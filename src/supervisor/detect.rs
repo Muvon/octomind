@@ -429,7 +429,16 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 		if haystack.contains(url) || haystack.contains(&with_slash) {
 			continue;
 		}
+		// A `#fragment` is client-side navigation, not a different resource:
+		// citing `url#section` when the fetched output carries the bare `url`
+		// is grounded.
 		let path = url.split('#').next().unwrap_or(url);
+		if path != url {
+			let path_slash = format!("{path}/");
+			if haystack.contains(path) || haystack.contains(&path_slash) {
+				continue;
+			}
+		}
 		let segments: Vec<&str> = path.split('/').filter(|s| s.len() >= 8).collect();
 		let constructed = segments.len() >= 2 && segments.iter().all(|s| haystack.contains(s));
 		if !constructed {
@@ -579,6 +588,42 @@ pub fn has_narrowing_params(parameters: &serde_json::Value) -> bool {
 	NARROWING.iter().any(|k| parameters.get(k).is_some())
 }
 
+/// Path-like values in a tool call's parameters — the artifact identities a
+/// mutation touches and a later read-back can verify. Generic across tools and
+/// domains: any non-empty string under a key containing "path" or "file", plus
+/// string arrays under such keys. No tool names, no extension lists.
+pub fn param_paths(parameters: &serde_json::Value) -> Vec<String> {
+	let mut out = Vec::new();
+	if let Some(obj) = parameters.as_object() {
+		for (k, v) in obj {
+			let kl = k.to_ascii_lowercase();
+			if !(kl.contains("path") || kl.contains("file")) {
+				continue;
+			}
+			match v {
+				serde_json::Value::String(s) if !s.trim().is_empty() => out.push(s.clone()),
+				serde_json::Value::Array(a) => out.extend(
+					a.iter()
+						.filter_map(|x| x.as_str())
+						.filter(|s| !s.trim().is_empty())
+						.map(str::to_string),
+				),
+				_ => {}
+			}
+		}
+	}
+	out
+}
+
+/// Normal form for mutated-path bookkeeping: the canonical filesystem path when
+/// it resolves (tolerates relative-vs-absolute and symlink spellings), else a
+/// lexical cleanup (a deleted or virtual path still compares by its own name).
+fn normalize_path(path: &str) -> String {
+	std::fs::canonicalize(path.trim())
+		.map(|p| p.to_string_lossy().into_owned())
+		.unwrap_or_else(|_| path.trim().trim_start_matches("./").to_string())
+}
+
 /// Heuristic: does this tool change state, so a success is inherently progress?
 /// (Reads/searches only count as progress when they surface *new* content.)
 pub fn is_mutation_tool(tool: &str) -> bool {
@@ -602,6 +647,11 @@ pub fn is_mutation_tool(tool: &str) -> bool {
 }
 
 const SEEN_CAP: usize = 128;
+
+/// Cap on remembered agent-mutated paths (read-back verification candidates).
+/// Oldest evicted — a task touching more artifacts than this verifies via the
+/// most recent ones, which is where the read-back lands anyway.
+const MUTATED_PATHS_CAP: usize = 32;
 
 /// Calls used to seed the working-set centroid before drift scoring begins —
 /// too few and the first off-task call would define the baseline.
@@ -660,11 +710,20 @@ pub struct Detectors {
 	/// drift between rounds (the user editing their tree mid-session) never
 	/// arms it: an agent that changed nothing has nothing to verify.
 	agent_dirty: bool,
+	/// Paths the agent's own successful mutation-shaped calls touched since the
+	/// last clean verification — the artifacts a later read-back can verify.
+	/// Normalized ([`normalize_path`]), deduped, capped at [`MUTATED_PATHS_CAP`]
+	/// (oldest evicted). Cleared with `agent_dirty`: once a round verifies, the
+	/// artifacts are accepted state and a fresh mutation restarts the set.
+	mutated_paths: Vec<String>,
 	/// Sticky latch: the user explicitly forbade running checks ("don't run
 	/// tests — I'll run it myself"). The resolver judges one turn at a time, so
 	/// without the latch a later turn loses the prohibition and the pre-gate
-	/// nudges the agent to violate it. Standing rule: persists across turns
-	/// like `verified_fp`; expires when a clean verification round runs.
+	/// nudges the agent to violate it. Standing rule: persists for the session
+	/// (an incidental check run must not erase the user's prohibition; the
+	/// latch only suppresses the pre-gate nudge — it never blocks the agent
+	/// from running a check the user directly asks for, and the LLM gate still
+	/// judges prohibitions on its own).
 	forbids_verification: bool,
 }
 
@@ -868,21 +927,62 @@ impl Detectors {
 		}
 	}
 
+	/// Record the artifact paths a successful mutation-shaped call touched —
+	/// the identities a later read-back can verify ([`Detectors::is_readback_call`]).
+	/// Called per successful mutation call; deduped and capped (oldest evicted).
+	pub fn note_mutated_paths(&mut self, parameters: &serde_json::Value) {
+		for p in param_paths(parameters) {
+			let n = normalize_path(&p);
+			if n.is_empty() || self.mutated_paths.contains(&n) {
+				continue;
+			}
+			if self.mutated_paths.len() >= MUTATED_PATHS_CAP {
+				self.mutated_paths.remove(0);
+			}
+			self.mutated_paths.push(n);
+		}
+	}
+
+	/// Is this successful non-mutation call a READ-BACK of an artifact the agent
+	/// itself mutated — inspecting the resulting state, the correct verification
+	/// for work with no command to run (documents, config, prose, data files)?
+	/// Domain-agnostic by construction: it matches artifact identity (the path
+	/// the agent changed), never tool names or file types. Command-verifiable
+	/// work still prefers the stronger exit — a check run — but a read-back is
+	/// exactly what the pre-gate note asks for ("inspect the resulting state"),
+	/// so it must count.
+	pub fn is_readback_call(
+		&self,
+		parameters: &serde_json::Value,
+		is_mutation: bool,
+		is_error: bool,
+	) -> bool {
+		if is_mutation || is_error || self.mutated_paths.is_empty() {
+			return false;
+		}
+		param_paths(parameters)
+			.iter()
+			.map(|p| normalize_path(p))
+			.any(|n| self.mutated_paths.contains(&n))
+	}
+
 	/// Fold one completed tool ROUND into the observational verification state.
 	/// `fp_before`/`fp_after` are workdir fingerprints measured around the round
 	/// (`None` = unavailable, e.g. not a git repo). `verifier_ok` = some
 	/// successful call in the round was verifier-shaped ([`is_verifier_shaped`]);
-	/// `mutation_ok` = some successful call was mutation-shaped (the
-	/// no-fingerprint fallback signal).
+	/// `readback_ok` = some successful call read back an artifact the agent
+	/// itself mutated ([`Detectors::is_readback_call`]); `mutation_ok` = some
+	/// successful call was mutation-shaped (the no-fingerprint fallback signal).
 	///
-	/// A round VERIFIES only when a verifier ran on an unchanged tree — a
-	/// "verifier" that also dirtied the tree (or ran in the same parallel batch
-	/// as an edit) checked an ambiguous state and proves nothing.
+	/// A round VERIFIES only when a verifier or read-back ran on an unchanged
+	/// tree — a "verifier" that also dirtied the tree (or ran in the same
+	/// parallel batch as an edit) checked an ambiguous state and proves nothing.
 	pub fn note_round_verification(
 		&mut self,
 		fp_before: Option<u64>,
 		fp_after: Option<u64>,
 		verifier_ok: bool,
+		readback_ok: bool,
 		mutation_ok: bool,
 	) {
 		// First observation seeds the baseline: the task-start tree is, by
@@ -897,20 +997,20 @@ impl Detectors {
 			// No fingerprints: fall back to call shape.
 			_ => !mutation_ok,
 		};
-		if verifier_ok && tree_unchanged {
+		if (verifier_ok || readback_ok) && tree_unchanged {
 			if let Some(a) = fp_after {
 				self.verified_fp = Some(a);
 			}
 			self.agent_dirty = false;
-			// Checks actually ran — a standing "don't run checks" prohibition is
-			// fulfilled and expires.
-			self.forbids_verification = false;
+			self.mutated_paths.clear();
 		} else if !tree_unchanged {
 			self.agent_dirty = true;
 		}
 		crate::log_debug!(
-			"round verification: tree_unchanged={} -> verified_fp={:?} agent_dirty={}",
+			"round verification: tree_unchanged={} verifier={} readback={} -> verified_fp={:?} agent_dirty={}",
 			tree_unchanged,
+			verifier_ok,
+			readback_ok,
 			self.verified_fp,
 			self.agent_dirty
 		);
@@ -929,21 +1029,23 @@ impl Detectors {
 		self.round_had_error = false;
 		self.prev_round_had_error = false;
 		self.agent_dirty = false;
+		self.mutated_paths.clear();
 	}
 
 	/// Latch that the user forbade running checks ("don't run tests — I'll run
 	/// it myself"). The resolver judges one turn at a time, and the prohibition
 	/// is a standing rule, not a per-turn property — so the latch persists
 	/// across turns like `verified_fp` (a later turn that merely fails to
-	/// repeat the rule must not re-arm the pre-gate). It expires only when a
-	/// clean verification round actually runs ([`Detectors::note_round_verification`]):
-	/// at that point checks have been run and the rule is moot.
+	/// repeat the rule must not re-arm the pre-gate). It never auto-expires:
+	/// an incidental check run does not mean the user revoked the rule, and
+	/// the latch only suppresses the pre-gate nudge — checks the user directly
+	/// requests still run, and the LLM gate judges prohibitions on its own.
 	pub fn note_forbids_verification(&mut self) {
 		self.forbids_verification = true;
 	}
 
-	/// Whether the user has forbidden running checks and no verification has
-	/// run since.
+	/// Whether the user has forbidden running checks (standing rule for the
+	/// session — see [`Detectors::note_forbids_verification`]).
 	pub fn check_run_forbidden(&self) -> bool {
 		self.forbids_verification
 	}
@@ -1517,16 +1619,16 @@ mod tests {
 		let mut d = Detectors::default();
 		assert!(!d.needs_verification(None));
 		// Mutation-shaped round, no verifier → unverified.
-		d.note_round_verification(None, None, false, true);
+		d.note_round_verification(None, None, false, false, true);
 		assert!(d.needs_verification(None));
 		// A read-only round changes nothing — looking is not verifying.
-		d.note_round_verification(None, None, false, false);
+		d.note_round_verification(None, None, false, false, false);
 		assert!(d.needs_verification(None));
 		// A round where the verifier ran alongside a mutation proves nothing.
-		d.note_round_verification(None, None, true, true);
+		d.note_round_verification(None, None, true, false, true);
 		assert!(d.needs_verification(None));
 		// A clean verifier round clears it.
-		d.note_round_verification(None, None, true, false);
+		d.note_round_verification(None, None, true, false, false);
 		assert!(!d.needs_verification(None));
 	}
 
@@ -1535,14 +1637,14 @@ mod tests {
 		let mut d = Detectors::default();
 		// Round 1 seeds the baseline (10 = task-start tree); the round's edit
 		// moved the tree to 11 → unverified.
-		d.note_round_verification(Some(10), Some(11), false, true);
+		d.note_round_verification(Some(10), Some(11), false, false, true);
 		assert!(d.needs_verification(Some(11)));
 		// Verifier ran but the same round dirtied the tree (11→12): ambiguous
 		// state, proves nothing.
-		d.note_round_verification(Some(11), Some(12), true, true);
+		d.note_round_verification(Some(11), Some(12), true, false, true);
 		assert!(d.needs_verification(Some(12)));
 		// Clean verifier on an unchanged tree → verified at 12.
-		d.note_round_verification(Some(12), Some(12), true, false);
+		d.note_round_verification(Some(12), Some(12), true, false, false);
 		assert!(!d.needs_verification(Some(12)));
 		// Drift with NO agent round in between is external (the user editing
 		// their own tree): the agent changed nothing since its clean
@@ -1558,12 +1660,64 @@ mod tests {
 		// Read-only rounds over a tree that drifts externally mid-session — the
 		// observe-only job shape (review/brief/audit): the deliverable is a
 		// report, and a done-claim needs no check run.
-		d.note_round_verification(Some(10), Some(10), false, false);
+		d.note_round_verification(Some(10), Some(10), false, false, false);
 		assert!(!d.needs_verification(Some(11)));
 		// A round that itself moved the tree arms it, even when no call was
 		// mutation-shaped (an edit hidden inside a shell command).
-		d.note_round_verification(Some(11), Some(12), false, false);
+		d.note_round_verification(Some(11), Some(12), false, false, false);
 		assert!(d.needs_verification(Some(12)));
+	}
+
+	#[test]
+	fn readback_of_mutated_path_verifies_artifact_work() {
+		use serde_json::json;
+		let mut d = Detectors::default();
+		// Round 1: agent edits a doc — mutation round, tree moves, dirty.
+		d.note_mutated_paths(&json!({"path": "blog/post/index.md"}));
+		d.note_round_verification(Some(10), Some(11), false, false, true);
+		assert!(d.needs_verification(Some(11)));
+		// Round 2: agent re-reads the exact artifact it changed — that IS the
+		// verification for work with no command to run.
+		let readback = d.is_readback_call(
+			&json!({"path": "blog/post/index.md", "start": 85}),
+			false,
+			false,
+		);
+		assert!(readback);
+		d.note_round_verification(Some(11), Some(11), false, readback, false);
+		assert!(!d.needs_verification(Some(11)));
+	}
+
+	#[test]
+	fn readback_requires_matching_path_success_and_no_mutation() {
+		use serde_json::json;
+		let mut d = Detectors::default();
+		d.note_mutated_paths(&json!({"path": "a.md"}));
+		// Different artifact → not a read-back.
+		assert!(!d.is_readback_call(&json!({"path": "b.md"}), false, false));
+		// Mutation call re-touching the path is more editing, not verification.
+		assert!(!d.is_readback_call(&json!({"path": "a.md"}), true, false));
+		// Failed read proves nothing.
+		assert!(!d.is_readback_call(&json!({"path": "a.md"}), false, true));
+		// No mutated paths recorded → nothing to read back.
+		let fresh = Detectors::default();
+		assert!(!fresh.is_readback_call(&json!({"path": "a.md"}), false, false));
+	}
+
+	#[test]
+	fn param_paths_collects_pathish_keys_only() {
+		use serde_json::json;
+		let p = json!({
+			"path": "a.md",
+			"from_path": "b.rs",
+			"files": ["c.py", ""],
+			"command": "rm -rf /",
+			"content": "path-like text ignored"
+		});
+		let mut got = param_paths(&p);
+		got.sort();
+		assert_eq!(got, vec!["a.md", "b.rs", "c.py"]);
+		assert!(param_paths(&json!({"command": "x"})).is_empty());
 	}
 
 	#[test]
@@ -1612,7 +1766,7 @@ mod tests {
 	#[test]
 	fn reset_streak_clears_previous_task_verification_latch() {
 		let mut d = Detectors::default();
-		d.note_round_verification(None, None, false, true);
+		d.note_round_verification(None, None, false, false, true);
 		assert!(d.needs_verification(None));
 		// A new genuine task must not inherit an earlier task's mutation.
 		d.reset_streak();
@@ -1620,16 +1774,17 @@ mod tests {
 	}
 
 	#[test]
-	fn forbids_verification_latches_until_checks_actually_run() {
+	fn forbids_verification_is_a_standing_rule() {
 		let mut d = Detectors::default();
 		assert!(!d.check_run_forbidden());
 		d.note_forbids_verification();
 		// Standing rule: a new genuine turn must not re-arm the pre-gate.
 		d.reset_streak();
 		assert!(d.check_run_forbidden());
-		// A clean verification round fulfils the rule and lifts it.
-		d.note_round_verification(None, None, true, false);
-		assert!(!d.check_run_forbidden());
+		// An incidental clean verification round does NOT erase the user's
+		// prohibition — the latch never auto-expires.
+		d.note_round_verification(None, None, true, false, false);
+		assert!(d.check_run_forbidden());
 	}
 
 	#[test]
@@ -1760,6 +1915,19 @@ mod tests {
 	fn url_trailing_punctuation_and_slash_tolerated() {
 		let grounds = vec!["fetched https://example.com/".to_string()];
 		let resp = "From (https://example.com), we learn.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+	}
+
+	#[test]
+	fn url_fragment_grounded_by_bare_url() {
+		// A `#fragment` is client-side navigation — citing `url#L10` when the
+		// tool output carried the bare `url` is grounded, not invented.
+		let grounds = vec!["fetched https://example.com/repo/file.rs".to_string()];
+		let resp = "See https://example.com/repo/file.rs#L10 for the guard.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+		// Trailing-slash ground also accepted for the fragment-stripped form.
+		let grounds = vec!["fetched https://example.com/docs/".to_string()];
+		let resp = "See https://example.com/docs#install.";
 		assert!(unverified_urls(resp, &grounds).is_empty());
 	}
 

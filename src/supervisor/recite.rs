@@ -47,16 +47,35 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		"forbidden",
 	];
 	let mut out: Vec<String> = Vec::new();
+	let mut in_fence = false;
 	for line in task.lines() {
+		// Quoted material is not a directive: skip fenced code blocks,
+		// blockquotes, transcript decoration (box-drawing UI captures), and
+		// line-numbered excerpts ("185:Keys are revoked, never deleted…") —
+		// pasted CONTENT that merely contains a negation must never be
+		// recited back as a binding constraint.
+		let trimmed = line.trim_start();
+		if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+			in_fence = !in_fence;
+			continue;
+		}
+		if in_fence || is_quoted_material(trimmed) {
+			continue;
+		}
 		// Sentence-ish units: split lines on terminators so one long line
 		// containing an instruction still yields just that instruction.
 		for unit in line.split_inclusive(['.', '!', ';']) {
 			let unit = unit
 				.trim()
-				.trim_start_matches(['-', '*', '•', '>'])
+				.trim_start_matches(['-', '*', '•'])
 				.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
 				.trim();
 			if unit.is_empty() || unit.len() > CONSTRAINT_LEN_MAX || unit.ends_with('?') {
+				continue;
+			}
+			// A unit opening with a quote character is cited material, not an
+			// instruction the user issued.
+			if unit.starts_with(['"', '\'', '“', '”', '‘', '`']) {
 				continue;
 			}
 			let lower = unit.to_lowercase();
@@ -69,6 +88,22 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		}
 	}
 	out
+}
+
+/// Is this trimmed line quoted/pasted material rather than the user's own
+/// words? True for blockquotes, transcript/UI decoration (box-drawing
+/// characters), and line-number-prefixed excerpts like `185:Keys are revoked`.
+fn is_quoted_material(trimmed: &str) -> bool {
+	let Some(first) = trimmed.chars().next() else {
+		return false;
+	};
+	if first == '>' || matches!(first, '│' | '╭' | '╰' | '├' | '└' | '┃' | '▸' | '┆' | '║')
+	{
+		return true;
+	}
+	// `NN:` line-number prefix — a pasted code/file excerpt.
+	let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+	digits > 0 && trimmed[digits..].starts_with(':')
 }
 
 /// Build the recitation note for the context tail, or `None` when there is
@@ -157,6 +192,21 @@ This long descriptive sentence merely mentions that the value must not exceed th
 		// Questions and over-long prose are excluded.
 		assert!(!c.iter().any(|x| x.contains("unicode")), "{c:?}");
 		assert!(!c.iter().any(|x| x.contains("buffer size")), "{c:?}");
+	}
+
+	#[test]
+	fn constraints_skip_quoted_and_pasted_material() {
+		// The two observed FPs: transcript-decorated line-numbered content and
+		// a quoted phrase inside prose — both merely CONTAIN a negation.
+		let task = "Update the post per the log below. Do not touch translations.\n\
+│ 185:Keys are revoked, never deleted — usage records survive.\n\
+> never deleted — usage records survive\n\
+185:Keys are revoked, never deleted.\n\
+\"rate windows\" the original post referenced but never defined.\n\
+```\ndo not run this fenced example\n```\n\
+~~~\nnever run this either\n~~~";
+		let c = extract_constraints(task);
+		assert_eq!(c, vec!["Do not touch translations."], "{c:?}");
 	}
 
 	#[test]

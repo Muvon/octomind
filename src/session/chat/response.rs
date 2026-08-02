@@ -655,6 +655,7 @@ pub async fn process_response<S: OutputSink>(
 					// (fp_before / track_verification are captured above, BEFORE
 					// execute_tools_parallel — see the pre-execution comment.)
 					let mut round_verifier = false;
+					let mut round_readback = false;
 					let mut round_mutation = false;
 
 					for call in &current_tool_calls {
@@ -742,8 +743,24 @@ pub async fn process_response<S: OutputSink>(
 						round_truncated |= is_truncated;
 						round_dedup |= is_dedup;
 						round_drift |= is_drift;
+						// Read-back verification: a successful non-mutation call that
+						// re-reads an artifact the agent itself mutated — the correct
+						// verification for work with no command to run (docs, config,
+						// prose). Checked BEFORE this call's own mutation is recorded so
+						// a call never reads back its own write.
+						round_readback |= params.chat_session.detectors.is_readback_call(
+							&call.parameters,
+							is_mutation,
+							is_error,
+						);
 						if !is_error {
 							round_mutation |= is_mutation;
+							if is_mutation {
+								params
+									.chat_session
+									.detectors
+									.note_mutated_paths(&call.parameters);
+							}
 							round_verifier |= crate::supervisor::detect::is_verifier_shaped(
 								&call.tool_name,
 								&call.parameters,
@@ -757,16 +774,18 @@ pub async fn process_response<S: OutputSink>(
 					if track_verification {
 						let fp_after = crate::supervisor::workdir::fingerprint();
 						crate::log_debug!(
-							"round fold: fp_before={:?} fp_after={:?} verifier={} mutation={}",
+							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={}",
 							fp_before,
 							fp_after,
 							round_verifier,
+							round_readback,
 							round_mutation
 						);
 						params.chat_session.detectors.note_round_verification(
 							fp_before,
 							fp_after,
 							round_verifier,
+							round_readback,
 							round_mutation,
 						);
 					}

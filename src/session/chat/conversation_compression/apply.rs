@@ -151,8 +151,22 @@ pub(super) async fn apply_compression(
 	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
 
-	let base_entry =
-		format_compressed_entry_with_context(&summary_body, &file_context_content, compression_id);
+	// LOSSLESS ARCHIVE (addressable recall): write the full drained range to
+	// disk BEFORE removing it from the session. The summary is lossy; the
+	// archive makes compaction reversible — the model can recall exact code,
+	// errors, or tool output from the file instead of guessing.
+	let archive_path = super::archive::archive_messages(
+		&session.session.info.name,
+		&compression_id,
+		&session.session.messages[start_idx + 1..=end_idx],
+	);
+
+	let base_entry = format_compressed_entry_with_context(
+		&summary_body,
+		&file_context_content,
+		compression_id,
+		archive_path.as_deref(),
+	);
 
 	// Prepend USER TASKS section (last 4 user requests, excluding the appended one).
 	// These are raw user messages — not AI-rephrased — so intent is never lost.

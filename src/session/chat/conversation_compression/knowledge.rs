@@ -38,6 +38,7 @@ pub(super) fn format_compressed_entry_with_context(
 	body: &str,
 	file_context: &str,
 	compression_id: String,
+	archive_path: Option<&std::path::Path>,
 ) -> String {
 	let mut sections = String::new();
 
@@ -53,6 +54,14 @@ pub(super) fn format_compressed_entry_with_context(
 			sections.push('\n');
 		}
 		sections.push_str("</file_context>\n");
+	}
+
+	// Addressable-recall pointer: the raw drained transcript lives on disk.
+	// Embedded inside the summary so every future compression cycle (and the
+	// model itself) knows the elided detail is recoverable, not lost.
+	if let Some(path) = archive_path {
+		sections.push_str(&super::archive::archive_pointer(path));
+		sections.push('\n');
 	}
 
 	format!(

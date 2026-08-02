@@ -654,6 +654,27 @@ pub async fn compress_completed_task(
 		}
 	}
 
+	// LOSSLESS ARCHIVE (addressable recall): persist the full drained range
+	// before removal so task compaction is reversible — exact code, errors,
+	// and tool output stay recoverable from disk, and the compressed entry
+	// carries a pointer to the archive file.
+	let archive_path = crate::session::chat::conversation_compression::archive::archive_messages(
+		&session.session.info.name,
+		&compression_id,
+		&session.session.messages[adjusted_range.start_index..=adjusted_range.end_index],
+	);
+	let compressed_entry = match &archive_path {
+		Some(path) => {
+			let pointer =
+				crate::session::chat::conversation_compression::archive::archive_pointer(path);
+			match compressed_entry.strip_suffix("</task_compressed>") {
+				Some(body) => format!("{body}{pointer}\n</task_compressed>"),
+				None => format!("{compressed_entry}\n{pointer}"),
+			}
+		}
+		None => compressed_entry,
+	};
+
 	let (messages_removed, _) =
 		session.remove_messages_in_range(adjusted_range.start_index, adjusted_range.end_index)?;
 

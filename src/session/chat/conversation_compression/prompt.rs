@@ -140,6 +140,13 @@ If the transcript contains a prior <conversation_summary id=\"…\">…</convers
 - current_task, next_steps: replace based on the most recent transcript.
 </scaffold_rules>
 
+<continuation>
+The summary you emit REPLACES the transcript — the next model turn sees only your summary plus the most recent messages. Write it for the model that continues the work:
+- Condition every field on next_steps: if a detail is needed to execute the next step correctly, keep it verbatim; if not, compress it away.
+- Populate open_loops with anything unresolved (pending questions, blockers, user decisions awaited) so the continuation never drops a thread.
+- Populate file_states with files already created/edited and their last-known state, so completed work is never re-done. The continuation trusts file_states and must NOT re-apply edits listed there.
+</continuation>
+
 <recency>
 Messages tagged [RECENT] are the most recent and most important — preserve them with highest fidelity. [USER] and [ASSISTANT] turns are primary signal. [TOOL CALL] and [TOOL RESULT] entries are secondary context.
 </recency>{force_directive}{mode_appendix}",

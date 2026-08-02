@@ -25,6 +25,7 @@
 
 mod ai;
 mod apply;
+pub(crate) mod archive;
 mod decision;
 mod knowledge;
 mod prompt;

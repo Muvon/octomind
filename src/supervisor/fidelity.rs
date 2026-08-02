@@ -101,6 +101,12 @@ pub async fn check_compaction_fidelity(
 	parse_lost(&resp, goal, constraints)
 }
 
+/// Minimum length for a lost item to match an authoritative requirement by
+/// SUBSTRING — a very short string ("test", "do") would match almost anything,
+/// letting a sloppy verifier reply resurrect an unrelated requirement.
+/// Exact matches are always accepted regardless of length.
+const SUBSTRING_MATCH_MIN: usize = 10;
+
 /// Extract the lost list from the verifier's JSON, keeping ONLY texts that
 /// match an actual input requirement — the verifier's output is untrusted and
 /// a hallucinated "lost" item must never be re-injected as a requirement.
@@ -126,8 +132,12 @@ fn parse_lost(resp: &str, goal: &str, constraints: &[String]) -> Vec<String> {
 	for item in items.iter().filter_map(|v| v.as_str()) {
 		let t = item.trim();
 		// Match exactly, or as a substring of an authoritative item (the
-		// verifier may strip the "GOAL: "/"CONSTRAINT n:" prefix).
-		if let Some(matched) = authoritative.iter().find(|a| a == &t || a.contains(t)) {
+		// verifier may strip the "GOAL: "/"CONSTRAINT n:" prefix). Substring
+		// matching needs a minimum length — a tiny fragment matches anything.
+		if let Some(matched) = authoritative
+			.iter()
+			.find(|a| a == &t || (t.len() >= SUBSTRING_MATCH_MIN && a.contains(t)))
+		{
 			if !lost.contains(matched) {
 				lost.push(matched.clone());
 			}
@@ -159,6 +169,22 @@ mod tests {
 		assert!(parse_lost("{}", "g", &["c".to_string()]).is_empty());
 		assert!(parse_lost(r#"{"lost":"nope"}"#, "g", &["c".to_string()]).is_empty());
 		assert!(parse_lost(r#"{"lost":[]}"#, "g", &["c".to_string()]).is_empty());
+	}
+
+	#[test]
+	fn parse_lost_short_fragment_never_substring_matches() {
+		let goal = "ship the parser";
+		let constraints = vec!["do not run tests".to_string()];
+		// "test" and "do" are substrings of a constraint but far too short to
+		// identify it — must be dropped, not resurrected as the full rule.
+		let resp = r#"{"lost":["test","do","run tests"]}"#;
+		assert!(parse_lost(resp, goal, &constraints).is_empty());
+		// A ≥10-char fragment still matches (prefix-stripped verifier reply).
+		let resp = r#"{"lost":["not run tests"]}"#;
+		assert_eq!(
+			parse_lost(resp, goal, &constraints),
+			vec!["do not run tests"]
+		);
 	}
 
 	#[test]

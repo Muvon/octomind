@@ -115,6 +115,31 @@ pub(super) async fn apply_compression(
 	preserved_skills: Vec<crate::session::Message>,
 	config: &crate::config::Config,
 ) -> Result<()> {
+	// Fidelity snapshot (pre-drain): the authoritative goal + every explicit
+	// constraint across real user turns. Compression is lossy; these are what
+	// the post-compression view must still entail (checked at the end).
+	let fidelity_goal = {
+		let orig = summary.original_request.trim();
+		if !orig.is_empty() {
+			orig.to_string()
+		} else {
+			crate::session::latest_real_user_task_content(&session.session.messages)
+				.unwrap_or_default()
+				.to_string()
+		}
+	};
+	let fidelity_constraints: Vec<String> = {
+		let mut seen = std::collections::BTreeSet::new();
+		session
+			.session
+			.messages
+			.iter()
+			.filter(|m| crate::session::is_real_user_task_message(m))
+			.flat_map(|m| crate::supervisor::recite::extract_constraints(&m.content))
+			.filter(|c| seen.insert(c.clone()))
+			.collect()
+	};
+
 	// Fold critical knowledge from the typed summary into the session.
 	// Done up-front so the session reflects the new knowledge before we
 	// insert the rendered markdown that omits the (already-folded) entries.
@@ -298,7 +323,7 @@ pub(super) async fn apply_compression(
 	// so the provider can chain via `previous_response_id` on the next API call.
 	let summary_msg = crate::session::Message {
 		role: "assistant".to_string(),
-		content: compressed_entry,
+		content: compressed_entry.clone(),
 		timestamp: now,
 		cached: false,
 		name: Some("plan_compression".to_string()),
@@ -451,6 +476,42 @@ pub(super) async fn apply_compression(
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default()
 		.as_secs();
+
+	// COMPACTION FIDELITY: one cheap verifier pass — does the surviving view
+	// (summary + plan + anchor intent) still entail the pre-compression goal and
+	// every explicit constraint? Whatever was lost is re-injected with full
+	// authority. Fail-open inside the check; never blocks compression.
+	if config.supervisor.enabled && config.supervisor.gate.enabled {
+		let compressed_view = format!(
+			"{}\n\nANCHOR INTENT: {}",
+			compressed_entry, session.session.info.anchor.intent
+		);
+		let lost = crate::supervisor::fidelity::check_compaction_fidelity(
+			config,
+			&fidelity_goal,
+			&fidelity_constraints,
+			&compressed_view,
+		)
+		.await;
+		if !lost.is_empty() {
+			let mut note = String::from(
+				"<pay-attention>\n<!-- octomind:compaction_fidelity -->\nThe compression just applied dropped standing requirement(s) that still bind the work. They are re-stated here with full authority — treat each as if the user had just repeated it:\n",
+			);
+			for item in &lost {
+				note.push_str(&format!("- {item}\n"));
+			}
+			note.push_str("</pay-attention>");
+			session.add_system_managed_user_message(&note)?;
+			crate::supervisor::notify(&format!(
+				"compaction dropped {} requirement(s) — re-injected",
+				lost.len()
+			));
+			crate::log_debug!(
+				"Compaction fidelity: {} lost requirement(s) re-injected",
+				lost.len()
+			);
+		}
+	}
 
 	Ok(())
 }

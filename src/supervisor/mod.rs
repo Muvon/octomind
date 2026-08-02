@@ -37,8 +37,10 @@
 pub mod condense;
 pub mod delegate;
 pub mod detect;
+pub mod fidelity;
 pub mod gate;
 pub mod learning;
+pub mod ontrack;
 pub mod recite;
 pub mod resolve;
 pub mod stats;

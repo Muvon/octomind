@@ -293,6 +293,20 @@ impl EvidenceLedger {
 		}
 		out
 	}
+
+	/// True when this task slice recorded plan-tool activity but zero non-plan
+	/// tool calls — plan coverage without any real action is fabricated success.
+	pub fn plan_activity_without_actions(&self) -> bool {
+		let mut plan_activity = false;
+		for e in &self.entries {
+			if e.tool == "plan" {
+				plan_activity = true;
+			} else {
+				return false;
+			}
+		}
+		plan_activity
+	}
 }
 
 /// Cap on the git diff inside the ground-truth block.
@@ -389,6 +403,19 @@ fn git_diff(paths: &[String]) -> String {
 /// Marker embedded in the plan pre-gate advisory so re-runs within the same
 /// turn don't nudge twice (mirrors the mutation pre-gate marker).
 pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
+
+/// Marker embedded in the plan-coverage-floor advisory so re-runs within the
+/// same turn don't nudge twice (mirrors the plan pre-gate marker).
+pub const COVERAGE_GATE_MARKER: &str = "octomind:pre_gate_plan_coverage";
+
+/// Advisory injected when `done` is self-reported after a turn that worked the
+/// plan (plan-tool calls) but recorded ZERO non-plan actions — closing plan
+/// items without any action is fabricated coverage, not work.
+pub fn format_coverage_advisory() -> String {
+	format!(
+		"<pay-attention>\n<!-- {COVERAGE_GATE_MARKER} -->\nYou reported done and your plan shows all items completed, but this turn recorded plan-tool calls only — no reads, no mutations, no checks. Closing plan items without any action is fabricated coverage, not work. Do the actual work each item requires (then close it), or close items with an honest reason via the plan tool.\n</pay-attention>"
+	)
+}
 
 /// Advisory injected when `done` is self-reported while the live plan still
 /// has open items — the drift-by-omission failure: parts of the decomposed
@@ -758,6 +785,36 @@ mod tests {
 		assert!(a.contains(PLAN_GATE_MARKER));
 		assert!(a.contains("- wire it up\n"));
 		assert!(a.contains("- add tests\n"));
+	}
+
+	#[test]
+	fn coverage_advisory_carries_marker() {
+		let a = format_coverage_advisory();
+		assert!(is_supervisor_injection(&a));
+		assert!(a.contains(COVERAGE_GATE_MARKER));
+	}
+
+	#[test]
+	fn ledger_flags_plan_activity_without_actions() {
+		let mut l = EvidenceLedger::default();
+		assert!(!l.plan_activity_without_actions());
+		l.record(
+			"plan",
+			&serde_json::json!({"command":"start"}),
+			false,
+			false,
+			1,
+		);
+		l.record(
+			"plan",
+			&serde_json::json!({"command":"next"}),
+			false,
+			false,
+			1,
+		);
+		assert!(l.plan_activity_without_actions());
+		l.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
+		assert!(!l.plan_activity_without_actions());
 	}
 
 	#[test]

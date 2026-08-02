@@ -361,6 +361,8 @@ The out-of-band control plane around the agent loop. It hosts learning (distill 
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
+| `claim_check` | bool | `true` | Evidence-bound claims: the agent backs load-bearing repo facts with a verbatim «quote»; each quote is verified against tool results and each file:line reference on disk. Fabricated citations are re-grounded via the verify-gate (needs `gate.enabled`) |
+| `max_consecutive_steers` | usize | `0` | Circuit-breaker: hard-stop a turn after this many consecutive steered tool rounds without breakout. `0` = unlimited (off) |
 
 ### `[supervisor.learning]`
 
@@ -406,16 +408,32 @@ Deterministic, free, every-turn signals that decide when (rarely) to wake the mo
 |-------|------|---------|-------------|
 | `loop_threshold` | usize | `3` | Identical tool+args this many times in a row → loop fired |
 | `no_progress_window` | usize | `5` | Turns without new information → drift candidate |
+| `truncation_threshold` | usize | `2` | Consecutive truncated tool results → model is re-querying without narrowing |
+| `dedup_threshold` | usize | `2` | Consecutive deduplicated tool results → model is re-issuing calls whose output it already has |
+| `distraction_threshold` | usize | `0` | Consecutive off-task results (cosine to the on-task centroid below `drift_floor`) → drift. `0` = off; costs one embedding per sizable tool result when enabled |
+| `drift_floor` | f64 | `0.7` | Drift floor: a result is drift only if its cosine to the working set falls below this. Model-dependent; tune from debug logs |
 | `self_report` | bool | `true` | Inject the self-report status-token instruction and parse it back |
+| `sequential_threshold` | usize | `0` | Consecutive single-tool-call rounds → over-sequencing advisory. `0` = off |
 
 ### `[supervisor.gate]`
 
-Verify-gate on self-reported completion.
+Verify-gate on self-reported completion. Free deterministic pre-gates run first (no model call); the LLM checklist runs only if those pass.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
-| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification) |
+| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification). Shared budget across the free pre-gate and the LLM verify-gate |
+| `verifier_model` | string | supervisor `model` | Model the gate verifies with. Recommended: a **different family** than the agent model — a same-family verifier inherits the same blind spots |
+| `require_check_after_mutation` | bool | `true` | Free pre-gate: refuse `done` when state changed but no successful command execution ran since the change (tool-agnostic — works for any domain) |
+| `require_plan_complete` | bool | `true` | Free pre-gate: refuse `done` while the live plan still has open items |
+
+### `[supervisor.recite]`
+
+Goal recitation: re-inject the live goal (anchor intent + next steps) at the context tail each turn on long (already-compacted) sessions, so it stays in the high-attention recency window. Short sessions pay nothing.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable goal recitation |
 
 ### `[supervisor.condense]`
 
@@ -427,10 +445,22 @@ Task-aware narrowing of oversized tool outputs. One cheap-model call per round s
 | `tokens_threshold` | usize | `2000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
 | `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
 
+### `[supervisor.delegate]`
+
+Delegate gate: handoff quality check before a subagent is spawned. `tap run` / `agent_*` children are context-isolated — one cheap-model call judges each proposed handoff against the parent's goal, live request and plan (faithful, self-contained, states the deliverable and scope edge). A failing handoff is not spawned; the gaps come back as a tool error so the agent rewrites the prompt. Fail-open on any gate outage.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable the delegate gate |
+| `model` | string | `anthropic:claude-haiku-4-5` | Model that judges the handoff (cheap + fast recommended) |
+| `max_revisions` | usize | `2` | Rejected rounds per turn before the gate lets the handoff through. `0` = never judge (same as off) |
+
 ```toml
 [supervisor]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
+claim_check = true
+max_consecutive_steers = 0
 
 [supervisor.learning]
 enabled = true
@@ -447,16 +477,32 @@ decay_days = 90
 [supervisor.detectors]
 loop_threshold = 3
 no_progress_window = 5
+truncation_threshold = 2
+dedup_threshold = 2
+distraction_threshold = 0
+drift_floor = 0.7
 self_report = true
+sequential_threshold = 0
 
 [supervisor.gate]
 enabled = true
 max_iterations = 2
+verifier_model = "anthropic:claude-haiku-4-5"
+require_check_after_mutation = true
+require_plan_complete = true
+
+[supervisor.recite]
+enabled = true
 
 [supervisor.condense]
 enabled = true
-tokens_threshold = 2000
+tokens_threshold = 5000
 model = "anthropic:claude-haiku-4-5"
+
+[supervisor.delegate]
+enabled = true
+model = "anthropic:claude-haiku-4-5"
+max_revisions = 2
 ```
 
 ## `[registry]`

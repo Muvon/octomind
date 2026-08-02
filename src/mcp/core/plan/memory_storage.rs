@@ -52,6 +52,7 @@ impl PlanStorage for MemoryPlanStorage {
 				completed_at: None,
 				message_range: None,    // Initialize as None, will be set during compression
 				phase: task_data.phase, // Optional phase grouping
+				valid_if: task_data.valid_if, // Optional falsifiable validity condition
 			})
 			.collect();
 
@@ -289,7 +290,7 @@ mod tests {
 	use super::*;
 
 	fn task(title: &str) -> TaskData {
-		TaskData::new(title.to_string(), format!("do {title}"), None)
+		TaskData::new(title.to_string(), format!("do {title}"), None, None)
 	}
 
 	fn plan_with(titles: &[&str]) -> MemoryPlanStorage {

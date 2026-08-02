@@ -243,7 +243,7 @@ Manage the structured task plan.
 
 **Note**: The `/plan` slash command only displays the current plan. To create, modify, or clear a plan, use the `plan` MCP tool directly with these commands:
 
-- `plan(command="start", content="<plan goal/title>", tasks=[{title, description}, ...])` — Create a new plan. The plan title comes from `content` (defaults to `Active Plan` if omitted); each task object requires non-empty `title` and `description`.
+- `plan(command="start", content="<plan goal/title>", tasks=[{title, description}, ...])` — Create a new plan. The plan title comes from `content` (defaults to `Active Plan` if omitted); each task object requires non-empty `title` and `description`. A task may also declare `valid_if` — a falsifiable condition that must hold for the task to stay valid (machine-checkable forms: `file_exists: <path>`, `file_absent: <path>`; free-form prose is left to the agent/verifier). The supervisor's verify-gate refuses `done` while an open task's `valid_if` is deterministically broken.
 - `plan(command="next", content="...")` — Mark current task complete, advance to next
 - `plan(command="step", content="...")` — Add progress note to current task
 - `plan(command="reset")` — **Clear/reset the current plan**

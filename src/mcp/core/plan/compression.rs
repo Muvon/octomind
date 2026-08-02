@@ -1206,6 +1206,7 @@ mod tests {
 			completed_at: Some(Utc::now()),
 			message_range: None,
 			phase: None,
+			valid_if: None,
 		};
 
 		// With an empty anchor the function falls back to a minimal task
@@ -1239,6 +1240,7 @@ mod tests {
 			completed_at: Some(Utc::now()),
 			message_range: None,
 			phase: None,
+			valid_if: None,
 		};
 		let mut anchor = crate::session::anchor::Anchor::default();
 		anchor.extend(

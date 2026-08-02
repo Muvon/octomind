@@ -49,6 +49,8 @@ pub struct PlanTask {
 	pub message_range: Option<MessageRange>, // Message range for compression
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub phase: Option<String>, // Optional phase grouping
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub valid_if: Option<String>, // Optional falsifiable validity condition
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,14 +71,21 @@ pub struct TaskData {
 	pub title: String,
 	pub description: String,
 	pub phase: Option<String>,
+	pub valid_if: Option<String>,
 }
 
 impl TaskData {
-	pub fn new(title: String, description: String, phase: Option<String>) -> Self {
+	pub fn new(
+		title: String,
+		description: String,
+		phase: Option<String>,
+		valid_if: Option<String>,
+	) -> Self {
 		Self {
 			title,
 			description,
 			phase,
+			valid_if,
 		}
 	}
 }

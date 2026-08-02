@@ -688,7 +688,13 @@ pub async fn process_response<S: OutputSink>(
 						// Tool-agnostic: detect truncation by the sentinel the global
 						// truncation choke point stamps, not by tool identity.
 						let is_truncated = result_content
-							.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG);
+							.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG)
+							// A paged/ranged call (start/end/limit/…) IS the narrowing —
+							// its truncation is the display cap, not ignored advice, so
+							// it must not feed the truncation streak.
+							&& !crate::supervisor::detect::has_narrowing_params(
+								&call.parameters,
+							);
 						// Likewise detect a deduped repeat by the sentinel the dedup
 						// placeholder carries (a successful duplicate arrives as an error
 						// result whose body is the placeholder).

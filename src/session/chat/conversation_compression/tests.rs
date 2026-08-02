@@ -2155,13 +2155,33 @@ fn render_key_entities_nested_tags() {
 }
 
 #[test]
+fn render_includes_open_loops_and_file_states() {
+	let mut s = summary_with_progress();
+	s.open_loops = vec!["awaiting user decision on archive format".to_string()];
+	s.file_states = vec!["src/foo.rs — added compress_summary, compiles".to_string()];
+	let rendered = render_summary(&s);
+	assert!(rendered.contains("<open_loops>"));
+	assert!(rendered.contains("<open_loop>awaiting user decision on archive format</open_loop>"));
+	assert!(rendered.contains("<file_states>"));
+	assert!(rendered.contains("<state>src/foo.rs — added compress_summary, compiles</state>"));
+}
+
+#[test]
+fn render_omits_empty_open_loops_and_file_states() {
+	let s = empty_summary();
+	let rendered = render_summary(&s);
+	assert!(!rendered.contains("<open_loops>"));
+	assert!(!rendered.contains("<file_states>"));
+}
+
+#[test]
 fn format_compressed_entry_with_empty_summary_still_renders_wrapper() {
 	// Belt-and-braces: even if `is_summary_substantive` failed to gate, an
 	// empty render still produces a clearly-tagged wrapper (used during the
 	// pathological-bootstrap branch in apply_compression). Pinned here so
 	// any future refactor that changes the wrapper tag breaks
 	// strip_file_context_from_summary's matching as well.
-	let formatted = format_compressed_entry_with_context("", "", "test-id".to_string());
+	let formatted = format_compressed_entry_with_context("", "", "test-id".to_string(), None);
 	assert!(formatted.contains("<conversation_summary id=\"test-id\">"));
 	assert!(formatted.contains("</conversation_summary>"));
 }

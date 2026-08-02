@@ -57,6 +57,8 @@ pub struct CompressionSummary {
 	pub next_steps: String,
 	pub file_context: Vec<FileContextEntry>,
 	pub critical_knowledge: Vec<String>,
+	pub open_loops: Vec<String>,
+	pub file_states: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -154,6 +156,9 @@ pub fn render_summary(summary: &CompressionSummary) -> String {
 		push_list(&mut out, "decisions", "decision", &ke.decisions);
 		out.push_str("</key_entities>\n");
 	}
+
+	push_list(&mut out, "open_loops", "open_loop", &summary.open_loops);
+	push_list(&mut out, "file_states", "state", &summary.file_states);
 
 	push_text(&mut out, "next_steps", &summary.next_steps);
 
@@ -276,6 +281,18 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"items": { "type": "string" },
 				"maxItems": 5,
 				"description": "Survives ALL future compressions. Architectural decisions, hidden constraints, user preferences, root-cause findings. 2–3 sentences each. Include only when truly critical — not routine progress."
+			},
+			"open_loops": {
+				"type": "array",
+				"items": { "type": "string" },
+				"maxItems": 8,
+				"description": "Unresolved questions, pending user decisions, blocked items, open TODOs — anything still waiting on an answer or action. Carry forward across compressions until resolved."
+			},
+			"file_states": {
+				"type": "array",
+				"items": { "type": "string" },
+				"maxItems": 10,
+				"description": "Files created or edited with their last-known state: 'path — what changed / current status'. Prevents re-doing completed edits after compression."
 			}
 		},
 		"required": [
@@ -290,7 +307,9 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			"key_entities",
 			"next_steps",
 			"file_context",
-			"critical_knowledge"
+			"critical_knowledge",
+			"open_loops",
+			"file_states"
 		]
 	})
 }
@@ -339,6 +358,8 @@ pub fn parse_xml_summary(text: &str) -> Result<CompressionSummary> {
 		next_steps: extract_text(body, "next_steps").unwrap_or_default(),
 		file_context,
 		critical_knowledge: extract_items(body, "critical_knowledge", "knowledge"),
+		open_loops: extract_items(body, "open_loops", "open_loop"),
+		file_states: extract_items(body, "file_states", "state"),
 	})
 }
 
@@ -498,6 +519,12 @@ Emit ONE single XML document with the following tags, in this order. Every requi
 <critical_knowledge>                                      (required container; 0-5 <knowledge> items, 2-3 sentences each)
   <knowledge>survives all future compressions</knowledge>
 </critical_knowledge>
+<open_loops>                                             (required container; 0-8 <open_loop> items, unresolved questions/blockers)
+  <open_loop>...</open_loop>
+</open_loops>
+<file_states>                                            (required container; 0-10 <state> items, 'path — last-known state')
+  <state>...</state>
+</file_states>
 
 Output ONLY the XML. No prose, no code fences, no markdown headers — the response is parsed by exact tag boundaries.
 </output_format>"#;
@@ -522,7 +549,9 @@ mod xml_parser_tests {
 </key_entities>
 <next_steps>do the next thing</next_steps>
 <file_context><range filepath="a.rs" start_line="1" end_line="10"/></file_context>
-<critical_knowledge><knowledge>arch decision: X</knowledge></critical_knowledge>"#
+<critical_knowledge><knowledge>arch decision: X</knowledge></critical_knowledge>
+<open_loops><open_loop>awaiting user decision on Y</open_loop></open_loops>
+<file_states><state>a.rs — added foo_fn, compiles</state></file_states>"#
 			.to_string()
 	}
 
@@ -544,6 +573,8 @@ mod xml_parser_tests {
 		assert_eq!(s.file_context[0].start_line, 1);
 		assert_eq!(s.file_context[0].end_line, 10);
 		assert_eq!(s.critical_knowledge, vec!["arch decision: X"]);
+		assert_eq!(s.open_loops, vec!["awaiting user decision on Y"]);
+		assert_eq!(s.file_states, vec!["a.rs — added foo_fn, compiles"]);
 	}
 
 	#[test]

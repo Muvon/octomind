@@ -662,11 +662,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 		}
 
-		// Free evidence check (no model call): a `done` answer that cites « » quotes
-		// which appear in NO tool result, `file:line` references that do not
-		// hold on disk, or source URLs that appear in nothing the agent received
-		// is fabricating its support. Catch all three deterministically
-		// and re-ground via the same bounded re-run.
+		// Free evidence check (no model call): a `done` answer that cites
+		// `<evidence>` quotes which appear in NO tool result, `file:line`
+		// references that do not hold on disk, or source URLs that appear in
+		// nothing the agent received is fabricating its support. Catch all
+		// three deterministically and re-ground via the same bounded re-run.
 		if config.supervisor.claim_check {
 			let mut grounds = current_turn_tool_outputs(&chat_session.session.messages, turn_start);
 			// A link the user supplied is legitimate to reference back.
@@ -696,12 +696,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				let mut note = String::from("<pay-attention>\n");
 				if !unverified.is_empty() {
 					note.push_str(
-						"Each quote below was presented as «verbatim» from a tool result, but none string-matches any output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
+						"Each quote below was presented as verbatim evidence from a tool result, but it string-matches no output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
 					);
 					for q in &unverified {
-						note.push_str("- «");
+						note.push_str("- ");
 						note.push_str(q);
-						note.push_str("»\n");
+						note.push('\n');
 					}
 				}
 				if !bad_refs.is_empty() {

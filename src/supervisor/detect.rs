@@ -66,14 +66,16 @@ Examples: `<sup>progressing · wiring store registration</sup>` or `<sup>done ·
 This line is read by the system and hidden from the user. Emit exactly one, leading with the state word.";
 
 /// One-time system-side instruction enabling evidence-bound claims. The agent
-/// backs load-bearing factual claims about the codebase with a verbatim quote it
-/// actually saw in a tool result; [`unverified_citations`] then deterministically
-/// checks the quote really occurs in some tool output, catching fabricated
-/// citations for free (no model call).
+/// backs load-bearing factual claims with a verbatim quote it actually saw in a
+/// tool result; [`unverified_citations`] then deterministically checks the
+/// quote really occurs in some tool output, catching fabricated citations for
+/// free (no model call). The tag is parseable markup: it stays in the message
+/// history (so the check and the model's own context keep it) but is stripped
+/// from user-facing display by [`strip_evidence`].
 pub const EVIDENCE_INSTRUCTION: &str = "\
-Before you assert a load-bearing fact about the code or repo (a path, signature, value, or concrete behavior), copy the supporting text you actually saw in a tool result, character-for-character, between guillemets, in this exact form:
-[evidence: <locator> «exact text copied verbatim from the tool output»]
-The text inside « » must be a literal copy that string-matches the tool output — rewording, summarizing, or trimming it breaks the match. Tag only load-bearing factual claims about the code, not plans, reasoning, or general knowledge. If you cannot find a line that supports a claim, say so and drop it — do not invent a quote. A « » quote not found in any tool result you received will be flagged to re-ground against real output or retract.";
+Before you assert a load-bearing fact about the task material (a path, value, statement, figure, or concrete behavior you were given or found), copy the supporting text you actually saw in a tool result, character-for-character, in this exact form:
+<evidence locator=\"source:location\">exact text copied verbatim from the tool output</evidence>
+The quote must be a literal copy that string-matches the tool output — rewording, summarizing, or trimming it breaks the match. Quote one line per tag; for a multi-line passage use one tag per line. Tag only load-bearing factual claims, not plans, reasoning, or general knowledge. If you cannot find text that supports a claim, say so and drop it — do not invent a quote. A quote not found in any tool result you received will be flagged to re-ground against real output or retract. Evidence tags are system metadata: they are hidden from the user, so never rely on them to carry your answer — state the substance in plain text as well.";
 
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
@@ -150,11 +152,14 @@ pub fn strip_self_report(text: &str) -> String {
 	out.trim_end().to_string()
 }
 
-/// Deterministic evidence check: return the verbatim `« »`-delimited quotes in
-/// `response` that do NOT appear in any of `tool_outputs`. Whitespace is
-/// normalized on both sides (models reflow quotes across lines), so the match
-/// tolerates reformatting but not fabrication. Empty result = every cited quote
-/// is grounded (or none were cited). No model call.
+/// Deterministic evidence check: return the quoted lines inside
+/// `<evidence>…</evidence>` tags in `response` that do NOT appear in any of
+/// `tool_outputs`. Matching is line-wise: every non-empty line of a quote,
+/// whitespace-normalized, must occur in the normalized haystack. Line-wise
+/// (not whole-quote) matching is what tolerates tool outputs that inject
+/// per-line decoration — e.g. `view` prefixes every line with `NN:` — which a
+/// joined multi-line quote can never string-match across. Empty result =
+/// every cited line is grounded (or none were cited). No model call.
 pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<String> {
 	let quotes = extract_quotes(response);
 	if quotes.is_empty() {
@@ -165,49 +170,73 @@ pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<Stri
 		.map(|o| normalize_ws(o))
 		.collect::<Vec<_>>()
 		.join("\n");
-	quotes
-		.into_iter()
-		.filter(|q| {
-			let n = normalize_ws(q);
-			!n.is_empty() && !haystack.contains(&n)
-		})
-		.collect()
+	let mut bad = Vec::new();
+	for q in quotes {
+		for line in q.lines().map(normalize_ws).filter(|l| !l.is_empty()) {
+			if !haystack.contains(&line) {
+				bad.push(line);
+			}
+		}
+	}
+	bad
 }
 
-/// Extract the text inside each `«…»` pair — but only within an `[evidence: …]`
-/// tag (the contract in [`EVIDENCE_INSTRUCTION`]). Guillemets in ordinary prose
-/// (a meta-mention like "the «quote» check") are not citations and must not be
-/// checked, or every discussion of the mechanism false-positives.
+/// Extract the quote text inside each `<evidence …>…</evidence>` tag (the
+/// contract in [`EVIDENCE_INSTRUCTION`]). The locator attribute is metadata
+/// for the reader, not checked here — only the quote body is verified against
+/// tool outputs.
 fn extract_quotes(text: &str) -> Vec<String> {
-	const TAG: &str = "[evidence:";
-	const OPEN: char = '«';
-	const CLOSE: char = '»';
+	const OPEN: &str = "<evidence";
+	const CLOSE: &str = "</evidence>";
 	let mut out = Vec::new();
 	let mut rest = text;
-	while let Some(s) = rest.find(TAG) {
-		let after = &rest[s + TAG.len()..];
-		// The quote is the first «…» pair inside the tag. A `]` before any «
-		// means this tag carries no quote (quote text may itself contain `]`,
-		// so the bracket only rules out a quote when it comes first).
-		match (after.find(']'), after.find(OPEN)) {
-			(Some(b), Some(o)) if b < o => rest = &after[b + 1..],
-			(_, Some(o)) => {
-				let qstart = &after[o + OPEN.len_utf8()..];
-				match qstart.find(CLOSE) {
-					Some(e) => {
-						let q = qstart[..e].trim();
-						if !q.is_empty() {
-							out.push(q.to_string());
-						}
-						rest = &qstart[e + CLOSE.len_utf8()..];
-					}
-					None => break,
+	while let Some(s) = rest.find(OPEN) {
+		let after = &rest[s + OPEN.len()..];
+		// Skip the tag attributes up to `>`; a tag with no body end is not a
+		// citation (and a self-closing `<evidence/>` carries no quote).
+		let Some(gt) = after.find('>') else { break };
+		if after[..gt].trim_end().ends_with('/') {
+			rest = &after[gt + 1..];
+			continue;
+		}
+		let body = &after[gt + 1..];
+		match body.find(CLOSE) {
+			Some(e) => {
+				let q = body[..e].trim();
+				if !q.is_empty() {
+					out.push(q.to_string());
 				}
+				rest = &body[e + CLOSE.len()..];
 			}
-			_ => break,
+			None => break,
 		}
 	}
 	out
+}
+
+/// Remove `<evidence …>…</evidence>` tags for user-facing display. The tags
+/// stay in the stored message (the verifier and the model's own context need
+/// them); only the screen rendering drops them. Unclosed tags are left
+/// untouched — partial markup is a model error the user should see.
+pub fn strip_evidence(text: &str) -> String {
+	const OPEN: &str = "<evidence";
+	const CLOSE: &str = "</evidence>";
+	let mut out = String::with_capacity(text.len());
+	let mut rest = text;
+	while let Some(s) = rest.find(OPEN) {
+		let after = &rest[s + OPEN.len()..];
+		let Some(gt) = after.find('>') else { break };
+		let body = &after[gt + 1..];
+		match body.find(CLOSE) {
+			Some(e) => {
+				out.push_str(&rest[..s]);
+				rest = &body[e + CLOSE.len()..];
+			}
+			None => break,
+		}
+	}
+	out.push_str(rest);
+	out.trim().to_string()
 }
 
 /// Collapse every run of whitespace to a single space and trim — the normal form
@@ -1457,17 +1486,67 @@ mod tests {
 	fn evidence_grounded_quote_passes() {
 		let outputs = vec!["274:\t\tif (!in_array($deal_data['status'], ...))".to_string()];
 		// Quote is a contiguous (whitespace-normalized) substring of the output.
-		let resp =
-			"The guard is here [evidence: PayoutTaskService.php «in_array($deal_data['status']»].";
+		let resp = "The guard is here <evidence locator=\"PayoutTaskService.php:274\">if (!in_array($deal_data['status'], ...))</evidence>.";
 		assert!(unverified_citations(resp, &outputs).is_empty());
 	}
 
 	#[test]
 	fn evidence_fabricated_quote_flagged() {
 		let outputs = vec!["fn record_action(&mut self) -> DetectorSignal".to_string()];
-		let resp = "It does [evidence: detect.rs «fn totally_made_up_symbol()»].";
+		let resp =
+			"It does <evidence locator=\"detect.rs\">fn totally_made_up_symbol()</evidence>.";
 		let bad = unverified_citations(resp, &outputs);
 		assert_eq!(bad, vec!["fn totally_made_up_symbol()"]);
+	}
+
+	#[test]
+	fn evidence_multiline_quote_spanning_numbered_view_lines_passes() {
+		// Regression: `view` prefixes every line with `NN:`, so a joined
+		// multi-line quote can never string-match across the injected numbers.
+		// Line-wise matching must accept it — this was the false positive that
+		// re-ran grounded answers.
+		let outputs = vec![
+			"36:\t\t'week' => $midnight - ((int)gmdate('N', $now) - 1) * 86400,\n37:\t\t'month' => (int)gmmktime(0, 0, 0),"
+				.to_string(),
+		];
+		let resp = "Both anchors <evidence locator=\"Meter.php:36-37\">'week' => $midnight - ((int)gmdate('N', $now) - 1) * 86400,\n'month' => (int)gmmktime(0, 0, 0),</evidence>.";
+		assert!(unverified_citations(resp, &outputs).is_empty());
+	}
+
+	#[test]
+	fn evidence_multiline_quote_with_one_fabricated_line_flagged() {
+		let outputs = vec!["36:\t\t'week' => $midnight,".to_string()];
+		let resp = "<evidence locator=\"Meter.php:36-37\">'week' => $midnight,\n'month' => invented()</evidence>";
+		let bad = unverified_citations(resp, &outputs);
+		assert_eq!(bad, vec!["'month' => invented()"]);
+	}
+
+	#[test]
+	fn evidence_self_closing_and_unclosed_tags_ignored() {
+		let outputs = vec!["x".to_string()];
+		assert!(unverified_citations("a <evidence/> b", &outputs).is_empty());
+		assert!(unverified_citations("a <evidence locator=\"f\" b", &outputs).is_empty());
+	}
+
+	#[test]
+	fn strip_evidence_removes_tags_keeps_prose() {
+		let resp = "The math is correct. <evidence locator=\"Meter.php:36\">'week' => $midnight,</evidence> Done.";
+		assert_eq!(strip_evidence(resp), "The math is correct.  Done.");
+	}
+
+	#[test]
+	fn strip_evidence_keeps_unclosed_tag() {
+		let resp = "text <evidence locator=\"f\">dangling quote";
+		assert_eq!(strip_evidence(resp), resp);
+	}
+
+	#[test]
+	fn strip_evidence_handles_multiple_and_none() {
+		assert_eq!(
+			strip_evidence("a <evidence>q1</evidence> b <evidence>x</evidence> c"),
+			"a  b  c"
+		);
+		assert_eq!(strip_evidence("plain"), "plain");
 	}
 
 	#[test]
@@ -1502,8 +1581,9 @@ mod tests {
 	#[test]
 	fn evidence_tolerates_reflowed_whitespace() {
 		let outputs = vec!["let signal = detectors.record_action(tool, result);".to_string()];
-		// Model reflowed the quote across lines — normalization makes it match.
-		let resp = "see [evidence: x «let signal =\n   detectors.record_action(tool, result);»]";
+		// Model reflowed the quote with extra indentation — normalization
+		// makes the single logical line match.
+		let resp = "see <evidence locator=\"x\">let signal = detectors.record_action(tool, result);</evidence>";
 		assert!(unverified_citations(resp, &outputs).is_empty());
 	}
 

@@ -72,6 +72,25 @@ pub fn notify(message: &str) {
 	}
 }
 
+/// Cap on the standing-instructions block handed to supervisor models.
+const ROLE_CONTEXT_CHARS: usize = 4_000;
+
+/// Standing role instructions — the session's system message: the durable rules
+/// the agent operates under, distinct from the current user turn. Every
+/// supervisor that judges intent (resolve, gate, delegate) receives this block
+/// so a standing rule can exonerate or convict independently of the turn.
+pub fn role_context(messages: &[crate::session::Message]) -> String {
+	let Some(system) = messages.iter().find(|m| m.role == "system") else {
+		return String::new();
+	};
+	let trimmed = system.content.trim();
+	if trimmed.chars().count() <= ROLE_CONTEXT_CHARS {
+		trimmed.to_string()
+	} else {
+		trimmed.chars().take(ROLE_CONTEXT_CHARS).collect()
+	}
+}
+
 /// Top-level supervisor configuration. Maps to the `[supervisor]` TOML section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorConfig {

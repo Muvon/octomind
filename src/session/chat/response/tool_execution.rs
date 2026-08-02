@@ -278,6 +278,7 @@ async fn execute_tools_with_context(
 			.map(|(_, c)| c.clone())
 			.collect();
 		let task = parent_task_context(chat_session);
+		let role_context = crate::supervisor::role_context(&chat_session.session.messages);
 		let cancel_rx = operation_cancelled
 			.clone()
 			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
@@ -285,6 +286,7 @@ async fn execute_tools_with_context(
 			&not_blocked,
 			config,
 			&task,
+			&role_context,
 			chat_session.delegate_revisions,
 			cancel_rx,
 		)

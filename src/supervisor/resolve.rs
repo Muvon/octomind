@@ -41,10 +41,11 @@ an explicit reference or ellipsis (for example "continue", "that", "it", "same b
 leaves a required referent or argument missing. Related subject matter does not create a
 dependency.
 
-Field "forbids_verification": true only when the turn explicitly tells the assistant NOT to run
-checks or verify the work itself (for example: do not run tests/build/lint, no verification
-needed, I will run/review it myself, in any language or phrasing). Prohibitions about other
-actions (do not run the migration, do not modify tests) and descriptive prose are false.
+Field "forbids_verification": true only when the turn OR the standing role instructions
+(role_context, when present) explicitly tell the assistant NOT to run checks or verify the
+work itself (for example: do not run tests/build/lint, no verification needed, I will
+run/review it myself, in any language or phrasing). Prohibitions about other actions (do
+not run the migration, do not modify tests) and descriptive prose are false.
 
 Return one JSON object and nothing else:
 {"scope":"self_contained|context_dependent","forbids_verification":true|false}"#;
@@ -65,7 +66,7 @@ For each source used, copy one short exact excerpt from that payload field. Do n
 evidence. A rewrite without an exact supporting excerpt is invalid.
 
 Return one JSON object and nothing else:
-{"scope":"follow_up|ambiguous","resolved_request":"...","evidence":[{"source":"recent_history|session_context|active_plan","excerpt":"exact text"}],"plan_relevant":true|false}"#;
+{"scope":"follow_up|ambiguous","resolved_request":"...","evidence":[{"source":"recent_history|session_context|active_plan|role_context","excerpt":"exact text"}],"plan_relevant":true|false}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionScope {
@@ -90,6 +91,10 @@ pub struct TaskContext {
 	pub recent_history: String,
 	pub session_context: String,
 	pub active_plan: String,
+	/// Standing role instructions (the session's system message) — durable rules
+	/// the agent operates under, separate from the current turn. The classifier
+	/// uses them for prohibitions; the resolver may cite them as evidence.
+	pub role_context: String,
 }
 
 #[derive(Debug, Clone)]
@@ -172,12 +177,14 @@ impl TaskContext {
 			recent_history: render_recent_history(&messages[..current_index]),
 			session_context: truncate_chars(session_context.trim(), SESSION_CONTEXT_CHARS),
 			active_plan: active_plan.map(str::trim).unwrap_or_default().to_string(),
+			role_context: crate::supervisor::role_context(messages),
 		})
 	}
 
 	fn render_classification_payload(&self) -> String {
 		serde_json::json!({
 			"current_user_request": self.current_request,
+			"role_context": self.role_context,
 		})
 		.to_string()
 	}
@@ -188,6 +195,7 @@ impl TaskContext {
 			"recent_history": self.recent_history,
 			"session_context": self.session_context,
 			"active_plan": self.active_plan,
+			"role_context": self.role_context,
 		})
 		.to_string()
 	}
@@ -452,6 +460,7 @@ mod tests {
 			recent_history: "Earlier user: Schedule the status check every two hours\n".to_string(),
 			session_context: "<intent>Implement websocket acknowledgements</intent>".to_string(),
 			active_plan: "Implement the active websocket acknowledgement task".to_string(),
+			role_context: String::new(),
 		}
 	}
 
@@ -467,6 +476,7 @@ mod tests {
 				recent_history: "Older request: check immediately".to_string(),
 				session_context: "Older session goal".to_string(),
 				active_plan: "Older checklist".to_string(),
+				role_context: String::new(),
 			};
 			let payload = context.render_classification_payload();
 			assert!(payload.contains(request));
@@ -485,6 +495,7 @@ mod tests {
 			recent_history: "Earlier user: Check live Cointrapper now\n".to_string(),
 			session_context: String::new(),
 			active_plan: String::new(),
+			role_context: String::new(),
 		};
 		let resolved = parse_resolution(
 			&context,
@@ -499,6 +510,7 @@ mod tests {
 			recent_history: "Earlier user: Monitor live Cointrapper\n".to_string(),
 			session_context: String::new(),
 			active_plan: String::new(),
+			role_context: String::new(),
 		};
 		let resolved_now = parse_resolution(
 			&explicit_now,

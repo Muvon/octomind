@@ -53,6 +53,8 @@ Judge each handoff on four criteria:
 
 Be strict about missing detail, not about style. A prompt that is terse but complete PASSES. A prompt that reads well but omits the paths, the constraint, or the acceptance condition does NOT.
 
+PARENT STANDING INSTRUCTIONS, when present, are durable rules the parent agent operates under: a handoff that delegates work they forbid is unfaithful. Do not reject a handoff for not repeating them — the subagent runs under its own role.
+
 Do not reject for things the parent could not know, for prompts that legitimately ask the subagent to investigate (exploration is a valid deliverable when the scope is named), or for missing detail that only the subagent can discover.
 
 Output ONLY json, no prose:
@@ -161,6 +163,7 @@ pub async fn gate_round(
 	calls: &[McpToolCall],
 	config: &Config,
 	task: &str,
+	role_context: &str,
 	revisions: u8,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Vec<(String, String)> {
@@ -180,7 +183,7 @@ pub async fn gate_round(
 		return Vec::new();
 	}
 
-	let user = build_prompt(&handoffs, task);
+	let user = build_prompt(&handoffs, task, role_context);
 	crate::supervisor::notify(&format!(
 		"checking {} subagent handoff(s): {}",
 		handoffs.len(),
@@ -254,13 +257,21 @@ fn decide(handoffs: &[Handoff], response: &str) -> Vec<(String, String)> {
 	blocks
 }
 
-fn build_prompt(handoffs: &[Handoff], task: &str) -> String {
+fn build_prompt(handoffs: &[Handoff], task: &str, role_context: &str) -> String {
 	let task_block = if task.trim().is_empty() {
 		"(parent context unavailable — judge the handoff on self-containment alone and be lenient about faithfulness)".to_string()
 	} else {
 		truncate_to_tokens(task.trim(), TASK_CAP_TOKENS)
 	};
-	let mut user = format!("PARENT CONTEXT (what the user asked the parent agent to do):\n{task_block}\n\nPROPOSED HANDOFFS ({}):\n", handoffs.len());
+	let role_block = if role_context.trim().is_empty() {
+		String::new()
+	} else {
+		format!(
+			"PARENT STANDING INSTRUCTIONS (durable rules the parent operates under):\n{}\n\n",
+			truncate_to_tokens(role_context.trim(), TASK_CAP_TOKENS)
+		)
+	};
+	let mut user = format!("PARENT CONTEXT (what the user asked the parent agent to do):\n{task_block}\n\n{role_block}PROPOSED HANDOFFS ({}):\n", handoffs.len());
 	for h in handoffs {
 		let kind = if h.resume {
 			"resume (the subagent keeps its own history from earlier turns, so references to its own prior work are legitimate)"
@@ -595,13 +606,13 @@ mod tests {
 		)];
 		let mut c = template_config();
 		c.supervisor.delegate.enabled = false;
-		assert!(gate_round(&calls, &c, "goal", 0, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 0, no_cancel())
 			.await
 			.is_empty());
 
 		let mut c = template_config();
 		c.supervisor.enabled = false;
-		assert!(gate_round(&calls, &c, "goal", 0, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 0, no_cancel())
 			.await
 			.is_empty());
 	}
@@ -610,7 +621,7 @@ mod tests {
 	async fn gate_short_circuits_without_handoffs() {
 		let calls = vec![call("shell", "s1", json!({"command":"ls"}))];
 		let c = template_config();
-		assert!(gate_round(&calls, &c, "goal", 0, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 0, no_cancel())
 			.await
 			.is_empty());
 	}
@@ -625,15 +636,15 @@ mod tests {
 		let mut c = template_config();
 		c.supervisor.delegate.max_revisions = 2;
 		// At and beyond the budget the gate stops judging — no model call, no block.
-		assert!(gate_round(&calls, &c, "goal", 2, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 2, no_cancel())
 			.await
 			.is_empty());
-		assert!(gate_round(&calls, &c, "goal", 7, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 7, no_cancel())
 			.await
 			.is_empty());
 		// max_revisions = 0 means never judge.
 		c.supervisor.delegate.max_revisions = 0;
-		assert!(gate_round(&calls, &c, "goal", 0, no_cancel())
+		assert!(gate_round(&calls, &c, "goal", "", 0, no_cancel())
 			.await
 			.is_empty());
 	}

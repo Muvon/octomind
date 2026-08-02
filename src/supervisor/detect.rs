@@ -202,6 +202,41 @@ fn normalize_ws(s: &str) -> String {
 	s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Deterministic evidence check: absolute URLs cited in `response` that appear
+/// in NONE of `grounds` (tool outputs plus the current user turn — a link the
+/// user supplied is a legitimate thing to reference back). A cited source link
+/// the agent never fetched and was never given is an invented source. Trailing
+/// prose/markdown punctuation is stripped, and a trailing-slash variant is
+/// accepted, so only genuinely absent links are flagged. No model call.
+pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
+	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+	let re = RE.get_or_init(|| {
+		regex::Regex::new(r#"https?://[^\s<>"')\]]+"#).expect("static pattern")
+	});
+	let haystack = grounds
+		.iter()
+		.map(|o| normalize_ws(o))
+		.collect::<Vec<_>>()
+		.join("\n");
+	let mut seen = std::collections::HashSet::new();
+	let mut flagged = Vec::new();
+	for m in re.find_iter(response) {
+		let url = m
+			.as_str()
+			.trim_end_matches(['.', ',', ';', ':', '!', '?', '/']);
+		if url.is_empty() || !seen.insert(url.to_string()) {
+			continue;
+		}
+		// Grounded when the URL (with or without a trailing slash) appears in
+		// anything the agent actually received this turn.
+		let with_slash = format!("{url}/");
+		if !haystack.contains(url) && !haystack.contains(&with_slash) {
+			flagged.push(url.to_string());
+		}
+	}
+	flagged
+}
+
 /// Deterministic evidence check: `file:line` references in `response` that do
 /// not hold on disk — the file is missing, or the line number is beyond EOF.
 /// High-precision by construction: only paths containing a `/` and an extension
@@ -399,6 +434,12 @@ pub struct Detectors {
 	/// drift between rounds (the user editing their tree mid-session) never
 	/// arms it: an agent that changed nothing has nothing to verify.
 	agent_dirty: bool,
+	/// Sticky latch: the user explicitly forbade running checks ("don't run
+	/// tests — I'll run it myself"). The resolver judges one turn at a time, so
+	/// without the latch a later turn loses the prohibition and the pre-gate
+	/// nudges the agent to violate it. Standing rule: persists across turns
+	/// like `verified_fp`; expires when a clean verification round runs.
+	forbids_verification: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -634,6 +675,9 @@ impl Detectors {
 				self.verified_fp = Some(a);
 			}
 			self.agent_dirty = false;
+			// Checks actually ran — a standing "don't run checks" prohibition is
+			// fulfilled and expires.
+			self.forbids_verification = false;
 		} else if !tree_unchanged {
 			self.agent_dirty = true;
 		}
@@ -656,6 +700,23 @@ impl Detectors {
 		self.consecutive_drift = 0;
 		self.consecutive_singletons = 0;
 		self.agent_dirty = false;
+	}
+
+	/// Latch that the user forbade running checks ("don't run tests — I'll run
+	/// it myself"). The resolver judges one turn at a time, and the prohibition
+	/// is a standing rule, not a per-turn property — so the latch persists
+	/// across turns like `verified_fp` (a later turn that merely fails to
+	/// repeat the rule must not re-arm the pre-gate). It expires only when a
+	/// clean verification round actually runs ([`Detectors::note_round_verification`]):
+	/// at that point checks have been run and the rule is moot.
+	pub fn note_forbids_verification(&mut self) {
+		self.forbids_verification = true;
+	}
+
+	/// Whether the user has forbidden running checks and no verification has
+	/// run since.
+	pub fn check_run_forbidden(&self) -> bool {
+		self.forbids_verification
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -1324,6 +1385,19 @@ mod tests {
 	}
 
 	#[test]
+	fn forbids_verification_latches_until_checks_actually_run() {
+		let mut d = Detectors::default();
+		assert!(!d.check_run_forbidden());
+		d.note_forbids_verification();
+		// Standing rule: a new genuine turn must not re-arm the pre-gate.
+		d.reset_streak();
+		assert!(d.check_run_forbidden());
+		// A clean verification round fulfils the rule and lifts it.
+		d.note_round_verification(None, None, true, false);
+		assert!(!d.check_run_forbidden());
+	}
+
+	#[test]
 	fn evidence_grounded_quote_passes() {
 		let outputs = vec!["274:\t\tif (!in_array($deal_data['status'], ...))".to_string()];
 		// Quote is a contiguous (whitespace-normalized) substring of the output.
@@ -1338,6 +1412,35 @@ mod tests {
 		let resp = "It does [evidence: detect.rs «fn totally_made_up_symbol()»].";
 		let bad = unverified_citations(resp, &outputs);
 		assert_eq!(bad, vec!["fn totally_made_up_symbol()"]);
+	}
+
+	#[test]
+	fn url_fetched_this_turn_passes() {
+		let grounds = vec!["See https://example.com/study for details.".to_string()];
+		let resp = "According to https://example.com/study, the effect holds.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+	}
+
+	#[test]
+	fn url_from_user_message_passes() {
+		let grounds = vec!["user: check https://example.com/spec please".to_string()];
+		let resp = "The spec at https://example.com/spec says so.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+	}
+
+	#[test]
+	fn url_never_received_flagged() {
+		let grounds = vec!["some unrelated tool output".to_string()];
+		let resp = "Source: https://invented.example/paper.pdf — see also https://invented.example/paper.pdf.";
+		let bad = unverified_urls(resp, &grounds);
+		assert_eq!(bad, vec!["https://invented.example/paper.pdf"]);
+	}
+
+	#[test]
+	fn url_trailing_punctuation_and_slash_tolerated() {
+		let grounds = vec!["fetched https://example.com/".to_string()];
+		let resp = "From (https://example.com), we learn.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
 	}
 
 	#[test]

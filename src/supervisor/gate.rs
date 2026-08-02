@@ -90,9 +90,13 @@ absence of a verification run is compliance, not a gap. Never flag missing verif
 the request itself forbade.
 
 Work through every part of the request, one at a time. For each, find the concrete proof it
-was done — a recorded action, file path, line or code excerpt, command output, or named test
-in the result. A part counts as done only if such evidence is present; a confident or
-well-formatted assertion with no locatable artifact does NOT count. Reason first, then decide.
+was done — a recorded action whose output the claim traces to (a read, search, recall, fetch,
+or command), a locatable artifact (file path and line, code excerpt, URL, named test), or a
+verbatim excerpt in the result. A part counts as done only if such evidence is present; a
+confident or well-formatted assertion with no locatable source does NOT count. The source of
+truth varies by domain — a file tree, a fetched page, a memory backend, an API response —
+judge whether the claim is grounded in what the agent actually received, whatever the source.
+Reason first, then decide.
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a

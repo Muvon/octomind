@@ -426,9 +426,9 @@ mod tests {
 		assert!(result2.is_error()); // Should fail
 		let error_content = result2.extract_content();
 		assert!(error_content.contains("Active plan already exists"));
-		assert!(error_content.contains("'done' to complete current plan"));
-		assert!(error_content.contains("'reset' to clear it"));
-		assert!(error_content.contains("'list' to view current progress"));
+		assert!(error_content.contains("'list' to view"));
+		assert!(error_content.contains("'step' to record progress"));
+		assert!(error_content.contains("'reset' permanently discards completed progress"));
 
 		// Verify the first plan is still intact
 		let list_call = create_plan_call("list", None);

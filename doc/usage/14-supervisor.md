@@ -74,7 +74,7 @@ Set `verifier_model` to a **different model family** than your agent model — a
 
 ### Evidence-bound claims
 
-With `claim_check = true`, the agent backs load-bearing repo facts with a verbatim «quote» plus a file:line reference. Each quote is verified deterministically — it must occur in an actual tool result, and each file:line reference must hold on disk. Fabricated citations are re-grounded through the verify-gate. Verification here is abstract: a quote from a web page, a file read, or a command output all count — it is not tied to coding.
+With `claim_check = true`, the agent backs load-bearing facts with a verbatim quote inside an `<evidence locator="source:location">…</evidence>` tag (hidden from the user's display, kept in the stored message). Each quoted line is verified deterministically — it must occur in an actual tool result — each file:line reference must hold on disk, and each cited URL must appear in something the agent actually received (tool output or the user's own message). Fabricated citations are re-grounded through the verify-gate. Verification here is abstract: a quote from a web page, a file read, or a command output all count — it is not tied to coding.
 
 ### Compaction fidelity
 

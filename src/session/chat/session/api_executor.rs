@@ -28,6 +28,11 @@ use tokio::sync::watch;
 use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
+
+/// Per-source cap (chars) on the disk-recovered evidence grounds (spill files,
+/// compression archives) pulled in when an in-context evidence check flags
+/// something that mid-turn compaction may have drained.
+const RECOVERY_GROUNDS_CAP: usize = 4_000_000;
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
 const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with state changes still unverified, so that claim isn't trustworthy yet. Run the check appropriate to this work (for example, inspect the resulting state, exercise the changed behavior, or use a domain-specific validator), watch the result, and report the actual outcome: pass, fail, or — if no meaningful check exists — what you inspected and why that is sufficient. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
@@ -534,8 +539,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// (language-agnostic, judges meaning not keywords) on the current user
 		// turn; the LLM verify-gate still runs and judges prohibitions on its
 		// own. The classifier sees ONE turn, but the prohibition is a standing
-		// rule — latch it on the detectors so later turns inherit it (it expires
-		// when a clean verification round actually runs).
+		// rule — latch it on the detectors so later turns inherit it for the
+		// rest of the session (it never auto-expires; see note_forbids_verification).
 		if resolved_task.forbids_verification {
 			chat_session.detectors.note_forbids_verification();
 		}
@@ -673,25 +678,38 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
 				grounds.push(user_msg.content.clone());
 			}
-			// Mid-turn compression and condensing drain or replace the very tool
-			// outputs these checks ground against — recover the verbatim originals
-			// from disk (lossless archive + spill files) so a compaction cannot
-			// fabricate an "unverified" verdict. Capped; best-effort.
-			grounds.extend(crate::utils::spill::read_session_spills(4_000_000));
-			grounds.extend(
-				crate::session::chat::conversation_compression::archive::read_session_archives(
-					&chat_session.session.info.name,
-					4_000_000,
-				),
-			);
-			let unverified = crate::supervisor::detect::unverified_citations(
+			let mut unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&grounds,
 			);
 			let bad_refs =
 				crate::supervisor::detect::unverified_file_refs(&chat_session.last_response);
-			let bad_urls =
+			let mut bad_urls =
 				crate::supervisor::detect::unverified_urls(&chat_session.last_response, &grounds);
+			// Mid-turn compression and condensing drain or replace the very tool
+			// outputs these checks ground against — recover the verbatim originals
+			// from disk (lossless archive + spill files) so a compaction cannot
+			// fabricate an "unverified" verdict. Disk grounds can only exonerate,
+			// so read them only when the in-context pass flagged something.
+			if !unverified.is_empty() || !bad_urls.is_empty() {
+				grounds.extend(crate::utils::spill::read_session_spills(
+					RECOVERY_GROUNDS_CAP,
+				));
+				grounds.extend(
+					crate::session::chat::conversation_compression::archive::read_session_archives(
+						&chat_session.session.info.name,
+						RECOVERY_GROUNDS_CAP,
+					),
+				);
+				unverified = crate::supervisor::detect::unverified_citations(
+					&chat_session.last_response,
+					&grounds,
+				);
+				bad_urls = crate::supervisor::detect::unverified_urls(
+					&chat_session.last_response,
+					&grounds,
+				);
+			}
 			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
 				let mut note = String::from("<pay-attention>\n");
 				if !unverified.is_empty() {

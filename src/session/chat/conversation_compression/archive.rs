@@ -89,16 +89,30 @@ fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> R
 	Ok(path)
 }
 
-/// Read every archive file of `session_name`, up to `max_total` chars total.
-/// Used to re-ground supervisor evidence checks after a mid-turn compression
-/// drained the tool outputs those checks match against — the archive is the
-/// verbatim record of everything drained. Empty when no archives exist.
+/// Read every archive file of `session_name`, up to `max_total` chars total
+/// (raw, pre-decode). Used to re-ground supervisor evidence checks after a
+/// mid-turn compression drained the tool outputs those checks match against —
+/// the archive is the verbatim record of everything drained. Archives are
+/// JSONL, so each line is decoded back to its message content: matching a
+/// quote against the raw file would fail for any text containing `"`, `\` or
+/// a newline (JSON-escaped on disk). Empty when no archives exist.
 pub(crate) fn read_session_archives(session_name: &str, max_total: usize) -> Vec<String> {
 	let dir = match crate::directories::get_sessions_dir() {
 		Ok(d) => d.join("archive").join(session_name),
 		Err(_) => return Vec::new(),
 	};
-	crate::utils::spill::read_text_files(&dir, max_total)
+	decode_jsonl_contents(&crate::utils::spill::read_text_files(&dir, max_total))
+}
+
+/// Decode JSONL archive chunks into per-message verbatim contents. Lines that
+/// fail to parse (e.g. the last line of a cap-truncated chunk) are skipped.
+fn decode_jsonl_contents(chunks: &[String]) -> Vec<String> {
+	chunks
+		.iter()
+		.flat_map(|chunk| chunk.lines())
+		.filter_map(|line| serde_json::from_str::<Message>(line).ok())
+		.map(|m| m.content)
+		.collect()
 }
 
 /// Render the `<archive>` pointer embedded into a compressed summary.
@@ -148,6 +162,22 @@ mod archive_tests {
 		}
 
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[test]
+	fn decode_jsonl_recovers_verbatim_content_with_escapes() {
+		// A quote containing `"`, `\` and newlines is JSON-escaped on disk;
+		// evidence matching needs the decoded original, not the raw JSONL.
+		let content = "let s = \"a\\nb\";\nsecond line";
+		let raw = format!(
+			"{}\n",
+			serde_json::to_string(&msg("tool", content)).unwrap()
+		);
+		let decoded = decode_jsonl_contents(&[raw]);
+		assert_eq!(decoded, vec![content]);
+		// A cap-truncated trailing line is skipped, not an error.
+		let decoded = decode_jsonl_contents(&["{\"role\":\"tool\",\"cont".to_string()]);
+		assert!(decoded.is_empty());
 	}
 
 	#[test]

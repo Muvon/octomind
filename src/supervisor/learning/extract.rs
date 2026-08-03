@@ -184,9 +184,12 @@ async fn run_extraction(
 	// enters the store only when its evidence survives two checks.
 	// 1. Deterministic: the evidence quote must appear verbatim in a real USER
 	//    turn — a fabricated or paraphrased quote means a fabricated lesson.
+	//    Real means the human's own words: supervisor steers and recall notes
+	//    also arrive with role "user", and a lesson quoting the system's own
+	//    injection IS the self-confirmation trap this gate exists to close.
 	let user_turns: Vec<&str> = messages
 		.iter()
-		.filter(|m| m.role == "user")
+		.filter(|m| crate::session::is_real_user_task_message(m))
 		.map(|m| m.content.as_str())
 		.collect();
 	let lessons_ev: Vec<(Lesson, String)> = lessons_ev
@@ -419,6 +422,10 @@ Judge each lesson independently. Return one JSON object and nothing else:
 {"unsupported":[<1-based lesson numbers>, ...]}
 Empty array when every lesson is supported."#;
 
+/// Cap on the transcript excerpt handed to the lesson verifier — keeps the
+/// call cheap (mirrors the compaction-fidelity view cap).
+const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
+
 /// One batched verifier pass: which of the candidate lessons does the
 /// transcript evidence actually support? Returns a keep-mask aligned with
 /// `lessons`. Fail-open: any error keeps everything — a verifier outage must
@@ -437,7 +444,7 @@ async fn verify_lessons(
 			evidence
 		));
 	}
-	let view: String = transcript.chars().take(12_000).collect();
+	let view: String = transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect();
 	let user = format!("CANDIDATE LESSONS:\n{}\nTRANSCRIPT:\n{}", listed, view);
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);

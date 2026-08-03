@@ -361,7 +361,7 @@ The out-of-band control plane around the agent loop. It hosts learning (distill 
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
-| `claim_check` | bool | `true` | Evidence-bound claims: the agent backs load-bearing repo facts with a verbatim «quote»; each quote is verified against tool results and each file:line reference on disk. Fabricated citations are re-grounded via the verify-gate (needs `gate.enabled`) |
+| `claim_check` | bool | `true` | Evidence-bound claims: the agent backs load-bearing facts with a verbatim quote in an `<evidence>` tag; each quoted line is verified against tool results, each file:line reference on disk, and each cited URL against what was actually received. Fabricated citations are re-grounded via the verify-gate (needs `gate.enabled`) |
 | `max_consecutive_steers` | usize | `0` | Circuit-breaker: hard-stop a turn after this many consecutive steered tool rounds without breakout. `0` = unlimited (off) |
 
 ### `[supervisor.learning]`

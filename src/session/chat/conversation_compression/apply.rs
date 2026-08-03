@@ -83,19 +83,29 @@ pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
 /// captured there. Resume from where the previous turn left off; do not
 /// restart or re-discover what is already established.
 ///
+/// {plan continuation note, only when a plan is active}
 /// <task>
 /// {intent OR "see summary above for the active task"}
 /// </task>
 /// </continuation>
 /// ```
-fn build_continuation_content(intent: Option<&str>) -> String {
+///
+/// `plan_active` adds an explicit "continue the active plan" line — without
+/// it, a post-compression model re-entering its plan-first protocol calls
+/// plan(start), gets steered to reset, and wipes completed-task history.
+fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String {
 	let task_body = intent.unwrap_or(CONTINUATION_FALLBACK_INTENT);
+	let plan_note = if plan_active {
+		"An execution plan is already active (shown in the summary above) — continue its current task; never call plan(start) or plan(reset) to re-create it.\n\n"
+	} else {
+		""
+	};
 	format!(
 		"<continuation>\n\
 		The conversation summary above is the complete record of prior work on this task — partial progress, decisions, and findings are all captured there. Resume from where the previous turn left off; do not restart or re-discover what is already established.\n\n\
-		<task>\n{}\n</task>\n\
+		{}<task>\n{}\n</task>\n\
 		</continuation>",
-		task_body
+		plan_note, task_body
 	)
 }
 
@@ -210,7 +220,9 @@ pub(super) async fn apply_compression(
 	// Append the current active plan (if any) to the summary so the model doesn't have
 	// to spend an extra `plan(list)` turn right after compression just to recover state.
 	// Absence of a plan → no section injected.
-	let compressed_entry = match crate::mcp::core::plan::core::get_current_plan_display().await {
+	let plan_display = crate::mcp::core::plan::core::get_current_plan_display().await;
+	let plan_active = plan_display.is_ok();
+	let compressed_entry = match plan_display {
 		Ok(plan_display) => format!(
 			"{}\n\nCurrent plan we are working on:\n<plan>\n{}\n</plan>",
 			compressed_entry,
@@ -355,7 +367,7 @@ pub(super) async fn apply_compression(
 		.map(|m| m.content.trim().to_string());
 	let continuation_msg = crate::session::Message {
 		role: "user".to_string(),
-		content: build_continuation_content(continuation_intent.as_deref()),
+		content: build_continuation_content(continuation_intent.as_deref(), plan_active),
 		timestamp: now,
 		cached: supports_caching,
 		..Default::default()
@@ -587,8 +599,15 @@ mod apply_tests {
 	#[test]
 	fn built_wrapper_round_trips_through_the_extractor() {
 		let intent = "add retry logic to the uploader";
-		let wrapper = build_continuation_content(Some(intent));
+		let wrapper = build_continuation_content(Some(intent), false);
 		assert!(is_continuation_message(&wrapper));
+		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
+		assert!(!wrapper.contains("execution plan is already active"));
+
+		// With an active plan the wrapper gains the continue-the-plan note and
+		// the task must still round-trip through the extractor.
+		let wrapper = build_continuation_content(Some(intent), true);
+		assert!(wrapper.contains("execution plan is already active"));
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 	}
 
@@ -596,7 +615,7 @@ mod apply_tests {
 	fn fallback_wrapper_carries_no_extractable_intent() {
 		// Without a real user ask the wrapper holds only the placeholder, which
 		// must not propagate as if it were the active task.
-		let wrapper = build_continuation_content(None);
+		let wrapper = build_continuation_content(None, false);
 		assert!(wrapper.contains(CONTINUATION_FALLBACK_INTENT));
 		assert_eq!(extract_continuation_task(&wrapper), None);
 	}
@@ -631,7 +650,7 @@ mod apply_tests {
 	#[test]
 	fn extract_handles_multibyte_intent_without_panicking() {
 		let intent = "почини парсер 日本語";
-		let wrapper = build_continuation_content(Some(intent));
+		let wrapper = build_continuation_content(Some(intent), false);
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 	}
 }

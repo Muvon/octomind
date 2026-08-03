@@ -433,12 +433,22 @@ async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
 	let storage = get_storage();
 	let mut storage = storage.lock().unwrap();
 
-	// Safety check: prevent accidental overwrite of existing plan
+	// Safety check: prevent accidental overwrite of existing plan. Report live
+	// progress and steer toward continuation — a post-compression model lands
+	// here after re-planning, and a bare "use reset" suggestion makes it wipe
+	// completed history (observed in real sessions).
 	if storage.has_active_plan().unwrap_or(false) {
+		let completed = storage.get_completed_task_count().unwrap_or(0);
+		let (current, total, current_title, _) =
+			storage
+				.get_current_task_info()
+				.unwrap_or((0, 0, "Unknown".to_string(), String::new()));
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			"Active plan already exists. Use 'done' to complete current plan, 'reset' to clear it, or 'list' to view current progress before starting a new plan.".to_string(),
+			format!(
+				"Active plan already exists ({completed}/{total} tasks completed, current: Task {current} - {current_title}). Plans survive context compression - continue this one: 'list' to view, 'step' to record progress, 'next' to advance. 'reset' permanently discards completed progress - use it only when the user explicitly abandoned this plan."
+			),
 		));
 	}
 

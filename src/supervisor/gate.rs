@@ -109,7 +109,7 @@ Do not reward length, formatting, or tone — only verifiable substance.
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
 claim has no supporting evidence. Each gap must name the specific unmet item.
 
-When the request was to correct a reported problem, two result shapes are gaps in their own
+When the request was to correct a reported problem, three result shapes are gaps in their own
 right, whatever the domain:
 - Suppression instead of resolution: the work hides, absorbs, or special-cases the visible
   symptom while whatever produced it is unchanged. The symptom disappearing is not the
@@ -117,6 +117,11 @@ right, whatever the domain:
 - Unexamined collateral impact: the repair changes a shared dependency, process, resource, or
   rule to satisfy one reported case, with no evidence that other affected uses were considered.
   Prefer evidence of the narrowest repair that addresses the cause.
+- Causally inert change: the recorded change cannot influence the behavior the problem
+  describes — it touches only declarations, annotations, comments, formatting, or metadata
+  while the claim is about observable behavior. Judge the GROUND TRUTH diff: if reverting the
+  change could not bring the problem back, the problem was not fixed by it. Checks passing on
+  such a change prove nothing — they passed before it too.
 
 If every part is evidenced — or you cannot point to a concrete unmet item — output exactly:
 <verdict>PASS</verdict>

@@ -59,7 +59,7 @@ Use for: multi-file implementations, long-running work that may be interrupted, 
 Skip for: single-step changes, quick fixes, anything completable in one focused pass without losing context.
 
 Commands:
-- start: create plan with tasks array (ERROR if plan already exists, use done or reset first)
+- start: create plan with tasks array (ERROR if a plan is already active — plans survive context compression; continue the active plan with step/next instead of re-creating it)
 - step: add progress note to current task (does NOT advance it)
 - next: mark current task DONE and advance to next
 - list: show all tasks with status

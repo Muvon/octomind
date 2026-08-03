@@ -5,7 +5,11 @@ PY=${PY:-.venv/bin/python}
 MATRIX=${MATRIX:-configs/run-matrix.octomind-glm.swebench.yaml}
 OUT=${OUT:-results-head-0801}
 MAXJOBS=${MAXJOBS:-4}; REPS=${REPS:-2}; MAXATT=${MAXATT:-4}
-TIMEOUT=${TIMEOUT:-1800}
+# 2400s since 2026-08-03: at 1800s the chronic instances (cfn-lint, jupyter-ai-1022)
+# burn full-quota attempts that get killed unscored — pure waste. The 0801 baseline
+# was measured at 1800s; re-anchor the baseline before leaning on solved-rate deltas
+# for timeout-sensitive instances.
+TIMEOUT=${TIMEOUT:-2400}
 read -r -a INSTANCES <<<"${INSTANCES:-aiogram__aiogram-1594 aws-cloudformation__cfn-lint-3749 conan-io__conan-17366 falconry__falcon-2366 instructlab__instructlab-2526 jupyterlab__jupyter-ai-1022 jupyterlab__jupyter-ai-1125 matplotlib__matplotlib-29007 pydata__xarray-9586 run-llama__llama_deploy-330 run-llama__llama_deploy-356 run-llama__llama_deploy-372 run-llama__llama_deploy-384 streamlink__streamlink-6242 tox-dev__tox-3409}"
 HERE=$(cd "$(dirname "$0")" && pwd)
 LOGDIR=${LOGDIR:-logs-head-0801}
@@ -39,8 +43,11 @@ PY
 }
 
 cleanup_containers() {
-  docker rm -f $(docker ps -q --filter "name=obsweb-${1//\//_}" 2>/dev/null) 2>/dev/null || true
-  docker rm -f $(docker ps -q --filter "name=obsweb-${1//__/-}" 2>/dev/null) 2>/dev/null || true
+  # Container names truncate the instance to 22 chars (obsweb-<inst:22>-octomi-<ts>),
+  # so filtering on the full instance name silently matches nothing and timed-out
+  # attempts leave zombie containers that starve the next attempt.
+  local n=${1//\//_}
+  docker rm -f $(docker ps -q --filter "name=obsweb-${n:0:22}" 2>/dev/null) 2>/dev/null || true
 }
 
 run_one() {

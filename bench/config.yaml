@@ -9,8 +9,16 @@
 # octobench is the instrument; THIS file + the frozen baseline live with octomind.
 
 # ── Agent under test ────────────────────────────────────────────────────────
-model: glm-5.1                 # octobench name for octohub:glm — the frozen bench agent
-judge_model: octohub:minimax   # judge role (only used by non-test-graded cases)
+# Since 2026-08-03 the agent runs zai:glm-5.2 DIRECT (ZAI_API_KEY + ZAI_API_URL,
+# coding-plan endpoint), replacing the ollama:glm-5.2 route of the 0801 baseline.
+# Cost accounting is cache-discounted end-to-end: octolib splits cached reads out
+# of prompt_tokens, octobench bills them at cached_input ($0.26/M vs $1.40/M) —
+# unlike ollama, which never reported caching (cached: 0). Cross-provider $ are
+# therefore not directly comparable; tokens + solved remain the primary metric.
+# NOTE: the zai coding plan has a 5-hour usage window — a full 30-run sweep at
+# MAXJOBS=4 does not fit in one window (run-head.sh + resume across windows).
+model: glm-5.2                 # via zai:glm-5.2 (models.yaml mapping) — the bench agent
+judge_model: ollama:minimax-m3 # judge role (only used by non-test-graded cases)
 
 # ── Refs to compare ─────────────────────────────────────────────────────────
 # A ref is built/fetched into the agent image: released tag -> download,

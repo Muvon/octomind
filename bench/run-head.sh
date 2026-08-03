@@ -8,7 +8,7 @@ MAXJOBS=${MAXJOBS:-4}; REPS=${REPS:-2}; MAXATT=${MAXATT:-4}
 TIMEOUT=${TIMEOUT:-1800}
 read -r -a INSTANCES <<<"${INSTANCES:-aiogram__aiogram-1594 aws-cloudformation__cfn-lint-3749 conan-io__conan-17366 falconry__falcon-2366 instructlab__instructlab-2526 jupyterlab__jupyter-ai-1022 jupyterlab__jupyter-ai-1125 matplotlib__matplotlib-29007 pydata__xarray-9586 run-llama__llama_deploy-330 run-llama__llama_deploy-356 run-llama__llama_deploy-372 run-llama__llama_deploy-384 streamlink__streamlink-6242 tox-dev__tox-3409}"
 HERE=$(cd "$(dirname "$0")" && pwd)
-LOGDIR=logs-head-0801
+LOGDIR=${LOGDIR:-logs-head-0801}
 
 mkdir -p "$OUT/head" "$LOGDIR"
 
@@ -28,7 +28,12 @@ stderr = res.get("stderr") or ""
 out = res.get("stdout") or ""
 fatal = bool(re.search(r'OctoHub API error|error code: 5\d\d|Too Many Requests| 429', stderr))
 empty_final = '"type":"assistant","content":""' in out[-600:]
-infra = ((res.get("exit_code") or 0) != 0) or (not tot) or fatal or empty_final
+# Eval-phase flake: pytest died mid-run inside the eval container (truncated
+# tests.log), the parser saw ZERO per-test results, and the run got scored
+# resolved=False 0/all despite a clean agent phase. Not a genuine miss.
+sw = r.get("swebench")
+eval_dead = sw is not None and not sw.get("results_seen")
+infra = ((res.get("exit_code") or 0) != 0) or (not tot) or fatal or empty_final or eval_dead
 print("RETRY" if infra else "OK")
 PY
 }

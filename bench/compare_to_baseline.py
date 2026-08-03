@@ -24,7 +24,12 @@ def is_infra(r):
     out = res.get("stdout") or ""
     fatal = bool(re.search(r'OctoHub API error|error code: 5\d\d|Too Many Requests| 429', stderr))
     empty_final = '"type":"assistant","content":""' in out[-600:]
-    return ((res.get("exit_code") or 0) != 0) or (not tot) or fatal or empty_final
+    # Eval-phase flake: pytest died mid-run inside the eval container, the
+    # parser saw ZERO per-test results, and the run got scored 0/all despite
+    # a clean agent phase. Excluded — not a genuine miss.
+    sw = r.get("swebench")
+    eval_dead = sw is not None and not sw.get("results_seen")
+    return ((res.get("exit_code") or 0) != 0) or (not tot) or fatal or empty_final or eval_dead
 
 rows = []
 for f in glob.glob(head_dir + "/*/*/results.json"):

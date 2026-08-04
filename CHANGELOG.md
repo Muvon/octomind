@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.40.1] - 2026-08-04
+
+### 📋 Release Summary
+
+This release includes routine dependency updates to ensure optimal system performance and security (eaf2b427).
+
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.40.0] - 2026-08-04
 
 ### 📋 Release Summary

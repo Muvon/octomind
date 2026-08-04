@@ -1,149 +1,149 @@
 {
  "meta": {
-  "date": "2026-08-01",
+  "date": "2026-08-04",
   "version": "0.40.0",
   "model": "glm-5.2",
   "judge": "ollama:minimax-m3",
   "suite": "swe-bench-live lite pilot (15 instances)",
   "k": "2",
-  "ref": "0.40.0 HEAD build (v0.39.0 binary, config v2). Model upgraded glm-5.1->glm-5.2 (ollama provider). Judge upgraded octohub:minimax->ollama:minimax-m3. octocode ENABLED.",
+  "ref": "0.40.0 (upcoming) HEAD build: fix/supervisors-tune final (read-back verification, XML evidence tags, compaction fidelity, lesson verify, plan valid_if, causally-inert-change gate criterion). Provider switched ollama->zai:glm-5.2 DIRECT (ZAI_API_KEY/ZAI_API_URL, cache-discounted pricing accumulated). Judge ollama:minimax-m3. octocode ENABLED. TIMEOUT=3600s.",
   "runs": 30,
   "executor": "docker",
   "octocode": "ON",
-  "harness": "HEAD-only k=2, single leg, same binary/config/day; infra-exclusion per compare_to_baseline.py; 0 infra-excluded.",
-  "note": "25/30 = 83% solved, $3.70/solved, median 1.35M tokens (solved), avg judge 77.4. vs prior baseline (0.37.1, 2026-07-19): +4 solved (70%->83%), -30% median tokens solved (1.92M->1.35M), +13.2 judge score (64.2->77.4). 5 instances improved (aiogram 1->2, conan 0->1, jupyter-ai-1125 0->1, matplotlib 0->2, xarray 0->1). 2 regressions (llama-deploy-356 2->1, tox-3409 2->1) both timeout-related at 1800s. cfn-lint r2 needed 3 attempts (timeout on att 2). llama-deploy-356 r1 timed out twice. Guardrail for future checks: per-instance solve, overall success, cost/solved, and per-instance avg_judge slide."
+  "harness": "HEAD-only k=2, single leg, same binary/config; infra-exclusion per compare_to_baseline.py incl. eval-phase results_seen==0; multi-window zai quota (resume chains); OOM-prone suites mopped up at MAXJOBS=1; 0 infra-excluded in final set.",
+  "note": "25/30 = 83% solved (parity with 0801 ollama baseline), $0.82/solved (4.5x cheaper via zai cache pricing - NOT comparable to ollama-era $), median 1.66M tokens (solved), avg judge 80.6 (+3.2). Above prior: conan 1->2, xarray 1->2, llama-356 1->2, tox 1->2. Below prior: aiogram 2->0 (CONFIRMED VARIANCE: separate confirm run solved 2/2 with 3/3 targets), cfn-lint 2->1, streamlink 2->1. matplotlib 2/2 validates the causally-inert-change gate fix (was 0/2 without it same day). jupyter-ai-1022 and llama-356 required the 3600s timeout. Guardrail for future checks: per-instance solve, overall success, cost/solved, per-instance avg_judge slide."
  },
  "arms": {
   "base": {
    "n": 30,
    "solved": 25,
    "success_rate": 0.83,
-   "median_tokens": 1565812,
-   "median_tokens_solved": 1347823,
-   "cost_per_solved": 3.7,
-   "avg_judge": 77.4,
-   "median_sec": 328
+   "median_tokens": 1473398,
+   "median_tokens_solved": 1659994,
+   "cost_per_solved": 0.82,
+   "avg_judge": 80.6,
+   "median_sec": 621
   }
  },
  "per_task": {
   "aiogram__aiogram-1594": {
    "base": {
-    "solved": 2,
+    "solved": 0,
     "n": 2,
-    "median_tokens": 497898,
-    "avg_judge": 98
+    "median_tokens": 711421,
+    "avg_judge": 58.0
    }
   },
   "aws-cloudformation__cfn-lint-3749": {
    "base": {
-    "solved": 2,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 2042108,
-    "avg_judge": 80
+    "median_tokens": 1496876,
+    "avg_judge": 46.0
    }
   },
   "conan-io__conan-17366": {
    "base": {
-    "solved": 1,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 2506217,
-    "avg_judge": 45
+    "median_tokens": 910203,
+    "avg_judge": 41.0
    }
   },
   "falconry__falcon-2366": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 1606072,
-    "avg_judge": 95
+    "median_tokens": 1921489,
+    "avg_judge": 98.0
    }
   },
   "instructlab__instructlab-2526": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 553327,
-    "avg_judge": 95
+    "median_tokens": 401843,
+    "avg_judge": 92.0
    }
   },
   "jupyterlab__jupyter-ai-1022": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 4296331,
-    "avg_judge": 86
+    "median_tokens": 4614044,
+    "avg_judge": 86.0
    }
   },
   "jupyterlab__jupyter-ai-1125": {
    "base": {
     "solved": 1,
     "n": 2,
-    "median_tokens": 5021256,
-    "avg_judge": 48
+    "median_tokens": 2146236,
+    "avg_judge": 71.0
    }
   },
   "matplotlib__matplotlib-29007": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 933444,
-    "avg_judge": 94
+    "median_tokens": 755608,
+    "avg_judge": 98.0
    }
   },
   "pydata__xarray-9586": {
    "base": {
-    "solved": 1,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 846712,
-    "avg_judge": 48
+    "median_tokens": 1964667,
+    "avg_judge": 95.0
    }
   },
   "run-llama__llama_deploy-330": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 2023704,
-    "avg_judge": 90
+    "median_tokens": 3877155,
+    "avg_judge": 91.0
    }
   },
   "run-llama__llama_deploy-356": {
    "base": {
-    "solved": 1,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 4414288,
-    "avg_judge": 55
+    "median_tokens": 1628234,
+    "avg_judge": 96.0
    }
   },
   "run-llama__llama_deploy-372": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 4757204,
-    "avg_judge": 94
+    "median_tokens": 2820633,
+    "avg_judge": 89.0
    }
   },
   "run-llama__llama_deploy-384": {
    "base": {
     "solved": 2,
     "n": 2,
-    "median_tokens": 1394773,
-    "avg_judge": 95
+    "median_tokens": 1045505,
+    "avg_judge": 95.0
    }
   },
   "streamlink__streamlink-6242": {
    "base": {
-    "solved": 2,
+    "solved": 1,
     "n": 2,
-    "median_tokens": 226760,
-    "avg_judge": 95
+    "median_tokens": 231377,
+    "avg_judge": 62.0
    }
   },
   "tox-dev__tox-3409": {
    "base": {
-    "solved": 1,
+    "solved": 2,
     "n": 2,
-    "median_tokens": 1520520,
-    "avg_judge": 45
+    "median_tokens": 1631983,
+    "avg_judge": 90.0
    }
   }
  }

@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.40.0] - 2026-08-04
+
+### 📋 Release Summary
+
+This release introduces significant enhancements to the supervisor's reasoning capabilities, featuring improved grounding, hallucination verification, and more robust task resolution (e60e875e, 1a518c29, 5414f10c, db6c45e7, 94df64bb). The Model Context Protocol (MCP) has been expanded with environment variable support, token rotation, and advanced tool response handling (f0b52436, a5eb73c5, e01325b2, c9344177). Additionally, several updates optimize session memory through lossless archiving and resolve critical bugs related to plan persistence and server stability (bc5c63e6, 161bb3ee, 07f5a1c1).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: implement read-back verification and grounding `e60e875e`
+- **supervisor**: implement XML evidence tagging system `1a518c29`
+- **session**: enhance grounding with archive and spill retrieval `c2bffd50`
+- **supervisor**: enhance verification and plan validation `5414f10c`
+- **supervisor**: integrate role context into gating and resolution `7ba95005`
+- **supervisor**: enhance hallucination and URL verification `db6c45e7`
+- **compression**: implement lossless task and message archiving `bc5c63e6`
+- **supervisor**: implement verification prohibition `e68a4886`
+- **bench**: enhance benchmark tooling and execution `0e8b6ab6`
+- **supervisor**: implement task resolution for completion gates `94df64bb`
+- **supervisor**: implement delegate gate for subagent handoffs `764405e5`
+- **mcp**: resolve env placeholders in server configs `75b703b7`
+- **mcp**: implement environment variable support `f0b52436`
+- **mcp**: implement multi-round tool responses and task polling `e01325b2`
+- **mcp**: add elicitation support and oauth resource param `29660dbe`
+- **session**: prevent premature turn ends during progress `409a7c31`
+- **mcp**: implement token rotation and server validation `a5eb73c5`
+- **mcp**: implement rmcp-based client and server management `c9344177`
+- **supervisor**: improve file reference detection `31b4ca17`
+- **supervisor**: define bug fix gap criteria `38bc0241`
+
+### 🔧 Improvements & Optimizations
+
+- **bench**: refresh baseline metrics and increase timeout `2e164574`
+- **mcp**: align plan existence error assertions `ec1320c2`
+- **learning**: move parse_lesson_tags to tests `3253571f`
+- **supervisor**: align build_prompt calls with new signature `2c3ffe84`
+- **supervisor**: make verification domain agnostic `656dd71c`
+- **bench**: update baseline to v0.40.0 `3febc283`
+- **supervisor**: use parse_classifier in resolution tests `297e0a8c`
+- **supervisor**: encapsulate LLM sampling parameters `265d847b`
+- **supervisor**: refine gate prompt terminology `ab311cec`
+- **supervisor**: improve session and gate logic `1707321b`
+- **config**: implement octolib migration framework `4225b225`
+- **supervisor**: simplify check command logic `5998e249`
+
+### 🐛 Bug Fixes & Stability
+
+- **bench**: prevent zombie containers and timeouts `de328cce`
+- **plan**: prevent plan loss after context compression `161bb3ee`
+- **bench**: ignore evaluation phase flakes in infra check `8150e9c7`
+- **session**: improve evidence recovery and performance `a62a54f3`
+- **supervisor**: ignore evidence tags in markdown code `ce318a59`
+- **mcp**: verify os process liveness for stdio servers `07f5a1c1`
+- **supervisor**: prevent external drift from triggering verification `7fea4483`
+- **supervisor**: improve workdir fingerprinting and verifier detection `a3a94f5d`
+- **supervisor**: ensure sequential signals trigger steering during exploration `09843550`
+
+### 📚 Documentation & Examples
+
+- **readme**: add benchmarks section `61ba2b2f`
+
+### 🔄 Other Changes
+
+7 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.39.0] - 2026-07-26
 
 ### 📋 Release Summary

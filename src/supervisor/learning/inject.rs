@@ -158,7 +158,7 @@ pub async fn retrieve_and_format(
 	// rules; orientation is working assumptions to verify, never truth.
 	let mut inner = String::new();
 	if !lesson_block.is_empty() {
-		inner.push_str("<lessons>\nRules learned in past sessions — follow them. [n] is confidence in [0,1]; weight your adherence by it.\n");
+		inner.push_str("<lessons>\nRules learned in past sessions — follow them. The bracketed tag is each lesson's confidence level; weight your adherence by it.\n");
 		inner.push_str(&lesson_block);
 		inner.push_str("</lessons>\n");
 	}

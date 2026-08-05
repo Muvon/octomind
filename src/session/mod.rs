@@ -130,8 +130,23 @@ pub fn is_system_managed_user_content(content: &str) -> bool {
 	let trimmed = content.trim_start();
 	trimmed.starts_with("<instructions>")
 		|| trimmed.starts_with("<continuation>")
+		|| trimmed.starts_with("<system-note>")
 		|| crate::mcp::runtime::skill::is_skill_message(content)
 		|| crate::supervisor::gate::is_supervisor_injection(content)
+}
+
+/// Enforce the system-managed contract at the injection seam: content that
+/// carries no recognized marker (an inbox report, a tool-usage hint) is
+/// wrapped in `<system-note>` so it can never classify as a genuine user
+/// turn — the gate boundary, task resolution, recitation, and learning all
+/// key on [`is_real_user_task_message`], and an unmarked injection would
+/// silently become "the current user request".
+pub fn ensure_system_managed(content: &str) -> std::borrow::Cow<'_, str> {
+	if is_system_managed_user_content(content) {
+		std::borrow::Cow::Borrowed(content)
+	} else {
+		std::borrow::Cow::Owned(format!("<system-note>\n{content}\n</system-note>"))
+	}
 }
 
 pub fn is_real_user_task_message(message: &Message) -> bool {
@@ -519,6 +534,30 @@ mod tests {
 			id: None,
 		}
 	}
+	#[test]
+	fn ensure_system_managed_wraps_unmarked_content_only() {
+		// Marked content passes through untouched.
+		for marked in [
+			"<pay-attention>\nnote\n</pay-attention>",
+			"<recall>\nlessons\n</recall>",
+			"<instructions>\nrole\n</instructions>",
+			"<system-note>\nalready wrapped\n</system-note>",
+		] {
+			assert_eq!(ensure_system_managed(marked), marked);
+			assert!(is_system_managed_user_content(marked));
+		}
+		// Unmarked injection content (inbox reports, tool-usage hints) is wrapped
+		// so it can never classify as a genuine user turn.
+		let report = "[Tap-run 'x' (dev) completed]\n\nall done";
+		let wrapped = ensure_system_managed(report);
+		assert!(wrapped.starts_with("<system-note>"));
+		assert!(wrapped.contains(report));
+		assert!(is_system_managed_user_content(&wrapped));
+		assert!(!is_real_user_task_message(&create_test_message(
+			"user", &wrapped, None, None
+		)));
+	}
+
 	#[test]
 	fn test_has_incomplete_tool_calls_complete_sequence() {
 		// Test complete tool call sequence: assistant -> tool_calls -> tool_response

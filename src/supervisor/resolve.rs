@@ -356,6 +356,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 					"recent_history" => &context.recent_history,
 					"session_context" => &context.session_context,
 					"active_plan" => &context.active_plan,
+					"role_context" => &context.role_context,
 					_ => continue,
 				};
 				if !excerpt.is_empty()
@@ -569,6 +570,21 @@ mod tests {
 		assert_eq!(unknown.resolved_request, "Write a README");
 		assert_eq!(unknown.scope, ResolutionScope::Ambiguous);
 		assert!(!unknown.plan_relevant);
+	}
+
+	#[test]
+	fn follow_up_grounded_in_role_context_is_accepted() {
+		// The prompt lists role_context as a legal evidence source; a rewrite
+		// grounded solely in it must resolve, not degrade to ambiguous.
+		let mut ctx = context("Run the scheduled check");
+		ctx.role_context = "You are the monitoring agent for Cointrapper status checks".to_string();
+		let resolved = parse_resolution(
+			&ctx,
+			r#"{"scope":"follow_up","resolved_request":"Run the Cointrapper status check","evidence":[{"source":"role_context","excerpt":"Cointrapper status checks"}]}"#,
+		);
+		assert_eq!(resolved.scope, ResolutionScope::FollowUp);
+		assert_eq!(resolved.context_sources, ["role_context"]);
+		assert_eq!(resolved.resolution_evidence.len(), 1);
 	}
 
 	#[test]

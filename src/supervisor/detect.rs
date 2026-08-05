@@ -465,6 +465,7 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 /// - as a suffix of a path occurring in `grounds` (tool outputs plus the
 ///   agent's executed call arguments) that exists on disk — a file the agent
 ///   actually touched under another root this turn.
+///
 /// Every candidate that resolves is line-bound-checked. A path that resolves
 /// nowhere but occurs verbatim in `grounds` at a path boundary was received,
 /// not fabricated — benefit of the doubt (the line cannot be checked). Only a

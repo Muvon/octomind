@@ -231,16 +231,16 @@ impl EvidenceLedger {
 		bytes: usize,
 	) {
 		// Track which files successful mutations touched, so ground truth can
-		// diff exactly those. Keyed on the conventional path parameter names.
+		// diff exactly those. Path-like params are collected generically — the
+		// same identity rule as the detectors' read-back tracking
+		// ([`crate::supervisor::detect::param_paths`]), so the two mechanisms
+		// can never disagree on what a mutation touched.
 		if mutation && !error {
-			for key in ["path", "file_path"] {
-				if let Some(p) = parameters.get(key).and_then(|v| v.as_str()) {
-					if self.mutated_paths.len() < MUTATED_PATHS_CAP
-						&& !p.trim().is_empty()
-						&& !self.mutated_paths.iter().any(|e| e == p)
-					{
-						self.mutated_paths.push(p.to_string());
-					}
+			for p in crate::supervisor::detect::param_paths(parameters) {
+				if self.mutated_paths.len() < MUTATED_PATHS_CAP
+					&& !self.mutated_paths.iter().any(|e| e == &p)
+				{
+					self.mutated_paths.push(p);
 				}
 			}
 		}
@@ -874,6 +874,37 @@ mod tests {
 		l.reset();
 		assert!(l.mutated_paths().is_empty());
 		assert!(l.last_command().is_none());
+	}
+
+	#[test]
+	fn ledger_collects_all_pathish_mutation_params() {
+		// Same identity rule as detect::param_paths: any path/file-keyed string
+		// or string array counts, so a rename or multi-file apply is fully
+		// covered by ground truth, not just `path`/`file_path`.
+		let mut l = EvidenceLedger::default();
+		l.record(
+			"rename",
+			&serde_json::json!({"from_path":"a.md","to_path":"b.md"}),
+			true,
+			false,
+			1,
+		);
+		l.record(
+			"apply",
+			&serde_json::json!({"files":["c.py","d.py"]}),
+			true,
+			false,
+			1,
+		);
+		assert_eq!(
+			l.mutated_paths(),
+			&[
+				"a.md".to_string(),
+				"b.md".to_string(),
+				"c.py".to_string(),
+				"d.py".to_string()
+			][..]
+		);
 	}
 
 	#[test]

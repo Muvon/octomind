@@ -673,9 +673,16 @@ pub async fn process_response<S: OutputSink>(
 							is_error,
 							result_content.len(),
 						);
-						// Ground truth for the gate: keep the last successful shell
-						// output — the decisive check normally runs right before `done`.
-						if call.tool_name == "shell" && !is_error {
+						// Ground truth for the gate: keep the last successful command
+						// execution's output — the decisive check normally runs right
+						// before `done`. Shape-based, the same definition as the
+						// verifier-candidate check, so any command-execution tool
+						// qualifies — never a hard-coded tool name.
+						let verifier_shaped = crate::supervisor::detect::is_verifier_shaped(
+							&call.tool_name,
+							&call.parameters,
+						);
+						if verifier_shaped && !is_error {
 							let cmd = call
 								.parameters
 								.get("command")
@@ -761,10 +768,7 @@ pub async fn process_response<S: OutputSink>(
 									.detectors
 									.note_mutated_paths(&call.parameters);
 							}
-							round_verifier |= crate::supervisor::detect::is_verifier_shaped(
-								&call.tool_name,
-								&call.parameters,
-							);
+							round_verifier |= verifier_shaped;
 						}
 					}
 

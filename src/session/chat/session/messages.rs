@@ -290,9 +290,12 @@ impl ChatSession {
 	}
 
 	// Add a system-managed user-role message. Provider APIs still see role=user,
-	// but task/compression/learning logic must not treat it as a user request.
+	// but task/compression/learning logic must not treat it as a user request —
+	// enforced here: unmarked content is wrapped so it always classifies as
+	// system-managed (see `ensure_system_managed`).
 	pub fn add_system_managed_user_message(&mut self, content: &str) -> Result<()> {
-		let message = crate::session::Session::build_message("user", content);
+		let content = crate::session::ensure_system_managed(content);
+		let message = crate::session::Session::build_message("user", &content);
 		if let Some(session_file) = &self.session.session_file {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;

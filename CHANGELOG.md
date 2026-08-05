@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.40.2] - 2026-08-05
+
+### 📋 Release Summary
+
+This release enhances session intelligence through improved system messaging and more accurate resolution context (c8f3cde8). Additionally, file reference validation has been refined to ensure greater reliability when interacting with your codebase (4e06053b).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: improve system messaging and resolution context `c8f3cde8`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: improve file reference validation `4e06053b`
+
 ## [0.40.1] - 2026-08-04
 
 ### 📋 Release Summary

@@ -453,13 +453,24 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 /// High-precision by construction: only paths containing a `/` and an extension
 /// starting with a letter are checked (bare `x.rs:3` or version-like `1.2:3`
 /// never match), URL interiors are excluded by the preceding-char guard, and
-/// GitHub-style `#L<n>` anchors count as line references too. Prose often
-/// abbreviates a path cited in full elsewhere in the same response
-/// ("deals/create.php:199" after "app/actions/deals/create.php:199"), so a
-/// path missing at cwd is resolved as a suffix of the response's existing
-/// cited paths before being flagged. Relative paths resolve against the
-/// process cwd (the project dir in a session). No model call.
-pub fn unverified_file_refs(response: &str) -> Vec<String> {
+/// GitHub-style `#L<n>` anchors count as line references too.
+///
+/// A reference resolves against every root the turn actually evidences, never
+/// the process cwd alone (a task legitimately spans other repos and working
+/// directories):
+/// - as given (cwd-relative or absolute);
+/// - as a suffix of another path cited in full in the same response (prose
+///   often abbreviates: "deals/create.php:199" after
+///   "app/actions/deals/create.php:199");
+/// - as a suffix of a path occurring in `grounds` (tool outputs plus the
+///   agent's executed call arguments) that exists on disk — a file the agent
+///   actually touched under another root this turn.
+/// Every candidate that resolves is line-bound-checked. A path that resolves
+/// nowhere but occurs verbatim in `grounds` at a path boundary was received,
+/// not fabricated — benefit of the doubt (the line cannot be checked). Only a
+/// reference with no on-disk candidate and no occurrence in anything the
+/// agent received or executed is flagged. No model call.
+pub fn unverified_file_refs(response: &str, grounds: &[String]) -> Vec<String> {
 	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 	let re = RE.get_or_init(|| {
 		regex::Regex::new(
@@ -492,10 +503,11 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 		.map(|(p, _)| p.clone())
 		.filter(|p| std::path::Path::new(p).exists())
 		.collect();
+	let haystack = grounds.join("\n");
 	let mut flagged = Vec::new();
 	for (path, line) in &refs {
 		let key = format!("{path}:{line}");
-		let candidates: Vec<String> = if std::path::Path::new(path).exists() {
+		let mut candidates: Vec<String> = if std::path::Path::new(path).exists() {
 			vec![path.clone()]
 		} else {
 			let suffix = format!("/{path}");
@@ -505,8 +517,12 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 				.cloned()
 				.collect()
 		};
+		let (ground_candidates, received) = grounds_path_evidence(path, &haystack);
+		candidates.extend(ground_candidates);
 		if candidates.is_empty() {
-			flagged.push(format!("{key} (file not found)"));
+			if !received {
+				flagged.push(format!("{key} (file not found)"));
+			}
 			continue;
 		}
 		// The reference holds if the line lands inside ANY candidate; an
@@ -526,6 +542,49 @@ pub fn unverified_file_refs(response: &str) -> Vec<String> {
 		}
 	}
 	flagged
+}
+
+/// Path evidence for `path` inside the joined grounds: full on-disk paths that
+/// end with `/{path}` (each occurrence expanded backwards over path
+/// characters — recovers the absolute path a tool call or output named), and
+/// whether the grounds contain `path` at a path boundary at all ("received").
+/// Boundaries are enforced both ways: `a/b.ts` inside `a/b.tsx` is a different
+/// file, and `zz/a/b.ts` inside `xzz/a/b.ts` is a different path.
+fn grounds_path_evidence(path: &str, haystack: &str) -> (Vec<String>, bool) {
+	let bytes = haystack.as_bytes();
+	let mut candidates = Vec::new();
+	let mut received = false;
+	let mut from = 0;
+	while let Some(rel) = haystack[from..].find(path) {
+		let start = from + rel;
+		let end = start + path.len();
+		from = start + 1;
+		if bytes.get(end).is_some_and(|b| b.is_ascii_alphanumeric()) {
+			continue;
+		}
+		let boundary = start == 0 || bytes[start - 1] == b'/' || !is_path_byte(bytes[start - 1]);
+		if !boundary {
+			continue;
+		}
+		received = true;
+		let mut s = start;
+		while s > 0 && is_path_byte(bytes[s - 1]) {
+			s -= 1;
+		}
+		if s < start {
+			let full = &haystack[s..end];
+			if !candidates.iter().any(|c| c == full) && std::path::Path::new(full).exists() {
+				candidates.push(full.to_string());
+			}
+		}
+	}
+	(candidates, received)
+}
+
+/// Chars that form a path token in surrounding text — the component charset of
+/// the reference regex plus the separator.
+fn is_path_byte(b: u8) -> bool {
+	b.is_ascii_alphanumeric() || matches!(b, b'_' | b'@' | b'~' | b'.' | b'-' | b'/')
 }
 
 /// Shape-based: is this call a candidate VERIFIER — something that executes a
@@ -1948,12 +2007,12 @@ mod tests {
 	#[test]
 	fn file_refs_existing_line_is_clean() {
 		// cargo test runs with the crate root as cwd, so this very file resolves.
-		assert!(unverified_file_refs("see src/supervisor/detect.rs:1 for it").is_empty());
+		assert!(unverified_file_refs("see src/supervisor/detect.rs:1 for it", &[]).is_empty());
 	}
 
 	#[test]
 	fn file_refs_missing_file_flagged() {
-		let bad = unverified_file_refs("fixed in src/supervisor/zz_no_such_file.rs:5 now");
+		let bad = unverified_file_refs("fixed in src/supervisor/zz_no_such_file.rs:5 now", &[]);
 		assert_eq!(
 			bad,
 			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
@@ -1962,26 +2021,28 @@ mod tests {
 
 	#[test]
 	fn file_refs_line_beyond_eof_flagged() {
-		let bad = unverified_file_refs("look at src/supervisor/mod.rs:999999");
+		let bad = unverified_file_refs("look at src/supervisor/mod.rs:999999", &[]);
 		assert_eq!(bad.len(), 1);
 		assert!(bad[0].starts_with("src/supervisor/mod.rs:999999 (file has only "));
 	}
 
 	#[test]
 	fn file_refs_urls_and_versions_not_matched() {
-		assert!(unverified_file_refs("see https://x.com/a/b.rs:12 and v1.2/3.4:56").is_empty());
+		assert!(
+			unverified_file_refs("see https://x.com/a/b.rs:12 and v1.2/3.4:56", &[]).is_empty()
+		);
 	}
 
 	#[test]
 	fn file_refs_deduplicated() {
-		let bad = unverified_file_refs("a/missing.rs:1 and again a/missing.rs:1 twice");
+		let bad = unverified_file_refs("a/missing.rs:1 and again a/missing.rs:1 twice", &[]);
 		assert_eq!(bad.len(), 1);
 	}
 
 	#[test]
 	fn file_refs_github_anchor_matched() {
-		assert!(unverified_file_refs("see src/supervisor/detect.rs#L1 for it").is_empty());
-		let bad = unverified_file_refs("see src/supervisor/zz_no_such_file.rs#L5 now");
+		assert!(unverified_file_refs("see src/supervisor/detect.rs#L1 for it", &[]).is_empty());
+		let bad = unverified_file_refs("see src/supervisor/zz_no_such_file.rs#L5 now", &[]);
 		assert_eq!(
 			bad,
 			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
@@ -1992,12 +2053,14 @@ mod tests {
 	fn file_refs_suffix_shorthand_resolves_against_cited_full_path() {
 		// Prose abbreviation of a path cited in full elsewhere is not fabrication.
 		assert!(unverified_file_refs(
-			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs:1)"
+			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs:1)",
+			&[]
 		)
 		.is_empty());
 		// Also when the full path was cited GitHub-style.
 		assert!(unverified_file_refs(
-			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs#L1-L20)"
+			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs#L1-L20)",
+			&[]
 		)
 		.is_empty());
 	}
@@ -2006,9 +2069,49 @@ mod tests {
 	fn file_refs_suffix_shorthand_still_bound_checked() {
 		let bad = unverified_file_refs(
 			"comment at supervisor/mod.rs:999999 (full: src/supervisor/mod.rs:1)",
+			&[],
 		);
 		assert_eq!(bad.len(), 1);
 		assert!(bad[0].starts_with("supervisor/mod.rs:999999 (file has only "));
+	}
+
+	#[test]
+	fn file_refs_resolve_against_grounds_from_other_roots() {
+		// A ref that resolves at no cwd path but whose full path appears in the
+		// turn's executed call args (another repo root) is real — recovered by
+		// backwards expansion and still line-bound-checked against that root.
+		let grounds = vec![format!(
+			r#"{{"path":"{}/src/supervisor/detect.rs","start":1}}"#,
+			env!("CARGO_MANIFEST_DIR")
+		)];
+		assert!(unverified_file_refs("see supervisor/detect.rs:1", &grounds).is_empty());
+		let bad = unverified_file_refs("see supervisor/detect.rs:999999", &grounds);
+		assert_eq!(bad.len(), 1);
+		assert!(bad[0].starts_with("supervisor/detect.rs:999999 (file has only "));
+	}
+
+	#[test]
+	fn file_refs_received_in_grounds_get_benefit_of_doubt() {
+		// A path echoed by a real tool output (e.g. `wc -l` run in another cwd)
+		// was received, not fabricated — even when nothing resolves on disk.
+		let grounds = vec!["     164 zz/qq/other_root.ts".to_string()];
+		assert!(unverified_file_refs("see zz/qq/other_root.ts:86", &grounds).is_empty());
+		// Absent from grounds → still flagged.
+		assert_eq!(
+			unverified_file_refs("see zz/qq/other_root.ts:86", &[]),
+			vec!["zz/qq/other_root.ts:86 (file not found)"]
+		);
+	}
+
+	#[test]
+	fn file_refs_grounds_boundaries_respected() {
+		// A prefix of a longer filename or the interior of a different path is
+		// not receipt of this path.
+		let grounds = vec!["zz/qq/other_root.tsx and xzz/qq/other_root.ts".to_string()];
+		assert_eq!(
+			unverified_file_refs("see zz/qq/other_root.ts:1", &grounds),
+			vec!["zz/qq/other_root.ts:1 (file not found)"]
+		);
 	}
 
 	#[test]

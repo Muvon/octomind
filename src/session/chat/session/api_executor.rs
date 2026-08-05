@@ -56,6 +56,20 @@ fn current_turn_tool_outputs(
 		.collect()
 }
 
+/// Arguments of every tool call the agent issued this turn — the paths it
+/// actually operated on, including roots outside the process cwd. Grounds for
+/// the file-reference check only: citations and URLs must match what the
+/// agent RECEIVED, never its own call text.
+fn current_turn_call_args(messages: &[crate::session::Message], turn_start: usize) -> Vec<String> {
+	messages
+		.get(turn_start..)
+		.unwrap_or_default()
+		.iter()
+		.filter_map(|message| message.tool_calls.as_ref())
+		.map(|calls| calls.to_string())
+		.collect()
+}
+
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
 /// misled). Clears the recalled set either way.
@@ -682,8 +696,18 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				&chat_session.last_response,
 				&grounds,
 			);
-			let bad_refs =
-				crate::supervisor::detect::unverified_file_refs(&chat_session.last_response);
+			// File refs resolve against every root the agent actually worked in
+			// this turn, not the process cwd alone — the paths in its executed
+			// call arguments are that evidence (see current_turn_call_args).
+			let mut ref_grounds = grounds.clone();
+			ref_grounds.extend(current_turn_call_args(
+				&chat_session.session.messages,
+				turn_start,
+			));
+			let mut bad_refs = crate::supervisor::detect::unverified_file_refs(
+				&chat_session.last_response,
+				&ref_grounds,
+			);
 			let mut bad_urls =
 				crate::supervisor::detect::unverified_urls(&chat_session.last_response, &grounds);
 			// Mid-turn compression and condensing drain or replace the very tool
@@ -691,19 +715,23 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			// from disk (lossless archive + spill files) so a compaction cannot
 			// fabricate an "unverified" verdict. Disk grounds can only exonerate,
 			// so read them only when the in-context pass flagged something.
-			if !unverified.is_empty() || !bad_urls.is_empty() {
-				grounds.extend(crate::utils::spill::read_session_spills(
-					RECOVERY_GROUNDS_CAP,
-				));
-				grounds.extend(
+			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
+				let mut recovered = crate::utils::spill::read_session_spills(RECOVERY_GROUNDS_CAP);
+				recovered.extend(
 					crate::session::chat::conversation_compression::archive::read_session_archives(
 						&chat_session.session.info.name,
 						RECOVERY_GROUNDS_CAP,
 					),
 				);
+				grounds.extend(recovered.iter().cloned());
+				ref_grounds.extend(recovered);
 				unverified = crate::supervisor::detect::unverified_citations(
 					&chat_session.last_response,
 					&grounds,
+				);
+				bad_refs = crate::supervisor::detect::unverified_file_refs(
+					&chat_session.last_response,
+					&ref_grounds,
 				);
 				bad_urls = crate::supervisor::detect::unverified_urls(
 					&chat_session.last_response,

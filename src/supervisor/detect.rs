@@ -569,7 +569,7 @@ fn grounds_path_evidence(path: &str, haystack: &str) -> (Vec<String>, bool) {
 		}
 		received = true;
 		let mut s = start;
-		while s > 0 && is_path_byte(bytes[s - 1]) {
+		while s > 0 && is_expansion_byte(bytes[s - 1]) {
 			s -= 1;
 		}
 		if s < start {
@@ -583,9 +583,18 @@ fn grounds_path_evidence(path: &str, haystack: &str) -> (Vec<String>, bool) {
 }
 
 /// Chars that form a path token in surrounding text — the component charset of
-/// the reference regex plus the separator.
+/// the reference regex plus the separator. Used for the boundary check, so it
+/// deliberately excludes `:` (the file:line separator in prose and grep/view
+/// output — treating it as a path byte would deny receipt to `12:src/a.ts`).
 fn is_path_byte(b: u8) -> bool {
 	b.is_ascii_alphanumeric() || matches!(b, b'_' | b'@' | b'~' | b'.' | b'-' | b'/')
+}
+
+/// Bytes the backwards expansion may additionally cross when recovering a full
+/// path from grounds text: Windows separators (`\`, drive `:`). A junk
+/// crossing is harmless — every candidate must exist on disk to count.
+fn is_expansion_byte(b: u8) -> bool {
+	is_path_byte(b) || matches!(b, b':' | b'\\')
 }
 
 /// Shape-based: is this call a candidate VERIFIER — something that executes a

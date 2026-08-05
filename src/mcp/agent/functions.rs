@@ -867,10 +867,21 @@ pub async fn run_acp_command(
 
 	if let Some(err) = prompt_error {
 		let trimmed = output.trim();
+		// `data` carries the real cause: the ACP server builds prompt failures as
+		// `Error::internal_error().data(e.to_string())`, so `message` is always the
+		// fixed JSON-RPC text ("Internal error") and only `data` names what broke.
 		let detail = err
-			.get("message")
-			.and_then(|m| m.as_str())
-			.map(|s| s.to_string())
+			.get("data")
+			.map(|d| {
+				d.as_str()
+					.map(str::to_string)
+					.unwrap_or_else(|| d.to_string())
+			})
+			.or_else(|| {
+				err.get("message")
+					.and_then(|m| m.as_str())
+					.map(str::to_string)
+			})
 			.unwrap_or_else(|| err.to_string());
 		if trimmed.is_empty() {
 			return Err(anyhow::anyhow!("ACP prompt failed: {detail}"));
@@ -1275,6 +1286,21 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 			.await
 			.expect_err("prompt error must fail the run");
 		assert!(err.to_string().contains("boom"), "got: {err:#}");
+	}
+
+	/// Real octomind failures arrive as `-32603` with the fixed JSON-RPC
+	/// message and the cause in `data` — reporting only `message` would tell
+	/// the parent nothing but "Internal error".
+	#[tokio::test]
+	async fn surfaces_error_data_over_generic_message() {
+		let script = format!(
+			"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
+			r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"Internal error","data":"API call failed: 429 rate limit"}}"#
+		);
+		let err = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect_err("prompt error must fail the run");
+		assert!(err.to_string().contains("429 rate limit"), "got: {err:#}");
 	}
 
 	#[tokio::test]

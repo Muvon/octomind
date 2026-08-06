@@ -364,7 +364,7 @@ max_cost = 2.50    # USD; abort the workflow once total spend exceeds this
 - Must be a positive number — validated pre-flight (`--dry-run` shows it in the plan).
 - The check runs **after each step's cost is added to the running total**, so it stops spend *before the next step* — including between loop iterations and after a parallel block. The step that crossed the line still completes; the workflow then exits non-zero with:
   `workflow cost budget exceeded: spent $<x> exceeds max_cost $<cap> (stopped after step '<name>')`.
-- This is the workflow-level analogue of the per-session spending thresholds (see [Cost as a Control Plane](../../README.md#pillar-3--cost-as-a-control-plane)).
+- This is the workflow-level analogue of the per-session spending thresholds (see [Cost as a Control Plane](../../README.md#cost-as-a-control-plane)).
 
 ## Retries and timeouts
 

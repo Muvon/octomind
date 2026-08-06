@@ -81,6 +81,11 @@ enum Commands {
 	/// Outputs one candidate per line to stdout.
 	#[command(hide = true)]
 	Complete(commands::CompleteArgs),
+
+	/// Distil lessons from a transcript snapshot. Spawned detached by an exiting
+	/// session so learning never blocks the exit; not meant to be run by hand.
+	#[command(hide = true)]
+	Distill(commands::DistillArgs),
 }
 
 #[tokio::main]
@@ -136,8 +141,10 @@ async fn main() -> Result<(), anyhow::Error> {
 	// `complete` is excluded: the shell runs it on every TAB press, which would
 	// both flood the ingest endpoint and risk printing the first-run notice into
 	// the middle of a completion. Everything downstream no-ops when uninitialised.
+	// `distill` is excluded too: it is spawned by an exiting `run`, so recording
+	// it would double-count that one session.
 	let command = command_name(&args.command);
-	if command != "complete" {
+	if command != "complete" && command != "distill" {
 		octomind::telemetry::init(&config);
 		octomind::telemetry::record_start(command, used_flags(command));
 	}
@@ -174,6 +181,7 @@ fn command_name(command: &Commands) -> &'static str {
 		Commands::Workflow(_) => "workflow",
 		Commands::Completion { .. } => "completion",
 		Commands::Complete(_) => "complete",
+		Commands::Distill(_) => "distill",
 	}
 }
 
@@ -243,6 +251,9 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 			print!("{patched}");
 		}
 		Commands::Complete(complete_args) => commands::complete::execute(&complete_args, &config)?,
+		Commands::Distill(distill_args) => {
+			commands::distill::execute(&distill_args, &config).await?
+		}
 	}
 
 	Ok(())

@@ -826,8 +826,9 @@ pub async fn run_interactive_session(
 				InputResult::Exit => {
 					// Ctrl+D pressed - graceful exit handled in input.rs
 					// Learning extraction on exit (skip if /done already extracted).
-					// Awaited: the process exits right after this loop breaks, and a
-					// detached task would be aborted before storing anything.
+					// Handed to a detached child process: the runtime dies with this
+					// loop, so an in-process task would be aborted, and awaiting one
+					// held the terminal for a whole LLM round-trip.
 					if current_config.supervisor.learning.enabled
 						&& !chat_session.learning_extracted
 					{
@@ -836,8 +837,7 @@ pub async fn run_interactive_session(
 							&current_config,
 							role.clone(),
 							Some(&current_dir),
-						)
-						.await;
+						);
 					}
 					// Kill any running async jobs
 					crate::mcp::agent::functions::kill_all_jobs();
@@ -852,15 +852,14 @@ pub async fn run_interactive_session(
 			// Check if the input is an exit command
 			if input == "/exit" || input == "/quit" {
 				// Learning extraction on exit (skip if /done already extracted).
-				// Awaited: see the Ctrl+D path above — detaching here loses lessons.
+				// Detached child process — see the Ctrl+D path above.
 				if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
 					crate::supervisor::learning::extract::extract_lessons_before_exit(
 						&chat_session,
 						&current_config,
 						role.clone(),
 						Some(&current_dir),
-					)
-					.await;
+					);
 				}
 				// Kill any running async jobs before exiting
 				crate::mcp::agent::functions::kill_all_jobs();

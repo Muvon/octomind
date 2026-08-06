@@ -79,7 +79,7 @@ A durable, reusable fact about how the subject works.
 /// Used by both `extract_lessons_detached` (fire-and-forget) and any caller that wants
 /// awaited extraction. Takes owned data so it works without a `ChatSession` reference.
 /// Cost is not tracked against the active session — this is background bookkeeping.
-async fn run_extraction(
+pub async fn run_extraction(
 	messages: &[crate::session::Message],
 	config: &Config,
 	role: &str,
@@ -655,6 +655,18 @@ pub fn spawn_lesson_extraction(
 		crate::log_debug!("Distill skipped: trajectory failed verify-gate");
 		return None;
 	}
+	Some(extract_lessons_detached(
+		session.session.messages.clone(),
+		config.clone(),
+		role,
+		project_name(current_dir),
+		session.session.info.name.clone(),
+	))
+}
+
+/// Lesson scope derived from the session's working directory (process cwd when
+/// the caller doesn't thread one).
+fn project_name(current_dir: Option<&std::path::Path>) -> String {
 	let owned_cwd;
 	let resolved_dir: Option<&std::path::Path> = match current_dir {
 		Some(p) => Some(p),
@@ -663,41 +675,86 @@ pub fn spawn_lesson_extraction(
 			owned_cwd.as_deref()
 		}
 	};
-	let project = resolved_dir
+	resolved_dir
 		.and_then(|p| p.file_name())
 		.and_then(|n| n.to_str())
 		.map(String::from)
-		.unwrap_or_else(|| "unknown".to_string());
-	Some(extract_lessons_detached(
-		session.session.messages.clone(),
-		config.clone(),
-		role,
-		project,
-		session.session.info.name.clone(),
-	))
+		.unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Exit-path variant: awaits the extraction (bounded) so the store completes
-/// before the process exits — a detached task would be aborted mid-flight by
-/// the runtime drop when `main` returns, silently losing the lessons.
-pub async fn extract_lessons_before_exit(
+/// Exit-path variant: hands the extraction to a DETACHED CHILD PROCESS
+/// (`octomind distill`) and returns immediately, so the shell prompt comes back
+/// the moment the user exits instead of waiting out an LLM round-trip.
+///
+/// An in-process task cannot work here: the tokio runtime drops with `main` and
+/// aborts it at its next await point, which is why this used to block on the
+/// handle. The child outlives us and finishes the store on its own; its progress
+/// still prints to the inherited terminal.
+///
+/// The transcript is handed over through a temp file rather than a pipe — a
+/// child that dies before reading would block the parent mid-write and
+/// re-introduce the very hang this removes. The child deletes it after reading.
+///
+/// Ceiling: the child stays in the terminal's process group, so closing the
+/// terminal window right after exiting SIGHUPs it and the lessons are lost.
+/// Use `setsid` if that ever matters more than the inherited log output.
+pub fn extract_lessons_before_exit(
 	session: &crate::session::chat::session::ChatSession,
 	config: &Config,
 	role: String,
 	current_dir: Option<&std::path::Path>,
 ) {
-	// Generous bound: two backend retrievals + one LLM call; exit proceeds
-	// regardless once it elapses.
-	const EXIT_EXTRACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-	if let Some(handle) = spawn_lesson_extraction(session, config, role, current_dir) {
-		crate::supervisor::notify("distilling lessons before exit …");
-		if tokio::time::timeout(EXIT_EXTRACTION_TIMEOUT, handle)
-			.await
-			.is_err()
-		{
-			crate::log_debug!("Exit lesson extraction timed out; exiting anyway");
-		}
+	if !config.supervisor.learning.enabled {
+		return;
 	}
+	if session.gate_failed {
+		crate::log_debug!("Distill skipped: trajectory failed verify-gate");
+		return;
+	}
+	let session_name = &session.session.info.name;
+	match spawn_distill_process(
+		&session.session.messages,
+		&role,
+		&project_name(current_dir),
+		session_name,
+	) {
+		Ok(()) => crate::supervisor::notify("distilling lessons in background …"),
+		Err(e) => crate::log_debug!("Background distill spawn failed: {}", e),
+	}
+}
+
+/// Snapshot the transcript to a temp file and launch `octomind distill` on it.
+/// The child is never waited on — the exiting parent's reaper adopts it.
+fn spawn_distill_process(
+	messages: &[crate::session::Message],
+	role: &str,
+	project: &str,
+	session_name: &str,
+) -> Result<()> {
+	let exe = std::env::current_exe()?;
+	let snapshot = std::env::temp_dir().join(format!(
+		"octomind-distill-{}-{}.json",
+		session_name,
+		std::process::id()
+	));
+	std::fs::write(&snapshot, serde_json::to_vec(messages)?)?;
+	let spawned = std::process::Command::new(exe)
+		.arg("distill")
+		.arg("--messages")
+		.arg(&snapshot)
+		.arg("--role")
+		.arg(role)
+		.arg("--project")
+		.arg(project)
+		.arg("--session")
+		.arg(session_name)
+		.stdin(std::process::Stdio::null())
+		.spawn();
+	if let Err(e) = spawned {
+		let _ = std::fs::remove_file(&snapshot);
+		return Err(e.into());
+	}
+	Ok(())
 }
 
 /// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.

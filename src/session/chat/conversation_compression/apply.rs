@@ -448,15 +448,24 @@ pub(super) async fn apply_compression(
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
-		// Prefer the actual most recent user message (ground truth) over the
-		// AI-generated `original_request`, which can drift stale across
-		// compressions when the model fails to detect a user pivot.
+		// The anchor intent is DURABLE — it survives every later compaction and
+		// feeds the resolver's session context — so it must not latch onto an
+		// elliptical turn ("continue", "yes, do it"), which is what taking the
+		// most recent user message verbatim would do. `current_task` is
+		// regenerated from the whole transcript on every cycle (never carried
+		// forward, unlike `original_request`), so it resolves the ellipsis and
+		// tracks pivots without going stale.
 		let intent_seed = {
-			let resolved = resolve_task_intent(
-				&last_user_message,
-				&summary.original_request,
-				&session.session.messages,
-			);
+			let current = summary.current_task.trim();
+			let resolved = if current.is_empty() {
+				resolve_task_intent(
+					&last_user_message,
+					&summary.original_request,
+					&session.session.messages,
+				)
+			} else {
+				current.to_string()
+			};
 			if !resolved.is_empty() {
 				Some(resolved)
 			} else if session.session.info.anchor.intent.is_empty() {

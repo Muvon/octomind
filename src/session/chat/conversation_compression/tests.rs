@@ -2206,8 +2206,7 @@ fn resolve_task_intent_prefers_last_user_message_over_stale_original_request() {
 
 	let last_user = crate::session::Message {
 		role: "user".to_string(),
-		content: "write about https://muvon.io/blog/reasoning-retrieval-code-search"
-			.to_string(),
+		content: "write about https://muvon.io/blog/reasoning-retrieval-code-search".to_string(),
 		..Default::default()
 	};
 	let stale_original = "write about https://octomind.run/blog/agents-where-you-already-are";
@@ -2215,8 +2214,7 @@ fn resolve_task_intent_prefers_last_user_message_over_stale_original_request() {
 
 	let resolved = resolve_task_intent(&Some(last_user), stale_original, &messages);
 	assert_eq!(
-		resolved,
-		"write about https://muvon.io/blog/reasoning-retrieval-code-search",
+		resolved, "write about https://muvon.io/blog/reasoning-retrieval-code-search",
 		"must prefer ground-truth last_user_message over stale original_request"
 	);
 }

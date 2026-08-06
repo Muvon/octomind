@@ -134,7 +134,7 @@ fn build_compression_prompt(
 
 <scaffold_rules>
 If the transcript contains a prior <conversation_summary id=\"…\">…</conversation_summary> block, treat its content as established facts that must carry forward:
-- original_request: copy from the prior summary unchanged. Otherwise quote verbatim from the very first user turn. Exception: if the user explicitly abandoned that task for an unrelated one, quote the pivot request verbatim instead.
+- original_request: quote verbatim from the MOST RECENT real user turn in the transcript. If the user explicitly pivoted to a new task, quote the pivot request. Only carry forward the prior summary's original_request when no new user turn exists in the transcript.
 - analysis_findings, errors_and_corrections, critical_knowledge: carry forward all prior entries, append new ones.
 - progress: extend (do not replace) the prior progress narrative.
 - current_task, next_steps: replace based on the most recent transcript.

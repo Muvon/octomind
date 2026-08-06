@@ -128,16 +128,15 @@ pub(super) async fn apply_compression(
 	// Fidelity snapshot (pre-drain): the authoritative goal + every explicit
 	// constraint across real user turns. Compression is lossy; these are what
 	// the post-compression view must still entail (checked at the end).
-	let fidelity_goal = {
-		let orig = summary.original_request.trim();
-		if !orig.is_empty() {
-			orig.to_string()
-		} else {
-			crate::session::latest_real_user_task_content(&session.session.messages)
-				.unwrap_or_default()
-				.to_string()
-		}
-	};
+	//
+	// Prefer the actual most recent user message (ground truth) over the
+	// AI-generated `original_request`, which can drift stale across
+	// compressions when the model fails to detect a user pivot.
+	let fidelity_goal = resolve_task_intent(
+		&last_user_message,
+		&summary.original_request,
+		&session.session.messages,
+	);
 	let fidelity_constraints: Vec<String> = {
 		let mut seen = std::collections::BTreeSet::new();
 		session
@@ -449,17 +448,21 @@ pub(super) async fn apply_compression(
 			.duration_since(std::time::UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
-		// Prefer the summarizer's ORIGINAL REQUEST (verbatim user words, carried
-		// forward across compactions, refreshed only on an explicit user pivot)
-		// so the anchor goal tracks the real task instead of going stale.
+		// Prefer the actual most recent user message (ground truth) over the
+		// AI-generated `original_request`, which can drift stale across
+		// compressions when the model fails to detect a user pivot.
 		let intent_seed = {
-			let orig = summary.original_request.trim();
-			if !orig.is_empty() {
-				Some(orig.to_string())
+			let resolved = resolve_task_intent(
+				&last_user_message,
+				&summary.original_request,
+				&session.session.messages,
+			);
+			if !resolved.is_empty() {
+				Some(resolved)
 			} else if session.session.info.anchor.intent.is_empty() {
 				Some("Free-form conversation session".to_string())
 			} else {
-				None
+				None // keep existing intent
 			}
 		};
 		session.session.info.anchor.extend(
@@ -578,6 +581,38 @@ pub(super) fn collect_preserved_skills(
 		.into_iter()
 		.filter_map(|name| last_idx.get(&name).map(|&i| messages[i].clone()))
 		.collect()
+}
+
+/// Resolve the current task intent, preferring ground truth (the actual
+/// most recent user message) over the AI-generated `original_request`
+/// field, which can drift stale across compressions when the model fails
+/// to detect a user pivot.
+///
+/// Priority: `last_user_message` > `original_request` > latest real user
+/// task in surviving messages.
+pub(super) fn resolve_task_intent(
+	last_user_message: &Option<crate::session::Message>,
+	original_request: &str,
+	messages: &[crate::session::Message],
+) -> String {
+	let from_last = last_user_message
+		.as_ref()
+		.map(|m| m.content.trim().to_string())
+		.filter(|s| !s.is_empty());
+	from_last
+		.or_else(|| {
+			let orig = original_request.trim();
+			if !orig.is_empty() {
+				Some(orig.to_string())
+			} else {
+				None
+			}
+		})
+		.unwrap_or_else(|| {
+			crate::session::latest_real_user_task_content(messages)
+				.unwrap_or_default()
+				.to_string()
+		})
 }
 
 #[cfg(test)]

@@ -2197,6 +2197,62 @@ fn format_compressed_entry_with_empty_summary_still_renders_wrapper() {
 //   * The token-count floor only gates WHETHER we compress, not which ratio.
 // ---------------------------------------------------------------------------
 #[test]
+fn resolve_task_intent_prefers_last_user_message_over_stale_original_request() {
+	// Regression for the bug that evicted the most recent user task:
+	// summary.original_request drifted stale (referenced an old article),
+	// but the actual most recent user message was about a different article.
+	// resolve_task_intent must prefer the ground-truth last_user_message.
+	use super::apply::resolve_task_intent;
+
+	let last_user = crate::session::Message {
+		role: "user".to_string(),
+		content: "write about https://muvon.io/blog/reasoning-retrieval-code-search"
+			.to_string(),
+		..Default::default()
+	};
+	let stale_original = "write about https://octomind.run/blog/agents-where-you-already-are";
+	let messages = vec![];
+
+	let resolved = resolve_task_intent(&Some(last_user), stale_original, &messages);
+	assert_eq!(
+		resolved,
+		"write about https://muvon.io/blog/reasoning-retrieval-code-search",
+		"must prefer ground-truth last_user_message over stale original_request"
+	);
+}
+
+#[test]
+fn resolve_task_intent_falls_back_to_original_request_when_no_last_user() {
+	use super::apply::resolve_task_intent;
+
+	let stale_original = "write about the old article";
+	let messages = vec![];
+
+	let resolved = resolve_task_intent(&None, stale_original, &messages);
+	assert_eq!(
+		resolved, "write about the old article",
+		"must fall back to original_request when last_user_message is None"
+	);
+}
+
+#[test]
+fn resolve_task_intent_falls_back_to_latest_real_user_in_messages() {
+	use super::apply::resolve_task_intent;
+
+	let messages = vec![crate::session::Message {
+		role: "user".to_string(),
+		content: "task from surviving prefix".to_string(),
+		..Default::default()
+	}];
+
+	let resolved = resolve_task_intent(&None, "", &messages);
+	assert_eq!(
+		resolved, "task from surviving prefix",
+		"must fall back to latest real user task in messages when both last_user and original_request are empty"
+	);
+}
+
+#[test]
 fn level_cursor_first_compression_after_user_is_lightest() {
 	// consecutive=0 must always select level 0 (lightest), independent of token floor.
 	assert_eq!(

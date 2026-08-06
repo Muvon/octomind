@@ -256,6 +256,7 @@ impl ChatSession {
 		self.evidence.reset();
 		self.gate_task = None;
 		self.gate_iterations = 0;
+		self.nudge_iterations = 0;
 		self.last_gate_gaps.clear();
 		// New genuine task: the delegate gate's rewrite budget starts fresh, so a
 		// previous task's exhausted budget can't latch the gate off.

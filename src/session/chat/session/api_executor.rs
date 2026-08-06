@@ -56,10 +56,58 @@ fn current_turn_tool_outputs(
 		.collect()
 }
 
-/// Arguments of every tool call the agent issued this turn — the paths it
-/// actually operated on, including roots outside the process cwd. Grounds for
-/// the file-reference check only: citations and URLs must match what the
-/// agent RECEIVED, never its own call text.
+/// Cap on the assembled turn answer handed to the verify-gate. Oldest parts are
+/// dropped first; the newest answer is always kept.
+const TURN_ANSWER_MAX: usize = 24_000;
+
+/// Separator between the parts of a re-run turn's answer. Self-describing so the
+/// verifier reads the parts as one deliverable (see the gate prompt).
+const ANSWER_PART_SEPARATOR: &str = "\n\n--- (continued after supervisor feedback) ---\n\n";
+
+/// The turn's answer: every assistant message since the real user turn that ended
+/// a round (content, no tool calls) — one per supervisor re-run pass, oldest first.
+///
+/// The gate must judge these as ONE deliverable. A re-run triggered by a narrow
+/// correction gets a narrow reply ("the link is grounded, the report stands"),
+/// because that is what the advisory asked for; judging only that last message
+/// throws away the actual deliverable and fails a correct turn for "not
+/// delivering" what an earlier part of the same turn already delivered.
+fn current_turn_answer(messages: &[crate::session::Message], turn_start: usize) -> String {
+	let parts: Vec<&str> = messages
+		.get(turn_start..)
+		.unwrap_or_default()
+		.iter()
+		.filter(|message| {
+			message.role == "assistant"
+				&& message.tool_calls.is_none()
+				&& !message.content.trim().is_empty()
+		})
+		.map(|message| message.content.as_str())
+		.collect();
+	// Fill the budget newest-first (an amendment is the most recent state), then
+	// restore chronological order so "later parts amend earlier ones" holds.
+	let mut kept: Vec<&str> = Vec::new();
+	let mut used = 0usize;
+	for part in parts.iter().rev().copied() {
+		if !kept.is_empty() && used + part.len() > TURN_ANSWER_MAX {
+			break;
+		}
+		used += part.len();
+		kept.push(part);
+	}
+	kept.reverse();
+	kept.join(ANSWER_PART_SEPARATOR)
+		.chars()
+		.take(TURN_ANSWER_MAX)
+		.collect()
+}
+
+/// Arguments of every tool call the agent issued this turn — the paths and URLs
+/// it actually operated on, including roots outside the process cwd. Grounds for
+/// the file-reference and URL checks: a locator the agent passed to a tool is one
+/// it read or opened, even when the tool's OUTPUT never echoes it (`view` returns
+/// numbered lines with no path header; a HEAD request returns a status code). It
+/// is not grounds for `<evidence>` quotes — those must match what came BACK.
 fn current_turn_call_args(messages: &[crate::session::Message], turn_start: usize) -> Vec<String> {
 	messages
 		.get(turn_start..)
@@ -418,7 +466,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// tool calls while the agent's OWN status still says exploring/progressing is
 	// a promise, not a result ("Let me implement the fix." → session end). Advisory
 	// continuation driven purely by the self-report — done stays gated,
-	// blocked/need_input stay legitimate hand-backs. Bounded by the shared gate
+	// blocked/need_input stay legitimate hand-backs. Bounded by the free-check
 	// budget, so a model that keeps yielding cannot loop it.
 	if config.supervisor.gate.enabled
 		&& !mode.is_interactive()
@@ -426,16 +474,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.last_self_report,
 			Some(crate::supervisor::detect::SelfReport::Exploring)
 				| Some(crate::supervisor::detect::SelfReport::Progressing)
-		) && chat_session.gate_iterations < config.supervisor.gate.max_iterations
+		) && chat_session.nudge_iterations < config.supervisor.gate.max_iterations
 	{
 		chat_session.add_system_managed_user_message(CONTINUE_NOTE)?;
 		chat_session.last_self_report = None;
-		chat_session.gate_iterations += 1;
+		chat_session.nudge_iterations += 1;
 		crate::supervisor::stats::pregate_block();
 		crate::supervisor::notify("turn ended while still in progress — continuing");
 		crate::log_debug!(
 			"Pre-gate: unfinished hand-back; re-running turn (iter {})",
-			chat_session.gate_iterations
+			chat_session.nudge_iterations
 		);
 		return Box::pin(execute_api_call_and_process_response(
 			chat_session,
@@ -452,10 +500,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
 	if config.supervisor.gate.enabled {
 		crate::log_debug!(
-			"gate: self_report={:?} iter={}/{} needs_verification={}",
+			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={}",
 			chat_session.last_self_report,
 			chat_session.gate_iterations,
 			config.supervisor.gate.max_iterations,
+			chat_session.nudge_iterations,
 			chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint())
@@ -522,8 +571,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		);
 		// Free pre-gate (no model call): the most common false-done is claiming
 		// completion right after a code change without re-running any check. Catch
-		// it deterministically before paying for the LLM verify-gate. Shares the
-		// gate_iterations budget, so it can't loop unbounded.
+		// it deterministically before paying for the LLM verify-gate. Bounded by the
+		// free-check budget (nudge_iterations), so it can't loop unbounded.
 		// Check every message since the current turn's real user task, not just
 		// the newest user-role message: recite/steer/recall inject their own
 		// user-role notes after the pre-gate note, which would hide it and cause
@@ -573,13 +622,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		{
 			chat_session.add_system_managed_user_message(PREGATE_NOTE)?;
 			chat_session.last_self_report = None; // force the re-run to re-evaluate
-			chat_session.gate_iterations += 1;
+			chat_session.nudge_iterations += 1;
 			crate::supervisor::stats::pregate_block();
 			crate::supervisor::notify("done claimed with unverified state changes — re-running");
-			if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+			if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
 				crate::log_debug!(
 					"Pre-gate: unverified mutation; re-running turn (iter {})",
-					chat_session.gate_iterations
+					chat_session.nudge_iterations
 				);
 				return Box::pin(execute_api_call_and_process_response(
 					chat_session,
@@ -611,17 +660,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				let note = crate::supervisor::gate::format_plan_advisory(&open);
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.gate_iterations += 1;
+				chat_session.nudge_iterations += 1;
 				crate::supervisor::stats::plan_block();
 				crate::supervisor::notify(&format!(
 					"done claimed with {} open plan item(s) — re-running",
 					open.len()
 				));
-				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
 					crate::log_debug!(
 						"Plan pre-gate: {} open item(s); re-running turn (iter {})",
 						open.len(),
-						chat_session.gate_iterations
+						chat_session.nudge_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(
 						chat_session,
@@ -657,15 +706,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				let note = crate::supervisor::gate::format_coverage_advisory();
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.gate_iterations += 1;
+				chat_session.nudge_iterations += 1;
 				crate::supervisor::stats::plan_block();
 				crate::supervisor::notify(
 					"done claimed with plan coverage but no recorded actions — re-running",
 				);
-				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
 					crate::log_debug!(
 						"Plan-coverage floor: plan-only activity; re-running turn (iter {})",
-						chat_session.gate_iterations
+						chat_session.nudge_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(
 						chat_session,
@@ -708,8 +757,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				&chat_session.last_response,
 				&ref_grounds,
 			);
-			let mut bad_urls =
-				crate::supervisor::detect::unverified_urls(&chat_session.last_response, &grounds);
+			// URLs ground against the same set as file refs: a cited permalink is
+			// built from paths the agent read, and a `view`-style result never echoes
+			// the path — only the call arguments carry it.
+			let mut bad_urls = crate::supervisor::detect::unverified_urls(
+				&chat_session.last_response,
+				&ref_grounds,
+			);
 			// Mid-turn compression and condensing drain or replace the very tool
 			// outputs these checks ground against — recover the verbatim originals
 			// from disk (lossless archive + spill files) so a compaction cannot
@@ -735,7 +789,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				);
 				bad_urls = crate::supervisor::detect::unverified_urls(
 					&chat_session.last_response,
-					&grounds,
+					&ref_grounds,
 				);
 			}
 			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
@@ -773,7 +827,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.gate_iterations += 1;
+				chat_session.nudge_iterations += 1;
 				crate::supervisor::stats::claim_block();
 				crate::supervisor::notify(&format!(
 					"{} unverifiable citation(s), {} invalid file reference(s), {} unverified URL(s) — re-running",
@@ -781,13 +835,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					bad_refs.len(),
 					bad_urls.len()
 				));
-				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
 					crate::log_debug!(
 						"Evidence check: {} unverified citation(s), {} bad file ref(s), {} bad URL(s); re-running (iter {})",
 						unverified.len(),
 						bad_refs.len(),
 						bad_urls.len(),
-						chat_session.gate_iterations
+						chat_session.nudge_iterations
 					);
 					return Box::pin(execute_api_call_and_process_response(
 						chat_session,
@@ -803,7 +857,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 		}
 
-		let result = chat_session.last_response.clone();
+		// The whole turn's answer, not just its last message: a supervisor re-run
+		// answers the correction it was given, so the deliverable usually sits in an
+		// earlier part of the same turn.
+		let result = current_turn_answer(&chat_session.session.messages, turn_start);
+		let result = if result.is_empty() {
+			chat_session.last_response.clone()
+		} else {
+			result
+		};
 		let claim = chat_session.last_self_report_reason.clone();
 		let actions = chat_session.evidence.render();
 		// Only a relevant pre-existing plan or a plan changed by this turn reaches
@@ -845,6 +907,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
 				chat_session.gate_iterations = 0;
+				chat_session.nudge_iterations = 0;
 				chat_session.gate_failed = false;
 				chat_session.last_gate_gaps.clear();
 				crate::supervisor::stats::gate_pass();
@@ -883,7 +946,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_failed = true;
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
-				crate::supervisor::notify("verification gaps remain — iterations exhausted");
+				// Name the gaps here too: this is the user's last word on the turn,
+				// and "gaps remain" without them is unactionable.
+				let mut msg = String::from("verification gaps remain — iterations exhausted");
+				for g in &gaps {
+					msg.push_str("\n- ");
+					msg.push_str(g);
+				}
+				crate::supervisor::notify(&msg);
 				reinforce_recalled(chat_session, config, -0.15).await;
 			}
 		}
@@ -910,6 +980,50 @@ mod tests {
 			content: content.to_string(),
 			..Default::default()
 		}
+	}
+
+	fn calling(content: &str) -> crate::session::Message {
+		crate::session::Message {
+			tool_calls: Some(serde_json::json!([{"name": "view"}])),
+			..message("assistant", content)
+		}
+	}
+
+	#[test]
+	fn turn_answer_joins_every_pass_oldest_first() {
+		let messages = vec![
+			message("user", "Old request"),
+			message("assistant", "Old answer, not this turn"),
+			message("user", "Brief the branch"),
+			calling("Reading the diff…"),
+			message("tool", "diff output"),
+			message("assistant", "THE BRIEF"),
+			message("user", "<pay-attention>unverified URL</pay-attention>"),
+			calling("Re-checking…"),
+			message("tool", "200"),
+			message("assistant", "The link is grounded; the brief stands."),
+		];
+		let start = latest_real_user_turn_start(&messages);
+		let answer = current_turn_answer(&messages, start);
+		// Both passes, in order, and nothing from the previous turn.
+		assert_eq!(
+			answer,
+			format!("THE BRIEF{ANSWER_PART_SEPARATOR}The link is grounded; the brief stands.")
+		);
+		assert!(!answer.contains("Old answer"));
+		assert!(!answer.contains("Reading the diff"));
+	}
+
+	#[test]
+	fn turn_answer_keeps_the_newest_pass_when_over_budget() {
+		let messages = vec![
+			message("user", "Do it"),
+			message("assistant", &"x".repeat(TURN_ANSWER_MAX)),
+			message("assistant", "the amendment"),
+		];
+		let start = latest_real_user_turn_start(&messages);
+		let answer = current_turn_answer(&messages, start);
+		assert_eq!(answer, "the amendment");
 	}
 
 	#[test]

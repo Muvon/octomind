@@ -422,7 +422,7 @@ Verify-gate on self-reported completion. Free deterministic pre-gates run first 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
-| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification). Shared budget across the free pre-gate and the LLM verify-gate |
+| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification). Applied separately to the free deterministic checks and to the LLM verify-gate, so a free nudge never consumes the verifier's repair budget |
 | `verifier_model` | string | supervisor `model` | Model the gate verifies with. Recommended: a **different family** than the agent model — a same-family verifier inherits the same blind spots |
 | `require_check_after_mutation` | bool | `true` | Free pre-gate: refuse `done` when state changed but no successful command execution ran since the change (tool-agnostic — works for any domain) |
 | `require_plan_complete` | bool | `true` | Free pre-gate: refuse `done` while the live plan still has open items |

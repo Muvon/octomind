@@ -396,11 +396,13 @@ fn normalize_ws(s: &str) -> String {
 }
 
 /// Deterministic evidence check: absolute URLs cited in `response` that appear
-/// in NONE of `grounds` (tool outputs plus the current user turn — a link the
-/// user supplied is a legitimate thing to reference back). A cited source link
-/// the agent never fetched and was never given is an invented source. Trailing
-/// prose/markdown punctuation is stripped, and a trailing-slash variant is
-/// accepted, so only genuinely absent links are flagged. No model call.
+/// in NONE of `grounds` (tool outputs, the current user turn, and the agent's
+/// executed call arguments — a link the user supplied is a legitimate thing to
+/// reference back, and one the agent passed to a tool is one it opened). A cited
+/// source link the agent never fetched, never issued a call for, and was never
+/// given is an invented source. Trailing prose/markdown punctuation is stripped,
+/// and a trailing-slash variant is accepted, so only genuinely absent links are
+/// flagged. No model call.
 pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 	let re =
@@ -1969,6 +1971,22 @@ mod tests {
 	fn url_from_user_message_passes() {
 		let grounds = vec!["user: check https://example.com/spec please".to_string()];
 		let resp = "The spec at https://example.com/spec says so.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+	}
+
+	#[test]
+	fn url_permalink_grounded_by_call_arguments() {
+		// A permalink built from a file the agent READ but that no tool OUTPUT
+		// names — `view` returns numbered lines, so the path exists only in the
+		// call arguments. Grounded, not invented.
+		let grounds = vec![
+			"git@github.com:Muvon/octolib.git\nd7269e6ce788af658b985da443e238e44058b363"
+				.to_string(),
+			r#"[{"name":"view","arguments":{"path":"src/llm/providers/ollama.rs","start":66}}]"#
+				.to_string(),
+			"66:    fn supports_caching(&self, _model: &str) -> bool {".to_string(),
+		];
+		let resp = "See https://github.com/Muvon/octolib/blob/d7269e6ce788af658b985da443e238e44058b363/src/llm/providers/ollama.rs#L66-L82 for the override.";
 		assert!(unverified_urls(resp, &grounds).is_empty());
 	}
 

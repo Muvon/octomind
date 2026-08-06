@@ -26,6 +26,12 @@ Judge the END STATE, not the agent's story: ignore its self-report and stated cl
 check only what the AGENT FINAL RESULT actually evidences against the CURRENT USER TURN (or,
 for a follow_up, its RESOLVED CURRENT REQUEST).
 
+AGENT FINAL RESULT holds every answer the agent produced for this turn, oldest first, split by
+`--- (continued after supervisor feedback) ---` when the turn was re-run. The parts are ONE
+deliverable: a later part amends or corrects the earlier ones, it does not replace them. A short
+final part that answers a narrow correction ("that reference is grounded, the rest stands") leaves
+the earlier part's deliverable intact — never flag it as undelivered.
+
 First classify what the CURRENT USER TURN asks for: CHANGING state (create, edit, fix, run, send),
 or only OBSERVING existing state and reporting on it (review, audit, analyze, investigate,
 explain, summarize). For an observe-only request the report itself is the deliverable:

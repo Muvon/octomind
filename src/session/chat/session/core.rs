@@ -202,6 +202,12 @@ pub struct ChatSession {
 	pub detectors: crate::supervisor::detect::Detectors,
 	/// Supervisor: verify-gate re-entry counter for the current turn.
 	pub gate_iterations: u8,
+	/// Supervisor: re-entry counter for the FREE deterministic checks (pre-gate,
+	/// plan, coverage, evidence). Deliberately separate from `gate_iterations`:
+	/// a zero-cost nudge that the agent then satisfies must not spend the paid
+	/// verifier's repair budget, which would fail an otherwise correct turn on
+	/// the gate's first gap verdict. Same per-turn bound, own counter.
+	pub nudge_iterations: u8,
 	/// Supervisor: rounds the delegate gate rejected a subagent handoff in the
 	/// current turn. Bounds the rewrite loop — at `delegate.max_revisions` the
 	/// gate stops judging and lets the handoff through. Reset on each genuine
@@ -369,6 +375,7 @@ impl ChatSession {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			nudge_iterations: 0,
 			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
@@ -583,6 +590,7 @@ impl ChatSession {
 						last_self_report: None,
 						detectors: crate::supervisor::detect::Detectors::default(),
 						gate_iterations: 0,
+						nudge_iterations: 0,
 						delegate_revisions: 0,
 						gate_failed: false,
 						last_gate_gaps: Vec::new(),
@@ -1338,6 +1346,7 @@ mod tests {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			nudge_iterations: 0,
 			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),

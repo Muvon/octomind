@@ -228,8 +228,9 @@ pub struct DetectorsConfig {
 pub struct GateConfig {
 	pub enabled: bool,
 	/// Max gate re-entry iterations before giving up (bounds the
-	/// self-verification dilemma). Shared budget across the free pre-gate and
-	/// the LLM verify-gate.
+	/// self-verification dilemma). Bounds the free deterministic checks and the
+	/// LLM verify-gate separately: a zero-cost nudge the agent then satisfies
+	/// must not consume the verifier's repair budget.
 	pub max_iterations: u8,
 	/// Model the gate verifies WITH (`provider:model`). Deliberately separate
 	/// from the generator: a same-family verifier inherits the same blind spots

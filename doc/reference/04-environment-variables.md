@@ -38,6 +38,7 @@ Each of these authenticates with its own `<PREFIX>_API_KEY` variable:
 | `MOONSHOT_API_KEY` | `moonshot` | The `kimi` prefix is an alias for `moonshot`. |
 | `ZAI_API_KEY` | `zai` | |
 | `BYTEPLUS_API_KEY` | `byteplus` | |
+| `ALIBABA_API_KEY` | `alibaba` | Defaults to the international endpoint; set `ALIBABA_API_URL` for Token Plan, China or workspace endpoints. |
 | `FEATHERLESS_API_KEY` | `featherless` | |
 | `OCTOHUB_API_KEY` | `octohub` | |
 | `OLLAMA_API_KEY` | `ollama` | Optional — local Ollama typically needs no key. |

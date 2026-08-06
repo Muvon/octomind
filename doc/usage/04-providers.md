@@ -47,7 +47,7 @@ A key set in the project `.env` therefore wins over the user-scope `.env`, which
 
 The most common providers are documented in detail below. The full set of provider prefixes octolib recognizes is:
 
-`openrouter`, `openai`, `anthropic`, `google`, `amazon`, `cloudflare`, `deepseek`, `cerebras`, `groq`, `together`, `fireworks`, `nvidia`, `minimax`, `moonshot` (alias `kimi`), `zai`, `byteplus`, `featherless`, `octohub`, `ollama`, `local` — plus the special `cli` meta-provider for local CLI-backed models.
+`openrouter`, `openai`, `anthropic`, `google`, `amazon`, `cloudflare`, `deepseek`, `cerebras`, `groq`, `together`, `fireworks`, `nvidia`, `minimax`, `moonshot` (alias `kimi`), `zai`, `byteplus`, `alibaba`, `featherless`, `octohub`, `ollama`, `local` — plus the special `cli` meta-provider for local CLI-backed models.
 
 ### OpenRouter (recommended)
 
@@ -169,6 +169,7 @@ The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Eac
 | Moonshot (Kimi) | `moonshot:model` / `kimi:model` | `MOONSHOT_API_KEY` |
 | Z.AI | `zai:model` | `ZAI_API_KEY` |
 | BytePlus | `byteplus:model` | `BYTEPLUS_API_KEY` |
+| Alibaba (Model Studio) | `alibaba:model` | `ALIBABA_API_KEY`, `ALIBABA_API_URL` (optional) |
 | Featherless | `featherless:model` | `FEATHERLESS_API_KEY` |
 | OctoHub | `octohub:model` | `OCTOHUB_API_KEY` |
 | Ollama (local) | `ollama:model` | `OLLAMA_API_KEY` (optional; defaults to local endpoint) |

@@ -296,7 +296,9 @@ pub(super) async fn apply_compression(
 	// Evict existing content markers first to enforce the 2-marker limit.
 	let supports_caching = crate::session::model_supports_caching(&session.session.info.model);
 	// Evict stale content markers — but preserve the anchor's marker.
-	// The anchor (instructions) keeps its cache marker from session start.
+	// The anchor is the last preamble message (system prompt, welcome, or the
+	// `<instructions>` file, whichever ends the preamble), so marking it caches
+	// that whole stable block behind one breakpoint.
 	// Set 1h TTL on anchor when long cache is enabled — stable prefix, rarely changes.
 	if supports_caching {
 		for (i, msg) in session.session.messages.iter_mut().enumerate() {

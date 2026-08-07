@@ -51,13 +51,17 @@ Most lessons are scoped. When unsure, use "scoped".
 - confidence=medium: the quote states a preference without a direct correction
 - State each lesson as a reusable rule, not a narrative
 
-# Existing Lessons (DO NOT duplicate; refine one only if a new user quote shows they changed their mind)
+# Existing Lessons (each carries an id you can reference)
 {existing_lessons}
 
 # Output Format
-<lesson scope="global|scoped" confidence="high|medium" tags="keyword1,keyword2" evidence="exact user quote here">
+<lesson scope="global|scoped" confidence="high|medium" tags="keyword1,keyword2" evidence="exact user quote here" supersedes="L#">
 Lesson text — what to do or avoid, stated as a rule.
-</lesson>"#;
+</lesson>
+
+Set supersedes="L#" ONLY when this lesson REPLACES that exact existing lesson because a new
+user quote refines it or reverses it — the old one is then deleted. Omit the attribute for
+anything new. Never restate an existing lesson that has not changed: drop it instead."#;
 
 /// Appended to the extraction prompt when orientation capture is enabled.
 const ORIENTATION_SECTION: &str = r#"
@@ -110,7 +114,10 @@ pub async fn run_extraction(
 		existing_scoped.len(),
 		existing_global.len()
 	);
-	let existing_text = format_existing(&existing_scoped, &existing_global);
+	// Bounded, id-labelled slice of the store — this is what the model may
+	// reference with `supersedes`, so prompt size is independent of corpus size.
+	let reconcile = reconcile_candidates(&existing_scoped, &existing_global);
+	let existing_text = format_existing(&reconcile);
 
 	let transcript = build_transcript(messages);
 	if transcript.is_empty() {
@@ -171,12 +178,13 @@ pub async fn run_extraction(
 		return Ok(stored);
 	}
 
-	let lessons_ev = parse_lessons_with_evidence(&response, role, project, session_name);
+	let candidates =
+		parse_lessons_with_evidence(&response, role, project, session_name, reconcile.len());
 	crate::log_debug!(
 		"Learning extraction: LLM returned {} lessons with evidence",
-		lessons_ev.len()
+		candidates.len()
 	);
-	if lessons_ev.is_empty() {
+	if candidates.is_empty() {
 		return Ok(stored);
 	}
 
@@ -192,47 +200,47 @@ pub async fn run_extraction(
 		.filter(|m| crate::session::is_real_user_task_message(m))
 		.map(|m| m.content.as_str())
 		.collect();
-	let lessons_ev: Vec<(Lesson, String)> = lessons_ev
+	let candidates: Vec<Candidate> = candidates
 		.into_iter()
-		.filter(|(lesson, evidence)| {
-			let found = user_turns.iter().any(|u| u.contains(evidence.as_str()));
+		.filter(|c| {
+			let found = user_turns.iter().any(|u| u.contains(c.evidence.as_str()));
 			if !found {
 				crate::log_debug!(
 					"Learning rejected (evidence not verbatim in any user turn): {}",
-					lesson.content
+					c.lesson.content
 				);
 			}
 			found
 		})
 		.collect();
-	if lessons_ev.is_empty() {
+	if candidates.is_empty() {
 		return Ok(stored);
 	}
 
 	// 2. One batched LLM pass: does the evidence actually support each lesson's
-	//    rule? Fail-open — a verifier outage must never block learning.
-	let keep = verify_lessons(config, &lessons_ev, &transcript).await;
-	let lessons: Vec<Lesson> = lessons_ev
+	//    rule? Fail-closed — an unverifiable rule must not become durable state.
+	let keep = verify_lessons(config, &candidates, &transcript).await;
+	let candidates: Vec<Candidate> = candidates
 		.into_iter()
 		.zip(keep.iter())
-		.filter_map(|((lesson, _), &k)| {
+		.filter_map(|(c, &k)| {
 			if !k {
 				crate::log_debug!(
 					"Learning rejected (evidence does not support rule): {}",
-					lesson.content
+					c.lesson.content
 				);
 			}
-			k.then_some(lesson)
+			k.then_some(c)
 		})
 		.collect();
-	if lessons.is_empty() {
+	if candidates.is_empty() {
 		return Ok(stored);
 	}
 
-	// Store each. Match within the same scope. Identical content is skipped;
-	// a refinement (high word overlap) supersedes the stale lesson — delete the
-	// old, write the new — so a correction to a previous correction wins instead
-	// of being silently dropped.
+	// Store each. Identical content is skipped. A refinement or reversal deletes
+	// the lesson the model explicitly named via `supersedes`, so a correction to
+	// a previous correction wins instead of being silently dropped — and no
+	// unrelated lesson is ever deleted on a similarity guess.
 	// Dedup lessons against existing lessons only (exclude orientation entries
 	// that share the same store).
 	let existing_lessons_scoped: Vec<Lesson> = existing_scoped
@@ -240,7 +248,8 @@ pub async fn run_extraction(
 		.filter(|l| l.memory_type != "orientation")
 		.cloned()
 		.collect();
-	for lesson in &lessons {
+	for candidate in &candidates {
+		let lesson = &candidate.lesson;
 		let existing = if lesson.scope == "global" {
 			&existing_global
 		} else {
@@ -255,7 +264,13 @@ pub async fn run_extraction(
 			continue;
 		}
 
-		if let Some(old) = best_overlap(&lesson.content, existing) {
+		// A scoped rule may not delete a user-wide one: crossing scopes here
+		// would let one project erase a preference that holds everywhere.
+		if let Some(old) = candidate
+			.supersedes
+			.and_then(|i| reconcile.get(i))
+			.filter(|old| old.scope == lesson.scope)
+		{
 			if let Err(e) = backend
 				.delete(&old.file_id(), &old.role, &old.project, config)
 				.await
@@ -283,6 +298,32 @@ pub async fn run_extraction(
 	Ok(stored)
 }
 
+/// Per-message transcript budget for USER turns. Every lesson needs a verbatim
+/// user quote, so this is where the signal is — spend the characters here.
+const USER_MSG_CHARS: usize = 2000;
+/// Per-message budget for assistant/tool turns: context only, never evidence.
+const OTHER_MSG_CHARS: usize = 500;
+
+/// Keep both ends of an over-budget message. Corrections and final constraints
+/// land at the END of long messages, which head-only truncation always dropped.
+/// UTF-8 safe: both cuts land on character boundaries.
+fn head_tail(content: &str, budget: usize) -> String {
+	if content.len() <= budget {
+		return content.to_string();
+	}
+	let half = budget / 2;
+	let head_end = crate::utils::truncation::floor_char_boundary(content, half);
+	let mut tail_start = content.len() - half;
+	while !content.is_char_boundary(tail_start) {
+		tail_start += 1;
+	}
+	format!(
+		"{}...[middle truncated]...{}",
+		&content[..head_end],
+		&content[tail_start..]
+	)
+}
+
 /// Build a compact transcript from session messages.
 fn build_transcript(messages: &[crate::session::Message]) -> String {
 	let mut transcript = String::new();
@@ -290,29 +331,42 @@ fn build_transcript(messages: &[crate::session::Message]) -> String {
 		if msg.role == "system" {
 			continue;
 		}
-		let role_label = match msg.role.as_str() {
-			"user" => "USER",
-			"assistant" => "ASSISTANT",
-			"tool" => "TOOL",
+		let (role_label, budget) = match msg.role.as_str() {
+			"user" => ("USER", USER_MSG_CHARS),
+			"assistant" => ("ASSISTANT", OTHER_MSG_CHARS),
+			"tool" => ("TOOL", OTHER_MSG_CHARS),
 			_ => continue,
 		};
 
-		// Truncate long messages to keep transcript manageable
-		let content = if msg.content.len() > 500 {
-			format!("{}...[truncated]", {
-				let mut end = 500;
-				while !msg.content.is_char_boundary(end) {
-					end -= 1;
-				}
-				&msg.content[..end]
-			})
-		} else {
-			msg.content.clone()
-		};
-
-		transcript.push_str(&format!("[{}]: {}\n\n", role_label, content));
+		transcript.push_str(&format!(
+			"[{}]: {}\n\n",
+			role_label,
+			head_tail(&msg.content, budget)
+		));
 	}
 	transcript
+}
+
+/// A parsed `<lesson>` before it earns storage: the rule, the verbatim quote the
+/// verification gate checks it against, and the existing lesson it claims to
+/// replace (index into the candidates shown in the prompt).
+struct Candidate {
+	lesson: Lesson,
+	evidence: String,
+	supersedes: Option<usize>,
+}
+
+/// Parse `supersedes="L3"` into a 0-based index, accepting only ids that were
+/// actually offered. Anything else — unknown id, garbage, out of range — means
+/// "no supersede", never an accidental delete.
+fn parse_supersedes(attrs: &str, candidate_count: usize) -> Option<usize> {
+	let raw = extract_attr(attrs, "supersedes")?;
+	let n: usize = raw.trim().trim_start_matches(['L', 'l']).parse().ok()?;
+	if n >= 1 && n <= candidate_count {
+		Some(n - 1)
+	} else {
+		None
+	}
 }
 
 /// Parse `<lesson>` tags, keeping each lesson's verbatim evidence quote
@@ -322,7 +376,8 @@ fn parse_lessons_with_evidence(
 	role: &str,
 	project: &str,
 	source: &str,
-) -> Vec<(Lesson, String)> {
+	candidate_count: usize,
+) -> Vec<Candidate> {
 	let mut lessons = Vec::new();
 	let now = chrono::Utc::now().to_rfc3339();
 
@@ -385,8 +440,8 @@ fn parse_lessons_with_evidence(
 					.unwrap_or_else(|| format!("{}...", truncated))
 			};
 
-			lessons.push((
-				Lesson {
+			lessons.push(Candidate {
+				lesson: Lesson {
 					content: content.to_string(),
 					title,
 					memory_type: "learning".into(),
@@ -400,7 +455,8 @@ fn parse_lessons_with_evidence(
 					created: now.clone(),
 				},
 				evidence,
-			));
+				supersedes: parse_supersedes(attrs, candidate_count),
+			});
 		}
 
 		remaining = &after_open[end_tag + 9..]; // skip past </lesson>
@@ -428,20 +484,17 @@ const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
 
 /// One batched verifier pass: which of the candidate lessons does the
 /// transcript evidence actually support? Returns a keep-mask aligned with
-/// `lessons`. Fail-open: any error keeps everything — a verifier outage must
-/// never block learning.
-async fn verify_lessons(
-	config: &Config,
-	lessons: &[(Lesson, String)],
-	transcript: &str,
-) -> Vec<bool> {
+/// `lessons`. Fail-CLOSED: a verifier outage or unusable output rejects
+/// everything. A lost lesson costs one extraction; an unverified lesson is
+/// durable state that steers every later session.
+async fn verify_lessons(config: &Config, lessons: &[Candidate], transcript: &str) -> Vec<bool> {
 	let mut listed = String::new();
-	for (i, (lesson, evidence)) in lessons.iter().enumerate() {
+	for (i, c) in lessons.iter().enumerate() {
 		listed.push_str(&format!(
 			"LESSON {}: {}\n  EVIDENCE: \"{}\"\n",
 			i + 1,
-			lesson.content,
-			evidence
+			c.lesson.content,
+			c.evidence
 		));
 	}
 	let view: String = transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect();
@@ -460,38 +513,44 @@ async fn verify_lessons(
 	{
 		Ok(r) => r,
 		Err(e) => {
-			crate::log_debug!("Lesson verification failed, keeping all: {}", e);
-			return vec![true; lessons.len()];
+			crate::log_debug!(
+				"Lesson verification unavailable, rejecting all {} candidates: {}",
+				lessons.len(),
+				e
+			);
+			return vec![false; lessons.len()];
 		}
 	};
 
-	let unsupported = parse_unsupported(&resp, lessons.len());
+	let Some(unsupported) = parse_unsupported(&resp, lessons.len()) else {
+		crate::log_debug!(
+			"Lesson verification returned unusable output, rejecting all {} candidates",
+			lessons.len()
+		);
+		return vec![false; lessons.len()];
+	};
 	(0..lessons.len())
 		.map(|i| !unsupported.contains(&(i + 1)))
 		.collect()
 }
 
 /// Extract the unsupported index list from the verifier's JSON, dropping
-/// out-of-range indices (the verifier's output is untrusted).
-fn parse_unsupported(resp: &str, count: usize) -> Vec<usize> {
-	let Some(start) = resp.find('{') else {
-		return Vec::new();
-	};
-	let Some(end) = resp.rfind('}') else {
-		return Vec::new();
-	};
-	let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&resp[start..=end]) else {
-		return Vec::new();
-	};
-	let Some(items) = parsed.get("unsupported").and_then(|v| v.as_array()) else {
-		return Vec::new();
-	};
-	items
-		.iter()
-		.filter_map(|v| v.as_u64())
-		.map(|n| n as usize)
-		.filter(|&n| n >= 1 && n <= count)
-		.collect()
+/// out-of-range indices (the verifier's output is untrusted). `None` means the
+/// response was unusable — no JSON object, or no `unsupported` array — which is
+/// a verification failure, NOT an empty unsupported list.
+fn parse_unsupported(resp: &str, count: usize) -> Option<Vec<usize>> {
+	let start = resp.find('{')?;
+	let end = resp.rfind('}')?;
+	let parsed = serde_json::from_str::<serde_json::Value>(&resp[start..=end]).ok()?;
+	let items = parsed.get("unsupported")?.as_array()?;
+	Some(
+		items
+			.iter()
+			.filter_map(|v| v.as_u64())
+			.map(|n| n as usize)
+			.filter(|&n| n >= 1 && n <= count)
+			.collect(),
+	)
 }
 
 /// Parse `<orientation>` tags — durable subject understanding. No evidence
@@ -560,8 +619,12 @@ fn word_overlap(new_content: &str, existing_content: &str) -> f64 {
 	overlap as f64 / new_words.len() as f64
 }
 
-/// Find the existing lesson most similar to `new_content` above the 0.6
-/// overlap threshold — the candidate to supersede. None if nothing is close.
+/// Find the existing entry most similar to `new_content` above the 0.6 overlap
+/// threshold — the candidate to supersede. None if nothing is close.
+///
+/// Orientation only. Lessons reconcile through the model's explicit
+/// `supersedes` id: word overlap cannot tell a refinement from a contradiction
+/// from a coincidence, and it must not decide a deletion on its own.
 fn best_overlap<'a>(new_content: &str, existing: &'a [Lesson]) -> Option<&'a Lesson> {
 	existing
 		.iter()
@@ -571,31 +634,65 @@ fn best_overlap<'a>(new_content: &str, existing: &'a [Lesson]) -> Option<&'a Les
 		.map(|(_, l)| l)
 }
 
-/// Format existing lessons (global + scoped) for the extraction prompt's
-/// dedup context, so the model neither duplicates nor wrongly re-scopes them.
-fn format_existing(scoped: &[Lesson], global: &[Lesson]) -> String {
-	let fmt = |ls: &[Lesson]| {
-		ls.iter()
-			.map(|l| format!("- [{}] {}", l.confidence, l.content))
-			.collect::<Vec<_>>()
-			.join("\n")
+/// Existing lessons offered to the extractor for dedup and supersede. Prompt
+/// size must not grow with the store; 20 is a workable retrieval-candidate
+/// count and the only knob evaluation needs.
+const RECONCILE_CANDIDATES: usize = 20;
+/// Slots held for global lessons so a busy project cannot crowd out the
+/// user-wide rules that matter most.
+const RECONCILE_GLOBAL_MIN: usize = 5;
+
+/// Pick the existing lessons to show the extractor: highest importance first,
+/// both scopes represented, capped. Orientation entries share the store but are
+/// not lessons, so they never appear here. Deterministic — ties break on
+/// creation time then content, since directory read order is not stable.
+fn reconcile_candidates(scoped: &[Lesson], global: &[Lesson]) -> Vec<Lesson> {
+	let ranked = |ls: &[Lesson]| {
+		let mut v: Vec<Lesson> = ls
+			.iter()
+			.filter(|l| l.memory_type != "orientation")
+			.cloned()
+			.collect();
+		v.sort_by(|a, b| {
+			b.importance
+				.partial_cmp(&a.importance)
+				.unwrap_or(std::cmp::Ordering::Equal)
+				.then_with(|| b.created.cmp(&a.created))
+				.then_with(|| a.content.cmp(&b.content))
+		});
+		v
 	};
-	let mut out = String::new();
-	if !global.is_empty() {
-		out.push_str("## Global (user-wide)\n");
-		out.push_str(&fmt(global));
-		out.push('\n');
+	let global = ranked(global);
+	let scoped = ranked(scoped);
+	let reserved = global.len().min(RECONCILE_GLOBAL_MIN);
+	let mut out: Vec<Lesson> = scoped
+		.into_iter()
+		.take(RECONCILE_CANDIDATES - reserved)
+		.collect();
+	out.extend(global.into_iter().take(RECONCILE_CANDIDATES - out.len()));
+	out
+}
+
+/// Format the reconcile candidates for the extraction prompt. Each line carries
+/// the `L#` id the model references with `supersedes`, plus the scope so it
+/// neither duplicates nor wrongly re-scopes an existing rule.
+fn format_existing(candidates: &[Lesson]) -> String {
+	if candidates.is_empty() {
+		return "(none)".to_string();
 	}
-	if !scoped.is_empty() {
-		out.push_str("## This project/role\n");
-		out.push_str(&fmt(scoped));
-		out.push('\n');
-	}
-	if out.is_empty() {
-		"(none)".to_string()
-	} else {
-		out
-	}
+	candidates
+		.iter()
+		.enumerate()
+		.map(|(i, l)| {
+			let scope = if l.scope == "global" {
+				"global"
+			} else {
+				"this project/role"
+			};
+			format!("[L{}] ({}, {}) {}", i + 1, scope, l.confidence, l.content)
+		})
+		.collect::<Vec<_>>()
+		.join("\n")
 }
 
 /// Extract an XML attribute value: `key="value"`.
@@ -940,10 +1037,20 @@ mod tests {
 
 	/// Test helper: parse lessons, discarding the evidence quotes.
 	fn parse_lesson_tags(response: &str, role: &str, project: &str, source: &str) -> Vec<Lesson> {
-		parse_lessons_with_evidence(response, role, project, source)
+		parse_lessons_with_evidence(response, role, project, source, 0)
 			.into_iter()
-			.map(|(lesson, _)| lesson)
+			.map(|c| c.lesson)
 			.collect()
+	}
+
+	fn lesson(content: &str, scope: &str, importance: f64) -> Lesson {
+		Lesson {
+			content: content.into(),
+			scope: scope.into(),
+			importance,
+			created: "2026-01-01T00:00:00Z".into(),
+			..Default::default()
+		}
 	}
 
 	#[test]
@@ -1127,11 +1234,21 @@ This project uses X
 
 	#[test]
 	fn test_parse_unsupported_filters_out_of_range() {
-		assert_eq!(parse_unsupported(r#"{"unsupported":[2,7,0]}"#, 3), vec![2]);
-		assert!(parse_unsupported(r#"{"unsupported":[]}"#, 3).is_empty());
-		assert!(parse_unsupported("not json", 3).is_empty());
-		assert!(parse_unsupported(r#"{"unsupported":"nope"}"#, 3).is_empty());
-		assert!(parse_unsupported("{}", 3).is_empty());
+		assert_eq!(
+			parse_unsupported(r#"{"unsupported":[2,7,0]}"#, 3),
+			Some(vec![2])
+		);
+		assert_eq!(parse_unsupported(r#"{"unsupported":[]}"#, 3), Some(vec![]));
+	}
+
+	#[test]
+	fn test_parse_unsupported_unusable_output_is_none() {
+		// None means "verification failed" — the caller must reject everything,
+		// not read it as an empty unsupported list.
+		assert_eq!(parse_unsupported("not json", 3), None);
+		assert_eq!(parse_unsupported(r#"{"unsupported":"nope"}"#, 3), None);
+		assert_eq!(parse_unsupported("{}", 3), None);
+		assert_eq!(parse_unsupported(r#"{"unsupported":[1,"#, 3), None);
 	}
 
 	#[test]
@@ -1139,9 +1256,106 @@ This project uses X
 		let response = r#"<lesson confidence="high" tags="auth" evidence="use bearer tokens">
 Bearer token auth is required
 </lesson>"#;
-		let parsed = parse_lessons_with_evidence(response, "dev", "proj", "src");
+		let parsed = parse_lessons_with_evidence(response, "dev", "proj", "src", 0);
 		assert_eq!(parsed.len(), 1);
-		assert_eq!(parsed[0].1, "use bearer tokens");
-		assert_eq!(parsed[0].0.content, "Bearer token auth is required");
+		assert_eq!(parsed[0].evidence, "use bearer tokens");
+		assert_eq!(parsed[0].lesson.content, "Bearer token auth is required");
+		assert_eq!(parsed[0].supersedes, None);
+	}
+
+	#[test]
+	fn test_parse_supersedes_only_accepts_offered_ids() {
+		assert_eq!(parse_supersedes(r#" supersedes="L3""#, 5), Some(2));
+		assert_eq!(parse_supersedes(r#" supersedes="3""#, 5), Some(2));
+		// Never offered, never parseable, or out of range → no delete.
+		assert_eq!(parse_supersedes(r#" supersedes="L9""#, 5), None);
+		assert_eq!(parse_supersedes(r#" supersedes="L0""#, 5), None);
+		assert_eq!(parse_supersedes(r#" supersedes="nope""#, 5), None);
+		assert_eq!(parse_supersedes(r#" supersedes="""#, 5), None);
+		assert_eq!(parse_supersedes(r#" confidence="high""#, 5), None);
+		assert_eq!(parse_supersedes(r#" supersedes="L1""#, 0), None);
+	}
+
+	#[test]
+	fn test_head_tail_preserves_end_of_long_message() {
+		let long = format!("{}CORRECTION AT THE END", "a".repeat(3000));
+		let out = head_tail(&long, 500);
+		assert!(out.ends_with("CORRECTION AT THE END"));
+		assert!(out.starts_with("aaa"));
+		assert!(out.contains("...[middle truncated]..."));
+		// Short input passes through untouched.
+		assert_eq!(head_tail("short", 500), "short");
+	}
+
+	#[test]
+	fn test_head_tail_utf8_safe() {
+		// Multibyte throughout: both cuts must land on char boundaries or this
+		// panics on slice.
+		let long = "日本語テキスト".repeat(200);
+		let out = head_tail(&long, 501);
+		assert!(out.contains("...[middle truncated]..."));
+		assert!(out.len() < long.len());
+	}
+
+	#[test]
+	fn test_build_transcript_keeps_tail_of_long_user_turn() {
+		let msg = |role: &str, content: String| crate::session::Message {
+			role: role.into(),
+			content,
+			timestamp: 0,
+			cached: false,
+			cache_ttl: None,
+			tool_call_id: None,
+			name: None,
+			tool_calls: None,
+			images: None,
+			videos: None,
+			thinking: None,
+			id: None,
+		};
+		let transcript = build_transcript(&[msg(
+			"user",
+			format!("{}no, use custom error types", "x".repeat(5000)),
+		)]);
+		assert!(transcript.contains("no, use custom error types"));
+	}
+
+	#[test]
+	fn test_reconcile_candidates_caps_and_reserves_global() {
+		let scoped: Vec<Lesson> = (0..50)
+			.map(|i| lesson(&format!("scoped {}", i), "scoped", 0.9))
+			.collect();
+		let global: Vec<Lesson> = (0..10)
+			.map(|i| lesson(&format!("global {}", i), "global", 0.5))
+			.collect();
+		let out = reconcile_candidates(&scoped, &global);
+		assert_eq!(out.len(), RECONCILE_CANDIDATES);
+		// Global keeps its floor even though every scoped entry outranks it.
+		assert_eq!(
+			out.iter().filter(|l| l.scope == "global").count(),
+			RECONCILE_GLOBAL_MIN
+		);
+	}
+
+	#[test]
+	fn test_reconcile_candidates_excludes_orientation() {
+		let orientation = Lesson {
+			memory_type: "orientation".into(),
+			..lesson("auth is delegated to octolib", "scoped", 0.9)
+		};
+		let out = reconcile_candidates(&[orientation, lesson("a rule", "scoped", 0.5)], &[]);
+		assert_eq!(out.len(), 1);
+		assert_eq!(out[0].content, "a rule");
+	}
+
+	#[test]
+	fn test_format_existing_emits_ids_and_scope() {
+		assert_eq!(format_existing(&[]), "(none)");
+		let out = format_existing(&[
+			lesson("scoped rule", "scoped", 0.9),
+			lesson("global rule", "global", 0.9),
+		]);
+		assert!(out.contains("[L1] (this project/role, medium) scoped rule"));
+		assert!(out.contains("[L2] (global, medium) global rule"));
 	}
 }

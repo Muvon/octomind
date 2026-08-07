@@ -708,16 +708,23 @@ pub async fn process_response<S: OutputSink>(
 						// result whose body is the placeholder).
 						let is_dedup =
 							result_content.contains(crate::session::dedup::DEDUP_NOTICE_TAG);
+						// A condensed result is the supervisor's rewrite, not the tool's
+						// output: "keep" mode has already pruned it to what serves the task
+						// and "replace" mode substitutes a model-written summary. Either way
+						// its topical fingerprint is the condenser's, so scoring it measures
+						// the supervisor instead of the agent.
+						let is_condensed = result_content
+							.contains(crate::supervisor::condense::CONDENSE_NOTICE_TAG);
 						// Drift: embed the RESULT and score it against the working-set centroid
 						// of recent on-task results. We score the result, not the call: the call
 						// is the cleaner intent, but short call strings are format-dominated and
 						// don't embed with topical separation (measured — they overlap); results
 						// carry real content and separate cleanly. Skip errors, dedup
-						// placeholders, and tiny outputs (no topical signal, not folded in).
-						// Score logged so `drift_floor` can be tuned.
+						// placeholders, condensed rewrites, and tiny outputs (no topical
+						// signal). Score logged so `drift_floor` can be tuned.
 						let is_drift = if distraction_threshold > 0
 							&& !is_error && !is_dedup
-							&& result_content.len() >= MIN_DRIFT_LEN
+							&& !is_condensed && result_content.len() >= MIN_DRIFT_LEN
 						{
 							match crate::embeddings::embed(&result_content).await {
 								Ok(emb) => {

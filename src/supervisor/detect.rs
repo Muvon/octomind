@@ -1172,9 +1172,16 @@ impl Detectors {
 	/// Update the working-set centroid with this result's embedding and return
 	/// whether the result drifted off it (cosine below `floor`). Self-referential:
 	/// it scores the result against what the agent has recently worked with, so it
-	/// needs no task anchor and is robust to abstract requests. Only NON-drift
-	/// results are folded in, so a sustained wander can't pull the centroid with it;
-	/// the first `CENTROID_WARMUP` results seed it and never count as drift.
+	/// needs no task anchor and is robust to abstract requests. The first
+	/// `CENTROID_WARMUP` results seed it and never count as drift.
+	///
+	/// EVERY result is folded in, drift included. Withholding drift results freezes
+	/// the centroid on the work the agent has left, so a deliberate move to another
+	/// subsystem scores below the floor for the rest of the turn no matter what it
+	/// does — the streak can then only be broken by going back. Folding always makes
+	/// the signal "nothing anchors" instead of "you left where you started": a
+	/// coherent pivot re-anchors within a few results and stops firing, while real
+	/// wandering never catches up to a centroid that keeps moving with it.
 	pub fn note_result(&mut self, emb: &[f32], floor: f32) -> bool {
 		if self.centroid.len() != emb.len() {
 			// First result since a reset (or a dimension change): seed, never drift.
@@ -1184,14 +1191,11 @@ impl Detectors {
 		}
 		let sim = crate::embeddings::cosine(&self.centroid, emb);
 		let warming = self.centroid_count < CENTROID_WARMUP;
-		let is_drift = !warming && sim < floor;
-		if !is_drift {
-			for (c, &e) in self.centroid.iter_mut().zip(emb) {
-				*c = (1.0 - CENTROID_ALPHA) * *c + CENTROID_ALPHA * e;
-			}
-			self.centroid_count = self.centroid_count.saturating_add(1);
+		for (c, &e) in self.centroid.iter_mut().zip(emb) {
+			*c = (1.0 - CENTROID_ALPHA) * *c + CENTROID_ALPHA * e;
 		}
-		is_drift
+		self.centroid_count = self.centroid_count.saturating_add(1);
+		!warming && sim < floor
 	}
 
 	/// Reset the working-set centroid when the user's task changes (a new turn):
@@ -1206,8 +1210,8 @@ impl Detectors {
 	}
 
 	/// Drop the working set so the next calls re-seed it. Called on a task change
-	/// and after a Distraction steer — a legit pivot then re-seeds instead of being
-	/// flagged forever (drift results are never folded into the stale centroid).
+	/// and after a Distraction steer — the agent has now been told, so it starts
+	/// from a clean anchor rather than from the centroid it was just steered off.
 	pub fn reset_working_set(&mut self) {
 		self.centroid.clear();
 		self.centroid_count = 0;
@@ -2333,18 +2337,26 @@ mod tests {
 	}
 
 	#[test]
-	fn drift_calls_do_not_pull_the_centroid() {
+	fn coherent_pivot_re_anchors_instead_of_drifting_forever() {
 		let mut d = Detectors::default();
 		let on = vec![1.0, 0.0, 0.0];
 		for _ in 0..3 {
 			d.note_result(&on, 0.5);
 		}
-		// Repeated drift is never folded in, so it keeps reading as drift.
+		// Landing in another subsystem reads as drift while the working set is still
+		// anchored on the old one...
 		let off = vec![0.0, 0.0, 1.0];
 		assert!(d.note_result(&off, 0.5));
 		assert!(d.note_result(&off, 0.5));
-		// And an on-task call is still recognised.
-		assert!(!d.note_result(&on, 0.5));
+		// ...but the centroid follows the agent, so continuing there is work, not
+		// drift. This is the false positive the fold-always rule removes: before it,
+		// every further result in the new subsystem stayed drift forever.
+		for i in 0..4 {
+			assert!(
+				!d.note_result(&off, 0.5),
+				"a coherent pivot must stop reading as drift (result {i})"
+			);
+		}
 	}
 
 	#[test]

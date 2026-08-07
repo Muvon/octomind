@@ -205,8 +205,11 @@ pub struct DetectorsConfig {
 	/// Consecutive off-task RESULTS this many times in a row → the model has drifted
 	/// from the line of work it was pursuing (distractor failure mode). `0` disables
 	/// the signal entirely (no embedding cost). When enabled it costs one embedding
-	/// per sizable result and scores it against a centroid of recent on-task results
-	/// — self-referential, so no task anchor is needed (robust to abstract requests).
+	/// per sizable result and scores it against a centroid of recent results — self-
+	/// referential, so no task anchor is needed (robust to abstract requests). The
+	/// centroid follows the agent, so only wandering that never re-anchors sustains
+	/// the streak; a coherent move to another subsystem breaks it after a result or
+	/// two.
 	pub distraction_threshold: usize,
 	/// Off-task FLOOR (not a relevance boundary): a result is drift only when its
 	/// cosine to the working-set centroid falls BELOW this. Embeddings are reliable

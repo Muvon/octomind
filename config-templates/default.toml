@@ -709,7 +709,8 @@ truncation_threshold = 2
 # output it already received (tool-agnostic, keyed on the dedup sentinel)
 dedup_threshold = 2
 # Consecutive off-task RESULTS in a row -> model has drifted from the line of work it
-# was pursuing. Scores each result against a centroid of recent on-task results
+# was pursuing. Scores each result against a centroid of recent results, which follows
+# the agent -- a coherent move to another subsystem re-anchors and breaks the streak
 # (self-referential -> no task anchor, robust to abstract requests). 0 = OFF (default;
 # costs one embedding per sizable tool result when enabled). Set e.g. 3 to enable;
 # drift decisions are logged at debug so you can tune drift_floor before relying on it.

@@ -583,19 +583,30 @@ pub async fn compress_completed_task(
 
 	// Build the AnchorUpdate for this compaction. Heuristic for now: the
 	// task summary becomes one `changes_made` entry, file_refs come from
-	// tool-call extraction, and `intent` is set on the first compaction
-	// from the task description (first-write-wins). Future work can
-	// replace this with an LLM-generated update for richer
-	// decisions/errors_seen content — the call shape stays the same.
+	// tool-call extraction. Future work can replace this with an
+	// LLM-generated update for richer decisions/errors_seen content — the
+	// call shape stays the same.
+	//
+	// `intent` re-reads the CURRENT user request every time. It used to be
+	// first-write-wins, which froze the goal at whatever the session opened
+	// with; `recite_note` then re-injected that stale ask as "Goal (fixed)"
+	// every few turns and steered the model off the live task. Falling back to
+	// the task description only when no real user turn survives in context.
 	let now_unix = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default()
 		.as_secs();
-	let anchor_intent = if session.session.info.anchor.intent.is_empty() {
-		Some(task.description.clone())
-	} else {
-		None
-	};
+	let anchor_intent = crate::session::latest_real_user_task_content(&session.session.messages)
+		.map(str::to_string)
+		.or_else(|| {
+			session
+				.session
+				.info
+				.anchor
+				.intent
+				.is_empty()
+				.then(|| task.description.clone())
+		});
 	let anchor_update = crate::session::anchor::AnchorUpdate {
 		intent: anchor_intent,
 		changes_made: vec![format!("{}: {}", task.title, summary)],

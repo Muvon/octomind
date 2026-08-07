@@ -168,10 +168,11 @@ impl TaskContext {
 		session_context: &str,
 		active_plan: Option<&str>,
 	) -> Option<Self> {
-		let current_index = messages
-			.iter()
-			.rposition(crate::session::is_real_user_task_message)?;
-		let current_request = messages[current_index].content.clone();
+		// Index and content resolve through the same helper pair, so after a
+		// compaction both land on the continuation wrapper instead of the
+		// resolution silently switching off.
+		let current_index = crate::session::latest_task_turn_index(messages)?;
+		let current_request = crate::session::latest_real_user_task_content(messages)?.to_string();
 		Some(Self {
 			current_request,
 			recent_history: render_recent_history(&messages[..current_index]),

@@ -18,21 +18,43 @@
 //
 // Anchor selection is purely structural and re-derived on every call — no
 // `first_prompt_idx` cache, no resume-time bootstrap detection, no Some/None
-// branching. Two-rule deterministic ladder:
+// branching. One deterministic rule:
 //
-//   1. If a `<instructions>` user message exists, anchor = its LATEST index.
-//   2. Else, anchor = first user message index.
+//   anchor = the last message of the immutable preamble, i.e. the index just
+//   before the FIRST message that states a task.
 //
-// No tool-skip dance: under this rule the anchor is always a user-role
-// message, never an assistant-with-tool_calls, so its tool results can't
-// orphan in the drain range.
+// "States a task" means a real user turn, a prior compression summary, or a
+// prior continuation wrapper — every message shape that can tell the model
+// what it is supposed to be doing. Draining from the first of them is what
+// makes compaction safe: the session's opening ask, older summaries, and the
+// previous cycle's continuation wrapper all fold into the NEW summary instead
+// of surviving beside it as competing instructions. Keeping the opening ask
+// verbatim (the old fallback rule) made the model abandon the live task and
+// re-execute the first thing it was ever asked.
+//
+// The preamble that survives is exactly the non-task scaffolding: system
+// prompt, welcome message, and the `<instructions>` file — none of which
+// claims to be the current request.
+//
+// No tool-skip dance: the message at the anchor is always the one preceding a
+// task-stating message, so it can never be an assistant still awaiting tool
+// results (a tool result must immediately follow its assistant message).
 
 use crate::session::chat::session::ChatSession;
 use anyhow::Result;
 
-/// User-role messages wrap the instructions file in this tag at injection
-/// time (see `prompt_setup.rs`). Detect by literal prefix on trimmed content.
-const INSTRUCTIONS_TAG_OPEN: &str = "<instructions>";
+/// True when a message can state or restate "what the user wants": a real user
+/// turn, a prior compression summary, or a prior continuation wrapper.
+///
+/// This is the compression boundary. Every such message must end up INSIDE the
+/// drained range so that after compaction exactly one statement of the active
+/// task survives — the fresh continuation wrapper.
+fn states_task(m: &crate::session::Message) -> bool {
+	crate::session::is_real_user_task_message(m)
+		|| (m.role == "user" && super::apply::is_continuation_message(&m.content))
+		|| (m.role == "assistant"
+			&& m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME))
+}
 
 /// Find the compression range deterministically from message structure.
 ///
@@ -40,31 +62,23 @@ const INSTRUCTIONS_TAG_OPEN: &str = "<instructions>";
 /// - `anchor_idx` is KEPT (compression drains `anchor_idx+1..=end_idx`)
 /// - `end_idx = messages.len() - 1`
 ///
-/// Returns `(0, 0)` when there is nothing meaningful to compress (no anchor,
-/// too few conversational messages, or anchor already at the tail).
+/// Returns `(0, 0)` when there is nothing meaningful to compress (no task-
+/// stating message, no preamble to anchor on, too few conversational messages,
+/// or the anchor is already at the tail).
 pub(super) fn find_compression_range(
 	messages: &[crate::session::Message],
 	force: bool,
 ) -> Result<(usize, usize)> {
-	// Anchor: latest <instructions> user message, else first user message.
-	let anchor = messages
-		.iter()
-		.enumerate()
-		.rev()
-		.find(|(_, m)| {
-			m.role == "user" && m.content.trim_start().starts_with(INSTRUCTIONS_TAG_OPEN)
-		})
-		.map(|(i, _)| i)
-		.or_else(|| {
-			messages
-				.iter()
-				.position(crate::session::is_real_user_task_message)
-		});
-
-	let start_idx = match anchor {
-		Some(i) => i,
-		None => return Ok((0, 0)),
+	let Some(first_task) = messages.iter().position(states_task) else {
+		return Ok((0, 0));
 	};
+
+	// No preamble in front of it (no system prompt) — there is nothing we could
+	// keep as an anchor, and index 0 must survive for the drain to be expressible.
+	if first_task == 0 {
+		return Ok((0, 0));
+	}
+	let start_idx = first_task - 1;
 
 	let end_idx = messages.len() - 1;
 

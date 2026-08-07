@@ -37,10 +37,7 @@ const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_
 const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with state changes still unverified, so that claim isn't trustworthy yet. Run the check appropriate to this work (for example, inspect the resulting state, exercise the changed behavior, or use a domain-specific validator), watch the result, and report the actual outcome: pass, fail, or — if no meaningful check exists — what you inspected and why that is sufficient. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
-	messages
-		.iter()
-		.rposition(crate::session::is_real_user_task_message)
-		.unwrap_or(messages.len())
+	crate::session::latest_task_turn_index(messages).unwrap_or(messages.len())
 }
 
 fn current_turn_tool_outputs(

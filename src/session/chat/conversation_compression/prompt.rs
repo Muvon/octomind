@@ -132,9 +132,12 @@ fn build_compression_prompt(
 5. User negative feedback (\"don't do X\", \"stop doing Y\") is the HIGHEST preservation priority — never lose a correction.
 </priorities>
 
+<active_task_rule>
+original_request is the ACTIVE task, not the session's opening ask. Quote it verbatim from the MOST RECENT real user turn in the transcript — always, whether or not the new request looks related to earlier work, and whether or not the user said they were abandoning anything. A later request supersedes an earlier one by being later. Only when the transcript contains no real user turn at all may you carry forward a prior summary's original_request unchanged.
+</active_task_rule>
+
 <scaffold_rules>
 If the transcript contains a prior <conversation_summary id=\"…\">…</conversation_summary> block, treat its content as established facts that must carry forward:
-- original_request: quote verbatim from the MOST RECENT real user turn in the transcript. If the user explicitly pivoted to a new task, quote the pivot request. Only carry forward the prior summary's original_request when no new user turn exists in the transcript.
 - analysis_findings, errors_and_corrections, critical_knowledge: carry forward all prior entries, append new ones.
 - progress: extend (do not replace) the prior progress narrative.
 - current_task, next_steps: replace based on the most recent transcript.

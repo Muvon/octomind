@@ -192,7 +192,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			},
 			"original_request": {
 				"type": "string",
-				"description": "The user's original task statement. Quote verbatim from the very first user turn in the transcript; OR, if a prior **ORIGINAL REQUEST** exists in a previous summary inside the transcript, carry it forward unchanged. EXCEPTION: if the user has since explicitly abandoned that task for an unrelated one, quote the pivot request verbatim instead — the abandoned task must not linger as the goal. Never paraphrase."
+				"description": "The ACTIVE task: quote verbatim from the MOST RECENT real user turn in the transcript. This field is what the next model turn treats as its instruction, so a stale value makes it abandon the live task and redo old work. Only when the transcript contains no real user turn at all, carry forward the prior summary's request unchanged. Never paraphrase, and never prefer an earlier turn over a later one."
 			},
 			"session_context": {
 				"type": "string",
@@ -488,7 +488,7 @@ pub const XML_OUTPUT_SPEC: &str = r#"<output_format>
 Emit ONE single XML document with the following tags, in this order. Every required tag MUST be present. Use the exact tag names below. Do not add additional tags or attributes.
 
 <should_compress>true|false</should_compress>             (required, exactly true or false)
-<original_request>verbatim first user request</original_request>   (required, may be empty when should_compress is false)
+<original_request>verbatim MOST RECENT user request</original_request>   (required, may be empty when should_compress is false)
 <session_context>one sentence</session_context>           (required, may be empty when should_compress is false)
 <current_task>1-2 sentences</current_task>                (required, may be empty when should_compress is false)
 <progress>2-4 sentences</progress>                        (required, may be empty when should_compress is false)

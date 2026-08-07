@@ -26,19 +26,17 @@ use crate::session::chat::session::ChatSession;
 use crate::session::estimate_tokens;
 use anyhow::Result;
 
-/// Open tag for the synthetic post-compression continuation wrapper.
-/// Detected verbatim by `is_continuation_message` so the next compression
-/// cycle's user-msg filter excludes these from `all_user_msgs`.
-const CONTINUATION_TAG_OPEN: &str = "<continuation>";
+// Continuation-wrapper vocabulary lives in `crate::session` so the builder here
+// and every reader of the live task (recall, resolve, verify-gate, recitation)
+// agree on one spelling.
+use crate::session::{CONTINUATION_FALLBACK_INTENT, CONTINUATION_TAG_OPEN};
 
-/// Open/close tags for the `<task>` intent embedded in a continuation wrapper.
-const CONTINUATION_TASK_OPEN: &str = "<task>";
-const CONTINUATION_TASK_CLOSE: &str = "</task>";
-
-/// Placeholder used when a continuation wrapper carries no real user intent
-/// (points the model at the summary instead). Shared by the builder and the
-/// extractor so the two never drift.
-const CONTINUATION_FALLBACK_INTENT: &str = "see summary above for the active task";
+/// `Message::name` carried by every compression summary inserted into the
+/// conversation — this module's conversation summaries and the task summaries
+/// from `mcp/core/plan/compression.rs` alike. Structural, so detection never
+/// depends on the rendered body text (which gets prefixed with the
+/// earlier-requests and plan sections).
+pub(super) const COMPRESSION_MESSAGE_NAME: &str = "plan_compression";
 
 /// True if `content` is a synthetic continuation wrapper inserted by a
 /// prior compression cycle (not a real user ask). Mirrors the
@@ -58,16 +56,7 @@ pub(super) fn is_continuation_message(content: &str) -> bool {
 /// Returns None when `content` isn't a continuation wrapper, has no `<task>`,
 /// or carries only the synthetic fallback placeholder (no real intent).
 pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
-	if !is_continuation_message(content) {
-		return None;
-	}
-	let start = content.find(CONTINUATION_TASK_OPEN)? + CONTINUATION_TASK_OPEN.len();
-	let end = content[start..].find(CONTINUATION_TASK_CLOSE)? + start;
-	let task = content[start..end].trim();
-	if task.is_empty() || task == CONTINUATION_FALLBACK_INTENT {
-		return None;
-	}
-	Some(task.to_string())
+	crate::session::continuation_task(content).map(str::to_string)
 }
 
 /// Build the SOTA continuation wrapper for the trailing user turn after a
@@ -149,6 +138,21 @@ pub(super) async fn apply_compression(
 			.collect()
 	};
 
+	// Re-point the session anchor at the goal we just resolved. `recite_note`
+	// injects `anchor.intent` mid-turn as "Goal (fixed)", so leaving it on an
+	// older task makes the supervisor itself steer the model back to work the
+	// user has moved on from — the same stale-task failure compaction just
+	// fixed, arriving through a different door.
+	if !fidelity_goal.trim().is_empty() {
+		session.session.info.anchor.extend(
+			crate::session::anchor::AnchorUpdate {
+				intent: Some(fidelity_goal.clone()),
+				..Default::default()
+			},
+			crate::utils::time::now_secs(),
+		);
+	}
+
 	// Fold critical knowledge from the typed summary into the session.
 	// Done up-front so the session reflects the new knowledge before we
 	// insert the rendered markdown that omits the (already-folded) entries.
@@ -202,8 +206,11 @@ pub(super) async fn apply_compression(
 		archive_path.as_deref(),
 	);
 
-	// Prepend USER TASKS section (last 4 user requests, excluding the appended one).
-	// These are raw user messages — not AI-rephrased — so intent is never lost.
+	// Prepend the earlier-requests section (last 4 user requests, excluding the
+	// appended one). These are raw user messages — not AI-rephrased — so intent
+	// is never lost. The heading says "earlier" explicitly: an ambiguous "USER
+	// TASKS" list reads as a to-do list, and a post-compaction model will pick
+	// the first entry and redo finished work.
 	let compressed_entry = if user_tasks_msgs.is_empty() {
 		base_entry
 	} else {
@@ -213,7 +220,10 @@ pub(super) async fn apply_compression(
 			.map(|(i, msg)| format!("{}. {}", i + 1, msg))
 			.collect::<Vec<_>>()
 			.join("\n");
-		format!("## USER TASKS\n{}\n\n{}", user_tasks, base_entry)
+		format!(
+			"## EARLIER USER REQUESTS (history — already superseded, NOT the active task)\n{}\n\n{}",
+			user_tasks, base_entry
+		)
 	};
 
 	// Append the current active plan (if any) to the summary so the model doesn't have
@@ -337,7 +347,7 @@ pub(super) async fn apply_compression(
 		content: compressed_entry.clone(),
 		timestamp: now,
 		cached: false,
-		name: Some("plan_compression".to_string()),
+		name: Some(COMPRESSION_MESSAGE_NAME.to_string()),
 		id: inherited_response_id,
 		..Default::default()
 	};

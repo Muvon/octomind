@@ -129,7 +129,7 @@ impl Default for Message {
 pub fn is_system_managed_user_content(content: &str) -> bool {
 	let trimmed = content.trim_start();
 	trimmed.starts_with("<instructions>")
-		|| trimmed.starts_with("<continuation>")
+		|| trimmed.starts_with(CONTINUATION_TAG_OPEN)
 		|| trimmed.starts_with("<system-note>")
 		|| crate::mcp::runtime::skill::is_skill_message(content)
 		|| crate::supervisor::gate::is_supervisor_injection(content)
@@ -156,12 +156,62 @@ pub fn is_real_user_task_message(message: &Message) -> bool {
 	!is_system_managed_user_content(&message.content)
 }
 
-pub fn latest_real_user_task_content(messages: &[Message]) -> Option<&str> {
+/// Open tag of the synthetic wrapper compaction inserts to carry the live
+/// request forward once the raw user turns have been drained.
+pub const CONTINUATION_TAG_OPEN: &str = "<continuation>";
+/// Open/close tags of the `<task>` intent embedded in a continuation wrapper.
+pub const CONTINUATION_TASK_OPEN: &str = "<task>";
+pub const CONTINUATION_TASK_CLOSE: &str = "</task>";
+/// Placeholder a continuation wrapper carries when there was no real user
+/// intent to forward. Shared by the builder and every reader so they can't drift.
+pub const CONTINUATION_FALLBACK_INTENT: &str = "see summary above for the active task";
+
+/// The `<task>` a continuation wrapper carries, borrowed from `content`.
+///
+/// `None` when `content` is not a wrapper, carries no `<task>`, or holds only
+/// the synthetic placeholder — i.e. whenever there is no real intent to read.
+pub fn continuation_task(content: &str) -> Option<&str> {
+	let trimmed = content.trim_start();
+	if !trimmed.starts_with(CONTINUATION_TAG_OPEN) {
+		return None;
+	}
+	let start = trimmed.find(CONTINUATION_TASK_OPEN)? + CONTINUATION_TASK_OPEN.len();
+	let end = trimmed[start..].find(CONTINUATION_TASK_CLOSE)? + start;
+	let task = trimmed[start..end].trim();
+	if task.is_empty() || task == CONTINUATION_FALLBACK_INTENT {
+		return None;
+	}
+	Some(task)
+}
+
+/// Index of the message that opens the current turn: the most recent genuine
+/// user turn, or — once a compaction has drained them all — the continuation
+/// wrapper carrying the live request forward.
+///
+/// Without the fallback every consumer (lesson recall, task resolution, the
+/// verify-gate's turn window, constraint recitation) goes blind for the rest of
+/// the turn immediately after a compaction.
+pub fn latest_task_turn_index(messages: &[Message]) -> Option<usize> {
 	messages
 		.iter()
-		.rev()
-		.find(|m| is_real_user_task_message(m))
-		.map(|m| m.content.as_str())
+		.rposition(is_real_user_task_message)
+		.or_else(|| {
+			messages
+				.iter()
+				.rposition(|m| m.role == "user" && continuation_task(&m.content).is_some())
+		})
+}
+
+/// The live user request — the text at [`latest_task_turn_index`], unwrapped
+/// when it is a continuation wrapper. The two always resolve to the same
+/// message, so an index and its content can never disagree.
+pub fn latest_real_user_task_content(messages: &[Message]) -> Option<&str> {
+	let message = messages.get(latest_task_turn_index(messages)?)?;
+	if is_real_user_task_message(message) {
+		Some(message.content.as_str())
+	} else {
+		continuation_task(&message.content)
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -534,6 +584,51 @@ mod tests {
 			id: None,
 		}
 	}
+	#[test]
+	fn latest_task_falls_back_to_continuation_after_compaction() {
+		let wrapper = "<continuation>\nResume from where the previous turn left off.\n<task>\nprepare the benchmark script\n</task>\n</continuation>";
+
+		// While a genuine user turn survives, it wins outright.
+		let live = vec![
+			create_test_message("system", "sys", None, None),
+			create_test_message("user", wrapper, None, None),
+			create_test_message("user", "prepare the benchmark script", None, None),
+		];
+		assert_eq!(
+			latest_real_user_task_content(&live),
+			Some("prepare the benchmark script")
+		);
+
+		// After compaction drains every raw user turn, the wrapper carries the
+		// live request — without this the whole supervisor stack goes blind.
+		let compacted = vec![
+			create_test_message("system", "sys", None, None),
+			create_test_message("assistant", "<conversation_summary/>", None, None),
+			create_test_message("user", wrapper, None, None),
+		];
+		assert_eq!(
+			latest_real_user_task_content(&compacted),
+			Some("prepare the benchmark script")
+		);
+
+		// The synthetic placeholder is not intent — it must not resolve.
+		let barren = vec![create_test_message(
+			"user",
+			&format!(
+				"<continuation>\n<task>\n{}\n</task>\n</continuation>",
+				CONTINUATION_FALLBACK_INTENT
+			),
+			None,
+			None,
+		)];
+		assert_eq!(latest_real_user_task_content(&barren), None);
+
+		// Non-wrappers and malformed wrappers never yield a task.
+		assert_eq!(continuation_task("just a user message"), None);
+		assert_eq!(continuation_task("<continuation>\nno task tag"), None);
+		assert_eq!(continuation_task("<continuation>\n<task>\n</task>"), None);
+	}
+
 	#[test]
 	fn ensure_system_managed_wraps_unmarked_content_only() {
 		// Marked content passes through untouched.

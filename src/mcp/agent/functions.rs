@@ -798,6 +798,14 @@ pub async fn run_acp_command(
 	// with status `done` even when the API call inside the subprocess failed.
 	let mut prompt_error: Option<Value> = None;
 	let mut prompt_response_received = false;
+	// Last cost the child reported, so repeated cumulative notifications bank
+	// deltas. A tap run resumes the same child session (`--name <id>`), so its
+	// reported total already covers earlier turns — resume from what we banked.
+	let mut child_cost = tap_run_id
+		.and_then(crate::session::tap_runs::find_job)
+		.and_then(|j| j.live.usage)
+		.map(|u| u.cost)
+		.unwrap_or(0.0);
 
 	loop {
 		// Check for cancellation before each line read
@@ -841,6 +849,18 @@ pub async fn run_acp_command(
 				.and_then(|x| x.as_bool()),
 		) {
 			g.verified = v;
+		}
+
+		// The child reports its own running session cost in `_meta` (which already
+		// includes anything IT delegated), so bank only the increment. Applies to
+		// every child — `agent_*`, `tap run`, layer — otherwise their spend never
+		// reaches the parent's total.
+		if let Some(cost) = msg
+			.pointer("/params/_meta/octomind.usage/session_cost")
+			.and_then(|v| v.as_f64())
+		{
+			crate::session::external_spend::record(cost - child_cost);
+			child_cost = cost;
 		}
 
 		// Forward session/update notifications to the parent's notification
@@ -1270,6 +1290,31 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 			assert_eq!(usage.output_tokens, 20);
 			assert_eq!(usage.cache_read_tokens, 7);
 			assert!((usage.cost - 0.5).abs() < 1e-9);
+
+			// Resuming the same tap run replays the child's cumulative total, so
+			// only the increment may be banked: 0.5 then 0.8 owes 0.8, not 1.3.
+			let script = format!(
+				"{HANDSHAKE}{}\n{}{WAIT_STDIN_EOF}",
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.usage":{"session_tokens":160,"session_cost":0.8,"input_tokens":120,"output_tokens":40,"cache_read_tokens":7,"cache_write_tokens":0,"reasoning_tokens":0}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'"#
+			);
+			run_acp_command(
+				"sh",
+				&["-c", &script],
+				"task",
+				&std::env::temp_dir(),
+				watch::channel(false).1,
+				Some("tap-test-live-000001"),
+				false,
+			)
+			.await
+			.expect("resume succeeds");
+
+			let banked = crate::session::external_spend::take();
+			assert!(
+				(banked - 0.8).abs() < 1e-9,
+				"expected 0.8 banked for the parent, got {banked}"
+			);
 		})
 		.await;
 	}

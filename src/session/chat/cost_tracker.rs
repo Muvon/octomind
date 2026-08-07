@@ -29,6 +29,12 @@ impl CostTracker {
 		exchange: &ProviderExchange,
 		_config: &Config,
 	) -> Result<()> {
+		// Subagents, layers and the supervisor spend without a `&mut Session` in
+		// hand; bank it into the total here so spending thresholds and every
+		// cost readout see the session's real bill.
+		chat_session.session.fold_external_spend();
+		chat_session.estimated_cost = chat_session.session.info.total_cost;
+
 		if let Some(usage) = &exchange.usage {
 			// Simple token extraction with clean provider interface
 			let cache_read_tokens = usage.cache_read_tokens;

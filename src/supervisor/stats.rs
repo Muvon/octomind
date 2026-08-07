@@ -15,10 +15,11 @@
 //! Supervisor activity + usage tally, surfaced in `/info`.
 //!
 //! The supervisor's own model calls (verify-gate, distill, recall-prep) run on a
-//! separate cheap model and are otherwise invisible to the session totals. This
-//! process-global accumulator captures their token/cost spend plus what the
-//! supervisor *did* (gate runs, steers, lessons/orientation stored, recalls) so
-//! `/info` can show it. One process == one interactive session, so a global is
+//! separate cheap model. This process-global accumulator captures their
+//! token/cost spend plus what the supervisor *did* (gate runs, steers,
+//! lessons/orientation stored, recalls) so `/info` can show it as its own
+//! breakdown; the cost also feeds `session::external_spend` so it lands in the
+//! session total. One process == one interactive session, so a global is
 //! effectively session-scoped (same approach as the agents stats).
 
 use std::sync::{Mutex, OnceLock};
@@ -113,6 +114,7 @@ pub fn record_call(
 		s.api_time_ms += api_time_ms;
 		s.cost += cost;
 	});
+	crate::session::external_spend::record(cost);
 }
 
 /// A verify-gate verification ran (regardless of verdict).

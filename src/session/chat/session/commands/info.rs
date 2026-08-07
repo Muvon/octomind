@@ -19,7 +19,10 @@ use super::{CommandOutput, CommandResult};
 use crate::config::Config;
 use anyhow::Result;
 
-pub fn handle_info(session: &ChatSession, config: &Config) -> Result<CommandResult> {
+pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<CommandResult> {
+	// Pick up subagent/supervisor spend banked since the last API call so the
+	// session line is the real total, not just the main agent's share.
+	session.session.fold_external_spend();
 	let info = &session.session.info;
 
 	let tokens_used = info.input_tokens + info.output_tokens;

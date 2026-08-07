@@ -22,6 +22,7 @@ pub mod chat; // Chat session logic
 mod chat_helper; // Chat command completion
 pub mod context; // Session-scoped context for multi-session concurrency
 pub mod dedup; // Tool result deduplication
+pub mod external_spend; // Spend by models outside the main loop (subagents, layers, supervisor)
 pub mod helper_functions; // Helper functions for layers and other components
 pub mod history; // Role-based history management
 pub mod image; // Image processing and attachment utilities
@@ -526,6 +527,14 @@ impl Session {
 		self.info.total_api_time_ms += api_time_ms;
 		self.info.total_tool_time_ms += tool_time_ms;
 		self.info.total_layer_time_ms += total_time_ms;
+	}
+
+	/// Fold spend by models that ran outside the main loop (subagents, layers,
+	/// supervisor) into the session total, so `total_cost` is the session's real
+	/// bill rather than just the main agent's share. Their per-source token
+	/// breakdowns stay in their own accumulators for `/info` to show.
+	pub fn fold_external_spend(&mut self) {
+		self.info.total_cost += external_spend::take();
 	}
 
 	// Save the session to a file - append-only approach

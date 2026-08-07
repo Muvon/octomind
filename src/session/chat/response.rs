@@ -1122,7 +1122,10 @@ pub async fn process_response<S: OutputSink>(
 	// caller (execute_api_call_and_process_response) invokes
 	// `run_deferred_plan_compression` at a non-re-run exit instead.
 
-	// Emit cost message through sink (WebSocket/JSONL)
+	// Emit cost message through sink (WebSocket/JSONL). Fold first so the
+	// reported total covers everything this turn spent, including subagents and
+	// the supervisor — a parent reading our `octomind.usage` gets the full bill.
+	params.chat_session.session.fold_external_spend();
 	let total_tokens = params.chat_session.session.info.input_tokens
 		+ params.chat_session.session.info.output_tokens
 		+ params.chat_session.session.info.cache_read_tokens

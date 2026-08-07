@@ -113,11 +113,15 @@ impl Anchor {
 
 	/// Merge an update into this anchor. Append-only fields (`changes_made`,
 	/// `decisions`, `file_refs`, `errors_seen`) are deduplicated on insert.
-	/// `intent` replaces when the update supplies one — suppliers decide when
-	/// that is right (most guard with `is_empty()` so the first write sticks;
-	/// conversation compaction supplies the summarizer's ORIGINAL REQUEST,
-	/// which carries forward verbatim and moves only on an explicit user
-	/// pivot, so a stale goal can heal). `next_steps` always replaces.
+	/// `intent` replaces whenever the update supplies one. Suppliers deliberately
+	/// do NOT guard with `is_empty()`: a first-write-wins intent froze the goal at
+	/// whatever the session opened with, and `recite::recite_note` re-injects it
+	/// mid-turn as "Goal (fixed)" — so the supervisor kept steering the model back
+	/// to work the user had already moved past. Both suppliers now re-resolve the
+	/// CURRENT request every time (conversation compaction from its fidelity goal,
+	/// task compaction from the latest real user turn) and skip the update when
+	/// that resolves empty, so the previous value survives rather than being
+	/// cleared. `next_steps` always replaces.
 	pub fn extend(&mut self, update: AnchorUpdate, now_unix: u64) {
 		if let Some(intent) = update.intent {
 			let trimmed = intent.trim();

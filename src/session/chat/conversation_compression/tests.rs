@@ -83,8 +83,11 @@ fn preserves_active_skill_in_drain_range() {
 		msg("system"),    // 0
 		msg("assistant"), // 1 welcome
 		{
+			// Wrapped exactly as prompt_setup.rs injects it — an unwrapped
+			// "instructions" string is just a real user turn, and the anchor
+			// (correctly) treats it as one.
 			let mut m = msg("user"); // 2 instructions
-			m.content = "instructions".into();
+			m.content = "<instructions>\nproject rules\n</instructions>".into();
 			m
 		},
 		{
@@ -731,12 +734,15 @@ fn bug_proof_token_mismatch_causes_zero_savings() {
 	use crate::session::estimate_message_tokens;
 
 	let mut messages = Vec::new();
-	messages.push(msg("system")); // 0
 
-	// Message at start_idx has LARGE token count
-	let mut large_msg = msg("user"); // 1
+	// Message at start_idx has LARGE token count. start_idx is the last
+	// preamble message — the system prompt — since the first user turn now
+	// belongs to the drain range.
+	let mut large_msg = msg("system"); // 0
 	large_msg.content = "x".repeat(4000); // ~1000 tokens
 	messages.push(large_msg);
+
+	messages.push(msg("user")); // 1
 
 	// Messages after start_idx have SMALL token counts
 	let mut small1 = msg("assistant"); // 2
@@ -1797,13 +1803,13 @@ fn compress_all_with_tool_cycles() {
 		after.insert(start_idx + 2 + i, user_msg.clone());
 	}
 
-	// Result: [system, user(anchor), summary(asst), user(5), user(7)]
-	assert_eq!(after.len(), 5);
-	assert_eq!(after[0].role, "system");
-	assert_eq!(after[1].role, "user"); // anchor
-	assert_eq!(after[2].role, "assistant"); // summary
-	assert_eq!(after[3].role, "user"); // extracted user from idx 5
-	assert_eq!(after[4].role, "user"); // extracted user from idx 7
+	// Result: [system(anchor), summary(asst), user(5), user(7)] — the first user
+	// turn is drained now, so it is no longer part of the surviving prefix.
+	assert_eq!(after.len(), 4);
+	assert_eq!(after[0].role, "system"); // anchor
+	assert_eq!(after[1].role, "assistant"); // summary
+	assert_eq!(after[2].role, "user"); // extracted user from idx 5
+	assert_eq!(after[3].role, "user"); // extracted user from idx 7
 }
 
 #[test]

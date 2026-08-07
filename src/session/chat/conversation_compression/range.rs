@@ -53,7 +53,13 @@ fn states_task(m: &crate::session::Message) -> bool {
 	crate::session::is_real_user_task_message(m)
 		|| (m.role == "user" && super::apply::is_continuation_message(&m.content))
 		|| (m.role == "assistant"
-			&& m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME))
+			// Two markers, either sufficient. `name` is what this module and
+			// `plan/compression.rs` set; the tag is what the body always
+			// carries. A summary missing one (older session file, a different
+			// insertion path) would otherwise become invisible here and
+			// accumulate in the prefix forever, stale task and all.
+			&& (m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
+				|| m.content.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX)))
 }
 
 /// Find the compression range deterministically from message structure.
@@ -73,8 +79,13 @@ pub(super) fn find_compression_range(
 		return Ok((0, 0));
 	};
 
-	// No preamble in front of it (no system prompt) — there is nothing we could
-	// keep as an anchor, and index 0 must survive for the drain to be expressible.
+	// Unreachable in practice, and deliberately not a silent compression-disable:
+	// every session entry point (interactive, non-interactive, websocket, ACP)
+	// routes through `setup_system_prompt_and_cache`, which seeds the system
+	// message before anything else, and a resumed session restores it from the
+	// session file. So index 0 is always system-role and never task-stating.
+	// The check exists because `first_task - 1` needs a message to anchor on —
+	// the drain is `start_idx+1..=end_idx`, so "drain from 0" is unexpressible.
 	if first_task == 0 {
 		return Ok((0, 0));
 	}

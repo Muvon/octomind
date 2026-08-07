@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.41.0] - 2026-08-07
+
+### 📋 Release Summary
+
+This release introduces advanced agent coordination through subagent verification and improved session response accuracy (bb75c8c3, 92e46503), alongside non-blocking lesson distillation for better learning efficiency (8b1a5257). User experience is enhanced with updated documentation for Alibaba Model Studio and comprehensive README rewrites (c938dd9f, 375efdee). Several bug fixes improve task intent recognition, MCP error reporting, and path expansion reliability (96d04c6a, a575d525, ab9ba15a).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: implement subagent verification handbacks `bb75c8c3`
+- **learning**: implement non-blocking lesson distillation `8b1a5257`
+- **session**: refine turn answer assembly and verification `92e46503`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: prioritize recent user messages for task intent `96d04c6a`
+- **mcp**: extract error details from data field `a575d525`
+- **supervisor**: allow colon and backslash in path expansion `ab9ba15a`
+
+### 📚 Documentation & Examples
+
+- **readme**: comprehensively rewrite documentation `c938dd9f`
+- **providers**: add Alibaba Model Studio documentation `375efdee`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.40.2] - 2026-08-05
 
 ### 📋 Release Summary

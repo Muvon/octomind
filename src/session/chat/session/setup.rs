@@ -191,7 +191,8 @@ pub async fn setup_and_initialize_session(
 	}
 
 	// Create or load session
-	let mut session_params = SessionInitParams::new(&config_for_role, &role);
+	let mut session_params =
+		SessionInitParams::new(&config_for_role, &role).with_role_explicit(args.role_explicit);
 
 	if let Some(name) = name {
 		session_params = session_params.with_name(name);

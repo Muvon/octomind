@@ -865,6 +865,51 @@ pub fn extract_runtime_state_from_log(session_file: &PathBuf) -> Result<SessionR
 	Ok(state)
 }
 
+/// The role a session should come back as when resumed without an explicit one.
+///
+/// Resuming is not starting: the session already knows what it was, so falling
+/// back to the config default silently switches the agent (and its model, tools
+/// and system prompt) out from under a conversation already in progress.
+///
+/// Prefers the last `/role` switch recorded in the log over the role the session
+/// was created with — that switch is the more recent expression of intent.
+/// `None` when the session file is missing, unreadable, or records no role, in
+/// which case the caller keeps its own default.
+pub fn resume_role(session_name: &str) -> Option<String> {
+	let session_file = get_sessions_dir()
+		.ok()?
+		.join(format!("{}.jsonl.zst", session_name));
+	if !session_file.exists() {
+		return None;
+	}
+	if let Some(role) = extract_runtime_state_from_log(&session_file)
+		.ok()
+		.and_then(|state| state.role)
+	{
+		return Some(role);
+	}
+	// Fall back to the creation role in the SUMMARY header. Only the first few
+	// lines are read — the whole log is not needed for this.
+	let reader = BufReader::new(ZstdDecoder::new(File::open(&session_file).ok()?).ok()?);
+	for line in reader.lines().take(10) {
+		let Ok(line) = line else { break };
+		let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+			continue;
+		};
+		if value.get("type").and_then(|t| t.as_str()) != Some("SUMMARY") {
+			continue;
+		}
+		let role = value
+			.get("session_info")
+			.and_then(|i| i.get("role"))
+			.and_then(|r| r.as_str())?;
+		if !role.is_empty() {
+			return Some(role.to_string());
+		}
+	}
+	None
+}
+
 /// Apply a command to runtime state (for state extraction)
 fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line: &str) {
 	let parts: Vec<&str> = command_line.split_whitespace().collect();

@@ -546,7 +546,7 @@ pub mod persistence;
 pub use persistence::{
 	append_to_session_file, clean_interrupted_tool_calls, extract_runtime_state_from_log,
 	find_most_recent_session_for_project, get_sessions_dir, list_available_sessions, load_session,
-	SessionRuntimeState,
+	resume_role, SessionRuntimeState,
 };
 pub mod prompt;
 pub use prompt::{add_compression_hints_to_prompt, create_system_prompt};

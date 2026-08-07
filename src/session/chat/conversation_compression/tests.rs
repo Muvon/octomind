@@ -187,7 +187,10 @@ fn preserves_active_skill_in_drain_range() {
 	// Expected post-compression layout:
 	// [system, welcome, instructions(anchor), skill, SUMMARY, user_req3]
 	assert_eq!(messages.len(), 6);
-	assert_eq!(messages[2].content, "instructions");
+	assert_eq!(
+		messages[2].content,
+		"<instructions>\nproject rules\n</instructions>"
+	);
 	assert!(
 		crate::mcp::runtime::skill::is_skill_message(&messages[3].content),
 		"skill comes right after anchor"

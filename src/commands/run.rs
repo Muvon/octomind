@@ -91,13 +91,21 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		None => None,
 	};
 
+	// Resuming without a tag comes back as the session's own role, not the config
+	// default — otherwise continuing a conversation silently swaps the agent, its
+	// model and its tools. An explicit tag always wins: that IS the switch.
+	let tag = match &args.tag {
+		Some(tag) => Some(tag.clone()),
+		None => resumed_session_name(args).and_then(|name| octomind::session::resume_role(&name)),
+	};
+
 	// Resolve config and role (tap/dep resolution only — MCP init happens after session ID is set)
 	let (run_config, role) =
-		octomind::agent::resolver::resolve_config_and_role(args.tag.as_deref(), config, None)
-			.await?;
+		octomind::agent::resolver::resolve_config_and_role(tag.as_deref(), config, None).await?;
 
 	let session_args = octomind::session::chat::session::GenericSessionArgs {
 		role: role.clone(),
+		role_explicit: args.tag.is_some(),
 		mode: args.format.clone().unwrap_or_else(|| "plain".to_string()),
 		name: args.name.clone(),
 		resume: args.resume.clone(),
@@ -119,6 +127,24 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		)
 		.await
 	}
+}
+
+/// Which existing session this invocation will resume, if any.
+///
+/// `--name` is included because it resumes when the session already exists; a
+/// name with no file behind it is a brand-new session and must not recover a
+/// role from anywhere.
+fn resumed_session_name(args: &RunArgs) -> Option<String> {
+	if let Some(session) = &args.resume {
+		return Some(session.clone());
+	}
+	if args.resume_recent {
+		let current_dir = octomind::mcp::get_thread_working_directory();
+		return octomind::session::find_most_recent_session_for_project(&current_dir)
+			.ok()
+			.flatten();
+	}
+	args.name.clone()
 }
 
 /// Read input from stdin (piped or interactive prompt is not our job here).

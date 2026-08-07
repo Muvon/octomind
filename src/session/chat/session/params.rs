@@ -26,6 +26,11 @@ pub struct GenericSessionArgs {
 	pub max_tokens: Option<u32>,
 	pub temperature: Option<f32>,
 	pub role: String,
+	/// The caller named the role explicitly (a CLI tag), rather than inheriting
+	/// it from a resumed session or the config default. An explicit role is a
+	/// deliberate switch, so it must not be overridden by a `/role` command
+	/// replayed out of the resumed session's log.
+	pub role_explicit: bool,
 	pub max_retries: Option<u32>,
 	/// Output mode: "plain", "jsonl", or "websocket". Anything else is
 	/// normalised to "plain" by `setup_and_initialize_session`.

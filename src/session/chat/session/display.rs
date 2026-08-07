@@ -179,6 +179,9 @@ impl ChatSession {
 				"messages removed",
 				"tokens saved",
 				"avg ratio",
+				"tokens",
+				"throughput",
+				"cost",
 			]);
 			if cs.task_compressions > 0 {
 				block_row(
@@ -233,6 +236,29 @@ impl ChatSession {
 			let avg_ratio = cs.avg_compression_ratio() * 100.0;
 			if avg_ratio > 0.0 {
 				block_row("avg ratio", &format!("{:.1}%", avg_ratio), kw);
+			}
+			if cs.input_tokens > 0 || cs.output_tokens > 0 {
+				block_row(
+					"tokens",
+					&format!(
+						"{} in {} {} out",
+						format_number(cs.input_tokens).bright_blue(),
+						dot,
+						format_number(cs.output_tokens).bright_green(),
+					),
+					kw,
+				);
+			}
+			if cs.api_time_ms > 0 && cs.output_tokens > 0 {
+				let tps = cs.output_tokens as f64 / (cs.api_time_ms as f64 / 1000.0);
+				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
+			}
+			if cs.cost > 0.0 {
+				block_row(
+					"cost",
+					&format!("${:.5}", cs.cost).bright_yellow().to_string(),
+					kw,
+				);
 			}
 		}
 
@@ -363,6 +389,7 @@ impl ChatSession {
 			+ self.session.info.total_tool_time_ms
 			+ self.session.info.total_layer_time_ms;
 
+		let cs = &self.session.info.compression_stats;
 		serde_json::json!({
 			"session_name": self.session.info.name,
 			"model": self.session.info.model,
@@ -383,6 +410,23 @@ impl ChatSession {
 			},
 			"messages": self.session.messages.len(),
 			"tool_calls": self.session.info.tool_calls,
+			"compression": {
+				"runs": {
+					"total": cs.total_compressions(),
+					"task": cs.task_compressions,
+					"phase": cs.phase_compressions,
+					"project": cs.project_compressions,
+					"conversation": cs.conversation_compressions
+				},
+				"messages_removed": cs.total_messages_removed,
+				"tokens_saved": cs.total_tokens_saved,
+				"tokens": {
+					"input": cs.input_tokens,
+					"output": cs.output_tokens
+				},
+				"cost": cs.cost,
+				"api_time_ms": cs.api_time_ms
+			},
 			"layers": {
 				"regular": regular_layers,
 				"commands": command_layers
@@ -416,6 +460,17 @@ impl ChatSession {
 			"Total cost: ${:.5}\n",
 			self.session.info.total_cost
 		));
+		let cs = &self.session.info.compression_stats;
+		if cs.total_compressions() > 0 || cs.cost > 0.0 {
+			output.push_str(&format!(
+				"Compression: {} runs, {} tokens saved, {} in / {} out, cost ${:.5}\n",
+				cs.total_compressions(),
+				format_number(cs.total_tokens_saved),
+				format_number(cs.input_tokens),
+				format_number(cs.output_tokens),
+				cs.cost
+			));
+		}
 
 		// Time information
 		let total_time_ms = self.session.info.total_api_time_ms

@@ -469,36 +469,60 @@ pub fn display_info(output: &CommandOutput) {
 		if let Some(stats) = compression_stats {
 			block_section("compression");
 			let kw = key_width([
-				"conversation",
+				"runs",
 				"messages removed",
 				"tokens saved",
 				"avg ratio",
 				"tokens",
+				"throughput",
 				"cost",
 			]);
-			if stats.conversation_compressions > 0 {
+			// Runs broken down by kind — same style as the supervisor calls row.
+			let total_runs = stats.total_compressions();
+			if total_runs > 0 {
+				let mut parts = Vec::new();
+				if stats.task_compressions > 0 {
+					parts.push(format!("{} task", stats.task_compressions));
+				}
+				if stats.phase_compressions > 0 {
+					parts.push(format!("{} phase", stats.phase_compressions));
+				}
+				if stats.project_compressions > 0 {
+					parts.push(format!("{} project", stats.project_compressions));
+				}
+				if stats.conversation_compressions > 0 {
+					parts.push(format!("{} conversation", stats.conversation_compressions));
+				}
+				let breakdown = if parts.is_empty() {
+					format_number(total_runs as u64).bright_white().to_string()
+				} else {
+					format!(
+						"{} {} {}",
+						format_number(total_runs as u64).bright_white(),
+						dot,
+						parts.join(&format!(" {} ", dot))
+					)
+				};
+				block_row("runs", &breakdown, kw);
+			}
+			if stats.total_messages_removed > 0 {
 				block_row(
-					"conversation",
-					&format_number(stats.conversation_compressions as u64)
-						.bright_white()
+					"messages removed",
+					&format_number(stats.total_messages_removed as u64)
+						.bright_green()
 						.to_string(),
 					kw,
 				);
 			}
-			block_row(
-				"messages removed",
-				&format_number(stats.total_messages_removed as u64)
-					.bright_green()
-					.to_string(),
-				kw,
-			);
-			block_row(
-				"tokens saved",
-				&format_number(stats.total_tokens_saved)
-					.bright_green()
-					.to_string(),
-				kw,
-			);
+			if stats.total_tokens_saved > 0 {
+				block_row(
+					"tokens saved",
+					&format_number(stats.total_tokens_saved)
+						.bright_green()
+						.to_string(),
+					kw,
+				);
+			}
 			let avg_ratio = stats.avg_compression_ratio() * 100.0;
 			if avg_ratio > 0.0 {
 				block_row("avg ratio", &format!("{:.1}%", avg_ratio), kw);
@@ -515,6 +539,10 @@ pub fn display_info(output: &CommandOutput) {
 					),
 					kw,
 				);
+			}
+			if stats.api_time_ms > 0 && stats.output_tokens > 0 {
+				let tps = stats.output_tokens as f64 / (stats.api_time_ms as f64 / 1000.0);
+				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
 			}
 			if stats.cost > 0.0 {
 				block_row(
@@ -635,14 +663,7 @@ pub fn display_info(output: &CommandOutput) {
 			let orientation = get_u64("orientation_stored");
 			let recalls = get_u64("recalls_injected");
 			block_section("supervisor");
-			let kw_sv = key_width([
-				"activity",
-				"gate",
-				"calls",
-				"tokens",
-				"throughput",
-				"total +sv",
-			]);
+			let kw_sv = key_width(["activity", "gate", "calls", "tokens", "throughput"]);
 			let dot = "·".bright_black();
 
 			let mut activity = Vec::new();
@@ -766,13 +787,6 @@ pub fn display_info(output: &CommandOutput) {
 				block_row(
 					"cost",
 					&format!("${:.5}", sup_cost).bright_yellow().to_string(),
-					kw_sv,
-				);
-				block_row(
-					"total +sv",
-					&format!("${:.5}", *total_cost + sup_cost)
-						.bright_yellow()
-						.to_string(),
 					kw_sv,
 				);
 			}

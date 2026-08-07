@@ -146,6 +146,7 @@ async fn call_ai_for_decision(
 		stats.input_tokens += usage.input_tokens;
 		stats.output_tokens += usage.output_tokens;
 		stats.cost += usage.cost.unwrap_or(0.0);
+		stats.api_time_ms += usage.request_time_ms.unwrap_or(0);
 	}
 
 	if !decision_config.ignore_cost {

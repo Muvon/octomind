@@ -210,7 +210,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"type": "array",
 				"items": { "type": "string" },
 				"maxItems": 8,
-				"description": "3–6 bullets: conclusions from investigation — root causes, behaviours, code-location-specific discoveries. If a prior summary exists, carry its findings forward and append new ones."
+				"description": "3–6 bullets: conclusions from investigation — root causes, behaviours, code-location-specific discoveries. Record NEGATIVE conclusions too: a hypothesis investigated and excluded, with the reason it was excluded ('X is not the cause / is out of scope because Y'). A ruled-out lead that is dropped here is re-investigated from scratch after the next compression. If a prior summary exists, carry its findings forward and append new ones."
 			},
 			"errors_and_corrections": {
 				"type": "array",

@@ -1106,6 +1106,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::inbox::clear_inbox_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
+	crate::supervisor::delegate::clear_handback_for_session(session_id);
 	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);
 	clear_schedule_notify(session_id);
 }

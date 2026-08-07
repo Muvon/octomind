@@ -1048,6 +1048,14 @@ impl Detectors {
 	/// A round VERIFIES only when a verifier or read-back ran on an unchanged
 	/// tree — a "verifier" that also dirtied the tree (or ran in the same
 	/// parallel batch as an edit) checked an ambiguous state and proves nothing.
+	///
+	/// `delegated_ok` is the one exception, and it is not a relaxation: a
+	/// subagent handoff collapses the child's whole trajectory (change, THEN
+	/// check) into a single parent round, so `tree_unchanged` is false by
+	/// construction and can never be satisfied however diligent the child was.
+	/// The child measures its own tree with this same code one level down, so
+	/// the caller passes its verdict up (see [`crate::supervisor::delegate`])
+	/// and it stands in for the tree check for that round only.
 	pub fn note_round_verification(
 		&mut self,
 		fp_before: Option<u64>,
@@ -1055,6 +1063,7 @@ impl Detectors {
 		verifier_ok: bool,
 		readback_ok: bool,
 		mutation_ok: bool,
+		delegated_ok: bool,
 	) {
 		// First observation seeds the baseline: the task-start tree is, by
 		// definition, the last state the user accepted.
@@ -1068,7 +1077,11 @@ impl Detectors {
 			// No fingerprints: fall back to call shape.
 			_ => !mutation_ok,
 		};
-		if (verifier_ok || readback_ok) && tree_unchanged {
+		// The child's verdict covers only what the child did. If the PARENT also
+		// ran a mutation in the same round, that edit was never inside the
+		// child's tree check and must not ride in on its verdict.
+		let delegated = delegated_ok && !mutation_ok;
+		if delegated || ((verifier_ok || readback_ok) && tree_unchanged) {
 			if let Some(a) = fp_after {
 				self.verified_fp = Some(a);
 			}
@@ -1078,10 +1091,11 @@ impl Detectors {
 			self.agent_dirty = true;
 		}
 		crate::log_debug!(
-			"round verification: tree_unchanged={} verifier={} readback={} -> verified_fp={:?} agent_dirty={}",
+			"round verification: tree_unchanged={} verifier={} readback={} delegated={} -> verified_fp={:?} agent_dirty={}",
 			tree_unchanged,
 			verifier_ok,
 			readback_ok,
+			delegated,
 			self.verified_fp,
 			self.agent_dirty
 		);
@@ -1690,16 +1704,16 @@ mod tests {
 		let mut d = Detectors::default();
 		assert!(!d.needs_verification(None));
 		// Mutation-shaped round, no verifier → unverified.
-		d.note_round_verification(None, None, false, false, true);
+		d.note_round_verification(None, None, false, false, true, false);
 		assert!(d.needs_verification(None));
 		// A read-only round changes nothing — looking is not verifying.
-		d.note_round_verification(None, None, false, false, false);
+		d.note_round_verification(None, None, false, false, false, false);
 		assert!(d.needs_verification(None));
 		// A round where the verifier ran alongside a mutation proves nothing.
-		d.note_round_verification(None, None, true, false, true);
+		d.note_round_verification(None, None, true, false, true, false);
 		assert!(d.needs_verification(None));
 		// A clean verifier round clears it.
-		d.note_round_verification(None, None, true, false, false);
+		d.note_round_verification(None, None, true, false, false, false);
 		assert!(!d.needs_verification(None));
 	}
 
@@ -1708,14 +1722,14 @@ mod tests {
 		let mut d = Detectors::default();
 		// Round 1 seeds the baseline (10 = task-start tree); the round's edit
 		// moved the tree to 11 → unverified.
-		d.note_round_verification(Some(10), Some(11), false, false, true);
+		d.note_round_verification(Some(10), Some(11), false, false, true, false);
 		assert!(d.needs_verification(Some(11)));
 		// Verifier ran but the same round dirtied the tree (11→12): ambiguous
 		// state, proves nothing.
-		d.note_round_verification(Some(11), Some(12), true, false, true);
+		d.note_round_verification(Some(11), Some(12), true, false, true, false);
 		assert!(d.needs_verification(Some(12)));
 		// Clean verifier on an unchanged tree → verified at 12.
-		d.note_round_verification(Some(12), Some(12), true, false, false);
+		d.note_round_verification(Some(12), Some(12), true, false, false, false);
 		assert!(!d.needs_verification(Some(12)));
 		// Drift with NO agent round in between is external (the user editing
 		// their own tree): the agent changed nothing since its clean
@@ -1731,12 +1745,38 @@ mod tests {
 		// Read-only rounds over a tree that drifts externally mid-session — the
 		// observe-only job shape (review/brief/audit): the deliverable is a
 		// report, and a done-claim needs no check run.
-		d.note_round_verification(Some(10), Some(10), false, false, false);
+		d.note_round_verification(Some(10), Some(10), false, false, false, false);
 		assert!(!d.needs_verification(Some(11)));
 		// A round that itself moved the tree arms it, even when no call was
 		// mutation-shaped (an edit hidden inside a shell command).
-		d.note_round_verification(Some(11), Some(12), false, false, false);
+		d.note_round_verification(Some(11), Some(12), false, false, false, false);
 		assert!(d.needs_verification(Some(12)));
+	}
+
+	#[test]
+	fn delegated_verification_clears_a_round_that_changed_the_tree() {
+		let mut d = Detectors::default();
+		// An orchestrator's `tap run`: the specialist edited AND checked inside
+		// this one parent round, so the tree moved and no parent call could ever
+		// be verifier-shaped. Without the child's verdict this latches dirty
+		// forever and every `done` re-triggers the mutation pre-gate.
+		d.note_round_verification(Some(10), Some(11), false, false, false, false);
+		assert!(d.needs_verification(Some(11)));
+		// Same round shape, child reported verified → accepted, and the
+		// post-round tree becomes the new baseline.
+		let mut d = Detectors::default();
+		d.note_round_verification(Some(10), Some(11), false, false, false, true);
+		assert!(!d.needs_verification(Some(11)));
+	}
+
+	#[test]
+	fn delegated_verification_does_not_cover_the_parents_own_edit() {
+		let mut d = Detectors::default();
+		// Parallel round: a verified subagent alongside the parent's own
+		// mutation-shaped call. The child never checked the parent's edit, so
+		// its verdict must not clear the round.
+		d.note_round_verification(Some(10), Some(11), false, false, true, true);
+		assert!(d.needs_verification(Some(11)));
 	}
 
 	#[test]
@@ -1745,7 +1785,7 @@ mod tests {
 		let mut d = Detectors::default();
 		// Round 1: agent edits a doc — mutation round, tree moves, dirty.
 		d.note_mutated_paths(&json!({"path": "blog/post/index.md"}));
-		d.note_round_verification(Some(10), Some(11), false, false, true);
+		d.note_round_verification(Some(10), Some(11), false, false, true, false);
 		assert!(d.needs_verification(Some(11)));
 		// Round 2: agent re-reads the exact artifact it changed — that IS the
 		// verification for work with no command to run.
@@ -1755,7 +1795,7 @@ mod tests {
 			false,
 		);
 		assert!(readback);
-		d.note_round_verification(Some(11), Some(11), false, readback, false);
+		d.note_round_verification(Some(11), Some(11), false, readback, false, false);
 		assert!(!d.needs_verification(Some(11)));
 	}
 
@@ -1837,7 +1877,7 @@ mod tests {
 	#[test]
 	fn reset_streak_clears_previous_task_verification_latch() {
 		let mut d = Detectors::default();
-		d.note_round_verification(None, None, false, false, true);
+		d.note_round_verification(None, None, false, false, true, false);
 		assert!(d.needs_verification(None));
 		// A new genuine task must not inherit an earlier task's mutation.
 		d.reset_streak();
@@ -1854,7 +1894,7 @@ mod tests {
 		assert!(d.check_run_forbidden());
 		// An incidental clean verification round does NOT erase the user's
 		// prohibition — the latch never auto-expires.
-		d.note_round_verification(None, None, true, false, false);
+		d.note_round_verification(None, None, true, false, false, false);
 		assert!(d.check_run_forbidden());
 	}
 

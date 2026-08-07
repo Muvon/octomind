@@ -1190,6 +1190,36 @@ impl OctomindAgent {
 			// Wait for the forwarding task to drain any remaining messages
 			let _ = forward_task.await;
 
+			// Report this turn's verification verdict to the parent on the same
+			// `_meta` side-channel usage rides. A parent that delegates sees only
+			// one tool round for our entire trajectory, so it cannot tell a change
+			// that was checked from one that was not — we can, because the
+			// detectors measured it here. Reported only when this session actually
+			// tracks verification: an untracked child has no verdict to give, and
+			// silence keeps the parent on its own (conservative) signal.
+			if let Some(conn) = self.conn.borrow().as_ref().cloned() {
+				let tracks = config_for_role.supervisor.enabled
+					&& config_for_role.supervisor.gate.enabled
+					&& config_for_role.supervisor.gate.require_check_after_mutation;
+				let verified = tracks
+					&& !chat_session
+						.detectors
+						.needs_verification(crate::supervisor::workdir::fingerprint());
+				let mut meta = serde_json::Map::new();
+				meta.insert(
+					"octomind.verified".to_string(),
+					serde_json::Value::Bool(verified),
+				);
+				let notif = SessionNotification::new(
+					std::sync::Arc::<str>::from(session_id.as_str()),
+					SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+				)
+				.meta(meta);
+				if let Err(e) = conn.send_notification(notif) {
+					log_error!("ACP: failed to send verification notification: {}", e);
+				}
+			}
+
 			// Persist updated session.info (tokens/cost accumulated via
 			// add_assistant_message during the API call) so `/info` and
 			// resume show real stats. Mirrors the WebSocket server pattern.

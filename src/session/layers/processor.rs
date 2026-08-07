@@ -59,8 +59,16 @@ impl Layer for LayerProcessor {
 		let mut parts = self.config.command.split_whitespace();
 		let program = parts.next().unwrap_or("");
 		let args: Vec<&str> = parts.collect();
-		let output =
-			run_acp_command(program, &args, &task, &workdir, operation_cancelled, None).await?;
+		let output = run_acp_command(
+			program,
+			&args,
+			&task,
+			&workdir,
+			operation_cancelled,
+			None,
+			false,
+		)
+		.await?;
 
 		// Return result with timing info
 		// Note: exchange/token_usage come from the ACP session's role config

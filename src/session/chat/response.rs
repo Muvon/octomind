@@ -777,13 +777,26 @@ pub async fn process_response<S: OutputSink>(
 					// round itself did not change.
 					if track_verification {
 						let fp_after = crate::supervisor::workdir::fingerprint();
+						// Subagent runs that finished in this window report their own
+						// end-of-turn verdict — the only vantage point from which a
+						// delegated change and the check that followed it are separable
+						// (see supervisor::delegate handback). ALL of them must have
+						// verified: one unverified specialist in a multi-agent round is
+						// an unchecked change, and the round is not clean because a
+						// sibling happened to check its own work.
+						let (delegated_runs, delegated_verified) =
+							crate::supervisor::delegate::take_handback();
+						let delegated_ok =
+							delegated_runs > 0 && delegated_verified == delegated_runs;
 						crate::log_debug!(
-							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={}",
+							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={} delegated={}/{}",
 							fp_before,
 							fp_after,
 							round_verifier,
 							round_readback,
-							round_mutation
+							round_mutation,
+							delegated_verified,
+							delegated_runs
 						);
 						params.chat_session.detectors.note_round_verification(
 							fp_before,
@@ -791,6 +804,7 @@ pub async fn process_response<S: OutputSink>(
 							round_verifier,
 							round_readback,
 							round_mutation,
+							delegated_ok,
 						);
 					}
 

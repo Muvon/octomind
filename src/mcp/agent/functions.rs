@@ -246,6 +246,7 @@ async fn execute_config_agent(
 					&workdir_owned,
 					cancel_rx,
 					None,
+					true,
 				)
 				.await
 				{
@@ -288,6 +289,7 @@ async fn execute_config_agent(
 		&workdir,
 		watch::channel(false).1,
 		None,
+		true,
 	)
 	.await
 	{
@@ -689,6 +691,11 @@ fn run_dynamic_agent_in_process(
 ///
 /// `tap_run_id`, when set, mirrors streamed updates (tool calls, usage) into
 /// the tap-run live registry so `/agents` can show them while the run works.
+///
+/// `handback` marks this run as a SUBAGENT HANDOFF whose verification verdict
+/// the parent folds into its own round (see [`crate::supervisor::delegate`]).
+/// Layers pass `false`: they post-process the parent's answer rather than doing
+/// delegated work, so their verdict says nothing about the parent's tree.
 pub async fn run_acp_command(
 	program: &str,
 	args: &[&str],
@@ -696,7 +703,21 @@ pub async fn run_acp_command(
 	workdir: &std::path::Path,
 	mut cancel_rx: watch::Receiver<bool>,
 	tap_run_id: Option<&str>,
+	handback: bool,
 ) -> Result<String> {
+	// Reported on drop so every exit path — success, prompt error, cancellation,
+	// a child that dies mid-stream — lands in the parent's tally exactly once.
+	// A run that never reports stays `false`: unverified is the safe default.
+	struct Handback {
+		verified: bool,
+	}
+	impl Drop for Handback {
+		fn drop(&mut self) {
+			crate::supervisor::delegate::note_handback(self.verified);
+		}
+	}
+	let mut handback_guard = handback.then(|| Handback { verified: false });
+
 	let mut command = Command::new(program);
 	command
 		.args(args)
@@ -810,6 +831,17 @@ pub async fn run_acp_command(
 			Ok(v) => v,
 			Err(_) => continue,
 		};
+
+		// The child's end-of-turn verification verdict rides in `_meta` next to
+		// usage (see acp/agent.rs) — the last thing it sends before the prompt
+		// response, so it is always in hand by the time this loop breaks.
+		if let (Some(g), Some(v)) = (
+			handback_guard.as_mut(),
+			msg.pointer("/params/_meta/octomind.verified")
+				.and_then(|x| x.as_bool()),
+		) {
+			g.verified = v;
+		}
 
 		// Forward session/update notifications to the parent's notification
 		// sink so the user sees thinking, tool calls, and tool results
@@ -1190,6 +1222,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 			&std::env::temp_dir(),
 			cancel_rx,
 			None,
+			false,
 		)
 		.await
 	}
@@ -1225,6 +1258,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 				&std::env::temp_dir(),
 				watch::channel(false).1,
 				Some("tap-test-live-000001"),
+				false,
 			)
 			.await
 			.expect("run succeeds");

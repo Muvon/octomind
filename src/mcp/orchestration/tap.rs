@@ -503,6 +503,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 					&workdir_owned,
 					cancel_rx,
 					Some(&id_owned),
+					true,
 				)
 				.await;
 				let (terminal, content) = match outcome {
@@ -561,6 +562,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		&workdir_path,
 		cancel_rx,
 		Some(&id),
+		true,
 	)
 	.await;
 	match outcome {

@@ -264,6 +264,11 @@ impl ChatSession {
 		// Reset per-task detector state (loop / no-progress / truncation / dedup /
 		// drift streaks and the prior task's unverified-mutation latch).
 		self.detectors.reset_streak();
+		// Drop any subagent verdict that outlived its turn (a background run that
+		// reported after the parent's last tool round). It vouches for the PREVIOUS
+		// task's tree, so letting it reach this turn's first round fold could clear
+		// a change it never saw.
+		let _ = crate::supervisor::delegate::take_handback();
 
 		// Check if we should cache this user message (after push, so the message exists
 		// at a known index and the cache manager can enforce the 2-marker limit).

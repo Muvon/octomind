@@ -52,6 +52,9 @@ pub struct SessionInitParams<'a> {
 	pub config: &'a Config,
 	/// Role for the session
 	pub role: &'a str,
+	/// The role was named explicitly by the caller (see
+	/// [`crate::session::chat::session::GenericSessionArgs::role_explicit`]).
+	pub role_explicit: bool,
 	/// Optional JSON schema for structured output
 	pub schema: Option<serde_json::Value>,
 }
@@ -70,8 +73,15 @@ impl<'a> SessionInitParams<'a> {
 			output_mode: None,
 			config,
 			role,
+			role_explicit: false,
 			schema: None,
 		}
+	}
+
+	/// Mark the role as explicitly named by the caller rather than inherited.
+	pub fn with_role_explicit(mut self, role_explicit: bool) -> Self {
+		self.role_explicit = role_explicit;
+		self
 	}
 
 	/// Set session name
@@ -612,8 +622,13 @@ impl ChatSession {
 						chat_session.cache_next_user_message = true;
 					}
 
-					// Apply restored role if available
-					if let Some(restored_role) = runtime_state.role {
+					// Apply restored role if available. An explicitly named role is a
+					// deliberate switch and outranks whatever `/role` the session
+					// last logged — otherwise `run reviewer --resume x` would snap
+					// straight back to the old role.
+					if let Some(restored_role) =
+						runtime_state.role.filter(|_| !params.role_explicit)
+					{
 						// Validate that the restored role still exists in config
 						if params.config.roles.iter().any(|r| r.name == restored_role) {
 							chat_session.role = restored_role;

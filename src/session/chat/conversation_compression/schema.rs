@@ -209,7 +209,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			"analysis_findings": {
 				"type": "array",
 				"items": { "type": "string" },
-				"maxItems": 8,
+				"maxItems": 30,
 				"description": "3–6 bullets: conclusions from investigation — root causes, behaviours, code-location-specific discoveries. Record NEGATIVE conclusions too: a hypothesis investigated and excluded, with the reason it was excluded ('X is not the cause / is out of scope because Y'). A ruled-out lead that is dropped here is re-investigated from scratch after the next compression. If a prior summary exists, carry its findings forward and append new ones."
 			},
 			"errors_and_corrections": {
@@ -279,7 +279,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			"critical_knowledge": {
 				"type": "array",
 				"items": { "type": "string" },
-				"maxItems": 5,
+				"maxItems": 15,
 				"description": "Survives ALL future compressions. Architectural decisions, hidden constraints, user preferences, root-cause findings. 2–3 sentences each. Include only when truly critical — not routine progress."
 			},
 			"open_loops": {
@@ -492,7 +492,7 @@ Emit ONE single XML document with the following tags, in this order. Every requi
 <session_context>one sentence</session_context>           (required, may be empty when should_compress is false)
 <current_task>1-2 sentences</current_task>                (required, may be empty when should_compress is false)
 <progress>2-4 sentences</progress>                        (required, may be empty when should_compress is false)
-<analysis_findings>                                       (required container; 0-8 <finding> items)
+<analysis_findings>                                       (required container; 0-30 <finding> items)
   <finding>...</finding>
 </analysis_findings>
 <errors_and_corrections>                                  (required container; 0-10 <entry> items, verbatim feedback/errors)
@@ -516,7 +516,7 @@ Emit ONE single XML document with the following tags, in this order. Every requi
 <file_context>                                            (required container; 0-5 entries, self-closing)
   <range filepath="path/from/project/root.rs" start_line="N" end_line="M"/>
 </file_context>
-<critical_knowledge>                                      (required container; 0-5 <knowledge> items, 2-3 sentences each)
+<critical_knowledge>                                      (required container; 0-15 <knowledge> items, 2-3 sentences each)
   <knowledge>survives all future compressions</knowledge>
 </critical_knowledge>
 <open_loops>                                             (required container; 0-8 <open_loop> items, unresolved questions/blockers)

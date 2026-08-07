@@ -189,9 +189,16 @@ pub struct ChatSession {
 	pub cached_tools: Option<Vec<crate::mcp::McpFunction>>, // Cached tool definitions for consistent token counting
 	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
-	/// Critical knowledge entries extracted from compressions — persisted across cycles.
-	/// Capped at `config.compression.knowledge_retention` entries (FIFO).
+	/// Critical knowledge entries extracted from compressions — persisted across
+	/// cycles. Deduped on insert, then trimmed (oldest first) to
+	/// `config.compression.knowledge_retention`; set that to `0` for a session
+	/// that must never forget.
 	pub critical_knowledge: Vec<String>,
+	/// Investigation findings accumulated across compactions. The model rewrites
+	/// `analysis_findings` from scratch each cycle despite being told to carry
+	/// them forward, so the union is maintained here and rendered into the
+	/// summary in place of the model's latest list.
+	pub analysis_findings: Vec<String>,
 	/// Whether the session-start learning injection has happened (global tier +
 	/// first hybrid scoped recall). Gates the once-per-session global injection.
 	pub learning_injected: bool,
@@ -376,7 +383,8 @@ impl ChatSession {
 			last_compression_hint_shown: 0,     // Initialize last hint timestamp
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			schema: None,                       // Schema set later via CLI override
-			critical_knowledge: Vec::new(),     // Populated from session log on resume
+			critical_knowledge: Vec::new(),
+			analysis_findings: Vec::new(),
 			learning_injected: false,
 			injected_lessons: std::collections::HashSet::new(),
 			pending_recall: false,
@@ -592,6 +600,7 @@ impl ChatSession {
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						schema: None,               // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
+						analysis_findings: Vec::new(),
 						learning_injected: false,
 						injected_lessons: std::collections::HashSet::new(),
 						pending_recall: false,
@@ -1353,6 +1362,7 @@ mod tests {
 			cached_tools: None,
 			schema: None,
 			critical_knowledge: Vec::new(),
+			analysis_findings: Vec::new(),
 			learning_injected: false,
 			injected_lessons: std::collections::HashSet::new(),
 			pending_recall: false,

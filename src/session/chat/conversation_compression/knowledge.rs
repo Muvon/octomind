@@ -101,7 +101,12 @@ pub(super) fn strip_file_context_from_summary(summary: &str) -> String {
 
 /// Persist `critical_knowledge` entries from the typed summary onto the
 /// session and log them. Trims to the configured `knowledge_retention`
-/// limit (keeping the most recent entries).
+/// limit (keeping the most recent entries); `0` disables trimming entirely,
+/// which is what a session that must never forget should be configured with.
+///
+/// Entries are deduped on the way in — the model re-emits carried-forward
+/// knowledge every cycle, so without this the store fills with copies and a
+/// retention limit then evicts genuinely distinct entries.
 ///
 /// Replaces the old `<knowledge>` tag extractor — entries now arrive
 /// pre-structured as `Vec<String>` from the schema response.
@@ -110,20 +115,21 @@ pub(super) fn fold_critical_knowledge(
 	config: &Config,
 	entries: &[String],
 ) {
-	let new_entries: Vec<&String> = entries.iter().filter(|e| !e.trim().is_empty()).collect();
-	if new_entries.is_empty() {
+	let mut added = 0usize;
+	for entry in entries.iter().filter(|e| !e.trim().is_empty()) {
+		if session.critical_knowledge.iter().any(|k| k == entry) {
+			continue;
+		}
+		log_debug!("Extracted critical knowledge: {}", entry);
+		session.critical_knowledge.push(entry.clone());
+		let _ = crate::session::logger::log_knowledge_entry(&session.session.info.name, entry);
+		added += 1;
+	}
+	if added == 0 {
 		return;
 	}
 
 	let retention_limit = config.compression.knowledge_retention;
-	let added = new_entries.len();
-
-	for entry in new_entries {
-		log_debug!("Extracted critical knowledge: {}", entry);
-		session.critical_knowledge.push(entry.clone());
-		let _ = crate::session::logger::log_knowledge_entry(&session.session.info.name, entry);
-	}
-
 	if retention_limit > 0 && session.critical_knowledge.len() > retention_limit {
 		let drain_count = session.critical_knowledge.len() - retention_limit;
 		session.critical_knowledge.drain(..drain_count);
@@ -138,4 +144,30 @@ pub(super) fn fold_critical_knowledge(
 		added,
 		session.critical_knowledge.len()
 	);
+}
+
+/// Accumulate `analysis_findings` across compactions and return the full set.
+///
+/// The schema and prompt both ask the model to "carry forward all prior
+/// entries, append new ones" — measured over 19 compactions it does not: the
+/// list churned 6→8→5→…→10→…→4, and between two cycles all 9 prior findings
+/// were dropped and 0 retained, deleting the root cause the agent had already
+/// established, which it then re-derived 37 times. Carry-forward is therefore
+/// enforced HERE, in code, and the model's output is treated as "what I
+/// learned this cycle" rather than as the authoritative list.
+///
+/// UNBOUNDED and deliberately not configurable: findings are scoped to one
+/// task, so the only correct time to drop them is when the task itself
+/// changes — which `ChatSession::add_user_message` does on a genuine new user
+/// turn, alongside the detector reset. A count-based cap would evict the
+/// earliest conclusions, and those are exactly the load-bearing ones (the root
+/// cause is usually found early and re-confirmed late). Dedupe is exact-match;
+/// order is oldest-first so earlier conclusions stay stable across renders.
+pub(super) fn fold_analysis_findings(session: &mut ChatSession, entries: &[String]) -> Vec<String> {
+	for entry in entries.iter().filter(|e| !e.trim().is_empty()) {
+		if !session.analysis_findings.iter().any(|f| f == entry) {
+			session.analysis_findings.push(entry.clone());
+		}
+	}
+	session.analysis_findings.clone()
 }

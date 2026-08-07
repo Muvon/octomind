@@ -264,6 +264,12 @@ impl ChatSession {
 		// Reset per-task detector state (loop / no-progress / truncation / dedup /
 		// drift streaks and the prior task's unverified-mutation latch).
 		self.detectors.reset_streak();
+		// Investigation findings are scoped to the task that produced them: they
+		// accumulate unbounded across every compaction of that task (see
+		// `fold_analysis_findings`) and are dropped only here, when the user
+		// genuinely moves on. Carrying them into a new task would have the
+		// summary assert conclusions about code the new request never mentions.
+		self.analysis_findings.clear();
 		// Drop any subagent verdict that outlived its turn (a background run that
 		// reported after the parent's last tool round). It vouches for the PREVIOUS
 		// task's tree, so letting it reach this turn's first round fold could clear

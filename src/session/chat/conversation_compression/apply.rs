@@ -18,7 +18,9 @@
 // update anchor + token bookkeeping. Pure side-effects on `ChatSession`.
 
 use super::decision::estimate_future_turns;
-use super::knowledge::{fold_critical_knowledge, format_compressed_entry_with_context};
+use super::knowledge::{
+	fold_analysis_findings, fold_critical_knowledge, format_compressed_entry_with_context,
+};
 use super::schema::{render_summary, CompressionSummary};
 use crate::log_debug;
 use crate::session::chat::file_context;
@@ -157,6 +159,19 @@ pub(super) async fn apply_compression(
 	// Done up-front so the session reflects the new knowledge before we
 	// insert the rendered markdown that omits the (already-folded) entries.
 	fold_critical_knowledge(session, config, &summary.critical_knowledge);
+
+	// Accumulate findings in CODE, not by asking the model. Measured over 19
+	// compactions of one session the model rewrote `analysis_findings` from
+	// scratch every cycle despite the carry-forward instruction — one cycle
+	// dropped all 9 prior findings and kept 0, deleting the root cause the
+	// agent had already established, which it then re-derived 37 times. The
+	// model's list is treated as "what I learned this cycle"; the union is
+	// authoritative and is what gets rendered.
+	let accumulated_findings = fold_analysis_findings(session, &summary.analysis_findings);
+	let summary = &CompressionSummary {
+		analysis_findings: accumulated_findings,
+		..summary.clone()
+	};
 
 	// Render the typed summary to the markdown body that gets inserted into
 	// the session as the compressed turn. Sections appear only when they

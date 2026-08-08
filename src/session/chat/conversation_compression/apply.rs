@@ -167,7 +167,7 @@ pub(super) async fn apply_compression(
 	// agent had already established, which it then re-derived 37 times. The
 	// model's list is treated as "what I learned this cycle"; the union is
 	// authoritative and is what gets rendered.
-	let accumulated_findings = fold_analysis_findings(session, &summary.analysis_findings);
+	let accumulated_findings = fold_analysis_findings(session, &summary.analysis_findings).await;
 	let summary = &CompressionSummary {
 		analysis_findings: accumulated_findings,
 		..summary.clone()

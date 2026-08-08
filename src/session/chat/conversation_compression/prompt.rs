@@ -30,7 +30,7 @@
 // across modes — only the system content and the closing task instruction
 // differ.
 
-use super::knowledge::{strip_file_context_from_summary, SUMMARY_TAG_OPEN_PREFIX};
+use super::knowledge::{strip_regrown_sections, SUMMARY_TAG_OPEN_PREFIX};
 use super::schema::XML_OUTPUT_SPEC;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
@@ -147,7 +147,8 @@ It is ONLY ever sourced from inside <transcript>, or from a prior summary's orig
 
 <scaffold_rules>
 If the transcript contains a prior <conversation_summary id=\"…\">…</conversation_summary> block, treat its content as established facts that must carry forward:
-- analysis_findings, errors_and_corrections, critical_knowledge: carry forward all prior entries, append new ones.
+- analysis_findings: report ONLY what this transcript established that a prior summary did not. Prior findings are retained outside your output and re-attached automatically — restating them in new words creates duplicates, it does not preserve them. An empty list is correct when the transcript established nothing new.
+- errors_and_corrections, critical_knowledge: carry forward all prior entries, append new ones.
 - progress: extend (do not replace) the prior progress narrative.
 - current_task, next_steps: replace based on the most recent transcript.
 </scaffold_rules>
@@ -224,7 +225,7 @@ Messages tagged [RECENT] are the most recent and most important — preserve the
 					.trim_start()
 					.starts_with(SUMMARY_TAG_OPEN_PREFIX)
 				{
-					strip_file_context_from_summary(&msg.content)
+					strip_regrown_sections(&msg.content)
 				} else {
 					msg.content.trim().to_string()
 				};

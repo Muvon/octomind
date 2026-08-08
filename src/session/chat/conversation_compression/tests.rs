@@ -1,5 +1,5 @@
 use super::collect_preserved_skills;
-use super::knowledge::{format_compressed_entry_with_context, strip_file_context_from_summary};
+use super::knowledge::{format_compressed_entry_with_context, strip_regrown_sections};
 use super::range::find_compression_range;
 use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
 use super::select_compression_level_index;
@@ -1595,7 +1595,7 @@ fn calculate_range_tokens_matches_actual_removal() {
 
 #[test]
 fn test_file_context_stripped_from_recompression_input() {
-	// strip_file_context_from_summary must remove the entire <file_context>…</file_context>
+	// strip_regrown_sections must remove the entire <file_context>…</file_context>
 	// block. This prevents stale file bytes from accumulating in every subsequent summary.
 	let summary_with_context = "<conversation_summary id=\"abc\">\n\
 			<progress>Some important history here.</progress>\n\
@@ -1604,7 +1604,7 @@ fn test_file_context_stripped_from_recompression_input() {
 			</file_context>\n\
 			</conversation_summary>";
 
-	let stripped = strip_file_context_from_summary(summary_with_context);
+	let stripped = strip_regrown_sections(summary_with_context);
 
 	assert!(
 		!stripped.contains("<file_context>"),
@@ -1621,10 +1621,76 @@ fn test_file_context_stripped_from_recompression_input() {
 }
 
 #[test]
+fn test_analysis_findings_stripped_from_recompression_input() {
+	// The accumulated union is re-attached from the session at render time, so
+	// re-feeding it only invites the model to restate every entry in new words.
+	let summary = "<conversation_summary id=\"abc\">\n\
+			<progress>Some important history here.</progress>\n\
+			<analysis_findings>\n\
+			<finding>ShouldSuspendCommit and Visibility share a flag bit.</finding>\n\
+			</analysis_findings>\n\
+			<next_steps>Keep going.</next_steps>\n\
+			</conversation_summary>";
+
+	let stripped = strip_regrown_sections(summary);
+
+	assert!(
+		!stripped.contains("<analysis_findings>"),
+		"analysis_findings tag must be stripped"
+	);
+	assert!(
+		!stripped.contains("share a flag bit"),
+		"Finding text must not be re-fed to the compressor"
+	);
+	assert!(
+		stripped.contains("Some important history here.") && stripped.contains("Keep going."),
+		"Text on both sides of the stripped block must survive"
+	);
+}
+
+#[test]
+fn test_restatement_bound_flags_only_outliers() {
+	// Held findings that are mutually spread out set a bound above their own
+	// nearest-neighbour similarities, so none of them would be dropped as a
+	// restatement of another — but a near-copy of one exceeds it.
+	let held: Vec<Vec<f32>> = vec![
+		vec![1.0, 0.0, 0.0],
+		vec![0.9, 0.4, 0.0],
+		vec![0.0, 1.0, 0.0],
+		vec![0.0, 0.0, 1.0],
+		vec![0.5, 0.5, 0.5],
+	];
+	let bound = super::knowledge::restatement_bound(&held);
+
+	for (i, a) in held.iter().enumerate() {
+		let nearest = held
+			.iter()
+			.enumerate()
+			.filter(|(j, _)| *j != i)
+			.map(|(_, b)| crate::embeddings::cosine(a, b))
+			.fold(f32::MIN, f32::max);
+		assert!(
+			nearest <= bound,
+			"held finding {i} (nearest {nearest:.3}) must not exceed bound {bound:.3}"
+		);
+	}
+
+	let near_copy = vec![0.999, 0.01, 0.0];
+	let nearest = held
+		.iter()
+		.map(|h| crate::embeddings::cosine(h, &near_copy))
+		.fold(f32::MIN, f32::max);
+	assert!(
+		nearest > bound,
+		"near-duplicate (sim {nearest:.3}) must exceed bound {bound:.3}"
+	);
+}
+
+#[test]
 fn test_file_context_stripped_when_no_sentinel() {
 	// When there is no file_context block, the function returns the text unchanged.
 	let plain = "<conversation_summary id=\"abc\">\n<progress>Just a summary.</progress>\n</conversation_summary>";
-	let stripped = strip_file_context_from_summary(plain);
+	let stripped = strip_regrown_sections(plain);
 	assert_eq!(stripped, plain.trim());
 }
 
@@ -2223,7 +2289,7 @@ fn format_compressed_entry_with_empty_summary_still_renders_wrapper() {
 	// empty render still produces a clearly-tagged wrapper (used during the
 	// pathological-bootstrap branch in apply_compression). Pinned here so
 	// any future refactor that changes the wrapper tag breaks
-	// strip_file_context_from_summary's matching as well.
+	// strip_regrown_sections's matching as well.
 	let formatted = format_compressed_entry_with_context("", "", "test-id".to_string(), None);
 	assert!(formatted.contains("<conversation_summary id=\"test-id\">"));
 	assert!(formatted.contains("</conversation_summary>"));

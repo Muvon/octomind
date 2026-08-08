@@ -166,7 +166,7 @@ pub struct CompressionHintConfig {
 }
 
 fn default_knowledge_retention() -> usize {
-	10
+	25
 }
 
 fn default_telemetry() -> bool {

@@ -290,7 +290,7 @@ Automatic context compression system.
 | `hints_enabled` | bool | `true` | Enable compression system |
 | `hints_pressure_threshold` | f64 | `0.7` | Context pressure threshold (0.0-1.0) to start showing hints |
 | `hints_min_interval` | usize | `5` | Minimum tool executions between hints |
-| `knowledge_retention` | usize | `10` | Max critical knowledge entries retained across compressions |
+| `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
 
 > **Disabling compression:** if `[[compression.pressure_levels]]` is empty, compression is disabled entirely and the compression-model validation is skipped. Independently, `max_session_tokens_threshold` (see Performance & Limits) acts as a hard token ceiling separate from these pressure levels.
 
@@ -328,7 +328,7 @@ Model used for compression decisions and summary generation.
 hints_enabled = true
 hints_pressure_threshold = 0.7
 hints_min_interval = 5
-knowledge_retention = 10
+knowledge_retention = 25
 
 [[compression.pressure_levels]]
 threshold = 60000

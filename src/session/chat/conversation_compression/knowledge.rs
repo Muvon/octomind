@@ -34,6 +34,18 @@ use crate::{log_debug, log_info};
 /// transcript (`prompt.rs`) and as the file-context strip boundary below.
 pub(super) const SUMMARY_TAG_OPEN_PREFIX: &str = "<conversation_summary";
 
+/// Robust z-score at which a candidate finding counts as a restatement.
+/// Dimensionless — the conventional 3-sigma bound, applied to the session's
+/// own similarity distribution rather than to a raw cosine value.
+const RESTATEMENT_Z: f32 = 3.0;
+
+/// Normal-consistency constant relating MAD to sigma (sigma ~= 1.4826 * MAD).
+const MAD_TO_SIGMA: f32 = 1.4826;
+
+/// Fewer held findings than this and the nearest-neighbour distribution is too
+/// small to estimate an outlier bound from.
+const MIN_HELD_FOR_DISTRIBUTION: usize = 5;
+
 pub(super) fn format_compressed_entry_with_context(
 	body: &str,
 	file_context: &str,
@@ -70,23 +82,32 @@ pub(super) fn format_compressed_entry_with_context(
 	)
 }
 
-/// Strip the `<file_context>` block from a prior compressed summary before
-/// re-feeding it to the next compression pass. When a summary is
-/// re-compressed, the embedded file bytes are stale and bloat the prompt —
-/// the AI will re-request whatever it still needs via the structured
-/// `file_context` field of the new summary.
-pub(super) fn strip_file_context_from_summary(summary: &str) -> String {
-	const OPEN: &str = "<file_context>";
-	const CLOSE: &str = "</file_context>";
-	let bytes = summary.as_bytes();
-	if let Some(open) = summary.find(OPEN) {
+/// Strip the blocks that the session re-attaches itself from a prior
+/// compressed summary, before re-feeding it to the next compression pass.
+///
+/// `<file_context>` — the embedded file bytes are stale; the AI re-requests
+/// whatever it still needs via the structured `file_context` field.
+///
+/// `<analysis_findings>` — the accumulated union is re-attached by
+/// `fold_analysis_findings` at render time, so showing it back to the
+/// compressor only invites it to restate every entry in new words (which is
+/// exactly what the old "carry forward all prior entries" instruction asked
+/// for). Left in place it recurses the same way file bytes did: one measured
+/// session re-fed 220 KB of findings into every compression call.
+pub(super) fn strip_regrown_sections(summary: &str) -> String {
+	let stripped = strip_block(summary, "<file_context>", "</file_context>");
+	strip_block(&stripped, "<analysis_findings>", "</analysis_findings>")
+}
+
+fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {
+	if let Some(open) = summary.find(open_tag) {
 		// Locate the matching close tag; if absent, drop everything from the
 		// open onward (defensive — a malformed summary should still
 		// strip cleanly rather than re-embed half the file dump).
-		let close_end = summary[open + OPEN.len()..]
-			.find(CLOSE)
-			.map(|i| open + OPEN.len() + i + CLOSE.len())
-			.unwrap_or(bytes.len());
+		let close_end = summary[open + open_tag.len()..]
+			.find(close_tag)
+			.map(|i| open + open_tag.len() + i + close_tag.len())
+			.unwrap_or(summary.len());
 		let mut head = summary[..open].trim_end().to_string();
 		let tail = summary[close_end..].trim_start().to_string();
 		if !tail.is_empty() {
@@ -156,18 +177,163 @@ pub(super) fn fold_critical_knowledge(
 /// enforced HERE, in code, and the model's output is treated as "what I
 /// learned this cycle" rather than as the authoritative list.
 ///
-/// UNBOUNDED and deliberately not configurable: findings are scoped to one
-/// task, so the only correct time to drop them is when the task itself
-/// changes — which `ChatSession::add_user_message` does on a genuine new user
-/// turn, alongside the detector reset. A count-based cap would evict the
-/// earliest conclusions, and those are exactly the load-bearing ones (the root
-/// cause is usually found early and re-confirmed late). Dedupe is exact-match;
-/// order is oldest-first so earlier conclusions stay stable across renders.
-pub(super) fn fold_analysis_findings(session: &mut ChatSession, entries: &[String]) -> Vec<String> {
-	for entry in entries.iter().filter(|e| !e.trim().is_empty()) {
-		if !session.analysis_findings.iter().any(|f| f == entry) {
-			session.analysis_findings.push(entry.clone());
-		}
+/// No count cap: findings are scoped to one task, so the only correct time to
+/// drop them all is when the task itself changes — which
+/// `ChatSession::add_user_message` does on a genuine new user turn, alongside
+/// the detector reset. A count-based cap evicts the earliest conclusions, and
+/// those are exactly the load-bearing ones (the root cause is usually found
+/// early and re-confirmed late).
+///
+/// Growth is bounded by restatement detection instead. Exact-match alone was
+/// not enough: the model restates the same conclusion in new words, so every
+/// restatement landed as a new entry — one measured session reached 888
+/// findings (220 KB, ~55K tokens per prompt) over 135 compactions.
+///
+/// The test is adaptive, never an absolute cosine cutoff. Cosine is not
+/// calibrated across models or domains: findings from one dense investigation
+/// share vocabulary and sit high, findings spanning subsystems sit low, so a
+/// fixed number means "restatement" in one session and "unrelated" in the
+/// next. The held findings are ones already accepted as distinct from each
+/// other, so they are the null model — take each held entry's similarity to
+/// its nearest held neighbour and a candidate is a restatement only when it
+/// beats that distribution as an outlier (see `restatement_bound`).
+///
+/// Order stays oldest-first so earlier conclusions are stable across renders,
+/// and the held phrasing wins — the first statement of a conclusion is kept,
+/// later paraphrases discarded.
+pub(super) async fn fold_analysis_findings(
+	session: &mut ChatSession,
+	entries: &[String],
+) -> Vec<String> {
+	let candidates: Vec<String> = entries
+		.iter()
+		.filter(|e| !e.trim().is_empty())
+		.filter(|e| !session.analysis_findings.iter().any(|f| f == *e))
+		.cloned()
+		.collect();
+	if candidates.is_empty() {
+		return session.analysis_findings.clone();
 	}
+
+	// Too few held findings to estimate the null distribution — exact match
+	// is all we can honestly claim.
+	if session.analysis_findings.len() < MIN_HELD_FOR_DISTRIBUTION {
+		session.analysis_findings.extend(candidates);
+		return session.analysis_findings.clone();
+	}
+
+	// One batched embed for held entries and candidates together; the cache
+	// makes held entries free on every cycle after the one that added them.
+	let mut texts = session.analysis_findings.clone();
+	let held = texts.len();
+	texts.extend(candidates.iter().cloned());
+	let vectors = match crate::embeddings::embed_many(&texts).await {
+		Ok(v) => v,
+		Err(e) => {
+			// Embeddings are an external dependency (model load can fail);
+			// losing dedupe is recoverable, losing the compaction is not.
+			log_debug!("Findings dedupe fell back to exact-match: {}", e);
+			session.analysis_findings.extend(candidates);
+			return session.analysis_findings.clone();
+		}
+	};
+
+	let bound = restatement_bound(&vectors[..held]);
+	// Grows as candidates are accepted, so two paraphrases arriving in the
+	// same cycle collapse against each other, not only against held entries.
+	let mut kept: Vec<&[f32]> = vectors[..held].iter().map(|v| v.as_slice()).collect();
+	let mut added = 0usize;
+	for (i, entry) in candidates.iter().enumerate() {
+		let vec = &vectors[held + i];
+		let nearest = kept
+			.iter()
+			.map(|k| crate::embeddings::cosine(k, vec))
+			.fold(f32::MIN, f32::max);
+		if nearest > bound {
+			log_debug!("Dropped restated finding (sim {:.3}): {}", nearest, entry);
+			continue;
+		}
+		kept.push(vec.as_slice());
+		session.analysis_findings.push(entry.clone());
+		added += 1;
+	}
+	log_debug!(
+		"Folded {} of {} findings, bound {:.3} ({} total)",
+		added,
+		candidates.len(),
+		bound,
+		session.analysis_findings.len()
+	);
 	session.analysis_findings.clone()
+}
+
+/// Similarity above which a candidate is a restatement rather than a new
+/// finding, derived from the held findings themselves.
+///
+/// Builds the null distribution — each held finding's cosine to its nearest
+/// other held finding, i.e. how close two *distinct* findings get in this
+/// session — and returns a robust upper outlier bound on it. MAD rather than
+/// standard deviation because it has a 50% breakdown point: if restatements
+/// have already leaked into the held set they cannot inflate the bound and
+/// hide the next ones. `MAD_TO_SIGMA` is the usual normal-consistency
+/// constant, so `RESTATEMENT_Z` is an ordinary dimensionless z-score and
+/// carries no assumption about the embedding model or the subject matter.
+/// The bound is computed under the Fisher transform because cosine is a
+/// bounded correlation, not an unbounded quantity.
+///
+/// A degenerate spread (every neighbour equidistant) would collapse the bound
+/// onto the median and start discarding real findings, so it falls back to the
+/// closest observed distinct pair: to be a restatement you must then be nearer
+/// than any two distinct findings have ever been here.
+pub(super) fn restatement_bound(held: &[Vec<f32>]) -> f32 {
+	let nearest: Vec<f32> = held
+		.iter()
+		.enumerate()
+		.map(|(i, a)| {
+			held.iter()
+				.enumerate()
+				.filter(|(j, _)| *j != i)
+				.map(|(_, b)| crate::embeddings::cosine(a, b))
+				.fold(f32::MIN, f32::max)
+		})
+		.collect();
+	// Fisher z. Cosine is a correlation: bounded in [-1, 1], and its variance
+	// shrinks as it approaches the ends. A median + k*MAD bound computed on raw
+	// cosines routinely lands above 1.0, where nothing can ever exceed it and
+	// the test silently never fires (measured: bound 1.437). atanh maps the
+	// bounded scale onto the whole real line, where an additive robust bound is
+	// meaningful; tanh maps it back, always below 1.
+	let mut z: Vec<f32> = nearest.iter().copied().map(fisher_z).collect();
+	let center = median(&mut z);
+	let mut deviations: Vec<f32> = z.iter().map(|v| (v - center).abs()).collect();
+	let mad = median(&mut deviations);
+	if mad > f32::EPSILON {
+		(center + RESTATEMENT_Z * MAD_TO_SIGMA * mad).tanh()
+	} else {
+		// Zero spread means the sample carries no information about what
+		// "unusually similar" looks like here, so fail open: keep everything
+		// rather than guess a cutoff. Dropping a real finding costs more than
+		// carrying a duplicate for one more cycle.
+		1.0
+	}
+}
+
+/// Fisher transform, clamped short of the poles where `atanh` is infinite.
+fn fisher_z(r: f32) -> f32 {
+	const LIMIT: f32 = 0.999_999;
+	r.clamp(-LIMIT, LIMIT).atanh()
+}
+
+/// Median of `values`, sorting in place. Callers pass scratch vectors.
+fn median(values: &mut [f32]) -> f32 {
+	values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+	let n = values.len();
+	if n == 0 {
+		return 0.0;
+	}
+	if n % 2 == 1 {
+		values[n / 2]
+	} else {
+		(values[n / 2 - 1] + values[n / 2]) / 2.0
+	}
 }

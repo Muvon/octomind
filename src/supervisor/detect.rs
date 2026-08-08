@@ -29,13 +29,31 @@ use std::collections::{HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 /// The agent's self-reported state for a turn, parsed from its `<sup>…</sup>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SelfReport {
 	Exploring,
 	Progressing,
 	Blocked,
 	NeedInput,
 	Done,
+}
+
+/// Compact handoff authored by the main agent at the end of each response.
+/// It is an attention signal, not ground truth; compression reconciles it
+/// against the transcript before promoting anything to durable knowledge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SelfReportHandoff {
+	pub focus: String,
+	pub next: String,
+	pub carry: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedSelfReport {
+	pub state: SelfReport,
+	pub handoff: SelfReportHandoff,
 }
 
 impl SelfReport {
@@ -49,21 +67,70 @@ impl SelfReport {
 			_ => None,
 		}
 	}
+
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Exploring => "exploring",
+			Self::Progressing => "progressing",
+			Self::Blocked => "blocked",
+			Self::NeedInput => "need_input",
+			Self::Done => "done",
+		}
+	}
 }
 
 /// One-time system-side instruction that makes the agent self-annotate. Injected
 /// out-of-band; the resulting tags are stripped before display.
-pub const SELF_REPORT_INSTRUCTION: &str = "\
-Finish every response with one status line — the last line, nothing after it:
-`<sup>STATE · brief reason</sup>`
-Start the tag with one state word, then ` · `, then a few words of reason. Use exactly one of these words (write the word itself, not the placeholder STATE):
+pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one compact JSON status line — the last line, nothing after it:
+`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"]}</sup>`
+Use valid single-line JSON with exactly those fields. `carry` may be empty; keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
 - `progressing` — actively making changes
 - `blocked` — stuck, cannot proceed
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
-Examples: `<sup>progressing · wiring store registration</sup>` or `<sup>done · migration verified</sup>`
-This line is read by the system and hidden from the user. Emit exactly one, leading with the state word.";
+Example: `<sup>{"state":"progressing","focus":"checking the active operation","next":"perform the next status check","carry":["use the resource reference established earlier"]}</sup>`
+This line is read by the system and hidden from the user. Emit exactly one."#;
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireSelfReport {
+	state: String,
+	focus: String,
+	next: String,
+	carry: Vec<String>,
+}
+
+pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
+	let end = text.rfind("</sup>")?;
+	let start = text[..end].rfind("<sup>")? + "<sup>".len();
+	let inner = text[start..end].trim();
+	if inner.starts_with('{') {
+		let wire: WireSelfReport = serde_json::from_str(inner).ok()?;
+		return Some(ParsedSelfReport {
+			state: SelfReport::from_token(&wire.state)?,
+			handoff: SelfReportHandoff {
+				focus: wire.focus.trim().to_string(),
+				next: wire.next.trim().to_string(),
+				carry: wire
+					.carry
+					.into_iter()
+					.map(|entry| entry.trim().to_string())
+					.filter(|entry| !entry.is_empty())
+					.collect(),
+			},
+		});
+	}
+
+	let (state, reason) = parse_legacy_self_report_inner(inner)?;
+	Some(ParsedSelfReport {
+		state,
+		handoff: SelfReportHandoff {
+			focus: reason.unwrap_or_default(),
+			..Default::default()
+		},
+	})
+}
 
 /// One-time system-side instruction enabling evidence-bound claims. The agent
 /// backs load-bearing factual claims with a verbatim quote it actually saw in a
@@ -83,6 +150,15 @@ pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
 	let end = text.rfind("</sup>")?;
 	let start = text[..end].rfind("<sup>")? + "<sup>".len();
 	let inner = text[start..end].trim();
+	if inner.starts_with('{') {
+		let parsed = parse_self_report_handoff(text)?;
+		let reason = (!parsed.handoff.focus.is_empty()).then_some(parsed.handoff.focus);
+		return Some((parsed.state, reason));
+	}
+	parse_legacy_self_report_inner(inner)
+}
+
+fn parse_legacy_self_report_inner(inner: &str) -> Option<(SelfReport, Option<String>)> {
 	// Normal: the body leads with the state. Echo: a model copied the literal
 	// `STATE` placeholder from the instruction, so the real state is the next
 	// token (`<sup>STATE · done</sup>` → done). Robust to `·`, `|`, `:`, `-`, space.
@@ -118,6 +194,12 @@ fn leading_state_token(inner: &str) -> String {
 /// reason separator (`·`/`|`) that real superscript never contains. This is the
 /// safety net: an echoed or malformed report still never reaches the screen.
 fn is_self_report_body(inner: &str) -> bool {
+	if inner.trim_start().starts_with('{') {
+		return serde_json::from_str::<WireSelfReport>(inner)
+			.ok()
+			.and_then(|report| SelfReport::from_token(&report.state))
+			.is_some();
+	}
 	let lead = leading_state_token(inner);
 	SelfReport::from_token(&lead).is_some()
 		|| lead.eq_ignore_ascii_case("state")
@@ -1558,6 +1640,28 @@ mod tests {
 			r,
 			Some((SelfReport::Progressing, Some("editing api".into())))
 		);
+	}
+
+	#[test]
+	fn parses_structured_handoff_and_strips_it() {
+		let text = r#"answer
+<sup>{"state":"progressing","focus":"inspect the active state","next":"continue from the last verified checkpoint","carry":["credential source is configured externally","retain opaque-run-ref"]}</sup>"#;
+		let parsed = parse_self_report_handoff(text).expect("structured report");
+		assert_eq!(parsed.state, SelfReport::Progressing);
+		assert_eq!(parsed.handoff.focus, "inspect the active state");
+		assert_eq!(
+			parsed.handoff.next,
+			"continue from the last verified checkpoint"
+		);
+		assert_eq!(parsed.handoff.carry.len(), 2);
+		assert_eq!(strip_self_report(text), "answer");
+	}
+
+	#[test]
+	fn malformed_structured_handoff_is_not_accepted_as_status() {
+		let malformed = r#"<sup>{"state":"progressing","focus":"x"}</sup>"#;
+		assert!(parse_self_report_handoff(malformed).is_none());
+		assert_eq!(strip_self_report(malformed), malformed);
 	}
 
 	#[test]

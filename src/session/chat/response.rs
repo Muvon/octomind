@@ -382,9 +382,12 @@ fn add_assistant_message_with_tool_calls(
 /// converges on the final message's state (None when no token was emitted).
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
 	if config.supervisor.enabled && config.supervisor.detectors.self_report {
-		let parsed = crate::supervisor::detect::parse_self_report(content);
-		chat_session.last_self_report = parsed.as_ref().map(|(s, _)| *s);
-		chat_session.last_self_report_reason = parsed.and_then(|(_, r)| r);
+		let parsed = crate::supervisor::detect::parse_self_report_handoff(content);
+		chat_session.last_self_report = parsed.as_ref().map(|report| report.state);
+		chat_session.last_self_report_reason = parsed.as_ref().and_then(|report| {
+			(!report.handoff.focus.is_empty()).then(|| report.handoff.focus.clone())
+		});
+		chat_session.last_self_report_handoff = parsed.map(|report| report.handoff);
 
 		// Surface the agent's own "what I'm doing" on the spinner instead of
 		// the generic "Working …" — free feedback already paid for by the
@@ -402,6 +405,11 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 
 		crate::supervisor::detect::strip_self_report(content)
 	} else {
+		// Configuration can be reloaded mid-session. Never let a report captured
+		// while self-reporting was enabled survive after the feature is disabled.
+		chat_session.last_self_report = None;
+		chat_session.last_self_report_reason = None;
+		chat_session.last_self_report_handoff = None;
 		content.to_string()
 	}
 }

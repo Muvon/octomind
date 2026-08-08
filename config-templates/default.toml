@@ -730,7 +730,8 @@ distraction_threshold = 0
 # relevant" -> keep it in the tail. Lower = stricter. Model-dependent; tune from logs.
 # (Diagnostic on the default model: on-task ~0.79, off-task ~0.63-0.73 -> ~0.70 floor.)
 drift_floor = 0.7
-# Inject the self-report status-token instruction and parse it back
+# Inject the hidden structured state/focus/next/carry handoff and parse it back.
+# Compression uses it as an untrusted attention hint grounded in the transcript.
 self_report = true
 # Consecutive single-tool-call ROUNDS in a row -> the model is issuing one tool call
 # per turn where independent calls could be batched into one parallel round. Scores

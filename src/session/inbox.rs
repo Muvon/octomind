@@ -118,7 +118,8 @@ impl InboxSource {
 	pub fn is_system_managed(&self) -> bool {
 		matches!(
 			self,
-			InboxSource::BackgroundAgent { .. }
+			InboxSource::Schedule { .. }
+				| InboxSource::BackgroundAgent { .. }
 				| InboxSource::TapRun { .. }
 				| InboxSource::Skill { .. }
 				| InboxSource::SkillValidator { .. }
@@ -378,15 +379,13 @@ mod tests {
 
 	#[test]
 	fn only_user_initiated_sources_are_not_system_managed() {
-		// Schedule and Inject are user-authored; everything else is machinery.
-		assert!(!InboxSource::Schedule { id: "s".into() }.is_system_managed());
+		// A schedule is user-authored configuration, but each firing is runtime
+		// control input: it must not replace the underlying task during compression.
+		assert!(InboxSource::Schedule { id: "s".into() }.is_system_managed());
 		assert!(!InboxSource::Inject.is_system_managed());
 		assert!(!InboxSource::Webhook { hook: "h".into() }.is_system_managed());
 		for source in all_sources() {
-			let expected = !matches!(
-				source,
-				InboxSource::Schedule { .. } | InboxSource::Inject | InboxSource::Webhook { .. }
-			);
+			let expected = !matches!(source, InboxSource::Inject | InboxSource::Webhook { .. });
 			assert_eq!(
 				source.is_system_managed(),
 				expected,

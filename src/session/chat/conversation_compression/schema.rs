@@ -222,7 +222,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"type": "array",
 				"items": { "type": "string" },
 				"maxItems": 10,
-				"description": "One short paraphrase per [RECENT]-tagged turn. Keep concrete details and decisions intact."
+				"description": "Faithful paraphrases covering the [RECENT]-tagged span. Combine causally related turns when needed to fit the array while keeping concrete details and decisions intact."
 			},
 			"key_entities": {
 				"type": "object",
@@ -280,7 +280,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"type": "array",
 				"items": { "type": "string" },
 				"maxItems": 15,
-				"description": "Survives ALL future compressions. Architectural decisions, hidden constraints, user preferences, root-cause findings. 2–3 sentences each. Include only when truly critical — not routine progress."
+				"description": "Survives ALL future compressions. Durable execution protocol (procedure, resources, cadence, constraints, checkpoints, completion condition), architectural decisions, hidden constraints, user preferences, and root-cause findings. Generic across task domains, not only programming. 2–3 sentences each. Include only when future turns must retain it — not routine progress or transient tool payloads."
 			},
 			"open_loops": {
 				"type": "array",
@@ -498,7 +498,7 @@ Emit ONE single XML document with the following tags, in this order. Every requi
 <errors_and_corrections>                                  (required container; 0-10 <entry> items, verbatim feedback/errors)
   <entry>...</entry>
 </errors_and_corrections>
-<recent_exchanges>                                        (required container; 0-10 <exchange> items, one per [RECENT] turn)
+<recent_exchanges>                                        (required container; 0-10 <exchange> items covering the [RECENT] span; combine related turns as needed)
   <exchange>...</exchange>
 </recent_exchanges>
 <key_entities>                                            (required container)

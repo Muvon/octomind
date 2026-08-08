@@ -414,7 +414,7 @@ Deterministic, free, every-turn signals that decide when (rarely) to wake the mo
 | `dedup_threshold` | usize | `2` | Consecutive deduplicated tool results → model is re-issuing calls whose output it already has |
 | `distraction_threshold` | usize | `0` | Consecutive off-task results (cosine to the working-set centroid below `drift_floor`) → drift. The centroid follows every result, so a coherent pivot re-anchors and breaks the streak. `0` = off; costs one embedding per sizable tool result when enabled |
 | `drift_floor` | f64 | `0.7` | Drift floor: a result is drift only if its cosine to the working set falls below this. Model-dependent; tune from debug logs |
-| `self_report` | bool | `true` | Inject the self-report status-token instruction and parse it back |
+| `self_report` | bool | `true` | Inject and parse the hidden structured state/focus/next/carry handoff used by detectors and compression |
 | `sequential_threshold` | usize | `0` | Consecutive single-tool-call rounds → over-sequencing advisory. `0` = off |
 | `sequential_max_steers_per_turn` | usize | `0` | Maximum over-sequencing advisories per genuine user turn. Successful compression resets the budget. `0` = unlimited |
 

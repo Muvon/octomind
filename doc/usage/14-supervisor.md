@@ -24,13 +24,13 @@ The **verify-gate is the reward signal**: it labels a run pass/fail, so the supe
 
 ## Self-report
 
-When `[supervisor.detectors] self_report = true`, the agent is instructed to end every turn with a one-word status token:
+When `[supervisor.detectors] self_report = true`, the agent ends every turn with a compact structured handoff:
 
 ```
-<sup>STATE</sup>          # optionally: <sup>STATE · short reason</sup>
+<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum resume-critical fact or opaque reference"]}</sup>
 ```
 
-`STATE` is one of `exploring`, `progressing`, `blocked`, `need_input`, `done`. The token is **parsed by the supervisor and stripped before display** — you never see it. It is the cheapest, most reliable signal of intent, because the agent already knows whether it is stuck, asking you a question, or finished.
+`STATE` is one of `exploring`, `progressing`, `blocked`, `need_input`, `done`. The token is **parsed by the supervisor and stripped before display** — you never see it. `focus`, `next`, and `carry` form a low-cost handoff to conversation compression. The compressor treats it as an attention hint, grounds it against the transcript, and may promote supported durable protocol into critical knowledge. It is never evidence by itself, and credential values are forbidden; only opaque credential pointers may be carried. Legacy one-word and `STATE · reason` reports remain accepted when resuming older sessions.
 
 | State | Effect |
 |-------|--------|

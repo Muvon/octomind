@@ -586,6 +586,7 @@ pub async fn run_interactive_session(
 			// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
 			// If one is ready, skip user input entirely and process it immediately.
 			let pending_msg = crate::session::inbox::try_pop_inbox_message();
+			let mut injected_source = pending_msg.as_ref().map(|msg| msg.source.clone());
 
 			// Get a new operation token for this iteration
 			let operation_rx = cancellation.new_operation();
@@ -880,6 +881,7 @@ pub async fn run_interactive_session(
 					if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
 						log_debug!("Processing inbox message from {:?}", msg.source);
 						crate::session::inbox::display_injected_input(&msg);
+						injected_source = Some(msg.source.clone());
 						input = msg.content;
 					}
 				}
@@ -1130,7 +1132,12 @@ pub async fn run_interactive_session(
 			// level ladder. Reset BEFORE the compression check so any compression this
 			// turn applies the lightest level (0); the counter only increments during
 			// autonomous (no-user-message) work via apply_compression.
-			chat_session.session.info.consecutive_compressions = 0;
+			let system_managed_input = injected_source
+				.as_ref()
+				.is_some_and(|source| source.is_system_managed());
+			if !system_managed_input {
+				chat_session.session.info.consecutive_compressions = 0;
+			}
 			let _compression_occurred =
 			match crate::session::chat::conversation_compression::check_and_compress_conversation(
 				&mut chat_session,
@@ -1161,10 +1168,16 @@ pub async fn run_interactive_session(
 
 			let user_message_index = chat_session.session.messages.len();
 
-			// Add user message for standard processing flow.
-			chat_session.add_user_message(&final_input)?;
-			// New user message → run per-message lesson recall on the next API call.
-			chat_session.pending_recall = true;
+			// Runtime control input (including schedule firings) drives the next action
+			// without becoming the user's active task. Preserve source metadata through
+			// the interactive path just as ACP, WebSocket, and non-interactive modes do.
+			if system_managed_input {
+				chat_session.add_system_managed_user_message(&final_input)?;
+			} else {
+				chat_session.add_user_message(&final_input)?;
+				// New real user message → run per-message lesson recall on the next API call.
+				chat_session.pending_recall = true;
+			}
 
 			// Create operation context for tracking
 			*current_operation.lock().unwrap() = Some(OperationContext {

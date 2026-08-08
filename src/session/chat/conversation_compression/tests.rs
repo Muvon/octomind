@@ -69,6 +69,10 @@ fn synthetic_user_messages_excluded_from_tasks() {
 	assert!(is_synthetic_user_message(
 		"<continuation>\nThe conversation summary above…\n</continuation>"
 	));
+	// Runtime action/context (schedule, background work, validator output).
+	assert!(is_synthetic_user_message(
+		"<system-note>\nCheck the current status now.\n</system-note>"
+	));
 	// Genuine user requests — kept.
 	assert!(!is_synthetic_user_message(
 		"fix the dedup steering bug in response.rs"

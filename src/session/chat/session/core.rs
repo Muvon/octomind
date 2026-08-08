@@ -260,6 +260,9 @@ pub struct ChatSession {
 	/// Supervisor: optional reason from the latest self-report token, fed to the
 	/// verify-gate so it checks what the agent claims it did.
 	pub last_self_report_reason: Option<String>,
+	/// Supervisor: structured continuation handoff from the main agent. Used as
+	/// an untrusted attention prior by conversation compression, never as evidence.
+	pub last_self_report_handoff: Option<crate::supervisor::detect::SelfReportHandoff>,
 	/// Supervisor: entries recalled during the current trajectory (content, role,
 	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
 	pub recalled_refs: Vec<(String, String, String)>,
@@ -403,6 +406,7 @@ impl ChatSession {
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
 			last_self_report_reason: None,
+			last_self_report_handoff: None,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
@@ -619,6 +623,7 @@ impl ChatSession {
 						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 						last_steered_calls: None,
 						last_self_report_reason: None,
+						last_self_report_handoff: None,
 						recalled_refs: Vec::new(),
 						evidence: crate::supervisor::gate::EvidenceLedger::default(),
 						gate_task: None,
@@ -1386,6 +1391,7 @@ mod tests {
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
 			last_self_report_reason: None,
+			last_self_report_handoff: None,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,

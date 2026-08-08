@@ -69,10 +69,10 @@ pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
 /// Shape:
 /// ```text
 /// <continuation>
-/// The conversation summary above is the complete record of prior work
-/// on this task — partial progress, decisions, and findings are all
-/// captured there. Resume from where the previous turn left off; do not
-/// restart or re-discover what is already established.
+/// The conversation summary above is the concise record of prior work;
+/// its archive is the lossless record. Resume from where the previous
+/// turn left off; read the archive rather than guessing an omitted exact
+/// detail.
 ///
 /// {plan continuation note, only when a plan is active}
 /// <task>
@@ -93,7 +93,7 @@ fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String
 	};
 	format!(
 		"<continuation>\n\
-		The conversation summary above is the complete record of prior work on this task — partial progress, decisions, and findings are all captured there. Resume from where the previous turn left off; do not restart or re-discover what is already established.\n\n\
+		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess.\n\n\
 		{}<task>\n{}\n</task>\n\
 		</continuation>",
 		plan_note, task_body

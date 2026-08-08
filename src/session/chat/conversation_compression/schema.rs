@@ -210,7 +210,7 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"type": "array",
 				"items": { "type": "string" },
 				"maxItems": 30,
-				"description": "3–6 bullets: conclusions from investigation — root causes, behaviours, code-location-specific discoveries. Record NEGATIVE conclusions too: a hypothesis investigated and excluded, with the reason it was excluded ('X is not the cause / is out of scope because Y'). A ruled-out lead that is dropped here is re-investigated from scratch after the next compression. If a prior summary exists, carry its findings forward and append new ones."
+				"description": "3–6 bullets: conclusions THIS transcript established that a prior summary did not — root causes, behaviours, code-location-specific discoveries. Record NEGATIVE conclusions too: a hypothesis investigated and excluded, with the reason it was excluded ('X is not the cause / is out of scope because Y'). Do NOT restate findings from a prior summary: they are retained outside your output and re-attached automatically, so repeating them in new words creates duplicates rather than preserving them. An empty array is correct when this transcript established nothing new."
 			},
 			"errors_and_corrections": {
 				"type": "array",

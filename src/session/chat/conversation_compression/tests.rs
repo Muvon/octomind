@@ -1604,7 +1604,7 @@ fn test_file_context_stripped_from_recompression_input() {
 			</file_context>\n\
 			</conversation_summary>";
 
-	let stripped = strip_regrown_sections(summary_with_context);
+	let stripped = strip_regrown_sections(summary_with_context, true);
 
 	assert!(
 		!stripped.contains("<file_context>"),
@@ -1632,7 +1632,7 @@ fn test_analysis_findings_stripped_from_recompression_input() {
 			<next_steps>Keep going.</next_steps>\n\
 			</conversation_summary>";
 
-	let stripped = strip_regrown_sections(summary);
+	let stripped = strip_regrown_sections(summary, true);
 
 	assert!(
 		!stripped.contains("<analysis_findings>"),
@@ -1690,7 +1690,7 @@ fn test_restatement_bound_flags_only_outliers() {
 fn test_file_context_stripped_when_no_sentinel() {
 	// When there is no file_context block, the function returns the text unchanged.
 	let plain = "<conversation_summary id=\"abc\">\n<progress>Just a summary.</progress>\n</conversation_summary>";
-	let stripped = strip_regrown_sections(plain);
+	let stripped = strip_regrown_sections(plain, true);
 	assert_eq!(stripped, plain.trim());
 }
 

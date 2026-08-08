@@ -94,9 +94,18 @@ pub(super) fn format_compressed_entry_with_context(
 /// exactly what the old "carry forward all prior entries" instruction asked
 /// for). Left in place it recurses the same way file bytes did: one measured
 /// session re-fed 220 KB of findings into every compression call.
-pub(super) fn strip_regrown_sections(summary: &str) -> String {
+pub(super) fn strip_regrown_sections(summary: &str, findings_held: bool) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
-	strip_block(&stripped, "<analysis_findings>", "</analysis_findings>")
+	if findings_held {
+		strip_block(&stripped, "<analysis_findings>", "</analysis_findings>")
+	} else {
+		// The session store is empty — `add_user_message` clears it on every
+		// real user turn, including a bare "continue". Stripping here too would
+		// leave no copy anywhere and permanently lose the findings, which is
+		// the failure this accumulation exists to prevent. Re-feed them and let
+		// the fold pick them back up.
+		stripped
+	}
 }
 
 fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {

@@ -41,6 +41,10 @@ pub(crate) struct ArchiveBlockEntry {
 	pub kind: super::attention::PacketKind,
 	pub provenance: super::attention::Provenance,
 	pub dependencies: Vec<String>,
+	#[serde(default)]
+	pub linkage: super::attention::PacketLinkage,
+	#[serde(default)]
+	pub exact_spans: Vec<super::attention::SourceSpan>,
 	pub content_digest: String,
 	pub archive_line_start: usize,
 	pub archive_line_end: usize,
@@ -125,7 +129,7 @@ pub(crate) fn archive_messages_with_index(
 	write_archive_with_index_to(&dir, compression_id, messages, packets)
 }
 
-fn write_archive_with_index_to(
+pub(super) fn write_archive_with_index_to(
 	dir: &Path,
 	compression_id: &str,
 	messages: &[Message],
@@ -145,6 +149,8 @@ fn write_archive_with_index_to(
 			kind: packet.kind,
 			provenance: packet.provenance,
 			dependencies: packet.depends_on.clone(),
+			linkage: packet.linkage,
+			exact_spans: packet.exact_spans.clone(),
 			content_digest: block_digest(&packet.id, block),
 			archive_line_start: packet.message_start + 1,
 			archive_line_end: packet.message_end + 1,
@@ -421,9 +427,11 @@ mod archive_tests {
 			message_start: 0,
 			message_end: 1,
 			depends_on: Vec::new(),
+			linkage: super::super::attention::PacketLinkage::StructuredIds,
 			tokens: 4,
 			lane: super::super::attention::Lane::KeepExact,
 			prompt_content: "issued call\nexact result".into(),
+			exact_spans: Vec::new(),
 			descriptor: "tool interaction".into(),
 		};
 		let bundle = write_archive_with_index_to(&dir, "pact", &messages, &[packet])
@@ -439,5 +447,27 @@ mod archive_tests {
 		let error = read_blocks(&bundle.index_path, &["b:test".into()]).unwrap_err();
 		assert!(error.to_string().contains("content-address verification"));
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[test]
+	fn pact_archive_storage_failure_is_returned_to_the_transaction_caller() {
+		let blocker = std::env::temp_dir().join(format!(
+			"octomind-pact-archive-blocker-{}-{}",
+			std::process::id(),
+			std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_nanos()
+		));
+		std::fs::write(&blocker, "not a directory").expect("fixture blocker writes");
+		let error = write_archive_with_index_to(
+			&blocker.join("child"),
+			"pact-failure",
+			&[msg("assistant", "must remain live")],
+			&[],
+		)
+		.unwrap_err();
+		assert!(error.to_string().contains("failed to create archive dir"));
+		let _ = std::fs::remove_file(blocker);
 	}
 }

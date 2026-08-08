@@ -216,10 +216,15 @@ pub(super) async fn apply_compression(
 		);
 	}
 
-	// Fold critical knowledge from the typed summary into the session.
-	// Done up-front so the session reflects the new knowledge before we
-	// insert the rendered markdown that omits the (already-folded) entries.
-	fold_critical_knowledge(session, config, &summary.critical_knowledge);
+	let pact_live = pact.is_some() && config.compression.attention.enabled;
+	// Legacy knowledge fields have no source IDs. Once PACT is live, committing
+	// them into runtime stores would create an unvalidated authority channel that
+	// can outlive the attributed folded units. Existing pre-PACT stores remain
+	// available as unverified attention context, but only validated folds may add
+	// new model-authored durable state.
+	if !pact_live {
+		fold_critical_knowledge(session, config, &summary.critical_knowledge);
+	}
 
 	// Accumulate findings in CODE, not by asking the model. Measured over 19
 	// compactions of one session the model rewrote `analysis_findings` from
@@ -232,8 +237,11 @@ pub(super) async fn apply_compression(
 		"{}\n{}\n{}",
 		summary.original_request, summary.current_task, summary.next_steps
 	);
-	let accumulated_findings =
-		fold_analysis_findings(session, config, &summary.analysis_findings, &finding_focus).await;
+	let accumulated_findings = if pact_live {
+		Vec::new()
+	} else {
+		fold_analysis_findings(session, config, &summary.analysis_findings, &finding_focus).await
+	};
 	let summary = &CompressionSummary {
 		analysis_findings: accumulated_findings,
 		..summary.clone()
@@ -242,7 +250,7 @@ pub(super) async fn apply_compression(
 	// Render the typed summary to the markdown body that gets inserted into
 	// the session as the compressed turn. Sections appear only when they
 	// carry signal so the body stays terse on early or sparse compressions.
-	let summary_body = if pact.is_some() && config.compression.attention.enabled {
+	let summary_body = if pact_live {
 		render_pact_summary(summary)
 	} else {
 		render_summary(summary)

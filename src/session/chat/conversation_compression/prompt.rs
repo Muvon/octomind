@@ -125,6 +125,11 @@ fn build_compression_prompt(
 		OutputMode::Json => String::new(),
 		OutputMode::Xml => format!("\n\n{XML_OUTPUT_SPEC}"),
 	};
+	let durable_state_rule = if pact.is_some() {
+		"Preserve durable protocol as attributed folded_units with source refs. Legacy critical_knowledge and analysis_findings are wire-compatibility fields in PACT mode: return them empty because the runtime neither renders nor commits their un-attributed prose."
+	} else {
+		"Preserve durable protocol in critical_knowledge; the legacy runtime retains that bounded field across later compressions."
+	};
 
 	let system_content = format!(
 		"<role>
@@ -147,7 +152,7 @@ The user message is assembled from the blocks below. Identify each by its TAG, n
 3. summarize packets are completed evidence to fold; archive_reference descriptors are recall pointers and cannot support an invented literal.
 4. File paths, line numbers, identifiers, and error strings — copy verbatim from the transcript.
 5. User negative feedback (\"don't do X\", \"stop doing Y\") is the HIGHEST preservation priority — never lose a correction.
-6. Preserve the execution protocol generically: the concrete procedure, resources, coordinates, cadence, constraints, checkpoints, and completion condition required to continue correctly. Put durable protocol in critical_knowledge; do not assume the task is programming.
+6. Preserve the execution protocol generically: the concrete procedure, resources, coordinates, cadence, constraints, checkpoints, and completion condition required to continue correctly. {durable_state_rule} Do not assume the task is programming.
 7. Never preserve credential or secret values in any summary field. Preserve only the opaque pointer, name, or location needed to obtain them through the established mechanism.
 </priorities>
 
@@ -178,7 +183,7 @@ On the legacy transcript path, [RECENT] marks a bounded suffix. Recency is never
 
 <attribution>
 In PACT mode populate folded_units with atomic completed-state claims. Every unit must cite all and only the supplied block IDs that support it. A runtime event cannot become a user goal, an assistant report cannot become an established observation by repetition, and archive descriptors cannot support exact values.
-PACT live rendering admits only folded_units from your model-authored output; legacy narrative fields remain compatibility/storage fields. Therefore every consequential completed outcome, correction, durable protocol, open loop, and next action that is not already exact in pinned_state or keep_exact packets must also appear as a supported folded unit.
+PACT live rendering and durable model-authored state admit only folded_units; legacy narrative fields are wire compatibility only and are neither rendered nor committed. Therefore every consequential completed outcome, correction, durable protocol, open loop, and next action that is not already exact in pinned_state or keep_exact packets must appear as a supported folded unit.
 </attribution>{force_directive}{mode_appendix}",
 	);
 

@@ -516,7 +516,9 @@ pub async fn check_and_compress_conversation(
 	// ever being mistaken for the genuine user task. Skills/instructions are
 	// excluded structurally by the packet builder and preserved through their
 	// existing dedicated paths.
-	let pact = if config.compression.attention.enabled
+	let pact_started = std::time::Instant::now();
+	let compression_stats_before = session.session.info.compression_stats.clone();
+	let mut pact = if config.compression.attention.enabled
 		|| config.compression.attention.governance.enabled
 	{
 		Some(
@@ -566,6 +568,22 @@ pub async fn check_and_compress_conversation(
 		target_ratio,
 	)
 	.await?;
+	if let Some(pact) = pact.as_mut() {
+		let after = &session.session.info.compression_stats;
+		pact.record_metrics(attention::PactMetrics {
+			controller_and_model_latency_ms: pact_started.elapsed().as_millis() as u64,
+			compression_api_time_ms: after
+				.api_time_ms
+				.saturating_sub(compression_stats_before.api_time_ms),
+			compression_input_tokens: after
+				.input_tokens
+				.saturating_sub(compression_stats_before.input_tokens),
+			compression_output_tokens: after
+				.output_tokens
+				.saturating_sub(compression_stats_before.output_tokens),
+			compression_cost: (after.cost - compression_stats_before.cost).max(0.0),
+		});
+	}
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");

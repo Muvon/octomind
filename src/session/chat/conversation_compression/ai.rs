@@ -365,7 +365,7 @@ pub(super) async fn ask_ai_decision_and_summary(
 		return Ok((false, summary));
 	}
 
-	if !is_summary_substantive(&summary) {
+	if pact.is_none() && !is_summary_substantive(&summary) {
 		log_info!(
 			"Compression aborted: AI set should_compress=true but every narrative field is empty. Skipping compression to avoid context loss."
 		);

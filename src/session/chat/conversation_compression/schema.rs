@@ -196,13 +196,18 @@ fn render_folded_state(units: &[FoldedUnit]) -> String {
 	for unit in units {
 		let refs = unit.refs.join(" ");
 		let id = super::attention::folded_unit_id(unit);
+		let text = if unit.status == "superseded" {
+			"Superseded state is archived and must not be treated as current."
+		} else {
+			unit.text.trim()
+		};
 		out.push_str(&format!(
 			"<unit id=\"{}\" kind=\"{}\" status=\"{}\" refs=\"{}\">{}</unit>\n",
 			xml_escape(&id),
 			xml_escape(&unit.kind),
 			xml_escape(&unit.status),
 			xml_escape(&refs),
-			xml_escape(unit.text.trim())
+			xml_escape(text)
 		));
 	}
 	out.push_str("</folded_state>");
@@ -393,7 +398,50 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 			"folded_units"
 		]
 	});
-	if !pact {
+	if pact {
+		let properties = schema
+			.get_mut("properties")
+			.and_then(serde_json::Value::as_object_mut)
+			.expect("compression schema properties are an object");
+		for field in [
+			"original_request",
+			"session_context",
+			"current_task",
+			"progress",
+			"next_steps",
+		] {
+			let property = properties[field]
+				.as_object_mut()
+				.expect("PACT legacy string field is an object");
+			property.insert("maxLength".into(), 0.into());
+			property.insert(
+				"description".into(),
+				"PACT wire-compatibility field. Return an empty string; runtime-owned bands and attributed folds carry live state."
+					.into(),
+			);
+		}
+		for field in [
+			"analysis_findings",
+			"errors_and_corrections",
+			"recent_exchanges",
+			"critical_knowledge",
+			"open_loops",
+			"file_states",
+		] {
+			let property = properties[field]
+				.as_object_mut()
+				.expect("PACT legacy array field is an object");
+			property.insert("maxItems".into(), 0.into());
+			property.insert(
+				"description".into(),
+				"PACT wire-compatibility field. Return []; only source-attributed folded_units are committed."
+					.into(),
+			);
+		}
+		for field in ["files", "names", "decisions"] {
+			properties["key_entities"]["properties"][field]["maxItems"] = 0.into();
+		}
+	} else {
 		if let Some(properties) = schema
 			.get_mut("properties")
 			.and_then(serde_json::Value::as_object_mut)
@@ -801,6 +849,12 @@ mod xml_parser_tests {
 			.unwrap()
 			.iter()
 			.any(|field| field == "folded_units"));
+		assert_eq!(pact["properties"]["current_task"]["maxLength"], 0);
+		assert_eq!(pact["properties"]["critical_knowledge"]["maxItems"], 0);
+		assert_eq!(
+			pact["properties"]["key_entities"]["properties"]["files"]["maxItems"],
+			0
+		);
 
 		let legacy = build_compression_schema(false, false);
 		assert!(legacy["properties"].get("folded_units").is_none());
@@ -809,6 +863,10 @@ mod xml_parser_tests {
 			.unwrap()
 			.iter()
 			.any(|field| field == "folded_units"));
+		assert!(legacy["properties"]["current_task"]
+			.get("maxLength")
+			.is_none());
+		assert_eq!(legacy["properties"]["critical_knowledge"]["maxItems"], 15);
 	}
 
 	#[test]
@@ -823,5 +881,23 @@ mod xml_parser_tests {
 		let expected_id = super::super::attention::folded_unit_id(&parsed.folded_units[0]);
 		assert!(rendered.contains(&format!("id=\"{expected_id}\"")));
 		assert!(rendered.contains("A &amp; B"));
+	}
+
+	#[test]
+	fn superseded_fold_renders_only_a_runtime_tombstone() {
+		let stale = "obsolete state that must not interfere";
+		let rendered = render_pact_summary(&CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: stale.into(),
+				kind: "observation".into(),
+				status: "superseded".into(),
+				refs: vec!["b:old".into()],
+			}],
+			..Default::default()
+		});
+		assert!(!rendered.contains(stale));
+		assert!(rendered.contains("status=\"superseded\""));
+		assert!(rendered.contains("must not be treated as current"));
+		assert!(rendered.contains("refs=\"b:old\""));
 	}
 }

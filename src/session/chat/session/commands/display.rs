@@ -2067,7 +2067,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					// from chat, so a bare `/schedule` isn't a dead end.
 					block_open("/schedule", Some("nothing scheduled yet"));
 					block_line(
-						&"Schedule a message to be injected as a user message later.".to_string(),
+					"Schedule a message to be injected as a user message later.",
 					);
 					block_blank();
 					block_section("examples");
@@ -2107,7 +2107,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					let count = msg
 						.lines()
 						.next()
-						.and_then(|l| l.trim().split_whitespace().next())
+						.and_then(|l| l.split_whitespace().next())
 						.and_then(|n| n.parse::<usize>().ok());
 					block_open("/schedule", None);
 					for line in msg.lines() {

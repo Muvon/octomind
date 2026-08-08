@@ -2066,9 +2066,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					// Empty state — explain what /schedule can do and how to drive it
 					// from chat, so a bare `/schedule` isn't a dead end.
 					block_open("/schedule", Some("nothing scheduled yet"));
-					block_line(
-					"Schedule a message to be injected as a user message later.",
-					);
+					block_line("Schedule a message to be injected as a user message later.");
 					block_blank();
 					block_section("examples");
 					let eg: &[(&str, &str)] = &[

@@ -65,6 +65,7 @@ fn display_random_tip() -> String {
 pub async fn setup_and_initialize_session(
 	args: &GenericSessionArgs,
 	config: &Config,
+	activate_interactive_tools: bool,
 ) -> Result<(
 	ChatSession,
 	Config,
@@ -167,8 +168,13 @@ pub async fn setup_and_initialize_session(
 	// Get current directory - use thread-local if set (ACP sessions), otherwise process cwd
 	let current_dir = crate::mcp::get_thread_working_directory();
 
-	// Get the merged configuration for the specified role
-	let mut config_for_role = config.get_merged_config_for_role(&role);
+	// Get the merged configuration for the specified role. Interactive CLI
+	// sessions always receive schedule + monitor as session-flow primitives.
+	let mut config_for_role = if activate_interactive_tools {
+		config.get_merged_config_for_interactive_role(&role)
+	} else {
+		config.get_merged_config_for_role(&role)
+	};
 
 	// Store resolved output_mode in config for later use (animation decisions, etc.)
 	// Resolve "plain" → "interactive" when running in a terminal

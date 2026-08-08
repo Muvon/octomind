@@ -589,7 +589,7 @@ impl OctomindAgent {
 
 		let session_args = self.build_new_session_args();
 		let (mut chat_session, config_for_role, session_role, _, _) =
-			setup_and_initialize_session(&session_args, &config_snapshot)
+			setup_and_initialize_session(&session_args, &config_snapshot, false)
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 
@@ -1289,7 +1289,7 @@ impl OctomindAgent {
 		// Resume the existing session from disk by its ID
 		let session_args = self.build_load_session_args(session_id.clone());
 		let (mut chat_session, config_for_role, session_role, _, _) =
-			setup_and_initialize_session(&session_args, &config_snapshot)
+			setup_and_initialize_session(&session_args, &config_snapshot, false)
 				.await
 				.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
 

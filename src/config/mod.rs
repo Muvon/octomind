@@ -738,6 +738,79 @@ impl Config {
 		merged
 	}
 
+	/// Build the role config used by an interactive CLI session.
+	///
+	/// Interactive sessions always expose the session-flow tools `schedule` and
+	/// `monitor`. If the role already enables the orchestration server, its
+	/// existing tool grant is preserved. Otherwise only these two tools are
+	/// overlaid; the role does not implicitly gain `tap`.
+	pub fn get_merged_config_for_interactive_role(&self, role: &str) -> Config {
+		const SERVER: &str = "orchestration";
+		const TOOLS: [&str; 2] = ["schedule", "monitor"];
+
+		let mut merged = self.get_merged_config_for_role(role);
+		let Some(registry_server) = self
+			.mcp
+			.servers
+			.iter()
+			.find(|server| server.name() == SERVER)
+		else {
+			crate::log_error!(
+				"Interactive session cannot activate schedule/monitor: '{}' builtin is missing from the MCP registry",
+				SERVER
+			);
+			return merged;
+		};
+
+		if let Some(server) = merged
+			.mcp
+			.servers
+			.iter_mut()
+			.find(|server| server.name() == SERVER)
+		{
+			// Empty means every tool on this server is already exposed. For a
+			// concrete role filter, union in the two interactive session tools.
+			if !server.tools().is_empty() {
+				let tools = server.tools_mut();
+				for tool in TOOLS {
+					if !tools.iter().any(|existing| existing == tool) {
+						tools.push(tool.to_string());
+					}
+				}
+			}
+		} else {
+			let mut server = registry_server.clone();
+			*server.tools_mut() = TOOLS.into_iter().map(str::to_string).collect();
+			merged.mcp.servers.push(server);
+		}
+
+		// Keep the compatibility fields aligned so re-merging this effective
+		// config (for example during `/role`) retains the interactive overlay.
+		if !merged.mcp.allowed_tools.is_empty() {
+			for tool in TOOLS {
+				let grant = format!("{SERVER}:{tool}");
+				if !merged.mcp.allowed_tools.contains(&grant) {
+					merged.mcp.allowed_tools.push(grant);
+				}
+			}
+		}
+		if let Some(role_entry) = merged.role_map.get_mut(role) {
+			if !role_entry.mcp.server_refs.iter().any(|name| name == SERVER) {
+				role_entry.mcp.server_refs.push(SERVER.to_string());
+			}
+			if !role_entry.mcp.allowed_tools.is_empty() {
+				for tool in TOOLS {
+					let grant = format!("{SERVER}:{tool}");
+					if !role_entry.mcp.allowed_tools.contains(&grant) {
+						role_entry.mcp.allowed_tools.push(grant);
+					}
+				}
+			}
+		}
+
+		merged
+	}
+
 	/// Get the current working directory for file/shell operations
 	/// Returns the runtime working_directory if set, otherwise falls back to current_dir
 	pub fn get_working_directory(&self) -> PathBuf {

@@ -712,6 +712,84 @@ tools = []
 		assert!(!server_names.contains(&"filesystem")); // Should not be included
 	}
 
+	#[test]
+	fn interactive_role_adds_only_schedule_and_monitor() {
+		let mut config: Config =
+			toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+		config.build_role_map();
+
+		let regular = config.get_merged_config_for_role("tester");
+		assert!(
+			regular
+				.mcp
+				.servers
+				.iter()
+				.all(|server| server.name() != "orchestration"),
+			"non-interactive role merge must remain unchanged"
+		);
+
+		let interactive = config.get_merged_config_for_interactive_role("tester");
+		let orchestration = interactive
+			.mcp
+			.servers
+			.iter()
+			.find(|server| server.name() == "orchestration")
+			.expect("interactive role must include orchestration");
+		assert_eq!(orchestration.tools(), ["schedule", "monitor"]);
+		assert!(interactive
+			.role_map
+			.get("tester")
+			.expect("tester role")
+			.mcp
+			.server_refs
+			.contains(&"orchestration".to_string()));
+
+		// MCP initialization re-merges its input. The compatibility fields must
+		// preserve the same narrow grant across that second merge.
+		let remerged = interactive.get_merged_config_for_role("tester");
+		let orchestration = remerged
+			.mcp
+			.servers
+			.iter()
+			.find(|server| server.name() == "orchestration")
+			.expect("interactive tools must survive re-merge");
+		assert_eq!(orchestration.tools(), ["schedule", "monitor"]);
+	}
+
+	#[test]
+	fn interactive_role_preserves_existing_orchestration_grants() {
+		let mut config: Config =
+			toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+		config.build_role_map();
+		let tester = config.role_map.get_mut("tester").expect("tester role");
+		tester.mcp.server_refs.push("orchestration".to_string());
+		tester
+			.mcp
+			.allowed_tools
+			.push("orchestration:tap".to_string());
+
+		let interactive = config.get_merged_config_for_interactive_role("tester");
+		let orchestration = interactive
+			.mcp
+			.servers
+			.iter()
+			.find(|server| server.name() == "orchestration")
+			.expect("orchestration server");
+		assert_eq!(orchestration.tools(), ["tap", "schedule", "monitor"]);
+		assert!(interactive
+			.mcp
+			.allowed_tools
+			.contains(&"orchestration:tap".to_string()));
+		assert!(interactive
+			.mcp
+			.allowed_tools
+			.contains(&"orchestration:schedule".to_string()));
+		assert!(interactive
+			.mcp
+			.allowed_tools
+			.contains(&"orchestration:monitor".to_string()));
+	}
+
 	/// Config with auto_bind servers for testing auto-bind behavior.
 	/// - `auto_bound` binds to the `developer` role via `auto_bind`
 	/// - `other_bound` binds to `assistant` only (should NOT appear for developer)

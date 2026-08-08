@@ -135,7 +135,11 @@ pub async fn handle_role(
 	// merged server list would silently regress to the full disk list,
 	// breaking that invariant and producing spurious "belongs to another
 	// session" errors after a role swap.
-	*config = resolved_config.get_merged_config_for_role(&target_role);
+	*config = if config.output_mode().is_interactive() {
+		resolved_config.get_merged_config_for_interactive_role(&target_role)
+	} else {
+		resolved_config.get_merged_config_for_role(&target_role)
+	};
 
 	// Apply role-level settings (temperature, optional model override)
 	let (role_config, _, _, _, _) = config.get_role_config(&target_role);

@@ -587,25 +587,32 @@ async fn allocate_lanes(
 	}
 
 	let exact_ids = active_dependency_closure(packets);
+	let mut exact_indices: Vec<usize> = packets
+		.iter()
+		.enumerate()
+		.filter(|(_, packet)| exact_ids.contains(&packet.id))
+		.map(|(index, _)| index)
+		.collect();
+	// Allocate the exact budget smallest-first: small closure members take only
+	// what they need and the recomputed fair share rolls the surplus into the
+	// largest packets, so truncation lands where head/tail extraction still
+	// yields recoverable spans instead of starving a late packet to zero budget
+	// (an empty-span KeepExact packet fails validation). Stable sort keeps ties
+	// deterministic; output order is untouched — only budgets are assigned here.
+	exact_indices.sort_by_key(|index| packets[*index].tokens);
 	let mut exact_remaining = target_tokens;
-	let mut exact_left = exact_ids.len();
+	let mut exact_left = exact_indices.len();
 	let mut used = 0usize;
-	for packet in packets.iter_mut() {
-		if exact_ids.contains(&packet.id) {
-			let packet_budget = if exact_left == 0 {
-				0
-			} else {
-				exact_remaining.div_ceil(exact_left)
-			};
-			packet.lane = Lane::KeepExact;
-			let rendered = render_packet_with_spans(messages, packet, packet_budget);
-			packet.prompt_content = rendered.content;
-			packet.exact_spans = rendered.spans;
-			let cost = crate::session::estimate_tokens(&packet.prompt_content);
-			used = used.saturating_add(cost);
-			exact_remaining = exact_remaining.saturating_sub(cost);
-			exact_left = exact_left.saturating_sub(1);
-		}
+	for index in exact_indices {
+		let packet_budget = exact_remaining.div_ceil(exact_left);
+		let rendered = render_packet_with_spans(messages, &packets[index], packet_budget);
+		packets[index].lane = Lane::KeepExact;
+		packets[index].prompt_content = rendered.content;
+		packets[index].exact_spans = rendered.spans;
+		let cost = crate::session::estimate_tokens(&packets[index].prompt_content);
+		used = used.saturating_add(cost);
+		exact_remaining = exact_remaining.saturating_sub(cost);
+		exact_left -= 1;
 	}
 
 	let mut candidates: Vec<usize> = packets
@@ -620,24 +627,27 @@ async fn allocate_lanes(
 	if remaining == 0 || candidates.is_empty() {
 		return;
 	}
-	let previews: Vec<(usize, PacketRender, usize)> = candidates
+	// Render each candidate once at its desired budget (half its source size).
+	// The map is reused by the ranked loop below whenever the per-packet share
+	// covers the desired budget, so no candidate is rendered twice.
+	let previews: BTreeMap<usize, (PacketRender, usize)> = candidates
 		.iter()
-		.filter_map(|index| {
+		.map(|index| {
 			let budget = packets[*index].tokens.div_ceil(2).max(1);
 			let rendered = render_packet_with_spans(messages, &packets[*index], budget);
-			if rendered.spans.is_empty() {
-				return None;
-			}
 			let cost = crate::session::estimate_tokens(&rendered.content);
-			Some((*index, rendered, cost))
+			(*index, (rendered, cost))
 		})
 		.collect();
+	let all_recoverable = previews
+		.values()
+		.all(|(rendered, _)| !rendered.spans.is_empty());
 	let preview_total = previews
-		.iter()
-		.map(|(_, _, cost)| *cost)
+		.values()
+		.map(|(_, cost)| *cost)
 		.fold(0usize, usize::saturating_add);
-	if previews.len() == candidates.len() && preview_total <= remaining {
-		for (index, rendered, cost) in previews {
+	if all_recoverable && preview_total <= remaining {
+		for (index, (rendered, cost)) in previews {
 			packets[index].lane = Lane::Summarize;
 			packets[index].prompt_content = rendered.content;
 			packets[index].exact_spans = rendered.spans;
@@ -685,15 +695,23 @@ async fn allocate_lanes(
 			.iter()
 			.filter_map(|candidate| {
 				let desired = packets[*candidate].tokens.div_ceil(2).max(1);
-				let rendered = render_packet_with_spans(
-					messages,
-					&packets[*candidate],
-					desired.min(per_packet),
-				);
-				(!rendered.spans.is_empty()).then(|| {
-					let cost = crate::session::estimate_tokens(&rendered.content);
-					(*candidate, rendered, cost)
-				})
+				// A preview rendered at `desired` is exact for any budget that
+				// covers it; empty spans at `desired` stay empty at any smaller
+				// budget, so a known-empty preview short-circuits the re-render.
+				let (rendered, cost) = match previews.get(candidate) {
+					Some((preview, _)) if preview.spans.is_empty() => return None,
+					Some((preview, cost)) if per_packet >= desired => (preview.clone(), *cost),
+					_ => {
+						let rendered = render_packet_with_spans(
+							messages,
+							&packets[*candidate],
+							desired.min(per_packet),
+						);
+						let cost = crate::session::estimate_tokens(&rendered.content);
+						(rendered, cost)
+					}
+				};
+				(!rendered.spans.is_empty()).then_some((*candidate, rendered, cost))
 			})
 			.collect();
 		if rendered.len() != pending.len() {
@@ -2278,6 +2296,49 @@ mod tests {
 			.sum();
 		assert!(selected <= 30, "selected {selected} tokens");
 		assert_eq!(packets[0].lane, Lane::KeepExact);
+	}
+
+	#[tokio::test]
+	async fn tight_budget_keeps_recoverable_spans_for_late_small_frontier_packets() {
+		// A large packet early in the closure must not consume the whole exact
+		// budget and starve a later small packet to an empty-span render, which
+		// would fail validation and abort every optional compression.
+		let large = message(
+			"assistant",
+			&(1..=400)
+				.map(|line| format!("large frontier line {line}"))
+				.collect::<Vec<_>>()
+				.join("\n"),
+		);
+		let small = message("assistant", "small closing checkpoint");
+		let messages = vec![large, small];
+		let mut packets = build_packets("session", &messages);
+		link_dependencies(&mut packets);
+		// Force both packets into the active closure.
+		let first_id = packets[0].id.clone();
+		packets[1].depends_on = vec![first_id];
+		let pinned = PinnedState {
+			task: PinnedItem {
+				text: "continue".into(),
+				source: None,
+			},
+			constraints: Vec::new(),
+			governance_hash: "hash".into(),
+		};
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 40).await;
+		for packet in &packets {
+			assert_eq!(packet.lane, Lane::KeepExact);
+			assert!(
+				!packet.exact_spans.is_empty(),
+				"packet {} lost all recoverable spans under tight budget",
+				packet.id
+			);
+		}
+		let selected: usize = packets
+			.iter()
+			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
+			.sum();
+		assert!(selected <= 40, "selected {selected} tokens");
 	}
 
 	#[test]

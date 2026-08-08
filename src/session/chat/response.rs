@@ -612,6 +612,11 @@ pub async fn process_response<S: OutputSink>(
 					let drift_floor = params.config.supervisor.detectors.drift_floor;
 					let sequential_threshold =
 						params.config.supervisor.detectors.sequential_threshold;
+					let sequential_max_steers_per_turn = params
+						.config
+						.supervisor
+						.detectors
+						.sequential_max_steers_per_turn;
 
 					// Drift detection is opt-in (distraction_threshold > 0): it costs one
 					// embedding per tool CALL. Reset the working-set centroid when the user's
@@ -847,10 +852,20 @@ pub async fn process_response<S: OutputSink>(
 						params.chat_session.detectors.reset_sequential_streak();
 						crate::supervisor::detect::DetectorSignal::None
 					} else {
-						params
+						let detected = params
 							.chat_session
 							.detectors
-							.record_round_arity(current_tool_calls.len(), sequential_threshold)
+							.record_round_arity(current_tool_calls.len(), sequential_threshold);
+						if detected == crate::supervisor::detect::DetectorSignal::Sequential
+							&& !params
+								.chat_session
+								.detectors
+								.sequential_steer_allowed(sequential_max_steers_per_turn)
+						{
+							crate::supervisor::detect::DetectorSignal::None
+						} else {
+							detected
+						}
 					};
 					round_signal = round_signal.merge(seq_signal);
 
@@ -886,8 +901,9 @@ pub async fn process_response<S: OutputSink>(
 
 						// Parameter-free adaptive backoff — no thresholds, no periods. Derived
 						// purely from the escalation ladder length + whether the model is ignoring:
-						//   • advisory (Sequential) → deliver the full ladder (0..PERSISTENT_ATTEMPT),
-						//     then re-emit on a DOUBLING schedule (gaps 1,2,4,8…) — same as critical.
+						//   • advisory (Sequential) → while its per-turn budget remains, deliver the
+						//     full ladder (0..PERSISTENT_ATTEMPT), then re-emit on a DOUBLING schedule
+						//     (gaps 1,2,4,8…) — same as critical.
 						//     A batching hint that goes permanently silent after 3 frames is one Opus
 						//     can simply wait out; the doubling backoff keeps it alive at O(log N) cost.
 						//   • critical → deliver the full ladder + persistent frame, then while it
@@ -911,6 +927,9 @@ pub async fn process_response<S: OutputSink>(
 						};
 
 						if emit {
+							if advisory {
+								params.chat_session.detectors.note_sequential_steer();
+							}
 							params.chat_session.steer_pending = Some(
 								crate::supervisor::detect::steer_note(
 									round_signal,

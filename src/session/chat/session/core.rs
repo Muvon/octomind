@@ -1002,6 +1002,11 @@ impl ChatSession {
 		// truncate, manual summarize, future paths) gets it for free
 		// without needing to remember a separate cleanup call.
 		crate::session::dedup::clear_current_session();
+		// A successful history reduction starts a fresh context segment. The prior
+		// Sequential advisory may have been removed, so allow the compacted segment
+		// its own bounded advisory budget and require the threshold to accumulate
+		// again. Centralized here for every compression/truncation path.
+		self.detectors.reset_sequential_advisory_budget();
 
 		crate::log_debug!(
 			"Compressed {} messages (range {}-{}), had_cached={}",
@@ -1438,6 +1443,21 @@ mod tests {
 			cs.steer_last_signal,
 			crate::supervisor::detect::DetectorSignal::None
 		);
+	}
+
+	#[test]
+	fn successful_history_removal_resets_sequential_advisory_budget() {
+		let mut cs = make_session(vec![
+			msg("system", false),
+			msg("user", false),
+			msg("assistant", false),
+		]);
+		cs.detectors.note_sequential_steer();
+		assert!(!cs.detectors.sequential_steer_allowed(1));
+
+		cs.remove_messages_in_range(0, 1).unwrap();
+
+		assert!(cs.detectors.sequential_steer_allowed(1));
 	}
 
 	// ── Case 1: no cache markers anywhere ────────────────────────────────────────

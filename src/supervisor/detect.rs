@@ -751,6 +751,10 @@ pub struct Detectors {
 	/// when it carries exactly one call and the model could have batched independent
 	/// calls, the streak grows. Reset by any multi-call (parallel) round.
 	consecutive_singletons: usize,
+	/// Sequential advisories actually emitted since the latest genuine user turn
+	/// or successful compression. Detection may keep running after the configured
+	/// cap is reached, but no further Sequential signal is surfaced.
+	sequential_steers_emitted: usize,
 	/// The current round carried at least one errored call (set by [`Detectors::note_call`],
 	/// consumed by [`Detectors::record_round_arity`]). An errored round — and the
 	/// singleton retry that follows it — is recovery, not a batchable drip-feed,
@@ -1111,6 +1115,7 @@ impl Detectors {
 		self.consecutive_dedups = 0;
 		self.consecutive_drift = 0;
 		self.consecutive_singletons = 0;
+		self.sequential_steers_emitted = 0;
 		self.round_had_error = false;
 		self.prev_round_had_error = false;
 		self.agent_dirty = false;
@@ -1167,6 +1172,25 @@ impl Detectors {
 	/// (need_input / done): a hand-back is not a silent drip-feed of independent calls.
 	pub fn reset_sequential_streak(&mut self) {
 		self.consecutive_singletons = 0;
+	}
+
+	/// Whether another Sequential advisory may be emitted in the current turn.
+	/// `limit == 0` preserves the historical unlimited behavior.
+	pub fn sequential_steer_allowed(&self, limit: usize) -> bool {
+		limit == 0 || self.sequential_steers_emitted < limit
+	}
+
+	/// Count one Sequential advisory once it is actually queued for delivery.
+	pub fn note_sequential_steer(&mut self) {
+		self.sequential_steers_emitted = self.sequential_steers_emitted.saturating_add(1);
+	}
+
+	/// Start a fresh Sequential advisory budget after successful compression.
+	/// Compression may remove the earlier advisory from the live context, so the
+	/// compacted segment gets a new budget and must re-accumulate the threshold.
+	pub fn reset_sequential_advisory_budget(&mut self) {
+		self.consecutive_singletons = 0;
+		self.sequential_steers_emitted = 0;
 	}
 
 	/// Update the working-set centroid with this result's embedding and return
@@ -2413,6 +2437,35 @@ mod tests {
 		d.reset_sequential_streak();
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
+	}
+
+	#[test]
+	fn sequential_steer_cap_counts_only_emitted_advisories() {
+		let mut d = Detectors::default();
+		assert!(d.sequential_steer_allowed(1));
+		d.note_sequential_steer();
+		assert!(!d.sequential_steer_allowed(1));
+		assert!(d.sequential_steer_allowed(0), "zero means unlimited");
+
+		// Resetting only the threshold streak after an advisory must not replenish
+		// the full-turn budget.
+		d.reset_sequential_streak();
+		assert!(!d.sequential_steer_allowed(1));
+	}
+
+	#[test]
+	fn sequential_steer_cap_resets_for_user_turn_and_compression() {
+		let mut d = Detectors::default();
+		d.note_sequential_steer();
+		d.reset_streak();
+		assert!(d.sequential_steer_allowed(1));
+
+		// Compression resets both the cap and the partially accumulated streak.
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
+		d.note_sequential_steer();
+		d.reset_sequential_advisory_budget();
+		assert!(d.sequential_steer_allowed(1));
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
 	}
 
 	#[test]

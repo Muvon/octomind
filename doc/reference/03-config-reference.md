@@ -416,6 +416,7 @@ Deterministic, free, every-turn signals that decide when (rarely) to wake the mo
 | `drift_floor` | f64 | `0.7` | Drift floor: a result is drift only if its cosine to the working set falls below this. Model-dependent; tune from debug logs |
 | `self_report` | bool | `true` | Inject the self-report status-token instruction and parse it back |
 | `sequential_threshold` | usize | `0` | Consecutive single-tool-call rounds → over-sequencing advisory. `0` = off |
+| `sequential_max_steers_per_turn` | usize | `0` | Maximum over-sequencing advisories per genuine user turn. Successful compression resets the budget. `0` = unlimited |
 
 ### `[supervisor.gate]`
 
@@ -485,6 +486,7 @@ distraction_threshold = 0
 drift_floor = 0.7
 self_report = true
 sequential_threshold = 0
+sequential_max_steers_per_turn = 0
 
 [supervisor.gate]
 enabled = true

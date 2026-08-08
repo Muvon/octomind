@@ -738,6 +738,10 @@ self_report = true
 # often legitimate (dependent calls, or one real action), so this stays advisory and
 # off unless over-sequencing is hurting you. Set e.g. 3 to enable.
 sequential_threshold = 0
+# Maximum Sequential advisories emitted during one genuine user turn. A successful
+# compression resets the budget because the prior advisory may leave the live context.
+# 0 = unlimited (default).
+sequential_max_steers_per_turn = 0
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 [supervisor.gate]

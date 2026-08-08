@@ -56,7 +56,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 2,
 				to: 3,
-				apply: add_analysis_findings_budget,
+				apply: add_v3_required_fields,
 			},
 		],
 	)
@@ -88,10 +88,10 @@ fn add_delegate_gate(
 	merge_missing(supervisor, template_supervisor, "delegate")
 }
 
-/// v3 adds the required hard budget for analysis findings retained by
-/// conversation compression. Existing compression values and comments are
-/// preserved; only the new key is copied from the embedded template.
-fn add_analysis_findings_budget(
+/// v3 adds required budgets for retained compression findings and Sequential
+/// advisories. Existing values and comments are preserved; only missing keys
+/// are copied from the embedded template.
+fn add_v3_required_fields(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
@@ -111,6 +111,34 @@ fn add_analysis_findings_budget(
 		compression,
 		template_compression,
 		"analysis_findings_max_tokens",
+	)?;
+	let template_supervisor = required_table(
+		template.as_table(),
+		"supervisor",
+		"embedded default configuration",
+	)?;
+	let template_detectors = required_table(
+		template_supervisor,
+		"detectors",
+		"embedded default configuration",
+	)?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user configuration",
+	)?;
+	let detectors = ensure_table(
+		supervisor,
+		template_supervisor,
+		"detectors",
+		"user configuration",
+	)?;
+
+	merge_missing(
+		detectors,
+		template_detectors,
+		"sequential_max_steers_per_turn",
 	)
 }
 
@@ -226,6 +254,10 @@ mod tests {
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 			Some(4000)
 		);
+		assert_eq!(
+			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
+			Some(0)
+		);
 	}
 
 	#[test]
@@ -330,7 +362,7 @@ max_revisions = 9
 	}
 
 	#[test]
-	fn v2_gains_analysis_findings_budget_and_keeps_compression_values() {
+	fn v2_gains_v3_budgets_and_keeps_existing_values() {
 		let existing = r#"# keep compression notes
 version = 2
 
@@ -339,6 +371,9 @@ hints_enabled = false
 hints_pressure_threshold = 0.8
 hints_min_interval = 9
 knowledge_retention = 17
+
+[supervisor.detectors]
+sequential_threshold = 3
 "#;
 
 		let migration = plan()
@@ -361,6 +396,14 @@ knowledge_retention = 17
 		assert_eq!(
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 			Some(4000)
+		);
+		assert_eq!(
+			migrated["supervisor"]["detectors"]["sequential_threshold"].as_integer(),
+			Some(3)
+		);
+		assert_eq!(
+			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
+			Some(0)
 		);
 	}
 

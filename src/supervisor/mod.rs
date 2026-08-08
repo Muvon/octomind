@@ -224,6 +224,10 @@ pub struct DetectorsConfig {
 	/// single parallel round. `0` = OFF: single calls are often legitimate (genuinely
 	/// dependent calls, or one real action), so this is advisory and conservative.
 	pub sequential_threshold: usize,
+	/// Maximum Sequential advisories emitted during one genuine user turn. A
+	/// successful compression resets the budget because the prior advisory may no
+	/// longer be present in the live context. `0` = unlimited.
+	pub sequential_max_steers_per_turn: usize,
 }
 
 /// Verify-gate configuration.

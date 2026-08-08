@@ -440,7 +440,7 @@ Goal recitation: re-inject the live goal (anchor intent + next steps) at the con
 
 ### `[supervisor.condense]`
 
-Task-aware narrowing of oversized tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Relevance uses trusted agent/project/active-skill instructions, the live goal/request/plan, and the current tool-round intent. The response contract is validated atomically and partial views cannot be discarded wholesale. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard ceiling.
+Task-aware narrowing of oversized plain-text tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Relevance uses trusted agent/project/active-skill instructions, the live goal/request/plan, and the current tool-round intent. The response contract is validated atomically and partial views cannot be discarded wholesale. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard plain-text ceiling; rich MCP payloads fail open rather than being flattened.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

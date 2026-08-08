@@ -826,6 +826,13 @@ async fn handle_large_tool_results(
 	let results: Vec<crate::mcp::McpToolResult> = results
 		.into_iter()
 		.map(|mut result| {
+			// Flattening and rebuilding a rich MCP result would discard resource,
+			// image, audio, or structured-content semantics. Until the hard cap
+			// has a protocol-aware representation, correctness wins: leave these
+			// payloads intact rather than silently converting them to plain text.
+			if !crate::supervisor::condense::is_plain_text_result(&result) {
+				return result;
+			}
 			let content_str = result.extract_content();
 			let (truncated, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
 				&content_str,

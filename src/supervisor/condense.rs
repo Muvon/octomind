@@ -382,7 +382,7 @@ fn spill_reader_available() -> bool {
 /// results into that path: flattening images/resources or structured content
 /// for the selector and then reconstructing only text would silently change
 /// the tool's protocol value.
-fn is_plain_text_result(result: &McpToolResult) -> bool {
+pub(crate) fn is_plain_text_result(result: &McpToolResult) -> bool {
 	result
 		.result
 		.structured_content

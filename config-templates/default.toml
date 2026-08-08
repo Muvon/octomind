@@ -638,7 +638,7 @@ analysis_findings_max_tokens = 4000
 # Compression triggers when context exceeds ANY threshold, using the highest matched ratio
 # Example: At 100k tokens, compress to 1/4 size (4x compression)
 [[compression.pressure_levels]]
-threshold = 60000
+threshold = 80000
 target_ratio = 2.0  # Light: 50% reduction
 
 [[compression.pressure_levels]]

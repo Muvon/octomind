@@ -510,6 +510,22 @@ pub async fn check_and_compress_conversation(
 		.cloned()
 		.collect();
 
+	// `analysis_findings` is runtime state, while the rendered summary is what
+	// survives on disk. Rebuild the store deterministically on resume before the
+	// prior summary is stripped from the compressor prompt. Normal live sessions
+	// retain the store across user follow-ups, so this branch is resume-only in
+	// practice.
+	if session.analysis_findings.is_empty() {
+		let restored = knowledge::latest_analysis_findings(&session.session.messages);
+		if !restored.is_empty() {
+			crate::log_debug!(
+				"Compression: restored {} analysis findings from latest summary",
+				restored.len()
+			);
+			session.analysis_findings = restored;
+		}
+	}
+
 	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
 	// Response is schema-validated and arrives as a typed struct.
 	let (should_compress, summary) = ask_ai_decision_and_summary(

@@ -1,5 +1,8 @@
 use super::collect_preserved_skills;
-use super::knowledge::{format_compressed_entry_with_context, strip_regrown_sections};
+use super::knowledge::{
+	analysis_findings_tokens, format_compressed_entry_with_context, latest_analysis_findings,
+	select_findings_with_vectors, select_newest_with_budget, strip_regrown_sections,
+};
 use super::range::find_compression_range;
 use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
 use super::select_compression_level_index;
@@ -1604,7 +1607,7 @@ fn test_file_context_stripped_from_recompression_input() {
 			</file_context>\n\
 			</conversation_summary>";
 
-	let stripped = strip_regrown_sections(summary_with_context, true);
+	let stripped = strip_regrown_sections(summary_with_context);
 
 	assert!(
 		!stripped.contains("<file_context>"),
@@ -1632,7 +1635,7 @@ fn test_analysis_findings_stripped_from_recompression_input() {
 			<next_steps>Keep going.</next_steps>\n\
 			</conversation_summary>";
 
-	let stripped = strip_regrown_sections(summary, true);
+	let stripped = strip_regrown_sections(summary);
 
 	assert!(
 		!stripped.contains("<analysis_findings>"),
@@ -1649,48 +1652,65 @@ fn test_analysis_findings_stripped_from_recompression_input() {
 }
 
 #[test]
-fn test_restatement_bound_flags_only_outliers() {
-	// Held findings that are mutually spread out set a bound above their own
-	// nearest-neighbour similarities, so none of them would be dropped as a
-	// restatement of another — but a near-copy of one exceeds it.
-	let held: Vec<Vec<f32>> = vec![
-		vec![1.0, 0.0, 0.0],
-		vec![0.9, 0.4, 0.0],
-		vec![0.0, 1.0, 0.0],
-		vec![0.0, 0.0, 1.0],
-		vec![0.5, 0.5, 0.5],
+fn test_mmr_keeps_new_correction_over_stale_similar_finding() {
+	let findings = vec![
+		"The provider timeout is the root cause.".to_string(),
+		"The provider timeout is not the root cause; queue waiting is.".to_string(),
+		"The UI spinner is unrelated.".to_string(),
 	];
-	let bound = super::knowledge::restatement_bound(&held);
+	// A sentence embedder commonly places a claim and its negation close
+	// together. Similarity must penalize redundant coverage, never declare the
+	// newer correction equivalent and discard it.
+	let vectors = vec![
+		vec![1.0, 0.0, 0.0],
+		vec![1.0, 0.0, 0.0],
+		vec![0.0, 1.0, 0.0],
+	];
+	let budget = analysis_findings_tokens(&[findings[1].clone()]);
+	let selected =
+		select_findings_with_vectors(&findings, &vectors, Some(&[1.0, 0.0, 0.0]), budget);
 
-	for (i, a) in held.iter().enumerate() {
-		let nearest = held
-			.iter()
-			.enumerate()
-			.filter(|(j, _)| *j != i)
-			.map(|(_, b)| crate::embeddings::cosine(a, b))
-			.fold(f32::MIN, f32::max);
-		assert!(
-			nearest <= bound,
-			"held finding {i} (nearest {nearest:.3}) must not exceed bound {bound:.3}"
-		);
-	}
+	assert!(selected.contains(&findings[1]));
+	assert!(!selected.contains(&findings[0]));
+	assert!(analysis_findings_tokens(&selected) <= budget);
+}
 
-	let near_copy = vec![0.999, 0.01, 0.0];
-	let nearest = held
-		.iter()
-		.map(|h| crate::embeddings::cosine(h, &near_copy))
-		.fold(f32::MIN, f32::max);
-	assert!(
-		nearest > bound,
-		"near-duplicate (sim {nearest:.3}) must exceed bound {bound:.3}"
+#[test]
+fn test_fallback_selection_is_hard_bounded_and_prefers_newest() {
+	let findings: Vec<String> = (0..20)
+		.map(|i| format!("finding {i}: {}", "detail ".repeat(30)))
+		.collect();
+	let budget = analysis_findings_tokens(&findings[18..]);
+	let selected = select_newest_with_budget(&findings, budget);
+
+	assert!(analysis_findings_tokens(&selected) <= budget);
+	assert!(selected.contains(findings.last().unwrap()));
+	assert!(selected.len() < findings.len());
+}
+
+#[test]
+fn test_latest_summary_restores_findings_but_never_resurrects_older_state() {
+	let mut old = msg("assistant");
+	old.content = "<conversation_summary id=\"old\">\n<analysis_findings>\n<finding>old root cause</finding>\n</analysis_findings>\n</conversation_summary>".to_string();
+	let mut latest = msg("assistant");
+	latest.content = "<conversation_summary id=\"latest\">\n<analysis_findings>\n<finding>current root cause</finding>\n</analysis_findings>\n</conversation_summary>".to_string();
+	assert_eq!(
+		latest_analysis_findings(&[old.clone(), latest]),
+		vec!["current root cause"]
 	);
+
+	let mut empty_latest = msg("assistant");
+	empty_latest.content =
+		"<conversation_summary id=\"empty\"><progress>done</progress></conversation_summary>"
+			.to_string();
+	assert!(latest_analysis_findings(&[old, empty_latest]).is_empty());
 }
 
 #[test]
 fn test_file_context_stripped_when_no_sentinel() {
 	// When there is no file_context block, the function returns the text unchanged.
 	let plain = "<conversation_summary id=\"abc\">\n<progress>Just a summary.</progress>\n</conversation_summary>";
-	let stripped = strip_regrown_sections(plain, true);
+	let stripped = strip_regrown_sections(plain);
 	assert_eq!(stripped, plain.trim());
 }
 

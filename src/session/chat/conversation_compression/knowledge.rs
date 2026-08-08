@@ -34,17 +34,10 @@ use crate::{log_debug, log_info};
 /// transcript (`prompt.rs`) and as the file-context strip boundary below.
 pub(super) const SUMMARY_TAG_OPEN_PREFIX: &str = "<conversation_summary";
 
-/// Robust z-score at which a candidate finding counts as a restatement.
-/// Dimensionless — the conventional 3-sigma bound, applied to the session's
-/// own similarity distribution rather than to a raw cosine value.
-const RESTATEMENT_Z: f32 = 3.0;
-
-/// Normal-consistency constant relating MAD to sigma (sigma ~= 1.4826 * MAD).
-const MAD_TO_SIGMA: f32 = 1.4826;
-
-/// Fewer held findings than this and the nearest-neighbour distribution is too
-/// small to estimate an outlier bound from.
-const MIN_HELD_FOR_DISTRIBUTION: usize = 5;
+const ANALYSIS_OPEN: &str = "<analysis_findings>";
+const ANALYSIS_CLOSE: &str = "</analysis_findings>";
+const FINDING_OPEN: &str = "<finding>";
+const FINDING_CLOSE: &str = "</finding>";
 
 pub(super) fn format_compressed_entry_with_context(
 	body: &str,
@@ -94,18 +87,9 @@ pub(super) fn format_compressed_entry_with_context(
 /// exactly what the old "carry forward all prior entries" instruction asked
 /// for). Left in place it recurses the same way file bytes did: one measured
 /// session re-fed 220 KB of findings into every compression call.
-pub(super) fn strip_regrown_sections(summary: &str, findings_held: bool) -> String {
+pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
-	if findings_held {
-		strip_block(&stripped, "<analysis_findings>", "</analysis_findings>")
-	} else {
-		// The session store is empty — `add_user_message` clears it on every
-		// real user turn, including a bare "continue". Stripping here too would
-		// leave no copy anywhere and permanently lose the findings, which is
-		// the failure this accumulation exists to prevent. Re-feed them and let
-		// the fold pick them back up.
-		stripped
-	}
+	strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE)
 }
 
 fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {
@@ -127,6 +111,52 @@ fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {
 	} else {
 		summary.trim().to_string()
 	}
+}
+
+/// Recover the authoritative finding store from the newest rendered summary.
+///
+/// The store is runtime-only, while the rendered summary is persisted with the
+/// session. Resumed sessions therefore rebuild the store from the latest
+/// summary before recompression. Stop at the newest summary even when it has no
+/// findings: an older summary is not allowed to resurrect entries that a newer
+/// compaction intentionally evicted.
+pub(super) fn latest_analysis_findings(messages: &[crate::session::Message]) -> Vec<String> {
+	messages
+		.iter()
+		.rev()
+		.find(|message| {
+			message.role == "assistant"
+				&& message
+					.content
+					.trim_start()
+					.starts_with(SUMMARY_TAG_OPEN_PREFIX)
+		})
+		.map(|message| analysis_findings_from_summary(&message.content))
+		.unwrap_or_default()
+}
+
+fn analysis_findings_from_summary(summary: &str) -> Vec<String> {
+	let Some(open) = summary.find(ANALYSIS_OPEN) else {
+		return Vec::new();
+	};
+	let body_start = open + ANALYSIS_OPEN.len();
+	let Some(close) = summary[body_start..].find(ANALYSIS_CLOSE) else {
+		return Vec::new();
+	};
+	let mut body = &summary[body_start..body_start + close];
+	let mut findings = Vec::new();
+	while let Some(item_open) = body.find(FINDING_OPEN) {
+		let item_start = item_open + FINDING_OPEN.len();
+		let Some(item_close) = body[item_start..].find(FINDING_CLOSE) else {
+			break;
+		};
+		let finding = body[item_start..item_start + item_close].trim();
+		if !finding.is_empty() {
+			findings.push(finding.to_string());
+		}
+		body = &body[item_start + item_close + FINDING_CLOSE.len()..];
+	}
+	findings
 }
 
 /// Persist `critical_knowledge` entries from the typed summary onto the
@@ -176,173 +206,168 @@ pub(super) fn fold_critical_knowledge(
 	);
 }
 
-/// Accumulate `analysis_findings` across compactions and return the full set.
+/// Fold newly extracted findings into the session under a hard token budget.
 ///
-/// The schema and prompt both ask the model to "carry forward all prior
-/// entries, append new ones" — measured over 19 compactions it does not: the
-/// list churned 6→8→5→…→10→…→4, and between two cycles all 9 prior findings
-/// were dropped and 0 retained, deleting the root cause the agent had already
-/// established, which it then re-derived 37 times. Carry-forward is therefore
-/// enforced HERE, in code, and the model's output is treated as "what I
-/// learned this cycle" rather than as the authoritative list.
+/// Semantic similarity is deliberately NOT used as an equivalence test: a
+/// correction and the stale claim it replaces are often close in embedding
+/// space. We only collapse normalized exact duplicates. When everything does
+/// not fit, cosine drives query-focused maximal-marginal-relevance selection:
+/// keep findings relevant to the live task while penalizing redundant coverage.
+/// A small recency term makes newer wording win ties, including corrections.
 ///
-/// No count cap: findings are scoped to one task, so the only correct time to
-/// drop them all is when the task itself changes — which
-/// `ChatSession::add_user_message` does on a genuine new user turn, alongside
-/// the detector reset. A count-based cap evicts the earliest conclusions, and
-/// those are exactly the load-bearing ones (the root cause is usually found
-/// early and re-confirmed late).
-///
-/// Growth is bounded by restatement detection instead. Exact-match alone was
-/// not enough: the model restates the same conclusion in new words, so every
-/// restatement landed as a new entry — one measured session reached 888
-/// findings (220 KB, ~55K tokens per prompt) over 135 compactions.
-///
-/// The test is adaptive, never an absolute cosine cutoff. Cosine is not
-/// calibrated across models or domains: findings from one dense investigation
-/// share vocabulary and sit high, findings spanning subsystems sit low, so a
-/// fixed number means "restatement" in one session and "unrelated" in the
-/// next. The held findings are ones already accepted as distinct from each
-/// other, so they are the null model — take each held entry's similarity to
-/// its nearest held neighbour and a candidate is a restatement only when it
-/// beats that distribution as an outlier (see `restatement_bound`).
-///
-/// Order stays oldest-first so earlier conclusions are stable across renders,
-/// and the held phrasing wins — the first statement of a conclusion is kept,
-/// later paraphrases discarded.
+/// The token budget is the actual growth bound. Embedding failure falls back to
+/// newest-first selection under the same budget, so optional semantic ranking
+/// can never turn into unbounded retention.
 pub(super) async fn fold_analysis_findings(
 	session: &mut ChatSession,
+	config: &Config,
 	entries: &[String],
+	focus: &str,
 ) -> Vec<String> {
-	let candidates: Vec<String> = entries
-		.iter()
-		.filter(|e| !e.trim().is_empty())
-		.filter(|e| !session.analysis_findings.iter().any(|f| f == *e))
-		.cloned()
-		.collect();
-	if candidates.is_empty() {
-		return session.analysis_findings.clone();
+	let budget = config.compression.analysis_findings_max_tokens;
+	let findings = merge_latest_exact(&session.analysis_findings, entries);
+	let before = findings.len();
+	if budget == 0 || findings.is_empty() {
+		session.analysis_findings.clear();
+		return Vec::new();
 	}
 
-	// Too few held findings to estimate the null distribution — exact match
-	// is all we can honestly claim.
-	if session.analysis_findings.len() < MIN_HELD_FOR_DISTRIBUTION {
-		session.analysis_findings.extend(candidates);
-		return session.analysis_findings.clone();
-	}
+	let mut embedding_inputs: Vec<String> = findings.iter().map(|s| embedding_input(s)).collect();
+	let focus_index = if focus.trim().is_empty() {
+		None
+	} else {
+		embedding_inputs.push(embedding_input(focus));
+		Some(embedding_inputs.len() - 1)
+	};
 
-	// One batched embed for held entries and candidates together; the cache
-	// makes held entries free on every cycle after the one that added them.
-	let mut texts = session.analysis_findings.clone();
-	let held = texts.len();
-	texts.extend(candidates.iter().cloned());
-	let vectors = match crate::embeddings::embed_many(&texts).await {
-		Ok(v) => v,
+	let selected = match crate::embeddings::embed_many(&embedding_inputs).await {
+		Ok(vectors) if vectors.len() == embedding_inputs.len() => select_findings_with_vectors(
+			&findings,
+			&vectors[..findings.len()],
+			focus_index.map(|i| vectors[i].as_slice()),
+			budget,
+		),
+		Ok(_) => select_newest_with_budget(&findings, budget),
 		Err(e) => {
-			// Embeddings are an external dependency (model load can fail);
-			// losing dedupe is recoverable, losing the compaction is not.
-			log_debug!("Findings dedupe fell back to exact-match: {}", e);
-			session.analysis_findings.extend(candidates);
-			return session.analysis_findings.clone();
+			log_debug!("Findings ranking fell back to recency: {}", e);
+			select_newest_with_budget(&findings, budget)
 		}
 	};
 
-	let bound = restatement_bound(&vectors[..held]);
-	// Grows as candidates are accepted, so two paraphrases arriving in the
-	// same cycle collapse against each other, not only against held entries.
-	let mut kept: Vec<&[f32]> = vectors[..held].iter().map(|v| v.as_slice()).collect();
-	let mut added = 0usize;
-	for (i, entry) in candidates.iter().enumerate() {
-		let vec = &vectors[held + i];
-		let nearest = kept
-			.iter()
-			.map(|k| crate::embeddings::cosine(k, vec))
-			.fold(f32::MIN, f32::max);
-		if nearest > bound {
-			log_debug!("Dropped restated finding (sim {:.3}): {}", nearest, entry);
-			continue;
-		}
-		kept.push(vec.as_slice());
-		session.analysis_findings.push(entry.clone());
-		added += 1;
-	}
+	session.analysis_findings = selected;
 	log_debug!(
-		"Folded {} of {} findings, bound {:.3} ({} total)",
-		added,
-		candidates.len(),
-		bound,
-		session.analysis_findings.len()
+		"Retained {} of {} analysis findings within {} tokens",
+		session.analysis_findings.len(),
+		before,
+		budget
 	);
 	session.analysis_findings.clone()
 }
 
-/// Similarity above which a candidate is a restatement rather than a new
-/// finding, derived from the held findings themselves.
-///
-/// Builds the null distribution — each held finding's cosine to its nearest
-/// other held finding, i.e. how close two *distinct* findings get in this
-/// session — and returns a robust upper outlier bound on it. MAD rather than
-/// standard deviation because it has a 50% breakdown point: if restatements
-/// have already leaked into the held set they cannot inflate the bound and
-/// hide the next ones. `MAD_TO_SIGMA` is the usual normal-consistency
-/// constant, so `RESTATEMENT_Z` is an ordinary dimensionless z-score and
-/// carries no assumption about the embedding model or the subject matter.
-/// The bound is computed under the Fisher transform because cosine is a
-/// bounded correlation, not an unbounded quantity.
-///
-/// A degenerate spread (every neighbour equidistant) would collapse the bound
-/// onto the median and start discarding real findings, so it falls back to the
-/// closest observed distinct pair: to be a restatement you must then be nearer
-/// than any two distinct findings have ever been here.
-pub(super) fn restatement_bound(held: &[Vec<f32>]) -> f32 {
-	let nearest: Vec<f32> = held
-		.iter()
-		.enumerate()
-		.map(|(i, a)| {
-			held.iter()
-				.enumerate()
-				.filter(|(j, _)| *j != i)
-				.map(|(_, b)| crate::embeddings::cosine(a, b))
-				.fold(f32::MIN, f32::max)
-		})
-		.collect();
-	// Fisher z. Cosine is a correlation: bounded in [-1, 1], and its variance
-	// shrinks as it approaches the ends. A median + k*MAD bound computed on raw
-	// cosines routinely lands above 1.0, where nothing can ever exceed it and
-	// the test silently never fires (measured: bound 1.437). atanh maps the
-	// bounded scale onto the whole real line, where an additive robust bound is
-	// meaningful; tanh maps it back, always below 1.
-	let mut z: Vec<f32> = nearest.iter().copied().map(fisher_z).collect();
-	let center = median(&mut z);
-	let mut deviations: Vec<f32> = z.iter().map(|v| (v - center).abs()).collect();
-	let mad = median(&mut deviations);
-	if mad > f32::EPSILON {
-		(center + RESTATEMENT_Z * MAD_TO_SIGMA * mad).tanh()
-	} else {
-		// Zero spread means the sample carries no information about what
-		// "unusually similar" looks like here, so fail open: keep everything
-		// rather than guess a cutoff. Dropping a real finding costs more than
-		// carrying a duplicate for one more cycle.
-		1.0
+fn merge_latest_exact(held: &[String], entries: &[String]) -> Vec<String> {
+	let mut findings: Vec<String> = Vec::new();
+	let mut keys: Vec<String> = Vec::new();
+	for finding in held.iter().chain(entries) {
+		let trimmed = finding.trim();
+		if trimmed.is_empty() {
+			continue;
+		}
+		let key = trimmed
+			.split_whitespace()
+			.collect::<Vec<_>>()
+			.join(" ")
+			.to_lowercase();
+		if let Some(index) = keys.iter().position(|existing| existing == &key) {
+			findings[index] = trimmed.to_string();
+		} else {
+			keys.push(key);
+			findings.push(trimmed.to_string());
+		}
 	}
+	findings
 }
 
-/// Fisher transform, clamped short of the poles where `atanh` is infinite.
-fn fisher_z(r: f32) -> f32 {
-	const LIMIT: f32 = 0.999_999;
-	r.clamp(-LIMIT, LIMIT).atanh()
+fn embedding_input(text: &str) -> String {
+	crate::embeddings::chunk_to_token_limit(text, crate::embeddings::EMBED_MAX_INPUT_TOKENS)
+		.into_iter()
+		.next()
+		.unwrap_or_default()
 }
 
-/// Median of `values`, sorting in place. Callers pass scratch vectors.
-fn median(values: &mut [f32]) -> f32 {
-	values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-	let n = values.len();
-	if n == 0 {
-		return 0.0;
+pub(super) fn analysis_findings_tokens(findings: &[String]) -> usize {
+	if findings.is_empty() {
+		return 0;
 	}
-	if n % 2 == 1 {
-		values[n / 2]
-	} else {
-		(values[n / 2 - 1] + values[n / 2]) / 2.0
+	let mut rendered = String::from(ANALYSIS_OPEN);
+	rendered.push('\n');
+	for finding in findings {
+		rendered.push_str(FINDING_OPEN);
+		rendered.push_str(finding.trim());
+		rendered.push_str(FINDING_CLOSE);
+		rendered.push('\n');
 	}
+	rendered.push_str(ANALYSIS_CLOSE);
+	crate::session::estimate_tokens(&rendered)
+}
+
+fn fits_budget(findings: &[String], selected: &[usize], candidate: usize, budget: usize) -> bool {
+	let mut indices = selected.to_vec();
+	indices.push(candidate);
+	indices.sort_unstable();
+	let values: Vec<String> = indices.iter().map(|&i| findings[i].clone()).collect();
+	analysis_findings_tokens(&values) <= budget
+}
+
+pub(super) fn select_findings_with_vectors(
+	findings: &[String],
+	vectors: &[Vec<f32>],
+	focus: Option<&[f32]>,
+	budget: usize,
+) -> Vec<String> {
+	if findings.len() != vectors.len() || budget == 0 {
+		return select_newest_with_budget(findings, budget);
+	}
+
+	let mut selected: Vec<usize> = Vec::new();
+	loop {
+		let mut best: Option<(usize, f32)> = None;
+		for i in 0..findings.len() {
+			if selected.contains(&i) || !fits_budget(findings, &selected, i, budget) {
+				continue;
+			}
+			let relevance = focus
+				.map(|query| crate::embeddings::cosine(&vectors[i], query))
+				.unwrap_or(0.0)
+				.clamp(0.0, 1.0);
+			let redundancy = selected
+				.iter()
+				.map(|&j| crate::embeddings::cosine(&vectors[i], &vectors[j]))
+				.fold(0.0_f32, f32::max)
+				.clamp(0.0, 1.0);
+			let recency = (i + 1) as f32 / findings.len().max(1) as f32;
+			let score = 0.65 * relevance + 0.10 * recency - 0.35 * redundancy;
+			if best.is_none_or(|(best_i, best_score)| {
+				score > best_score || (score == best_score && i > best_i)
+			}) {
+				best = Some((i, score));
+			}
+		}
+		let Some((index, _)) = best else {
+			break;
+		};
+		selected.push(index);
+	}
+	selected.sort_unstable();
+	selected.into_iter().map(|i| findings[i].clone()).collect()
+}
+
+pub(super) fn select_newest_with_budget(findings: &[String], budget: usize) -> Vec<String> {
+	let mut selected = Vec::new();
+	for i in (0..findings.len()).rev() {
+		if fits_budget(findings, &selected, i, budget) {
+			selected.push(i);
+		}
+	}
+	selected.sort_unstable();
+	selected.into_iter().map(|i| findings[i].clone()).collect()
 }

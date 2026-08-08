@@ -194,10 +194,10 @@ pub struct ChatSession {
 	/// `config.compression.knowledge_retention`; set that to `0` for a session
 	/// that must never forget.
 	pub critical_knowledge: Vec<String>,
-	/// Investigation findings accumulated across compactions. The model rewrites
-	/// `analysis_findings` from scratch each cycle despite being told to carry
-	/// them forward, so the union is maintained here and rendered into the
-	/// summary in place of the model's latest list.
+	/// Investigation findings accumulated across compactions. Code owns the
+	/// canonical set, restores it from the latest rendered summary on resume,
+	/// and keeps it within `compression.analysis_findings_max_tokens` using
+	/// current-task relevance, recency, and diversity.
 	pub analysis_findings: Vec<String>,
 	/// Whether the session-start learning injection has happened (global tier +
 	/// first hybrid scoped recall). Gates the once-per-session global injection.
@@ -1393,6 +1393,20 @@ mod tests {
 			cached,
 			..Default::default()
 		}
+	}
+
+	#[test]
+	fn real_user_follow_up_does_not_clear_analysis_findings() {
+		let mut session = make_session(Vec::new());
+		session.analysis_findings = vec!["load-bearing root cause".to_string()];
+
+		session.add_user_message("continue").unwrap();
+
+		assert_eq!(
+			session.analysis_findings,
+			vec!["load-bearing root cause"],
+			"task continuity is resolved later; message insertion must not destroy findings"
+		);
 	}
 
 	/// Collect indices of all content-cached messages (user/assistant/tool with cached=true).

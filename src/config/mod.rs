@@ -65,7 +65,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 2;
+pub const CURRENT_CONFIG_VERSION: u32 = 3;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -163,6 +163,9 @@ pub struct CompressionHintConfig {
 	/// Each compression may extract a short knowledge snippet; only the last N are kept.
 	#[serde(default = "default_knowledge_retention")]
 	pub knowledge_retention: usize,
+	/// Hard token budget for analysis findings retained across compressions.
+	/// Zero disables analysis-finding retention.
+	pub analysis_findings_max_tokens: usize,
 }
 
 fn default_knowledge_retention() -> usize {

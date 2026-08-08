@@ -225,7 +225,7 @@ Messages tagged [RECENT] are the most recent and most important — preserve the
 					.trim_start()
 					.starts_with(SUMMARY_TAG_OPEN_PREFIX)
 				{
-					strip_regrown_sections(&msg.content, !session.analysis_findings.is_empty())
+					strip_regrown_sections(&msg.content)
 				} else {
 					msg.content.trim().to_string()
 				};

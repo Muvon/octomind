@@ -53,6 +53,11 @@ fn plan() -> MigrationPlan {
 				to: 2,
 				apply: add_delegate_gate,
 			},
+			VersionMigration {
+				from: 2,
+				to: 3,
+				apply: add_analysis_findings_budget,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -81,6 +86,32 @@ fn add_delegate_gate(
 	)?;
 
 	merge_missing(supervisor, template_supervisor, "delegate")
+}
+
+/// v3 adds the required hard budget for analysis findings retained by
+/// conversation compression. Existing compression values and comments are
+/// preserved; only the new key is copied from the embedded template.
+fn add_analysis_findings_budget(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_compression = required_table(
+		template.as_table(),
+		"compression",
+		"embedded default configuration",
+	)?;
+	let compression = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"compression",
+		"user configuration",
+	)?;
+
+	merge_missing(
+		compression,
+		template_compression,
+		"analysis_findings_max_tokens",
+	)
 }
 
 /// Upgrade `config_path` in place when it lags behind the embedded template.
@@ -186,11 +217,15 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(2));
+		assert_eq!(migrated["version"].as_integer(), Some(3));
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
 		assert!(migrated["supervisor"]["delegate"]["enabled"]
 			.as_bool()
 			.is_some());
+		assert_eq!(
+			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
+			Some(4000)
+		);
 	}
 
 	#[test]
@@ -214,13 +249,13 @@ model = "openrouter:custom/model"
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 2);
+		assert_eq!(migration.to_version, 3);
 		assert!(migration.content.contains("# keep me"));
 		// The template's documentation comes across with the new section.
 		assert!(migration.content.contains("# Delegate gate"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(2));
+		assert_eq!(migrated["version"].as_integer(), Some(3));
 		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
 			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
@@ -295,8 +330,43 @@ max_revisions = 9
 	}
 
 	#[test]
+	fn v2_gains_analysis_findings_budget_and_keeps_compression_values() {
+		let existing = r#"# keep compression notes
+version = 2
+
+[compression]
+hints_enabled = false
+hints_pressure_threshold = 0.8
+hints_min_interval = 9
+knowledge_retention = 17
+"#;
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v2 must migrate");
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+
+		assert_eq!(migration.from_version, 2);
+		assert_eq!(migration.to_version, 3);
+		assert!(migration.content.contains("# keep compression notes"));
+		assert_eq!(
+			migrated["compression"]["hints_enabled"].as_bool(),
+			Some(false)
+		);
+		assert_eq!(
+			migrated["compression"]["knowledge_retention"].as_integer(),
+			Some(17)
+		);
+		assert_eq!(
+			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
+			Some(4000)
+		);
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 2", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 3", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");
@@ -335,7 +405,7 @@ max_revisions = 9
 
 		let migrated: toml::Value =
 			toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(2));
+		assert_eq!(migrated["version"].as_integer(), Some(3));
 
 		fs::remove_dir_all(&dir).ok();
 	}

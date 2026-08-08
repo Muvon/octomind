@@ -628,10 +628,22 @@ knowledge_retention = 25
 # they do not all fit. 0 disables analysis-finding retention.
 analysis_findings_max_tokens = 4000
 
-# NOTE: every key above belongs to [compression]. Anything placed AFTER the
-# [[compression.pressure_levels]] blocks below is parsed as a field of the last
-# pressure level instead, where it is silently ignored — which is exactly how
-# knowledge_retention sat inert here for as long as it did.
+# Evidence-grounded causal compaction (PACT): runtime-owned task/constraint
+# pins, causal tool packets, an exact active frontier, attributed folds, and a
+# stable lossless recall index. This is deterministic infrastructure around the
+# existing compression model; it does not enable a separate learned ranker.
+[compression.attention]
+enabled = false
+validator = true
+telemetry = true
+
+[compression.attention.governance]
+enabled = true
+verify_hash = true
+
+# NOTE: scalar compression keys must remain before the nested attention and
+# pressure-level tables. A scalar placed after a [[compression.pressure_levels]]
+# block is parsed as a field of that level and silently ignored.
 
 # Compression aggressiveness scales with absolute token count
 # Each level defines: threshold (token count) and target_ratio (compression strength)

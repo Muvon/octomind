@@ -26,6 +26,7 @@
 mod ai;
 mod apply;
 pub(crate) mod archive;
+mod attention;
 mod decision;
 mod knowledge;
 mod prompt;
@@ -510,6 +511,28 @@ pub async fn check_and_compress_conversation(
 		.cloned()
 		.collect();
 
+	// PACT is built from the exact drain slice, including system-managed runtime
+	// events. Those events must remain visible as low-authority triggers without
+	// ever being mistaken for the genuine user task. Skills/instructions are
+	// excluded structurally by the packet builder and preserved through their
+	// existing dedicated paths.
+	let pact = if config.compression.attention.enabled
+		|| config.compression.attention.governance.enabled
+	{
+		Some(
+			attention::build(
+				session,
+				start_idx + 1,
+				end_idx,
+				target_ratio,
+				config.compression.attention.enabled,
+			)
+			.await?,
+		)
+	} else {
+		None
+	};
+
 	// `analysis_findings` is runtime state, while the rendered summary is what
 	// survives on disk. Rebuild the store deterministically on resume before the
 	// prior summary is stripped from the compressor prompt. Normal live sessions
@@ -528,10 +551,16 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
 	// Response is schema-validated and arrives as a typed struct.
-	let (should_compress, summary) = ask_ai_decision_and_summary(
+	let (should_compress, mut summary) = ask_ai_decision_and_summary(
 		session,
 		config,
 		&messages_to_compress,
+		config
+			.compression
+			.attention
+			.enabled
+			.then_some(())
+			.and(pact.as_ref()),
 		operation_rx,
 		force,
 		target_ratio,
@@ -542,6 +571,58 @@ pub async fn check_and_compress_conversation(
 		log_debug!("AI decided compression not beneficial at this point");
 		return Ok(false);
 	}
+
+	let pact_validation = if let Some(pact) = pact.as_ref() {
+		pact.normalize_summary(&mut summary);
+		if config.compression.attention.enabled && config.compression.attention.validator {
+			match pact.validate_summary(&summary) {
+				Ok(report) => Some(report),
+				Err(error) if force => {
+					let fallback_reason = error.to_string();
+					crate::log_error!(
+						"PACT validation failed under forced compression: {} — using deterministic pins/frontier and dropping invalid folds",
+						error
+					);
+					pact.sanitize_for_forced_compression(&mut summary);
+					let post_fallback = pact.validate_summary(&summary).ok();
+					Some(attention::ValidationReport {
+						attribution_valid: false,
+						fallback_reason: Some(fallback_reason),
+						valid_units: post_fallback
+							.as_ref()
+							.map(|report| report.valid_units)
+							.unwrap_or(0),
+						referenced_blocks: post_fallback
+							.as_ref()
+							.map(|report| report.referenced_blocks)
+							.unwrap_or(0),
+						governance_hash: pact.pinned.governance_hash.clone(),
+					})
+				}
+				Err(error) => {
+					log_info!(
+						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
+						error
+					);
+					return Ok(false);
+				}
+			}
+		} else {
+			Some(attention::ValidationReport {
+				attribution_valid: !config.compression.attention.enabled,
+				fallback_reason: config
+					.compression
+					.attention
+					.enabled
+					.then(|| "attribution validator disabled by configuration".to_string()),
+				valid_units: summary.folded_units.len(),
+				referenced_blocks: 0,
+				governance_hash: pact.pinned.governance_hash.clone(),
+			})
+		}
+	} else {
+		None
+	};
 
 	log_info!("AI decided to compress older conversation exchanges");
 
@@ -557,6 +638,9 @@ pub async fn check_and_compress_conversation(
 		last_user_message,
 		preserved_skills,
 		config,
+		pact.as_ref(),
+		pact_validation.as_ref(),
+		force,
 	)
 	.await?;
 

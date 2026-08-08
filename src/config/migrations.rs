@@ -88,9 +88,9 @@ fn add_delegate_gate(
 	merge_missing(supervisor, template_supervisor, "delegate")
 }
 
-/// v3 adds required budgets for retained compression findings and Sequential
-/// advisories. Existing values and comments are preserved; only missing keys
-/// are copied from the embedded template.
+/// v3 adds required budgets for retained compression findings, Sequential
+/// advisories, and the PACT attention controller. Existing values and comments
+/// are preserved; only missing keys are copied from the embedded template.
 fn add_v3_required_fields(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
@@ -112,6 +112,7 @@ fn add_v3_required_fields(
 		template_compression,
 		"analysis_findings_max_tokens",
 	)?;
+	merge_missing(compression, template_compression, "attention")?;
 	let template_supervisor = required_table(
 		template.as_table(),
 		"supervisor",
@@ -258,6 +259,56 @@ mod tests {
 			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
 			Some(0)
 		);
+		assert_eq!(
+			migrated["compression"]["attention"]["enabled"].as_bool(),
+			Some(false)
+		);
+		assert_eq!(
+			migrated["compression"]["attention"]["governance"]["verify_hash"].as_bool(),
+			Some(true)
+		);
+	}
+
+	#[test]
+	fn v2_gains_attention_in_same_v3_migration_and_preserves_custom_values() {
+		let existing = r#"version = 2
+
+[compression]
+hints_enabled = true
+
+[compression.attention]
+enabled = true
+"#;
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v2 must migrate");
+		assert_eq!(migration.to_version, 3);
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(
+			migrated["compression"]["attention"]["enabled"].as_bool(),
+			Some(true)
+		);
+		assert_eq!(
+			migrated["compression"]["attention"]["validator"].as_bool(),
+			Some(true)
+		);
+		assert_eq!(
+			migrated["compression"]["attention"]["governance"]["enabled"].as_bool(),
+			Some(true)
+		);
+	}
+
+	#[test]
+	fn partial_unreleased_attention_table_uses_safe_field_defaults() {
+		let parsed: crate::config::CompressionAttentionConfig =
+			toml::from_str("enabled = true\n").unwrap();
+		assert!(parsed.enabled);
+		assert!(parsed.validator);
+		assert!(parsed.telemetry);
+		assert!(parsed.governance.enabled);
+		assert!(parsed.governance.verify_hash);
 	}
 
 	#[test]

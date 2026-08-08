@@ -75,6 +75,44 @@ pub(super) fn format_compressed_entry_with_context(
 	)
 }
 
+pub(super) fn format_compressed_entry_with_pact(
+	body: &str,
+	file_context: &str,
+	compression_id: String,
+	archive: Option<&super::archive::ArchiveBundle>,
+	pact: &super::attention::PactContext,
+) -> String {
+	let (pinned, frontier_and_recall) = pact.render_live_bands(archive);
+	let mut sections = pinned;
+	sections.push('\n');
+	if !body.is_empty() {
+		sections.push_str(body);
+		sections.push('\n');
+	}
+	if !frontier_and_recall.is_empty() {
+		sections.push_str(&frontier_and_recall);
+		sections.push('\n');
+	}
+	if !file_context.is_empty() {
+		sections.push_str("<file_context>\n");
+		sections.push_str(file_context);
+		if !file_context.ends_with('\n') {
+			sections.push('\n');
+		}
+		sections.push_str("</file_context>\n");
+	}
+	if let Some(bundle) = archive {
+		sections.push_str(&super::archive::archive_pointer(&bundle.path));
+		sections.push('\n');
+	}
+	format!(
+		"<conversation_summary id=\"{}\" controller=\"pact-v{}\">\n{}</conversation_summary>",
+		compression_id,
+		super::attention::CONTROLLER_VERSION,
+		sections
+	)
+}
+
 /// Strip the blocks that the session re-attaches itself from a prior
 /// compressed summary, before re-feeding it to the next compression pass.
 ///

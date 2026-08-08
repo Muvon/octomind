@@ -2221,6 +2221,20 @@ fn substantive_accepts_single_finding() {
 }
 
 #[test]
+fn substantive_accepts_attributed_fold_only() {
+	let summary = CompressionSummary {
+		folded_units: vec![super::schema::FoldedUnit {
+			text: "completed outcome".into(),
+			kind: "outcome".into(),
+			status: "established".into(),
+			refs: vec!["b:source".into()],
+		}],
+		..Default::default()
+	};
+	assert!(is_summary_substantive(&summary));
+}
+
+#[test]
 fn substantive_accepts_recent_exchange_only() {
 	let mut s = empty_summary();
 	s.recent_exchanges = vec!["user asked X; assistant answered Y".to_string()];

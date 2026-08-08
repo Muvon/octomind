@@ -30,7 +30,7 @@
 //!     which is cached and amortised across every compression call.
 
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Maximum allowed value for `start_line` / `end_line` in `file_context`.
 /// Mirrors the JSON schema bound so JSON and XML paths validate identically.
@@ -59,6 +59,19 @@ pub struct CompressionSummary {
 	pub critical_knowledge: Vec<String>,
 	pub open_loops: Vec<String>,
 	pub file_states: Vec<String>,
+	/// Atomic completed-state claims with platform-verifiable source IDs.
+	/// Empty only on the legacy compression path or when there is no completed
+	/// evidence to fold.
+	pub folded_units: Vec<FoldedUnit>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct FoldedUnit {
+	pub text: String,
+	pub kind: String,
+	pub status: String,
+	pub refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -89,6 +102,7 @@ pub fn is_summary_substantive(summary: &CompressionSummary) -> bool {
 		|| !summary.session_context.trim().is_empty()
 		|| !summary.analysis_findings.is_empty()
 		|| !summary.recent_exchanges.is_empty()
+		|| !summary.folded_units.is_empty()
 }
 
 /// Render a structured summary to the XML body that will be inserted into
@@ -128,6 +142,10 @@ pub fn render_summary(summary: &CompressionSummary) -> String {
 	push_text(&mut out, "original_request", &summary.original_request);
 	push_text(&mut out, "session_context", &summary.session_context);
 	push_text(&mut out, "current_task", &summary.current_task);
+	if !summary.folded_units.is_empty() {
+		out.push_str(&render_folded_state(&summary.folded_units));
+		out.push('\n');
+	}
 	push_text(&mut out, "progress", &summary.progress);
 	push_list(
 		&mut out,
@@ -165,6 +183,41 @@ pub fn render_summary(summary: &CompressionSummary) -> String {
 	out.trim_end().to_string()
 }
 
+/// PACT live state admits only source-attributed model-authored claims. The
+/// runtime supplies task/governance, exact frontier, and recall separately, so
+/// re-rendering legacy narrative fields here would create a second,
+/// unvalidated authority channel that can contradict those bands.
+pub fn render_pact_summary(summary: &CompressionSummary) -> String {
+	render_folded_state(&summary.folded_units)
+}
+
+fn render_folded_state(units: &[FoldedUnit]) -> String {
+	let mut out = String::from("<folded_state>\n");
+	for unit in units {
+		let refs = unit.refs.join(" ");
+		let id = super::attention::folded_unit_id(unit);
+		out.push_str(&format!(
+			"<unit id=\"{}\" kind=\"{}\" status=\"{}\" refs=\"{}\">{}</unit>\n",
+			xml_escape(&id),
+			xml_escape(&unit.kind),
+			xml_escape(&unit.status),
+			xml_escape(&refs),
+			xml_escape(unit.text.trim())
+		));
+	}
+	out.push_str("</folded_state>");
+	out
+}
+
+fn xml_escape(value: &str) -> String {
+	value
+		.replace('&', "&amp;")
+		.replace('<', "&lt;")
+		.replace('>', "&gt;")
+		.replace('"', "&quot;")
+		.replace('\'', "&apos;")
+}
+
 /// Build the JSON Schema sent to the provider via `with_schema(..)`.
 ///
 /// `force=true`: model has no veto. `should_compress` MUST be `true`; the
@@ -175,14 +228,14 @@ pub fn render_summary(summary: &CompressionSummary) -> String {
 /// transcript is already minimal. Other fields are still required by the
 /// schema (strict mode); they're expected to be empty strings / empty arrays
 /// when `should_compress` is false.
-pub fn build_compression_schema(force: bool) -> serde_json::Value {
+pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 	let should_compress_desc = if force {
 		"Compression has been forced by the user. MUST be true."
 	} else {
 		"True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. False only if the transcript is already minimal."
 	};
 
-	serde_json::json!({
+	let mut schema = serde_json::json!({
 		"type": "object",
 		"additionalProperties": false,
 		"properties": {
@@ -293,6 +346,33 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 				"items": { "type": "string" },
 				"maxItems": 10,
 				"description": "Files created or edited with their last-known state: 'path — what changed / current status'. Prevents re-doing completed edits after compression."
+			},
+			"folded_units": {
+				"type": "array",
+				"maxItems": 40,
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"text": { "type": "string", "maxLength": 2000 },
+						"kind": {
+							"type": "string",
+							"enum": ["observation", "decision", "action", "outcome", "correction", "open_loop", "next_action", "reference", "synthesis"]
+						},
+						"status": {
+							"type": "string",
+							"enum": ["established", "tentative", "superseded", "failed", "pending", "unknown"]
+						},
+						"refs": {
+							"type": "array",
+							"items": { "type": "string" },
+							"minItems": 1,
+							"maxItems": 16
+						}
+					},
+					"required": ["text", "kind", "status", "refs"]
+				},
+				"description": "PACT only: atomic completed-state claims. Every claim cites all and only supplied evidence block IDs. Include every consequential completed outcome, correction, durable protocol, open loop, and next action not already exact in pinned/frontier state; legacy narrative fields are not rendered as PACT authority. Return [] only when no such state exists."
 			}
 		},
 		"required": [
@@ -309,9 +389,22 @@ pub fn build_compression_schema(force: bool) -> serde_json::Value {
 			"file_context",
 			"critical_knowledge",
 			"open_loops",
-			"file_states"
+			"file_states",
+			"folded_units"
 		]
-	})
+	});
+	if !pact {
+		if let Some(properties) = schema
+			.get_mut("properties")
+			.and_then(serde_json::Value::as_object_mut)
+		{
+			properties.remove("folded_units");
+		}
+		if let Some(required) = schema.get_mut("required").and_then(|v| v.as_array_mut()) {
+			required.retain(|v| v.as_str() != Some("folded_units"));
+		}
+	}
+	schema
 }
 
 /// Parse the XML-formatted compression response (used when the provider
@@ -360,7 +453,34 @@ pub fn parse_xml_summary(text: &str) -> Result<CompressionSummary> {
 		critical_knowledge: extract_items(body, "critical_knowledge", "knowledge"),
 		open_loops: extract_items(body, "open_loops", "open_loop"),
 		file_states: extract_items(body, "file_states", "state"),
+		folded_units: extract_folded_units(body),
 	})
+}
+
+fn extract_folded_units(body: &str) -> Vec<FoldedUnit> {
+	let Some(inner) = extract_text(body, "folded_units") else {
+		return Vec::new();
+	};
+	let mut units = Vec::new();
+	let mut cursor = inner.as_str();
+	while let Some(start) = cursor.find("<unit>") {
+		let rest = &cursor[start + "<unit>".len()..];
+		let Some(end) = rest.find("</unit>") else {
+			break;
+		};
+		let unit = &rest[..end];
+		let folded = FoldedUnit {
+			text: extract_text(unit, "text").unwrap_or_default(),
+			kind: extract_text(unit, "kind").unwrap_or_default(),
+			status: extract_text(unit, "status").unwrap_or_default(),
+			refs: extract_items(unit, "refs", "ref"),
+		};
+		if !folded.text.trim().is_empty() {
+			units.push(folded);
+		}
+		cursor = &rest[end + "</unit>".len()..];
+	}
+	units
 }
 
 /// Strip an outer markdown code fence if the whole payload is wrapped in
@@ -525,6 +645,14 @@ Emit ONE single XML document with the following tags, in this order. Every requi
 <file_states>                                            (required container; 0-10 <state> items, 'path — last-known state')
   <state>...</state>
 </file_states>
+<folded_units>                                           (required container on PACT; 0-40 atomic units)
+  <unit>
+    <text>one independently supported completed-state claim</text>
+    <kind>observation|decision|action|outcome|correction|open_loop|next_action|reference|synthesis</kind>
+    <status>established|tentative|superseded|failed|pending|unknown</status>
+    <refs><ref>b:source-id</ref></refs>
+  </unit>
+</folded_units>
 
 Output ONLY the XML. No prose, no code fences, no markdown headers — the response is parsed by exact tag boundaries.
 </output_format>"#;
@@ -662,5 +790,38 @@ mod xml_parser_tests {
 		);
 		let s = parse_xml_summary(&xml).unwrap();
 		assert!(s.should_compress);
+	}
+
+	#[test]
+	fn pact_schema_requires_folds_while_legacy_schema_does_not_expose_them() {
+		let pact = build_compression_schema(false, true);
+		assert!(pact["properties"].get("folded_units").is_some());
+		assert!(pact["required"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.any(|field| field == "folded_units"));
+
+		let legacy = build_compression_schema(false, false);
+		assert!(legacy["properties"].get("folded_units").is_none());
+		assert!(!legacy["required"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.any(|field| field == "folded_units"));
+	}
+
+	#[test]
+	fn parses_and_renders_attributed_fold_with_stable_escaped_id() {
+		let xml = format!(
+			"{}\n<folded_units><unit><text>A & B</text><kind>outcome</kind><status>established</status><refs><ref>b:one</ref></refs></unit></folded_units>",
+			minimal_ok_xml()
+		);
+		let parsed = parse_xml_summary(&xml).unwrap();
+		assert_eq!(parsed.folded_units.len(), 1);
+		let rendered = render_summary(&parsed);
+		let expected_id = super::super::attention::folded_unit_id(&parsed.folded_units[0]);
+		assert!(rendered.contains(&format!("id=\"{expected_id}\"")));
+		assert!(rendered.contains("A &amp; B"));
 	}
 }

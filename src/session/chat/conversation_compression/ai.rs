@@ -322,6 +322,7 @@ pub(super) async fn ask_ai_decision_and_summary(
 	session: &mut ChatSession,
 	config: &Config,
 	messages_to_compress: &[crate::session::Message],
+	pact: Option<&super::attention::PactContext>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 	force: bool,
 	target_ratio: f64,
@@ -331,13 +332,13 @@ pub(super) async fn ask_ai_decision_and_summary(
 	let use_json = provider.enforces_response_schema(&actual_model);
 
 	let (system_content, user_content) = if use_json {
-		build_compression_prompt_json(session, messages_to_compress, force, target_ratio)
+		build_compression_prompt_json(session, messages_to_compress, pact, force, target_ratio)
 	} else {
-		build_compression_prompt_xml(session, messages_to_compress, force, target_ratio)
+		build_compression_prompt_xml(session, messages_to_compress, pact, force, target_ratio)
 	};
 
 	let schema = if use_json {
-		Some(build_compression_schema(force))
+		Some(build_compression_schema(force, pact.is_some()))
 	} else {
 		None
 	};

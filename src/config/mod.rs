@@ -144,6 +144,47 @@ pub struct CompressionDecisionConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct CompressionAttentionGovernanceConfig {
+	/// Preserve runtime-owned task/constraint state outside model-authored prose.
+	pub enabled: bool,
+	/// Verify the governance hash before committing a compaction.
+	pub verify_hash: bool,
+}
+
+impl Default for CompressionAttentionGovernanceConfig {
+	fn default() -> Self {
+		Self {
+			enabled: true,
+			verify_hash: true,
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct CompressionAttentionConfig {
+	/// Enable provenance-labelled PACT evidence selection and rendering.
+	pub enabled: bool,
+	/// Reject optional compactions whose folded units have invalid attribution.
+	pub validator: bool,
+	/// Persist a content-free decision record beside the lossless archive.
+	pub telemetry: bool,
+	pub governance: CompressionAttentionGovernanceConfig,
+}
+
+impl Default for CompressionAttentionConfig {
+	fn default() -> Self {
+		Self {
+			enabled: false,
+			validator: true,
+			telemetry: true,
+			governance: CompressionAttentionGovernanceConfig::default(),
+		}
+	}
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompressionHintConfig {
 	/// Enable compression system (task → phase → project, all automatic)
 	pub hints_enabled: bool,
@@ -166,6 +207,11 @@ pub struct CompressionHintConfig {
 	/// Hard token budget for analysis findings retained across compressions.
 	/// Zero disables analysis-finding retention.
 	pub analysis_findings_max_tokens: usize,
+	/// Evidence-grounded causal attention around conversation compression.
+	/// Defaulted defensively for development configs already stamped with the
+	/// current unreleased schema version; released older configs are migrated.
+	#[serde(default)]
+	pub attention: CompressionAttentionConfig,
 }
 
 fn default_knowledge_retention() -> usize {

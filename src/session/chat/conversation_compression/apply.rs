@@ -20,8 +20,9 @@
 use super::decision::estimate_future_turns;
 use super::knowledge::{
 	fold_analysis_findings, fold_critical_knowledge, format_compressed_entry_with_context,
+	format_compressed_entry_with_pact,
 };
-use super::schema::{render_summary, CompressionSummary};
+use super::schema::{render_pact_summary, render_summary, CompressionSummary};
 use crate::log_debug;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
@@ -115,6 +116,9 @@ pub(super) async fn apply_compression(
 	last_user_message: Option<crate::session::Message>,
 	preserved_skills: Vec<crate::session::Message>,
 	config: &crate::config::Config,
+	pact: Option<&super::attention::PactContext>,
+	pact_validation: Option<&super::attention::ValidationReport>,
+	force: bool,
 ) -> Result<()> {
 	// Fidelity snapshot (pre-drain): the authoritative goal + every explicit
 	// constraint across real user turns. Compression is lossy; these are what
@@ -138,6 +142,63 @@ pub(super) async fn apply_compression(
 			.flat_map(|m| crate::supervisor::recite::extract_constraints(&m.content))
 			.filter(|c| seen.insert(c.clone()))
 			.collect()
+	};
+
+	// PACT commit checks run before ANY live session mutation. Governance is
+	// recomputed from the still-live transcript, then the full drain is archived
+	// and every stable packet ID is dereferenced back to byte-identical messages.
+	// Optional compression aborts on either failure; a forced hard-ceiling
+	// compression may proceed without recall only when storage itself is the
+	// failing component, because retaining the oversized context can deadlock the
+	// session. Governance failure is never bypassed.
+	if config.compression.attention.governance.enabled
+		&& config.compression.attention.governance.verify_hash
+	{
+		if let Some(pact) = pact {
+			pact.verify_governance(&session.session.messages)?;
+		}
+	}
+
+	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
+		.unwrap_or_else(|| "unknown".to_string());
+	let (archive_bundle, archive_fallback_reason) = if let Some(pact) = pact {
+		let archive_result = {
+			let drained = &session.session.messages[start_idx + 1..=end_idx];
+			super::archive::archive_messages_with_index(
+				&session.session.info.name,
+				&compression_id,
+				drained,
+				&pact.packets,
+			)
+			.and_then(|bundle| {
+				pact.verify_archive(&bundle, drained)?;
+				Ok(bundle)
+			})
+		};
+		match archive_result {
+			Ok(bundle) => (Some(bundle), None),
+			Err(error) if force => {
+				let reason = error.to_string();
+				crate::log_error!(
+					"PACT archive verification failed under forced compression: {} — exact recall is unavailable for this cycle",
+					error
+				);
+				(None, Some(reason))
+			}
+			Err(error) => {
+				return Err(anyhow::anyhow!(
+					"PACT archive verification failed before drain; compression aborted: {error}"
+				));
+			}
+		}
+	} else {
+		(None, None)
+	};
+	let legacy_archive_path = if pact.is_none() {
+		let drained = &session.session.messages[start_idx + 1..=end_idx];
+		super::archive::archive_messages(&session.session.info.name, &compression_id, drained)
+	} else {
+		None
 	};
 
 	// Re-point the session anchor at the goal we just resolved. `recite_note`
@@ -181,7 +242,11 @@ pub(super) async fn apply_compression(
 	// Render the typed summary to the markdown body that gets inserted into
 	// the session as the compressed turn. Sections appear only when they
 	// carry signal so the body stays terse on early or sparse compressions.
-	let summary_body = render_summary(summary);
+	let summary_body = if pact.is_some() && config.compression.attention.enabled {
+		render_pact_summary(summary)
+	} else {
+		render_summary(summary)
+	};
 
 	// File context: structured array → tuple form expected by the legacy
 	// renderer. Validate line ranges (start <= end, both > 0); drop invalid
@@ -206,25 +271,22 @@ pub(super) async fn apply_compression(
 		String::new()
 	};
 
-	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
-		.unwrap_or_else(|| "unknown".to_string());
-
-	// LOSSLESS ARCHIVE (addressable recall): write the full drained range to
-	// disk BEFORE removing it from the session. The summary is lossy; the
-	// archive makes compaction reversible — the model can recall exact code,
-	// errors, or tool output from the file instead of guessing.
-	let archive_path = super::archive::archive_messages(
-		&session.session.info.name,
-		&compression_id,
-		&session.session.messages[start_idx + 1..=end_idx],
-	);
-
-	let base_entry = format_compressed_entry_with_context(
-		&summary_body,
-		&file_context_content,
-		compression_id,
-		archive_path.as_deref(),
-	);
+	let base_entry = if let Some(pact) = pact {
+		format_compressed_entry_with_pact(
+			&summary_body,
+			&file_context_content,
+			compression_id.clone(),
+			archive_bundle.as_ref(),
+			pact,
+		)
+	} else {
+		format_compressed_entry_with_context(
+			&summary_body,
+			&file_context_content,
+			compression_id.clone(),
+			legacy_archive_path.as_deref(),
+		)
+	};
 
 	// Prepend the earlier-requests section (last 4 user requests, excluding the
 	// appended one). These are raw user messages — not AI-rephrased — so intent
@@ -443,6 +505,25 @@ pub(super) async fn apply_compression(
 	// preventing futile back-to-back compressions while reacting to actual growth.
 	let post_compression_tokens = current_context_tokens.saturating_sub(tokens_saved);
 	session.session.info.context_tokens_after_last_compression = post_compression_tokens as usize;
+	if config.compression.attention.telemetry {
+		if let (Some(pact), Some(report)) = (pact, pact_validation) {
+			let telemetry_result = if let Some(bundle) = archive_bundle.as_ref() {
+				pact.write_telemetry(bundle, report, summary, post_compression_tokens)
+			} else {
+				pact.write_degraded_telemetry(
+					&session.session.info.name,
+					&compression_id,
+					report,
+					summary,
+					post_compression_tokens,
+					archive_fallback_reason.as_deref(),
+				)
+			};
+			if let Err(error) = telemetry_result {
+				crate::log_error!("PACT telemetry write failed: {}", error);
+			}
+		}
+	}
 
 	// SELF-TUNING: Record checkpoint for incremental growth rate tracking.
 	// output_tokens_at_last_compression lets estimate_future_turns measure growth since

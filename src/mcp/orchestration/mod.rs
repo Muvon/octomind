@@ -17,15 +17,18 @@
 //! Orchestrator-tier session primitives:
 //! - `tap`      — discover and run registry specialists (cross-domain delegation).
 //! - `schedule` — inject deferred/recurring user messages (session-flow control).
+//! - `monitor`  — run event-stream commands with bounded, rate-limited injection.
 //!
 //! They live under the `orchestration` builtin server, granted only via the
 //! `orchestration` capability. Narrow domain specialists never see them.
 
 use crate::mcp::McpFunction;
 
+pub mod monitor;
 pub mod schedule;
 pub mod tap;
 
+pub use monitor::{execute_monitor_tool, has_running_monitors};
 pub use schedule::{
 	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules,
 	has_pending_schedules, is_session_idle, next_schedule_sleep,
@@ -33,5 +36,9 @@ pub use schedule::{
 pub use tap::execute_tap_command;
 
 pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![tap::get_tap_function(), schedule::get_schedule_function()]
+	vec![
+		tap::get_tap_function(),
+		schedule::get_schedule_function(),
+		monitor::get_monitor_function(),
+	]
 }

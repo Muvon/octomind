@@ -366,6 +366,7 @@ Every agent has these:
 | `mcp` | Enable/disable MCP servers at runtime |
 | `agent` | Spawn specialist sub-agents mid-session |
 | `schedule` | Inject messages at future times |
+| `monitor` | React to event-stream scripts without active polling |
 | `skill` | Inject reusable instruction packs from taps |
 | `tap` | Delegate to any specialist role from a tap registry |
 | `capability` | Auto-activate capabilities by semantic intent matching |

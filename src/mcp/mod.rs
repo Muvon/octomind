@@ -714,6 +714,9 @@ async fn route_builtin_tool(
 				"schedule" => orchestration::execute_schedule_tool(call)
 					.await
 					.map_err(|e| format!("Schedule tool failed: {}", e)),
+				"monitor" => orchestration::execute_monitor_tool(call)
+					.await
+					.map_err(|e| format!("Monitor tool failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
 						"Tool '{}' not implemented in orchestration server",

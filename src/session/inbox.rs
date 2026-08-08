@@ -41,6 +41,8 @@ use crate::session::context::SessionId;
 pub enum InboxSource {
 	/// A `schedule` tool entry that fired at its configured time.
 	Schedule { id: String },
+	/// A rate-limited batch from a long-running `monitor` script.
+	Monitor { id: String, description: String },
 	/// A background agent job that completed (success or failure).
 	BackgroundAgent { name: String },
 	/// A background tap-run launched via the `tap` core tool.
@@ -73,6 +75,9 @@ impl InboxSource {
 	pub fn display_label(&self) -> String {
 		match self {
 			InboxSource::Schedule { id } => format!("schedule {id}"),
+			InboxSource::Monitor { id, description } => {
+				format!("monitor {id} ({description})")
+			}
 			InboxSource::BackgroundAgent { name } => format!("agent {name}"),
 			InboxSource::TapRun { id, role } => format!("tap-run {id} ({role})"),
 			InboxSource::Skill { name } => format!("skill {name}"),
@@ -89,6 +94,7 @@ impl InboxSource {
 	pub fn display_kind(&self) -> &'static str {
 		match self {
 			InboxSource::Schedule { .. } => "schedule",
+			InboxSource::Monitor { .. } => "monitor",
 			InboxSource::BackgroundAgent { .. } => "background_agent",
 			InboxSource::TapRun { .. } => "tap_run",
 			InboxSource::Skill { .. } => "skill",
@@ -104,6 +110,7 @@ impl InboxSource {
 	pub fn display_icon(&self) -> &'static str {
 		match self {
 			InboxSource::Schedule { .. } => "⏰",
+			InboxSource::Monitor { .. } => "📡",
 			InboxSource::BackgroundAgent { .. } => "🤖",
 			InboxSource::TapRun { .. } => "🚰",
 			InboxSource::Skill { .. } => "🧩",
@@ -119,6 +126,7 @@ impl InboxSource {
 		matches!(
 			self,
 			InboxSource::Schedule { .. }
+				| InboxSource::Monitor { .. }
 				| InboxSource::BackgroundAgent { .. }
 				| InboxSource::TapRun { .. }
 				| InboxSource::Skill { .. }
@@ -233,6 +241,92 @@ pub fn push_inbox_message_for_session(session_id: &str, msg: InboxMessage) {
 	}
 }
 
+/// Push a bounded monitor delivery, coalescing it with an already-pending
+/// delivery from the same monitor. A slow AI turn therefore cannot build an
+/// unbounded queue of periodic batches from a noisy script.
+pub fn push_monitor_message_for_session(
+	session_id: &str,
+	id: &str,
+	description: &str,
+	content: String,
+	max_batch_bytes: usize,
+) {
+	let mut guard = INBOX.write().unwrap();
+	let Some(queue) = guard
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+	else {
+		return;
+	};
+	if let Some(pending) = queue.messages.iter_mut().find(|message| {
+		matches!(&message.source, InboxSource::Monitor { id: pending_id, .. } if pending_id == id)
+	}) {
+		append_monitor_content(&mut pending.content, &content, max_batch_bytes);
+	} else {
+		let mut content = content;
+		bound_monitor_content(&mut content, max_batch_bytes);
+		queue.messages.push_back(InboxMessage {
+			source: InboxSource::Monitor {
+				id: id.to_string(),
+				description: description.to_string(),
+			},
+			content,
+		});
+	}
+	queue.notify.notify_one();
+}
+
+fn append_monitor_content(existing: &mut String, addition: &str, max_batch_bytes: usize) {
+	const MARKER: &str = "\n[additional monitor output omitted while this delivery was pending]";
+	let limit = max_batch_bytes.saturating_add(2048);
+	if existing.ends_with(MARKER) {
+		return;
+	}
+	let separator = "\n\n";
+	if existing.len() + separator.len() + addition.len() <= limit {
+		existing.push_str(separator);
+		existing.push_str(addition);
+		return;
+	}
+
+	let content_limit = limit.saturating_sub(MARKER.len());
+	if existing.len() < content_limit {
+		let separator = if content_limit.saturating_sub(existing.len()) >= separator.len() {
+			separator
+		} else {
+			""
+		};
+		existing.push_str(separator);
+		let remaining = content_limit.saturating_sub(existing.len());
+		let mut end = remaining.min(addition.len());
+		while end > 0 && !addition.is_char_boundary(end) {
+			end -= 1;
+		}
+		existing.push_str(&addition[..end]);
+	} else {
+		let mut end = content_limit.min(existing.len());
+		while end > 0 && !existing.is_char_boundary(end) {
+			end -= 1;
+		}
+		existing.truncate(end);
+	}
+	existing.push_str(MARKER);
+}
+
+fn bound_monitor_content(content: &mut String, max_batch_bytes: usize) {
+	const MARKER: &str = "\n[monitor delivery truncated to its configured pending-message limit]";
+	let limit = max_batch_bytes.saturating_add(2048);
+	if content.len() <= limit {
+		return;
+	}
+	let mut end = limit.saturating_sub(MARKER.len()).min(content.len());
+	while end > 0 && !content.is_char_boundary(end) {
+		end -= 1;
+	}
+	content.truncate(end);
+	content.push_str(MARKER);
+}
+
 // ---------------------------------------------------------------------------
 // Consumer API
 // ---------------------------------------------------------------------------
@@ -272,6 +366,9 @@ pub fn peek_inbox_preview(session_id: &str) -> Option<String> {
 		.front()?;
 	let source = match &msg.source {
 		InboxSource::Schedule { .. } => "scheduled message",
+		InboxSource::Monitor { id, description } => {
+			return Some(format!("monitor {id} ({description})"));
+		}
 		InboxSource::BackgroundAgent { name } => {
 			return Some(format!("background agent '{name}'"));
 		}
@@ -332,6 +429,10 @@ mod tests {
 	fn all_sources() -> Vec<InboxSource> {
 		vec![
 			InboxSource::Schedule { id: "s1".into() },
+			InboxSource::Monitor {
+				id: "m1".into(),
+				description: "build".into(),
+			},
 			InboxSource::BackgroundAgent {
 				name: "reviewer".into(),
 			},
@@ -393,5 +494,15 @@ mod tests {
 				source.display_kind()
 			);
 		}
+	}
+
+	#[test]
+	fn coalesced_monitor_content_remains_bounded() {
+		let mut content = "first".to_string();
+		append_monitor_content(&mut content, &"x".repeat(10_000), 1024);
+		assert!(content.len() <= 1024 + 2048);
+		assert!(content.contains("additional monitor output omitted"));
+		bound_monitor_content(&mut content, 1024);
+		assert!(content.len() <= 1024 + 2048);
 	}
 }

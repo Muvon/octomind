@@ -1754,8 +1754,8 @@ pub async fn run_interactive_session_with_input(
 	}
 	} // end if !input.is_empty()
 
-	// Keep session alive while there are pending inbox messages, scheduled entries, or active jobs.
-	// All injection sources (schedule, background agents) push to the inbox — drain it here.
+	// Keep the session alive while an asynchronous producer can still inject work.
+	// Schedules, monitors, and background agents all push to the inbox — drain it here.
 	loop {
 		// Flush any due schedule entries into the inbox first.
 		crate::mcp::orchestration::flush_due_to_inbox();
@@ -1899,8 +1899,9 @@ pub async fn run_interactive_session_with_input(
 		let active_jobs = crate::mcp::agent::functions::get_job_manager()
 			.map(|m| m.active_count())
 			.unwrap_or(0);
+		let has_monitors = crate::mcp::orchestration::has_running_monitors();
 
-		if !daemon && !has_schedules && active_jobs == 0 {
+		if !daemon && !has_schedules && !has_monitors && active_jobs == 0 {
 			break;
 		}
 

@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.42.0] - 2026-08-08
+
+### 📋 Release Summary
+
+This release introduces advanced conversation compression and knowledge retention via PACT, enabling more efficient long-term session memory and structured handoffs (2a01d88b, 05791ca0, 10373778, 4651adf9, c9851b86). The AI supervisor has been enhanced with intelligent tool result condensation, improved steering limits, and hardened prompt security (f98f00a5, 8c282d24, 935e30c2). Additionally, several fixes improve session stability, prevent data loss during compression, and refine drift detection (756ba8fc, 8af5bc86, 45b709ef, 05dc7e1e).
+
+
+### ✨ New Features & Enhancements
+
+- **compression**: integrate PACT attention and tracking `2a01d88b`
+- **session**: implement PACT conversation compression `05791ca0`
+- **session**: add list subcommand to schedule command `76822534`
+- **session**: implement adaptive compression and structured handoffs `10373778`
+- **supervisor**: implement intelligent tool result condensation `f98f00a5`
+- **supervisor**: implement sequential steering budget limit `8c282d24`
+- **compression**: implement token-budgeted findings retention `5a3f8409`
+- **compression**: enhance knowledge retention and deduplication `4651adf9`
+- **session**: persist and deduplicate analysis findings `c9851b86`
+- **session**: expand compression statistics tracking `dd007416`
+- **chat**: expand conversation compression schema `7f89ee4a`
+- **session**: track external spend from agents `723e05c2`
+- **session**: implement persistent role recovery `442463b2`
+- **learning**: implement explicit lesson supersession `c5de9815`
+
+### 🔧 Improvements & Optimizations
+
+- **compression**: allocate PACT lanes in one render pass per packet `0d8cfeb0`
+- **session**: simplify schedule command output string `a36a0b90`
+- **session**: simplify schedule command display `97c732be`
+- **supervisor**: implement XML tagging for prompts `ffdbff49`
+- **session**: improve conversation compression and anchoring `bf6af937`
+
+### 🐛 Bug Fixes & Stability
+
+- **compression**: prevent recall index regrowth and validate spans `756ba8fc`
+- **supervisor**: prevent condensing non-text tool results `9caa4a88`
+- **config**: move compression settings before pressure levels `56fdfd36`
+- **compression**: prevent loss of analysis findings `8af5bc86`
+- **supervisor**: refine drift detection and centroid logic `45b709ef`
+- **supervisor**: harden LLM prompts against injection `935e30c2`
+- **session**: prevent compressor instructions from leaking into summaries `136b73a9`
+- **session**: prevent stale task goals during compression `05dc7e1e`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.41.0] - 2026-08-07
 
 ### 📋 Release Summary

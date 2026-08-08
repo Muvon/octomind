@@ -2049,6 +2049,83 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 				block_close_ok("/schedule", Some("help"));
 				println!();
 			}
+			"list" => {
+				let is_error = data
+					.get("is_error")
+					.and_then(|v| v.as_bool())
+					.unwrap_or(false);
+				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+				if is_error {
+					block_open("/schedule", None);
+					for line in msg.lines() {
+						block_row_text(line);
+					}
+					block_close_err("/schedule", "failed");
+					println!();
+				} else if msg.trim().is_empty() || msg.contains("No scheduled entries.") {
+					// Empty state — explain what /schedule can do and how to drive it
+					// from chat, so a bare `/schedule` isn't a dead end.
+					block_open("/schedule", Some("nothing scheduled yet"));
+					block_line(
+						&"Schedule a message to be injected as a user message later.".to_string(),
+					);
+					block_blank();
+					block_section("examples");
+					let eg: &[(&str, &str)] = &[
+						("/schedule add when=\"in 5m\" message=\"check build\"", "one-shot in 5 minutes"),
+						(
+							"/schedule add when=\"9am\" message=\"run tests\" every=\"1h\" description=\"hourly\"",
+							"repeating every hour",
+						),
+						(
+							"/schedule add message=\"summarize when idle\"",
+							"one-shot, fires next idle",
+						),
+					];
+					let eg_w = eg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
+					for (cmd, desc) in eg {
+						block_row(cmd, &desc.dimmed().to_string(), eg_w);
+					}
+					block_section("manage");
+					let mg: &[(&str, &str)] = &[
+						("/schedule list", "show pending entries"),
+						("/schedule remove <id>", "cancel an entry"),
+						(
+							"/schedule edit <id> when=\"…\" message=\"…\"",
+							"update an entry",
+						),
+						("/schedule help", "full reference"),
+					];
+					let mg_w = mg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
+					for (cmd, desc) in mg {
+						block_row(cmd, &desc.dimmed().to_string(), mg_w);
+					}
+					block_close_ok("/schedule", Some("0 scheduled"));
+					println!();
+				} else {
+					// Entries present — show them, then a one-line footer on how to remove.
+					let count = msg
+						.lines()
+						.next()
+						.and_then(|l| l.trim().split_whitespace().next())
+						.and_then(|n| n.parse::<usize>().ok());
+					block_open("/schedule", None);
+					for line in msg.lines() {
+						block_row_text(line);
+					}
+					block_blank();
+					block_line(
+						&"Manage: /schedule remove <id>  ·  /schedule edit <id> …  ·  /schedule help"
+							.dimmed()
+							.to_string(),
+					);
+					block_close_ok(
+						"/schedule",
+						Some(&format!("{} scheduled", count.unwrap_or(0))),
+					);
+					println!();
+				}
+			}
 			_ => {
 				let is_error = data
 					.get("is_error")

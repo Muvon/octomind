@@ -175,7 +175,7 @@ pub async fn run_interactive_session(
 	// Setup and initialize session using helper function
 
 	let (chat_session, config_for_role, role, first_message_processed, spinner) =
-		setup_and_initialize_session(args, config).await?;
+		setup_and_initialize_session(args, config, true).await?;
 
 	let session_id = chat_session.session.info.name.clone();
 
@@ -230,7 +230,8 @@ pub async fn run_interactive_session(
 					}
 				}
 			};
-			crate::mcp::initialize_mcp_for_role_with_callback(&role, config, Some(&cb)).await?;
+			crate::mcp::initialize_mcp_for_role_with_callback(&role, &config_for_role, Some(&cb))
+				.await?;
 		}
 
 		let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
@@ -1443,7 +1444,7 @@ pub async fn run_interactive_session_with_input(
 	// Setup and initialize session using helper function
 
 	let (chat_session, config_for_role, role, first_message_processed, spinner) =
-		setup_and_initialize_session(args, config).await?;
+		setup_and_initialize_session(args, config, false).await?;
 
 	// Set task-local session ID so all session-scoped state (skills, plans, schedules, etc.)
 	// uses the real session name — must happen after setup determines the actual name.

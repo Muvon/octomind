@@ -604,7 +604,7 @@ async fn handle_session_message(
 					}
 				};
 
-				match setup_and_initialize_session(&args, &ctx.config).await {
+				match setup_and_initialize_session(&args, &ctx.config, false).await {
 					Ok((session, cfg, role_name, _, _)) => {
 						let is_new = !session.was_resumed;
 						(session, cfg, role_name, is_new)
@@ -626,7 +626,7 @@ async fn handle_session_message(
 				mode: "websocket".into(),
 				..Default::default()
 			};
-			match setup_and_initialize_session(&args, &ctx.config).await {
+			match setup_and_initialize_session(&args, &ctx.config, false).await {
 				Ok((session, cfg, role_name, _, _)) => (session, cfg, role_name, true),
 				Err(e) => {
 					let error = ServerMessage::error(format!("Failed to create session: {}", e));
@@ -701,7 +701,7 @@ async fn lookup_session(
 	log_debug!("Loading session from disk: {}", session_id);
 	let mut args = GenericSessionArgs::resume(session_id.to_string(), role.to_string());
 	args.mode = "websocket".to_string();
-	match setup_and_initialize_session(&args, config).await {
+	match setup_and_initialize_session(&args, config, false).await {
 		Ok((mut session, config_for_role, session_role, _, _)) => {
 			if let Err(e) =
 				setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false)

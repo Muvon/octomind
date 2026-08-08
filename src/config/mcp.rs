@@ -260,6 +260,15 @@ impl McpServerConfig {
 			},
 		}
 	}
+
+	/// Get mutable access to the server's tool filter.
+	pub fn tools_mut(&mut self) -> &mut Vec<String> {
+		match self {
+			McpServerConfig::Builtin { tools, .. } => tools,
+			McpServerConfig::Http { tools, .. } => tools,
+			McpServerConfig::Stdin { tools, .. } => tools,
+		}
+	}
 	/// Validate the server configuration
 	pub fn validate(&self) -> Result<(), String> {
 		match self {

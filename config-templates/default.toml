@@ -617,6 +617,22 @@ hints_pressure_threshold = 0.7
 # Minimum tool executions between hints to avoid spamming
 hints_min_interval = 5
 
+# Maximum number of critical knowledge entries retained across compressions.
+# Each compression may extract a short snippet of critical knowledge (decisions,
+# constraints, user preferences). Only the last N entries are kept and injected
+# into every subsequent compression so the AI never loses essential context.
+knowledge_retention = 25
+
+# Hard token budget for analysis findings retained across compression cycles.
+# Findings are ranked for current-task relevance, recency, and diversity when
+# they do not all fit. 0 disables analysis-finding retention.
+analysis_findings_max_tokens = 4000
+
+# NOTE: every key above belongs to [compression]. Anything placed AFTER the
+# [[compression.pressure_levels]] blocks below is parsed as a field of the last
+# pressure level instead, where it is silently ignored — which is exactly how
+# knowledge_retention sat inert here for as long as it did.
+
 # Compression aggressiveness scales with absolute token count
 # Each level defines: threshold (token count) and target_ratio (compression strength)
 # Compression triggers when context exceeds ANY threshold, using the highest matched ratio
@@ -632,17 +648,6 @@ target_ratio = 4.0  # Medium: 75% reduction
 [[compression.pressure_levels]]
 threshold = 160000
 target_ratio = 8.0  # Aggressive: 87.5% reduction
-
-# Maximum number of critical knowledge entries retained across compressions.
-# Each compression may extract a short snippet of critical knowledge (decisions,
-# constraints, user preferences). Only the last N entries are kept and injected
-# into every subsequent compression so the AI never loses essential context.
-knowledge_retention = 25
-
-# Hard token budget for analysis findings retained across compression cycles.
-# Findings are ranked for current-task relevance, recency, and diversity when
-# they do not all fit. 0 disables analysis-finding retention.
-analysis_findings_max_tokens = 4000
 
 # Decision model configuration for compression decisions and summary generation
 # Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)

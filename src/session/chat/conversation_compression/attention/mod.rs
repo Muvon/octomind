@@ -1315,6 +1315,16 @@ impl PactContext {
 				self.target_tokens
 			));
 		}
+		if let Some(packet) = self
+			.packets
+			.iter()
+			.find(|packet| packet.lane == Lane::KeepExact && packet.exact_spans.is_empty())
+		{
+			return Err(anyhow!(
+				"PACT exact-frontier packet has no recoverable source span: {}",
+				packet.id
+			));
+		}
 		let packets_by_id: BTreeMap<&str, &EvidencePacket> = self
 			.packets
 			.iter()
@@ -1646,6 +1656,14 @@ mod tests {
 	}
 
 	fn packet(id: &str, provenance: Provenance, lane: Lane) -> EvidencePacket {
+		let exact_spans = (lane == Lane::KeepExact)
+			.then(|| SourceSpan {
+				start_line: 1,
+				end_line: 1,
+				content_digest: "test-digest".into(),
+			})
+			.into_iter()
+			.collect();
 		EvidencePacket {
 			id: id.to_string(),
 			kind: PacketKind::ToolInteraction,
@@ -1657,7 +1675,7 @@ mod tests {
 			tokens: 1,
 			lane,
 			prompt_content: "exact support".into(),
-			exact_spans: Vec::new(),
+			exact_spans,
 			descriptor: "test packet".into(),
 		}
 	}
@@ -2337,15 +2355,29 @@ mod tests {
 	fn prior_summary_packet_strips_regenerated_file_context() {
 		let mut prior = message(
 			"assistant",
-			"<conversation_summary id=\"old\">\n<progress>keep this</progress>\n<file_context>\nSECRET STALE FILE BYTES\n</file_context>\n</conversation_summary>",
+			"<conversation_summary id=\"old\">\n<folded_state><unit refs=\"b:required\">keep this</unit></folded_state>\n<file_context>\nSECRET STALE FILE BYTES\n</file_context>\n<recall_index format=\"json\">{\"entries\":[{\"id\":\"b:unreferenced\"}]}</recall_index>\n</conversation_summary>",
 		);
 		prior.name = Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into());
 		let messages = vec![prior];
 		let packets = build_packets("session", &messages);
 		let rendered = render_packet(&messages, &packets[0], usize::MAX);
-		assert!(rendered.contains("<progress>keep this</progress>"));
+		assert!(rendered.contains("b:required"));
 		assert!(!rendered.contains("SECRET STALE FILE BYTES"));
 		assert!(!rendered.contains("<file_context>"));
+		assert!(!rendered.contains("b:unreferenced"));
+		assert!(!rendered.contains("<recall_index"));
+	}
+
+	#[test]
+	fn validator_rejects_exact_frontier_without_recoverable_span() {
+		let mut exact = packet("b:exact", Provenance::ToolObserved, Lane::KeepExact);
+		exact.prompt_content = "[… exact packet omitted; recall by block ID …]".into();
+		exact.exact_spans.clear();
+		let pact = pact_with(exact);
+		let error = pact
+			.validate_summary(&CompressionSummary::default())
+			.unwrap_err();
+		assert!(error.to_string().contains("no recoverable source span"));
 	}
 
 	#[test]

@@ -125,9 +125,20 @@ pub(super) fn format_compressed_entry_with_pact(
 /// exactly what the old "carry forward all prior entries" instruction asked
 /// for). Left in place it recurses the same way file bytes did: one measured
 /// session re-fed 220 KB of findings into every compression call.
+///
+/// `<recall_index>` — this is runtime-generated navigation metadata, not
+/// evidence. Re-feeding it makes every historical ID look newly referenced,
+/// causing the live index to grow monotonically across compactions. IDs cited
+/// by pinned, folded, or active state remain in the retained text and are
+/// therefore carried forward with exact coordinates.
 pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
-	strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE)
+	let stripped = strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE);
+	strip_block(
+		&stripped,
+		"<recall_index format=\"json\">",
+		"</recall_index>",
+	)
 }
 
 fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {

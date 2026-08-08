@@ -440,12 +440,12 @@ Goal recitation: re-inject the live goal (anchor intent + next steps) at the con
 
 ### `[supervisor.condense]`
 
-Task-aware narrowing of oversized tool outputs. One cheap-model call per round selects, by line ranges over a numbered copy, what the current task needs; kept lines are reconstructed verbatim (never rewritten). Full originals are spilled to session files first (lossless — the condensed result carries the path). The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard ceiling.
+Task-aware narrowing of oversized tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Relevance uses trusted agent/project/active-skill instructions, the live goal/request/plan, and the current tool-round intent. The response contract is validated atomically and partial views cannot be discarded wholesale. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard ceiling.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable condensation |
-| `tokens_threshold` | usize | `2000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
+| `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
 | `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
 
 ### `[supervisor.delegate]`

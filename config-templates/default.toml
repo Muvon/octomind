@@ -775,10 +775,12 @@ enabled = true
 # Condense: task-aware narrowing of oversized tool outputs. When a tool result
 # exceeds tokens_threshold, ONE cheap-model call per round decides what the
 # agent needs to see: all relevant -> kept in full; partly relevant -> only the
-# needed lines (selected by LINE RANGES over a numbered copy and reconstructed
-# verbatim -- never rewritten); irrelevant -> replaced with a short note. The
-# full original is spilled to a session file first, so nothing is lost -- the
-# agent can read any cut span on demand. Runs BEFORE the blunt
+# needed lines (selected by ORIGINAL LINE RANGES over a bounded query/diagnostic-
+# aware view and reconstructed verbatim -- never rewritten); irrelevant -> a
+# deterministic system notice (never a model-authored summary). The response is
+# validated atomically; partial views and errors cannot be discarded wholesale.
+# The full original is spilled only when the active role can read it back. Runs
+# BEFORE the blunt
 # mcp_response_tokens_threshold prefix-cut, which still applies as the ceiling.
 [supervisor.condense]
 enabled = true

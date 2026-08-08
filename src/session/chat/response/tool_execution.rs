@@ -29,6 +29,9 @@ pub enum ToolExecutionContext<'a> {
 	MainSession {
 		chat_session: &'a mut ChatSession,
 		tool_processor: &'a mut ToolProcessor,
+		/// Assistant text accompanying this batch: the nearest available
+		/// explanation of why these calls were issued now.
+		tool_round_intent: &'a str,
 	},
 	/// Layer/agent context — tool access controlled by the ACP session's role config
 	Layer {
@@ -129,6 +132,7 @@ pub async fn execute_tools_in_context(
 // Execute all tool calls in parallel and collect results (legacy interface for main session)
 pub async fn execute_tools_parallel(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
+	tool_round_intent: &str,
 	chat_session: &mut ChatSession,
 	config: &Config,
 	tool_processor: &mut ToolProcessor,
@@ -140,13 +144,24 @@ pub async fn execute_tools_parallel(
 		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
 		let (result, elapsed_ms) =
 			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
-		let processed = handle_large_tool_results(vec![result], config, mode).await?;
+		let mut results = vec![result];
+		condense_main_results(
+			&mut results,
+			&current_tool_calls,
+			chat_session,
+			config,
+			tool_round_intent,
+			operation_cancelled,
+		)
+		.await;
+		let processed = handle_large_tool_results(results, config, mode).await?;
 		return Ok((processed, elapsed_ms));
 	}
 
 	let mut context = ToolExecutionContext::MainSession {
 		chat_session,
 		tool_processor,
+		tool_round_intent,
 	};
 
 	let result = execute_tools_in_context(
@@ -699,26 +714,21 @@ async fn execute_tools_with_context(
 	// AFTER hooks (they must see full output) and BEFORE the hard truncation
 	// cap below, which still applies to whatever survives as the ceiling.
 	// Main-session only: layers have no anchor/user-request to condition on.
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		let task = parent_task_context(chat_session);
-		// Agent-objective conditioning: the condenser distills a short profile
-		// from this on its first call and caches it for the session.
-		let system_prompt = chat_session
-			.session
-			.messages
-			.iter()
-			.find(|m| m.role == "system")
-			.map(|m| m.content.as_str())
-			.unwrap_or_default();
+	if let ToolExecutionContext::MainSession {
+		chat_session,
+		tool_round_intent,
+		..
+	} = context
+	{
 		let cancel_rx = operation_cancelled
 			.clone()
 			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
-		crate::supervisor::condense::condense_round(
+		condense_main_results(
 			&mut tool_results,
 			&current_tool_calls,
+			chat_session,
 			config,
-			&task,
-			system_prompt,
+			tool_round_intent,
 			cancel_rx,
 		)
 		.await;
@@ -747,6 +757,63 @@ fn parent_task_context(chat_session: &ChatSession) -> String {
 		task.push_str(&plan);
 	}
 	task
+}
+
+/// Trusted, durable context that controls what evidence matters. Deliberately
+/// excludes ordinary user/task messages (supplied separately) and synthetic
+/// notes. Skill injections are included only while that skill is active.
+fn parent_agent_context(chat_session: &ChatSession) -> String {
+	let active_skills: std::collections::HashSet<String> =
+		crate::session::context::current_session_id()
+			.map(|sid| crate::session::context::get_active_skills(&sid))
+			.unwrap_or_default()
+			.into_iter()
+			.collect();
+
+	chat_session
+		.session
+		.messages
+		.iter()
+		.filter(|message| {
+			if message.role == "system" {
+				return true;
+			}
+			if message.role != "user" {
+				return false;
+			}
+			let trimmed = message.content.trim_start();
+			if trimmed.starts_with("<instructions>") {
+				return true;
+			}
+			crate::mcp::runtime::skill::extract_skill_name(&message.content)
+				.is_some_and(|name| active_skills.contains(name))
+		})
+		.map(|message| message.content.trim())
+		.filter(|content| !content.is_empty())
+		.collect::<Vec<_>>()
+		.join("\n\n")
+}
+
+async fn condense_main_results(
+	results: &mut [crate::mcp::McpToolResult],
+	calls: &[crate::mcp::McpToolCall],
+	chat_session: &ChatSession,
+	config: &Config,
+	tool_round_intent: &str,
+	operation_cancelled: tokio::sync::watch::Receiver<bool>,
+) {
+	let task = parent_task_context(chat_session);
+	let agent_context = parent_agent_context(chat_session);
+	crate::supervisor::condense::condense_round(
+		results,
+		calls,
+		config,
+		&task,
+		&agent_context,
+		tool_round_intent,
+		operation_cancelled,
+	)
+	.await;
 }
 
 // Handle large tool results: apply token-cap truncation (warnings removed).

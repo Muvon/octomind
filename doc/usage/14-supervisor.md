@@ -92,11 +92,13 @@ When a tool round returns oversized results (over `[supervisor.condense] tokens_
 
 - **All relevant** → kept in full, byte-for-byte.
 - **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**; the kept lines are reconstructed verbatim from the original — the model never retypes content, so nothing can be mis-copied.
-- **Irrelevant** → replaced with a short note saying what the output was and why it doesn't help.
+- **Irrelevant** → replaced with a deterministic system notice. The condenser cannot write a factual summary that could hallucinate tool output.
 
-It is lossless: the full original is spilled to a session file first, and every condensed result carries the path, so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the ceiling. Fail-open: any condenser error leaves results untouched. Main session only (layers/agents are not condensed).
+It is recoverable: condensation runs only when the active role has a local file-reading tool, the full original is spilled to a session file first, and every condensed result carries the path so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the ceiling. Fail-open: any condenser or response-contract error leaves results untouched. Main session only (layers/agents are not condensed).
 
-Relevance is conditioned on the running agent, not just the current request: the first condense call of a session includes the head of the agent's system prompt and distills a short **agent profile** ("what this agent is for, what output it must never lose"), which is cached for the session (re-distilled automatically if the system prompt changes) and prepended to every later call. Internal mechanic — no config.
+Relevance is conditioned on three separate signals: trusted standing context (system prompt, project instructions, and currently active skills), the live goal/request/plan, and the assistant text explaining why the current tool batch was issued. Tool data is serialized as JSON, treated as untrusted reference data, and cannot create instructions for the condenser.
+
+The numbered-view budget is fixed **per round**, not per result. A large result is represented by task/argument matches, diagnostics with context, head and tail lines, and stratified middle samples, all carrying their original line numbers. A partial view can be extracted but never discarded wholesale; selected ranges must fall entirely inside visible spans. The response is atomic: missing, duplicate, unknown, malformed, or unsafe entries keep every original. Error/diagnostic lines are also retained deterministically even if the model overlooks them.
 
 ## Memory: lessons + orientation
 

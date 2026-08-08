@@ -143,10 +143,10 @@ pub struct ReciteConfig {
 
 /// Condense: task-aware narrowing of oversized tool outputs. When a round
 /// returns results over `tokens_threshold`, one cheap-model call selects per
-/// result what the current task needs — by LINE RANGES over a numbered copy,
-/// reconstructed verbatim (never retyped). Full originals are spilled to
-/// session files first, so it is lossless; the hard
-/// `mcp_response_tokens_threshold` cap still applies after as the ceiling.
+/// result what the current task needs — by ORIGINAL LINE RANGES over a bounded
+/// task-aware view, reconstructed verbatim (never retyped). Full originals are
+/// spilled when the active role can read them back; the hard
+/// `mcp_response_tokens_threshold` cap still applies afterwards as the ceiling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CondenseConfig {
 	pub enabled: bool,

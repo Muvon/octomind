@@ -555,6 +555,7 @@ pub async fn process_response<S: OutputSink>(
 				let (tool_results, total_tool_time_ms) =
 					match tool_execution::execute_tools_parallel(
 						current_tool_calls.clone(),
+						&current_content,
 						params.chat_session,
 						params.config,
 						&mut tool_processor,

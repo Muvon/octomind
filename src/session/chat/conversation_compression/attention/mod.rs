@@ -154,6 +154,7 @@ pub(crate) async fn build(
 	drain_end: usize,
 	target_ratio: f64,
 	attention_enabled: bool,
+	minimal_frontier: bool,
 ) -> Result<PactContext> {
 	if drain_start > drain_end || drain_end >= session.session.messages.len() {
 		return Err(anyhow!(
@@ -199,6 +200,7 @@ pub(crate) async fn build(
 			&grounded_hints,
 			&plan_focus,
 			target_tokens,
+			minimal_frontier,
 		)
 		.await;
 	}
@@ -581,12 +583,21 @@ async fn allocate_lanes(
 	grounded_hints: &[GroundedHint],
 	plan_focus: &str,
 	target_tokens: usize,
+	minimal_frontier: bool,
 ) {
 	if packets.is_empty() {
 		return;
 	}
 
-	let exact_ids = active_dependency_closure(packets);
+	// /done marks a task-phase boundary: the next turn starts a NEW task, so
+	// the heavy dependency-closure frontier of the finished one is noise, not
+	// focus. The active task text survives in pinned_state; everything else
+	// competes for the summarize lane or stays a recall pointer.
+	let exact_ids = if minimal_frontier {
+		HashSet::new()
+	} else {
+		active_dependency_closure(packets)
+	};
 	let mut exact_indices: Vec<usize> = packets
 		.iter()
 		.enumerate()
@@ -1081,130 +1092,93 @@ impl PactContext {
 	}
 
 	pub(crate) fn prompt_view(&self) -> String {
-		#[derive(Serialize)]
-		struct PacketView<'a> {
-			id: &'a str,
-			lane: Lane,
-			kind: PacketKind,
-			origin: Provenance,
-			depends_on: &'a [String],
-			linkage: PacketLinkage,
-			exact_spans: &'a [SourceSpan],
-			content: Option<&'a str>,
-			descriptor: Option<&'a str>,
-		}
-		let packets: Vec<PacketView<'_>> = self
-			.packets
-			.iter()
-			.map(|packet| PacketView {
-				id: &packet.id,
-				lane: packet.lane,
-				kind: packet.kind,
-				origin: packet.provenance,
-				depends_on: &packet.depends_on,
-				linkage: packet.linkage,
-				exact_spans: &packet.exact_spans,
-				content: (packet.lane != Lane::ArchiveReference)
-					.then_some(packet.prompt_content.as_str()),
-				descriptor: (packet.lane == Lane::ArchiveReference)
-					.then_some(packet.descriptor.as_str()),
-			})
-			.collect();
-		serde_json::to_string_pretty(&serde_json::json!({
-			"controller": format!("pact-v{}", CONTROLLER_VERSION),
-			"query_contract": [
-				"continue the genuine current task under its binding constraints",
-				"recover the next safe action and its exact required inputs",
-				"distinguish established, tentative, failed, pending, and superseded state",
-				"cite consequential completed-state claims with supplied block IDs"
-			],
-			"pinned_state": &self.pinned,
-			"grounded_self_report": &self.grounded_hints,
-			"evidence_packets": packets,
-			"budgets": {
-				"source_tokens": self.source_tokens,
-				"target_tokens": self.target_tokens
+		let mut out = String::new();
+		out.push_str(&format!("controller: pact-v{}\n", CONTROLLER_VERSION));
+		out.push_str(&format!(
+			"budget: source_tokens={} target_tokens={}\n",
+			self.source_tokens, self.target_tokens
+		));
+		out.push_str("<pinned_state>\n");
+		out.push_str(&render_pinned_lines(&self.pinned));
+		out.push_str("</pinned_state>\n");
+		if !self.grounded_hints.is_empty() {
+			out.push_str("<grounded_self_report>\n");
+			for hint in &self.grounded_hints {
+				out.push_str(&format!("{}: {}\n", hint.kind, hint.refs.join(" ")));
 			}
-		}))
-		.expect("PACT prompt view is serializable")
+			out.push_str("</grounded_self_report>\n");
+		}
+		out.push_str("<packets>\n");
+		for packet in &self.packets {
+			out.push_str(&packet_header(packet));
+			if packet.lane == Lane::ArchiveReference {
+				out.push_str(&format!("descriptor: {}\n", packet.descriptor));
+			} else {
+				out.push_str(packet.prompt_content.trim_end());
+				out.push('\n');
+			}
+		}
+		out.push_str("</packets>");
+		out
 	}
 
 	pub(crate) fn render_live_bands(
 		&self,
 		archive: Option<&super::archive::ArchiveBundle>,
 	) -> (String, String) {
+		let pinned_band = format!(
+			"<pinned_state>\n{}</pinned_state>",
+			render_pinned_lines(&self.pinned)
+		);
 		if !self.enabled {
-			let pinned =
-				serde_json::to_string_pretty(&self.pinned).expect("pinned state is serializable");
-			return (
-				format!("<pinned_state format=\"json\">\n{pinned}\n</pinned_state>"),
-				String::new(),
-			);
+			return (pinned_band, String::new());
 		}
-		let exact_packets: Vec<serde_json::Value> = self
+		let mut frontier = String::new();
+		for packet in self
 			.packets
 			.iter()
 			.filter(|packet| packet.lane == Lane::KeepExact)
-			.map(|packet| {
-				serde_json::json!({
-					"id": packet.id,
-					"kind": packet.kind,
-					"origin": packet.provenance,
-					"depends_on": packet.depends_on,
-					"linkage": packet.linkage,
-					"exact_spans": packet.exact_spans,
-					"content": packet.prompt_content,
-				})
-			})
-			.collect();
-		let mut recall_entries: Vec<serde_json::Value> = self
+		{
+			frontier.push_str(&packet_header(packet));
+			frontier.push_str(packet.prompt_content.trim_end());
+			frontier.push('\n');
+		}
+		let mut recall = String::new();
+		if let Some(path) = bundle_path(archive) {
+			recall.push_str(&format!("archive: {path}\n"));
+		}
+		if let Some(bundle) = archive {
+			recall.push_str(&format!("sidecar: {}\n", bundle.index_path.display()));
+		}
+		for packet in self
 			.packets
 			.iter()
 			.filter(|packet| packet.lane != Lane::KeepExact)
-			.map(|packet| {
-				let location = archive
-					.and_then(|bundle| bundle.entry(&packet.id))
-					.map(|entry| {
-						serde_json::json!({
-							"archive": bundle_path(archive),
-							"jsonl_lines": [entry.archive_line_start, entry.archive_line_end],
-						})
-					});
-				serde_json::json!({
-					"id": packet.id,
-					"descriptor": packet.descriptor,
-					"location": location,
-				})
-			})
-			.collect();
-		recall_entries.extend(self.prior_recall.iter().map(|(id, entry)| {
-			serde_json::json!({
-				"id": id,
-				"descriptor": entry.descriptor,
-				"location": {
-					"archive": entry.archive_path.display().to_string(),
-					"sidecar": entry.index_path.display().to_string(),
-					"jsonl_lines": [entry.archive_line_start, entry.archive_line_end],
-				},
-			})
-		}));
-
-		let pinned =
-			serde_json::to_string_pretty(&self.pinned).expect("pinned state is serializable");
-		let frontier =
-			serde_json::to_string_pretty(&exact_packets).expect("active frontier is serializable");
-		let recall = serde_json::to_string_pretty(&serde_json::json!({
-			"archive": bundle_path(archive),
-			"sidecar": archive.map(|bundle| bundle.index_path.display().to_string()),
-			"entries": recall_entries,
-		}))
-		.expect("recall index is serializable");
+		{
+			let lines = archive
+				.and_then(|bundle| bundle.entry(&packet.id))
+				.map(|entry| format!(" L{}-{}", entry.archive_line_start, entry.archive_line_end))
+				.unwrap_or_default();
+			recall.push_str(&format!("{}{} — {}\n", packet.id, lines, packet.descriptor));
+		}
+		for (id, entry) in &self.prior_recall {
+			recall.push_str(&format!(
+				"{} {} L{}-{} — {}\n",
+				id,
+				entry.archive_path.display(),
+				entry.archive_line_start,
+				entry.archive_line_end,
+				entry.descriptor
+			));
+		}
+		let frontier_band = if frontier.is_empty() {
+			String::new()
+		} else {
+			format!("<active_frontier>\n{frontier}</active_frontier>\n")
+		};
 		(
-			format!("<pinned_state format=\"json\">\n{pinned}\n</pinned_state>"),
-			format!(
-				"<active_frontier format=\"json\">\n{frontier}\n</active_frontier>\n\
-<recall_index format=\"json\">\n{recall}\n</recall_index>"
-			),
+			pinned_band,
+			format!("{frontier_band}<recall_index>\n{recall}</recall_index>"),
 		)
 	}
 
@@ -1764,6 +1738,50 @@ fn bundle_path(archive: Option<&super::archive::ArchiveBundle>) -> Option<String
 	archive.map(|bundle| bundle.path.display().to_string())
 }
 
+/// One-line, model-facing packet header: stable ID plus the attribution
+/// metadata the compressor's citation rules need. Runtime-only fields
+/// (exact_spans digests, linkage) are deliberately not rendered — they cost
+/// tokens without informing the fold.
+fn packet_header(packet: &EvidencePacket) -> String {
+	let lane = match packet.lane {
+		Lane::KeepExact => "keep_exact",
+		Lane::Summarize => "summarize",
+		Lane::ArchiveReference => "archive_reference",
+	};
+	let deps = if packet.depends_on.is_empty() {
+		String::new()
+	} else {
+		format!(" deps={}", packet.depends_on.join(","))
+	};
+	format!(
+		"[{} {} kind={:?} origin={:?}{}]\n",
+		packet.id, lane, packet.kind, packet.provenance, deps
+	)
+}
+
+/// Compact plain-line rendering of pinned state — replaces the pretty-JSON
+/// serialization that stayed in the model's context every turn.
+fn render_pinned_lines(pinned: &PinnedState) -> String {
+	let mut out = String::new();
+	let source = pinned
+		.task
+		.source
+		.as_deref()
+		.map(|id| format!(" (source: {id})"))
+		.unwrap_or_default();
+	out.push_str(&format!("task{source}: {}\n", pinned.task.text));
+	for constraint in &pinned.constraints {
+		let source = constraint
+			.source
+			.as_deref()
+			.map(|id| format!(" (source: {id})"))
+			.unwrap_or_default();
+		out.push_str(&format!("constraint{source}: {}\n", constraint.text));
+	}
+	out.push_str(&format!("governance_hash: {}\n", pinned.governance_hash));
+	out
+}
+
 pub(crate) fn folded_unit_id(unit: &FoldedUnit) -> String {
 	let mut hasher = Sha256::new();
 	hasher.update(b"octomind-pact-fold-v1\0");
@@ -2064,7 +2082,7 @@ mod tests {
 			constraints: Vec::new(),
 			governance_hash: "hash".into(),
 		};
-		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100).await;
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
 		let selected_tokens = packets
 			.iter()
 			.filter(|packet| packet.lane != Lane::ArchiveReference)
@@ -2506,7 +2524,7 @@ mod tests {
 			constraints: Vec::new(),
 			governance_hash: "hash".into(),
 		};
-		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 30).await;
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 30, false).await;
 		let selected: usize = packets
 			.iter()
 			.filter(|packet| packet.lane != Lane::ArchiveReference)
@@ -2514,6 +2532,31 @@ mod tests {
 			.sum();
 		assert!(selected <= 30, "selected {selected} tokens");
 		assert_eq!(packets[0].lane, Lane::KeepExact);
+	}
+
+	#[tokio::test]
+	async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
+		// /done is a task-phase boundary: the dependency-closure frontier of
+		// the finished task must NOT be carried exact into the next phase.
+		let messages = vec![
+			message("user", "do the thing"),
+			message("assistant", "working on the thing\nline two\nline three"),
+		];
+		let mut packets = build_packets("session", &messages);
+		link_dependencies(&mut packets);
+		let pinned = PinnedState {
+			task: PinnedItem {
+				text: "do the thing".into(),
+				source: None,
+			},
+			constraints: Vec::new(),
+			governance_hash: "hash".into(),
+		};
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 1000, true).await;
+		assert!(
+			packets.iter().all(|packet| packet.lane != Lane::KeepExact),
+			"minimal frontier must keep no packet exact"
+		);
 	}
 
 	#[tokio::test]
@@ -2543,7 +2586,7 @@ mod tests {
 			constraints: Vec::new(),
 			governance_hash: "hash".into(),
 		};
-		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 40).await;
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 40, false).await;
 		for packet in &packets {
 			assert_eq!(packet.lane, Lane::KeepExact);
 			assert!(
@@ -2634,7 +2677,7 @@ mod tests {
 	fn prior_summary_packet_strips_regenerated_file_context() {
 		let mut prior = message(
 			"assistant",
-			"<conversation_summary id=\"old\">\n<folded_state><unit refs=\"b:required\">keep this</unit></folded_state>\n<file_context>\nSECRET STALE FILE BYTES\n</file_context>\n<recall_index format=\"json\">{\"entries\":[{\"id\":\"b:unreferenced\"}]}</recall_index>\n</conversation_summary>",
+			"<conversation_summary id=\"old\">\n<folded_state><unit refs=\"b:required\">keep this</unit></folded_state>\n<file_context>\nSECRET STALE FILE BYTES\n</file_context>\n<recall_index>\nb:unreferenced L1-2 — stale entry\n</recall_index>\n</conversation_summary>",
 		);
 		prior.name = Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into());
 		let messages = vec![prior];

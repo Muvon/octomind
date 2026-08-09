@@ -278,11 +278,16 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionTrigger {
 	/// Normal automatic compression — respects thresholds/cooldowns, preserves all active skills.
 	Automatic,
-	/// `/done` command — bypasses thresholds, preserves only env-loaded skills (OCTOMIND_SKILLS).
+	/// `/done` command — bypasses thresholds and starts the next task without injected skills.
 	Done,
+}
+
+fn preserves_active_skills(trigger: CompressionTrigger) -> bool {
+	matches!(trigger, CompressionTrigger::Automatic)
 }
 
 /// Main entry point: check if compression needed and perform if AI decides YES
@@ -387,19 +392,16 @@ pub async fn check_and_compress_conversation(
 	// loses the domain guidance that was active. Extract them here so
 	// apply_compression can re-insert them between the anchor and the summary.
 	//
-	// When trigger=Done (/done), preserve ONLY env-loaded skills (OCTOMIND_SKILLS).
-	// Auto-activated skills are context-dependent and should re-activate if
-	// the context still matches after the summary.
-	//
-	// When trigger=Automatic or SkillForget, preserve all active skills.
-	let skill_names_to_preserve: Vec<String> = if matches!(trigger, CompressionTrigger::Done) {
-		crate::session::context::current_session_id()
-			.map(|sid| crate::session::context::get_env_skills(&sid))
-			.unwrap_or_default()
-	} else {
+	// Automatic long-running compression keeps active skills because the same
+	// task is continuing. `/done` is a task boundary: preserve no injected
+	// skills (including env-loaded ones); normal activation can inject whatever
+	// the next task actually needs.
+	let skill_names_to_preserve: Vec<String> = if preserves_active_skills(trigger) {
 		crate::session::context::current_session_id()
 			.map(|sid| crate::session::context::get_active_skills(&sid))
 			.unwrap_or_default()
+	} else {
+		Vec::new()
 	};
 	let preserved_skills = collect_preserved_skills(
 		&session.session.messages,

@@ -101,6 +101,56 @@ fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String
 	)
 }
 
+/// Rebuild the two rolling content-cache boundaries after every compression
+/// mutation and reinjection has finished.
+///
+/// The first marker stays on the unchanged pre-compression anchor so the
+/// provider can reuse the longest stable prefix. The second marker is placed
+/// on the final message in the newly compacted state. If the structural anchor
+/// is the system message (which uses its own cache slot), the generated summary
+/// becomes the first *content* marker so both content slots remain useful.
+fn align_compression_cache_markers(
+	messages: &mut [crate::session::Message],
+	anchor_idx: usize,
+	summary_idx: usize,
+	supports_caching: bool,
+) {
+	for message in messages
+		.iter_mut()
+		.filter(|message| message.role != "system")
+	{
+		message.cached = false;
+		message.cache_ttl = None;
+	}
+
+	if !supports_caching || messages.is_empty() {
+		return;
+	}
+
+	let first_idx = match messages.get(anchor_idx) {
+		Some(anchor) if anchor.role != "system" => anchor_idx,
+		Some(_) if summary_idx < messages.len() => summary_idx,
+		_ => return,
+	};
+
+	if let Some(first) = messages.get_mut(first_idx) {
+		first.cached = true;
+		// Only the unchanged preamble boundary gets the long TTL. A generated
+		// summary is new content and follows the normal rolling-cache lifetime.
+		if first_idx == anchor_idx {
+			first.cache_ttl = Some("1h".to_string());
+		}
+	}
+
+	let final_idx = messages.len() - 1;
+	if final_idx != first_idx {
+		if let Some(last) = messages.get_mut(final_idx) {
+			last.cached = true;
+			last.cache_ttl = None;
+		}
+	}
+}
+
 /// Apply compression: drain all messages, insert summary, re-inject recent user messages.
 /// Pulls structured file contexts and critical knowledge directly from the
 /// typed summary — no markdown re-parsing.
@@ -381,36 +431,19 @@ pub(super) async fn apply_compression(
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx
 	let (messages_removed, _) = session.remove_messages_in_range(start_idx, end_idx)?;
 
-	// Insert summary + re-injected user message in one shot with correct cache markers.
-	// Cache markers: marker #1 on summary, marker #2 on re-injected user message.
-	// Evict existing content markers first to enforce the 2-marker limit.
+	// Insert the post-compression state first. Cache markers are aligned only
+	// after every reinjection (including fidelity repair) has finished, so the
+	// second boundary really is the end of the current state.
 	let supports_caching = crate::session::model_supports_caching(&session.session.info.model);
-	// Evict stale content markers — but preserve the anchor's marker.
-	// The anchor is the last preamble message (system prompt, welcome, or the
-	// `<instructions>` file, whichever ends the preamble), so marking it caches
-	// that whole stable block behind one breakpoint.
-	// Set 1h TTL on anchor when long cache is enabled — stable prefix, rarely changes.
-	if supports_caching {
-		for (i, msg) in session.session.messages.iter_mut().enumerate() {
-			if i == start_idx {
-				// Anchor: keep marker, set long TTL (always enabled — Anthropic 1h cache).
-				msg.cached = true;
-				msg.cache_ttl = Some("1h".to_string());
-			} else if msg.cached && msg.role != "system" {
-				msg.cached = false;
-				msg.cache_ttl = None;
-			}
-		}
-	}
 
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.unwrap_or_default()
 		.as_secs();
 
-	// Insert preserved active skills FIRST, between the anchor (which keeps
-	// cache marker #1) and the summary. Skills carry no cache markers — the
-	// two-marker budget is reserved for anchor + re-injected user. Order is
+	// Insert preserved active skills FIRST, between the anchor and the summary.
+	// Skills carry no cache markers — the two-marker budget is reserved for the
+	// stable boundary + final compacted state. Order is
 	// preserved relative to each other, matching the user's expectation that
 	// active skills sit at the top of the recovered context:
 	//   [system, anchor(marker#1), skill1, skill2, …, summary, user(marker#2), …]
@@ -431,7 +464,7 @@ pub(super) async fn apply_compression(
 		);
 	}
 
-	// Summary message (no cache marker — sits between anchor marker and user marker).
+	// Summary marker placement is finalized after all reinjections below.
 	// The `id` is inherited from the most recent assistant turn in the drained range
 	// so the provider can chain via `previous_response_id` on the next API call.
 	let summary_msg = crate::session::Message {
@@ -448,8 +481,8 @@ pub(super) async fn apply_compression(
 		.messages
 		.insert(start_idx + 1 + skill_count, summary_msg);
 
-	// Marker #2: re-injected continuation message — full content cache
-	// boundary. This is ALWAYS a synthetic <continuation> wrapper, never
+	// Re-injected continuation message. This is ALWAYS a synthetic
+	// <continuation> wrapper, never
 	// the raw user message verbatim. The wrapper:
 	//   - signals to the model that this is an in-progress task (the
 	//     summary above captures completed work), preventing "fresh
@@ -470,7 +503,7 @@ pub(super) async fn apply_compression(
 		role: "user".to_string(),
 		content: build_continuation_content(continuation_intent.as_deref(), plan_active),
 		timestamp: now,
-		cached: supports_caching,
+		cached: false,
 		..Default::default()
 	};
 	session
@@ -547,17 +580,6 @@ pub(super) async fn apply_compression(
 		post_compression_tokens,
 		session.session.info.consecutive_compressions,
 		(0.10 * 2.0_f64.powi(session.session.info.consecutive_compressions as i32)).min(1.0) * 100.0
-	);
-
-	// CRITICAL: Log compression point to session file
-	// This marker tells session loader to clear messages before this point on resume
-	// Without this, all "compressed" messages are reloaded, defeating compression
-	let _ = crate::session::logger::log_compression_point(
-		&session.session.info.name,
-		"conversation",
-		messages_removed,
-		tokens_saved,
-		&session.session.messages,
 	);
 
 	// Extend the session anchor so conversation compaction contributes to
@@ -658,6 +680,25 @@ pub(super) async fn apply_compression(
 		}
 	}
 
+	let summary_idx = start_idx + 1 + skill_count;
+	align_compression_cache_markers(
+		&mut session.session.messages,
+		start_idx,
+		summary_idx,
+		supports_caching,
+	);
+
+	// Persist the final post-compression state only after skill/fidelity
+	// reinjection and cache alignment. The loader clears everything before this
+	// marker and rebuilds from this exact snapshot.
+	let _ = crate::session::logger::log_compression_point(
+		&session.session.info.name,
+		"conversation",
+		messages_removed,
+		tokens_saved,
+		&session.session.messages,
+	);
+
 	Ok(())
 }
 
@@ -748,6 +789,89 @@ pub(super) fn resolve_task_intent(
 #[cfg(test)]
 mod apply_tests {
 	use super::*;
+
+	fn cache_message(role: &str, content: &str, cached: bool) -> crate::session::Message {
+		crate::session::Message {
+			role: role.to_string(),
+			content: content.to_string(),
+			cached,
+			cache_ttl: cached.then(|| "stale".to_string()),
+			..Default::default()
+		}
+	}
+
+	fn content_marker_indices(messages: &[crate::session::Message]) -> Vec<usize> {
+		messages
+			.iter()
+			.enumerate()
+			.filter(|(_, message)| message.role != "system" && message.cached)
+			.map(|(index, _)| index)
+			.collect()
+	}
+
+	#[test]
+	fn compression_markers_keep_anchor_and_end_after_skill_and_fidelity_reinjection() {
+		let mut messages = vec![
+			cache_message("system", "system", true),
+			cache_message("assistant", "unchanged welcome anchor", false),
+			cache_message("user", "<skill name=\"rust\">rules</skill>", true),
+			cache_message("assistant", "compressed summary", true),
+			cache_message("user", "<continuation>resume</continuation>", true),
+			cache_message(
+				"user",
+				"<pay-attention>fidelity repair</pay-attention>",
+				false,
+			),
+		];
+
+		align_compression_cache_markers(&mut messages, 1, 3, true);
+
+		assert_eq!(content_marker_indices(&messages), vec![1, 5]);
+		assert_eq!(messages[1].cache_ttl.as_deref(), Some("1h"));
+		assert!(
+			!messages[2].cached,
+			"re-injected skill is between boundaries"
+		);
+		assert!(
+			!messages[3].cached,
+			"summary is covered by the final boundary"
+		);
+		assert!(
+			!messages[4].cached,
+			"stale pre-reinjection end marker is cleared"
+		);
+		assert!(messages[5].cached, "final current state gets marker #2");
+	}
+
+	#[test]
+	fn compression_with_system_anchor_uses_both_content_marker_slots() {
+		let mut messages = vec![
+			cache_message("system", "system anchor", true),
+			cache_message("assistant", "compressed summary", false),
+			cache_message("user", "<continuation>resume</continuation>", false),
+		];
+
+		align_compression_cache_markers(&mut messages, 0, 1, true);
+
+		assert!(messages[0].cached, "system cache marker remains intact");
+		assert_eq!(content_marker_indices(&messages), vec![1, 2]);
+		assert_eq!(messages[1].cache_ttl, None, "new summary uses normal TTL");
+	}
+
+	#[test]
+	fn compression_clears_content_markers_for_non_caching_models() {
+		let mut messages = vec![
+			cache_message("system", "system", true),
+			cache_message("assistant", "anchor", true),
+			cache_message("assistant", "summary", true),
+			cache_message("user", "continuation", true),
+		];
+
+		align_compression_cache_markers(&mut messages, 1, 2, false);
+
+		assert!(content_marker_indices(&messages).is_empty());
+		assert!(messages[0].cached, "system marker is managed separately");
+	}
 
 	#[test]
 	fn continuation_detection_ignores_ordinary_messages() {

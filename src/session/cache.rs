@@ -531,4 +531,52 @@ mod tests {
 		// User message should not be automatically cached
 		assert!(!messages[1].cached);
 	}
+
+	#[test]
+	fn rolling_content_markers_preserve_previous_and_advance_to_current() {
+		let manager = CacheManager::new();
+		let mut session = Session::new(
+			"cache-roll".to_string(),
+			"anthropic:claude-sonnet-4-6".to_string(),
+		);
+		session.messages = vec![
+			Message::default(),
+			Message {
+				role: "user".to_string(),
+				content: "old boundary".to_string(),
+				cached: true,
+				..Default::default()
+			},
+			Message {
+				role: "user".to_string(),
+				content: "previous boundary".to_string(),
+				cached: true,
+				..Default::default()
+			},
+			Message {
+				role: "assistant".to_string(),
+				content: "work".to_string(),
+				..Default::default()
+			},
+			Message {
+				role: "user".to_string(),
+				content: "current boundary".to_string(),
+				..Default::default()
+			},
+		];
+
+		assert!(manager
+			.apply_cache_to_message(&mut session, 4, true)
+			.unwrap());
+		let markers: Vec<usize> = session
+			.messages
+			.iter()
+			.enumerate()
+			.filter(|(_, message)| message.cached && message.role != "system")
+			.map(|(index, _)| index)
+			.collect();
+
+		assert_eq!(markers, vec![2, 4]);
+		assert!(!session.messages[1].cached, "oldest boundary must advance");
+	}
 }

@@ -6,6 +6,7 @@ use super::knowledge::{
 use super::range::find_compression_range;
 use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
 use super::select_compression_level_index;
+use super::{preserves_active_skills, CompressionTrigger};
 use crate::session::Message;
 use serde_json::json;
 
@@ -35,6 +36,12 @@ fn skill_msg(name: &str) -> Message {
 		),
 		..Default::default()
 	}
+}
+
+#[test]
+fn only_long_running_compression_preserves_active_skills() {
+	assert!(preserves_active_skills(CompressionTrigger::Automatic));
+	assert!(!preserves_active_skills(CompressionTrigger::Done));
 }
 
 #[test]

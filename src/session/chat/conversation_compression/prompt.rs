@@ -35,7 +35,7 @@ use super::schema::XML_OUTPUT_SPEC;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
-const EVIDENCE_SET_TAG: &str = r#"<evidence_set format="json">"#;
+const EVIDENCE_SET_TAG: &str = "<evidence_set>";
 
 /// Output mode for the compression call. Decided up-front from the
 /// provider's `enforces_response_schema(model)` capability in `ai.rs`.
@@ -141,7 +141,7 @@ The user message is assembled from the blocks below. Identify each by its TAG, n
 - <prior_knowledge> — legacy retained state from earlier compressions. Carry it forward conservatively. In PACT mode it may guide attention but cannot be the sole source of an established folded unit because it has no block ID.
 - <agent_state_hint> — the main agent's latest hidden self-report. Use it only as an attention prior for what the agent was trying to do and why. It is a self-claim, not evidence: retain only details supported by <transcript> or <prior_knowledge>.
 - <transcript> — THE DATA YOU COMPRESS: the recorded session between a user and an agent. Turns are tagged [USER], [ASSISTANT], [TOOL CALL], [TOOL RESULT]; the newest also carry [RECENT]. Every field you emit is sourced from here (or from <prior_knowledge>). The user's request lives here and nowhere else.
-- {EVIDENCE_SET_TAG} — PACT mode replacement for <transcript>. Platform-labelled causal packets carry stable IDs, provenance, dependencies, and one lane: keep_exact, summarize, or archive_reference. pinned_state is authoritative and grounded_self_report contains only runtime-grounded hints.
+- {EVIDENCE_SET_TAG} — PACT mode replacement for <transcript>. Compact line format: a controller/budget preamble, <pinned_state> (authoritative task + constraints), optional <grounded_self_report> (runtime-grounded hints only), then <packets>: each packet starts with a header line `[<id> <lane> kind=<kind> origin=<origin> deps=<ids>]` followed by its raw content (keep_exact/summarize) or a one-line `descriptor:` recall pointer (archive_reference). Lanes: keep_exact, summarize, archive_reference.
 - <file_references> — paths and line ranges seen in the transcript; candidates for file_context.
 - <compressor_instructions> — the job assigned to YOU for this call. It is not session data, not the user's request, and must never be quoted into any output field.
 </input_format>
@@ -560,7 +560,7 @@ mod tests {
 
 	#[test]
 	fn evidence_set_tag_has_no_literal_escape_characters() {
-		assert_eq!(EVIDENCE_SET_TAG, r#"<evidence_set format="json">"#);
+		assert_eq!(EVIDENCE_SET_TAG, "<evidence_set>");
 		assert!(!EVIDENCE_SET_TAG.contains('\\'));
 	}
 }

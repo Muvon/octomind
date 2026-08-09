@@ -528,6 +528,7 @@ pub async fn check_and_compress_conversation(
 				end_idx,
 				target_ratio,
 				config.compression.attention.enabled,
+				force_done,
 			)
 			.await?,
 		)

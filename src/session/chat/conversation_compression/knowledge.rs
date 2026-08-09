@@ -134,11 +134,7 @@ pub(super) fn format_compressed_entry_with_pact(
 pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
 	let stripped = strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE);
-	strip_block(
-		&stripped,
-		"<recall_index format=\"json\">",
-		"</recall_index>",
-	)
+	strip_block(&stripped, "<recall_index>", "</recall_index>")
 }
 
 fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {

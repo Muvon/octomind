@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.42.1] - 2026-08-09
+
+### 📋 Release Summary
+
+This release introduces an interactive role tool overlay and enhanced session repair capabilities to improve development workflows (9af09025, 9948d77f), alongside new monitoring for MCP processes and event streams (98e8b2b4). System performance is improved through optimized data compression and serialization (e18df587, 7e925527), with a fix to ensure consistent orchestration builtins (b50df618).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: implement deterministic repair for units `9948d77f`
+- **session**: implement interactive role tool overlay `9af09025`
+- **mcp**: implement process and event stream monitoring `98e8b2b4`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: optimize cache marker and compression logic `e18df587`
+- **compression**: optimize serialization and prompts `7e925527`
+
+### 🐛 Bug Fixes & Stability
+
+- **config**: synthesize missing orchestration builtin `b50df618`
+
 ## [0.42.0] - 2026-08-08
 
 ### 📋 Release Summary

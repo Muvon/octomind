@@ -313,15 +313,20 @@ fn handle_list(call: &McpToolCall) -> McpToolResult {
 			"monitor requires an active session context".to_string(),
 		);
 	};
-	let mut monitors = list_for_session(&session_id);
-	monitors.sort_by(|a, b| a.id.cmp(&b.id));
+	let listing =
+		render_running_monitors(&session_id).unwrap_or_else(|| "No running monitors.".to_string());
+	McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), listing)
+}
+
+/// Render every running monitor owned by a session in the same format
+/// `monitor(list)` shows them. Returns None when no monitors are running,
+/// so callers (e.g. conversation compression) can skip the section entirely.
+pub fn render_running_monitors(session_id: &SessionId) -> Option<String> {
+	let mut monitors = list_for_session(session_id);
 	if monitors.is_empty() {
-		return McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"No running monitors.".to_string(),
-		);
+		return None;
 	}
+	monitors.sort_by(|a, b| a.id.cmp(&b.id));
 
 	let lines = monitors
 		.into_iter()
@@ -345,11 +350,7 @@ fn handle_list(call: &McpToolCall) -> McpToolResult {
 		})
 		.collect::<Vec<_>>()
 		.join("\n");
-	McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		format!("Running monitors:\n{lines}"),
-	)
+	Some(format!("Running monitors:\n{lines}"))
 }
 
 fn handle_stop(call: &McpToolCall) -> McpToolResult {

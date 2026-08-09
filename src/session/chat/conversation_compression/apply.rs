@@ -101,6 +101,30 @@ fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String
 	)
 }
 
+/// Render the session's live background automation state (scheduled entries
+/// and running monitors) for embedding into the compressed summary. Without
+/// this, compression drains the tool exchanges that created them and the
+/// post-compression model re-schedules/re-starts duplicates. Returns None
+/// when nothing is scheduled and no monitor is running.
+fn render_background_state() -> Option<String> {
+	let mut sections = Vec::new();
+	if let Some(schedules) = crate::mcp::orchestration::schedule::core::render_pending_entries() {
+		sections.push(schedules);
+	}
+	if let Some(session_id) = crate::session::context::current_session_id() {
+		if let Some(monitors) =
+			crate::mcp::orchestration::monitor::render_running_monitors(&session_id)
+		{
+			sections.push(monitors);
+		}
+	}
+	if sections.is_empty() {
+		None
+	} else {
+		Some(sections.join("\n\n"))
+	}
+}
+
 /// Rebuild the two rolling content-cache boundaries after every compression
 /// mutation and reinjection has finished.
 ///
@@ -378,6 +402,17 @@ pub(super) async fn apply_compression(
 			plan_display.trim()
 		),
 		Err(_) => compressed_entry,
+	};
+
+	// Append live background state (scheduled entries, running monitors) so the
+	// post-compression model knows they already exist and doesn't re-create
+	// duplicates. Absence of state → no section injected.
+	let compressed_entry = match render_background_state() {
+		Some(state) => format!(
+			"{}\n\nActive background automation (already running — do NOT schedule or start it again; manage by the IDs shown):\n<background>\n{}\n</background>",
+			compressed_entry, state
+		),
+		None => compressed_entry,
 	};
 
 	let tokens_after = estimate_tokens(&compressed_entry) as u64;

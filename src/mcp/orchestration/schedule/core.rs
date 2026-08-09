@@ -553,16 +553,24 @@ fn handle_add(call: &McpToolCall) -> Result<McpToolResult> {
 }
 
 fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
+	let listing = render_pending_entries().unwrap_or_else(|| "No scheduled entries.".to_string());
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		listing,
+	))
+}
+
+/// Render all pending schedule entries for the current context in the same
+/// format `schedule(list)` shows them. Returns None when nothing is scheduled,
+/// so callers (e.g. conversation compression) can skip the section entirely.
+pub fn render_pending_entries() -> Option<String> {
 	let store = get_store();
 	let guard = store.lock().unwrap();
 	let entries = guard.entries();
 
 	if entries.is_empty() {
-		return Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"No scheduled entries.".to_string(),
-		));
+		return None;
 	}
 
 	let mut lines = vec![format!("{} scheduled entries:\n", entries.len())];
@@ -607,11 +615,7 @@ fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 
-	Ok(McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		lines.join("\n"),
-	))
+	Some(lines.join("\n"))
 }
 
 fn handle_remove(call: &McpToolCall) -> Result<McpToolResult> {

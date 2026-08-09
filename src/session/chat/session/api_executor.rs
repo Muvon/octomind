@@ -344,6 +344,30 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
+	// Supervisor: plan-adoption nudge (free, deterministic). The task slice has
+	// provably grown multi-step — many executed calls, mutations across 2+
+	// distinct paths — with NO plan tracking it. Advise (never block) creating
+	// one now, so the remaining work gains the plan tool's durable checklist:
+	// recitation each turn, the plan pre-gates on `done`, and compression
+	// anchoring. Once per genuine user turn, deduped by marker.
+	if config.supervisor.enabled {
+		let planless = crate::mcp::core::plan::render_plan_checklist().is_none();
+		if planless && chat_session.evidence.plan_adoption_signal() {
+			let turn_start = latest_real_user_turn_start(&chat_session.session.messages);
+			let already_nudged = chat_session.session.messages[turn_start..].iter().any(|m| {
+				m.content
+					.contains(crate::supervisor::gate::PLAN_ADOPTION_MARKER)
+			});
+			if !already_nudged {
+				chat_session.add_system_managed_user_message(
+					&crate::supervisor::gate::format_plan_adoption_advisory(),
+				)?;
+				crate::supervisor::notify("multi-step work without a plan — plan adoption nudged");
+				crate::log_debug!("Plan-adoption nudge injected");
+			}
+		}
+	}
+
 	// Advance Anthropic-style content cache markers after all pre-call message injections
 	// (learning context, inbox hints, etc.) and immediately before building the request.
 	// This preserves the previous marker while moving the oldest marker to the latest

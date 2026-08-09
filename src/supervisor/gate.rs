@@ -167,6 +167,13 @@ pub fn is_supervisor_injection(content: &str) -> bool {
 /// Cap on ledger lines — beyond it the oldest are dropped (and counted in the
 /// render) so a very long turn still hands the verifier a bounded block.
 const LEDGER_CAP: usize = 128;
+/// Executed non-plan calls PER mutated path before an untracked multi-mutation
+/// task counts as provably multi-step (see
+/// [`EvidenceLedger::plan_adoption_signal`]). A ratio, not an absolute count:
+/// the trigger scales with the breadth of the task itself — a broad task must
+/// show proportionally more work before the nudge fires, so it adapts without
+/// any configurable threshold.
+const PLAN_ADOPTION_ACTIONS_PER_PATH: usize = 3;
 /// Args locate the object of an action (path, command, url) — not replay it.
 const LEDGER_ARGS_MAX: usize = 120;
 /// Cap on distinct mutated paths tracked for ground truth (a task touching more
@@ -317,6 +324,30 @@ impl EvidenceLedger {
 		out
 	}
 
+	/// Plan-adoption signal: the task slice is provably multi-step — successful
+	/// mutations across at least two distinct paths AND at least
+	/// [`PLAN_ADOPTION_ACTIONS_PER_PATH`] executed non-plan calls per mutated
+	/// path — yet contains ZERO plan-tool calls. That is exactly the work the
+	/// plan tool exists for — durable decomposition that survives compression —
+	/// running untracked. Deterministic, no model call, no config: the trigger
+	/// adapts to the task itself (broader mutation surface demands
+	/// proportionally more recorded work), so long read-only exploration or a
+	/// deep single-file edit never trips it.
+	pub fn plan_adoption_signal(&self) -> bool {
+		if self.mutated_paths.len() < 2 {
+			return false;
+		}
+		let mut actions = 0usize;
+		for e in &self.entries {
+			if e.tool == "plan" {
+				return false;
+			}
+			actions += e.repeats;
+		}
+		let threshold = self.mutated_paths.len() * PLAN_ADOPTION_ACTIONS_PER_PATH;
+		actions.saturating_add(self.dropped) >= threshold
+	}
+
 	/// True when this task slice recorded plan-tool activity but zero non-plan
 	/// tool calls — plan coverage without any real action is fabricated success.
 	pub fn plan_activity_without_actions(&self) -> bool {
@@ -430,6 +461,21 @@ pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
 /// Marker embedded in the plan-coverage-floor advisory so re-runs within the
 /// same turn don't nudge twice (mirrors the plan pre-gate marker).
 pub const COVERAGE_GATE_MARKER: &str = "octomind:pre_gate_plan_coverage";
+
+/// Marker embedded in the plan-adoption advisory so the nudge fires at most
+/// once per genuine user turn (mirrors the other advisory markers).
+pub const PLAN_ADOPTION_MARKER: &str = "octomind:plan_adoption_nudge";
+
+/// Advisory injected mid-turn when the task is provably multi-step (see
+/// [`EvidenceLedger::plan_adoption_signal`]) but no plan exists. Advisory, not
+/// a gate: it never blocks a `done` — it recruits the plan tool's durable
+/// checklist (recitation, pre-gates, compression anchoring) for work that is
+/// already running long enough to need it.
+pub fn format_plan_adoption_advisory() -> String {
+	format!(
+		"<pay-attention>\n<!-- {PLAN_ADOPTION_MARKER} -->\nThis task has grown multi-step — multiple files changed across many actions — but no plan is tracking it. Untracked long work loses steps to context compression and drifts by omission. Create one now: plan(start) with one task per remaining surface (include what is already done as completed context in the descriptions), then keep it current with step/next as you go. If the remaining work is genuinely one small step, finish it directly instead.\n</pay-attention>"
+	)
+}
 
 /// Advisory injected when `done` is self-reported after a turn that worked the
 /// plan (plan-tool calls) but recorded ZERO non-plan actions — closing plan
@@ -825,6 +871,60 @@ mod tests {
 		let a = format_coverage_advisory();
 		assert!(is_supervisor_injection(&a));
 		assert!(a.contains(COVERAGE_GATE_MARKER));
+	}
+
+	#[test]
+	fn plan_adoption_advisory_carries_marker() {
+		let a = format_plan_adoption_advisory();
+		assert!(is_supervisor_injection(&a));
+		assert!(a.contains(PLAN_ADOPTION_MARKER));
+	}
+
+	#[test]
+	fn plan_adoption_signal_requires_breadth_and_no_plan() {
+		let mut l = EvidenceLedger::default();
+		// Two distinct mutated paths, but below the adaptive action threshold
+		// (2 paths × PLAN_ADOPTION_ACTIONS_PER_PATH).
+		l.record("edit", &serde_json::json!({"path":"a.rs"}), true, false, 1);
+		l.record("edit", &serde_json::json!({"path":"b.rs"}), true, false, 1);
+		assert!(!l.plan_adoption_signal());
+		// Identical consecutive repeats count via `repeats` toward the threshold.
+		for _ in 0..(2 * PLAN_ADOPTION_ACTIONS_PER_PATH - 2) {
+			l.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
+		}
+		assert!(l.plan_adoption_signal());
+		// Any plan-tool activity means a plan is being worked — no nudge.
+		l.record(
+			"plan",
+			&serde_json::json!({"command":"start"}),
+			false,
+			false,
+			1,
+		);
+		assert!(!l.plan_adoption_signal());
+	}
+
+	#[test]
+	fn plan_adoption_signal_needs_two_mutated_paths() {
+		let mut l = EvidenceLedger::default();
+		// Deep single-file work: many actions, one mutated path — no signal.
+		l.record("edit", &serde_json::json!({"path":"a.rs"}), true, false, 1);
+		for _ in 0..10 {
+			l.record(
+				"shell",
+				&serde_json::json!({"command":"cargo test"}),
+				false,
+				false,
+				1,
+			);
+		}
+		assert!(!l.plan_adoption_signal());
+		// Read-only exploration: zero mutations — no signal either.
+		let mut r = EvidenceLedger::default();
+		r.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
+		r.record("view", &serde_json::json!({"path":"b.rs"}), false, false, 1);
+		r.record("view", &serde_json::json!({"path":"c.rs"}), false, false, 1);
+		assert!(!r.plan_adoption_signal());
 	}
 
 	#[test]

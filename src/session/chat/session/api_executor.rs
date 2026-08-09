@@ -560,10 +560,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let plan_changed_this_turn = live_plan != resolved_task.plan_at_turn_start;
 		let plan_applies = crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan);
 		crate::log_debug!(
-			"gate task scope={} sources={} plan_relevant={} plan_changed={}",
+			"gate task scope={} sources={} plan_relevant={} answer_only={} plan_changed={}",
 			resolved_task.scope.as_str(),
 			resolved_task.context_sources.join(","),
 			resolved_task.plan_relevant,
+			resolved_task.answer_only,
 			plan_changed_this_turn
 		);
 		// Free pre-gate (no model call): the most common false-done is claiming

@@ -53,8 +53,13 @@ work itself (for example: do not run tests/build/lint, no verification needed, I
 run/review it myself, in any language or phrasing). Prohibitions about other actions (do
 not run the migration, do not modify tests) and descriptive prose are false.
 
+Field "answer_only": true only when the turn asks solely for information — a question,
+status report, confirmation, or explanation — and requests no new work and no continuation
+of existing work. A turn that mixes a question with any action request is false. When in
+doubt, return false.
+
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"answer_only":true|false}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -76,7 +81,9 @@ most recent relevant history; use durable session context or the active plan onl
 If one minimal interpretation is not supported, return ambiguous and an empty request.
 
 Set plan_relevant=true only when the active plan supplies a missing referent and its checklist
-scope is entailed by the resolved request. A merely open or topically related plan is false.
+scope is entailed by the resolved request. A merely open or topically related plan is false. A
+turn that only asks a question about, or requests confirmation or status of, the plan's work is
+false even when the plan supplies referents.
 For each source used, copy one short exact excerpt from that payload field. Do not paraphrase
 evidence. A rewrite without an exact supporting excerpt is invalid.
 
@@ -129,6 +136,12 @@ pub struct ResolvedTask {
 	/// verifying the work ("don't run cargo — I'll run it myself"), in any
 	/// language. The mutation pre-gate stands down when true.
 	pub forbids_verification: bool,
+	/// Classifier verdict: the turn asks solely for information (a question,
+	/// status report, confirmation) and requests no work. The plan pre-gates
+	/// stand down for a pre-existing unchanged plan when true — a side question
+	/// during a long-running plan is complete once answered, whatever the plan's
+	/// open items. Never affects the mutation pre-gate or the LLM verify-gate.
+	pub answer_only: bool,
 }
 
 impl ResolvedTask {
@@ -143,6 +156,7 @@ impl ResolvedTask {
 			plan_relevant: false,
 			plan_at_turn_start: String::new(),
 			forbids_verification: false,
+			answer_only: false,
 		}
 	}
 
@@ -157,15 +171,20 @@ impl ResolvedTask {
 			plan_relevant: false,
 			plan_at_turn_start: active_plan.to_string(),
 			forbids_verification: false,
+			answer_only: false,
 		}
 	}
 }
 
 /// Whether the live plan belongs in this turn's completion check. A plan that
 /// was already open but classified as unrelated is ignored without deleting
-/// it; any plan created or changed by the current turn applies deterministically.
+/// it; any plan created or changed by the current turn applies deterministically
+/// — that signal outranks classification, so an answer-only misread can never
+/// unhook a plan the turn itself produced. A pre-existing unchanged plan is
+/// ignored for an answer-only turn: a side question is complete once answered.
 pub fn plan_applies(task: &ResolvedTask, live_plan: &str) -> bool {
-	!live_plan.is_empty() && (task.plan_relevant || live_plan != task.plan_at_turn_start)
+	!live_plan.is_empty()
+		&& (live_plan != task.plan_at_turn_start || (task.plan_relevant && !task.answer_only))
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +241,8 @@ struct ClassifierOutput {
 	scope: String,
 	#[serde(default)]
 	forbids_verification: bool,
+	#[serde(default)]
+	answer_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -266,16 +287,17 @@ pub async fn resolve(
 		operation_rx.clone(),
 	)
 	.await;
-	let forbids_verification = match classification {
+	let (forbids_verification, answer_only) = match classification {
 		Ok(response) => {
 			let parsed = parse_classifier(&response);
 			if !parsed.context_dependent {
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
 				resolved.forbids_verification = parsed.forbids_verification;
+				resolved.answer_only = parsed.answer_only;
 				return resolved;
 			}
-			parsed.forbids_verification
+			(parsed.forbids_verification, parsed.answer_only)
 		}
 		Err(error) => {
 			crate::log_debug!(
@@ -312,20 +334,24 @@ pub async fn resolve(
 		}
 	};
 	resolved.forbids_verification = forbids_verification;
+	resolved.answer_only = answer_only;
 	resolved
 }
 
 /// Classifier verdicts extracted from the response; unparseable output means
-/// no dependency and no prohibition (same as before the field existed).
+/// no dependency, no prohibition, and not answer-only (same as before the
+/// fields existed — the conservative default keeps every gate armed).
 struct ClassifierVerdict {
 	context_dependent: bool,
 	forbids_verification: bool,
+	answer_only: bool,
 }
 
 fn parse_classifier(response: &str) -> ClassifierVerdict {
 	let fallback = ClassifierVerdict {
 		context_dependent: false,
 		forbids_verification: false,
+		answer_only: false,
 	};
 	let Some(start) = response.find('{') else {
 		return fallback;
@@ -342,6 +368,7 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 			.trim()
 			.eq_ignore_ascii_case("context_dependent"),
 		forbids_verification: parsed.forbids_verification,
+		answer_only: parsed.answer_only,
 	}
 }
 
@@ -407,6 +434,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				plan_relevant: !active_plan.is_empty() && plan_supported && parsed.plan_relevant,
 				plan_at_turn_start: active_plan.to_string(),
 				forbids_verification: false,
+				answer_only: false,
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),
@@ -676,5 +704,38 @@ mod tests {
 		task.plan_relevant = false;
 		assert!(plan_applies(&task, "New README plan"));
 		assert!(!plan_applies(&task, ""));
+	}
+
+	#[test]
+	fn answer_only_turn_ignores_preexisting_plan_but_not_plan_changed_this_turn() {
+		// A side question during a long-running plan: the resolver may mark the
+		// plan relevant (it supplies referents), but an answer-only turn is
+		// complete once answered — the open checklist must not block it.
+		let mut task = ResolvedTask::self_contained("Is pricing computed per token?");
+		task.plan_at_turn_start = "Benchmark plan (2 open)".to_string();
+		task.plan_relevant = true;
+		task.answer_only = true;
+		assert!(!plan_applies(&task, "Benchmark plan (2 open)"));
+
+		// Deterministic act signal outranks classification: a plan created or
+		// changed by the turn itself applies even under an answer-only misread.
+		assert!(plan_applies(&task, "Benchmark plan (changed)"));
+
+		// Without the answer-only verdict the relevant plan still applies.
+		task.answer_only = false;
+		assert!(plan_applies(&task, "Benchmark plan (2 open)"));
+	}
+
+	#[test]
+	fn classifier_parses_answer_only_and_defaults_to_false() {
+		let parsed = parse_classifier(
+			r#"{"scope":"context_dependent","forbids_verification":false,"answer_only":true}"#,
+		);
+		assert!(parsed.context_dependent);
+		assert!(parsed.answer_only);
+
+		// Absent field, malformed JSON, and non-JSON all keep every gate armed.
+		assert!(!parse_classifier(r#"{"scope":"self_contained"}"#).answer_only);
+		assert!(!parse_classifier("not json").answer_only);
 	}
 }

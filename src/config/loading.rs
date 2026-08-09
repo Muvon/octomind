@@ -757,6 +757,26 @@ tools = []
 	}
 
 	#[test]
+	fn interactive_role_synthesizes_missing_orchestration_builtin() {
+		let mut config: Config =
+			toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+		config
+			.mcp
+			.servers
+			.retain(|server| server.name() != "orchestration");
+		config.build_role_map();
+
+		let interactive = config.get_merged_config_for_interactive_role("tester");
+		let orchestration = interactive
+			.mcp
+			.servers
+			.iter()
+			.find(|server| server.name() == "orchestration")
+			.expect("orchestration builtin must be synthesized when absent from registry");
+		assert_eq!(orchestration.tools(), ["schedule", "monitor"]);
+	}
+
+	#[test]
 	fn interactive_role_preserves_existing_orchestration_grants() {
 		let mut config: Config =
 			toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");

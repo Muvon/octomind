@@ -749,18 +749,16 @@ impl Config {
 		const TOOLS: [&str; 2] = ["schedule", "monitor"];
 
 		let mut merged = self.get_merged_config_for_role(role);
-		let Some(registry_server) = self
+		// Builtins need no external configuration — if the registry lacks the
+		// orchestration entry (e.g. a minimal user config), synthesize it so
+		// interactive sessions always get schedule/monitor.
+		let registry_server = self
 			.mcp
 			.servers
 			.iter()
 			.find(|server| server.name() == SERVER)
-		else {
-			crate::log_error!(
-				"Interactive session cannot activate schedule/monitor: '{}' builtin is missing from the MCP registry",
-				SERVER
-			);
-			return merged;
-		};
+			.cloned()
+			.unwrap_or_else(|| McpServerConfig::builtin(SERVER, 30, Vec::new()));
 
 		if let Some(server) = merged
 			.mcp
@@ -779,7 +777,7 @@ impl Config {
 				}
 			}
 		} else {
-			let mut server = registry_server.clone();
+			let mut server = registry_server;
 			*server.tools_mut() = TOOLS.into_iter().map(str::to_string).collect();
 			merged.mcp.servers.push(server);
 		}

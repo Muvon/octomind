@@ -1314,6 +1314,117 @@ impl PactContext {
 		}
 	}
 
+	/// Deterministic repair of model-authored folded units before validation.
+	///
+	/// The generative fold is already paid for; when it violates the
+	/// attribution contract in mechanical ways (citing a recall descriptor,
+	/// folding live frontier state as completed, skipping a summarize packet)
+	/// the runtime can fix the violation without inventing content. Anything
+	/// repair cannot save is dropped, and `validate_summary` remains the
+	/// strict final gate.
+	pub(crate) fn repair_summary(&self, summary: &mut CompressionSummary) {
+		let lane_of = |id: &str| {
+			self.packets
+				.iter()
+				.find(|packet| packet.id == id)
+				.map(|packet| packet.lane)
+		};
+		for unit in summary.folded_units.iter_mut() {
+			let mut seen = HashSet::new();
+			unit.refs.retain(|source| seen.insert(source.clone()));
+			// Strip refs the validator can never accept: unknown blocks,
+			// archive-only descriptors (recall pointers, not evidence), and
+			// prior IDs that were not visible to the compressor.
+			unit.refs.retain(|source| {
+				if !self.known_provenance.contains_key(source) {
+					return false;
+				}
+				match lane_of(source) {
+					Some(Lane::ArchiveReference) => false,
+					Some(_) => true,
+					None => self
+						.packets
+						.iter()
+						.any(|packet| packet.prompt_content.contains(source.as_str())),
+				}
+			});
+			unit.refs.truncate(16);
+			if unit.text.chars().count() > 2_000 {
+				unit.text = unit.text.chars().take(2_000).collect();
+			}
+			// Active-frontier packets are live state; folding them as
+			// completed is lane amplification — downgrade instead of reject.
+			if matches!(
+				unit.status.as_str(),
+				"established" | "failed" | "superseded"
+			) && unit
+				.refs
+				.iter()
+				.any(|source| lane_of(source) == Some(Lane::KeepExact))
+			{
+				unit.status = "tentative".into();
+			}
+			// Authority amplification: assistant/runtime-only support cannot
+			// carry an established claim.
+			if unit.status == "established"
+				&& !unit.refs.is_empty()
+				&& unit.refs.iter().all(|source| {
+					matches!(
+						self.known_provenance.get(source),
+						Some(Provenance::AssistantReported | Provenance::RuntimeSystemManaged)
+					)
+				}) {
+				unit.status = "tentative".into();
+			}
+		}
+		// Drop what per-unit repair could not save (empty text/refs, invalid
+		// kind or status, unrecoverable prior sources).
+		summary.folded_units.retain(|unit| {
+			if self.validate_folded_unit(0, unit).is_err() {
+				return false;
+			}
+			let referenced: BTreeSet<String> = unit.refs.iter().cloned().collect();
+			self.verify_prior_references(&referenced).is_ok()
+		});
+		// Coverage: every summarize-lane packet must be represented by a
+		// folded unit. Represent the ones the model skipped with reference
+		// units so their recall coordinates survive the drain.
+		let referenced: HashSet<&str> = summary
+			.folded_units
+			.iter()
+			.flat_map(|unit| unit.refs.iter().map(String::as_str))
+			.collect();
+		let uncovered: Vec<&EvidencePacket> = self
+			.packets
+			.iter()
+			.filter(|packet| {
+				packet.lane == Lane::Summarize && !referenced.contains(packet.id.as_str())
+			})
+			.collect();
+		for chunk in uncovered.chunks(16) {
+			if summary.folded_units.len() >= 40 {
+				break;
+			}
+			let mut text = chunk
+				.iter()
+				.map(|packet| packet.descriptor.as_str())
+				.collect::<Vec<_>>()
+				.join("; ");
+			if text.trim().is_empty() {
+				text = "evidence retained for recall".into();
+			}
+			if text.chars().count() > 2_000 {
+				text = text.chars().take(2_000).collect();
+			}
+			summary.folded_units.push(FoldedUnit {
+				text,
+				kind: "reference".into(),
+				status: "unknown".into(),
+				refs: chunk.iter().map(|packet| packet.id.clone()).collect(),
+			});
+		}
+	}
+
 	pub(crate) fn validate_summary(
 		&self,
 		summary: &CompressionSummary,
@@ -2105,6 +2216,113 @@ mod tests {
 			.unwrap_err()
 			.to_string()
 			.contains("active-frontier"));
+	}
+
+	#[test]
+	fn repair_strips_archive_refs_and_keeps_valid_support() {
+		let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
+		let archived = packet(
+			"b:archived",
+			Provenance::ToolObserved,
+			Lane::ArchiveReference,
+		);
+		pact.known_provenance
+			.insert(archived.id.clone(), archived.provenance);
+		pact.packets.push(archived);
+		let mut summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "outcome supported by tool and archive".into(),
+				kind: "outcome".into(),
+				status: "established".into(),
+				refs: vec!["b:tool".into(), "b:archived".into(), "b:unknown".into()],
+			}],
+			..Default::default()
+		};
+		pact.repair_summary(&mut summary);
+		assert_eq!(summary.folded_units[0].refs, vec!["b:tool".to_string()]);
+		assert!(pact.validate_summary(&summary).is_ok());
+	}
+
+	#[test]
+	fn repair_downgrades_frontier_fold_and_drops_unsalvageable_units() {
+		let mut pact = pact_with(packet(
+			"b:active",
+			Provenance::ToolObserved,
+			Lane::KeepExact,
+		));
+		let archived = packet(
+			"b:archived",
+			Provenance::ToolObserved,
+			Lane::ArchiveReference,
+		);
+		pact.known_provenance
+			.insert(archived.id.clone(), archived.provenance);
+		pact.packets.push(archived);
+		let mut summary = CompressionSummary {
+			folded_units: vec![
+				FoldedUnit {
+					text: "frontier folded as done".into(),
+					kind: "outcome".into(),
+					status: "established".into(),
+					refs: vec!["b:active".into()],
+				},
+				FoldedUnit {
+					text: "only archive support".into(),
+					kind: "observation".into(),
+					status: "established".into(),
+					refs: vec!["b:archived".into()],
+				},
+			],
+			..Default::default()
+		};
+		pact.repair_summary(&mut summary);
+		assert_eq!(summary.folded_units.len(), 1);
+		assert_eq!(summary.folded_units[0].status, "tentative");
+		assert!(pact.validate_summary(&summary).is_ok());
+	}
+
+	#[test]
+	fn repair_covers_uncited_summarize_packets_with_reference_units() {
+		let pact = pact_with(packet(
+			"b:selected-completed-state",
+			Provenance::ToolObserved,
+			Lane::Summarize,
+		));
+		let mut summary = CompressionSummary {
+			should_compress: true,
+			current_task: "continue".into(),
+			..Default::default()
+		};
+		pact.repair_summary(&mut summary);
+		assert_eq!(summary.folded_units.len(), 1);
+		assert_eq!(summary.folded_units[0].kind, "reference");
+		assert_eq!(summary.folded_units[0].status, "unknown");
+		assert_eq!(
+			summary.folded_units[0].refs,
+			vec!["b:selected-completed-state".to_string()]
+		);
+		assert!(pact.validate_summary(&summary).is_ok());
+	}
+
+	#[test]
+	fn repair_downgrades_assistant_only_established_claims() {
+		let pact = pact_with(packet(
+			"b:claim",
+			Provenance::AssistantReported,
+			Lane::Summarize,
+		));
+		let mut summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "assistant said it is done".into(),
+				kind: "outcome".into(),
+				status: "established".into(),
+				refs: vec!["b:claim".into()],
+			}],
+			..Default::default()
+		};
+		pact.repair_summary(&mut summary);
+		assert_eq!(summary.folded_units[0].status, "tentative");
+		assert!(pact.validate_summary(&summary).is_ok());
 	}
 
 	#[test]

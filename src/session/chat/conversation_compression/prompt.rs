@@ -183,6 +183,10 @@ On the legacy transcript path, [RECENT] marks a bounded suffix. Recency is never
 
 <attribution>
 In PACT mode populate folded_units with atomic completed-state claims. Every unit must cite all and only the supplied block IDs that support it. A runtime event cannot become a user goal, an assistant report cannot become an established observation by repetition, and archive descriptors cannot support exact values.
+Hard citation rules (violations are rejected by a validator):
+- NEVER cite an archive_reference packet ID in refs — those descriptors are recall pointers, not evidence. Cite only keep_exact and summarize packet IDs.
+- A unit citing any keep_exact (active frontier) packet may only use status pending, tentative, or unknown — the frontier is live state, never completed.
+- EVERY summarize-lane packet ID must appear in the refs of at least one folded unit; a summarize packet you leave uncited fails the whole summary.
 PACT live rendering and durable model-authored state admit only folded_units; legacy narrative fields are wire compatibility only and are neither rendered nor committed. Therefore every consequential completed outcome, correction, durable protocol, open loop, and next action that is not already exact in pinned_state or keep_exact packets must appear as a supported folded unit.
 </attribution>{force_directive}{mode_appendix}",
 	);

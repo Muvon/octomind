@@ -377,7 +377,7 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 					},
 					"required": ["text", "kind", "status", "refs"]
 				},
-				"description": "PACT only: atomic completed-state claims. Every claim cites all and only supplied evidence block IDs. Include every consequential completed outcome, correction, durable protocol, open loop, and next action not already exact in pinned/frontier state; legacy narrative fields are not rendered as PACT authority. Return [] only when no such state exists."
+				"description": "PACT only: atomic completed-state claims. Every claim cites all and only supplied evidence block IDs. Hard rules: never cite archive_reference packet IDs (recall pointers, not evidence); a unit citing any keep_exact packet may only use status pending/tentative/unknown; every summarize-lane packet ID must be cited by at least one unit. Include every consequential completed outcome, correction, durable protocol, open loop, and next action not already exact in pinned/frontier state; legacy narrative fields are not rendered as PACT authority. Return [] only when no such state exists."
 			}
 		},
 		"required": [
@@ -700,6 +700,7 @@ Emit ONE single XML document with the following tags, in this order. Every requi
     <status>established|tentative|superseded|failed|pending|unknown</status>
     <refs><ref>b:source-id</ref></refs>
   </unit>
+  Citation rules: never cite archive_reference packet IDs; units citing keep_exact packets may only use status pending/tentative/unknown; every summarize-lane packet ID must be cited by at least one unit.
 </folded_units>
 
 Output ONLY the XML. No prose, no code fences, no markdown headers — the response is parsed by exact tag boundaries.

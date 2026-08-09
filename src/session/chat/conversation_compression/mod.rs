@@ -593,6 +593,11 @@ pub async fn check_and_compress_conversation(
 	let pact_validation = if let Some(pact) = pact.as_ref() {
 		pact.normalize_summary(&mut summary);
 		if config.compression.attention.enabled && config.compression.attention.validator {
+			// Deterministic repair first: the generative fold is already paid
+			// for, so mechanical contract violations (archive-descriptor refs,
+			// frontier folded as completed, skipped summarize packets) are
+			// fixed instead of rejected. validate_summary stays the strict gate.
+			pact.repair_summary(&mut summary);
 			match pact.validate_summary(&summary) {
 				Ok(report) => Some(report),
 				Err(error) if force => {
@@ -622,6 +627,15 @@ pub async fn check_and_compress_conversation(
 						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
 						error
 					);
+					// COOLDOWN ON REJECTION: without this, the pressure check
+					// refires the full (paid) compression call on every turn
+					// and gets rejected again — a token-burning loop. Record
+					// the current context as the cooldown baseline so the next
+					// attempt waits for real growth, exactly like the other
+					// skip paths in should_check_compression.
+					session.session.info.context_tokens_after_last_compression =
+						current_context_tokens as usize;
+					session.session.info.consecutive_compressions += 1;
 					return Ok(false);
 				}
 			}

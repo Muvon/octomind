@@ -36,7 +36,7 @@ overflow-checks = false # Disable overflow checks in release mode
 octolib = { version = "0.30.2", default-features = false, features = ["huggingface"] }
 # fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
-rmcp = { version = "3.1.1", default-features = false, features = [
+rmcp = { version = "3.1.2", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process
 	"transport-streamable-http-client-reqwest", # Streamable HTTP client transport
@@ -68,7 +68,7 @@ reedline = { version = "0.49", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
 regex = "1.13.1"
 colored = "3.1.1"
-async-trait = "0.1.91"
+async-trait = "0.1.92"
 termimad = "0.35.1"
 # No plist-load/yaml-load: only bundled dumps are used (ThemeSet::load_defaults),
 # and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
@@ -114,7 +114,7 @@ landlock = "0.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 [profile.dev]
 opt-level = 1          # Basic optimizations without slowing compilation too much

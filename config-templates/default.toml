@@ -797,9 +797,10 @@ enabled = true
 # mcp_response_tokens_threshold prefix-cut, which still applies as the ceiling.
 [supervisor.condense]
 enabled = true
-# Per-result trigger (estimated tokens). 0 = off. Keep well below
-# mcp_response_tokens_threshold: that cap is the backstop, this is the smart
-# path that fires earlier.
+# Round trigger (estimated tokens across all of the round's text results).
+# 0 = off. Keep well below mcp_response_tokens_threshold: that cap is the
+# backstop, this is the smart path that fires earlier. A round crosses it
+# whether that is one huge output or several middling ones.
 tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
 model = "anthropic:claude-haiku-4-5"

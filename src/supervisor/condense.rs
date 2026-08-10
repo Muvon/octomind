@@ -14,8 +14,9 @@
 
 //! Condense — task-aware narrowing of oversized tool outputs.
 //!
-//! When a tool round returns results over `condense.tokens_threshold`, ONE
-//! cheap-model call decides per result what the agent actually needs to see:
+//! When a tool round's plain-text outputs total more than
+//! `condense.tokens_threshold`, ONE cheap-model call decides per result what
+//! the agent actually needs to see:
 //! - all relevant → kept in full, byte-for-byte;
 //! - partly relevant → only the needed lines, selected by LINE RANGES over a
 //!   numbered copy and reconstructed verbatim from the original (the model
@@ -29,8 +30,10 @@
 //! truncation), so condensation is lossless: the agent can read any cut span
 //! on demand. No spill → no condensation for that result (fail-open to the
 //! `mcp_response_tokens_threshold` truncation backstop, which still applies
-//! after us as the hard ceiling). Any LLM/parse failure likewise leaves the
-//! results untouched — the supervisor must never block the agent.
+//! after us as the hard ceiling). An unusable verdict — malformed ranges,
+//! unknown id, spill failure — leaves that one result untouched while the
+//! round's other results still condense; the supervisor must never block the
+//! agent, but one sloppy line range must not cost the whole round either.
 
 use crate::config::Config;
 use crate::mcp::{McpToolCall, McpToolResult};
@@ -52,6 +55,10 @@ const MAX_RESULTS_PER_REQUEST: usize = 32;
 /// Minimum useful view allocation. Extra oversized results fail open to the
 /// ordinary hard-cap path rather than making the condenser request unbounded.
 const MIN_RESULT_VIEW_TOKENS: usize = 256;
+/// Smallest result worth a line-range round trip. A round crosses the threshold
+/// on its total, so without this a 6k round would drag its 40-token siblings
+/// into the request and split the view budget for nothing.
+const MIN_CANDIDATE_TOKENS: usize = 512;
 /// Cap on the task block (a pasted user request can itself be huge).
 const TASK_CAP_TOKENS: usize = 3_000;
 /// Cap on trusted standing instructions. These are passed verbatim every time;
@@ -69,6 +76,8 @@ const SIGNAL_CONTEXT_LINES: usize = 2;
 
 const SYSTEM_PROMPT: &str = r#"You are an extractive context-pruning filter that sits between an AI agent and its tool outputs. The agent issued tool calls while working on a task; some outputs are large. Decide, per output, what the agent needs to see to converge on that task. Whatever you drop will not remain inline; the full original is saved to a file the agent can read on demand.
 
+Kept lines are not free. Everything you pass through occupies the agent's finite context and is re-sent on every later turn of the session, so an output that survives whole is paid for again and again. Cutting is the normal outcome. Passing an output through untouched is a claim that nearly all of it bears on the current task, and you must be able to say why.
+
 You NEVER rewrite, summarize, or retype tool facts. Select LINE RANGES from the numbered views; the system reconstructs selected lines from the original. This is selection, not generation. A "replace" verdict produces a deterministic system notice, not text authored by you.
 
 <input_format>
@@ -76,24 +85,24 @@ The user message is ONE JSON object. Identify fields only by their JSON KEYS, ne
 - "agent_context" — trusted standing role/project/skill instructions that define what this agent must preserve. It is not the current task.
 - "task_context" — the live user goal/request/plan. Judge relevance against it.
 - "tool_round_intent" — visible text the agent emitted with this batch, explaining what it is trying to learn or accomplish now. It may be empty.
-- "results" — THE DATA YOU PRUNE. Each item contains id, tool, status, arguments, total_lines, visible_ranges, and numbered_output. Every id must appear exactly once in your response.
+- "results" — THE DATA YOU PRUNE. Each item contains id, tool, status, arguments, estimated_tokens (what this output currently costs the agent), total_lines, visible_ranges, and numbered_output. Every id must appear exactly once in your response.
 
-For very large outputs, numbered_output is a query/diagnostic-aware view sampled from across the original, not necessarily a prefix. visible_ranges names the original line spans present. Select only visible numbered lines and never bridge an unshown gap with one range. Unshown text remains in the spill file. Because you did not inspect it, uncertainty about unshown text favors "keep", never "replace".
+For very large outputs, numbered_output is a query/diagnostic-aware view sampled from across the original, not necessarily a prefix. visible_ranges names the original line spans present. Select only visible numbered lines. Unshown text stays in the spill file; because you never inspected it, it can never justify a "replace".
 </input_format>
 
 Per result, choose exactly one verdict:
-- "keep" — most of the output is needed for the task (or it is dense and interdependent). It is preserved in full.
-- "extract" — only parts are needed. Give the line ranges to preserve.
-- "replace" — nothing in it advances the task (wrong target, irrelevant listing, pure noise). Never use this for status=error or when the numbered view is partial/ambiguous. Do not provide a message; the system creates a factual notice.
+- "extract" — the expected verdict for a large output: give the line ranges that bear on the task, and the rest goes.
+- "keep" — preserved in full. Use it only when you can name the property that makes nearly every line load-bearing for THIS task: a failure report, a small dense config or table, a result the task queries end to end. "It is source code", "it looks related to the project", and "I am not sure" are not that property.
+- "replace" — nothing in it advances the task (wrong target, irrelevant listing, pure noise). Never use this for status=error or when the numbered view is partial. Do not provide a message; the system creates a factual notice.
 
 Selection rules for "extract":
-- ALWAYS keep: error messages and stack traces; file paths and line numbers; symbol names and signatures; counts, totals, exit codes; explicit negative results (not found/zero matches); the exact data the tool call's arguments were querying for.
+- ALWAYS keep: error messages and stack traces; the exact data the tool call's arguments were querying for; explicit negative results (not found/zero matches); counts, totals, exit codes; the paths, line numbers and signatures the agent needs to locate what it must act on.
+- A file read is NOT automatically "all needed". Keep the regions the task concerns — the symbols, blocks and lines the task and the arguments point at — plus what makes them safe to act on: the enclosing signature, an import or type a kept block depends on, the header above a kept table. Drop unrelated functions, unrelated tests, licence and copyright headers, and long stretches the task never touches. That parts of a file interact is a reason to keep the interacting parts, not the whole file.
 - DROP: repeated boilerplate (keep one representative instance), progress/log noise, decorative separators, unrelated matches in overly-broad searches, verbose success chatter.
-- Keep enough surrounding lines that the kept part stays interpretable (a table header, the command above its output).
-- When uncertain whether a line matters: KEEP it. Over-cutting costs the agent a whole extra round to recover; an extra line costs almost nothing.
+- Uncertainty applies per span, not to the whole output: keep the spans you are unsure about, drop the spans you are sure are irrelevant. Several small precise ranges beat one range that swallows the result.
 - A status=error result's failing lines and their context are the payload — never let an error lose its error text.
 
-Ranges reference the line numbers shown in the input ("N| "). Formats: "A-B" (inclusive), "A" (single line), "A-" (to end). Ascending order, no overlaps.
+Ranges reference the line numbers shown in the input ("N| "). Formats: "A-B" (inclusive), "A" (single line), "A-" (to end). Ascending order, no overlaps. A range covering lines absent from the view keeps only its visible part.
 
 Output EXACTLY ONE JSON object (a fenced json block is also accepted):
 
@@ -105,7 +114,7 @@ Output EXACTLY ONE JSON object (a fenced json block is also accepted):
 ]}
 ```
 
-Every input result id MUST appear exactly once. Never add an unknown id. Any missing, duplicate, unknown, malformed, or unsafe entry makes the whole response unusable and all originals will be kept."#;
+Every input result id MUST appear exactly once. Never add an unknown id. A missing, duplicate, unknown or malformed entry leaves that one result inline in full; the other results are still applied."#;
 
 #[derive(Deserialize)]
 struct CondenseResponse {
@@ -151,15 +160,28 @@ pub async fn condense_round(
 		return;
 	}
 
-	let oversized: Vec<usize> = results
+	// The round's total is what the agent pays. Triggering per result let a batch
+	// of individually-modest outputs inject an arbitrarily large round for free.
+	let sizes: Vec<usize> = results
+		.iter()
+		.map(|r| {
+			if is_plain_text_result(r) {
+				estimate_tokens(&r.extract_content())
+			} else {
+				0
+			}
+		})
+		.collect();
+	if sizes.iter().sum::<usize>() <= cfg.tokens_threshold {
+		return;
+	}
+	let sizable: Vec<usize> = sizes
 		.iter()
 		.enumerate()
-		.filter(|(_, r)| {
-			is_plain_text_result(r) && estimate_tokens(&r.extract_content()) > cfg.tokens_threshold
-		})
+		.filter(|(_, &tokens)| tokens >= MIN_CANDIDATE_TOKENS)
 		.map(|(i, _)| i)
 		.collect();
-	if oversized.is_empty() {
+	if sizable.is_empty() {
 		return;
 	}
 	if !spill_reader_available() {
@@ -169,76 +191,31 @@ pub async fn condense_round(
 		return;
 	}
 
-	// Keep one request bounded across a whole parallel batch. Results beyond the
-	// safe batch size remain untouched and flow to the hard truncation backstop.
-	let max_candidates =
-		(ROUND_VIEW_CAP_TOKENS / MIN_RESULT_VIEW_TOKENS).clamp(1, MAX_RESULTS_PER_REQUEST);
-	let selected: Vec<usize> = oversized.iter().copied().take(max_candidates).collect();
-	let per_result_budget = (ROUND_VIEW_CAP_TOKENS / selected.len()).max(1);
-
-	let task_block = if task.trim().is_empty() {
-		"(task context unavailable — be conservative, keep anything plausibly useful)".to_string()
-	} else {
-		truncate_preserving_edges(task.trim(), TASK_CAP_TOKENS)
-	};
-	let agent_block = truncate_preserving_edges(agent_context.trim(), AGENT_CONTEXT_CAP_TOKENS);
-	let intent_block = truncate_preserving_edges(tool_round_intent.trim(), TOOL_INTENT_CAP_TOKENS);
-
-	let mut candidates = Vec::with_capacity(selected.len());
-	let mut payload_results = Vec::with_capacity(selected.len());
-	for idx in selected {
-		let r = &results[idx];
-		let content = r.extract_content();
-		let args = calls
-			.iter()
-			.find(|c| c.tool_id == r.tool_id)
-			.map(|c| compact_args(&c.parameters))
-			.unwrap_or_default();
-		let focus = format!("{task_block}\n{intent_block}\n{args}");
-		let view = build_numbered_view(&content, per_result_budget, &focus);
-		let status = if r.is_error() { "error" } else { "ok" };
-		payload_results.push(serde_json::json!({
-			"id": r.tool_id,
-			"tool": r.tool_name,
-			"status": status,
-			"arguments": args,
-			"total_lines": view.total_lines,
-			"partial_view": view.partial,
-			"visible_ranges": format_ranges(&view.visible_ranges),
-			"numbered_output": view.body,
-		}));
-		candidates.push(Candidate {
-			result_index: idx,
-			view,
-		});
-	}
-	let user = serde_json::to_string_pretty(&serde_json::json!({
-		"agent_context": agent_block,
-		"task_context": task_block,
-		"tool_round_intent": intent_block,
-		"oversized_results_in_round": oversized.len(),
-		"results_considered": candidates.len(),
-		"results": payload_results,
-	}))
-	.expect("condenser payload is JSON-serializable");
+	let (candidates, user) = build_request(
+		results,
+		calls,
+		&sizable,
+		&sizes,
+		task,
+		agent_context,
+		tool_round_intent,
+	);
 
 	// Name the culprits: the notice fires once per round, so without sizes a
 	// small result sitting next to it looks like the trigger.
-	let culprits = oversized
+	let culprits = candidates
 		.iter()
-		.map(|&i| {
+		.map(|c| {
 			format!(
 				"{} {}",
-				results[i].tool_name,
-				crate::session::chat::format_number(
-					estimate_tokens(&results[i].extract_content()) as u64
-				)
+				results[c.result_index].tool_name,
+				crate::session::chat::format_number(sizes[c.result_index] as u64)
 			)
 		})
 		.collect::<Vec<_>>()
 		.join(" · ");
 	crate::supervisor::notify(&format!(
-		"condensing {} oversized tool result(s): {culprits}",
+		"condensing {} tool result(s): {culprits}",
 		candidates.len()
 	));
 
@@ -264,30 +241,35 @@ pub async fn condense_round(
 		crate::log_debug!("Condense: unparseable response, leaving results as-is");
 		return;
 	};
-	if !validate_response(&parsed, &candidates, results) {
-		crate::log_debug!("Condense: response contract invalid, leaving results as-is");
-		return;
-	}
 
-	let entries: HashMap<&str, &Entry> = parsed
-		.results
-		.iter()
-		.map(|entry| (entry.id.as_str(), entry))
-		.collect();
+	let entries = unambiguous_entries(&parsed);
 	let mut summary = Vec::new();
 	let mut n_condensed = 0u64;
 	let mut saved_tokens = 0u64;
+	let mut untouched = Vec::new();
 	for candidate in &candidates {
 		let idx = candidate.result_index;
 		let r = &mut results[idx];
-		let entry = entries[&r.tool_id.as_str()];
 		let original = r.extract_content();
 		let before = estimate_tokens(&original);
-		let Some(new_content) = apply_verdict(entry, r, &original, &candidate.view) else {
+		let outcome = entries
+			.get(r.tool_id.as_str())
+			.and_then(|entry| apply_verdict(entry, r, &original, &candidate.view));
+		// One unusable verdict costs its own result, never the round: a single
+		// bad line range used to discard every other result's correct selection.
+		let Some(new_content) = outcome else {
+			untouched.push(format!(
+				"{} {}",
+				r.tool_name,
+				entries
+					.get(r.tool_id.as_str())
+					.map_or("missing", |entry| entry.verdict.as_str())
+			));
 			continue;
 		};
 		let after = estimate_tokens(&new_content);
 		if after >= before {
+			untouched.push(format!("{} no-gain", r.tool_name));
 			continue;
 		}
 		set_content(r, new_content);
@@ -301,10 +283,103 @@ pub async fn condense_round(
 		));
 	}
 
+	if !untouched.is_empty() {
+		crate::log_debug!("Condense: left inline in full: {}", untouched.join(" · "));
+	}
 	if n_condensed > 0 {
 		crate::supervisor::stats::condensed(n_condensed, saved_tokens);
 		crate::supervisor::notify(&format!("condensed: {}", summary.join(" · ")));
 	}
+}
+
+/// Build the numbered views for `sizable` results and the single JSON payload
+/// the condenser model sees. Returned as a pair so callers keep the views they
+/// must validate ranges against.
+fn build_request(
+	results: &[McpToolResult],
+	calls: &[McpToolCall],
+	sizable: &[usize],
+	sizes: &[usize],
+	task: &str,
+	agent_context: &str,
+	tool_round_intent: &str,
+) -> (Vec<Candidate>, String) {
+	// Keep one request bounded across a whole parallel batch. Results beyond the
+	// safe batch size remain untouched and flow to the hard truncation backstop.
+	// Biggest first: if the batch overflows, the outputs that actually cost the
+	// agent context are the ones that get condensed.
+	let mut selected = sizable.to_vec();
+	selected.sort_by_key(|&i| std::cmp::Reverse(sizes[i]));
+	selected.truncate(MAX_RESULTS_PER_REQUEST);
+	selected.sort_unstable();
+	// Share the round's view budget in proportion to what each result costs, so
+	// one large output beside several small ones is not sampled down to their
+	// level. The floor keeps a small candidate's view usable.
+	let selected_tokens: usize = selected.iter().map(|&i| sizes[i]).sum::<usize>().max(1);
+
+	let task_block = if task.trim().is_empty() {
+		"(task context unavailable — be conservative, keep anything plausibly useful)".to_string()
+	} else {
+		truncate_preserving_edges(task.trim(), TASK_CAP_TOKENS)
+	};
+	let agent_block = truncate_preserving_edges(agent_context.trim(), AGENT_CONTEXT_CAP_TOKENS);
+	let intent_block = truncate_preserving_edges(tool_round_intent.trim(), TOOL_INTENT_CAP_TOKENS);
+
+	let mut candidates = Vec::with_capacity(selected.len());
+	let mut payload_results = Vec::with_capacity(selected.len());
+	for idx in selected {
+		let r = &results[idx];
+		let content = r.extract_content();
+		let args = calls
+			.iter()
+			.find(|c| c.tool_id == r.tool_id)
+			.map(|c| compact_args(&c.parameters))
+			.unwrap_or_default();
+		let focus = format!("{task_block}\n{intent_block}\n{args}");
+		let budget =
+			(ROUND_VIEW_CAP_TOKENS * sizes[idx] / selected_tokens).max(MIN_RESULT_VIEW_TOKENS);
+		let view = build_numbered_view(&content, budget, &focus);
+		let status = if r.is_error() { "error" } else { "ok" };
+		payload_results.push(serde_json::json!({
+			"id": r.tool_id,
+			"tool": r.tool_name,
+			"status": status,
+			"arguments": args,
+			"estimated_tokens": sizes[idx],
+			"total_lines": view.total_lines,
+			"partial_view": view.partial,
+			"visible_ranges": format_ranges(&view.visible_ranges),
+			"numbered_output": view.body,
+		}));
+		candidates.push(Candidate {
+			result_index: idx,
+			view,
+		});
+	}
+	let user = serde_json::to_string_pretty(&serde_json::json!({
+		"agent_context": agent_block,
+		"task_context": task_block,
+		"tool_round_intent": intent_block,
+		"round_output_tokens": sizes.iter().sum::<usize>(),
+		"results_considered": candidates.len(),
+		"results": payload_results,
+	}))
+	.expect("condenser payload is JSON-serializable");
+	(candidates, user)
+}
+
+/// Index the response by id, dropping ids the model listed more than once: two
+/// verdicts for one output is an ambiguity we must not resolve by guessing.
+fn unambiguous_entries(response: &CondenseResponse) -> HashMap<&str, &Entry> {
+	let mut entries: HashMap<&str, &Entry> = HashMap::new();
+	let mut duplicated = HashSet::new();
+	for entry in &response.results {
+		if entries.insert(entry.id.as_str(), entry).is_some() {
+			duplicated.insert(entry.id.as_str());
+		}
+	}
+	entries.retain(|id, _| !duplicated.contains(id));
+	entries
 }
 
 /// Resolve an entry into replacement content, or `None` to leave the result
@@ -321,8 +396,11 @@ fn apply_verdict(
 			// Ranges always address the untouched original. The model may see a
 			// sampled view, but it never supplies replacement text.
 			let lines: Vec<&str> = original.lines().collect();
-			let mut ranges = parse_ranges(&entry.lines, lines.len())?;
-			if !ranges_are_visible(&ranges, &view.visible_ranges) {
+			// A range reaching across a gap the sampled view never showed is
+			// clipped to what the model actually read, not rejected: rejecting it
+			// threw away a whole correct selection over one careless endpoint.
+			let mut ranges = clip_to_visible(parse_ranges(&entry.lines, lines.len())?, view);
+			if ranges.is_empty() {
 				return None;
 			}
 			// The model chooses task relevance, but load-bearing diagnostics are
@@ -630,23 +708,25 @@ fn focus_terms(focus: &str) -> Vec<String> {
 		.collect()
 }
 
+/// Failure signals worth protecting deterministically. Deliberately narrow and
+/// punctuated: bare "error"/"warning"/"total"/"summary" match ordinary prose and
+/// ordinary source code, and forcing ±2 lines around every one of those hits was
+/// pinning 20-36% of a plain file read in place no matter what the task needed.
 fn is_diagnostic_line(line: &str) -> bool {
 	let lower = line.to_lowercase();
 	[
-		"error",
+		"error:",
+		"error[",
 		"failed",
 		"failure",
 		"fatal",
-		"panic",
+		"panic:",
 		"exception",
 		"traceback",
-		"warning",
 		"not found",
 		"no matches",
 		"0 matches",
 		"exit code",
-		"summary",
-		"total",
 		"assertion",
 	]
 	.iter()
@@ -745,60 +825,6 @@ fn parse_response(text: &str) -> Option<CondenseResponse> {
 	serde_json::from_str(json).ok()
 }
 
-/// Validate the model's response as one atomic transaction. A partial or
-/// ambiguous response must never silently condense a subset of the round.
-fn validate_response(
-	response: &CondenseResponse,
-	candidates: &[Candidate],
-	results: &[McpToolResult],
-) -> bool {
-	if response.results.len() != candidates.len() {
-		return false;
-	}
-
-	let expected: HashMap<&str, &Candidate> = candidates
-		.iter()
-		.map(|candidate| (results[candidate.result_index].tool_id.as_str(), candidate))
-		.collect();
-	if expected.len() != candidates.len() {
-		return false;
-	}
-
-	let mut seen = HashSet::new();
-	for entry in &response.results {
-		let Some(candidate) = expected.get(entry.id.as_str()) else {
-			return false;
-		};
-		if !seen.insert(entry.id.as_str()) {
-			return false;
-		}
-		let result = &results[candidate.result_index];
-		match entry.verdict.as_str() {
-			"keep" => {
-				if !entry.lines.is_empty() {
-					return false;
-				}
-			}
-			"extract" => {
-				let Some(ranges) = parse_ranges(&entry.lines, candidate.view.total_lines) else {
-					return false;
-				};
-				if !ranges_are_visible(&ranges, &candidate.view.visible_ranges) {
-					return false;
-				}
-			}
-			"replace" => {
-				if !entry.lines.is_empty() || result.is_error() || candidate.view.partial {
-					return false;
-				}
-			}
-			_ => return false,
-		}
-	}
-
-	seen.len() == candidates.len()
-}
-
 /// Parse "A-B" / "A" / "A-" strings into sorted, merged, 1-indexed inclusive
 /// ranges clamped to `max`. All-or-nothing: one malformed spec invalidates the
 /// entire selection, rather than silently dropping evidence the model named.
@@ -849,12 +875,21 @@ fn merge_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 	merged
 }
 
-fn ranges_are_visible(ranges: &[(usize, usize)], visible: &[(usize, usize)]) -> bool {
-	ranges.iter().all(|(start, end)| {
-		visible
-			.iter()
-			.any(|(visible_start, visible_end)| start >= visible_start && end <= visible_end)
-	})
+/// Intersect the model's ranges with the spans it was actually shown. Lines it
+/// never read can never be selected, so a range bridging an unshown gap keeps
+/// only its inspected parts instead of smuggling the gap back in.
+fn clip_to_visible(ranges: Vec<(usize, usize)>, view: &NumberedView) -> Vec<(usize, usize)> {
+	let mut clipped = Vec::new();
+	for (start, end) in ranges {
+		for (visible_start, visible_end) in &view.visible_ranges {
+			let s = start.max(*visible_start);
+			let e = end.min(*visible_end);
+			if s <= e {
+				clipped.push((s, e));
+			}
+		}
+	}
+	merge_ranges(clipped)
 }
 
 /// Rebuild the body from kept ranges: kept lines verbatim, gaps replaced by an
@@ -987,104 +1022,84 @@ mod tests {
 		assert!(!view.body.ends_with('x'));
 	}
 
-	fn candidate(partial: bool, visible_ranges: Vec<(usize, usize)>) -> Candidate {
-		Candidate {
-			result_index: 0,
-			view: NumberedView {
-				body: String::new(),
-				visible_ranges,
-				total_lines: 6,
-				partial,
-			},
+	fn view(partial: bool, visible_ranges: Vec<(usize, usize)>) -> NumberedView {
+		NumberedView {
+			body: String::new(),
+			visible_ranges,
+			total_lines: 6,
+			partial,
+		}
+	}
+
+	fn entry(verdict: &str, lines: &[&str]) -> Entry {
+		Entry {
+			id: "t1".into(),
+			verdict: verdict.into(),
+			lines: specs(lines),
 		}
 	}
 
 	#[test]
-	fn response_contract_is_atomic_and_range_safe() {
-		let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
-		let candidates = vec![candidate(true, vec![(1, 2), (5, 6)])];
+	fn unseen_lines_are_clipped_away_not_smuggled_in() {
+		let view = view(true, vec![(1, 2), (5, 6)]);
+		// The model wrote one sweeping range over two islands: keep both islands,
+		// drop the gap it never read.
+		assert_eq!(
+			clip_to_visible(vec![(1, 5)], &view),
+			vec![(1, 2), (5, 5)],
+			"a bridging range must survive as its visible parts"
+		);
+		assert_eq!(clip_to_visible(vec![(3, 4)], &view), Vec::new());
+	}
 
-		let valid = CondenseResponse {
-			results: vec![Entry {
-				id: "t1".into(),
-				verdict: "extract".into(),
-				lines: specs(&["1-2", "5"]),
-			}],
-		};
-		assert!(validate_response(
-			&valid,
-			&candidates,
-			std::slice::from_ref(&ok)
-		));
+	#[tokio::test]
+	async fn one_bad_verdict_does_not_cost_the_other_results() {
+		crate::session::context::with_session_id("condense-test".into(), async {
+			let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
+			let original = ok.extract_content();
+			let partial = view(true, vec![(1, 2), (5, 6)]);
 
-		let crosses_hidden_gap = CondenseResponse {
-			results: vec![Entry {
-				id: "t1".into(),
-				verdict: "extract".into(),
-				lines: specs(&["1-5"]),
-			}],
-		};
-		assert!(!validate_response(
-			&crosses_hidden_gap,
-			&candidates,
-			std::slice::from_ref(&ok)
-		));
+			let kept = apply_verdict(&entry("extract", &["1-2", "5"]), &ok, &original, &partial)
+				.expect("a valid selection applies");
+			assert!(kept.starts_with("a\nb\n"));
+			assert!(kept.contains(CONDENSE_NOTICE_TAG));
 
-		let partial_replace = CondenseResponse {
-			results: vec![Entry {
-				id: "t1".into(),
-				verdict: "replace".into(),
-				lines: Vec::new(),
-			}],
-		};
-		assert!(!validate_response(
-			&partial_replace,
-			&candidates,
-			std::slice::from_ref(&ok)
-		));
+			// Each of these leaves ITS OWN result inline; the valid one above still
+			// applied. Previously any single one of them voided the whole round.
+			assert!(apply_verdict(&entry("keep", &[]), &ok, &original, &partial).is_none());
+			assert!(
+				apply_verdict(&entry("extract", &["1", "junk"]), &ok, &original, &partial)
+					.is_none()
+			);
+			assert!(apply_verdict(&entry("extract", &["3-4"]), &ok, &original, &partial).is_none());
+			assert!(apply_verdict(&entry("nonsense", &[]), &ok, &original, &partial).is_none());
+			// Nothing was inspected outside the islands, so "none of it matters" is
+			// not a claim the model is allowed to make.
+			assert!(apply_verdict(&entry("replace", &[]), &ok, &original, &partial).is_none());
 
-		let duplicate = CondenseResponse {
+			let error = McpToolResult::error("shell".into(), "t1".into(), "fatal".into());
+			let full = view(false, vec![(1, 6)]);
+			assert!(apply_verdict(&entry("replace", &[]), &error, "fatal", &full).is_none());
+		})
+		.await;
+	}
+
+	#[test]
+	fn duplicate_ids_are_dropped_rather_than_guessed() {
+		let response = CondenseResponse {
 			results: vec![
+				entry("keep", &[]),
+				entry("replace", &[]),
 				Entry {
-					id: "t1".into(),
-					verdict: "keep".into(),
-					lines: Vec::new(),
-				},
-				Entry {
-					id: "t1".into(),
+					id: "t2".into(),
 					verdict: "keep".into(),
 					lines: Vec::new(),
 				},
 			],
 		};
-		assert!(!validate_response(&duplicate, &candidates, &[ok]));
-	}
-
-	#[test]
-	fn error_replace_and_malformed_ranges_fail_closed() {
-		let error = McpToolResult::error("shell".into(), "t1".into(), "fatal".into());
-		let candidates = vec![candidate(false, vec![(1, 6)])];
-		let replace = CondenseResponse {
-			results: vec![Entry {
-				id: "t1".into(),
-				verdict: "replace".into(),
-				lines: Vec::new(),
-			}],
-		};
-		assert!(!validate_response(
-			&replace,
-			&candidates,
-			std::slice::from_ref(&error)
-		));
-
-		let malformed = CondenseResponse {
-			results: vec![Entry {
-				id: "t1".into(),
-				verdict: "extract".into(),
-				lines: specs(&["1", "junk"]),
-			}],
-		};
-		assert!(!validate_response(&malformed, &candidates, &[error]));
+		let entries = unambiguous_entries(&response);
+		assert!(!entries.contains_key("t1"));
+		assert!(entries.contains_key("t2"));
 	}
 
 	#[test]
@@ -1104,6 +1119,173 @@ mod tests {
 			serde_json::json!({"important": true}),
 		);
 		assert!(!is_plain_text_result(&structured));
+	}
+
+	/// One condensable scenario: what the agent was doing, what came back, and
+	/// the facts the agent still needs afterwards.
+	struct Scenario {
+		name: &'static str,
+		task: &'static str,
+		tool: &'static str,
+		args: serde_json::Value,
+		output: String,
+		is_error: bool,
+		/// Substrings that MUST survive condensation — cutting one of these is
+		/// the failure mode that costs the agent a whole recovery round.
+		must_keep: &'static [&'static str],
+	}
+
+	fn repo_file(relative: &str) -> String {
+		std::fs::read_to_string(format!("{}/{relative}", env!("CARGO_MANIFEST_DIR")))
+			.unwrap_or_else(|e| panic!("fixture {relative}: {e}"))
+	}
+
+	fn build_log() -> String {
+		let mut lines: Vec<String> = (1..=240)
+			.map(|i| format!("   Compiling crate_number_{i} v0.{i}.3"))
+			.collect();
+		lines.push("error[E0308]: mismatched types".into());
+		lines.push("   --> src/supervisor/condense.rs:412:17".into());
+		lines.push("    |".into());
+		lines.push("412 |         let kept: usize = ranges.len() as u64;".into());
+		lines.push(
+			"    |                   -----   ^^^^^^^^^^^^^^^^^^^ expected `usize`, found `u64`"
+				.into(),
+		);
+		lines.push("error: could not compile `octomind` (lib) due to 1 previous error".into());
+		lines.join("\n")
+	}
+
+	fn unrelated_listing() -> String {
+		(1..=600)
+			.map(|i| format!("./vendor/assets/icons/glyph-{i:04}.svg"))
+			.collect::<Vec<_>>()
+			.join("\n")
+	}
+
+	/// Live end-to-end check of the condenser against the configured model.
+	/// Ignored by default (network + credentials); run with:
+	///   cargo test --lib supervisor::condense::tests::live -- --ignored --nocapture
+	#[tokio::test]
+	#[ignore = "live: calls the configured condense model"]
+	async fn live_condense_eval() {
+		let config = crate::config::Config::load().expect("config loads");
+		let scenarios = vec![
+			Scenario {
+				name: "source read, narrow task",
+				task: "Goal: fix a wrong notice string.\nCurrent request: the truncation notice for oversized tool results reads badly — reword the text produced in handle_large_tool_results.",
+				tool: "view",
+				args: serde_json::json!({"path": "src/session/chat/response/tool_execution.rs"}),
+				output: repo_file("src/session/chat/response/tool_execution.rs"),
+				is_error: false,
+				must_keep: &["handle_large_tool_results"],
+			},
+			Scenario {
+				name: "failing build",
+				task: "Goal: get the crate compiling.\nCurrent request: the build is broken, fix it.",
+				tool: "shell",
+				args: serde_json::json!({"command": "cargo build"}),
+				output: build_log(),
+				is_error: true,
+				must_keep: &["error[E0308]", "condense.rs:412", "expected `usize`, found `u64`"],
+			},
+			Scenario {
+				name: "irrelevant listing",
+				task: "Goal: get the crate compiling.\nCurrent request: the build is broken, fix it.",
+				tool: "shell",
+				args: serde_json::json!({"command": "find ./vendor -name '*.svg'"}),
+				output: unrelated_listing(),
+				is_error: false,
+				must_keep: &[],
+			},
+		];
+
+		let mut total_before = 0usize;
+		let mut total_after = 0usize;
+		let mut report = Vec::new();
+		for scenario in &scenarios {
+			let result = if scenario.is_error {
+				McpToolResult::error(scenario.tool.into(), "t1".into(), scenario.output.clone())
+			} else {
+				McpToolResult::success(scenario.tool.into(), "t1".into(), scenario.output.clone())
+			};
+			let call = McpToolCall {
+				tool_name: scenario.tool.into(),
+				parameters: scenario.args.clone(),
+				tool_id: "t1".into(),
+			};
+			let sizes = vec![estimate_tokens(&scenario.output)];
+			let (candidates, user) = build_request(
+				std::slice::from_ref(&result),
+				std::slice::from_ref(&call),
+				&[0],
+				&sizes,
+				scenario.task,
+				"",
+				"",
+			);
+			let (_tx, rx) = tokio::sync::watch::channel(false);
+			let response = crate::supervisor::learning::extract::call_learning_llm(
+				&config,
+				&config.supervisor.condense.model.clone(),
+				SYSTEM_PROMPT.to_string(),
+				user,
+				crate::supervisor::stats::CallKind::Condense,
+				rx,
+			)
+			.await
+			.unwrap_or_else(|e| panic!("[{}] condense call failed: {e}", scenario.name));
+
+			let parsed = parse_response(&response)
+				.unwrap_or_else(|| panic!("[{}] unparseable: {response}", scenario.name));
+			let entries = unambiguous_entries(&parsed);
+			let entry = entries
+				.get("t1")
+				.unwrap_or_else(|| panic!("[{}] no verdict for t1", scenario.name));
+			let condensed =
+				crate::session::context::with_session_id("condense-live-eval".into(), async {
+					apply_verdict(entry, &result, &scenario.output, &candidates[0].view)
+				})
+				.await;
+
+			let before = sizes[0];
+			let after = condensed
+				.as_ref()
+				.map_or(before, |content| estimate_tokens(content));
+			let body = condensed.as_deref().unwrap_or(&scenario.output);
+			for needle in scenario.must_keep {
+				assert!(
+					body.contains(needle),
+					"[{}] verdict {} dropped required evidence {needle:?}",
+					scenario.name,
+					entry.verdict
+				);
+			}
+			total_before += before;
+			total_after += after;
+			report.push(format!(
+				"{:<24} {:>8} → {:<8} {:>4}% cut  verdict={}",
+				scenario.name,
+				before,
+				after,
+				100 - (after * 100 / before.max(1)),
+				entry.verdict
+			));
+		}
+
+		for line in &report {
+			println!("{line}");
+		}
+		println!(
+			"TOTAL {total_before} → {total_after} ({}% cut)",
+			100 - (total_after * 100 / total_before.max(1))
+		);
+		// The whole point of the mechanic. A prompt that drifts back to keeping
+		// everything passes every other test in this file and fails here.
+		assert!(
+			total_after * 2 < total_before,
+			"condenser saved less than half of {total_before} tokens across scenarios"
+		);
 	}
 
 	#[test]

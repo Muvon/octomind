@@ -539,13 +539,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// recall, skill, and continuation injections after it remain part of the
 		// runtime conversation but cannot move this boundary.
 		let turn_start = latest_real_user_turn_start(&chat_session.session.messages);
-		let task = chat_session
-			.session
-			.messages
-			.get(turn_start)
-			.filter(|message| crate::session::is_real_user_task_message(message))
-			.map(|message| message.content.clone())
-			.unwrap_or_default();
+		// Task content via the continuation-aware helper: after a compaction drains
+		// the raw user turns, the live request survives only inside the
+		// `<continuation>` wrapper's `<task>`. Reading the message directly returns
+		// empty there, and an empty task makes `verify()` fail open — silently
+		// disabling the verify-gate for the rest of the session.
+		let task = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+			.unwrap_or_default()
+			.to_string();
 		let live_plan = crate::mcp::core::plan::render_plan_checklist().unwrap_or_default();
 		// Resolve references before any deterministic gate that consults session-
 		// persistent state. Otherwise an old open plan could block a new unrelated

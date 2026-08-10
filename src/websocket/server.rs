@@ -33,7 +33,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
-use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::handshake::server::{
+	Callback, ErrorResponse, Request, Response,
+};
 use tokio_tungstenite::tungstenite::http::{header::ORIGIN, StatusCode};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
@@ -137,36 +139,40 @@ impl WebSocketServer {
 	}
 }
 
-/// Reject a handshake whose `Origin` is not allowlisted.
+/// Rejects a handshake whose `Origin` is not allowlisted.
 ///
 /// WebSocket upgrades are covered by neither CORS nor the same-origin policy, so
 /// without this check any page the operator visits can open a socket to a
 /// loopback-bound server and drive the agent with full tool access. Native
 /// clients send no `Origin` header and are unaffected; browsers always send one,
 /// so a present-but-unlisted origin is refused before the welcome frame.
-fn check_origin(
-	req: &Request,
-	response: Response,
-	allow_origins: &[String],
-) -> Result<Response, ErrorResponse> {
-	let origin = match req.headers().get(ORIGIN) {
-		// Absent header — not a browser.
-		None => return Ok(response),
-		Some(value) => value.to_str().unwrap_or_default(),
-	};
+///
+/// A named callback type rather than a closure: tungstenite's handshake contract
+/// fixes the error type, and carrying it through a signature of our own is what
+/// makes an oversized `Err` variant our problem instead of the library's.
+struct OriginAllowlist(Arc<Vec<String>>);
 
-	if allow_origins.iter().any(|allowed| allowed == origin) {
-		return Ok(response);
+impl Callback for OriginAllowlist {
+	fn on_request(self, request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+		let origin = match request.headers().get(ORIGIN) {
+			// Absent header — not a browser.
+			None => return Ok(response),
+			Some(value) => value.to_str().unwrap_or_default(),
+		};
+
+		if self.0.iter().any(|allowed| allowed == origin) {
+			return Ok(response);
+		}
+
+		log_error!("Rejected WebSocket handshake from origin '{}'", origin);
+		Err(Response::builder()
+			.status(StatusCode::FORBIDDEN)
+			.body(Some(
+				"Origin not allowed. Start the server with --allow-origin <ORIGIN> to permit it."
+					.to_string(),
+			))
+			.expect("static 403 response is always valid"))
 	}
-
-	log_error!("Rejected WebSocket handshake from origin '{}'", origin);
-	Err(Response::builder()
-		.status(StatusCode::FORBIDDEN)
-		.body(Some(
-			"Origin not allowed. Start the server with --allow-origin <ORIGIN> to permit it."
-				.to_string(),
-		))
-		.expect("static 403 response is always valid"))
 }
 
 /// Handle a single WebSocket connection
@@ -187,7 +193,7 @@ async fn handle_connection(
 
 	let ws_stream = tokio_tungstenite::accept_hdr_async_with_config(
 		stream,
-		move |req: &Request, response: Response| check_origin(req, response, &allow_origins),
+		OriginAllowlist(allow_origins),
 		Some(ws_config),
 	)
 	.await?;
@@ -1302,15 +1308,13 @@ async fn send_message(
 mod tests {
 	use super::*;
 
-	fn handshake(
-		origin: Option<&str>,
-		allow_origins: &[String],
-	) -> Result<Response, ErrorResponse> {
+	fn handshake(origin: Option<&str>, allow_origins: &[&str]) -> Result<Response, ErrorResponse> {
 		let mut req = Request::builder().uri("/");
 		if let Some(origin) = origin {
 			req = req.header(ORIGIN, origin);
 		}
-		check_origin(&req.body(()).unwrap(), Response::new(()), allow_origins)
+		let allowlist = allow_origins.iter().map(|o| (*o).to_string()).collect();
+		OriginAllowlist(Arc::new(allowlist)).on_request(&req.body(()).unwrap(), Response::new(()))
 	}
 
 	#[test]
@@ -1320,15 +1324,13 @@ mod tests {
 
 	#[test]
 	fn listed_origin_is_allowed() {
-		let allowed = vec!["http://localhost:3000".to_string()];
-		assert!(handshake(Some("http://localhost:3000"), &allowed).is_ok());
+		assert!(handshake(Some("http://localhost:3000"), &["http://localhost:3000"]).is_ok());
 	}
 
 	#[test]
 	fn unlisted_origin_is_refused() {
-		let allowed = vec!["http://localhost:3000".to_string()];
 		// A different port is a different origin — this is the drive-by browser case.
-		let err = handshake(Some("http://localhost:3001"), &allowed).unwrap_err();
+		let err = handshake(Some("http://localhost:3001"), &["http://localhost:3000"]).unwrap_err();
 		assert_eq!(err.status(), StatusCode::FORBIDDEN);
 	}
 

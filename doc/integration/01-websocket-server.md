@@ -26,6 +26,25 @@ octomind server [TAG] [OPTIONS]
 | `--host` | `127.0.0.1` | Bind address |
 | `--port`, `-p` | `8080` | Port |
 | `--sandbox` | `false` | Restrict all filesystem writes to the current working directory |
+| `--allow-origin` | none | Browser origin permitted to connect. Repeatable |
+
+## Browser origins
+
+WebSocket upgrades are covered by neither CORS nor the same-origin policy. Without an origin check, **any** page the operator visits -- including a third-party iframe -- can open a socket to a loopback-bound server and drive the agent with the full configured toolset, reading every response frame back. Binding to `127.0.0.1` is not a boundary against this.
+
+The server therefore refuses any handshake that carries an `Origin` header not listed in `--allow-origin`, with `HTTP 403` before the welcome frame:
+
+```bash
+octomind server --allow-origin http://localhost:3000 --allow-origin https://dashboard.example.com
+```
+
+Origins are matched exactly, as sent by the browser (scheme, host, and port; no trailing slash). Native clients -- `websocat`, the Python and Node examples below, anything that is not a browser -- send no `Origin` header and connect without configuration.
+
+## Single principal per process
+
+The server has no notion of a user. One process serves one identity: config, MCP server processes, and OAuth tokens are process-global and shared by every session, so all tool calls from every session go out with the same credentials. `session_id` is a name, not a capability -- any connection may resume any session.
+
+To serve multiple users, run one process per user, each with its own `HOME`. The data directory derives from it, which gives each process a separate OAuth keystore, session store, and config.
 
 ## Protocol
 

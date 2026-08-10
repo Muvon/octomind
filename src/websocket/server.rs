@@ -33,6 +33,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::http::{header::ORIGIN, StatusCode};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
@@ -57,16 +59,26 @@ pub struct WebSocketServer {
 	addr: SocketAddr,
 	config: Arc<Config>,
 	role: String,
+	/// Browser origins permitted to open a connection. Empty = refuse every
+	/// handshake that carries an `Origin` header.
+	allow_origins: Arc<Vec<String>>,
 }
 
 impl WebSocketServer {
 	/// Create a new WebSocket server
-	pub fn new(host: &str, port: u16, config: Config, role: String) -> Result<Self> {
+	pub fn new(
+		host: &str,
+		port: u16,
+		config: Config,
+		role: String,
+		allow_origins: Vec<String>,
+	) -> Result<Self> {
 		let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 		Ok(Self {
 			addr,
 			config: Arc::new(config),
 			role,
+			allow_origins: Arc::new(allow_origins),
 		})
 	}
 
@@ -75,6 +87,11 @@ impl WebSocketServer {
 		let listener = TcpListener::bind(&self.addr).await?;
 		log_info!("WebSocket server listening on ws://{}", self.addr);
 		println!("🚀 WebSocket server started on ws://{}", self.addr);
+		if self.allow_origins.is_empty() {
+			println!("Browser connections refused (no --allow-origin configured)");
+		} else {
+			println!("Allowed browser origins: {}", self.allow_origins.join(", "));
+		}
 		println!("Press Ctrl+C to stop the server");
 
 		// Active sessions map (session_id -> ChatSession)
@@ -94,6 +111,7 @@ impl WebSocketServer {
 					let role = self.role.clone();
 					let sessions = Arc::clone(&sessions);
 					let session_locks = Arc::clone(&session_locks);
+					let allow_origins = Arc::clone(&self.allow_origins);
 
 					tokio::spawn(async move {
 						if let Err(e) = handle_connection(
@@ -103,6 +121,7 @@ impl WebSocketServer {
 							role,
 							sessions,
 							session_locks,
+							allow_origins,
 						)
 						.await
 						{
@@ -118,6 +137,38 @@ impl WebSocketServer {
 	}
 }
 
+/// Reject a handshake whose `Origin` is not allowlisted.
+///
+/// WebSocket upgrades are covered by neither CORS nor the same-origin policy, so
+/// without this check any page the operator visits can open a socket to a
+/// loopback-bound server and drive the agent with full tool access. Native
+/// clients send no `Origin` header and are unaffected; browsers always send one,
+/// so a present-but-unlisted origin is refused before the welcome frame.
+fn check_origin(
+	req: &Request,
+	response: Response,
+	allow_origins: &[String],
+) -> Result<Response, ErrorResponse> {
+	let origin = match req.headers().get(ORIGIN) {
+		// Absent header — not a browser.
+		None => return Ok(response),
+		Some(value) => value.to_str().unwrap_or_default(),
+	};
+
+	if allow_origins.iter().any(|allowed| allowed == origin) {
+		return Ok(response);
+	}
+
+	log_error!("Rejected WebSocket handshake from origin '{}'", origin);
+	Err(Response::builder()
+		.status(StatusCode::FORBIDDEN)
+		.body(Some(
+			"Origin not allowed. Start the server with --allow-origin <ORIGIN> to permit it."
+				.to_string(),
+		))
+		.expect("static 403 response is always valid"))
+}
+
 /// Handle a single WebSocket connection
 async fn handle_connection(
 	stream: TcpStream,
@@ -126,6 +177,7 @@ async fn handle_connection(
 	role: String,
 	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
 	session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+	allow_origins: Arc<Vec<String>>,
 ) -> Result<()> {
 	// Accept WebSocket connection with compression enabled
 	let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
@@ -133,7 +185,12 @@ async fn handle_connection(
 		.max_frame_size(Some(10 * 1024 * 1024)) // 10MB max frame size
 		.accept_unmasked_frames(false);
 
-	let ws_stream = tokio_tungstenite::accept_async_with_config(stream, Some(ws_config)).await?;
+	let ws_stream = tokio_tungstenite::accept_hdr_async_with_config(
+		stream,
+		move |req: &Request, response: Response| check_origin(req, response, &allow_origins),
+		Some(ws_config),
+	)
+	.await?;
 	log_info!("WebSocket handshake completed for {}", peer_addr);
 
 	let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -1239,4 +1296,45 @@ async fn send_message(
 	);
 	ws_sender.send(Message::text(json)).await?;
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn handshake(
+		origin: Option<&str>,
+		allow_origins: &[String],
+	) -> Result<Response, ErrorResponse> {
+		let mut req = Request::builder().uri("/");
+		if let Some(origin) = origin {
+			req = req.header(ORIGIN, origin);
+		}
+		check_origin(&req.body(()).unwrap(), Response::new(()), allow_origins)
+	}
+
+	#[test]
+	fn native_clients_send_no_origin_and_are_allowed() {
+		assert!(handshake(None, &[]).is_ok());
+	}
+
+	#[test]
+	fn listed_origin_is_allowed() {
+		let allowed = vec!["http://localhost:3000".to_string()];
+		assert!(handshake(Some("http://localhost:3000"), &allowed).is_ok());
+	}
+
+	#[test]
+	fn unlisted_origin_is_refused() {
+		let allowed = vec!["http://localhost:3000".to_string()];
+		// A different port is a different origin — this is the drive-by browser case.
+		let err = handshake(Some("http://localhost:3001"), &allowed).unwrap_err();
+		assert_eq!(err.status(), StatusCode::FORBIDDEN);
+	}
+
+	#[test]
+	fn empty_allowlist_refuses_every_browser() {
+		let err = handshake(Some("https://evil.example.com"), &[]).unwrap_err();
+		assert_eq!(err.status(), StatusCode::FORBIDDEN);
+	}
 }

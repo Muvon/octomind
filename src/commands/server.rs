@@ -32,6 +32,13 @@ pub struct ServerArgs {
 	/// Restrict all filesystem writes to the current working directory
 	#[arg(long)]
 	pub sandbox: bool,
+
+	/// Browser origin permitted to connect (repeatable, e.g.
+	/// `--allow-origin http://localhost:3000`). Handshakes carrying an
+	/// unlisted `Origin` header are refused with HTTP 403. Native clients
+	/// send no `Origin` and never need this.
+	#[arg(long = "allow-origin", value_name = "ORIGIN")]
+	pub allow_origin: Vec<String>,
 }
 
 /// Execute the server command
@@ -55,7 +62,13 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 	super::common::startup_mcp_only(&role, &resolved_config, true).await?;
 
 	// Create and start WebSocket server
-	let server = WebSocketServer::new(&args.host, args.port, resolved_config, role)?;
+	let server = WebSocketServer::new(
+		&args.host,
+		args.port,
+		resolved_config,
+		role,
+		args.allow_origin.clone(),
+	)?;
 	server.start().await?;
 
 	Ok(())

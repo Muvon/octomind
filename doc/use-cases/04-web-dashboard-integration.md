@@ -22,10 +22,18 @@ octomind server --host 127.0.0.1 --port 8080
 octomind server assistant -p 8080
 ```
 
+Because the dashboard connects from a browser, you must allowlist the page's origin -- the server refuses any handshake carrying an unlisted `Origin` header:
+
+```bash
+octomind server assistant -p 8080 --allow-origin http://localhost:3000
+```
+
+Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-websocket-server.md#browser-origins) for why this is not optional.
+
 For production, bind to `0.0.0.0` behind a reverse proxy with TLS:
 
 ```bash
-octomind server assistant --host 0.0.0.0 --port 8080
+octomind server assistant --host 0.0.0.0 --port 8080 --allow-origin https://dashboard.example.com
 ```
 
 > The server performs no authentication, authorization, TLS, or origin checking itself. Any client that can reach the socket can drive a session. Always put it behind a reverse proxy that handles TLS and auth (see Step 3), and never bind `0.0.0.0` on an untrusted network.

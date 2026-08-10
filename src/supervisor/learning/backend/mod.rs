@@ -48,6 +48,14 @@ pub trait LearningBackend: Send + Sync {
 	async fn retrieve_all(&self, role: &str, project: &str, config: &Config)
 		-> Result<Vec<Lesson>>;
 
+	/// Whether this scope holds any lesson at all. Gates the retrieval LLM call:
+	/// with an empty store there is nothing to rank, so the query-preparation
+	/// model must not run. Default `true` — a backend that cannot answer this
+	/// cheaply keeps the full retrieval path.
+	async fn has_lessons(&self, _role: &str, _project: &str, _config: &Config) -> bool {
+		true
+	}
+
 	/// Retrieve ALL global (user-wide) lessons, sorted by importance descending.
 	/// These are injected unconditionally at session start — they apply to every
 	/// task — so there is no relevance query, just an importance ranking.

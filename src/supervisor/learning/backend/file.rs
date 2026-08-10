@@ -283,6 +283,20 @@ impl LearningBackend for FileBackend {
 		Ok(Self::read_lessons_sorted(&dir))
 	}
 
+	/// Dir scan only — no parsing: the caller just needs to know whether the
+	/// scope is worth a retrieval query.
+	async fn has_lessons(&self, role: &str, project: &str, _config: &Config) -> bool {
+		let Ok(dir) = Self::learning_dir(role, project) else {
+			return false;
+		};
+		let Ok(entries) = std::fs::read_dir(&dir) else {
+			return false;
+		};
+		entries
+			.flatten()
+			.any(|e| e.path().extension().is_some_and(|x| x == "md"))
+	}
+
 	async fn reinforce(
 		&self,
 		content: &str,

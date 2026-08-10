@@ -87,7 +87,9 @@ pub async fn retrieve_and_format(
 	// Scoped tier: contextual lessons retrieved by relevance to this message.
 	// First call uses the full hybrid (LLM keywords + embedding); follow-up
 	// messages skip the LLM call and use embedding-only recall — free and fast.
-	let patterns = if first_call {
+	// An empty scope skips it too: there is nothing to rank, so the query model
+	// would only add latency to the user's first message.
+	let patterns = if first_call && backend.has_lessons(role, project, config).await {
 		prepare_retrieval_query(
 			config,
 			user_input,

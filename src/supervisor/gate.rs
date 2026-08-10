@@ -122,6 +122,18 @@ confident or well-formatted assertion with no locatable source does NOT count. T
 truth varies by domain — a file tree, a fetched page, a memory backend, an API response —
 judge whether the claim is grounded in what the agent actually received, whatever the source.
 Reason first, then decide.
+
+When the request itself enumerates the items it covers — named parts, cases, types, endpoints,
+files, behaviors, whatever the domain — hold each enumerated item to EXERCISED evidence: a
+check whose recorded output demonstrably runs or probes THAT item. This applies equally to
+items the agent claims to have changed and to items it claims were "already correct" or
+"needed no change" — a correctness claim about an enumerated item is a verification claim,
+and inspection alone ("read it, looks right") does not verify behavior. A single global green
+check counts for an item only if its recorded evidence shows that item exercised; where the
+domain defines the enumerated set in one authoritative place, evidence that covers the set
+from that source outranks hand-picked instances. An enumerated item with no exercising
+evidence is a gap — name the item and the check it lacks. This bar applies only to items the
+request explicitly enumerates, never to surfaces you infer.
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a

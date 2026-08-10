@@ -113,6 +113,13 @@ pub(super) async fn calculate_compression_net_benefit(
 	// Check if decision model can reuse session cache
 	let same_model = decision_model == session_model;
 
+	// Cache-less providers (per the provider's own supports_caching capability)
+	// re-bill the ENTIRE context at full input price on every call. Pricing the
+	// base at cache_read rate there (glm-5.2: $0.26/M vs $1.40/M input) understates
+	// the no-compress cost ~5x and wrongly cost-gates compression OFF exactly
+	// where it is most profitable.
+	let session_caches = crate::session::model_supports_caching(session_model);
+
 	// Estimate actual output tokens from compression API call
 	// The AI generates a summary (not the full compressed_tokens size)
 	// Use compressed_tokens as estimate, but cap at max_tokens if set
@@ -129,13 +136,23 @@ pub(super) async fn calculate_compression_net_benefit(
 	let mut base_context = total_tokens;
 
 	for _ in 0..estimated_future_turns as i32 {
-		// Pay cache_read for base (already cached) + input for NEW tokens
-		let context_cost = session_pricing.calculate_cost(
-			avg_new_tokens_per_call as u64, // NEW tokens: input price
-			0,                              // No cache write
-			base_context as u64,            // BASE: cache_read price
-			0,                              // No output in context calculation
-		);
+		// Pay cache_read for base (already cached) + input for NEW tokens.
+		// Without provider caching the base is re-billed at input price.
+		let context_cost = if session_caches {
+			session_pricing.calculate_cost(
+				avg_new_tokens_per_call as u64, // NEW tokens: input price
+				0,                              // No cache write
+				base_context as u64,            // BASE: cache_read price
+				0,                              // No output in context calculation
+			)
+		} else {
+			session_pricing.calculate_cost(
+				(base_context + avg_new_tokens_per_call) as u64, // ALL at input price
+				0,
+				0,
+				0,
+			)
+		};
 
 		total_cost_no_compress += context_cost;
 
@@ -145,7 +162,7 @@ pub(super) async fn calculate_compression_net_benefit(
 
 	// SCENARIO B: WITH compression
 	// 1. Compression cost (one-time) using DECISION model pricing
-	let compression_cost = if same_model {
+	let compression_cost = if same_model && session_caches {
 		// Same model: session context is already cached, only decision prompt is new
 		decision_pricing.calculate_cost(
 			decision_prompt_tokens as u64, // Only new prompt is uncached
@@ -170,8 +187,15 @@ pub(super) async fn calculate_compression_net_benefit(
 
 	for call_num in 0..estimated_future_turns as i32 {
 		// First call after compression: cache_write for base (fresh cache)
-		// Subsequent calls: cache_read for base
-		let (input_tokens, cache_write, cache_read) = if call_num == 0 {
+		// Subsequent calls: cache_read for base.
+		// Without provider caching the compressed base is input-priced every call.
+		let (input_tokens, cache_write, cache_read) = if !session_caches {
+			(
+				(base_context_compressed + avg_new_tokens_per_call) as u64,
+				0,
+				0,
+			)
+		} else if call_num == 0 {
 			// First call: write the compressed base to cache, pay input for NEW tokens
 			(
 				avg_new_tokens_per_call as u64,

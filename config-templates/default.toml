@@ -650,15 +650,15 @@ verify_hash = true
 # Compression triggers when context exceeds ANY threshold, using the highest matched ratio
 # Example: At 100k tokens, compress to 1/4 size (4x compression)
 [[compression.pressure_levels]]
-threshold = 80000
+threshold = 90000
 target_ratio = 2.0  # Light: 50% reduction
 
 [[compression.pressure_levels]]
-threshold = 120000
+threshold = 125000
 target_ratio = 4.0  # Medium: 75% reduction
 
 [[compression.pressure_levels]]
-threshold = 160000
+threshold = 180000
 target_ratio = 8.0  # Aggressive: 87.5% reduction
 
 # Decision model configuration for compression decisions and summary generation

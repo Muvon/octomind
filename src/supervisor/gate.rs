@@ -136,10 +136,10 @@ evidence is a gap — name the item and the check it lacks. This bar applies onl
 request explicitly enumerates, never to surfaces you infer.
 
 Three evidence shapes never satisfy that bar, in any domain:
-- Circular verification: a check whose expected values were derived from the implementation's
-  own output. When the request itself states exact expected outcomes — literal examples, exact
+- Circular verification: a check whose expected values were derived from the work's own
+  output. When the request itself states exact expected outcomes — literal examples, exact
   strings or bytes, formats, messages — the decisive check must compare against the request's
-  stated values; a check that asserts what the code produced proves only self-consistency.
+  stated values; a check that asserts what the work itself produced proves only self-consistency.
 - Context-stripped verification: the request demonstrates an item in composition (entries
   alongside siblings, steps in a sequence, parts of one document or flow), but the only
   exercising evidence runs the item in isolation. Behavior that neighboring context can alter
@@ -499,29 +499,53 @@ fn git_status() -> String {
 	}
 }
 
-/// `git diff HEAD -- <paths>` in the current directory, capped. Empty on any
-/// failure (not a repo, no git, no HEAD yet) — ground truth is additive
+/// Working-tree diff (`git diff HEAD`) of the mutated paths, capped. Empty on
+/// any failure (not a repo, no git, no HEAD yet) — ground truth is additive
 /// evidence, so absence degrades to the file-head path, never blocks.
+///
+/// The cap is FAIR-SHARED per file, not one global head-cut: git emits paths
+/// in sorted order, so a single truncation silently drops every later file —
+/// typically exactly the checks the verifier must judge. Under budget keeps
+/// everything; over budget each changed file gets an equal slice with its own
+/// truncation marker, so every touched file stays visible.
 fn git_diff(paths: &[String]) -> String {
-	let out = std::process::Command::new("git")
-		.args(["diff", "HEAD", "--"])
-		.args(paths)
-		.output();
-	match out {
-		Ok(o) if o.status.success() => {
-			let mut d = String::from_utf8_lossy(&o.stdout).into_owned();
-			if d.len() > GT_DIFF_MAX {
-				let mut end = GT_DIFF_MAX;
-				while !d.is_char_boundary(end) {
-					end -= 1;
+	let mut diffs: Vec<(&String, String)> = Vec::new();
+	for p in paths {
+		let out = std::process::Command::new("git")
+			.args(["diff", "HEAD", "--"])
+			.arg(p)
+			.output();
+		match out {
+			Ok(o) if o.status.success() => {
+				let d = String::from_utf8_lossy(&o.stdout).into_owned();
+				if !d.is_empty() {
+					diffs.push((p, d));
 				}
-				d.truncate(end);
-				d.push_str("\n(diff truncated)\n");
 			}
-			d
+			_ => return String::new(),
 		}
-		_ => String::new(),
 	}
+	let total: usize = diffs.iter().map(|(_, d)| d.len()).sum();
+	let mut s = String::new();
+	if total <= GT_DIFF_MAX {
+		for (_, d) in diffs {
+			s.push_str(&d);
+		}
+		return s;
+	}
+	let share = GT_DIFF_MAX / diffs.len().max(1);
+	for (p, mut d) in diffs {
+		if d.len() > share {
+			let mut end = share;
+			while !d.is_char_boundary(end) {
+				end -= 1;
+			}
+			d.truncate(end);
+			d.push_str(&format!("\n(diff of {p} truncated to fit)\n"));
+		}
+		s.push_str(&d);
+	}
+	s
 }
 
 /// Marker embedded in the plan pre-gate advisory so re-runs within the same
@@ -797,7 +821,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing spec — never from your implementation's observed output — and exercise it in the same context the request demonstrates. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }

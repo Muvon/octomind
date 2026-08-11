@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.43.0] - 2026-08-11
+
+### 📋 Release Summary
+
+This release introduces Agent Plugins 1.0.0 support and an adaptive compression engine to optimize session memory and context handling (0de569be, 31eccabb, 19fe770b). The AI supervisor is now more efficient at task classification, planning, and tool output condensation for a more streamlined conversational experience (fe2a3b5d, 0694876c, a27a2b6d, 31407e4e). Additional updates improve server security, learning efficiency, and overall system stability (dbd50120, f76bd143, f8430671, 081b2093).
+
+
+### ✨ New Features & Enhancements
+
+- **mcp**: implement Agent Plugins 1.0.0 support `0de569be`
+- **compression**: implement adaptive compression engine `31eccabb`
+- **server**: implement browser origin allowlisting `dbd50120`
+- **learning**: add lesson existence check to skip retrieval `f76bd143`
+- **supervisor**: add plan adoption nudge for multi-step tasks `fe2a3b5d`
+- **supervisor**: implement answer_only task classification `0694876c`
+- **compression**: include background state in summaries `19fe770b`
+
+### 🔧 Improvements & Optimizations
+
+- **websocket**: wrap handshake error in box `f81c3d33`
+- **websocket**: implement Callback trait for origin checks `b1d8c5d8`
+- **supervisor**: tighten evidence requirements for enumerated items `a27a2b6d`
+- **supervisor**: enhance tool output condensation `31407e4e`
+- **config**: increase compression pressure thresholds `0cc1a38f`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: prevent verify-gate bypass after compaction `f8430671`
+- **compression**: account for cache-less providers in benefit calc `081b2093`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.42.1] - 2026-08-09
 
 ### 📋 Release Summary

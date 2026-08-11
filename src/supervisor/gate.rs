@@ -639,65 +639,39 @@ pub struct GateInput<'a> {
 	pub role_context: &'a str,
 }
 
-/// Verify a self-reported completion against [`GateInput`]. Verifies with the
-/// configured (ideally different-family) verifier model; when that model is
-/// unreachable (offline host, sealed network, missing key) it falls back to
-/// `active_model` — the session's own model, which by definition is reachable —
-/// because a same-family verification still catches far more than none. Fails
-/// open (PASS) only on empty input or when both models error — a verifier
-/// outage must never block the agent.
+/// Verify a self-reported completion against [`GateInput`]. Fails open (PASS)
+/// on empty input or LLM error — a verifier outage must never block the agent.
 pub async fn verify(
 	config: &Config,
 	input: GateInput<'_>,
-	active_model: &str,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Pass;
 	}
 	let user = render_gate_input(&input);
+	crate::log_debug!("Verify-gate input:\n{}", user);
 	// Verify with a deliberately separate (ideally different-family) model — a
 	// same-family verifier shares the generator's blind spots and rubber-stamps
-	// them.
+	// them. Strict config guarantees this is set; no fallback to the generator.
 	let model = config.supervisor.gate.verifier_model.clone();
 	match crate::supervisor::learning::extract::call_learning_llm(
 		config,
 		&model,
 		GATE_PROMPT.to_string(),
-		user.clone(),
+		user,
 		crate::supervisor::stats::CallKind::Gate,
-		operation_rx.clone(),
+		operation_rx,
 	)
 	.await
 	{
-		Ok(resp) => parse_verdict(&resp),
+		Ok(resp) => {
+			crate::log_debug!("Verify-gate response ({}):\n{}", model, resp);
+			parse_verdict(&resp)
+		}
 		Err(e) => {
-			if active_model.trim().is_empty() || active_model == model {
-				crate::log_info!("Verify-gate verifier '{}' failed, accepting: {}", model, e);
-				return GateVerdict::Pass;
-			}
-			crate::log_info!(
-				"Verify-gate verifier '{}' failed ({}); retrying with session model '{}'",
-				model,
-				e,
-				active_model
-			);
-			match crate::supervisor::learning::extract::call_learning_llm(
-				config,
-				active_model,
-				GATE_PROMPT.to_string(),
-				user,
-				crate::supervisor::stats::CallKind::Gate,
-				operation_rx,
-			)
-			.await
-			{
-				Ok(resp) => parse_verdict(&resp),
-				Err(e2) => {
-					crate::log_info!("Verify-gate fallback also failed, accepting: {}", e2);
-					GateVerdict::Pass
-				}
-			}
+			crate::log_info!("Verify-gate verifier '{}' failed, accepting: {}", model, e);
+			GateVerdict::Pass
 		}
 	}
 }

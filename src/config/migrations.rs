@@ -242,12 +242,11 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	toml::from_str::<toml::Value>(&migration.content)
 		.context("Migrated config is not valid TOML - aborting upgrade")?;
 
-	config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
+	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
 
 	println!(
-		"✅ Config upgraded successfully! Backup saved to: {}.v{}.bak",
-		config_path.display(),
-		migration.from_version
+		"✅ Config upgraded successfully! Backup saved to: {}",
+		backup_path.display()
 	);
 
 	Ok(true)
@@ -257,6 +256,17 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 mod tests {
 	use super::*;
 	use crate::config::CURRENT_CONFIG_VERSION;
+
+	/// Backups sitting next to `config_path`. The naming scheme is octolib's, so
+	/// tests here only ever ask whether a backup was made, never what it's called.
+	fn backups(config_path: &Path) -> Vec<std::path::PathBuf> {
+		let parent = config_path.parent().expect("config path must have a parent");
+		fs::read_dir(parent)
+			.expect("config directory must be readable")
+			.map(|entry| entry.expect("directory entry must be readable").path())
+			.filter(|path| path.extension().is_some_and(|extension| extension == "bak"))
+			.collect()
+	}
 
 	/// The Rust-side constant and the template must never disagree: the
 	/// constant is what the rest of the codebase compares against.
@@ -587,11 +597,15 @@ target_ratio = 4.0
 		fs::write(&config_path, original).unwrap();
 
 		assert!(check_and_upgrade_config(&config_path).unwrap());
-		let backup = dir.join("config.toml.v1.bak");
+		let backup = match backups(&config_path).as_slice() {
+			[backup] => backup.clone(),
+			other => panic!("upgrade should leave exactly one backup, got {other:?}"),
+		};
 		assert_eq!(fs::read_to_string(&backup).unwrap(), original);
 
 		// Second run must be a no-op: nothing to migrate, backup untouched.
 		assert!(!check_and_upgrade_config(&config_path).unwrap());
+		assert_eq!(backups(&config_path), vec![backup.clone()]);
 		assert_eq!(fs::read_to_string(&backup).unwrap(), original);
 
 		let migrated: toml::Value =

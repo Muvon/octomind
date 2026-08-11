@@ -292,23 +292,9 @@ Automatic context compression system.
 | `hints_min_interval` | usize | `5` | Minimum tool executions between hints |
 | `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
 | `analysis_findings_max_tokens` | usize | `4000` | Hard token budget for retained analysis findings; `0` disables retention |
+| `threshold` | usize | `90000` | Single compression trigger in absolute tokens; `0` disables compression |
 
-> **Disabling compression:** if `[[compression.pressure_levels]]` is empty, compression is disabled entirely and the compression-model validation is skipped. Independently, `max_session_tokens_threshold` (see Performance & Limits) acts as a hard token ceiling separate from these pressure levels.
-
-### `[[compression.pressure_levels]]`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `threshold` | usize | Token count threshold to trigger compression |
-| `target_ratio` | f64 | Compression strength (2.0 = 50% reduction, 4.0 = 75%, 8.0 = 87.5%) |
-
-Default pressure levels:
-
-| Threshold | Target Ratio | Effect |
-|-----------|-------------|--------|
-| `60000` | `2.0` | Light: 50% reduction |
-| `120000` | `4.0` | Medium: 75% reduction |
-| `160000` | `8.0` | Aggressive: 87.5% reduction |
+> **Depth is computed, not configured.** Once context exceeds `threshold`, how deep each compression goes is derived per cycle from the measured session growth rate and the context ceiling — the lower of `max_session_tokens_threshold` (see Performance & Limits) and the session model's usable window. The derived ratio always lands in [2.0, 16.0].
 ### `[compression.decision]`
 
 Model used for compression decisions and summary generation.
@@ -331,18 +317,7 @@ hints_pressure_threshold = 0.7
 hints_min_interval = 5
 knowledge_retention = 25
 analysis_findings_max_tokens = 4000
-
-[[compression.pressure_levels]]
-threshold = 60000
-target_ratio = 2.0
-
-[[compression.pressure_levels]]
-threshold = 120000
-target_ratio = 4.0
-
-[[compression.pressure_levels]]
-threshold = 160000
-target_ratio = 8.0
+threshold = 90000
 
 [compression.decision]
 model = "openai:gpt-5-mini"

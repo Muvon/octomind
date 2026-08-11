@@ -18,11 +18,19 @@
 
 use super::super::McpFunction;
 use super::plan::get_plan_function;
+use super::recall::get_recall_function;
 
-// Core builtin tool — the universal self-management primitive `plan`.
-// Delegation (`tap`) and session control (`schedule`) are the `orchestration`
-// builtin server; tool-surface controls (`mcp`, `agent`, `skill`, `capability`)
-// are the `runtime` builtin server.
-pub fn get_all_functions() -> Vec<McpFunction> {
-	vec![get_plan_function()]
+// Core builtin tools — the universal self-management primitives `plan` and
+// `recall`. Delegation (`tap`) and session control (`schedule`) are the
+// `orchestration` builtin server; tool-surface controls (`mcp`, `agent`,
+// `skill`, `capability`) are the `runtime` builtin server.
+pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
+	let mut functions = vec![get_plan_function()];
+	// `recall` dereferences the PACT block registry; the sidecar index is only
+	// written when the attention/governance machinery runs, so don't advertise
+	// a tool that could only error.
+	if config.compression.attention.enabled || config.compression.attention.governance.enabled {
+		functions.push(get_recall_function());
+	}
+	functions
 }

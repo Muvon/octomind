@@ -1926,6 +1926,9 @@ mod tests {
 
 	#[test]
 	fn generate_session_name_format() {
+		// Format: YYMMDD-<basename>-HHMM-<uuid4>. The basename is the working
+		// directory name and may itself contain dashes, so parse from the ends
+		// instead of by dash position.
 		let name = generate_session_name();
 		let parts: Vec<&str> = name.split('-').collect();
 		assert!(
@@ -1945,12 +1948,12 @@ mod tests {
 			"date part should be all digits, got: {date_part}"
 		);
 
-		// Second part: basename (directory name, non-empty)
-		let basename_part = parts[1];
-		assert!(!basename_part.is_empty(), "basename should not be empty");
+		// Middle: basename (directory name, non-empty, may contain dashes)
+		let basename = parts[1..parts.len() - 2].join("-");
+		assert!(!basename.is_empty(), "basename should not be empty");
 
-		// Third part: HHMM (4 digits)
-		let time_part = parts[2];
+		// Second-to-last part: HHMM (4 digits)
+		let time_part = parts[parts.len() - 2];
 		assert_eq!(
 			time_part.len(),
 			4,
@@ -1961,8 +1964,8 @@ mod tests {
 			"time part should be all digits, got: {time_part}"
 		);
 
-		// Fourth part: uuid4 (4 hex chars)
-		let uuid_part = parts[3];
+		// Last part: uuid4 (4 hex chars)
+		let uuid_part = parts[parts.len() - 1];
 		assert_eq!(
 			uuid_part.len(),
 			4,

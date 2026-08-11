@@ -38,13 +38,17 @@ mod schema;
 //   prompt internally via `prompt::build_compression_prompt`).
 // - `apply::{apply_compression, collect_preserved_skills}` materialises the
 //   chosen drain range against the session.
-// - `decision::{calculate_compression_net_benefit, calculate_adaptive_compression_ratio}`
-//   is the cost/benefit math driving the should-we-compress gate.
+// - `decision::{calculate_compression_net_benefit, compression_depth, ...}`
+//   is the cost/benefit math and the adaptive depth controller driving the
+//   should-we-compress gate.
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
 use ai::ask_ai_decision_and_summary;
 use apply::{apply_compression, collect_preserved_skills};
-use decision::{calculate_adaptive_compression_ratio, calculate_compression_net_benefit};
+use decision::{
+	calculate_compression_net_benefit, compression_depth, context_ceiling, measured_growth_rate,
+	session_runway, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
+};
 use range::{calculate_range_tokens, find_compression_range};
 
 use crate::config::Config;
@@ -53,25 +57,12 @@ use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
-/// Select which pressure level (ratio) to apply for THIS compression.
-///
-/// `consecutive_compressions` is a pure cursor into the pressure-level ladder —
-/// 0 on the first compression after any user message (lightest ratio), advancing
-/// one step per *autonomous* (no-user-message) compression and wrapping back to 0
-/// after the strongest level. The token-count floor (`base_idx`, computed by the
-/// caller) only gates WHETHER we compress; it deliberately does NOT pick the ratio.
-///
-/// `num_levels` must be > 0 (caller guarantees a non-empty `pressure_levels`).
-fn select_compression_level_index(num_levels: usize, consecutive_compressions: u32) -> usize {
-	debug_assert!(
-		num_levels > 0,
-		"caller must guarantee at least one pressure level"
-	);
-	(consecutive_compressions as usize) % num_levels
-}
-
 /// Check if we should ask AI about compression
 /// Returns (should_compress, target_ratio) tuple
+///
+/// ADAPTIVE CONTROLLER: one configured fire line, one physical ceiling; depth
+/// is computed per cycle from measured session dynamics (see
+/// `decision::compression_depth`) instead of a configured ratio ladder.
 ///
 /// CACHE-AWARE: Uses amortized cost analysis to determine if compression is profitable
 /// considering cache invalidation costs vs. future savings over estimated remaining turns
@@ -80,95 +71,43 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	// This ensures consistency with display and all other systems
 	let current_tokens = session.get_full_context_tokens(config).await;
 
-	// HARD CEILING: max_session_tokens_threshold is the user's explicit safety limit.
-	// When set and exceeded, force compression unconditionally — no cooldown, no cost
-	// analysis, no "won't bring below threshold" checks. This is the last line of defense.
-	if config.max_session_tokens_threshold > 0
-		&& current_tokens >= config.max_session_tokens_threshold
-	{
-		let ratio = config
-			.compression
-			.pressure_levels
-			.iter()
-			.map(|l| l.target_ratio)
-			.fold(2.0_f64, f64::max);
+	if config.compression.threshold == 0 {
+		log_debug!("Compression disabled (compression.threshold = 0)");
+		return (false, MIN_COMPRESSION_RATIO);
+	}
+
+	// HARD CEILING: the lower of the user's explicit safety limit and the model's
+	// physical window. When exceeded, force the deepest compression unconditionally
+	// — no cooldown, no cost analysis, no feasibility checks. Last line of defense.
+	let ceiling = context_ceiling(session, config);
+	if current_tokens >= ceiling {
 		log_debug!(
-			"Max session token threshold exceeded ({} >= {}) - FORCE triggering compression with ratio {:.1}x (bypasses all gates)",
+			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x, bypasses all gates)",
 			current_tokens,
-			config.max_session_tokens_threshold,
-			ratio
+			ceiling,
+			MAX_COMPRESSION_RATIO
 		);
-		return (true, ratio);
+		return (true, MAX_COMPRESSION_RATIO);
 	}
 
-	// Check if we have any pressure levels configured
-	if config.compression.pressure_levels.is_empty() {
-		log_debug!("No pressure levels configured - compression disabled");
-		return (false, 2.0);
-	}
-
-	log_debug!(
-		"Compression check: current_tokens={}, thresholds={:?}",
-		current_tokens,
-		config
-			.compression
-			.pressure_levels
-			.iter()
-			.map(|l| l.threshold)
-			.collect::<Vec<_>>()
-	);
-
-	// RATIO SELECTION: token count gates WHETHER to compress (find the highest
-	// matched pressure level); the ratio LEVEL itself is a pure incremental cursor
-	// driven by consecutive_compressions (see select_compression_level_index).
-	let num_levels = config.compression.pressure_levels.len();
-	if num_levels == 0 {
-		log_debug!("No pressure levels configured - compression disabled");
-		return (false, 2.0);
-	}
-
-	// Find the index of the highest threshold that current_tokens exceeds.
-	let matched_idx = config
+	// FIRE LINE: the configured threshold, pulled down when the model window is
+	// small so at least MIN_RUNWAY_TURNS turns of measured growth still fit
+	// between the fire line and the ceiling.
+	let growth = measured_growth_rate(&session.session.info);
+	let fire_line = config
 		.compression
-		.pressure_levels
-		.iter()
-		.enumerate()
-		.filter(|(_, l)| current_tokens >= l.threshold)
-		.max_by(|(_, a), (_, b)| a.threshold.cmp(&b.threshold))
-		.map(|(i, _)| i);
+		.threshold
+		.min(ceiling.saturating_sub((growth * MIN_RUNWAY_TURNS) as usize));
 
-	let (matched_idx, level) = match matched_idx {
-		Some(base_idx) => {
-			let n = session.session.info.consecutive_compressions;
-			let level_idx = select_compression_level_index(num_levels, n);
-			(base_idx, &config.compression.pressure_levels[level_idx])
-		}
-		None => {
-			log_debug!(
-				"No threshold exceeded (current: {}, lowest threshold: {})",
-				current_tokens,
-				config
-					.compression
-					.pressure_levels
-					.first()
-					.map(|l| l.threshold)
-					.unwrap_or(0)
-			);
-			return (false, 2.0);
-		}
-	};
-
-	// ADAPTIVE COMPRESSION RATIO: Adjust based on session patterns
-	let adjusted_ratio = calculate_adaptive_compression_ratio(session, level.target_ratio);
-
-	log_debug!(
-		"✓ Threshold exceeded! Context tokens: {} → base compression: {:.1}x → adaptive: {:.1}x (matched threshold: {}, escalated level: {})",
-		current_tokens,
-		level.target_ratio,
-		adjusted_ratio,
-		config.compression.pressure_levels[matched_idx].threshold,
-		level.threshold
-	);
+	if current_tokens < fire_line {
+		log_debug!(
+			"Below compression fire line (current: {}, fire line: {}, ceiling: {})",
+			current_tokens,
+			fire_line,
+			ceiling
+		);
+		return (false, MIN_COMPRESSION_RATIO);
+	}
 
 	// EXPONENTIAL COOLDOWN: Each consecutive compression (without a user message)
 	// doubles the required token growth before re-compression is allowed.
@@ -194,7 +133,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 				min_tokens_for_recompression,
 				tokens_after_last
 			);
-			return (false, 2.0);
+			return (false, MIN_COMPRESSION_RATIO);
 		}
 	}
 
@@ -205,68 +144,66 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		session.session.info.consecutive_compressions
 	);
 
+	// ADAPTIVE DEPTH: pick the post-compression target from measured dynamics.
+	// Pure math over the drain range — no API cost, so it runs before the cost
+	// gate and its derived ratio feeds the pricing analysis.
+	let (start_idx, end_idx) = match find_compression_range(&session.session.messages, false) {
+		Ok(range) => range,
+		Err(e) => {
+			log_debug!("Failed to find compression range: {}", e);
+			return (false, MIN_COMPRESSION_RATIO);
+		}
+	};
+
+	if start_idx >= end_idx {
+		log_debug!(
+			"Invalid compression range ({} >= {}), setting cooldown to prevent re-analysis loop",
+			start_idx,
+			end_idx
+		);
+		session.session.info.context_tokens_after_last_compression = current_tokens;
+		return (false, MIN_COMPRESSION_RATIO);
+	}
+
+	// Count only start_idx+1..=end_idx — the anchor at start_idx is kept
+	let compressible_tokens = match calculate_range_tokens(session, start_idx + 1, end_idx) {
+		Ok(tokens) => tokens,
+		Err(e) => {
+			log_debug!("Failed to calculate range tokens: {}", e);
+			return (false, MIN_COMPRESSION_RATIO);
+		}
+	};
+
+	let runway = session_runway(&session.session.info);
+	let Some(adjusted_ratio) = compression_depth(
+		current_tokens,
+		compressible_tokens,
+		fire_line,
+		ceiling,
+		growth,
+		runway,
+	) else {
+		// Even the deepest fold cannot land usefully below the fire line —
+		// re-firing immediately would burn a paid call for nothing. Cooldown.
+		log_debug!(
+			"No feasible compression depth (current={}, compressible={}, fire_line={}). Setting cooldown.",
+			current_tokens,
+			compressible_tokens,
+			fire_line
+		);
+		session.session.info.context_tokens_after_last_compression = current_tokens;
+		return (false, MIN_COMPRESSION_RATIO);
+	};
+
 	// CACHE-AWARE DECISION: Calculate if compression is profitable
 	let net_benefit =
 		calculate_compression_net_benefit(session, config, current_tokens, adjusted_ratio).await;
 
 	if net_benefit > 0.0 {
-		// Verify compression will actually reduce context meaningfully
-		let (start_idx, end_idx) = match find_compression_range(&session.session.messages, false) {
-			Ok(range) => range,
-			Err(e) => {
-				log_debug!("Failed to find compression range: {}", e);
-				return (false, 2.0);
-			}
-		};
-
-		if start_idx >= end_idx {
-			log_debug!(
-				"Invalid compression range ({} >= {}), setting cooldown to prevent re-analysis loop",
-				start_idx,
-				end_idx
-			);
-			session.session.info.context_tokens_after_last_compression = current_tokens;
-			return (false, 2.0);
-		}
-
-		// Count only start_idx+1..=end_idx — the anchor at start_idx is kept
-		let compressible_tokens = match calculate_range_tokens(session, start_idx + 1, end_idx) {
-			Ok(tokens) => tokens,
-			Err(e) => {
-				log_debug!("Failed to calculate range tokens: {}", e);
-				return (false, 2.0);
-			}
-		};
-
-		let estimated_compressed_size = (compressible_tokens as f64 / adjusted_ratio) as u64;
-		let estimated_after_compression = (current_tokens as u64)
-			.saturating_sub(compressible_tokens)
-			.saturating_add(estimated_compressed_size);
-
-		// Use the matched (trigger) threshold for the feasibility check, not the
-		// escalated level's threshold. The goal is to drop below the threshold that
-		// actually fired — the escalated level may have a higher threshold and would
-		// incorrectly pass contexts that compression cannot meaningfully reduce.
-		let trigger_threshold = config.compression.pressure_levels[matched_idx].threshold as u64;
-		if estimated_after_compression >= trigger_threshold {
-			log_debug!(
-				"Compression won't bring context below trigger threshold: {} → {} (threshold: {}). Compressible: {} → {}. Setting cooldown.",
-				current_tokens,
-				estimated_after_compression,
-				trigger_threshold,
-				compressible_tokens,
-				estimated_compressed_size
-			);
-			session.session.info.context_tokens_after_last_compression = current_tokens;
-			return (false, 2.0);
-		}
-
 		log_debug!(
-			"Cache-aware analysis: Net benefit ${:.5} → COMPRESS (will reduce {} → {} tokens, below threshold {})",
+			"Cache-aware analysis: Net benefit ${:.5} → COMPRESS at {:.1}x",
 			net_benefit,
-			current_tokens,
-			estimated_after_compression,
-			trigger_threshold
+			adjusted_ratio
 		);
 		(true, adjusted_ratio)
 	} else {
@@ -274,7 +211,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			"Cache-aware analysis: Net benefit ${:.5} → SKIP (would lose money)",
 			net_benefit
 		);
-		(false, 2.0)
+		(false, MIN_COMPRESSION_RATIO)
 	}
 }
 
@@ -317,27 +254,23 @@ pub async fn check_and_compress_conversation(
 		return Ok(false);
 	}
 
-	// When max_session_tokens_threshold is exceeded, force compression — AI cannot refuse.
-	// This is the user's explicit safety ceiling; the decision model has no veto here.
-	let force_ceiling = config.max_session_tokens_threshold > 0 && {
+	// When the context ceiling is exceeded, force compression — AI cannot refuse.
+	// The ceiling is the user's explicit safety limit or the model's physical
+	// window, whichever is lower; the decision model has no veto here.
+	let force_ceiling = {
 		let current_tokens = session.get_full_context_tokens(config).await;
-		current_tokens >= config.max_session_tokens_threshold
+		current_tokens >= context_ceiling(session, config)
 	};
 	let force = force_done || force_ceiling;
 
-	// /done uses the fixed level-1 pressure ratio (no adaptive adjustment). The
-	// hard-ceiling force must NOT fall into that branch: should_check_compression
-	// already computed the STRONGEST configured ratio for the ceiling case, and
-	// substituting the gentlest one would under-compress a session that is over
-	// the user's explicit safety limit, looping gentle forced compressions.
-	// Regular automatic compressions use the adaptive ratio as computed.
+	// /done uses the gentlest fixed ratio: it's a task boundary, so there are no
+	// session dynamics to project onto the next task. The hard-ceiling force must
+	// NOT fall into that branch: should_check_compression already computed the
+	// DEEPEST ratio for the ceiling case, and substituting the gentlest one would
+	// under-compress a session that is over the safety limit, looping gentle
+	// forced compressions. Regular automatic compressions use the computed depth.
 	let target_ratio = if force_done {
-		config
-			.compression
-			.pressure_levels
-			.first()
-			.map(|l| l.target_ratio)
-			.unwrap_or(2.0)
+		MIN_COMPRESSION_RATIO
 	} else {
 		computed_ratio
 	};

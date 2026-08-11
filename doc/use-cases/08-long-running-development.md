@@ -100,17 +100,18 @@ As sessions grow, context management becomes important:
 `/done` forces it now, automatic compression waits for a threshold. `/run reduce` is a
 separate, configurable ACP layer command and is independent of that engine.
 
-**How automatic compression decides to fire.** Each `[[compression.pressure_levels]]`
-entry has an *absolute* `threshold` (a token count) and a `target_ratio`. When the
-full-context token count exceeds any configured threshold, compression triggers using
-the highest matched ratio. Critical knowledge (decisions, constraints, preferences) is
-extracted and re-injected so it survives every compression.
+**How automatic compression decides to fire.** `compression.threshold` is a single
+*absolute* token count. When the full-context token count exceeds it, compression
+becomes eligible; how deep each compression goes is computed per cycle from the
+measured session growth rate and the context ceiling — hot sessions compress deeply,
+winding-down sessions gently. Critical knowledge (decisions, constraints, preferences)
+is extracted and re-injected so it survives every compression.
 
-Above all sits the root-level `max_session_tokens_threshold` (default `200000`). This
-is a hard ceiling: once the context reaches it, compression is forced unconditionally --
-bypassing the cooldown and cost guards that govern ordinary pressure-level compressions.
-It is the single most important knob to tune for genuinely long sessions; set it `0` to
-disable the session-token limit entirely. See
+Above all sits the context ceiling: the lower of the root-level
+`max_session_tokens_threshold` (default `200000`) and the session model's usable
+window. Once the context reaches it, compression is forced unconditionally --
+bypassing the cooldown and cost guards that govern ordinary compressions. Set
+`max_session_tokens_threshold = 0` to rely on the model window alone. See
 [Context Compression](../usage/08-compression.md) for the full mechanics.
 
 **Why a second `/done` may report nothing to compress.** `/done` *forces* compression,
@@ -234,10 +235,7 @@ Long sessions can accumulate significant costs. Monitor with `/info`.
 [compression]
 hints_enabled = true
 knowledge_retention = 10
-
-[[compression.pressure_levels]]
 threshold = 60000
-target_ratio = 2.0
 ```
 
 This keeps context manageable while preserving critical decisions.

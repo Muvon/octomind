@@ -1129,10 +1129,10 @@ pub async fn run_interactive_session(
 			// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
 			// AI decides if compression is beneficial based on conversation history
 			//
-			// LEVEL CURSOR RESET: A new user message restarts the incremental pressure-
-			// level ladder. Reset BEFORE the compression check so any compression this
-			// turn applies the lightest level (0); the counter only increments during
-			// autonomous (no-user-message) work via apply_compression.
+			// COOLDOWN RESET: A new user message restarts the exponential re-compression
+			// cooldown (consecutive_compressions doubles the required growth each
+			// autonomous cycle). Reset BEFORE the compression check; the counter only
+			// increments during autonomous (no-user-message) work via apply_compression.
 			let system_managed_input = injected_source
 				.as_ref()
 				.is_some_and(|source| source.is_system_managed());

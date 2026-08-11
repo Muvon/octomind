@@ -306,57 +306,119 @@ pub(super) fn get_model_pricing(
 	provider.get_model_pricing(model_name)
 }
 
-/// Calculate adaptive compression ratio based on session patterns
-///
-/// If session has high growth rate (active exploration), compress more aggressively
-/// If session is winding down (low activity), compress less aggressively
-/// Also considers how far we are from the next threshold
-pub(super) fn calculate_adaptive_compression_ratio(session: &ChatSession, base_ratio: f64) -> f64 {
-	let info = &session.session.info;
-	let current_api_calls = info.total_api_calls as f64;
+/// Below this ratio a paid summarize call frees too little context to be worth
+/// the round-trip and the cache invalidation it causes.
+pub(super) const MIN_COMPRESSION_RATIO: f64 = 2.0;
 
-	if current_api_calls < 5.0 {
-		// Early session: trust the base ratio
-		return base_ratio;
+/// Above this ratio the summary can no longer carry the evidence the folded
+/// units must cite; deeper reduction destroys attribution instead of saving it.
+pub(super) const MAX_COMPRESSION_RATIO: f64 = 16.0;
+
+/// A compression must buy at least this many turns before re-firing, or the
+/// cost analysis (and the paid call itself) is meaningless. Also the floor for
+/// runway projections when a session is too young to have a symmetry signal.
+pub(super) const MIN_RUNWAY_TURNS: f64 = 5.0;
+
+/// Usable context ceiling: the hard cap the session must never cross.
+/// The lower of the user's explicit safety limit (when set) and the session
+/// model's physical window minus the reserved completion budget. A session
+/// model that doesn't resolve to a provider contributes no physical bound
+/// (such a session cannot make API calls anyway).
+pub(super) fn context_ceiling(session: &ChatSession, config: &crate::config::Config) -> usize {
+	let model_bound = crate::session::model_max_input_tokens(&session.model)
+		.map(|window| window.saturating_sub(config.max_tokens as usize));
+	match (config.max_session_tokens_threshold, model_bound) {
+		(0, Some(bound)) => bound,
+		(0, None) => usize::MAX,
+		(configured, Some(bound)) => configured.min(bound),
+		(configured, None) => configured,
+	}
+}
+
+/// Measured context growth per API call — output tokens only, since input
+/// re-bills the whole cached context and isn't new growth.
+///
+/// INCREMENTAL vs LIFETIME: after a compression we have a checkpoint; use only
+/// the tokens/calls since it — the session may have changed intensity. Fall
+/// back to the lifetime average before the first compression.
+pub(super) fn measured_growth_rate(info: &crate::session::SessionInfo) -> f64 {
+	if info.compression_stats.conversation_compressions > 0 {
+		let calls_since = (info.total_api_calls - info.api_calls_at_last_compression).max(1) as f64;
+		let output_since = info
+			.output_tokens
+			.saturating_sub(info.output_tokens_at_last_compression) as f64;
+		(output_since / calls_since).max(1.0)
+	} else {
+		(info.output_tokens as f64 / (info.total_api_calls as f64).max(1.0)).max(1.0)
+	}
+}
+
+/// Predicted remaining calls for depth selection: the symmetry estimate
+/// (work remaining ≈ work done) corrected by the self-tuning accuracy of the
+/// last prediction. Unlike `estimate_future_turns` this deliberately has no
+/// physical-ceiling term — the ceiling is what depth selection is solving for.
+pub(super) fn session_runway(info: &crate::session::SessionInfo) -> f64 {
+	let symmetry = info.total_api_calls as f64;
+	(symmetry * calculate_self_tuning_accuracy(info)).max(MIN_RUNWAY_TURNS)
+}
+
+/// Compute the compression ratio from measured session dynamics — the ladder
+/// replacement. Picks the post-compression token target directly:
+///
+///   desired_after = ceiling − runway × growth
+///
+/// i.e. leave exactly enough headroom for the predicted remainder of the
+/// session — a hot session compresses deep, a winding-down session compresses
+/// gently. The target is clamped between the deepest and gentlest achievable
+/// sizes and must land at least MIN_RUNWAY_TURNS × growth below the fire line
+/// (a compression that refires immediately is worse than none).
+///
+/// Returns the derived ratio (∈ [MIN_COMPRESSION_RATIO, MAX_COMPRESSION_RATIO]
+/// by construction), or None when even the deepest fold cannot land below the
+/// re-fire bound — the caller sets the cooldown and skips.
+pub(super) fn compression_depth(
+	current_tokens: usize,
+	compressible_tokens: u64,
+	fire_line: usize,
+	ceiling: usize,
+	growth: f64,
+	runway: f64,
+) -> Option<f64> {
+	if compressible_tokens == 0 {
+		return None;
+	}
+	let compressible = compressible_tokens as f64;
+	let surviving = (current_tokens as f64 - compressible).max(0.0);
+	let deepest_after = surviving + compressible / MAX_COMPRESSION_RATIO;
+	let gentlest_after = surviving + compressible / MIN_COMPRESSION_RATIO;
+
+	let refire_bound = fire_line as f64 - growth * MIN_RUNWAY_TURNS;
+	let upper = gentlest_after.min(refire_bound);
+	if deepest_after > upper {
+		return None;
 	}
 
-	// Tool density indicates activity level
-	let tool_density = info.tool_calls as f64 / current_api_calls;
-	let has_plan = crate::mcp::core::plan::core::has_active_plan();
-
-	// Determine adjustment factor
-	let adjustment = if has_plan {
-		// Active plan = longer session expected = compress more aggressively
-		1.2
-	} else if tool_density > 2.5 {
-		// High tool activity = active exploration = compress more
-		1.15
-	} else if tool_density > 1.0 {
-		// Normal activity = use base ratio
-		1.0
-	} else if tool_density > 0.3 {
-		// Low activity = winding down = compress less
-		0.9
-	} else {
-		// Very low activity = session ending soon = minimal compression
-		0.8
-	};
-
-	let adaptive_ratio = base_ratio * adjustment;
-
-	// Clamp to reasonable range (1.5x to 4x compression)
-	let final_ratio = adaptive_ratio.clamp(1.5, 4.0);
+	let desired_after = ceiling as f64 - runway * growth;
+	let target_after = desired_after.clamp(deepest_after, upper);
+	let ratio = compressible / (target_after - surviving);
 
 	crate::log_debug!(
-		"Adaptive compression ratio: base={:.1}, adjustment={:.2}, tool_density={:.2}, has_plan={}, final={:.1}",
-		base_ratio,
-		adjustment,
-		tool_density,
-		has_plan,
-		final_ratio
+		"Computed compression depth: current={}, compressible={:.0}, surviving={:.0}, \
+		growth={:.0} tok/call, runway={:.1} calls, desired_after={:.0}, \
+		band=[{:.0}, {:.0}], target_after={:.0} → ratio {:.1}x",
+		current_tokens,
+		compressible,
+		surviving,
+		growth,
+		runway,
+		desired_after,
+		deepest_after,
+		upper,
+		target_after,
+		ratio
 	);
 
-	final_ratio
+	Some(ratio)
 }
 
 /// Estimate remaining API calls in this session.
@@ -389,24 +451,9 @@ pub(super) fn estimate_future_turns(session: &ChatSession, headroom: f64) -> f64
 	let info = &session.session.info;
 	let api_calls = info.total_api_calls as f64;
 
-	// Growth rate: output tokens per call — pure new content added each turn.
-	// Output (not input) because input includes the full cached context on every call,
-	// which inflates per-call cost but isn't new growth.
-	//
-	// INCREMENTAL vs LIFETIME: After a compression we have a checkpoint. Use only
-	// the tokens/calls since that checkpoint — the session may have changed intensity
-	// (heavy exploration early, lighter review later, or vice versa). Lifetime average
-	// would carry stale signal from the pre-compression phase.
-	// Fall back to lifetime average before the first compression (no checkpoint yet).
-	let growth_rate = if info.compression_stats.conversation_compressions > 0 {
-		let calls_since = (info.total_api_calls - info.api_calls_at_last_compression).max(1) as f64;
-		let output_since = info
-			.output_tokens
-			.saturating_sub(info.output_tokens_at_last_compression) as f64;
-		(output_since / calls_since).max(1.0)
-	} else {
-		(info.output_tokens as f64 / api_calls.max(1.0)).max(1.0)
-	};
+	// Growth rate: output tokens per call — pure new content added each turn
+	// (see measured_growth_rate for the incremental-vs-lifetime rationale).
+	let growth_rate = measured_growth_rate(info);
 
 	// Physical ceiling: headroom / growth_rate — exact math, no constants.
 	// Tells us precisely how many more calls fit before the threshold is hit again.
@@ -434,7 +481,7 @@ pub(super) fn estimate_future_turns(session: &ChatSession, headroom: f64) -> f64
 	// actual_turns / predicted_turns = how wrong we were → apply directly.
 	// Clamp to [0.25, 4.0]: one bad cycle shouldn't dominate all future estimates.
 	let accuracy = calculate_self_tuning_accuracy(info);
-	let adjusted = (estimate * accuracy).max(5.0); // min=5: cooldown must be meaningful
+	let adjusted = (estimate * accuracy).max(MIN_RUNWAY_TURNS); // cooldown must be meaningful
 
 	crate::log_debug!(
 		"Future calls estimation: api_calls={:.0}, growth_rate={:.0} tok/call ({}), \
@@ -516,6 +563,34 @@ mod tests {
 	#[test]
 	fn accuracy_is_neutral_before_the_first_compression() {
 		assert_eq!(calculate_self_tuning_accuracy(&SessionInfo::default()), 1.0);
+	}
+
+	#[test]
+	fn growth_rate_uses_incremental_checkpoint_after_compression() {
+		let mut info = SessionInfo {
+			total_api_calls: 40,
+			output_tokens: 100_000,
+			api_calls_at_last_compression: 30,
+			output_tokens_at_last_compression: 90_000,
+			..Default::default()
+		};
+		info.compression_stats.conversation_compressions = 1;
+		// 10k output over 10 calls since the checkpoint — not the lifetime 2.5k.
+		assert_eq!(measured_growth_rate(&info), 1_000.0);
+
+		info.compression_stats.conversation_compressions = 0;
+		assert_eq!(measured_growth_rate(&info), 2_500.0);
+	}
+
+	#[test]
+	fn runway_floors_at_minimum_and_scales_with_accuracy() {
+		// Fresh session: no symmetry signal yet — the floor applies.
+		assert_eq!(session_runway(&SessionInfo::default()), MIN_RUNWAY_TURNS);
+
+		// 110 calls made; the last prediction overestimated 2x (predicted 20,
+		// got 10) → symmetry scaled down by the measured 0.5 accuracy.
+		let info = info_after_compression(20.0, 100, 110);
+		assert!((session_runway(&info) - 55.0).abs() < 1e-9);
 	}
 
 	#[test]

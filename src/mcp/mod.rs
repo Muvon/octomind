@@ -357,8 +357,12 @@ async fn server_functions_for(
 ) -> Vec<McpFunction> {
 	match server.connection_type() {
 		McpConnectionType::Builtin => match server.name() {
+			// Uncached (like `agent`): the core list depends on config — the
+			// process-wide INTERNAL_FUNCTION_CACHE keys only on server+filter
+			// and would serve a stale list across differing configs.
 			"core" => {
-				get_filtered_server_functions("core", server.tools(), core::get_all_functions)
+				let fns = core::get_all_functions(config);
+				filter_tools_by_patterns(fns, server.tools())
 			}
 			"runtime" => {
 				get_filtered_server_functions("runtime", server.tools(), runtime::get_all_functions)
@@ -683,6 +687,9 @@ async fn route_builtin_tool(
 				"plan" => core::execute_plan(call)
 					.await
 					.map_err(|e| format!("Plan execution failed: {}", e)),
+				"recall" => core::recall::execute_recall(call)
+					.await
+					.map_err(|e| format!("Recall failed: {}", e)),
 				other => {
 					return Err(anyhow::anyhow!(
 						"Tool '{}' not implemented in core server",

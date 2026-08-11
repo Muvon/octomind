@@ -52,11 +52,10 @@ impl Config {
 	/// either capability is acceptable — we only fail when the model
 	/// string itself is missing or unresolvable.
 	///
-	/// Skipped when compression is effectively disabled (no pressure
-	/// levels configured) — there is no compression call to validate
-	/// against.
+	/// Skipped when compression is effectively disabled (threshold = 0)
+	/// — there is no compression call to validate against.
 	fn validate_compression_model(&self) -> Result<()> {
-		if self.compression.pressure_levels.is_empty() {
+		if self.compression.threshold == 0 {
 			return Ok(());
 		}
 

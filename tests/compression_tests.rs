@@ -410,13 +410,10 @@ mod adaptive_compression_tests {
 		// Load isolated config to avoid race conditions
 		let (_temp_dir, config) = create_isolated_config();
 
-		// Create a session with enough messages to exceed lowest pressure level
+		// Create a session with enough messages to exceed the compression trigger
 		// We'll create a custom threshold for testing
 		let mut test_config = config.clone();
-		test_config.compression.pressure_levels = vec![octomind::config::PressureLevel {
-			threshold: 1000,
-			target_ratio: 2.0,
-		}];
+		test_config.compression.threshold = 1000;
 
 		let session = create_test_session(50); // Should generate > 1000 tokens
 
@@ -426,16 +423,16 @@ mod adaptive_compression_tests {
 
 		// Verify our test setup: full context > threshold, cache counter < threshold
 		assert!(
-			full_context > test_config.compression.pressure_levels[0].threshold,
+			full_context > test_config.compression.threshold,
 			"Full context ({}) should exceed threshold ({})",
 			full_context,
-			test_config.compression.pressure_levels[0].threshold
+			test_config.compression.threshold
 		);
 		assert!(
-			cache_counter < test_config.compression.pressure_levels[0].threshold,
+			cache_counter < test_config.compression.threshold,
 			"Cache counter ({}) should be below threshold ({}) for this test",
 			cache_counter,
-			test_config.compression.pressure_levels[0].threshold
+			test_config.compression.threshold
 		);
 
 		// The bug would use cache_counter (500) and return false
@@ -443,48 +440,22 @@ mod adaptive_compression_tests {
 
 		// We can't directly call should_check_compression without ChatSession,
 		// but we've verified the logic: full_context > threshold = should compress
-		assert!(full_context >= test_config.compression.pressure_levels[0].threshold);
+		assert!(full_context >= test_config.compression.threshold);
 	}
 
 	#[test]
-	fn test_compression_threshold_calculation() {
+	fn test_compression_threshold_configuration() {
 		let (_temp_dir, config) = create_isolated_config();
 
-		// Test that pressure levels are correctly configured
+		// The single adaptive trigger must be configured (0 would disable
+		// compression entirely) and sit at a realistic session size.
 		assert!(
-			!config.compression.pressure_levels.is_empty(),
-			"Pressure levels should be configured"
+			config.compression.threshold > 0,
+			"Compression threshold should be configured"
 		);
-
-		// Verify levels are in ascending order
-		let mut prev_threshold = 0;
-		for level in &config.compression.pressure_levels {
-			assert!(
-				level.threshold > prev_threshold,
-				"Pressure levels should be in ascending order"
-			);
-			assert!(
-				level.target_ratio >= 1.0,
-				"Target ratio should be >= 1.0 (compression factor)"
-			);
-			prev_threshold = level.threshold;
-		}
-	}
-
-	#[test]
-	fn test_pressure_levels_configuration() {
-		let (_temp_dir, config) = create_isolated_config();
-
-		// Verify pressure_levels are configured
 		assert!(
-			!config.compression.pressure_levels.is_empty(),
-			"Pressure levels should be configured"
-		);
-
-		// Verify first level is reasonable (should be around 50k)
-		assert!(
-			config.compression.pressure_levels[0].threshold >= 10000,
-			"First pressure level should be >= 10k tokens"
+			config.compression.threshold >= 10000,
+			"Compression threshold should be >= 10k tokens"
 		);
 	}
 

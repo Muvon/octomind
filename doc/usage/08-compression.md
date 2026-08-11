@@ -10,16 +10,16 @@ As sessions grow, token costs increase and context windows fill up. The compress
 3. Drains older exchanges into an AI-generated summary while re-injecting the most recent intent
 4. Retains critical knowledge across compressions
 
-Two related safety nets sit on top of the pressure-level engine:
-- **`max_session_tokens_threshold`** (root config, default `200000`) — a hard ceiling that force-compresses unconditionally once exceeded (see [The Hard Ceiling](#the-hard-ceiling)).
+Two related safety nets sit on top of the adaptive engine:
+- **The context ceiling** — the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's usable window; crossing it force-compresses unconditionally (see [The Hard Ceiling](#the-hard-ceiling)).
 - **Cache keepalive** — an opt-in subsystem that keeps the prompt cache warm during idle time (see [Cache Keepalive](#cache-keepalive)).
 
-> **Hints are not the compression engine.** The `hints_*` fields below only control a cosmetic `/plan next` suggestion shown when an active plan exists. They do **not** gate automatic compression — the engine is driven solely by `pressure_levels` and `max_session_tokens_threshold`.
+> **Hints are not the compression engine.** The `hints_*` fields below only control a cosmetic `/plan next` suggestion shown when an active plan exists. They do **not** gate automatic compression — the engine is driven solely by `compression.threshold` and the context ceiling.
 
 ## Configuration
 
 ```toml
-# Root config field — the hard compression ceiling (0 = disabled)
+# Root config field — the user half of the hard compression ceiling (0 = model window only)
 max_session_tokens_threshold = 200000
 
 [compression]
@@ -29,17 +29,10 @@ hints_pressure_threshold = 0.7
 hints_min_interval = 5
 knowledge_retention = 10
 
-[[compression.pressure_levels]]
-threshold = 60000
-target_ratio = 2.0    # Light: 50% reduction
-
-[[compression.pressure_levels]]
-threshold = 120000
-target_ratio = 4.0    # Medium: 75% reduction
-
-[[compression.pressure_levels]]
-threshold = 160000
-target_ratio = 8.0    # Aggressive: 87.5% reduction (clamped to 4.0x for automatic compression — see below)
+# The single compression trigger, in absolute tokens (0 = compression disabled).
+# Depth is NOT configured — it is computed per cycle from the measured session
+# growth rate and the context ceiling.
+threshold = 90000
 
 [compression.decision]
 model = "openai:gpt-5-mini"
@@ -58,29 +51,26 @@ See [Configuration Reference](../reference/03-config-reference.md#compression) f
 
 ### Token-Based Triggers
 
-Compression triggers when the full context (messages + system prompt + tool definitions + safety margin) exceeds a pressure level threshold. The highest matched threshold determines the **base** compression ratio, but the level actually applied is **escalated** by the number of consecutive compressions, clamped at the highest level — it never wraps back to a lighter ratio under sustained pressure. This prevents infinite loops when compress-all drops context hard and it grows back to the same threshold repeatedly.
+Compression becomes eligible when the full context (messages + system prompt + tool definitions + safety margin) exceeds the **fire line**: `compression.threshold`, pulled down automatically when the model's window is small so at least 5 turns of measured growth still fit below the ceiling.
 
-| Token Count | Configured Ratio | Effect |
-|-------------|------------------|--------|
-| 60,000+ | 2.0x | 50% reduction |
-| 120,000+ | 4.0x | 75% reduction |
-| 160,000+ | 8.0x | 87.5% reduction |
+**Computed depth.** How deep each compression goes is not configured. The controller picks the post-compression token target directly from measured session dynamics:
 
-**Adaptive ratio.** The matched ratio is not used verbatim for automatic compression. It is scaled by recent session activity and then clamped to **[1.5, 4.0]**:
+```
+target_after = ceiling − runway × growth
+```
 
-- ×1.2 when an active plan exists (longer session expected → compress harder)
-- ×1.15 when tool density (`tool_calls / api_calls`) > 2.5 (heavy exploration)
-- ×1.0 when tool density > 1.0 (normal)
-- ×0.9 when tool density > 0.3 (winding down)
-- ×0.8 otherwise (session ending soon)
+- `growth` — measured output tokens per API call since the last compression checkpoint (lifetime average before the first compression)
+- `runway` — predicted remaining calls: the symmetry estimate (work remaining ≈ work done) corrected by the self-tuning accuracy of the previous prediction
 
-Adaptive scaling only kicks in after the first 5 API calls; before that the base ratio is trusted as-is. Because the final value is clamped at 4.0, the configured **8.0 level effectively caps at 4.0x for automatic compression** — the full 8.0 ratio is never applied. (Forced `/done` compression skips adaptive scaling and uses the first level's ratio directly; see [Forced vs Automatic Compression](#forced-vs-automatic-compression).)
+The target is clamped between the deepest and gentlest achievable sizes (derived ratio always lands in **[2.0, 16.0]**) and must fall at least 5 turns of growth below the fire line — a compression that would re-fire immediately is refused (cooldown instead). The effect: a hot session (high growth, long predicted runway) compresses deep and buys a long quiet stretch; a winding-down session compresses gently and preserves fidelity. Compressing to a stable watermark also keeps the post-compression prefix size consistent, which is what keeps the prompt cache effective across cycles.
+
+(Forced `/done` compression skips the controller and uses the gentlest fixed 2.0x — it is a task boundary, so there are no session dynamics to project onto the next task; see [Forced vs Automatic Compression](#forced-vs-automatic-compression).)
 
 ### The Hard Ceiling
 
-`max_session_tokens_threshold` (root config, default `200000`) is the single most important compression control. When the full-context token count reaches this value, compression is **forced unconditionally** — it bypasses the exponential cooldown, the cache-aware cost analysis, the feasibility check, and the AI's veto (the decision model cannot decline). The ratio used is the **maximum `target_ratio` across all pressure levels**.
+The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). When the full-context token count reaches it, compression is **forced unconditionally** — it bypasses the exponential cooldown, the cache-aware cost analysis, the feasibility check, and the AI's veto (the decision model cannot decline). The ratio used is the deepest allowed (**16.0x**).
 
-This same value is the denominator for the `/plan next` hint pressure calculation. Setting it to `0` disables **both** the hard ceiling and the hints.
+`max_session_tokens_threshold` is also the denominator for the `/plan next` hint pressure calculation. Setting it to `0` leaves the model-window half of the ceiling in force but disables the hints.
 
 ### Exponential Cooldown
 
@@ -95,7 +85,7 @@ To prevent compression loops during tool-heavy operations, each consecutive comp
 
 The watermark check is inactive until the first compression sets `context_tokens_after_last_compression > 0`. The cooldown resets when escalation stops (a check that finds nothing to compress) and on forced `/done` compression.
 
-Two escape hatches set the **same** watermark (`context_tokens_after_last_compression = current_tokens`) to suppress re-analysis until context grows again — they are not a separate cooldown mechanism: (1) the chosen compression range is empty (`start_idx >= end_idx`), and (2) compression would not bring context below the threshold that fired. Both occur only inside the `net_benefit > 0` branch.
+Two escape hatches set the **same** watermark (`context_tokens_after_last_compression = current_tokens`) to suppress re-analysis until context grows again — they are not a separate cooldown mechanism: (1) the chosen compression range is empty (`start_idx >= end_idx`), and (2) the depth controller finds no feasible target — even the deepest fold could not land usefully below the fire line. Both run before the cost analysis.
 
 ### Cache-Aware Economics
 
@@ -181,6 +171,12 @@ The only recent context that survives is therefore carried by the **summary** an
 
 (For minimum-message gating, automatic compression needs at least 5 conversational messages after the anchor; forced `/done` lowers this to 3.)
 
+### Lossless Archive and Recall
+
+Compression is not one-way. Every drained message is archived verbatim to a per-session JSONL file, and (when the PACT attention/governance machinery is on — governance is on by default) each drain also writes a sidecar index of content-addressed **block IDs** (`b:<hex>`). The compressed summary's `<folded_state>` units cite those IDs, and an `<archive>` pointer in the summary names the file.
+
+The **`recall` tool** closes the loop: the model passes up to 2 cited block IDs per call and gets the exact original messages back (digest-verified). Recalled content arrives as a normal tool result — appended at the tail, never rewriting history — so the prompt cache stays intact, and it folds back into the next compression cycle automatically once it stops being referenced. The response is capped by the global `mcp_response_tokens_threshold` truncation like any other tool output. Sessions without a block index fall back to reading the archive file directly.
+
 ### Knowledge Retention
 
 Each compression may extract critical knowledge (decisions, constraints, preferences). New entries are appended and the list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention`, default: 10) — the oldest are dropped when the limit is exceeded. The retained entries are injected into every subsequent compression so the AI never loses essential context.
@@ -263,13 +259,13 @@ Net benefit: negative --> SKIP (would cost money)
 1. **Monitor effectiveness** with `/info` to verify compression saves money
 2. **Use a cheap decision model** -- `openai:gpt-5-mini` is the default; `anthropic:claude-haiku-4-5` is a good alternative
 3. **Start conservative** with default thresholds, adjust based on workflow
-4. **Disable for short sessions** (empty `pressure_levels`) if sessions rarely reach the lowest threshold (60k by default)
-5. **Increase thresholds** if compression triggers too frequently
+4. **Disable for short sessions** (`threshold = 0`) if sessions rarely reach the trigger (90k by default)
+5. **Raise `threshold`** if compression triggers too frequently
 
 ## Troubleshooting
 
 **Compression not triggering:**
-- Check `[[compression.pressure_levels]]` is non-empty and a threshold is actually exceeded.
+- Check `compression.threshold` is non-zero and actually exceeded.
 - If you rely on the hard ceiling, confirm `max_session_tokens_threshold > 0`.
 - Use `/info` to see the current token count vs. your thresholds.
 - Note: `hints_enabled` does **not** control compression. It only gates the cosmetic `/plan next` hint (which additionally requires an active plan and a non-zero `max_session_tokens_threshold`). Changing it will not make compression trigger.

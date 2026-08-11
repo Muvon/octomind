@@ -58,6 +58,11 @@ fn plan() -> MigrationPlan {
 				to: 3,
 				apply: add_v3_required_fields,
 			},
+			VersionMigration {
+				from: 3,
+				to: 4,
+				apply: collapse_pressure_levels,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -141,6 +146,47 @@ fn add_v3_required_fields(
 		template_detectors,
 		"sequential_max_steers_per_turn",
 	)
+}
+
+/// v4 collapses the `[[compression.pressure_levels]]` ladder into the single
+/// adaptive `compression.threshold` trigger. The lowest configured level was
+/// the point where compression became eligible, so its threshold carries over;
+/// depth is computed at runtime now and the ratio ladder is dropped.
+fn collapse_pressure_levels(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_compression = required_table(
+		template.as_table(),
+		"compression",
+		"embedded default configuration",
+	)?;
+	let compression = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"compression",
+		"user configuration",
+	)?;
+
+	let lowest_threshold = compression
+		.get("pressure_levels")
+		.and_then(|item| item.as_array_of_tables())
+		.and_then(|levels| {
+			levels
+				.iter()
+				.filter_map(|level| level.get("threshold").and_then(|v| v.as_integer()))
+				.min()
+		});
+	compression.remove("pressure_levels");
+
+	if !compression.contains_key("threshold") {
+		if let Some(threshold) = lowest_threshold {
+			compression["threshold"] = toml_edit::value(threshold);
+		} else {
+			merge_missing(compression, template_compression, "threshold")?;
+		}
+	}
+	Ok(())
 }
 
 /// Upgrade `config_path` in place when it lags behind the embedded template.
@@ -246,7 +292,7 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(3));
+		assert_eq!(migrated["version"].as_integer(), Some(4));
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
 		assert!(migrated["supervisor"]["delegate"]["enabled"]
 			.as_bool()
@@ -284,7 +330,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 3);
+		assert_eq!(migration.to_version, 4);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -332,13 +378,13 @@ model = "openrouter:custom/model"
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 3);
+		assert_eq!(migration.to_version, 4);
 		assert!(migration.content.contains("# keep me"));
 		// The template's documentation comes across with the new section.
 		assert!(migration.content.contains("# Delegate gate"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(3));
+		assert_eq!(migrated["version"].as_integer(), Some(4));
 		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
 			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
@@ -434,7 +480,7 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 3);
+		assert_eq!(migration.to_version, 4);
 		assert!(migration.content.contains("# keep compression notes"));
 		assert_eq!(
 			migrated["compression"]["hints_enabled"].as_bool(),
@@ -459,8 +505,59 @@ sequential_threshold = 3
 	}
 
 	#[test]
+	fn v3_collapses_pressure_levels_into_lowest_threshold() {
+		let existing = r#"# keep my notes
+version = 3
+
+[compression]
+hints_enabled = true
+
+[[compression.pressure_levels]]
+threshold = 80000
+target_ratio = 2.0
+
+[[compression.pressure_levels]]
+threshold = 120000
+target_ratio = 4.0
+"#;
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v3 must migrate");
+
+		assert_eq!(migration.from_version, 3);
+		assert_eq!(migration.to_version, 4);
+		assert!(migration.content.contains("# keep my notes"));
+
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		// The lowest level was where compression became eligible — it carries over.
+		assert_eq!(
+			migrated["compression"]["threshold"].as_integer(),
+			Some(80000)
+		);
+		assert!(migrated["compression"].get("pressure_levels").is_none());
+	}
+
+	#[test]
+	fn v3_without_pressure_levels_takes_template_threshold() {
+		let existing = "version = 3\n\n[compression]\nhints_enabled = true\n";
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v3 must migrate");
+
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(
+			migrated["compression"]["threshold"].as_integer(),
+			Some(90000)
+		);
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 3", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 4", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");
@@ -499,7 +596,7 @@ sequential_threshold = 3
 
 		let migrated: toml::Value =
 			toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(3));
+		assert_eq!(migrated["version"].as_integer(), Some(4));
 
 		fs::remove_dir_all(&dir).ok();
 	}

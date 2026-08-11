@@ -16,6 +16,14 @@
 
 use crate::providers::ProviderFactory;
 
+/// Provider-reported context window (max input tokens) for a model.
+/// None when the model string doesn't resolve to a configured provider.
+pub fn model_max_input_tokens(model: &str) -> Option<usize> {
+	ProviderFactory::get_provider_for_model(model)
+		.ok()
+		.map(|(provider, actual_model)| provider.get_max_input_tokens(&actual_model))
+}
+
 // Function to check if a model supports caching
 pub fn model_supports_caching(model: &str) -> bool {
 	// Try to use the new provider system first

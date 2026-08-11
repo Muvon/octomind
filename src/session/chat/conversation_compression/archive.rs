@@ -349,7 +349,7 @@ fn decode_jsonl_contents(chunks: &[String]) -> Vec<String> {
 /// into every subsequent compression cycle as part of the summary.
 pub(crate) fn archive_pointer(path: &Path) -> String {
 	format!(
-		"<archive path=\"{}\">\nFull raw transcript of the messages this summary replaced (JSONL, one message per line). If you need exact code, error text, or tool output the summary elided, read or search this file — do not guess.\n</archive>",
+		"<archive path=\"{}\">\nFull raw transcript of the messages this summary replaced (JSONL, one message per line). If you need exact code, error text, or tool output the summary elided, do not guess: prefer the `recall` tool with the block IDs cited in <folded_state> refs; otherwise read or search this file.\n</archive>",
 		path.display()
 	)
 }

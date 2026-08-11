@@ -18,6 +18,7 @@
 pub mod functions;
 pub mod local_tool;
 pub mod plan;
+pub mod recall;
 
 #[cfg(test)]
 mod plan_tests;

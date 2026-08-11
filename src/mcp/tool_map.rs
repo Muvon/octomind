@@ -354,12 +354,9 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 			McpConnectionType::Builtin => {
 				match server.name() {
 					"core" => {
-						// Developer server only has shell and other dev tools
-						crate::mcp::get_filtered_server_functions(
-							"core",
-							server.tools(),
-							crate::mcp::core::get_all_functions,
-						)
+						// Uncached (like `agent`): the core list depends on config.
+						let server_functions = crate::mcp::core::get_all_functions(config);
+						crate::mcp::filter_tools_by_patterns(server_functions, server.tools())
 					}
 					"runtime" => crate::mcp::get_filtered_server_functions(
 						"runtime",

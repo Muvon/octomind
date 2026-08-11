@@ -65,7 +65,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 3;
+pub const CURRENT_CONFIG_VERSION: u32 = 4;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -110,14 +110,6 @@ impl LogLevel {
 }
 
 // REMOVED: All default functions - config must be complete and explicit
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PressureLevel {
-	/// Absolute token threshold at which this level applies
-	pub threshold: usize,
-	/// Target compression ratio (e.g., 2.0 = compress to 1/2 size, 4.0 = compress to 1/4 size)
-	pub target_ratio: f64,
-}
 
 /// Compression decision model configuration
 /// All standard model parameters for the compression decision API call
@@ -192,11 +184,11 @@ pub struct CompressionHintConfig {
 	pub hints_pressure_threshold: f64,
 	/// Minimum tool executions between hints
 	pub hints_min_interval: usize,
-	/// Compression aggressiveness levels based on absolute token count
-	/// Each level defines threshold (token count) and target compression ratio
-	/// Compression triggers when context exceeds ANY threshold, using the highest matched ratio
-	/// Example: At 100k tokens, uses 4.0x compression (75% reduction)
-	pub pressure_levels: Vec<PressureLevel>,
+	/// Absolute token threshold at which compression becomes eligible (0 = disabled).
+	/// This is the only compression knob: how deep each compression goes is
+	/// computed at runtime from the measured session growth rate and the context
+	/// ceiling (min of max_session_tokens_threshold and the model's usable window).
+	pub threshold: usize,
 	/// Decision model configuration for compression decisions and summary generation
 	/// Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
 	pub decision: CompressionDecisionConfig,

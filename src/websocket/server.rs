@@ -1308,13 +1308,18 @@ async fn send_message(
 mod tests {
 	use super::*;
 
-	fn handshake(origin: Option<&str>, allow_origins: &[&str]) -> Result<Response, ErrorResponse> {
+	fn handshake(
+		origin: Option<&str>,
+		allow_origins: &[&str],
+	) -> Result<Response, Box<ErrorResponse>> {
 		let mut req = Request::builder().uri("/");
 		if let Some(origin) = origin {
 			req = req.header(ORIGIN, origin);
 		}
 		let allowlist = allow_origins.iter().map(|o| (*o).to_string()).collect();
-		OriginAllowlist(Arc::new(allowlist)).on_request(&req.body(()).unwrap(), Response::new(()))
+		OriginAllowlist(Arc::new(allowlist))
+			.on_request(&req.body(()).unwrap(), Response::new(()))
+			.map_err(Box::new)
 	}
 
 	#[test]

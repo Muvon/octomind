@@ -1000,13 +1000,13 @@ auto_bind = ["assistant"]
 		let mut config: Config = toml::from_str(&test_config).expect("Failed to parse test config");
 		config.build_role_map();
 
-		// Test that all roles use the root level max_tokens (16384 from test config)
-		assert_eq!(config.get_max_tokens("developer"), 16384);
-		assert_eq!(config.get_max_tokens("assistant"), 16384);
-		assert_eq!(config.get_max_tokens("tester"), 16384);
-		assert_eq!(config.get_max_tokens("nonexistent_role"), 16384); // Should still return root level
+		// Test that all roles use the root level max_tokens (32768 from test config)
+		assert_eq!(config.get_max_tokens("developer"), 32768);
+		assert_eq!(config.get_max_tokens("assistant"), 32768);
+		assert_eq!(config.get_max_tokens("tester"), 32768);
+		assert_eq!(config.get_max_tokens("nonexistent_role"), 32768); // Should still return root level
 																// Test get_effective_max_tokens directly
-		assert_eq!(config.get_effective_max_tokens(), 16384);
+		assert_eq!(config.get_effective_max_tokens(), 32768);
 
 		// Verify that RoleConfig no longer has max_tokens field by checking the role config struct
 		let (role_config, _, _, _, _) = config.get_role_config("tester");

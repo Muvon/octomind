@@ -97,6 +97,11 @@ impl Tap {
 	pub fn workflows_dir(&self) -> Result<PathBuf> {
 		Ok(self.local_dir()?.join("workflows"))
 	}
+
+	/// Returns the plugins directory path for this tap (Agent Plugins 1.0.0 format).
+	pub fn plugins_dir(&self) -> Result<PathBuf> {
+		Ok(self.local_dir()?.join("plugins"))
+	}
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

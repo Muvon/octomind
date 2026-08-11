@@ -30,6 +30,7 @@ use anyhow::Result;
 pub mod capability;
 pub mod dynamic;
 pub mod dynamic_agents;
+pub mod plugin;
 pub mod skill;
 pub mod skill_auto;
 

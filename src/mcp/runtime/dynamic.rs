@@ -854,6 +854,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 				timeout_seconds,
 				tools,
 				env: HashMap::new(),
+				cwd: None,
 				auto_bind: None,
 			}
 		}

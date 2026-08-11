@@ -688,6 +688,23 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 	}
 
+	// 3. Agent Plugins (tap plugins/, .agents/plugins/, ~/.config/agents/plugins/)
+	for plugin in crate::mcp::runtime::plugin::find_plugins() {
+		for skill_dir in crate::mcp::runtime::plugin::skill_dirs(&plugin) {
+			let skill_md = skill_dir.join("SKILL.md");
+			let content = match std::fs::read_to_string(&skill_md) {
+				Ok(c) => c,
+				Err(_) => continue,
+			};
+
+			if let Some(meta) = parse_skill_meta(&content) {
+				if seen_names.insert(meta.name.clone()) {
+					skills.push((meta, skill_dir));
+				}
+			}
+		}
+	}
+
 	skills
 }
 
@@ -736,6 +753,26 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	for dir in universal_skill_dirs(&workdir) {
 		let skill_dir = dir.join(name);
+		if !skill_dir.is_dir() {
+			continue;
+		}
+
+		let skill_md = skill_dir.join("SKILL.md");
+		let content = match std::fs::read_to_string(&skill_md) {
+			Ok(c) => c,
+			Err(_) => continue,
+		};
+
+		if let Some(meta) = parse_skill_meta(&content) {
+			if meta.name == name {
+				return Some((meta, skill_dir, content));
+			}
+		}
+	}
+
+	// 3. Plugin skills — lowest priority
+	for plugin in crate::mcp::runtime::plugin::find_plugins() {
+		let skill_dir = plugin.root.join("skills").join(name);
 		if !skill_dir.is_dir() {
 			continue;
 		}
@@ -948,6 +985,60 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 	))
 }
 
+/// Register + enable one dynamically-loaded server on behalf of a skill, with
+/// capability refcounting so forget offloads it when the last skill releases
+/// it. Returns the server name when the server is available (config-level
+/// servers count as available but are not skill-owned).
+async fn enable_skill_server(
+	server_config: crate::config::McpServerConfig,
+	origin: &str,
+	session_id: &crate::session::context::SessionId,
+	config_server_names: &std::collections::HashSet<String>,
+	servers_loaded_by_this_skill: &mut Vec<String>,
+) -> Option<String> {
+	let server_name = server_config.name().to_string();
+
+	// Domain-level server (loaded at session init) — skip, not our responsibility
+	if config_server_names.contains(&server_name) {
+		crate::log_debug!(
+			"skill: {} server '{}' already config-level, skipping",
+			origin,
+			server_name
+		);
+		return Some(server_name);
+	}
+
+	// Already in dynamic registry and enabled — just bump refcount
+	if let Some((_cfg, true)) = crate::session::context::current_session_id()
+		.and_then(|sid| crate::session::context::get_dynamic_server_for_session(&sid, &server_name))
+	{
+		crate::session::context::increment_capability_refcount(session_id, &server_name);
+		servers_loaded_by_this_skill.push(server_name.clone());
+		return Some(server_name);
+	}
+
+	// New server — register + enable + refcount=1
+	if let Err(e) = crate::mcp::runtime::dynamic::register_server(server_config.clone()) {
+		crate::log_debug!("skill: {} server '{}' register: {}", origin, server_name, e);
+	}
+	match crate::mcp::runtime::dynamic::enable_server(&server_name, None).await {
+		Ok(_) => {
+			crate::session::context::increment_capability_refcount(session_id, &server_name);
+			servers_loaded_by_this_skill.push(server_name.clone());
+			Some(server_name)
+		}
+		Err(e) => {
+			crate::log_debug!(
+				"skill: {} server '{}' enable failed: {}",
+				origin,
+				server_name,
+				e
+			);
+			None
+		}
+	}
+}
+
 async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, String> {
 	let name = match call.parameters.get("name") {
 		Some(Value::String(n)) if !n.trim().is_empty() => n.clone(),
@@ -1012,24 +1103,23 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Uses refcounting so shared capabilities are only offloaded when the last skill forgets.
 	let mut cap_messages = Vec::new();
 	let mut servers_loaded_by_this_skill = Vec::new();
+	let session_config = crate::session::context::current_session_id()
+		.and_then(|sid| crate::session::context::get_session_config(&sid));
+	// Collect config-level server names to avoid touching domain-owned servers
+	let config_server_names: std::collections::HashSet<String> = session_config
+		.as_ref()
+		.map(|cfg| {
+			cfg.mcp
+				.servers
+				.iter()
+				.map(|s| s.name().to_string())
+				.collect()
+		})
+		.unwrap_or_default();
 	if !meta.capabilities.is_empty() {
-		let session_config = crate::session::context::current_session_id()
-			.and_then(|sid| crate::session::context::get_session_config(&sid));
 		let overrides = session_config
 			.as_ref()
 			.map(|cfg| cfg.capabilities.clone())
-			.unwrap_or_default();
-
-		// Collect config-level server names to avoid touching domain-owned servers
-		let config_server_names: std::collections::HashSet<String> = session_config
-			.as_ref()
-			.map(|cfg| {
-				cfg.mcp
-					.servers
-					.iter()
-					.map(|s| s.name().to_string())
-					.collect()
-			})
 			.unwrap_or_default();
 
 		for cap_name in &meta.capabilities {
@@ -1055,65 +1145,16 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 					}
 					let mut loaded_servers = Vec::new();
 					for server_config in resolved.mcp_servers {
-						let server_name = server_config.name().to_string();
-
-						// Domain-level server (loaded at session init) — skip, not our responsibility
-						if config_server_names.contains(&server_name) {
-							crate::log_debug!(
-								"skill: capability '{}' server '{}' already config-level, skipping",
-								cap_name,
-								server_name
-							);
-							loaded_servers.push(server_name);
-							continue;
-						}
-
-						// Already in dynamic registry and enabled — just bump refcount
-						if let Some((_cfg, true)) = crate::session::context::current_session_id()
-							.and_then(|sid| {
-								crate::session::context::get_dynamic_server_for_session(
-									&sid,
-									&server_name,
-								)
-							}) {
-							crate::session::context::increment_capability_refcount(
-								&session_id,
-								&server_name,
-							);
-							servers_loaded_by_this_skill.push(server_name.clone());
-							loaded_servers.push(server_name);
-							continue;
-						}
-
-						// New server — register + enable + refcount=1
-						if let Err(e) =
-							crate::mcp::runtime::dynamic::register_server(server_config.clone())
+						if let Some(loaded) = enable_skill_server(
+							server_config,
+							&format!("capability '{}'", cap_name),
+							&session_id,
+							&config_server_names,
+							&mut servers_loaded_by_this_skill,
+						)
+						.await
 						{
-							crate::log_debug!(
-								"skill: capability '{}' server '{}' register: {}",
-								cap_name,
-								server_name,
-								e
-							);
-						}
-						match crate::mcp::runtime::dynamic::enable_server(&server_name, None).await
-						{
-							Ok(_) => {
-								crate::session::context::increment_capability_refcount(
-									&session_id,
-									&server_name,
-								);
-								servers_loaded_by_this_skill.push(server_name.clone());
-								loaded_servers.push(server_name);
-							}
-							Err(e) => {
-								crate::log_debug!(
-									"skill: capability '{}' server '{}' enable failed: {}",
-									cap_name,
-									server_name,
-									e
-								);
-							}
+							loaded_servers.push(loaded);
 						}
 					}
 					if !loaded_servers.is_empty() {
@@ -1129,6 +1170,32 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 					cap_messages.push(format!("⚠️ Capability '{}' not found: {}", cap_name, e));
 				}
 			}
+		}
+	}
+
+	// Agent Plugins: a skill shipped inside a plugin brings the plugin's
+	// mcp.json servers, refcounted like capability servers so forget offloads them.
+	if let Some(plugin) = crate::mcp::runtime::plugin::plugin_for_skill_dir(&skill_dir) {
+		let mut loaded_servers = Vec::new();
+		for server_config in crate::mcp::runtime::plugin::load_mcp_servers(&plugin) {
+			if let Some(loaded) = enable_skill_server(
+				server_config,
+				&format!("plugin '{}'", plugin.name),
+				&session_id,
+				&config_server_names,
+				&mut servers_loaded_by_this_skill,
+			)
+			.await
+			{
+				loaded_servers.push(loaded);
+			}
+		}
+		if !loaded_servers.is_empty() {
+			cap_messages.push(format!(
+				"Loaded plugin '{}' (servers: {})",
+				plugin.name,
+				loaded_servers.join(", ")
+			));
 		}
 	}
 

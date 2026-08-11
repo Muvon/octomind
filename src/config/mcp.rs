@@ -52,6 +52,10 @@ pub enum McpServerConfig {
 		/// vars are gated from activation.
 		#[serde(default)]
 		env: HashMap<String, String>,
+		/// Working directory for the child process. None = inherit octomind's cwd.
+		/// Set by Agent Plugins loading (spec: default cwd is the plugin root).
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		cwd: Option<String>,
 		/// Roles that should automatically include this server (without explicit server_refs)
 		#[serde(skip_serializing_if = "Option::is_none")]
 		auto_bind: Option<Vec<String>>,
@@ -208,6 +212,7 @@ impl McpServerConfig {
 			timeout_seconds,
 			tools,
 			env: HashMap::new(),
+			cwd: None,
 			auto_bind: None,
 		}
 	}
@@ -248,6 +253,7 @@ impl McpServerConfig {
 				timeout_seconds,
 				tools,
 				env,
+				cwd,
 				..
 			} => McpServerConfig::Stdin {
 				name: name.clone(),
@@ -256,6 +262,7 @@ impl McpServerConfig {
 				timeout_seconds: *timeout_seconds,
 				tools: tools.clone(),
 				env: env.clone(),
+				cwd: cwd.clone(),
 				auto_bind,
 			},
 		}
@@ -407,6 +414,7 @@ impl RoleMcpConfig {
 							args,
 							timeout_seconds,
 							env,
+							cwd,
 							auto_bind,
 							..
 						} => McpServerConfig::Stdin {
@@ -416,6 +424,7 @@ impl RoleMcpConfig {
 							timeout_seconds,
 							tools: filtered_tools,
 							env,
+							cwd,
 							auto_bind,
 						},
 					};

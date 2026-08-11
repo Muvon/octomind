@@ -372,13 +372,15 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 		));
 	}
 
-	let (command, args) = match server {
-		McpServerConfig::Stdin { command, args, .. } => {
+	let (command, args, cwd) = match server {
+		McpServerConfig::Stdin {
+			command, args, cwd, ..
+		} => {
 			// Resolve {{ENV:KEY}} in command and args from the parent environment.
 			let cmd = resolve_env_placeholders(command);
 			let resolved_args: Vec<String> =
 				args.iter().map(|a| resolve_env_placeholders(a)).collect();
-			(cmd, resolved_args)
+			(cmd, resolved_args, cwd.clone())
 		}
 		_ => return Err(anyhow!("connect_stdio requires a stdio server config")),
 	};
@@ -386,6 +388,9 @@ async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Ar
 
 	let mut cmd = tokio::process::Command::new(&command);
 	cmd.args(&args);
+	if let Some(dir) = &cwd {
+		cmd.current_dir(dir);
+	}
 	// Pass env vars from the server config to the child process.
 	// {{ENV:KEY}} placeholders are resolved from the parent environment.
 	if let Some(env_map) = server.env() {

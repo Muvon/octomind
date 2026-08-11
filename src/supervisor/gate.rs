@@ -134,6 +134,21 @@ domain defines the enumerated set in one authoritative place, evidence that cove
 from that source outranks hand-picked instances. An enumerated item with no exercising
 evidence is a gap — name the item and the check it lacks. This bar applies only to items the
 request explicitly enumerates, never to surfaces you infer.
+
+Three evidence shapes never satisfy that bar, in any domain:
+- Circular verification: a check whose expected values were derived from the implementation's
+  own output. When the request itself states exact expected outcomes — literal examples, exact
+  strings or bytes, formats, messages — the decisive check must compare against the request's
+  stated values; a check that asserts what the code produced proves only self-consistency.
+- Context-stripped verification: the request demonstrates an item in composition (entries
+  alongside siblings, steps in a sequence, parts of one document or flow), but the only
+  exercising evidence runs the item in isolation. Behavior that neighboring context can alter
+  counts as exercised only in a context like the one the request shows.
+- Acceptance-only verification: the work widens what an input path accepts — new forms parse,
+  new values validate, input is rewritten before an existing consumer — but every exercised
+  input is a valid one. A widened boundary is demonstrated by both sides: at least one
+  near-miss input (invalid under the governing rule or spec) must be shown still rejected.
+  If none is, name the boundary left unprobed.
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
@@ -430,6 +445,19 @@ pub fn render_ground_truth(mutated_paths: &[String], last_command: Option<(&str,
 		s.push_str(out);
 		s.push('\n');
 	}
+	// Whole-tree status: mutations made through the shell (sed, redirects,
+	// generators) never enter mutated_paths, and stray files are collateral the
+	// scoped diff cannot show. Emitted only when the turn already produced
+	// ground truth, so observe-only turns stay empty.
+	if !s.is_empty() {
+		let status = git_status();
+		if !status.is_empty() {
+			s.push_str(
+				"Working-tree status, all files (informational — may include pre-existing or build files):\n",
+			);
+			s.push_str(&status);
+		}
+	}
 	if s.len() > GT_TOTAL_MAX {
 		let mut end = GT_TOTAL_MAX;
 		while !s.is_char_boundary(end) {
@@ -439,6 +467,36 @@ pub fn render_ground_truth(mutated_paths: &[String], last_command: Option<(&str,
 		s.push_str("\n(ground truth truncated)\n");
 	}
 	s
+}
+
+/// Cap on the working-tree status lines inside the ground-truth block.
+const GT_STATUS_MAX_LINES: usize = 40;
+
+/// `git status --porcelain` in the current directory, capped. Empty on any
+/// failure (not a repo, no git) — same degradation contract as [`git_diff`].
+fn git_status() -> String {
+	let out = std::process::Command::new("git")
+		.args(["status", "--porcelain"])
+		.output();
+	match out {
+		Ok(o) if o.status.success() => {
+			let all = String::from_utf8_lossy(&o.stdout);
+			let total = all.lines().count();
+			let mut s: String = all
+				.lines()
+				.take(GT_STATUS_MAX_LINES)
+				.map(|l| format!("{l}\n"))
+				.collect();
+			if total > GT_STATUS_MAX_LINES {
+				s.push_str(&format!(
+					"(+{} more entries)\n",
+					total - GT_STATUS_MAX_LINES
+				));
+			}
+			s
+		}
+		_ => String::new(),
+	}
 }
 
 /// `git diff HEAD -- <paths>` in the current directory, capped. Empty on any
@@ -557,11 +615,17 @@ pub struct GateInput<'a> {
 	pub role_context: &'a str,
 }
 
-/// Verify a self-reported completion against [`GateInput`]. Fails open (PASS)
-/// on empty input or LLM error — a verifier outage must never block the agent.
+/// Verify a self-reported completion against [`GateInput`]. Verifies with the
+/// configured (ideally different-family) verifier model; when that model is
+/// unreachable (offline host, sealed network, missing key) it falls back to
+/// `active_model` — the session's own model, which by definition is reachable —
+/// because a same-family verification still catches far more than none. Fails
+/// open (PASS) only on empty input or when both models error — a verifier
+/// outage must never block the agent.
 pub async fn verify(
 	config: &Config,
 	input: GateInput<'_>,
+	active_model: &str,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
@@ -570,22 +634,46 @@ pub async fn verify(
 	let user = render_gate_input(&input);
 	// Verify with a deliberately separate (ideally different-family) model — a
 	// same-family verifier shares the generator's blind spots and rubber-stamps
-	// them. Strict config guarantees this is set; no fallback to the generator.
+	// them.
 	let model = config.supervisor.gate.verifier_model.clone();
 	match crate::supervisor::learning::extract::call_learning_llm(
 		config,
 		&model,
 		GATE_PROMPT.to_string(),
-		user,
+		user.clone(),
 		crate::supervisor::stats::CallKind::Gate,
-		operation_rx,
+		operation_rx.clone(),
 	)
 	.await
 	{
 		Ok(resp) => parse_verdict(&resp),
 		Err(e) => {
-			crate::log_debug!("Verify-gate call failed, accepting: {}", e);
-			GateVerdict::Pass
+			if active_model.trim().is_empty() || active_model == model {
+				crate::log_info!("Verify-gate verifier '{}' failed, accepting: {}", model, e);
+				return GateVerdict::Pass;
+			}
+			crate::log_info!(
+				"Verify-gate verifier '{}' failed ({}); retrying with session model '{}'",
+				model,
+				e,
+				active_model
+			);
+			match crate::supervisor::learning::extract::call_learning_llm(
+				config,
+				active_model,
+				GATE_PROMPT.to_string(),
+				user,
+				crate::supervisor::stats::CallKind::Gate,
+				operation_rx,
+			)
+			.await
+			{
+				Ok(resp) => parse_verdict(&resp),
+				Err(e2) => {
+					crate::log_info!("Verify-gate fallback also failed, accepting: {}", e2);
+					GateVerdict::Pass
+				}
+			}
 		}
 	}
 }
@@ -709,7 +797,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing spec — never from your implementation's observed output — and exercise it in the same context the request demonstrates. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }

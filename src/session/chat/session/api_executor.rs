@@ -923,6 +923,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				prior_gaps: &prior_gaps,
 				role_context: &crate::supervisor::role_context(&chat_session.session.messages),
 			},
+			&model,
 			operation_rx.clone(),
 		)
 		.await;

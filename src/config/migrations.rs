@@ -260,7 +260,9 @@ mod tests {
 	/// Backups sitting next to `config_path`. The naming scheme is octolib's, so
 	/// tests here only ever ask whether a backup was made, never what it's called.
 	fn backups(config_path: &Path) -> Vec<std::path::PathBuf> {
-		let parent = config_path.parent().expect("config path must have a parent");
+		let parent = config_path
+			.parent()
+			.expect("config path must have a parent");
 		fs::read_dir(parent)
 			.expect("config directory must be readable")
 			.map(|entry| entry.expect("directory entry must be readable").path())

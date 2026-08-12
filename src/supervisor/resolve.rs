@@ -82,11 +82,12 @@ applies (skipping an applicable class is an error):
    that a near-miss input is shown still rejected — and the near-miss must be one that could
    LEAK: an input whose handled/rewritten form would be valid under a neighboring rule or
    format of the same consumer, not one that everything rejects anyway.
-5. named_form: when the request itself names something the work must create or expose (a
-   name, identifier, title, label, command, key), one condition that the produced thing
-   carries EXACTLY the request's form — its spelling, casing, and word boundaries — and,
-   when the request says to follow existing conventions, that the form mirrors the existing
-   counterparts it names. A form that differs only in casing or joining still fails.
+5. named_form: when the work must create or expose something whose name derives from a
+   name the request uses — directly, or EMBEDDED inside a longer form the work invents —
+   one condition that the produced form preserves EXACTLY the request's spelling, casing,
+   and word boundaries of that name (a form differing only in casing or joining still
+   fails); and when the request says to follow existing conventions, one condition that
+   every public form of the new thing mirrors its closest existing counterpart.
 6. quantified: when the request demands a guarantee over an open set of behaviors ("never",
    "always", "any", "whatever/no matter what X does"), one condition per materially
    different behavior of the quantified thing — at minimum the behavior the request shows

@@ -157,9 +157,10 @@ evidence shape below, judged against the work as a whole:
 <shape name="circular" found="yes|no">one-line reason</shape>
 <shape name="context-stripped" found="yes|no">one-line reason</shape>
 <shape name="acceptance-only" found="yes|no">one-line reason</shape>
+<shape name="unenumerated-category" found="yes|no">one-line reason</shape>
 A shape found="yes" is a gap — name what makes it so.
 
-Three evidence shapes never satisfy that bar, in any domain:
+Four evidence shapes never satisfy that bar, in any domain:
 - Circular verification: a check whose expected values were derived from the work's own
   output. When the request itself states exact expected outcomes — literal examples, exact
   strings or bytes, formats, messages — the decisive check must compare against the request's
@@ -177,6 +178,16 @@ Three evidence shapes never satisfy that bar, in any domain:
   of the consumer's OTHER rules — leakage into a neighboring format is the failure this
   shape guards, and evidence that never probes it leaves the shape present. If no adequate
   near-miss is shown, name the boundary left unprobed.
+- Unenumerated-category verification: a requirement or condition spans a whole category of
+  surfaces ("every X", "all Y", a kind of thing the environment produces in several places),
+  the work handles some members of that category individually, yet no recorded action ever
+  ENUMERATED the category from the environment itself — no search, listing, or survey whose
+  output names the member set. What the work touched cannot define the set: the members it
+  missed are exactly the ones its changes never show. Exercising the touched members, however
+  thoroughly, proves nothing about the set; the shape is absent only when the evidence derives
+  the member set from the environment (a recorded search or listing) and each named member is
+  exercised, or when the request itself fixes the complete set. If enumeration is missing,
+  name the category and the survey that would bound it.
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a

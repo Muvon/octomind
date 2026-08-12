@@ -116,14 +116,20 @@ absence of a verification run is compliance, not a gap. Never flag missing verif
 the request itself forbade.
 
 When <evidence_conditions> is present, it is your PRIMARY checklist — work it first, one
-condition at a time. For each condition, find the recorded action or ground-truth artifact
-whose OBSERVED OUTPUT demonstrates that condition; reasoning about why the work should
-satisfy it does not count — only an observation does. A condition with no such match is a
-gap: name the condition and what observation it lacks. The conditions are an aid, not an
-authority: a condition that contradicts the <current_user_turn> is void, a condition whose
-only demonstration would require an action the request or standing instructions forbid is
-void (prohibitions outrank the checklist), and satisfying every condition does not excuse
-a requirement of the request the conditions missed.
+condition at a time, and your answer MUST begin with one line per condition:
+<condition n="N" status="matched">the specific observation that demonstrates it — the action and what its output showed</condition>
+<condition n="N" status="unmatched">what observation is missing</condition>
+Judge each condition in isolation before any overall impression: a green overall check does
+not match a condition unless its recorded output demonstrably exercised THAT condition.
+For each condition, only an observation counts — the recorded action or ground-truth
+artifact whose OBSERVED OUTPUT demonstrates it; reasoning about why the work should satisfy
+it does not. Mark a condition matched ONLY with a citable observation; when in doubt about a
+specific condition, mark it unmatched — the overall "be conservative, PASS when unsure" rule
+applies to inferring extra requirements, never to skipping listed conditions. A condition
+that contradicts the <current_user_turn> is void (mark it matched with reason "void:
+contradicts request"), and a condition whose only demonstration would require an action the
+request or standing instructions forbid is likewise void. Satisfying every condition does
+not excuse a requirement of the request the conditions missed.
 
 Work through every part of the request, one at a time. For each, find the concrete proof it
 was done — a recorded action whose output the claim traces to (a read, search, recall, fetch,
@@ -146,6 +152,13 @@ from that source outranks hand-picked instances. An enumerated item with no exer
 evidence is a gap — name the item and the check it lacks. This bar applies only to items the
 request explicitly enumerates, never to surfaces you infer.
 
+After the condition lines (when conditions are present), you MUST also emit one line per
+evidence shape below, judged against the work as a whole:
+<shape name="circular" found="yes|no">one-line reason</shape>
+<shape name="context-stripped" found="yes|no">one-line reason</shape>
+<shape name="acceptance-only" found="yes|no">one-line reason</shape>
+A shape found="yes" is a gap — name what makes it so.
+
 Three evidence shapes never satisfy that bar, in any domain:
 - Circular verification: a check whose expected values were derived from the work's own
   output. When the request itself states exact expected outcomes — literal examples, exact
@@ -159,7 +172,11 @@ Three evidence shapes never satisfy that bar, in any domain:
   new values validate, input is rewritten before an existing consumer — but every exercised
   input is a valid one. A widened boundary is demonstrated by both sides: at least one
   near-miss input (invalid under the governing rule or spec) must be shown still rejected.
-  If none is, name the boundary left unprobed.
+  Trivially-rejected near-misses prove little: when the work REWRITES input before an
+  existing consumer, the decisive near-miss is one whose REWRITTEN form is valid under one
+  of the consumer's OTHER rules — leakage into a neighboring format is the failure this
+  shape guards, and evidence that never probes it leaves the shape present. If no adequate
+  near-miss is shown, name the boundary left unprobed.
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
@@ -822,6 +839,55 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 }
 
 fn parse_verdict(resp: &str) -> GateVerdict {
+	// Itemized condition verdicts outrank the holistic one: the verdict over a
+	// checklist is derived HERE, not trusted from the model — an unmatched
+	// condition is a gap even when the response also says PASS (holistic
+	// judgment demonstrably absorbs violated conditions when the overall
+	// picture looks done). Evidence-shape findings are enforced the same way.
+	let mut unmatched = Vec::new();
+	let mut rest = resp;
+	while let Some(s) = rest.find("<shape ") {
+		let after = &rest[s..];
+		let Some(open_end) = after.find('>') else {
+			break;
+		};
+		let tag = &after[..open_end];
+		let body_and_rest = &after[open_end + 1..];
+		let body_end = body_and_rest.find("</shape>").unwrap_or(0);
+		let body = body_and_rest[..body_end].trim();
+		if tag.contains("found=\"yes\"") {
+			let name = tag
+				.split("name=\"")
+				.nth(1)
+				.and_then(|t| t.split('"').next())
+				.unwrap_or("?");
+			unmatched.push(format!("Evidence shape '{name}' present: {body}"));
+		}
+		rest = &body_and_rest[body_end..];
+	}
+	let mut rest = resp;
+	while let Some(s) = rest.find("<condition ") {
+		let after = &rest[s..];
+		let Some(open_end) = after.find('>') else {
+			break;
+		};
+		let tag = &after[..open_end];
+		let body_and_rest = &after[open_end + 1..];
+		let body_end = body_and_rest.find("</condition>").unwrap_or(0);
+		let body = body_and_rest[..body_end].trim();
+		if tag.contains("status=\"unmatched\"") {
+			let n = tag
+				.split("n=\"")
+				.nth(1)
+				.and_then(|t| t.split('"').next())
+				.unwrap_or("?");
+			unmatched.push(format!("Unmatched condition {n}: {body}"));
+		}
+		rest = &body_and_rest[body_end..];
+	}
+	if !unmatched.is_empty() {
+		return GateVerdict::Gaps(unmatched);
+	}
 	if resp.contains("<verdict>PASS</verdict>") {
 		return GateVerdict::Pass;
 	}
@@ -856,7 +922,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. When demonstrating that something is still rejected or unaffected, choose near-miss inputs that overlap the OTHER forms the changed path accepts or the other behaviors adjacent to it — you know those from the material and context you read; a near-miss that nothing else could accept proves little. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. When demonstrating that something is still rejected or unaffected, choose near-miss inputs that could LEAK: ones whose handled or rewritten form would be accepted by a NEIGHBORING rule or format of the same consumer — you know the neighboring forms from the material you read; a near-miss that nothing else could accept proves nothing, however plausible it looks. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }
@@ -882,6 +948,37 @@ mod tests {
 	#[test]
 	fn no_markers_is_pass() {
 		assert_eq!(parse_verdict("looks good to me"), GateVerdict::Pass);
+	}
+
+	#[test]
+	fn found_shape_outranks_holistic_pass() {
+		let resp = r#"<condition n="1" status="matched">ok</condition>
+<shape name="acceptance-only" found="yes">only valid inputs exercised on a widened parser</shape>
+<shape name="circular" found="no">expected values from request</shape>
+<verdict>PASS</verdict>"#;
+		assert_eq!(
+			parse_verdict(resp),
+			GateVerdict::Gaps(vec![
+				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser".into()
+			])
+		);
+	}
+
+	#[test]
+	fn unmatched_condition_outranks_holistic_pass() {
+		let resp = r#"<condition n="1" status="matched">suite ran green</condition>
+<condition n="10" status="unmatched">no test shows custom prettifier output preserved</condition>
+<verdict>PASS</verdict>"#;
+		let v = parse_verdict(resp);
+		assert_eq!(
+			v,
+			GateVerdict::Gaps(vec![
+				"Unmatched condition 10: no test shows custom prettifier output preserved".into()
+			])
+		);
+		let all_matched = r#"<condition n="1" status="matched">ok</condition>
+<verdict>PASS</verdict>"#;
+		assert_eq!(parse_verdict(all_matched), GateVerdict::Pass);
 	}
 
 	#[test]

@@ -902,7 +902,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// the last command's recorded output — the verifier judges state, not story.
 		let ground_truth = crate::supervisor::gate::render_ground_truth(
 			chat_session.evidence.mutated_paths(),
-			chat_session.evidence.last_command(),
+			&chat_session.evidence.recent_commands(),
 		);
 		let prior_gaps = chat_session.last_gate_gaps.clone();
 		crate::supervisor::stats::gate_run();
@@ -922,6 +922,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,
 				role_context: &crate::supervisor::role_context(&chat_session.session.messages),
+				evidence_conditions: &resolved_task.evidence_conditions,
 			},
 			operation_rx.clone(),
 		)

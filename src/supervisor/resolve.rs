@@ -58,8 +58,28 @@ status report, confirmation, or explanation — and requests no new work and no 
 of existing work. A turn that mixes a question with any action request is false. When in
 doubt, return false.
 
+Field "conditions": decompose the request into the concrete observations that would
+demonstrate it is fulfilled — one short line per explicitly stated requirement, example,
+and prohibition. NEVER omit a stated requirement: an incomplete checklist makes incomplete
+work look complete, and the requirements late in a request are exactly the ones work tends
+to miss. Merge only true restatements; an empty list when the turn is a question, a
+conversation, or a trivial ask. Each condition must be:
+- stated in the request's own terms (its nouns, names, examples), never in terms of any
+  particular way of doing the work;
+- checkable against a log of performed actions and observed outputs ("X was produced and
+  the observed output shows Y"), never a restatement of intent.
+Cover, when present in the request: every explicitly enumerated item; every stated example
+EXACTLY as shown, in the same composition and context the request displays it (an example
+shown inside a document, list, sequence, or flow is demonstrated in that composition, not
+in isolation); each prohibition (as "nothing done that ..."); and, when the request widens
+what is accepted or recognized, one near-miss just outside the stated rule shown still
+rejected.
+Never include a condition whose only demonstration would require an action the request
+forbids (e.g. the request says not to run, send, or change something) — express the
+prohibition itself as the condition instead.
+
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"answer_only":true|false}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"answer_only":true|false,"conditions":["..."]}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -142,6 +162,11 @@ pub struct ResolvedTask {
 	/// during a long-running plan is complete once answered, whatever the plan's
 	/// open items. Never affects the mutation pre-gate or the LLM verify-gate.
 	pub answer_only: bool,
+	/// Request-derived checklist of concrete observations that would demonstrate
+	/// fulfillment, compiled from the request ALONE — before and independent of
+	/// any work — so no implementation belief can shape what counts as done.
+	/// The verify-gate matches these against recorded actions and ground truth.
+	pub evidence_conditions: Vec<String>,
 }
 
 impl ResolvedTask {
@@ -157,6 +182,7 @@ impl ResolvedTask {
 			plan_at_turn_start: String::new(),
 			forbids_verification: false,
 			answer_only: false,
+			evidence_conditions: Vec::new(),
 		}
 	}
 
@@ -172,6 +198,7 @@ impl ResolvedTask {
 			plan_at_turn_start: active_plan.to_string(),
 			forbids_verification: false,
 			answer_only: false,
+			evidence_conditions: Vec::new(),
 		}
 	}
 }
@@ -243,6 +270,8 @@ struct ClassifierOutput {
 	forbids_verification: bool,
 	#[serde(default)]
 	answer_only: bool,
+	#[serde(default)]
+	conditions: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -282,12 +311,14 @@ pub async fn resolve(
 		crate::supervisor::stats::CallKind::Resolve,
 		crate::supervisor::learning::extract::SupervisorSampling {
 			temperature: 0.0,
-			max_tokens: 256,
+			// Room for the conditions checklist on top of the scalar verdicts
+			// (a reasoning verifier model may also spend budget before the JSON).
+			max_tokens: 2048,
 		},
 		operation_rx.clone(),
 	)
 	.await;
-	let (forbids_verification, answer_only) = match classification {
+	let (forbids_verification, answer_only, conditions) = match classification {
 		Ok(response) => {
 			let parsed = parse_classifier(&response);
 			if !parsed.context_dependent {
@@ -295,9 +326,14 @@ pub async fn resolve(
 				resolved.plan_at_turn_start = context.active_plan.clone();
 				resolved.forbids_verification = parsed.forbids_verification;
 				resolved.answer_only = parsed.answer_only;
+				resolved.evidence_conditions = parsed.conditions;
 				return resolved;
 			}
-			(parsed.forbids_verification, parsed.answer_only)
+			(
+				parsed.forbids_verification,
+				parsed.answer_only,
+				parsed.conditions,
+			)
 		}
 		Err(error) => {
 			crate::log_debug!(
@@ -335,6 +371,10 @@ pub async fn resolve(
 	};
 	resolved.forbids_verification = forbids_verification;
 	resolved.answer_only = answer_only;
+	// Conditions were compiled from the literal current turn; for a follow-up
+	// the resolved request preserves that turn's actions and constraints, so
+	// they remain the fulfillment checklist.
+	resolved.evidence_conditions = conditions;
 	resolved
 }
 
@@ -345,6 +385,7 @@ struct ClassifierVerdict {
 	context_dependent: bool,
 	forbids_verification: bool,
 	answer_only: bool,
+	conditions: Vec<String>,
 }
 
 fn parse_classifier(response: &str) -> ClassifierVerdict {
@@ -352,6 +393,7 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 		context_dependent: false,
 		forbids_verification: false,
 		answer_only: false,
+		conditions: Vec::new(),
 	};
 	let Some(start) = response.find('{') else {
 		return fallback;
@@ -369,6 +411,25 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 			.eq_ignore_ascii_case("context_dependent"),
 		forbids_verification: parsed.forbids_verification,
 		answer_only: parsed.answer_only,
+		// An answer-only turn (question, status, explanation) has no fulfillment
+		// checklist by definition — clear deterministically rather than trusting
+		// the model's empty list, so a pure question can never collect bogus
+		// unmatched-condition gaps.
+		conditions: if parsed.answer_only {
+			Vec::new()
+		} else {
+			parsed
+				.conditions
+				.into_iter()
+				.map(|c| c.trim().to_string())
+				.filter(|c| !c.is_empty())
+				// Generous runaway bound only — truncation here silently drops the
+				// tail requirements, which are exactly the ones work tends to miss
+				// (proven: a 7-cap cut a request's trusted-output exemption and the
+				// wrong work matched the remaining checklist perfectly).
+				.take(24)
+				.collect()
+		},
 	}
 }
 
@@ -435,6 +496,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				plan_at_turn_start: active_plan.to_string(),
 				forbids_verification: false,
 				answer_only: false,
+				evidence_conditions: Vec::new(),
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),

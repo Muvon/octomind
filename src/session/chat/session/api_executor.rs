@@ -531,8 +531,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.needs_verification(crate::supervisor::workdir::fingerprint())
 		);
 	}
+	// An explicit `done` self-report claims completion — and so does ending the
+	// turn with no status at all after having changed state: a token the model
+	// forgot must not become an unverified exit (observed: sessions ending with
+	// self_report=None skipped the whole gate). Pure answers (no mutations)
+	// stay ungated, in every mode alike.
+	let implicit_done = chat_session.last_self_report.is_none()
+		&& !chat_session.evidence.mutated_paths().is_empty();
 	if config.supervisor.gate.enabled
-		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
+		&& (chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
+			|| implicit_done)
 		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
 	{
 		// One genuine user message defines the verification turn. Supervisor,

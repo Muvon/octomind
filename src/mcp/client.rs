@@ -663,6 +663,18 @@ async fn call_tool_round(
 ) -> Result<CallToolResponse> {
 	let options = PeerRequestOptions::with_timeout(Duration::from_secs(server.timeout_seconds()))
 		.reset_timeout_on_progress();
+	// Progress keeps a call alive but must not extend it forever: a runaway
+	// command that streams output resets the idle timeout on every line, so
+	// without a ceiling one spinning tool stalls the whole session until an
+	// external kill. The cap scales with the server's configured timeout, so
+	// deliberately long-tool servers keep their headroom.
+	const PROGRESS_EXTENSION_CAP: u64 = 20;
+	let absolute_cap = Duration::from_secs(
+		server
+			.timeout_seconds()
+			.saturating_mul(PROGRESS_EXTENSION_CAP),
+	);
+	let tool_name = params.name.clone();
 	let handle = service
 		.peer()
 		.send_cancellable_request(
@@ -675,6 +687,19 @@ async fn call_tool_round(
 	let peer = handle.peer.clone();
 	let result = tokio::select! {
 		result = handle.await_response() => result,
+		_ = tokio::time::sleep(absolute_cap) => {
+			let _ = peer
+				.notify_cancelled(CancelledNotificationParam::new(
+					Some(request_id),
+					Some("absolute tool-call time cap exceeded".to_string()),
+				))
+				.await;
+			return Err(anyhow!(
+				"Tool '{}' cancelled after {}s: it kept emitting output (which resets the idle timeout) without completing. If it was a long-running command, re-run it bounded — with a limit, filter, or timeout — so it finishes.",
+				tool_name,
+				absolute_cap.as_secs()
+			));
+		}
 		_ = wait_cancelled(cancellation_token) => {
 			let _ = peer
 				.notify_cancelled(CancelledNotificationParam::new(

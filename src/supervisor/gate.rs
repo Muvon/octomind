@@ -723,12 +723,49 @@ pub async fn verify(
 			// as PASS — give it real headroom.
 			max_tokens: 8192,
 		},
-		operation_rx,
+		operation_rx.clone(),
 	)
 	.await
 	{
-		Ok(resp) => {
+		Ok(mut resp) => {
 			crate::log_debug!("Verify-gate response ({}):\n{}", model, resp);
+			// Format enforcement, one bounded retry: with a checklist present, a
+			// prose summary ("all conditions matched") is a protocol violation —
+			// summarized verification demonstrably absorbs violated conditions.
+			if !input.evidence_conditions.is_empty() && !resp.contains("<condition ") {
+				crate::log_info!(
+					"Verify-gate response skipped condition itemization; retrying once with format notice"
+				);
+				let retry_user = format!(
+					"{}\n\n<format_violation>\nYour previous reply summarized the checklist instead of itemizing it. Emit the required <condition n=\"..\" status=\"matched|unmatched\"> line for EVERY numbered condition (with its specific observation), then the <shape> lines, then the verdict.\n</format_violation>",
+					render_gate_input(&input)
+				);
+				match crate::supervisor::learning::extract::call_supervisor_llm(
+					config,
+					&model,
+					GATE_PROMPT.to_string(),
+					retry_user,
+					crate::supervisor::stats::CallKind::Gate,
+					crate::supervisor::learning::extract::SupervisorSampling {
+						temperature: 0.3,
+						max_tokens: 8192,
+					},
+					operation_rx,
+				)
+				.await
+				{
+					Ok(second) => {
+						crate::log_debug!("Verify-gate retry response ({}):\n{}", model, second);
+						resp = second;
+					}
+					Err(e) => {
+						crate::log_info!(
+							"Verify-gate format retry failed, keeping first response: {}",
+							e
+						);
+					}
+				}
+			}
 			if !resp.contains("<verdict>") && !resp.contains("<gap>") {
 				crate::log_info!(
 					"Verify-gate response carries no verdict markers (accepting): {}",
@@ -922,7 +959,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. When demonstrating that something is still rejected or unaffected, choose near-miss inputs that could LEAK: ones whose handled or rewritten form would be accepted by a NEIGHBORING rule or format of the same consumer — you know the neighboring forms from the material you read; a near-miss that nothing else could accept proves nothing, however plausible it looks. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. When demonstrating that something is still rejected or unaffected, pick each candidate near-miss by PROCEDURE, not intuition: (1) apply the work's own handling/transformation to the candidate on paper and write down the exact resulting value; (2) ask what ELSE would accept that resulting value — every other rule, format, or branch of the same consumer; (3) if nothing else could accept it, the candidate proves nothing — discard it and pick one whose transformed result IS acceptable to a neighboring rule. Demonstrate rejection with those. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }

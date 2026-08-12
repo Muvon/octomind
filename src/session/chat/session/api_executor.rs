@@ -643,7 +643,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		if check_run_forbidden {
 			crate::log_debug!("Pre-gate: check-run forbidden by user/instructions; standing down");
 		}
+		// Observe-only turns (a report, briefing, review, explanation) deliver
+		// text, not state — "run a check" is a category error there, and the
+		// tree fingerprint may have moved for reasons outside the agent (a
+		// concurrent editor, a generated artifact). The classifier's
+		// answer_only verdict stands this pre-gate down the same way it stands
+		// down the plan pre-gates; the LLM verify-gate still judges the report
+		// itself under its observe-only rules.
 		if config.supervisor.gate.require_check_after_mutation
+			&& !resolved_task.answer_only
 			&& !validators_configured
 			&& !check_run_forbidden
 			&& chat_session

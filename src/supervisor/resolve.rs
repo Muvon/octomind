@@ -68,7 +68,7 @@ conversation, or a trivial ask. Each condition must be:
   particular way of doing the work;
 - checkable against a log of performed actions and observed outputs ("X was produced and
   the observed output shows Y"), never a restatement of intent.
-Four coverage classes are MANDATORY — walk them in order and emit conditions for each that
+Six coverage classes are MANDATORY — walk them in order and emit conditions for each that
 applies (skipping an applicable class is an error):
 1. enumerated: every explicitly enumerated item, requirement, and stated constraint — ONE
    CONDITION PER ITEM, never merged: when the request lists variants ("including X and Y",
@@ -82,17 +82,27 @@ applies (skipping an applicable class is an error):
    that a near-miss input is shown still rejected — and the near-miss must be one that could
    LEAK: an input whose handled/rewritten form would be valid under a neighboring rule or
    format of the same consumer, not one that everything rejects anyway.
+5. named_form: when the request itself names something the work must create or expose (a
+   name, identifier, title, label, command, key), one condition that the produced thing
+   carries EXACTLY the request's form — its spelling, casing, and word boundaries — and,
+   when the request says to follow existing conventions, that the form mirrors the existing
+   counterparts it names. A form that differs only in casing or joining still fails.
+6. quantified: when the request demands a guarantee over an open set of behaviors ("never",
+   "always", "any", "whatever/no matter what X does"), one condition per materially
+   different behavior of the quantified thing — at minimum the behavior the request shows
+   plus one other failure mode (misbehaving output, failing outright, absent) — because
+   evidence for the shown behavior alone does not demonstrate the guarantee.
 Never include a condition whose only demonstration would require an action the request
 forbids (e.g. the request says not to run, send, or change something) — express the
 prohibition itself as the condition instead.
 
-Field "coverage": for each of the four classes, "covered" when you emitted conditions for
+Field "coverage": for each of the six classes, "covered" when you emitted conditions for
 it, or "n/a" when that class genuinely does not appear in the request. This field is your
 own audit — fill it after the conditions, and add any condition you find missing while
 filling it.
 
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"answer_only":true|false,"conditions":["..."],"coverage":{"enumerated":"covered|n/a","examples":"covered|n/a","prohibitions":"covered|n/a","boundary":"covered|n/a"}}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"answer_only":true|false,"conditions":["..."],"coverage":{"enumerated":"covered|n/a","examples":"covered|n/a","prohibitions":"covered|n/a","boundary":"covered|n/a","named_form":"covered|n/a","quantified":"covered|n/a"}}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every

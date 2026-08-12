@@ -117,7 +117,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		..Default::default()
 	};
 
-	if is_interactive_session {
+	let result = if is_interactive_session {
 		session::chat::run_interactive_session(&session_args, &run_config).await
 	} else {
 		session::chat::run_interactive_session_with_input(
@@ -126,7 +126,14 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 			&piped_input.unwrap(),
 		)
 		.await
+	};
+	// What the supervisor did and spent this run (gate runs, steers, blocks,
+	// condense savings, its own token/time bill) — the counters exist only in
+	// this process, so surface them before exit.
+	if let Some(stats) = octomind::supervisor::stats::snapshot() {
+		octomind::log_debug!("supervisor session stats: {}", stats);
 	}
+	result
 }
 
 /// Which existing session this invocation will resume, if any.

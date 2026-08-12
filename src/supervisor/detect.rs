@@ -255,12 +255,34 @@ pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<Stri
 	let mut bad = Vec::new();
 	for q in quotes {
 		for line in q.lines().map(normalize_ws).filter(|l| !l.is_empty()) {
-			if !haystack.contains(&line) {
+			if !haystack.contains(&line) && !joined_segments_grounded(&line, &haystack) {
 				bad.push(line);
 			}
 		}
 	}
 	bad
+}
+
+/// Fallback for a quote line that fails whole-line matching: models sometimes
+/// join several output lines into one with `·` or `|` (a habit our own
+/// self-report separator format teaches). Such a join is not fabrication as
+/// long as EVERY joined segment occurs verbatim in the outputs, so accept it —
+/// but only when each segment is substantial enough that a match still means
+/// something. Any short or unmatched segment keeps the line flagged.
+fn joined_segments_grounded(line: &str, haystack: &str) -> bool {
+	const MIN_SEGMENT_CHARS: usize = 8;
+	if !line.contains(['·', '|']) {
+		return false;
+	}
+	let segments: Vec<&str> = line
+		.split(['·', '|'])
+		.map(str::trim)
+		.filter(|s| !s.is_empty())
+		.collect();
+	segments.len() >= 2
+		&& segments
+			.iter()
+			.all(|s| s.chars().count() >= MIN_SEGMENT_CHARS && haystack.contains(s))
 }
 
 /// Extract the quote text inside each `<evidence …>…</evidence>` tag (the
@@ -2067,6 +2089,35 @@ mod tests {
 		let resp = "<evidence locator=\"Meter.php:36-37\">'week' => $midnight,\n'month' => invented()</evidence>";
 		let bad = unverified_citations(resp, &outputs);
 		assert_eq!(bad, vec!["'month' => invented()"]);
+	}
+
+	#[test]
+	fn evidence_lines_joined_with_middot_pass_when_every_segment_grounded() {
+		// Regression (carbon run): the agent quoted three real output lines
+		// joined into one with `·`; the whole line matched nothing and a true
+		// claim was bounced. Every segment is verbatim output, so it passes.
+		let outputs = vec![
+			"setEnd: ->end=2012-08-01 getEnd=2012-08-01\nremoveEnd: ->end=NULL getEnd=NULL instanceof=y\nsetStart: ->start=2014-01-01 getStart=2014-01-01"
+				.to_string(),
+		];
+		let resp = "<evidence locator=\"/tmp/acc.php\">setEnd: ->end=2012-08-01 getEnd=2012-08-01 · removeEnd: ->end=NULL getEnd=NULL instanceof=y · setStart: ->start=2014-01-01 getStart=2014-01-01</evidence>";
+		assert!(unverified_citations(resp, &outputs).is_empty());
+	}
+
+	#[test]
+	fn evidence_joined_line_with_fabricated_segment_still_flagged() {
+		let outputs = vec!["setEnd: ->end=2012-08-01 getEnd=2012-08-01".to_string()];
+		let resp = "<evidence locator=\"x\">setEnd: ->end=2012-08-01 getEnd=2012-08-01 · removeEnd: ->end=fabricated()</evidence>";
+		assert_eq!(unverified_citations(resp, &outputs).len(), 1);
+	}
+
+	#[test]
+	fn evidence_joined_short_segments_not_eligible() {
+		// Segments below the minimum length would match noise ("ok", "0"), so
+		// the fallback refuses them and the line stays flagged.
+		let outputs = vec!["ok\n42".to_string()];
+		let resp = "<evidence locator=\"x\">ok · 42</evidence>";
+		assert_eq!(unverified_citations(resp, &outputs).len(), 1);
 	}
 
 	#[test]

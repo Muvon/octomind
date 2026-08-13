@@ -509,7 +509,10 @@ pub fn render_ground_truth(mutated_paths: &[String], recent_commands: &[(&str, &
 		let status = git_status();
 		if !status.is_empty() {
 			s.push_str(
-				"Working-tree status, all files (informational — may include pre-existing or build files):\n",
+				"Working-tree status, all files (informational — may include pre-existing or build files).\n\
+				 Porcelain legend: two status columns, then the path. Column 1 = STAGED (index) state, \
+				 column 2 = UNSTAGED (worktree) state: `M ` staged-modified, ` M` unstaged-modified, \
+				 `MM` both, `??` untracked. Do not call a file unstaged unless column 2 says so.\n",
 			);
 			s.push_str(&status);
 		}
@@ -733,7 +736,7 @@ pub async fn verify(
 			// A reasoning verifier spends output budget thinking before the
 			// verdict; a budget overflow returns empty content, which parses
 			// as PASS — give it real headroom.
-			max_tokens: 8192,
+			max_tokens: config.supervisor.gate.max_tokens,
 		},
 		operation_rx.clone(),
 	)
@@ -766,7 +769,7 @@ pub async fn verify(
 					crate::supervisor::stats::CallKind::Gate,
 					crate::supervisor::learning::extract::SupervisorSampling {
 						temperature: 0.3,
-						max_tokens: 8192,
+						max_tokens: config.supervisor.gate.max_tokens,
 					},
 					operation_rx,
 				)

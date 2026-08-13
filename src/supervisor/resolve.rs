@@ -53,10 +53,14 @@ work itself (for example: do not run tests/build/lint, no verification needed, I
 run/review it myself, in any language or phrasing). Prohibitions about other actions (do
 not run the migration, do not modify tests) and descriptive prose are false.
 
-Field "answer_only": true only when the turn asks solely for information — a question,
-status report, confirmation, or explanation — and requests no new work and no continuation
-of existing work. A turn that mixes a question with any action request is false. When in
-doubt, return false.
+Field "answer_only": true only when the turn's ENTIRE deliverable is information delivered
+in the reply — a question answered, a status report, confirmation, explanation, or an
+observe-only work product: a review, audit, analysis, briefing, comparison, or diagnosis of
+existing material. Producing such a report may take substantial reading and tool use; it is
+still answer_only because nothing outside the conversation is created or changed. False
+whenever the turn asks to create or change anything outside the reply (files, data,
+systems, published or sent content) or to continue such work; a turn that mixes an
+information ask with any change request is false. When in doubt, return false.
 
 Field "conditions": decompose the request into the concrete observations that would
 demonstrate it is fulfilled — one short line per explicitly stated requirement, example,

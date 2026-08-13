@@ -258,6 +258,9 @@ impl ChatSession {
 		self.gate_iterations = 0;
 		self.nudge_iterations = 0;
 		self.last_gate_gaps.clear();
+		// New genuine task: the turn-answer ledger starts fresh — the previous
+		// turn's deliverable must not pad this turn's verification.
+		self.turn_answers.clear();
 		// New genuine task: the delegate gate's rewrite budget starts fresh, so a
 		// previous task's exhausted budget can't latch the gate off.
 		self.delegate_revisions = 0;
@@ -382,6 +385,10 @@ impl ChatSession {
 		}
 		self.session.messages.push(message);
 		self.last_response = content.to_string();
+		// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
+		if !content.trim().is_empty() {
+			self.turn_answers.push(content.to_string());
+		}
 
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {

@@ -255,4 +255,10 @@ pub struct GateConfig {
 	/// agent must finish them or close them out via the plan tool first. Runs
 	/// before the LLM verify-gate (zero model calls).
 	pub require_plan_complete: bool,
+	/// Max tokens for the verifier exchange, like every model block: the
+	/// call's output budget (a reasoning verifier thinks before its verdict —
+	/// an overflow returns empty content, which parses as PASS) and the token
+	/// cap on the assembled turn deliverable it is shown (newest answer always
+	/// kept, oldest parts drop first). Size it to the verifier_model.
+	pub max_tokens: u32,
 }

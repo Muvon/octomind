@@ -53,50 +53,37 @@ fn current_turn_tool_outputs(
 		.collect()
 }
 
-/// Cap on the assembled turn answer handed to the verify-gate. Oldest parts are
-/// dropped first; the newest answer is always kept.
-const TURN_ANSWER_MAX: usize = 24_000;
-
 /// Separator between the parts of a re-run turn's answer. Self-describing so the
 /// verifier reads the parts as one deliverable (see the gate prompt).
 const ANSWER_PART_SEPARATOR: &str = "\n\n--- (continued after supervisor feedback) ---\n\n";
 
-/// The turn's answer: every assistant message since the real user turn that ended
-/// a round (content, no tool calls) — one per supervisor re-run pass, oldest first.
+/// The turn's answer: the turn-answer ledger's finals — one per supervisor
+/// re-run pass, oldest first. First-class session state, never a context-window
+/// query: mid-turn compression rewrites the live message list, and the judged
+/// deliverable must not shrink because the context was compacted.
 ///
 /// The gate must judge these as ONE deliverable. A re-run triggered by a narrow
 /// correction gets a narrow reply ("the link is grounded, the report stands"),
 /// because that is what the advisory asked for; judging only that last message
 /// throws away the actual deliverable and fails a correct turn for "not
 /// delivering" what an earlier part of the same turn already delivered.
-fn current_turn_answer(messages: &[crate::session::Message], turn_start: usize) -> String {
-	let parts: Vec<&str> = messages
-		.get(turn_start..)
-		.unwrap_or_default()
-		.iter()
-		.filter(|message| {
-			message.role == "assistant"
-				&& message.tool_calls.is_none()
-				&& !message.content.trim().is_empty()
-		})
-		.map(|message| message.content.as_str())
-		.collect();
+///
+/// `max_tokens` is the gate's configured budget (`supervisor.gate.max_tokens`).
+fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	// Fill the budget newest-first (an amendment is the most recent state), then
 	// restore chronological order so "later parts amend earlier ones" holds.
 	let mut kept: Vec<&str> = Vec::new();
 	let mut used = 0usize;
-	for part in parts.iter().rev().copied() {
-		if !kept.is_empty() && used + part.len() > TURN_ANSWER_MAX {
+	for part in turn_answers.iter().rev() {
+		let tokens = crate::session::estimate_tokens(part);
+		if !kept.is_empty() && used + tokens > max_tokens {
 			break;
 		}
-		used += part.len();
-		kept.push(part);
+		used += tokens;
+		kept.push(part.as_str());
 	}
 	kept.reverse();
-	kept.join(ANSWER_PART_SEPARATOR)
-		.chars()
-		.take(TURN_ANSWER_MAX)
-		.collect()
+	crate::session::truncate_to_tokens(&kept.join(ANSWER_PART_SEPARATOR), max_tokens)
 }
 
 /// Arguments of every tool call the agent issued this turn — the paths and URLs
@@ -903,7 +890,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// The whole turn's answer, not just its last message: a supervisor re-run
 		// answers the correction it was given, so the deliverable usually sits in an
 		// earlier part of the same turn.
-		let result = current_turn_answer(&chat_session.session.messages, turn_start);
+		let result = current_turn_answer(
+			&chat_session.turn_answers,
+			config.supervisor.gate.max_tokens as usize,
+		);
 		let result = if result.is_empty() {
 			chat_session.last_response.clone()
 		} else {
@@ -1026,48 +1016,26 @@ mod tests {
 		}
 	}
 
-	fn calling(content: &str) -> crate::session::Message {
-		crate::session::Message {
-			tool_calls: Some(serde_json::json!([{"name": "view"}])),
-			..message("assistant", content)
-		}
-	}
-
 	#[test]
 	fn turn_answer_joins_every_pass_oldest_first() {
-		let messages = vec![
-			message("user", "Old request"),
-			message("assistant", "Old answer, not this turn"),
-			message("user", "Brief the branch"),
-			calling("Reading the diff…"),
-			message("tool", "diff output"),
-			message("assistant", "THE BRIEF"),
-			message("user", "<pay-attention>unverified URL</pay-attention>"),
-			calling("Re-checking…"),
-			message("tool", "200"),
-			message("assistant", "The link is grounded; the brief stands."),
+		// Turn-boundary and tool-call filtering happen at the append/clear
+		// sites (the ledger is state); assembly joins the passes in order.
+		let answers = vec![
+			"THE BRIEF".to_string(),
+			"The link is grounded; the brief stands.".to_string(),
 		];
-		let start = latest_real_user_turn_start(&messages);
-		let answer = current_turn_answer(&messages, start);
-		// Both passes, in order, and nothing from the previous turn.
 		assert_eq!(
-			answer,
+			current_turn_answer(&answers, 8192),
 			format!("THE BRIEF{ANSWER_PART_SEPARATOR}The link is grounded; the brief stands.")
 		);
-		assert!(!answer.contains("Old answer"));
-		assert!(!answer.contains("Reading the diff"));
 	}
 
 	#[test]
 	fn turn_answer_keeps_the_newest_pass_when_over_budget() {
-		let messages = vec![
-			message("user", "Do it"),
-			message("assistant", &"x".repeat(TURN_ANSWER_MAX)),
-			message("assistant", "the amendment"),
-		];
-		let start = latest_real_user_turn_start(&messages);
-		let answer = current_turn_answer(&messages, start);
-		assert_eq!(answer, "the amendment");
+		// The older pass alone exceeds the token budget; the newest is always kept.
+		let old = "many different words fill the older pass ".repeat(50);
+		let answers = vec![old, "the amendment".to_string()];
+		assert_eq!(current_turn_answer(&answers, 16), "the amendment");
 	}
 
 	#[test]

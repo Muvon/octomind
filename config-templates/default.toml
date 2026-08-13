@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 4
+version = 5
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -769,6 +769,10 @@ require_check_after_mutation = true
 # live plan checklist still has open items -- finish them or close them out via
 # the plan tool (mark complete / done / reset) first.
 require_plan_complete = true
+# Max tokens for the verifier exchange: the call's output budget (a reasoning
+# verifier thinks before its verdict) and the token cap on the assembled turn
+# deliverable it is shown (newest answer always kept, older passes drop first).
+max_tokens = 8192
 
 # Goal recitation: re-inject the live goal (anchor intent + next_steps) at the
 # context tail each turn on long (already-compacted) sessions, so it stays in the

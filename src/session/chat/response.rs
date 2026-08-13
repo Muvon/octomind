@@ -137,6 +137,10 @@ fn handle_final_response(
 		.messages
 		.push(assistant_message.clone());
 	chat_session.last_response = content.to_string();
+	// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
+	if !content.trim().is_empty() {
+		chat_session.turn_answers.push(content.to_string());
+	}
 
 	// Persist to session file so the message survives session close/resume
 	if let Some(session_file) = &chat_session.session.session_file {
@@ -369,6 +373,11 @@ fn add_assistant_message_with_tool_calls(
 
 	// Update last response - no cost tracking here as it will be handled by follow-up processing
 	chat_session.last_response = current_content.to_string();
+	// Turn-answer ledger: only a FINAL (no tool calls) is part of the turn's
+	// deliverable — a message that carries tool calls is work in progress.
+	if original_tool_calls.is_none() && !current_content.trim().is_empty() {
+		chat_session.turn_answers.push(current_content.to_string());
+	}
 
 	// CRITICAL FIX: DO NOT track cost/tokens here - already tracked by CostTracker::track_exchange_cost()
 	// in api_executor.rs:163. Tracking here causes DUPLICATE cost/token counting.
@@ -671,6 +680,7 @@ pub async fn process_response<S: OutputSink>(
 					let mut round_verifier = false;
 					let mut round_readback = false;
 					let mut round_mutation = false;
+					let mut round_write_capable = false;
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -781,6 +791,11 @@ pub async fn process_response<S: OutputSink>(
 							is_mutation,
 							is_error,
 						);
+						// Write-capability for the verification fold: a mutation-shaped
+						// call or a command execution could have moved the tree — errored
+						// ones included, a command may write before failing. A round of
+						// pure reads cannot, so fingerprint drift across it is external.
+						round_write_capable |= is_mutation || verifier_shaped;
 						if !is_error {
 							round_mutation |= is_mutation;
 							if is_mutation {
@@ -810,12 +825,13 @@ pub async fn process_response<S: OutputSink>(
 						let delegated_ok =
 							delegated_runs > 0 && delegated_verified == delegated_runs;
 						crate::log_debug!(
-							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={} delegated={}/{}",
+							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={} write_capable={} delegated={}/{}",
 							fp_before,
 							fp_after,
 							round_verifier,
 							round_readback,
 							round_mutation,
+							round_write_capable,
 							delegated_verified,
 							delegated_runs
 						);
@@ -826,6 +842,9 @@ pub async fn process_response<S: OutputSink>(
 							round_readback,
 							round_mutation,
 							delegated_ok,
+							// A delegated child can write through any tool of its own, so
+							// its round is write-capable regardless of the parent's calls.
+							round_write_capable || delegated_runs > 0,
 						);
 					}
 

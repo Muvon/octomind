@@ -63,9 +63,38 @@ fn plan() -> MigrationPlan {
 				to: 4,
 				apply: collapse_pressure_levels,
 			},
+			VersionMigration {
+				from: 4,
+				to: 5,
+				apply: add_gate_turn_answer_budget,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v5 adds `supervisor.gate.max_tokens` — the verifier exchange's token budget
+/// (previously hardcoded), configurable because different verifier models carry
+/// different windows. Existing gate settings and comments are preserved; only
+/// the missing key is copied from the embedded template.
+fn add_gate_turn_answer_budget(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_supervisor = required_table(
+		template.as_table(),
+		"supervisor",
+		"embedded default configuration",
+	)?;
+
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user configuration",
+	)?;
+
+	merge_missing(supervisor, template_supervisor, "gate")
 }
 
 /// v2 (octomind 0.40) adds `[supervisor.delegate]` — the handoff quality gate.
@@ -304,7 +333,7 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(4));
+		assert_eq!(migrated["version"].as_integer(), Some(5));
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
 		assert!(migrated["supervisor"]["delegate"]["enabled"]
 			.as_bool()
@@ -325,6 +354,10 @@ mod tests {
 			migrated["compression"]["attention"]["governance"]["verify_hash"].as_bool(),
 			Some(true)
 		);
+		assert_eq!(
+			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
+			Some(8192)
+		);
 	}
 
 	#[test]
@@ -342,7 +375,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 4);
+		assert_eq!(migration.to_version, 5);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -390,13 +423,13 @@ model = "openrouter:custom/model"
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 4);
+		assert_eq!(migration.to_version, 5);
 		assert!(migration.content.contains("# keep me"));
 		// The template's documentation comes across with the new section.
 		assert!(migration.content.contains("# Delegate gate"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(4));
+		assert_eq!(migrated["version"].as_integer(), Some(5));
 		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
 			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
@@ -492,7 +525,7 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 4);
+		assert_eq!(migration.to_version, 5);
 		assert!(migration.content.contains("# keep compression notes"));
 		assert_eq!(
 			migrated["compression"]["hints_enabled"].as_bool(),
@@ -539,7 +572,7 @@ target_ratio = 4.0
 			.expect("v3 must migrate");
 
 		assert_eq!(migration.from_version, 3);
-		assert_eq!(migration.to_version, 4);
+		assert_eq!(migration.to_version, 5);
 		assert!(migration.content.contains("# keep my notes"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -549,6 +582,40 @@ target_ratio = 4.0
 			Some(80000)
 		);
 		assert!(migrated["compression"].get("pressure_levels").is_none());
+	}
+
+	#[test]
+	fn v4_gains_gate_answer_budget_and_keeps_user_gate_values() {
+		let existing = r#"version = 4
+
+[supervisor.gate]
+enabled = false
+max_iterations = 7
+verifier_model = "openai:custom-verifier"
+require_check_after_mutation = false
+require_plan_complete = false
+"#;
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v4 must migrate");
+		assert_eq!(migration.from_version, 4);
+		assert_eq!(migration.to_version, 5);
+
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(
+			migrated["supervisor"]["gate"]["verifier_model"].as_str(),
+			Some("openai:custom-verifier")
+		);
+		assert_eq!(
+			migrated["supervisor"]["gate"]["max_iterations"].as_integer(),
+			Some(7)
+		);
+		assert_eq!(
+			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
+			Some(8192)
+		);
 	}
 
 	#[test]
@@ -569,7 +636,7 @@ target_ratio = 4.0
 
 	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 4", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 5", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

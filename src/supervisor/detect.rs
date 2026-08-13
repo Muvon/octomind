@@ -506,7 +506,10 @@ fn normalize_ws(s: &str) -> String {
 /// source link the agent never fetched, never issued a call for, and was never
 /// given is an invented source. Trailing prose/markdown punctuation is stripped,
 /// and a trailing-slash variant is accepted, so only genuinely absent links are
-/// flagged. No model call.
+/// flagged. Infrastructure endpoints — loopback/private/unspecified addresses
+/// and single-label hosts (`localhost`, Docker service names) — are exempt:
+/// they describe a deployment topology, not a source, and "fetch it now" is a
+/// category error for an address unreachable from here. No model call.
 pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 	let re =
@@ -523,6 +526,36 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 			.as_str()
 			.trim_end_matches(['.', ',', ';', ':', '!', '?', '/']);
 		if url.is_empty() || !seen.insert(url.to_string()) {
+			continue;
+		}
+		// Infrastructure endpoint, not a citable source: prose describing a
+		// topology ("admin calls go to http://octohub:2780") fabricates nothing
+		// even when no tool output carries that exact concatenation.
+		let hostport = url
+			.split("://")
+			.nth(1)
+			.unwrap_or("")
+			.split(['/', '?'])
+			.next()
+			.unwrap_or("");
+		let host = if let Some(rest) = hostport.strip_prefix('[') {
+			rest.split(']').next().unwrap_or("")
+		} else {
+			match hostport.rsplit_once(':') {
+				Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+				_ => hostport,
+			}
+		};
+		let non_public = match host.parse::<std::net::IpAddr>() {
+			Ok(std::net::IpAddr::V4(v4)) => {
+				v4.is_loopback() || v4.is_private() || v4.is_unspecified() || v4.is_link_local()
+			}
+			Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || v6.is_unspecified(),
+			// A host with no dot (`localhost`, a Docker service name) resolves
+			// only inside the described deployment.
+			Err(_) => !host.contains('.'),
+		};
+		if non_public {
 			continue;
 		}
 		// Grounded when the URL (with or without a trailing slash) appears in
@@ -886,8 +919,11 @@ pub struct Detectors {
 	/// differ (a change made through ANY tool, `shell sed -i` included) or,
 	/// without fingerprints, a mutation-shaped success — and no clean
 	/// verification has run since. Keyed to the agent's own rounds, so external
-	/// drift between rounds (the user editing their tree mid-session) never
-	/// arms it: an agent that changed nothing has nothing to verify.
+	/// drift never arms it: between rounds (the user editing their tree
+	/// mid-session) the fingerprint moves outside any round, and DURING a round
+	/// arming additionally requires a write-capable call (mutation-shaped,
+	/// command-executing, or delegated) — a round of pure reads cannot have
+	/// moved the tree, so drift there is a concurrent writer, not the agent.
 	agent_dirty: bool,
 	/// Paths the agent's own successful mutation-shaped calls touched since the
 	/// last clean verification — the artifacts a later read-back can verify.
@@ -1164,6 +1200,16 @@ impl Detectors {
 	/// The child measures its own tree with this same code one level down, so
 	/// the caller passes its verdict up (see [`crate::supervisor::delegate`])
 	/// and it stands in for the tree check for that round only.
+	///
+	/// `write_capable` = the round carried at least one call that COULD have
+	/// moved the tree: mutation-shaped, command-executing (an edit hides inside
+	/// a shell command, and a command may write before erroring), or a delegated
+	/// subagent run. A round of pure reads cannot have caused the movement, so a
+	/// fingerprint that drifts across it is a concurrent writer (the user's
+	/// editor, a dev server, a generated artifact) — attributing that to the
+	/// agent armed the mutation pre-gate on observe-only jobs (review/audit),
+	/// which then demanded a check run for work that changed nothing.
+	#[allow(clippy::too_many_arguments)]
 	pub fn note_round_verification(
 		&mut self,
 		fp_before: Option<u64>,
@@ -1172,6 +1218,7 @@ impl Detectors {
 		readback_ok: bool,
 		mutation_ok: bool,
 		delegated_ok: bool,
+		write_capable: bool,
 	) {
 		// First observation seeds the baseline: the task-start tree is, by
 		// definition, the last state the user accepted.
@@ -1195,15 +1242,16 @@ impl Detectors {
 			}
 			self.agent_dirty = false;
 			self.mutated_paths.clear();
-		} else if !tree_unchanged {
+		} else if !tree_unchanged && write_capable {
 			self.agent_dirty = true;
 		}
 		crate::log_debug!(
-			"round verification: tree_unchanged={} verifier={} readback={} delegated={} -> verified_fp={:?} agent_dirty={}",
+			"round verification: tree_unchanged={} verifier={} readback={} delegated={} write_capable={} -> verified_fp={:?} agent_dirty={}",
 			tree_unchanged,
 			verifier_ok,
 			readback_ok,
 			delegated,
+			write_capable,
 			self.verified_fp,
 			self.agent_dirty
 		);
@@ -1858,16 +1906,16 @@ mod tests {
 		let mut d = Detectors::default();
 		assert!(!d.needs_verification(None));
 		// Mutation-shaped round, no verifier → unverified.
-		d.note_round_verification(None, None, false, false, true, false);
+		d.note_round_verification(None, None, false, false, true, false, true);
 		assert!(d.needs_verification(None));
 		// A read-only round changes nothing — looking is not verifying.
-		d.note_round_verification(None, None, false, false, false, false);
+		d.note_round_verification(None, None, false, false, false, false, false);
 		assert!(d.needs_verification(None));
 		// A round where the verifier ran alongside a mutation proves nothing.
-		d.note_round_verification(None, None, true, false, true, false);
+		d.note_round_verification(None, None, true, false, true, false, true);
 		assert!(d.needs_verification(None));
 		// A clean verifier round clears it.
-		d.note_round_verification(None, None, true, false, false, false);
+		d.note_round_verification(None, None, true, false, false, false, true);
 		assert!(!d.needs_verification(None));
 	}
 
@@ -1876,14 +1924,14 @@ mod tests {
 		let mut d = Detectors::default();
 		// Round 1 seeds the baseline (10 = task-start tree); the round's edit
 		// moved the tree to 11 → unverified.
-		d.note_round_verification(Some(10), Some(11), false, false, true, false);
+		d.note_round_verification(Some(10), Some(11), false, false, true, false, true);
 		assert!(d.needs_verification(Some(11)));
 		// Verifier ran but the same round dirtied the tree (11→12): ambiguous
 		// state, proves nothing.
-		d.note_round_verification(Some(11), Some(12), true, false, true, false);
+		d.note_round_verification(Some(11), Some(12), true, false, true, false, true);
 		assert!(d.needs_verification(Some(12)));
 		// Clean verifier on an unchanged tree → verified at 12.
-		d.note_round_verification(Some(12), Some(12), true, false, false, false);
+		d.note_round_verification(Some(12), Some(12), true, false, false, false, true);
 		assert!(!d.needs_verification(Some(12)));
 		// Drift with NO agent round in between is external (the user editing
 		// their own tree): the agent changed nothing since its clean
@@ -1899,12 +1947,18 @@ mod tests {
 		// Read-only rounds over a tree that drifts externally mid-session — the
 		// observe-only job shape (review/brief/audit): the deliverable is a
 		// report, and a done-claim needs no check run.
-		d.note_round_verification(Some(10), Some(10), false, false, false, false);
+		d.note_round_verification(Some(10), Some(10), false, false, false, false, false);
 		assert!(!d.needs_verification(Some(11)));
-		// A round that itself moved the tree arms it, even when no call was
-		// mutation-shaped (an edit hidden inside a shell command).
-		d.note_round_verification(Some(11), Some(12), false, false, false, false);
-		assert!(d.needs_verification(Some(12)));
+		// Drift DURING a pure-read round (a concurrent editor, a dev server, a
+		// generated artifact moving the tree while the agent only views and
+		// searches): no call could have written, so the movement is external
+		// and must not arm — this is what falsely gated read-only jobs.
+		d.note_round_verification(Some(11), Some(12), false, false, false, false, false);
+		assert!(!d.needs_verification(Some(12)));
+		// A write-capable round that moved the tree arms it, even when no call
+		// was mutation-shaped (an edit hidden inside a shell command).
+		d.note_round_verification(Some(12), Some(13), false, false, false, false, true);
+		assert!(d.needs_verification(Some(13)));
 	}
 
 	#[test]
@@ -1913,13 +1967,15 @@ mod tests {
 		// An orchestrator's `tap run`: the specialist edited AND checked inside
 		// this one parent round, so the tree moved and no parent call could ever
 		// be verifier-shaped. Without the child's verdict this latches dirty
-		// forever and every `done` re-triggers the mutation pre-gate.
-		d.note_round_verification(Some(10), Some(11), false, false, false, false);
+		// forever and every `done` re-triggers the mutation pre-gate. A round
+		// with delegated runs is always write-capable — the child can write
+		// through any tool of its own.
+		d.note_round_verification(Some(10), Some(11), false, false, false, false, true);
 		assert!(d.needs_verification(Some(11)));
 		// Same round shape, child reported verified → accepted, and the
 		// post-round tree becomes the new baseline.
 		let mut d = Detectors::default();
-		d.note_round_verification(Some(10), Some(11), false, false, false, true);
+		d.note_round_verification(Some(10), Some(11), false, false, false, true, true);
 		assert!(!d.needs_verification(Some(11)));
 	}
 
@@ -1929,7 +1985,7 @@ mod tests {
 		// Parallel round: a verified subagent alongside the parent's own
 		// mutation-shaped call. The child never checked the parent's edit, so
 		// its verdict must not clear the round.
-		d.note_round_verification(Some(10), Some(11), false, false, true, true);
+		d.note_round_verification(Some(10), Some(11), false, false, true, true, true);
 		assert!(d.needs_verification(Some(11)));
 	}
 
@@ -1939,7 +1995,7 @@ mod tests {
 		let mut d = Detectors::default();
 		// Round 1: agent edits a doc — mutation round, tree moves, dirty.
 		d.note_mutated_paths(&json!({"path": "blog/post/index.md"}));
-		d.note_round_verification(Some(10), Some(11), false, false, true, false);
+		d.note_round_verification(Some(10), Some(11), false, false, true, false, true);
 		assert!(d.needs_verification(Some(11)));
 		// Round 2: agent re-reads the exact artifact it changed — that IS the
 		// verification for work with no command to run.
@@ -1949,7 +2005,7 @@ mod tests {
 			false,
 		);
 		assert!(readback);
-		d.note_round_verification(Some(11), Some(11), false, readback, false, false);
+		d.note_round_verification(Some(11), Some(11), false, readback, false, false, false);
 		assert!(!d.needs_verification(Some(11)));
 	}
 
@@ -2031,7 +2087,7 @@ mod tests {
 	#[test]
 	fn reset_streak_clears_previous_task_verification_latch() {
 		let mut d = Detectors::default();
-		d.note_round_verification(None, None, false, false, true, false);
+		d.note_round_verification(None, None, false, false, true, false, true);
 		assert!(d.needs_verification(None));
 		// A new genuine task must not inherit an earlier task's mutation.
 		d.reset_streak();
@@ -2048,7 +2104,7 @@ mod tests {
 		assert!(d.check_run_forbidden());
 		// An incidental clean verification round does NOT erase the user's
 		// prohibition — the latch never auto-expires.
-		d.note_round_verification(None, None, true, false, false, false);
+		d.note_round_verification(None, None, true, false, false, false, true);
 		assert!(d.check_run_forbidden());
 	}
 
@@ -2226,6 +2282,25 @@ mod tests {
 		let grounds = vec!["fetched https://example.com/".to_string()];
 		let resp = "From (https://example.com), we learn.";
 		assert!(unverified_urls(resp, &grounds).is_empty());
+	}
+
+	#[test]
+	fn url_infrastructure_endpoints_never_flagged() {
+		// Loopback/private addresses and single-label hosts (Docker service
+		// names) are deployment topology, not citable sources — prose like
+		// "admin calls go to http://octohub:2780" fabricates nothing even when
+		// no tool output carries that exact concatenation.
+		let grounds = vec!["some unrelated tool output".to_string()];
+		let resp =
+			"Admin traffic uses http://127.0.0.1:2780 in production, http://octohub:2780 in dev; \
+			see also http://localhost:3000, http://192.168.1.10:8080, and http://[::1]:8443.";
+		assert!(unverified_urls(resp, &grounds).is_empty());
+		// Public hosts are still held to grounding.
+		let resp = "Source: https://invented.example/paper.pdf";
+		assert_eq!(
+			unverified_urls(resp, &grounds),
+			vec!["https://invented.example/paper.pdf"]
+		);
 	}
 
 	#[test]

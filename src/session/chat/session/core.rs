@@ -164,6 +164,15 @@ fn generate_session_name() -> String {
 pub struct ChatSession {
 	pub session: Session,
 	pub last_response: String,
+	/// The turn's deliverable as first-class state: every final assistant
+	/// message (content, no tool calls) since the latest genuine user turn,
+	/// oldest first. The verify-gate judges these as ONE deliverable. State,
+	/// not a context query — mid-turn compression rewrites the live message
+	/// list, and the judged deliverable must not shrink because the context
+	/// was compacted (a gate shown only the post-compaction tail "finds"
+	/// coverage gaps for everything delivered before it). Cleared on a
+	/// genuine user turn, alongside the evidence ledger.
+	pub turn_answers: Vec<String>,
 	pub model: String,
 	pub role: String, // Role for the session
 	pub temperature: f32,
@@ -367,6 +376,7 @@ impl ChatSession {
 		Self {
 			session,
 			last_response: String::new(),
+			turn_answers: Vec::new(),
 			model: model_name,
 			role: params.role.to_string(),
 			temperature: temperature_value,     // Use the provided temperature
@@ -584,6 +594,7 @@ impl ChatSession {
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
+						turn_answers: Vec::new(),
 						model: restored_model,               // Use restored model from session
 						role: params.role.to_string(),       // Add role from params
 						temperature: effective_temperature,  // Use config-based temperature
@@ -694,6 +705,23 @@ impl ChatSession {
 							break;
 						}
 					}
+
+					// Seed the turn-answer ledger from the loaded transcript: the
+					// resumed turn's finals were appended live in the prior process,
+					// and the verify-gate must judge the same deliverable after a
+					// resume as before it.
+					let turn_start =
+						crate::session::latest_task_turn_index(&chat_session.session.messages)
+							.unwrap_or(chat_session.session.messages.len());
+					chat_session.turn_answers = chat_session.session.messages[turn_start..]
+						.iter()
+						.filter(|m| {
+							m.role == "assistant"
+								&& m.tool_calls.is_none()
+								&& !m.content.trim().is_empty()
+						})
+						.map(|m| m.content.clone())
+						.collect();
 
 					Ok(chat_session)
 				}
@@ -1351,6 +1379,7 @@ mod tests {
 				session_file: None,
 			},
 			last_response: String::new(),
+			turn_answers: Vec::new(),
 			model: "anthropic/claude-3-5-sonnet".to_string(),
 			role: "core".to_string(),
 			temperature: 0.7,

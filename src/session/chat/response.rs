@@ -1179,6 +1179,13 @@ pub async fn process_response<S: OutputSink>(
 
 	params.emit(cost_msg);
 
+	// Supervisor telemetry beside the cost snapshot: the run-exit dump can be
+	// reaped with the process by harnesses that close on the final stream
+	// event, so emit the cumulative counters at every turn boundary too.
+	if let Some(stats) = crate::supervisor::stats::snapshot() {
+		crate::log_debug!("supervisor session stats: {}", stats);
+	}
+
 	// Inject compression hint if applicable (non-intrusive, appended to response)
 	// Skip if using structured output (JSONL/WebSocket - handled by sink)
 	if params.mode.is_terminal_mode() {

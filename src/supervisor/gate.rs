@@ -152,8 +152,9 @@ from that source outranks hand-picked instances. An enumerated item with no exer
 evidence is a gap — name the item and the check it lacks. This bar applies only to items the
 request explicitly enumerates, never to surfaces you infer.
 
-After the condition lines (when conditions are present), you MUST also emit one line per
-evidence shape below, judged against the work as a whole:
+ALWAYS — whether or not conditions are present — you MUST emit one line per evidence
+shape below, judged against the work as a whole (after the condition lines when there
+are any; as the start of your answer otherwise):
 <shape name="circular" found="yes|no">one-line reason</shape>
 <shape name="context-stripped" found="yes|no">one-line reason</shape>
 <shape name="acceptance-only" found="yes|no">one-line reason</shape>
@@ -743,12 +744,18 @@ pub async fn verify(
 			// Format enforcement, one bounded retry: with a checklist present, a
 			// prose summary ("all conditions matched") is a protocol violation —
 			// summarized verification demonstrably absorbs violated conditions.
-			if !input.evidence_conditions.is_empty() && !resp.contains("<condition ") {
+			// The shape lines are required UNCONDITIONALLY: when the classifier
+			// yields no conditions (thin request, failed call), the shapes are the
+			// only forcing structure left — without them the verifier reverts to
+			// gestalt prose, which demonstrably stamps flawed work.
+			if (!input.evidence_conditions.is_empty() && !resp.contains("<condition "))
+				|| !resp.contains("<shape ")
+			{
 				crate::log_info!(
 					"Verify-gate response skipped condition itemization; retrying once with format notice"
 				);
 				let retry_user = format!(
-					"{}\n\n<format_violation>\nYour previous reply summarized the checklist instead of itemizing it. Emit the required <condition n=\"..\" status=\"matched|unmatched\"> line for EVERY numbered condition (with its specific observation), then the <shape> lines, then the verdict.\n</format_violation>",
+					"{}\n\n<format_violation>\nYour previous reply omitted required structure. Emit a <condition n=\"..\" status=\"matched|unmatched\"> line for EVERY numbered condition when a checklist is present (with its specific observation), then ALWAYS one <shape name=\"..\" found=\"yes|no\"> line per evidence shape, then the verdict. Prose alone is not a verification.\n</format_violation>",
 					render_gate_input(&input)
 				);
 				match crate::supervisor::learning::extract::call_supervisor_llm(

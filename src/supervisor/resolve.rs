@@ -337,7 +337,11 @@ pub async fn resolve(
 			temperature: 0.0,
 			// Room for the conditions checklist on top of the scalar verdicts
 			// (a reasoning verifier model may also spend budget before the JSON).
-			max_tokens: 2048,
+			// 2048 proved too small once the six coverage classes landed: on
+			// condition-heavy requests the reasoning pass ate the budget and the
+			// JSON arrived truncated — parse failed, the checklist silently
+			// dropped, and the gate lost its forcing structure.
+			max_tokens: 6144,
 		},
 		operation_rx.clone(),
 	)
@@ -420,12 +424,17 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 		conditions: Vec::new(),
 	};
 	let Some(start) = response.find('{') else {
+		crate::log_info!(
+			"Classifier returned no JSON object; conditions checklist lost (fail-open)"
+		);
 		return fallback;
 	};
 	let Some(end) = response.rfind('}') else {
+		crate::log_info!("Classifier JSON unterminated (likely token-budget truncation); conditions checklist lost (fail-open)");
 		return fallback;
 	};
 	let Ok(parsed) = serde_json::from_str::<ClassifierOutput>(&response[start..=end]) else {
+		crate::log_info!("Classifier JSON unparseable; conditions checklist lost (fail-open)");
 		return fallback;
 	};
 	ClassifierVerdict {

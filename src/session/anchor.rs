@@ -65,6 +65,17 @@ pub struct Anchor {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub next_steps: Vec<String>,
 
+	/// Signature of the user request `intent` was resolved from, so a later turn
+	/// can tell whether that goal is still the live one. `intent` is refreshed
+	/// only by `extend()`, i.e. on compaction — but the user can issue a new
+	/// request at any time, and a resumed session typically does so on a freshly
+	/// compacted (small) context that will not compact again for many turns.
+	/// Without this, `recite_note` keeps injecting the previous request as
+	/// "Goal (fixed)" and the model rules the new request out of scope.
+	/// 0 = unknown (legacy sessions), which recites exactly as before.
+	#[serde(default, skip_serializing_if = "is_zero_u64")]
+	pub intent_task_sig: u64,
+
 	/// Number of compactions that have folded into this anchor.
 	#[serde(default, skip_serializing_if = "is_zero")]
 	pub compactions_folded: u32,
@@ -97,6 +108,29 @@ pub struct AnchorUpdate {
 	pub errors_seen: Vec<String>,
 	#[serde(default)]
 	pub next_steps: Vec<String>,
+	/// Signature of the user request `intent` was resolved from. `None` leaves
+	/// the anchor's existing signature untouched.
+	#[serde(default)]
+	pub intent_task_sig: Option<u64>,
+}
+
+/// Stable signature of a user request, used to tell "still the same ask" from
+/// "the user has moved on". Deliberately not `DefaultHasher`: anchors are
+/// serialized and re-read by a later process, so the function must not change
+/// with the toolchain. FNV-1a over the trimmed bytes; collisions only cost a
+/// suppressed recitation.
+pub fn task_sig(task: &str) -> u64 {
+	let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+	for byte in task.trim().as_bytes() {
+		hash ^= u64::from(*byte);
+		hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+	}
+	// 0 is reserved for "unknown".
+	if hash == 0 {
+		1
+	} else {
+		hash
+	}
 }
 
 impl Anchor {
@@ -127,6 +161,9 @@ impl Anchor {
 			let trimmed = intent.trim();
 			if !trimmed.is_empty() {
 				self.intent = trimmed.to_string();
+				// Track which request this goal came from; suppliers resolve the
+				// live user turn, so a later turn can detect it has moved on.
+				self.intent_task_sig = update.intent_task_sig.unwrap_or(0);
 			}
 		}
 

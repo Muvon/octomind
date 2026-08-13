@@ -280,10 +280,16 @@ pub(super) async fn apply_compression(
 	// older task makes the supervisor itself steer the model back to work the
 	// user has moved on from — the same stale-task failure compaction just
 	// fixed, arriving through a different door.
+	// Sign it with the request it was resolved from, so recitation stops once the
+	// user asks for something else — the goal only outlives the turn, not the ask.
 	if !fidelity_goal.trim().is_empty() {
+		let intent_task_sig =
+			crate::session::latest_real_user_task_content(&session.session.messages)
+				.map(crate::session::anchor::task_sig);
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {
 				intent: Some(fidelity_goal.clone()),
+				intent_task_sig,
 				..Default::default()
 			},
 			crate::utils::time::now_secs(),

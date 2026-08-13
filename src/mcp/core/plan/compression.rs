@@ -607,8 +607,15 @@ pub async fn compress_completed_task(
 				.is_empty()
 				.then(|| task.description.clone())
 		});
+	// Record WHICH request this goal came from, so a later turn can tell the user
+	// has moved on and stop reciting it (see `Anchor::intent_task_sig`). Only a
+	// real user turn is signed; the task-description fallback leaves it unknown,
+	// which recites as before.
+	let intent_task_sig = crate::session::latest_real_user_task_content(&session.session.messages)
+		.map(crate::session::anchor::task_sig);
 	let anchor_update = crate::session::anchor::AnchorUpdate {
 		intent: anchor_intent,
+		intent_task_sig,
 		changes_made: vec![format!("{}: {}", task.title, summary)],
 		file_refs: file_refs.clone(),
 		..Default::default()

@@ -127,18 +127,44 @@ pub fn recite_note(
 	anchor: &Anchor,
 	plan_checklist: Option<&str>,
 	constraints: &[String],
+	current_task_sig: Option<u64>,
 ) -> Option<String> {
-	if anchor.intent.is_empty()
-		&& anchor.next_steps.is_empty()
+	// A goal is only worth reciting while it still IS the goal. `intent` is
+	// refreshed on compaction, but the user can ask for something else on any
+	// turn — and a resumed session typically does so on a just-compacted context
+	// that will not compact again for many turns. Reciting the previous request
+	// at the tail then outranks the live one in the recency window, and the model
+	// refuses the new ask as out of scope ("Goal (fixed)" is quoted back at the
+	// user). The newest user message must always win.
+	let goal_is_live = match (anchor.intent_task_sig, current_task_sig) {
+		// Legacy anchor with no signature — recite exactly as before.
+		(0, _) => true,
+		(sig, Some(current)) => sig == current,
+		// No user turn resolvable this turn: nothing to contradict.
+		(_, None) => true,
+	};
+	let intent = if goal_is_live {
+		anchor.intent.as_str()
+	} else {
+		""
+	};
+	// next_steps were recorded against that goal, so they go stale with it.
+	let next_steps: &[String] = if goal_is_live {
+		&anchor.next_steps
+	} else {
+		&[]
+	};
+	if intent.is_empty()
+		&& next_steps.is_empty()
 		&& plan_checklist.is_none()
 		&& constraints.is_empty()
 	{
 		return None;
 	}
 	let mut s = String::from("<pay-attention>\nRe-anchor on your task:\n");
-	if !anchor.intent.is_empty() {
+	if !intent.is_empty() {
 		s.push_str("Goal (fixed): <intent>");
-		s.push_str(anchor.intent.trim());
+		s.push_str(intent.trim());
 		s.push_str("</intent>\n");
 	}
 	// Prefer the live plan checklist (current every turn) over the stale
@@ -146,9 +172,9 @@ pub fn recite_note(
 	if let Some(checklist) = plan_checklist.map(str::trim).filter(|c| !c.is_empty()) {
 		s.push_str(checklist);
 		s.push('\n');
-	} else if !anchor.next_steps.is_empty() {
+	} else if !next_steps.is_empty() {
 		s.push_str("Last-known next steps (may be stale — re-check against current state):\n");
-		for step in &anchor.next_steps {
+		for step in next_steps {
 			let step = step.trim();
 			if !step.is_empty() {
 				s.push_str("- ");

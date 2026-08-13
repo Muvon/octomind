@@ -247,7 +247,8 @@ This long descriptive sentence merely mentions that the value must not exceed th
 	#[test]
 	fn constraints_recite_without_anchor_or_plan() {
 		let cs = vec!["Do NOT modify tests.".to_string()];
-		let note = recite_note(&Anchor::default(), None, &cs, None).expect("constraints recite alone");
+		let note =
+			recite_note(&Anchor::default(), None, &cs, None).expect("constraints recite alone");
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 		assert!(note.contains("- Do NOT modify tests."));
 		assert!(note.contains("still binding"));

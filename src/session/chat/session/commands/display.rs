@@ -414,7 +414,34 @@ pub fn display_info(output: &CommandOutput) {
 			),
 			kw_sess,
 		);
-		block_row("cost", &format!("${:.5}", total_cost), kw_sess);
+		// `total_cost` folds in compression/supervisor/agents spend; the token rows
+		// above are main-model only. Subtract the per-component costs back out so
+		// the main model's own share is visible next to the total.
+		let external_cost = compression_stats.as_ref().map(|s| s.cost).unwrap_or(0.0)
+			+ supervisor_stats
+				.as_ref()
+				.and_then(|s| s.get("cost"))
+				.and_then(|v| v.as_f64())
+				.unwrap_or(0.0)
+			+ agents_stats
+				.as_ref()
+				.and_then(|s| s.get("total_cost"))
+				.and_then(|v| v.as_f64())
+				.unwrap_or(0.0);
+		if external_cost > 0.0 {
+			block_row(
+				"cost",
+				&format!(
+					"{} total {} {} main",
+					format!("${:.5}", total_cost).bright_white(),
+					dot,
+					format!("${:.5}", (total_cost - external_cost).max(0.0))
+				),
+				kw_sess,
+			);
+		} else {
+			block_row("cost", &format!("${:.5}", total_cost), kw_sess);
+		}
 		if *tokens_per_second > 0.0 {
 			block_row(
 				"throughput",

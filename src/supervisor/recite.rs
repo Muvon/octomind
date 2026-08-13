@@ -202,7 +202,7 @@ mod tests {
 
 	#[test]
 	fn empty_anchor_recites_nothing() {
-		assert!(recite_note(&Anchor::default(), None, &[]).is_none());
+		assert!(recite_note(&Anchor::default(), None, &[], None).is_none());
 	}
 
 	#[test]
@@ -247,7 +247,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 	#[test]
 	fn constraints_recite_without_anchor_or_plan() {
 		let cs = vec!["Do NOT modify tests.".to_string()];
-		let note = recite_note(&Anchor::default(), None, &cs).expect("constraints recite alone");
+		let note = recite_note(&Anchor::default(), None, &cs, None).expect("constraints recite alone");
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 		assert!(note.contains("- Do NOT modify tests."));
 		assert!(note.contains("still binding"));
@@ -264,7 +264,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 			},
 			0,
 		);
-		let note = recite_note(&a, None, &[]).expect("should recite");
+		let note = recite_note(&a, None, &[], None).expect("should recite");
 		// Excluded from the gate's real-task search.
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 		assert!(note.contains("<intent>Add the truncation detector</intent>"));
@@ -281,7 +281,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 			},
 			0,
 		);
-		let note = recite_note(&a, None, &[]).expect("should recite");
+		let note = recite_note(&a, None, &[], None).expect("should recite");
 		assert!(note.contains("<intent>Refactor auth</intent>"));
 		assert!(!note.contains("Last-known next steps"));
 	}
@@ -301,6 +301,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 			&a,
 			Some("Live plan (1/2 done):\n✅ done it\n🔄 do this ← current"),
 			&[],
+			None,
 		)
 		.expect("should recite");
 		assert!(note.contains("<intent>Ship the feature</intent>"));
@@ -311,11 +312,48 @@ This long descriptive sentence merely mentions that the value must not exceed th
 	}
 
 	#[test]
+	fn goal_from_a_superseded_request_is_not_recited() {
+		// The failure this guards: a session compacts while working request A, the
+		// user then asks for B, and B's turn does not compact (the context was just
+		// shrunk). Reciting A as "Goal (fixed)" at the tail outranks B in the
+		// recency window, and the model refuses B as out of scope.
+		let sig = crate::session::anchor::task_sig;
+		let mut a = Anchor::default();
+		a.extend(
+			AnchorUpdate {
+				intent: Some("Request A".to_string()),
+				next_steps: vec!["finish A".to_string()],
+				intent_task_sig: Some(sig("Request A")),
+				..Default::default()
+			},
+			0,
+		);
+		// Still the live request -> recites exactly as before.
+		let live = recite_note(&a, None, &[], Some(sig("Request A"))).expect("live goal recites");
+		assert!(live.contains("<intent>Request A</intent>"));
+
+		// User moved on -> the superseded goal and its next_steps stay out.
+		assert!(
+			recite_note(&a, None, &[], Some(sig("Request B"))).is_none(),
+			"a goal from a superseded request must not be recited"
+		);
+
+		// Constraints come from the CURRENT request, so they still recite.
+		let cs = vec!["Do not touch tests.".to_string()];
+		let note = recite_note(&a, None, &cs, Some(sig("Request B")))
+			.expect("current-request constraints still recite");
+		assert!(!note.contains("Request A"), "{note}");
+		assert!(!note.contains("finish A"), "{note}");
+		assert!(note.contains("Do not touch tests."), "{note}");
+	}
+
+	#[test]
 	fn live_plan_recites_even_with_empty_anchor() {
 		let note = recite_note(
 			&Anchor::default(),
 			Some("Live plan (0/1 done):\n🔄 first ← current"),
 			&[],
+			None,
 		)
 		.expect("active plan recites pre-compaction");
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));

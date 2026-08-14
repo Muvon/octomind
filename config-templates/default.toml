@@ -766,13 +766,26 @@ verifier_model = "octohub:auto"
 # for any domain (build/test/lint, booking confirmations, health checks, etc.).
 require_check_after_mutation = true
 # Free deterministic pre-gate (no model call): refuse a `done` claim while the
-# live plan checklist still has open items -- finish them or close them out via
-# the plan tool (mark complete / done / reset) first.
+# live plan checklist still has open items. The external manager advances it
+# from runtime evidence; the specialist has no plan mutation tool.
 require_plan_complete = true
 # Max tokens for the verifier exchange: the call's output budget (a reasoning
 # verifier thinks before its verdict) and the token cap on the assembled turn
 # deliverable it is shown (newest answer always kept, older passes drop first).
 max_tokens = 8192
+
+# Adaptive external plan manager. The specialist never receives a plan mutation
+# tool; it emits a sparse signal alongside real work and this manager makes one
+# structured decision from the request, specialist context, plan, and evidence.
+[supervisor.plan]
+enabled = true
+# Keep this cheap and fast: each signal is exactly one request/response.
+model = "octohub:auto"
+max_tokens = 2048
+# Automatic adoption is conservative so small or repetitive tasks stay plan-free.
+# Set either threshold to 0 to disable automatic adoption; explicit signals still work.
+adoption_min_actions = 8
+adoption_min_distinct_actions = 4
 
 # Goal recitation: re-inject the live goal (anchor intent + next_steps) at the
 # context tail each turn on long (already-compacted) sessions, so it stays in the

@@ -207,21 +207,6 @@ fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> R
 	Ok(path)
 }
 
-/// Read every archive file of `session_name`, up to `max_total` chars total
-/// (raw, pre-decode). Used to re-ground supervisor evidence checks after a
-/// mid-turn compression drained the tool outputs those checks match against —
-/// the archive is the verbatim record of everything drained. Archives are
-/// JSONL, so each line is decoded back to its message content: matching a
-/// quote against the raw file would fail for any text containing `"`, `\` or
-/// a newline (JSON-escaped on disk). Empty when no archives exist.
-pub(crate) fn read_session_archives(session_name: &str, max_total: usize) -> Vec<String> {
-	let dir = match crate::directories::get_sessions_dir() {
-		Ok(d) => d.join("archive").join(session_name),
-		Err(_) => return Vec::new(),
-	};
-	decode_jsonl_contents(&crate::utils::spill::read_text_files(&dir, max_total))
-}
-
 /// Registry for IDs emitted by prior PACT compactions. This lets a
 /// recompression preserve transitive raw-source references and their exact
 /// archive coordinates rather than forcing every unit to cite only the
@@ -333,6 +318,7 @@ pub(crate) fn read_blocks(index_path: &Path, ids: &[String]) -> Result<Vec<Messa
 
 /// Decode JSONL archive chunks into per-message verbatim contents. Lines that
 /// fail to parse (e.g. the last line of a cap-truncated chunk) are skipped.
+#[cfg(test)]
 fn decode_jsonl_contents(chunks: &[String]) -> Vec<String> {
 	chunks
 		.iter()

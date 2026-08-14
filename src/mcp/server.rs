@@ -45,10 +45,19 @@ lazy_static::lazy_static! {
 pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
 	tools
 		.iter()
-		.map(|tool| McpFunction {
-			name: tool.name.as_ref().to_string(),
-			description: tool.description.as_deref().unwrap_or("").to_string(),
-			parameters: tool.schema_as_json_value(),
+		.map(|tool| {
+			let name = tool.name.as_ref().to_string();
+			crate::supervisor::detect::register_tool_read_only_hint(
+				&name,
+				tool.annotations
+					.as_ref()
+					.and_then(|annotations| annotations.read_only_hint),
+			);
+			McpFunction {
+				name,
+				description: tool.description.as_deref().unwrap_or("").to_string(),
+				parameters: tool.schema_as_json_value(),
+			}
 		})
 		.collect()
 }

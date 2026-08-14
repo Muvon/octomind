@@ -41,6 +41,7 @@ pub mod fidelity;
 pub mod gate;
 pub mod learning;
 pub mod ontrack;
+pub mod plan;
 pub mod recite;
 pub mod resolve;
 pub mod stats;
@@ -102,10 +103,9 @@ pub struct SupervisorConfig {
 	pub model: String,
 	/// Evidence-bound claims: instruct the agent to back load-bearing facts
 	/// with a verbatim quote in an `<evidence>` tag, then deterministically
-	/// verify each quoted line occurs in a tool result — and that each
-	/// `file:line` reference in the final answer holds on disk. Fabricated
-	/// citations are re-grounded via the verify-gate's bounded re-run (so this
-	/// is effective only when `gate.enabled`).
+	/// verify each quoted line occurs in current-turn tool provenance. Ordinary
+	/// URLs, code samples, and file-like prose are never inferred to be citations.
+	/// Unsupported explicit evidence is repaired through a bounded re-run.
 	pub claim_check: bool,
 	/// Cross-session learning mechanic (distill + recall).
 	pub learning: learning::LearningConfig,
@@ -115,6 +115,9 @@ pub struct SupervisorConfig {
 	pub detectors: DetectorsConfig,
 	/// Verify-gate on self-reported completion.
 	pub gate: GateConfig,
+	/// External, adaptive plan manager. The specialist sees plan state but cannot
+	/// mutate it directly.
+	pub plan: PlanConfig,
 	/// Goal recitation: re-anchor the live goal at the context tail.
 	pub recite: ReciteConfig,
 	/// Task-aware condensation of oversized tool outputs.
@@ -252,13 +255,29 @@ pub struct GateConfig {
 	pub require_check_after_mutation: bool,
 	/// Free deterministic pre-gate: refuse a self-reported `done` while the live
 	/// plan checklist still has open items — the drift-by-omission failure. The
-	/// agent must finish them or close them out via the plan tool first. Runs
+	/// specialist must finish them while the external manager owns transitions. Runs
 	/// before the LLM verify-gate (zero model calls).
 	pub require_plan_complete: bool,
 	/// Max tokens for the verifier exchange, like every model block: the
 	/// call's output budget (a reasoning verifier thinks before its verdict —
-	/// an overflow returns empty content, which parses as PASS) and the token
+	/// an overflow returns an explicit indeterminate outcome) and the token
 	/// cap on the assembled turn deliverable it is shown (newest answer always
 	/// kept, oldest parts drop first). Size it to the verifier_model.
 	pub max_tokens: u32,
+}
+
+/// External plan-manager configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanConfig {
+	pub enabled: bool,
+	/// Model that decides whether to create, advance, hold, or revise a plan.
+	pub model: String,
+	/// Output budget for the manager's single structured decision.
+	pub max_tokens: u32,
+	/// Successful actions required before the runtime may automatically ask
+	/// whether broad work needs a plan. `0` disables automatic adoption.
+	pub adoption_min_actions: usize,
+	/// Distinct successful actions required by the same detector. `0` disables
+	/// automatic adoption.
+	pub adoption_min_distinct_actions: usize,
 }

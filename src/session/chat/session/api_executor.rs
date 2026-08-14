@@ -29,28 +29,11 @@ use crate::session::output::{OutputMode, OutputSink};
 
 const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
 
-/// Per-source cap (chars) on the disk-recovered evidence grounds (spill files,
-/// compression archives) pulled in when an in-context evidence check flags
-/// something that mid-turn compaction may have drained.
-const RECOVERY_GROUNDS_CAP: usize = 4_000_000;
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
 const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with state changes still unverified, so that claim isn't trustworthy yet. Run the check appropriate to this work (for example, inspect the resulting state, exercise the changed behavior, or use a domain-specific validator), watch the result, and report the actual outcome: pass, fail, or — if no meaningful check exists — what you inspected and why that is sufficient. Base the report on the observed result, not on what you expect.\n</pay-attention>";
 
 fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
 	crate::session::latest_task_turn_index(messages).unwrap_or(messages.len())
-}
-
-fn current_turn_tool_outputs(
-	messages: &[crate::session::Message],
-	turn_start: usize,
-) -> Vec<String> {
-	messages
-		.get(turn_start..)
-		.unwrap_or_default()
-		.iter()
-		.filter(|message| message.role == "tool")
-		.map(|message| message.content.clone())
-		.collect()
 }
 
 /// Separator between the parts of a re-run turn's answer. Self-describing so the
@@ -84,22 +67,6 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	}
 	kept.reverse();
 	crate::session::truncate_to_tokens(&kept.join(ANSWER_PART_SEPARATOR), max_tokens)
-}
-
-/// Arguments of every tool call the agent issued this turn — the paths and URLs
-/// it actually operated on, including roots outside the process cwd. Grounds for
-/// the file-reference and URL checks: a locator the agent passed to a tool is one
-/// it read or opened, even when the tool's OUTPUT never echoes it (`view` returns
-/// numbered lines with no path header; a HEAD request returns a status code). It
-/// is not grounds for `<evidence>` quotes — those must match what came BACK.
-fn current_turn_call_args(messages: &[crate::session::Message], turn_start: usize) -> Vec<String> {
-	messages
-		.get(turn_start..)
-		.unwrap_or_default()
-		.iter()
-		.filter_map(|message| message.tool_calls.as_ref())
-		.map(|calls| calls.to_string())
-		.collect()
 }
 
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
@@ -198,7 +165,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		&& chat_session.gate_task.is_none()
 	{
 		let session_context = chat_session.session.info.anchor.to_xml();
-		let active_plan = crate::mcp::core::plan::render_plan_checklist();
+		let active_plan = crate::mcp::core::plan::render_plan_details();
 		chat_session.gate_task = crate::supervisor::resolve::TaskContext::capture(
 			&chat_session.session.messages,
 			&session_context,
@@ -270,7 +237,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// attention is weak. Re-emit a tiny goal block here — at the tail, in the
 	// recency window — and crucially BEFORE the cache-marker advance below, so the
 	// cached prefix stays intact (the recited block lands after it each turn).
-	if config.supervisor.enabled && config.supervisor.recite.enabled {
+	if config.supervisor.enabled
+		&& (config.supervisor.recite.enabled || crate::mcp::core::plan::has_active_plan())
+	{
 		// Prefer the live plan checklist (refreshed every turn from plan storage)
 		// over the anchor's stale next_steps snapshot for the recency-slot block.
 		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
@@ -320,12 +289,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.iter()
 				.any(|m| m.content.contains(&marker));
 			if !already_flagged {
-				let mut note = format!("<pay-attention>\n{marker}\nA condition your plan declared as required is no longer true — the approach for the affected task(s) rested on an assumption that has broken. Do not keep executing the plan as if it still holds: revise the plan (plan reset + start with corrected tasks, or complete/close the affected task with the reason), or state explicitly why the task is still valid despite the broken condition. Broken condition(s):\n");
+				let mut note = format!("<pay-attention>\n{marker}\nA runtime-checked plan assumption is no longer true. The external plan manager will reassess the unfinished route before work continues. Broken condition(s):\n");
 				for (n, title, cond) in &broken {
 					note.push_str(&format!("- task {n} \"{title}\": valid if {cond}\n"));
 				}
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
+				chat_session.pending_plan_signal =
+					Some(crate::supervisor::plan::PlanSignal::Reassess);
 				crate::supervisor::notify(&format!(
 					"{} broken plan condition(s) — plan revision steered",
 					broken.len()
@@ -335,28 +306,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
-	// Supervisor: plan-adoption nudge (free, deterministic). The task slice has
-	// provably grown multi-step — many executed calls, mutations across 2+
-	// distinct paths — with NO plan tracking it. Advise (never block) creating
-	// one now, so the remaining work gains the plan tool's durable checklist:
-	// recitation each turn, the plan pre-gates on `done`, and compression
-	// anchoring. Once per genuine user turn, deduped by marker.
-	if config.supervisor.enabled {
-		let planless = crate::mcp::core::plan::render_plan_checklist().is_none();
-		if planless && chat_session.evidence.plan_adoption_signal() {
-			let turn_start = latest_real_user_turn_start(&chat_session.session.messages);
-			let already_nudged = chat_session.session.messages[turn_start..].iter().any(|m| {
-				m.content
-					.contains(crate::supervisor::gate::PLAN_ADOPTION_MARKER)
-			});
-			if !already_nudged {
-				chat_session.add_system_managed_user_message(
-					&crate::supervisor::gate::format_plan_adoption_advisory(),
-				)?;
-				crate::supervisor::notify("multi-step work without a plan — plan adoption nudged");
-				crate::log_debug!("Plan-adoption nudge injected");
-			}
+	// Signals produced without a tool-result boundary (notably a broken-plan
+	// assumption detected above) are reconciled here, still before the normal
+	// specialist request. No signal means no planner call.
+	if config.supervisor.enabled && chat_session.pending_plan_signal.is_some() {
+		animation_manager.set_phase("Reconciling plan …").await;
+		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
+			chat_session,
+			config,
+			operation_rx.clone(),
+		)
+		.await
+		{
+			crate::log_debug!("External plan reconciliation failed: {}", error);
 		}
+		animation_manager.clear_phase();
 	}
 
 	// Advance Anthropic-style content cache markers after all pre-call message injections
@@ -546,7 +510,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let task = crate::session::latest_real_user_task_content(&chat_session.session.messages)
 			.unwrap_or_default()
 			.to_string();
-		let live_plan = crate::mcp::core::plan::render_plan_checklist().unwrap_or_default();
+		let live_plan = crate::mcp::core::plan::render_plan_details().unwrap_or_default();
 		// Resolve references before any deterministic gate that consults session-
 		// persistent state. Otherwise an old open plan could block a new unrelated
 		// self-contained request before the resolver gets a chance to reject it.
@@ -648,16 +612,85 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			&& chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint())
-			&& !already_nudged
 		{
-			chat_session.add_system_managed_user_message(PREGATE_NOTE)?;
+			let next_iteration = chat_session.nudge_iterations.saturating_add(1);
+			if next_iteration >= config.supervisor.gate.max_iterations {
+				chat_session.nudge_iterations = next_iteration;
+				chat_session.gate_failed = true;
+				chat_session.pending_plan_signal = None;
+				crate::supervisor::stats::pregate_block();
+				crate::supervisor::stats::gate_fail();
+				crate::supervisor::notify(
+					"unverified state changes remain — repair budget exhausted",
+				);
+				return Ok(());
+			}
+			if !already_nudged {
+				chat_session.add_system_managed_user_message(PREGATE_NOTE)?;
+			}
 			chat_session.last_self_report = None; // force the re-run to re-evaluate
-			chat_session.nudge_iterations += 1;
+			chat_session.nudge_iterations = next_iteration;
 			crate::supervisor::stats::pregate_block();
 			crate::supervisor::notify("done claimed with unverified state changes — re-running");
-			if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
+			crate::log_debug!(
+				"Pre-gate: unverified mutation; re-running turn (iter {})",
+				chat_session.nudge_iterations
+			);
+			return Box::pin(execute_api_call_and_process_response(
+				chat_session,
+				config,
+				role,
+				operation_rx,
+				mode,
+				sink,
+			))
+			.await;
+		}
+
+		// Free plan pre-gate (no model call): a self-reported `done` while the live
+		// plan still has open items is drift-by-omission — parts of the decomposed
+		// task silently dropped. The specialist must continue while the external
+		// manager owns transitions. Same marker/budget pattern as mutation above.
+		if config.supervisor.gate.require_plan_complete && plan_applies {
+			let open = crate::mcp::core::plan::open_plan_tasks();
+			// The final current phase is judged together with the final answer and
+			// committed only after PASS. More than one open phase is still drift.
+			let blocking_open = open.len().saturating_sub(1);
+			let already_nudged_plan = {
+				let msgs = &chat_session.session.messages;
+				msgs[turn_start..].iter().any(|m| {
+					m.content
+						.contains(crate::supervisor::gate::PLAN_GATE_MARKER)
+				})
+			};
+			if blocking_open > 0 {
+				let next_iteration = chat_session.nudge_iterations.saturating_add(1);
+				if next_iteration >= config.supervisor.gate.max_iterations {
+					chat_session.nudge_iterations = next_iteration;
+					chat_session.gate_failed = true;
+					chat_session.pending_plan_signal = None;
+					crate::supervisor::stats::plan_block();
+					crate::supervisor::stats::gate_fail();
+					crate::supervisor::notify(&format!(
+						"{} plan phase(s) remain open — repair budget exhausted",
+						blocking_open
+					));
+					return Ok(());
+				}
+				if !already_nudged_plan {
+					let note = crate::supervisor::gate::format_plan_advisory(&open);
+					chat_session.add_system_managed_user_message(&note)?;
+				}
+				chat_session.last_self_report = None; // force the re-run to re-evaluate
+				chat_session.nudge_iterations = next_iteration;
+				crate::supervisor::stats::plan_block();
+				crate::supervisor::notify(&format!(
+					"done claimed with {} open plan item(s) — re-running",
+					open.len()
+				));
 				crate::log_debug!(
-					"Pre-gate: unverified mutation; re-running turn (iter {})",
+					"Plan pre-gate: {} open item(s); re-running turn (iter {})",
+					open.len(),
 					chat_session.nudge_iterations
 				);
 				return Box::pin(execute_api_call_and_process_response(
@@ -670,220 +703,68 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				))
 				.await;
 			}
-			// Budget exhausted — fall through to the LLM gate / acceptance.
 		}
 
-		// Free plan pre-gate (no model call): a self-reported `done` while the live
-		// plan still has open items is drift-by-omission — parts of the decomposed
-		// task silently dropped. The agent must finish them or close them out via
-		// the plan tool. Same marker/budget pattern as the mutation pre-gate above.
-		if config.supervisor.gate.require_plan_complete && plan_applies {
-			let open = crate::mcp::core::plan::open_plan_tasks();
-			let already_nudged_plan = {
-				let msgs = &chat_session.session.messages;
-				msgs[turn_start..].iter().any(|m| {
-					m.content
-						.contains(crate::supervisor::gate::PLAN_GATE_MARKER)
-				})
-			};
-			if !open.is_empty() && !already_nudged_plan {
-				let note = crate::supervisor::gate::format_plan_advisory(&open);
-				chat_session.add_system_managed_user_message(&note)?;
-				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.nudge_iterations += 1;
-				crate::supervisor::stats::plan_block();
-				crate::supervisor::notify(&format!(
-					"done claimed with {} open plan item(s) — re-running",
-					open.len()
-				));
-				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
-					crate::log_debug!(
-						"Plan pre-gate: {} open item(s); re-running turn (iter {})",
-						open.len(),
-						chat_session.nudge_iterations
-					);
-					return Box::pin(execute_api_call_and_process_response(
-						chat_session,
-						config,
-						role,
-						operation_rx,
-						mode,
-						sink,
-					))
-					.await;
-				}
-				// Budget exhausted — fall through to the LLM gate / acceptance.
-			}
-		}
-
-		// Free plan-coverage floor (no model call): the plan was actively worked
-		// this turn (plan-tool calls in the ledger) but ZERO non-plan actions were
-		// recorded — closing plan items without any action is fabricated coverage,
-		// not work. Same marker/budget pattern as the plan pre-gate above.
-		if config.supervisor.gate.require_plan_complete
-			&& plan_applies
-			&& crate::mcp::core::plan::open_plan_tasks().is_empty()
-			&& chat_session.evidence.plan_activity_without_actions()
-		{
-			let already_nudged_coverage = {
-				let msgs = &chat_session.session.messages;
-				msgs[turn_start..].iter().any(|m| {
-					m.content
-						.contains(crate::supervisor::gate::COVERAGE_GATE_MARKER)
-				})
-			};
-			if !already_nudged_coverage {
-				let note = crate::supervisor::gate::format_coverage_advisory();
-				chat_session.add_system_managed_user_message(&note)?;
-				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.nudge_iterations += 1;
-				crate::supervisor::stats::plan_block();
-				crate::supervisor::notify(
-					"done claimed with plan coverage but no recorded actions — re-running",
-				);
-				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
-					crate::log_debug!(
-						"Plan-coverage floor: plan-only activity; re-running turn (iter {})",
-						chat_session.nudge_iterations
-					);
-					return Box::pin(execute_api_call_and_process_response(
-						chat_session,
-						config,
-						role,
-						operation_rx,
-						mode,
-						sink,
-					))
-					.await;
-				}
-				// Budget exhausted — fall through to the LLM gate / acceptance.
-			}
-		}
-
-		// Free evidence check (no model call): a `done` answer that cites
-		// `<evidence>` quotes which appear in NO tool result, `file:line`
-		// references that do not hold on disk, or source URLs that appear in
-		// nothing the agent received is fabricating its support. Catch all
-		// three deterministically and re-ground via the same bounded re-run.
+		// Free evidence check (no model call): validate only explicit
+		// `<evidence>` metadata. Ordinary URLs and file-like prose are task
+		// material, examples, or deliverable content just as often as citations;
+		// scanning all of them creates category-error false positives.
 		if config.supervisor.claim_check {
-			let mut grounds = current_turn_tool_outputs(&chat_session.session.messages, turn_start);
+			let mut grounds = chat_session.evidence.citation_grounds();
 			// A link the user supplied is legitimate to reference back.
 			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
 				grounds.push(user_msg.content.clone());
 			}
-			let mut unverified = crate::supervisor::detect::unverified_citations(
+			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&grounds,
 			);
-			// File refs resolve against every root the agent actually worked in
-			// this turn, not the process cwd alone — the paths in its executed
-			// call arguments are that evidence (see current_turn_call_args).
-			let mut ref_grounds = grounds.clone();
-			ref_grounds.extend(current_turn_call_args(
-				&chat_session.session.messages,
-				turn_start,
-			));
-			let mut bad_refs = crate::supervisor::detect::unverified_file_refs(
-				&chat_session.last_response,
-				&ref_grounds,
-			);
-			// URLs ground against the same set as file refs: a cited permalink is
-			// built from paths the agent read, and a `view`-style result never echoes
-			// the path — only the call arguments carry it.
-			let mut bad_urls = crate::supervisor::detect::unverified_urls(
-				&chat_session.last_response,
-				&ref_grounds,
-			);
-			// Mid-turn compression and condensing drain or replace the very tool
-			// outputs these checks ground against — recover the verbatim originals
-			// from disk (lossless archive + spill files) so a compaction cannot
-			// fabricate an "unverified" verdict. Disk grounds can only exonerate,
-			// so read them only when the in-context pass flagged something.
-			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
-				let mut recovered = crate::utils::spill::read_session_spills(RECOVERY_GROUNDS_CAP);
-				recovered.extend(
-					crate::session::chat::conversation_compression::archive::read_session_archives(
-						&chat_session.session.info.name,
-						RECOVERY_GROUNDS_CAP,
-					),
-				);
-				grounds.extend(recovered.iter().cloned());
-				ref_grounds.extend(recovered);
-				unverified = crate::supervisor::detect::unverified_citations(
-					&chat_session.last_response,
-					&grounds,
-				);
-				bad_refs = crate::supervisor::detect::unverified_file_refs(
-					&chat_session.last_response,
-					&ref_grounds,
-				);
-				bad_urls = crate::supervisor::detect::unverified_urls(
-					&chat_session.last_response,
-					&ref_grounds,
-				);
-			}
-			if !unverified.is_empty() || !bad_refs.is_empty() || !bad_urls.is_empty() {
+			if !unverified.is_empty() {
+				let next_iteration = chat_session.nudge_iterations.saturating_add(1);
+				if next_iteration >= config.supervisor.gate.max_iterations {
+					chat_session.nudge_iterations = next_iteration;
+					chat_session.gate_failed = true;
+					chat_session.pending_plan_signal = None;
+					crate::supervisor::stats::claim_block();
+					crate::supervisor::stats::gate_fail();
+					crate::supervisor::notify(&format!(
+						"{} unsupported evidence quote(s) remain — repair budget exhausted",
+						unverified.len()
+					));
+					return Ok(());
+				}
 				let mut note = String::from("<pay-attention>\n");
-				if !unverified.is_empty() {
-					note.push_str(
-						"Each quote below was presented as verbatim evidence from a tool result, but it string-matches no output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
-					);
-					for q in &unverified {
-						note.push_str("- ");
-						note.push_str(q);
-						note.push('\n');
-					}
-				}
-				if !bad_refs.is_empty() {
-					note.push_str(
-						"Each file:line reference below does not hold on disk — the file is missing or the line is beyond its end. Re-check the real location and cite the correct file and line; if the reference was illustrative or the file was intentionally deleted, say so instead of citing it as a location. Invalid references:\n",
-					);
-					for r in &bad_refs {
-						note.push_str("- ");
-						note.push_str(r);
-						note.push('\n');
-					}
-				}
-				if !bad_urls.is_empty() {
-					note.push_str(
-						"Each URL below was cited as a source, but it appears in nothing you received this turn — no tool result and no user message contains it, so it is an unverified source. Fetch it now and ground the claim in what it actually says, or drop the link and the claim it supported. Never present a link you did not open as evidence. Unverified URLs:\n",
-					);
-					for u in &bad_urls {
-						note.push_str("- ");
-						note.push_str(u);
-						note.push('\n');
-					}
+				note.push_str(
+					"Each quote below was presented as verbatim evidence from a tool result, but it string-matches no output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
+				);
+				for q in &unverified {
+					note.push_str("- ");
+					note.push_str(q);
+					note.push('\n');
 				}
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.nudge_iterations += 1;
+				chat_session.nudge_iterations = next_iteration;
 				crate::supervisor::stats::claim_block();
 				crate::supervisor::notify(&format!(
-					"{} unverifiable citation(s), {} invalid file reference(s), {} unverified URL(s) — re-running",
-					unverified.len(),
-					bad_refs.len(),
-					bad_urls.len()
+					"{} unsupported evidence quote(s) — re-running",
+					unverified.len()
 				));
-				if chat_session.nudge_iterations < config.supervisor.gate.max_iterations {
-					crate::log_debug!(
-						"Evidence check: {} unverified citation(s), {} bad file ref(s), {} bad URL(s); re-running (iter {})",
-						unverified.len(),
-						bad_refs.len(),
-						bad_urls.len(),
-						chat_session.nudge_iterations
-					);
-					return Box::pin(execute_api_call_and_process_response(
-						chat_session,
-						config,
-						role,
-						operation_rx,
-						mode,
-						sink,
-					))
-					.await;
-				}
-				// Budget exhausted — fall through to the LLM gate / acceptance.
+				crate::log_debug!(
+					"Evidence check: {} unsupported quote(s); re-running (iter {})",
+					unverified.len(),
+					chat_session.nudge_iterations
+				);
+				return Box::pin(execute_api_call_and_process_response(
+					chat_session,
+					config,
+					role,
+					operation_rx,
+					mode,
+					sink,
+				))
+				.await;
 			}
 		}
 
@@ -940,6 +821,19 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		animation_manager.clear_phase();
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
+				if plan_applies && crate::mcp::core::plan::open_plan_tasks().len() <= 1 {
+					let summary = claim.as_deref().unwrap_or("Completion verified");
+					if let Err(error) =
+						crate::supervisor::plan::finalize_after_verification(summary)
+					{
+						chat_session.gate_failed = true;
+						crate::supervisor::stats::gate_fail();
+						crate::supervisor::notify(&format!(
+							"completion evidence passed, but plan finalization failed: {error}"
+						));
+						return Ok(());
+					}
+				}
 				chat_session.gate_iterations = 0;
 				chat_session.nudge_iterations = 0;
 				chat_session.gate_failed = false;
@@ -950,6 +844,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				reinforce_recalled(chat_session, config, 0.05).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
+				chat_session.pending_plan_signal = None;
 				let note = crate::supervisor::gate::format_advisory(&gaps);
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
@@ -990,6 +885,29 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::notify(&msg);
 				reinforce_recalled(chat_session, config, -0.15).await;
 			}
+			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
+				chat_session.pending_plan_signal = None;
+				chat_session.gate_failed = true;
+				crate::supervisor::stats::gate_fail();
+				crate::log_debug!("Verify-gate: indeterminate: {}", reason);
+				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
+				reinforce_recalled(chat_session, config, -0.05).await;
+			}
+		}
+	}
+
+	// With the completion gate disabled, final self-report is the only available
+	// finalization signal. Intermediate transitions still belong to the manager.
+	if !config.supervisor.gate.enabled
+		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
+		&& crate::mcp::core::plan::open_plan_tasks().len() <= 1
+	{
+		let summary = chat_session
+			.last_self_report_reason
+			.as_deref()
+			.unwrap_or("Specialist reported completion");
+		if let Err(error) = crate::supervisor::plan::finalize_after_verification(summary) {
+			crate::log_debug!("External plan finalization failed: {}", error);
 		}
 	}
 
@@ -1007,14 +925,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	fn message(role: &str, content: &str) -> crate::session::Message {
-		crate::session::Message {
-			role: role.to_string(),
-			content: content.to_string(),
-			..Default::default()
-		}
-	}
 
 	#[test]
 	fn turn_answer_joins_every_pass_oldest_first() {
@@ -1036,21 +946,6 @@ mod tests {
 		let old = "many different words fill the older pass ".repeat(50);
 		let answers = vec![old, "the amendment".to_string()];
 		assert_eq!(current_turn_answer(&answers, 16), "the amendment");
-	}
-
-	#[test]
-	fn current_turn_evidence_excludes_older_tool_outputs() {
-		let messages = vec![
-			message("user", "Old request"),
-			message("tool", "old evidence that must not validate a later quote"),
-			message("assistant", "Old answer quotes old evidence"),
-			message("user", "New request"),
-			message("assistant", "Current answer quotes old evidence"),
-			message("tool", "current evidence"),
-		];
-		let start = latest_real_user_turn_start(&messages);
-		let outputs = current_turn_tool_outputs(&messages, start);
-		assert_eq!(outputs, ["current evidence"]);
 	}
 
 	#[test]

@@ -272,6 +272,14 @@ pub struct ChatSession {
 	/// Supervisor: structured continuation handoff from the main agent. Used as
 	/// an untrusted attention prior by conversation compression, never as evidence.
 	pub last_self_report_handoff: Option<crate::supervisor::detect::SelfReportHandoff>,
+	/// Supervisor: execution signal for the external plan controller. The main
+	/// specialist can request planning or report phase completion, but cannot
+	/// author or mutate the plan itself.
+	pub pending_plan_signal: Option<crate::supervisor::plan::PlanSignal>,
+	/// Supervisor: a create/no-plan decision already ran for this genuine user
+	/// turn. Prevents a declined or unavailable planner from being called again
+	/// after every subsequent action batch.
+	pub plan_evaluated: bool,
 	/// Supervisor: entries recalled during the current trajectory (content, role,
 	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
 	pub recalled_refs: Vec<(String, String, String)>,
@@ -417,6 +425,8 @@ impl ChatSession {
 			last_steered_calls: None,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
+			pending_plan_signal: None,
+			plan_evaluated: false,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
@@ -635,6 +645,8 @@ impl ChatSession {
 						last_steered_calls: None,
 						last_self_report_reason: None,
 						last_self_report_handoff: None,
+						pending_plan_signal: None,
+						plan_evaluated: false,
 						recalled_refs: Vec::new(),
 						evidence: crate::supervisor::gate::EvidenceLedger::default(),
 						gate_task: None,
@@ -1421,6 +1433,8 @@ mod tests {
 			last_steered_calls: None,
 			last_self_report_reason: None,
 			last_self_report_handoff: None,
+			pending_plan_signal: None,
+			plan_evaluated: false,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,

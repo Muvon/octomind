@@ -27,6 +27,30 @@ impl MemoryPlanStorage {
 	pub fn new() -> Self {
 		Self { plan: None }
 	}
+
+	/// Replace only the unfinished tail while preserving completed history.
+	pub fn replace_remaining(&mut self, tasks: Vec<TaskData>) -> Result<()> {
+		if tasks.is_empty() {
+			return Err(anyhow!("A revised plan needs at least one remaining task"));
+		}
+		let plan = self
+			.plan
+			.as_mut()
+			.ok_or_else(|| anyhow!("No active plan"))?;
+		plan.tasks.truncate(plan.current_task_index);
+		plan.tasks.extend(tasks.into_iter().map(|task| PlanTask {
+			title: task.title,
+			description: task.description,
+			details: String::new(),
+			summary: None,
+			status: TaskStatus::InProgress,
+			completed_at: None,
+			message_range: None,
+			phase: task.phase,
+			valid_if: task.valid_if,
+		}));
+		Ok(())
+	}
 }
 
 impl Default for MemoryPlanStorage {

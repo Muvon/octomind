@@ -40,8 +40,8 @@ pub use core::{
 	broken_plan_conditions, clear_plan_data, clear_task_start_index, execute_plan,
 	get_and_clear_start_index, get_completed_task_count, get_current_plan_display,
 	get_current_task_start_index, get_last_completed_task_for_compression, has_active_plan,
-	open_plan_tasks, render_plan_checklist, set_current_task_start_index,
-	set_last_task_message_range,
+	open_plan_tasks, render_plan_checklist, render_plan_details, set_current_task_start_index,
+	set_last_task_message_range, sidecar_advance, sidecar_finish, sidecar_revise, sidecar_start,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};
@@ -53,10 +53,11 @@ use serde_json::json;
 pub fn get_plan_function() -> McpFunction {
 	McpFunction {
         name: "plan".to_string(),
-        description: "Structured step-by-step task tracker for COMPLEX, MULTI-STEP work spanning multiple files or components.
+        description: "Manual compatibility interface for structured multi-step work.
 
-Use for: multi-file implementations, long-running work that may be interrupted, tasks needing sequencing and checkpoints.
-Skip for: single-step changes, quick fixes, anything completable in one focused pass without losing context.
+When supervisor self-reporting is active, routine plan lifecycle is carried out-of-band in the hidden status line. Do NOT call this tool merely to start, advance, list, or close that sidecar plan: those transitions ride with normal work responses and cost no standalone API round trip.
+
+Use this tool only when explicit manual plan control is needed, or when the sidecar is unavailable. Plans are domain-neutral: tasks describe observable outcomes, whether the work concerns code, research, operations, writing, or another domain. Skip planning for answers and focused work completable without meaningful context-loss risk.
 
 Commands:
 - start: create plan with tasks array (ERROR if a plan is already active — plans survive context compression; continue the active plan with step/next instead of re-creating it)
@@ -66,7 +67,7 @@ Commands:
 - done: complete the plan with final summary
 - reset: clear all plan data
 
-Each task requires title (short) and description (detailed: file paths, commands, expected outcomes, validation steps).".to_string(),
+Each task requires a short title and a concise, observable completion condition. Do not pad tasks with implementation detail already available in context.".to_string(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -87,7 +88,7 @@ Each task requires title (short) and description (detailed: file paths, commands
                             },
                             "description": {
                                 "type": "string",
-                                "description": "Comprehensive explanation of exactly what needs to be done. Include: specific file paths, exact commands to run, configuration details, expected outcomes, error handling steps, validation criteria, and any dependencies. Write as if someone else needs to complete this task from scratch with zero context. Minimum 2-3 sentences with technical specifics."
+                                "description": "Concise observable outcome that marks this task complete. Include domain-specific detail only when it is needed to resume or verify the work."
                             },
                             "valid_if": {
                                 "type": "string",
@@ -95,7 +96,7 @@ Each task requires title (short) and description (detailed: file paths, commands
                             }
                         }
                     },
-                    "description": "Array of detailed task objects with titles and comprehensive descriptions (REQUIRED for 'start' command). Each task description must include specific technical details, file paths, commands, expected outcomes, and validation steps - write as if someone else needs to complete the task from scratch."
+                    "description": "Ordered task outcomes (REQUIRED for 'start'). Use only for meaningful dependent phases."
                 },
                 "content": {
                     "type": "string",

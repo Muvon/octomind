@@ -492,7 +492,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					));
 
 					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_user_message(&inbox_msg.content)
+						chat_session.add_system_managed_turn_message(&inbox_msg.content)
 					} else {
 						chat_session.add_user_message(&inbox_msg.content)
 					};
@@ -1062,7 +1062,7 @@ async fn handle_user_message(
 			)
 			.await?;
 			if inbox_msg.source.is_system_managed() {
-				if let Err(e) = chat_session.add_system_managed_user_message(&inbox_msg.content) {
+				if let Err(e) = chat_session.add_system_managed_turn_message(&inbox_msg.content) {
 					log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
 					send_message(
 						ws_sender,

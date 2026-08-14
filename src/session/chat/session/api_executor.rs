@@ -36,6 +36,16 @@ fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
 	crate::session::latest_task_turn_index(messages).unwrap_or(messages.len())
 }
 
+fn claims_user_task_completion(
+	completion_gate_eligible: bool,
+	self_report: Option<crate::supervisor::detect::SelfReport>,
+	has_mutations: bool,
+) -> bool {
+	completion_gate_eligible
+		&& (self_report == Some(crate::supervisor::detect::SelfReport::Done)
+			|| (self_report.is_none() && has_mutations))
+}
+
 /// Separator between the parts of a re-run turn's answer. Self-describing so the
 /// verifier reads the parts as one deliverable (see the gate prompt).
 const ANSWER_PART_SEPARATOR: &str = "\n\n--- (continued after supervisor feedback) ---\n\n";
@@ -163,6 +173,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// completion claim pays for the classifier/rewriter call, and recursive gate
 	// re-runs reuse its result.
 	if config.supervisor.enabled
+		&& chat_session.completion_gate_eligible
 		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled)
 		&& chat_session.gate_task.is_none()
 	{
@@ -449,6 +460,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// blocked/need_input stay legitimate hand-backs. Bounded by the free-check
 	// budget, so a model that keeps yielding cannot loop it.
 	if config.supervisor.gate.enabled
+		&& chat_session.completion_gate_eligible
 		&& !mode.is_interactive()
 		&& matches!(
 			chat_session.last_self_report,
@@ -495,12 +507,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// forgot must not become an unverified exit (observed: sessions ending with
 	// self_report=None skipped the whole gate). Pure answers (no mutations)
 	// stay ungated, in every mode alike.
-	let implicit_done = chat_session.last_self_report.is_none()
-		&& !chat_session.evidence.mutated_paths().is_empty();
 	if config.supervisor.gate.enabled
-		&& (chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
-			|| implicit_done)
-		&& chat_session.gate_iterations < config.supervisor.gate.max_iterations
+		&& claims_user_task_completion(
+			chat_session.completion_gate_eligible,
+			chat_session.last_self_report,
+			!chat_session.evidence.mutated_paths().is_empty(),
+		) && chat_session.gate_iterations < config.supervisor.gate.max_iterations
 	{
 		// One genuine user message defines the verification turn. Supervisor,
 		// recall, skill, and continuation injections after it remain part of the
@@ -903,6 +915,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// With the completion gate disabled, final self-report is the only available
 	// finalization signal. Intermediate transitions still belong to the manager.
 	if !config.supervisor.gate.enabled
+		&& chat_session.completion_gate_eligible
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
 		&& crate::mcp::core::plan::open_plan_tasks().len() <= 1
 	{
@@ -958,5 +971,23 @@ mod tests {
 		assert!(PREGATE_NOTE.contains("domain-specific validator"));
 		assert!(!PREGATE_NOTE.contains("code changes"));
 		assert!(!PREGATE_NOTE.contains("build / test / lint"));
+	}
+
+	#[test]
+	fn system_managed_response_cannot_complete_the_latest_user_task() {
+		use crate::supervisor::detect::SelfReport;
+
+		assert!(claims_user_task_completion(
+			true,
+			Some(SelfReport::Done),
+			false
+		));
+		assert!(claims_user_task_completion(true, None, true));
+		assert!(!claims_user_task_completion(
+			false,
+			Some(SelfReport::Done),
+			false
+		));
+		assert!(!claims_user_task_completion(false, None, true));
 	}
 }

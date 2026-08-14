@@ -1173,7 +1173,7 @@ pub async fn run_interactive_session(
 			// without becoming the user's active task. Preserve source metadata through
 			// the interactive path just as ACP, WebSocket, and non-interactive modes do.
 			if system_managed_input {
-				chat_session.add_system_managed_user_message(&final_input)?;
+				chat_session.add_system_managed_turn_message(&final_input)?;
 			} else {
 				chat_session.add_user_message(&final_input)?;
 				// New real user message → run per-message lesson recall on the next API call.
@@ -1797,7 +1797,7 @@ pub async fn run_interactive_session_with_input(
 			.await;
 
 			if inbox_msg.source.is_system_managed() {
-				chat_session.add_system_managed_user_message(&inbox_msg.content)?;
+				chat_session.add_system_managed_turn_message(&inbox_msg.content)?;
 			} else {
 				chat_session.add_user_message(&inbox_msg.content)?;
 			}

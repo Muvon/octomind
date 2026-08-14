@@ -288,7 +288,7 @@ fn render_specialist_context(
 			})
 		})
 		.unwrap_or(serde_json::Value::Null);
-	let task_context = request_context(chat_session, &request, signal);
+	let task_context = request_context(chat_session, request, signal);
 	serde_json::json!({
 		"signal": match signal {
 			PlanSignal::Request => "request",

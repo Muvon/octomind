@@ -160,24 +160,38 @@ pub fn is_real_user_task_message(message: &Message) -> bool {
 /// Open tag of the synthetic wrapper compaction inserts to carry the live
 /// request forward once the raw user turns have been drained.
 pub const CONTINUATION_TAG_OPEN: &str = "<continuation>";
-/// Open/close tags of the `<task>` intent embedded in a continuation wrapper.
+/// Open/close tags of the model-facing resumption action embedded in a
+/// continuation wrapper. Older wrappers stored the user request here too.
 pub const CONTINUATION_TASK_OPEN: &str = "<task>";
 pub const CONTINUATION_TASK_CLOSE: &str = "</task>";
+/// Open/close tags for the exact user request that originated the active turn.
+/// New wrappers keep this separate from `<task>`, which describes where the
+/// already-running work should resume after compaction.
+pub const CONTINUATION_REQUEST_OPEN: &str = "<request>";
+pub const CONTINUATION_REQUEST_CLOSE: &str = "</request>";
 /// Placeholder a continuation wrapper carries when there was no real user
 /// intent to forward. Shared by the builder and every reader so they can't drift.
 pub const CONTINUATION_FALLBACK_INTENT: &str = "see summary above for the active task";
 
-/// The `<task>` a continuation wrapper carries, borrowed from `content`.
+/// The exact user request a continuation wrapper carries, borrowed from
+/// `<request>` in current wrappers or `<task>` in older persisted wrappers.
 ///
-/// `None` when `content` is not a wrapper, carries no `<task>`, or holds only
+/// `None` when `content` is not a wrapper, carries no request, or holds only
 /// the synthetic placeholder — i.e. whenever there is no real intent to read.
 pub fn continuation_task(content: &str) -> Option<&str> {
 	let trimmed = content.trim_start();
 	if !trimmed.starts_with(CONTINUATION_TAG_OPEN) {
 		return None;
 	}
-	let start = trimmed.find(CONTINUATION_TASK_OPEN)? + CONTINUATION_TASK_OPEN.len();
-	let end = trimmed[start..].find(CONTINUATION_TASK_CLOSE)? + start;
+	let (open, close) = if trimmed.contains(CONTINUATION_REQUEST_OPEN) {
+		(CONTINUATION_REQUEST_OPEN, CONTINUATION_REQUEST_CLOSE)
+	} else {
+		// Backward compatibility for sessions compacted before request and
+		// resumption action became separate fields.
+		(CONTINUATION_TASK_OPEN, CONTINUATION_TASK_CLOSE)
+	};
+	let start = trimmed.find(open)? + open.len();
+	let end = trimmed[start..].find(close)? + start;
 	let task = trimmed[start..end].trim();
 	if task.is_empty() || task == CONTINUATION_FALLBACK_INTENT {
 		return None;
@@ -639,6 +653,13 @@ mod tests {
 		assert_eq!(continuation_task("just a user message"), None);
 		assert_eq!(continuation_task("<continuation>\nno task tag"), None);
 		assert_eq!(continuation_task("<continuation>\n<task>\n</task>"), None);
+	}
+
+	#[test]
+	fn continuation_keeps_user_request_separate_from_resumption_action() {
+		let wrapper = "<continuation>\n<request>\nShould work now\n</request>\n<task>\nContinue monitoring the active benchmark; the monitor is already running.\n</task>\n</continuation>";
+
+		assert_eq!(continuation_task(wrapper), Some("Should work now"));
 	}
 
 	#[test]

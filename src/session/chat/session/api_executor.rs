@@ -158,10 +158,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	animation_manager.set_cancel_receiver(operation_rx.clone());
 
 	// Snapshot task-resolution context before this turn's work changes the plan or
-	// compaction anchor. Resolution itself stays lazy: only a completion claim pays
-	// for the classifier/rewriter call, and recursive gate re-runs reuse its result.
+	// compaction anchor. The external planner reuses this bounded snapshot without
+	// paying for a separate resolver call. Resolution itself stays lazy: only a
+	// completion claim pays for the classifier/rewriter call, and recursive gate
+	// re-runs reuse its result.
 	if config.supervisor.enabled
-		&& config.supervisor.gate.enabled
+		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled)
 		&& chat_session.gate_task.is_none()
 	{
 		let session_context = chat_session.session.info.anchor.to_xml();
@@ -291,6 +293,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if !already_flagged {
 				let mut note = format!("<pay-attention>\n{marker}\nA runtime-checked plan assumption is no longer true. The external plan manager will reassess the unfinished route before work continues. Broken condition(s):\n");
 				for (n, title, cond) in &broken {
+					let title = crate::supervisor::escape_xml_text(title);
+					let cond = crate::supervisor::escape_xml_text(cond);
 					note.push_str(&format!("- task {n} \"{title}\": valid if {cond}\n"));
 				}
 				note.push_str("</pay-attention>");

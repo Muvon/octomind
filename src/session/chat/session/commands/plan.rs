@@ -16,7 +16,7 @@ use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
 use anyhow::Result;
 
-/// Handle /plan command — display current plan stored in MCP plan tool, plus any
+/// Handle /plan command — display current supervisor-owned plan, plus any
 /// critical knowledge accumulated from compressions on this session.
 pub async fn handle_plan(session: &ChatSession) -> Result<CommandResult> {
 	let knowledge = session.critical_knowledge.clone();

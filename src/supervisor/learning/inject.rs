@@ -139,10 +139,17 @@ pub async fn retrieve_and_format(
 			if !orient_enabled || orient_count >= orient_max {
 				continue;
 			}
-			orient_block.push_str(&format!("- {}\n", lesson.content));
+			orient_block.push_str(&format!(
+				"- {}\n",
+				crate::supervisor::escape_xml_text(&lesson.content)
+			));
 			orient_count += 1;
 		} else {
-			lesson_block.push_str(&format!("- [{}] {}\n", lesson.confidence, lesson.content));
+			lesson_block.push_str(&format!(
+				"- [{}] {}\n",
+				crate::supervisor::escape_xml_text(&lesson.confidence),
+				crate::supervisor::escape_xml_text(&lesson.content)
+			));
 		}
 		new_contents.push(lesson.content.clone());
 	}

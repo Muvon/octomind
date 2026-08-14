@@ -37,12 +37,35 @@ impl Config {
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
+		// Optional mechanics are validated only when reachable. In particular,
+		// max_tokens = 0 means unbounded provider output and defeats the external
+		// planner's token budget, so an enabled planner must use a positive cap.
+		self.validate_supervisor_plan()?;
+
 		// Compression model: must resolve to a known provider, but EITHER
 		// structured-output support (JSON path) OR no support (XML path)
 		// is acceptable — `ask_ai_decision_and_summary` dispatches on the
 		// provider's capability at call time.
 		self.validate_compression_model()?;
 
+		Ok(())
+	}
+
+	fn validate_supervisor_plan(&self) -> Result<()> {
+		if !self.supervisor.enabled || !self.supervisor.plan.enabled {
+			return Ok(());
+		}
+		let plan = &self.supervisor.plan;
+		if plan.model.trim().is_empty() {
+			return Err(anyhow!(
+				"supervisor.plan.model cannot be empty while the external planner is enabled"
+			));
+		}
+		if plan.max_tokens == 0 {
+			return Err(anyhow!(
+				"supervisor.plan.max_tokens must be greater than 0 while the external planner is enabled"
+			));
+		}
 		Ok(())
 	}
 
@@ -264,6 +287,11 @@ mod tests {
 	use super::*;
 	use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
+	fn template_config() -> Config {
+		toml::from_str(include_str!("../../config-templates/default.toml"))
+			.expect("default template must deserialize")
+	}
+
 	fn valid_layer() -> LayerConfig {
 		LayerConfig {
 			name: "test_layer".to_string(),
@@ -335,5 +363,19 @@ mod tests {
 		layer.description = String::new();
 		let result = validate_layer_rules(&[layer]);
 		assert!(result.is_err(), "empty description should fail validation");
+	}
+
+	#[test]
+	fn enabled_external_planner_requires_bounded_output_and_model() {
+		let mut config = template_config();
+		config.supervisor.plan.max_tokens = 0;
+		assert!(config.validate_supervisor_plan().is_err());
+
+		config.supervisor.plan.max_tokens = 128;
+		config.supervisor.plan.model.clear();
+		assert!(config.validate_supervisor_plan().is_err());
+
+		config.supervisor.plan.enabled = false;
+		assert!(config.validate_supervisor_plan().is_ok());
 	}
 }

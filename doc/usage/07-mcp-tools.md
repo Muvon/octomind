@@ -4,49 +4,27 @@ Octomind uses the Model Context Protocol (MCP) to provide AI models with externa
 
 ## Architecture
 
-Octomind ships **three builtin MCP servers** declared in the default config (`core`, `runtime`, `agent`), plus an auto-discovered `local` server for project scripts:
+Octomind ships four builtin MCP servers (`core`, `orchestration`, `runtime`, `agent`), plus an auto-discovered `local` server for project scripts:
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | High-level day-to-day tools: planning, tap-role launch |
-| `runtime` | builtin | Low-level harness reconfiguration: register MCP servers, manage dynamic agents, load skills, schedule, capability |
+| `core` | builtin | Session-memory retrieval (`recall`, when attention is enabled) |
+| `orchestration` | builtin | Delegation (`tap`), scheduled messages (`schedule`), and event streams (`monitor`) |
+| `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
 | `local` | builtin | Project-local shebang-script tools auto-discovered from `<workdir>/.agents/tools/`. See [Local Tools](17-local-tools.md). |
 
 The filesystem tools (`view`, `text_editor`, `shell`, …) are **not** a builtin server. They are served by a separate `octofs` MCP server (a stdio subprocess: command `octofs`, args `["mcp"]`) that is **not declared in the default config**. It is delivered through the built-in default tap [`muvon/tap`](../integration/04-tap-system.md)'s capabilities `filesystem-read` and `filesystem-write`, and roles reach it via `server_refs`/capabilities under the `filesystem` capability name — never a hardcoded `[[mcp.servers]]` block named `filesystem`. See [Filesystem Server Tools (octofs)](#filesystem-server-tools-octofs) below for the prerequisites.
 
-`core` and `runtime` are the two split halves of what used to be a single `core` server. The split separates "what the agent uses to do work" (`core`) from "what reconfigures the harness mid-session" (`runtime`).
+Planning is supervisor-internal rather than an MCP tool. The specialist sees runtime-owned plan state and emits sparse hidden signals alongside normal work; the external planner owns transitions. `/plan` only displays that state.
 
 Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio` types.
 
 ## Core Server Tools
 
-### `plan` -- Structured Task Management
+### Adaptive external planning
 
-Break down large objectives into steps with progress tracking.
-
-**Parameters:**
-- `command` (string, required): `"start"`, `"step"`, `"next"`, `"list"`, `"done"`, `"reset"`
-
-| Command | Required Params | Description |
-|---------|----------------|-------------|
-| `start` | `content` (plan goal/title), `tasks` (array of `{title, description}`) | Begin a new plan (errors if a plan already exists — `done` or `reset` first) |
-| `step` | `content` | Add progress notes to current task (does not advance it) |
-| `next` | `content` | Mark current task done, advance |
-| `list` | -- | Show all tasks with status |
-| `done` | `content` | Complete plan, trigger cleanup |
-| `reset` | -- | Abort and clear plan |
-
-The plan title comes from the `content` parameter on `start` — there is **no** `title` property on the tool itself (only inside each `tasks` entry). The schema sets `additionalProperties: false`, so a stray top-level `title` key is rejected.
-
-```json
-{"command": "start", "content": "Implement Auth", "tasks": [
-  {"title": "Design API", "description": "Create endpoints"},
-  {"title": "Write tests", "description": "Unit and integration"}
-]}
-{"command": "next", "content": "API designed, moving to tests"}
-{"command": "done", "content": "Feature complete"}
-```
+There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate planner model updates runtime-owned state from bounded trajectory and evidence. Use `/plan` to inspect the current checklist.
 
 ### `tap` -- Run Specialist Roles from Taps
 
@@ -434,14 +412,14 @@ MCP servers are monitored automatically:
 - The failed-state flag is cleared after a 5-minute cooldown, allowing the server to be retried again (distinct from the 30-second between-attempt wait)
 - Use `/mcp health` to force a health check
 
-## Design Notes: Why Two Builtin Servers
+## Design Notes: Builtin Server Boundaries
 
-The `core`/`runtime` split exists for two reasons: a clearer mental model, and a lower default token tax.
+The builtin split provides clear ownership while keeping each role's tool schema small.
 
-**The taxonomy.** `runtime` answers *"what am I?"* — its tools mutate the agent's identity: register a new MCP server, define a dynamic-agent class, load a skill instruction-pack. `core` answers *"how do I get this done?"* — planning a multi-step task, deferring work, growing the toolset on intent, delegating to a specialist. Most roles always want the second. Only specialized harness-authoring roles want the first.
+**The taxonomy.** `runtime` changes the available harness and tool surface. `orchestration` delegates or schedules work. `core` holds small session-native primitives such as conditional `recall`. Planning is external supervisor state rather than a tool category.
 
 **The token cost.** Every always-on tool is schema text the model stares at every turn, even when irrelevant. Splitting `runtime` out lets a typical role (`lawyer:sg`, `doctor:blood`, `developer:general`) drop those three tools from its surface entirely — they're never reached for during normal work, and exposing them just adds noise.
 
-**Where new tools go.** When adding a tool, ask: *does it change what the agent **is**, or help the agent **work**?* Identity-change → `runtime`. Work-help → `core`. If neither fits cleanly, it's probably a [capability](#capability----discover-and-activate-domain-bundles) — a domain bundle activated on demand rather than a built-in.
+**Where new tools go.** Harness or tool-surface mutation belongs in `runtime`; delegation, schedules, and monitors belong in `orchestration`; small universally session-native primitives belong in `core`. Domain work is usually a [capability](#capability----discover-and-activate-domain-bundles) activated on demand rather than a built-in.
 
-**Direction of travel.** Even `core` is moving toward capability-gated rather than always-on. Today the essentials (`capability`, `tap`, `plan`) are always exposed because they're the bootstrap layer — `capability` loads everything else, `tap` is foundational delegation, `plan` is meta-cognition every role benefits from. Auxiliaries like `schedule`, and the entirety of `runtime`, are good candidates to migrate behind opt-in capability bundles authored in taps. The auto-activation pipeline already handles this for external capabilities; extending it to builtin tools is a tap-side authoring task.
+**Token direction.** Keep model-callable built-ins sparse. Plan bookkeeping moved out of the specialist surface entirely; role filters and capabilities should similarly avoid exposing runtime tools that the role does not need.

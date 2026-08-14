@@ -13,16 +13,17 @@ Add a built-in server when you need:
 
 For external tools, prefer configuring a `stdio` or `http` server in config.
 
-> Smallest reference to copy: read `src/mcp/core/functions.rs` (which collects two functions) together with `src/mcp/core/plan/` and how the `core` server is wired into `src/mcp/mod.rs`. Every code block below is modeled on that real `plan` tool.
+> Smallest reference to copy: read `src/mcp/core/functions.rs`, `src/mcp/core/recall.rs`, and how the `core` server is wired into `src/mcp/mod.rs`. Planning is supervisor-internal and is not a tool-definition example.
 
 ## Built-in Servers
 
-Three built-in servers are shipped as `[[mcp.servers]]` entries in `config-templates/default.toml` (`core`, `runtime`, `agent`):
+Four built-in servers are shipped as `[[mcp.servers]]` entries in `config-templates/default.toml` (`core`, `orchestration`, `runtime`, `agent`):
 
 | Server | Location | Tools |
 |--------|----------|-------|
-| `core` | `src/mcp/core/` | `plan`, `tap` |
-| `runtime` | `src/mcp/runtime/` | `mcp`, `agent`, `skill`, `schedule`, `capability` |
+| `core` | `src/mcp/core/` | `recall` when attention is enabled |
+| `orchestration` | `src/mcp/orchestration/` | `tap`, `schedule`, `monitor` |
+| `runtime` | `src/mcp/runtime/` | `mcp`, `agent`, `skill`, `capability` |
 | `agent` | `src/mcp/agent/` | one `agent_<name>` tool per configured agent (built from `config.agents`) |
 
 External:
@@ -30,7 +31,7 @@ External:
 |--------|------|---------|
 | `filesystem` (octofs) | stdio | `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `workdir` |
 
-> `filesystem` is **not** declared in `default.toml`'s `[[mcp.servers]]`. It is supplied by a tap and referenced by name in roles' `server_refs` / `allowed_tools`. Only `core`, `runtime`, and `agent` are shipped as built-in server entries.
+> `filesystem` is **not** declared in `default.toml`'s `[[mcp.servers]]`. It is supplied by a tap and referenced by name in roles' `server_refs` / `allowed_tools`. The shipped built-in entries are `core`, `orchestration`, `runtime`, and `agent`.
 
 ## Step-by-Step Guide
 
@@ -44,7 +45,7 @@ src/mcp/
 
 ### 2. Implement `get_all_functions()`
 
-Return a list of `McpFunction` definitions. The `parameters` field is a JSON Schema built with `serde_json::json!`. Model it on `get_plan_function()` (`src/mcp/core/plan/mod.rs`):
+Return a list of `McpFunction` definitions. The `parameters` field is a JSON Schema built with `serde_json::json!`. `get_recall_function()` in `src/mcp/core/recall.rs` is the smallest current example:
 
 ```rust
 use crate::mcp::McpFunction;
@@ -159,8 +160,8 @@ pub async fn execute_tool(call: &McpToolCall, config: &Config) -> Result<McpTool
 ```
 
 Existing references for the exact signatures:
-- `pub async fn execute_plan(call: &McpToolCall) -> Result<McpToolResult>` (`src/mcp/core/plan/core.rs`)
-- `pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<McpToolResult>` (`src/mcp/core/tap.rs`)
+- `pub async fn execute_recall(call: &McpToolCall) -> Result<McpToolResult>` (`src/mcp/core/recall.rs`)
+- `pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<McpToolResult>` (`src/mcp/orchestration/tap.rs`)
 - `pub async fn execute_runtime_tool(call: &McpToolCall, config: &Config) -> Result<McpToolResult>` (`src/mcp/runtime/mod.rs`)
 
 #### Error-handling contract
@@ -276,7 +277,7 @@ let result = timeout(
 
 ### Session-Ownership Checks for Dynamic Tools
 
-If you add dynamic or runtime-registered tools (e.g. `agent_*` tools or dynamic servers), be aware that `execute_tool_without_cancellation` (`src/mcp/mod.rs`) enforces session ownership: the global tool map can contain tools registered by other sessions, so in a session context it verifies that a dynamic tool either is config-defined or belongs to the current session, returning a "belongs to another session" error otherwise. Static built-in tools (`plan`, `tap`, etc.) and project-local tools under the synthetic `local` server bypass this check.
+If you add dynamic or runtime-registered tools (e.g. `agent_*` tools or dynamic servers), be aware that `execute_tool_without_cancellation` (`src/mcp/mod.rs`) enforces session ownership: the global tool map can contain tools registered by other sessions, so in a session context it verifies that a dynamic tool either is config-defined or belongs to the current session, returning a "belongs to another session" error otherwise. Static built-in tools (`recall`, `tap`, `schedule`, etc.) and project-local tools under the synthetic `local` server bypass this check.
 
 ### Server Stderr Capture
 

@@ -362,6 +362,10 @@ mod tests {
 			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
 			Some(2048)
 		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["trajectory_max_tokens"].as_integer(),
+			Some(4096)
+		);
 	}
 
 	#[test]
@@ -602,6 +606,8 @@ require_plan_complete = false
 [supervisor.plan]
 enabled = false
 model = "openai:custom-planner"
+max_tokens = 1536
+trajectory_max_tokens = 3072
 "#;
 
 		let migration = plan()
@@ -634,7 +640,11 @@ model = "openai:custom-planner"
 		);
 		assert_eq!(
 			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
-			Some(2048)
+			Some(1536)
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["trajectory_max_tokens"].as_integer(),
+			Some(3072)
 		);
 		assert_eq!(
 			migrated["supervisor"]["plan"]["adoption_min_actions"].as_integer(),

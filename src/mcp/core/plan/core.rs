@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Core plan tool implementation
-/// Core implementation of the plan MCP tool.
+//! Runtime-owned plan storage operations.
 ///
-/// Handles all supported commands (start, step, next, list, done, reset).
+/// Production lifecycle changes enter through the `sidecar_*` functions under
+/// `supervisor::plan`. The legacy command parser below is retained only as an
+/// internal compatibility/test path and is not registered or routed as MCP.
+///
+/// It handles the historical commands (start, step, next, list, done, reset).
 ///
 /// - Validates all parameters with clear MCP-compliant error messages.
 /// - Ensures all errors use Ok(McpToolResult::error(...))—never Err().
@@ -52,7 +55,7 @@ fn get_storage() -> Arc<Mutex<MemoryPlanStorage>> {
 	}
 }
 
-/// Set the start index for the current task (called by session before plan tool execution)
+/// Set the start index for the current runtime-owned phase.
 pub fn set_current_task_start_index(index: usize) {
 	if let Some(session_id) = crate::session::context::current_session_id() {
 		crate::session::context::set_task_start_index(&session_id, index);
@@ -137,6 +140,9 @@ fn sidecar_tasks(
 ) -> Result<Vec<TaskData>> {
 	if tasks.len() < minimum {
 		anyhow::bail!("A sidecar plan needs at least {minimum} meaningful task(s)");
+	}
+	if tasks.len() > 6 {
+		anyhow::bail!("A sidecar plan supports at most 6 meaningful tasks");
 	}
 	tasks
 		.iter()
@@ -238,6 +244,7 @@ pub fn sidecar_finish(summary: &str) -> Result<()> {
 	storage.complete_plan(summary.to_string())?;
 	storage.clear_plan()?;
 	drop(storage);
+	clear_task_start_index();
 	persist_plan_cleared();
 	Ok(())
 }
@@ -343,7 +350,7 @@ pub fn get_plan_context() -> Option<(String, usize, usize, String)> {
 	Some((plan_title, completed_count, total, current_title))
 }
 
-/// Execute plan tool command
+/// Execute a legacy internal plan command. Not part of the MCP tool surface.
 pub async fn execute_plan(call: &McpToolCall) -> Result<McpToolResult> {
 	// Extract command parameter
 	let command = match call.parameters.get("command") {
@@ -590,7 +597,7 @@ async fn handle_start_command(call: &McpToolCall) -> Result<McpToolResult> {
 	// CRITICAL FIX: Set start_index for first task when plan is created
 	// This will be used by compression to know where the first task's work begins
 	// Note: We can't get message_count here (no session access), so we signal
-	// that start_index should be set in response.rs when plan tool returns
+	// that start_index should be set in response.rs when the legacy command returns
 	// The flag will be checked and start_index will be set AFTER plan(start) completes
 
 	Ok(McpToolResult::success(
@@ -1168,7 +1175,7 @@ pub async fn get_current_plan_display() -> Result<String> {
 
 	// Check if plan exists
 	if !storage.has_active_plan().unwrap_or(false) {
-		return Err(anyhow::anyhow!("Use plan tool only for COMPLEX, multi-step tasks that require structured breakdown. For simple tasks, just execute them directly without a plan."));
+		return Err(anyhow::anyhow!("No active plan. Complex plans are created automatically by the external planner; focused work remains plan-free."));
 	}
 
 	let plan_title = storage
@@ -1294,5 +1301,18 @@ mod tests {
 		// Free-form prose is not machine-checkable — left to the agent/verifier.
 		assert_eq!(check_condition("the API still returns 200"), None);
 		assert_eq!(check_condition("file_exists:"), None);
+	}
+
+	#[test]
+	fn sidecar_task_count_is_bounded() {
+		let task = crate::supervisor::plan::PlanTaskDirective {
+			title: "phase".to_string(),
+			done_when: "outcome exists".to_string(),
+		};
+		assert!(sidecar_tasks(std::slice::from_ref(&task), 2).is_err());
+		let six = vec![task.clone(); 6];
+		assert!(sidecar_tasks(&six, 2).is_ok());
+		let seven = vec![task; 7];
+		assert!(sidecar_tasks(&seven, 2).is_err());
 	}
 }

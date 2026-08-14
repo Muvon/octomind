@@ -190,7 +190,7 @@ timeout_seconds = 30
 tools = []
 ```
 
-The three built-in servers shipped in the default config are `core` (hosts `plan`, `tap`), `runtime` (hosts `mcp`, `agent`, `skill`, `schedule`, `capability`), and `agent`. Omitting `runtime` would lose all of its tools — keep it in the list.
+The four built-in servers shipped in the default config are `core` (conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), and `agent` (configured `agent_<name>` tools). Planning is supervisor-internal rather than an MCP tool.
 
 See [MCP Tools Reference](07-mcp-tools.md) for complete tool documentation.
 

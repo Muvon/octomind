@@ -107,7 +107,8 @@ A `server_refs` entry that names a server not present in the global registry is 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
 allowed_tools = [
-  "core:*",              # plan, tap
+  "core:*",              # recall, when attention is enabled
+  "orchestration:*",     # tap, schedule, monitor
   "runtime:mcp",         # only the mcp tool from runtime (skip agent / skill / schedule / capability)
   "filesystem:view",     # Only view from filesystem
   "filesystem:shell",    # Only shell from filesystem
@@ -115,9 +116,10 @@ allowed_tools = [
 ]
 ```
 
-**Builtin (config-declared) servers** — only these three are declared as `[[mcp.servers]]` in the default config:
-- `core` -- high-level day-to-day tools: `plan`, `tap`.
-- `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills), `schedule`, `capability`. Most roles don't need this.
+**Builtin (config-declared) servers** — these four are declared as `[[mcp.servers]]` in the default config:
+- `core` -- conditional session-memory `recall`; planning is supervisor-internal.
+- `orchestration` -- `tap`, `schedule`, and `monitor`.
+- `runtime` -- low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills), and `capability`. Most roles don't need this.
 - `agent` -- dispatches to `[[agents]]`-defined ACP sub-agents (`agent_<name>` per entry).
 
 > **`filesystem` is not a built-in declared server.** The filesystem tools (`view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, `workdir`) come from the **octofs** companion server supplied by the tap/capability layer, not from a `[[mcp.servers]]` entry. If you copy the examples below into a bare standalone config that has no tap/capability providing `filesystem`, the reference is silently dropped and no filesystem tools appear. To see exactly which tools a server exposes, run `/mcp list` (or `/mcp full`) in a session.

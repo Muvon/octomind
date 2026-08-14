@@ -149,7 +149,7 @@ After a session is created the agent sends an `AvailableCommandsUpdate` listing 
 | `run` | `<command_name>` | Execute a command layer |
 | `workflow` | `<workflow_name> [input]` | **Legacy / no-op** — still advertised over ACP, but `/workflow` was removed; run workflows via the `octomind workflow <file.toml>` CLI instead |
 | `mcp` | `[info\|list\|full\|health\|dump\|validate]` | MCP server management |
-| `plan` | — | Display current plan stored in MCP plan tool |
+| `plan` | — | Display the current supervisor-owned plan |
 | `prompt` | `[template_name]` | Manage prompt templates |
 | `image` | `<path>` | Attach image to next message |
 | `video` | `<path>` | Attach video to next message |

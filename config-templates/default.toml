@@ -680,9 +680,10 @@ enabled = true
 # Shared cheap model for supervisor mechanics (a mechanic may override)
 model = "octohub:auto"
 # Evidence-bound claims: have the agent back load-bearing repo facts with a
-# verbatim «quote», then deterministically verify each quote occurs in a tool
-# result -- and that each file:line reference in the answer holds on disk;
-# fabricated citations are re-grounded via the verify-gate (needs gate.enabled).
+# verbatim <evidence> quote, then deterministically verify each quote occurs in
+# current-turn tool output. Ordinary URLs, paths, and code examples are not
+# inferred to be citations; unsupported explicit evidence is re-grounded via
+# the verify-gate (needs gate.enabled).
 claim_check = true
 # Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that emitted
 # a steer without the model breaking out (a steer is advisory, so a loop can otherwise
@@ -781,7 +782,14 @@ max_tokens = 8192
 enabled = true
 # Keep this cheap and fast: each signal is exactly one request/response.
 model = "octohub:auto"
+# Maximum tokens the planner model may GENERATE for its JSON decision. This is
+# the standard provider output limit; it does not limit prompt or context input.
 max_tokens = 2048
+# Maximum INPUT tokens used by only the newest assistant/tool trajectory slice.
+# Octomind truncates that slice locally before constructing the planner prompt;
+# the request, active plan, capabilities, and evidence are separate input. Set
+# this to 0 to omit trajectory records while retaining those authoritative fields.
+trajectory_max_tokens = 4096
 # Automatic adoption is conservative so small or repetitive tasks stay plan-free.
 # Set either threshold to 0 to disable automatic adoption; explicit signals still work.
 adoption_min_actions = 8

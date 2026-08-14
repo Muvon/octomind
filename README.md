@@ -241,7 +241,7 @@ Octomind's adaptive compaction engine runs automatically:
 - **Cache-aware** — calculates if compaction is worth it *before* paying for it. Never breaks the prompt-cache hit by accident.
 - **Pressure-tiered** — compacts more aggressively as context grows.
 - **Structurally preserving** — keeps decisions, file references, errors, dependencies; drops noise.
-- **Plan-aware and free-form-aware** — works whether you use the `plan` tool or have a free-form chat.
+- **Adaptively plan-aware** — the supervisor tracks complex work externally while focused tasks remain plan-free.
 - **Fully automatic** — you never think about it.
 
 The second-order benefit: smaller context means **fewer tokens, faster responses, lower cost** every turn after compaction fires.
@@ -358,11 +358,10 @@ Each tap is a Git repo. Each agent is one TOML file. Pull requests are contribut
 
 Octomind is MCP-native in both directions: it's a **client** that consumes any MCP server (stdio, Streamable HTTP, OAuth), and it exposes its own built-in servers.
 
-Every agent has these:
+The runtime can expose these according to the active role and configuration. Planning is not a model-callable tool: the supervisor owns it externally, while `/plan` remains a read-only display command.
 
 | Tool | Purpose |
 |---|---|
-| `plan` | Structured multi-step task tracking |
 | `mcp` | Enable/disable MCP servers at runtime |
 | `agent` | Spawn specialist sub-agents mid-session |
 | `schedule` | Inject messages at future times |

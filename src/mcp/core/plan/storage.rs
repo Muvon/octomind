@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Storage abstraction for plan tool
+//! Storage abstraction for runtime-owned plans.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

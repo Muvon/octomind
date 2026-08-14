@@ -61,20 +61,27 @@ When the agent self-reports `done` and `[supervisor.gate] enabled = true`, the c
 **Free pre-gates (no model call):**
 
 - **Mutation → check** (`require_check_after_mutation`) — state was changed but no successful command execution ran since the change. Tool-agnostic: any non-mutation command that succeeds on an unchanged tree counts as a check, so it works for any domain (build/test/lint, booking confirmations, health checks).
-- **Plan complete** (`require_plan_complete`) — the live plan checklist still has open items.
-- **Plan coverage** — the plan advanced (tasks completed) but the evidence ledger shows no real tool actions since; finishing paperwork is not doing the work.
-- **Plan conditions** — an open task's declared `valid_if` condition (e.g. `file_exists: src/foo.rs`) is deterministically broken right now.
+- **Plan complete** (`require_plan_complete`) — more than the final plan phase remains open. The final phase is judged with the complete result and committed only after `PASS`.
+
+Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are monitored during execution. A broken assumption emits `reassess`; the external planner revises or holds the unfinished route before completion.
 
 **Model pass (rare):** an independent verifier checks the result against your request:
 
 - **Pass** → the run is labelled verified; distill is allowed to learn from it.
-- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by `max_iterations` (default `2`, to avoid over-verifying). If gaps remain after the bound, the run is marked unverified and **distill is suppressed** — we never learn from an unverified trajectory.
+- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by `max_iterations` (default `2`). Exhaustion hard-stops instead of falling through to another judge.
+- **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed successful response gets one bounded format-only retry; substantive gaps do not.
 
 Set `verifier_model` to a **different model family** than your agent model — a same-family verifier inherits the same blind spots and rubber-stamps them.
 
 ### Evidence-bound claims
 
-With `claim_check = true`, the agent backs load-bearing facts with a verbatim quote inside an `<evidence locator="source:location">…</evidence>` tag (hidden from the user's display, kept in the stored message). Each quoted line is verified deterministically — it must occur in an actual tool result — each file:line reference must hold on disk, and each cited URL must appear in something the agent actually received (tool output or the user's own message). Fabricated citations are re-grounded through the verify-gate. Verification here is abstract: a quote from a web page, a file read, or a command output all count — it is not tied to coding.
+With `claim_check = true`, the agent backs load-bearing facts with a verbatim quote inside an `<evidence locator="source:location">…</evidence>` tag. Each explicit quoted line must occur in current-turn tool provenance (or in the user's current message). Ordinary URLs, paths, and code examples are not inferred to be citations, which avoids treating fixture data as an external source. Unsupported explicit evidence is re-grounded through the verify-gate.
+
+## Adaptive external planning
+
+Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal alongside normal work. A separate planner model makes one structured create/no-plan decision from the current request, specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
+
+The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses; the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion gate owns final plan clearance.
 
 ### Compaction fidelity
 
@@ -159,6 +166,15 @@ max_iterations = 2
 verifier_model = "openai:gpt-5-mini"     # recommended: a DIFFERENT family than the agent model
 require_check_after_mutation = true
 require_plan_complete = true
+max_tokens = 8192
+
+[supervisor.plan]          # adaptive external plan manager
+enabled = true
+model = "octohub:auto"
+max_tokens = 2048          # generated JSON decision; not input context
+trajectory_max_tokens = 4096 # locally bounded assistant/tool input slice
+adoption_min_actions = 8
+adoption_min_distinct_actions = 4
 
 [supervisor.recite]        # goal recitation on compacted sessions
 enabled = true

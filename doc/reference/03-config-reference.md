@@ -125,8 +125,9 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 
 | Server | Tools | Description |
 |--------|-------|-------------|
-| `core` | `plan`, `tap` | High-level planning and tap (agent registry) management |
-| `runtime` | `mcp`, `agent`, `skill`, `schedule`, `capability` | Harness reconfiguration and scheduling |
+| `core` | `recall` (when attention is enabled) | Session-memory retrieval; planning is supervisor-internal |
+| `orchestration` | `tap`, `schedule`, `monitor` | Delegation, scheduled messages, and event-stream monitoring |
+| `runtime` | `mcp`, `agent`, `skill`, `capability` | Harness and tool-surface reconfiguration |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
 
 > **`filesystem` is not declared here.** Default roles reference a `filesystem` server in their `server_refs`, but it is **not** a builtin and is **not** defined in this config file's `[[mcp.servers]]`. It is an external `stdio` server backed by `octofs`, provided by the built-in tap. Its tools are `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, and `workdir`. See [MCP Tools](../usage/07-mcp-tools.md) for the full surface.
@@ -338,7 +339,7 @@ The out-of-band control plane around the agent loop. It hosts learning (distill 
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
-| `claim_check` | bool | `true` | Evidence-bound claims: the agent backs load-bearing facts with a verbatim quote in an `<evidence>` tag; each quoted line is verified against tool results, each file:line reference on disk, and each cited URL against what was actually received. Fabricated citations are re-grounded via the verify-gate (needs `gate.enabled`) |
+| `claim_check` | bool | `true` | Evidence-bound claims: each explicit `<evidence>` quote must occur in current-turn tool provenance or the current user message. Ordinary URLs, paths, and code examples are not inferred as citations; unsupported explicit evidence is re-grounded via the verify-gate |
 | `max_consecutive_steers` | usize | `0` | Circuit-breaker: hard-stop a turn after this many consecutive steered tool rounds without breakout. `0` = unlimited (off) |
 
 ### `[supervisor.learning]`
@@ -403,7 +404,21 @@ Verify-gate on self-reported completion. Free deterministic pre-gates run first 
 | `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification). Applied separately to the free deterministic checks and to the LLM verify-gate, so a free nudge never consumes the verifier's repair budget |
 | `verifier_model` | string | supervisor `model` | Model the gate verifies with. Recommended: a **different family** than the agent model — a same-family verifier inherits the same blind spots |
 | `require_check_after_mutation` | bool | `true` | Free pre-gate: refuse `done` when state changed but no successful command execution ran since the change (tool-agnostic — works for any domain) |
-| `require_plan_complete` | bool | `true` | Free pre-gate: refuse `done` while the live plan still has open items |
+| `require_plan_complete` | bool | `true` | Free pre-gate: refuse `done` while more than the final live-plan phase remains open |
+| `max_tokens` | u32 | `8192` | Maximum verifier output tokens; also bounds the assembled turn deliverable supplied to it |
+
+### `[supervisor.plan]`
+
+Adaptive external plan manager. The specialist has no plan mutation tool; sparse hidden signals wake this manager only when planning or a transition is needed.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable adaptive external planning |
+| `model` | string | `octohub:auto` | Model used for the single structured plan decision |
+| `max_tokens` | u32 | `2048` | Standard provider output cap: maximum generated decision tokens, not input context |
+| `trajectory_max_tokens` | usize | `4096` | Local input cap for only the newest current-phase assistant/tool trajectory; `0` omits that slice |
+| `adoption_min_actions` | usize | `8` | Successful actions before automatic plan adoption may be evaluated; `0` disables auto-adoption |
+| `adoption_min_distinct_actions` | usize | `4` | Distinct successful actions required by auto-adoption; `0` disables auto-adoption |
 
 ### `[supervisor.recite]`
 
@@ -469,6 +484,15 @@ max_iterations = 2
 verifier_model = "anthropic:claude-haiku-4-5"
 require_check_after_mutation = true
 require_plan_complete = true
+max_tokens = 8192
+
+[supervisor.plan]
+enabled = true
+model = "octohub:auto"
+max_tokens = 2048
+trajectory_max_tokens = 4096
+adoption_min_actions = 8
+adoption_min_distinct_actions = 4
 
 [supervisor.recite]
 enabled = true

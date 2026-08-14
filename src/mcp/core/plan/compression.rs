@@ -126,7 +126,7 @@ pub struct ProjectCompressionRequest {
 }
 
 /// Request compression for a completed task
-/// This is called by the plan tool when a task is completed via plan(next)
+/// Used by the retained legacy command path when a task is completed.
 pub fn request_compression(task: PlanTask) {
 	crate::log_debug!("Compression requested for task: {}", task.title);
 	let ptc = PendingTaskCompression { task, force: false };
@@ -141,7 +141,7 @@ pub fn request_compression(task: PlanTask) {
 }
 
 /// Request forced compression for a completed task (bypasses 20% threshold)
-/// Called by plan(done) to ensure the final task is compressed before project compression
+/// Used by the retained legacy completion path before project compression.
 pub fn request_forced_compression(task: PlanTask) {
 	crate::log_debug!("Forced compression requested for task: {}", task.title);
 	let ptc = PendingTaskCompression { task, force: true };
@@ -156,7 +156,7 @@ pub fn request_forced_compression(task: PlanTask) {
 }
 
 /// Set message range on the pending compression task
-/// This is called by the session after detecting a plan tool execution
+/// Called after the retained legacy command path records a task boundary.
 ///
 /// # Parameters
 ///

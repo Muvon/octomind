@@ -49,6 +49,15 @@ pub mod workdir;
 
 use serde::{Deserialize, Serialize};
 
+/// Escape untrusted text before embedding it inside supervisor-owned XML-like
+/// control blocks. This preserves field boundaries against literal closing tags.
+pub(crate) fn escape_xml_text(value: &str) -> String {
+	value
+		.replace('&', "&amp;")
+		.replace('<', "&lt;")
+		.replace('>', "&gt;")
+}
+
 /// Out-of-band notice (`· Supervisor: …`) so the user sees what the control
 /// plane is doing — mirrors the skill-activation notice: dim, stderr,
 /// interactive terminals only. Continuation lines (multi-line messages, e.g.
@@ -272,8 +281,12 @@ pub struct PlanConfig {
 	pub enabled: bool,
 	/// Model that decides whether to create, advance, hold, or revise a plan.
 	pub model: String,
-	/// Output budget for the manager's single structured decision.
+	/// Standard provider output limit: maximum tokens the manager may generate
+	/// for its single structured decision. This does not limit prompt input.
 	pub max_tokens: u32,
+	/// Locally enforced input budget for only the bounded current-phase
+	/// assistant/tool trajectory. Other planner-input fields are separate.
+	pub trajectory_max_tokens: usize,
 	/// Successful actions required before the runtime may automatically ask
 	/// whether broad work needs a plan. `0` disables automatic adoption.
 	pub adoption_min_actions: usize,

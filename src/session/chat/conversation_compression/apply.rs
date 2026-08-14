@@ -658,9 +658,18 @@ pub(super) async fn apply_compression(
 				None // keep existing intent
 			}
 		};
+		// Sign it with the request it was resolved from, so recitation retires the
+		// goal once the user asks for something else. Unsigned intents recite
+		// forever: this path fired on the late turns of long sequences, and the
+		// agent answered "the re-anchored goal is complete … out of scope" to a
+		// brand-new instruction, with zero tool calls.
+		let intent_task_sig =
+			crate::session::latest_real_user_task_content(&session.session.messages)
+				.map(crate::session::anchor::task_sig);
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {
 				intent: intent_seed,
+				intent_task_sig,
 				changes_made: vec![format!(
 					"Conversation compaction: {} messages folded, {} tokens saved",
 					messages_removed, tokens_saved

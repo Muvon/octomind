@@ -137,8 +137,14 @@ pub fn recite_note(
 	// refuses the new ask as out of scope ("Goal (fixed)" is quoted back at the
 	// user). The newest user message must always win.
 	let goal_is_live = match (anchor.intent_task_sig, current_task_sig) {
-		// Legacy anchor with no signature — recite exactly as before.
-		(0, _) => true,
+		// Unsigned intent: provenance unknown, so we cannot claim it is the live
+		// goal. Fail SAFE — skip the recitation rather than risk asserting a
+		// superseded one as "fixed". This is deliberately the strict default: the
+		// bug recurred once because a third writer set `intent` without signing it,
+		// and treating unsigned as current made that silently wrong again. The only
+		// cost is a session carried over from an older binary losing recitation
+		// until its next compaction re-signs the goal.
+		(0, _) => false,
 		(sig, Some(current)) => sig == current,
 		// No user turn resolvable this turn: nothing to contradict.
 		(_, None) => true,
@@ -260,12 +266,14 @@ This long descriptive sentence merely mentions that the value must not exceed th
 		a.extend(
 			AnchorUpdate {
 				intent: Some("Add the truncation detector".to_string()),
+				intent_task_sig: Some(crate::session::anchor::task_sig("the ask")),
 				next_steps: vec!["wire it into response.rs".to_string()],
 				..Default::default()
 			},
 			0,
 		);
-		let note = recite_note(&a, None, &[], None).expect("should recite");
+		let live = Some(crate::session::anchor::task_sig("the ask"));
+		let note = recite_note(&a, None, &[], live).expect("should recite");
 		// Excluded from the gate's real-task search.
 		assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 		assert!(note.contains("<intent>Add the truncation detector</intent>"));
@@ -278,11 +286,13 @@ This long descriptive sentence merely mentions that the value must not exceed th
 		a.extend(
 			AnchorUpdate {
 				intent: Some("Refactor auth".to_string()),
+				intent_task_sig: Some(crate::session::anchor::task_sig("the ask")),
 				..Default::default()
 			},
 			0,
 		);
-		let note = recite_note(&a, None, &[], None).expect("should recite");
+		let live = Some(crate::session::anchor::task_sig("the ask"));
+		let note = recite_note(&a, None, &[], live).expect("should recite");
 		assert!(note.contains("<intent>Refactor auth</intent>"));
 		assert!(!note.contains("Last-known next steps"));
 	}
@@ -293,6 +303,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 		a.extend(
 			AnchorUpdate {
 				intent: Some("Ship the feature".to_string()),
+				intent_task_sig: Some(crate::session::anchor::task_sig("the ask")),
 				next_steps: vec!["STALE step".to_string()],
 				..Default::default()
 			},
@@ -302,7 +313,7 @@ This long descriptive sentence merely mentions that the value must not exceed th
 			&a,
 			Some("Live plan (1/2 done):\n✅ done it\n🔄 do this ← current"),
 			&[],
-			None,
+			Some(crate::session::anchor::task_sig("the ask")),
 		)
 		.expect("should recite");
 		assert!(note.contains("<intent>Ship the feature</intent>"));

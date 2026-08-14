@@ -276,7 +276,7 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 			.input(unstructured("<workflow_name> [input]")),
 		AvailableCommand::new("mcp", "MCP server management")
 			.input(unstructured("[info|list|full|health|dump|validate]")),
-		AvailableCommand::new("plan", "Display current plan stored in MCP plan tool"),
+		AvailableCommand::new("plan", "Display current supervisor-owned plan"),
 		AvailableCommand::new("prompt", "Manage prompt templates")
 			.input(unstructured("[template_name]")),
 		AvailableCommand::new("image", "Attach image to next message")

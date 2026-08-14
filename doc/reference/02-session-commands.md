@@ -235,19 +235,13 @@ Inject a prompt template defined in the `[[prompts]]` config section into the se
 
 ### `/plan [ACTION]`
 
-Manage the structured task plan.
+Display the runtime-owned structured task plan.
 
 | Usage | Description |
 |-------|-------------|
 | `/plan` or `/plan show` | Show current plan with progress |
 
-**Note**: The `/plan` slash command only displays the current plan. To create, modify, or clear a plan, use the `plan` MCP tool directly with these commands:
-
-- `plan(command="start", content="<plan goal/title>", tasks=[{title, description}, ...])` — Create a new plan. The plan title comes from `content` (defaults to `Active Plan` if omitted); each task object requires non-empty `title` and `description`. A task may also declare `valid_if` — a falsifiable condition that must hold for the task to stay valid (machine-checkable forms: `file_exists: <path>`, `file_absent: <path>`; free-form prose is left to the agent/verifier). The supervisor's verify-gate refuses `done` while an open task's `valid_if` is deterministically broken.
-- `plan(command="next", content="...")` — Mark current task complete, advance to next
-- `plan(command="step", content="...")` — Add progress note to current task
-- `plan(command="reset")` — **Clear/reset the current plan**
-- `plan(command="done", content="...")` — Complete the plan with final summary
+**Note**: `/plan` is display-only. The specialist has no plan mutation tool. For complex work it emits sparse hidden signals alongside normal work; the external planner creates, advances, revises, and finalizes runtime plan state. Focused work stays plan-free.
 ### `/skill [NAME|PAGE|PATTERN]`
 Manage skills from taps. Skills are reusable instruction packs that inject domain knowledge into context.
 

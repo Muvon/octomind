@@ -26,7 +26,7 @@ Triggers — central to everything below — live in `config.toml`, never in the
 
 ## The `capability` Tool
 
-A built-in `runtime` MCP tool — the `runtime` builtin server hosts `mcp`, `agent`, `skill`, `schedule`, and `capability`, while `core` hosts only `plan` and `tap`. Available to every role in every session.
+A built-in `runtime` MCP tool. The `runtime` server hosts `mcp`, `agent`, `skill`, and `capability`; `orchestration` hosts `tap`, `schedule`, and `monitor`; `core` conditionally exposes `recall`. Planning is supervisor-internal rather than a tool.
 
 | Action | Description |
 |--------|-------------|

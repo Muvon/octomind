@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! In-memory storage implementation for plan tool
+//! In-memory storage implementation for runtime-owned plans.
 
 use super::storage::{ExecutionPlan, PlanStatus, PlanStorage, PlanTask, TaskData, TaskStatus};
 use anyhow::{anyhow, Result};

@@ -280,6 +280,9 @@ pub struct ChatSession {
 	/// turn. Prevents a declined or unavailable planner from being called again
 	/// after every subsequent action batch.
 	pub plan_evaluated: bool,
+	/// Evidence-ledger boundary for the active plan phase. Only actions at or
+	/// after this checkpoint may authorize its transition.
+	pub plan_evidence_checkpoint: u64,
 	/// Supervisor: entries recalled during the current trajectory (content, role,
 	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
 	pub recalled_refs: Vec<(String, String, String)>,
@@ -427,6 +430,7 @@ impl ChatSession {
 			last_self_report_handoff: None,
 			pending_plan_signal: None,
 			plan_evaluated: false,
+			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
@@ -647,6 +651,7 @@ impl ChatSession {
 						last_self_report_handoff: None,
 						pending_plan_signal: None,
 						plan_evaluated: false,
+						plan_evidence_checkpoint: 0,
 						recalled_refs: Vec::new(),
 						evidence: crate::supervisor::gate::EvidenceLedger::default(),
 						gate_task: None,
@@ -1435,6 +1440,7 @@ mod tests {
 			last_self_report_handoff: None,
 			pending_plan_signal: None,
 			plan_evaluated: false,
+			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,

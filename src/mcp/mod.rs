@@ -684,9 +684,6 @@ async fn route_builtin_tool(
 		"core" => {
 			crate::log_debug!("Executing '{}' via core builtin server", call.tool_name);
 			let result = match call.tool_name.as_str() {
-				"plan" => core::execute_plan(call)
-					.await
-					.map_err(|e| format!("Plan execution failed: {}", e)),
 				"recall" => core::recall::execute_recall(call)
 					.await
 					.map_err(|e| format!("Recall failed: {}", e)),

@@ -133,9 +133,7 @@ The config directory merges **all** `*.toml` files it contains, not just `config
 octomind config --upgrade
 ```
 
-This bumps the config **schema version field** to the latest version. The current schema is version `1`, and the only migration that exists is `v0 → v1`, which simply sets (or inserts) `version = 1` at the top of the file. Before writing, it copies your config to `<config>.toml.backup`.
-
-It does **not** rewrite any legacy section layouts — `[role_name]` → `[[roles]]`, the filesystem builtin → external, the `core`/`runtime` split, `[mcp]` reshaping, and every other change in this guide must be applied **by hand**. `--upgrade` only touches the `version` line.
+This upgrades the config to the current schema version (`5`) through the registered migration chain and creates a backup before the atomic replacement. Versioned migrations add or transform the fields they explicitly own while preserving user values; unrelated historical layout changes described below may still require manual edits.
 
 ## Runtime Namespace Move
 
@@ -143,12 +141,13 @@ The `core` builtin server was split into two: high-level tools stay in `core`, l
 
 | Tool | Old server | New server |
 |------|------------|------------|
-| `plan` | `core` | `core` |
-| `tap` *(new)* | -- | `core` |
+| `plan` | `core` | removed from tool surface; supervisor-internal |
+| `tap` *(new)* | -- | **`orchestration`** |
 | `mcp` | `core` | **`runtime`** |
 | `agent` | `core` | **`runtime`** |
 | `skill` | `core` | **`runtime`** |
-| `schedule` | `core` | **`runtime`** |
+| `schedule` | `core` | **`orchestration`** |
+| `monitor` *(new)* | -- | **`orchestration`** |
 | `capability` | `core` | **`runtime`** |
 
 If your config or tap manifest has `server_refs = ["core", ...]` and the role calls any of `mcp`, `agent`, `skill`, `schedule`, or `capability`, add `"runtime"` to the list:

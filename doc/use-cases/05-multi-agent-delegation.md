@@ -163,7 +163,7 @@ Use `[[agents]]` (this page) when the role doesn't exist in any tap or you need 
 
 ### Dynamic Agents
 
-Create agents on the fly during a session using the `agent` tool from the `runtime` server (the `core` server hosts only `plan` and `tap`):
+Create agents on the fly during a session using the `agent` tool from the `runtime` server (`tap` delegation lives on the separate `orchestration` server):
 
 ```json
 // AI creates a specialized agent at runtime

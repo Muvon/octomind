@@ -34,6 +34,8 @@ pub enum CallKind {
 	Gate,
 	/// Current-turn dependency classification and minimal resolution.
 	Resolve,
+	/// External plan creation and phase transition decision.
+	Plan,
 	/// End-of-trajectory lesson/orientation extraction.
 	Distill,
 	/// Tool-output condensation (task-aware narrowing).
@@ -48,6 +50,7 @@ struct Stats {
 	recall_calls: u64,
 	gate_calls: u64,
 	resolve_calls: u64,
+	plan_calls: u64,
 	distill_calls: u64,
 	condense_calls: u64,
 	delegate_calls: u64,
@@ -105,6 +108,7 @@ pub fn record_call(
 			CallKind::Recall => s.recall_calls += 1,
 			CallKind::Gate => s.gate_calls += 1,
 			CallKind::Resolve => s.resolve_calls += 1,
+			CallKind::Plan => s.plan_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Delegate => s.delegate_calls += 1,
@@ -222,6 +226,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"recall_calls": s.recall_calls,
 		"gate_calls": s.gate_calls,
 		"resolve_calls": s.resolve_calls,
+		"plan_calls": s.plan_calls,
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
 		"delegate_calls": s.delegate_calls,

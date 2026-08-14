@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The plan tool provides structured, step-by-step task execution, progress tracking, and session integration.
-// Registered here as a core MCP function. See src/mcp/core/plan/ for details and compliance patterns.
 // Function definitions for the Core MCP provider
 
 use super::super::McpFunction;
-use super::plan::get_plan_function;
 use super::recall::get_recall_function;
 
-// Core builtin tools — the universal self-management primitives `plan` and
-// `recall`. Delegation (`tap`) and session control (`schedule`) are the
+// Core builtin tool surface. Planning is owned by `supervisor::plan` and is
+// deliberately absent here: the specialist sees injected execution state but
+// cannot spend model rounds mutating it. Delegation (`tap`) and session control (`schedule`) are the
 // `orchestration` builtin server; tool-surface controls (`mcp`, `agent`,
 // `skill`, `capability`) are the `runtime` builtin server.
 pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
-	let mut functions = vec![get_plan_function()];
+	let mut functions = Vec::new();
 	// `recall` dereferences the PACT block registry; the sidecar index is only
 	// written when the attention/governance machinery runs, so don't advertise
 	// a tool that could only error.

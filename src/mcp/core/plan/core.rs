@@ -131,6 +131,117 @@ fn persist_plan_cleared() {
 	}
 }
 
+fn sidecar_tasks(
+	tasks: &[crate::supervisor::plan::PlanTaskDirective],
+	minimum: usize,
+) -> Result<Vec<TaskData>> {
+	if tasks.len() < minimum {
+		anyhow::bail!("A sidecar plan needs at least {minimum} meaningful task(s)");
+	}
+	tasks
+		.iter()
+		.map(|task| {
+			let title = task.title.trim();
+			let done_when = task.done_when.trim();
+			if title.is_empty() || done_when.is_empty() {
+				anyhow::bail!("Plan task title and done_when must be non-empty");
+			}
+			Ok(TaskData::new(
+				title.to_string(),
+				format!("Done when: {done_when}"),
+				None,
+				None,
+			))
+		})
+		.collect()
+}
+
+/// Start a runtime-owned plan without a tool result or compression side effect.
+pub fn sidecar_start(
+	title: &str,
+	tasks: &[crate::supervisor::plan::PlanTaskDirective],
+) -> Result<()> {
+	let title = title.trim();
+	if title.is_empty() {
+		anyhow::bail!("Plan title must be non-empty");
+	}
+	let tasks = sidecar_tasks(tasks, 2)?;
+	let storage = get_storage();
+	let mut storage = storage.lock().unwrap();
+	if storage.has_active_plan().unwrap_or(false) {
+		anyhow::bail!("A plan is already active");
+	}
+	storage.create_plan(title.to_string(), tasks)?;
+	drop(storage);
+	persist_plan_snapshot();
+	Ok(())
+}
+
+/// Complete the current sidecar task. This is deliberately independent from
+/// conversation compression: planning tracks work; PACT owns context policy.
+pub fn sidecar_advance(summary: &str) -> Result<()> {
+	let summary = summary.trim();
+	if summary.is_empty() {
+		anyhow::bail!("Advance summary must be non-empty");
+	}
+	let storage = get_storage();
+	let mut storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		anyhow::bail!("No active plan");
+	}
+	if !storage.has_more_tasks()? {
+		anyhow::bail!("All plan tasks are already complete");
+	}
+	storage.complete_current_task(summary.to_string())?;
+	drop(storage);
+	persist_plan_snapshot();
+	Ok(())
+}
+
+/// Revise only the open tail after new evidence invalidates the route.
+pub fn sidecar_revise(
+	reason: &str,
+	tasks: &[crate::supervisor::plan::PlanTaskDirective],
+) -> Result<()> {
+	if reason.trim().is_empty() {
+		anyhow::bail!("Plan revision reason must be non-empty");
+	}
+	let tasks = sidecar_tasks(tasks, 1)?;
+	let storage = get_storage();
+	let mut storage = storage.lock().unwrap();
+	storage.replace_remaining(tasks)?;
+	drop(storage);
+	persist_plan_snapshot();
+	Ok(())
+}
+
+/// Commit a staged finalization after the completion gate accepts the result.
+pub fn sidecar_finish(summary: &str) -> Result<()> {
+	let summary = summary.trim();
+	if summary.is_empty() {
+		anyhow::bail!("Plan finish summary must be non-empty");
+	}
+	let storage = get_storage();
+	let mut storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return Ok(());
+	}
+	let remaining = storage
+		.get_total_task_count()?
+		.saturating_sub(storage.get_current_task_index()?);
+	if remaining > 1 {
+		anyhow::bail!("Cannot finish while multiple plan tasks remain");
+	}
+	if storage.has_more_tasks()? {
+		storage.complete_current_task(summary.to_string())?;
+	}
+	storage.complete_plan(summary.to_string())?;
+	storage.clear_plan()?;
+	drop(storage);
+	persist_plan_cleared();
+	Ok(())
+}
+
 /// Restore the active plan (if any) from the session log into session-scoped storage.
 /// Called at session startup (all entry points) right after init_session_services.
 /// Safe no-op when the log file doesn't exist or contains no snapshot.
@@ -897,8 +1008,8 @@ pub fn get_completed_task_count() -> Result<usize> {
 	storage.get_completed_task_count()
 }
 
-/// Compact live checklist for goal recitation: status icon + title only (no
-/// descriptions), the active task marked. Sync — safe at the pre-request
+/// Compact live checklist for goal recitation: status icon + title, with only
+/// the current phase's observable completion condition expanded. Sync — safe at the pre-request
 /// injection point. Returns None when no plan is active.
 pub fn render_plan_checklist() -> Option<String> {
 	let storage = get_storage();
@@ -920,7 +1031,7 @@ pub fn render_plan_checklist() -> Option<String> {
 		.count();
 
 	let mut s = format!("Live plan ({completed}/{} done):\n", task_list.len());
-	for (i, (title, _desc, status)) in task_list.iter().enumerate() {
+	for (i, (title, description, status)) in task_list.iter().enumerate() {
 		let num = i + 1;
 		let icon = match status {
 			TaskStatus::Completed => "✅",
@@ -929,6 +1040,9 @@ pub fn render_plan_checklist() -> Option<String> {
 		};
 		let marker = if num == current { " ← current" } else { "" };
 		s.push_str(&format!("{icon} {title}{marker}\n"));
+		if num == current && !description.trim().is_empty() {
+			s.push_str(&format!("   {description}\n"));
+		}
 	}
 	// Surface falsifiable validity conditions on open tasks so the agent sees
 	// what each remaining task's approach depends on.
@@ -947,6 +1061,36 @@ pub fn render_plan_checklist() -> Option<String> {
 		}
 	}
 	Some(s)
+}
+
+/// Full manager/verifier view of the runtime-owned plan. Unlike recitation,
+/// this expands every phase's outcome so an external decision never relies on
+/// titles alone.
+pub fn render_plan_details() -> Option<String> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+	let plan = storage.get_plan().ok()?;
+	let mut output = format!("Plan: {}\n", plan.title);
+	for (index, task) in plan.tasks.iter().enumerate() {
+		let state = if index < plan.current_task_index {
+			"completed"
+		} else if index == plan.current_task_index {
+			"current"
+		} else {
+			"pending"
+		};
+		output.push_str(&format!(
+			"{}. [{}] {} — {}\n",
+			index + 1,
+			state,
+			task.title,
+			task.description
+		));
+	}
+	Some(output)
 }
 
 /// Titles of not-yet-completed tasks. Pure filter so it is testable without

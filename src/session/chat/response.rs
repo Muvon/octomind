@@ -392,6 +392,7 @@ fn add_assistant_message_with_tool_calls(
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
 	if config.supervisor.enabled && config.supervisor.detectors.self_report {
 		let parsed = crate::supervisor::detect::parse_self_report_handoff(content);
+		chat_session.pending_plan_signal = parsed.as_ref().and_then(|report| report.plan);
 		chat_session.last_self_report = parsed.as_ref().map(|report| report.state);
 		chat_session.last_self_report_reason = parsed.as_ref().and_then(|report| {
 			(!report.handoff.focus.is_empty()).then(|| report.handoff.focus.clone())
@@ -419,6 +420,7 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		chat_session.last_self_report = None;
 		chat_session.last_self_report_reason = None;
 		chat_session.last_self_report_handoff = None;
+		chat_session.pending_plan_signal = None;
 		content.to_string()
 	}
 }
@@ -686,8 +688,10 @@ pub async fn process_response<S: OutputSink>(
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
 						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
 						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
-						let is_mutation =
-							crate::supervisor::detect::is_mutation_tool(&call.tool_name);
+						let is_mutation = crate::supervisor::detect::is_mutation_call(
+							&call.tool_name,
+							&call.parameters,
+						);
 						// Verify-gate evidence ledger: record what actually executed —
 						// completion claims are checked against this, not the narrative.
 						params.chat_session.evidence.record(
@@ -697,6 +701,10 @@ pub async fn process_response<S: OutputSink>(
 							is_error,
 							result_content.len(),
 						);
+						params
+							.chat_session
+							.evidence
+							.record_citation_ground(&result_content);
 						// Ground truth for the gate: keep the last successful command
 						// execution's output — the decisive check normally runs right
 						// before `done`. Shape-based, the same definition as the

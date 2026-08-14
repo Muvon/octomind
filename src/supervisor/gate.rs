@@ -221,6 +221,9 @@ Be conservative — only flag real, actionable gaps. If unsure, PASS."#;
 pub enum GateVerdict {
 	Pass,
 	Gaps(Vec<String>),
+	/// The verifier was unavailable or violated its response contract. This is
+	/// operationally distinct from both success and a substantive task gap.
+	Indeterminate(String),
 }
 
 /// True when a message is a supervisor-injected note (a `<pay-attention>` advisory
@@ -234,13 +237,6 @@ pub fn is_supervisor_injection(content: &str) -> bool {
 /// Cap on ledger lines — beyond it the oldest are dropped (and counted in the
 /// render) so a very long turn still hands the verifier a bounded block.
 const LEDGER_CAP: usize = 128;
-/// Executed non-plan calls PER mutated path before an untracked multi-mutation
-/// task counts as provably multi-step (see
-/// [`EvidenceLedger::plan_adoption_signal`]). A ratio, not an absolute count:
-/// the trigger scales with the breadth of the task itself — a broad task must
-/// show proportionally more work before the nudge fires, so it adapts without
-/// any configurable threshold.
-const PLAN_ADOPTION_ACTIONS_PER_PATH: usize = 3;
 /// Args locate the object of an action (path, command, url) — not replay it.
 const LEDGER_ARGS_MAX: usize = 120;
 /// Cap on distinct mutated paths tracked for ground truth (a task touching more
@@ -254,6 +250,9 @@ const LAST_COMMAND_TAIL: usize = 2_000;
 /// not only the very last one — a single slot let a trailing `rm`/format run
 /// evict the actual verification evidence.
 const RECENT_COMMANDS_KEPT: usize = 3;
+/// Verbatim current-turn tool output retained outside the compressible message
+/// list for explicit evidence checking. Oldest outputs are evicted first.
+const CITATION_GROUNDS_CHARS: usize = 512_000;
 
 /// One executed tool call (or a run of identical consecutive successful calls).
 #[derive(Debug)]
@@ -282,6 +281,8 @@ pub struct EvidenceLedger {
 	/// — the decisive checks are normally the last commands run before
 	/// claiming done.
 	recent_commands: VecDeque<(String, String)>,
+	citation_grounds: VecDeque<String>,
+	citation_ground_chars: usize,
 }
 
 impl EvidenceLedger {
@@ -291,6 +292,39 @@ impl EvidenceLedger {
 		self.dropped = 0;
 		self.mutated_paths.clear();
 		self.recent_commands.clear();
+		self.citation_grounds.clear();
+		self.citation_ground_chars = 0;
+	}
+
+	/// Retain verbatim output as current-turn provenance. This state survives
+	/// context compression and is reset at the genuine user-turn boundary, so
+	/// older tasks can neither exonerate nor incriminate a current citation.
+	pub fn record_citation_ground(&mut self, output: &str) {
+		if output.is_empty() {
+			return;
+		}
+		let bounded = if output.chars().count() > CITATION_GROUNDS_CHARS {
+			output
+				.chars()
+				.take(CITATION_GROUNDS_CHARS)
+				.collect::<String>()
+		} else {
+			output.to_string()
+		};
+		self.citation_ground_chars += bounded.chars().count();
+		self.citation_grounds.push_back(bounded);
+		while self.citation_ground_chars > CITATION_GROUNDS_CHARS {
+			let Some(removed) = self.citation_grounds.pop_front() else {
+				break;
+			};
+			self.citation_ground_chars = self
+				.citation_ground_chars
+				.saturating_sub(removed.chars().count());
+		}
+	}
+
+	pub fn citation_grounds(&self) -> Vec<String> {
+		self.citation_grounds.iter().cloned().collect()
 	}
 
 	/// Record the output of a successful shell call; the last
@@ -402,42 +436,29 @@ impl EvidenceLedger {
 		out
 	}
 
-	/// Plan-adoption signal: the task slice is provably multi-step — successful
-	/// mutations across at least two distinct paths AND at least
-	/// [`PLAN_ADOPTION_ACTIONS_PER_PATH`] executed non-plan calls per mutated
-	/// path — yet contains ZERO plan-tool calls. That is exactly the work the
-	/// plan tool exists for — durable decomposition that survives compression —
-	/// running untracked. Deterministic, no model call, no config: the trigger
-	/// adapts to the task itself (broader mutation surface demands
-	/// proportionally more recorded work), so long read-only exploration or a
-	/// deep single-file edit never trips it.
-	pub fn plan_adoption_signal(&self) -> bool {
-		if self.mutated_paths.len() < 2 {
+	/// Domain-neutral plan-adoption signal. A planless trajectory that crosses
+	/// both configured thresholds has become broad enough to ask the external
+	/// planner; distinct reads, searches, sends, edits, queries, and other
+	/// actions all count. It catches work that *became* broad
+	/// during execution without imposing planning on small tasks. The external
+	/// planner still makes the semantic yes/no decision after the specialist
+	/// acknowledges the nudge; this detector only establishes enough action
+	/// breadth to make that decision worthwhile.
+	pub fn plan_adoption_signal(&self, min_actions: usize, min_distinct_actions: usize) -> bool {
+		if min_actions == 0 || min_distinct_actions == 0 {
 			return false;
 		}
 		let mut actions = 0usize;
+		let mut distinct = std::collections::HashSet::new();
 		for e in &self.entries {
-			if e.tool == "plan" {
-				return false;
+			if e.error {
+				continue;
 			}
 			actions += e.repeats;
+			distinct.insert((e.tool.as_str(), e.args.as_str()));
 		}
-		let threshold = self.mutated_paths.len() * PLAN_ADOPTION_ACTIONS_PER_PATH;
-		actions.saturating_add(self.dropped) >= threshold
-	}
-
-	/// True when this task slice recorded plan-tool activity but zero non-plan
-	/// tool calls — plan coverage without any real action is fabricated success.
-	pub fn plan_activity_without_actions(&self) -> bool {
-		let mut plan_activity = false;
-		for e in &self.entries {
-			if e.tool == "plan" {
-				plan_activity = true;
-			} else {
-				return false;
-			}
-		}
-		plan_activity
+		actions.saturating_add(self.dropped) >= min_actions
+			&& distinct.len() >= min_distinct_actions
 	}
 }
 
@@ -618,34 +639,6 @@ fn git_diff(paths: &[String]) -> String {
 /// turn don't nudge twice (mirrors the mutation pre-gate marker).
 pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
 
-/// Marker embedded in the plan-coverage-floor advisory so re-runs within the
-/// same turn don't nudge twice (mirrors the plan pre-gate marker).
-pub const COVERAGE_GATE_MARKER: &str = "octomind:pre_gate_plan_coverage";
-
-/// Marker embedded in the plan-adoption advisory so the nudge fires at most
-/// once per genuine user turn (mirrors the other advisory markers).
-pub const PLAN_ADOPTION_MARKER: &str = "octomind:plan_adoption_nudge";
-
-/// Advisory injected mid-turn when the task is provably multi-step (see
-/// [`EvidenceLedger::plan_adoption_signal`]) but no plan exists. Advisory, not
-/// a gate: it never blocks a `done` — it recruits the plan tool's durable
-/// checklist (recitation, pre-gates, compression anchoring) for work that is
-/// already running long enough to need it.
-pub fn format_plan_adoption_advisory() -> String {
-	format!(
-		"<pay-attention>\n<!-- {PLAN_ADOPTION_MARKER} -->\nThis task has grown multi-step — multiple files changed across many actions — but no plan is tracking it. Untracked long work loses steps to context compression and drifts by omission. Create one now: plan(start) with one task per remaining surface (include what is already done as completed context in the descriptions), then keep it current with step/next as you go. If the remaining work is genuinely one small step, finish it directly instead.\n</pay-attention>"
-	)
-}
-
-/// Advisory injected when `done` is self-reported after a turn that worked the
-/// plan (plan-tool calls) but recorded ZERO non-plan actions — closing plan
-/// items without any action is fabricated coverage, not work.
-pub fn format_coverage_advisory() -> String {
-	format!(
-		"<pay-attention>\n<!-- {COVERAGE_GATE_MARKER} -->\nYou reported done and your plan shows all items completed, but this turn recorded plan-tool calls only — no reads, no mutations, no checks. Closing plan items without any action is fabricated coverage, not work. Do the actual work each item requires (then close it), or close items with an honest reason via the plan tool.\n</pay-attention>"
-	)
-}
-
 /// Advisory injected when `done` is self-reported while the live plan still
 /// has open items — the drift-by-omission failure: parts of the decomposed
 /// task silently dropped. Free and deterministic; shares the gate budget.
@@ -659,7 +652,7 @@ pub fn format_plan_advisory(open: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done while its plan is open. For each item: do the work and mark it complete (plan `next`), or — if it is already covered or no longer applies — close it out via the plan tool (`next` with a one-line reason, or `done`/`reset` for the whole plan if it is obsolete). Then re-report your status.\n</pay-attention>",
+		"The task is not done while several phases remain. Continue the current phase and emit the hidden `phase_complete` signal alongside the next real work batch when its outcome is evidenced. If the remaining route is invalid, emit `reassess` with the reason in `focus`; the external manager owns the transition. Then re-report your status.\n</pay-attention>",
 	);
 	s
 }
@@ -708,15 +701,16 @@ pub struct GateInput<'a> {
 	pub evidence_conditions: &'a [String],
 }
 
-/// Verify a self-reported completion against [`GateInput`]. Fails open (PASS)
-/// on empty input or LLM error — a verifier outage must never block the agent.
+/// Verify a self-reported completion against [`GateInput`]. Infrastructure and
+/// protocol failures are explicit indeterminate outcomes; they never masquerade
+/// as verified completion and never trigger another model call.
 pub async fn verify(
 	config: &Config,
 	input: GateInput<'_>,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
-		return GateVerdict::Pass;
+		return GateVerdict::Indeterminate("empty task or result".to_string());
 	}
 	let user = render_gate_input(&input);
 	crate::log_debug!("Verify-gate input:\n{}", user);
@@ -742,62 +736,13 @@ pub async fn verify(
 	)
 	.await
 	{
-		Ok(mut resp) => {
+		Ok(resp) => {
 			crate::log_debug!("Verify-gate response ({}):\n{}", model, resp);
-			// Format enforcement, one bounded retry: with a checklist present, a
-			// prose summary ("all conditions matched") is a protocol violation —
-			// summarized verification demonstrably absorbs violated conditions.
-			// The shape lines are required UNCONDITIONALLY: when the classifier
-			// yields no conditions (thin request, failed call), the shapes are the
-			// only forcing structure left — without them the verifier reverts to
-			// gestalt prose, which demonstrably stamps flawed work.
-			if (!input.evidence_conditions.is_empty() && !resp.contains("<condition "))
-				|| !resp.contains("<shape ")
-			{
-				crate::log_info!(
-					"Verify-gate response skipped condition itemization; retrying once with format notice"
-				);
-				let retry_user = format!(
-					"{}\n\n<format_violation>\nYour previous reply omitted required structure. Emit a <condition n=\"..\" status=\"matched|unmatched\"> line for EVERY numbered condition when a checklist is present (with its specific observation), then ALWAYS one <shape name=\"..\" found=\"yes|no\"> line per evidence shape, then the verdict. Prose alone is not a verification.\n</format_violation>",
-					render_gate_input(&input)
-				);
-				match crate::supervisor::learning::extract::call_supervisor_llm(
-					config,
-					&model,
-					GATE_PROMPT.to_string(),
-					retry_user,
-					crate::supervisor::stats::CallKind::Gate,
-					crate::supervisor::learning::extract::SupervisorSampling {
-						temperature: 0.3,
-						max_tokens: config.supervisor.gate.max_tokens,
-					},
-					operation_rx,
-				)
-				.await
-				{
-					Ok(second) => {
-						crate::log_debug!("Verify-gate retry response ({}):\n{}", model, second);
-						resp = second;
-					}
-					Err(e) => {
-						crate::log_info!(
-							"Verify-gate format retry failed, keeping first response: {}",
-							e
-						);
-					}
-				}
-			}
-			if !resp.contains("<verdict>") && !resp.contains("<gap>") {
-				crate::log_info!(
-					"Verify-gate response carries no verdict markers (accepting): {}",
-					resp.chars().take(200).collect::<String>()
-				);
-			}
-			parse_verdict(&resp)
+			parse_verdict(&resp, input.evidence_conditions.len())
 		}
 		Err(e) => {
-			crate::log_info!("Verify-gate verifier '{}' failed, accepting: {}", model, e);
-			GateVerdict::Pass
+			crate::log_info!("Verify-gate verifier '{}' unavailable: {}", model, e);
+			GateVerdict::Indeterminate(e.to_string())
 		}
 	}
 }
@@ -896,13 +841,14 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 	)
 }
 
-fn parse_verdict(resp: &str) -> GateVerdict {
+fn parse_verdict(resp: &str, expected_conditions: usize) -> GateVerdict {
 	// Itemized condition verdicts outrank the holistic one: the verdict over a
 	// checklist is derived HERE, not trusted from the model — an unmatched
 	// condition is a gap even when the response also says PASS (holistic
 	// judgment demonstrably absorbs violated conditions when the overall
 	// picture looks done). Evidence-shape findings are enforced the same way.
 	let mut unmatched = Vec::new();
+	let mut seen_shapes = std::collections::HashSet::new();
 	let mut rest = resp;
 	while let Some(s) = rest.find("<shape ") {
 		let after = &rest[s..];
@@ -911,18 +857,46 @@ fn parse_verdict(resp: &str) -> GateVerdict {
 		};
 		let tag = &after[..open_end];
 		let body_and_rest = &after[open_end + 1..];
-		let body_end = body_and_rest.find("</shape>").unwrap_or(0);
+		let Some(body_end) = body_and_rest.find("</shape>") else {
+			return GateVerdict::Indeterminate("malformed shape result".to_string());
+		};
 		let body = body_and_rest[..body_end].trim();
-		if tag.contains("found=\"yes\"") {
-			let name = tag
-				.split("name=\"")
-				.nth(1)
-				.and_then(|t| t.split('"').next())
-				.unwrap_or("?");
+		let Some(name) = tag
+			.split("name=\"")
+			.nth(1)
+			.and_then(|t| t.split('"').next())
+		else {
+			return GateVerdict::Indeterminate("shape without name".to_string());
+		};
+		let found = if tag.contains("found=\"yes\"") {
+			true
+		} else if tag.contains("found=\"no\"") {
+			false
+		} else {
+			return GateVerdict::Indeterminate("shape without yes/no result".to_string());
+		};
+		if !seen_shapes.insert(name.to_string()) {
+			return GateVerdict::Indeterminate(format!("duplicate evidence shape: {name}"));
+		}
+		if found {
 			unmatched.push(format!("Evidence shape '{name}' present: {body}"));
 		}
 		rest = &body_and_rest[body_end..];
 	}
+	const REQUIRED_SHAPES: [&str; 4] = [
+		"circular",
+		"context-stripped",
+		"acceptance-only",
+		"unenumerated-category",
+	];
+	if REQUIRED_SHAPES
+		.iter()
+		.any(|shape| !seen_shapes.contains(*shape))
+		|| seen_shapes.len() != REQUIRED_SHAPES.len()
+	{
+		return GateVerdict::Indeterminate("incomplete evidence-shape checklist".to_string());
+	}
+	let mut seen_conditions = std::collections::HashSet::new();
 	let mut rest = resp;
 	while let Some(s) = rest.find("<condition ") {
 		let after = &rest[s..];
@@ -931,23 +905,38 @@ fn parse_verdict(resp: &str) -> GateVerdict {
 		};
 		let tag = &after[..open_end];
 		let body_and_rest = &after[open_end + 1..];
-		let body_end = body_and_rest.find("</condition>").unwrap_or(0);
+		let Some(body_end) = body_and_rest.find("</condition>") else {
+			return GateVerdict::Indeterminate("malformed condition result".to_string());
+		};
 		let body = body_and_rest[..body_end].trim();
+		let Some(n) = tag
+			.split("n=\"")
+			.nth(1)
+			.and_then(|t| t.split('"').next())
+			.and_then(|n| n.parse::<usize>().ok())
+		else {
+			return GateVerdict::Indeterminate("condition without numeric index".to_string());
+		};
+		if !seen_conditions.insert(n) {
+			return GateVerdict::Indeterminate(format!("duplicate condition: {n}"));
+		}
 		if tag.contains("status=\"unmatched\"") {
-			let n = tag
-				.split("n=\"")
-				.nth(1)
-				.and_then(|t| t.split('"').next())
-				.unwrap_or("?");
 			unmatched.push(format!("Unmatched condition {n}: {body}"));
+		} else if !tag.contains("status=\"matched\"") {
+			return GateVerdict::Indeterminate(format!("condition {n} has invalid status"));
 		}
 		rest = &body_and_rest[body_end..];
 	}
+	if seen_conditions.len() != expected_conditions
+		|| (1..=expected_conditions).any(|n| !seen_conditions.contains(&n))
+	{
+		return GateVerdict::Indeterminate(format!(
+			"condition checklist mismatch: expected {expected_conditions}, received {}",
+			seen_conditions.len()
+		));
+	}
 	if !unmatched.is_empty() {
 		return GateVerdict::Gaps(unmatched);
-	}
-	if resp.contains("<verdict>PASS</verdict>") {
-		return GateVerdict::Pass;
 	}
 	let mut gaps = Vec::new();
 	let mut rest = resp;
@@ -962,10 +951,12 @@ fn parse_verdict(resp: &str) -> GateVerdict {
 		}
 		rest = &after[e + 6..];
 	}
-	if gaps.is_empty() {
+	if !gaps.is_empty() {
+		GateVerdict::Gaps(gaps)
+	} else if resp.contains("<verdict>PASS</verdict>") {
 		GateVerdict::Pass
 	} else {
-		GateVerdict::Gaps(gaps)
+		GateVerdict::Indeterminate("missing verdict markers".to_string())
 	}
 }
 
@@ -980,7 +971,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"The task is not done until each gap is closed. For each, do the work, then cite the concrete evidence that closes it — the resulting artifact, observed state, delivered output, or domain-appropriate check. When a gap needs a new check, derive its expected outcome from the request and its stated examples or the governing rule — never from what your own work produced — and exercise it in the same context the request demonstrates. When demonstrating that something is still rejected or unaffected, pick each candidate near-miss by PROCEDURE, not intuition: (1) apply the work's own handling/transformation to the candidate on paper and write down the exact resulting value; (2) ask what ELSE would accept that resulting value — every other rule, format, or branch of the same consumer; (3) if nothing else could accept it, the candidate proves nothing — discard it and pick one whose transformed result IS acceptable to a neighboring rule. Demonstrate rejection with those. If a gap is already satisfied, point to that exact evidence rather than describing it. If a gap is wrong or out of scope, say so and why. Then re-report your status.\n</pay-attention>",
+		"Close each gap with a concrete artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied or out of scope, point to the exact evidence and explain briefly. Then re-report status.\n</pay-attention>",
 	);
 	s
 }
@@ -989,14 +980,21 @@ pub fn format_advisory(gaps: &[String]) -> String {
 mod tests {
 	use super::*;
 
+	const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>"#;
+
 	#[test]
 	fn pass_parsed() {
-		assert_eq!(parse_verdict("<verdict>PASS</verdict>"), GateVerdict::Pass);
+		let response = format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>");
+		assert_eq!(parse_verdict(&response, 0), GateVerdict::Pass);
 	}
 
 	#[test]
 	fn gaps_parsed() {
-		let v = parse_verdict("<gap>no tests</gap>\n<gap>missing docs</gap>");
+		let response = format!("{CLEAN_SHAPES}\n<gap>no tests</gap>\n<gap>missing docs</gap>");
+		let v = parse_verdict(&response, 0);
 		assert_eq!(
 			v,
 			GateVerdict::Gaps(vec!["no tests".into(), "missing docs".into()])
@@ -1004,8 +1002,11 @@ mod tests {
 	}
 
 	#[test]
-	fn no_markers_is_pass() {
-		assert_eq!(parse_verdict("looks good to me"), GateVerdict::Pass);
+	fn no_markers_is_indeterminate() {
+		assert!(matches!(
+			parse_verdict("looks good to me", 0),
+			GateVerdict::Indeterminate(_)
+		));
 	}
 
 	#[test]
@@ -1013,9 +1014,11 @@ mod tests {
 		let resp = r#"<condition n="1" status="matched">ok</condition>
 <shape name="acceptance-only" found="yes">only valid inputs exercised on a widened parser</shape>
 <shape name="circular" found="no">expected values from request</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
 		assert_eq!(
-			parse_verdict(resp),
+			parse_verdict(resp, 1),
 			GateVerdict::Gaps(vec![
 				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser".into()
 			])
@@ -1025,18 +1028,25 @@ mod tests {
 	#[test]
 	fn unmatched_condition_outranks_holistic_pass() {
 		let resp = r#"<condition n="1" status="matched">suite ran green</condition>
-<condition n="10" status="unmatched">no test shows custom prettifier output preserved</condition>
+<condition n="2" status="unmatched">no test shows custom prettifier output preserved</condition>
+<shape name="circular" found="no">independent expectation</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
-		let v = parse_verdict(resp);
+		let v = parse_verdict(resp, 2);
 		assert_eq!(
 			v,
 			GateVerdict::Gaps(vec![
-				"Unmatched condition 10: no test shows custom prettifier output preserved".into()
+				"Unmatched condition 2: no test shows custom prettifier output preserved".into()
 			])
 		);
-		let all_matched = r#"<condition n="1" status="matched">ok</condition>
-<verdict>PASS</verdict>"#;
-		assert_eq!(parse_verdict(all_matched), GateVerdict::Pass);
+		let all_matched = format!(
+			r#"<condition n="1" status="matched">ok</condition>
+{CLEAN_SHAPES}
+<verdict>PASS</verdict>"#
+		);
+		assert_eq!(parse_verdict(&all_matched, 1), GateVerdict::Pass);
 	}
 
 	#[test]
@@ -1196,87 +1206,58 @@ mod tests {
 	}
 
 	#[test]
-	fn coverage_advisory_carries_marker() {
-		let a = format_coverage_advisory();
-		assert!(is_supervisor_injection(&a));
-		assert!(a.contains(COVERAGE_GATE_MARKER));
-	}
-
-	#[test]
-	fn plan_adoption_advisory_carries_marker() {
-		let a = format_plan_adoption_advisory();
-		assert!(is_supervisor_injection(&a));
-		assert!(a.contains(PLAN_ADOPTION_MARKER));
-	}
-
-	#[test]
-	fn plan_adoption_signal_requires_breadth_and_no_plan() {
+	fn plan_adoption_signal_requires_action_breadth() {
+		const MIN_ACTIONS: usize = 8;
+		const MIN_DISTINCT_ACTIONS: usize = 4;
 		let mut l = EvidenceLedger::default();
-		// Two distinct mutated paths, but below the adaptive action threshold
-		// (2 paths × PLAN_ADOPTION_ACTIONS_PER_PATH).
-		l.record("edit", &serde_json::json!({"path":"a.rs"}), true, false, 1);
-		l.record("edit", &serde_json::json!({"path":"b.rs"}), true, false, 1);
-		assert!(!l.plan_adoption_signal());
-		// Identical consecutive repeats count via `repeats` toward the threshold.
-		for _ in 0..(2 * PLAN_ADOPTION_ACTIONS_PER_PATH - 2) {
-			l.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
-		}
-		assert!(l.plan_adoption_signal());
-		// Any plan-tool activity means a plan is being worked — no nudge.
-		l.record(
-			"plan",
-			&serde_json::json!({"command":"start"}),
-			false,
-			false,
-			1,
-		);
-		assert!(!l.plan_adoption_signal());
-	}
-
-	#[test]
-	fn plan_adoption_signal_needs_two_mutated_paths() {
-		let mut l = EvidenceLedger::default();
-		// Deep single-file work: many actions, one mutated path — no signal.
-		l.record("edit", &serde_json::json!({"path":"a.rs"}), true, false, 1);
-		for _ in 0..10 {
+		for i in 0..MIN_DISTINCT_ACTIONS {
 			l.record(
-				"shell",
-				&serde_json::json!({"command":"cargo test"}),
+				"inspect",
+				&serde_json::json!({"resource":i}),
 				false,
 				false,
 				1,
 			);
 		}
-		assert!(!l.plan_adoption_signal());
-		// Read-only exploration: zero mutations — no signal either.
-		let mut r = EvidenceLedger::default();
-		r.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
-		r.record("view", &serde_json::json!({"path":"b.rs"}), false, false, 1);
-		r.record("view", &serde_json::json!({"path":"c.rs"}), false, false, 1);
-		assert!(!r.plan_adoption_signal());
+		assert!(!l.plan_adoption_signal(MIN_ACTIONS, MIN_DISTINCT_ACTIONS));
+		for i in MIN_DISTINCT_ACTIONS..MIN_ACTIONS {
+			l.record(
+				"inspect",
+				&serde_json::json!({"resource":i}),
+				false,
+				false,
+				1,
+			);
+		}
+		assert!(l.plan_adoption_signal(MIN_ACTIONS, MIN_DISTINCT_ACTIONS));
 	}
 
 	#[test]
-	fn ledger_flags_plan_activity_without_actions() {
+	fn plan_adoption_signal_ignores_repetitive_narrow_work() {
 		let mut l = EvidenceLedger::default();
-		assert!(!l.plan_activity_without_actions());
-		l.record(
-			"plan",
-			&serde_json::json!({"command":"start"}),
-			false,
-			false,
-			1,
-		);
-		l.record(
-			"plan",
-			&serde_json::json!({"command":"next"}),
-			false,
-			false,
-			1,
-		);
-		assert!(l.plan_activity_without_actions());
-		l.record("view", &serde_json::json!({"path":"a.rs"}), false, false, 1);
-		assert!(!l.plan_activity_without_actions());
+		// Many repeats of one action are not several dependent outcomes.
+		for _ in 0..10 {
+			l.record(
+				"poll",
+				&serde_json::json!({"resource":"job-1"}),
+				false,
+				false,
+				1,
+			);
+		}
+		assert!(!l.plan_adoption_signal(8, 4));
+		assert!(!l.plan_adoption_signal(0, 4));
+	}
+
+	#[test]
+	fn citation_provenance_resets_at_real_turn_boundary() {
+		let mut ledger = EvidenceLedger::default();
+		ledger.record_citation_ground("old task output");
+		assert_eq!(ledger.citation_grounds(), ["old task output"]);
+		ledger.reset();
+		assert!(ledger.citation_grounds().is_empty());
+		ledger.record_citation_ground("current task output");
+		assert_eq!(ledger.citation_grounds(), ["current task output"]);
 	}
 
 	#[test]
@@ -1406,7 +1387,7 @@ mod tests {
 		assert!(!GATE_PROMPT.contains("Shared-dependency blast radius"));
 
 		let advisory = format_advisory(&["missing evidence".to_string()]);
-		assert!(advisory.contains("resulting artifact"));
+		assert!(advisory.contains("concrete artifact"));
 		assert!(advisory.contains("observed state"));
 		assert!(advisory.contains("delivered output"));
 		assert!(!advisory.contains("the file and line, the passing test"));

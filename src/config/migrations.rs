@@ -66,18 +66,17 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 4,
 				to: 5,
-				apply: add_gate_turn_answer_budget,
+				apply: add_v5_supervisor_fields,
 			},
 		],
 	)
 	.with_missing_version(0)
 }
 
-/// v5 adds `supervisor.gate.max_tokens` — the verifier exchange's token budget
-/// (previously hardcoded), configurable because different verifier models carry
-/// different windows. Existing gate settings and comments are preserved; only
-/// the missing key is copied from the embedded template.
-fn add_gate_turn_answer_budget(
+/// v5 adds the configurable verifier budget and the external plan manager.
+/// Existing supervisor settings and comments are preserved; only missing keys
+/// are copied from the embedded template.
+fn add_v5_supervisor_fields(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
@@ -94,7 +93,8 @@ fn add_gate_turn_answer_budget(
 		"user configuration",
 	)?;
 
-	merge_missing(supervisor, template_supervisor, "gate")
+	merge_missing(supervisor, template_supervisor, "gate")?;
+	merge_missing(supervisor, template_supervisor, "plan")
 }
 
 /// v2 (octomind 0.40) adds `[supervisor.delegate]` — the handoff quality gate.
@@ -358,6 +358,10 @@ mod tests {
 			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
 			Some(8192)
 		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
+			Some(2048)
+		);
 	}
 
 	#[test]
@@ -585,7 +589,7 @@ target_ratio = 4.0
 	}
 
 	#[test]
-	fn v4_gains_gate_answer_budget_and_keeps_user_gate_values() {
+	fn v4_gains_v5_supervisor_fields_and_keeps_user_values() {
 		let existing = r#"version = 4
 
 [supervisor.gate]
@@ -594,6 +598,10 @@ max_iterations = 7
 verifier_model = "openai:custom-verifier"
 require_check_after_mutation = false
 require_plan_complete = false
+
+[supervisor.plan]
+enabled = false
+model = "openai:custom-planner"
 "#;
 
 		let migration = plan()
@@ -615,6 +623,26 @@ require_plan_complete = false
 		assert_eq!(
 			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
 			Some(8192)
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["enabled"].as_bool(),
+			Some(false)
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["model"].as_str(),
+			Some("openai:custom-planner")
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
+			Some(2048)
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["adoption_min_actions"].as_integer(),
+			Some(8)
+		);
+		assert_eq!(
+			migrated["supervisor"]["plan"]["adoption_min_distinct_actions"].as_integer(),
+			Some(4)
 		);
 	}
 
@@ -679,7 +707,10 @@ require_plan_complete = false
 
 		let migrated: toml::Value =
 			toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(4));
+		assert_eq!(
+			migrated["version"].as_integer(),
+			Some(i64::from(CURRENT_CONFIG_VERSION))
+		);
 
 		fs::remove_dir_all(&dir).ok();
 	}

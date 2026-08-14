@@ -54,6 +54,7 @@ pub struct SelfReportHandoff {
 pub struct ParsedSelfReport {
 	pub state: SelfReport,
 	pub handoff: SelfReportHandoff,
+	pub plan: Option<super::plan::PlanSignal>,
 }
 
 impl SelfReport {
@@ -82,14 +83,16 @@ impl SelfReport {
 /// One-time system-side instruction that makes the agent self-annotate. Injected
 /// out-of-band; the resulting tags are stripped before display.
 pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one compact JSON status line — the last line, nothing after it:
-`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"]}</sup>`
+`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"],"plan":null}</sup>`
 Use valid single-line JSON with exactly those fields. `carry` may be empty; keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
 - `progressing` — actively making changes
 - `blocked` — stuck, cannot proceed
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
-Example: `<sup>{"state":"progressing","focus":"checking the active operation","next":"perform the next status check","carry":["use the resource reference established earlier"]}</sup>`
+
+`plan` is normally `null`. Set it to `"request"` once, alongside real work, only when the task clearly needs 3+ dependent outcomes or durable tracking. With an injected plan, use `"phase_complete"` alongside the next work batch only after the current outcome is evidenced, or `"reassess"` when evidence invalidates the remaining route. The external manager owns the plan; never emit a response only for planning.
+Example: `<sup>{"state":"progressing","focus":"checking the active operation","next":"perform the next status check","carry":["use the resource reference established earlier"],"plan":null}</sup>`
 This line is read by the system and hidden from the user. Emit exactly one."#;
 
 #[derive(serde::Deserialize)]
@@ -99,6 +102,8 @@ struct WireSelfReport {
 	focus: String,
 	next: String,
 	carry: Vec<String>,
+	#[serde(default)]
+	plan: Option<super::plan::PlanSignal>,
 }
 
 pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
@@ -119,6 +124,7 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 					.filter(|entry| !entry.is_empty())
 					.collect(),
 			},
+			plan: wire.plan,
 		});
 	}
 
@@ -129,6 +135,7 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 			focus: reason.unwrap_or_default(),
 			..Default::default()
 		},
+		plan: None,
 	})
 }
 
@@ -521,7 +528,15 @@ pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
 		.join("\n");
 	let mut seen = std::collections::HashSet::new();
 	let mut flagged = Vec::new();
+	let literal_ranges = markdown_code_ranges(response);
 	for m in re.find_iter(response) {
+		let literal_index = literal_ranges.partition_point(|range| range.end <= m.start());
+		if literal_ranges
+			.get(literal_index)
+			.is_some_and(|range| range.contains(&m.start()))
+		{
+			continue;
+		}
 		let url = m
 			.as_str()
 			.trim_end_matches(['.', ',', ';', ':', '!', '?', '/']);
@@ -757,7 +772,7 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 	// `command` (octofs text_editor's command="str_replace" selects an edit
 	// operation, it executes nothing) — without this guard an edit round
 	// classified itself as its own verifier.
-	if is_mutation_tool(tool) {
+	if is_mutation_call(tool, parameters) {
 		crate::log_debug!("verifier-shape: {} rejected: mutation tool", tool);
 		return false;
 	}
@@ -835,23 +850,74 @@ fn normalize_path(path: &str) -> String {
 /// Heuristic: does this tool change state, so a success is inherently progress?
 /// (Reads/searches only count as progress when they surface *new* content.)
 pub fn is_mutation_tool(tool: &str) -> bool {
-	let t = tool.to_ascii_lowercase();
-	[
-		"write",
-		"edit",
-		"create",
-		"str_replace",
-		"apply",
-		"insert",
-		"delete",
-		"remove",
-		"patch",
-		"mkdir",
-		"rename",
-		"move",
-	]
-	.iter()
-	.any(|k| t.contains(k))
+	if let Some(read_only) = tool_read_only_hint(tool) {
+		return !read_only;
+	}
+	contains_mutation_intent(tool)
+}
+
+/// Classify one concrete call. MCP annotations supply the generic cross-domain
+/// signal when present; command/action parameters cover multi-operation tools
+/// such as editors; normalized intent tokens are the compatibility fallback.
+pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
+	if let Some(read_only) = tool_read_only_hint(tool) {
+		return !read_only;
+	}
+	if contains_mutation_intent(tool) {
+		return true;
+	}
+	["command", "action", "operation"]
+		.iter()
+		.filter_map(|key| parameters.get(key).and_then(|value| value.as_str()))
+		.any(contains_mutation_intent)
+}
+
+fn contains_mutation_intent(value: &str) -> bool {
+	let mut normalized = String::with_capacity(value.len());
+	let mut previous_lowercase = false;
+	for character in value.chars() {
+		if character.is_ascii_uppercase() && previous_lowercase {
+			normalized.push(' ');
+		}
+		if character.is_ascii_alphanumeric() {
+			normalized.push(character.to_ascii_lowercase());
+			previous_lowercase = character.is_ascii_lowercase();
+		} else {
+			normalized.push(' ');
+			previous_lowercase = false;
+		}
+	}
+	let intents = [
+		"write", "edit", "create", "replace", "apply", "insert", "delete", "remove", "patch",
+		"mkdir", "rename", "move", "update", "set", "send", "publish", "post", "upload",
+		"schedule", "book", "approve", "reject", "cancel", "deploy", "install", "commit", "push",
+		"merge",
+	];
+	normalized
+		.split_whitespace()
+		.any(|token| intents.contains(&token))
+}
+
+fn tool_read_only_hints() -> &'static std::sync::RwLock<std::collections::HashMap<String, bool>> {
+	static HINTS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+		std::sync::OnceLock::new();
+	HINTS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Register the standard MCP read-only hint when an external tool inventory is
+/// received. Per the MCP specification this is a hint, not an authorization or
+/// safety boundary; it is used only for progress/evidence classification.
+pub fn register_tool_read_only_hint(tool: &str, read_only: Option<bool>) {
+	let Some(read_only) = read_only else {
+		return;
+	};
+	if let Ok(mut hints) = tool_read_only_hints().write() {
+		hints.insert(tool.to_string(), read_only);
+	}
+}
+
+fn tool_read_only_hint(tool: &str) -> Option<bool> {
+	tool_read_only_hints().read().ok()?.get(tool).copied()
 }
 
 const SEEN_CAP: usize = 128;
@@ -1724,7 +1790,18 @@ mod tests {
 			"continue from the last verified checkpoint"
 		);
 		assert_eq!(parsed.handoff.carry.len(), 2);
+		assert_eq!(parsed.plan, None);
 		assert_eq!(strip_self_report(text), "answer");
+	}
+
+	#[test]
+	fn parses_external_plan_signal_without_plan_content() {
+		let text = r#"<sup>{"state":"progressing","focus":"surveying sources","next":"compare findings","carry":[],"plan":"request"}</sup>"#;
+		let parsed = parse_self_report_handoff(text).expect("structured report");
+		assert_eq!(
+			parsed.plan,
+			Some(crate::supervisor::plan::PlanSignal::Request)
+		);
 	}
 
 	#[test]
@@ -2070,7 +2147,7 @@ mod tests {
 			"shell",
 			&json!({"command": "cd /proj && sh scripts/test.sh"})
 		));
-		assert!(is_verifier_shaped(
+		assert!(!is_verifier_shaped(
 			"shell",
 			&json!({"command": "bash scripts/deploy.sh"})
 		));
@@ -2082,6 +2159,27 @@ mod tests {
 			"text_editor",
 			&json!({"command": "str_replace"})
 		));
+	}
+
+	#[test]
+	fn mutation_classification_uses_call_intent_and_mcp_hint() {
+		use serde_json::json;
+		assert!(is_mutation_call(
+			"text_editor",
+			&json!({"command":"str_replace"})
+		));
+		assert!(is_mutation_call(
+			"generic_runner",
+			&json!({"command":"deploy release"})
+		));
+		assert!(!is_mutation_call(
+			"generic_runner",
+			&json!({"command":"check booking status"})
+		));
+		register_tool_read_only_hint("remotePublisherForTest", Some(false));
+		register_tool_read_only_hint("remoteLookupForTest", Some(true));
+		assert!(is_mutation_call("remotePublisherForTest", &json!({})));
+		assert!(!is_mutation_call("remoteLookupForTest", &json!({})));
 	}
 
 	#[test]
@@ -2275,6 +2373,17 @@ mod tests {
 		let resp = "Source: https://invented.example/paper.pdf — see also https://invented.example/paper.pdf.";
 		let bad = unverified_urls(resp, &grounds);
 		assert_eq!(bad, vec!["https://invented.example/paper.pdf"]);
+	}
+
+	#[test]
+	fn url_inside_markdown_code_is_not_a_citation() {
+		let grounds = vec!["unrelated".to_string()];
+		assert!(
+			unverified_urls("Example endpoint: `http://192.168.1.10:8080`", &grounds).is_empty()
+		);
+		assert!(
+			unverified_urls("```text\nhttps://example.invalid/source\n```", &grounds).is_empty()
+		);
 	}
 
 	#[test]

@@ -933,6 +933,7 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 	match kind {
 		CallKind::Gate => ModelPurpose::SupervisorGate,
 		CallKind::Resolve => ModelPurpose::SupervisorGate,
+		CallKind::Plan => ModelPurpose::SupervisorGate,
 		CallKind::Condense => ModelPurpose::SupervisorCondense,
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,

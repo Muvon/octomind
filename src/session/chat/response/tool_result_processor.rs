@@ -231,6 +231,36 @@ pub async fn process_tool_results(
 		}
 	}
 
+	// External plan manager: a sparse hidden signal rides with the specialist's
+	// normal action batch. Reconcile only after results exist, then inject the
+	// manager-owned state before the already-needed follow-up request. With no
+	// signal this is a free no-op.
+	if config.supervisor.enabled && config.supervisor.plan.enabled {
+		if chat_session.pending_plan_signal.is_none()
+			&& !chat_session.plan_evaluated
+			&& !crate::mcp::core::plan::has_active_plan()
+			&& chat_session.evidence.plan_adoption_signal(
+				config.supervisor.plan.adoption_min_actions,
+				config.supervisor.plan.adoption_min_distinct_actions,
+			) {
+			chat_session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
+			crate::supervisor::notify(
+				"work became multi-phase — external planner evaluating remaining outcomes",
+			);
+		}
+		animation_manager.set_phase("Reconciling plan …").await;
+		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
+			chat_session,
+			config,
+			operation_cancelled.clone(),
+		)
+		.await
+		{
+			crate::log_debug!("External plan reconciliation failed: {}", error);
+		}
+		animation_manager.clear_phase();
+	}
+
 	// 🗜️ ADAPTIVE CONVERSATION COMPRESSION: Check if context should be compressed
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,

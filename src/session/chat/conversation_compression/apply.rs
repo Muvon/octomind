@@ -62,10 +62,35 @@ pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
 	crate::session::continuation_task(content).map(str::to_string)
 }
 
-/// Build the SOTA continuation wrapper for the trailing user turn after a
-/// compressed summary. `intent` is the most recent real user message
-/// content (already trimmed); when absent, the wrapper points the model
-/// at the summary itself as the source of truth.
+/// Select the validated active frontier that the model should resume after
+/// PACT compression. The exact user request remains separately preserved in
+/// the wrapper for task identity, constraints, and completion verification.
+/// A pending/tentative/unknown `next_action` is source-attributed and has
+/// survived PACT validation; an established/failed/superseded action is not a
+/// live frontier. Legacy compression keeps its existing request-as-task path.
+fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) -> Option<String> {
+	if !pact_enabled {
+		return None;
+	}
+
+	summary
+		.folded_units
+		.iter()
+		.rev()
+		.find(|unit| {
+			unit.kind == "next_action"
+				&& matches!(unit.status.as_str(), "pending" | "tentative" | "unknown")
+				&& !unit.text.trim().is_empty()
+		})
+		.map(|unit| unit.text.trim().to_string())
+}
+
+/// Build the continuation wrapper for the trailing user turn after a
+/// compressed summary. `request` is the exact most recent real user message;
+/// `action` is the validated frontier the work has already advanced to.
+/// Keeping them separate prevents a contextual acknowledgement such as
+/// "Should work now" from being replayed as a fresh instruction after the
+/// summary correctly recorded that the monitor is already running.
 ///
 /// Shape:
 /// ```text
@@ -76,17 +101,23 @@ pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
 /// detail.
 ///
 /// {plan continuation note, only when a plan is active}
-/// <task>
-/// {intent OR "see summary above for the active task"}
-/// </task>
+/// <request>{exact user request}</request>
+/// <task>{validated resumption action}</task>
 /// </continuation>
 /// ```
 ///
 /// `plan_active` adds an explicit "continue the active plan" line — without
 /// it, a post-compression model re-entering its plan-first protocol calls
 /// plan(start), gets steered to reset, and wipes completed-task history.
-fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String {
-	let task_body = intent.unwrap_or(CONTINUATION_FALLBACK_INTENT);
+fn build_continuation_content(
+	request: Option<&str>,
+	action: Option<&str>,
+	plan_active: bool,
+) -> String {
+	let task_body = action.or(request).unwrap_or(CONTINUATION_FALLBACK_INTENT);
+	let request_block = request
+		.map(|request| format!("<request>\n{}\n</request>\n", request.trim()))
+		.unwrap_or_default();
 	let plan_note = if plan_active {
 		"An execution plan is already active (shown in the summary above) — continue its current task; never call plan(start) or plan(reset) to re-create it.\n\n"
 	} else {
@@ -94,10 +125,10 @@ fn build_continuation_content(intent: Option<&str>, plan_active: bool) -> String
 	};
 	format!(
 		"<continuation>\n\
-		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess.\n\n\
-		{}<task>\n{}\n</task>\n\
+		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <request> block preserves the user's exact turn for identity and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
+		{}{}<task>\n{}\n</task>\n\
 		</continuation>",
-		plan_note, task_body
+		plan_note, request_block, task_body
 	)
 }
 
@@ -194,6 +225,17 @@ pub(super) async fn apply_compression(
 	pact_validation: Option<&super::attention::ValidationReport>,
 	force: bool,
 ) -> Result<()> {
+	let continuation_request = last_user_message
+		.as_ref()
+		.map(|message| message.content.trim().to_string())
+		.filter(|request| !request.is_empty());
+	let continuation_action = select_continuation_action(summary, pact.is_some());
+	let continuation_goal = continuation_action
+		.as_deref()
+		.or(continuation_request.as_deref())
+		.unwrap_or_default()
+		.to_string();
+
 	// Fidelity snapshot (pre-drain): the authoritative goal + every explicit
 	// constraint across real user turns. Compression is lossy; these are what
 	// the post-compression view must still entail (checked at the end).
@@ -282,13 +324,13 @@ pub(super) async fn apply_compression(
 	// fixed, arriving through a different door.
 	// Sign it with the request it was resolved from, so recitation stops once the
 	// user asks for something else — the goal only outlives the turn, not the ask.
-	if !fidelity_goal.trim().is_empty() {
+	if !continuation_goal.trim().is_empty() {
 		let intent_task_sig =
 			crate::session::latest_real_user_task_content(&session.session.messages)
 				.map(crate::session::anchor::task_sig);
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {
-				intent: Some(fidelity_goal.clone()),
+				intent: Some(continuation_goal.clone()),
 				intent_task_sig,
 				..Default::default()
 			},
@@ -528,8 +570,9 @@ pub(super) async fn apply_compression(
 	//   - signals to the model that this is an in-progress task (the
 	//     summary above captures completed work), preventing "fresh
 	//     start" hallucinations after compression;
-	//   - carries the most recent real user intent inside <task> so the
-	//     model has a clear current focus;
+	//   - preserves the most recent real user request inside <request> for
+	//     runtime task identity, while <task> carries the validated active
+	//     frontier so the model does not replay an already-handled follow-up;
 	//   - is tagged so the next compression cycle's user-msg filter skips
 	//     it (see `is_continuation_message`), keeping USER TASKS sourced
 	//     only from real user asks and preventing cross-cycle decay.
@@ -537,12 +580,13 @@ pub(super) async fn apply_compression(
 	// `last_user_message = None` is only possible on a session with no
 	// real user message anywhere (pathological bootstrap-only state); the
 	// wrapper falls back to pointing at the summary itself.
-	let continuation_intent = last_user_message
-		.as_ref()
-		.map(|m| m.content.trim().to_string());
 	let continuation_msg = crate::session::Message {
 		role: "user".to_string(),
-		content: build_continuation_content(continuation_intent.as_deref(), plan_active),
+		content: build_continuation_content(
+			continuation_request.as_deref(),
+			continuation_action.as_deref(),
+			plan_active,
+		),
 		timestamp: now,
 		cached: false,
 		..Default::default()
@@ -554,7 +598,9 @@ pub(super) async fn apply_compression(
 	log_debug!(
 		"Inserted continuation wrapper after compressed summary (USER TASKS: {}, intent_source: {})",
 		user_tasks_msgs.len(),
-		if continuation_intent.is_some() {
+		if continuation_action.is_some() {
+			"validated_frontier"
+		} else if continuation_request.is_some() {
 			"last_user_message"
 		} else {
 			"summary_fallback"
@@ -634,13 +680,13 @@ pub(super) async fn apply_compression(
 			.as_secs();
 		// The anchor intent is DURABLE — it survives every later compaction and
 		// feeds the resolver's session context — so it must not latch onto an
-		// elliptical turn ("continue", "yes, do it"), which is what taking the
-		// most recent user message verbatim would do. `current_task` is
-		// regenerated from the whole transcript on every cycle (never carried
-		// forward, unlike `original_request`), so it resolves the ellipsis and
-		// tracks pivots without going stale.
+		// elliptical turn ("continue", "yes, do it", "should work now"). PACT's
+		// attributed next_action is the already-advanced frontier; legacy mode
+		// retains its generated current_task fallback.
 		let intent_seed = {
-			let current = summary.current_task.trim();
+			let current = continuation_action
+				.as_deref()
+				.unwrap_or_else(|| summary.current_task.trim());
 			let resolved = if current.is_empty() {
 				resolve_task_intent(
 					&last_user_message,
@@ -938,23 +984,49 @@ mod apply_tests {
 	#[test]
 	fn built_wrapper_round_trips_through_the_extractor() {
 		let intent = "add retry logic to the uploader";
-		let wrapper = build_continuation_content(Some(intent), false);
+		let wrapper = build_continuation_content(Some(intent), None, false);
 		assert!(is_continuation_message(&wrapper));
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 		assert!(!wrapper.contains("execution plan is already active"));
 
 		// With an active plan the wrapper gains the continue-the-plan note and
 		// the task must still round-trip through the extractor.
-		let wrapper = build_continuation_content(Some(intent), true);
+		let wrapper = build_continuation_content(Some(intent), None, true);
 		assert!(wrapper.contains("execution plan is already active"));
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
+	}
+
+	#[test]
+	fn pact_continuation_separates_contextual_request_from_validated_frontier() {
+		let summary = CompressionSummary {
+			folded_units: vec![super::super::schema::FoldedUnit {
+				text: "Continue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running."
+					.to_string(),
+				kind: "next_action".to_string(),
+				status: "tentative".to_string(),
+				refs: vec!["b:frontier".to_string()],
+			}],
+			..Default::default()
+		};
+		let action = select_continuation_action(&summary, true);
+		let wrapper = build_continuation_content(Some("Should work now"), action.as_deref(), false);
+
+		assert_eq!(
+			extract_continuation_task(&wrapper).as_deref(),
+			Some("Should work now"),
+			"runtime task identity must remain the exact user request"
+		);
+		assert!(wrapper.contains(
+			"<task>\nContinue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running.\n</task>"
+		));
+		assert!(!wrapper.contains("<task>\nShould work now\n</task>"));
 	}
 
 	#[test]
 	fn fallback_wrapper_carries_no_extractable_intent() {
 		// Without a real user ask the wrapper holds only the placeholder, which
 		// must not propagate as if it were the active task.
-		let wrapper = build_continuation_content(None, false);
+		let wrapper = build_continuation_content(None, None, false);
 		assert!(wrapper.contains(CONTINUATION_FALLBACK_INTENT));
 		assert_eq!(extract_continuation_task(&wrapper), None);
 	}
@@ -989,7 +1061,7 @@ mod apply_tests {
 	#[test]
 	fn extract_handles_multibyte_intent_without_panicking() {
 		let intent = "почини парсер 日本語";
-		let wrapper = build_continuation_content(Some(intent), false);
+		let wrapper = build_continuation_content(Some(intent), None, false);
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 	}
 }

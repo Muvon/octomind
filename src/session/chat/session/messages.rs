@@ -243,6 +243,9 @@ impl ChatSession {
 		}
 		self.session.messages.push(message);
 
+		// This response is owned by a genuine user turn, so a `done` report may
+		// be verified against the task that was just added.
+		self.completion_gate_eligible = true;
 		self.consecutive_steers = 0;
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
@@ -319,6 +322,15 @@ impl ChatSession {
 		}
 		self.session.messages.push(message);
 
+		Ok(())
+	}
+
+	/// Add a system-managed message that starts a new externally-triggered AI
+	/// response. Unlike supervisor/recall notes injected *inside* a user turn,
+	/// this message does not own the latest human task and cannot complete it.
+	pub fn add_system_managed_turn_message(&mut self, content: &str) -> Result<()> {
+		self.add_system_managed_user_message(content)?;
+		self.completion_gate_eligible = false;
 		Ok(())
 	}
 

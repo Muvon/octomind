@@ -228,6 +228,14 @@ pub struct ChatSession {
 	pub detectors: crate::supervisor::detect::Detectors,
 	/// Supervisor: verify-gate re-entry counter for the current turn.
 	pub gate_iterations: u8,
+	/// Whether the response currently being produced belongs to a genuine user
+	/// turn and may therefore claim that user's task complete. System-managed
+	/// inbox deliveries (monitor output, schedules, background results, validator
+	/// feedback) trigger their own response but are not new user tasks; verifying
+	/// those responses against the latest human request creates false positives.
+	/// Supervisor repair notes preserve the existing value so a legitimate gate
+	/// re-entry still verifies the original user turn.
+	pub completion_gate_eligible: bool,
 	/// Supervisor: re-entry counter for the FREE deterministic checks (pre-gate,
 	/// plan, coverage, evidence). Deliberately separate from `gate_iterations`:
 	/// a zero-cost nudge that the agent then satisfies must not spend the paid
@@ -417,6 +425,7 @@ impl ChatSession {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			completion_gate_eligible: true,
 			nudge_iterations: 0,
 			delegate_revisions: 0,
 			gate_failed: false,
@@ -638,6 +647,7 @@ impl ChatSession {
 						last_self_report: None,
 						detectors: crate::supervisor::detect::Detectors::default(),
 						gate_iterations: 0,
+						completion_gate_eligible: true,
 						nudge_iterations: 0,
 						delegate_revisions: 0,
 						gate_failed: false,
@@ -1427,6 +1437,7 @@ mod tests {
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
+			completion_gate_eligible: true,
 			nudge_iterations: 0,
 			delegate_revisions: 0,
 			gate_failed: false,
@@ -1467,6 +1478,33 @@ mod tests {
 			vec!["load-bearing root cause"],
 			"task continuity is resolved later; message insertion must not destroy findings"
 		);
+	}
+
+	#[test]
+	fn system_managed_event_does_not_take_ownership_of_the_human_task() {
+		let mut session = make_session(Vec::new());
+
+		session
+			.add_user_message("monitor the active operation")
+			.unwrap();
+		assert!(session.completion_gate_eligible);
+
+		session
+			.add_system_managed_turn_message("[monitor] still running")
+			.unwrap();
+		assert!(!session.completion_gate_eligible);
+
+		// Notes injected within that response preserve its ownership. Otherwise a
+		// recitation or supervisor hint could accidentally re-enable the old task.
+		session
+			.add_system_managed_user_message(
+				"<pay-attention>wait for the next event</pay-attention>",
+			)
+			.unwrap();
+		assert!(!session.completion_gate_eligible);
+
+		session.add_user_message("new human task").unwrap();
+		assert!(session.completion_gate_eligible);
 	}
 
 	/// Collect indices of all content-cached messages (user/assistant/tool with cached=true).

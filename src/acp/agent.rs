@@ -415,7 +415,7 @@ fn spawn_inbox_monitor(
 					}
 
 					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_user_message(&inbox_msg.content)
+						chat_session.add_system_managed_turn_message(&inbox_msg.content)
 					} else {
 						chat_session.add_user_message(&inbox_msg.content)
 					};
@@ -955,7 +955,7 @@ impl OctomindAgent {
 						}
 					}
 					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_user_message(&inbox_msg.content)
+						chat_session.add_system_managed_turn_message(&inbox_msg.content)
 					} else {
 						chat_session.add_user_message(&inbox_msg.content)
 					};

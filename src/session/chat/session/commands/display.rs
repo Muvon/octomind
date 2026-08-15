@@ -428,14 +428,14 @@ pub fn display_info(output: &CommandOutput) {
 				.and_then(|s| s.get("total_cost"))
 				.and_then(|v| v.as_f64())
 				.unwrap_or(0.0);
-	if external_cost > 0.0 {
-		let total_str = format!("${:.5}", total_cost).bright_white();
-		let main_str = format!("${:.5}", (total_cost - external_cost).max(0.0));
-		block_row(
-			"cost",
-			&format!("{} total {} {} main", total_str, dot, main_str),
-			kw_sess,
-		);
+		if external_cost > 0.0 {
+			let total_str = format!("${:.5}", total_cost).bright_white();
+			let main_str = format!("${:.5}", (total_cost - external_cost).max(0.0));
+			block_row(
+				"cost",
+				&format!("{} total {} {} main", total_str, dot, main_str),
+				kw_sess,
+			);
 		} else {
 			block_row("cost", &format!("${:.5}", total_cost), kw_sess);
 		}

@@ -452,6 +452,29 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
+	// External plan manager: reconcile a signal emitted on the turn's FINAL
+	// (tool-less) response before any gate reads plan state. Mid-turn signals
+	// reconcile at the tool-result boundary; a final-message `phase_complete`
+	// crosses no such boundary, so without this the plan pre-gate below would
+	// block on a stale open-task count and exhaust the repair budget against
+	// plan state the manager never saw. Free no-op without a pending signal.
+	if config.supervisor.enabled
+		&& config.supervisor.plan.enabled
+		&& chat_session.pending_plan_signal.is_some()
+	{
+		animation_manager.set_phase("Reconciling plan …").await;
+		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
+			chat_session,
+			config,
+			operation_rx.clone(),
+		)
+		.await
+		{
+			crate::log_debug!("External plan reconciliation failed: {}", error);
+		}
+		animation_manager.clear_phase();
+	}
+
 	// Unfinished hand-back pre-gate (free, deterministic): in non-interactive
 	// runs there is no user to pick the turn back up, so a final message with no
 	// tool calls while the agent's OWN status still says exploring/progressing is

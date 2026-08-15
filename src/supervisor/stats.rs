@@ -76,6 +76,8 @@ struct Stats {
 	steer_sequential: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
+	/// Compatibility tombstone for `/info` consumers. The checklist-count
+	/// pre-gate was removed; this remains zero and has no increment path.
 	plan_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
@@ -157,10 +159,6 @@ pub fn pregate_block() {
 /// The evidence check refused a `done` (cited quotes absent from tool output).
 pub fn claim_block() {
 	with(|s| s.claim_blocks += 1);
-}
-/// The plan pre-gate refused a `done` (live plan still has open items).
-pub fn plan_block() {
-	with(|s| s.plan_blocks += 1);
 }
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
@@ -249,6 +247,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,
 		"claim_blocks": s.claim_blocks,
+		// Stable output shape for clients written before the plan pre-gate was
+		// removed. A value above zero can no longer be produced.
 		"plan_blocks": s.plan_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,

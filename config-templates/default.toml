@@ -768,7 +768,9 @@ verifier_model = "octohub:auto"
 require_check_after_mutation = true
 # Include relevant plan outcomes in independent completion verification. Open
 # checklist state alone never forces a re-run: one verified deliverable may
-# satisfy several phases, which are then closed atomically on PASS.
+# satisfy several phases, which are then closed atomically on PASS. When false,
+# PASS still retires a plan owned by this turn because the authoritative user
+# task was accepted; the plan never adds requirements.
 require_plan_complete = true
 # Max tokens for the verifier exchange: the call's output budget (a reasoning
 # verifier thinks before its verdict) and the token cap on the assembled turn

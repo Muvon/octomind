@@ -535,19 +535,27 @@ mod tests {
 
 	#[test]
 	fn phase_trajectory_is_bounded_to_assistant_and_tool_records() {
-		let mut user = Message::default();
-		user.role = "user".to_string();
-		user.content = "do not include me".to_string();
-		let mut old_assistant = Message::default();
-		old_assistant.role = "assistant".to_string();
-		old_assistant.content = "old phase".to_string();
-		let mut assistant = Message::default();
-		assistant.role = "assistant".to_string();
-		assistant.content = "derived the current route".to_string();
-		let mut tool = Message::default();
-		tool.role = "tool".to_string();
-		tool.name = Some("lookup".to_string());
-		tool.content = "observed current state".to_string();
+		let user = Message {
+			role: "user".to_string(),
+			content: "do not include me".to_string(),
+			..Default::default()
+		};
+		let old_assistant = Message {
+			role: "assistant".to_string(),
+			content: "old phase".to_string(),
+			..Default::default()
+		};
+		let assistant = Message {
+			role: "assistant".to_string(),
+			content: "derived the current route".to_string(),
+			..Default::default()
+		};
+		let tool = Message {
+			role: "tool".to_string(),
+			name: Some("lookup".to_string()),
+			content: "observed current state".to_string(),
+			..Default::default()
+		};
 
 		let rendered = render_phase_trajectory(&[user, old_assistant, assistant, tool], 2, 100);
 		assert!(!rendered.contains("do not include me"));
@@ -560,10 +568,12 @@ mod tests {
 
 	#[test]
 	fn oversized_latest_record_preserves_both_edges() {
-		let mut tool = Message::default();
-		tool.role = "tool".to_string();
-		tool.name = Some("inspect".to_string());
-		tool.content = format!("BEGIN {} END", "middle ".repeat(1_000));
+		let tool = Message {
+			role: "tool".to_string(),
+			name: Some("inspect".to_string()),
+			content: format!("BEGIN {} END", "middle ".repeat(1_000)),
+			..Default::default()
+		};
 		let rendered = render_phase_trajectory(&[tool], 0, 80);
 		assert!(rendered.contains("BEGIN"));
 		assert!(rendered.contains("END"));

@@ -952,8 +952,7 @@ pub(crate) async fn call_learning_llm(
 	call_supervisor_llm(
 		config,
 		model,
-		system_content,
-		user_content,
+		SupervisorPrompt::new(system_content, user_content),
 		kind,
 		SupervisorSampling {
 			temperature: 0.3,
@@ -971,29 +970,32 @@ pub(crate) struct SupervisorSampling {
 	pub max_tokens: u32,
 }
 
+/// The two-message prompt sent by every supervisor mechanic.
+#[derive(Debug)]
+pub(crate) struct SupervisorPrompt {
+	system: String,
+	user: String,
+}
+
+impl SupervisorPrompt {
+	pub(crate) fn new(system: String, user: String) -> Self {
+		Self { system, user }
+	}
+}
+
 /// Shared supervisor-model transport with mechanic-specific sampling/output
 /// limits. Most generative mechanics use [`call_learning_llm`]; narrow
 /// classifiers such as task resolution can request deterministic short output.
 pub(crate) async fn call_supervisor_llm(
 	config: &Config,
 	model: &str,
-	system_content: String,
-	user_content: String,
+	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
 	sampling: SupervisorSampling,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
-	let response = call_supervisor_model(
-		config,
-		model,
-		system_content,
-		user_content,
-		kind,
-		sampling,
-		None,
-		operation_rx,
-	)
-	.await?;
+	let response =
+		call_supervisor_model(config, model, prompt, kind, sampling, None, operation_rx).await?;
 	Ok(response.content)
 }
 
@@ -1006,8 +1008,7 @@ pub(crate) async fn call_supervisor_llm(
 pub(crate) async fn call_supervisor_json(
 	config: &Config,
 	model: &str,
-	system_content: String,
-	user_content: String,
+	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
 	sampling: SupervisorSampling,
 	schema: serde_json::Value,
@@ -1019,8 +1020,7 @@ pub(crate) async fn call_supervisor_json(
 	let response = call_supervisor_model(
 		config,
 		model,
-		system_content,
-		user_content,
+		prompt,
 		kind,
 		sampling,
 		enforced.then_some(schema),
@@ -1039,8 +1039,7 @@ pub(crate) async fn call_supervisor_json(
 async fn call_supervisor_model(
 	config: &Config,
 	model: &str,
-	system_content: String,
-	user_content: String,
+	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
 	sampling: SupervisorSampling,
 	schema: Option<serde_json::Value>,
@@ -1050,7 +1049,7 @@ async fn call_supervisor_model(
 	let messages = vec![
 		crate::session::Message {
 			role: "system".to_string(),
-			content: system_content,
+			content: prompt.system,
 			timestamp: now,
 			cached: false,
 			cache_ttl: None,
@@ -1064,7 +1063,7 @@ async fn call_supervisor_model(
 		},
 		crate::session::Message {
 			role: "user".to_string(),
-			content: user_content,
+			content: prompt.user,
 			timestamp: now,
 			cached: false,
 			cache_ttl: None,

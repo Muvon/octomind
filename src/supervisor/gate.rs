@@ -19,6 +19,7 @@
 
 use crate::config::Config;
 use crate::supervisor::escape_xml_text as xml_text;
+use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
 use std::collections::VecDeque;
 use tokio::sync::watch;
 
@@ -742,10 +743,9 @@ pub async fn verify(
 	match crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
 		&model,
-		GATE_PROMPT.to_string(),
-		user.clone(),
+		SupervisorPrompt::new(GATE_PROMPT.to_string(), user.clone()),
 		crate::supervisor::stats::CallKind::Gate,
-		crate::supervisor::learning::extract::SupervisorSampling {
+		SupervisorSampling {
 			temperature: 0.3,
 			// A reasoning verifier spends output budget thinking before the
 			// verdict; a budget overflow becomes Indeterminate — give it real
@@ -776,10 +776,9 @@ pub async fn verify(
 			match crate::supervisor::learning::extract::call_supervisor_llm(
 				config,
 				&model,
-				GATE_PROMPT.to_string(),
-				retry_user,
+				SupervisorPrompt::new(GATE_PROMPT.to_string(), retry_user),
 				crate::supervisor::stats::CallKind::Gate,
-				crate::supervisor::learning::extract::SupervisorSampling {
+				SupervisorSampling {
 					temperature: 0.0,
 					max_tokens: config.supervisor.gate.max_tokens,
 				},

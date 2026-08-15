@@ -22,6 +22,7 @@
 
 use crate::config::Config;
 use crate::session::Message;
+use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
 use serde::Deserialize;
 use tokio::sync::watch;
 
@@ -334,10 +335,12 @@ pub async fn resolve(
 	let classification = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
 		&model,
-		CLASSIFIER_PROMPT.to_string(),
-		context.render_classification_payload(),
+		SupervisorPrompt::new(
+			CLASSIFIER_PROMPT.to_string(),
+			context.render_classification_payload(),
+		),
 		crate::supervisor::stats::CallKind::Resolve,
-		crate::supervisor::learning::extract::SupervisorSampling {
+		SupervisorSampling {
 			temperature: 0.0,
 			// Room for the conditions checklist on top of the scalar verdicts
 			// (a reasoning verifier model may also spend budget before the JSON).
@@ -381,10 +384,12 @@ pub async fn resolve(
 	let response = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
 		&model,
-		FOLLOWUP_PROMPT.to_string(),
-		context.render_resolution_payload(),
+		SupervisorPrompt::new(
+			FOLLOWUP_PROMPT.to_string(),
+			context.render_resolution_payload(),
+		),
 		crate::supervisor::stats::CallKind::Resolve,
-		crate::supervisor::learning::extract::SupervisorSampling {
+		SupervisorSampling {
 			temperature: 0.0,
 			max_tokens: 512,
 		},

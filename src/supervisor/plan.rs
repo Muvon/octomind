@@ -23,6 +23,7 @@
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use crate::supervisor::escape_xml_text as xml_text;
+use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -539,10 +540,9 @@ pub async fn reconcile_after_actions(
 	let response = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
 		&config.supervisor.plan.model,
-		PLANNER_PROMPT.to_string(),
-		payload,
+		SupervisorPrompt::new(PLANNER_PROMPT.to_string(), payload),
 		crate::supervisor::stats::CallKind::Plan,
-		crate::supervisor::learning::extract::SupervisorSampling {
+		SupervisorSampling {
 			temperature: 0.0,
 			max_tokens: config.supervisor.plan.max_tokens,
 		},

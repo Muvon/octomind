@@ -26,13 +26,15 @@ use super::schema::{render_pact_summary, render_summary, CompressionSummary};
 use crate::log_debug;
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
-use crate::session::estimate_tokens;
 use anyhow::Result;
 
 // Continuation-wrapper vocabulary lives in `crate::session` so the builder here
 // and every reader of the live task (recall, resolve, verify-gate, recitation)
 // agree on one spelling.
 use crate::session::{CONTINUATION_FALLBACK_INTENT, CONTINUATION_TAG_OPEN};
+
+const PREVIOUS_ASSISTANT_OPEN: &str = "<previous_assistant_response>";
+const PREVIOUS_ASSISTANT_CLOSE: &str = "</previous_assistant_response>";
 
 /// `Message::name` carried by every compression summary inserted into the
 /// conversation — this module's conversation summaries and the task summaries
@@ -60,6 +62,20 @@ pub(super) fn is_continuation_message(content: &str) -> bool {
 /// or carries only the synthetic fallback placeholder (no real intent).
 pub(super) fn extract_continuation_task(content: &str) -> Option<String> {
 	crate::session::continuation_task(content).map(str::to_string)
+}
+
+/// Recover the exact assistant response paired with the user request from a
+/// prior continuation envelope, allowing the pair to survive repeated folds.
+pub(super) fn extract_previous_assistant_response(content: &str) -> Option<String> {
+	let trimmed = content.trim_start();
+	if !trimmed.starts_with(CONTINUATION_TAG_OPEN) {
+		return None;
+	}
+	let start =
+		trimmed.find(&format!("\n{PREVIOUS_ASSISTANT_OPEN}"))? + 1 + PREVIOUS_ASSISTANT_OPEN.len();
+	let end = trimmed[start..].find(PREVIOUS_ASSISTANT_CLOSE)? + start;
+	let response = &trimmed[start..end];
+	(!response.is_empty()).then(|| response.to_string())
 }
 
 /// Select the validated active frontier that the model should resume after
@@ -101,6 +117,7 @@ fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) 
 /// detail.
 ///
 /// {plan continuation note, only when a plan is active}
+/// <previous_assistant_response>{exact preceding assistant response}</previous_assistant_response>
 /// <request>{exact user request}</request>
 /// <task>{validated resumption action}</task>
 /// </continuation>
@@ -110,13 +127,22 @@ fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) 
 /// it, a post-compression model re-entering its plan-first protocol calls
 /// plan(start), gets steered to reset, and wipes completed-task history.
 fn build_continuation_content(
+	previous_assistant_response: Option<&str>,
 	request: Option<&str>,
 	action: Option<&str>,
 	plan_active: bool,
 ) -> String {
 	let task_body = action.or(request).unwrap_or(CONTINUATION_FALLBACK_INTENT);
+	let previous_assistant_block = previous_assistant_response
+		.map(|response| {
+			format!(
+				"{PREVIOUS_ASSISTANT_OPEN}{}{PREVIOUS_ASSISTANT_CLOSE}\n",
+				response
+			)
+		})
+		.unwrap_or_default();
 	let request_block = request
-		.map(|request| format!("<request>\n{}\n</request>\n", request.trim()))
+		.map(|request| format!("<request>{request}</request>\n"))
 		.unwrap_or_default();
 	let plan_note = if plan_active {
 		"An execution plan is already active (shown in the summary above) — continue its current task; never call plan(start) or plan(reset) to re-create it.\n\n"
@@ -125,10 +151,10 @@ fn build_continuation_content(
 	};
 	format!(
 		"<continuation>\n\
-		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <request> block preserves the user's exact turn for identity and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
-		{}{}<task>\n{}\n</task>\n\
+		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <previous_assistant_response> and <request> blocks preserve the exact turn boundary and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
+		{}{}{}<task>\n{}\n</task>\n\
 		</continuation>",
-		plan_note, request_block, task_body
+		plan_note, previous_assistant_block, request_block, task_body
 	)
 }
 
@@ -219,16 +245,18 @@ pub(super) async fn apply_compression(
 	current_context_tokens: u64,
 	user_tasks_msgs: Vec<String>,
 	last_user_message: Option<crate::session::Message>,
+	previous_assistant_response: Option<String>,
 	preserved_skills: Vec<crate::session::Message>,
 	config: &crate::config::Config,
 	pact: Option<&super::attention::PactContext>,
 	pact_validation: Option<&super::attention::ValidationReport>,
 	force: bool,
+	preserve_recent_user_bridge: bool,
 ) -> Result<()> {
 	let continuation_request = last_user_message
 		.as_ref()
-		.map(|message| message.content.trim().to_string())
-		.filter(|request| !request.is_empty());
+		.map(|message| message.content.clone())
+		.filter(|request| !request.trim().is_empty());
 	let continuation_action = select_continuation_action(summary, pact.is_some());
 	let continuation_goal = continuation_action
 		.as_deref()
@@ -463,8 +491,6 @@ pub(super) async fn apply_compression(
 		None => compressed_entry,
 	};
 
-	let tokens_after = estimate_tokens(&compressed_entry) as u64;
-
 	// CRITICAL: Capture the most recent assistant response_id from the range we're
 	// about to drain. The Responses API (OpenAI + OctoHub) chains via this id —
 	// the server stores prior turns under it and reconstructs full history from
@@ -564,7 +590,7 @@ pub(super) async fn apply_compression(
 		.messages
 		.insert(start_idx + 1 + skill_count, summary_msg);
 
-	// Re-injected continuation message. This is ALWAYS a synthetic
+	// Re-injected continuation message. This is a synthetic
 	// <continuation> wrapper, never
 	// the raw user message verbatim. The wrapper:
 	//   - signals to the model that this is an in-progress task (the
@@ -580,94 +606,43 @@ pub(super) async fn apply_compression(
 	// `last_user_message = None` is only possible on a session with no
 	// real user message anywhere (pathological bootstrap-only state); the
 	// wrapper falls back to pointing at the summary itself.
-	let continuation_msg = crate::session::Message {
-		role: "user".to_string(),
-		content: build_continuation_content(
-			continuation_request.as_deref(),
-			continuation_action.as_deref(),
-			plan_active,
-		),
-		timestamp: now,
-		cached: false,
-		..Default::default()
-	};
-	session
-		.session
-		.messages
-		.insert(start_idx + 2 + skill_count, continuation_msg);
-	log_debug!(
-		"Inserted continuation wrapper after compressed summary (USER TASKS: {}, intent_source: {})",
-		user_tasks_msgs.len(),
-		if continuation_action.is_some() {
-			"validated_frontier"
-		} else if continuation_request.is_some() {
-			"last_user_message"
-		} else {
-			"summary_fallback"
-		}
-	);
-
-	// Calculate metrics
-	let tokens_saved = tokens_before.saturating_sub(tokens_after);
-
-	let metrics = crate::mcp::core::plan::compression::CompressionMetrics::new(
-		messages_removed,
-		tokens_saved,
-		tokens_before,
-	);
-
-	crate::session::chat::cost_tracker::CostTracker::display_compression_result(
-		"Conversation",
-		&metrics,
-	);
-
-	// Track stats
-	session.session.info.compression_stats.add_compression(
-		crate::session::CompressionKind::Conversation,
-		messages_removed,
-		tokens_saved,
-	);
-
-	// Token-based cooldown: record post-compression context size.
-	// Next compression is allowed only after context grows ≥10% above this watermark,
-	// preventing futile back-to-back compressions while reacting to actual growth.
-	let post_compression_tokens = current_context_tokens.saturating_sub(tokens_saved);
-	session.session.info.context_tokens_after_last_compression = post_compression_tokens as usize;
-	if config.compression.attention.telemetry {
-		if let (Some(pact), Some(report)) = (pact, pact_validation) {
-			let telemetry_result = if let Some(bundle) = archive_bundle.as_ref() {
-				pact.write_telemetry(bundle, report, summary, post_compression_tokens)
+	if preserve_recent_user_bridge {
+		log_debug!("Preserved exact previous-assistant/new-user bridge after compressed summary");
+	} else {
+		let continuation_msg = crate::session::Message {
+			role: "user".to_string(),
+			content: build_continuation_content(
+				previous_assistant_response.as_deref(),
+				continuation_request.as_deref(),
+				continuation_action.as_deref(),
+				plan_active,
+			),
+			timestamp: now,
+			cached: false,
+			..Default::default()
+		};
+		session
+			.session
+			.messages
+			.insert(start_idx + 2 + skill_count, continuation_msg);
+		log_debug!(
+			"Inserted continuation wrapper after compressed summary (USER TASKS: {}, intent_source: {})",
+			user_tasks_msgs.len(),
+			if continuation_action.is_some() {
+				"validated_frontier"
+			} else if continuation_request.is_some() {
+				"last_user_message"
 			} else {
-				pact.write_degraded_telemetry(
-					&session.session.info.name,
-					&compression_id,
-					report,
-					summary,
-					post_compression_tokens,
-					archive_fallback_reason.as_deref(),
-				)
-			};
-			if let Err(error) = telemetry_result {
-				crate::log_error!("PACT telemetry write failed: {}", error);
+				"summary_fallback"
 			}
-		}
+		);
 	}
 
-	// SELF-TUNING: Record checkpoint for incremental growth rate tracking.
-	// output_tokens_at_last_compression lets estimate_future_turns measure growth since
-	// this compression only, not the inflated lifetime average.
-	let estimated_future_turns = estimate_future_turns(session, tokens_saved as f64);
-	let api_calls_at_compression = session.session.info.total_api_calls;
-	session.session.info.predicted_turns_at_last_compression = estimated_future_turns;
-	session.session.info.api_calls_at_last_compression = api_calls_at_compression;
-	session.session.info.output_tokens_at_last_compression = session.session.info.output_tokens;
-
-	log_debug!(
-		"Compression cooldown set: post_compression_tokens={}, consecutive={}, requires ≥{:.0}% growth before next compression",
-		post_compression_tokens,
-		session.session.info.consecutive_compressions,
-		(0.10 * 2.0_f64.powi(session.session.info.consecutive_compressions as i32)).min(1.0) * 100.0
-	);
+	// A provisional value is enough for the human-readable anchor note. The
+	// controller/telemetry/statistics use an exact recount after every
+	// reinjection below.
+	let provisional_tokens_saved =
+		tokens_before.saturating_sub(crate::session::estimate_tokens(&compressed_entry) as u64);
 
 	// Extend the session anchor so conversation compaction contributes to
 	// cross-compaction continuity. Heuristic update: record a marker entry
@@ -718,7 +693,7 @@ pub(super) async fn apply_compression(
 				intent_task_sig,
 				changes_made: vec![format!(
 					"Conversation compaction: {} messages folded, {} tokens saved",
-					messages_removed, tokens_saved
+					messages_removed, provisional_tokens_saved
 				)],
 				..Default::default()
 			},
@@ -782,6 +757,63 @@ pub(super) async fn apply_compression(
 		start_idx,
 		summary_idx,
 		supports_caching,
+	);
+
+	// Exact post-state accounting must happen after every mutation: summary,
+	// preserved skills, exact user bridge or continuation wrapper, fidelity
+	// repair, and final cache-marker placement. The previous subtraction model
+	// only priced the generated summary and therefore understated the surviving
+	// context, corrupting both the next trigger and hard-ceiling safety.
+	let post_compression_tokens = session.get_full_context_tokens(config).await as u64;
+	let tokens_saved = current_context_tokens.saturating_sub(post_compression_tokens);
+	session.session.info.context_tokens_after_last_compression = post_compression_tokens as usize;
+
+	let metrics = crate::mcp::core::plan::compression::CompressionMetrics::new(
+		messages_removed,
+		tokens_saved,
+		tokens_before,
+	);
+	crate::session::chat::cost_tracker::CostTracker::display_compression_result(
+		"Conversation",
+		&metrics,
+	);
+	session.session.info.compression_stats.add_compression(
+		crate::session::CompressionKind::Conversation,
+		messages_removed,
+		tokens_saved,
+	);
+
+	if config.compression.attention.telemetry {
+		if let (Some(pact), Some(report)) = (pact, pact_validation) {
+			let telemetry_result = if let Some(bundle) = archive_bundle.as_ref() {
+				pact.write_telemetry(bundle, report, summary, post_compression_tokens)
+			} else {
+				pact.write_degraded_telemetry(
+					&session.session.info.name,
+					&compression_id,
+					report,
+					summary,
+					post_compression_tokens,
+					archive_fallback_reason.as_deref(),
+				)
+			};
+			if let Err(error) = telemetry_result {
+				crate::log_error!("PACT telemetry write failed: {}", error);
+			}
+		}
+	}
+
+	let estimated_future_turns = estimate_future_turns(session, tokens_saved as f64);
+	session.session.info.predicted_turns_at_last_compression = estimated_future_turns;
+	session.session.info.api_calls_at_last_compression = session.session.info.total_api_calls;
+	session.session.info.output_tokens_at_last_compression = session.session.info.output_tokens;
+	log_debug!(
+		"Adaptive compression checkpoint: post_tokens={}, saved={}, next autonomous runway={:.0} calls",
+		post_compression_tokens,
+		tokens_saved,
+		super::decision::autonomous_runway(
+			session.session.info.consecutive_compressions.saturating_add(1)
+		)
 	);
 
 	// Persist the final post-compression state only after skill/fidelity
@@ -984,14 +1016,14 @@ mod apply_tests {
 	#[test]
 	fn built_wrapper_round_trips_through_the_extractor() {
 		let intent = "add retry logic to the uploader";
-		let wrapper = build_continuation_content(Some(intent), None, false);
+		let wrapper = build_continuation_content(None, Some(intent), None, false);
 		assert!(is_continuation_message(&wrapper));
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 		assert!(!wrapper.contains("execution plan is already active"));
 
 		// With an active plan the wrapper gains the continue-the-plan note and
 		// the task must still round-trip through the extractor.
-		let wrapper = build_continuation_content(Some(intent), None, true);
+		let wrapper = build_continuation_content(None, Some(intent), None, true);
 		assert!(wrapper.contains("execution plan is already active"));
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
 	}
@@ -1009,7 +1041,8 @@ mod apply_tests {
 			..Default::default()
 		};
 		let action = select_continuation_action(&summary, true);
-		let wrapper = build_continuation_content(Some("Should work now"), action.as_deref(), false);
+		let wrapper =
+			build_continuation_content(None, Some("Should work now"), action.as_deref(), false);
 
 		assert_eq!(
 			extract_continuation_task(&wrapper).as_deref(),
@@ -1026,7 +1059,7 @@ mod apply_tests {
 	fn fallback_wrapper_carries_no_extractable_intent() {
 		// Without a real user ask the wrapper holds only the placeholder, which
 		// must not propagate as if it were the active task.
-		let wrapper = build_continuation_content(None, None, false);
+		let wrapper = build_continuation_content(None, None, None, false);
 		assert!(wrapper.contains(CONTINUATION_FALLBACK_INTENT));
 		assert_eq!(extract_continuation_task(&wrapper), None);
 	}
@@ -1061,7 +1094,19 @@ mod apply_tests {
 	#[test]
 	fn extract_handles_multibyte_intent_without_panicking() {
 		let intent = "почини парсер 日本語";
-		let wrapper = build_continuation_content(Some(intent), None, false);
+		let wrapper = build_continuation_content(None, Some(intent), None, false);
 		assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(intent));
+	}
+
+	#[test]
+	fn continuation_round_trips_exact_previous_assistant_response() {
+		let previous = "  Exact answer\nwith formatting and trailing space ";
+		let request = "  exact follow-up\nwith trailing space ";
+		let wrapper = build_continuation_content(Some(previous), Some(request), None, false);
+		assert_eq!(
+			extract_previous_assistant_response(&wrapper).as_deref(),
+			Some(previous)
+		);
+		assert!(wrapper.contains(&format!("<request>{request}</request>")));
 	}
 }

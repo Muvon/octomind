@@ -1539,6 +1539,24 @@ mod tests {
 	}
 
 	#[test]
+	fn only_real_user_turn_resets_adaptive_compression_runway() {
+		let mut cs = make_session(vec![msg("system", false)]);
+		cs.session.info.consecutive_compressions = 3;
+		cs.session.info.context_tokens_after_last_compression = 42_000;
+
+		cs.add_system_managed_user_message("<system-note>continue</system-note>")
+			.unwrap();
+		assert_eq!(cs.session.info.consecutive_compressions, 3);
+
+		cs.add_user_message("new human request").unwrap();
+		assert_eq!(cs.session.info.consecutive_compressions, 0);
+		assert_eq!(
+			cs.session.info.context_tokens_after_last_compression, 42_000,
+			"the exact post-compression watermark remains usable"
+		);
+	}
+
+	#[test]
 	fn successful_history_removal_resets_sequential_advisory_budget() {
 		let mut cs = make_session(vec![
 			msg("system", false),

@@ -183,20 +183,29 @@ pub fn continuation_task(content: &str) -> Option<&str> {
 	if !trimmed.starts_with(CONTINUATION_TAG_OPEN) {
 		return None;
 	}
-	let (open, close) = if trimmed.contains(CONTINUATION_REQUEST_OPEN) {
+	let (open, close) = if find_block_open(trimmed, CONTINUATION_REQUEST_OPEN).is_some() {
 		(CONTINUATION_REQUEST_OPEN, CONTINUATION_REQUEST_CLOSE)
 	} else {
 		// Backward compatibility for sessions compacted before request and
 		// resumption action became separate fields.
 		(CONTINUATION_TASK_OPEN, CONTINUATION_TASK_CLOSE)
 	};
-	let start = trimmed.find(open)? + open.len();
+	let start = find_block_open(trimmed, open)? + open.len();
 	let end = trimmed[start..].find(close)? + start;
 	let task = trimmed[start..end].trim();
 	if task.is_empty() || task == CONTINUATION_FALLBACK_INTENT {
 		return None;
 	}
 	Some(task)
+}
+
+/// Index of `tag` where it opens its own line — the block form the wrapper
+/// builder emits. The wrapper preamble names both tags inline ("The
+/// `<request>` block preserves…"), so a bare `find` would match that prose
+/// mention instead of the block and swallow everything up to the real
+/// closing tag.
+fn find_block_open(content: &str, tag: &str) -> Option<usize> {
+	content.find(&format!("\n{tag}")).map(|index| index + 1)
 }
 
 /// Index of the message that opens the current turn: the most recent genuine

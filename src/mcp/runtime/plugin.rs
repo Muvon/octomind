@@ -28,13 +28,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::config::McpServerConfig;
+use crate::config::{McpServerConfig, DEFAULT_MCP_TIMEOUT_SECONDS};
 
 pub const PLUGIN_SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 pub const MCP_SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
-
-/// Matches the `mcp add` tool default in `runtime/dynamic.rs`.
-const DEFAULT_TIMEOUT_SECONDS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct Plugin {
@@ -441,7 +438,7 @@ fn build_stdio(
 		name: name.to_string(),
 		command,
 		args,
-		timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+		timeout_seconds: DEFAULT_MCP_TIMEOUT_SECONDS,
 		tools: Vec::new(),
 		env,
 		cwd: Some(cwd.to_string_lossy().into_owned()),
@@ -487,7 +484,7 @@ fn build_http(name: &str, value: serde_json::Value, plugin: &Plugin) -> Option<M
 	Some(McpServerConfig::Http {
 		name: name.to_string(),
 		url: entry.url,
-		timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
+		timeout_seconds: DEFAULT_MCP_TIMEOUT_SECONDS,
 		tools: Vec::new(),
 		auto_bind: None,
 	})

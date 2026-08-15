@@ -18,7 +18,7 @@
 //! during a session. These servers are separate from the config-defined servers
 //! and are stored in memory only.
 
-use crate::config::McpServerConfig;
+use crate::config::{McpServerConfig, DEFAULT_MCP_TIMEOUT_SECONDS};
 use crate::mcp::{McpFunction, McpToolResult};
 use anyhow::Result;
 use serde_json::json;
@@ -637,7 +637,7 @@ pub fn get_mcp_tool_function() -> McpFunction {
 				},
 				"timeout_seconds": {
 					"type": "number",
-					"description": "How long to wait for server response (default: 60)"
+					"description": format!("Per-operation timeout in seconds; tool-call progress resets this idle deadline (default: {DEFAULT_MCP_TIMEOUT_SECONDS})")
 				},
 				"tools": {
 					"type": "array",
@@ -811,7 +811,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 	let timeout_seconds = params
 		.get("timeout_seconds")
 		.and_then(|v| v.as_u64())
-		.unwrap_or(60);
+		.unwrap_or(DEFAULT_MCP_TIMEOUT_SECONDS);
 
 	let tools: Vec<String> = params
 		.get("tools")

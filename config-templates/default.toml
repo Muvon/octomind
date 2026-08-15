@@ -362,6 +362,9 @@ allowed_tools = []
 # Global tool restrictions (empty = no restrictions)
 allowed_tools = []
 
+# Per-operation timeout. For tool calls this is an idle deadline: each MCP
+# progress notification resets it. Set a larger explicit value only for a
+# server that cannot report progress or return a task for long-running work.
 # Built-in MCP servers (always available)
 [[mcp.servers]]
 name = "core"

@@ -15,7 +15,7 @@
 use clap::Args;
 use colored::Colorize;
 
-use octomind::config::{Config, McpConnectionType, McpServerConfig};
+use octomind::config::{Config, McpConnectionType, McpServerConfig, DEFAULT_MCP_TIMEOUT_SECONDS};
 use octomind::directories;
 use octomind::session::chat::{
 	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text,
@@ -229,7 +229,8 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		config.mcp.servers.clear();
 		for server_name in &server_names {
 			if !config.mcp.servers.iter().any(|s| s.name() == *server_name) {
-				let server = McpServerConfig::builtin(server_name, 30, Vec::new());
+				let server =
+					McpServerConfig::builtin(server_name, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new());
 				config.mcp.servers.push(server);
 			}
 		}
@@ -248,7 +249,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		let mut url: Option<String> = None;
 		let mut command: Option<String> = None;
 		let mut args_vec: Vec<String> = Vec::new();
-		let mut timeout_seconds: u64 = 30;
+		let mut timeout_seconds = DEFAULT_MCP_TIMEOUT_SECONDS;
 		let mut connection_type = McpConnectionType::Http;
 		let mut warnings: Vec<String> = Vec::new();
 
@@ -753,7 +754,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 				}
 			};
 			block_row_text(&format!("{}  {}", name.bright_white(), detail));
-			if server.timeout_seconds() != 30 {
+			if server.timeout_seconds() != DEFAULT_MCP_TIMEOUT_SECONDS {
 				block_row_text(
 					&format!("  timeout: {}s", server.timeout_seconds())
 						.dimmed()

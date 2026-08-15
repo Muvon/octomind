@@ -138,7 +138,7 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique server identifier |
 | `type` | string | yes | `"builtin"`, `"http"`, or `"stdio"` |
-| `timeout_seconds` | u64 | no | Response timeout (default: 30) |
+| `timeout_seconds` | u64 | yes | Per-operation timeout; tool-call progress resets this idle deadline (template: 30) |
 | `tools` | string[] | no | Tool filter. Empty = all tools. Supports wildcards: `"github_*"` |
 | `auto_bind` | string[] | no | Role names to auto-include this server for |
 

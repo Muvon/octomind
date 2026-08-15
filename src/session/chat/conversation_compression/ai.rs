@@ -218,7 +218,7 @@ fn parse_json_response(
 ///   3. Prose preamble: `"Here is the analysis: {…}"`
 ///
 /// Returns `None` if no parseable JSON object/array can be located.
-fn extract_json_lenient(content: &str) -> Option<serde_json::Value> {
+pub(crate) fn extract_json_lenient(content: &str) -> Option<serde_json::Value> {
 	let trimmed = content.trim();
 	if trimmed.is_empty() {
 		return None;

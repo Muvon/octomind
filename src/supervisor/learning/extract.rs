@@ -983,6 +983,69 @@ pub(crate) async fn call_supervisor_llm(
 	sampling: SupervisorSampling,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
+	let response = call_supervisor_model(
+		config,
+		model,
+		system_content,
+		user_content,
+		kind,
+		sampling,
+		None,
+		operation_rx,
+	)
+	.await?;
+	Ok(response.content)
+}
+
+/// Structured-output variant: when the provider can enforce a response schema
+/// for `model`, the schema is attached to the request and the typed value is
+/// read from `structured_output`. Providers without enforcement still get the
+/// prompt-level contract, and the JSON is recovered from the text body with
+/// the compression path's lenient extractor — one shared mechanism, no second
+/// parser.
+pub(crate) async fn call_supervisor_json(
+	config: &Config,
+	model: &str,
+	system_content: String,
+	user_content: String,
+	kind: crate::supervisor::stats::CallKind,
+	sampling: SupervisorSampling,
+	schema: serde_json::Value,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<serde_json::Value> {
+	let (provider, actual_model) =
+		crate::providers::ProviderFactory::get_provider_for_model(model)?;
+	let enforced = provider.enforces_response_schema(&actual_model);
+	let response = call_supervisor_model(
+		config,
+		model,
+		system_content,
+		user_content,
+		kind,
+		sampling,
+		enforced.then_some(schema),
+		operation_rx,
+	)
+	.await?;
+	if let Some(value) = response.structured_output {
+		return Ok(value);
+	}
+	crate::session::chat::conversation_compression::extract_json_lenient(&response.content)
+		.ok_or_else(|| {
+			anyhow::anyhow!("model '{model}' returned no JSON object (schema enforced: {enforced})")
+		})
+}
+
+async fn call_supervisor_model(
+	config: &Config,
+	model: &str,
+	system_content: String,
+	user_content: String,
+	kind: crate::supervisor::stats::CallKind,
+	sampling: SupervisorSampling,
+	schema: Option<serde_json::Value>,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<crate::providers::ProviderResponse> {
 	let now = crate::utils::time::now_secs();
 	let messages = vec![
 		crate::session::Message {
@@ -1015,7 +1078,7 @@ pub(crate) async fn call_supervisor_llm(
 		},
 	];
 
-	let params = crate::session::ChatCompletionWithValidationParams::new(
+	let mut params = crate::session::ChatCompletionWithValidationParams::new(
 		&messages,
 		model,
 		sampling.temperature,
@@ -1029,6 +1092,9 @@ pub(crate) async fn call_supervisor_llm(
 	.with_cancellation_token(operation_rx)
 	.with_purpose(purpose_for(kind))
 	.without_tools();
+	if let Some(schema) = schema {
+		params = params.with_schema(schema);
+	}
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
 	if let Some(usage) = &response.exchange.usage {
@@ -1040,7 +1106,7 @@ pub(crate) async fn call_supervisor_llm(
 			usage.cost.unwrap_or(0.0),
 		);
 	}
-	Ok(response.content)
+	Ok(response)
 }
 
 #[cfg(test)]

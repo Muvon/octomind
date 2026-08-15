@@ -57,7 +57,7 @@ For signal `phase_complete`, compare the current phase's `done_when` with runtim
 
 For signal `reassess`, a runtime-checked plan assumption has broken. Return `revise` with a valid remaining route, or `hold` when no safe route is evidenced.
 
-Revision replaces only the unfinished tail; completed history is preserved. Never advance merely because the specialist says it is complete. Output exactly one compact JSON object and nothing else."#;
+Revision replaces only the unfinished tail; completed history is preserved. Never advance merely because the specialist says it is complete. Fields that do not belong to the chosen decision are null (or an empty list for `tasks`). Output exactly one JSON object and nothing else."#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,8 +74,7 @@ pub struct PlanTaskDirective {
 	pub done_when: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "decision", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug)]
 enum PlanDecision {
 	Create {
 		title: String,
@@ -94,6 +93,104 @@ enum PlanDecision {
 		reason: String,
 		tasks: Vec<PlanTaskDirective>,
 	},
+}
+
+/// Flat wire shape of the planner reply. Structured output cannot express a
+/// serde-tagged enum under strict mode (every property must be declared and
+/// required), so the union is flattened here and narrowed to [`PlanDecision`]
+/// once the tag is known.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PlanResponse {
+	decision: String,
+	title: Option<String>,
+	summary: Option<String>,
+	reason: Option<String>,
+	tasks: Vec<PlanTaskDirective>,
+}
+
+impl PlanResponse {
+	fn into_decision(self) -> Option<PlanDecision> {
+		let PlanResponse {
+			decision,
+			title,
+			summary,
+			reason,
+			tasks,
+		} = self;
+		match decision.as_str() {
+			"create" => Some(PlanDecision::Create {
+				title: title.unwrap_or_default(),
+				tasks,
+			}),
+			"no_plan" => Some(PlanDecision::NoPlan {
+				reason: reason.unwrap_or_default(),
+			}),
+			"advance" => Some(PlanDecision::Advance {
+				summary: summary.unwrap_or_default(),
+			}),
+			"hold" => Some(PlanDecision::Hold {
+				reason: reason.unwrap_or_default(),
+			}),
+			"revise" => Some(PlanDecision::Revise {
+				reason: reason.unwrap_or_default(),
+				tasks,
+			}),
+			_ => None,
+		}
+	}
+}
+
+/// Response schema for the planner call. The admissible decisions are narrowed
+/// per signal, so an incompatible decision cannot be produced at all when the
+/// provider enforces the schema.
+fn build_plan_schema(signal: PlanSignal) -> serde_json::Value {
+	let decisions: &[&str] = match signal {
+		PlanSignal::Request => &["create", "no_plan"],
+		PlanSignal::PhaseComplete => &["advance", "hold", "revise"],
+		PlanSignal::Reassess => &["revise", "hold"],
+	};
+	serde_json::json!({
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"decision": {
+				"type": "string",
+				"enum": decisions,
+				"description": "The decision for this signal."
+			},
+			"title": {
+				"type": ["string", "null"],
+				"description": "Short goal. Required for `create`, otherwise null."
+			},
+			"summary": {
+				"type": ["string", "null"],
+				"description": "Specific observed outcome. Required for `advance`, otherwise null."
+			},
+			"reason": {
+				"type": ["string", "null"],
+				"description": "Why this decision. Required for `no_plan`, `hold`, and `revise`, otherwise null."
+			},
+			"tasks": {
+				"type": "array",
+				"maxItems": 6,
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"title": { "type": "string" },
+						"done_when": {
+							"type": "string",
+							"description": "Observable state or delivered artifact."
+						}
+					},
+					"required": ["title", "done_when"]
+				},
+				"description": "Phases for `create` and `revise`; empty list otherwise."
+			}
+		},
+		"required": ["decision", "title", "summary", "reason", "tasks"]
+	})
 }
 
 fn truncate_edges_to_tokens(text: &str, max_tokens: usize) -> String {
@@ -390,7 +487,7 @@ pub async fn reconcile_after_actions(
 		signal,
 		config.supervisor.plan.trajectory_max_tokens,
 	);
-	let response = crate::supervisor::learning::extract::call_supervisor_llm(
+	let response = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
 		&config.supervisor.plan.model,
 		PLANNER_PROMPT.to_string(),
@@ -400,18 +497,18 @@ pub async fn reconcile_after_actions(
 			temperature: 0.0,
 			max_tokens: config.supervisor.plan.max_tokens,
 		},
+		build_plan_schema(signal),
 		operation_rx,
 	)
 	.await;
 	let decision = match response {
-		Ok(response) => match serde_json::from_str::<PlanDecision>(response.trim()) {
-			Ok(decision) => decision,
-			Err(error) => {
-				note_planner_failure(
-					chat_session,
-					signal,
-					&format!("invalid JSON response: {error}"),
-				)?;
+		Ok(value) => match serde_json::from_value::<PlanResponse>(value)
+			.ok()
+			.and_then(PlanResponse::into_decision)
+		{
+			Some(decision) => decision,
+			None => {
+				note_planner_failure(chat_session, signal, "unusable decision object")?;
 				return Ok(());
 			}
 		},
@@ -526,11 +623,29 @@ mod tests {
 
 	#[test]
 	fn parses_domain_neutral_plan() {
-		let decision: PlanDecision = serde_json::from_str(
-			r#"{"decision":"create","title":"Publish report","tasks":[{"title":"Gather sources","done_when":"source set is recorded"},{"title":"Synthesize","done_when":"claims map to sources"},{"title":"Deliver","done_when":"report is returned"}]}"#,
+		let response: PlanResponse = serde_json::from_str(
+			r#"{"decision":"create","title":"Publish report","summary":null,"reason":null,"tasks":[{"title":"Gather sources","done_when":"source set is recorded"},{"title":"Synthesize","done_when":"claims map to sources"},{"title":"Deliver","done_when":"report is returned"}]}"#,
 		)
 		.unwrap();
-		assert!(matches!(decision, PlanDecision::Create { tasks, .. } if tasks.len() == 3));
+		assert!(
+			matches!(response.into_decision(), Some(PlanDecision::Create { tasks, .. }) if tasks.len() == 3)
+		);
+	}
+
+	#[test]
+	fn unknown_decision_tag_is_rejected() {
+		let response: PlanResponse =
+			serde_json::from_str(r#"{"decision":"proceed","reason":"why not"}"#).unwrap();
+		assert!(response.into_decision().is_none());
+	}
+
+	#[test]
+	fn schema_admits_only_the_signal_decisions() {
+		let schema = build_plan_schema(PlanSignal::PhaseComplete);
+		assert_eq!(
+			schema["properties"]["decision"]["enum"],
+			serde_json::json!(["advance", "hold", "revise"])
+		);
 	}
 
 	#[test]

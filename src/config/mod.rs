@@ -752,7 +752,9 @@ impl Config {
 			.iter()
 			.find(|server| server.name() == SERVER)
 			.cloned()
-			.unwrap_or_else(|| McpServerConfig::builtin(SERVER, 30, Vec::new()));
+			.unwrap_or_else(|| {
+				McpServerConfig::builtin(SERVER, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new())
+			});
 
 		if let Some(server) = merged
 			.mcp

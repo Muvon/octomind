@@ -253,7 +253,7 @@ pairs:
 | `url` | Endpoint URL — **required** for `http`. |
 | `command` | Executable to launch — **required** for `stdio`. |
 | `args` | Space-separated arguments for a `stdio` command. |
-| `timeout` / `timeout_seconds` | Request timeout in seconds (default `30`). |
+| `timeout` / `timeout_seconds` | Per-operation timeout in seconds (default `30`); tool-call progress resets the idle deadline. |
 
 ```bash
 # HTTP server

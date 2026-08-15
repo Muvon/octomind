@@ -33,7 +33,7 @@ use rmcp::model::{
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
-	RunningService,
+	RunningService, ServiceError,
 };
 use rmcp::{ClientHandler, RoleClient};
 use std::collections::HashMap;
@@ -655,13 +655,31 @@ async fn wait_cancelled(token: &mut Option<tokio::sync::watch::Receiver<bool>>) 
 	}
 }
 
+fn idle_timeout_message(tool_name: &str, server_name: &str, timeout_seconds: u64) -> String {
+	format!(
+		"MCP tool '{tool_name}' on '{server_name}' timed out after PT{timeout_seconds}S idle. Cancellation sent; check for side effects before retrying with a smaller call or background task."
+	)
+}
+
+fn absolute_timeout_message(
+	tool_name: &str,
+	server_name: &str,
+	idle_timeout_seconds: u64,
+	absolute_timeout_seconds: u64,
+) -> String {
+	format!(
+		"MCP tool '{tool_name}' on '{server_name}' exceeded PT{absolute_timeout_seconds}S total while reporting progress (idle PT{idle_timeout_seconds}S). Cancellation sent; check for side effects before retrying with a smaller call or background task."
+	)
+}
+
 async fn call_tool_round(
 	service: &McpService,
 	server: &McpServerConfig,
 	params: CallToolRequestParams,
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<CallToolResponse> {
-	let options = PeerRequestOptions::with_timeout(Duration::from_secs(server.timeout_seconds()))
+	let idle_timeout_seconds = server.timeout_seconds();
+	let options = PeerRequestOptions::with_timeout(Duration::from_secs(idle_timeout_seconds))
 		.reset_timeout_on_progress();
 	// Progress keeps a call alive but must not extend it forever: a runaway
 	// command that streams output resets the idle timeout on every line, so
@@ -669,11 +687,8 @@ async fn call_tool_round(
 	// external kill. The cap scales with the server's configured timeout, so
 	// deliberately long-tool servers keep their headroom.
 	const PROGRESS_EXTENSION_CAP: u64 = 20;
-	let absolute_cap = Duration::from_secs(
-		server
-			.timeout_seconds()
-			.saturating_mul(PROGRESS_EXTENSION_CAP),
-	);
+	let absolute_cap =
+		Duration::from_secs(idle_timeout_seconds.saturating_mul(PROGRESS_EXTENSION_CAP));
 	let tool_name = params.name.clone();
 	let handle = service
 		.peer()
@@ -694,11 +709,12 @@ async fn call_tool_round(
 					Some("absolute tool-call time cap exceeded".to_string()),
 				))
 				.await;
-			return Err(anyhow!(
-				"Tool '{}' cancelled after {}s: it kept emitting output (which resets the idle timeout) without completing. If it was a long-running command, re-run it bounded — with a limit, filter, or timeout — so it finishes.",
-				tool_name,
-				absolute_cap.as_secs()
-			));
+			return Err(anyhow!(absolute_timeout_message(
+				&tool_name,
+				server.name(),
+				idle_timeout_seconds,
+				absolute_cap.as_secs(),
+			)));
 		}
 		_ = wait_cancelled(cancellation_token) => {
 			let _ = peer
@@ -709,7 +725,17 @@ async fn call_tool_round(
 				.await;
 			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
-	}?;
+	};
+	let result = match result {
+		Err(ServiceError::Timeout { .. }) => {
+			return Err(anyhow!(idle_timeout_message(
+				&tool_name,
+				server.name(),
+				idle_timeout_seconds,
+			)))
+		}
+		other => other?,
+	};
 	match result {
 		ServerResult::CallToolResult(result) => Ok(CallToolResponse::Complete(result)),
 		ServerResult::InputRequiredResult(result) => Ok(CallToolResponse::InputRequired(result)),
@@ -929,6 +955,29 @@ mod tests {
 		assert!(info.capabilities.elicitation.is_none());
 		assert!(info.capabilities.sampling.is_none());
 		assert!(info.capabilities.roots.is_none());
+	}
+
+	#[test]
+	fn idle_timeout_guidance_is_actionable_and_side_effect_safe() {
+		let message = idle_timeout_message("deploy", "operations", 30);
+		assert!(message.contains("'deploy'"));
+		assert!(message.contains("'operations'"));
+		assert!(message.contains("PT30S idle"));
+		assert!(message.contains("check for side effects"));
+		assert!(message.contains("smaller call or background task"));
+		assert!(!message.contains("timeout_seconds"));
+		assert!(message.len() < 200);
+	}
+
+	#[test]
+	fn absolute_timeout_guidance_distinguishes_progress_from_completion() {
+		let message = absolute_timeout_message("index", "search", 30, 600);
+		assert!(message.contains("PT600S total"));
+		assert!(message.contains("while reporting progress"));
+		assert!(message.contains("idle PT30S"));
+		assert!(message.contains("check for side effects"));
+		assert!(!message.contains("timeout_seconds"));
+		assert!(message.len() < 250);
 	}
 
 	#[tokio::test]

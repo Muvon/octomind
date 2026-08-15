@@ -15,6 +15,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Default per-operation MCP timeout. Tool calls treat this as an idle
+/// deadline and reset it whenever the server sends an MCP progress update.
+pub const DEFAULT_MCP_TIMEOUT_SECONDS: u64 = 30;
+
 // Type-specific MCP server configuration using tagged enums
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]

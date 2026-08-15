@@ -86,7 +86,7 @@ Manage MCP servers at runtime without editing config.
 - `command` (string): Executable (for stdio)
 - `args` (array): Arguments (for stdio)
 - `url` (string): Endpoint (for http)
-- `timeout_seconds` (number): Timeout (default: 60)
+- `timeout_seconds` (number): Per-operation timeout; tool-call progress resets this idle deadline (default: 30)
 - `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`). Also accepted by `enable` for a per-enable filter.
 
 ### `agent` -- Dynamic Agent Management
@@ -352,6 +352,8 @@ args = ["-m", "my_mcp_server"]
 timeout_seconds = 30
 tools = []
 ```
+
+For tool calls, `timeout_seconds` is an idle deadline rather than a total runtime limit: every MCP progress notification resets it. Calls are still bounded by an absolute cap of 20 times this value. After a timeout, completion and side effects may be unknown, so inspect state before retrying; prefer a narrower operation, a background/monitor workflow, or an MCP task for inherently long-running work.
 
 ### Auto-Bind to Roles
 

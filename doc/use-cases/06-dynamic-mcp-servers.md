@@ -105,7 +105,7 @@ AI calls: mcp(action="enable", name="octocode")
     semantic_search, view_signatures, graphrag"
 ```
 
-`timeout_seconds` is optional and defaults to **60**. Raise it (as above) only for servers that take a long time to respond.
+`timeout_seconds` is optional and defaults to **30**. For tool calls it is an idle deadline that resets on MCP progress. Raise it only when a server cannot report progress or return a task for bounded long-running work.
 
 ### Tool Filtering
 
@@ -172,7 +172,7 @@ AI:
 | Action | Description |
 |--------|-------------|
 | `list` | Show all servers with status |
-| `add` | Register new server (doesn't connect; `timeout_seconds` defaults to 60) |
+| `add` | Register new server (doesn't connect; `timeout_seconds` defaults to 30) |
 | `enable` | Connect and activate tools (optional `tools` filter applied at connect time) |
 | `disable` | Deactivate (keep config) |
 | `remove` | Unregister a dynamically added server (does not remove config-defined servers) |
@@ -191,7 +191,7 @@ It is important not to confuse two things that look similar:
 - The `mcp` tool lives in the `runtime` builtin server; the AI's role must grant `runtime` access (the default `assistant` role does) for self-configuration to be possible
 - The AI can add/remove MCP servers without human intervention
 - Supports both HTTP (remote) and stdio (local process) servers
-- `timeout_seconds` is optional and defaults to 60
+- `timeout_seconds` is optional and defaults to 30; tool-call progress resets this idle deadline
 - `persist` saves a dynamic server to the config dir; it auto-binds to the current role only when the server is enabled at persist time (disabled servers persist with `auto_bind` cleared)
 - `remove` only unregisters dynamic (runtime-added) servers — it cannot delete servers defined in config
 - Tool filtering prevents exposing unnecessary capabilities, and a filter can be applied at `add` time or refined at `enable` time

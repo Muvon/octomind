@@ -369,6 +369,17 @@ pub async fn run_activation(
 		None => return,
 	};
 
+	// Control-plane text is never a user task: supervisor steers/recalls
+	// (`<pay-attention>`, `<recall>`), skill blocks, continuation wrappers and
+	// `<system-note>` injections are our own messages replayed in the user role.
+	// Matching them would auto-inject a skill in response to the supervisor
+	// rather than to anything the user asked for. Same predicate the compression
+	// and gate paths use, so the three can't drift apart.
+	if crate::session::is_system_managed_user_content(content) {
+		crate::log_debug!("skill_auto: skipping activation — system-managed content");
+		return;
+	}
+
 	// Strip XML blocks (skill injections, log pastes, system tags, etc.) so
 	// they don't trigger false-positive skill matches.
 	let stripped = strip_xml_blocks(content);
@@ -872,5 +883,26 @@ mod tests {
 		assert!(!intent_has_enough_signal("  try   "));
 		// Whitespace doesn't pad a real intent up to the threshold.
 		assert!(!intent_has_enough_signal("a b c"));
+	}
+
+	#[test]
+	fn system_managed_content_is_not_user_intent() {
+		// Supervisor steers / recalls, skill replays and continuation wrappers
+		// must never drive auto-activation — run_activation returns early on them.
+		for synthetic in [
+			"<pay-attention>\nYou have made several single-call turns in a row.\n</pay-attention>",
+			"<recall>\npast-session lesson\n</recall>",
+			"<system-note>\nbackground job finished\n</system-note>",
+			"<skill name=\"tap-agent-authoring\" description=\"x\">\nbody\n</skill>",
+			"<continuation>\n<task>resume</task>\n</continuation>",
+		] {
+			assert!(
+				crate::session::is_system_managed_user_content(synthetic),
+				"expected {synthetic:?} to be classified as system-managed"
+			);
+		}
+		assert!(!crate::session::is_system_managed_user_content(
+			"please create an agent manifest for developer:plan"
+		));
 	}
 }

@@ -1011,6 +1011,14 @@ pub async fn auto_activate_capabilities(
 /// This is the same scoring path as fresh user-message activation, exposed for
 /// runtime prompts that ask the session to load missing tools.
 pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config) -> Vec<String> {
+	// Control-plane text (supervisor steers/recalls, skill replays, continuation
+	// wrappers) is not a user intent — mirrors the same gate in
+	// `skill_auto::run_activation`.
+	if crate::session::is_system_managed_user_content(intent) {
+		crate::log_debug!("capability auto-activate: skipping — system-managed content");
+		return Vec::new();
+	}
+
 	// Strip XML blocks (skill injections, <log> pastes, system tags, etc.)
 	// so pasted content doesn't drive false-positive capability matches.
 	let intent = crate::mcp::runtime::skill_auto::strip_xml_blocks(intent);

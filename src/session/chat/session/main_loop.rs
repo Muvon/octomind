@@ -1080,7 +1080,13 @@ pub async fn run_interactive_session(
 				)
 				.await;
 
-			// Run skill activation on user input
+			// Run skill activation on user input. Inbox-injected turns (schedule,
+			// skill replay, validator, background agent) drive the next action but
+			// are not the user's request — activating on them injects skills in
+			// response to the control plane, not to anything the user asked for.
+			if !injected_source
+				.as_ref()
+				.is_some_and(|source| source.is_system_managed())
 			{
 				crate::mcp::runtime::skill_auto::run_activation(
 					&input,

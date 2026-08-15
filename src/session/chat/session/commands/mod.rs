@@ -33,6 +33,7 @@ mod login;
 mod loglevel;
 mod mcp;
 mod model;
+mod monitor;
 mod plan;
 mod prompt;
 mod report;
@@ -194,6 +195,9 @@ pub enum CommandOutput {
 	Schedule {
 		data: serde_json::Value,
 	},
+	Monitor {
+		data: serde_json::Value,
+	},
 	Learning {
 		data: serde_json::Value,
 	},
@@ -309,6 +313,7 @@ impl CommandOutput {
 			Self::Session { .. } => display::display_session(self),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
+			Self::Monitor { .. } => display::display_monitor(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
 			Self::Usage { .. } => display::display_usage(self),
@@ -398,6 +403,7 @@ pub async fn process_command(
 		PLAN_COMMAND => plan::handle_plan(session).await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
+		MONITOR_COMMAND => monitor::handle_monitor().await,
 		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,

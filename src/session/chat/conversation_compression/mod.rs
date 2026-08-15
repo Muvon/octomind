@@ -44,6 +44,9 @@ mod schema;
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
 use ai::ask_ai_decision_and_summary;
+// Shared with the supervisor: recovery of JSON from a text body when the
+// provider does not enforce a response schema.
+pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills};
 use decision::{
 	calculate_compression_net_benefit, compression_depth, context_ceiling, measured_growth_rate,

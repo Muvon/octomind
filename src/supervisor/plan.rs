@@ -421,7 +421,15 @@ pub async fn reconcile_after_actions(
 		}
 	};
 
-	let application = (|| -> Result<bool> {
+	// What the planner changed; drives post-transition context policy below.
+	#[derive(Clone, Copy, PartialEq)]
+	enum Transition {
+		None,
+		Created,
+		Advanced,
+		Revised,
+	}
+	let application = (|| -> Result<Transition> {
 		match (signal, decision) {
 			(PlanSignal::Request, PlanDecision::Create { title, tasks }) => {
 				crate::mcp::core::plan::sidecar_start(&title, &tasks)?;
@@ -429,16 +437,16 @@ pub async fn reconcile_after_actions(
 					"external plan created with {} phase(s)",
 					tasks.len()
 				));
-				Ok(true)
+				Ok(Transition::Created)
 			}
 			(PlanSignal::Request, PlanDecision::NoPlan { reason }) => {
 				crate::log_debug!("External planner declined plan: {}", concise_text(&reason));
-				Ok(false)
+				Ok(Transition::None)
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Advance { summary }) => {
 				crate::mcp::core::plan::sidecar_advance(&summary)?;
 				crate::supervisor::notify("external plan advanced");
-				Ok(true)
+				Ok(Transition::Advanced)
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Revise { reason, tasks }) => {
 				crate::mcp::core::plan::sidecar_revise(&reason, &tasks)?;
@@ -446,14 +454,14 @@ pub async fn reconcile_after_actions(
 					"external plan revised: {}",
 					concise_text(&reason)
 				));
-				Ok(true)
+				Ok(Transition::Revised)
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Hold { reason }) => {
 				chat_session.add_system_managed_user_message(&format!(
 					"<runtime-plan-feedback>Current phase remains open: {}</runtime-plan-feedback>",
 					xml_feedback(&reason)
 				))?;
-				Ok(false)
+				Ok(Transition::None)
 			}
 			(PlanSignal::Reassess, PlanDecision::Revise { reason, tasks }) => {
 				crate::mcp::core::plan::sidecar_revise(&reason, &tasks)?;
@@ -461,31 +469,46 @@ pub async fn reconcile_after_actions(
 					"external plan revised: {}",
 					concise_text(&reason)
 				));
-				Ok(true)
+				Ok(Transition::Revised)
 			}
 			(PlanSignal::Reassess, PlanDecision::Hold { reason }) => {
 				chat_session.add_system_managed_user_message(&format!(
 					"<runtime-plan-feedback>Plan assumption failed and no safe revision was established: {}</runtime-plan-feedback>",
 					xml_feedback(&reason)
 				))?;
-				Ok(false)
+				Ok(Transition::None)
 			}
 			_ => anyhow::bail!("decision incompatible with {:?} signal", signal),
 		}
 	})();
-	let changed = match application {
-		Ok(changed) => changed,
+	let transition = match application {
+		Ok(transition) => transition,
 		Err(error) => {
 			note_planner_failure(chat_session, signal, &format!("invalid decision: {error}"))?;
 			return Ok(());
 		}
 	};
-	if changed {
+	if transition != Transition::None {
 		if let Some(note) = plan_state_note() {
 			chat_session.add_system_managed_user_message(&note)?;
 		}
-		crate::mcp::core::plan::set_current_task_start_index(chat_session.get_message_count());
-		chat_session.plan_evidence_checkpoint = chat_session.evidence.begin_phase();
+	}
+	match transition {
+		// A planner-verified advance is progress, not a failed repair: recharge
+		// the shared pre-gate budget so a multi-phase plan can still close — one
+		// advance per signal against a budget of 2 would otherwise cap every
+		// plan at a single re-run. Mirrors the verify-gate PASS reset.
+		Transition::Advanced => chat_session.nudge_iterations = 0,
+		// Only a revision invalidates accumulated evidence: the remaining route
+		// changed, so prior actions must not authorize the new phases. Create and
+		// Advance deliberately keep the window — when several phases were
+		// finished within one work turn, the work that evidenced the completed
+		// phase is exactly what the next phase is judged on.
+		Transition::Revised => {
+			crate::mcp::core::plan::set_current_task_start_index(chat_session.get_message_count());
+			chat_session.plan_evidence_checkpoint = chat_session.evidence.begin_phase();
+		}
+		Transition::Created | Transition::None => {}
 	}
 	Ok(())
 }

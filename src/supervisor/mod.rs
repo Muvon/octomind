@@ -265,6 +265,8 @@ pub struct GateConfig {
 	/// Include a relevant live plan's outcomes in independent completion
 	/// verification. Checklist status is not proof of incompletion: one verified
 	/// deliverable may satisfy several phases and closes them atomically on PASS.
+	/// When false, the authoritative user task is still verified and its PASS
+	/// retires any plan owned by that turn; the plan never adds requirements.
 	pub require_plan_complete: bool,
 	/// Max tokens for the verifier exchange, like every model block: the
 	/// call's output budget (a reasoning verifier thinks before its verdict —

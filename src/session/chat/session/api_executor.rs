@@ -46,6 +46,49 @@ fn claims_user_task_completion(
 			|| (self_report.is_none() && has_mutations))
 }
 
+/// Resolve the current human task against the plan snapshot captured before
+/// this turn did any work. Both verifier-backed and trusted no-gate completion
+/// use this exact ownership decision, so an unrelated `done` cannot retire an
+/// older plan merely because it is still active.
+async fn resolve_completion_task(
+	chat_session: &mut ChatSession,
+	config: &Config,
+	task: &str,
+	live_plan: &str,
+	operation_rx: watch::Receiver<bool>,
+) -> crate::supervisor::resolve::ResolvedTask {
+	match chat_session.gate_task.clone() {
+		Some(crate::supervisor::resolve::TaskResolutionState::Resolved(resolved))
+			if resolved.original_request == task =>
+		{
+			resolved
+		}
+		Some(crate::supervisor::resolve::TaskResolutionState::Pending(context))
+			if context.current_request == task =>
+		{
+			let animation_manager = crate::session::chat::get_animation_manager();
+			animation_manager
+				.set_phase("Resolving current task …")
+				.await;
+			let resolved =
+				crate::supervisor::resolve::resolve(config, &context, operation_rx).await;
+			animation_manager.clear_phase();
+			chat_session.gate_task = Some(
+				crate::supervisor::resolve::TaskResolutionState::Resolved(resolved.clone()),
+			);
+			resolved
+		}
+		_ => {
+			// Missing/mismatched state is uncertain. Treat the live plan as
+			// pre-existing so it cannot gain authority from missing metadata.
+			let mut resolved =
+				crate::supervisor::resolve::ResolvedTask::self_contained(task.to_string());
+			resolved.plan_at_turn_start = live_plan.to_string();
+			resolved
+		}
+	}
+}
+
 /// Separator between the parts of a re-run turn's answer. Self-describing so the
 /// verifier reads the parts as one deliverable (see the gate prompt).
 const ANSWER_PART_SEPARATOR: &str = "\n\n--- (continued after supervisor feedback) ---\n\n";
@@ -552,37 +595,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// Resolve references before completion checks consult session-persistent
 		// state. Otherwise an old plan could gain scope over a new unrelated
 		// self-contained request before the resolver gets a chance to reject it.
-		let resolved_task = match chat_session.gate_task.clone() {
-			Some(crate::supervisor::resolve::TaskResolutionState::Resolved(resolved))
-				if resolved.original_request == task =>
-			{
-				resolved
-			}
-			Some(crate::supervisor::resolve::TaskResolutionState::Pending(context))
-				if context.current_request == task =>
-			{
-				animation_manager
-					.set_phase("Resolving current task …")
-					.await;
-				let resolved =
-					crate::supervisor::resolve::resolve(config, &context, operation_rx.clone())
-						.await;
-				animation_manager.clear_phase();
-				chat_session.gate_task = Some(
-					crate::supervisor::resolve::TaskResolutionState::Resolved(resolved.clone()),
-				);
-				resolved
-			}
-			_ => {
-				// A missing/mismatched snapshot is uncertain. Keep the literal task and
-				// treat the current plan as pre-existing so it cannot gain authority
-				// merely because resolution state was unavailable.
-				let mut resolved =
-					crate::supervisor::resolve::ResolvedTask::self_contained(task.clone());
-				resolved.plan_at_turn_start = live_plan.clone();
-				resolved
-			}
-		};
+		let resolved_task = resolve_completion_task(
+			chat_session,
+			config,
+			&task,
+			&live_plan,
+			operation_rx.clone(),
+		)
+		.await;
 		let plan_changed_this_turn = live_plan != resolved_task.plan_at_turn_start;
 		let plan_applies = crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan);
 		crate::log_debug!(
@@ -875,18 +895,38 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 	}
 
-	// With the completion gate disabled, final self-report is the only available
-	// finalization signal. Intermediate transitions still belong to the manager.
-	if !config.supervisor.gate.enabled
+	// With the completion gate disabled, final self-report is the configured
+	// completion authority. It may retire only a plan owned by this turn;
+	// unrelated persistent plan state remains untouched.
+	if config.supervisor.enabled
+		&& config.supervisor.plan.enabled
+		&& !config.supervisor.gate.enabled
 		&& chat_session.completion_gate_eligible
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
+		&& crate::mcp::core::plan::has_active_plan()
 	{
-		let summary = chat_session
-			.last_self_report_reason
-			.as_deref()
-			.unwrap_or("Specialist reported completion");
-		if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary) {
-			crate::log_debug!("External plan finalization failed: {}", error);
+		let task = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+			.unwrap_or_default()
+			.to_string();
+		let live_plan = crate::mcp::core::plan::render_plan_details().unwrap_or_default();
+		let resolved_task = resolve_completion_task(
+			chat_session,
+			config,
+			&task,
+			&live_plan,
+			operation_rx.clone(),
+		)
+		.await;
+		if crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan) {
+			let summary = chat_session
+				.last_self_report_reason
+				.as_deref()
+				.unwrap_or("Specialist reported completion");
+			if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary) {
+				crate::log_debug!("External plan finalization failed: {}", error);
+			}
+		} else {
+			crate::log_debug!("External plan retained: completed turn does not own it");
 		}
 	}
 

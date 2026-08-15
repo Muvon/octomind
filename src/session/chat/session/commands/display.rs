@@ -2169,6 +2169,88 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// /monitor display
+// ---------------------------------------------------------------------------
+
+pub(super) fn display_monitor(output: &CommandOutput) {
+	if let CommandOutput::Monitor { data } = output {
+		let subcommand = data
+			.get("subcommand")
+			.and_then(|v| v.as_str())
+			.unwrap_or("");
+
+		match subcommand {
+			"error" => {
+				block_open("/monitor", None);
+				let msg = data
+					.get("message")
+					.and_then(|v| v.as_str())
+					.unwrap_or("unknown error");
+				block_close_err("/monitor", msg);
+				println!();
+			}
+			"list" => {
+				let is_error = data
+					.get("is_error")
+					.and_then(|v| v.as_bool())
+					.unwrap_or(false);
+				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+				if is_error {
+					block_open("/monitor", None);
+					for line in msg.lines() {
+						block_row_text(line);
+					}
+					block_close_err("/monitor", "failed");
+					println!();
+				} else if msg.contains("No running monitors") {
+					// Empty state — monitors are agent-started, so explain where
+					// they come from instead of showing a bare dead end.
+					block_open("/monitor", Some("no running monitors"));
+					block_line("Monitors are long-running watch commands the agent starts");
+					block_line("with the `monitor` tool; their output is injected as it arrives.");
+					block_blank();
+					block_section("manage");
+					let mg: &[(&str, &str)] = &[
+						("/monitor", "list running monitors"),
+						("ask the agent", "start a monitor or stop one by id"),
+					];
+					let mg_w = mg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
+					for (cmd, desc) in mg {
+						block_row(cmd, &desc.dimmed().to_string(), mg_w);
+					}
+					block_close_ok("/monitor", Some("0 running"));
+					println!();
+				} else {
+					// Entries look like "[id] desc — running Ns" — one per monitor.
+					let count = msg.lines().filter(|l| l.starts_with('[')).count();
+					block_open("/monitor", None);
+					for line in msg.lines() {
+						block_row_text(line);
+					}
+					block_blank();
+					block_line(
+						&"Stop: ask the agent to run monitor stop <id>  ·  monitors end with the session"
+							.dimmed()
+							.to_string(),
+					);
+					block_close_ok("/monitor", Some(&format!("{} running", count)));
+					println!();
+				}
+			}
+			_ => {
+				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+				block_open("/monitor", None);
+				for line in msg.lines() {
+					block_row_text(line);
+				}
+				block_close_ok("/monitor", None);
+				println!();
+			}
+		}
+	}
+}
+
 pub(super) fn display_skill(output: &CommandOutput) {
 	if let CommandOutput::Skill { data } = output {
 		let subcommand = data

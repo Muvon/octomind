@@ -271,10 +271,15 @@ pub async fn process_tool_results(
 	.await
 	{
 		log_debug!(
-			"Adaptive conversation compression failed during tool processing: {}. Continuing session.",
+			"Adaptive conversation compression failed during tool processing: {}.",
 			e
 		);
 	}
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
+		chat_session,
+		config,
+	)
+	.await?;
 
 	// CRITICAL FIX: Check cache threshold AFTER all tool results are processed
 	// This ensures cache markers are set at the correct boundary - after all parallel

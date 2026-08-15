@@ -1131,39 +1131,9 @@ pub async fn run_interactive_session(
 					.unwrap_or_default()
 					.as_millis()
 			);
-			// CONVERSATION COMPRESSION: Check if AI should compress older exchanges
-			// This happens BEFORE user message is added to ensure user's new request is not broken by summarization
-			// AI decides if compression is beneficial based on conversation history
-			//
-			// COOLDOWN RESET: A new user message restarts the exponential re-compression
-			// cooldown (consecutive_compressions doubles the required growth each
-			// autonomous cycle). Reset BEFORE the compression check; the counter only
-			// increments during autonomous (no-user-message) work via apply_compression.
 			let system_managed_input = injected_source
 				.as_ref()
 				.is_some_and(|source| source.is_system_managed());
-			if !system_managed_input {
-				chat_session.session.info.consecutive_compressions = 0;
-			}
-			let _compression_occurred =
-			match crate::session::chat::conversation_compression::check_and_compress_conversation(
-				&mut chat_session,
-				&current_config,
-				operation_rx.clone(),
-				crate::session::chat::conversation_compression::CompressionTrigger::Automatic,
-			)
-			.await
-			{
-				Ok(compressed) => compressed,
-				Err(e) => {
-					// Best-effort: log error but continue session
-					log_debug!(
-						"Conversation compression failed: {}. Continuing session.",
-						e
-					);
-					false
-				}
-			};
 
 			// CRITICAL FIX: Set processing state BEFORE adding user message
 			// This ensures cancellation cleanup works correctly if Ctrl+C is pressed

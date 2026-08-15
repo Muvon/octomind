@@ -1140,27 +1140,6 @@ async fn handle_user_message(
 		}
 	};
 
-	// Conversation compression: check if AI should compress older exchanges.
-	// Runs BEFORE user message is added to avoid breaking the new request.
-	let _compression_occurred =
-		match crate::session::chat::conversation_compression::check_and_compress_conversation(
-			&mut chat_session,
-			&config_for_role,
-			operation_rx.clone(),
-			crate::session::chat::conversation_compression::CompressionTrigger::Automatic,
-		)
-		.await
-		{
-			Ok(compressed) => compressed,
-			Err(e) => {
-				log_debug!(
-					"Conversation compression failed: {}. Continuing session.",
-					e
-				);
-				false
-			}
-		};
-
 	// Add user message
 	if let Err(e) = chat_session.add_user_message(&processed_input) {
 		sessions

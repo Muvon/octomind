@@ -291,7 +291,7 @@ pub struct SessionInfo {
 	pub compression_hint_count: usize,
 	#[serde(default)]
 	pub last_compression_hint_shown: u64,
-	// Conversation compression cooldown tracking (token-based)
+	// Exact post-compression context watermark used by the adaptive controller.
 	#[serde(default)]
 	pub context_tokens_after_last_compression: usize, // 0 = no prior compression, can compress immediately
 	// Self-tuning estimation tracking (for accuracy measurement)
@@ -301,9 +301,8 @@ pub struct SessionInfo {
 	pub api_calls_at_last_compression: usize, // API call count at last compression
 	#[serde(default)]
 	pub output_tokens_at_last_compression: u64, // Cumulative output tokens at last compression (for incremental growth rate)
-	// Exponential compression cooldown: tracks consecutive compressions without a user message.
-	// Required growth before re-compression = 10% × 2^consecutive_compressions (capped at 100%).
-	// Resets to 0 on every new user message so each turn starts fresh.
+	// Consecutive autonomous compressions. Each cycle doubles the desired quiet
+	// runway; a genuine user turn resets it so new work gets a short horizon.
 	#[serde(default)]
 	pub consecutive_compressions: u32,
 }

@@ -242,6 +242,13 @@ impl ChatSession {
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 		self.session.messages.push(message);
+		// A genuine user turn starts a new adaptive-compression phase. Preserve
+		// the exact post-compression watermark, but reset autonomous runway
+		// expansion so this request gets the normal short safety horizon. Keeping
+		// this at the shared insertion boundary makes CLI, ACP, and WebSocket
+		// behavior identical; system-managed user-role injections use a different
+		// method and intentionally do not reset it.
+		self.session.info.consecutive_compressions = 0;
 
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.

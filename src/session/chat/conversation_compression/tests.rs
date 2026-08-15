@@ -6,7 +6,7 @@ use super::knowledge::{
 	analysis_findings_tokens, format_compressed_entry_with_context, latest_analysis_findings,
 	select_findings_with_vectors, select_newest_with_budget, strip_regrown_sections,
 };
-use super::range::find_compression_range;
+use super::range::{find_compression_range, find_compression_range_preserving_turn};
 use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
 use super::{preserves_active_skills, CompressionTrigger};
 use crate::session::Message;
@@ -44,6 +44,36 @@ fn skill_msg(name: &str) -> Message {
 fn only_long_running_compression_preserves_active_skills() {
 	assert!(preserves_active_skills(CompressionTrigger::Automatic));
 	assert!(!preserves_active_skills(CompressionTrigger::Done));
+}
+
+#[test]
+fn fresh_user_turn_preserves_exact_previous_assistant_bridge() {
+	let mut latest = msg("user");
+	latest.content = "new follow-up request".to_string();
+	let mut previous = msg("assistant");
+	previous.content = "the exact answer being followed up".to_string();
+	let messages = vec![
+		msg("system"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		previous.clone(),
+		latest.clone(),
+	];
+
+	let (start_idx, end_idx) =
+		find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	assert_eq!(start_idx, 1);
+	assert_eq!(end_idx, 6);
+	assert_eq!(messages[end_idx + 1].content, previous.content);
+	assert_eq!(messages[end_idx + 2].content, latest.content);
+
+	let (_, unprotected_end) =
+		find_compression_range_preserving_turn(&messages, false, false).unwrap();
+	assert_eq!(unprotected_end, messages.len() - 1);
 }
 
 #[test]
@@ -2410,9 +2440,9 @@ fn resolve_task_intent_falls_back_to_latest_real_user_in_messages() {
 fn depth_hot_session_compresses_deeper_than_cold() {
 	// Same context, same band — a session predicted to keep growing hard must
 	// free more room than one that is winding down.
-	let hot = compression_depth(100_000, 80_000, 90_000, 200_000, 3_000.0, 50.0)
+	let hot = compression_depth(100_000, 80_000, 90_000, 3_000.0, 50.0)
 		.expect("hot session must be compressible");
-	let cold = compression_depth(100_000, 80_000, 90_000, 200_000, 500.0, MIN_RUNWAY_TURNS)
+	let cold = compression_depth(100_000, 80_000, 90_000, 500.0, MIN_RUNWAY_TURNS)
 		.expect("cold session must be compressible");
 	assert!(
 		hot > cold,
@@ -2430,7 +2460,7 @@ fn depth_hot_session_compresses_deeper_than_cold() {
 fn depth_extreme_pressure_clamps_at_deepest() {
 	// Predicted growth exceeds everything compression can free: clamp at the
 	// deepest achievable ratio instead of chasing an impossible target.
-	let ratio = compression_depth(100_000, 80_000, 90_000, 200_000, 3_000.0, 60.0)
+	let ratio = compression_depth(100_000, 80_000, 90_000, 3_000.0, 60.0)
 		.expect("must still be compressible");
 	assert!(
 		(ratio - MAX_COMPRESSION_RATIO).abs() < 1e-9,
@@ -2443,9 +2473,7 @@ fn depth_ratio_always_within_bounds() {
 	// Whatever the dynamics, a returned ratio stays inside the achievable band.
 	for growth in [1.0, 500.0, 3_000.0, 20_000.0] {
 		for runway in [MIN_RUNWAY_TURNS, 20.0, 200.0] {
-			if let Some(ratio) =
-				compression_depth(150_000, 120_000, 90_000, 200_000, growth, runway)
-			{
+			if let Some(ratio) = compression_depth(150_000, 120_000, 90_000, growth, runway) {
 				assert!(
 					(MIN_COMPRESSION_RATIO..=MAX_COMPRESSION_RATIO).contains(&ratio),
 					"ratio {ratio:.2}x out of bounds (growth={growth}, runway={runway})"
@@ -2460,14 +2488,14 @@ fn depth_infeasible_when_surviving_prefix_pins_context_above_fire_line() {
 	// Almost nothing is drainable: even the deepest fold cannot land below the
 	// fire line, so the controller must skip (caller sets the cooldown).
 	assert!(
-		compression_depth(100_000, 10_000, 90_000, 200_000, 2_000.0, 20.0).is_none(),
+		compression_depth(100_000, 10_000, 90_000, 2_000.0, 20.0).is_none(),
 		"tiny drain range over a huge surviving prefix must be infeasible"
 	);
 }
 
 #[test]
 fn depth_nothing_compressible_is_infeasible() {
-	assert!(compression_depth(100_000, 0, 90_000, 200_000, 2_000.0, 20.0).is_none());
+	assert!(compression_depth(100_000, 0, 90_000, 2_000.0, 20.0).is_none());
 }
 
 // ============================================================================

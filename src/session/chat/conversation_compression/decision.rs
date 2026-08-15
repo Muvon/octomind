@@ -34,12 +34,15 @@ pub(super) async fn calculate_compression_net_benefit(
 	session: &ChatSession,
 	config: &crate::config::Config,
 	current_tokens: usize,
+	compressible_tokens: u64,
 	compression_ratio: f64,
 ) -> f64 {
 	let total_tokens = current_tokens as f64;
-	let headroom = total_tokens - (total_tokens / compression_ratio);
+	let compressible_tokens = compressible_tokens as f64;
+	let compressed_slice_tokens = compressible_tokens / compression_ratio;
+	let headroom = compressible_tokens - compressed_slice_tokens;
 	let estimated_future_turns = estimate_future_turns(session, headroom);
-	let compressed_tokens = total_tokens / compression_ratio;
+	let compressed_tokens = total_tokens - headroom;
 
 	// Get decision model (used for compression) and session model (used for future calls)
 	let decision_model = &config.compression.decision.model;
@@ -125,9 +128,9 @@ pub(super) async fn calculate_compression_net_benefit(
 	// Use compressed_tokens as estimate, but cap at max_tokens if set
 	let decision_max_tokens = config.compression.decision.max_tokens;
 	let estimated_output_tokens = if decision_max_tokens > 0 {
-		(compressed_tokens as u64).min(decision_max_tokens as u64)
+		(compressed_slice_tokens as u64).min(decision_max_tokens as u64)
 	} else {
-		compressed_tokens as u64
+		compressed_slice_tokens as u64
 	};
 
 	// SCENARIO A: NO compression
@@ -335,13 +338,29 @@ pub(super) fn context_ceiling(session: &ChatSession, config: &crate::config::Con
 	}
 }
 
-/// Measured context growth per API call — output tokens only, since input
-/// re-bills the whole cached context and isn't new growth.
+/// Measured full-context growth per API call.
 ///
-/// INCREMENTAL vs LIFETIME: after a compression we have a checkpoint; use only
-/// the tokens/calls since it — the session may have changed intensity. Fall
-/// back to the lifetime average before the first compression.
-pub(super) fn measured_growth_rate(info: &crate::session::SessionInfo) -> f64 {
+/// After a compression, `context_tokens_after_last_compression` is an exact
+/// recount of the surviving view. Comparing the live context against that
+/// watermark captures every source of growth: assistant output, tool results,
+/// user messages, and runtime injections. Before the first compression there is
+/// no full-context checkpoint, so output-token growth is the conservative
+/// fallback.
+pub(super) fn measured_growth_rate(
+	info: &crate::session::SessionInfo,
+	current_tokens: usize,
+) -> f64 {
+	if info.context_tokens_after_last_compression > 0 {
+		let calls_since = (info.total_api_calls - info.api_calls_at_last_compression).max(1) as f64;
+		let context_growth =
+			current_tokens.saturating_sub(info.context_tokens_after_last_compression) as f64;
+		(context_growth / calls_since).max(1.0)
+	} else {
+		measured_output_growth_rate(info)
+	}
+}
+
+fn measured_output_growth_rate(info: &crate::session::SessionInfo) -> f64 {
 	if info.compression_stats.conversation_compressions > 0 {
 		let calls_since = (info.total_api_calls - info.api_calls_at_last_compression).max(1) as f64;
 		let output_since = info
@@ -353,19 +372,50 @@ pub(super) fn measured_growth_rate(info: &crate::session::SessionInfo) -> f64 {
 	}
 }
 
-/// Predicted remaining calls for depth selection: the symmetry estimate
-/// (work remaining ≈ work done) corrected by the self-tuning accuracy of the
-/// last prediction. Unlike `estimate_future_turns` this deliberately has no
-/// physical-ceiling term — the ceiling is what depth selection is solving for.
-pub(super) fn session_runway(info: &crate::session::SessionInfo) -> f64 {
-	let symmetry = info.total_api_calls as f64;
-	(symmetry * calculate_self_tuning_accuracy(info)).max(MIN_RUNWAY_TURNS)
+/// Desired quiet runway between autonomous compression cycles.
+///
+/// A genuine user turn resets `consecutive_compressions` to zero. While one
+/// turn continues autonomously, every successful compression doubles the
+/// runway, so the next soft trigger expands from 5 to 10, 20, 40... measured
+/// rounds. The hard ceiling still bounds the result.
+pub(super) fn autonomous_runway(consecutive_compressions: u32) -> f64 {
+	MIN_RUNWAY_TURNS * 2usize.saturating_pow(consecutive_compressions) as f64
+}
+
+/// Dynamic soft trigger derived from the actual post-compression working set.
+///
+/// `configured_threshold` remains the minimum fire line. After compression the
+/// trigger expands to `post_tokens + runway * growth`, capped early enough to
+/// leave `MIN_RUNWAY_TURNS` of safety below the physical ceiling.
+pub(super) fn adaptive_fire_line(
+	configured_threshold: usize,
+	ceiling: usize,
+	post_tokens: usize,
+	growth: f64,
+	runway: f64,
+) -> usize {
+	let safety_tokens = (growth * MIN_RUNWAY_TURNS) as usize;
+	let safe_ceiling = ceiling.saturating_sub(safety_tokens);
+	let baseline = configured_threshold.min(safe_ceiling);
+	if post_tokens == 0 {
+		// Before the first successful compression there is no post-state anchor.
+		// A paid model rejection still increments the autonomous counter, so grow
+		// from the configured baseline and avoid asking the same question again on
+		// the next round.
+		let extra_runway = (runway - MIN_RUNWAY_TURNS).max(0.0);
+		return baseline
+			.saturating_add((growth * extra_runway) as usize)
+			.min(safe_ceiling);
+	}
+
+	let expanded = post_tokens.saturating_add((growth * runway) as usize);
+	baseline.max(expanded.min(safe_ceiling))
 }
 
 /// Compute the compression ratio from measured session dynamics — the ladder
 /// replacement. Picks the post-compression token target directly:
 ///
-///   desired_after = ceiling − runway × growth
+///   desired_after = fire_line − runway × growth
 ///
 /// i.e. leave exactly enough headroom for the predicted remainder of the
 /// session — a hot session compresses deep, a winding-down session compresses
@@ -380,7 +430,6 @@ pub(super) fn compression_depth(
 	current_tokens: usize,
 	compressible_tokens: u64,
 	fire_line: usize,
-	ceiling: usize,
 	growth: f64,
 	runway: f64,
 ) -> Option<f64> {
@@ -398,7 +447,7 @@ pub(super) fn compression_depth(
 		return None;
 	}
 
-	let desired_after = ceiling as f64 - runway * growth;
+	let desired_after = fire_line as f64 - runway * growth;
 	let target_after = desired_after.clamp(deepest_after, upper);
 	let ratio = compressible / (target_after - surviving);
 
@@ -453,7 +502,7 @@ pub(super) fn estimate_future_turns(session: &ChatSession, headroom: f64) -> f64
 
 	// Growth rate: output tokens per call — pure new content added each turn
 	// (see measured_growth_rate for the incremental-vs-lifetime rationale).
-	let growth_rate = measured_growth_rate(info);
+	let growth_rate = measured_output_growth_rate(info);
 
 	// Physical ceiling: headroom / growth_rate — exact math, no constants.
 	// Tells us precisely how many more calls fit before the threshold is hit again.
@@ -572,25 +621,43 @@ mod tests {
 			output_tokens: 100_000,
 			api_calls_at_last_compression: 30,
 			output_tokens_at_last_compression: 90_000,
+			context_tokens_after_last_compression: 50_000,
 			..Default::default()
 		};
 		info.compression_stats.conversation_compressions = 1;
-		// 10k output over 10 calls since the checkpoint — not the lifetime 2.5k.
-		assert_eq!(measured_growth_rate(&info), 1_000.0);
+		// Full context grew 20k over 10 calls. This includes user/tool/runtime
+		// growth that output-only accounting misses.
+		assert_eq!(measured_growth_rate(&info, 70_000), 2_000.0);
 
+		info.context_tokens_after_last_compression = 0;
 		info.compression_stats.conversation_compressions = 0;
-		assert_eq!(measured_growth_rate(&info), 2_500.0);
+		assert_eq!(measured_growth_rate(&info, 70_000), 2_500.0);
 	}
 
 	#[test]
-	fn runway_floors_at_minimum_and_scales_with_accuracy() {
-		// Fresh session: no symmetry signal yet — the floor applies.
-		assert_eq!(session_runway(&SessionInfo::default()), MIN_RUNWAY_TURNS);
+	fn autonomous_runway_expands_until_a_user_turn_resets_the_counter() {
+		assert_eq!(autonomous_runway(0), 5.0);
+		assert_eq!(autonomous_runway(1), 10.0);
+		assert_eq!(autonomous_runway(2), 20.0);
+		assert_eq!(autonomous_runway(3), 40.0);
+	}
 
-		// 110 calls made; the last prediction overestimated 2x (predicted 20,
-		// got 10) → symmetry scaled down by the measured 0.5 accuracy.
-		let info = info_after_compression(20.0, 100, 110);
-		assert!((session_runway(&info) - 55.0).abs() < 1e-9);
+	#[test]
+	fn adaptive_fire_line_expands_but_keeps_ceiling_safety() {
+		assert_eq!(adaptive_fire_line(80_000, 200_000, 0, 2_000.0, 5.0), 80_000);
+		assert_eq!(
+			adaptive_fire_line(80_000, 200_000, 70_000, 2_000.0, 10.0),
+			90_000
+		);
+		assert_eq!(
+			adaptive_fire_line(80_000, 200_000, 0, 2_000.0, 10.0),
+			90_000,
+			"a pre-first-compression rejection must also buy quiet runway"
+		);
+		assert_eq!(
+			adaptive_fire_line(80_000, 100_000, 90_000, 2_000.0, 40.0),
+			90_000
+		);
 	}
 
 	#[test]

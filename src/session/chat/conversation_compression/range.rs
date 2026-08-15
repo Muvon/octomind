@@ -71,9 +71,25 @@ fn states_task(m: &crate::session::Message) -> bool {
 /// Returns `(0, 0)` when there is nothing meaningful to compress (no task-
 /// stating message, no preamble to anchor on, too few conversational messages,
 /// or the anchor is already at the tail).
+#[cfg(test)]
 pub(super) fn find_compression_range(
 	messages: &[crate::session::Message],
 	force: bool,
+) -> Result<(usize, usize)> {
+	find_compression_range_preserving_turn(messages, force, false)
+}
+
+/// Production range selection with an optional exact user-turn bridge.
+///
+/// When the newest message is a genuine user request, automatic compression
+/// stops immediately before the preceding assistant response. The surviving
+/// tail is therefore the byte-exact `[assistant response, new user request]`
+/// pair (plus any control-plane messages between them), while older history is
+/// still eligible for folding. `/done` deliberately compresses the whole task.
+pub(super) fn find_compression_range_preserving_turn(
+	messages: &[crate::session::Message],
+	force: bool,
+	preserve_recent_user_bridge: bool,
 ) -> Result<(usize, usize)> {
 	let Some(first_task) = messages.iter().position(states_task) else {
 		return Ok((0, 0));
@@ -91,7 +107,20 @@ pub(super) fn find_compression_range(
 	}
 	let start_idx = first_task - 1;
 
-	let end_idx = messages.len() - 1;
+	let tail_idx = messages.len() - 1;
+	let end_idx = if preserve_recent_user_bridge
+		&& crate::session::is_real_user_task_message(&messages[tail_idx])
+	{
+		match messages[..tail_idx]
+			.iter()
+			.rposition(|message| message.role == "assistant")
+		{
+			Some(previous_assistant_idx) => previous_assistant_idx.saturating_sub(1),
+			None => tail_idx,
+		}
+	} else {
+		tail_idx
+	};
 
 	// Minimum conversation messages to justify compression.
 	// Need at least 5 (non-force) or 3 (force/done) to produce a useful summary.
@@ -99,6 +128,7 @@ pub(super) fn find_compression_range(
 	let conv_count = messages
 		.iter()
 		.skip(start_idx)
+		.take(end_idx.saturating_sub(start_idx) + 1)
 		.filter(|m| m.role == "user" || m.role == "assistant")
 		.count();
 	if conv_count < min_conv {

@@ -40,8 +40,16 @@ pub async fn prepare_for_api_call(
 	)
 	.await
 	{
-		crate::log_debug!("Compression failed before API call: {}. Continuing.", e);
+		if crate::session::cancellation::is_cancelled(&e) {
+			return Err(e);
+		}
+		crate::log_debug!("Compression failed before API call: {}.", e);
 	}
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
+		chat_session,
+		config,
+	)
+	.await?;
 
 	// Deterministic auto-activation: when the latest message is a fresh
 	// user input and a non-active capability strongly matches (margin-gated

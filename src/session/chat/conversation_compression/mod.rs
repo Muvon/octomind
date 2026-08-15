@@ -19,9 +19,9 @@
 //!
 //! Key features:
 //! - AI decides when compression is beneficial (self-reflection)
-//! - Preserves last 4 turns (2 exchanges) uncompressed for context continuity
+//! - Preserves the active task and exact latest turn boundary for continuity
 //! - Reuses existing plan compression infrastructure
-//! - Triggered BEFORE user message is added to avoid breaking conversation flow
+//! - Preserves the exact previous-assistant/new-user bridge on fresh user turns
 
 mod ai;
 mod apply;
@@ -49,10 +49,10 @@ use ai::ask_ai_decision_and_summary;
 pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills};
 use decision::{
-	calculate_compression_net_benefit, compression_depth, context_ceiling, measured_growth_rate,
-	session_runway, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
+	adaptive_fire_line, autonomous_runway, calculate_compression_net_benefit, compression_depth,
+	context_ceiling, measured_growth_rate, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
-use range::{calculate_range_tokens, find_compression_range};
+use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 
 use crate::config::Config;
 use crate::session::chat::get_animation_manager;
@@ -79,23 +79,34 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (false, MIN_COMPRESSION_RATIO);
 	}
 
-	// HARD CEILING: the lower of the user's explicit safety limit and the model's
-	// physical window. When exceeded, force the deepest compression — but only
-	// past the exponential cooldown below. A forced compression that could not
-	// land below the ceiling leaves the watermark at/above it; re-forcing every
-	// turn after that saves nothing and re-folds the fresh summary each cycle,
-	// destroying context (the short-turn loop). The gate requires real growth
-	// above the last post-compression watermark before force fires again.
+	// HARD CEILING: unconditional last line of defense. A cooldown may delay a
+	// soft fold, but it must never permit an over-window API request. If the fold
+	// cannot get below this bound, the caller reports a hard error instead of
+	// looping compression or sending an invalid request.
 	let ceiling = context_ceiling(session, config);
+	if current_tokens >= ceiling {
+		log_debug!(
+			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x)",
+			current_tokens,
+			ceiling,
+			MAX_COMPRESSION_RATIO
+		);
+		return (true, MAX_COMPRESSION_RATIO);
+	}
 
-	// FIRE LINE: the configured threshold, pulled down when the model window is
-	// small so at least MIN_RUNWAY_TURNS turns of measured growth still fit
-	// between the fire line and the ceiling.
-	let growth = measured_growth_rate(&session.session.info);
-	let fire_line = config
-		.compression
-		.threshold
-		.min(ceiling.saturating_sub((growth * MIN_RUNWAY_TURNS) as usize));
+	// ADAPTIVE FIRE LINE: a new user turn resets the runway to five measured
+	// rounds. Each autonomous compression doubles it (5, 10, 20, 40...), so a
+	// long uninterrupted task gets progressively more room instead of repeatedly
+	// firing at the same configured threshold. Ceiling safety remains fixed.
+	let growth = measured_growth_rate(&session.session.info, current_tokens);
+	let runway = autonomous_runway(session.session.info.consecutive_compressions);
+	let fire_line = adaptive_fire_line(
+		config.compression.threshold,
+		ceiling,
+		session.session.info.context_tokens_after_last_compression,
+		growth,
+		runway,
+	);
 
 	if current_tokens < fire_line && current_tokens < ceiling {
 		log_debug!(
@@ -107,73 +118,34 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (false, MIN_COMPRESSION_RATIO);
 	}
 
-	// EXPONENTIAL COOLDOWN: Each consecutive compression (without a user message)
-	// doubles the required token growth before re-compression is allowed.
-	// 1st: 10%, 2nd: 20%, 3rd: 40%, 4th+: 80-100%.
-	// This prevents futile loops while still allowing compression when context genuinely grows.
-	let tokens_after_last = session.session.info.context_tokens_after_last_compression;
-
-	if tokens_after_last > 0 {
-		let n = session.session.info.consecutive_compressions;
-		// 0.10 * 2^n, capped at 1.0 (i.e. require 100% growth = context must double)
-		let growth_factor = (0.10 * 2.0_f64.powi(n as i32)).min(1.0);
-		let min_tokens_for_recompression =
-			(tokens_after_last as f64 * (1.0 + growth_factor)) as usize;
-		if current_tokens < min_tokens_for_recompression {
-			let actual_growth_pct =
-				((current_tokens as f64 / tokens_after_last as f64 - 1.0) * 100.0) as i32;
-			log_debug!(
-				"Exponential cooldown active (n={}): need {:.0}% growth, have {}% (current={}, required={}, base={})",
-				n,
-				growth_factor * 100.0,
-				actual_growth_pct,
-				current_tokens,
-				min_tokens_for_recompression,
-				tokens_after_last
-			);
-			return (false, MIN_COMPRESSION_RATIO);
-		}
-	}
-
-	// HARD CEILING (past cooldown): force the deepest compression, bypassing
-	// depth feasibility and cost analysis — last line of defense. The cooldown
-	// above still applies so a ceiling that compression cannot escape does not
-	// re-force every turn.
-	if current_tokens >= ceiling {
-		log_debug!(
-			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x)",
-			current_tokens,
-			ceiling,
-			MAX_COMPRESSION_RATIO
-		);
-		return (true, MAX_COMPRESSION_RATIO);
-	}
-
 	log_debug!(
-		"Compression cooldown passed: current_tokens={}, tokens_after_last_compression={}, consecutive={}",
+		"Adaptive compression fire line reached: current={}, fire_line={}, ceiling={}, post={}, growth={:.0}, runway={:.0}",
 		current_tokens,
-		tokens_after_last,
-		session.session.info.consecutive_compressions
+		fire_line,
+		ceiling,
+		session.session.info.context_tokens_after_last_compression,
+		growth,
+		runway
 	);
 
 	// ADAPTIVE DEPTH: pick the post-compression target from measured dynamics.
 	// Pure math over the drain range — no API cost, so it runs before the cost
 	// gate and its derived ratio feeds the pricing analysis.
-	let (start_idx, end_idx) = match find_compression_range(&session.session.messages, false) {
-		Ok(range) => range,
-		Err(e) => {
-			log_debug!("Failed to find compression range: {}", e);
-			return (false, MIN_COMPRESSION_RATIO);
-		}
-	};
+	let (start_idx, end_idx) =
+		match find_compression_range_preserving_turn(&session.session.messages, false, true) {
+			Ok(range) => range,
+			Err(e) => {
+				log_debug!("Failed to find compression range: {}", e);
+				return (false, MIN_COMPRESSION_RATIO);
+			}
+		};
 
 	if start_idx >= end_idx {
 		log_debug!(
-			"Invalid compression range ({} >= {}), setting cooldown to prevent re-analysis loop",
+			"Invalid compression range ({} >= {}), skipping compression",
 			start_idx,
 			end_idx
 		);
-		session.session.info.context_tokens_after_last_compression = current_tokens;
 		return (false, MIN_COMPRESSION_RATIO);
 	}
 
@@ -186,30 +158,33 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		}
 	};
 
-	let runway = session_runway(&session.session.info);
 	let Some(adjusted_ratio) = compression_depth(
 		current_tokens,
 		compressible_tokens,
 		fire_line,
-		ceiling,
 		growth,
 		runway,
 	) else {
-		// Even the deepest fold cannot land usefully below the fire line —
-		// re-firing immediately would burn a paid call for nothing. Cooldown.
+		// Even the deepest fold cannot land usefully below the fire line. This is
+		// local math (no paid call), so leave the exact compression watermark intact.
 		log_debug!(
-			"No feasible compression depth (current={}, compressible={}, fire_line={}). Setting cooldown.",
+			"No feasible compression depth (current={}, compressible={}, fire_line={}). Skipping.",
 			current_tokens,
 			compressible_tokens,
 			fire_line
 		);
-		session.session.info.context_tokens_after_last_compression = current_tokens;
 		return (false, MIN_COMPRESSION_RATIO);
 	};
 
 	// CACHE-AWARE DECISION: Calculate if compression is profitable
-	let net_benefit =
-		calculate_compression_net_benefit(session, config, current_tokens, adjusted_ratio).await;
+	let net_benefit = calculate_compression_net_benefit(
+		session,
+		config,
+		current_tokens,
+		compressible_tokens,
+		adjusted_ratio,
+	)
+	.await;
 
 	if net_benefit > 0.0 {
 		log_debug!(
@@ -225,6 +200,27 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		);
 		(false, MIN_COMPRESSION_RATIO)
 	}
+}
+
+/// Refuse an API call only when the fully materialized context remains above
+/// its usable bound after compression. This is the escape hatch for an
+/// infeasible fold (for example, an enormous protected current turn): retrying
+/// compression would destroy fresh summaries, while sending the request would
+/// violate the model window.
+pub async fn ensure_context_within_ceiling(
+	session: &mut ChatSession,
+	config: &Config,
+) -> Result<()> {
+	let current_tokens = session.get_full_context_tokens(config).await;
+	let ceiling = context_ceiling(session, config);
+	if current_tokens > ceiling {
+		return Err(anyhow::anyhow!(
+			"context remains above the usable ceiling after compression ({} > {} tokens); shorten the current request or increase the configured/model context limit",
+			current_tokens,
+			ceiling
+		));
+	}
+	Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,7 +317,12 @@ pub async fn check_and_compress_conversation(
 
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
 	// This allows us to send context chunks to AI in the same call as decision
-	let (start_idx, end_idx) = find_compression_range(&session.session.messages, force)?;
+	let preserve_recent_user_bridge = !force_done;
+	let (start_idx, end_idx) = find_compression_range_preserving_turn(
+		&session.session.messages,
+		force,
+		preserve_recent_user_bridge,
+	)?;
 
 	// end_idx is already safe from find_compression_range
 
@@ -357,19 +358,15 @@ pub async fn check_and_compress_conversation(
 
 	// COMPRESS-ALL: Extract user messages BEFORE compression.
 	//
-	// Two slots feed user intent into the post-compression session:
+	// Two paths feed user intent into the post-compression session:
 	//   1. USER TASKS section inside the summary text — older real user
-	//      messages (excluding the most recent one), full text, never
+	//      messages, full text, never
 	//      truncated. The summary becomes input to the next compression
 	//      cycle's AI, so untruncated text is what makes intent durable
 	//      across multiple compressions.
-	//   2. Re-injected trailing user message right after the summary — a
-	//      synthetic <continuation> wrapper around the most recent real
-	//      user intent. Signals to the model that this is an in-progress
-	//      task, not a fresh start, and supplies the focus ask.
-	//
-	// The two slots are disjoint by design: the most recent user msg lives
-	// ONLY in slot 2, older ones live ONLY in slot 1. No duplication.
+	//   2. The current turn is either kept structurally as the exact previous
+	//      assistant/new-user pair, or carried across a later autonomous fold in
+	//      a continuation envelope containing both exact bodies.
 	//
 	// Filters excluded from `all_user_msgs`:
 	//   - skill messages (`<skill name="…">…</skill>`) — preserved
@@ -397,36 +394,59 @@ pub async fn check_and_compress_conversation(
 	//   2. The most recent real user message in the surviving prefix
 	//      [..=start_idx] (covers a single-turn loop where the anchor IS the
 	//      user message).
-	let last_user_message: Option<crate::session::Message> = match all_user_msgs.last() {
-		Some(m) => Some((*m).clone()),
-		None => session.session.messages[start_idx + 1..=end_idx]
-			.iter()
-			.rev()
-			.find(|m| m.role == "user" && apply::is_continuation_message(&m.content))
-			.and_then(|m| apply::extract_continuation_task(&m.content))
-			.map(|task| crate::session::Message {
-				role: "user".to_string(),
-				content: task,
-				..Default::default()
-			})
-			.or_else(|| {
-				session.session.messages[..=start_idx]
-					.iter()
-					.rev()
-					.find(user_msg_filter)
-					.cloned()
-			}),
-	};
+	let latest_real_user_idx = session
+		.session
+		.messages
+		.iter()
+		.rposition(crate::session::is_real_user_task_message);
+	let last_user_message: Option<crate::session::Message> = latest_real_user_idx
+		.and_then(|idx| session.session.messages.get(idx).cloned())
+		.or_else(|| {
+			session.session.messages[start_idx + 1..=end_idx]
+				.iter()
+				.rev()
+				.find(|m| m.role == "user" && apply::is_continuation_message(&m.content))
+				.and_then(|m| apply::extract_continuation_task(&m.content))
+				.map(|task| crate::session::Message {
+					role: "user".to_string(),
+					content: task,
+					..Default::default()
+				})
+				.or_else(|| {
+					session.session.messages[..=start_idx]
+						.iter()
+						.rev()
+						.find(user_msg_filter)
+						.cloned()
+				})
+		});
+	let previous_assistant_response = latest_real_user_idx
+		.and_then(|user_idx| {
+			session.session.messages[..user_idx]
+				.iter()
+				.rev()
+				.find(|message| message.role == "assistant")
+				.map(|message| message.content.clone())
+		})
+		.or_else(|| {
+			session.session.messages[start_idx + 1..=end_idx]
+				.iter()
+				.rev()
+				.find(|message| {
+					message.role == "user" && apply::is_continuation_message(&message.content)
+				})
+				.and_then(|message| apply::extract_previous_assistant_response(&message.content))
+		});
 
-	// USER TASKS: older real user requests, untruncated. The most recent
-	// one is excluded — it lives in the continuation wrapper (slot 2)
-	// instead. Take up to 4 to bound summary growth while preserving
-	// recent task history.
+	// USER TASKS: drained real user requests, untruncated. Exclude the latest
+	// only when it was drained and will be carried by the continuation envelope;
+	// a structurally preserved latest request is outside this list already.
 	let user_tasks_msgs: Vec<String> = {
-		let exclude_last = if all_user_msgs.len() > 1 {
+		let latest_user_is_drained = latest_real_user_idx.is_some_and(|idx| idx <= end_idx);
+		let exclude_last = if latest_user_is_drained && !all_user_msgs.is_empty() {
 			&all_user_msgs[..all_user_msgs.len() - 1]
 		} else {
-			&[][..]
+			&all_user_msgs[..]
 		};
 		exclude_last
 			.iter()
@@ -575,14 +595,8 @@ pub async fn check_and_compress_conversation(
 						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
 						error
 					);
-					// COOLDOWN ON REJECTION: without this, the pressure check
-					// refires the full (paid) compression call on every turn
-					// and gets rejected again — a token-burning loop. Record
-					// the current context as the cooldown baseline so the next
-					// attempt waits for real growth, exactly like the other
-					// skip paths in should_check_compression.
-					session.session.info.context_tokens_after_last_compression =
-						current_context_tokens as usize;
+					// A paid rejection expands the next fire line without
+					// overwriting the exact successful-compression watermark.
 					session.session.info.consecutive_compressions += 1;
 					return Ok(false);
 				}
@@ -616,11 +630,13 @@ pub async fn check_and_compress_conversation(
 		current_context_tokens,
 		user_tasks_msgs,
 		last_user_message,
+		previous_assistant_response,
 		preserved_skills,
 		config,
 		pact.as_ref(),
 		pact_validation.as_ref(),
 		force,
+		preserve_recent_user_bridge && end_idx + 1 < session.session.messages.len(),
 	)
 	.await?;
 
@@ -643,23 +659,20 @@ pub async fn check_and_compress_conversation(
 	}
 
 	if force_done {
-		// /done is a task boundary: restart the exponential counter. The
-		// watermark recorded by apply_compression is kept — zeroing it would
-		// disable the growth gate and re-compress on the very next short turn,
-		// refolding the fresh summary and destroying context.
+		// /done starts a new user-task phase, so autonomous expansion resets.
+		// Keep the exact post-compression watermark: the next turn can derive its
+		// fire line from real surviving context instead of reverting to a blind
+		// configured threshold.
 		session.session.info.consecutive_compressions = 0;
-		log_debug!("/done compression: consecutive counter reset, watermark kept");
+		log_debug!("/done compression: autonomous runway reset for new task phase");
 	} else {
-		// EXPONENTIAL COOLDOWN: Increment consecutive compressions counter.
-		// Each consecutive compression (without a user message) doubles the required
-		// token growth before the next compression is allowed.
-		// Resets to 0 on every new user message (see main_loop.rs).
+		// Each uninterrupted autonomous fold expands the next quiet runway.
+		// Genuine user input resets this centrally in add_user_message.
 		session.session.info.consecutive_compressions += 1;
 		log_debug!(
-			"Exponential cooldown: consecutive_compressions now {} (next requires {:.0}% growth)",
+			"Adaptive runway: consecutive_compressions={} (next runway {:.0} calls)",
 			session.session.info.consecutive_compressions,
-			(0.10 * 2.0_f64.powi(session.session.info.consecutive_compressions as i32)).min(1.0)
-				* 100.0
+			autonomous_runway(session.session.info.consecutive_compressions)
 		);
 	}
 

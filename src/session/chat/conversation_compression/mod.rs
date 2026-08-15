@@ -80,18 +80,13 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	}
 
 	// HARD CEILING: the lower of the user's explicit safety limit and the model's
-	// physical window. When exceeded, force the deepest compression unconditionally
-	// — no cooldown, no cost analysis, no feasibility checks. Last line of defense.
+	// physical window. When exceeded, force the deepest compression — but only
+	// past the exponential cooldown below. A forced compression that could not
+	// land below the ceiling leaves the watermark at/above it; re-forcing every
+	// turn after that saves nothing and re-folds the fresh summary each cycle,
+	// destroying context (the short-turn loop). The gate requires real growth
+	// above the last post-compression watermark before force fires again.
 	let ceiling = context_ceiling(session, config);
-	if current_tokens >= ceiling {
-		log_debug!(
-			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x, bypasses all gates)",
-			current_tokens,
-			ceiling,
-			MAX_COMPRESSION_RATIO
-		);
-		return (true, MAX_COMPRESSION_RATIO);
-	}
 
 	// FIRE LINE: the configured threshold, pulled down when the model window is
 	// small so at least MIN_RUNWAY_TURNS turns of measured growth still fit
@@ -102,7 +97,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		.threshold
 		.min(ceiling.saturating_sub((growth * MIN_RUNWAY_TURNS) as usize));
 
-	if current_tokens < fire_line {
+	if current_tokens < fire_line && current_tokens < ceiling {
 		log_debug!(
 			"Below compression fire line (current: {}, fire line: {}, ceiling: {})",
 			current_tokens,
@@ -138,6 +133,20 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			);
 			return (false, MIN_COMPRESSION_RATIO);
 		}
+	}
+
+	// HARD CEILING (past cooldown): force the deepest compression, bypassing
+	// depth feasibility and cost analysis — last line of defense. The cooldown
+	// above still applies so a ceiling that compression cannot escape does not
+	// re-force every turn.
+	if current_tokens >= ceiling {
+		log_debug!(
+			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x)",
+			current_tokens,
+			ceiling,
+			MAX_COMPRESSION_RATIO
+		);
+		return (true, MAX_COMPRESSION_RATIO);
 	}
 
 	log_debug!(
@@ -633,11 +642,13 @@ pub async fn check_and_compress_conversation(
 		}
 	}
 
-	if force {
-		// /done resets cooldown — treat as fresh session phase boundary.
+	if force_done {
+		// /done is a task boundary: restart the exponential counter. The
+		// watermark recorded by apply_compression is kept — zeroing it would
+		// disable the growth gate and re-compress on the very next short turn,
+		// refolding the fresh summary and destroying context.
 		session.session.info.consecutive_compressions = 0;
-		session.session.info.context_tokens_after_last_compression = 0;
-		log_debug!("Forced compression: cooldown counters reset (fresh session phase)");
+		log_debug!("/done compression: consecutive counter reset, watermark kept");
 	} else {
 		// EXPONENTIAL COOLDOWN: Increment consecutive compressions counter.
 		// Each consecutive compression (without a user message) doubles the required

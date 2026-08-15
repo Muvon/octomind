@@ -766,9 +766,9 @@ verifier_model = "octohub:auto"
 # unchanged tree; the framework does not hard-code program names, so it works
 # for any domain (build/test/lint, booking confirmations, health checks, etc.).
 require_check_after_mutation = true
-# Free deterministic pre-gate (no model call): refuse a `done` claim while the
-# live plan checklist still has open items. The external manager advances it
-# from runtime evidence; the specialist has no plan mutation tool.
+# Include relevant plan outcomes in independent completion verification. Open
+# checklist state alone never forces a re-run: one verified deliverable may
+# satisfy several phases, which are then closed atomically on PASS.
 require_plan_complete = true
 # Max tokens for the verifier exchange: the call's output budget (a reasoning
 # verifier thinks before its verdict) and the token cap on the assembled turn
@@ -790,8 +790,10 @@ max_tokens = 2048
 # the request, active plan, capabilities, and evidence are separate input. Set
 # this to 0 to omit trajectory records while retaining those authoritative fields.
 trajectory_max_tokens = 4096
-# Automatic adoption is conservative so small or repetitive tasks stay plan-free.
-# Set either threshold to 0 to disable automatic adoption; explicit signals still work.
+# These thresholds only nominate broad work. The task classifier rejects
+# answer-only turns, then the planner considers genuinely remaining outcomes.
+# Set either threshold to 0 to disable automatic adoption; explicit signals
+# still pass through the same semantic guards.
 adoption_min_actions = 8
 adoption_min_distinct_actions = 4
 

@@ -243,10 +243,10 @@ pub async fn process_tool_results(
 				config.supervisor.plan.adoption_min_actions,
 				config.supervisor.plan.adoption_min_distinct_actions,
 			) {
+			// Action breadth nominates the turn for evaluation; it does not prove
+			// the work is multi-phase. Reconciliation first applies the task
+			// classifier, then the planner considers only remaining outcomes.
 			chat_session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
-			crate::supervisor::notify(
-				"work became multi-phase — external planner evaluating remaining outcomes",
-			);
 		}
 		animation_manager.set_phase("Reconciling plan …").await;
 		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(

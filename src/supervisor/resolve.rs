@@ -184,11 +184,11 @@ pub struct ResolvedTask {
 	/// verifying the work ("don't run cargo — I'll run it myself"), in any
 	/// language. The mutation pre-gate stands down when true.
 	pub forbids_verification: bool,
-	/// Classifier verdict: the turn asks solely for information (a question,
-	/// status report, confirmation) and requests no work. The plan pre-gates
-	/// stand down for a pre-existing unchanged plan when true — a side question
-	/// during a long-running plan is complete once answered, whatever the plan's
-	/// open items. Never affects the mutation pre-gate or the LLM verify-gate.
+	/// Classifier verdict: the turn's sole deliverable is conversational
+	/// information, including an observe-only review/audit that may require many
+	/// tool calls. Automatic plan formation is suppressed, and a pre-existing
+	/// unchanged plan stands down, when true. Never affects the mutation
+	/// pre-gate or the LLM verify-gate.
 	pub answer_only: bool,
 	/// Request-derived checklist of concrete observations that would demonstrate
 	/// fulfillment, compiled from the request ALONE — before and independent of

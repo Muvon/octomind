@@ -262,10 +262,9 @@ pub struct GateConfig {
 	/// unchanged tree; the framework does not hard-code program names, so it is
 	/// domain-agnostic out of the box.
 	pub require_check_after_mutation: bool,
-	/// Free deterministic pre-gate: refuse a self-reported `done` while the live
-	/// plan checklist still has open items — the drift-by-omission failure. The
-	/// specialist must finish them while the external manager owns transitions. Runs
-	/// before the LLM verify-gate (zero model calls).
+	/// Include a relevant live plan's outcomes in independent completion
+	/// verification. Checklist status is not proof of incompletion: one verified
+	/// deliverable may satisfy several phases and closes them atomically on PASS.
 	pub require_plan_complete: bool,
 	/// Max tokens for the verifier exchange, like every model block: the
 	/// call's output budget (a reasoning verifier thinks before its verdict —
@@ -287,10 +286,11 @@ pub struct PlanConfig {
 	/// Locally enforced input budget for only the bounded current-phase
 	/// assistant/tool trajectory. Other planner-input fields are separate.
 	pub trajectory_max_tokens: usize,
-	/// Successful actions required before the runtime may automatically ask
-	/// whether broad work needs a plan. `0` disables automatic adoption.
+	/// Successful actions required before the runtime may nominate broad work
+	/// for automatic planning. The task classifier and planner may still reject
+	/// it. `0` disables automatic adoption.
 	pub adoption_min_actions: usize,
-	/// Distinct successful actions required by the same detector. `0` disables
-	/// automatic adoption.
+	/// Distinct successful actions required by the same nomination detector. `0`
+	/// disables automatic adoption.
 	pub adoption_min_distinct_actions: usize,
 }

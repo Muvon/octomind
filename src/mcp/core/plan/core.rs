@@ -221,7 +221,19 @@ pub fn sidecar_revise(
 	Ok(())
 }
 
-/// Commit a staged finalization after the completion gate accepts the result.
+/// Complete every still-open bookkeeping item after completion is accepted by
+/// the configured authority (independent verifier, or final `done` when that
+/// gate is disabled). The plan is a decomposition aid, not a second source of
+/// requirements; its cursor may legitimately lag when one deliverable
+/// evidences several phases at once.
+fn finish_accepted_plan(storage: &mut dyn PlanStorage, summary: &str) -> Result<()> {
+	while storage.has_more_tasks()? {
+		storage.complete_current_task(summary.to_string())?;
+	}
+	storage.complete_plan(summary.to_string())
+}
+
+/// Commit an atomic finalization after completion is accepted.
 pub fn sidecar_finish(summary: &str) -> Result<()> {
 	let summary = summary.trim();
 	if summary.is_empty() {
@@ -232,16 +244,7 @@ pub fn sidecar_finish(summary: &str) -> Result<()> {
 	if !storage.has_active_plan().unwrap_or(false) {
 		return Ok(());
 	}
-	let remaining = storage
-		.get_total_task_count()?
-		.saturating_sub(storage.get_current_task_index()?);
-	if remaining > 1 {
-		anyhow::bail!("Cannot finish while multiple plan tasks remain");
-	}
-	if storage.has_more_tasks()? {
-		storage.complete_current_task(summary.to_string())?;
-	}
-	storage.complete_plan(summary.to_string())?;
+	finish_accepted_plan(&mut *storage, summary)?;
 	storage.clear_plan()?;
 	drop(storage);
 	clear_task_start_index();
@@ -1110,8 +1113,8 @@ fn open_titles(task_list: Vec<(String, String, TaskStatus)>) -> Vec<String> {
 		.collect()
 }
 
-/// Free pre-gate signal: titles of open items in the active plan. Empty when
-/// no active plan or every task is completed.
+/// Titles of open items in the active plan. Empty when no plan is active or
+/// every task is completed.
 pub fn open_plan_tasks() -> Vec<String> {
 	let storage = get_storage();
 	let storage = storage.lock().unwrap();
@@ -1314,5 +1317,45 @@ mod tests {
 		assert!(sidecar_tasks(&six, 2).is_ok());
 		let seven = vec![task; 7];
 		assert!(sidecar_tasks(&seven, 2).is_err());
+	}
+
+	#[test]
+	fn verified_finish_closes_every_remaining_plan_item_atomically() {
+		let mut storage = MemoryPlanStorage::new();
+		storage
+			.create_plan(
+				"review".to_string(),
+				["inspect", "synthesize", "deliver"]
+					.into_iter()
+					.map(|title| {
+						TaskData::new(
+							title.to_string(),
+							format!("Done when: {title} is evidenced"),
+							None,
+							None,
+						)
+					})
+					.collect(),
+			)
+			.unwrap();
+		storage
+			.complete_current_task("inspection already evidenced".to_string())
+			.unwrap();
+
+		finish_accepted_plan(&mut storage, "full deliverable verified").unwrap();
+
+		assert!(!storage.has_active_plan().unwrap());
+		assert_eq!(storage.get_completed_task_count().unwrap(), 3);
+		let tasks = &storage.get_plan().unwrap().tasks;
+		assert_eq!(
+			tasks[0].summary.as_deref(),
+			Some("inspection already evidenced")
+		);
+		assert!(tasks
+			.iter()
+			.all(|task| matches!(task.status, TaskStatus::Completed)));
+		assert!(tasks[1..]
+			.iter()
+			.all(|task| task.summary.as_deref() == Some("full deliverable verified")));
 	}
 }

@@ -90,8 +90,13 @@ outranks the narrative:
   text on its own terms.
 
 You may also receive an <active_plan>. It is execution state, not another user
-request. Use it to detect unfinished work in the current plan, but never treat the checklist
-as evidence that the user requested anything absent from the <current_user_turn>.
+request. Use each phase's outcome as a decomposition of the current request, but never treat
+the checklist as evidence that the user requested anything absent from the
+<current_user_turn>. Plan status can lag reality when one deliverable evidences several phases:
+an item marked current or pending is NOT itself a gap. Judge whether its stated outcome is
+demonstrated by the final result, recorded actions, or ground truth. PASS authorizes the runtime
+to close every remaining bookkeeping item atomically; flag only the specific outcome whose
+evidence is actually missing.
 
 You may also receive <ground_truth> — runtime-gathered state (the working-tree diff of the
 files the agent changed, current content of new files, and the last command's recorded
@@ -476,10 +481,9 @@ impl EvidenceLedger {
 	/// both configured thresholds has become broad enough to ask the external
 	/// planner; distinct reads, searches, sends, edits, queries, and other
 	/// actions all count. It catches work that *became* broad
-	/// during execution without imposing planning on small tasks. The external
-	/// planner still makes the semantic yes/no decision after the specialist
-	/// acknowledges the nudge; this detector only establishes enough action
-	/// breadth to make that decision worthwhile.
+	/// during execution without imposing planning on small tasks. This is only a
+	/// nomination: the current-task classifier rejects answer-only work, then the
+	/// external planner makes the remaining semantic yes/no decision.
 	pub fn plan_adoption_signal(&self, min_actions: usize, min_distinct_actions: usize) -> bool {
 		if min_actions == 0 || min_distinct_actions == 0 {
 			return false;
@@ -668,28 +672,6 @@ fn git_diff(paths: &[String]) -> String {
 		}
 		s.push_str(&d);
 	}
-	s
-}
-
-/// Marker embedded in the plan pre-gate advisory so re-runs within the same
-/// turn don't nudge twice (mirrors the mutation pre-gate marker).
-pub const PLAN_GATE_MARKER: &str = "octomind:pre_gate_open_plan";
-
-/// Advisory injected when `done` is self-reported while the live plan still
-/// has open items — the drift-by-omission failure: parts of the decomposed
-/// task silently dropped. Free and deterministic; shares the gate budget.
-pub fn format_plan_advisory(open: &[String]) -> String {
-	let mut s = format!(
-		"<pay-attention>\n<!-- {PLAN_GATE_MARKER} -->\nYou reported done, but your plan still has open items:\n"
-	);
-	for t in open {
-		s.push_str("- ");
-		s.push_str(&xml_text(t));
-		s.push('\n');
-	}
-	s.push_str(
-		"The task is not done while several phases remain. Continue the current phase and emit the hidden `phase_complete` signal alongside the next real work batch when its outcome is evidenced. If the remaining route is invalid, emit `reassess` with the reason in `focus`; the external manager owns the transition. Then re-report your status.\n</pay-attention>",
-	);
 	s
 }
 
@@ -1344,15 +1326,6 @@ mod tests {
 			1,
 		);
 		assert!(l.render().contains('…'));
-	}
-
-	#[test]
-	fn plan_advisory_lists_items_and_carries_marker() {
-		let a = format_plan_advisory(&["wire it up".into(), "add tests".into()]);
-		assert!(is_supervisor_injection(&a));
-		assert!(a.contains(PLAN_GATE_MARKER));
-		assert!(a.contains("- wire it up\n"));
-		assert!(a.contains("- add tests\n"));
 	}
 
 	#[test]

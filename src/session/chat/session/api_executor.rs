@@ -453,11 +453,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	}
 
 	// External plan manager: reconcile a signal emitted on the turn's FINAL
-	// (tool-less) response before any gate reads plan state. Mid-turn signals
+	// (tool-less) response before completion verification reads plan state. Mid-turn signals
 	// reconcile at the tool-result boundary; a final-message `phase_complete`
-	// crosses no such boundary, so without this the plan pre-gate below would
-	// block on a stale open-task count and exhaust the repair budget against
-	// plan state the manager never saw. Free no-op without a pending signal.
+	// crosses no such boundary, so without this the verifier would see plan state
+	// the manager never reconciled. Free no-op without a pending signal.
 	if config.supervisor.enabled
 		&& config.supervisor.plan.enabled
 		&& chat_session.pending_plan_signal.is_some()
@@ -550,8 +549,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or_default()
 			.to_string();
 		let live_plan = crate::mcp::core::plan::render_plan_details().unwrap_or_default();
-		// Resolve references before any deterministic gate that consults session-
-		// persistent state. Otherwise an old open plan could block a new unrelated
+		// Resolve references before completion checks consult session-persistent
+		// state. Otherwise an old plan could gain scope over a new unrelated
 		// self-contained request before the resolver gets a chance to reject it.
 		let resolved_task = match chat_session.gate_task.clone() {
 			Some(crate::supervisor::resolve::TaskResolutionState::Resolved(resolved))
@@ -641,8 +640,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// text, not state — "run a check" is a category error there, and the
 		// tree fingerprint may have moved for reasons outside the agent (a
 		// concurrent editor, a generated artifact). The classifier's
-		// answer_only verdict stands this pre-gate down the same way it stands
-		// down the plan pre-gates; the LLM verify-gate still judges the report
+		// answer_only verdict stands this pre-gate down just as it suppresses
+		// automatic plan formation; the LLM verify-gate still judges the report
 		// itself under its observe-only rules.
 		if config.supervisor.gate.require_check_after_mutation
 			&& !resolved_task.answer_only
@@ -684,64 +683,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				sink,
 			))
 			.await;
-		}
-
-		// Free plan pre-gate (no model call): a self-reported `done` while the live
-		// plan still has open items is drift-by-omission — parts of the decomposed
-		// task silently dropped. The specialist must continue while the external
-		// manager owns transitions. Same marker/budget pattern as mutation above.
-		if config.supervisor.gate.require_plan_complete && plan_applies {
-			let open = crate::mcp::core::plan::open_plan_tasks();
-			// The final current phase is judged together with the final answer and
-			// committed only after PASS. More than one open phase is still drift.
-			let blocking_open = open.len().saturating_sub(1);
-			let already_nudged_plan = {
-				let msgs = &chat_session.session.messages;
-				msgs[turn_start..].iter().any(|m| {
-					m.content
-						.contains(crate::supervisor::gate::PLAN_GATE_MARKER)
-				})
-			};
-			if blocking_open > 0 {
-				let next_iteration = chat_session.nudge_iterations.saturating_add(1);
-				if next_iteration >= config.supervisor.gate.max_iterations {
-					chat_session.nudge_iterations = next_iteration;
-					chat_session.gate_failed = true;
-					chat_session.pending_plan_signal = None;
-					crate::supervisor::stats::plan_block();
-					crate::supervisor::stats::gate_fail();
-					crate::supervisor::notify(&format!(
-						"{} plan phase(s) remain open — repair budget exhausted",
-						blocking_open
-					));
-					return Ok(());
-				}
-				if !already_nudged_plan {
-					let note = crate::supervisor::gate::format_plan_advisory(&open);
-					chat_session.add_system_managed_user_message(&note)?;
-				}
-				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.nudge_iterations = next_iteration;
-				crate::supervisor::stats::plan_block();
-				crate::supervisor::notify(&format!(
-					"done claimed with {} open plan item(s) — re-running",
-					open.len()
-				));
-				crate::log_debug!(
-					"Plan pre-gate: {} open item(s); re-running turn (iter {})",
-					open.len(),
-					chat_session.nudge_iterations
-				);
-				return Box::pin(execute_api_call_and_process_response(
-					chat_session,
-					config,
-					role,
-					operation_rx,
-					mode,
-					sink,
-				))
-				.await;
-			}
 		}
 
 		// Free evidence check (no model call): validate only explicit
@@ -823,7 +764,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let actions = chat_session.evidence.render();
 		// Only a relevant pre-existing plan or a plan changed by this turn reaches
 		// the verifier. Unrelated old plan state remains alive but cannot add scope.
-		let plan = if plan_applies {
+		let plan = if plan_applies && config.supervisor.gate.require_plan_complete {
 			live_plan
 		} else {
 			String::new()
@@ -860,10 +801,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		animation_manager.clear_phase();
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
-				if plan_applies && crate::mcp::core::plan::open_plan_tasks().len() <= 1 {
+				if plan_applies {
 					let summary = claim.as_deref().unwrap_or("Completion verified");
-					if let Err(error) =
-						crate::supervisor::plan::finalize_after_verification(summary)
+					if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary)
 					{
 						chat_session.gate_failed = true;
 						crate::supervisor::stats::gate_fail();
@@ -940,13 +880,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	if !config.supervisor.gate.enabled
 		&& chat_session.completion_gate_eligible
 		&& chat_session.last_self_report == Some(crate::supervisor::detect::SelfReport::Done)
-		&& crate::mcp::core::plan::open_plan_tasks().len() <= 1
 	{
 		let summary = chat_session
 			.last_self_report_reason
 			.as_deref()
 			.unwrap_or("Specialist reported completion");
-		if let Err(error) = crate::supervisor::plan::finalize_after_verification(summary) {
+		if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary) {
 			crate::log_debug!("External plan finalization failed: {}", error);
 		}
 	}

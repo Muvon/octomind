@@ -285,7 +285,13 @@ struct LedgerEntry {
 /// tool loop from actual executions, so the agent's narrative cannot alter
 /// them. Reset on each genuine user turn; gate/steer re-runs (system-managed
 /// messages) keep accumulating into the same task slice.
-#[derive(Debug, Default)]
+///
+/// Serialized into `SessionInfo` on every save so a resumed session restores
+/// the still-open turn's recorded actions — otherwise the gate re-derives its
+/// evidence conditions from the persisted request while the ledger restarts
+/// empty, guaranteeing false "no recorded action" gaps after any resume.
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct EvidenceLedger {
 	entries: VecDeque<LedgerEntry>,
 	dropped: usize,
@@ -1387,6 +1393,38 @@ mod tests {
 		assert!(ledger.citation_grounds().is_empty());
 		ledger.record_citation_ground("current task output");
 		assert_eq!(ledger.citation_grounds(), ["current task output"]);
+	}
+
+	#[test]
+	fn ledger_round_trips_through_serde_for_session_persistence() {
+		// The ledger is snapshotted into SessionInfo on save and restored on
+		// resume — a lossy round-trip would silently re-introduce the false
+		// "no recorded action" gaps this persistence exists to prevent.
+		let mut l = EvidenceLedger::default();
+		l.record(
+			"text_editor",
+			&serde_json::json!({"path":"src/a.rs","command":"str_replace"}),
+			true,
+			false,
+			42,
+		);
+		l.record_command_output("cargo test", "ok. 12 passed");
+		l.record_citation_ground("official pricing page body");
+		let json = serde_json::to_string(&l).expect("ledger serializes");
+		let restored: EvidenceLedger = serde_json::from_str(&json).expect("ledger deserializes");
+		assert_eq!(restored.render(), l.render());
+		assert_eq!(restored.mutated_paths(), l.mutated_paths());
+		assert_eq!(restored.recent_commands(), l.recent_commands());
+		assert_eq!(restored.citation_grounds(), l.citation_grounds());
+	}
+
+	#[test]
+	fn ledger_deserializes_from_empty_object_for_legacy_sessions() {
+		// Session files written before the ledger was persisted carry no
+		// evidence data; #[serde(default)] must accept a bare object.
+		let restored: EvidenceLedger = serde_json::from_str("{}").expect("legacy default");
+		assert!(restored.render().is_empty());
+		assert!(restored.mutated_paths().is_empty());
 	}
 
 	#[test]

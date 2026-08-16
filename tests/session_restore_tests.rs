@@ -114,6 +114,8 @@ mod session_restore_tests {
 			api_calls_at_last_compression: 0,
 			output_tokens_at_last_compression: 0,
 			consecutive_compressions: 0,
+			verification_policy: Default::default(),
+			evidence: Default::default(),
 		};
 
 		let summary = serde_json::json!({

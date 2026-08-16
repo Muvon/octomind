@@ -311,6 +311,13 @@ pub struct SessionInfo {
 	/// compression.
 	#[serde(default)]
 	pub verification_policy: crate::supervisor::VerificationPolicy,
+	/// Verify-gate evidence ledger snapshot for the still-open turn. Synced on
+	/// every save and restored on resume, so the gate's ground truth survives a
+	/// process restart the same way the task request does — without it, resumed
+	/// turns re-derive evidence conditions from the persisted request but judge
+	/// them against an empty ledger, producing false verification gaps.
+	#[serde(default)]
+	pub evidence: crate::supervisor::gate::EvidenceLedger,
 }
 
 #[derive(Debug, Clone)]
@@ -440,6 +447,7 @@ impl Session {
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
 				verification_policy: crate::supervisor::VerificationPolicy::default(),
+				evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			},
 
 			messages: Vec::new(),

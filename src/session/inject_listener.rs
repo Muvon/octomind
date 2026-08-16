@@ -14,9 +14,11 @@
 
 //! Unix Domain Socket listener for external message injection.
 //!
-//! Each running session binds a UDS at `<run_dir>/<name>.sock` and writes its
+//! Each running session binds a UDS at `<run_dir>/<stem>.sock` and writes its
 //! PID to `<run_dir>/<name>.pid`, where the run dir is `$XDG_RUNTIME_DIR/octomind`
-//! or `<system tmp>/octomind-<uid>` (see `directories::get_run_dir`).
+//! or `<system tmp>/octomind-<uid>` (see `directories::get_run_dir`). The socket
+//! stem shortens long session names to fit the sun_path limit (see
+//! `directories::session_socket_path`).
 //!
 //! The `octomind send` command connects to this socket, sends a UTF-8 message,
 //! shuts down the write half, and reads back `"ok\n"` or `"error: ...\n"`.
@@ -35,7 +37,7 @@ mod imp {
 	use crate::{log_debug, log_error};
 
 	fn socket_path(session_name: &str) -> anyhow::Result<PathBuf> {
-		Ok(crate::directories::get_run_dir()?.join(format!("{}.sock", session_name)))
+		crate::directories::session_socket_path(session_name)
 	}
 
 	fn pid_path(session_name: &str) -> anyhow::Result<PathBuf> {

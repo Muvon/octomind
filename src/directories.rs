@@ -102,6 +102,58 @@ pub fn get_run_dir() -> Result<PathBuf> {
 
 	Ok(run_dir)
 }
+/// Longest `sun_path` on supported Unix platforms, NUL included — macOS is
+/// the strictest at 104 bytes (Linux allows 108).
+#[cfg(unix)]
+const SUN_PATH_MAX: usize = 104;
+
+/// Path of a session's inject socket: `<run_dir>/<stem>.sock`.
+///
+/// `stem` is the session name when the full path fits `sun_path`; otherwise the
+/// name is cut to fit and suffixed with 8 hex chars of its SHA-256 so the path
+/// stays unique and stable. macOS `$TMPDIR` run dirs are long enough that full
+/// session names overflow the limit and `bind` fails with "path must be shorter
+/// than SUN_LEN". `octomind send` derives the same path, so both ends meet.
+#[cfg(unix)]
+pub fn session_socket_path(session_name: &str) -> Result<PathBuf> {
+	use sha2::{Digest, Sha256};
+
+	let run_dir = get_run_dir()?;
+	// "+2" covers the '/' between dir and file and the NUL terminator.
+	let budget = SUN_PATH_MAX
+		.checked_sub(run_dir.as_os_str().len() + ".sock".len() + 2)
+		.ok_or_else(|| {
+			anyhow::anyhow!(
+				"run dir {} is too long for a Unix socket path",
+				run_dir.display()
+			)
+		})?;
+	// Shortest possible shortened stem is "-<8 hex>" (9 bytes).
+	if budget < 9 {
+		anyhow::bail!(
+			"run dir {} leaves too little room for a Unix socket path",
+			run_dir.display()
+		);
+	}
+
+	let stem = if session_name.len() <= budget {
+		session_name.to_owned()
+	} else {
+		let digest = Sha256::digest(session_name.as_bytes());
+		let hash: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+		let keep = budget - hash.len() - 1;
+		// Cut on a char boundary — names are ASCII today, but don't panic if not.
+		let keep = session_name
+			.char_indices()
+			.take_while(|(i, _)| *i <= keep)
+			.last()
+			.map(|(i, _)| i)
+			.unwrap_or(0);
+		format!("{}-{hash}", &session_name[..keep])
+	};
+
+	Ok(run_dir.join(format!("{stem}.sock")))
+}
 
 #[cfg(unix)]
 fn runtime_base_dir() -> PathBuf {
@@ -278,5 +330,24 @@ mod tests {
 	fn test_config_file_path() {
 		let config_path = get_config_file_path().unwrap();
 		assert!(config_path.to_string_lossy().ends_with("config.toml"));
+	}
+	#[cfg(unix)]
+	#[test]
+	fn test_session_socket_path_fits_sun_path() {
+		// Short names keep their identity.
+		let short = session_socket_path("abc").unwrap();
+		assert_eq!(short, get_run_dir().unwrap().join("abc.sock"));
+
+		// Long names are shortened to fit the strictest sun_path (104 bytes).
+		let long_name = "x".repeat(150);
+		let long = session_socket_path(&long_name).unwrap();
+		assert!(
+			long.as_os_str().len() < SUN_PATH_MAX,
+			"path {} exceeds sun_path",
+			long.display()
+		);
+		// Deterministic for the same name, distinct for names sharing the head.
+		assert_eq!(long, session_socket_path(&long_name).unwrap());
+		assert_ne!(long, session_socket_path(&format!("{long_name}y")).unwrap());
 	}
 }

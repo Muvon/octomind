@@ -416,7 +416,6 @@ fn xml_feedback(text: &str) -> String {
 fn note_planner_failure(
 	chat_session: &mut ChatSession,
 	signal: PlanSignal,
-	active: bool,
 	detail: &str,
 ) -> Result<()> {
 	crate::log_info!(
@@ -424,13 +423,13 @@ fn note_planner_failure(
 		signal,
 		detail
 	);
-	// Only inject runtime-plan-feedback when a plan was already active at the
-	// start of this reconcile AND the signal is managing an existing plan.
-	// A Request signal asks the planner to *create* a plan; if it fails there
-	// is nothing to reconcile and the message must not be injected.
-	if active && !matches!(signal, PlanSignal::Request) {
+	// Set the per-turn failure latch so a subsequent signal from the same turn
+	// is consumed without another planner call — prevents an unbounded
+	// re-emit/fail/inject loop when the planner is broken or indecisive.
+	chat_session.planner_failed = true;
+	if crate::mcp::core::plan::has_active_plan() {
 		chat_session.add_system_managed_user_message(
-			"<runtime-plan-feedback>The external plan manager could not decide. Plan state was not changed; do not infer a transition. Continue only safe evidence-gathering work, then emit the appropriate plan signal again with a later action-bearing response.</runtime-plan-feedback>",
+			"<runtime-plan-feedback>The external plan manager could not decide. Plan state was not changed; do not infer a transition. Continue only safe evidence-gathering work.</runtime-plan-feedback>",
 		)?;
 		crate::supervisor::notify("external planner made no decision — current phase remains open");
 	} else {
@@ -472,6 +471,16 @@ pub async fn reconcile_after_actions(
 		return Ok(());
 	};
 	if !config.supervisor.enabled || !config.supervisor.plan.enabled {
+		return Ok(());
+	}
+	// Per-turn failure latch: if the planner already failed for this genuine
+	// user turn, consume the signal silently without another planner call.
+	// Prevents an unbounded re-emit/fail/inject loop. Reset on new user turn.
+	if chat_session.planner_failed {
+		crate::log_debug!(
+			"External plan signal {:?} consumed without planner call (per-turn failure latch)",
+			signal
+		);
 		return Ok(());
 	}
 	let active = crate::mcp::core::plan::has_active_plan();
@@ -528,17 +537,12 @@ pub async fn reconcile_after_actions(
 		{
 			Some(decision) => decision,
 			None => {
-				note_planner_failure(chat_session, signal, active, "unusable decision object")?;
+				note_planner_failure(chat_session, signal, "unusable decision object")?;
 				return Ok(());
 			}
 		},
 		Err(error) => {
-			note_planner_failure(
-				chat_session,
-				signal,
-				active,
-				&format!("transport failure: {error}"),
-			)?;
+			note_planner_failure(chat_session, signal, &format!("transport failure: {error}"))?;
 			return Ok(());
 		}
 	};
@@ -606,12 +610,7 @@ pub async fn reconcile_after_actions(
 	let transition = match application {
 		Ok(transition) => transition,
 		Err(error) => {
-			note_planner_failure(
-				chat_session,
-				signal,
-				active,
-				&format!("invalid decision: {error}"),
-			)?;
+			note_planner_failure(chat_session, signal, &format!("invalid decision: {error}"))?;
 			return Ok(());
 		}
 	};

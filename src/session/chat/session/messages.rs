@@ -270,6 +270,7 @@ impl ChatSession {
 		self.last_gate_gaps.clear();
 		self.pending_plan_signal = None;
 		self.plan_evaluated = false;
+		self.planner_failed = false;
 		self.plan_evidence_checkpoint = 0;
 		// New genuine task: the turn-answer ledger starts fresh — the previous
 		// turn's deliverable must not pad this turn's verification.

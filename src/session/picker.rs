@@ -171,16 +171,13 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 					}
 					// ── readline-style editing ─────────────────────────
 					KeyCode::Char('c') if ctrl => return Ok(None),
-					KeyCode::Char('d') if ctrl => {
-						// bash EOF: empty line exits, otherwise delete char under cursor
-						if query.is_empty() {
-							return Ok(None);
-						}
-						if cursor_pos < query.len() {
-							query.remove(cursor_pos);
-							selected = 0;
+					KeyCode::Char('d') if ctrl => return Ok(None), // exit, not resume
+					KeyCode::Char('n') if ctrl => {
+						if selected + 1 < filtered.len() {
+							selected += 1;
 						}
 					}
+					KeyCode::Char('p') if ctrl => selected = selected.saturating_sub(1),
 					KeyCode::Char('a') if ctrl => cursor_pos = 0,
 					KeyCode::Char('e') if ctrl => cursor_pos = query.len(),
 					KeyCode::Char('u') if ctrl => {

@@ -31,6 +31,52 @@ pub async fn prepare_for_api_call(
 		return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 	}
 
+	// Resolve each genuine user turn before compression or agent work. The same
+	// cached resolution later serves planning and completion, so this is one
+	// semantic pass, not a second policy classifier. Doing it at turn admission
+	// is essential: an answer-only turn may never claim completion, but its
+	// explicit "I will test it; do not run checks" policy must still govern the
+	// next mutation turn. System-managed turns are ineligible and cannot update
+	// user-owned policy.
+	if config.supervisor.enabled
+		&& chat_session.completion_gate_eligible
+		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled)
+		&& chat_session.gate_task.is_none()
+	{
+		let session_context = chat_session.session.info.anchor.to_xml();
+		let active_plan = crate::mcp::core::plan::render_plan_details();
+		if let Some(context) = crate::supervisor::resolve::TaskContext::capture(
+			&chat_session.session.messages,
+			&session_context,
+			active_plan.as_deref(),
+			chat_session.session.info.verification_policy,
+		) {
+			let animation_manager = crate::session::chat::get_animation_manager();
+			animation_manager
+				.set_phase("Resolving current task …")
+				.await;
+			let resolved =
+				crate::supervisor::resolve::resolve(config, &context, operation_rx.clone()).await;
+			animation_manager.clear_phase();
+			let policy_changed = chat_session
+				.session
+				.info
+				.verification_policy
+				.apply(resolved.verification_policy_update);
+			chat_session.gate_task = Some(resolved);
+			if policy_changed {
+				// Persist at the ownership boundary. Most modes also save after the
+				// response, but cancellation and ACP monitor paths can return earlier.
+				if let Err(error) = chat_session.save() {
+					crate::log_debug!("Failed to persist verification policy update: {}", error);
+				}
+			}
+			if *operation_rx.borrow() {
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+			}
+		}
+	}
+
 	// Run compression if max_session_tokens_threshold is exceeded
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(
 		chat_session,

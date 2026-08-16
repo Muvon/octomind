@@ -286,13 +286,9 @@ fn render_phase_trajectory(
 	)
 }
 
-fn request_context(
-	chat_session: &ChatSession,
-	current_request: &str,
-	signal: PlanSignal,
-) -> serde_json::Value {
+fn request_context(chat_session: &ChatSession, current_request: &str) -> serde_json::Value {
 	match chat_session.gate_task.as_ref() {
-		Some(crate::supervisor::resolve::TaskResolutionState::Resolved(task)) => {
+		Some(task) => {
 			let working_request = (task.scope
 				== crate::supervisor::resolve::ResolutionScope::FollowUp
 				&& task.resolved_request.trim() != current_request.trim())
@@ -305,24 +301,6 @@ fn request_context(
 				"session_context": "",
 			})
 		}
-		Some(crate::supervisor::resolve::TaskResolutionState::Pending(context))
-			if signal == PlanSignal::Request =>
-		{
-			serde_json::json!({
-				"working_request": serde_json::Value::Null,
-				"resolution": "captured_unresolved",
-				"answer_only": serde_json::Value::Null,
-				"prior_turn_context": context.recent_history,
-				"session_context": context.session_context,
-			})
-		}
-		Some(crate::supervisor::resolve::TaskResolutionState::Pending(_)) => serde_json::json!({
-			"working_request": serde_json::Value::Null,
-			"resolution": "literal_active_plan",
-			"answer_only": serde_json::Value::Null,
-			"prior_turn_context": "",
-			"session_context": "",
-		}),
 		None => serde_json::json!({
 			"working_request": serde_json::Value::Null,
 			"resolution": "literal",
@@ -391,7 +369,7 @@ fn render_specialist_context(
 			})
 		})
 		.unwrap_or(serde_json::Value::Null);
-	let task_context = request_context(chat_session, request, signal);
+	let task_context = request_context(chat_session, request);
 	serde_json::json!({
 		"signal": match signal {
 			PlanSignal::Request => "request",
@@ -462,31 +440,19 @@ fn resolved_task_allows_plan_request(task: &crate::supervisor::resolve::Resolved
 	!task.answer_only
 }
 
-/// Classify a prospective plan before consulting the planner. Action volume is
-/// only a nomination signal: an observe-only turn may need many reads/searches
-/// yet still have one conversational deliverable and no execution state to
-/// track. Cache the resolution for the completion gate so this guard adds no
-/// duplicate classifier call later in the turn.
-async fn plan_request_allowed(
-	chat_session: &mut ChatSession,
-	config: &Config,
-	operation_rx: watch::Receiver<bool>,
-) -> bool {
-	let resolved = match chat_session.gate_task.clone() {
-		Some(crate::supervisor::resolve::TaskResolutionState::Resolved(task)) => task,
-		Some(crate::supervisor::resolve::TaskResolutionState::Pending(context)) => {
-			let task = crate::supervisor::resolve::resolve(config, &context, operation_rx).await;
-			chat_session.gate_task = Some(
-				crate::supervisor::resolve::TaskResolutionState::Resolved(task.clone()),
-			);
-			task
-		}
+/// Consult the admission-time classification before invoking the planner.
+/// Action volume is only a nomination signal: an observe-only turn may need
+/// many reads/searches yet still have one conversational deliverable and no
+/// execution state to track.
+fn plan_request_allowed(chat_session: &ChatSession) -> bool {
+	let resolved = match chat_session.gate_task.as_ref() {
+		Some(task) => task,
 		// The task snapshot is normally captured before the first model call. If
 		// it is unavailable, leave the optional planner able to decline safely
 		// rather than manufacturing a classification from changed mid-turn state.
 		None => return true,
 	};
-	resolved_task_allows_plan_request(&resolved)
+	resolved_task_allows_plan_request(resolved)
 }
 
 /// Reconcile one sparse specialist signal after its action batch has produced
@@ -518,7 +484,7 @@ pub async fn reconcile_after_actions(
 			crate::log_debug!("External plan request ignored for system-managed turn");
 			return Ok(());
 		}
-		if !plan_request_allowed(chat_session, config, operation_rx.clone()).await {
+		if !plan_request_allowed(chat_session) {
 			crate::log_debug!(
 				"External plan request declined: current turn has one answer-only deliverable"
 			);

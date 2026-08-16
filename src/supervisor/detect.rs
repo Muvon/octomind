@@ -997,15 +997,6 @@ pub struct Detectors {
 	/// (oldest evicted). Cleared with `agent_dirty`: once a round verifies, the
 	/// artifacts are accepted state and a fresh mutation restarts the set.
 	mutated_paths: Vec<String>,
-	/// Sticky latch: the user explicitly forbade running checks ("don't run
-	/// tests — I'll run it myself"). The resolver judges one turn at a time, so
-	/// without the latch a later turn loses the prohibition and the pre-gate
-	/// nudges the agent to violate it. Standing rule: persists for the session
-	/// (an incidental check run must not erase the user's prohibition; the
-	/// latch only suppresses the pre-gate nudge — it never blocks the agent
-	/// from running a check the user directly asks for, and the LLM gate still
-	/// judges prohibitions on its own).
-	forbids_verification: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -1338,24 +1329,6 @@ impl Detectors {
 		self.prev_round_had_error = false;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
-	}
-
-	/// Latch that the user forbade running checks ("don't run tests — I'll run
-	/// it myself"). The resolver judges one turn at a time, and the prohibition
-	/// is a standing rule, not a per-turn property — so the latch persists
-	/// across turns like `verified_fp` (a later turn that merely fails to
-	/// repeat the rule must not re-arm the pre-gate). It never auto-expires:
-	/// an incidental check run does not mean the user revoked the rule, and
-	/// the latch only suppresses the pre-gate nudge — checks the user directly
-	/// requests still run, and the LLM gate judges prohibitions on its own.
-	pub fn note_forbids_verification(&mut self) {
-		self.forbids_verification = true;
-	}
-
-	/// Whether the user has forbidden running checks (standing rule for the
-	/// session — see [`Detectors::note_forbids_verification`]).
-	pub fn check_run_forbidden(&self) -> bool {
-		self.forbids_verification
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -2190,20 +2163,6 @@ mod tests {
 		// A new genuine task must not inherit an earlier task's mutation.
 		d.reset_streak();
 		assert!(!d.needs_verification(None));
-	}
-
-	#[test]
-	fn forbids_verification_is_a_standing_rule() {
-		let mut d = Detectors::default();
-		assert!(!d.check_run_forbidden());
-		d.note_forbids_verification();
-		// Standing rule: a new genuine turn must not re-arm the pre-gate.
-		d.reset_streak();
-		assert!(d.check_run_forbidden());
-		// An incidental clean verification round does NOT erase the user's
-		// prohibition — the latch never auto-expires.
-		d.note_round_verification(None, None, true, false, false, false, true);
-		assert!(d.check_run_forbidden());
 	}
 
 	#[test]

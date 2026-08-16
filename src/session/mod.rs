@@ -306,6 +306,11 @@ pub struct SessionInfo {
 	// runway; a genuine user turn resets it so new work gets a short horizon.
 	#[serde(default)]
 	pub consecutive_compressions: u32,
+	/// Standing user policy for assistant-run verification. Updated from genuine
+	/// user turns only; persisted independently of detector streaks and context
+	/// compression.
+	#[serde(default)]
+	pub verification_policy: crate::supervisor::VerificationPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -434,6 +439,7 @@ impl Session {
 				api_calls_at_last_compression: 0,
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
+				verification_policy: crate::supervisor::VerificationPolicy::default(),
 			},
 
 			messages: Vec::new(),

@@ -736,6 +736,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		output_tokens_at_last_compression: 0,
 		consecutive_compressions: 0,
 		verification_policy: crate::supervisor::VerificationPolicy::default(),
+		evidence: crate::supervisor::gate::EvidenceLedger::default(),
 	};
 
 	let runtime_state = extract_runtime_state_from_log(session_file)?;
@@ -1345,6 +1346,71 @@ mod tests {
 
 		assert_eq!(session.info.input_tokens, 9999);
 		assert_eq!(session.info.output_tokens, 8888);
+	}
+
+	#[test]
+	fn legacy_summary_without_evidence_field_loads() {
+		// Session files written before EvidenceLedger persistence carry a
+		// session_info without the `evidence` key — #[serde(default)] must
+		// accept them so old sessions keep loading without migration.
+		let s = serde_json::to_string(&json!({
+			"type": "SUMMARY",
+			"timestamp": 1_700_000_000u64,
+			"session_info": {
+				"name": "legacy-no-evidence",
+				"created_at": 1_700_000_000u64,
+				"model": "test/model",
+				"role": "",
+				"input_tokens": 5u64,
+				"output_tokens": 7u64,
+				"cache_read_tokens": 0u64,
+				"cache_write_tokens": 0u64,
+				"total_cost": 0.0,
+				"duration_seconds": 0u64,
+				"layer_stats": [],
+			},
+		}))
+		.unwrap();
+		let m = serde_json::to_string(&msg("user", "hi")).unwrap();
+
+		let file = write_session(&[&s, &m]);
+		let session = load_session(&file.path().to_path_buf()).expect("legacy load");
+
+		assert_eq!(session.info.name, "legacy-no-evidence");
+		assert_eq!(session.info.input_tokens, 5);
+		assert!(session.info.evidence.render().is_empty());
+	}
+
+	#[test]
+	fn summary_with_evidence_restores_ledger_on_load() {
+		// The still-open turn's recorded actions must survive a restart: a
+		// SUMMARY carrying ledger state restores it instead of default().
+		let mut info = SessionInfo {
+			name: "evidence-restore".to_string(),
+			created_at: 1_700_000_000,
+			model: "test/model".to_string(),
+			..Default::default()
+		};
+		info.evidence.record(
+			"knowledge",
+			&json!({"source":"https://docs.x.ai/developers/pricing"}),
+			false,
+			false,
+			1024,
+		);
+		let s = serde_json::to_string(&json!({
+			"type": "SUMMARY",
+			"timestamp": 1_700_000_000u64,
+			"session_info": info,
+		}))
+		.unwrap();
+		let m = serde_json::to_string(&msg("user", "hi")).unwrap();
+
+		let file = write_session(&[&s, &m]);
+		let session = load_session(&file.path().to_path_buf()).expect("load");
+
+		assert_eq!(session.info.evidence.render(), info.evidence.render());
+		assert!(session.info.evidence.render().contains("docs.x.ai"));
 	}
 
 	#[test]

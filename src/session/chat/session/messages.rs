@@ -30,6 +30,9 @@ impl ChatSession {
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
 		self.session.info.compression_hint_count = self.compression_hint_count;
 		self.session.info.last_compression_hint_shown = self.last_compression_hint_shown;
+		// Snapshot the verify-gate's ground truth so a resume restores the
+		// still-open turn's recorded actions instead of an empty ledger.
+		self.session.info.evidence = self.evidence.clone();
 	}
 
 	// Save the session (syncs runtime state first)

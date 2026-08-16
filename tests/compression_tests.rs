@@ -372,6 +372,7 @@ mod adaptive_compression_tests {
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
 				verification_policy: Default::default(),
+				evidence: Default::default(),
 			},
 			session_file: None,
 		}

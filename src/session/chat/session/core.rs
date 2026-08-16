@@ -389,6 +389,7 @@ impl ChatSession {
 			output_tokens_at_last_compression: 0,
 			consecutive_compressions: 0,
 			verification_policy: crate::supervisor::VerificationPolicy::default(),
+			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 		};
 
 		let session = Session {
@@ -624,6 +625,11 @@ impl ChatSession {
 					let spending_checkpoint = session.info.spending_threshold_checkpoint;
 					let compression_hint_count = session.info.compression_hint_count;
 					let last_compression_hint = session.info.last_compression_hint_shown;
+					// Restore the verify-gate's evidence ledger for the still-open
+					// turn. The gate re-derives its conditions from the persisted
+					// request; the recorded actions that satisfy them must survive
+					// the restart too, or every resumed turn reports false gaps.
+					let restored_evidence = session.info.evidence.clone();
 
 					let mut chat_session = ChatSession {
 						session,
@@ -675,7 +681,7 @@ impl ChatSession {
 						planner_failed: false,
 						plan_evidence_checkpoint: 0,
 						recalled_refs: Vec::new(),
-						evidence: crate::supervisor::gate::EvidenceLedger::default(),
+						evidence: restored_evidence,
 						gate_task: None,
 					};
 					// Keep session.info.role in sync with the active role

@@ -416,6 +416,7 @@ fn xml_feedback(text: &str) -> String {
 fn note_planner_failure(
 	chat_session: &mut ChatSession,
 	signal: PlanSignal,
+	active: bool,
 	detail: &str,
 ) -> Result<()> {
 	crate::log_info!(
@@ -423,7 +424,11 @@ fn note_planner_failure(
 		signal,
 		detail
 	);
-	if crate::mcp::core::plan::has_active_plan() {
+	// Only inject runtime-plan-feedback when a plan was already active at the
+	// start of this reconcile AND the signal is managing an existing plan.
+	// A Request signal asks the planner to *create* a plan; if it fails there
+	// is nothing to reconcile and the message must not be injected.
+	if active && !matches!(signal, PlanSignal::Request) {
 		chat_session.add_system_managed_user_message(
 			"<runtime-plan-feedback>The external plan manager could not decide. Plan state was not changed; do not infer a transition. Continue only safe evidence-gathering work, then emit the appropriate plan signal again with a later action-bearing response.</runtime-plan-feedback>",
 		)?;
@@ -523,12 +528,12 @@ pub async fn reconcile_after_actions(
 		{
 			Some(decision) => decision,
 			None => {
-				note_planner_failure(chat_session, signal, "unusable decision object")?;
+				note_planner_failure(chat_session, signal, active, "unusable decision object")?;
 				return Ok(());
 			}
 		},
 		Err(error) => {
-			note_planner_failure(chat_session, signal, &format!("transport failure: {error}"))?;
+			note_planner_failure(chat_session, signal, active, &format!("transport failure: {error}"))?;
 			return Ok(());
 		}
 	};
@@ -596,7 +601,7 @@ pub async fn reconcile_after_actions(
 	let transition = match application {
 		Ok(transition) => transition,
 		Err(error) => {
-			note_planner_failure(chat_session, signal, &format!("invalid decision: {error}"))?;
+			note_planner_failure(chat_session, signal, active, &format!("invalid decision: {error}"))?;
 			return Ok(());
 		}
 	};

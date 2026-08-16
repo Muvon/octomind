@@ -276,17 +276,13 @@ pub(super) async fn apply_compression(
 		&summary.original_request,
 		&session.session.messages,
 	);
-	let fidelity_constraints: Vec<String> = {
-		let mut seen = std::collections::BTreeSet::new();
+	let fidelity_constraints = crate::supervisor::recite::active_constraints(
+		&session.session.messages,
 		session
-			.session
-			.messages
-			.iter()
-			.filter(|m| crate::session::is_real_user_task_message(m))
-			.flat_map(|m| crate::supervisor::recite::extract_constraints(&m.content))
-			.filter(|c| seen.insert(c.clone()))
-			.collect()
-	};
+			.gate_task
+			.as_ref()
+			.map(|task| task.resolved_request.as_str()),
+	);
 
 	// PACT commit checks run before ANY live session mutation. Governance is
 	// recomputed from the still-live transcript, then the full drain is archived
@@ -299,7 +295,7 @@ pub(super) async fn apply_compression(
 		&& config.compression.attention.governance.verify_hash
 	{
 		if let Some(pact) = pact {
-			pact.verify_governance(&session.session.messages)?;
+			pact.verify_governance(session)?;
 		}
 	}
 

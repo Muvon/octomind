@@ -66,6 +66,25 @@ impl VerificationPolicy {
 		self == Self::Forbidden
 	}
 
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Unspecified => "unspecified",
+			Self::Forbidden => "forbidden",
+			Self::Allowed => "allowed",
+		}
+	}
+
+	/// Effective boundary for this turn. Standing role instructions and a
+	/// reply-local user restriction may forbid verification without mutating the
+	/// persisted user-owned policy.
+	pub fn effective(self, current_turn_forbids: bool) -> Self {
+		if current_turn_forbids {
+			Self::Forbidden
+		} else {
+			self
+		}
+	}
+
 	/// Apply one classified user delta. Returns whether durable state changed.
 	pub fn apply(&mut self, update: VerificationPolicyUpdate) -> bool {
 		let previous = *self;
@@ -101,6 +120,8 @@ mod verification_policy_tests {
 		assert!(policy.forbids());
 		assert!(policy.apply(VerificationPolicyUpdate::Allow));
 		assert!(!policy.forbids());
+		assert_eq!(policy.effective(true), VerificationPolicy::Forbidden);
+		assert_eq!(policy.effective(false), VerificationPolicy::Allowed);
 	}
 }
 

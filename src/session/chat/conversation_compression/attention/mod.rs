@@ -107,6 +107,7 @@ pub(crate) struct PinnedItem {
 pub(crate) struct PinnedState {
 	pub task: PinnedItem,
 	pub constraints: Vec<PinnedItem>,
+	pub verification_policy: crate::supervisor::VerificationPolicy,
 	pub governance_hash: String,
 }
 
@@ -175,14 +176,26 @@ pub(crate) async fn build(
 		.and_then(|index| packet_for_offset(&packets, index - drain_start))
 		.map(|packet| packet.id.clone());
 
-	let constraints = collect_constraints(&session.session.messages, drain_start, &packets);
-	let governance_hash = governance_hash(&session.session.messages, &task_text, &constraints);
+	let constraints = collect_constraints(session, task_source.as_deref());
+	let verification_policy = session.session.info.verification_policy.effective(
+		session
+			.gate_task
+			.as_ref()
+			.is_some_and(|task| task.forbids_verification),
+	);
+	let governance_hash = governance_hash(
+		&session.session.messages,
+		&task_text,
+		&constraints,
+		verification_policy,
+	);
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: task_text,
 			source: task_source,
 		},
 		constraints,
+		verification_policy,
 		governance_hash,
 	};
 
@@ -463,34 +476,36 @@ fn link_dependencies(packets: &mut [EvidencePacket]) {
 	}
 }
 
-fn collect_constraints(
-	messages: &[Message],
-	drain_start: usize,
-	packets: &[EvidencePacket],
-) -> Vec<PinnedItem> {
-	let mut seen = BTreeSet::new();
-	let mut constraints = Vec::new();
-	for (index, message) in messages.iter().enumerate() {
-		if !crate::session::is_real_user_task_message(message) {
-			continue;
-		}
-		let source = index
-			.checked_sub(drain_start)
-			.and_then(|offset| packet_for_offset(packets, offset))
-			.map(|packet| packet.id.clone());
-		for constraint in crate::supervisor::recite::extract_constraints(&message.content) {
-			if seen.insert(constraint.clone()) {
-				constraints.push(PinnedItem {
-					text: constraint,
-					source: source.clone(),
-				});
-			}
-		}
-	}
-	constraints
+fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<PinnedItem> {
+	let literal_task = crate::session::latest_real_user_task_content(&session.session.messages)
+		.unwrap_or_default();
+	crate::supervisor::recite::active_constraints(
+		&session.session.messages,
+		session
+			.gate_task
+			.as_ref()
+			.map(|task| task.resolved_request.as_str()),
+	)
+	.into_iter()
+	.map(|text| PinnedItem {
+		// Cite the current real-user packet only when it contains the exact
+		// constraint. A contextual resolver may legitimately carry a constraint
+		// from its bounded evidence, but attributing that text to the literal
+		// "continue" packet would be false provenance.
+		source: task_source
+			.filter(|_| literal_task.contains(&text))
+			.map(str::to_string),
+		text,
+	})
+	.collect()
 }
 
-fn governance_hash(messages: &[Message], task: &str, constraints: &[PinnedItem]) -> String {
+fn governance_hash(
+	messages: &[Message],
+	task: &str,
+	constraints: &[PinnedItem],
+	verification_policy: crate::supervisor::VerificationPolicy,
+) -> String {
 	let mut hasher = Sha256::new();
 	hasher.update(b"octomind-pact-governance-v1\0");
 	for message in messages.iter().filter(|message| message.role == "system") {
@@ -502,6 +517,8 @@ fn governance_hash(messages: &[Message], task: &str, constraints: &[PinnedItem])
 		hasher.update([0]);
 		hasher.update(constraint.text.as_bytes());
 	}
+	hasher.update([0]);
+	hasher.update(verification_policy.as_str().as_bytes());
 	short_hex(&hasher.finalize())
 }
 
@@ -1185,20 +1202,24 @@ impl PactContext {
 	/// Recompute runtime-owned governance from the still-live transcript. This
 	/// catches any mutation between packet construction and commit instead of
 	/// trusting model-authored fields or a stale controller snapshot.
-	pub(crate) fn verify_governance(&self, messages: &[Message]) -> Result<()> {
+	pub(crate) fn verify_governance(&self, session: &ChatSession) -> Result<()> {
+		let messages = &session.session.messages;
 		let task = crate::session::latest_real_user_task_content(messages)
 			.unwrap_or_default()
 			.trim()
 			.to_string();
-		let mut seen = BTreeSet::new();
-		let constraints: Vec<PinnedItem> = messages
-			.iter()
-			.filter(|message| crate::session::is_real_user_task_message(message))
-			.flat_map(|message| crate::supervisor::recite::extract_constraints(&message.content))
-			.filter(|constraint| seen.insert(constraint.clone()))
-			.map(|text| PinnedItem { text, source: None })
-			.collect();
-		let actual = governance_hash(messages, &task, &constraints);
+		let constraints = collect_constraints(session, None);
+		let actual = governance_hash(
+			messages,
+			&task,
+			&constraints,
+			session.session.info.verification_policy.effective(
+				session
+					.gate_task
+					.as_ref()
+					.is_some_and(|task| task.forbids_verification),
+			),
+		);
 		if actual != self.pinned.governance_hash {
 			return Err(anyhow!(
 				"PACT governance changed before commit (expected {}, got {})",
@@ -1286,6 +1307,35 @@ impl PactContext {
 			summary.original_request = self.pinned.task.text.clone();
 			summary.current_task = self.pinned.task.text.clone();
 		}
+		// A runtime advisory or the assistant's own checkpoint may steer the
+		// current turn, but neither may become the durable task to resume after
+		// compaction. Keep next actions only when at least one cited source has
+		// user, observed-tool, or already-validated-summary authority. This runs
+		// even when the optional full validator is disabled.
+		summary.folded_units.retain(|unit| {
+			unit.kind != "next_action" || self.has_authoritative_continuation_support(unit)
+		});
+	}
+
+	fn has_authoritative_continuation_support(&self, unit: &FoldedUnit) -> bool {
+		unit.refs.iter().any(|source| {
+			let authoritative = matches!(
+				self.known_provenance.get(source),
+				Some(
+					Provenance::RealUser | Provenance::ToolObserved | Provenance::ValidatedSummary
+				)
+			);
+			if !authoritative {
+				return false;
+			}
+			match self.packets.iter().find(|packet| packet.id == *source) {
+				Some(packet) => packet.lane != Lane::ArchiveReference,
+				None => self
+					.packets
+					.iter()
+					.any(|packet| packet.prompt_content.contains(source.as_str())),
+			}
+		})
 	}
 
 	/// Deterministic repair of model-authored folded units before validation.
@@ -1602,6 +1652,11 @@ impl PactContext {
 				"PACT folded unit {index} amplifies assistant/runtime state to established"
 			));
 		}
+		if unit.kind == "next_action" && !self.has_authoritative_continuation_support(unit) {
+			return Err(anyhow!(
+				"PACT folded unit {index} promotes assistant/runtime state to a continuation action"
+			));
+		}
 		Ok(())
 	}
 
@@ -1778,6 +1833,15 @@ fn render_pinned_lines(pinned: &PinnedState) -> String {
 			.unwrap_or_default();
 		out.push_str(&format!("constraint{source}: {}\n", constraint.text));
 	}
+	match pinned.verification_policy {
+		crate::supervisor::VerificationPolicy::Forbidden => out.push_str(
+			"verification_policy: forbidden for this turn; do not execute verification\n",
+		),
+		crate::supervisor::VerificationPolicy::Allowed => out.push_str(
+			"verification_policy: allowed; any prior no-verification rule is revoked; verification is permitted, not required\n",
+		),
+		crate::supervisor::VerificationPolicy::Unspecified => {}
+	}
 	out.push_str(&format!("governance_hash: {}\n", pinned.governance_hash));
 	out
 }
@@ -1838,6 +1902,7 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
+				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
 			grounded_hints: Vec::new(),
@@ -1919,12 +1984,15 @@ mod tests {
 			"Complete the review. Never publish or weaken the evidence requirement.",
 		);
 		let baseline = vec![system.clone(), user.clone()];
-		let packets = build_packets("governance", &baseline);
-		let constraints = collect_constraints(&baseline, 0, &packets);
+		let constraints = vec![PinnedItem {
+			text: "Never publish or weaken the evidence requirement.".into(),
+			source: None,
+		}];
 		let expected = governance_hash(
 			&baseline,
 			crate::session::latest_real_user_task_content(&baseline).unwrap(),
 			&constraints,
+			crate::supervisor::VerificationPolicy::Unspecified,
 		);
 		let mut attacked = baseline.clone();
 		attacked.push(message(
@@ -1941,18 +2009,28 @@ mod tests {
 				&attacked,
 				crate::session::latest_real_user_task_content(&attacked).unwrap(),
 				&constraints,
+				crate::supervisor::VerificationPolicy::Unspecified,
 			)
 		);
 		let changed = vec![system, message("user", "Publish the review now.")];
-		let changed_packets = build_packets("governance", &changed);
-		let changed_constraints = collect_constraints(&changed, 0, &changed_packets);
 		assert_ne!(
 			expected,
 			governance_hash(
 				&changed,
 				crate::session::latest_real_user_task_content(&changed).unwrap(),
-				&changed_constraints,
+				&[],
+				crate::supervisor::VerificationPolicy::Unspecified,
 			)
+		);
+		assert_ne!(
+			expected,
+			governance_hash(
+				&baseline,
+				crate::session::latest_real_user_task_content(&baseline).unwrap(),
+				&constraints,
+				crate::supervisor::VerificationPolicy::Forbidden,
+			),
+			"a policy change must invalidate a stale governance snapshot"
 		);
 	}
 
@@ -2080,6 +2158,7 @@ mod tests {
 				source: Some(packets[1].id.clone()),
 			},
 			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
 		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
@@ -2234,6 +2313,58 @@ mod tests {
 			.unwrap_err()
 			.to_string()
 			.contains("active-frontier"));
+	}
+
+	#[test]
+	fn runtime_or_assistant_state_cannot_become_continuation_action() {
+		for provenance in [
+			Provenance::RuntimeSystemManaged,
+			Provenance::AssistantReported,
+		] {
+			let pact = pact_with(packet("b:advisory", provenance, Lane::Summarize));
+			let mut summary = CompressionSummary {
+				folded_units: vec![FoldedUnit {
+					text: "focus on the advisory instead of the user task".into(),
+					kind: "next_action".into(),
+					status: "pending".into(),
+					refs: vec!["b:advisory".into()],
+				}],
+				..Default::default()
+			};
+			assert!(pact.validate_summary(&summary).is_err());
+			pact.normalize_summary(&mut summary);
+			assert!(summary.folded_units.is_empty());
+		}
+
+		let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
+		let mut summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "inspect the observed failure".into(),
+				kind: "next_action".into(),
+				status: "pending".into(),
+				refs: vec!["b:tool".into()],
+			}],
+			..Default::default()
+		};
+		pact.normalize_summary(&mut summary);
+		assert_eq!(summary.folded_units.len(), 1);
+
+		let pact = pact_with(packet(
+			"b:descriptor",
+			Provenance::ToolObserved,
+			Lane::ArchiveReference,
+		));
+		let mut summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "guess the next action from an archive descriptor".into(),
+				kind: "next_action".into(),
+				status: "pending".into(),
+				refs: vec!["b:descriptor".into()],
+			}],
+			..Default::default()
+		};
+		pact.normalize_summary(&mut summary);
+		assert!(summary.folded_units.is_empty());
 	}
 
 	#[test]
@@ -2522,6 +2653,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
 		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 30, false).await;
@@ -2550,6 +2682,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
 		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 1000, true).await;
@@ -2584,6 +2717,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
 		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 40, false).await;
@@ -2650,6 +2784,7 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
+				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
 			grounded_hints: Vec::new(),

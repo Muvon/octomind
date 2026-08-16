@@ -246,13 +246,21 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		crate::log_debug!("Supervisor steer injected");
 	}
 
-	// Supervisor: goal recitation. Once the session has compacted at least once
-	// the durable goal lives only in the mid-transcript compressed summary, where
+	// Supervisor: goal and execution-boundary recitation. Once the session has
+	// compacted, the durable goal lives only in the mid-transcript summary, where
 	// attention is weak. Re-emit a tiny goal block here — at the tail, in the
 	// recency window — and crucially BEFORE the cache-marker advance below, so the
 	// cached prefix stays intact (the recited block lands after it each turn).
+	let effective_verification_policy = chat_session.session.info.verification_policy.effective(
+		chat_session
+			.gate_task
+			.as_ref()
+			.is_some_and(|task| task.forbids_verification),
+	);
 	if config.supervisor.enabled
-		&& (config.supervisor.recite.enabled || crate::mcp::core::plan::has_active_plan())
+		&& (config.supervisor.recite.enabled
+			|| crate::mcp::core::plan::has_active_plan()
+			|| effective_verification_policy != crate::supervisor::VerificationPolicy::Unspecified)
 	{
 		// Prefer the live plan checklist (refreshed every turn from plan storage)
 		// over the anchor's stale next_steps snapshot for the recency-slot block.
@@ -263,17 +271,22 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// for something else since the last compaction wrote that goal.
 		let live_task =
 			crate::session::latest_real_user_task_content(&chat_session.session.messages);
-		let constraints = live_task
-			.map(crate::supervisor::recite::extract_constraints)
-			.unwrap_or_default();
+		let constraints = crate::supervisor::recite::active_constraints(
+			&chat_session.session.messages,
+			chat_session
+				.gate_task
+				.as_ref()
+				.map(|task| task.resolved_request.as_str()),
+		);
 		if let Some(note) = crate::supervisor::recite::recite_note(
 			&chat_session.session.info.anchor,
 			plan_checklist.as_deref(),
 			&constraints,
 			live_task.map(crate::session::anchor::task_sig),
+			effective_verification_policy,
 		) {
 			chat_session.add_system_managed_user_message(&note)?;
-			crate::log_debug!("Supervisor goal recitation injected");
+			crate::log_debug!("Supervisor recitation injected");
 		}
 	}
 

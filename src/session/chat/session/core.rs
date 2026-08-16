@@ -288,6 +288,10 @@ pub struct ChatSession {
 	/// turn. Prevents a declined or unavailable planner from being called again
 	/// after every subsequent action batch.
 	pub plan_evaluated: bool,
+	/// Supervisor: the external planner failed once during this genuine user
+	/// turn. Subsequent plan signals are consumed without a planner call to
+	/// prevent an unbounded re-emit/fail/inject loop. Reset on new user turn.
+	pub planner_failed: bool,
 	/// Evidence-ledger boundary for the active plan phase. Only actions at or
 	/// after this checkpoint may authorize its transition.
 	pub plan_evidence_checkpoint: u64,
@@ -440,6 +444,7 @@ impl ChatSession {
 			last_self_report_handoff: None,
 			pending_plan_signal: None,
 			plan_evaluated: false,
+			planner_failed: false,
 			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
@@ -667,6 +672,7 @@ impl ChatSession {
 						last_self_report_handoff: None,
 						pending_plan_signal: None,
 						plan_evaluated: false,
+						planner_failed: false,
 						plan_evidence_checkpoint: 0,
 						recalled_refs: Vec::new(),
 						evidence: crate::supervisor::gate::EvidenceLedger::default(),
@@ -1457,6 +1463,7 @@ mod tests {
 			last_self_report_handoff: None,
 			pending_plan_signal: None,
 			plan_evaluated: false,
+			planner_failed: false,
 			plan_evidence_checkpoint: 0,
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),

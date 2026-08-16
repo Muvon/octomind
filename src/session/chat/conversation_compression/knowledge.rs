@@ -134,7 +134,20 @@ pub(super) fn format_compressed_entry_with_pact(
 pub(super) fn strip_regrown_sections(summary: &str) -> String {
 	let stripped = strip_block(summary, "<file_context>", "</file_context>");
 	let stripped = strip_block(&stripped, ANALYSIS_OPEN, ANALYSIS_CLOSE);
-	strip_block(&stripped, "<recall_index>", "</recall_index>")
+	strip_recall_index(&stripped)
+}
+
+/// Remove every `<recall_index>` block from `text`.
+///
+/// A summary can carry more than one: a re-compressed transcript embeds the
+/// previous summary (with its own index) inside the new one. Stripping only the
+/// first would leave historical IDs visible to any containment test.
+pub(super) fn strip_recall_index(text: &str) -> String {
+	let mut stripped = text.to_string();
+	while stripped.contains("<recall_index>") {
+		stripped = strip_block(&stripped, "<recall_index>", "</recall_index>");
+	}
+	stripped
 }
 
 fn strip_block(summary: &str, open_tag: &str, close_tag: &str) -> String {

@@ -226,13 +226,18 @@ pub(crate) async fn build(
 	for packet in &packets {
 		known_provenance.insert(packet.id.clone(), packet.provenance);
 	}
+	// Carry forward only the prior IDs that the retained content still cites.
+	// A prior summary packet embeds the previous cycle's own <recall_index>, so
+	// testing raw content would re-match every historical ID and grow the live
+	// index monotonically across compactions — the index itself becoming the
+	// dominant term of the surviving context.
+	let cited: Vec<String> = packets
+		.iter()
+		.map(|packet| super::knowledge::strip_recall_index(&packet.prompt_content))
+		.collect();
 	let prior_recall = registry
 		.into_iter()
-		.filter(|(id, _)| {
-			packets
-				.iter()
-				.any(|packet| packet.prompt_content.contains(id))
-		})
+		.filter(|(id, _)| cited.iter().any(|content| content.contains(id)))
 		.collect();
 
 	Ok(PactContext {

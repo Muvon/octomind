@@ -46,8 +46,9 @@ pub const ANALYZE_COMMAND: &str = "/analyze";
 pub const AGENTS_COMMAND: &str = "/agents";
 pub const USAGE_COMMAND: &str = "/usage";
 pub const LOGIN_COMMAND: &str = "/login";
+pub const RENAME_COMMAND: &str = "/rename";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 31] = [
+pub const COMMANDS: [&str; 32] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -79,4 +80,5 @@ pub const COMMANDS: [&str; 31] = [
 	AGENTS_COMMAND,
 	USAGE_COMMAND,
 	LOGIN_COMMAND,
+	RENAME_COMMAND,
 ];

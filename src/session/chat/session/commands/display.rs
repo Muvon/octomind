@@ -42,6 +42,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(CLEAR_COMMAND, "Clear the screen"),
 			(LIST_COMMAND, "List all available sessions"),
 			(SESSION_COMMAND, "Switch to another session or create one"),
+			(
+				RENAME_COMMAND,
+				"Set a display title for this session (no arg clears)",
+			),
 			(INFO_COMMAND, "Detailed token and cost breakdown"),
 			(DONE_COMMAND, "Finalize task with memorize/summarize/commit"),
 			(LOGLEVEL_COMMAND, "Set logging level: none, info, debug"),
@@ -389,7 +393,19 @@ pub fn display_info(output: &CommandOutput) {
 
 		// ── session ────────────────────────────────────────────────────
 		block_section_with("session", session_name);
-		let kw_sess = key_width(["model", "tokens", "breakdown", "cost", "throughput"]);
+		let kw_sess = key_width([
+			"title",
+			"model",
+			"tokens",
+			"breakdown",
+			"cost",
+			"throughput",
+		]);
+		if let Some(title) =
+			crate::session::titles::get_session_meta(session_name).and_then(|m| m.title)
+		{
+			block_row("title", &title.bright_white().to_string(), kw_sess);
+		}
 		block_row("model", &model.bright_white().to_string(), kw_sess);
 		let total_tokens = tokens_used + tokens_cached + tokens_cache_write + tokens_reasoning;
 		block_row(
@@ -1858,11 +1874,12 @@ pub fn display_session(output: &CommandOutput) {
 }
 
 pub fn display_list(output: &CommandOutput, _config: &Config) {
-	// Column widths chosen to fit ~95 chars with rail prefix.
+	// Column widths chosen to fit ~110 chars with rail prefix.
 	const W_MARK: usize = 1;
 	const W_NAME: usize = 28;
+	const W_TITLE: usize = 24;
 	const W_CREATED: usize = 16;
-	const W_MODEL: usize = 24;
+	const W_MODEL: usize = 20;
 	const W_TOKENS: usize = 8;
 	const W_COST: usize = 9;
 
@@ -1913,9 +1930,10 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 
 		// Header + divider.
 		let header = format!(
-			"{} {}  {}  {}  {}  {}",
+			"{} {}  {}  {}  {}  {}  {}",
 			pad_left("", W_MARK),
 			pad_left("name", W_NAME).bright_black(),
+			pad_left("title", W_TITLE).bright_black(),
 			pad_left("created", W_CREATED).bright_black(),
 			pad_left("model", W_MODEL).bright_black(),
 			pad_right("tokens", W_TOKENS).bright_black(),
@@ -1923,9 +1941,10 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 		);
 		block_line(&header);
 		let divider = format!(
-			"{} {}  {}  {}  {}  {}",
+			"{} {}  {}  {}  {}  {}  {}",
 			"─".repeat(W_MARK),
 			"─".repeat(W_NAME),
+			"─".repeat(W_TITLE),
 			"─".repeat(W_CREATED),
 			"─".repeat(W_MODEL),
 			"─".repeat(W_TOKENS),
@@ -1958,6 +1977,9 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 			} else {
 				" ".to_string()
 			};
+			let title = crate::session::titles::get_session_meta(name)
+				.and_then(|m| m.title)
+				.unwrap_or_default();
 			let name_cell = pad_left(&truncate_cell(name, W_NAME), W_NAME);
 			let name_colored = if is_current {
 				name_cell.bright_green().bold().to_string()
@@ -1966,9 +1988,10 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 			};
 
 			let row = format!(
-				"{} {}  {}  {}  {}  {}",
+				"{} {}  {}  {}  {}  {}  {}",
 				mark,
 				name_colored,
+				pad_left(&truncate_cell(&title, W_TITLE), W_TITLE).dimmed(),
 				pad_left(&truncate_cell(created, W_CREATED), W_CREATED).dimmed(),
 				pad_left(&truncate_cell(model_short, W_MODEL), W_MODEL).dimmed(),
 				pad_right(&crate::session::chat::format_number(tokens), W_TOKENS),

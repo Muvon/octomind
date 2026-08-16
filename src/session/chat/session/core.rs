@@ -298,9 +298,9 @@ pub struct ChatSession {
 	/// the verify-gate checks completion claims against. Reset on each genuine
 	/// user turn; gate/steer re-runs (system-managed messages) keep accumulating.
 	pub evidence: crate::supervisor::gate::EvidenceLedger,
-	/// Supervisor: turn-start task/context snapshot, then its stable resolution.
-	/// Reset on each genuine user turn and cached across gate re-runs.
-	pub gate_task: Option<crate::supervisor::resolve::TaskResolutionState>,
+	/// Supervisor: stable turn-start task resolution. Reset on each genuine user
+	/// turn and cached across planning and completion-gate re-runs.
+	pub gate_task: Option<crate::supervisor::resolve::ResolvedTask>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -384,6 +384,7 @@ impl ChatSession {
 			api_calls_at_last_compression: 0,
 			output_tokens_at_last_compression: 0,
 			consecutive_compressions: 0,
+			verification_policy: crate::supervisor::VerificationPolicy::default(),
 		};
 
 		let session = Session {

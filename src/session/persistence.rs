@@ -735,6 +735,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		api_calls_at_last_compression: 0,
 		output_tokens_at_last_compression: 0,
 		consecutive_compressions: 0,
+		verification_policy: crate::supervisor::VerificationPolicy::default(),
 	};
 
 	let runtime_state = extract_runtime_state_from_log(session_file)?;

@@ -49,6 +49,61 @@ pub mod workdir;
 
 use serde::{Deserialize, Serialize};
 
+/// Session-level user policy for whether the assistant may run verification.
+/// Kept outside detector streak state: it is an instruction, not an observed
+/// trajectory signal, and survives resume until the user explicitly changes it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationPolicy {
+	#[default]
+	Unspecified,
+	Forbidden,
+	Allowed,
+}
+
+impl VerificationPolicy {
+	pub fn forbids(self) -> bool {
+		self == Self::Forbidden
+	}
+
+	/// Apply one classified user delta. Returns whether durable state changed.
+	pub fn apply(&mut self, update: VerificationPolicyUpdate) -> bool {
+		let previous = *self;
+		match update {
+			VerificationPolicyUpdate::Unchanged => {}
+			VerificationPolicyUpdate::Forbid => *self = Self::Forbidden,
+			VerificationPolicyUpdate::Allow => *self = Self::Allowed,
+		}
+		*self != previous
+	}
+}
+
+/// Delta emitted from one genuine user turn. Absence is distinct from an
+/// explicit revocation, so ordinary follow-ups preserve standing policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VerificationPolicyUpdate {
+	#[default]
+	Unchanged,
+	Forbid,
+	Allow,
+}
+
+#[cfg(test)]
+mod verification_policy_tests {
+	use super::*;
+
+	#[test]
+	fn silence_preserves_policy_and_explicit_updates_replace_it() {
+		let mut policy = VerificationPolicy::default();
+		assert!(policy.apply(VerificationPolicyUpdate::Forbid));
+		assert!(policy.forbids());
+		assert!(!policy.apply(VerificationPolicyUpdate::Unchanged));
+		assert!(policy.forbids());
+		assert!(policy.apply(VerificationPolicyUpdate::Allow));
+		assert!(!policy.forbids());
+	}
+}
+
 /// Escape untrusted text before embedding it inside supervisor-owned XML-like
 /// control blocks. This preserves field boundaries against literal closing tags.
 pub(crate) fn escape_xml_text(value: &str) -> String {

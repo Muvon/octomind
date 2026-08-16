@@ -46,38 +46,16 @@ fn claims_user_task_completion(
 			|| (self_report.is_none() && has_mutations))
 }
 
-/// Resolve the current human task against the plan snapshot captured before
-/// this turn did any work. Both verifier-backed and trusted no-gate completion
-/// use this exact ownership decision, so an unrelated `done` cannot retire an
-/// older plan merely because it is still active.
-async fn resolve_completion_task(
-	chat_session: &mut ChatSession,
-	config: &Config,
+/// Read the admission-time task resolution used by both verifier-backed and
+/// trusted no-gate completion. A missing/mismatched cache stays conservative,
+/// so an unrelated `done` cannot retire an older plan merely because it is open.
+fn completion_task(
+	chat_session: &ChatSession,
 	task: &str,
 	live_plan: &str,
-	operation_rx: watch::Receiver<bool>,
 ) -> crate::supervisor::resolve::ResolvedTask {
 	match chat_session.gate_task.clone() {
-		Some(crate::supervisor::resolve::TaskResolutionState::Resolved(resolved))
-			if resolved.original_request == task =>
-		{
-			resolved
-		}
-		Some(crate::supervisor::resolve::TaskResolutionState::Pending(context))
-			if context.current_request == task =>
-		{
-			let animation_manager = crate::session::chat::get_animation_manager();
-			animation_manager
-				.set_phase("Resolving current task …")
-				.await;
-			let resolved =
-				crate::supervisor::resolve::resolve(config, &context, operation_rx).await;
-			animation_manager.clear_phase();
-			chat_session.gate_task = Some(
-				crate::supervisor::resolve::TaskResolutionState::Resolved(resolved.clone()),
-			);
-			resolved
-		}
+		Some(resolved) if resolved.original_request == task => resolved,
 		_ => {
 			// Missing/mismatched state is uncertain. Treat the live plan as
 			// pre-existing so it cannot gain authority from missing metadata.
@@ -209,26 +187,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 
 	// CRITICAL: Connect session cancellation to animation for INSTANT Ctrl+C response
 	animation_manager.set_cancel_receiver(operation_rx.clone());
-
-	// Snapshot task-resolution context before this turn's work changes the plan or
-	// compaction anchor. The external planner reuses this bounded snapshot without
-	// paying for a separate resolver call. Resolution itself stays lazy: only a
-	// completion claim pays for the classifier/rewriter call, and recursive gate
-	// re-runs reuse its result.
-	if config.supervisor.enabled
-		&& chat_session.completion_gate_eligible
-		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled)
-		&& chat_session.gate_task.is_none()
-	{
-		let session_context = chat_session.session.info.anchor.to_xml();
-		let active_plan = crate::mcp::core::plan::render_plan_details();
-		chat_session.gate_task = crate::supervisor::resolve::TaskContext::capture(
-			&chat_session.session.messages,
-			&session_context,
-			active_plan.as_deref(),
-		)
-		.map(crate::supervisor::resolve::TaskResolutionState::Pending);
-	}
 
 	// Inject learned lessons. Two triggers:
 	//   - first call of the session → global tier + full hybrid scoped recall;
@@ -592,17 +550,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or_default()
 			.to_string();
 		let live_plan = crate::mcp::core::plan::render_plan_details().unwrap_or_default();
-		// Resolve references before completion checks consult session-persistent
-		// state. Otherwise an old plan could gain scope over a new unrelated
-		// self-contained request before the resolver gets a chance to reject it.
-		let resolved_task = resolve_completion_task(
-			chat_session,
-			config,
-			&task,
-			&live_plan,
-			operation_rx.clone(),
-		)
-		.await;
+		// Read the resolution captured before work began, before completion checks
+		// consult session-persistent plan state.
+		let resolved_task = completion_task(chat_session, &task, &live_plan);
 		let plan_changed_this_turn = live_plan != resolved_task.plan_at_turn_start;
 		let plan_applies = crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan);
 		crate::log_debug!(
@@ -639,20 +589,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::session::guardrails::get_rules(&chat_session.session.info.name)
 				.map(|r| !r.validators.is_empty())
 				.unwrap_or(false);
-		// The user can explicitly forbid running checks ("don't run cargo —
-		// I'll run it myself", in any language). Nudging "run a check" then
-		// pushes the agent to violate that prohibition — the pre-gate must
-		// stand down. The verdict comes from the resolver's LLM classifier
-		// (language-agnostic, judges meaning not keywords) on the current user
-		// turn; the LLM verify-gate still runs and judges prohibitions on its
-		// own. The classifier sees ONE turn, but the prohibition is a standing
-		// rule — latch it on the detectors so later turns inherit it for the
-		// rest of the session (it never auto-expires; see note_forbids_verification).
-		if resolved_task.forbids_verification {
-			chat_session.detectors.note_forbids_verification();
-		}
-		let check_run_forbidden =
-			resolved_task.forbids_verification || chat_session.detectors.check_run_forbidden();
+		// The current-turn verdict covers role instructions and immediate user
+		// wording. The persisted user policy covers prior genuine turns, including
+		// answer-only turns that never reached a completion claim. An explicit
+		// later permission changes that policy during turn admission; silence does
+		// not. Detector streak state is intentionally not an instruction store.
+		let check_run_forbidden = resolved_task.forbids_verification
+			|| chat_session.session.info.verification_policy.forbids();
 		if check_run_forbidden {
 			crate::log_debug!("Pre-gate: check-run forbidden by user/instructions; standing down");
 		}
@@ -909,14 +852,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.unwrap_or_default()
 			.to_string();
 		let live_plan = crate::mcp::core::plan::render_plan_details().unwrap_or_default();
-		let resolved_task = resolve_completion_task(
-			chat_session,
-			config,
-			&task,
-			&live_plan,
-			operation_rx.clone(),
-		)
-		.await;
+		let resolved_task = completion_task(chat_session, &task, &live_plan);
 		if crate::supervisor::resolve::plan_applies(&resolved_task, &live_plan) {
 			let summary = chat_session
 				.last_self_report_reason

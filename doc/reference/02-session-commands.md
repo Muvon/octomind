@@ -10,7 +10,7 @@ All interactive session commands. Type the command at the prompt. There are 25 d
 | `/exit` (`/quit`) | Exit the session |
 | `/clear` | Clear the terminal screen |
 | `/list [PAGE]` | List saved sessions |
-| `/session [NAME]` | Create a new session, or switch to/create one by name |
+| `/new [TITLE]` | Start a fresh session with unified naming (optional title) |
 | `/info` | Show session statistics (tokens, cost, cache, compression) |
 | `/report` | Detailed per-request usage report |
 | `/share` | Upload the session log and print a permanent share URL |
@@ -45,9 +45,9 @@ Exit the current session. `/quit` is an alias of `/exit`.
 ### `/list [PAGE]`
 List all saved sessions. Optional page number for pagination.
 
-### `/session [NAME]`
-- `/session` (no argument) creates a **new** session named `session_<unix_timestamp>`.
-- `/session <name...>` switches to a session with the given name, creating it if it does not exist. The name may contain spaces (all arguments are joined).
+### `/new [TITLE]`
+- `/new` (no argument) creates a **new** session with a generated name in the same format as `octomind run`: `YYMMDD-basename-HHMM-uuid4short`.
+- `/new <title...>` creates a new session and sets the given title (same as `/rename`). The title may contain spaces (all arguments are joined).
 
 This command does **not** display current session info — use [`/info`](#info) for that.
 

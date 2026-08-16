@@ -34,6 +34,7 @@ mod loglevel;
 mod mcp;
 mod model;
 mod monitor;
+mod new;
 mod plan;
 mod prompt;
 mod rename;
@@ -41,7 +42,6 @@ mod report;
 mod role;
 mod run;
 mod schedule;
-mod session;
 mod share;
 mod skill;
 mod usage;
@@ -186,10 +186,6 @@ pub enum CommandOutput {
 		entries: Vec<serde_json::Value>,
 		totals: serde_json::Value,
 	},
-	Session {
-		switched: bool,
-		session_name: String,
-	},
 	Skill {
 		data: serde_json::Value,
 	},
@@ -316,7 +312,6 @@ impl CommandOutput {
 			Self::Run { .. } => display::display_run(self, config, &session.role),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
-			Self::Session { .. } => display::display_session(self),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Monitor { .. } => display::display_monitor(self),
@@ -414,7 +409,7 @@ pub async fn process_command(
 		LIST_COMMAND => list::handle_list(session, config, params),
 		MODEL_COMMAND => model::handle_model(session, config, params),
 		EFFORT_COMMAND => effort::handle_effort(session, config, params),
-		SESSION_COMMAND => session::handle_session(session, params),
+		NEW_COMMAND => new::handle_new(session, params),
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
 		RUN_COMMAND => {
 			run::handle_run(session, config, &current_role, params, operation_cancelled).await

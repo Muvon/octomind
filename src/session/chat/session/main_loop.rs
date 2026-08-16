@@ -14,7 +14,7 @@
 
 // Main session loop - orchestrates all session operations
 
-use super::super::commands::{MODEL_COMMAND, ROLE_COMMAND, SESSION_COMMAND};
+use super::super::commands::{MODEL_COMMAND, NEW_COMMAND, ROLE_COMMAND};
 use super::super::input::{calculate_current_context_tokens, read_user_input, InputResult};
 use super::super::CostTracker;
 use super::api_executor::execute_api_call_and_process_response;
@@ -1002,7 +1002,7 @@ pub async fn run_interactive_session(
 					}
 					CommandResult::Exit => {
 						// First check if it's a session switch command
-						if input.starts_with(SESSION_COMMAND) {
+						if input.starts_with(NEW_COMMAND) {
 							// We need to switch to another session
 							let new_session_name = chat_session.session.info.name.clone();
 
@@ -1020,6 +1020,13 @@ pub async fn run_interactive_session(
 
 							// Reset first message flag for new session
 							first_message_processed = !chat_session.session.messages.is_empty();
+
+							// Confirm the switch — a fresh session has no history to replay.
+							println!(
+								"{}",
+								format!("Starting new session: {}", chat_session.session.info.name)
+									.bright_green()
+							);
 
 							// Print the last few messages for context with colors
 							if !chat_session.session.messages.is_empty() {
@@ -1565,8 +1572,8 @@ pub async fn run_interactive_session_with_input(
 			}
 			crate::session::chat::session::commands::CommandResult::Exit => {
 				// Check if it's a session switch command
-				if input.starts_with(crate::session::chat::commands::SESSION_COMMAND) {
-					println!("{}", "Note: Session switching is not supported in run mode. Use 'octomind run' for interactive session management.".yellow())
+				if input.starts_with(crate::session::chat::commands::NEW_COMMAND) {
+					println!("{}", "Note: /new is not supported in run mode. Start a new session with 'octomind run'.".yellow())
 				}
 				// Save session after command execution
 				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }

@@ -41,7 +41,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(COPY_COMMAND, "Copy last response to clipboard"),
 			(CLEAR_COMMAND, "Clear the screen"),
 			(LIST_COMMAND, "List all available sessions"),
-			(SESSION_COMMAND, "Switch to another session or create one"),
+			(NEW_COMMAND, "Start a fresh session (optional title)"),
 			(
 				RENAME_COMMAND,
 				"Set a display title for this session (no arg clears)",
@@ -1850,25 +1850,6 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				total_cost
 			)),
 		);
-		println!();
-	}
-}
-
-pub fn display_session(output: &CommandOutput) {
-	if let CommandOutput::Session {
-		switched,
-		session_name,
-	} = output
-	{
-		block_open("/session", None);
-		if *switched {
-			let kw = key_width(["new"]);
-			block_row("new", &session_name.bright_green().to_string(), kw);
-			block_close_ok("/session", Some(session_name));
-		} else {
-			block_line(&"You are already in this session.".blue().to_string());
-			block_close_ok("/session", Some(session_name));
-		}
 		println!();
 	}
 }

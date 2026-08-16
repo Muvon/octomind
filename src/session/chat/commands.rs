@@ -22,7 +22,7 @@ pub const QUIT_COMMAND: &str = "/quit";
 pub const COPY_COMMAND: &str = "/copy";
 pub const CLEAR_COMMAND: &str = "/clear";
 pub const LIST_COMMAND: &str = "/list";
-pub const SESSION_COMMAND: &str = "/session";
+pub const NEW_COMMAND: &str = "/new";
 pub const INFO_COMMAND: &str = "/info";
 pub const DONE_COMMAND: &str = "/done";
 pub const LOGLEVEL_COMMAND: &str = "/loglevel";
@@ -56,7 +56,7 @@ pub const COMMANDS: [&str; 32] = [
 	COPY_COMMAND,
 	CLEAR_COMMAND,
 	LIST_COMMAND,
-	SESSION_COMMAND,
+	NEW_COMMAND,
 	INFO_COMMAND,
 	DONE_COMMAND,
 	LOGLEVEL_COMMAND,

@@ -533,7 +533,12 @@ pub async fn reconcile_after_actions(
 			}
 		},
 		Err(error) => {
-			note_planner_failure(chat_session, signal, active, &format!("transport failure: {error}"))?;
+			note_planner_failure(
+				chat_session,
+				signal,
+				active,
+				&format!("transport failure: {error}"),
+			)?;
 			return Ok(());
 		}
 	};
@@ -601,7 +606,12 @@ pub async fn reconcile_after_actions(
 	let transition = match application {
 		Ok(transition) => transition,
 		Err(error) => {
-			note_planner_failure(chat_session, signal, active, &format!("invalid decision: {error}"))?;
+			note_planner_failure(
+				chat_session,
+				signal,
+				active,
+				&format!("invalid decision: {error}"),
+			)?;
 			return Ok(());
 		}
 	};

@@ -36,6 +36,7 @@ mod model;
 mod monitor;
 mod plan;
 mod prompt;
+mod rename;
 mod report;
 mod role;
 mod run;
@@ -241,6 +242,11 @@ pub enum CommandOutput {
 		/// Total runs tracked for this session (running + finished).
 		total: usize,
 	},
+	/// Result of `/rename`: the new display title (None = cleared).
+	Rename {
+		session_name: String,
+		title: Option<String>,
+	},
 	Error {
 		error: String,
 		context: Option<serde_json::Value>,
@@ -320,6 +326,24 @@ impl CommandOutput {
 			Self::Login { .. } => display::display_login(self),
 			Self::Analyze { .. } => display::display_analyze(self),
 			Self::Agents { .. } => display::display_agents(self),
+			Self::Rename {
+				session_name,
+				title,
+			} => {
+				block_open("/rename", None);
+				match title {
+					Some(t) => {
+						let kw = key_width(["title"]);
+						block_row("title", &t.bright_green().to_string(), kw);
+						block_close_ok("/rename", Some(session_name));
+					}
+					None => {
+						block_line(&"Session title cleared.".yellow().to_string());
+						block_close_ok("/rename", Some(session_name));
+					}
+				}
+				println!();
+			}
 			Self::Error { error, .. } => {
 				block_open("/error", None);
 				block_close_err("error", error);
@@ -410,6 +434,7 @@ pub async fn process_command(
 		AGENTS_COMMAND => agents::handle_agents(params),
 		USAGE_COMMAND => usage::handle_usage().await,
 		LOGIN_COMMAND => login::handle_login().await,
+		RENAME_COMMAND => rename::handle_rename(session, params),
 		_ => {
 			// Unknown command - treat as user input instead of showing error
 			Ok(CommandResult::TreatAsUserInput)

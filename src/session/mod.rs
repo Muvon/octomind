@@ -44,6 +44,7 @@ pub mod report; // Session usage reporting
 pub mod share; // /share: upload session JSONL → octomind.run/r/<id>
 pub mod smart_summarizer; // Smart text summarization for context management
 pub mod tap_runs; // Registry for agents launched via the `tap` core tool
+pub mod titles; // Session titles/metadata sidecar store (titles.json)
 mod token_counter; // Token counting utilities // Comprehensive caching system
 pub mod webhook_listener; // HTTP webhook listener for hook-to-inbox injection
 
@@ -577,6 +578,8 @@ impl Session {
 }
 
 pub mod persistence;
+
+pub mod picker; // Interactive fuzzy session picker (bare `octomind` in a terminal)
 pub use persistence::{
 	append_to_session_file, clean_interrupted_tool_calls, extract_runtime_state_from_log,
 	find_most_recent_session_for_project, get_sessions_dir, list_available_sessions, load_session,

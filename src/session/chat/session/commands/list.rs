@@ -108,6 +108,8 @@ pub fn handle_list(
 
 					serde_json::json!({
 						"name": name,
+						"title": crate::session::titles::get_session_meta(name)
+							.and_then(|m| m.title),
 						"created": created_time,
 						"created_timestamp": info.created_at,
 						"model": info.model,

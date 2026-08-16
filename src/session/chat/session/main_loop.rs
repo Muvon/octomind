@@ -183,9 +183,22 @@ pub async fn run_interactive_session(
 	// `args`/`config` are borrows that don't cross into the session scope.
 	let (resumed, sandbox, mcp_servers) = telemetry_context(args, config);
 
+	// Record role/model in the titles sidecar so the picker and /list can
+	// show and restore them even without an explicit /rename.
+	crate::session::titles::record_session_meta(
+		&session_id,
+		&role,
+		&chat_session.session.info.model,
+	);
+
 	// Now that the session ID is known, set the process & terminal title so
 	// `ps`/htop and the terminal tab show which run/role/session this is.
-	let title = format!("octomind-run {role} [{session_id}]");
+	// Include the session's display title when one was set via /rename.
+	let display_title = crate::session::titles::get_session_meta(&session_id)
+		.and_then(|m| m.title)
+		.map(|t| format!(" — {}", t))
+		.unwrap_or_default();
+	let title = format!("octomind-run {role} [{session_id}{display_title}]");
 	crate::proctitle::set_process_title(&title);
 	crate::proctitle::set_terminal_title(&title);
 
@@ -1426,11 +1439,21 @@ pub async fn run_interactive_session_with_input(
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 
+	crate::session::titles::record_session_meta(
+		&session_id,
+		&role,
+		&chat_session.session.info.model,
+	);
+
 	let (resumed, sandbox, mcp_servers) = telemetry_context(args, config);
 
 	// Now that the session ID is known, set the process & terminal title so
 	// `ps`/htop and the terminal tab show which run/role/session this is.
-	let title = format!("octomind-run {role} [{session_id}]");
+	let display_title = crate::session::titles::get_session_meta(&session_id)
+		.and_then(|m| m.title)
+		.map(|t| format!(" — {}", t))
+		.unwrap_or_default();
+	let title = format!("octomind-run {role} [{session_id}{display_title}]");
 	crate::proctitle::set_process_title(&title);
 	crate::proctitle::set_terminal_title(&title);
 

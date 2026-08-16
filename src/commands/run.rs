@@ -29,8 +29,9 @@ pub struct RunArgs {
 	#[arg(long, short = 'n', value_name = "NAME")]
 	pub name: Option<String>,
 
-	/// Resume a specific session by name.
-	#[arg(long, short = 'r', value_name = "SESSION")]
+	/// Resume a specific session by name. Bare `--resume` (no value) opens the
+	/// interactive session picker instead.
+	#[arg(long, short = 'r', value_name = "SESSION", num_args = 0..=1, default_missing_value = "")]
 	pub resume: Option<String>,
 
 	/// Resume the most recent session for the current working directory.
@@ -91,12 +92,30 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		None => None,
 	};
 
+	// Interactive startup with bare `--resume` (no value): offer a fuzzy picker
+	// of recent sessions (newest first). Picking one is resume-equivalent;
+	// Esc starts a fresh session. Bare `octomind run` still starts a new
+	// session directly — the picker is opt-in via `--resume`. Non-interactive
+	// mode is untouched.
+	let picker_resume = if is_interactive_session && args.resume.as_deref() == Some("") {
+		session::picker::pick_session()?
+	} else {
+		None
+	};
+
+	// Bare `--resume` has nothing to resume from without a terminal picker.
+	if !is_interactive_session && args.resume.as_deref() == Some("") {
+		anyhow::bail!("--resume requires a session name in non-interactive mode");
+	}
+
 	// Resuming without a tag comes back as the session's own role, not the config
 	// default — otherwise continuing a conversation silently swaps the agent, its
 	// model and its tools. An explicit tag always wins: that IS the switch.
 	let tag = match &args.tag {
 		Some(tag) => Some(tag.clone()),
-		None => resumed_session_name(args).and_then(|name| octomind::session::resume_role(&name)),
+		None => resumed_session_name(args)
+			.or_else(|| picker_resume.clone())
+			.and_then(|name| octomind::session::resume_role(&name)),
 	};
 
 	// Resolve config and role (tap/dep resolution only — MCP init happens after session ID is set)
@@ -108,7 +127,11 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 		role_explicit: args.tag.is_some(),
 		mode: args.format.clone().unwrap_or_else(|| "plain".to_string()),
 		name: args.name.clone(),
-		resume: args.resume.clone(),
+		resume: args
+			.resume
+			.clone()
+			.filter(|s| !s.is_empty())
+			.or(picker_resume),
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
 		daemon: args.daemon,
@@ -142,8 +165,9 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 /// name with no file behind it is a brand-new session and must not recover a
 /// role from anywhere.
 fn resumed_session_name(args: &RunArgs) -> Option<String> {
-	if let Some(session) = &args.resume {
-		return Some(session.clone());
+	match args.resume.as_deref() {
+		Some(session) if !session.is_empty() => return Some(session.to_string()),
+		_ => {}
 	}
 	if args.resume_recent {
 		let current_dir = octomind::mcp::get_thread_working_directory();

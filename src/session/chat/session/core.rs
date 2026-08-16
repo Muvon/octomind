@@ -564,6 +564,11 @@ impl ChatSession {
 							"{}",
 							format!("✓ Resuming session: {}", session_name).bright_green()
 						);
+						if let Some(title) = crate::session::titles::get_session_meta(&session_name)
+							.and_then(|m| m.title)
+						{
+							println!("{} {}", "Title:".blue(), title.white());
+						}
 
 						// Show a brief summary of the session
 						let created_time =

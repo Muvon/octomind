@@ -22,17 +22,11 @@ pub mod core;
 pub mod memory_storage;
 pub mod storage;
 
-pub use compression::{
-	has_pending_compression, has_pending_project_compression, process_pending_compression,
-	process_pending_phase_compression, process_pending_project_compression,
-	set_pending_compression_range, CompressionMetrics, PhaseCompression, ProjectCompression,
-};
+pub use compression::CompressionMetrics;
 pub use core::{
-	broken_plan_conditions, clear_plan_data, clear_task_start_index, execute_plan,
-	get_and_clear_start_index, get_completed_task_count, get_current_plan_display,
-	get_current_task_start_index, get_last_completed_task_for_compression, has_active_plan,
-	open_plan_tasks, render_plan_checklist, render_plan_details, set_current_task_start_index,
-	set_last_task_message_range, sidecar_advance, sidecar_finish, sidecar_revise, sidecar_start,
+	broken_plan_conditions, clear_task_start_index, get_current_plan_display,
+	get_current_task_start_index, has_active_plan, render_plan_checklist, render_plan_details,
+	set_current_task_start_index, sidecar_advance, sidecar_finish, sidecar_revise, sidecar_start,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};

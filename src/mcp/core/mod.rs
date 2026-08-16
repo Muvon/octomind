@@ -20,9 +20,5 @@ pub mod local_tool;
 pub mod plan;
 pub mod recall;
 
-#[cfg(test)]
-mod plan_tests;
-
 // Re-export main functionality
 pub use functions::get_all_functions;
-pub use plan::{clear_plan_data, execute_plan};

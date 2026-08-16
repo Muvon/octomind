@@ -1177,13 +1177,6 @@ pub async fn process_response<S: OutputSink>(
 	// `<validation validator="…">…</validation>` into the inbox.
 	crate::session::hooks::run_turn_validators(&session_id, params.role, &current_content).await;
 
-	// 🗜️ DEFERRED PLAN COMPRESSION: queued by plan(done), NOT run here.
-	// It must only fire once the turn's completion is actually accepted — the
-	// verify-gate runs after process_response, and on gaps it re-runs the turn.
-	// Compressing here would wipe the detailed context the re-run needs. So the
-	// caller (execute_api_call_and_process_response) invokes
-	// `run_deferred_plan_compression` at a non-re-run exit instead.
-
 	// Emit cost message through sink (WebSocket/JSONL). Fold first so the
 	// reported total covers everything this turn spent, including subagents and
 	// the supervisor — a parent reading our `octomind.usage` gets the full bill.
@@ -1221,59 +1214,4 @@ pub async fn process_response<S: OutputSink>(
 		}
 	}
 	Ok(())
-}
-
-/// Run the plan(done) deferred compression (task → phase → project), queued by
-/// plan(done) and held until the turn's completion is accepted. Called by
-/// `execute_api_call_and_process_response` at a non-re-run exit — after the
-/// verify-gate passes, or when no gate applies. The gate's gap path re-runs the
-/// turn (returning early), so a rejected completion never reaches this point and
-/// the detailed context stays intact for the re-run. No-op when nothing pending.
-pub async fn run_deferred_plan_compression(chat_session: &mut ChatSession) {
-	if !crate::mcp::core::plan::has_pending_project_compression() {
-		return;
-	}
-	log_debug!("Processing deferred plan(done) compression after completion accepted");
-
-	// Task compression (forced for last task)
-	match crate::mcp::core::plan::process_pending_compression(chat_session).await {
-		Ok(Some(metrics)) => {
-			chat_session.session.info.compression_stats.add_compression(
-				crate::session::CompressionKind::Task,
-				metrics.messages_removed,
-				metrics.tokens_saved,
-			);
-			CostTracker::display_compression_result("Task", &metrics);
-		}
-		Ok(None) => {}
-		Err(e) => log_debug!("Deferred task compression failed: {}. Continuing.", e),
-	}
-
-	// Phase compression
-	match crate::mcp::core::plan::process_pending_phase_compression(chat_session).await {
-		Ok(Some(metrics)) => {
-			chat_session.session.info.compression_stats.add_compression(
-				crate::session::CompressionKind::Phase,
-				metrics.messages_removed,
-				metrics.tokens_saved,
-			);
-			CostTracker::display_compression_result("Phase", &metrics);
-		}
-		Ok(None) => {}
-		Err(e) => log_debug!("Deferred phase compression failed: {}. Continuing.", e),
-	}
-
-	// Project compression
-	match crate::mcp::core::plan::process_pending_project_compression(chat_session).await {
-		Ok(Some(metrics)) => {
-			chat_session.session.info.compression_stats.add_compression(
-				crate::session::CompressionKind::Project,
-				metrics.messages_removed,
-				metrics.tokens_saved,
-			);
-			CostTracker::display_compression_result("Project", &metrics);
-		}
-		Ok(None) => {}
-		Err(e) => log_debug!("Deferred project compression failed: {}. Continuing.", e),
-	}
 }

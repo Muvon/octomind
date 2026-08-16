@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::super::response::{
-	process_response, run_deferred_plan_compression, ResponseProcessingParams,
-};
+use super::super::response::{process_response, ResponseProcessingParams};
 use super::super::CostTracker;
 use super::core::ChatSession;
 use super::error_utils::display_rate_limit_info;
@@ -878,15 +876,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::log_debug!("External plan retained: completed turn does not own it");
 		}
 	}
-
-	// Deferred plan(done) compression: held until the turn's completion is
-	// accepted, so it runs ONCE here — a non-re-run exit reached only after the
-	// verify-gate passed (or when no gate applied / iterations were exhausted).
-	// The gate's gap path returns earlier to re-run the turn, so a rejected
-	// completion never compresses and the re-run keeps full context. No-op unless
-	// plan(done) queued a project compression.
-	run_deferred_plan_compression(chat_session).await;
-
 	Ok(())
 }
 

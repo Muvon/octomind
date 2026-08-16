@@ -86,8 +86,6 @@ impl PlanStorage for MemoryPlanStorage {
 			current_task_index: 0,
 			created_at: Utc::now(),
 			status: PlanStatus::Active,
-			phase_compressions: Vec::new(),
-			project_compression: None,
 		});
 
 		Ok(())
@@ -289,14 +287,6 @@ impl PlanStorage for MemoryPlanStorage {
 			.as_ref()
 			.ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.tasks.len())
-	}
-
-	fn get_phase_count(&self) -> Result<usize> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
-		Ok(plan.phase_compressions.len())
 	}
 
 	fn get_plan(&self) -> Result<&ExecutionPlan> {

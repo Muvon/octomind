@@ -25,10 +25,6 @@ pub struct ExecutionPlan {
 	pub current_task_index: usize,
 	pub created_at: DateTime<Utc>,
 	pub status: PlanStatus,
-	#[serde(default)]
-	pub phase_compressions: Vec<super::compression::PhaseCompression>,
-	#[serde(default)]
-	pub project_compression: Option<super::compression::ProjectCompression>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,9 +139,6 @@ pub trait PlanStorage {
 
 	/// Get total task count
 	fn get_total_task_count(&self) -> Result<usize>;
-
-	/// Get phase compression count
-	fn get_phase_count(&self) -> Result<usize>;
 
 	/// Get the execution plan (for phase detection)
 	fn get_plan(&self) -> Result<&ExecutionPlan>;

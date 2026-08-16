@@ -365,13 +365,6 @@ pub fn get_task_start_index(session_id: &SessionId) -> Option<usize> {
 	registry.get(session_id).copied()
 }
 
-/// Get and clear the task start index for a session.
-pub fn take_task_start_index(session_id: &SessionId) -> Option<usize> {
-	let mut guard = TASK_START_INDICES.write().ok()?;
-	let registry = guard.as_mut()?;
-	registry.remove(session_id)
-}
-
 /// Clear the task start index for a session.
 pub fn clear_task_start_index(session_id: &SessionId) {
 	if let Ok(mut guard) = TASK_START_INDICES.write() {
@@ -384,7 +377,6 @@ pub fn clear_task_start_index(session_id: &SessionId) {
 // ---------------------------------------------------------------------------
 // Session-keyed schedule storage
 // ---------------------------------------------------------------------------
-
 use crate::mcp::orchestration::schedule::storage::ScheduleStore;
 
 /// Registry for schedule storage, keyed by session ID.
@@ -1108,7 +1100,6 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::tap_runs::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
 	crate::supervisor::delegate::clear_handback_for_session(session_id);
-	crate::mcp::core::plan::compression::cleanup_compression_state(session_id);
 	clear_schedule_notify(session_id);
 }
 

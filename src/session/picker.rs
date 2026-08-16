@@ -92,7 +92,8 @@ pub fn pick_session() -> Result<Option<String>> {
 
 fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 	let matcher = SkimMatcherV2::default();
-	let mut query = String::new();
+	let mut query: Vec<char> = Vec::new();
+	let mut cursor_pos: usize = 0; // char index into query, 0..=len
 	let mut selected: usize = 0;
 	let mut stdout = std::io::stdout();
 
@@ -100,6 +101,7 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 	let result = (|| -> Result<Option<String>> {
 		execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
 		loop {
+			let query_str: String = query.iter().collect();
 			// Rank entries against the current query; empty query keeps the
 			// natural order (already newest-first from list_available_sessions).
 			let filtered: Vec<&PickerEntry> = if query.is_empty() {
@@ -107,7 +109,7 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 			} else {
 				let mut scored: Vec<(i64, &PickerEntry)> = entries
 					.iter()
-					.filter_map(|e| matcher.fuzzy_match(&e.label(), &query).map(|s| (s, e)))
+					.filter_map(|e| matcher.fuzzy_match(&e.label(), &query_str).map(|s| (s, e)))
 					.collect();
 				scored.sort_by(|a, b| b.0.cmp(&a.0));
 				scored.into_iter().map(|(_, e)| e).collect()
@@ -122,7 +124,7 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 				cursor::MoveTo(0, 0)
 			)?;
 			write!(stdout, "Resume session (type to filter, ↑/↓ to move, Enter to resume, Esc for new session)\r\n")?;
-			write!(stdout, "> {}\r\n\r\n", query)?;
+			write!(stdout, "> {}\r\n\r\n", query_str)?;
 
 			let rows = terminal::size().map(|(_, h)| h as usize).unwrap_or(24);
 			let max_visible = rows.saturating_sub(5);
@@ -143,12 +145,19 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 			if filtered.is_empty() {
 				write!(stdout, "  (no matches — Enter starts a new session)\r\n")?;
 			}
+			// Place the cursor in the query line at its edit position.
+			execute!(
+				stdout,
+				cursor::Show,
+				cursor::MoveTo(2 + cursor_pos as u16, 1)
+			)?;
 			stdout.flush()?;
 
 			if let Event::Key(KeyEvent {
 				code, modifiers, ..
 			}) = event::read()?
 			{
+				let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 				match code {
 					KeyCode::Esc => return Ok(None),
 					KeyCode::Enter => {
@@ -160,15 +169,62 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 							selected += 1;
 						}
 					}
-					KeyCode::Backspace => {
-						query.pop();
+					// ── readline-style editing ─────────────────────────
+					KeyCode::Char('c') if ctrl => return Ok(None),
+					KeyCode::Char('d') if ctrl => {
+						// bash EOF: empty line exits, otherwise delete char under cursor
+						if query.is_empty() {
+							return Ok(None);
+						}
+						if cursor_pos < query.len() {
+							query.remove(cursor_pos);
+							selected = 0;
+						}
+					}
+					KeyCode::Char('a') if ctrl => cursor_pos = 0,
+					KeyCode::Char('e') if ctrl => cursor_pos = query.len(),
+					KeyCode::Char('u') if ctrl => {
+						query.drain(..cursor_pos);
+						cursor_pos = 0;
 						selected = 0;
 					}
-					KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-						return Ok(None)
+					KeyCode::Char('k') if ctrl => {
+						query.truncate(cursor_pos);
+						selected = 0;
 					}
-					KeyCode::Char(c) => {
-						query.push(c);
+					KeyCode::Char('w') if ctrl => {
+						// kill word before cursor: trailing spaces, then the word
+						let mut start = cursor_pos;
+						while start > 0 && query[start - 1] == ' ' {
+							start -= 1;
+						}
+						while start > 0 && query[start - 1] != ' ' {
+							start -= 1;
+						}
+						query.drain(start..cursor_pos);
+						cursor_pos = start;
+						selected = 0;
+					}
+					KeyCode::Left => cursor_pos = cursor_pos.saturating_sub(1),
+					KeyCode::Right => cursor_pos = (cursor_pos + 1).min(query.len()),
+					KeyCode::Home => cursor_pos = 0,
+					KeyCode::End => cursor_pos = query.len(),
+					KeyCode::Backspace => {
+						if cursor_pos > 0 {
+							query.remove(cursor_pos - 1);
+							cursor_pos -= 1;
+							selected = 0;
+						}
+					}
+					KeyCode::Delete => {
+						if cursor_pos < query.len() {
+							query.remove(cursor_pos);
+							selected = 0;
+						}
+					}
+					KeyCode::Char(c) if !ctrl => {
+						query.insert(cursor_pos, c);
+						cursor_pos += 1;
 						selected = 0;
 					}
 					_ => {}

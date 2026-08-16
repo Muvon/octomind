@@ -111,7 +111,7 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 					.iter()
 					.filter_map(|e| matcher.fuzzy_match(&e.label(), &query_str).map(|s| (s, e)))
 					.collect();
-				scored.sort_by(|a, b| b.0.cmp(&a.0));
+				scored.sort_by_key(|b| std::cmp::Reverse(b.0));
 				scored.into_iter().map(|(_, e)| e).collect()
 			};
 			if selected >= filtered.len() {

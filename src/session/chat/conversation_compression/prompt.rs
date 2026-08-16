@@ -147,7 +147,7 @@ The user message is assembled from the blocks below. Identify each by its TAG, n
 </input_format>
 
 <priorities>
-1. Runtime-owned pinned_state is the active task and binding constraints — preserve it precisely and never weaken or replace it.
+1. Runtime-owned pinned_state is the active task, current-scope constraints, and verification policy — preserve it precisely and never weaken or replace it. The verification policy is execution permission, never task scope or a next action; \"allowed\" explicitly revokes an older no-verification instruction and permits checks without requiring them.
 2. In PACT mode, keep_exact packets and their dependency relations define the active frontier. Preserve their concrete state; do not infer omitted payload text.
 3. summarize packets are completed evidence to fold; archive_reference descriptors are recall pointers and cannot support an invented literal.
 4. File paths, line numbers, identifiers, and error strings — copy verbatim from the transcript.
@@ -182,7 +182,7 @@ On the legacy transcript path, [RECENT] marks a bounded suffix. Recency is never
 </recency>
 
 <attribution>
-In PACT mode populate folded_units with atomic completed-state claims. Every unit must cite all and only the supplied block IDs that support it. A runtime event cannot become a user goal, an assistant report cannot become an established observation by repetition, and archive descriptors cannot support exact values.
+In PACT mode populate folded_units with atomic completed-state claims. Every unit must cite all and only the supplied block IDs that support it. A runtime event or assistant report cannot become the continuation next_action without support from a real user turn, observed tool result, or validated summary; a runtime event cannot become a user goal, an assistant report cannot become an established observation by repetition, and archive descriptors cannot support exact values.
 Hard citation rules (violations are rejected by a validator):
 - NEVER cite an archive_reference packet ID in refs — those descriptors are recall pointers, not evidence. Cite only keep_exact and summarize packet IDs.
 - A unit citing any keep_exact (active frontier) packet may only use status pending, tentative, or unknown — the frontier is live state, never completed.

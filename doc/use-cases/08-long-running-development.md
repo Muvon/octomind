@@ -141,7 +141,11 @@ octomind run --name auth-tests
 Switch between them:
 ```
 /list
-/session auth-bugfix-csrf
+```
+
+Start a fresh session for a new task:
+```
+/new auth-bugfix-csrf
 ```
 
 Each session maintains its own independent context and history.

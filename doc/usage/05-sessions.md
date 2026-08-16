@@ -39,9 +39,10 @@ List all sessions:
 /list 2    # Page 2
 ```
 
-Switch session mid-conversation:
+Start a fresh session mid-conversation:
 ```
-/session feature-auth
+/new
+/new Auth Refactor    # with a title
 ```
 
 ## Output Formats
@@ -75,7 +76,7 @@ See [Daemon and Hooks](../integration/03-daemon-and-hooks.md) for webhook integr
 
 Commands typed at the session prompt control the session without sending a message to the model. The grouped list below covers the full command surface; see the [Session Commands Reference](../reference/02-session-commands.md) for every flag and subcommand.
 
-**Session lifecycle:** `/help` (alias `/?`), `/exit` (alias `/quit`), `/clear`, `/list`, `/session`
+**Session lifecycle:** `/help` (alias `/?`), `/exit` (alias `/quit`), `/clear`, `/list`, `/new`
 
 **Monitoring:** `/info`, `/report`, `/context`, `/loglevel`
 

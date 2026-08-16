@@ -140,7 +140,7 @@ impl<'a> SessionInitParams<'a> {
 }
 
 // Generate a session name in format: YYMMDD-basename-HHMM-uuid4
-fn generate_session_name() -> String {
+pub(crate) fn generate_session_name() -> String {
 	let now = chrono::Local::now();
 	let date_str = now.format("%y%m%d").to_string();
 	let time_str = now.format("%H%M").to_string();

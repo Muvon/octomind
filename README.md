@@ -524,7 +524,7 @@ Exact field list: [Telemetry](doc/reference/04-environment-variables.md#telemetr
 | `/model <provider:model>` | Switch model mid-session |
 | `/effort <level>` | Set reasoning effort (low/medium/high/xhigh/max) |
 | `/role <name>` | Switch role mid-session |
-| `/session` | Manage saved sessions (sessions auto-save) |
+| `/new [TITLE]` | Start a fresh session (optional title) |
 | `/done` | Finalize the current task: compress context, run learning extraction, summarize |
 | `/exit` | Exit session |
 

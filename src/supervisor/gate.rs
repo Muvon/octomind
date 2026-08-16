@@ -262,14 +262,21 @@ const RECENT_COMMANDS_KEPT: usize = 3;
 const CITATION_GROUNDS_CHARS: usize = 512_000;
 
 /// One executed tool call (or a run of identical consecutive successful calls).
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct LedgerEntry {
+	#[serde(default)]
 	last_sequence: u64,
+	#[serde(default)]
 	tool: String,
+	#[serde(default)]
 	args: String,
+	#[serde(default)]
 	mutation: bool,
+	#[serde(default)]
 	error: bool,
+	#[serde(default)]
 	bytes: usize,
+	#[serde(default)]
 	repeats: usize,
 }
 

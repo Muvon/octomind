@@ -14,7 +14,8 @@
 
 //! `octomind send` — send a message to a running session.
 //!
-//! On Unix this uses a Unix Domain Socket (`<run_dir>/<name>.sock`).
+//! On Unix this uses a Unix Domain Socket (`<run_dir>/<stem>.sock`, long names
+//! shortened to fit sun_path — see `directories::session_socket_path`).
 //! On Windows this uses a Named Pipe (`\\.\pipe\octomind-<name>`).
 
 use anyhow::{bail, Context, Result};
@@ -79,9 +80,8 @@ pub async fn execute(args: &SendArgs) -> Result<()> {
 async fn send_message(session_name: &str, message: &str) -> Result<()> {
 	use tokio::net::UnixStream;
 
-	let sock_path = octomind::directories::get_run_dir()
-		.context("failed to resolve run directory")?
-		.join(format!("{}.sock", session_name));
+	let sock_path = octomind::directories::session_socket_path(session_name)
+		.context("failed to resolve session socket path")?;
 
 	if !sock_path.exists() {
 		bail!(

@@ -343,9 +343,12 @@ pub(super) fn context_ceiling(session: &ChatSession, config: &crate::config::Con
 /// After a compression, `context_tokens_after_last_compression` is an exact
 /// recount of the surviving view. Comparing the live context against that
 /// watermark captures every source of growth: assistant output, tool results,
-/// user messages, and runtime injections. Before the first compression there is
-/// no full-context checkpoint, so output-token growth is the conservative
-/// fallback.
+/// user messages, and runtime injections. Before the first compression the
+/// whole live context accumulated over the calls made so far, so
+/// `current / calls` is the honest per-call rate — output-only accounting
+/// missed tool-result growth (the dominant source in agent sessions),
+/// underestimated growth by an order of magnitude, and made every
+/// runway/safety margin a sliver that re-fired within a call or two.
 pub(super) fn measured_growth_rate(
 	info: &crate::session::SessionInfo,
 	current_tokens: usize,
@@ -356,7 +359,9 @@ pub(super) fn measured_growth_rate(
 			current_tokens.saturating_sub(info.context_tokens_after_last_compression) as f64;
 		(context_growth / calls_since).max(1.0)
 	} else {
-		measured_output_growth_rate(info)
+		let full_rate =
+			(current_tokens as f64 / (info.total_api_calls as f64).max(1.0)).max(1.0);
+		full_rate.max(measured_output_growth_rate(info))
 	}
 }
 
@@ -397,19 +402,25 @@ pub(super) fn adaptive_fire_line(
 	let safety_tokens = (growth * MIN_RUNWAY_TURNS) as usize;
 	let safe_ceiling = ceiling.saturating_sub(safety_tokens);
 	let baseline = configured_threshold.min(safe_ceiling);
+	// The runway ladder must move the fire line itself: each autonomous
+	// compression doubles the runway, so the next trigger expands from the
+	// configured baseline by the extra runway bought. Anchoring expansion only
+	// on post_tokens pinned the fire line at the baseline forever — after a
+	// fold the surviving context sits far below the threshold, so
+	// `post + growth*runway` never exceeded it and every cycle re-fired at the
+	// same configured mark.
+	let extra_runway = (runway - MIN_RUNWAY_TURNS).max(0.0);
+	let ladder = baseline.saturating_add((growth * extra_runway) as usize);
 	if post_tokens == 0 {
 		// Before the first successful compression there is no post-state anchor.
 		// A paid model rejection still increments the autonomous counter, so grow
 		// from the configured baseline and avoid asking the same question again on
 		// the next round.
-		let extra_runway = (runway - MIN_RUNWAY_TURNS).max(0.0);
-		return baseline
-			.saturating_add((growth * extra_runway) as usize)
-			.min(safe_ceiling);
+		return ladder.min(safe_ceiling);
 	}
 
 	let expanded = post_tokens.saturating_add((growth * runway) as usize);
-	baseline.max(expanded.min(safe_ceiling))
+	ladder.max(expanded).min(safe_ceiling)
 }
 
 /// Compute the compression ratio from measured session dynamics — the ladder
@@ -658,6 +669,120 @@ mod tests {
 			adaptive_fire_line(80_000, 100_000, 90_000, 2_000.0, 40.0),
 			90_000
 		);
+	}
+
+	#[test]
+	fn fire_line_ladder_expands_even_when_post_tokens_sit_below_baseline() {
+		// Regression: after a fold the surviving context sits far below the
+		// configured threshold. The runway ladder must still lift the fire line
+		// above the baseline, otherwise every autonomous cycle re-fires at the
+		// same configured mark forever.
+		assert_eq!(
+			adaptive_fire_line(80_000, 200_000, 30_000, 2_000.0, 10.0),
+			90_000
+		);
+		assert_eq!(
+			adaptive_fire_line(80_000, 200_000, 30_000, 2_000.0, 20.0),
+			110_000
+		);
+	}
+
+	#[test]
+	fn composed_autonomous_cycles_raise_the_fire_line_every_round() {
+		// Composed regression for the "always compresses at the same 40% mark"
+		// loop: simulate consecutive autonomous compression cycles through the
+		// exact production wiring used by should_check_compression —
+		// measured_growth_rate → autonomous_runway → adaptive_fire_line —
+		// and assert the trigger strictly rises each round until capped by
+		// ceiling safety.
+		let configured_threshold = 80_000;
+		let ceiling = 200_000;
+		let mut info = SessionInfo {
+			total_api_calls: 20,
+			output_tokens: 8_000,
+			..Default::default()
+		};
+
+		// Round 0: no compression yet, live context just crossed the threshold.
+		let mut current_tokens = 81_000;
+		let growth = measured_growth_rate(&info, current_tokens);
+		let runway = autonomous_runway(info.consecutive_compressions);
+		let mut prev_fire_line =
+			adaptive_fire_line(configured_threshold, ceiling, 0, growth, runway);
+		assert_eq!(prev_fire_line, configured_threshold);
+		assert!(current_tokens >= prev_fire_line, "round 0 must fire");
+
+		// Simulate the post-fold bookkeeping apply_compression performs, then
+		// grow the session back up. Each next fire line must exceed the last.
+		for cycle in 1..=3u32 {
+			// Fold: surviving context drops well below the threshold.
+			info.context_tokens_after_last_compression = 35_000;
+			info.api_calls_at_last_compression = info.total_api_calls;
+			info.compression_stats.conversation_compressions += 1;
+			info.consecutive_compressions += 1; // autonomous fold, no user turn
+
+			// Session keeps working: 10 calls at ~4.6k tokens/call of growth.
+			info.total_api_calls += 10;
+			current_tokens = 35_000 + 46_000;
+
+			let growth = measured_growth_rate(&info, current_tokens);
+			let runway = autonomous_runway(info.consecutive_compressions);
+			let fire_line = adaptive_fire_line(
+				configured_threshold,
+				ceiling,
+				info.context_tokens_after_last_compression,
+				growth,
+				runway,
+			);
+			assert!(
+				fire_line > prev_fire_line,
+				"cycle {}: fire line must rise ({} <= {}) — pinned trigger is the repeat-compression loop",
+				cycle,
+				fire_line,
+				prev_fire_line
+			);
+			let safety = (growth * MIN_RUNWAY_TURNS) as usize;
+			assert!(
+				fire_line <= ceiling - safety,
+				"cycle {}: fire line {} must keep ceiling safety {}",
+				cycle,
+				fire_line,
+				ceiling - safety
+			);
+			prev_fire_line = fire_line;
+		}
+
+		// A genuine user turn resets the runway: the next fire line returns to
+		// the short-horizon baseline band instead of staying inflated.
+		info.consecutive_compressions = 0;
+		let growth = measured_growth_rate(&info, current_tokens);
+		let reset_line = adaptive_fire_line(
+			configured_threshold,
+			ceiling,
+			info.context_tokens_after_last_compression,
+			growth,
+			autonomous_runway(0),
+		);
+		assert!(
+			reset_line < prev_fire_line,
+			"user turn must shrink the horizon ({} >= {})",
+			reset_line,
+			prev_fire_line
+		);
+	}
+
+	#[test]
+	fn pre_compression_growth_uses_full_context_when_it_dominates() {
+		// Regression: tool-result growth dominates agent sessions. Before the
+		// first compression the fallback must not underestimate growth by
+		// looking at assistant output alone.
+		let info = SessionInfo {
+			total_api_calls: 40,
+			output_tokens: 10_000,
+			..Default::default()
+		};
+		// 200k live context over 40 calls = 5k/call vs 250/call output-only.
+		assert_eq!(measured_growth_rate(&info, 200_000), 5_000.0);
 	}
 
 	#[test]

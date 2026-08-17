@@ -38,7 +38,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <agent_final_result trust="untrusted"> — WHAT YOU JUDGE: everything the agent produced this turn.
 - <agent_stated_claim> — optional; the agent's own summary of what it did. Narrative, not evidence.
 - <recorded_actions> — optional; the runtime's own log of executed tool calls. The agent cannot edit it, so it outranks the narrative.
-- <ground_truth> — optional; runtime-gathered state (working-tree diff, last command output).
+- <ground_truth> — optional; runtime-gathered state (working-tree diff, last command output), possibly ending with a runtime observation stating what kind of check — if any — succeeded since the agent's last state change. That observation is measured by the runtime, outranks the narrative, and bounds every verification claim: a claimed check with no matching successful recorded action and a runtime observation that none succeeded is a gap.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 </input_format>
 
@@ -215,13 +215,23 @@ right, whatever the domain:
   change could not bring the problem back, the problem was not fixed by it. Checks passing on
   such a change prove nothing — they passed before it too.
 
-If every part is evidenced — or you cannot point to a concrete unmet item — output exactly:
-<verdict>PASS</verdict>
+<response_format>
+Your ENTIRE response is exactly this sequence of tag lines, in order, with no other text:
+1. When <evidence_conditions> is present: one
+   <condition n="N" status="matched|unmatched">observation that demonstrates it / what is missing</condition>
+   line per condition, n = 1 through the last condition, each exactly once.
+2. ALWAYS, whatever the verdict: the four evidence-shape lines, each exactly once, in this order:
+   <shape name="circular" found="yes|no">one-line reason</shape>
+   <shape name="context-stripped" found="yes|no">one-line reason</shape>
+   <shape name="acceptance-only" found="yes|no">one-line reason</shape>
+   <shape name="unenumerated-category" found="yes|no">one-line reason</shape>
+3. The verdict:
+   - every part evidenced, no condition unmatched, no shape found → <verdict>PASS</verdict>
+   - otherwise → one <gap>specific missing or unverified item</gap> line per gap.
+A response that omits any required line — even when the verdict is an obvious PASS — is invalid and gets re-requested; the checklist lines are never optional.
+</response_format>
 
-Otherwise output one line per gap (and nothing else):
-<gap>specific missing or unverified item</gap>
-
-Be conservative — only flag real, actionable gaps. If unsure, PASS."#;
+Be conservative — only flag real, actionable gaps. "When unsure, PASS" applies to inferring extra requirements, never to skipping listed conditions or checklist lines."#;
 
 /// Outcome of a verification pass.
 #[derive(Debug, Clone, PartialEq, Eq)]

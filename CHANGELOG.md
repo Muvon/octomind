@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.44.1] - 2026-08-17
+
+### 📋 Release Summary
+
+This release includes a fix to improve the reliability of conversation summaries by preventing redundant nesting (4a1a1844). This ensures a cleaner and more consistent context history during AI interactions.
+
+
+### 🐛 Bug Fixes & Stability
+
+- **compression**: prevent nested conversation summaries `4a1a1844`
+
 ## [0.44.0] - 2026-08-17
 
 ### 📋 Release Summary

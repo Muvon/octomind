@@ -1,5 +1,81 @@
 # Changelog
 
+## [0.44.0] - 2026-08-17
+
+### 📋 Release Summary
+
+This release introduces an interactive session picker with titles and improved navigation, alongside a new `/monitor` command and a streamlined `/new` session workflow (9937bf21, c4043b17, 94918d6d, 8785f636). Significant enhancements to the AI supervisor improve response accuracy, evidence verification, and adaptive context management for more reliable codebase interactions (82681a93, b01388f4, d0db82c3, 3d93c4b2). Numerous stability fixes resolve issues with MCP tool timeouts, compression loops, and system reliability (468537cd, 4096b2d2, 461d32e0, 94935fe7).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: implement response processing orchestrator `e74a4b4a`
+- **supervisor**: implement re-read advisory detector `4e0f3a7e`
+- **supervisor**: add verification provenance to ground truth `a1217e89`
+- **session**: persist evidence ledger across restarts `a9e7522c`
+- **session**: replace /session with /new command `8785f636`
+- **governance**: integrate verification policy and constraints `873e14da`
+- **supervisor**: implement persisted verification policy `524661b0`
+- **session**: add ctrl-n/p navigation to picker `c4043b17`
+- **session**: add readline-style editing to picker `b69729fc`
+- **session**: add session titles and interactive picker `9937bf21`
+- **compression**: implement adaptive context management `d0db82c3`
+- **supervisor**: implement structured JSON output `82681a93`
+- **chat**: implement /monitor command `94918d6d`
+- **session**: separate user requests from resumption actions `fcd3aa0b`
+- **supervisor**: implement adaptive external plan management `3d93c4b2`
+- **supervisor**: implement turn answer tracking and refined verification `bb7fd43f`
+- **session**: track request signatures in anchors `2a62dc0b`
+- **session**: split total cost into total and main components `8ec9706d`
+- **supervisor**: add unenumerated-category evidence shape `7b68577e`
+- **supervisor**: improve citation verification and coverage `b01388f4`
+- **supervisor**: enforce structured evidence verification `146fb763`
+- **supervisor**: implement evidence conditions and command history `4b77167a`
+- **supervisor**: improve gate verification and session handling `a4717188`
+
+### 🔧 Improvements & Optimizations
+
+- **compression**: format growth rate calculation `f99d4c5e`
+- **mcp**: remove plan-driven compression logic `8a358410`
+- **supervisor**: introduce SupervisorPrompt struct `2e350640`
+- **supervisor**: refine task resolution and stats `4d89cc64`
+- **supervisor**: refine plan completion and constraints `01780efd`
+- **supervisor**: simplify message initialization in tests `2fd65967`
+- **session**: fix indentation in display_info `c4eabad4`
+- **supervisor**: decouple planning and reorganize MCP servers `5ac0a9bd`
+- **supervisor**: wrap long line in recite tests `ff2ee2da`
+- **supervisor**: verify superseded goals are not recited `738da7dc`
+- **supervisor**: remove verifier model fallback `50096e76`
+- **supervisor**: distribute git diff budget per file `f32a6b02`
+- **config**: align max_tokens assertions with test config `5b689245`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: add classifier retry and fidelity stats `fe1226e1`
+- **compression**: improve turn estimation and triggers `17a9ca10`
+- **supervisor**: reset singleton streak on recovery `fe3060d4`
+- **session**: prevent repeat compression loops `4096b2d2`
+- **compression**: prevent recall index growth `f7a78acf`
+- **unix**: truncate socket paths to fit sun_path limit `863c29a1`
+- **supervisor**: prevent unbounded planner failure loops `461d32e0`
+- **supervisor**: prevent feedback injection on plan request failure `9bc9bda6`
+- **mcp**: implement idle deadline and unify timeouts `468537cd`
+- **session**: prevent compression loop at context ceiling `15028ee9`
+- **mcp**: prevent auto-activation on system content `d791eb19`
+- **supervisor**: reconcile plan signals on final response `2a2cdbdf`
+- **session**: prevent matching tags in preamble prose `ab555473`
+- **supervisor**: prevent system events from triggering task completion `093f2d8d`
+- **supervisor**: prevent reciting stale goals during compression `c0b61af6`
+- **supervisor**: enforce evidence shape reporting and increase token limit `c705c4d0`
+- **mcp**: add absolute timeout for tool calls `94935fe7`
+- **supervisor**: enforce condition itemization in verify gate `35b63524`
+- **session**: skip mutation checks for answer-only tasks `1f9d955b`
+- **session**: trigger supervisor gate on implicit done `61889d63`
+
+### 🔄 Other Changes
+
+5 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.43.0] - 2026-08-11
 
 ### 📋 Release Summary

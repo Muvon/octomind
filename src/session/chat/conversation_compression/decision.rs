@@ -41,7 +41,8 @@ pub(super) async fn calculate_compression_net_benefit(
 	let compressible_tokens = compressible_tokens as f64;
 	let compressed_slice_tokens = compressible_tokens / compression_ratio;
 	let headroom = compressible_tokens - compressed_slice_tokens;
-	let estimated_future_turns = estimate_future_turns(session, headroom);
+	let growth = measured_growth_rate(&session.session.info, current_tokens);
+	let estimated_future_turns = estimate_future_turns(&session.session.info, headroom, growth);
 	let compressed_tokens = total_tokens - headroom;
 
 	// Get decision model (used for compression) and session model (used for future calls)
@@ -91,13 +92,11 @@ pub(super) async fn calculate_compression_net_benefit(
 		return 1.0; // Positive = compress (context management benefit)
 	}
 
-	// Calculate average NEW tokens per API call from session history
-	// CRITICAL: Use OUTPUT tokens only - they represent true incremental growth
-	// input_tokens includes cold-start (first call with no cache) which inflates average
-	// output_tokens = pure new content added per call (steady-state growth rate)
-	let total_api_calls = session.session.info.total_api_calls.max(1) as f64;
-	let avg_new_tokens_per_call =
-		(session.session.info.output_tokens as f64 / total_api_calls).max(2000.0);
+	// Average NEW tokens per API call: full-context growth — assistant output,
+	// tool results, and injections all become billed input next call. Output-only
+	// accounting missed tool results, the dominant source in agent sessions (see
+	// measured_growth_rate). Floor guards degenerate young sessions.
+	let avg_new_tokens_per_call = growth.max(2000.0);
 
 	// CRITICAL FIX: Estimate decision prompt size (the NEW content for compression API call)
 	// This is the only uncached part when using same model
@@ -489,7 +488,9 @@ pub(super) fn compression_depth(
 ///    This is a hard upper bound: you literally cannot make more calls than this
 ///    before hitting the threshold again.
 ///    headroom  = actual tokens freed by compression (passed by caller)
-///    growth_rate = output_tokens / api_calls  (measured new tokens added per call)
+///    growth = full-context tokens added per call (measured_growth_rate, passed
+///    by caller — output-only accounting missed tool-result growth and inflated
+///    this ceiling by an order of magnitude)
 ///
 /// 2. SYMMETRY ESTIMATE — api_calls made so far
 ///    Empirically, sessions are roughly symmetric: work remaining ≈ work done.
@@ -506,18 +507,17 @@ pub(super) fn compression_depth(
 ///
 /// Only one justified constant: min=5 (compression cooldown must cover at least
 /// a few calls or the cost analysis is meaningless).
-pub(super) fn estimate_future_turns(session: &ChatSession, headroom: f64) -> f64 {
-	let info = &session.session.info;
+pub(super) fn estimate_future_turns(
+	info: &crate::session::SessionInfo,
+	headroom: f64,
+	growth: f64,
+) -> f64 {
 	let api_calls = info.total_api_calls as f64;
 
-	// Growth rate: output tokens per call — pure new content added each turn
-	// (see measured_growth_rate for the incremental-vs-lifetime rationale).
-	let growth_rate = measured_output_growth_rate(info);
-
-	// Physical ceiling: headroom / growth_rate — exact math, no constants.
+	// Physical ceiling: headroom / growth — exact math, no constants.
 	// Tells us precisely how many more calls fit before the threshold is hit again.
 	// headroom = actual tokens freed by compression (provided by caller).
-	let physical_ceiling = headroom / growth_rate;
+	let physical_ceiling = headroom / growth.max(1.0);
 
 	// Symmetry estimate: calls made so far ≈ calls remaining.
 	// Empirically true for interactive sessions; the min() with physical_ceiling
@@ -543,11 +543,11 @@ pub(super) fn estimate_future_turns(session: &ChatSession, headroom: f64) -> f64
 	let adjusted = (estimate * accuracy).max(MIN_RUNWAY_TURNS); // cooldown must be meaningful
 
 	crate::log_debug!(
-		"Future calls estimation: api_calls={:.0}, growth_rate={:.0} tok/call ({}), \
+		"Future calls estimation: api_calls={:.0}, growth={:.0} tok/call ({}), \
 		headroom={:.0}, physical_ceiling={:.1}, symmetry={:.1}, accuracy={:.2}, final={:.0}",
 		api_calls,
-		growth_rate,
-		if info.compression_stats.conversation_compressions > 0 {
+		growth,
+		if info.context_tokens_after_last_compression > 0 {
 			"incremental"
 		} else {
 			"lifetime"
@@ -824,5 +824,130 @@ mod tests {
 			calculate_self_tuning_accuracy(&info_after_compression(20.0, 200, 100)),
 			1.0
 		);
+	}
+
+	#[test]
+	fn growth_rate_floors_at_one_when_context_shrank_below_watermark() {
+		// Dedup/truncation can leave the live context BELOW the last watermark;
+		// the rate must floor at 1, not go negative or divide runways by zero.
+		let mut info = SessionInfo {
+			total_api_calls: 35,
+			api_calls_at_last_compression: 30,
+			context_tokens_after_last_compression: 50_000,
+			..Default::default()
+		};
+		info.compression_stats.conversation_compressions = 1;
+		assert_eq!(measured_growth_rate(&info, 40_000), 1.0);
+	}
+
+	#[test]
+	fn growth_rate_survives_zero_calls_since_compression() {
+		// Checked immediately after a fold (total == at_last): the divisor
+		// clamps to 1 instead of dividing by zero.
+		let mut info = SessionInfo {
+			total_api_calls: 30,
+			api_calls_at_last_compression: 30,
+			context_tokens_after_last_compression: 50_000,
+			..Default::default()
+		};
+		info.compression_stats.conversation_compressions = 1;
+		assert_eq!(measured_growth_rate(&info, 56_000), 6_000.0);
+	}
+
+	#[test]
+	fn pre_compression_growth_floors_at_output_rate() {
+		// Dedup can shrink the live context below what the model actually
+		// produced; the lifetime fallback must not underestimate below the
+		// measured output rate.
+		let info = SessionInfo {
+			total_api_calls: 10,
+			output_tokens: 50_000,
+			..Default::default()
+		};
+		// full rate = 30k/10 = 3k/call, output rate = 50k/10 = 5k/call.
+		assert_eq!(measured_growth_rate(&info, 30_000), 5_000.0);
+	}
+
+	#[test]
+	fn future_turns_bound_by_physical_ceiling() {
+		// Freed headroom is consumed at the FULL-context growth rate: 20k of
+		// headroom at 2k/call is 10 calls, even though 40 calls happened so far.
+		let info = SessionInfo {
+			total_api_calls: 40,
+			..Default::default()
+		};
+		assert_eq!(estimate_future_turns(&info, 20_000.0, 2_000.0), 10.0);
+	}
+
+	#[test]
+	fn future_turns_bound_by_symmetry() {
+		// Plenty of headroom: the session-depth-so-far signal ends sooner.
+		let info = SessionInfo {
+			total_api_calls: 6,
+			..Default::default()
+		};
+		assert_eq!(estimate_future_turns(&info, 100_000.0, 1_000.0), 6.0);
+	}
+
+	#[test]
+	fn future_turns_apply_self_tuning_and_runway_floor() {
+		// Prior cycle overestimated 2x (predicted 20, saw 10) → halve the
+		// symmetry-bound estimate: min(200, 110) * 0.5 = 55.
+		let info = info_after_compression(20.0, 100, 110);
+		assert_eq!(estimate_future_turns(&info, 400_000.0, 2_000.0), 55.0);
+
+		// The result never drops below the meaningful-cooldown floor.
+		let young = SessionInfo {
+			total_api_calls: 4,
+			..Default::default()
+		};
+		assert_eq!(
+			estimate_future_turns(&young, 100_000.0, 1_000.0),
+			MIN_RUNWAY_TURNS
+		);
+	}
+
+	#[test]
+	fn future_turns_cold_start_is_capped() {
+		// No calls yet, growth floors at 1 → the raw ceiling is nonsense (1M
+		// calls); cap at 100 until self-tuning has a sample.
+		let info = SessionInfo::default();
+		assert_eq!(estimate_future_turns(&info, 1_000_000.0, 1.0), 100.0);
+	}
+
+	#[test]
+	fn depth_targets_runway_below_fire_line() {
+		// desired_after = fire − runway·growth lands inside the achievable band:
+		// the ratio reproduces it exactly and honors the re-fire guarantee.
+		let ratio = compression_depth(100_000, 70_000, 100_000, 2_000.0, 20.0).unwrap();
+		let surviving = 30_000.0;
+		assert!((ratio - 70_000.0 / 30_000.0).abs() < 1e-9);
+		let post = surviving + 70_000.0 / ratio;
+		assert!(post <= 100_000.0 - 2_000.0 * MIN_RUNWAY_TURNS);
+	}
+
+	#[test]
+	fn depth_clamps_to_gentlest_and_deepest() {
+		// Short runway asks for a post-state above the gentlest achievable →
+		// clamp to MIN ratio.
+		let gentle = compression_depth(100_000, 70_000, 100_000, 2_000.0, 5.0).unwrap();
+		assert!((gentle - MIN_COMPRESSION_RATIO).abs() < 1e-9);
+
+		// Huge runway asks for a post-state below the deepest achievable →
+		// clamp to MAX ratio.
+		let deep = compression_depth(100_000, 70_000, 100_000, 2_000.0, 40.0).unwrap();
+		assert!((deep - MAX_COMPRESSION_RATIO).abs() < 1e-9);
+	}
+
+	#[test]
+	fn depth_is_none_when_no_fold_lands_below_refire_bound() {
+		// refire_bound = 40k − 10k = 30k, but even a 16x fold leaves
+		// 30k + 70k/16 ≈ 34.4k — compressing would re-fire immediately.
+		assert_eq!(
+			compression_depth(100_000, 70_000, 40_000, 2_000.0, 5.0),
+			None
+		);
+		// Nothing to compress is never feasible.
+		assert_eq!(compression_depth(100_000, 0, 100_000, 2_000.0, 5.0), None);
 	}
 }

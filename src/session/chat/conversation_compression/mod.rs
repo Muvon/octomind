@@ -555,6 +555,12 @@ pub async fn check_and_compress_conversation(
 
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
+		// A paid rejection expands the next fire line without overwriting the
+		// exact successful-compression watermark — same handling as a PACT
+		// validation reject below. Without this the fire line stays put and the
+		// very next tool batch re-crosses it, repeating the paid decision call
+		// every round.
+		session.session.info.consecutive_compressions += 1;
 		return Ok(false);
 	}
 

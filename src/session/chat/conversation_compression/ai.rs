@@ -361,8 +361,19 @@ pub(super) async fn ask_ai_decision_and_summary(
 	.await?;
 
 	if !summary.should_compress {
-		log_debug!("AI compression decision: should_compress=false");
-		return Ok((false, summary));
+		if force {
+			// Forced compression (ceiling breach or /done) grants the decision
+			// model no veto — the schema/prompt demand should_compress=true, so a
+			// false here is a protocol violation, not a decision. Override and let
+			// the substantive-summary guard below stay the real safety: an empty
+			// narrative still aborts rather than destroying context.
+			log_info!(
+				"Forced compression: decision model returned should_compress=false — overriding (refusal is not an option under force)"
+			);
+		} else {
+			log_debug!("AI compression decision: should_compress=false");
+			return Ok((false, summary));
+		}
 	}
 
 	if pact.is_none() && !is_summary_substantive(&summary) {

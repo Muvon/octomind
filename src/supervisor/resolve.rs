@@ -399,7 +399,47 @@ pub async fn resolve(
 	let (forbids_verification, verification_policy_update, answer_only, conditions) =
 		match classification {
 			Ok(response) => {
-				let mut parsed = parse_classifier(&response);
+				// One bounded retry on an unusable response before failing open.
+				// A truncated classifier reply loses the conditions checklist —
+				// the gate's forcing structure — precisely on requirement-dense
+				// requests. Doubled budget + a JSON-only nudge; same pattern as
+				// the gate's format retry.
+				let mut parsed = match parse_classifier_checked(&response) {
+					Some(parsed) => parsed,
+					None => {
+						crate::log_info!(
+							"Classifier response unusable; retrying once with doubled output budget"
+						);
+						let retry_payload = format!(
+							"{}\n\n<format_violation>\nYour previous response was not one complete JSON object (truncated or malformed). Re-emit the classification now: output ONLY the JSON object, with no reasoning text before it.\n</format_violation>",
+							context.render_classification_payload()
+						);
+						match crate::supervisor::learning::extract::call_supervisor_llm(
+							config,
+							&model,
+							SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
+							crate::supervisor::stats::CallKind::Resolve,
+							SupervisorSampling {
+								temperature: 0.0,
+								max_tokens: 12288,
+							},
+							operation_rx.clone(),
+						)
+						.await
+						{
+							Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
+								crate::log_info!(
+									"Classifier retry still unusable; conditions checklist lost (fail-open)"
+								);
+								classifier_fallback()
+							}),
+							Err(error) => {
+								crate::log_debug!("Classifier retry unavailable: {}", error);
+								classifier_fallback()
+							}
+						}
+					}
+				};
 				parsed.validate_policy_update(context);
 				if !parsed.context_dependent {
 					let mut resolved = ResolvedTask::self_contained(raw);
@@ -475,30 +515,44 @@ struct ClassifierVerdict {
 	conditions: Vec<String>,
 }
 
-fn parse_classifier(response: &str) -> ClassifierVerdict {
-	let fallback = ClassifierVerdict {
+fn classifier_fallback() -> ClassifierVerdict {
+	ClassifierVerdict {
 		context_dependent: false,
 		forbids_verification: false,
 		verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 		verification_policy_evidence: String::new(),
 		answer_only: false,
 		conditions: Vec::new(),
-	};
+	}
+}
+
+#[cfg(test)]
+fn parse_classifier(response: &str) -> ClassifierVerdict {
+	parse_classifier_checked(response).unwrap_or_else(classifier_fallback)
+}
+
+/// `None` when the response carries no usable JSON object (missing, truncated,
+/// or unparseable) — the resolver retries once before falling open, because a
+/// lost conditions checklist silently decapitates the verify-gate exactly on
+/// the requirement-dense requests that need it most (observed 2026-08-17: a
+/// 6144-token budget truncated on the rustls case, the checklist dropped, and
+/// the gate holistically passed a near-miss implementation).
+fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 	let Some(start) = response.find('{') else {
 		crate::log_info!(
 			"Classifier returned no JSON object; conditions checklist lost (fail-open)"
 		);
-		return fallback;
+		return None;
 	};
 	let Some(end) = response.rfind('}') else {
 		crate::log_info!("Classifier JSON unterminated (likely token-budget truncation); conditions checklist lost (fail-open)");
-		return fallback;
+		return None;
 	};
 	let Ok(parsed) = serde_json::from_str::<ClassifierOutput>(&response[start..=end]) else {
 		crate::log_info!("Classifier JSON unparseable; conditions checklist lost (fail-open)");
-		return fallback;
+		return None;
 	};
-	ClassifierVerdict {
+	Some(ClassifierVerdict {
 		context_dependent: parsed
 			.scope
 			.trim()
@@ -534,7 +588,7 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 				.take(24)
 				.collect()
 		},
-	}
+	})
 }
 
 impl ClassifierVerdict {

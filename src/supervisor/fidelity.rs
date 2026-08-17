@@ -91,7 +91,7 @@ pub async fn check_compaction_fidelity(
 		&config.supervisor.gate.verifier_model,
 		FIDELITY_PROMPT.to_string(),
 		user,
-		crate::supervisor::stats::CallKind::Gate,
+		crate::supervisor::stats::CallKind::Fidelity,
 		rx,
 	)
 	.await

@@ -316,6 +316,13 @@ pub struct DetectorsConfig {
 	/// successful compression resets the budget because the prior advisory may no
 	/// longer be present in the live context. `0` = unlimited.
 	pub sequential_max_steers_per_turn: usize,
+	/// Successful READS of the same path this many times with no intervening
+	/// mutation of that path → the model is re-fetching content it already
+	/// received (attention failure, not exploration — measured 350 re-reads /
+	/// 374 views ≈ 269k re-fetched tokens in one trajectory). Mutating a path
+	/// resets its counter, so edit-verify loops never trip it. `0` = OFF
+	/// (advisory, Sequential-class; shares the sequential advisory budget).
+	pub reread_threshold: usize,
 }
 
 /// Verify-gate configuration.

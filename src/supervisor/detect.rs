@@ -927,6 +927,11 @@ const SEEN_CAP: usize = 128;
 /// most recent ones, which is where the read-back lands anyway.
 const MUTATED_PATHS_CAP: usize = 32;
 
+/// Cap on distinct paths tracked by the re-read counter. A working set larger
+/// than this rotates naturally; the counter exists for the handful of files a
+/// stuck model orbits, not for a full-tree census.
+const PATH_READS_CAP: usize = 64;
+
 /// Calls used to seed the working-set centroid before drift scoring begins —
 /// too few and the first off-task call would define the baseline.
 const CENTROID_WARMUP: usize = 3;
@@ -1005,6 +1010,10 @@ pub struct Detectors {
 	/// kind of evidence blessed the tree instead of inferring it from a raw
 	/// action log ([`Detectors::cleared_by_readback_only`]).
 	readback_only_clearance: bool,
+	/// Successful reads per normalized path since that path was last mutated
+	/// (or since the streak reset). Mutating a path clears its counter, so
+	/// edit-verify loops never accumulate. Bounded by [`PATH_READS_CAP`].
+	path_read_counts: std::collections::HashMap<String, usize>,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -1038,6 +1047,12 @@ pub enum DetectorSignal {
 	/// [`Detectors::record_round_arity`]. Off by default — single calls are often
 	/// legitimate, so this is the softest, most conservative signal.
 	Sequential,
+	/// `reread_threshold` successful reads of the SAME path with no intervening
+	/// mutation of that path — the model is re-fetching content it already
+	/// received instead of using it (attention failure; measured 350/374 views
+	/// were re-reads ≈ 269k re-fetched tokens in one trajectory). Advisory:
+	/// mutating a path resets its counter, so edit-verify loops never trip it.
+	Reread,
 }
 
 impl DetectorSignal {
@@ -1047,11 +1062,12 @@ impl DetectorSignal {
 		match self {
 			Self::None => 0,
 			Self::Sequential => 1,
-			Self::Distraction => 2,
-			Self::NoProgress => 3,
-			Self::Loop => 4,
-			Self::Truncation => 5,
-			Self::Dedup => 6,
+			Self::Reread => 2,
+			Self::Distraction => 3,
+			Self::NoProgress => 4,
+			Self::Loop => 5,
+			Self::Truncation => 6,
+			Self::Dedup => 7,
 		}
 	}
 
@@ -1213,13 +1229,60 @@ impl Detectors {
 	pub fn note_mutated_paths(&mut self, parameters: &serde_json::Value) {
 		for p in param_paths(parameters) {
 			let n = normalize_path(&p);
-			if n.is_empty() || self.mutated_paths.contains(&n) {
+			if n.is_empty() {
+				continue;
+			}
+			// A mutation makes the next read of this path fresh by definition —
+			// the re-read counter must never flag post-edit verification reads.
+			self.path_read_counts.remove(&n);
+			if self.mutated_paths.contains(&n) {
 				continue;
 			}
 			if self.mutated_paths.len() >= MUTATED_PATHS_CAP {
 				self.mutated_paths.remove(0);
 			}
 			self.mutated_paths.push(n);
+		}
+	}
+
+	/// Fold one completed round's successfully-READ paths into the per-path
+	/// counters and return the re-read advisory verdict. A parallel batch is one
+	/// model decision, so a path counts once per round however many calls named
+	/// it. `threshold == 0` disables the signal. On fire, the offending path's
+	/// counter resets so the advisory must re-accumulate before nudging again.
+	pub fn record_round_path_reads(
+		&mut self,
+		read_paths: &[String],
+		threshold: usize,
+	) -> DetectorSignal {
+		if threshold == 0 || read_paths.is_empty() {
+			return DetectorSignal::None;
+		}
+		let mut seen_this_round = HashSet::new();
+		let mut fired = false;
+		for p in read_paths {
+			let n = normalize_path(p);
+			if n.is_empty() || !seen_this_round.insert(n.clone()) {
+				continue;
+			}
+			// Bounded: an untracked path beyond the cap simply isn't counted —
+			// the counter exists for the files a stuck model orbits.
+			if !self.path_read_counts.contains_key(&n)
+				&& self.path_read_counts.len() >= PATH_READS_CAP
+			{
+				continue;
+			}
+			let count = self.path_read_counts.entry(n.clone()).or_insert(0);
+			*count += 1;
+			if *count >= threshold {
+				self.path_read_counts.remove(&n);
+				fired = true;
+			}
+		}
+		if fired {
+			DetectorSignal::Reread
+		} else {
+			DetectorSignal::None
 		}
 	}
 
@@ -1344,6 +1407,7 @@ impl Detectors {
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
+		self.path_read_counts.clear();
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -1526,6 +1590,9 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Sequential => {
 			"single tool calls in a row — independent calls could be batched"
 		}
+		DetectorSignal::Reread => {
+			"repeated reads of the same file — content already received this session"
+		}
 		DetectorSignal::None => "",
 	}
 }
@@ -1620,6 +1687,11 @@ pub fn steer_note(
 			"<pay-attention>\nYou have made several single-call turns in a row. For maximum efficiency, when your next operations are independent (none needs another's result), invoke them all in one parallel batch rather than one per turn — e.g. reading 3 files is 3 calls in one batch. It is faster and uses less context.\n</pay-attention>",
 			"<pay-attention>\nYou keep issuing one tool call per turn. Name the calls you need next, then send every one that does not depend on a prior result together in a single parallel batch — three independent reads go out as three calls at once. Only chain calls whose arguments genuinely depend on an earlier result.\n</pay-attention>",
 			"<pay-attention>\nStill one call per turn — stop serializing independent work. Name your next 2+ calls and send every independent one in a single parallel batch this turn. If each call truly depends on the previous result, serial is correct — keep it.\n</pay-attention>",
+		],
+		DetectorSignal::Reread => &[
+			"<pay-attention>\nYou have read this file several times without changing it — its content does not change between reads, and every re-fetch spends context on bytes you already hold. Use the copy already in your context (or the recall archive) instead of fetching it again.\n</pay-attention>",
+			"<pay-attention>\nStill re-reading the same unchanged file. Name in one line what you are looking for in it, then extract that from the content already in your context — or make ONE precisely-targeted read (exact line range or pattern) and act on the result instead of fetching the file again.\n</pay-attention>",
+			"<pay-attention>\nRepeated re-reads of an unchanged file are pure waste: the content is identical every time. Decide now what fact you need from it, take it from what you already received, and move to acting on it. If you genuinely cannot find it, say so in your next step rather than fetching the same bytes again.\n</pay-attention>",
 		],
 		DetectorSignal::None => return "",
 	};

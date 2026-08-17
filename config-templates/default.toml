@@ -751,6 +751,12 @@ sequential_threshold = 0
 # compression resets the budget because the prior advisory may leave the live context.
 # 0 = unlimited (default).
 sequential_max_steers_per_turn = 0
+# Successful READS of the same path this many times with no intervening mutation of
+# that path -> re-read advisory: the model is re-fetching content it already received
+# instead of using it. Mutating a path resets its counter, so edit-verify loops never
+# trip this. Shares the sequential advisory budget. 0 = OFF (default). Set e.g. 4 to
+# enable.
+reread_threshold = 0
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 [supervisor.gate]

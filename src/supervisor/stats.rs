@@ -77,6 +77,7 @@ struct Stats {
 	steer_dedup: u64,
 	steer_distraction: u64,
 	steer_sequential: u64,
+	steer_reread: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
 	/// Compatibility tombstone for `/info` consumers. The checklist-count
@@ -152,6 +153,7 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 			DetectorSignal::Dedup => s.steer_dedup += 1,
 			DetectorSignal::Distraction => s.steer_distraction += 1,
 			DetectorSignal::Sequential => s.steer_sequential += 1,
+			DetectorSignal::Reread => s.steer_reread += 1,
 			DetectorSignal::None => {}
 		}
 	});
@@ -218,6 +220,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		("dedup", s.steer_dedup),
 		("drift", s.steer_distraction),
 		("sequential", s.steer_sequential),
+		("reread", s.steer_reread),
 	]
 	.into_iter()
 	.filter(|(_, n)| *n > 0)

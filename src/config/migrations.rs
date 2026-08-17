@@ -73,9 +73,9 @@ fn plan() -> MigrationPlan {
 	.with_missing_version(0)
 }
 
-/// v5 adds the configurable verifier budget and the external plan manager.
-/// Existing supervisor settings and comments are preserved; only missing keys
-/// are copied from the embedded template.
+/// v5 adds the configurable verifier budget, the external plan manager, and
+/// the re-read advisory threshold. Existing supervisor settings and comments
+/// are preserved; only missing keys are copied from the embedded template.
 fn add_v5_supervisor_fields(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
@@ -94,7 +94,19 @@ fn add_v5_supervisor_fields(
 	)?;
 
 	merge_missing(supervisor, template_supervisor, "gate")?;
-	merge_missing(supervisor, template_supervisor, "plan")
+	merge_missing(supervisor, template_supervisor, "plan")?;
+	let template_detectors = required_table(
+		template_supervisor,
+		"detectors",
+		"embedded default configuration",
+	)?;
+	let detectors = ensure_table(
+		supervisor,
+		template_supervisor,
+		"detectors",
+		"user configuration",
+	)?;
+	merge_missing(detectors, template_detectors, "reread_threshold")
 }
 
 /// v2 (octomind 0.40) adds `[supervisor.delegate]` — the handoff quality gate.

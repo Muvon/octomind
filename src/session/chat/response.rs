@@ -683,6 +683,10 @@ pub async fn process_response<S: OutputSink>(
 					let mut round_readback = false;
 					let mut round_mutation = false;
 					let mut round_write_capable = false;
+					// Paths successfully READ this round (non-mutation calls carrying
+					// path params) — input to the re-read advisory. Dedup-elided
+					// repeats still count: an elided body is exactly a wasted re-fetch.
+					let mut round_read_paths: Vec<String> = Vec::new();
 
 					for call in &current_tool_calls {
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
@@ -813,6 +817,11 @@ pub async fn process_response<S: OutputSink>(
 									.note_mutated_paths(&call.parameters);
 							}
 							round_verifier |= verifier_shaped;
+							if !is_mutation {
+								round_read_paths.extend(crate::supervisor::detect::param_paths(
+									&call.parameters,
+								));
+							}
 						}
 					}
 
@@ -905,6 +914,30 @@ pub async fn process_response<S: OutputSink>(
 					};
 					round_signal = round_signal.merge(seq_signal);
 
+					// Re-read advisory: the model keeps re-fetching a path it already
+					// received, with no intervening mutation of that path (mutating it
+					// resets its counter, so edit-verify loops never trip this). Shares
+					// the sequential advisory budget — both are efficiency advisories
+					// and one per-turn cap bounds total advisory noise.
+					let reread_signal = {
+						let reread_threshold = params.config.supervisor.detectors.reread_threshold;
+						let detected = params
+							.chat_session
+							.detectors
+							.record_round_path_reads(&round_read_paths, reread_threshold);
+						if detected == crate::supervisor::detect::DetectorSignal::Reread
+							&& !params
+								.chat_session
+								.detectors
+								.sequential_steer_allowed(sequential_max_steers_per_turn)
+						{
+							crate::supervisor::detect::DetectorSignal::None
+						} else {
+							detected
+						}
+					};
+					round_signal = round_signal.merge(reread_signal);
+
 					// Steer at most once per round with the winning signal — but adapt the
 					// steer to whether the model is HEEDING it. "Ignored" is free to detect:
 					// the model's CHOSEN call-set (tool+params hash) repeating byte-for-byte
@@ -924,8 +957,11 @@ pub async fn process_response<S: OutputSink>(
 							params.chat_session.last_steered_calls = None;
 						}
 						let attempt = params.chat_session.steer_attempt;
-						let advisory =
-							round_signal == crate::supervisor::detect::DetectorSignal::Sequential;
+						let advisory = matches!(
+							round_signal,
+							crate::supervisor::detect::DetectorSignal::Sequential
+								| crate::supervisor::detect::DetectorSignal::Reread
+						);
 						let calls_hash =
 							crate::supervisor::detect::call_set_hash(&current_tool_calls);
 						// Critical: a repeated byte-identical call-set is the model IGNORING the

@@ -791,7 +791,7 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 	let Some(active) = packets.last() else {
 		return HashSet::new();
 	};
-	if active.provenance == Provenance::RealUser {
+	if active.provenance == Provenance::RealUser || active.kind == PacketKind::PriorSummary {
 		return HashSet::new();
 	}
 	let by_id: BTreeMap<&str, &EvidencePacket> = packets
@@ -807,11 +807,16 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 		if let Some(packet) = by_id.get(id) {
 			for dependency in &packet.depends_on {
 				// The genuine task is rendered in pinned_state and need not be
-				// duplicated into the exact frontier.
-				if by_id
-					.get(dependency.as_str())
-					.is_some_and(|p| matches!(p.provenance, Provenance::RealUser))
-				{
+				// duplicated into the exact frontier. A prior summary must never
+				// be kept exact either: it is compression OUTPUT, so embedding it
+				// verbatim nests summary inside summary and each fold then grows
+				// by the size of the previous one until compaction frees nothing.
+				// Its durable content re-folds through the summarize lane and
+				// stays exactly recallable by block ID.
+				if by_id.get(dependency.as_str()).is_some_and(|p| {
+					matches!(p.provenance, Provenance::RealUser)
+						|| p.kind == PacketKind::PriorSummary
+				}) {
 					continue;
 				}
 				stack.push(dependency);
@@ -1494,10 +1499,16 @@ impl PactContext {
 			.filter(|packet| packet.lane != Lane::ArchiveReference)
 		{
 			for dependency in &packet.depends_on {
+				// An archive-lane prior summary is not a missing live dependency:
+				// it is deliberately never kept exact (see active_dependency_closure)
+				// and its durable content is pinned, re-folded, or recallable by
+				// block ID. Rejecting here would veto every compression whose
+				// summarize budget could not admit the prior summary.
 				if packets_by_id
 					.get(dependency.as_str())
 					.is_some_and(|source| {
-						source.provenance != Provenance::RealUser
+						source.kind != PacketKind::PriorSummary
+							&& source.provenance != Provenance::RealUser
 							&& source.lane == Lane::ArchiveReference
 					}) {
 					return Err(anyhow!(
@@ -2105,7 +2116,16 @@ mod tests {
 		assert!(packets[3].depends_on.contains(&packets[2].id));
 
 		let closure = active_dependency_closure(&packets);
-		assert!(packets.iter().all(|packet| closure.contains(&packet.id)));
+		// Every live-path packet stays in the exact closure EXCEPT the prior
+		// summary: compression output kept exact would nest summary inside
+		// summary and grow the fold monotonically across cycles.
+		for packet in &packets {
+			if packet.kind == PacketKind::PriorSummary {
+				assert!(!closure.contains(&packet.id));
+			} else {
+				assert!(closure.contains(&packet.id));
+			}
+		}
 	}
 
 	#[tokio::test]
@@ -2840,6 +2860,114 @@ mod tests {
 			.validate_summary(&CompressionSummary::default())
 			.unwrap_err();
 		assert!(error.to_string().contains("no recoverable source span"));
+	}
+
+	#[tokio::test]
+	async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest() {
+		// Regression: each compression kept the drained prior summary as a
+		// KeepExact frontier packet, so summary N embedded summary N-1 verbatim
+		// (observed in a real session: 9 nested <conversation_summary> levels,
+		// 219K chars, tokens_saved decaying 47K → 3K → 0 across 35 cycles).
+		// The fold must stay contracting: with the prior summary confined to
+		// the budget-bounded summarize lane, S_n <= (S_{n-1} + fresh)/ratio +
+		// O(bounded sections), which converges instead of growing without bound.
+		let prior = Message {
+			role: "assistant".into(),
+			content: format!(
+				"<conversation_summary id=\"old\" controller=\"pact-v1\">\n<folded_state>\n{}\n</folded_state>\n</conversation_summary>",
+				(1..=300)
+					.map(|line| format!("prior folded line {line}"))
+					.collect::<Vec<_>>()
+					.join("\n")
+			),
+			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
+			..Default::default()
+		};
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>keep monitoring the benchmark run</task>\n</continuation>",
+		);
+		let mut call = message("assistant", "checking the run status");
+		call.tool_calls = Some(serde_json::json!([{
+			"id": "c1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut result = message("tool", "run alive; 12 cases remaining");
+		result.tool_call_id = Some("c1".into());
+		let messages = vec![prior, continuation, call, result];
+		let pinned = PinnedState {
+			task: PinnedItem {
+				text: "keep monitoring the benchmark run".into(),
+				source: None,
+			},
+			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
+			governance_hash: "hash".into(),
+		};
+
+		// Generous budget: the prior summary WOULD fit the exact frontier —
+		// it must still be excluded, and no kept-exact packet may embed a
+		// summary tag.
+		let mut packets = build_packets("nesting-regression", &messages);
+		link_dependencies(&mut packets);
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 10_000, false).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_ne!(
+			prior_packet.lane,
+			Lane::KeepExact,
+			"prior summary kept exact re-embeds summary into summary"
+		);
+		for packet in packets.iter().filter(|p| p.lane == Lane::KeepExact) {
+			assert!(
+				!packet
+					.prompt_content
+					.contains(super::super::knowledge::SUMMARY_TAG_OPEN_PREFIX),
+				"frontier packet {} embeds a prior summary",
+				packet.id
+			);
+		}
+
+		// A prior summary that stayed an archive reference (summarize budget
+		// exhausted) must NOT fail validation as a missing live dependency of
+		// the selected packets that depend on it — that veto would reject
+		// every such compression instead of the nesting.
+		let mut prior_packet = packet(
+			"b:prior-summary",
+			Provenance::ValidatedSummary,
+			Lane::ArchiveReference,
+		);
+		prior_packet.kind = PacketKind::PriorSummary;
+		let mut continuation_packet = packet(
+			"b:continuation",
+			Provenance::ValidatedSummary,
+			Lane::KeepExact,
+		);
+		continuation_packet.kind = PacketKind::TaskContinuation;
+		continuation_packet.depends_on = vec![prior_packet.id.clone()];
+		let known_provenance = BTreeMap::from([
+			(prior_packet.id.clone(), prior_packet.provenance),
+			(
+				continuation_packet.id.clone(),
+				continuation_packet.provenance,
+			),
+		]);
+		let pact = PactContext {
+			enabled: true,
+			packets: vec![prior_packet, continuation_packet],
+			pinned,
+			grounded_hints: Vec::new(),
+			known_provenance,
+			prior_recall: BTreeMap::new(),
+			source_tokens: 2,
+			target_tokens: 40,
+			metrics: PactMetrics::default(),
+		};
+		assert!(pact
+			.validate_summary(&CompressionSummary::default())
+			.is_ok());
 	}
 
 	#[test]

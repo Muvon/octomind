@@ -359,8 +359,7 @@ pub(super) fn measured_growth_rate(
 			current_tokens.saturating_sub(info.context_tokens_after_last_compression) as f64;
 		(context_growth / calls_since).max(1.0)
 	} else {
-		let full_rate =
-			(current_tokens as f64 / (info.total_api_calls as f64).max(1.0)).max(1.0);
+		let full_rate = (current_tokens as f64 / (info.total_api_calls as f64).max(1.0)).max(1.0);
 		full_rate.max(measured_output_growth_rate(info))
 	}
 }

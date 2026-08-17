@@ -1340,12 +1340,15 @@ impl Detectors {
 	/// [`Detectors::record_round_signals`].
 	pub fn record_round_arity(&mut self, call_count: usize, threshold: usize) -> DetectorSignal {
 		// A round containing an errored call — or the singleton RETRY right after
-		// one — is recovery, not a silent drip-feed of independent calls: it must
-		// not grow the streak (but does not reset a legitimately accumulated one).
+		// one — is recovery, not a silent drip-feed of independent calls. An error
+		// inside a singleton chain is hard proof the chain was dependent (a retry
+		// cannot be batched with the call that failed), so recovery RESETS the
+		// streak: the steer must re-accumulate a full threshold of clean
+		// single-call rounds after any failure.
 		let recovery = self.round_had_error || self.prev_round_had_error;
-		if call_count > 1 {
+		if call_count > 1 || recovery {
 			self.consecutive_singletons = 0;
-		} else if call_count == 1 && !recovery {
+		} else if call_count == 1 {
 			self.consecutive_singletons += 1;
 		}
 		self.prev_round_had_error = self.round_had_error;
@@ -2771,15 +2774,16 @@ mod tests {
 		let mut d = Detectors::default();
 		// One legit singleton accumulates.
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// An errored singleton round (e.g. git_diff ref not resolving) must not
-		// grow the streak — it is a failure, not a batching choice.
+		// An errored singleton round (e.g. git_diff ref not resolving) RESETS the
+		// streak — the failure proves the chain was dependent, not a batching choice.
 		d.note_call("git_diff", "ref did not resolve", true, false);
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// The singleton RETRY right after the errored round is recovery, not a
-		// drip-feed — still no growth, and the earlier streak is preserved.
+		// The singleton RETRY right after the errored round is recovery — also
+		// resets, so the steer re-accumulates a full threshold from scratch.
 		d.note_call("shell", "65ab1db…", false, false);
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// Recovery over: the next ordinary singleton resumes the streak and fires.
+		// Post-recovery: a full threshold of clean singletons is required to fire.
+		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
 	}
 

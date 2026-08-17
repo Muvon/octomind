@@ -932,6 +932,15 @@ const MUTATED_PATHS_CAP: usize = 32;
 /// stuck model orbits, not for a full-tree census.
 const PATH_READS_CAP: usize = 64;
 
+/// Smallest result that counts as a re-FETCH for the re-read advisory, in
+/// tokens (the unit of the cost being guarded — context spend). Below it a
+/// repeat read is a cheap membership probe ("no matches", a short lookup),
+/// legitimate however often it repeats; counting probes made the advisory
+/// nag on narrow targeted probing (observed: glm pattern-probes a test file
+/// once per symbol, ~15 tokens each). Measured with the real tokenizer at
+/// the call site, not a chars/4 proxy.
+pub const REREAD_MIN_RESULT_TOKENS: usize = 128;
+
 /// Calls used to seed the working-set centroid before drift scoring begins —
 /// too few and the first off-task call would define the baseline.
 const CENTROID_WARMUP: usize = 3;

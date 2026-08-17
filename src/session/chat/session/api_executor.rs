@@ -745,10 +745,37 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		};
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
-		let ground_truth = crate::supervisor::gate::render_ground_truth(
+		let mut ground_truth = crate::supervisor::gate::render_ground_truth(
 			chat_session.evidence.mutated_paths(),
 			&chat_session.evidence.recent_commands(),
 		);
+		// Verification-evidence provenance: the runtime KNOWS whether any
+		// command-shaped check succeeded since the last state change; the
+		// verifier must not have to infer that absence from a raw action log
+		// (small verifiers demonstrably don't). Stated as observed fact — the
+		// verdict stays the verifier's.
+		if !chat_session.evidence.mutated_paths().is_empty() {
+			let provenance = if chat_session
+				.detectors
+				.needs_verification(crate::supervisor::workdir::fingerprint())
+			{
+				Some(
+					"Runtime observation: NO check of any kind has succeeded on the changed state since the agent's last state change.",
+				)
+			} else if chat_session.detectors.cleared_by_readback_only() {
+				Some(
+					"Runtime observation: since its last state change the agent only re-read its own edited artifacts; no command-shaped check (build, test, run, validator) succeeded on the changed state. Inspection verifies artifact content, never behavior.",
+				)
+			} else {
+				None
+			};
+			if let Some(p) = provenance {
+				if !ground_truth.is_empty() {
+					ground_truth.push_str("\n\n");
+				}
+				ground_truth.push_str(p);
+			}
+		}
 		let prior_gaps = chat_session.last_gate_gaps.clone();
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;

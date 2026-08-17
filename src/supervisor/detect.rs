@@ -997,6 +997,14 @@ pub struct Detectors {
 	/// (oldest evicted). Cleared with `agent_dirty`: once a round verifies, the
 	/// artifacts are accepted state and a fresh mutation restarts the set.
 	mutated_paths: Vec<String>,
+	/// HOW the last `agent_dirty` clearance happened: `true` when only a
+	/// read-back (the agent re-reading its own edited artifacts) cleared it,
+	/// with no command-shaped check in that round. Read-back is legitimate
+	/// verification for artifact work (a doc, a config), but for behavioral
+	/// claims it proves only content — the verify-gate needs to know which
+	/// kind of evidence blessed the tree instead of inferring it from a raw
+	/// action log ([`Detectors::cleared_by_readback_only`]).
+	readback_only_clearance: bool,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -1297,6 +1305,12 @@ impl Detectors {
 			if let Some(a) = fp_after {
 				self.verified_fp = Some(a);
 			}
+			// Record the evidence KIND: read-back-only clearance means no
+			// command-shaped check has succeeded since the last mutation.
+			// Only meaningful while the agent had something to verify.
+			if self.agent_dirty {
+				self.readback_only_clearance = readback_ok && !verifier_ok && !delegated;
+			}
 			self.agent_dirty = false;
 			self.mutated_paths.clear();
 		} else if !tree_unchanged && write_capable {
@@ -1329,6 +1343,7 @@ impl Detectors {
 		self.prev_round_had_error = false;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
+		self.readback_only_clearance = false;
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -1457,6 +1472,13 @@ impl Detectors {
 			r
 		);
 		r
+	}
+
+	/// Was the last dirty-state clearance a read-back only — the agent re-read
+	/// its own edited artifacts, with no command-shaped check succeeding since
+	/// the last mutation? Verification-evidence provenance for the verify-gate.
+	pub fn cleared_by_readback_only(&self) -> bool {
+		self.readback_only_clearance
 	}
 }
 

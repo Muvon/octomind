@@ -42,6 +42,8 @@ pub enum CallKind {
 	Condense,
 	/// Subagent handoff quality gate (`tap run` / `agent_*`).
 	Delegate,
+	/// Compaction-fidelity check after a compression is applied.
+	Fidelity,
 }
 
 #[derive(Default, Clone)]
@@ -54,6 +56,7 @@ struct Stats {
 	distill_calls: u64,
 	condense_calls: u64,
 	delegate_calls: u64,
+	fidelity_calls: u64,
 	delegate_runs: u64,
 	delegate_blocks: u64,
 	condensed_results: u64,
@@ -114,6 +117,7 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Delegate => s.delegate_calls += 1,
+			CallKind::Fidelity => s.fidelity_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -228,6 +232,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
 		"delegate_calls": s.delegate_calls,
+		"fidelity_calls": s.fidelity_calls,
 		"delegate_runs": s.delegate_runs,
 		"delegate_blocks": s.delegate_blocks,
 		"condensed_results": s.condensed_results,

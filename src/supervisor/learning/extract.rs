@@ -938,6 +938,8 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,
 		CallKind::Delegate => ModelPurpose::SupervisorDelegate,
+		// Fidelity rides the gate routing seat: same verifier-class model.
+		CallKind::Fidelity => ModelPurpose::SupervisorGate,
 	}
 }
 

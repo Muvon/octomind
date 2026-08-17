@@ -684,6 +684,7 @@ pub fn display_info(output: &CommandOutput) {
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
 			let delegate_calls = get_u64("delegate_calls");
+			let fidelity_calls = get_u64("fidelity_calls");
 			let delegate_runs = get_u64("delegate_runs");
 			let delegate_blocks = get_u64("delegate_blocks");
 			let condensed_results = get_u64("condensed_results");
@@ -795,6 +796,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if delegate_calls > 0 {
 					parts.push(format!("{} delegate", delegate_calls));
+				}
+				if fidelity_calls > 0 {
+					parts.push(format!("{} fidelity", fidelity_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

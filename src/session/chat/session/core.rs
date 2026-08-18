@@ -1405,20 +1405,18 @@ impl ChatSession {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::session::{Message, Session, SessionInfo};
-
-	/// Build a minimal ChatSession with the given messages for testing compression primitives.
-	/// No config, no async, no providers needed.
-	fn make_session(messages: Vec<Message>) -> ChatSession {
-		let info = SessionInfo {
+impl ChatSession {
+	/// Minimal ChatSession for unit tests — no config, no providers, no IO.
+	/// Shared across the crate's test modules (core, cost tracking, messages);
+	/// keep new runtime fields initialized here so every test picks them up.
+	pub(crate) fn for_tests(messages: Vec<crate::session::Message>) -> Self {
+		let info = crate::session::SessionInfo {
 			name: "test".to_string(),
 			model: "anthropic/claude-3-5-sonnet".to_string(),
 			..Default::default()
 		};
 		ChatSession {
-			session: Session {
+			session: crate::session::Session {
 				info,
 				messages,
 				session_file: None,
@@ -1475,6 +1473,18 @@ mod tests {
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::session::Message;
+
+	/// Build a minimal ChatSession with the given messages for testing compression primitives.
+	/// Delegates to the crate-shared test constructor (see `ChatSession::for_tests`).
+	fn make_session(messages: Vec<Message>) -> ChatSession {
+		ChatSession::for_tests(messages)
 	}
 
 	fn msg(role: &str, cached: bool) -> Message {

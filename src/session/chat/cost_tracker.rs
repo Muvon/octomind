@@ -367,3 +367,7 @@ impl CostTracker {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "cost_tracker_tests.rs"]
+mod tests;

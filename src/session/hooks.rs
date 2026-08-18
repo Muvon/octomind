@@ -656,3 +656,7 @@ mod tests {
 		assert!(!when_satisfied(&v, &edited_and_tested));
 	}
 }
+
+#[cfg(test)]
+#[path = "hooks_tests.rs"]
+mod run_tests;

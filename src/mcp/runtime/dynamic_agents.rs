@@ -895,3 +895,7 @@ mod tests {
 		assert!(func.parameters.get("properties").is_some());
 	}
 }
+
+#[cfg(test)]
+#[path = "dynamic_agents_command_tests.rs"]
+mod command_tests;

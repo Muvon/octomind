@@ -557,6 +557,249 @@ async fn test_named_session_resume_roundtrip() {
 	}
 }
 
+/// Stub that answers call N with `bodies[N]` (clamped to the last entry).
+async fn spawn_scripted_stub(bodies: Vec<String>) -> String {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind stub");
+	let addr = listener.local_addr().expect("addr");
+	let counter = std::sync::Arc::new(AtomicUsize::new(0));
+	let bodies = std::sync::Arc::new(bodies);
+
+	tokio::spawn(async move {
+		while let Ok((mut sock, _)) = listener.accept().await {
+			let counter = counter.clone();
+			let bodies = bodies.clone();
+			tokio::spawn(async move {
+				let mut buf = Vec::new();
+				let mut tmp = [0u8; 8192];
+				let header_end = loop {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						return;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+						break pos + 4;
+					}
+				};
+				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+				let content_length: usize = headers
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				while buf.len() < header_end + content_length {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						break;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+				}
+				let idx = counter.fetch_add(1, Ordering::SeqCst).min(bodies.len() - 1);
+				let body = &bodies[idx];
+				let response = format!(
+					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+					body.len(),
+					body
+				);
+				let _ = sock.write_all(response.as_bytes()).await;
+				let _ = sock.shutdown().await;
+			});
+		}
+	});
+
+	format!("http://{}/v1/chat/completions", addr)
+}
+
+fn completion_body(content: &str) -> String {
+	serde_json::json!({
+		"choices": [{
+			"message": {"role": "assistant", "content": content},
+			"finish_reason": "stop"
+		}],
+		"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18, "cost": 0.0001}
+	})
+	.to_string()
+}
+
+/// `config --model/--log-level` must persist into the sandbox config file
+/// and be visible on the next `config --show`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_config_setters_roundtrip() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args([
+			"config",
+			"--model",
+			"ollama:cfg-model",
+			"--log-level",
+			"debug",
+		])
+		.output()
+		.expect("config setters run");
+	assert!(
+		output.status.success(),
+		"config setters failed: {}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["config", "--show"])
+		.output()
+		.expect("config --show runs");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	assert!(output.status.success());
+	assert!(
+		stdout.contains("ollama:cfg-model"),
+		"model change not persisted:\n{stdout}"
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_vars_preview() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	for args in [vec!["vars"], vec!["vars", "--preview"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.output()
+			.expect("vars runs");
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			output.status.success(),
+			"{args:?} failed: {}",
+			String::from_utf8_lossy(&output.stderr)
+		);
+		assert!(stdout.contains("DATE"), "{args:?} missing DATE:\n{stdout}");
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_complete_run_lists_roles() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["complete", "run"])
+		.output()
+		.expect("complete run executes");
+	assert!(output.status.success());
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	assert!(
+		stdout.lines().any(|l| l.trim() == "assistant"),
+		"roles missing from candidates:\n{stdout}"
+	);
+}
+
+/// Full lesson-distillation pipeline against scripted verdicts: extraction
+/// call returns LEARN + one lesson (whose evidence is verbatim in a user
+/// turn) + one orientation; verification keeps everything. Both must land
+/// in the sandbox learning store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_distill_stores_lessons() {
+	let extraction = completion_body(concat!(
+		"<decision>LEARN</decision>\n",
+		"<lesson scope=\"scoped\" confidence=\"high\" tags=\"testing\" ",
+		"evidence=\"always run the tests on the box\">",
+		"Run the tests on the box, never locally",
+		"</lesson>\n",
+		"<orientation tags=\"arch\" confidence=\"high\">",
+		"The project is a Rust CLI with a workspace build",
+		"</orientation>"
+	));
+	let verification = completion_body("{\"unsupported\": []}");
+	let stub_url = spawn_scripted_stub(vec![extraction, verification]).await;
+
+	let home = tempfile::tempdir().expect("temp home");
+	{
+		let mut config: octomind::config::Config =
+			toml::from_str(include_str!("../config-templates/default.toml"))
+				.expect("parse default config template");
+		config.model = "ollama:fake-model".to_string();
+		config.default = "assistant".to_string();
+		config.supervisor.enabled = false;
+		config.supervisor.learning.model = "ollama:fake-model".to_string();
+		config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+		config.telemetry = false;
+		config.auto_capabilities = false;
+		config.skills.auto_activation = false;
+		config.skills.auto_validation = false;
+
+		let config_dir = home.path().join(".local/share/octomind/config");
+		std::fs::create_dir_all(&config_dir).expect("create config dir");
+		std::fs::write(
+			config_dir.join("config.toml"),
+			toml::to_string(&config).expect("serialize config"),
+		)
+		.expect("write config");
+	}
+
+	// Transcript snapshot exactly as an exiting session writes it. The user
+	// turn carries the evidence quote verbatim — the distill verification
+	// gate rejects any lesson whose evidence it cannot find there.
+	let transcript = serde_json::json!([
+		{"role": "user", "content": "for this repo, always run the tests on the box please", "timestamp": 1},
+		{"role": "assistant", "content": "Understood — running everything on the box.", "timestamp": 2}
+	]);
+	let transcript_path = home.path().join("transcript.json");
+	std::fs::write(&transcript_path, transcript.to_string()).expect("write transcript");
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args([
+			"distill",
+			"--messages",
+			transcript_path.to_str().expect("utf8 path"),
+			"--role",
+			"assistant",
+			"--project",
+			"e2eproj",
+			"--session",
+			"e2esess",
+		])
+		.output()
+		.expect("distill runs");
+	assert!(
+		output.status.success(),
+		"distill failed.\nstdout:\n{}\nstderr:\n{}",
+		String::from_utf8_lossy(&output.stdout),
+		String::from_utf8_lossy(&output.stderr)
+	);
+
+	// The snapshot is consumed on read
+	assert!(
+		!transcript_path.exists(),
+		"transcript snapshot must be deleted after distillation"
+	);
+
+	// Lesson + orientation landed in the scoped learning store
+	let learning_dir = home
+		.path()
+		.join(".local/share/octomind/learning/e2eproj/assistant");
+	let mut stored = String::new();
+	for entry in std::fs::read_dir(&learning_dir).expect("learning dir exists") {
+		let path = entry.expect("dir entry").path();
+		if path.is_file() {
+			stored.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+		}
+	}
+	assert!(
+		stored.contains("Run the tests on the box"),
+		"lesson missing from store:\n{stored}"
+	);
+	assert!(
+		stored.contains("Rust CLI with a workspace build"),
+		"orientation missing from store:\n{stored}"
+	);
+}
+
 #[test]
 fn test_version_flag() {
 	let output = Command::new(env!("CARGO_BIN_EXE_octomind"))
@@ -565,4 +808,45 @@ fn test_version_flag() {
 		.expect("octomind --version runs");
 	assert!(output.status.success());
 	assert!(String::from_utf8_lossy(&output.stdout).contains("octomind"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_send_to_unknown_session_fails() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["send", "-n", "no-such-session-e2e", "hello?"])
+		.output()
+		.expect("send runs");
+	assert!(
+		!output.status.success(),
+		"send to missing session must fail"
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_tap_list_and_untap_unknown() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	// Bare `tap` lists active taps from the sandbox (no network)
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["tap"])
+		.output()
+		.expect("tap runs");
+	assert!(
+		output.status.success(),
+		"tap list failed: {}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+
+	// Removing a tap that was never added must fail
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["untap", "no-such-tap-e2e"])
+		.output()
+		.expect("untap runs");
+	assert!(!output.status.success(), "untap of unknown tap must fail");
 }

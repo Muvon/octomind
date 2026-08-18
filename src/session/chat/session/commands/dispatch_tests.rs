@@ -221,12 +221,15 @@ async fn test_done_on_empty_session_has_nothing_to_compress() {
 async fn test_mcp_subcommands_read_config() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();
-	// All read-only subcommands (health is skipped: it probes servers)
+	// All read-only subcommands. health is safe here: the template config
+	// carries only builtin servers, so the forced check never probes an
+	// external process.
 	for input in [
 		"/mcp list",
 		"/mcp",
 		"/mcp info",
 		"/mcp full",
+		"/mcp health",
 		"/mcp dump",
 		"/mcp validate",
 		"/mcp bogus-subcommand",

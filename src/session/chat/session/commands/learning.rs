@@ -326,3 +326,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 	}
 	true
 }
+
+#[cfg(test)]
+#[path = "learning_tests.rs"]
+mod tests;

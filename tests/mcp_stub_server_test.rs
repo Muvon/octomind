@@ -89,4 +89,33 @@ async fn stub_stdio_server_end_to_end() {
 	assert!(octomind::mcp::client::is_connected(name));
 	octomind::mcp::client::disconnect(name);
 	assert!(!octomind::mcp::client::is_connected(name));
+
+	// Instructions for a server that never connected are absent
+	assert!(octomind::mcp::process::get_server_instructions("__mcp_stub_nope").is_none());
+}
+
+/// A tool that outlives the server's timeout must produce a client-side
+/// error in bounded time — never a hang, never a fabricated success.
+#[tokio::test]
+async fn stub_stdio_server_call_timeout() {
+	let name = "stub_timeout";
+	let script = concat!(
+		env!("CARGO_MANIFEST_DIR"),
+		"/tests/fixtures/mcp_stub_server.py"
+	);
+	let server = McpServerConfig::stdin(name, "python3", vec![script.to_string()], 2, Vec::new());
+
+	let call = McpToolCall {
+		tool_name: "sleep".to_string(),
+		parameters: serde_json::json!({}),
+		tool_id: "t-sleep".to_string(),
+	};
+	let started = std::time::Instant::now();
+	let result = octomind::mcp::client::call_tool(&server, &call, None).await;
+	assert!(result.is_err(), "sleeping tool call must fail on timeout");
+	assert!(
+		started.elapsed() < std::time::Duration::from_secs(15),
+		"timeout must fire well before the tool's 20s sleep"
+	);
+	octomind::mcp::client::disconnect(name);
 }

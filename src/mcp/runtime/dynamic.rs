@@ -1209,3 +1209,7 @@ mod tests {
 		clear_all();
 	}
 }
+
+#[cfg(test)]
+#[path = "dynamic_command_tests.rs"]
+mod command_tests;

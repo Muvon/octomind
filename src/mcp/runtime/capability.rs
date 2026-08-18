@@ -2598,3 +2598,7 @@ mod tests {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "capability_command_tests.rs"]
+mod command_tests;

@@ -213,3 +213,7 @@ async fn prepare_retrieval_query(
 
 	Ok(patterns)
 }
+
+#[cfg(test)]
+#[path = "inject_tests.rs"]
+mod tests;

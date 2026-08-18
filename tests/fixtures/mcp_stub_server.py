@@ -14,6 +14,7 @@ initialize handshake, list tools, and round-trip a tool call:
 
 import json
 import sys
+import time
 
 
 def send(obj):
@@ -62,6 +63,17 @@ def main():
             })
         elif method == "tools/call":
             params = msg.get("params") or {}
+            if params.get("name") == "sleep":
+                # Longer than any test server's timeout_seconds — used to
+                # exercise the client-side call deadline.
+                time.sleep(20)
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"content": [{"type": "text", "text": "overslept"}],
+                               "isError": False},
+                })
+                continue
             if params.get("name") == "explode":
                 send({
                     "jsonrpc": "2.0",

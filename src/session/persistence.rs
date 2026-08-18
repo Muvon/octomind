@@ -1486,3 +1486,7 @@ mod tests {
 		assert_eq!(session.messages[1].content, "tail");
 	}
 }
+
+#[cfg(test)]
+#[path = "persistence_runtime_tests.rs"]
+mod runtime_tests;

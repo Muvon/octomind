@@ -1297,3 +1297,7 @@ mod tests {
 		assert!(bounded.contains("middle omitted for condenser budget"));
 	}
 }
+
+#[cfg(test)]
+#[path = "condense_e2e_tests.rs"]
+mod condense_e2e_tests;

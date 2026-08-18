@@ -12,11 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! WebSocket end-to-end: spawn `octomind server` sandboxed, connect as a
-//! real client over tokio-tungstenite, create a session, send a message,
-//! and read the streamed server events — against the fake ollama provider.
+//! WebSocket end-to-end: run the real `WebSocketServer` in-process (the same
+//! code path `octomind server` executes), connect as a real client over
+//! tokio-tungstenite, create a session, send a message and a command, and
+//! read the streamed server events — against the fake ollama provider.
+//!
+//! In-process (not a spawned binary) so the server has no shutdown problem:
+//! the accept loop runs forever by design, and killing a child would lose
+//! its coverage profile. HOME is redirected to a tempdir before any session
+//! I/O happens; this file holds exactly one test, so the process-wide env
+//! mutation races with nothing.
 
-use std::process::Stdio;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -81,7 +87,7 @@ async fn spawn_openai_stub() -> String {
 	format!("http://{}/v1/chat/completions", addr)
 }
 
-fn write_sandbox_config(home: &std::path::Path) {
+fn sandbox_config() -> octomind::config::Config {
 	let mut config: octomind::config::Config =
 		toml::from_str(include_str!("../config-templates/default.toml"))
 			.expect("parse default config template");
@@ -92,14 +98,8 @@ fn write_sandbox_config(home: &std::path::Path) {
 	config.auto_capabilities = false;
 	config.skills.auto_activation = false;
 	config.skills.auto_validation = false;
-
-	let config_dir = home.join(".local/share/octomind/config");
-	std::fs::create_dir_all(&config_dir).expect("create config dir");
-	std::fs::write(
-		config_dir.join("config.toml"),
-		toml::to_string(&config).expect("serialize config"),
-	)
-	.expect("write config");
+	config.build_role_map();
+	config
 }
 
 async fn free_port() -> u16 {
@@ -111,24 +111,54 @@ async fn free_port() -> u16 {
 	port
 }
 
+/// Read text frames until one satisfies `pred` (returned) or the deadline
+/// passes (panics with everything seen).
+async fn read_until<S>(socket: &mut S, what: &str, secs: u64, pred: impl Fn(&str) -> bool) -> String
+where
+	S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+	let mut seen = Vec::new();
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+	while tokio::time::Instant::now() < deadline {
+		match tokio::time::timeout_at(deadline, socket.next()).await {
+			Ok(Some(Ok(WsMessage::Text(text)))) => {
+				let owned = text.to_string();
+				if pred(&owned) {
+					return owned;
+				}
+				seen.push(owned);
+			}
+			Ok(Some(Ok(_))) => continue,
+			Ok(Some(Err(e))) => panic!("ws error while waiting for {what}: {e}; seen: {seen:?}"),
+			Ok(None) => panic!("server closed connection while waiting for {what}; seen: {seen:?}"),
+			Err(_) => break,
+		}
+	}
+	panic!("{what} never arrived; seen: {seen:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ws_session_message_roundtrip() {
 	let stub_url = spawn_openai_stub().await;
 	let home = tempfile::tempdir().expect("temp home");
-	write_sandbox_config(home.path());
-	let port = free_port().await;
+	// Redirect all session/data I/O into the sandbox before the server does
+	// any of it. Sole test in this binary — no other thread reads env.
+	std::env::set_var("HOME", home.path());
+	std::env::set_var("OLLAMA_API_URL", &stub_url);
+	std::env::set_var("DO_NOT_TRACK", "1");
 
-	let mut server = tokio::process::Command::new(env!("CARGO_BIN_EXE_octomind"))
-		.env("HOME", home.path())
-		.env("OLLAMA_API_URL", &stub_url)
-		.env("DO_NOT_TRACK", "1")
-		.current_dir(home.path())
-		.args(["server", "--port", &port.to_string()])
-		.stdin(Stdio::null())
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.spawn()
-		.expect("spawn octomind server");
+	let port = free_port().await;
+	let server = octomind::websocket::WebSocketServer::new(
+		"127.0.0.1",
+		port,
+		sandbox_config(),
+		"assistant".to_string(),
+		Vec::new(),
+	)
+	.expect("create server");
+	tokio::spawn(async move {
+		let _ = server.start().await;
+	});
 
 	// Retry until the server accepts websocket connections
 	let url = format!("ws://127.0.0.1:{port}");
@@ -165,31 +195,23 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("send message");
+	read_until(&mut socket, "assistant marker", 60, |t| t.contains(MARKER)).await;
 
-	// Collect streamed events until the assistant answer with the marker
-	// arrives (or time out loudly with everything we saw).
-	let mut seen = Vec::new();
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-	let mut got_marker = false;
-	while tokio::time::Instant::now() < deadline {
-		let next = tokio::time::timeout_at(deadline, socket.next()).await;
-		match next {
-			Ok(Some(Ok(WsMessage::Text(text)))) => {
-				let owned = text.to_string();
-				if owned.contains(MARKER) {
-					got_marker = true;
-					seen.push(owned);
-					break;
-				}
-				seen.push(owned);
-			}
-			Ok(Some(Ok(_))) => continue,
-			Ok(Some(Err(e))) => panic!("ws error: {e}; seen: {seen:?}"),
-			Ok(None) => panic!("server closed connection; seen: {seen:?}"),
-			Err(_) => break,
-		}
-	}
-	assert!(got_marker, "assistant marker never arrived; seen: {seen:?}");
+	// Command channel: /help must come back as command output, not a model turn
+	socket
+		.send(WsMessage::Text(
+			serde_json::json!({
+				"type": "command",
+				"session_id": "ws-e2e",
+				"command": "help",
+				"request_id": "cmd-1"
+			})
+			.to_string()
+			.into(),
+		))
+		.await
+		.expect("send command");
+	read_until(&mut socket, "help command ack", 30, |t| t.contains("cmd-1")).await;
 
 	// A structured error for a bogus session must come back, not a hang
 	socket
@@ -204,22 +226,40 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("send bogus");
-	let mut got_error = false;
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-	while tokio::time::Instant::now() < deadline {
-		match tokio::time::timeout_at(deadline, socket.next()).await {
-			Ok(Some(Ok(WsMessage::Text(text)))) => {
-				if text.contains("error") || text.contains("not") {
-					got_error = true;
-					break;
-				}
-			}
-			Ok(Some(Ok(_))) => continue,
-			_ => break,
-		}
-	}
-	assert!(got_error, "no error response for unknown session");
+	read_until(&mut socket, "unknown-session error", 30, |t| {
+		t.contains("error") || t.contains("not")
+	})
+	.await;
+
+	// Malformed JSON must produce an error response, not kill the connection
+	socket
+		.send(WsMessage::Text("{not json".to_string().into()))
+		.await
+		.expect("send malformed");
+	read_until(&mut socket, "malformed-input error", 30, |t| {
+		t.to_lowercase().contains("error") || t.to_lowercase().contains("invalid")
+	})
+	.await;
+
+	// The session was persisted inside the sandbox HOME
+	let sessions_dir = home.path().join(".local/share/octomind/sessions");
+	let persisted = std::fs::read_dir(&sessions_dir)
+		.map(|entries| entries.count())
+		.unwrap_or(0);
+	assert!(persisted > 0, "no session file written in sandbox");
+
+	// Browser-origin handshakes are refused when no --allow-origin is set:
+	// a connection carrying an Origin header must fail at the handshake.
+	use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+	let mut request = url.clone().into_client_request().expect("request");
+	request.headers_mut().insert(
+		"Origin",
+		"http://evil.example".parse().expect("header value"),
+	);
+	assert!(
+		tokio_tungstenite::connect_async(request).await.is_err(),
+		"handshake with a browser Origin must be refused"
+	);
 
 	let _ = socket.close(None).await;
-	let _ = server.kill().await;
 }

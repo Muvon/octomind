@@ -337,3 +337,7 @@ fn truncate(s: &str, max: usize) -> String {
 		format!("{head}…")
 	}
 }
+
+#[cfg(test)]
+#[path = "agents_tests.rs"]
+mod tests;

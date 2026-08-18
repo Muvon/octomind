@@ -269,5 +269,65 @@ async fn test_acp_initialize_new_session_prompt() {
 	let updates_text = serde_json::to_string(&second_updates).expect("serialize updates");
 	assert!(updates_text.contains(MARKER), "second turn missing marker");
 
-	let _ = client.child.kill().await;
+	// A second agent process loads the persisted session (session/load
+	// replays history as session/update notifications) and continues it.
+	let mut client2 = AcpClient::spawn(home.path(), &stub_url).await;
+	let (_, _) = client2
+		.request(
+			"initialize",
+			serde_json::json!({"protocolVersion": 1, "clientCapabilities": {}}),
+		)
+		.await;
+	// This agent does not replay history on load — the contract is that the
+	// load succeeds (request() already rejects error responses) and the
+	// session is continuable.
+	let (_, _) = client2
+		.request(
+			"session/load",
+			serde_json::json!({"sessionId": session_id, "cwd": cwd, "mcpServers": []}),
+		)
+		.await;
+	let (loaded_result, _) = client2
+		.request(
+			"session/prompt",
+			serde_json::json!({
+				"sessionId": session_id,
+				"prompt": [{"type": "text", "text": "continue after load"}]
+			}),
+		)
+		.await;
+	assert_eq!(loaded_result["stopReason"].as_str(), Some("end_turn"));
+
+	let AcpClient {
+		mut child, stdin, ..
+	} = client2;
+	drop(stdin);
+	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+		Ok(status) => {
+			let status = status.expect("wait on acp child 2");
+			assert!(status.success(), "second acp agent exited with {status}");
+		}
+		Err(_) => {
+			let _ = child.kill().await;
+			panic!("second acp agent did not exit after stdin EOF");
+		}
+	}
+
+	// Graceful shutdown: closing stdin fires the agent's EOF disconnect and
+	// the process must exit cleanly on its own (this is also what lets the
+	// instrumented child flush its coverage profile — kill() would drop it).
+	let AcpClient {
+		mut child, stdin, ..
+	} = client;
+	drop(stdin);
+	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+		Ok(status) => {
+			let status = status.expect("wait on acp child");
+			assert!(status.success(), "acp agent exited with {status}");
+		}
+		Err(_) => {
+			let _ = child.kill().await;
+			panic!("acp agent did not exit after stdin EOF");
+		}
+	}
 }

@@ -1431,3 +1431,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "functions_command_tests.rs"]
+mod command_tests;

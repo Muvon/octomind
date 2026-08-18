@@ -20,151 +20,11 @@
 //! and cost bookkeeping. No network, no API keys, no side effects.
 
 use super::*;
+use crate::session::chat::test_support::{
+	fake_provider_config, fake_session, final_response, spawn_stub, spawn_stub_with_status,
+	tool_call_response, tool_calls_response, ENV_LOCK,
+};
 use crate::session::output::SilentSink;
-use std::collections::VecDeque;
-use std::sync::Mutex as StdMutex;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-/// `OLLAMA_API_URL` is process-global env — tests touching it must not
-/// overlap. Lock is poisoned-tolerant: a failed test must not cascade.
-static ENV_LOCK: StdMutex<()> = StdMutex::new(());
-
-/// Spawn a one-shot-per-connection HTTP stub returning scripted
-/// chat-completion bodies in order. Returns the chat-completions URL.
-async fn spawn_stub(responses: Vec<serde_json::Value>) -> String {
-	spawn_stub_with_status(responses.into_iter().map(|r| (200, r)).collect()).await
-}
-
-/// Like [`spawn_stub`] but each scripted entry carries its HTTP status,
-/// so provider-level error handling can be exercised.
-async fn spawn_stub_with_status(responses: Vec<(u16, serde_json::Value)>) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub listener");
-	let addr = listener.local_addr().expect("stub addr");
-	let queue = std::sync::Arc::new(StdMutex::new(VecDeque::from(responses)));
-
-	tokio::spawn(async move {
-		while let Ok((mut sock, _)) = listener.accept().await {
-			let queue = queue.clone();
-			tokio::spawn(async move {
-				// Read headers + Content-Length body of the POST request.
-				let mut buf = Vec::new();
-				let mut tmp = [0u8; 8192];
-				let header_end = loop {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						return;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-						break pos + 4;
-					}
-				};
-				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
-				let content_length: usize = headers
-					.lines()
-					.find_map(|l| l.strip_prefix("content-length:"))
-					.and_then(|v| v.trim().parse().ok())
-					.unwrap_or(0);
-				while buf.len() < header_end + content_length {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						break;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-				}
-
-				let (status, body) = queue
-					.lock()
-					.expect("stub queue")
-					.pop_front()
-					.unwrap_or_else(|| {
-						(
-							200,
-							serde_json::json!({
-								"choices": [{
-									"message": {"role": "assistant", "content": "SCRIPT EXHAUSTED"},
-									"finish_reason": "stop"
-								}],
-								"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
-							}),
-						)
-					});
-				let body = body.to_string();
-				let reason = if status == 200 { "OK" } else { "Error" };
-				let response = format!(
-					"HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-					body.len(),
-					body
-				);
-				let _ = sock.write_all(response.as_bytes()).await;
-				let _ = sock.shutdown().await;
-			});
-		}
-	});
-
-	format!("http://{}/v1/chat/completions", addr)
-}
-
-fn final_response(text: &str) -> serde_json::Value {
-	serde_json::json!({
-		"choices": [{
-			"message": {"role": "assistant", "content": text},
-			"finish_reason": "stop"
-		}],
-		"usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cost": 0.001}
-	})
-}
-
-fn tool_calls_response(calls: &[(&str, &str, serde_json::Value)]) -> serde_json::Value {
-	let tool_calls: Vec<serde_json::Value> = calls
-		.iter()
-		.map(|(id, name, arguments)| {
-			serde_json::json!({
-				"id": id,
-				"type": "function",
-				"function": {"name": name, "arguments": arguments.to_string()}
-			})
-		})
-		.collect();
-	serde_json::json!({
-		"choices": [{
-			"message": {"role": "assistant", "content": "", "tool_calls": tool_calls},
-			"finish_reason": "tool_calls"
-		}],
-		"usage": {"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40, "cost": 0.002}
-	})
-}
-
-fn tool_call_response(tool_name: &str, arguments: serde_json::Value) -> serde_json::Value {
-	tool_calls_response(&[("call_1", tool_name, arguments)])
-}
-
-/// Merged config wired for the fake provider: real template + assistant
-/// role, supervisor off (its gates would issue their own scripted-queue
-/// desyncing LLM calls).
-fn fake_provider_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
-	config.build_role_map();
-	config.model = "ollama:fake-model".to_string();
-	config.supervisor.enabled = false;
-	let mut merged = config.get_merged_config_for_role("assistant");
-	merged.model = "ollama:fake-model".to_string();
-	merged
-}
-
-fn fake_session(user_input: &str) -> ChatSession {
-	let mut session = ChatSession::for_tests(Vec::new());
-	session.model = "ollama:fake-model".to_string();
-	session.session.info.model = "ollama:fake-model".to_string();
-	session
-		.add_user_message(user_input)
-		.expect("add user message");
-	session
-}
 
 async fn run_turn(session: &mut ChatSession, config: &Config) -> anyhow::Result<()> {
 	let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -181,7 +41,7 @@ async fn run_turn(session: &mut ChatSession, config: &Config) -> anyhow::Result<
 
 #[tokio::test]
 async fn test_simple_completion_turn() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![final_response("Hello from stub")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
@@ -208,7 +68,7 @@ async fn test_simple_completion_turn() {
 
 #[tokio::test]
 async fn test_tool_round_trip_with_unknown_tool() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		tool_call_response("stub_missing_tool", serde_json::json!({"arg": 1})),
 		final_response("All done"),
@@ -262,7 +122,7 @@ async fn test_tool_round_trip_with_unknown_tool() {
 
 #[tokio::test]
 async fn test_parallel_tools_and_multi_round_chain() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		// Round 1: two parallel tool calls in one assistant message
 		tool_calls_response(&[
@@ -308,7 +168,7 @@ async fn test_parallel_tools_and_multi_round_chain() {
 
 #[tokio::test]
 async fn test_reasoning_content_is_preserved_as_thinking() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![serde_json::json!({
 		"choices": [{
 			"message": {
@@ -352,7 +212,7 @@ async fn test_reasoning_content_is_preserved_as_thinking() {
 
 #[tokio::test]
 async fn test_provider_error_surfaces_as_turn_error() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	// Persistent 500s: retries (if any) also hit an error response
 	let url = spawn_stub_with_status(vec![
 		(
@@ -393,7 +253,7 @@ async fn test_provider_error_surfaces_as_turn_error() {
 
 #[tokio::test]
 async fn test_empty_response_is_retried_by_validation() {
-	let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
 		// Empty completion: no content, no tool calls — the validation layer
 		// must not accept this as a final answer.
@@ -438,4 +298,189 @@ async fn test_empty_response_is_retried_by_validation() {
 			);
 		}
 	}
+}
+
+/// A real successful tool round: the model calls the builtin orchestration
+/// `schedule` tool (list on an empty store), the dispatcher routes and
+/// executes it in-process, and the follow-up call produces the final answer.
+#[tokio::test]
+async fn test_real_builtin_tool_round_schedule_list() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		tool_call_response("schedule", serde_json::json!({"action": "list"})),
+		final_response("schedule round complete"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	// Tool routing is tool-map-only; build it from the merged config so this
+	// test never depends on another test having initialized the global map.
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+	let mut session = fake_session("list my schedules");
+	run_turn(&mut session, &config)
+		.await
+		.expect("tool round turn");
+
+	let tool_msg = session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "tool")
+		.expect("tool result message recorded");
+	assert_eq!(tool_msg.name.as_deref(), Some("schedule"));
+	assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_1"));
+	assert!(
+		!tool_msg.content.to_lowercase().contains("not implemented"),
+		"schedule must execute for real, got: {}",
+		tool_msg.content
+	);
+	let last = session
+		.session
+		.messages
+		.last()
+		.expect("final assistant message");
+	assert_eq!(last.role, "assistant");
+	assert!(last.content.contains("schedule round complete"));
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// Cancellation signalled before the turn starts: the turn must end without
+/// recording any assistant output — gracefully (Ok) or as a cancel error,
+/// but never with a fabricated answer.
+#[tokio::test]
+async fn test_pre_cancelled_turn_records_nothing() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![final_response("must never be recorded")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	let mut session = fake_session("do something");
+	let (tx, rx) = tokio::sync::watch::channel(false);
+	tx.send(true).expect("signal cancel");
+
+	let result = execute_api_call_and_process_response(
+		&mut session,
+		&config,
+		"assistant",
+		rx,
+		crate::session::output::OutputMode::NonInteractive,
+		SilentSink,
+	)
+	.await;
+
+	let recorded_answer = session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.role == "assistant" && m.content.contains("must never be recorded"));
+	assert!(
+		!recorded_answer,
+		"cancelled turn must not record the answer (result was {result:?})"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// Interactive output mode: the same tool round now renders headers, close
+/// lines, and (with a tiny threshold) the truncation indicator — the paths
+/// non-interactive runs suppress entirely.
+#[tokio::test]
+async fn test_interactive_mode_tool_round_renders_and_truncates() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		tool_call_response("schedule", serde_json::json!({"action": "list"})),
+		final_response("interactive round done"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	// Force the truncation display arm for any non-trivial tool output
+	config.mcp_response_tokens_threshold = 5;
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	let mut session = fake_session("list my schedules");
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	execute_api_call_and_process_response(
+		&mut session,
+		&config,
+		"assistant",
+		rx,
+		crate::session::output::OutputMode::Interactive,
+		SilentSink,
+	)
+	.await
+	.expect("interactive turn");
+
+	let last = session
+		.session
+		.messages
+		.last()
+		.expect("final assistant message");
+	assert_eq!(last.role, "assistant");
+	assert!(last.content.contains("interactive round done"));
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// A genuinely oversized tool result (the box's tap skill list is thousands
+/// of tokens) drives the hard truncation cap, and re-issuing the identical
+/// call drives the dedup placeholder — the two large-output defenses.
+#[tokio::test]
+async fn test_large_tool_result_truncation_and_dedup() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		tool_calls_response(&[("call_s1", "skill", serde_json::json!({"action": "list"}))]),
+		tool_calls_response(&[("call_s2", "skill", serde_json::json!({"action": "list"}))]),
+		final_response("spill round done"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.mcp_response_tokens_threshold = 50;
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	let mut session = fake_session("list every skill twice");
+	run_turn(&mut session, &config)
+		.await
+		.expect("double skill round");
+
+	let tool_contents: Vec<(&str, &str)> = session
+		.session
+		.messages
+		.iter()
+		.filter(|m| m.role == "tool")
+		.map(|m| (m.tool_call_id.as_deref().unwrap_or(""), m.content.as_str()))
+		.collect();
+	assert_eq!(tool_contents.len(), 2, "both rounds must record results");
+
+	// First round: hard cap applied — the result cannot exceed the threshold
+	// by more than the truncation notice itself.
+	let first = tool_contents[0].1;
+	assert!(
+		crate::session::token_counter::estimate_tokens(first) < 400,
+		"oversized result was not capped ({} chars)",
+		first.len()
+	);
+
+	// Second round: identical call → dedup placeholder, not a re-send
+	let second = tool_contents[1].1;
+	assert!(
+		second.contains("duplicate tool call"),
+		"dedup placeholder missing: {second}"
+	);
+
+	let last = session.session.messages.last().expect("final message");
+	assert!(last.content.contains("spill round done"));
+
+	std::env::remove_var("OLLAMA_API_URL");
 }

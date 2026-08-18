@@ -3001,3 +3001,7 @@ pub fn display_agents(output: &CommandOutput) {
 	block_close_ok("/agents", Some(&format!("{} total", total)));
 	println!();
 }
+
+#[cfg(test)]
+#[path = "display_render_tests.rs"]
+mod render_tests;

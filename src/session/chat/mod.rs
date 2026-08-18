@@ -32,6 +32,8 @@ pub(crate) mod response;
 pub mod session;
 mod status_prefix;
 mod syntax;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod thinking_display;
 mod tool_display;
 mod tool_error_tracker;

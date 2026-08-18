@@ -524,3 +524,7 @@ mod tests {
 		assert!(!ImageProcessor::is_supported_image(Path::new("test.txt")));
 	}
 }
+
+#[cfg(test)]
+#[path = "image_tests.rs"]
+mod attachment_tests;

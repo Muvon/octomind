@@ -1520,3 +1520,7 @@ mod tests {
 		assert_eq!(strip_frontmatter(unterminated), unterminated);
 	}
 }
+
+#[cfg(test)]
+#[path = "skill_command_tests.rs"]
+mod command_tests;

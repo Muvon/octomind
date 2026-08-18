@@ -695,3 +695,7 @@ mod tests;
 #[cfg(test)]
 #[path = "gate_tests.rs"]
 mod gate_tests;
+
+#[cfg(test)]
+#[path = "compression_e2e_tests.rs"]
+mod compression_e2e_tests;

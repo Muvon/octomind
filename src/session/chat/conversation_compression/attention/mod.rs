@@ -122,6 +122,11 @@ pub(crate) struct PactContext {
 	enabled: bool,
 	pub packets: Vec<EvidencePacket>,
 	pub pinned: PinnedState,
+	/// Live runtime-owned plan checklist at build time. Rendered inside
+	/// <pinned_state> for the fold model only (the live context already gets
+	/// the plan recited each turn by the supervisor), so a summary can never
+	/// contradict the plan the model is re-anchored on after compaction.
+	plan_focus: String,
 	grounded_hints: Vec<GroundedHint>,
 	known_provenance: BTreeMap<String, Provenance>,
 	prior_recall: BTreeMap<String, super::archive::ArchivedBlockRef>,
@@ -202,10 +207,10 @@ pub(crate) async fn build(
 	let source_tokens = packets.iter().map(|packet| packet.tokens).sum::<usize>();
 	let target_tokens = ((source_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
 	let grounded_hints = ground_self_report(session, drained, &packets);
+	let plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
+		.await
+		.unwrap_or_default();
 	if attention_enabled {
-		let plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
-			.await
-			.unwrap_or_default();
 		allocate_lanes(
 			&mut packets,
 			drained,
@@ -244,6 +249,7 @@ pub(crate) async fn build(
 		enabled: attention_enabled,
 		packets,
 		pinned,
+		plan_focus,
 		grounded_hints,
 		known_provenance,
 		prior_recall,
@@ -598,6 +604,12 @@ fn normalize_for_match(text: &str) -> String {
 		.to_lowercase()
 }
 
+/// Smallest preview budget for a summarize candidate. Below this the head/tail
+/// extractor cannot fit even its omission marker, the render comes back with no
+/// recoverable spans, and the packet (plus every closure containing it) is
+/// silently dropped from the fold. At or above it, small packets render whole.
+const MIN_SUMMARIZE_RENDER_TOKENS: usize = 64;
+
 async fn allocate_lanes(
 	packets: &mut [EvidencePacket],
 	messages: &[Message],
@@ -648,6 +660,28 @@ async fn allocate_lanes(
 		exact_left -= 1;
 	}
 
+	// A prior summary is compression OUTPUT being drained this cycle: every
+	// line is already-distilled state, so the fold model must see ALL of it —
+	// any line it never saw silently vanishes from the session. Summarize
+	// renders are fold-model INPUT only (render_live_bands emits just the
+	// KeepExact packets into the live context), so the full render costs
+	// compression-call tokens, not context budget: it is charged to neither
+	// `used` nor `remaining`, and it must never pass through head/tail
+	// extraction — that once deleted the middle 600 lines of a real session's
+	// prior summary and the model rebuilt the task state wrong from the edges.
+	for packet in packets.iter_mut() {
+		if packet.kind != PacketKind::PriorSummary || packet.lane != Lane::ArchiveReference {
+			continue;
+		}
+		let rendered = render_packet_with_spans(messages, packet, usize::MAX);
+		if rendered.spans.is_empty() {
+			continue;
+		}
+		packet.lane = Lane::Summarize;
+		packet.prompt_content = rendered.content;
+		packet.exact_spans = rendered.spans;
+	}
+
 	let mut candidates: Vec<usize> = packets
 		.iter()
 		.enumerate()
@@ -660,13 +694,21 @@ async fn allocate_lanes(
 	if remaining == 0 || candidates.is_empty() {
 		return;
 	}
-	// Render each candidate once at its desired budget (half its source size).
-	// The map is reused by the ranked loop below whenever the per-packet share
-	// covers the desired budget, so no candidate is rendered twice.
+	// Render each candidate once at its desired budget: half its source size,
+	// floored so a tiny packet renders whole. Below the floor the head/tail
+	// extractor cannot even fit its omission marker and returns zero
+	// recoverable spans — and one unrecoverable packet poisons every fold
+	// closure depending on it, silently dropping the whole chain from the
+	// fold. The map is reused by the ranked loop below whenever the
+	// per-packet share covers the desired budget, so no candidate is
+	// rendered twice.
 	let previews: BTreeMap<usize, (PacketRender, usize)> = candidates
 		.iter()
 		.map(|index| {
-			let budget = packets[*index].tokens.div_ceil(2).max(1);
+			let budget = packets[*index]
+				.tokens
+				.div_ceil(2)
+				.max(MIN_SUMMARIZE_RENDER_TOKENS);
 			let rendered = render_packet_with_spans(messages, &packets[*index], budget);
 			let cost = crate::session::estimate_tokens(&rendered.content);
 			(*index, (rendered, cost))
@@ -727,7 +769,10 @@ async fn allocate_lanes(
 		let rendered: Vec<(usize, PacketRender, usize)> = pending
 			.iter()
 			.filter_map(|candidate| {
-				let desired = packets[*candidate].tokens.div_ceil(2).max(1);
+				let desired = packets[*candidate]
+					.tokens
+					.div_ceil(2)
+					.max(MIN_SUMMARIZE_RENDER_TOKENS);
 				// A preview rendered at `desired` is exact for any budget that
 				// covers it; empty spans at `desired` stay empty at any smaller
 				// budget, so a known-empty preview short-circuits the re-render.
@@ -1127,6 +1172,9 @@ impl PactContext {
 		));
 		out.push_str("<pinned_state>\n");
 		out.push_str(&render_pinned_lines(&self.pinned));
+		if !self.plan_focus.trim().is_empty() {
+			out.push_str(&format!("live_plan:\n{}\n", self.plan_focus.trim()));
+		}
 		out.push_str("</pinned_state>\n");
 		if !self.grounded_hints.is_empty() {
 			out.push_str("<grounded_self_report>\n");
@@ -1466,10 +1514,17 @@ impl PactContext {
 		if summary.folded_units.len() > 40 {
 			return Err(anyhow!("PACT summary exceeds the 40-unit fold bound"));
 		}
+		// The prior summary folds at FULL fidelity by design (see
+		// allocate_lanes): its render is fold-model input that never reaches
+		// the live context — the folded units replacing it are bounded by the
+		// 40-unit fold cap. Counting it here would veto exactly the
+		// compressions that carry the most prior state.
 		let selected_tokens = self
 			.packets
 			.iter()
-			.filter(|packet| packet.lane != Lane::ArchiveReference)
+			.filter(|packet| {
+				packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
+			})
 			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 			.sum::<usize>();
 		if selected_tokens > self.target_tokens {
@@ -1488,6 +1543,28 @@ impl PactContext {
 				packet.id
 			));
 		}
+		// A prior summary selected for folding must be its COMPLETE render:
+		// exactly one span from line 1 over every rendered line, digest-exact
+		// against the content. Head/tail extraction leaves two edge spans and
+		// omission markers, and post-render truncation breaks the digest —
+		// either way the cycle is vetoed instead of silently folding from a
+		// gutted summary. This is the runtime backstop for the allocate_lanes
+		// full-render guarantee: any future budget reintroduced on that path
+		// trips here instead of deleting distilled session state.
+		for packet in self.packets.iter().filter(|packet| {
+			packet.kind == PacketKind::PriorSummary && packet.lane == Lane::Summarize
+		}) {
+			let lines: Vec<&str> = packet.prompt_content.lines().collect();
+			let complete = !lines.is_empty()
+				&& packet.exact_spans.len() == 1
+				&& packet.exact_spans[0] == source_span(&lines, 1, lines.len());
+			if !complete {
+				return Err(anyhow!(
+					"PACT prior summary {} was not folded from its complete render",
+					packet.id
+				));
+			}
+		}
 		let packets_by_id: BTreeMap<&str, &EvidencePacket> = self
 			.packets
 			.iter()
@@ -1501,9 +1578,10 @@ impl PactContext {
 			for dependency in &packet.depends_on {
 				// An archive-lane prior summary is not a missing live dependency:
 				// it is deliberately never kept exact (see active_dependency_closure)
-				// and its durable content is pinned, re-folded, or recallable by
-				// block ID. Rejecting here would veto every compression whose
-				// summarize budget could not admit the prior summary.
+				// and it normally re-folds through the summarize lane at full
+				// fidelity — it stays archived only when its render is empty,
+				// where its content is still recallable by block ID. Rejecting
+				// here would veto that legitimate case.
 				if packets_by_id
 					.get(dependency.as_str())
 					.is_some_and(|source| {
@@ -1786,6 +1864,7 @@ impl PactContext {
 			"post_compression_tokens": post_compression_tokens,
 			"metrics": self.metrics,
 			"governance_hash": self.pinned.governance_hash,
+			"plan_focus": &self.plan_focus,
 			"pinned_block_ids": self.pinned.task.source.iter()
 				.chain(self.pinned.constraints.iter().filter_map(|item| item.source.as_ref()))
 				.collect::<Vec<_>>(),
@@ -1921,6 +2000,7 @@ mod tests {
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
+			plan_focus: String::new(),
 			grounded_hints: Vec::new(),
 			known_provenance,
 			prior_recall: BTreeMap::new(),
@@ -2187,11 +2267,20 @@ mod tests {
 			governance_hash: "hash".into(),
 		};
 		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
+		// The prior summary folds whole outside the context budget (fold-model
+		// input only), so the budget invariant covers everything but it.
 		let selected_tokens = packets
 			.iter()
-			.filter(|packet| packet.lane != Lane::ArchiveReference)
+			.filter(|packet| {
+				packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
+			})
 			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 			.sum::<usize>();
+		assert_eq!(packets[0].kind, PacketKind::PriorSummary);
+		assert_eq!(packets[0].lane, Lane::Summarize);
+		assert!(packets[0]
+			.prompt_content
+			.contains("Use the established resource reference"));
 
 		assert_eq!(
 			packets
@@ -2812,6 +2901,7 @@ mod tests {
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
+			plan_focus: String::new(),
 			grounded_hints: Vec::new(),
 			known_provenance,
 			prior_recall: BTreeMap::new(),
@@ -2958,6 +3048,7 @@ mod tests {
 			enabled: true,
 			packets: vec![prior_packet, continuation_packet],
 			pinned,
+			plan_focus: String::new(),
 			grounded_hints: Vec::new(),
 			known_provenance,
 			prior_recall: BTreeMap::new(),
@@ -2968,6 +3059,577 @@ mod tests {
 		assert!(pact
 			.validate_summary(&CompressionSummary::default())
 			.is_ok());
+	}
+
+	fn prior_summary_message(lines: &[String]) -> Message {
+		Message {
+			role: "assistant".into(),
+			content: format!(
+				"<conversation_summary id=\"old\" controller=\"pact-v1\">\n<folded_state>\n{}\n</folded_state>\n</conversation_summary>",
+				lines.join("\n")
+			),
+			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
+			..Default::default()
+		}
+	}
+
+	fn pinned_task(text: &str) -> PinnedState {
+		PinnedState {
+			task: PinnedItem {
+				text: text.into(),
+				source: None,
+			},
+			constraints: Vec::new(),
+			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
+			governance_hash: "hash".into(),
+		}
+	}
+
+	#[tokio::test]
+	async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
+		// Regression: the first compression after the nesting fix routed the
+		// prior summary to the summarize lane but rendered it through
+		// head/tail extraction at the lane's share of the CONTEXT budget. In a
+		// real session that deleted lines 81-683 of a 905-line prior summary —
+		// the per-case benchmark outcomes — before the fold model ever saw
+		// them, and the model then rebuilt the task state wrong from the
+		// surviving edges. Summarize renders are fold INPUT, not context, so
+		// the prior summary must reach the fold model whole under ANY budget.
+		// 1,000 lines: large enough that any hidden size cap between the
+		// render and the fold prompt would visibly truncate.
+		let prior_lines: Vec<String> = (1..=1_000)
+			.map(|line| format!("prior folded line {line}"))
+			.collect();
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>finish the benchmark reconciliation</task>\n</continuation>",
+		);
+		let mut call = message("assistant", "checking the run status");
+		call.tool_calls = Some(serde_json::json!([{
+			"id": "c1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut result = message("tool", "run alive; 12 cases remaining");
+		result.tool_call_id = Some("c1".into());
+		let build = || {
+			vec![
+				prior_summary_message(&prior_lines),
+				continuation.clone(),
+				call.clone(),
+				result.clone(),
+			]
+		};
+		let pinned = pinned_task("finish the benchmark reconciliation");
+
+		// Budget far below the prior summary's size: must not matter.
+		let messages = build();
+		let mut packets = build_packets("full-fold", &messages);
+		link_dependencies(&mut packets);
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_eq!(prior_packet.lane, Lane::Summarize);
+		for line in &prior_lines {
+			assert!(
+				prior_packet.prompt_content.contains(line.as_str()),
+				"fold input lost prior summary content: {line}"
+			);
+		}
+		assert!(
+			!prior_packet.prompt_content.contains("omitted"),
+			"prior summary render must never be head/tail extracted"
+		);
+		assert_eq!(prior_packet.exact_spans.len(), 1);
+		assert_eq!(prior_packet.exact_spans[0].start_line, 1);
+		assert_eq!(
+			prior_packet.exact_spans[0].end_line,
+			prior_packet.prompt_content.lines().count()
+		);
+		// The stored span must reconstruct byte-exact from the render, or
+		// archive recovery of the drained summary fails after the fact.
+		let rendered_lines: Vec<&str> = prior_packet.prompt_content.lines().collect();
+		assert_eq!(
+			source_span(&rendered_lines, 1, rendered_lines.len()),
+			prior_packet.exact_spans[0]
+		);
+		let prior_id = prior_packet.id.clone();
+
+		// The fold model's actual input (prompt_view) carries every line too.
+		let known_provenance: BTreeMap<String, Provenance> = packets
+			.iter()
+			.map(|packet| (packet.id.clone(), packet.provenance))
+			.collect();
+		let pact = PactContext {
+			enabled: true,
+			packets,
+			pinned: pinned_task("finish the benchmark reconciliation"),
+			plan_focus: String::new(),
+			grounded_hints: Vec::new(),
+			known_provenance,
+			prior_recall: BTreeMap::new(),
+			source_tokens: 2_000,
+			target_tokens: 200,
+			metrics: PactMetrics::default(),
+		};
+		let view = pact.prompt_view();
+		for line in &prior_lines {
+			assert!(
+				view.contains(line.as_str()),
+				"fold prompt lost prior summary content: {line}"
+			);
+		}
+
+		// The live context after this cycle must NOT carry the prior render
+		// verbatim (that was the original nesting bug); it keeps only the
+		// prior's recall coordinates.
+		let (_, recall_band) = pact.render_live_bands(None);
+		assert!(
+			!recall_band.contains("prior folded line"),
+			"prior summary render leaked into the live context"
+		);
+		assert!(
+			recall_band.contains(prior_id.as_str()),
+			"prior summary lost its recall coordinates"
+		);
+
+		// /done's minimal frontier is a task boundary, not amnesia: the prior
+		// summary still folds whole there.
+		let messages = build();
+		let mut packets = build_packets("full-fold-done", &messages);
+		link_dependencies(&mut packets);
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, true).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_eq!(prior_packet.lane, Lane::Summarize);
+		for line in &prior_lines {
+			assert!(prior_packet.prompt_content.contains(line.as_str()));
+		}
+	}
+
+	#[tokio::test]
+	async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
+		// The full-fidelity prior render is fold input, not selected context:
+		// charging it against the summarize budget would starve every other
+		// archive candidate out of the fold whenever the prior summary is
+		// large — exactly the sessions that need folding the most.
+		let prior_lines: Vec<String> = (1..=300)
+			.map(|line| format!("prior folded line {line}"))
+			.collect();
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>finish the benchmark reconciliation</task>\n</continuation>",
+		);
+		let mut old_call = message("assistant", "ran an earlier diagnostic");
+		old_call.tool_calls = Some(serde_json::json!([{
+			"id": "old-1",
+			"function": {"name": "diagnostic", "arguments": {}}
+		}]));
+		let mut old_result = message("tool", "diagnostic finished cleanly");
+		old_result.tool_call_id = Some("old-1".into());
+		let trigger = message("user", "check the run status now");
+		let mut live_call = message("assistant", "checking the run");
+		live_call.tool_calls = Some(serde_json::json!([{
+			"id": "live-1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut live_result = message("tool", "run alive");
+		live_result.tool_call_id = Some("live-1".into());
+		let messages = vec![
+			prior_summary_message(&prior_lines),
+			continuation,
+			old_call,
+			old_result,
+			trigger,
+			live_call,
+			live_result,
+		];
+		let mut packets = build_packets("budget-exempt", &messages);
+		link_dependencies(&mut packets);
+		let old_pair_id = packets[2].id.clone();
+		let pinned = pinned_task("check the run status now");
+		// 600 tokens: far below the prior summary alone, ample for the tiny
+		// frontier and candidates. If the prior render were charged, remaining
+		// would saturate to zero and the old pair would stay archived.
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 600, false).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_eq!(prior_packet.lane, Lane::Summarize);
+		assert!(prior_packet
+			.prompt_content
+			.contains("prior folded line 300"));
+		let old_pair = packets
+			.iter()
+			.find(|packet| packet.id == old_pair_id)
+			.expect("old tool pair packet exists");
+		assert_eq!(
+			old_pair.lane,
+			Lane::Summarize,
+			"prior summary's full render starved other candidates out of the fold"
+		);
+		// The context budget invariant still holds for everything BUT the
+		// prior's fold input.
+		let context_selected: usize = packets
+			.iter()
+			.filter(|packet| {
+				packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
+			})
+			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
+			.sum();
+		assert!(
+			context_selected <= 600,
+			"context selection {context_selected} exceeds budget"
+		);
+	}
+
+	#[test]
+	fn oversized_prior_summary_fold_input_is_exempt_from_the_selected_budget_veto() {
+		let oversized: String = (1..=200)
+			.map(|line| format!("distilled fact {line}"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let summary_for = |id: &str| CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "carried prior state".into(),
+				kind: "outcome".into(),
+				status: "established".into(),
+				refs: vec![id.into()],
+			}],
+			..Default::default()
+		};
+
+		// A prior summary rendered whole exceeds target_tokens by design and
+		// must not trip the veto.
+		let oversized_lines: Vec<&str> = oversized.lines().collect();
+		let full_span = source_span(&oversized_lines, 1, oversized_lines.len());
+		let mut prior = packet("b:prior", Provenance::ValidatedSummary, Lane::Summarize);
+		prior.kind = PacketKind::PriorSummary;
+		prior.prompt_content = oversized.clone();
+		prior.exact_spans = vec![full_span];
+		let pact = pact_with(prior);
+		assert!(
+			crate::session::estimate_tokens(&oversized) > pact.target_tokens,
+			"test needs the render to exceed the budget"
+		);
+		assert!(pact.validate_summary(&summary_for("b:prior")).is_ok());
+
+		// The veto still bites for every other oversized selection.
+		let mut tool = packet("b:tool", Provenance::ToolObserved, Lane::Summarize);
+		tool.prompt_content = oversized;
+		let pact = pact_with(tool);
+		assert!(pact
+			.validate_summary(&summary_for("b:tool"))
+			.unwrap_err()
+			.to_string()
+			.contains("exceeds its token budget"));
+	}
+
+	#[test]
+	fn validator_vetoes_a_prior_summary_folded_from_a_gutted_render() {
+		let content: String = (1..=40)
+			.map(|line| format!("distilled fact {line}"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let lines: Vec<&str> = content.lines().collect();
+		let summary = CompressionSummary {
+			folded_units: vec![FoldedUnit {
+				text: "carried prior state".into(),
+				kind: "outcome".into(),
+				status: "established".into(),
+				refs: vec!["b:prior".into()],
+			}],
+			..Default::default()
+		};
+		let build_prior = |spans: Vec<SourceSpan>, prompt: &str| {
+			let mut prior = packet("b:prior", Provenance::ValidatedSummary, Lane::Summarize);
+			prior.kind = PacketKind::PriorSummary;
+			prior.prompt_content = prompt.into();
+			prior.exact_spans = spans;
+			let mut pact = pact_with(prior);
+			pact.target_tokens = 10_000;
+			pact
+		};
+
+		// Head/tail extraction leaves two edge spans — vetoed.
+		let gutted = build_prior(
+			vec![
+				source_span(&lines, 1, 10),
+				source_span(&lines, 30, lines.len()),
+			],
+			&content,
+		);
+		assert!(gutted
+			.validate_summary(&summary)
+			.unwrap_err()
+			.to_string()
+			.contains("complete render"));
+
+		// A full-looking span over truncated content breaks the digest — vetoed.
+		let truncated_prompt: String = lines[..10].join("\n");
+		let stale_span = build_prior(
+			vec![source_span(&lines, 1, lines.len())],
+			&truncated_prompt,
+		);
+		assert!(stale_span
+			.validate_summary(&summary)
+			.unwrap_err()
+			.to_string()
+			.contains("complete render"));
+
+		// The genuine complete render passes.
+		let complete = build_prior(vec![source_span(&lines, 1, lines.len())], &content);
+		assert!(complete.validate_summary(&summary).is_ok());
+	}
+
+	#[tokio::test]
+	async fn legacy_nested_prior_summary_folds_whole_after_stripping_regrown_sections() {
+		// Sessions written before the nesting fix carry a prior summary with
+		// older summaries embedded inside. Its first post-fix fold must see
+		// the durable lines of EVERY nesting level (defusing the blob without
+		// losing state), while regrown navigation metadata stays stripped.
+		let nested: String = (1..=120)
+			.map(|line| format!("nested legacy line {line}"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let outer: String = (1..=120)
+			.map(|line| format!("outer folded line {line}"))
+			.collect::<Vec<_>>()
+			.join("\n");
+		let prior = Message {
+			role: "assistant".into(),
+			content: format!(
+				"<conversation_summary id=\"new\" controller=\"pact-v1\">\n<folded_state>\n{outer}\n</folded_state>\n<conversation_summary id=\"older\">\n<folded_state>\n{nested}\n</folded_state>\n<recall_index>\nb:dead-id L1-2 — stale pointer\n</recall_index>\n</conversation_summary>\n</conversation_summary>",
+			),
+			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
+			..Default::default()
+		};
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>keep going</task>\n</continuation>",
+		);
+		let messages = vec![prior, continuation];
+		let mut packets = build_packets("legacy-blob", &messages);
+		link_dependencies(&mut packets);
+		let pinned = pinned_task("keep going");
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_eq!(prior_packet.lane, Lane::Summarize);
+		for line in 1..=120 {
+			assert!(prior_packet
+				.prompt_content
+				.contains(&format!("outer folded line {line}")));
+			assert!(prior_packet
+				.prompt_content
+				.contains(&format!("nested legacy line {line}")));
+		}
+		assert!(
+			!prior_packet.prompt_content.contains("b:dead-id"),
+			"regrown recall_index must stay stripped from the fold input"
+		);
+		assert!(!prior_packet.prompt_content.contains("omitted"));
+	}
+
+	#[tokio::test]
+	async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
+		// A prior summary whose content strips to nothing (only regrown
+		// sections) has no evidence to fold: it must stay an archive
+		// reference, and the cycle must still validate — packets depending on
+		// it are not "missing a live dependency".
+		let prior = Message {
+			role: "assistant".into(),
+			content: "<file_context>\nstale regrown bytes\n</file_context>".into(),
+			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
+			..Default::default()
+		};
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>keep going</task>\n</continuation>",
+		);
+		let mut call = message("assistant", "checking");
+		call.tool_calls = Some(serde_json::json!([{
+			"id": "c1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut result = message("tool", "still running");
+		result.tool_call_id = Some("c1".into());
+		let messages = vec![prior, continuation, call, result];
+		let mut packets = build_packets("empty-prior", &messages);
+		link_dependencies(&mut packets);
+		let pinned = pinned_task("keep going");
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
+		let prior_packet = packets
+			.iter()
+			.find(|packet| packet.kind == PacketKind::PriorSummary)
+			.expect("prior summary packet exists");
+		assert_eq!(prior_packet.lane, Lane::ArchiveReference);
+		assert!(prior_packet.prompt_content.is_empty());
+
+		let known_provenance: BTreeMap<String, Provenance> = packets
+			.iter()
+			.map(|packet| (packet.id.clone(), packet.provenance))
+			.collect();
+		let pact = PactContext {
+			enabled: true,
+			packets,
+			pinned: pinned_task("keep going"),
+			plan_focus: String::new(),
+			grounded_hints: Vec::new(),
+			known_provenance,
+			prior_recall: BTreeMap::new(),
+			source_tokens: 100,
+			target_tokens: 200,
+			metrics: PactMetrics::default(),
+		};
+		assert!(pact
+			.validate_summary(&CompressionSummary::default())
+			.is_ok());
+	}
+
+	#[tokio::test]
+	async fn every_prior_summary_folds_whole_when_a_legacy_session_carries_several() {
+		// Pre-fix sessions can hold more than one summary message; each one is
+		// distilled state and each must reach the fold model complete.
+		let first_lines: Vec<String> = (1..=50)
+			.map(|line| format!("first epoch line {line}"))
+			.collect();
+		let second_lines: Vec<String> = (1..=50)
+			.map(|line| format!("second epoch line {line}"))
+			.collect();
+		let continuation = message(
+			"user",
+			"<continuation>\n<task>keep going</task>\n</continuation>",
+		);
+		let mut call = message("assistant", "checking");
+		call.tool_calls = Some(serde_json::json!([{
+			"id": "c1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut result = message("tool", "still running");
+		result.tool_call_id = Some("c1".into());
+		let messages = vec![
+			prior_summary_message(&first_lines),
+			prior_summary_message(&second_lines),
+			continuation,
+			call,
+			result,
+		];
+		let mut packets = build_packets("two-priors", &messages);
+		link_dependencies(&mut packets);
+		let pinned = pinned_task("keep going");
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 150, false).await;
+		let priors: Vec<&EvidencePacket> = packets
+			.iter()
+			.filter(|packet| packet.kind == PacketKind::PriorSummary)
+			.collect();
+		assert_eq!(priors.len(), 2);
+		for (prior_packet, lines) in priors.iter().zip([&first_lines, &second_lines]) {
+			assert_eq!(prior_packet.lane, Lane::Summarize);
+			for line in lines {
+				assert!(
+					prior_packet.prompt_content.contains(line.as_str()),
+					"fold input lost prior summary content: {line}"
+				);
+			}
+			assert!(!prior_packet.prompt_content.contains("omitted"));
+		}
+	}
+
+	#[tokio::test]
+	async fn compaction_with_only_a_prior_summary_still_folds_it_whole() {
+		// Back-to-back compactions can fire with nothing after the previous
+		// summary. The closure is empty then — the prior must still fold with
+		// full content instead of being stranded as an archive pointer.
+		let prior_lines: Vec<String> = (1..=100)
+			.map(|line| format!("prior folded line {line}"))
+			.collect();
+		let messages = vec![prior_summary_message(&prior_lines)];
+		let mut packets = build_packets("prior-only", &messages);
+		link_dependencies(&mut packets);
+		let pinned = pinned_task("keep going");
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 50, false).await;
+		assert_eq!(packets.len(), 1);
+		assert_eq!(packets[0].kind, PacketKind::PriorSummary);
+		assert_eq!(packets[0].lane, Lane::Summarize);
+		for line in &prior_lines {
+			assert!(packets[0].prompt_content.contains(line.as_str()));
+		}
+		assert!(!packets[0].prompt_content.contains("omitted"));
+	}
+
+	#[test]
+	fn fold_prompt_pins_the_live_plan_checklist_inside_pinned_state() {
+		// After compaction the supervisor re-anchors the model on the live
+		// plan every turn; the fold must see that same checklist as pinned
+		// governance so a summary can never contradict the plan (a
+		// stale-plan/summary split once sent a session chasing a step it had
+		// already been re-scoped away from).
+		let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
+		pact.plan_focus =
+			"Live plan (1/4 done):\n✅ run the case\n🔄 capture the rerun ← current".into();
+		let view = pact.prompt_view();
+		let pinned_block = view
+			.split("</pinned_state>")
+			.next()
+			.expect("pinned_state present");
+		assert!(pinned_block.contains("live_plan:"));
+		assert!(pinned_block.contains("capture the rerun ← current"));
+
+		let without = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
+		assert!(!without.prompt_view().contains("live_plan:"));
+	}
+
+	#[tokio::test]
+	async fn tiny_summarize_candidate_renders_whole_instead_of_poisoning_its_dependents() {
+		// A candidate smaller than the head/tail extractor's own omission
+		// marker used to preview with zero recoverable spans at half size —
+		// and one unrecoverable packet silently dropped every fold closure
+		// depending on it. The MIN_SUMMARIZE_RENDER_TOKENS floor makes small
+		// packets render whole instead.
+		let continuation = message("user", "<continuation>\n<task>go</task>\n</continuation>");
+		let mut old_call = message("assistant", "ran an earlier diagnostic");
+		old_call.tool_calls = Some(serde_json::json!([{
+			"id": "old-1",
+			"function": {"name": "diagnostic", "arguments": {}}
+		}]));
+		let mut old_result = message("tool", "diagnostic finished cleanly");
+		old_result.tool_call_id = Some("old-1".into());
+		let trigger = message("user", "check the run status now");
+		let mut live_call = message("assistant", "checking the run");
+		live_call.tool_calls = Some(serde_json::json!([{
+			"id": "live-1",
+			"function": {"name": "status", "arguments": {}}
+		}]));
+		let mut live_result = message("tool", "run alive");
+		live_result.tool_call_id = Some("live-1".into());
+		let messages = vec![continuation, old_call, old_result, trigger, live_call, live_result];
+		let mut packets = build_packets("tiny-candidate", &messages);
+		link_dependencies(&mut packets);
+		let continuation_id = packets[0].id.clone();
+		let old_pair_id = packets[1].id.clone();
+		let pinned = pinned_task("check the run status now");
+		allocate_lanes(&mut packets, &messages, &pinned, &[], "", 600, false).await;
+		for id in [&continuation_id, &old_pair_id] {
+			let candidate = packets
+				.iter()
+				.find(|packet| packet.id == *id)
+				.expect("candidate packet exists");
+			assert_eq!(
+				candidate.lane,
+				Lane::Summarize,
+				"tiny candidate {} was dropped from the fold",
+				candidate.id
+			);
+			assert!(!candidate.exact_spans.is_empty());
+			assert!(!candidate.prompt_content.contains("omitted"));
+		}
 	}
 
 	#[test]

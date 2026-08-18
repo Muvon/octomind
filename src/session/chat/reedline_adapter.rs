@@ -17,8 +17,8 @@
 use crate::config::Config;
 use nu_ansi_term::{Color, Style};
 use reedline::{
-	CommandLineSearch, Completer, Highlighter, Hinter, History, SearchFilter, SearchQuery, Span,
-	StyledText, Suggestion,
+	CommandLineSearch, Completer, CompletionResult, Highlighter, Hinter, History, SearchFilter,
+	SearchQuery, Span, StyledText, Suggestion,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -54,14 +54,14 @@ impl ReedlineAdapter {
 }
 
 impl Completer for ReedlineAdapter {
-	fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
+	fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
 		let completer =
 			crate::session::chat_helper::CommandCompleter::new(self.config.as_ref(), &self.role);
 		let (start_pos, candidates) = completer.complete(line, pos);
 
 		let span_start = start_pos.min(pos);
 		let dim_style = Some(Style::new().dimmed());
-		candidates
+		let suggestions: Vec<Suggestion> = candidates
 			.into_iter()
 			.map(|pair| {
 				let replacement = pair.replacement;
@@ -80,7 +80,8 @@ impl Completer for ReedlineAdapter {
 					..Default::default()
 				}
 			})
-			.collect()
+			.collect();
+		CompletionResult::fresh(suggestions)
 	}
 }
 

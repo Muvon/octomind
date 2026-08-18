@@ -395,3 +395,7 @@ impl EditMode for EmacsWithShortcutHelp {
 		self.emacs.edit_mode()
 	}
 }
+
+#[cfg(test)]
+#[path = "edit_mode_tests.rs"]
+mod tests;

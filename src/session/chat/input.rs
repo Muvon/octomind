@@ -263,6 +263,10 @@ fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str
 	let _ = std::io::stdout().flush();
 }
 
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod tests;
+
 fn add_completion_menu_keybindings(keybindings: &mut Keybindings) {
 	keybindings.add_binding(
 		KeyModifiers::NONE,

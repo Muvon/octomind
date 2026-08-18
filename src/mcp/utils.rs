@@ -100,3 +100,7 @@ pub fn tool_results_to_messages(
 
 	messages
 }
+
+#[cfg(test)]
+#[path = "utils_tests.rs"]
+mod tests;

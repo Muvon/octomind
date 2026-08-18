@@ -132,3 +132,7 @@ pub fn build_status_body_plain(cost: f64, context_tokens: u64, max_threshold: u6
 		(false, None) => String::new(),
 	}
 }
+
+#[cfg(test)]
+#[path = "status_prefix_tests.rs"]
+mod tests;

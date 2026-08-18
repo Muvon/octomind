@@ -233,3 +233,7 @@ fn handle_interrupt(
 		true // Continue handling
 	}
 }
+
+#[cfg(test)]
+#[path = "cancellation_tests.rs"]
+mod tests;

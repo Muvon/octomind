@@ -464,3 +464,7 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 	}
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "taps_tests.rs"]
+mod tests;

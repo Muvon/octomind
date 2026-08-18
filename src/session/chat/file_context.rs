@@ -176,3 +176,7 @@ pub fn merge_file_refs(refs: &[String]) -> Vec<String> {
 
 	merged
 }
+
+#[cfg(test)]
+#[path = "file_context_tests.rs"]
+mod tests;

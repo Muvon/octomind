@@ -109,13 +109,6 @@ pub fn read_text_files(dir: &std::path::Path, max_total: usize) -> Vec<String> {
 	out
 }
 
-/// Read every spill file of the current session, up to `max_total` chars total.
-/// Spill files hold the FULL verbatim body of over-cap tool outputs, so they
-/// re-ground evidence checks after condensing replaced the in-context copy
-/// with a handle. Empty when there is no session context or no spills.
-pub fn read_session_spills(max_total: usize) -> Vec<String> {
-	match session_spill_dir() {
-		Some(dir) => read_text_files(&dir, max_total),
-		None => Vec::new(),
-	}
-}
+#[cfg(test)]
+#[path = "spill_tests.rs"]
+mod tests;

@@ -110,3 +110,7 @@ fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
 
 	toml::to_string(&value).context("Failed to re-serialize agent manifest TOML")
 }
+
+#[cfg(test)]
+#[path = "resolver_tests.rs"]
+mod tests;

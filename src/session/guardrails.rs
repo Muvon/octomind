@@ -305,3 +305,7 @@ pub fn increment_pipe_run_count(session_id: &SessionId, pipe_name: &str) -> u64 
 	*count += 1;
 	*count
 }
+
+#[cfg(test)]
+#[path = "guardrails_tests.rs"]
+mod tests;

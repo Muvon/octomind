@@ -732,3 +732,7 @@ impl<'a> CommandCompleter<'a> {
 			.map(|cmd| cmd[line.len()..].to_string())
 	}
 }
+
+#[cfg(test)]
+#[path = "chat_helper_tests.rs"]
+mod tests;

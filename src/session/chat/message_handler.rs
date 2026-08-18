@@ -113,3 +113,7 @@ impl MessageHandler {
 		Ok(())
 	}
 }
+
+#[cfg(test)]
+#[path = "message_handler_tests.rs"]
+mod tests;

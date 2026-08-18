@@ -1258,3 +1258,7 @@ pub async fn process_response<S: OutputSink>(
 	}
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "response_tests.rs"]
+mod tests;

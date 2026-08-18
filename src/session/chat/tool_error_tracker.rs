@@ -70,3 +70,7 @@ impl ToolErrorTracker {
 		self.max_consecutive_errors
 	}
 }
+
+#[cfg(test)]
+#[path = "tool_error_tracker_tests.rs"]
+mod tests;

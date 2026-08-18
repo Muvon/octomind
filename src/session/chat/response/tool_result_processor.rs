@@ -679,3 +679,7 @@ fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "tool_result_processor_tests.rs"]
+mod tests;

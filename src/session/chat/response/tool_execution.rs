@@ -630,7 +630,11 @@ async fn execute_tools_with_context(
 							let loop_error_result = crate::mcp::McpToolResult::error(
 								tool_name.clone(),
 								tool_id.clone(),
-								format!("LOOP DETECTED: Tool '{}' failed {} consecutive times. Last error: {}. Please try a completely different approach or ask the user for guidance.", tool_name, error_tracker.max_consecutive_errors(), e),
+								loop_error_message(
+									&tool_name,
+									error_tracker.max_consecutive_errors(),
+									&e.to_string(),
+								),
 							);
 							tool_results.push(loop_error_result);
 						}
@@ -640,11 +644,10 @@ async fn execute_tools_with_context(
 							crate::mcp::McpToolResult::error(
 								tool_name.clone(),
 								tool_id.clone(),
-								format!(
-									"Tool execution failed (attempt {}/{}): {}",
+								attempt_error_message(
 									error_tracker.get_error_count(&tool_name),
 									error_tracker.max_consecutive_errors(),
-									e
+									&e.to_string(),
 								),
 							)
 						} else {
@@ -814,6 +817,18 @@ async fn condense_main_results(
 		operation_cancelled,
 	)
 	.await;
+}
+
+/// Error body for a tool that hit the consecutive-failure threshold. The
+/// wording steers the model away from retry loops — keep it stable.
+fn loop_error_message(tool_name: &str, max_errors: usize, last_error: &str) -> String {
+	format!("LOOP DETECTED: Tool '{tool_name}' failed {max_errors} consecutive times. Last error: {last_error}. Please try a completely different approach or ask the user for guidance.")
+}
+
+/// Error body for a regular failure, carrying the attempt counter so the
+/// model can see how close it is to the loop threshold.
+fn attempt_error_message(attempt: usize, max_errors: usize, error: &str) -> String {
+	format!("Tool execution failed (attempt {attempt}/{max_errors}): {error}")
 }
 
 // Handle large tool results: apply token-cap truncation (warnings removed).
@@ -1019,3 +1034,7 @@ pub async fn execute_layer_tool_calls_parallel(
 	)
 	.await
 }
+
+#[cfg(test)]
+#[path = "tool_execution_tests.rs"]
+mod tests;

@@ -110,6 +110,27 @@ async fn drain_keepalive_into_session(
 
 /// Apply clipboard blobs auto-attached via Ctrl+V to the active session.
 /// Multiple items of the same kind: last one wins (matches `/image` and `/video` semantics).
+/// Ctrl+C rollback decision for an interrupted API call: `Some(idx)` means
+/// truncate the message list back to `idx` (first call, no tools executed —
+/// remove the user message for a clean retry); `None` means preserve
+/// everything (multi-turn: tool results after the user message make the
+/// conversation state valid, and truncating would orphan them).
+fn interrupted_call_truncation(
+	messages: &[crate::session::Message],
+	user_message_index: Option<usize>,
+) -> Option<usize> {
+	let user_idx = user_message_index?;
+	if user_idx >= messages.len() {
+		return None;
+	}
+	let has_tool_messages = messages.iter().skip(user_idx).any(|msg| msg.role == "tool");
+	if has_tool_messages {
+		None
+	} else {
+		Some(user_idx)
+	}
+}
+
 fn apply_clipboard_items(
 	chat_session: &mut ChatSession,
 	items: Vec<crate::session::chat::reedline_adapter::PendingClipboardItem>,
@@ -474,28 +495,20 @@ pub async fn run_interactive_session(
 						// Multi-turn = tools were already executed and we're processing follow-up response
 						// Check: Are there ANY tool messages in the current operation's context?
 						if let Some(op) = operation {
-							// Check if there are tool messages AFTER the user message for this operation
-							// This indicates tools were executed and we're in a follow-up API call
-							let user_idx = op.user_message_index.unwrap_or(0);
-							let has_tool_messages = chat_session
-								.session
-								.messages
-								.iter()
-								.skip(user_idx)
-								.any(|msg| msg.role == "tool");
-
-							if has_tool_messages {
-								// MULTI-TURN: Tools were executed, conversation state is valid
-								// Keep EVERYTHING - user message, assistant message, tool results
-								log_debug!("Ctrl+C during multi-turn (tools executed) - preserving all conversation state");
-							} else {
-								// FIRST CALL: No tools executed yet
-								// Remove user message (and assistant if added) for clean retry
-								if let Some(user_idx) = op.user_message_index {
-									if user_idx < chat_session.session.messages.len() {
-										chat_session.session.messages.truncate(user_idx);
-										log_debug!("Ctrl+C during first API call - removed user message for clean retry");
-									}
+							match interrupted_call_truncation(
+								&chat_session.session.messages,
+								op.user_message_index,
+							) {
+								Some(user_idx) => {
+									// FIRST CALL: No tools executed yet — remove the user
+									// message (and assistant if added) for a clean retry.
+									chat_session.session.messages.truncate(user_idx);
+									log_debug!("Ctrl+C during first API call - removed user message for clean retry");
+								}
+								None => {
+									// MULTI-TURN: Tools were executed, conversation state is
+									// valid — keep user message, assistant message, tool results.
+									log_debug!("Ctrl+C during multi-turn (tools executed) - preserving all conversation state");
 								}
 							}
 						}
@@ -1948,3 +1961,7 @@ pub async fn run_interactive_session_with_input(
 	Ok(())
 	}).await
 }
+
+#[cfg(test)]
+#[path = "main_loop_tests.rs"]
+mod tests;

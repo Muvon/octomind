@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.44.2] - 2026-08-18
+
+### 📋 Release Summary
+
+This release enhances the session experience with improved visual feedback and higher fidelity summary preservation (c10791ae, a49de43c). Additionally, it introduces plan staleness detection to ensure AI development workflows remain current and accurate (286e2769).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: add loading spinner to session picker `c10791ae`
+- **plan**: implement plan staleness detection `286e2769`
+- **session**: preserve prior summary fidelity in PACT `a49de43c`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.44.1] - 2026-08-17
 
 ### 📋 Release Summary

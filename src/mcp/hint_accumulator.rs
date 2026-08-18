@@ -60,3 +60,7 @@ pub fn has_hints() -> bool {
 	}
 	HINTS.lock().is_ok_and(|h| !h.is_empty())
 }
+
+#[cfg(test)]
+#[path = "hint_accumulator_tests.rs"]
+mod tests;

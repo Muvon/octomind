@@ -939,3 +939,7 @@ impl ChatSession {
 		println!();
 	}
 }
+
+#[cfg(test)]
+#[path = "display_tests.rs"]
+mod tests;

@@ -1245,3 +1245,7 @@ mod tests {
 		assert!(!has_active_skill(&id, "anything"));
 	}
 }
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod registry_tests;

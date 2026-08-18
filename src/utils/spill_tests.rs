@@ -39,6 +39,34 @@ fn test_read_text_files() {
 	assert!(read_text_files(&tmp.path().join("nope"), 100).is_empty());
 }
 
+#[tokio::test]
+async fn test_spill_write_read_clear_in_session() {
+	crate::session::context::with_session_id("spill-test-session".to_string(), async {
+		let path = write_spill("shell", "spilled full output body").expect("spill writes");
+		assert!(path.exists());
+
+		// Identical (tool, content) overwrites the same handle — idempotent
+		let again = write_spill("shell", "spilled full output body").expect("spill rewrites");
+		assert_eq!(path, again);
+
+		let spill_dir = path.parent().expect("spill dir").to_path_buf();
+		let spills = read_text_files(&spill_dir, 10_000);
+		assert!(spills.iter().any(|s| s.contains("spilled full output")));
+
+		clear_current_session();
+		assert!(!path.exists(), "clear must remove the spill dir");
+		assert!(read_text_files(&spill_dir, 10_000).is_empty());
+	})
+	.await;
+}
+
+#[test]
+fn test_spill_without_session_context_is_none() {
+	// CLI/test paths without a session id never spill — they fall back to
+	// lossy truncation and stay IO-free.
+	assert!(write_spill("shell", "body").is_none());
+}
+
 #[test]
 fn test_read_text_files_utf8_boundary() {
 	let tmp = tempfile::tempdir().expect("tempdir");

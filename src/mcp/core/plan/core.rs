@@ -685,3 +685,7 @@ mod tests {
 			.all(|task| task.summary.as_deref() == Some("full deliverable verified")));
 	}
 }
+
+#[cfg(test)]
+#[path = "core_sidecar_tests.rs"]
+mod sidecar_tests;

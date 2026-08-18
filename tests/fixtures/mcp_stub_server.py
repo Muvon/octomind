@@ -61,7 +61,15 @@ def main():
                 },
             })
         elif method == "tools/call":
-            args = (msg.get("params") or {}).get("arguments") or {}
+            params = msg.get("params") or {}
+            if params.get("name") == "explode":
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32000, "message": "tool exploded on purpose"},
+                })
+                continue
+            args = params.get("arguments") or {}
             send({
                 "jsonrpc": "2.0",
                 "id": msg_id,

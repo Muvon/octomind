@@ -691,3 +691,7 @@ pub async fn check_and_compress_conversation(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "gate_tests.rs"]
+mod gate_tests;

@@ -796,3 +796,7 @@ mod tests {
 		assert!(!renderer.skin.headers.is_empty());
 	}
 }
+
+#[cfg(test)]
+#[path = "markdown_tests.rs"]
+mod render_tests;

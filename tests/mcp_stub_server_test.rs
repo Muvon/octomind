@@ -70,6 +70,21 @@ async fn stub_stdio_server_end_to_end() {
 	assert_eq!(text, "round-trip");
 	assert!(!result.is_error.unwrap_or(false));
 
+	// A JSON-RPC error from the server surfaces as a call_tool error, not
+	// a hang or a fabricated success
+	let exploding = McpToolCall {
+		tool_name: "explode".to_string(),
+		parameters: serde_json::json!({}),
+		tool_id: "t2".to_string(),
+	};
+	let error = octomind::mcp::client::call_tool(&server, &exploding, None)
+		.await
+		.expect_err("server error must propagate");
+	assert!(
+		error.to_string().contains("exploded"),
+		"error should carry the server message: {error}"
+	);
+
 	// Connected state is tracked, and disconnect tears it down
 	assert!(octomind::mcp::client::is_connected(name));
 	octomind::mcp::client::disconnect(name);

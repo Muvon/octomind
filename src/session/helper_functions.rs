@@ -599,3 +599,7 @@ mod tests {
 		assert_eq!(out, "keep {{NOT_A_PLACEHOLDER}} and /x");
 	}
 }
+
+#[cfg(test)]
+#[path = "helper_functions_tests.rs"]
+mod placeholder_tests;

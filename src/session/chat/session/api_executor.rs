@@ -977,3 +977,7 @@ mod tests {
 		assert!(!claims_user_task_completion(false, None, true));
 	}
 }
+
+#[cfg(test)]
+#[path = "api_executor_tests.rs"]
+mod e2e_tests;

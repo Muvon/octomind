@@ -130,6 +130,8 @@ jobs:
   coverage:
     name: Coverage Report
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the badge JSON to the `badges` branch
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -198,6 +200,27 @@ jobs:
       with:
         name: coverage-lcov
         path: lcov.info
+
+    # README badge: shields.io endpoint reads coverage.json from the orphan
+    # `badges` branch (force-pushed, single file, no history). Master pushes
+    # only — PR runs (esp. from forks) have no write access.
+    - name: Publish coverage badge
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        pct=$(cargo llvm-cov report --summary-only --ignore-filename-regex '_tests\.rs$' | tail -1 | awk '{print $10}' | tr -d '%')
+        color=$(awk -v p="$pct" 'BEGIN { print (p < 50 ? "e05d44" : p < 65 ? "fe7d37" : p < 80 ? "dfb317" : "4c1") }')
+        badge_dir=$(mktemp -d)
+        printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' "$pct" "$color" > "$badge_dir/coverage.json"
+        cd "$badge_dir"
+        git init -q -b badges
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add coverage.json
+        git commit -q -m "chore: update coverage badge to ${pct}%"
+        git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
 
   musl-build:
     name: Musl Build (x86_64 + aarch64)

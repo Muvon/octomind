@@ -1,0 +1,242 @@
+// Copyright 2026 Muvon Un Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Dispatch tests for the interactive `/command` surface, driven through the
+//! real `process_command` entry with an in-memory session. Only commands
+//! without external side effects (network, clipboard, session-file writes)
+//! are exercised; the rest are covered by their own module tests.
+
+use super::*;
+
+fn test_config() -> Config {
+	let mut config: Config =
+		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	config.build_role_map();
+	config
+}
+
+fn cancel_rx() -> tokio::sync::watch::Receiver<bool> {
+	tokio::sync::watch::channel(false).1
+}
+
+async fn dispatch(
+	session: &mut ChatSession,
+	config: &mut Config,
+	input: &str,
+) -> Result<CommandResult> {
+	process_command(session, input, config, "assistant", cancel_rx()).await
+}
+
+/// Dispatch and, when the command produced typed output, render it through
+/// the real CLI display path (what the main loop does with it).
+async fn dispatch_rendered(
+	session: &mut ChatSession,
+	config: &mut Config,
+	input: &str,
+) -> Result<CommandResult> {
+	let result = dispatch(session, config, input).await?;
+	if let CommandResult::HandledWithOutput(ref output) = result {
+		let mut output = output.clone();
+		output.display_cli(session, config).await;
+	}
+	Ok(result)
+}
+
+#[tokio::test]
+async fn test_non_commands_are_treated_as_user_input() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	for input in ["", "   ", "/definitely-not-a-command", "hello there"] {
+		let result = dispatch(&mut session, &mut config, input)
+			.await
+			.expect("dispatch never errors on unknown input");
+		assert!(
+			matches!(result, CommandResult::TreatAsUserInput),
+			"input {input:?} must fall through to user input"
+		);
+	}
+}
+
+#[tokio::test]
+async fn test_exit_command() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let result = dispatch(&mut session, &mut config, "/exit")
+		.await
+		.expect("exit dispatches");
+	assert!(matches!(result, CommandResult::Exit));
+}
+
+#[tokio::test]
+async fn test_loglevel_mutates_config() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	let result = dispatch(&mut session, &mut config, "/loglevel debug")
+		.await
+		.expect("loglevel dispatches");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+	assert!(config.get_log_level().is_debug_enabled());
+
+	dispatch(&mut session, &mut config, "/loglevel none")
+		.await
+		.expect("loglevel resets");
+	assert!(!config.get_log_level().is_info_enabled());
+
+	// Invalid level is handled (reported), not treated as chat
+	let result = dispatch_rendered(&mut session, &mut config, "/loglevel bogus")
+		.await
+		.expect("invalid level handled");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+}
+
+#[tokio::test]
+async fn test_model_show_and_set() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	// Show current model
+	dispatch(&mut session, &mut config, "/model")
+		.await
+		.expect("model show dispatches");
+
+	// Set a new model on the live session
+	dispatch(&mut session, &mut config, "/model ollama:other-model")
+		.await
+		.expect("model set dispatches");
+	assert_eq!(session.model, "ollama:other-model");
+}
+
+#[tokio::test]
+async fn test_effort_set() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	dispatch(&mut session, &mut config, "/effort high")
+		.await
+		.expect("effort dispatches");
+	assert_eq!(
+		session.reasoning_effort,
+		Some(crate::config::ReasoningEffortConfig::High)
+	);
+}
+
+#[tokio::test]
+async fn test_display_commands_run_without_panicking() {
+	// Populate the session so info/context/report have real content to render
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	session.add_user_message("first question").expect("user");
+	session
+		.add_assistant_message(
+			"an answer with some length to it",
+			None,
+			&config,
+			"assistant",
+		)
+		.expect("assistant message");
+
+	for input in [
+		"/help",
+		"/info",
+		"/report",
+		"/context",
+		"/context all",
+		"/context user",
+		"/clear",
+		"/agents",
+		"/plan",
+		"/list",
+		"/model",
+		"/effort",
+		"/loglevel",
+		// Bare invocations render list/usage output without side effects
+		"/role",
+		"/prompt",
+		"/skill",
+		"/image",
+		"/video",
+	] {
+		let result = dispatch(&mut session, &mut config, input)
+			.await
+			.unwrap_or_else(|e| panic!("{input} errored: {e}"));
+		match result {
+			CommandResult::TreatAsUserInput => {
+				panic!("{input} must dispatch as a command")
+			}
+			// Render the typed output through the real CLI display path —
+			// this is what the main loop does with it.
+			CommandResult::HandledWithOutput(mut output) => {
+				output.display_cli(&mut session, &config).await;
+			}
+			_ => {}
+		}
+	}
+}
+
+#[tokio::test]
+async fn test_role_switch_without_session_file_fails_gracefully() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	// Start from a role the template actually defines — for_tests defaults
+	// to "core", which only exists in richer configs.
+	session.role = "task_refiner".to_string();
+	let mut config = test_config();
+	// A file-less (in-memory) session cannot persist a role change: the
+	// switch must fail GRACEFULLY — error output, role untouched — never
+	// a half-switched session. (Successful switches are covered by the
+	// binary/ACP e2e tests, which run with real session files.)
+	let result = dispatch_rendered(&mut session, &mut config, "/role assistant")
+		.await
+		.expect("role switch dispatches");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+	assert_eq!(session.role, "task_refiner", "role must stay unchanged");
+}
+
+#[tokio::test]
+async fn test_done_on_empty_session_has_nothing_to_compress() {
+	// Empty session: /done short-circuits before any model call
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let result = dispatch_rendered(&mut session, &mut config, "/done")
+		.await
+		.expect("done dispatches");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+	assert!(session.session.messages.is_empty());
+}
+
+#[tokio::test]
+async fn test_mcp_subcommands_read_config() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	// All read-only subcommands (health is skipped: it probes servers)
+	for input in [
+		"/mcp list",
+		"/mcp",
+		"/mcp info",
+		"/mcp full",
+		"/mcp dump",
+		"/mcp validate",
+		"/mcp bogus-subcommand",
+	] {
+		let result = dispatch_rendered(&mut session, &mut config, input)
+			.await
+			.unwrap_or_else(|e| panic!("{input} errored: {e}"));
+		assert!(
+			!matches!(result, CommandResult::TreatAsUserInput),
+			"{input} must dispatch"
+		);
+	}
+}

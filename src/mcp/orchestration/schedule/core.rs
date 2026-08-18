@@ -822,3 +822,7 @@ mod tests {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "core_tool_tests.rs"]
+mod tool_tests;

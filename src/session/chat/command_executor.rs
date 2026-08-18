@@ -416,3 +416,7 @@ pub fn get_command_help(config: &Config, role: &str) -> String {
 		"No command layers configured.".to_string()
 	}
 }
+
+#[cfg(test)]
+#[path = "command_executor_tests.rs"]
+mod tests;

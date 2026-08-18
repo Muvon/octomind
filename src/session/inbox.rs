@@ -506,3 +506,7 @@ mod tests {
 		assert!(content.len() <= 1024 + 2048);
 	}
 }
+
+#[cfg(test)]
+#[path = "inbox_tests.rs"]
+mod queue_tests;

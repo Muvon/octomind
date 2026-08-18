@@ -263,3 +263,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"recalls_injected": s.recalls_injected,
 	}))
 }
+
+#[cfg(test)]
+#[path = "stats_tests.rs"]
+mod tests;

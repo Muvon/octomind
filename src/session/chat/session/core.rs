@@ -2111,3 +2111,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "core_methods_tests.rs"]
+mod method_tests;

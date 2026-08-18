@@ -504,3 +504,7 @@ pub static GLOBAL_ANIMATION_MANAGER: std::sync::OnceLock<AnimationManager> =
 pub fn get_animation_manager() -> &'static AnimationManager {
 	GLOBAL_ANIMATION_MANAGER.get_or_init(AnimationManager::new)
 }
+
+#[cfg(test)]
+#[path = "animation_manager_tests.rs"]
+mod tests;

@@ -203,3 +203,7 @@ impl ReedlineAdapter {
 			.unwrap_or_default()
 	}
 }
+
+#[cfg(test)]
+#[path = "reedline_adapter_tests.rs"]
+mod tests;

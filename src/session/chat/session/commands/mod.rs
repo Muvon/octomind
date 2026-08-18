@@ -445,3 +445,7 @@ pub async fn process_command(
 
 	result
 }
+
+#[cfg(test)]
+#[path = "dispatch_tests.rs"]
+mod dispatch_tests;

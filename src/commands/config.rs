@@ -775,3 +775,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	println!();
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

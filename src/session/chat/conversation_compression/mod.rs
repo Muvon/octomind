@@ -47,6 +47,9 @@ use ai::ask_ai_decision_and_summary;
 // Shared with the supervisor: recovery of JSON from a text body when the
 // provider does not enforce a response schema.
 pub(crate) use ai::extract_json_lenient;
+// Shared with the evidence checker: summaries carry <file_context> the model
+// is told to cite without re-reading, so they are legitimate quote grounds.
+pub(crate) use apply::COMPRESSION_MESSAGE_NAME;
 use apply::{apply_compression, collect_preserved_skills};
 use decision::{
 	adaptive_fire_line, autonomous_runway, calculate_compression_net_benefit, compression_depth,

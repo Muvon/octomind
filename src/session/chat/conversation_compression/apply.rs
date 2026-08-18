@@ -36,12 +36,20 @@ use crate::session::{CONTINUATION_FALLBACK_INTENT, CONTINUATION_TAG_OPEN};
 const PREVIOUS_ASSISTANT_OPEN: &str = "<previous_assistant_response>";
 const PREVIOUS_ASSISTANT_CLOSE: &str = "</previous_assistant_response>";
 
+/// Ceiling on the total `<file_context>` payload injected into a compression
+/// summary. The injection must always be small next to what compression
+/// drains, or a single fold can grow the context instead of shrinking it.
+const MAX_FILE_CONTEXT_TOKENS: usize = 8_000;
+/// Per-entry span clamp so one file cannot eat the whole budget in a single
+/// requested range.
+const MAX_FILE_CONTEXT_ENTRY_LINES: usize = 400;
+
 /// `Message::name` carried by every compression summary inserted into the
 /// conversation — this module's conversation summaries and the task summaries
 /// from `mcp/core/plan/compression.rs` alike. Structural, so detection never
 /// depends on the rendered body text (which gets prefixed with the
 /// earlier-requests and plan sections).
-pub(super) const COMPRESSION_MESSAGE_NAME: &str = "plan_compression";
+pub(crate) const COMPRESSION_MESSAGE_NAME: &str = "plan_compression";
 
 /// True if `content` is a synthetic continuation wrapper inserted by a
 /// prior compression cycle (not a real user ask). Mirrors the
@@ -405,12 +413,42 @@ pub(super) async fn apply_compression(
 	// File context: structured array → tuple form expected by the legacy
 	// renderer. Validate line ranges (start <= end, both > 0); drop invalid
 	// entries silently rather than failing compression.
-	let file_contexts: Vec<(String, usize, usize)> = summary
-		.file_context
-		.iter()
-		.filter(|fc| fc.start_line > 0 && fc.start_line <= fc.end_line)
-		.map(|fc| (fc.filepath.clone(), fc.start_line, fc.end_line))
-		.collect();
+	//
+	// HARD CAP: the fold model requests arbitrary ranges — a real session
+	// asked for lines 1:9875 of a bench log and the render inlined ~318k
+	// tokens into the summary, so compression ADDED more than it drained
+	// (reported as "0 tokens saved") and wedged the context above the model
+	// ceiling. Clamp every entry's span and stop admitting entries once the
+	// total budget is spent; whole entries are dropped and logged, never
+	// silently truncated mid-render.
+	let mut fc_budget = MAX_FILE_CONTEXT_TOKENS;
+	let mut file_contexts: Vec<(String, usize, usize)> = Vec::new();
+	for fc in &summary.file_context {
+		if fc.start_line == 0 || fc.start_line > fc.end_line {
+			continue;
+		}
+		let end_line = fc.end_line.min(
+			fc.start_line
+				.saturating_add(MAX_FILE_CONTEXT_ENTRY_LINES - 1),
+		);
+		let entry = (fc.filepath.clone(), fc.start_line, end_line);
+		let cost = crate::session::estimate_tokens(&file_context::generate_file_context_content(
+			std::slice::from_ref(&entry),
+		));
+		if cost > fc_budget {
+			crate::log_debug!(
+				"Compression: dropped file context {} ({}:{}) — {} tokens over remaining budget {}",
+				entry.0,
+				entry.1,
+				entry.2,
+				cost,
+				fc_budget
+			);
+			continue;
+		}
+		fc_budget -= cost;
+		file_contexts.push(entry);
+	}
 
 	let file_context_content = if !file_contexts.is_empty() {
 		crate::log_debug!(
@@ -762,6 +800,15 @@ pub(super) async fn apply_compression(
 	// context, corrupting both the next trigger and hard-ceiling safety.
 	let post_compression_tokens = session.get_full_context_tokens(config).await as u64;
 	let tokens_saved = current_context_tokens.saturating_sub(post_compression_tokens);
+	// saturating_sub reports a net-negative fold as "0 saved" — say what
+	// actually happened so a growing context is never mistaken for a no-op.
+	if post_compression_tokens > current_context_tokens {
+		crate::log_error!(
+			"Compression INCREASED context ({} -> {} tokens) — injected summary outweighed the drained range",
+			current_context_tokens,
+			post_compression_tokens
+		);
+	}
 	// Growth over the interval since the LAST compression, measured before the
 	// watermark write below resets the baseline (afterwards the rate degenerates).
 	let growth_at_fold =

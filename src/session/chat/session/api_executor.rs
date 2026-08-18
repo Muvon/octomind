@@ -674,6 +674,20 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
 				grounds.push(user_msg.content.clone());
 			}
+			// Compaction summaries embed <file_context> extracted from disk at
+			// compression time, and the system prompt tells the model to cite
+			// them WITHOUT re-reading the files. The per-turn ledger never saw
+			// those reads, so without these grounds every quote sourced from a
+			// pre-compaction read is flagged as fabricated and burns a repair
+			// re-run on content the model legitimately holds.
+			for message in &chat_session.session.messages {
+				if message.name.as_deref()
+					== Some(
+						crate::session::chat::conversation_compression::COMPRESSION_MESSAGE_NAME,
+					) {
+					grounds.push(message.content.clone());
+				}
+			}
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&grounds,

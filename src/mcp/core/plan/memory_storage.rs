@@ -21,11 +21,34 @@ use chrono::Utc;
 /// In-memory storage for plan execution
 pub struct MemoryPlanStorage {
 	plan: Option<ExecutionPlan>,
+	/// Unix seconds of the last model-driven plan mutation (create, advance,
+	/// revise, finish, restore). Compared against the latest real-user message
+	/// timestamp to flag a plan that predates the current request. Runtime
+	/// bookkeeping (message ranges) does not count as engagement.
+	touched_at: u64,
 }
 
 impl MemoryPlanStorage {
 	pub fn new() -> Self {
-		Self { plan: None }
+		Self {
+			plan: None,
+			touched_at: 0,
+		}
+	}
+
+	pub fn touched_at(&self) -> u64 {
+		self.touched_at
+	}
+
+	fn touch(&mut self) {
+		self.touched_at = Utc::now().timestamp().max(0) as u64;
+	}
+
+	/// Backdate the engagement clock so tests can prove a mutation refreshes
+	/// it even within the same wall-clock second.
+	#[cfg(test)]
+	pub(crate) fn set_touched_at(&mut self, timestamp: u64) {
+		self.touched_at = timestamp;
 	}
 
 	/// Replace only the unfinished tail while preserving completed history.
@@ -49,6 +72,7 @@ impl MemoryPlanStorage {
 			phase: task.phase,
 			valid_if: task.valid_if,
 		}));
+		self.touch();
 		Ok(())
 	}
 }
@@ -87,6 +111,7 @@ impl PlanStorage for MemoryPlanStorage {
 			created_at: Utc::now(),
 			status: PlanStatus::Active,
 		});
+		self.touch();
 
 		Ok(())
 	}
@@ -106,6 +131,7 @@ impl PlanStorage for MemoryPlanStorage {
 			current_task.details.push_str("\n\n");
 		}
 		current_task.details.push_str(&content);
+		self.touch();
 
 		Ok(())
 	}
@@ -141,6 +167,7 @@ impl PlanStorage for MemoryPlanStorage {
 
 		// Move to next task
 		plan.current_task_index += 1;
+		self.touch();
 
 		Ok(())
 	}
@@ -198,6 +225,7 @@ impl PlanStorage for MemoryPlanStorage {
 			.ok_or_else(|| anyhow!("No active plan"))?;
 
 		plan.status = PlanStatus::Completed;
+		self.touch();
 		Ok(())
 	}
 
@@ -295,6 +323,7 @@ impl PlanStorage for MemoryPlanStorage {
 
 	fn load_plan(&mut self, plan: ExecutionPlan) -> Result<()> {
 		self.plan = Some(plan);
+		self.touch();
 		Ok(())
 	}
 }
@@ -445,6 +474,60 @@ mod tests {
 		assert!(s.get_plan().is_err());
 		// Clearing an already-empty storage is a no-op, not an error.
 		assert!(s.clear_plan().is_ok());
+	}
+
+	#[test]
+	fn touched_at_tracks_every_model_engagement_but_not_runtime_bookkeeping() {
+		let mut s = MemoryPlanStorage::new();
+		assert_eq!(s.touched_at(), 0);
+		s.create_plan("demo".to_string(), vec![task("a"), task("b"), task("c")])
+			.unwrap();
+		assert!(s.touched_at() > 0, "create_plan must refresh the clock");
+
+		// Backdate before each mutation so a refresh is provable even when the
+		// whole test runs within one wall-clock second.
+		s.set_touched_at(1);
+		s.add_step_details("notes".into()).unwrap();
+		assert!(s.touched_at() > 1, "add_step_details must refresh the clock");
+
+		s.set_touched_at(1);
+		s.complete_current_task("done a".into()).unwrap();
+		assert!(
+			s.touched_at() > 1,
+			"complete_current_task must refresh the clock"
+		);
+
+		s.set_touched_at(1);
+		s.replace_remaining(vec![task("b2"), task("c2")]).unwrap();
+		assert!(
+			s.touched_at() > 1,
+			"replace_remaining must refresh the clock"
+		);
+
+		// Message-range bookkeeping is runtime-owned, not the model engaging
+		// with the plan — it must not refresh the staleness clock.
+		s.set_touched_at(1);
+		s.set_current_task_message_range(0, 5).unwrap();
+		assert_eq!(s.touched_at(), 1, "bookkeeping must not refresh the clock");
+
+		s.set_touched_at(1);
+		s.complete_plan("all done".into()).unwrap();
+		assert!(s.touched_at() > 1, "complete_plan must refresh the clock");
+
+		// A restored plan counts as engagement: right after restore the plan is
+		// as fresh as the restore itself, so only messages arriving AFTER the
+		// resume can mark it stale.
+		let snapshot = {
+			let mut other = MemoryPlanStorage::new();
+			other
+				.create_plan("restored".to_string(), vec![task("x")])
+				.unwrap();
+			other.get_plan().unwrap().clone()
+		};
+		let mut s = MemoryPlanStorage::new();
+		s.set_touched_at(1);
+		s.load_plan(snapshot).unwrap();
+		assert!(s.touched_at() > 1, "load_plan must refresh the clock");
 	}
 
 	#[test]

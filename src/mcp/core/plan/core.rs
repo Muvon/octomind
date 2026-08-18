@@ -80,6 +80,37 @@ pub fn has_active_plan() -> bool {
 	storage.has_active_plan().unwrap_or(false)
 }
 
+/// Appended to plan recitations and the compaction fold prompt when the active
+/// plan was last touched before the latest real user message: the plan
+/// predates the current request and needs explicit confirmation, not silent
+/// obedience.
+pub const PLAN_STALENESS_MARKER: &str = "⚠ plan untouched since before the latest user message — confirm it still applies: revise or finish it, or continue it explicitly";
+
+/// Some(marker) when an active plan is stale against the timestamp of the
+/// latest real-user task message.
+pub fn plan_staleness_marker(latest_task_timestamp: u64) -> Option<&'static str> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+	(storage.touched_at() < latest_task_timestamp).then_some(PLAN_STALENESS_MARKER)
+}
+
+/// Plan checklist for recitation with the staleness marker applied — the one
+/// place the marker joins the checklist, so the recite and its tests cannot
+/// diverge.
+pub fn render_plan_checklist_with_staleness(
+	latest_task_timestamp: Option<u64>,
+) -> Option<String> {
+	let mut checklist = render_plan_checklist()?;
+	if let Some(marker) = latest_task_timestamp.and_then(plan_staleness_marker) {
+		checklist.push_str(marker);
+		checklist.push('\n');
+	}
+	Some(checklist)
+}
+
 /// Persist the current plan to the session log (best-effort, no-op outside a session).
 fn persist_plan_snapshot() {
 	let Some(session_id) = crate::session::context::current_session_id() else {
@@ -526,6 +557,65 @@ pub async fn get_current_plan_json() -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[tokio::test]
+	async fn staleness_marker_fires_only_for_an_active_plan_older_than_the_request() {
+		// A unique session id scopes plan storage to this test — no global
+		// contamination across parallel tests.
+		crate::session::context::with_session_id("plan-staleness-test".to_string(), async {
+			// No plan → no marker regardless of timestamp.
+			assert_eq!(plan_staleness_marker(u64::MAX), None);
+
+			let storage = get_storage();
+			storage
+				.lock()
+				.unwrap()
+				.create_plan(
+					"demo".to_string(),
+					vec![TaskData::new("a".into(), "do a".into(), None, None)],
+				)
+				.unwrap();
+
+			// Fresh plan against an older request → no marker.
+			assert_eq!(plan_staleness_marker(1), None);
+
+			// Plan untouched since before the latest request → marker; the
+			// same second is NOT stale (the mutation follows the message
+			// within one turn).
+			storage.lock().unwrap().set_touched_at(10);
+			assert_eq!(plan_staleness_marker(11), Some(PLAN_STALENESS_MARKER));
+			assert_eq!(plan_staleness_marker(10), None);
+
+			// The recitation renderer appends the marker as the last line —
+			// and only when actually stale.
+			let recited = render_plan_checklist_with_staleness(Some(11)).unwrap();
+			assert!(recited.starts_with("Live plan"));
+			assert!(recited.trim_end().ends_with(PLAN_STALENESS_MARKER));
+			let fresh = render_plan_checklist_with_staleness(Some(9)).unwrap();
+			assert!(!fresh.contains(PLAN_STALENESS_MARKER));
+			// No user task timestamp available → no marker.
+			let unknown = render_plan_checklist_with_staleness(None).unwrap();
+			assert!(!unknown.contains(PLAN_STALENESS_MARKER));
+
+			// Engaging the plan clears the marker (self-clearing steering).
+			storage
+				.lock()
+				.unwrap()
+				.complete_current_task("done a".into())
+				.unwrap();
+			assert_eq!(plan_staleness_marker(11), None);
+
+			// A finished plan is not recited and cannot be stale.
+			storage
+				.lock()
+				.unwrap()
+				.complete_plan("done".into())
+				.unwrap();
+			assert_eq!(plan_staleness_marker(u64::MAX), None);
+			assert_eq!(render_plan_checklist_with_staleness(Some(u64::MAX)), None);
+		})
+		.await;
+	}
 
 	#[test]
 	fn condition_check_only_answers_the_machine_checkable() {

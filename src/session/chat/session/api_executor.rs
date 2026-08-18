@@ -262,7 +262,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	{
 		// Prefer the live plan checklist (refreshed every turn from plan storage)
 		// over the anchor's stale next_steps snapshot for the recency-slot block.
-		let plan_checklist = crate::mcp::core::plan::render_plan_checklist();
+		// A plan untouched since before the latest user message carries a
+		// staleness marker: re-anchoring the model on a plan the user may have
+		// superseded is how a session ends up chasing a dead step.
+		let plan_checklist = crate::mcp::core::plan::render_plan_checklist_with_staleness(
+			crate::session::latest_task_timestamp(&chat_session.session.messages),
+		);
 		// The live request. Its prohibitions are recited verbatim (models abandon
 		// those first as attention decays), and its signature decides whether the
 		// anchor's goal is still the one being worked on — the user may have asked

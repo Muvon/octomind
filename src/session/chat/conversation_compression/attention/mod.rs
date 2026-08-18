@@ -207,9 +207,20 @@ pub(crate) async fn build(
 	let source_tokens = packets.iter().map(|packet| packet.tokens).sum::<usize>();
 	let target_tokens = ((source_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
 	let grounded_hints = ground_self_report(session, drained, &packets);
-	let plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
+	let mut plan_focus = crate::mcp::core::plan::core::get_current_plan_display()
 		.await
 		.unwrap_or_default();
+	// The fold model must know when the plan predates the pinned task: aligned
+	// folding is only correct for a live plan; a stale one is candidate state
+	// the pinned task overrules.
+	if let Some(marker) = crate::session::latest_task_timestamp(&session.session.messages)
+		.and_then(crate::mcp::core::plan::plan_staleness_marker)
+	{
+		if !plan_focus.is_empty() {
+			plan_focus.push('\n');
+		}
+		plan_focus.push_str(marker);
+	}
 	if attention_enabled {
 		allocate_lanes(
 			&mut packets,
@@ -3371,10 +3382,7 @@ mod tests {
 
 		// A full-looking span over truncated content breaks the digest — vetoed.
 		let truncated_prompt: String = lines[..10].join("\n");
-		let stale_span = build_prior(
-			vec![source_span(&lines, 1, lines.len())],
-			&truncated_prompt,
-		);
+		let stale_span = build_prior(vec![source_span(&lines, 1, lines.len())], &truncated_prompt);
 		assert!(stale_span
 			.validate_summary(&summary)
 			.unwrap_err()
@@ -3609,7 +3617,14 @@ mod tests {
 		}]));
 		let mut live_result = message("tool", "run alive");
 		live_result.tool_call_id = Some("live-1".into());
-		let messages = vec![continuation, old_call, old_result, trigger, live_call, live_result];
+		let messages = vec![
+			continuation,
+			old_call,
+			old_result,
+			trigger,
+			live_call,
+			live_result,
+		];
 		let mut packets = build_packets("tiny-candidate", &messages);
 		link_dependencies(&mut packets);
 		let continuation_id = packets[0].id.clone();

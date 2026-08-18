@@ -239,6 +239,16 @@ pub fn latest_real_user_task_content(messages: &[Message]) -> Option<&str> {
 	}
 }
 
+/// Timestamp of the live user request — the message at
+/// [`latest_task_turn_index`]. Plan staleness compares the plan's last model
+/// engagement against this: timestamps survive compaction, message indices
+/// don't.
+pub fn latest_task_timestamp(messages: &[Message]) -> Option<u64> {
+	messages
+		.get(latest_task_turn_index(messages)?)
+		.map(|message| message.timestamp)
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionInfo {
 	pub name: String,
@@ -613,6 +623,26 @@ mod tests {
 	use super::*;
 	use crate::session::persistence::has_incomplete_tool_calls;
 	use serde_json::json;
+
+	#[test]
+	fn latest_task_timestamp_is_the_live_request_message_timestamp() {
+		let user = |content: &str, timestamp: u64| Message {
+			role: "user".into(),
+			content: content.into(),
+			timestamp,
+			..Default::default()
+		};
+		let mut assistant = user("working on it", 15);
+		assistant.role = "assistant".into();
+		let messages = vec![
+			user("first task", 10),
+			assistant,
+			user("<system-note>not a task</system-note>", 20),
+			user("newest real task", 30),
+		];
+		assert_eq!(latest_task_timestamp(&messages), Some(30));
+		assert_eq!(latest_task_timestamp(&[]), None);
+	}
 
 	fn create_test_message(
 		role: &str,

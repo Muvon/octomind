@@ -269,6 +269,22 @@ async fn test_acp_initialize_new_session_prompt() {
 	let updates_text = serde_json::to_string(&second_updates).expect("serialize updates");
 	assert!(updates_text.contains(MARKER), "second turn missing marker");
 
+	// Schedule an immediate inbox message: the agent's idle monitor picks it
+	// up and runs an autonomous inbox turn against the stub. No assertion —
+	// the session staying functional below is the observable contract; the
+	// wait just gives the fire-and-inject path time to run.
+	let (sched_result, _) = client
+		.request(
+			"session/prompt",
+			serde_json::json!({
+				"sessionId": session_id,
+				"prompt": [{"type": "text", "text": "/schedule add when=\"now\" message=\"inbox ping\""}]
+			}),
+		)
+		.await;
+	assert!(sched_result.get("stopReason").is_some());
+	tokio::time::sleep(Duration::from_secs(5)).await;
+
 	// A second agent process loads the persisted session (session/load
 	// replays history as session/update notifications) and continues it.
 	let mut client2 = AcpClient::spawn(home.path(), &stub_url).await;
@@ -325,6 +341,132 @@ async fn test_acp_initialize_new_session_prompt() {
 			let status = status.expect("wait on acp child");
 			assert!(status.success(), "acp agent exited with {status}");
 		}
+		Err(_) => {
+			let _ = child.kill().await;
+			panic!("acp agent did not exit after stdin EOF");
+		}
+	}
+}
+
+/// A prompt that triggers a tool round: the ToolCall / ToolCallUpdate
+/// translation paths only run when the model actually calls a tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_acp_tool_round_updates() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind stub");
+	let addr = listener.local_addr().expect("addr");
+	let counter = std::sync::Arc::new(AtomicUsize::new(0));
+	tokio::spawn(async move {
+		while let Ok((mut sock, _)) = listener.accept().await {
+			let counter = counter.clone();
+			tokio::spawn(async move {
+				let mut buf = Vec::new();
+				let mut tmp = [0u8; 8192];
+				let header_end = loop {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						return;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+						break pos + 4;
+					}
+				};
+				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+				let content_length: usize = headers
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				while buf.len() < header_end + content_length {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						break;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+				}
+				let body = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+					serde_json::json!({
+						"choices": [{
+							"message": {
+								"role": "assistant",
+								"content": "",
+								"tool_calls": [{
+									"id": "call_acp",
+									"type": "function",
+									"function": {"name": "schedule", "arguments": "{\"action\":\"list\"}"}
+								}]
+							},
+							"finish_reason": "tool_calls"
+						}],
+						"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+					})
+				} else {
+					serde_json::json!({
+						"choices": [{
+							"message": {"role": "assistant", "content": format!("{MARKER}: tool round done")},
+							"finish_reason": "stop"
+						}],
+						"usage": {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
+					})
+				}
+				.to_string();
+				let response = format!(
+					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+					body.len(),
+					body
+				);
+				let _ = sock.write_all(response.as_bytes()).await;
+				let _ = sock.shutdown().await;
+			});
+		}
+	});
+	let stub_url = format!("http://{}/v1/chat/completions", addr);
+
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
+	let (_, _) = client
+		.request(
+			"initialize",
+			serde_json::json!({"protocolVersion": 1, "clientCapabilities": {}}),
+		)
+		.await;
+	let cwd = home.path().to_string_lossy().to_string();
+	let (new_session, _) = client
+		.request(
+			"session/new",
+			serde_json::json!({"cwd": cwd, "mcpServers": []}),
+		)
+		.await;
+	let session_id = new_session["sessionId"].as_str().expect("id").to_string();
+
+	let (result, notifications) = client
+		.request(
+			"session/prompt",
+			serde_json::json!({
+				"sessionId": session_id,
+				"prompt": [{"type": "text", "text": "list my schedules with your tool"}]
+			}),
+		)
+		.await;
+	assert_eq!(result["stopReason"].as_str(), Some("end_turn"));
+	let updates = serde_json::to_string(&notifications).expect("serialize");
+	assert!(
+		updates.contains("tool_call") || updates.contains("toolCall"),
+		"no tool-call updates streamed: {updates}"
+	);
+	assert!(updates.contains(MARKER), "final answer missing: {updates}");
+
+	let AcpClient {
+		mut child, stdin, ..
+	} = client;
+	drop(stdin);
+	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+		Ok(status) => assert!(status.expect("wait").success()),
 		Err(_) => {
 			let _ = child.kill().await;
 			panic!("acp agent did not exit after stdin EOF");

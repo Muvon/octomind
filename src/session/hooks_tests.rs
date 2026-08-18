@@ -18,7 +18,6 @@
 //! non-zero with non-empty stdout, and `on = "error"` hooks stay silent for
 //! successful tool results.
 
-use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 fn write_script(dir: &std::path::Path, rel: &str, body: &str) {

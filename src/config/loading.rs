@@ -1017,3 +1017,7 @@ auto_bind = ["assistant"]
 		assert!(config.role_map.contains_key("developer"));
 	}
 }
+
+#[cfg(test)]
+#[path = "loading_tests.rs"]
+mod path_tests;

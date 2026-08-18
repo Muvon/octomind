@@ -850,3 +850,123 @@ async fn test_tap_list_and_untap_unknown() {
 		.expect("untap runs");
 	assert!(!output.status.success(), "untap of unknown tap must fail");
 }
+
+/// The jsonl and json output formats drive their own sinks through the
+/// non-interactive loop; both must deliver the answer machine-readably.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_run_jsonl_and_json_formats() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	for format in ["jsonl", "json"] {
+		let mut child = octomind_cmd(home.path(), &stub_url)
+			.args(["run", "--format", format])
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.spawn()
+			.expect("spawn octomind run");
+		child
+			.stdin
+			.take()
+			.expect("stdin")
+			.write_all(b"answer with the marker\n")
+			.expect("write prompt");
+		let output = child.wait_with_output().expect("octomind exits");
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		assert!(
+			output.status.success(),
+			"--format {format} failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+		);
+		assert!(
+			stdout.contains(MARKER),
+			"--format {format} missing answer.\nstdout:\n{stdout}"
+		);
+	}
+}
+
+/// Remaining config surfaces: markdown setters persist, validate and
+/// upgrade run cleanly against the sandbox config.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_config_markdown_validate_upgrade() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args([
+			"config",
+			"--markdown-enable",
+			"true",
+			"--markdown-theme",
+			"dark",
+		])
+		.output()
+		.expect("markdown setters run");
+	assert!(
+		output.status.success(),
+		"markdown setters failed: {}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["config", "--show"])
+		.output()
+		.expect("config --show runs");
+	assert!(output.status.success());
+	assert!(
+		String::from_utf8_lossy(&output.stdout).contains("dark"),
+		"theme change not visible"
+	);
+
+	for flag in ["--validate", "--upgrade"] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(["config", flag])
+			.output()
+			.expect("config flag runs");
+		assert!(
+			output.status.success(),
+			"config {flag} failed: {}",
+			String::from_utf8_lossy(&output.stderr)
+		);
+	}
+}
+
+/// A workflow whose provider is unreachable: every step attempt fails, the
+/// retry loop runs out, and the workflow must exit nonzero with diagnostics
+/// — never hang or report success.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_workflow_dead_provider_fails_cleanly() {
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+	let workflow_path = home.path().join("dead-provider.toml");
+	std::fs::write(
+		&workflow_path,
+		"name = \"dead\"\n\n[[steps]]\nname = \"only\"\nrole = \"assistant\"\nsession = \"fresh\"\nprompt = \"{{input}}\"\n",
+	)
+	.expect("write workflow");
+
+	// Port 9 (discard) — nothing answers; the provider call fails fast.
+	let mut child = octomind_cmd(home.path(), "http://127.0.0.1:9/v1/chat/completions")
+		.args(["workflow", workflow_path.to_str().expect("utf8")])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn workflow");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"the task\n")
+		.expect("write input");
+	let output = child.wait_with_output().expect("workflow exits");
+	assert!(
+		!output.status.success(),
+		"dead-provider workflow must fail.\nstdout:\n{}\nstderr:\n{}",
+		String::from_utf8_lossy(&output.stdout),
+		String::from_utf8_lossy(&output.stderr)
+	);
+}

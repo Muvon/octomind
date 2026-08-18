@@ -116,6 +116,7 @@ fn test_render_mcp_health_variants() {
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "health".to_string(),
 		data: json!({
+			"subcommand": "health",
 			"monitor_running": true,
 			"servers": [
 				{"name": "developer", "health": "healthy", "last_checked_secs_ago": 12},
@@ -125,11 +126,11 @@ fn test_render_mcp_health_variants() {
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "health".to_string(),
-		data: json!({"message": "MCP disabled for this role"}),
+		data: json!({"subcommand": "health", "message": "MCP disabled for this role"}),
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "health".to_string(),
-		data: json!({"monitor_running": false, "error": "monitor not reachable"}),
+		data: json!({"subcommand": "health", "monitor_running": false, "error": "monitor not reachable"}),
 	});
 }
 
@@ -413,33 +414,36 @@ fn test_render_schedule_and_monitor_arms() {
 fn test_render_mcp_list_full_validate_payloads() {
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "list".to_string(),
-		data: json!({"servers": {
+		data: json!({"subcommand": "list", "servers": {
 			"developer": ["shell", "text_editor"],
 			"orchestration": ["schedule", "monitor"]
 		}}),
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "list".to_string(),
-		data: json!({"servers": {}}),
+		data: json!({"subcommand": "list", "servers": {}}),
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "full".to_string(),
 		data: json!({
+			"subcommand": "full",
 			"servers": [
-				{"name": "developer", "health": "healthy", "connection_type": "builtin"},
+				{"name": "developer", "health": "healthy", "connection_type": "builtin",
+				 "tools": ["shell", "text_editor"]},
 				{"name": "flaky", "health": "dead", "connection_type": "stdio",
 				 "restart_count": 2, "consecutive_failures": 1}
 			],
-			"tools": [{
+			"tools": {"developer": [{
 				"name": "shell",
 				"description": "Run a command",
 				"parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}
-			}]
+			}]}
 		}),
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "validate".to_string(),
 		data: json!({
+			"subcommand": "validate",
 			"all_valid": false,
 			"tools": [
 				{"name": "good_tool", "valid": true},
@@ -449,7 +453,25 @@ fn test_render_mcp_list_full_validate_payloads() {
 	});
 	display_mcp(&CommandOutput::Mcp {
 		mcp_command: "validate".to_string(),
-		data: json!({"all_valid": true, "tools": [{"name": "good_tool", "valid": true}]}),
+		data: json!({"subcommand": "validate", "all_valid": true, "tools": [{"name": "good_tool", "valid": true}]}),
+	});
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "info".to_string(),
+		data: json!({
+			"subcommand": "info",
+			"servers": [
+				{"name": "developer", "health": "healthy", "connection_type": "builtin",
+				 "tools": [{"name": "shell", "description": "Run a command"}]},
+				{"name": "flaky", "health": "dead", "connection_type": "stdio",
+				 "restart_count": 3, "consecutive_failures": 2,
+				 "tools": [{"name": "probe", "description": "Probe things"}]}
+			]
+		}),
+	});
+	// Unknown subcommand falls through to the generic message arm
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "other".to_string(),
+		data: json!({"subcommand": "??", "message": "unknown mcp subcommand"}),
 	});
 }
 
@@ -568,5 +590,97 @@ fn test_render_info_full_and_minimal() {
 		cache_non_cached_tokens: 0,
 		agents_stats: None,
 		supervisor_stats: None,
+	});
+}
+
+#[test]
+fn test_render_change_variants_model_effort_role() {
+	display_model(&CommandOutput::Model {
+		old_model: Some("ollama:old".to_string()),
+		new_model: "ollama:new".to_string(),
+		changed: true,
+		saved: Some(false),
+		save_error: Some("config file is read-only".to_string()),
+	});
+	display_model(&CommandOutput::Model {
+		old_model: None,
+		new_model: "ollama:new".to_string(),
+		changed: true,
+		saved: None,
+		save_error: None,
+	});
+	display_effort(&CommandOutput::Effort {
+		old_effort: Some("low".to_string()),
+		new_effort: "high".to_string(),
+		changed: true,
+		saved: Some(false),
+		save_error: Some("could not persist".to_string()),
+	});
+	display_role(&CommandOutput::Role {
+		old_role: Some("assistant".to_string()),
+		new_role: "task_refiner".to_string(),
+		current_role: None,
+		available_roles: None,
+		changed: true,
+		saved: Some(false),
+		save_error: Some("could not persist".to_string()),
+	});
+	display_role(&CommandOutput::Role {
+		old_role: None,
+		new_role: String::new(),
+		current_role: Some("assistant".to_string()),
+		available_roles: Some(vec!["assistant".to_string(), "reduce".to_string()]),
+		changed: false,
+		saved: None,
+		save_error: None,
+	});
+}
+
+#[test]
+fn test_render_prompt_arms() {
+	display_prompt(&CommandOutput::Prompt {
+		data: json!({"action": "list", "prompts": [
+			{"name": "estimate", "description": "estimate a task"},
+			{"name": "review", "description": "review a diff"}
+		]}),
+	});
+	display_prompt(&CommandOutput::Prompt {
+		data: json!({"action": "list", "prompts": []}),
+	});
+	display_prompt(&CommandOutput::Prompt {
+		data: json!({"action": "execute", "success": true, "prompt_name": "estimate"}),
+	});
+	display_prompt(&CommandOutput::Prompt {
+		data: json!({
+			"action": "execute",
+			"success": false,
+			"error": "no such template",
+			"available_prompts": ["estimate", "review"]
+		}),
+	});
+}
+
+#[test]
+fn test_render_schedule_and_monitor_list_arms() {
+	// Empty list → onboarding examples
+	display_schedule(&CommandOutput::Schedule {
+		data: json!({"subcommand": "list", "is_error": false, "message": "No scheduled entries."}),
+	});
+	// Populated list → raw rows
+	display_schedule(&CommandOutput::Schedule {
+		data: json!({"subcommand": "list", "is_error": false,
+			"message": "1: in 5m — check build\n2: 9am — run tests"}),
+	});
+	// Failed list
+	display_schedule(&CommandOutput::Schedule {
+		data: json!({"subcommand": "list", "is_error": true, "message": "scheduler unavailable"}),
+	});
+	// Any other subcommand falls through to the generic message arm
+	display_schedule(&CommandOutput::Schedule {
+		data: json!({"subcommand": "add", "is_error": false, "message": "scheduled #3"}),
+	});
+	display_monitor(&CommandOutput::Monitor {
+		data: json!({"subcommand": "list", "is_error": false,
+			"message": "mon-1 running: watching the build log"}),
 	});
 }

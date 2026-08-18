@@ -484,3 +484,44 @@ async fn test_large_tool_result_truncation_and_dedup() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+/// Full supervised turn at the unit level: task classification, orientation,
+/// and gate calls all go to the same scripted stub. Whatever nonsense the
+/// control plane reads back, the user turn must complete and the answer must
+/// be recorded.
+#[tokio::test]
+async fn test_supervised_turn_survives_scripted_control_plane() {
+	let _guard = ENV_LOCK.lock().await;
+	// Enough valid completions for the agent answer plus every supervisor
+	// side-call; the queue-exhausted fallback stays valid after these.
+	// Identical bodies: the supervisor's side-calls interleave with the agent
+	// call in no guaranteed order, so every consumer must see the same text.
+	let url = spawn_stub(vec![final_response("SUPERVISED-TURN-ANSWER ok"); 5]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.supervisor.enabled = true;
+	config.supervisor.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.learning.enabled = false;
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = fake_session("do the supervised thing and finish");
+	run_turn(&mut session, &config)
+		.await
+		.expect("supervised turn");
+
+	let assistant = session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "assistant")
+		.expect("assistant reply recorded");
+	assert!(
+		assistant.content.contains("SUPERVISED-TURN-ANSWER"),
+		"got: {}",
+		assistant.content
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

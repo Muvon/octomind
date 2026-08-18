@@ -148,6 +148,19 @@ async fn test_display_commands_run_without_panicking() {
 			"assistant",
 		)
 		.expect("assistant message");
+	// Non-zero compression stats: /info renders its compression section only
+	// when compressions actually happened.
+	{
+		let cs = &mut session.session.info.compression_stats;
+		cs.task_compressions = 1;
+		cs.phase_compressions = 1;
+		cs.project_compressions = 1;
+		cs.conversation_compressions = 2;
+		cs.total_messages_removed = 14;
+		cs.total_tokens_saved = 9_000;
+		cs.input_tokens = 1_200;
+		cs.output_tokens = 300;
+	}
 
 	for input in [
 		"/help",
@@ -156,6 +169,8 @@ async fn test_display_commands_run_without_panicking() {
 		"/context",
 		"/context all",
 		"/context user",
+		"/context tool",
+		"/context large",
 		"/clear",
 		"/agents",
 		"/plan",
@@ -221,6 +236,11 @@ async fn test_done_on_empty_session_has_nothing_to_compress() {
 async fn test_mcp_subcommands_read_config() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();
+	// The handlers enumerate tools through the global tool map; build it from
+	// this config so list/info/full/dump/validate see the real builtin tools.
+	crate::mcp::tool_map::initialize_tool_map(&config.get_merged_config_for_role("assistant"))
+		.await
+		.expect("init tool map");
 	// All read-only subcommands. health is safe here: the template config
 	// carries only builtin servers, so the forced check never probes an
 	// external process.
@@ -240,6 +260,60 @@ async fn test_mcp_subcommands_read_config() {
 		assert!(
 			!matches!(result, CommandResult::TreatAsUserInput),
 			"{input} must dispatch"
+		);
+	}
+}
+
+/// Direct handler check: with the template's builtin servers the /mcp data
+/// payloads must actually carry servers and tools — an empty listing here
+/// means function enumeration silently broke.
+#[tokio::test]
+async fn test_mcp_handlers_enumerate_builtin_tools() {
+	let config = test_config();
+
+	let result = crate::session::chat::session::commands::mcp::handle_mcp(
+		&config,
+		"assistant",
+		&["list"],
+	)
+	.await
+	.expect("mcp list");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected output");
+	};
+	let CommandOutput::Mcp { data, .. } = *output else {
+		panic!("expected Mcp output");
+	};
+	let servers = data
+		.get("servers")
+		.and_then(|v| v.as_object())
+		.expect("servers object");
+	assert!(!servers.is_empty(), "no servers enumerated: {data}");
+	let total_tools: usize = servers
+		.values()
+		.filter_map(|v| v.as_array())
+		.map(|a| a.len())
+		.sum();
+	assert!(total_tools > 0, "no tools enumerated: {data}");
+
+	for sub in ["info", "full", "validate", "dump"] {
+		let result = crate::session::chat::session::commands::mcp::handle_mcp(
+			&config,
+			"assistant",
+			&[sub],
+		)
+		.await
+		.unwrap_or_else(|e| panic!("mcp {sub} errored: {e}"));
+		let CommandResult::HandledWithOutput(output) = result else {
+			panic!("mcp {sub}: expected output");
+		};
+		let CommandOutput::Mcp { data, .. } = *output else {
+			panic!("mcp {sub}: expected Mcp output");
+		};
+		let text = data.to_string();
+		assert!(
+			text.contains("schedule") || text.contains("tools"),
+			"mcp {sub} payload looks empty: {text}"
 		);
 	}
 }

@@ -177,3 +177,43 @@ async fn test_skill_use_and_forget_round_trip() {
 	.await;
 	crate::session::context::cleanup_session(&sid);
 }
+
+/// OCTOMIND_SKILLS env loading: the named project skill is force-activated
+/// and its instructions land in the session; unknown names fail without
+/// aborting; a second load is an idempotent no-op.
+#[tokio::test]
+#[serial]
+async fn test_load_env_skills_injects_and_is_idempotent() {
+	let sid = "__skilltest_env_load".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let _tmp = skill_workdir(&sid);
+		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+
+		std::env::set_var(
+			"OCTOMIND_SKILLS",
+			format!("{SKILL_NAME}, ,__skilltest_env_nope"),
+		);
+		crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
+
+		let injected = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| m.content.contains(INSTRUCTIONS_MARKER))
+			.count();
+		assert_eq!(injected, 1, "skill instructions must be injected once");
+
+		// Second load: the active-skill guard suppresses re-injection
+		crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
+		std::env::remove_var("OCTOMIND_SKILLS");
+		let injected = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| m.content.contains(INSTRUCTIONS_MARKER))
+			.count();
+		assert_eq!(injected, 1, "env skill loading must be idempotent");
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

@@ -213,6 +213,51 @@ async fn test_ws_session_message_roundtrip() {
 		.expect("send command");
 	read_until(&mut socket, "help command ack", 30, |t| t.contains("cmd-1")).await;
 
+	// Bare model command: renders the current model back to the client
+	socket
+		.send(WsMessage::Text(
+			serde_json::json!({
+				"type": "command",
+				"session_id": "ws-e2e",
+				"command": "model",
+				"request_id": "cmd-2"
+			})
+			.to_string()
+			.into(),
+		))
+		.await
+		.expect("send model command");
+	read_until(&mut socket, "model command ack", 30, |t| t.contains("cmd-2")).await;
+
+	// Inbox injection: a queued message for this session is surfaced to the
+	// client as an Injected frame before the AI answers it.
+	octomind::session::inbox::push_inbox_message_for_session(
+		"ws-e2e",
+		octomind::session::inbox::InboxMessage {
+			source: octomind::session::inbox::InboxSource::Schedule {
+				id: "sched-1".to_string(),
+			},
+			content: "INBOX-INJECTED-MARKER: check the queue".to_string(),
+		},
+	);
+	socket
+		.send(WsMessage::Text(
+			serde_json::json!({
+				"type": "message",
+				"session_id": "ws-e2e",
+				"content": "and now answer again"
+			})
+			.to_string()
+			.into(),
+		))
+		.await
+		.expect("send post-inbox message");
+	read_until(&mut socket, "injected frame", 60, |t| {
+		t.contains("INBOX-INJECTED-MARKER")
+	})
+	.await;
+	read_until(&mut socket, "post-inbox answer", 60, |t| t.contains(MARKER)).await;
+
 	// A structured error for a bogus session must come back, not a hang
 	socket
 		.send(WsMessage::Text(

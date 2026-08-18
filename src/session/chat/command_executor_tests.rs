@@ -44,3 +44,24 @@ fn test_command_help_names_every_command() {
 		assert!(help.contains(&name), "help must mention {name}: {help}");
 	}
 }
+
+#[tokio::test]
+async fn test_execute_unknown_command_errors() {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	config.build_role_map();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let result = execute_command_layer(
+		"no-such-command",
+		"input",
+		&mut session,
+		&config,
+		"assistant",
+		rx,
+	)
+	.await;
+	let err = result.expect_err("unknown command must error");
+	assert!(err.to_string().contains("not found"), "{err}");
+}

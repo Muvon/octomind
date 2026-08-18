@@ -142,3 +142,49 @@ async fn test_capability_discover_arms() {
 	.expect("dispatch");
 	assert!(!is_err(&result), "got: {}", text_of(&result));
 }
+
+#[tokio::test]
+#[serial]
+async fn test_load_env_capabilities_reports_failures_per_name() {
+	let config = test_config();
+
+	// Unset: early return, no events
+	std::env::remove_var("OCTOMIND_CAPABILITIES");
+	let events = std::sync::Mutex::new(Vec::new());
+	let cb = |e: EnvCapabilityProgress| {
+		events.lock().unwrap().push(e);
+	};
+	load_env_capabilities(&config, Some(&cb)).await;
+	assert!(events.lock().unwrap().is_empty());
+
+	// Two bogus names (plus junk whitespace): a Starting event with both,
+	// then a failed Completed per name — never an abort.
+	std::env::set_var(
+		"OCTOMIND_CAPABILITIES",
+		"__envcap_nonexistent, ,__envcap_other",
+	);
+	load_env_capabilities(&config, Some(&cb)).await;
+	std::env::remove_var("OCTOMIND_CAPABILITIES");
+
+	let events = events.into_inner().unwrap();
+	let mut starting_names = Vec::new();
+	let mut completions = Vec::new();
+	for e in events {
+		match e {
+			EnvCapabilityProgress::Starting { capabilities } => starting_names = capabilities,
+			EnvCapabilityProgress::Completed {
+				capability,
+				success,
+			} => completions.push((capability, success)),
+		}
+	}
+	assert_eq!(
+		starting_names,
+		vec!["__envcap_nonexistent".to_string(), "__envcap_other".to_string()]
+	);
+	assert_eq!(completions.len(), 2, "{completions:?}");
+	assert!(
+		completions.iter().all(|(_, success)| !success),
+		"bogus capabilities must fail: {completions:?}"
+	);
+}

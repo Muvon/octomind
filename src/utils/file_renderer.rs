@@ -78,6 +78,57 @@ pub fn expand_context_blocks(text: &str) -> String {
 	result
 }
 
+/// Expand `@path` mentions in user input by appending the referenced files
+/// rendered as XML (same pipeline as context blocks). A token qualifies when
+/// it starts with `@` and the remainder is an existing readable text file —
+/// anything else (nonexistent path, directory, binary) is left untouched.
+/// The `@path` mention itself stays in place so the model sees where the
+/// file was referenced.
+pub fn expand_at_file_refs(text: &str) -> String {
+	let mut file_contents: HashMap<String, Vec<FileContent>> = HashMap::new();
+
+	for token in text.split_whitespace() {
+		let Some(path) = token.strip_prefix('@') else {
+			continue;
+		};
+		if path.is_empty() || file_contents.contains_key(path) {
+			continue;
+		}
+		if !std::path::Path::new(path).is_file() {
+			continue;
+		}
+		// Binary / non-UTF8 files fail here and stay a plain mention.
+		let Ok(content) = std::fs::read_to_string(path) else {
+			continue;
+		};
+
+		// LineRange enforces a 10000-line ceiling; clamp oversized files to it.
+		let line_count = content.lines().count().clamp(1, 10000);
+		let range = LineRange::new(1, line_count).expect("range within ceiling");
+		let lines = content
+			.lines()
+			.take(line_count)
+			.enumerate()
+			.map(|(i, line)| format!("{}: {}", i + 1, line))
+			.collect();
+
+		file_contents.insert(
+			path.to_string(),
+			vec![FileContent {
+				path: path.to_string(),
+				lines,
+				line_range: range,
+				error: None,
+			}],
+		);
+	}
+
+	if file_contents.is_empty() {
+		return text.to_string();
+	}
+	format!("{}\n\n{}", text, render_files_as_xml(&file_contents))
+}
+
 /// Rendering format options
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderFormat {
@@ -426,6 +477,36 @@ mod tests {
 		assert!(result_invalid.contains("Text "));
 		assert!(result_invalid.contains(" More"));
 		assert!(result_invalid.contains("error=\"true\""));
+	}
+
+	#[test]
+	fn test_expand_at_file_refs() {
+		use std::io::Write;
+		use tempfile::NamedTempFile;
+
+		let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+		writeln!(temp_file, "line 1").expect("Failed to write to temp file");
+		writeln!(temp_file, "line 2").expect("Failed to write to temp file");
+		temp_file.flush().expect("Failed to flush temp file");
+		let temp_path = temp_file.path().to_string_lossy().to_string();
+
+		// Existing file: mention stays inline, content appended as XML
+		let input = format!("check @{} please", temp_path);
+		let result = expand_at_file_refs(&input);
+		assert!(result.starts_with(&input));
+		assert!(result.contains("FILE CONTEXT:"));
+		assert!(result.contains(&format!("<content path=\"{}\" lines=\"1:2\">", temp_path)));
+		assert!(result.contains("1: line 1"));
+		assert!(result.contains("2: line 2"));
+
+		// Nonexistent path and bare @ are left untouched
+		let untouched = "see @nonexistent/file.rs and a lone @ here";
+		assert_eq!(expand_at_file_refs(untouched), untouched);
+
+		// Duplicate mentions inject the file once
+		let dup_input = format!("@{} and again @{}", temp_path, temp_path);
+		let dup_result = expand_at_file_refs(&dup_input);
+		assert_eq!(dup_result.matches("<content path=").count(), 1);
 	}
 
 	#[test]

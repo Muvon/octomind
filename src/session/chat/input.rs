@@ -432,6 +432,10 @@ pub fn read_user_input(
 			),
 		))
 		.with_quick_completions(true)
+		// Keep the @-file menu alive while the user erases to fix a typo —
+		// without this, quick completions dismiss the menu on backspace and
+		// nothing reopens it until the next `@` or Tab.
+		.with_persistent_menus(true)
 		.use_bracketed_paste(true)
 		.with_break_signal(break_signal.clone())
 		.with_edit_mode(edit_mode);

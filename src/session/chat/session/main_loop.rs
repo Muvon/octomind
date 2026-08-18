@@ -807,8 +807,11 @@ pub async fn run_interactive_session(
 						// Ctrl+G with non-empty input — add to context without sending.
 						apply_clipboard_items(&mut chat_session, clipboard_items);
 
-						// Add the message to session context
-						chat_session.add_user_message(&text)?;
+						// Add the message to session context, with @file
+						// mentions injected as rendered file content.
+						chat_session.add_user_message(
+							&crate::utils::file_renderer::expand_at_file_refs(&text),
+						)?;
 
 						// Save the session to persist the added message
 						if let Err(e) = chat_session.save() {
@@ -1141,7 +1144,9 @@ pub async fn run_interactive_session(
 			// will retry on the next user message. This is intentional: the
 			// first message was never successfully processed.
 			first_message_processed = true;
-			let final_input = processed_input;
+			// Inject @file mentions as rendered file content. After skill
+			// activation, so file content can't false-trigger skills.
+			let final_input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
 
 			// Initialize operation context for smart tracking
 			let operation_id = format!(
@@ -1614,7 +1619,8 @@ pub async fn run_interactive_session_with_input(
 	)
 	.await?;
 
-	input = processed_input;
+	// Inject @file mentions as rendered file content - same as interactive.
+	input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
 
 	// Add user message - same as interactive.
 	let user_message_index = chat_session.session.messages.len();

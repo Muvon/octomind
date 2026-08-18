@@ -488,7 +488,10 @@ mod tests {
 		// whole test runs within one wall-clock second.
 		s.set_touched_at(1);
 		s.add_step_details("notes".into()).unwrap();
-		assert!(s.touched_at() > 1, "add_step_details must refresh the clock");
+		assert!(
+			s.touched_at() > 1,
+			"add_step_details must refresh the clock"
+		);
 
 		s.set_touched_at(1);
 		s.complete_current_task("done a".into()).unwrap();

@@ -24,7 +24,9 @@ use crossterm::{
 };
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::io::Write;
+use std::time::Duration;
 
 struct PickerEntry {
 	name: String,
@@ -62,30 +64,47 @@ impl PickerEntry {
 /// user chose to start a brand-new session. Returns `Ok(None)` silently when
 /// there is nothing to pick from.
 pub fn pick_session() -> Result<Option<String>> {
-	let sessions = crate::session::list_available_sessions()?;
-	if sessions.is_empty() {
+	// Listing sessions reads every session's metadata — show a spinner so the
+	// terminal isn't blank until the picker renders.
+	let spinner = ProgressBar::new_spinner();
+	spinner.set_style(
+		ProgressStyle::default_spinner()
+			.template(" {spinner:.cyan} {msg:.cyan}")
+			.unwrap()
+			.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
+	);
+	spinner.set_message("Loading sessions...");
+	spinner.enable_steady_tick(Duration::from_millis(80));
+
+	let entries = crate::session::list_available_sessions().map(|sessions| {
+		sessions
+			.into_iter()
+			.map(|(name, info)| {
+				let meta = crate::session::titles::get_session_meta(&name);
+				PickerEntry {
+					name,
+					title: meta.as_ref().and_then(|m| m.title.clone()),
+					role: meta
+						.as_ref()
+						.and_then(|m| m.role.clone())
+						.or(Some(info.role.clone())),
+					model: meta
+						.as_ref()
+						.and_then(|m| m.model.clone())
+						.or(Some(info.model.clone())),
+					created_at: info.created_at,
+				}
+			})
+			.collect::<Vec<PickerEntry>>()
+	});
+	spinner.finish_and_clear();
+	print!("\x1B[2K\r");
+	std::io::stdout().flush().ok();
+
+	let entries = entries?;
+	if entries.is_empty() {
 		return Ok(None);
 	}
-
-	let entries: Vec<PickerEntry> = sessions
-		.into_iter()
-		.map(|(name, info)| {
-			let meta = crate::session::titles::get_session_meta(&name);
-			PickerEntry {
-				name,
-				title: meta.as_ref().and_then(|m| m.title.clone()),
-				role: meta
-					.as_ref()
-					.and_then(|m| m.role.clone())
-					.or(Some(info.role.clone())),
-				model: meta
-					.as_ref()
-					.and_then(|m| m.model.clone())
-					.or(Some(info.model.clone())),
-				created_at: info.created_at,
-			}
-		})
-		.collect();
 
 	run_picker_loop(entries)
 }

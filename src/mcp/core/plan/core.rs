@@ -100,9 +100,7 @@ pub fn plan_staleness_marker(latest_task_timestamp: u64) -> Option<&'static str>
 /// Plan checklist for recitation with the staleness marker applied — the one
 /// place the marker joins the checklist, so the recite and its tests cannot
 /// diverge.
-pub fn render_plan_checklist_with_staleness(
-	latest_task_timestamp: Option<u64>,
-) -> Option<String> {
+pub fn render_plan_checklist_with_staleness(latest_task_timestamp: Option<u64>) -> Option<String> {
 	let mut checklist = render_plan_checklist()?;
 	if let Some(marker) = latest_task_timestamp.and_then(plan_staleness_marker) {
 		checklist.push_str(marker);

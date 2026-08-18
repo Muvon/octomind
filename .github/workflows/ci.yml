@@ -27,7 +27,11 @@ jobs:
       # Test job stays local below: needs ONNX static libs and HF model cache
       test: false
       doc: false
-      tarpaulin-args: '--engine llvm --verbose --workspace --timeout 120 --out xml'
+      # Shared tarpaulin job measured coverage but the Codecov upload has no
+      # token, so nothing ever landed (codecov shows zero commits). Replaced
+      # by the local `coverage` job below, which publishes the report on the
+      # run page and as an artifact without any external service.
+      coverage: false
 
   test:
     name: Test Suite
@@ -118,6 +122,82 @@ jobs:
         RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=-crt-static' || '' }}
         CXXFLAGS_x86_64_pc_windows_msvc: -MD
       run: cargo test --verbose
+
+  # Source-based coverage via cargo-llvm-cov (more accurate than tarpaulin).
+  # The TOTAL line + per-file table land on the workflow run's summary page;
+  # lcov.info is uploaded as an artifact for local diffing or a future badge.
+  # Setup mirrors the Linux Test Suite job (protoc, tools, ONNX, HF cache).
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: 1.95.0
+        components: llvm-tools-preview
+
+    - name: Setup protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install ripgrep, ast-grep and cargo-llvm-cov
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ripgrep,ast-grep,cargo-llvm-cov
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+
+    - name: Cache HuggingFace model weights
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/octolib/huggingface
+        key: ${{ runner.os }}-octolib-hf-${{ hashFiles('src/embeddings/mod.rs') }}
+        restore-keys: |
+          ${{ runner.os }}-octolib-hf-
+
+    - name: Download ONNX Runtime static library
+      shell: bash
+      run: |
+        ORT_VERSION="1.24.2"
+        ORT_ASSET="onnxruntime-linux-x64-static_lib-${ORT_VERSION}-glibc2_17"
+        curl -sL "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v${ORT_VERSION}/${ORT_ASSET}.zip" -o /tmp/ort.zip
+        unzip -q /tmp/ort.zip -d /tmp/ort
+        echo "ORT_LIB_LOCATION=/tmp/ort/${ORT_ASSET}/lib" >> "$GITHUB_ENV"
+
+    - name: Generate coverage
+      shell: bash
+      run: |
+        # Run the suite once with instrumentation, then render both formats
+        # from the collected profiles. Test-only files are excluded from the
+        # report so percentages describe product code.
+        cargo llvm-cov --no-report
+        cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex '_tests\.rs$'
+        {
+          echo '## Coverage'
+          echo '```'
+          cargo llvm-cov report --summary-only --ignore-filename-regex '_tests\.rs$' | tail -1
+          echo '```'
+          echo '<details><summary>Per-file coverage</summary>'
+          echo ''
+          echo '```'
+          cargo llvm-cov report --summary-only --ignore-filename-regex '_tests\.rs$'
+          echo '```'
+          echo '</details>'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload lcov artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-lcov
+        path: lcov.info
 
   musl-build:
     name: Musl Build (x86_64 + aarch64)

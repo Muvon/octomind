@@ -67,6 +67,7 @@ help:
 	@echo "  install-completions - Install shell completions"
 	@echo "  test              - Run tests"
 	@echo "  test-completions  - Test shell completion generation"
+	@echo "  coverage          - Generate test coverage report (cargo-llvm-cov)"
 	@echo "  fmt               - Format code"
 	@echo "  fmt-check         - Check code formatting without modifying"
 	@echo "  clippy            - Run clippy lints"
@@ -231,6 +232,13 @@ clean:
 test:
 	@echo "Running tests..."
 	cargo test --release
+
+# Coverage report (requires cargo-llvm-cov + llvm-tools-preview).
+# Test-only files are excluded so percentages describe product code.
+.PHONY: coverage
+coverage:
+	@echo "Generating coverage report..."
+	cargo llvm-cov --summary-only --ignore-filename-regex '_tests\.rs$$'
 
 # Format code
 .PHONY: fmt

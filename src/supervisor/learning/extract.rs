@@ -796,8 +796,8 @@ fn project_name(current_dir: Option<&std::path::Path>) -> String {
 ///
 /// An in-process task cannot work here: the tokio runtime drops with `main` and
 /// aborts it at its next await point, which is why this used to block on the
-/// handle. The child outlives us and finishes the store on its own; its progress
-/// still prints to the inherited terminal.
+/// handle. The child outlives us and finishes the store on its own, silently —
+/// its stdio is nulled so it cannot scribble on the shell prompt after exit.
 ///
 /// The transcript is handed over through a temp file rather than a pipe — a
 /// child that dies before reading would block the parent mid-write and
@@ -805,7 +805,7 @@ fn project_name(current_dir: Option<&std::path::Path>) -> String {
 ///
 /// Ceiling: the child stays in the terminal's process group, so closing the
 /// terminal window right after exiting SIGHUPs it and the lessons are lost.
-/// Use `setsid` if that ever matters more than the inherited log output.
+/// Use `setsid` if that ever matters.
 pub fn extract_lessons_before_exit(
 	session: &crate::session::chat::session::ChatSession,
 	config: &Config,
@@ -857,6 +857,8 @@ fn spawn_distill_process(
 		.arg("--session")
 		.arg(session_name)
 		.stdin(std::process::Stdio::null())
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::null())
 		.spawn();
 	if let Err(e) = spawned {
 		let _ = std::fs::remove_file(&snapshot);

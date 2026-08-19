@@ -130,16 +130,8 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	// Same call with everything already injected: nothing new to say.
 	let already: std::collections::HashSet<String> = injected_now.into_iter().collect();
 	let (_tx2, rx2) = cancel_pair();
-	let (text2, injected2) = retrieve_and_format(
-		&config,
-		"",
-		ROLE,
-		proj,
-		false,
-		&already,
-		rx2,
-	)
-	.await;
+	let (text2, injected2) =
+		retrieve_and_format(&config, "", ROLE, proj, false, &already, rx2).await;
 	assert!(text2.is_empty(), "re-injection must be suppressed: {text2}");
 	assert!(injected2.is_empty());
 

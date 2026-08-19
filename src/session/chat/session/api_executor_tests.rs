@@ -429,12 +429,29 @@ async fn test_interactive_mode_tool_round_renders_and_truncates() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
-/// A genuinely oversized tool result (the box's tap skill list is thousands
-/// of tokens) drives the hard truncation cap, and re-issuing the identical
-/// call drives the dedup placeholder — the two large-output defenses.
+/// A genuinely oversized tool result drives the hard truncation cap, and
+/// re-issuing the identical call drives the dedup placeholder — the two
+/// large-output defenses. The skill list is grown here from a temp workdir
+/// rather than whatever tap the machine happens to have: on a bare CI runner
+/// the real list is "No skills found", which is under both thresholds.
 #[tokio::test]
 async fn test_large_tool_result_truncation_and_dedup() {
 	let _guard = ENV_LOCK.lock().await;
+	let workdir = tempfile::tempdir().expect("temp workdir");
+	let skills_root = workdir.path().join(".agents").join("skills");
+	for i in 0..40 {
+		let dir = skills_root.join(format!("bulk-skill-{i:02}"));
+		std::fs::create_dir_all(&dir).expect("skill dir");
+		std::fs::write(
+			dir.join("SKILL.md"),
+			format!(
+				"---\nname: bulk-skill-{i:02}\ndescription: filler skill {i:02} used to grow the list past the truncation and dedup thresholds\n---\n\nbody\n"
+			),
+		)
+		.expect("write SKILL.md");
+	}
+	crate::mcp::workdir::set_thread_working_directory(workdir.path().to_path_buf());
+
 	let url = spawn_stub(vec![
 		tool_calls_response(&[("call_s1", "skill", serde_json::json!({"action": "list"}))]),
 		tool_calls_response(&[("call_s2", "skill", serde_json::json!({"action": "list"}))]),
@@ -482,6 +499,7 @@ async fn test_large_tool_result_truncation_and_dedup() {
 	let last = session.session.messages.last().expect("final message");
 	assert!(last.content.contains("spill round done"));
 
+	crate::mcp::workdir::set_thread_working_directory(std::env::current_dir().expect("cwd"));
 	std::env::remove_var("OLLAMA_API_URL");
 }
 

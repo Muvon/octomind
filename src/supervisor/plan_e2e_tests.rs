@@ -19,7 +19,9 @@
 
 use super::plan::{reconcile_after_actions, PlanSignal};
 use crate::session::chat::session::ChatSession;
-use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
+use crate::session::chat::test_support::{
+	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+};
 
 fn plan_config() -> crate::config::Config {
 	let mut config = fake_provider_config();

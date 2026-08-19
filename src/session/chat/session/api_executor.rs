@@ -98,6 +98,34 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	crate::session::truncate_to_tokens(&kept.join(ANSWER_PART_SEPARATOR), max_tokens)
 }
 
+/// Everything the model may legitimately quote in an `<evidence>` tag: the
+/// current turn's ledger, the user's own message (a link they supplied is fair
+/// to reference back), every tool result still in context, and compaction
+/// summaries.
+///
+/// The ledger alone is not enough. It is reset at every genuine user turn —
+/// correct for the completion gate, which judges one task — so a follow-up like
+/// "summarize what you found" would have every quote from the previous turn
+/// flagged as fabricated even though the tool output is right there in context.
+/// Compaction summaries embed `<file_context>` read from disk at compression
+/// time and the system prompt tells the model to cite them WITHOUT re-reading,
+/// so they are grounds too even though the ledger never saw those reads.
+fn citation_grounds(chat_session: &ChatSession, turn_start: usize) -> Vec<String> {
+	let mut grounds = chat_session.evidence.citation_grounds();
+	if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
+		grounds.push(user_msg.content.clone());
+	}
+	for message in &chat_session.session.messages {
+		if message.role == "tool"
+			|| message.name.as_deref()
+				== Some(crate::session::chat::conversation_compression::COMPRESSION_MESSAGE_NAME)
+		{
+			grounds.push(message.content.clone());
+		}
+	}
+	grounds
+}
+
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
 /// misled). Clears the recalled set either way.
@@ -669,25 +697,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// material, examples, or deliverable content just as often as citations;
 		// scanning all of them creates category-error false positives.
 		if config.supervisor.claim_check {
-			let mut grounds = chat_session.evidence.citation_grounds();
-			// A link the user supplied is legitimate to reference back.
-			if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
-				grounds.push(user_msg.content.clone());
-			}
-			// Compaction summaries embed <file_context> extracted from disk at
-			// compression time, and the system prompt tells the model to cite
-			// them WITHOUT re-reading the files. The per-turn ledger never saw
-			// those reads, so without these grounds every quote sourced from a
-			// pre-compaction read is flagged as fabricated and burns a repair
-			// re-run on content the model legitimately holds.
-			for message in &chat_session.session.messages {
-				if message.name.as_deref()
-					== Some(
-						crate::session::chat::conversation_compression::COMPRESSION_MESSAGE_NAME,
-					) {
-					grounds.push(message.content.clone());
-				}
-			}
+			let grounds = citation_grounds(chat_session, turn_start);
 			let unverified = crate::supervisor::detect::unverified_citations(
 				&chat_session.last_response,
 				&grounds,
@@ -949,6 +959,38 @@ mod tests {
 		let old = "many different words fill the older pass ".repeat(50);
 		let answers = vec![old, "the amendment".to_string()];
 		assert_eq!(current_turn_answer(&answers, 16), "the amendment");
+	}
+
+	/// Regression: a follow-up user turn resets the evidence ledger, so before
+	/// tool messages counted as grounds every quote sourced from the previous
+	/// turn's tool output was flagged as fabricated.
+	#[test]
+	fn tool_output_from_an_earlier_turn_is_still_citable() {
+		let mut session = ChatSession::for_tests(vec![
+			crate::session::Message {
+				role: "user".to_string(),
+				content: "review the diff".to_string(),
+				..Default::default()
+			},
+			crate::session::Message {
+				role: "tool".to_string(),
+				content: "312:17|\t\t\t\tif (!$ack_live_payment) {".to_string(),
+				..Default::default()
+			},
+			crate::session::Message {
+				role: "user".to_string(),
+				content: "restate that with evidence".to_string(),
+				..Default::default()
+			},
+		]);
+		// The genuine user turn wiped the ledger — the state the bug ran in.
+		session.evidence.reset();
+		let grounds = citation_grounds(&session, 2);
+		assert!(crate::supervisor::detect::unverified_citations(
+			"<evidence locator=\"DealService.php:312\">if (!$ack_live_payment) {</evidence>",
+			&grounds,
+		)
+		.is_empty());
 	}
 
 	#[test]

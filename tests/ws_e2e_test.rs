@@ -241,7 +241,10 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("resume session");
-	read_until(&mut socket, "session resume ack", 30, |t| t.contains("sess-2")).await;
+	read_until(&mut socket, "session resume ack", 30, |t| {
+		t.contains("sess-2")
+	})
+	.await;
 
 	// Inbox injection: a queued message for this session is surfaced to the
 	// client as an Injected frame before the AI answers it.

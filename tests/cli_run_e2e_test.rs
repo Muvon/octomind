@@ -970,3 +970,60 @@ async fn test_workflow_dead_provider_fails_cleanly() {
 		String::from_utf8_lossy(&output.stderr)
 	);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_completion_generation_and_api_key_setter() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	for shell in ["bash", "zsh"] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(["completion", shell])
+			.output()
+			.expect("completion runs");
+		assert!(output.status.success(), "completion {shell} failed");
+		assert!(
+			!output.stdout.is_empty(),
+			"completion {shell} produced nothing"
+		);
+	}
+
+	// API key setter writes into the sandbox config only
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["config", "--api-key", "openrouter:test-key-e2e"])
+		.output()
+		.expect("api-key setter runs");
+	assert!(
+		output.status.success(),
+		"api-key setter failed: {}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_vars_expand_and_system_prompt_setter() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["vars", "--expand"])
+		.output()
+		.expect("vars --expand runs");
+	assert!(output.status.success());
+	assert!(String::from_utf8_lossy(&output.stdout).contains("DATE"));
+
+	// Custom system prompt, then reset to default — both must persist cleanly
+	for system in ["my custom sandbox prompt", "default"] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(["config", "--system", system])
+			.output()
+			.expect("system setter runs");
+		assert!(
+			output.status.success(),
+			"config --system {system} failed: {}",
+			String::from_utf8_lossy(&output.stderr)
+		);
+	}
+}

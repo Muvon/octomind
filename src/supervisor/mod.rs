@@ -379,3 +379,7 @@ pub struct PlanConfig {
 	/// disables automatic adoption.
 	pub adoption_min_distinct_actions: usize,
 }
+
+#[cfg(test)]
+#[path = "plan_e2e_tests.rs"]
+mod plan_e2e_tests;

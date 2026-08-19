@@ -161,6 +161,19 @@ async fn test_display_commands_run_without_panicking() {
 		cs.input_tokens = 1_200;
 		cs.output_tokens = 300;
 	}
+	// Timing rows and layer sections render only when their totals are set
+	session.session.info.total_api_time_ms = 1_500;
+	session.session.info.total_tool_time_ms = 300;
+	session.session.info.total_layer_time_ms = 200;
+	session
+		.session
+		.add_layer_stats("command:reduce", "ollama:fake-model", 1_000, 200, 0.01);
+	session
+		.session
+		.add_layer_stats("command:reduce", "ollama:fake-model", 900, 150, 0.008);
+	session
+		.session
+		.add_layer_stats("refine", "ollama:fake-model", 500, 100, 0.004);
 
 	for input in [
 		"/help",
@@ -271,13 +284,10 @@ async fn test_mcp_subcommands_read_config() {
 async fn test_mcp_handlers_enumerate_builtin_tools() {
 	let config = test_config();
 
-	let result = crate::session::chat::session::commands::mcp::handle_mcp(
-		&config,
-		"assistant",
-		&["list"],
-	)
-	.await
-	.expect("mcp list");
+	let result =
+		crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &["list"])
+			.await
+			.expect("mcp list");
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected output");
 	};
@@ -297,13 +307,10 @@ async fn test_mcp_handlers_enumerate_builtin_tools() {
 	assert!(total_tools > 0, "no tools enumerated: {data}");
 
 	for sub in ["info", "full", "validate", "dump"] {
-		let result = crate::session::chat::session::commands::mcp::handle_mcp(
-			&config,
-			"assistant",
-			&[sub],
-		)
-		.await
-		.unwrap_or_else(|e| panic!("mcp {sub} errored: {e}"));
+		let result =
+			crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &[sub])
+				.await
+				.unwrap_or_else(|e| panic!("mcp {sub} errored: {e}"));
 		let CommandResult::HandledWithOutput(output) = result else {
 			panic!("mcp {sub}: expected output");
 		};
@@ -315,5 +322,43 @@ async fn test_mcp_handlers_enumerate_builtin_tools() {
 			text.contains("schedule") || text.contains("tools"),
 			"mcp {sub} payload looks empty: {text}"
 		);
+	}
+}
+
+/// Inline display_cli arms (copy/rename/error) that no dispatchable command
+/// reaches without a clipboard or a session file.
+#[tokio::test]
+async fn test_inline_output_render_arms() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let config = test_config();
+	let outputs = [
+		CommandOutput::Copy {
+			copied: true,
+			length: Some(42),
+		},
+		CommandOutput::Copy {
+			copied: true,
+			length: None,
+		},
+		CommandOutput::Copy {
+			copied: false,
+			length: None,
+		},
+		CommandOutput::Rename {
+			session_name: "s".to_string(),
+			title: Some("new title".to_string()),
+		},
+		CommandOutput::Rename {
+			session_name: "s".to_string(),
+			title: None,
+		},
+		CommandOutput::Error {
+			error: "something broke".to_string(),
+			context: Some(serde_json::json!({"where": "here"})),
+		},
+	];
+	for output in outputs {
+		let mut output = output.clone();
+		output.display_cli(&mut session, &config).await;
 	}
 }

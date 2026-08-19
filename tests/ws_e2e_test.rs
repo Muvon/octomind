@@ -227,7 +227,21 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("send model command");
-	read_until(&mut socket, "model command ack", 30, |t| t.contains("cmd-2")).await;
+	read_until(&mut socket, "model command ack", 30, |t| {
+		t.contains("cmd-2")
+	})
+	.await;
+
+	// Re-sending the same session id takes the resume arm of create-or-resume
+	socket
+		.send(WsMessage::Text(
+			serde_json::json!({"type": "session", "session_id": "ws-e2e", "request_id": "sess-2"})
+				.to_string()
+				.into(),
+		))
+		.await
+		.expect("resume session");
+	read_until(&mut socket, "session resume ack", 30, |t| t.contains("sess-2")).await;
 
 	// Inbox injection: a queued message for this session is surfaced to the
 	// client as an Injected frame before the AI answers it.

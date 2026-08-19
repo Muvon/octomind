@@ -48,8 +48,13 @@ fn lesson(proj: &str, content: &str, memory_type: &str, tags: &[&str]) -> Lesson
 	}
 }
 
-fn rx() -> tokio::sync::watch::Receiver<bool> {
-	tokio::sync::watch::channel(false).1
+/// Keep the sender alive across the call — a dropped sender reads as a
+/// cancelled operation to the LLM-call cancellation wrapper.
+fn cancel_pair() -> (
+	tokio::sync::watch::Sender<bool>,
+	tokio::sync::watch::Receiver<bool>,
+) {
+	tokio::sync::watch::channel(false)
 }
 
 #[tokio::test]
@@ -83,21 +88,37 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 		.await
 		.expect("store orientation");
 
-	// Follow-up call (first_call=false): no LLM, no global tier — pure
-	// scoped keyword/recency retrieval.
+	// Follow-up call (first_call=false): no LLM, no global tier. An empty
+	// user input takes the deterministic embedding-free branch (plain
+	// recency listing); a non-empty one would need the MiniLM warmup, which
+	// only other tests happen to trigger — never depend on that here.
+	let (_tx1, rx1) = cancel_pair();
 	let (text, injected_now) = retrieve_and_format(
 		&config,
-		"how should I run the test suite?",
+		"",
 		ROLE,
 		proj,
 		false,
 		&std::collections::HashSet::new(),
-		rx(),
+		rx1,
 	)
 	.await;
+	let dir = crate::directories::get_learning_dir(ROLE, proj).expect("dir");
+	let files: Vec<String> = std::fs::read_dir(&dir)
+		.map(|entries| {
+			entries
+				.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+				.collect()
+		})
+		.unwrap_or_default();
+	let all = backend
+		.retrieve_all(ROLE, proj, &config)
+		.await
+		.unwrap_or_default();
 	assert!(
 		text.contains("always run the test suite on the dev box"),
-		"lesson missing from recall block:\n{text}"
+		"lesson missing from recall block:\ntext={text:?}\nstore dir {dir:?} files={files:?}\nretrieve_all={}",
+		all.len()
 	);
 	assert!(text.contains("<recall>"), "missing recall wrapper:\n{text}");
 	assert!(
@@ -108,14 +129,15 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 
 	// Same call with everything already injected: nothing new to say.
 	let already: std::collections::HashSet<String> = injected_now.into_iter().collect();
+	let (_tx2, rx2) = cancel_pair();
 	let (text2, injected2) = retrieve_and_format(
 		&config,
-		"how should I run the test suite?",
+		"",
 		ROLE,
 		proj,
 		false,
 		&already,
-		rx(),
+		rx2,
 	)
 	.await;
 	assert!(text2.is_empty(), "re-injection must be suppressed: {text2}");
@@ -149,6 +171,7 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 	let url = spawn_stub(vec![final_response("deploy\nrsync\nbox\n")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
+	let (_tx3, rx3) = cancel_pair();
 	let (text, _) = retrieve_and_format(
 		&config,
 		"deploy the service to the box",
@@ -156,7 +179,7 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 		proj,
 		true,
 		&std::collections::HashSet::new(),
-		rx(),
+		rx3,
 	)
 	.await;
 	assert!(
@@ -172,6 +195,7 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 async fn test_disabled_learning_injects_nothing() {
 	let mut config = fake_provider_config();
 	config.supervisor.learning.enabled = false;
+	let (_tx4, rx4) = cancel_pair();
 	let (text, injected) = retrieve_and_format(
 		&config,
 		"anything",
@@ -179,7 +203,7 @@ async fn test_disabled_learning_injects_nothing() {
 		"__inject_test_proj_disabled",
 		true,
 		&std::collections::HashSet::new(),
-		rx(),
+		rx4,
 	)
 	.await;
 	assert!(text.is_empty());

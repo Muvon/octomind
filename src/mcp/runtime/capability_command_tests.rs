@@ -180,7 +180,10 @@ async fn test_load_env_capabilities_reports_failures_per_name() {
 	}
 	assert_eq!(
 		starting_names,
-		vec!["__envcap_nonexistent".to_string(), "__envcap_other".to_string()]
+		vec![
+			"__envcap_nonexistent".to_string(),
+			"__envcap_other".to_string()
+		]
 	);
 	assert_eq!(completions.len(), 2, "{completions:?}");
 	assert!(

@@ -18,13 +18,29 @@
 //! non-zero with non-empty stdout, and `on = "error"` hooks stay silent for
 //! successful tool results.
 
-use std::os::unix::fs::PermissionsExt;
+/// Hooks are spawned with `Command::new(script)`, so the script must be
+/// directly runnable by the OS: a shebang script with the exec bit on Unix,
+/// a batch file on Windows (std routes `.cmd` through `cmd.exe`).
+#[cfg(unix)]
+const SCRIPT_EXT: &str = "sh";
+#[cfg(windows)]
+const SCRIPT_EXT: &str = "cmd";
 
-fn write_script(dir: &std::path::Path, rel: &str, body: &str) {
+fn write_script(dir: &std::path::Path, rel: &str, message: &str) {
 	let path = dir.join(rel);
 	std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+
+	#[cfg(unix)]
+	let body = format!("#!/bin/sh\necho \"{message}\"\nexit 1\n");
+	#[cfg(windows)]
+	let body = format!("@echo off\r\necho {message}\r\nexit /b 1\r\n");
 	std::fs::write(&path, body).expect("write script");
-	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+	}
 }
 
 fn hook_workdir() -> tempfile::TempDir {
@@ -32,25 +48,20 @@ fn hook_workdir() -> tempfile::TempDir {
 	std::fs::create_dir_all(tmp.path().join(".agents")).expect(".agents");
 	std::fs::write(
 		tmp.path().join(".agents/guardrails.toml"),
-		concat!(
-			"[[hook]]\n",
-			"script = \"hooks/notify.sh\"\n",
-			"\n",
-			"[[hook]]\n",
-			"on = \"error\"\n",
-			"script = \"hooks/on_error.sh\"\n",
+		format!(
+			"[[hook]]\nscript = \"hooks/notify.{SCRIPT_EXT}\"\n\n[[hook]]\non = \"error\"\nscript = \"hooks/on_error.{SCRIPT_EXT}\"\n"
 		),
 	)
 	.expect("write guardrails.toml");
 	write_script(
 		tmp.path(),
-		"hooks/notify.sh",
-		"#!/bin/sh\necho \"HOOK-FIRED: inspect the result\"\nexit 1\n",
+		&format!("hooks/notify.{SCRIPT_EXT}"),
+		"HOOK-FIRED: inspect the result",
 	);
 	write_script(
 		tmp.path(),
-		"hooks/on_error.sh",
-		"#!/bin/sh\necho \"ERROR-HOOK-FIRED\"\nexit 1\n",
+		&format!("hooks/on_error.{SCRIPT_EXT}"),
+		"ERROR-HOOK-FIRED",
 	);
 	tmp
 }

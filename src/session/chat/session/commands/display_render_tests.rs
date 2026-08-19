@@ -520,11 +520,13 @@ fn test_render_image_video_variants() {
 
 #[test]
 fn test_render_info_full_and_minimal() {
-	let mut cstats = crate::session::CompressionStats::default();
-	cstats.conversation_compressions = 2;
-	cstats.total_messages_removed = 14;
-	cstats.total_tokens_saved = 9_000;
-	cstats.input_tokens = 1_200;
+	let cstats = crate::session::CompressionStats {
+		conversation_compressions: 2,
+		total_messages_removed: 14,
+		total_tokens_saved: 9_000,
+		input_tokens: 1_200,
+		..Default::default()
+	};
 
 	display_info(&CommandOutput::Info {
 		session_name: "info-render".to_string(),

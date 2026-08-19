@@ -450,7 +450,7 @@ async fn test_large_tool_result_truncation_and_dedup() {
 		)
 		.expect("write SKILL.md");
 	}
-	crate::mcp::workdir::set_thread_working_directory(workdir.path().to_path_buf());
+	crate::mcp::workdir::set_session_working_directory(workdir.path().to_path_buf());
 
 	let url = spawn_stub(vec![
 		tool_calls_response(&[("call_s1", "skill", serde_json::json!({"action": "list"}))]),
@@ -499,7 +499,7 @@ async fn test_large_tool_result_truncation_and_dedup() {
 	let last = session.session.messages.last().expect("final message");
 	assert!(last.content.contains("spill round done"));
 
-	crate::mcp::workdir::set_thread_working_directory(std::env::current_dir().expect("cwd"));
+	crate::mcp::workdir::set_session_working_directory(std::env::current_dir().expect("cwd"));
 	std::env::remove_var("OLLAMA_API_URL");
 }
 

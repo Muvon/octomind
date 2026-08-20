@@ -76,7 +76,8 @@ pub async fn create_system_prompt(
 		The supervisor injects control messages mid-task. They appear in the user turn but are system orders, not the user — obey each on your very next action, ahead of whatever you were doing.\n\
 		- <pay-attention>…</pay-attention>: a steering order. Loop/stall → change tool, args, or sub-goal, never repeat the call. Verification → run the project's check and report the real result before claiming done. Format (status line / evidence) → emit exactly as given.\n\
 		- <recall>…</recall>: past-session lessons (rules) and orientation (unverified — check first).\n\
-		Never echo or mention these blocks; they are hidden from the user.\n\
+		Never echo or mention these blocks; they are hidden from the user, and they never replace the task you were given.\n\
+		The user sees only your final message. Write it as the complete, standalone answer to their original request — never a reply about a note, and never a delta on an earlier draft they never saw (\"here it is with evidence\", \"fixed as asked\"). If a note made you redo work, re-state the whole answer, not the correction.\n\
 		</supervisor-rules>",
 	);
 

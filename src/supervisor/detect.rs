@@ -84,7 +84,7 @@ impl SelfReport {
 /// out-of-band; the resulting tags are stripped before display.
 pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one compact JSON status line — the last line, nothing after it:
 `<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"],"plan":null}</sup>`
-Use valid single-line JSON with exactly those fields. `carry` may be empty; keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
+Use valid single-line JSON with exactly those fields. `carry` may be empty and `next` is `null` when nothing remains to do; keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
 - `progressing` — actively making changes
 - `blocked` — stuck, cannot proceed
@@ -100,7 +100,9 @@ This line is read by the system and hidden from the user. Emit exactly one."#;
 struct WireSelfReport {
 	state: String,
 	focus: String,
-	next: String,
+	// Null at `done`: a finished turn has no next action, and the schema has to
+	// say so — a rejected parse loses the terminal state the gate runs on.
+	next: Option<String>,
 	carry: Vec<String>,
 	#[serde(default)]
 	plan: Option<super::plan::PlanSignal>,
@@ -116,7 +118,7 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 			state: SelfReport::from_token(&wire.state)?,
 			handoff: SelfReportHandoff {
 				focus: wire.focus.trim().to_string(),
-				next: wire.next.trim().to_string(),
+				next: wire.next.unwrap_or_default().trim().to_string(),
 				carry: wire
 					.carry
 					.into_iter()
@@ -200,12 +202,15 @@ fn leading_state_token(inner: &str) -> String {
 /// `STATE` placeholder a model may echo from the instruction, or carries the
 /// reason separator (`·`/`|`) that real superscript never contains. This is the
 /// safety net: an echoed or malformed report still never reaches the screen.
+///
+/// The JSON form is matched on *shape*, not by deserializing [`WireSelfReport`]:
+/// hiding the token must not depend on the model honoring the schema, or an
+/// unknown state, an extra field, or truncated JSON puts it on the user's screen.
+/// Superscript the user actually wrote (`2`, `th`, `®`) is never a JSON object
+/// carrying a `state` key.
 fn is_self_report_body(inner: &str) -> bool {
 	if inner.trim_start().starts_with('{') {
-		return serde_json::from_str::<WireSelfReport>(inner)
-			.ok()
-			.and_then(|report| SelfReport::from_token(&report.state))
-			.is_some();
+		return inner.contains("\"state\"");
 	}
 	let lead = leading_state_token(inner);
 	SelfReport::from_token(&lead).is_some()
@@ -1885,9 +1890,22 @@ mod tests {
 
 	#[test]
 	fn malformed_structured_handoff_is_not_accepted_as_status() {
+		// Rejected as a status (no `carry`) — but still never shown to the user.
 		let malformed = r#"<sup>{"state":"progressing","focus":"x"}</sup>"#;
 		assert!(parse_self_report_handoff(malformed).is_none());
-		assert_eq!(strip_self_report(malformed), malformed);
+		assert_eq!(strip_self_report(malformed), "");
+		// Truncated mid-token: not parseable at all, still hidden.
+		assert_eq!(strip_self_report(r#"a <sup>{"state":"do</sup>"#), "a");
+	}
+
+	#[test]
+	fn done_report_with_null_next_parses_and_is_hidden() {
+		let text = r#"answer
+<sup>{"state":"done","focus":"briefed the staged changes","next":null,"carry":["one file left untracked"],"plan":null}</sup>"#;
+		let parsed = parse_self_report_handoff(text).expect("null next is a valid done report");
+		assert_eq!(parsed.state, SelfReport::Done);
+		assert_eq!(parsed.handoff.next, "");
+		assert_eq!(strip_self_report(text), "answer");
 	}
 
 	#[test]

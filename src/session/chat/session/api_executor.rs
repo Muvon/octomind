@@ -725,7 +725,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					note.push_str(q);
 					note.push('\n');
 				}
-				note.push_str("</pay-attention>");
+				note.push_str(
+					"Then re-emit your full answer to the user's original request, self-contained — the version these quotes came from never reached them, so a correction or a remark about this repair answers nothing.\n</pay-attention>",
+				);
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate
 				chat_session.nudge_iterations = next_iteration;

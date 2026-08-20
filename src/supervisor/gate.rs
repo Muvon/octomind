@@ -1068,7 +1068,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 		s.push('\n');
 	}
 	s.push_str(
-		"Close each gap with a concrete artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied or out of scope, point to the exact evidence and explain briefly. Then re-report status.\n</pay-attention>",
+		"Close each gap with a concrete artifact, observed state, delivered output, or domain-appropriate check. If a gap is already satisfied or out of scope, point to the exact evidence and explain briefly. Then re-report status, and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
 	);
 	s
 }

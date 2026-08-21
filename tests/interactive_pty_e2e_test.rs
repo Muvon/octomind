@@ -16,6 +16,10 @@
 //! (tests/fixtures/pty_driver.py), type a prompt, read the streamed answer,
 //! and leave via /exit. This is the only way the interactive main loop,
 //! reedline input layer, and terminal rendering ever execute under test.
+//!
+//! Unix only: the driver needs Python's `pty` module, which does not exist on
+//! Windows.
+#![cfg(unix)]
 
 use std::process::{Command, Stdio};
 

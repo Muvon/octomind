@@ -144,6 +144,10 @@ async fn test_ws_session_message_roundtrip() {
 	// Redirect all session/data I/O into the sandbox before the server does
 	// any of it. Sole test in this binary — no other thread reads env.
 	std::env::set_var("HOME", home.path());
+	std::env::set_var(
+		"OCTOMIND_DATA_DIR",
+		home.path().join(".local/share/octomind"),
+	);
 	std::env::set_var("OLLAMA_API_URL", &stub_url);
 	std::env::set_var("DO_NOT_TRACK", "1");
 

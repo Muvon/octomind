@@ -70,6 +70,7 @@ Octomind also loads `.env` files from the current directory (see [.env File Supp
 
 | Variable | Description |
 |----------|-------------|
+| `OCTOMIND_DATA_DIR` | Override the directory holding **all** octomind state — config, sessions, logs, cache, learning. Default: `~/.local/share/octomind` (Linux/macOS) or `%LOCALAPPDATA%\octomind` (Windows). Redirecting `HOME` does not work on Windows, so this is the portable way to run octomind against a throwaway state directory. |
 | `OCTOMIND_CONFIG_PATH` | Override the config **file** path used at load. The value is the path to the primary config TOML; its parent directory becomes the config directory for multi-file merge (all `*.toml` files there are merged). Default file: `~/.local/share/octomind/config/config.toml` (Linux/macOS) or `%LOCALAPPDATA%\octomind\config\config.toml` (Windows). |
 | `OCTOMIND_SKILLS` | Comma-delimited skill names to preload at session start (e.g., `programming-rust,git-workflow`). Skills are activated permanently without evaluating declarative rules. |
 | `OCTOMIND_CAPABILITIES` | Comma-delimited capability names to force-enable at session start (e.g., `cron,docker`). Bypasses the auto-activation embedding pipeline; capabilities are loaded deterministically regardless of intent matching. Already-active entries are no-ops. |

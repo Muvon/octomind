@@ -21,12 +21,18 @@
 use octomind::config::McpServerConfig;
 use octomind::mcp::McpToolCall;
 
+/// Windows CPython installs ship `python.exe` only — there is no `python3`.
+#[cfg(windows)]
+const PYTHON: &str = "python";
+#[cfg(not(windows))]
+const PYTHON: &str = "python3";
+
 fn stub_server(name: &str) -> McpServerConfig {
 	let script = concat!(
 		env!("CARGO_MANIFEST_DIR"),
 		"/tests/fixtures/mcp_stub_server.py"
 	);
-	McpServerConfig::stdin(name, "python3", vec![script.to_string()], 30, Vec::new())
+	McpServerConfig::stdin(name, PYTHON, vec![script.to_string()], 30, Vec::new())
 }
 
 #[tokio::test]
@@ -103,7 +109,7 @@ async fn stub_stdio_server_call_timeout() {
 		env!("CARGO_MANIFEST_DIR"),
 		"/tests/fixtures/mcp_stub_server.py"
 	);
-	let server = McpServerConfig::stdin(name, "python3", vec![script.to_string()], 2, Vec::new());
+	let server = McpServerConfig::stdin(name, PYTHON, vec![script.to_string()], 2, Vec::new());
 
 	let call = McpToolCall {
 		tool_name: "sleep".to_string(),

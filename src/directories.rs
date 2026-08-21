@@ -20,30 +20,38 @@ use std::path::{Path, PathBuf};
 
 /// Get the system-wide data directory for octomind
 ///
-/// This function returns the appropriate data directory based on the OS:
+/// `OCTOMIND_DATA_DIR` overrides the location of every piece of state (config,
+/// sessions, logs, cache). This is the only portable way to sandbox octomind:
+/// on Windows `dirs` resolves Known Folders, so redirecting `HOME` isolates
+/// nothing.
+///
+/// Otherwise the location depends on the OS:
 /// - macOS: ~/.local/share/octomind
 /// - Linux: ~/.local/share/octomind (following XDG Base Directory specification)
 /// - Windows: %LOCALAPPDATA%/octomind
 pub fn get_octomind_data_dir() -> Result<PathBuf> {
-	let data_dir = match dirs::home_dir() {
-		Some(home) => {
-			#[cfg(target_os = "windows")]
-			let path = {
-				// On Windows, use %LOCALAPPDATA%/octomind
-				match dirs::data_local_dir() {
-					Some(dir) => dir.join("octomind"),
-					None => home.join("AppData").join("Local").join("octomind"),
-				}
-			};
+	let data_dir = match std::env::var_os("OCTOMIND_DATA_DIR") {
+		Some(dir) => PathBuf::from(dir),
+		None => match dirs::home_dir() {
+			Some(home) => {
+				#[cfg(target_os = "windows")]
+				let path = {
+					// On Windows, use %LOCALAPPDATA%/octomind
+					match dirs::data_local_dir() {
+						Some(dir) => dir.join("octomind"),
+						None => home.join("AppData").join("Local").join("octomind"),
+					}
+				};
 
-			#[cfg(not(target_os = "windows"))]
-			let path = home.join(".local").join("share").join("octomind");
+				#[cfg(not(target_os = "windows"))]
+				let path = home.join(".local").join("share").join("octomind");
 
-			path
-		}
-		None => {
-			return Err(anyhow::anyhow!("Unable to determine home directory"));
-		}
+				path
+			}
+			None => {
+				return Err(anyhow::anyhow!("Unable to determine home directory"));
+			}
+		},
 	};
 
 	// Ensure the directory exists

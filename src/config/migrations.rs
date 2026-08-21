@@ -269,12 +269,14 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 	let Some(migration) = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE)? else {
 		if report_up_to_date {
 			let version = plan().version_of(&original)?;
-			println!("✅ Config is already at the latest version ({version})");
+			eprintln!("✅ Config is already at the latest version ({version})");
 		}
 		return Ok(false);
 	};
 
-	println!(
+	// stderr, never stdout: an outdated config is upgraded during startup, and
+	// ACP/MCP stdio modes carry JSON-RPC on stdout.
+	eprintln!(
 		"🔄 Upgrading config from version {} to {}...",
 		migration.from_version, migration.to_version
 	);
@@ -285,7 +287,7 @@ fn upgrade_locked(config_path: &Path, report_up_to_date: bool) -> Result<bool> {
 
 	let backup_path = config_file::apply_migration(config_path, original.as_bytes(), &migration)?;
 
-	println!(
+	eprintln!(
 		"✅ Config upgraded successfully! Backup saved to: {}",
 		backup_path.display()
 	);

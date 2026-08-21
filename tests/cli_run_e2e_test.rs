@@ -110,6 +110,7 @@ fn write_sandbox_config(home: &std::path::Path) {
 fn octomind_cmd(home: &std::path::Path, stub_url: &str) -> Command {
 	let mut cmd = Command::new(env!("CARGO_BIN_EXE_octomind"));
 	cmd.env("HOME", home)
+		.env("OCTOMIND_DATA_DIR", home.join(".local/share/octomind"))
 		.env("OLLAMA_API_URL", stub_url)
 		.env_remove("OCTOMIND_TELEMETRY")
 		.env("DO_NOT_TRACK", "1")

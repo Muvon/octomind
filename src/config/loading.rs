@@ -322,7 +322,9 @@ impl Config {
 			config_path.display()
 		))?;
 
-		println!("Configuration saved to {}", config_path.display());
+		// stderr, never stdout: ACP and MCP stdio modes carry JSON-RPC on stdout,
+		// and a first run creates this file before the protocol starts.
+		eprintln!("Configuration saved to {}", config_path.display());
 		Ok(())
 	}
 
@@ -381,7 +383,7 @@ impl Config {
 		fs::write(path, config_str)
 			.context(format!("Failed to write config to {}", path.display()))?;
 
-		println!("Configuration saved to {}", path.display());
+		eprintln!("Configuration saved to {}", path.display());
 		Ok(())
 	}
 

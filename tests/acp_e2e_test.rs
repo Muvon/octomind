@@ -112,6 +112,7 @@ impl AcpClient {
 	async fn spawn(home: &std::path::Path, stub_url: &str) -> Self {
 		let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_octomind"))
 			.env("HOME", home)
+			.env("OCTOMIND_DATA_DIR", home.join(".local/share/octomind"))
 			.env("OLLAMA_API_URL", stub_url)
 			.env("DO_NOT_TRACK", "1")
 			.current_dir(home)

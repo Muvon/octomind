@@ -262,7 +262,7 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 			},
 			"progress": {
 				"type": "string",
-				"description": "2–4 sentences: what was completed, what is in progress, the outcome so far. If a prior summary exists in the transcript, extend (do not replace) its progress narrative."
+				"description": "Lead with a DONE list — one line per action already carried out and confirmed (file written, command run and its result, check that passed), each phrased so it is unambiguous the work exists and must NOT be repeated. Then 1-2 sentences on what is in progress and the outcome so far. This list is the only record the next turn has of what it already did: anything omitted will be done a second time, and work still described as pending will be resumed even when it is finished. If a prior summary exists in the transcript, carry its DONE list forward and add to it. Keep at most 20 lines: when the list would exceed that, merge the oldest entries into a single summarising line rather than dropping them, so the record stays bounded while nothing already done silently disappears."
 			},
 			"analysis_findings": {
 				"type": "array",

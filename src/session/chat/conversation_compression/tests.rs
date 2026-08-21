@@ -77,6 +77,44 @@ fn fresh_user_turn_preserves_exact_previous_assistant_bridge() {
 }
 
 #[test]
+fn mid_task_fold_keeps_the_live_exchange_verbatim() {
+	// Compaction usually fires mid-task, where the tail is a tool result rather
+	// than a new request. That path used to drain to the tail, folding away the
+	// exchange the model was working from — the moment detail matters most.
+	let mut live_step = msg("assistant");
+	live_step.content = "the step currently being executed".to_string();
+	let mut live_result = msg("tool");
+	live_result.content = "output of the in-flight call".to_string();
+	let messages = vec![
+		msg("system"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		live_step.clone(),
+		live_result.clone(),
+	];
+
+	let (start_idx, end_idx) =
+		find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	// The drain stops before the live assistant step, so it and its tool
+	// traffic survive byte-exact.
+	assert!(
+		end_idx < 7,
+		"live step must not be folded (end_idx={end_idx})"
+	);
+	assert_eq!(messages[end_idx + 1].content, live_step.content);
+	assert_eq!(messages[end_idx + 2].content, live_result.content);
+	assert!(start_idx < end_idx);
+
+	// /done still compresses the whole task deliberately.
+	let (_, done_end) = find_compression_range_preserving_turn(&messages, false, false).unwrap();
+	assert_eq!(done_end, messages.len() - 1);
+}
+
+#[test]
 fn synthetic_user_messages_excluded_from_tasks() {
 	// Guards the bug that ate the work: supervisor steers / recall / skill /
 	// continuation are USER-role but must never be captured as user tasks or fed to

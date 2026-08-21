@@ -79,13 +79,22 @@ pub(super) fn find_compression_range(
 	find_compression_range_preserving_turn(messages, force, false)
 }
 
-/// Production range selection with an optional exact user-turn bridge.
+/// Production range selection that always leaves the live exchange verbatim.
 ///
 /// When the newest message is a genuine user request, automatic compression
 /// stops immediately before the preceding assistant response. The surviving
 /// tail is therefore the byte-exact `[assistant response, new user request]`
 /// pair (plus any control-plane messages between them), while older history is
 /// still eligible for folding. `/done` deliberately compresses the whole task.
+///
+/// Mid-task the newest message is a tool result or an assistant step, not a
+/// request — and that used to fall through to draining everything, so the fold
+/// summarised away the exchange the model was in the middle of. That is the
+/// worst possible moment to lose detail: compressing mid-derivation both blunts
+/// the influence of the newest interaction and leaves the agent unable to tell
+/// which actions it has already taken, so it repeats them. So the live exchange
+/// — everything after the last assistant message that closed a step — is kept
+/// verbatim on every preserving fold, whatever role the tail happens to carry.
 pub(super) fn find_compression_range_preserving_turn(
 	messages: &[crate::session::Message],
 	force: bool,
@@ -108,9 +117,10 @@ pub(super) fn find_compression_range_preserving_turn(
 	let start_idx = first_task - 1;
 
 	let tail_idx = messages.len() - 1;
-	let end_idx = if preserve_recent_user_bridge
-		&& crate::session::is_real_user_task_message(&messages[tail_idx])
-	{
+	let end_idx = if !preserve_recent_user_bridge {
+		tail_idx
+	} else if crate::session::is_real_user_task_message(&messages[tail_idx]) {
+		// A fresh request just arrived: keep the [assistant, request] bridge.
 		match messages[..tail_idx]
 			.iter()
 			.rposition(|message| message.role == "assistant")
@@ -119,7 +129,16 @@ pub(super) fn find_compression_range_preserving_turn(
 			None => tail_idx,
 		}
 	} else {
-		tail_idx
+		// Mid-task: keep the live exchange. The last assistant message is the
+		// step the model is working from, so fold up to just before it and let
+		// it plus its tool traffic survive byte-exact.
+		match messages[..=tail_idx]
+			.iter()
+			.rposition(|message| message.role == "assistant")
+		{
+			Some(live_step_idx) => live_step_idx.saturating_sub(1),
+			None => tail_idx,
+		}
 	};
 
 	// Minimum conversation messages to justify compression.

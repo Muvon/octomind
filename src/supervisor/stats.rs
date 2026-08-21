@@ -42,8 +42,6 @@ pub enum CallKind {
 	Condense,
 	/// Subagent handoff quality gate (`tap run` / `agent_*`).
 	Delegate,
-	/// Compaction-fidelity check after a compression is applied.
-	Fidelity,
 }
 
 #[derive(Default, Clone)]
@@ -56,7 +54,6 @@ struct Stats {
 	distill_calls: u64,
 	condense_calls: u64,
 	delegate_calls: u64,
-	fidelity_calls: u64,
 	delegate_runs: u64,
 	delegate_blocks: u64,
 	condensed_results: u64,
@@ -74,9 +71,6 @@ struct Stats {
 	// Per-signal steer breakdown — which detector signal fired each steer.
 	steer_loop: u64,
 	steer_no_progress: u64,
-	steer_truncation: u64,
-	steer_dedup: u64,
-	steer_distraction: u64,
 	steer_sequential: u64,
 	steer_reread: u64,
 	pregate_blocks: u64,
@@ -119,7 +113,6 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Delegate => s.delegate_calls += 1,
-			CallKind::Fidelity => s.fidelity_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -156,9 +149,6 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 		match signal {
 			DetectorSignal::Loop => s.steer_loop += 1,
 			DetectorSignal::NoProgress => s.steer_no_progress += 1,
-			DetectorSignal::Truncation => s.steer_truncation += 1,
-			DetectorSignal::Dedup => s.steer_dedup += 1,
-			DetectorSignal::Distraction => s.steer_distraction += 1,
 			DetectorSignal::Sequential => s.steer_sequential += 1,
 			DetectorSignal::Reread => s.steer_reread += 1,
 			DetectorSignal::None => {}
@@ -223,9 +213,6 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	let steer_signals: Vec<serde_json::Value> = [
 		("loop", s.steer_loop),
 		("no-progress", s.steer_no_progress),
-		("truncation", s.steer_truncation),
-		("dedup", s.steer_dedup),
-		("drift", s.steer_distraction),
 		("sequential", s.steer_sequential),
 		("reread", s.steer_reread),
 	]
@@ -242,7 +229,6 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
 		"delegate_calls": s.delegate_calls,
-		"fidelity_calls": s.fidelity_calls,
 		"delegate_runs": s.delegate_runs,
 		"delegate_blocks": s.delegate_blocks,
 		"condensed_results": s.condensed_results,

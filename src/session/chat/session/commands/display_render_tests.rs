@@ -558,12 +558,12 @@ fn test_render_info_full_and_minimal() {
 		supervisor_stats: Some(json!({
 			"calls": 12, "recall_calls": 2, "gate_calls": 4, "resolve_calls": 1,
 			"distill_calls": 1, "condense_calls": 2, "delegate_calls": 1,
-			"fidelity_calls": 1, "delegate_runs": 1, "delegate_blocks": 0,
+			"delegate_runs": 1, "delegate_blocks": 0,
 			"condensed_results": 3, "condense_saved_tokens": 4_000,
 			"input_tokens": 30_000, "output_tokens": 2_000,
 			"tokens_per_second": 80.0, "cost": 0.12,
 			"gate_runs": 4, "gate_pass": 3, "gate_fail": 1,
-			"steers": 1, "steer_signals": {"drift": 1}
+			"steers": 1, "steer_signals": {"loop": 1}
 		})),
 	});
 

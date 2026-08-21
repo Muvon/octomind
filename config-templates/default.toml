@@ -720,24 +720,6 @@ decay_days = 90
 loop_threshold = 3
 # Turns without new information -> drift candidate
 no_progress_window = 5
-# Consecutive truncated tool results in a row -> model is ignoring the truncation
-# notice and re-querying without narrowing (tool-agnostic, keyed on the sentinel)
-truncation_threshold = 2
-# Consecutive deduplicated tool results in a row -> model is re-issuing calls whose
-# output it already received (tool-agnostic, keyed on the dedup sentinel)
-dedup_threshold = 2
-# Consecutive off-task RESULTS in a row -> model has drifted from the line of work it
-# was pursuing. Scores each result against a centroid of recent results, which follows
-# the agent -- a coherent move to another subsystem re-anchors and breaks the streak
-# (self-referential -> no task anchor, robust to abstract requests). 0 = OFF (default;
-# costs one embedding per sizable tool result when enabled). Set e.g. 3 to enable;
-# drift decisions are logged at debug so you can tune drift_floor before relying on it.
-distraction_threshold = 0
-# FLOOR (not a relevance boundary): a result is drift only if its cosine to the working
-# set falls BELOW this. Embeddings are reliable at "clearly unrelated", not at "is this
-# relevant" -> keep it in the tail. Lower = stricter. Model-dependent; tune from logs.
-# (Diagnostic on the default model: on-task ~0.79, off-task ~0.63-0.73 -> ~0.70 floor.)
-drift_floor = 0.7
 # Inject the hidden structured state/focus/next/carry handoff and parse it back.
 # Compression uses it as an untrusted attention hint grounded in the transcript.
 self_report = true

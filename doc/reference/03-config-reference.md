@@ -386,10 +386,6 @@ Deterministic, free, every-turn signals that decide when (rarely) to wake the mo
 |-------|------|---------|-------------|
 | `loop_threshold` | usize | `3` | Identical tool+args this many times in a row → loop fired |
 | `no_progress_window` | usize | `5` | Turns without new information → drift candidate |
-| `truncation_threshold` | usize | `2` | Consecutive truncated tool results → model is re-querying without narrowing |
-| `dedup_threshold` | usize | `2` | Consecutive deduplicated tool results → model is re-issuing calls whose output it already has |
-| `distraction_threshold` | usize | `0` | Consecutive off-task results (cosine to the working-set centroid below `drift_floor`) → drift. The centroid follows every result, so a coherent pivot re-anchors and breaks the streak. `0` = off; costs one embedding per sizable tool result when enabled |
-| `drift_floor` | f64 | `0.7` | Drift floor: a result is drift only if its cosine to the working set falls below this. Model-dependent; tune from debug logs |
 | `self_report` | bool | `true` | Inject and parse the hidden structured state/focus/next/carry handoff used by detectors and compression |
 | `sequential_threshold` | usize | `0` | Consecutive single-tool-call rounds → over-sequencing advisory. `0` = off |
 | `sequential_max_steers_per_turn` | usize | `0` | Maximum over-sequencing advisories per genuine user turn. Successful compression resets the budget. `0` = unlimited |
@@ -470,10 +466,6 @@ decay_days = 90
 [supervisor.detectors]
 loop_threshold = 3
 no_progress_window = 5
-truncation_threshold = 2
-dedup_threshold = 2
-distraction_threshold = 0
-drift_floor = 0.7
 self_report = true
 sequential_threshold = 0
 sequential_max_steers_per_turn = 0

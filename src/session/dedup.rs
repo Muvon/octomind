@@ -58,9 +58,9 @@ const MIN_DEDUP_CONTENT_LEN: usize = 500;
 /// Max chars of the original's first/last line quoted in the placeholder.
 const SNIPPET_CHARS: usize = 120;
 
-/// Sentinel embedded in every dedup placeholder (see [`placeholder`]). The
-/// supervisor's detector keys its consecutive-dedup streak on this substring,
-/// tool-agnostically — mirroring how truncation detection keys on its own tag.
+/// Sentinel embedded in every dedup placeholder (see [`placeholder`]). This is
+/// the model-facing signal that the body was elided because it already has the
+/// output — the inline feedback that makes a separate detector unnecessary.
 pub const DEDUP_NOTICE_TAG: &str = "duplicate tool call";
 
 static DEDUP_STATE: OnceLock<RwLock<GlobalMap>> = OnceLock::new();
@@ -214,8 +214,8 @@ mod tests {
 
 	#[test]
 	fn every_placeholder_variant_carries_the_sentinel() {
-		// The supervisor's dedup detector keys on DEDUP_NOTICE_TAG; if any
-		// placeholder variant stops containing it, dedup steering goes silent.
+		// A placeholder that doesn't say it's a duplicate reads as a tool failure:
+		// the model re-runs the call instead of using the output it already holds.
 		let two_line = placeholder("view", "first\nlast\n", false);
 		let one_line = placeholder("view", "only\n", false);
 		let truncated = placeholder("shell", "huge\n", true);

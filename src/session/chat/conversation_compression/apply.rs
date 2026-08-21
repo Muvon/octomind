@@ -272,26 +272,6 @@ pub(super) async fn apply_compression(
 		.unwrap_or_default()
 		.to_string();
 
-	// Fidelity snapshot (pre-drain): the authoritative goal + every explicit
-	// constraint across real user turns. Compression is lossy; these are what
-	// the post-compression view must still entail (checked at the end).
-	//
-	// Prefer the actual most recent user message (ground truth) over the
-	// AI-generated `original_request`, which can drift stale across
-	// compressions when the model fails to detect a user pivot.
-	let fidelity_goal = resolve_task_intent(
-		&last_user_message,
-		&summary.original_request,
-		&session.session.messages,
-	);
-	let fidelity_constraints = crate::supervisor::recite::active_constraints(
-		&session.session.messages,
-		session
-			.gate_task
-			.as_ref()
-			.map(|task| task.resolved_request.as_str()),
-	);
-
 	// PACT commit checks run before ANY live session mutation. Governance is
 	// recomputed from the still-live transcript, then the full drain is archived
 	// and every stable packet ID is dereferenced back to byte-identical messages.
@@ -575,8 +555,8 @@ pub(super) async fn apply_compression(
 	let (messages_removed, _) = session.remove_messages_in_range(start_idx, end_idx)?;
 
 	// Insert the post-compression state first. Cache markers are aligned only
-	// after every reinjection (including fidelity repair) has finished, so the
-	// second boundary really is the end of the current state.
+	// after every reinjection has finished, so the second boundary really is the
+	// end of the current state.
 	let supports_caching = crate::session::model_supports_caching(&session.session.info.model);
 
 	let now = std::time::SystemTime::now()
@@ -749,42 +729,6 @@ pub(super) async fn apply_compression(
 		.unwrap_or_default()
 		.as_secs();
 
-	// COMPACTION FIDELITY: one cheap verifier pass — does the surviving view
-	// (summary + plan + anchor intent) still entail the pre-compression goal and
-	// every explicit constraint? Whatever was lost is re-injected with full
-	// authority. Fail-open inside the check; never blocks compression.
-	if config.supervisor.enabled && config.supervisor.gate.enabled {
-		let compressed_view = format!(
-			"{}\n\nANCHOR INTENT: {}",
-			compressed_entry, session.session.info.anchor.intent
-		);
-		let lost = crate::supervisor::fidelity::check_compaction_fidelity(
-			config,
-			&fidelity_goal,
-			&fidelity_constraints,
-			&compressed_view,
-		)
-		.await;
-		if !lost.is_empty() {
-			let mut note = String::from(
-				"<pay-attention>\n<!-- octomind:compaction_fidelity -->\nThe compression just applied dropped standing requirement(s) that still bind the work. They are re-stated here with full authority — treat each as if the user had just repeated it:\n",
-			);
-			for item in &lost {
-				note.push_str(&format!("- {item}\n"));
-			}
-			note.push_str("</pay-attention>");
-			session.add_system_managed_user_message(&note)?;
-			crate::supervisor::notify(&format!(
-				"compaction dropped {} requirement(s) — re-injected",
-				lost.len()
-			));
-			crate::log_debug!(
-				"Compaction fidelity: {} lost requirement(s) re-injected",
-				lost.len()
-			);
-		}
-	}
-
 	let summary_idx = start_idx + 1 + skill_count;
 	align_compression_cache_markers(
 		&mut session.session.messages,
@@ -794,8 +738,8 @@ pub(super) async fn apply_compression(
 	);
 
 	// Exact post-state accounting must happen after every mutation: summary,
-	// preserved skills, exact user bridge or continuation wrapper, fidelity
-	// repair, and final cache-marker placement. The previous subtraction model
+	// preserved skills, exact user bridge or continuation wrapper, and final
+	// cache-marker placement. The previous subtraction model
 	// only priced the generated summary and therefore understated the surviving
 	// context, corrupting both the next trigger and hard-ceiling safety.
 	let post_compression_tokens = session.get_full_context_tokens(config).await as u64;
@@ -864,8 +808,8 @@ pub(super) async fn apply_compression(
 		)
 	);
 
-	// Persist the final post-compression state only after skill/fidelity
-	// reinjection and cache alignment. The loader clears everything before this
+	// Persist the final post-compression state only after skill reinjection and
+	// cache alignment. The loader clears everything before this
 	// marker and rebuilds from this exact snapshot.
 	let _ = crate::session::logger::log_compression_point(
 		&session.session.info.name,
@@ -986,18 +930,14 @@ mod apply_tests {
 	}
 
 	#[test]
-	fn compression_markers_keep_anchor_and_end_after_skill_and_fidelity_reinjection() {
+	fn compression_markers_keep_anchor_and_end_after_skill_and_note_reinjection() {
 		let mut messages = vec![
 			cache_message("system", "system", true),
 			cache_message("assistant", "unchanged welcome anchor", false),
 			cache_message("user", "<skill name=\"rust\">rules</skill>", true),
 			cache_message("assistant", "compressed summary", true),
 			cache_message("user", "<continuation>resume</continuation>", true),
-			cache_message(
-				"user",
-				"<pay-attention>fidelity repair</pay-attention>",
-				false,
-			),
+			cache_message("user", "<pay-attention>re-anchor</pay-attention>", false),
 		];
 
 		align_compression_cache_markers(&mut messages, 1, 3, true);

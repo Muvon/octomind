@@ -47,9 +47,6 @@ Both derive from one primitive — **information novelty**: did the action add n
 
 - **Loop** — the same *result* repeats `loop_threshold` times in a row (default `3`). Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
 - **No-progress** — `no_progress_window` actions (default `5`) with **zero novelty** — churn, not genuine work.
-- **Truncation** — `truncation_threshold` truncated tool results in a row: the model is re-querying without narrowing instead of reading the spill file.
-- **Dedup** — `dedup_threshold` deduplicated results in a row: the model is re-issuing calls whose output it already received.
-- **Distraction** (opt-in, `distraction_threshold = 0` is off) — a result is drift when its embedding cosine to the centroid of recent results falls below `drift_floor`. Self-referential (no task anchor needed); costs one embedding per sizable tool result when enabled. The centroid follows every result, so a coherent move to another subsystem re-anchors after a couple of results — only wandering that never anchors keeps the streak alive. Condensed results are not scored (they carry the condenser's wording, not the tool's output).
 - **Sequential** (opt-in, `sequential_threshold = 0` is off) — single-tool-call rounds in a row where independent calls could have been batched into one parallel round. `sequential_max_steers_per_turn` caps emitted advisories within one genuine user turn; `0` is unlimited, and successful compression starts a fresh budget.
 
 The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, or no-progress otherwise, steers. Agreement needs no model at all.
@@ -82,10 +79,6 @@ With `claim_check = true`, the agent backs load-bearing facts with a verbatim qu
 Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal alongside normal work. A separate planner model makes one structured create/no-plan decision from the current request, specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
 
 The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses; the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion gate owns final plan clearance.
-
-### Compaction fidelity
-
-Compression is lossy by design. After a compression is applied, one cheap verifier pass (a *different* model than the summarizer) checks that the surviving view still entails the authoritative pre-compression requirements — the goal plus every explicit constraint. Anything lost is re-injected, so a binding requirement ("never X", a scope boundary) can never be silently dropped by compaction. Fail-open: a verifier outage accepts the compression.
 
 ## Steer
 
@@ -152,10 +145,6 @@ decay_days = 90
 [supervisor.detectors]     # deterministic, free, every turn
 loop_threshold = 3
 no_progress_window = 5
-truncation_threshold = 2
-dedup_threshold = 2
-distraction_threshold = 0  # opt-in embedding drift detector
-drift_floor = 0.7
 self_report = true
 sequential_threshold = 0   # opt-in over-sequencing advisory
 sequential_max_steers_per_turn = 0 # 0 = unlimited; successful compression resets it
@@ -203,11 +192,10 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 | Mechanic | When | Cost | Config |
 |----------|------|------|--------|
 | Self-report | Every turn | Free | `[supervisor.detectors] self_report` |
-| Detectors (loop / no-progress / truncation / dedup / distraction / sequential) | Every turn | Free (distraction: 1 embedding) | `[supervisor.detectors]` |
+| Detectors (loop / no-progress / sequential / re-read) | Every turn | Free | `[supervisor.detectors]` |
 | Evidence-bound claims | Every answer with repo facts | Free | `[supervisor] claim_check` |
 | Free pre-gates (mutation→check, plan complete / coverage / conditions) | On self-reported `done` | Free | `[supervisor.gate]` |
 | Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
-| Compaction fidelity | After each compression | Model (cheap) | — (uses `gate.verifier_model`) |
 | Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |
 | Steer | On loop / no-progress | Free | `[supervisor.detectors]` |
 | Steer circuit-breaker + on-track checkpoint | After `max_consecutive_steers` steers | Model (cheap, per breaker trip) | `[supervisor] max_consecutive_steers` |

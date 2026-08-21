@@ -487,7 +487,7 @@ Judge each lesson independently. Return one JSON object and nothing else:
 Empty array when every lesson is supported."#;
 
 /// Cap on the transcript excerpt handed to the lesson verifier — keeps the
-/// call cheap (mirrors the compaction-fidelity view cap).
+/// call cheap.
 const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
 
 /// One batched verifier pass: which of the candidate lessons does the
@@ -940,8 +940,6 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,
 		CallKind::Delegate => ModelPurpose::SupervisorDelegate,
-		// Fidelity rides the gate routing seat: same verifier-class model.
-		CallKind::Fidelity => ModelPurpose::SupervisorGate,
 	}
 }
 

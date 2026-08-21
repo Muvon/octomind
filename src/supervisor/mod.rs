@@ -37,7 +37,6 @@
 pub mod condense;
 pub mod delegate;
 pub mod detect;
-pub mod fidelity;
 pub mod gate;
 pub mod learning;
 pub mod ontrack;
@@ -299,29 +298,6 @@ pub struct DetectorsConfig {
 	pub loop_threshold: usize,
 	/// Turns without new information → drift candidate.
 	pub no_progress_window: usize,
-	/// Consecutive truncated tool results this many times in a row → the model
-	/// is ignoring the truncation notice and re-querying without narrowing.
-	/// Tool-agnostic: keyed on the truncation sentinel, not on tool identity.
-	pub truncation_threshold: usize,
-	/// Consecutive deduplicated tool results this many times in a row → the model
-	/// is re-issuing calls whose output it already received this session.
-	/// Tool-agnostic: keyed on the dedup sentinel, not on tool identity.
-	pub dedup_threshold: usize,
-	/// Consecutive off-task RESULTS this many times in a row → the model has drifted
-	/// from the line of work it was pursuing (distractor failure mode). `0` disables
-	/// the signal entirely (no embedding cost). When enabled it costs one embedding
-	/// per sizable result and scores it against a centroid of recent results — self-
-	/// referential, so no task anchor is needed (robust to abstract requests). The
-	/// centroid follows the agent, so only wandering that never re-anchors sustains
-	/// the streak; a coherent move to another subsystem breaks it after a result or
-	/// two.
-	pub distraction_threshold: usize,
-	/// Off-task FLOOR (not a relevance boundary): a result is drift only when its
-	/// cosine to the working-set centroid falls BELOW this. Embeddings are reliable
-	/// at "clearly unrelated" (the far-low tail), not at "is this relevant", so this
-	/// is a high-precision tail cutoff. Model-dependent; the drift decision is logged
-	/// at debug when the signal is on, so tune from real data. Lower = stricter.
-	pub drift_floor: f32,
 	/// Inject the self-report status-token instruction and parse it back.
 	pub self_report: bool,
 	/// Consecutive single-tool-call ROUNDS this many times in a row → the model is

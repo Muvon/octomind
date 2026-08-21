@@ -624,12 +624,6 @@ pub async fn process_response<S: OutputSink>(
 				if params.config.supervisor.enabled {
 					let loop_threshold = params.config.supervisor.detectors.loop_threshold;
 					let no_progress_window = params.config.supervisor.detectors.no_progress_window;
-					let truncation_threshold =
-						params.config.supervisor.detectors.truncation_threshold;
-					let dedup_threshold = params.config.supervisor.detectors.dedup_threshold;
-					let distraction_threshold =
-						params.config.supervisor.detectors.distraction_threshold;
-					let drift_floor = params.config.supervisor.detectors.drift_floor;
 					let sequential_threshold =
 						params.config.supervisor.detectors.sequential_threshold;
 					let sequential_max_steers_per_turn = params
@@ -638,32 +632,6 @@ pub async fn process_response<S: OutputSink>(
 						.detectors
 						.sequential_max_steers_per_turn;
 
-					// Drift detection is opt-in (distraction_threshold > 0): it costs one
-					// embedding per tool CALL. Reset the working-set centroid when the user's
-					// task changes — hash the latest real user message (NOT an embedding of it,
-					// so abstract/terse requests are fine here). The centroid is then the
-					// current task's calls, never carried across turns.
-					if distraction_threshold > 0 {
-						let task_hash = {
-							use std::hash::{Hash, Hasher};
-							let mut h = std::collections::hash_map::DefaultHasher::new();
-							params
-								.chat_session
-								.session
-								.messages
-								.iter()
-								.rev()
-								.find(|m| crate::session::is_real_user_task_message(m))
-								.map(|m| m.content.as_str())
-								.unwrap_or_default()
-								.hash(&mut h);
-							h.finish()
-						};
-						params.chat_session.detectors.note_task(task_hash);
-					}
-					// Results shorter than this aren't worth embedding — a few lines give a
-					// noisy cosine and verdict/placeholder cases carry no topical signal.
-					const MIN_DRIFT_LEN: usize = 200;
 					// Track whether this round emitted a steer (for the circuit-breaker).
 					let mut round_steered = false;
 					// Accumulate the highest-priority signal across the parallel batch;
@@ -674,9 +642,6 @@ pub async fn process_response<S: OutputSink>(
 					// the round verdict comes from record_round_signals after the loop.
 					let mut call_hashes: Vec<u64> = Vec::with_capacity(current_tool_calls.len());
 					let mut round_novel = false;
-					let mut round_truncated = false;
-					let mut round_dedup = false;
-					let mut round_drift = false;
 					// (fp_before / track_verification are captured above, BEFORE
 					// execute_tools_parallel — see the pre-execution comment.)
 					let mut round_verifier = false;
@@ -732,58 +697,6 @@ pub async fn process_response<S: OutputSink>(
 								.evidence
 								.record_command_output(cmd, &result_content);
 						}
-						// Tool-agnostic: detect truncation by the sentinel the global
-						// truncation choke point stamps, not by tool identity.
-						let is_truncated = result_content
-							.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG)
-							// A paged/ranged call (start/end/limit/…) IS the narrowing —
-							// its truncation is the display cap, not ignored advice, so
-							// it must not feed the truncation streak.
-							&& !crate::supervisor::detect::has_narrowing_params(
-								&call.parameters,
-							);
-						// Likewise detect a deduped repeat by the sentinel the dedup
-						// placeholder carries (a successful duplicate arrives as an error
-						// result whose body is the placeholder).
-						let is_dedup =
-							result_content.contains(crate::session::dedup::DEDUP_NOTICE_TAG);
-						// A condensed result is the supervisor's rewrite, not the tool's
-						// output: "keep" mode has already pruned it to what serves the task
-						// and "replace" mode substitutes a model-written summary. Either way
-						// its topical fingerprint is the condenser's, so scoring it measures
-						// the supervisor instead of the agent.
-						let is_condensed = result_content
-							.contains(crate::supervisor::condense::CONDENSE_NOTICE_TAG);
-						// Drift: embed the RESULT and score it against the working-set centroid
-						// of recent on-task results. We score the result, not the call: the call
-						// is the cleaner intent, but short call strings are format-dominated and
-						// don't embed with topical separation (measured — they overlap); results
-						// carry real content and separate cleanly. Skip errors, dedup
-						// placeholders, condensed rewrites, and tiny outputs (no topical
-						// signal). Score logged so `drift_floor` can be tuned.
-						let is_drift = if distraction_threshold > 0
-							&& !is_error && !is_dedup
-							&& !is_condensed && result_content.len() >= MIN_DRIFT_LEN
-						{
-							match crate::embeddings::embed(&result_content).await {
-								Ok(emb) => {
-									let drift = params
-										.chat_session
-										.detectors
-										.note_result(&emb, drift_floor);
-									crate::log_debug!(
-										"drift={} (tool={}, floor={:.3})",
-										drift,
-										call.tool_name,
-										drift_floor
-									);
-									drift
-								}
-								Err(_) => false,
-							}
-						} else {
-							false
-						};
 						// Fold this call's per-result state in; aggregate the rest for the round.
 						let (rhash, novel) = params.chat_session.detectors.note_call(
 							&call.tool_name,
@@ -793,9 +706,6 @@ pub async fn process_response<S: OutputSink>(
 						);
 						call_hashes.push(rhash);
 						round_novel |= novel;
-						round_truncated |= is_truncated;
-						round_dedup |= is_dedup;
-						round_drift |= is_drift;
 						// Read-back verification: a successful non-mutation call that
 						// re-reads an artifact the agent itself mutated — the correct
 						// verification for work with no command to run (docs, config,
@@ -881,14 +791,8 @@ pub async fn process_response<S: OutputSink>(
 					let batch_signal = params.chat_session.detectors.record_round_signals(
 						&call_hashes,
 						round_novel,
-						round_truncated,
-						round_dedup,
-						round_drift,
 						loop_threshold,
 						no_progress_window,
-						truncation_threshold,
-						dedup_threshold,
-						distraction_threshold,
 					);
 					round_signal = round_signal.merge(batch_signal);
 
@@ -1022,16 +926,10 @@ pub async fn process_response<S: OutputSink>(
 							);
 							params.chat_session.last_steered_calls = Some(calls_hash);
 							// Reset the fired signal's streak so it must re-accumulate before
-							// nudging again: Distraction drops the working set (a legitimate
-							// pivot then re-seeds); Sequential resets its singleton streak.
-							match round_signal {
-								crate::supervisor::detect::DetectorSignal::Distraction => {
-									params.chat_session.detectors.reset_working_set();
-								}
-								crate::supervisor::detect::DetectorSignal::Sequential => {
-									params.chat_session.detectors.reset_sequential_streak();
-								}
-								_ => {}
+							// nudging again.
+							if round_signal == crate::supervisor::detect::DetectorSignal::Sequential
+							{
+								params.chat_session.detectors.reset_sequential_streak();
 							}
 							crate::supervisor::stats::steer(round_signal);
 							crate::supervisor::notify(&format!(

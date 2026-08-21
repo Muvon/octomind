@@ -237,7 +237,7 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 	let should_compress_desc = if force {
 		"Compression has been forced by the user. MUST be true."
 	} else {
-		"True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. False only if the transcript is already minimal."
+		"True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. WHEN a fold happens matters as much as what it keeps: folding while a step is half-finished blunts the newest exchange and leaves the agent unable to tell which actions it has already taken, so it repeats them. Answer true at a natural seam — a sub-task just resolved, a check passed, or the work is converging on its answer. Answer false when the agent is mid-derivation (a build or test is in flight, an edit is started but unverified, a hypothesis is being chased) or is stuck and re-reading to recover its footing, and false when the transcript is already minimal. Deferring is a short reprieve, not a veto: when the context nears its limit this decision is forced and the fold happens regardless, so defer only for a genuinely unfinished step, never as a general preference."
 	};
 
 	let mut schema = serde_json::json!({

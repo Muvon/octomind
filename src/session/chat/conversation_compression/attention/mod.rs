@@ -107,11 +107,6 @@ pub(crate) struct PinnedItem {
 pub(crate) struct PinnedState {
 	pub task: PinnedItem,
 	pub constraints: Vec<PinnedItem>,
-	/// Requests this session already satisfied, oldest first. Pinned for the
-	/// same reason the active task is: compaction treats ordinary history as
-	/// fungible, so without a ledger entry the work these produced becomes
-	/// unattributable and the next turn removes it as untraceable.
-	pub satisfied: Vec<PinnedItem>,
 	pub verification_policy: crate::supervisor::VerificationPolicy,
 	pub governance_hash: String,
 }
@@ -187,7 +182,6 @@ pub(crate) async fn build(
 		.map(|packet| packet.id.clone());
 
 	let constraints = collect_constraints(session, task_source.as_deref());
-	let satisfied = collect_satisfied(&session.session.messages);
 	let verification_policy = session.session.info.verification_policy.effective(
 		session
 			.gate_task
@@ -198,7 +192,6 @@ pub(crate) async fn build(
 		&session.session.messages,
 		&task_text,
 		&constraints,
-		&satisfied,
 		verification_policy,
 	);
 	let pinned = PinnedState {
@@ -207,7 +200,6 @@ pub(crate) async fn build(
 			source: task_source,
 		},
 		constraints,
-		satisfied,
 		verification_policy,
 		governance_hash,
 	};
@@ -530,48 +522,10 @@ fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<
 	.collect()
 }
 
-/// How many satisfied requests the ledger carries, newest first. Enough to
-/// cover a long multi-request session; bounded because the pin block is
-/// re-injected on every fold and must not grow without limit.
-const SATISFIED_MAX: usize = 12;
-
-/// Chars kept per satisfied request. The first sentences carry the ask; the
-/// rest is usually restatement the agent can recover from the code itself.
-const SATISFIED_LEN_MAX: usize = 400;
-
-/// Requests already satisfied in this session, oldest first.
-///
-/// Only the request text is kept, not the work: the point is that the agent can
-/// attribute existing changes to something it was asked for. A few hundred
-/// chars per entry against tool output measured in megabytes is a rounding
-/// error next to redoing — or undoing — the work they protect.
-fn collect_satisfied(messages: &[Message]) -> Vec<PinnedItem> {
-	let tasks = crate::session::superseded_real_user_tasks(messages);
-	let skip = tasks.len().saturating_sub(SATISFIED_MAX);
-	tasks
-		.into_iter()
-		.skip(skip)
-		.map(|text| PinnedItem {
-			text: truncate_on_char_boundary(text.trim(), SATISFIED_LEN_MAX),
-			source: None,
-		})
-		.collect()
-}
-
-/// Truncate to at most `limit` chars without splitting a UTF-8 character.
-fn truncate_on_char_boundary(text: &str, limit: usize) -> String {
-	if text.chars().count() <= limit {
-		return text.to_string();
-	}
-	let kept: String = text.chars().take(limit).collect();
-	format!("{kept}…")
-}
-
 fn governance_hash(
 	messages: &[Message],
 	task: &str,
 	constraints: &[PinnedItem],
-	satisfied: &[PinnedItem],
 	verification_policy: crate::supervisor::VerificationPolicy,
 ) -> String {
 	let mut hasher = Sha256::new();
@@ -584,10 +538,6 @@ fn governance_hash(
 	for constraint in constraints {
 		hasher.update([0]);
 		hasher.update(constraint.text.as_bytes());
-	}
-	for item in satisfied {
-		hasher.update([0]);
-		hasher.update(item.text.as_bytes());
 	}
 	hasher.update([0]);
 	hasher.update(verification_policy.as_str().as_bytes());
@@ -1328,12 +1278,10 @@ impl PactContext {
 			.trim()
 			.to_string();
 		let constraints = collect_constraints(session, None);
-		let satisfied = collect_satisfied(messages);
 		let actual = governance_hash(
 			messages,
 			&task,
 			&constraints,
-			&satisfied,
 			session.session.info.verification_policy.effective(
 				session
 					.gate_task
@@ -1991,17 +1939,6 @@ fn render_pinned_lines(pinned: &PinnedState) -> String {
 			.unwrap_or_default();
 		out.push_str(&format!("constraint{source}: {}\n", constraint.text));
 	}
-	if !pinned.satisfied.is_empty() {
-		out.push_str(
-			"satisfied_requests: already delivered earlier in THIS session; their \
-			 changes are in the working tree on purpose. Treat them as requested \
-			 work, not as untraceable edits to clean up, and do not revert or \
-			 weaken them while serving the current task.\n",
-		);
-		for item in &pinned.satisfied {
-			out.push_str(&format!("satisfied: {}\n", item.text));
-		}
-	}
 	match pinned.verification_policy {
 		crate::supervisor::VerificationPolicy::Forbidden => out.push_str(
 			"verification_policy: forbidden for this turn; do not execute verification\n",
@@ -2026,56 +1963,6 @@ pub(crate) fn folded_unit_id(unit: &FoldedUnit) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn satisfied_requests_survive_as_pinned_ledger() {
-		// Two requests, the second live. The first produced code that is still
-		// in the tree; without a ledger entry the agent cannot attribute it and
-		// the "revert anything that does not trace to the ask" rule removes it.
-		let messages = vec![
-			message("user", "Reject unterminated group in the pattern parser."),
-			message("assistant", "done"),
-			message("user", "Treat file as a special scheme."),
-		];
-		let satisfied = collect_satisfied(&messages);
-		assert_eq!(satisfied.len(), 1);
-		assert!(satisfied[0].text.starts_with("Reject unterminated group"));
-
-		let rendered = render_pinned_lines(&PinnedState {
-			task: PinnedItem {
-				text: "Treat file as a special scheme.".to_string(),
-				source: None,
-			},
-			constraints: Vec::new(),
-			satisfied,
-			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
-			governance_hash: "deadbeef".to_string(),
-		});
-		assert!(rendered.contains("satisfied: Reject unterminated group"));
-		assert!(rendered.contains("do not revert"));
-		// The live request stays the task, not a ledger entry.
-		assert!(rendered.contains("task: Treat file as a special scheme."));
-	}
-
-	#[test]
-	fn satisfied_ledger_is_bounded() {
-		let mut messages = Vec::new();
-		for i in 0..30 {
-			messages.push(message(
-				"user",
-				&format!("request number {i} with some detail"),
-			));
-			messages.push(message("assistant", "done"));
-		}
-		messages.push(message("user", "the live one"));
-		let satisfied = collect_satisfied(&messages);
-		assert_eq!(satisfied.len(), SATISFIED_MAX);
-		// Newest kept: the oldest requests are the ones dropped.
-		assert!(satisfied.last().unwrap().text.contains("request number 29"));
-		assert!(satisfied
-			.iter()
-			.all(|item| item.text.chars().count() <= SATISFIED_LEN_MAX + 1));
-	}
 
 	fn message(role: &str, content: &str) -> Message {
 		Message {
@@ -2121,7 +2008,6 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
-				satisfied: Vec::new(),
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
@@ -2213,7 +2099,6 @@ mod tests {
 			&baseline,
 			crate::session::latest_real_user_task_content(&baseline).unwrap(),
 			&constraints,
-			&[],
 			crate::supervisor::VerificationPolicy::Unspecified,
 		);
 		let mut attacked = baseline.clone();
@@ -2231,7 +2116,6 @@ mod tests {
 				&attacked,
 				crate::session::latest_real_user_task_content(&attacked).unwrap(),
 				&constraints,
-				&[],
 				crate::supervisor::VerificationPolicy::Unspecified,
 			)
 		);
@@ -2242,7 +2126,6 @@ mod tests {
 				&changed,
 				crate::session::latest_real_user_task_content(&changed).unwrap(),
 				&[],
-				&[],
 				crate::supervisor::VerificationPolicy::Unspecified,
 			)
 		);
@@ -2252,7 +2135,6 @@ mod tests {
 				&baseline,
 				crate::session::latest_real_user_task_content(&baseline).unwrap(),
 				&constraints,
-				&[],
 				crate::supervisor::VerificationPolicy::Forbidden,
 			),
 			"a policy change must invalidate a stale governance snapshot"
@@ -2392,7 +2274,6 @@ mod tests {
 				source: Some(packets[1].id.clone()),
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2897,7 +2778,6 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2927,7 +2807,6 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2963,7 +2842,6 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -3031,7 +2909,6 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
-				satisfied: Vec::new(),
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
@@ -3125,7 +3002,6 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -3215,7 +3091,6 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
-			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		}

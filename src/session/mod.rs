@@ -239,22 +239,6 @@ pub fn latest_real_user_task_content(messages: &[Message]) -> Option<&str> {
 	}
 }
 
-/// Real user requests this session already moved past, oldest first.
-///
-/// A request stops being *active* the moment the next one arrives, but the work
-/// it produced stays in the workspace. Something has to keep saying it was
-/// asked for, or that work becomes unattributable.
-pub fn superseded_real_user_tasks(messages: &[Message]) -> Vec<&str> {
-	let live = latest_task_turn_index(messages);
-	messages
-		.iter()
-		.enumerate()
-		.filter(|(index, _)| Some(*index) != live)
-		.filter(|(_, message)| is_real_user_task_message(message))
-		.map(|(_, message)| message.content.as_str())
-		.collect()
-}
-
 /// Timestamp of the live user request — the message at
 /// [`latest_task_turn_index`]. Plan staleness compares the plan's last model
 /// engagement against this: timestamps survive compaction, message indices

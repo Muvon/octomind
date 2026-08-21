@@ -696,6 +696,7 @@ pub fn display_info(output: &CommandOutput) {
 			let gate_runs = get_u64("gate_runs");
 			let gate_pass = get_u64("gate_pass");
 			let gate_fail = get_u64("gate_fail");
+			let gate_stall = get_u64("gate_stall");
 			let steers = get_u64("steers");
 			let pregate_blocks = get_u64("pregate_blocks");
 			let claim_blocks = get_u64("claim_blocks");
@@ -773,6 +774,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if gate_fail > 0 {
 					g.push(format!("{} fail", gate_fail).bright_red().to_string());
+				}
+				if gate_stall > 0 {
+					g.push(format!("{} stalled", gate_stall).yellow().to_string());
 				}
 				block_row("gate", &g.join(" · "), kw_sv);
 			}

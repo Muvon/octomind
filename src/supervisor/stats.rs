@@ -69,6 +69,7 @@ struct Stats {
 	gate_runs: u64,
 	gate_pass: u64,
 	gate_fail: u64,
+	gate_stall: u64,
 	steers: u64,
 	// Per-signal steer breakdown — which detector signal fired each steer.
 	steer_loop: u64,
@@ -139,6 +140,12 @@ pub fn gate_pass() {
 /// The verify-gate gave up with gaps remaining (trajectory unverified).
 pub fn gate_fail() {
 	with(|s| s.gate_fail += 1);
+}
+/// The verify-gate returned an unchanged finding after the re-run gathered new
+/// evidence — the check could not converge, so the loop stopped charging it.
+/// A rising count means the verifier is asking for something unreachable.
+pub fn gate_stall() {
+	with(|s| s.gate_stall += 1);
 }
 /// A steer (advisory re-anchor) was queued, attributed to the detector signal
 /// that fired it so `/info` can break the total down by signal.
@@ -251,6 +258,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"gate_runs": s.gate_runs,
 		"gate_pass": s.gate_pass,
 		"gate_fail": s.gate_fail,
+		"gate_stall": s.gate_stall,
 		"steers": s.steers,
 		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,

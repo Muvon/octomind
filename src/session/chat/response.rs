@@ -698,17 +698,20 @@ pub async fn process_response<S: OutputSink>(
 						);
 						// Verify-gate evidence ledger: record what actually executed —
 						// completion claims are checked against this, not the narrative.
-						params.chat_session.evidence.record(
+						let sequence = params.chat_session.evidence.record(
 							&call.tool_name,
 							&call.parameters,
 							is_mutation,
 							is_error,
 							result_content.len(),
 						);
+						// Retained under the sequence the rendered ledger shows, so the
+						// verify-gate can ask for this exact call's output instead of
+						// ruling on a line that names the call but not what it returned.
 						params
 							.chat_session
 							.evidence
-							.record_citation_ground(&result_content);
+							.record_ground(sequence, &result_content);
 						// Ground truth for the gate: keep the last successful command
 						// execution's output — the decisive check normally runs right
 						// before `done`. Shape-based, the same definition as the

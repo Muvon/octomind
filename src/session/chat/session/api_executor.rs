@@ -821,6 +821,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				result: &result,
 				claim: claim.as_deref(),
 				actions: &actions,
+				grounds: chat_session.evidence.grounds(),
 				plan: &plan,
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,
@@ -831,6 +832,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		)
 		.await;
 		animation_manager.clear_phase();
+		// Did the trajectory gain anything since the pass that produced
+		// `prior_gaps`? A finding that survives new evidence is diagnostic (see
+		// the Gaps arm); one that survives a re-run with nothing new is not.
+		let new_evidence = chat_session.evidence.actions_since_gate() > 0;
+		chat_session.evidence.mark_gate_checkpoint();
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
 				if plan_applies {
@@ -856,6 +862,31 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
+				// The same finding twice, across a re-run that DID gather new
+				// evidence, is a check the loop cannot converge on — the agent
+				// answered it and the verdict did not move. Repeating the advisory
+				// only spends the budget to arrive here again, so hand the finding
+				// to the user instead of blocking on it. The trajectory stays
+				// unverified (no distill) but the turn is not failed on it.
+				if new_evidence && crate::supervisor::gate::gaps_unchanged(&prior_gaps, &gaps) {
+					chat_session.gate_iterations = 0;
+					chat_session.last_gate_gaps.clear();
+					chat_session.gate_failed = true;
+					crate::supervisor::stats::gate_stall();
+					let mut msg = String::from(
+						"verification did not converge — unchanged after new evidence",
+					);
+					for g in &gaps {
+						msg.push_str("\n- ");
+						msg.push_str(g);
+					}
+					crate::supervisor::notify(&msg);
+					crate::log_debug!(
+						"Verify-gate: {} gap(s) unchanged after new evidence; not re-running",
+						gaps.len()
+					);
+					return Ok(());
+				}
 				let note = crate::supervisor::gate::format_advisory(&gaps);
 				chat_session.add_system_managed_user_message(&note)?;
 				chat_session.last_self_report = None; // force the re-run to re-evaluate

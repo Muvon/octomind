@@ -114,22 +114,48 @@ fn an_unsettled_shape_reports_without_blocking() {
 <shape name="unenumerated-category" found="unknown">the search ran but its output is not in my input</shape>
 <verdict>PASS</verdict>"#;
 	assert_eq!(parse_verdict(response, 0), GateVerdict::Pass);
-	let unsettled = unknown_shapes(response);
-	assert_eq!(unsettled.len(), 1);
-	assert!(unsettled[0].starts_with("unenumerated-category"));
+	let reported = reported_findings(response);
+	assert_eq!(reported.len(), 1);
+	assert!(reported[0].starts_with("unenumerated-category unsettled"));
 }
 
 /// An accusation no action can close cannot be repaired — re-running only
-/// spends the budget to arrive at the same verdict.
+/// spends the budget to arrive at the same verdict. It is not silently dropped
+/// either: whatever the runtime declines to charge, the user sees.
 #[test]
-fn a_finding_with_no_settling_observation_is_not_charged() {
+fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 	let response = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="yes">the set is not bounded</shape>
 <verdict>PASS</verdict>"#;
 	assert_eq!(parse_verdict(response, 0), GateVerdict::Pass);
-	assert!(unknown_shapes(response).is_empty());
+	let reported = reported_findings(response);
+	assert_eq!(reported.len(), 1);
+	assert!(reported[0].contains("names no closing observation"));
+}
+
+/// The same bar on a free-form gap: without it, an unanswerable finding could
+/// still enter the repair loop through the one channel the shapes do not cover.
+#[test]
+fn a_free_form_gap_answers_to_the_same_rule() {
+	let unanswerable = format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>");
+	assert_eq!(parse_verdict(&unanswerable, 0), GateVerdict::Pass);
+	let reported = reported_findings(&unanswerable);
+	assert_eq!(reported.len(), 1);
+	assert!(reported[0].contains("gap names no closing observation"));
+
+	let answerable = format!(
+		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
+	);
+	let GateVerdict::Gaps(gaps) = parse_verdict(&answerable, 0) else {
+		panic!("a gap naming its observation is charged");
+	};
+	assert_eq!(
+		gaps,
+		["the counter is unverified — clear it by: a read of stats.rs"]
+	);
+	assert!(reported_findings(&answerable).is_empty());
 }
 
 #[test]

@@ -219,7 +219,11 @@ Four evidence shapes never satisfy that bar, in any domain:
 Do not reward length, formatting, or tone — only verifiable substance.
 
 Flag a gap only when a requested part is provably missing, a stated requirement is unmet, or a
-claim has no supporting evidence. Each gap must name the specific unmet item.
+claim has no supporting evidence. Each gap must name the specific unmet item AND, in a
+`settles` attribute, the one observation that would close it — the same bar every found="yes"
+shape answers to. This is one rule for every finding you raise: name what would close it, or do
+not raise it. A finding no available action can close gives the agent nothing to repair, so the
+runtime reports it to the user instead of spending a re-run on it.
 
 When the request was to correct a reported problem, three result shapes are gaps in their own
 right, whatever the domain:
@@ -260,7 +264,8 @@ with no other text:
 3. The verdict:
    - every part evidenced, no condition unmatched, no shape found="yes" → <verdict>PASS</verdict>
      (an unknown shape does not block — it is a limit of the evidence, not a defect)
-   - otherwise → one <gap>specific missing or unverified item</gap> line per gap.
+   - otherwise → one <gap settles="the observation that would close it">specific missing or
+     unverified item</gap> line per gap.
 A response that omits any required line — even when the verdict is an obvious PASS — is invalid and gets re-requested; the checklist lines are never optional.
 </response_format>
 
@@ -890,14 +895,15 @@ pub async fn verify(
 			}
 		}
 	}
-	// A shape the verifier could not settle is a limit of what it was shown, not
-	// a defect in the work. It never blocks — and it never silently vanishes.
-	let unsettled = unknown_shapes(&resp);
-	if !unsettled.is_empty() {
+	// Everything the verifier raised but could not make actionable. None of it
+	// blocks the turn — and none of it silently vanishes either: a finding the
+	// runtime declines to charge is exactly the one a human should see.
+	let reported = reported_findings(&resp);
+	if !reported.is_empty() {
 		crate::supervisor::notify(&format!(
-			"verification left {} check(s) unsettled: {}",
-			unsettled.len(),
-			unsettled.join("; ")
+			"verification reported {} finding(s) it could not act on: {}",
+			reported.len(),
+			reported.join("; ")
 		));
 	}
 	verdict
@@ -930,31 +936,102 @@ async fn ask_verifier(
 	.await
 }
 
+/// Every `<name …>body</name>` element in a verifier response, as (attributes,
+/// body). One scanner for the whole protocol — shapes, conditions, gaps,
+/// readback requests — so a malformed element drops out the same way everywhere
+/// and the per-tag checklists decide what its absence means.
+fn elements<'a>(resp: &'a str, name: &str) -> Vec<(&'a str, &'a str)> {
+	let open = format!("<{name}");
+	let close = format!("</{name}>");
+	let mut found = Vec::new();
+	let mut rest = resp;
+	while let Some(start) = rest.find(&open) {
+		let after = &rest[start + open.len()..];
+		let Some(open_end) = after.find('>') else {
+			break;
+		};
+		let attributes = &after[..open_end];
+		rest = &after[open_end + 1..];
+		// `<gap>` and a longer tag sharing its prefix are different elements: only
+		// a delimiter right after the name opens the one asked for.
+		if !attributes.is_empty() && !attributes.starts_with(' ') {
+			continue;
+		}
+		let Some(body_end) = rest.find(&close) else {
+			break;
+		};
+		found.push((attributes, rest[..body_end].trim()));
+		rest = &rest[body_end + close.len()..];
+	}
+	found
+}
+
+/// Value of `key="…"` in an element's attributes; empty when absent.
+fn attr<'a>(attributes: &'a str, key: &str) -> &'a str {
+	attributes
+		.split(&format!("{key}=\""))
+		.nth(1)
+		.and_then(|value| value.split('"').next())
+		.unwrap_or_default()
+		.trim()
+}
+
+/// The one rule for every finding the verifier raises, shape or gap: it is
+/// charged to the agent only when it names the observation that would close it.
+/// A finding no available action can close gives the repair loop nothing to
+/// converge on, so it is reported to the user instead of spent as a re-run.
+fn charged(attributes: &str, body: &str) -> Option<String> {
+	let settles = attr(attributes, "settles");
+	if settles.is_empty() {
+		return None;
+	}
+	Some(format!("{body} — clear it by: {settles}"))
+}
+
+/// Findings the verifier could not make actionable: a shape it could not
+/// settle, or a finding of either kind that names no observation to close it.
+/// Surfaced to the user, never charged to the agent.
+fn reported_findings(resp: &str) -> Vec<String> {
+	let mut reported = Vec::new();
+	for (attributes, body) in elements(resp, "shape") {
+		let name = attr(attributes, "name");
+		match attr(attributes, "found") {
+			"unknown" => reported.push(format!("{name} unsettled: {body}")),
+			"yes" if charged(attributes, body).is_none() => {
+				reported.push(format!("{name} names no closing observation: {body}"))
+			}
+			_ => {}
+		}
+	}
+	for (attributes, body) in elements(resp, "gap") {
+		if charged(attributes, body).is_none() {
+			reported.push(format!("gap names no closing observation: {body}"));
+		}
+	}
+	reported
+}
+
 /// Sequence numbers the verifier asked to see, capped at [`READBACK_MAX`].
 /// A readback is a response mode of its own: a reply that already carries
 /// shapes, gaps, or a verdict has ruled, so readback tags inside it are ignored.
 fn parse_readback_request(resp: &str) -> Vec<u64> {
-	if resp.contains("<shape ") || resp.contains("<gap>") || resp.contains("<verdict>") {
+	if !elements(resp, "shape").is_empty()
+		|| !elements(resp, "gap").is_empty()
+		|| resp.contains("<verdict>")
+	{
 		return Vec::new();
 	}
 	let mut wanted: Vec<u64> = Vec::new();
-	let mut rest = resp;
-	while let Some(start) = rest.find("<readback ") {
-		let after = &rest[start..];
-		let Some(open_end) = after.find('>') else {
-			break;
+	for (attributes, _) in elements(resp, "readback") {
+		let Ok(sequence) = attr(attributes, "seq")
+			.trim_start_matches('#')
+			.parse::<u64>()
+		else {
+			continue;
 		};
-		let sequence = after[..open_end]
-			.split("seq=\"")
-			.nth(1)
-			.and_then(|t| t.split('"').next())
-			.and_then(|n| n.trim().trim_start_matches('#').parse::<u64>().ok());
-		if let Some(sequence) = sequence {
-			if !wanted.contains(&sequence) && wanted.len() < READBACK_MAX {
-				wanted.push(sequence);
-			}
+		if !wanted.contains(&sequence) && wanted.len() < READBACK_MAX {
+			wanted.push(sequence);
 		}
-		rest = &after[open_end + 1..];
 	}
 	wanted
 }
@@ -993,50 +1070,6 @@ fn bounded_output(output: &str) -> String {
 		"{head}\n…({} characters elided from the middle)…\n{tail}",
 		total - READBACK_HEAD - READBACK_TAIL
 	)
-}
-
-/// Shapes the verifier marked unresolved. Reported to the user, never charged to
-/// the agent — see [`parse_verdict`].
-fn unknown_shapes(resp: &str) -> Vec<String> {
-	let mut unknown = Vec::new();
-	for (name, tag, body) in shape_tags(resp) {
-		if tag.contains("found=\"unknown\"") {
-			unknown.push(format!("{name} ({body})"));
-		}
-	}
-	unknown
-}
-
-/// Every `<shape …>…</shape>` in a verifier response as (name, open tag, body).
-fn shape_tags(resp: &str) -> Vec<(String, String, String)> {
-	let mut shapes = Vec::new();
-	let mut rest = resp;
-	while let Some(start) = rest.find("<shape ") {
-		let after = &rest[start..];
-		let Some(open_end) = after.find('>') else {
-			break;
-		};
-		let tag = &after[..open_end];
-		let body_and_rest = &after[open_end + 1..];
-		let Some(body_end) = body_and_rest.find("</shape>") else {
-			break;
-		};
-		let Some(name) = tag
-			.split("name=\"")
-			.nth(1)
-			.and_then(|t| t.split('"').next())
-		else {
-			rest = &body_and_rest[body_end..];
-			continue;
-		};
-		shapes.push((
-			name.to_string(),
-			tag.to_string(),
-			body_and_rest[..body_end].trim().to_string(),
-		));
-		rest = &body_and_rest[body_end..];
-	}
-	shapes
 }
 
 /// True when a verification pass returned the same findings as the pass before
@@ -1179,55 +1212,31 @@ fn parse_verdict(resp: &str, expected_conditions: usize) -> GateVerdict {
 	// picture looks done). Evidence-shape findings are enforced the same way.
 	let mut unmatched = Vec::new();
 	let mut seen_shapes = std::collections::HashSet::new();
-	let mut rest = resp;
-	while let Some(s) = rest.find("<shape ") {
-		let after = &rest[s..];
-		let Some(open_end) = after.find('>') else {
-			break;
-		};
-		let tag = &after[..open_end];
-		let body_and_rest = &after[open_end + 1..];
-		let Some(body_end) = body_and_rest.find("</shape>") else {
-			return GateVerdict::Indeterminate("malformed shape result".to_string());
-		};
-		let body = body_and_rest[..body_end].trim();
-		let Some(name) = tag
-			.split("name=\"")
-			.nth(1)
-			.and_then(|t| t.split('"').next())
-		else {
+	for (attributes, body) in elements(resp, "shape") {
+		let name = attr(attributes, "name");
+		if name.is_empty() {
 			return GateVerdict::Indeterminate("shape without name".to_string());
-		};
-		if !seen_shapes.insert(name.to_string()) {
+		}
+		if !seen_shapes.insert(name) {
 			return GateVerdict::Indeterminate(format!("duplicate evidence shape: {name}"));
 		}
 		// Three-valued, and deliberately asymmetric. "unknown" says the verifier
-		// could not see what would settle the shape — a limit of its input, so it
-		// is surfaced (see [`unknown_shapes`]) and never charged to the agent. A
-		// "yes" is an accusation and must name the observation that would clear
-		// it: a finding no available action can close cannot be repaired, so
-		// charging it would only spend the repair budget re-flagging it.
-		if tag.contains("found=\"yes\"") {
-			let settles = tag
-				.split("settles=\"")
-				.nth(1)
-				.and_then(|t| t.split('"').next())
-				.unwrap_or_default()
-				.trim();
-			if settles.is_empty() {
-				crate::log_info!(
-					"Verify-gate: shape '{}' flagged without a settling observation; not charged",
-					name
-				);
-			} else {
-				unmatched.push(format!(
-					"Evidence shape '{name}' present: {body} — clear it by: {settles}"
-				));
+		// could not see what would settle the shape — a limit of its input, never a
+		// defect in the work. "yes" is an accusation, and is charged only under the
+		// rule every finding answers to (see [`charged`]).
+		match attr(attributes, "found") {
+			"yes" => {
+				if let Some(finding) = charged(attributes, body) {
+					unmatched.push(format!("Evidence shape '{name}' present: {finding}"));
+				}
 			}
-		} else if !tag.contains("found=\"no\"") && !tag.contains("found=\"unknown\"") {
-			return GateVerdict::Indeterminate("shape without yes/no/unknown result".to_string());
+			"no" | "unknown" => {}
+			_ => {
+				return GateVerdict::Indeterminate(
+					"shape without yes/no/unknown result".to_string(),
+				)
+			}
 		}
-		rest = &body_and_rest[body_end..];
 	}
 	const REQUIRED_SHAPES: [&str; 4] = [
 		"circular",
@@ -1243,35 +1252,18 @@ fn parse_verdict(resp: &str, expected_conditions: usize) -> GateVerdict {
 		return GateVerdict::Indeterminate("incomplete evidence-shape checklist".to_string());
 	}
 	let mut seen_conditions = std::collections::HashSet::new();
-	let mut rest = resp;
-	while let Some(s) = rest.find("<condition ") {
-		let after = &rest[s..];
-		let Some(open_end) = after.find('>') else {
-			break;
-		};
-		let tag = &after[..open_end];
-		let body_and_rest = &after[open_end + 1..];
-		let Some(body_end) = body_and_rest.find("</condition>") else {
-			return GateVerdict::Indeterminate("malformed condition result".to_string());
-		};
-		let body = body_and_rest[..body_end].trim();
-		let Some(n) = tag
-			.split("n=\"")
-			.nth(1)
-			.and_then(|t| t.split('"').next())
-			.and_then(|n| n.parse::<usize>().ok())
-		else {
+	for (attributes, body) in elements(resp, "condition") {
+		let Ok(n) = attr(attributes, "n").parse::<usize>() else {
 			return GateVerdict::Indeterminate("condition without numeric index".to_string());
 		};
 		if !seen_conditions.insert(n) {
 			return GateVerdict::Indeterminate(format!("duplicate condition: {n}"));
 		}
-		if tag.contains("status=\"unmatched\"") {
-			unmatched.push(format!("Unmatched condition {n}: {body}"));
-		} else if !tag.contains("status=\"matched\"") {
-			return GateVerdict::Indeterminate(format!("condition {n} has invalid status"));
+		match attr(attributes, "status") {
+			"unmatched" => unmatched.push(format!("Unmatched condition {n}: {body}")),
+			"matched" => {}
+			_ => return GateVerdict::Indeterminate(format!("condition {n} has invalid status")),
 		}
-		rest = &body_and_rest[body_end..];
 	}
 	if seen_conditions.len() != expected_conditions
 		|| (1..=expected_conditions).any(|n| !seen_conditions.contains(&n))
@@ -1284,19 +1276,11 @@ fn parse_verdict(resp: &str, expected_conditions: usize) -> GateVerdict {
 	if !unmatched.is_empty() {
 		return GateVerdict::Gaps(unmatched);
 	}
-	let mut gaps = Vec::new();
-	let mut rest = resp;
-	while let Some(s) = rest.find("<gap>") {
-		let after = &rest[s + 5..];
-		let Some(e) = after.find("</gap>") else {
-			break;
-		};
-		let g = after[..e].trim();
-		if !g.is_empty() {
-			gaps.push(g.to_string());
-		}
-		rest = &after[e + 6..];
-	}
+	let gaps: Vec<String> = elements(resp, "gap")
+		.into_iter()
+		.filter(|(_, body)| !body.is_empty())
+		.filter_map(|(attributes, body)| charged(attributes, body))
+		.collect();
 	if !gaps.is_empty() {
 		GateVerdict::Gaps(gaps)
 	} else if resp.contains("<verdict>PASS</verdict>") {
@@ -1343,11 +1327,16 @@ mod tests {
 
 	#[test]
 	fn gaps_parsed() {
-		let response = format!("{CLEAN_SHAPES}\n<gap>no tests</gap>\n<gap>missing docs</gap>");
+		let response = format!(
+			"{CLEAN_SHAPES}\n<gap settles=\"a test run\">no tests</gap>\n<gap settles=\"the published page\">missing docs</gap>"
+		);
 		let v = parse_verdict(&response, 0);
 		assert_eq!(
 			v,
-			GateVerdict::Gaps(vec!["no tests".into(), "missing docs".into()])
+			GateVerdict::Gaps(vec![
+				"no tests — clear it by: a test run".into(),
+				"missing docs — clear it by: the published page".into()
+			])
 		);
 	}
 

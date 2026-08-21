@@ -91,7 +91,17 @@ impl VerificationPolicy {
 		match update {
 			VerificationPolicyUpdate::Unchanged => {}
 			VerificationPolicyUpdate::Forbid => *self = Self::Forbidden,
-			VerificationPolicyUpdate::Allow => *self = Self::Allowed,
+			// `Allow` REVOKES a prior prohibition. With nothing forbidden there is
+			// nothing to revoke, and materializing `Allowed` makes every turn recite
+			// a standing execution licence — which a review-only role reads as an
+			// instruction to run the build (observed: session 260821-backend-2007-683c,
+			// a `developer:brief` run that spent an hour on docker builds and test
+			// suites it was never asked for).
+			VerificationPolicyUpdate::Allow => {
+				if *self == Self::Forbidden {
+					*self = Self::Allowed;
+				}
+			}
 		}
 		*self != previous
 	}
@@ -122,6 +132,13 @@ mod verification_policy_tests {
 		assert!(!policy.forbids());
 		assert_eq!(policy.effective(true), VerificationPolicy::Forbidden);
 		assert_eq!(policy.effective(false), VerificationPolicy::Allowed);
+	}
+
+	#[test]
+	fn allow_without_a_prior_prohibition_is_a_noop() {
+		let mut policy = VerificationPolicy::default();
+		assert!(!policy.apply(VerificationPolicyUpdate::Allow));
+		assert_eq!(policy, VerificationPolicy::Unspecified);
 	}
 }
 

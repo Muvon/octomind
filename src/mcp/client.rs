@@ -657,7 +657,7 @@ async fn wait_cancelled(token: &mut Option<tokio::sync::watch::Receiver<bool>>) 
 
 fn idle_timeout_message(tool_name: &str, server_name: &str, timeout_seconds: u64) -> String {
 	format!(
-		"MCP tool '{tool_name}' on '{server_name}' timed out after PT{timeout_seconds}S idle. Cancellation sent; check for side effects before retrying with a smaller call or background task."
+		"MCP tool '{tool_name}' on '{server_name}' timed out after PT{timeout_seconds}S idle. Cancellation sent; check for side effects before retrying. The call reported no liveness at all, so this is a hung or wedged command, not merely a slow one — a long build or test suite keeps its call alive on its own. Fix or narrow the command rather than detaching it: a detached command discards its output and has to be polled for, which costs more than the wait it avoids."
 	)
 }
 
@@ -964,9 +964,13 @@ mod tests {
 		assert!(message.contains("'operations'"));
 		assert!(message.contains("PT30S idle"));
 		assert!(message.contains("check for side effects"));
-		assert!(message.contains("smaller call or background task"));
+		// An idle timeout means no liveness at all, which a slow-but-healthy
+		// command cannot produce — it reports progress while it waits. Steering
+		// the model to detach instead is what produced launch-then-poll loops,
+		// where each check costs a round-trip and re-sends the conversation.
+		assert!(message.contains("hung or wedged"));
+		assert!(!message.contains("background task"));
 		assert!(!message.contains("timeout_seconds"));
-		assert!(message.len() < 200);
 	}
 
 	#[test]

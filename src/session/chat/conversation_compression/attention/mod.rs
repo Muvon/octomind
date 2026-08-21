@@ -2061,7 +2061,10 @@ mod tests {
 	fn satisfied_ledger_is_bounded() {
 		let mut messages = Vec::new();
 		for i in 0..30 {
-			messages.push(message("user", &format!("request number {i} with some detail")));
+			messages.push(message(
+				"user",
+				&format!("request number {i} with some detail"),
+			));
 			messages.push(message("assistant", "done"));
 		}
 		messages.push(message("user", "the live one"));
@@ -2118,6 +2121,7 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
+				satisfied: Vec::new(),
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
@@ -2209,6 +2213,7 @@ mod tests {
 			&baseline,
 			crate::session::latest_real_user_task_content(&baseline).unwrap(),
 			&constraints,
+			&[],
 			crate::supervisor::VerificationPolicy::Unspecified,
 		);
 		let mut attacked = baseline.clone();
@@ -2226,6 +2231,7 @@ mod tests {
 				&attacked,
 				crate::session::latest_real_user_task_content(&attacked).unwrap(),
 				&constraints,
+				&[],
 				crate::supervisor::VerificationPolicy::Unspecified,
 			)
 		);
@@ -2236,6 +2242,7 @@ mod tests {
 				&changed,
 				crate::session::latest_real_user_task_content(&changed).unwrap(),
 				&[],
+				&[],
 				crate::supervisor::VerificationPolicy::Unspecified,
 			)
 		);
@@ -2245,6 +2252,7 @@ mod tests {
 				&baseline,
 				crate::session::latest_real_user_task_content(&baseline).unwrap(),
 				&constraints,
+				&[],
 				crate::supervisor::VerificationPolicy::Forbidden,
 			),
 			"a policy change must invalidate a stale governance snapshot"
@@ -2384,6 +2392,7 @@ mod tests {
 				source: Some(packets[1].id.clone()),
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2888,6 +2897,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2917,6 +2927,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -2952,6 +2963,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -3019,6 +3031,7 @@ mod tests {
 					source: None,
 				},
 				constraints: Vec::new(),
+				satisfied: Vec::new(),
 				verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 				governance_hash: "hash".into(),
 			},
@@ -3112,6 +3125,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		};
@@ -3201,6 +3215,7 @@ mod tests {
 				source: None,
 			},
 			constraints: Vec::new(),
+			satisfied: Vec::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			governance_hash: "hash".into(),
 		}

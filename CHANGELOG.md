@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.45.0] - 2026-08-21
+
+### 📋 Release Summary
+
+This release introduces `@file` mentions for easier codebase referencing and enhanced configuration flexibility through role-based merging and custom data directories (3078ee9f, c5a1de58, 31c9b03d). The AI supervisor is now more reliable with improved gap reporting, stall detection, and consistent response parsing (f576c81a, 7b3a92d3, bce57945). Additionally, several fixes improve session citation accuracy, context compression, and MCP timeout messaging (40a698b6, 4e9c55a4, a82d0b77).
+
+
+### ✨ New Features & Enhancements
+
+- **attention**: add pinned ledger for satisfied requests `8b570c97`
+- **supervisor**: enhance gap reporting and parsing `f576c81a`
+- **supervisor**: implement readback and stall detection for verify-gate `7b3a92d3`
+- **config**: add OCTOMIND_DATA_DIR override `31c9b03d`
+- **config**: implement role-based config merging `c5a1de58`
+- **chat**: add @file mention expansion `3078ee9f`
+
+### 🔧 Improvements & Optimizations
+
+- **attention**: remove unused request and task tracking `a1f04601`
+- **acp**: capture agent stderr for timeout diagnostics `ff34056e`
+- **supervisor**: align gate parsing tests with expected output `f573aa38`
+- **session**: refine compression schema instructions `61a6d465`
+- **supervisor**: remove drift and fidelity detectors `009c4311`
+- **attention**: add missing satisfied field to tests `6a9ba4fe`
+- **pty**: synchronize input with prompt ready marker `901b3093`
+- **session**: add windows support for hook tests `17118dff`
+- **test**: use session working directory in tests `4daaaeb2`
+- **supervisor**: expand supervisor and websocket tests `c1b7331e`
+- **all**: expand integration and e2e test coverage `25813374`
+- **core**: expand test suite for chat, mcp, and sessions `122740c1`
+- **coverage**: implement source-based coverage reporting `8c2a7af0`
+- **session**: remove response orchestrator and add mcp tests `53e64e3d`
+- **chat,session,mcp**: expand unit test coverage `9207123e`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: clarify idle timeout error message `a82d0b77`
+- **compression**: preserve live exchange during mid-task folds `a39c6e0a`
+- **supervisor**: prevent Allow from overriding Unspecified `43c00f80`
+- **supervisor**: improve response consistency and report parsing `bce57945`
+- **supervisor**: nullify distill process stdio `394f70b6`
+- **session**: include tool outputs in citations and add tests `40a698b6`
+- **compression**: limit file context size in summaries `4e9c55a4`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.44.2] - 2026-08-18
 
 ### 📋 Release Summary

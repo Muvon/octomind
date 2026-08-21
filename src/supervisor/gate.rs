@@ -1351,7 +1351,7 @@ mod tests {
 	#[test]
 	fn found_shape_outranks_holistic_pass() {
 		let resp = r#"<condition n="1" status="matched">ok</condition>
-<shape name="acceptance-only" found="yes">only valid inputs exercised on a widened parser</shape>
+<shape name="acceptance-only" found="yes" settles="a test feeding an invalid input">only valid inputs exercised on a widened parser</shape>
 <shape name="circular" found="no">expected values from request</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>
@@ -1359,7 +1359,7 @@ mod tests {
 		assert_eq!(
 			parse_verdict(resp, 1),
 			GateVerdict::Gaps(vec![
-				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser".into()
+				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser — clear it by: a test feeding an invalid input".into()
 			])
 		);
 	}

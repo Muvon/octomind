@@ -139,7 +139,8 @@ fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 /// still enter the repair loop through the one channel the shapes do not cover.
 #[test]
 fn a_free_form_gap_answers_to_the_same_rule() {
-	let unanswerable = format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>");
+	let unanswerable =
+		format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
 	assert_eq!(parse_verdict(&unanswerable, 0), GateVerdict::Pass);
 	let reported = reported_findings(&unanswerable);
 	assert_eq!(reported.len(), 1);

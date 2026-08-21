@@ -106,9 +106,20 @@ struct AcpClient {
 	stdin: tokio::process::ChildStdin,
 	reader: BufReader<tokio::process::ChildStdout>,
 	next_id: u64,
+	/// Rolling tail of the agent's stderr, drained by a background task.
+	/// On Windows the agent has stalled mid-turn with no visible diagnostics;
+	/// surfacing this buffer in the panic turns an undebuggable timeout into
+	/// log lines pointing at the stall.
+	stderr_tail: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 impl AcpClient {
+	fn stderr_dump(&self) -> String {
+		self.stderr_tail
+			.lock()
+			.map(|t| String::from_utf8_lossy(&t).to_string())
+			.unwrap_or_default()
+	}
 	async fn spawn(home: &std::path::Path, stub_url: &str) -> Self {
 		let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_octomind"))
 			.env("HOME", home)
@@ -119,16 +130,42 @@ impl AcpClient {
 			.arg("acp")
 			.stdin(Stdio::piped())
 			.stdout(Stdio::piped())
-			.stderr(Stdio::null())
+			.stderr(Stdio::piped())
 			.spawn()
 			.expect("spawn octomind acp");
 		let stdin = child.stdin.take().expect("stdin");
 		let reader = BufReader::new(child.stdout.take().expect("stdout"));
+		let stderr = child.stderr.take().expect("stderr");
+		let stderr_tail: std::sync::Arc<std::sync::Mutex<Vec<u8>>> =
+			std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+		{
+			let tail = std::sync::Arc::clone(&stderr_tail);
+			tokio::spawn(async move {
+				use tokio::io::AsyncReadExt;
+				let mut stderr = stderr;
+				let mut buf = [0u8; 4096];
+				loop {
+					match stderr.read(&mut buf).await {
+						Ok(0) | Err(_) => break,
+						Ok(n) => {
+							if let Ok(mut t) = tail.lock() {
+								t.extend_from_slice(&buf[..n]);
+								let excess = t.len().saturating_sub(64 * 1024);
+								if excess > 0 {
+									t.drain(..excess);
+								}
+							}
+						}
+					}
+				}
+			});
+		}
 		Self {
 			child,
 			stdin,
 			reader,
 			next_id: 0,
+			stderr_tail,
 		}
 	}
 
@@ -159,9 +196,18 @@ impl AcpClient {
 			let read =
 				tokio::time::timeout(Duration::from_secs(60), self.reader.read_line(&mut buf))
 					.await
-					.unwrap_or_else(|_| panic!("timeout waiting for response to {method}"))
+					.unwrap_or_else(|_| {
+						panic!(
+							"timeout waiting for response to {method}; agent stderr tail:\n{}",
+							self.stderr_dump()
+						)
+					})
 					.expect("read line");
-			assert!(read > 0, "agent closed stdout while awaiting {method}");
+			assert!(
+				read > 0,
+				"agent closed stdout while awaiting {method}; agent stderr tail:\n{}",
+				self.stderr_dump()
+			);
 			let trimmed = buf.trim();
 			if trimmed.is_empty() {
 				continue;

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.45.1] - 2026-08-22
+
+### 📋 Release Summary
+
+This release introduces filesystem path completion for @ queries and enhanced visual progress notifications for MCP tool calls (7ec096e, 2b77d084, 8ee6c2c2). Several stability improvements ensure more reliable session initialization and prevent data loss during request compression (6d2eeddb, cb803ab2).
+
+
+### ✨ New Features & Enhancements
+
+- **session**: add filesystem path completion for @ queries `7ec096e6`
+- **mcp**: implement tool call progress notifications `2b77d084`
+- **chat**: route MCP notifications to spinner phase `8ee6c2c2`
+
+### 🔧 Improvements & Optimizations
+
+- **acp**: move SignalOnEof tests to agent_tests.rs `1151a170`
+- **session**: simplify user task message check `6ca2f117`
+- **acp**: skip e2e tests on windows `d3aac046`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: make inbox initialization idempotent `6d2eeddb`
+- **session**: prevent user request loss during compression `cb803ab2`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.45.0] - 2026-08-21
 
 ### 📋 Release Summary

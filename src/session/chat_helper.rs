@@ -148,10 +148,57 @@ impl<'a> CommandCompleter<'a> {
 		scored
 			.into_iter()
 			.map(|(_, path)| Pair {
-				display: path.to_string(),
-				replacement: path.to_string(),
+				display: format!("@{}", path),
+				replacement: format!("@{}", path),
 			})
 			.collect()
+	}
+
+	/// A `@` query that names a location instead of a fuzzy pattern.
+	fn is_path_query(query: &str) -> bool {
+		query.starts_with('/') || query.starts_with('.') || query.starts_with('~')
+	}
+
+	/// Walk the filesystem for `@` queries that look like a path. The rg index
+	/// only covers the working directory, so `../`, `/` and `~/` need real
+	/// directory listings. The typed prefix is preserved verbatim so a relative
+	/// mention stays relative.
+	fn complete_at_path(query: &str) -> Vec<Pair> {
+		let query = if query == "~" { "~/" } else { query };
+		let split = query.rfind('/').map(|i| i + 1).unwrap_or(0);
+		let (prefix, name) = query.split_at(split);
+		let dir = if prefix.is_empty() {
+			PathBuf::from(".")
+		} else {
+			Self::expand_tilde(prefix)
+		};
+
+		let name_lower = name.to_lowercase();
+		let mut candidates = Vec::new();
+		if let Ok(entries) = fs::read_dir(&dir) {
+			for entry in entries.flatten() {
+				let file_name = entry.file_name().to_string_lossy().to_string();
+				if !name_lower.is_empty() && !file_name.to_lowercase().starts_with(&name_lower) {
+					continue;
+				}
+				let suffix = if entry.path().is_dir() { "/" } else { "" };
+				let replacement = format!("@{}{}{}", prefix, file_name, suffix);
+				candidates.push(Pair {
+					display: replacement.clone(),
+					replacement,
+				});
+			}
+		}
+
+		candidates.sort_by(|a, b| {
+			let a_is_dir = a.replacement.ends_with('/');
+			let b_is_dir = b.replacement.ends_with('/');
+			b_is_dir
+				.cmp(&a_is_dir)
+				.then_with(|| a.replacement.cmp(&b.replacement))
+		});
+		candidates.truncate(10);
+		candidates
 	}
 
 	fn get_all_files() -> Vec<String> {
@@ -358,7 +405,11 @@ impl<'a> CommandCompleter<'a> {
 		// Guard cursor position to nearest char boundary (reedline passes byte offsets)
 		let pos = crate::utils::truncation::floor_char_boundary(line, pos.min(line.len()));
 		if let Some((start, query)) = Self::find_at_query(line, pos) {
-			let candidates = Self::fuzzy_match_files(query, 10);
+			let candidates = if Self::is_path_query(query) {
+				Self::complete_at_path(query)
+			} else {
+				Self::fuzzy_match_files(query, 10)
+			};
 			return (start, candidates);
 		}
 

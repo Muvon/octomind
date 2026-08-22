@@ -135,7 +135,7 @@ fn test_fuzzy_match_and_at_dispatch() {
 
 	let matches = CC::fuzzy_match_files("main", 10);
 	assert_eq!(matches.len(), 1);
-	assert_eq!(matches[0].replacement, "src/main.rs");
+	assert_eq!(matches[0].replacement, "@src/main.rs");
 
 	// max_results truncation
 	assert_eq!(CC::fuzzy_match_files("m", 1).len(), 1);
@@ -146,7 +146,37 @@ fn test_fuzzy_match_and_at_dispatch() {
 	let (start, candidates) = completer.complete("look @main", 10);
 	assert_eq!(start, 5);
 	assert_eq!(candidates.len(), 1);
-	assert_eq!(candidates[0].replacement, "src/main.rs");
+	assert_eq!(candidates[0].replacement, "@src/main.rs");
+}
+
+#[test]
+fn test_complete_at_path() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::create_dir(base.join("subdir")).expect("mkdir");
+	std::fs::write(base.join("notes.txt"), b"x").expect("write text");
+	std::fs::write(base.join("other.md"), b"x").expect("write md");
+
+	// Absolute directory listing: dirs first, all file types, @ kept
+	let listing = CC::complete_at_path(&format!("{}/", base.display()));
+	assert_eq!(listing.len(), 3);
+	assert!(listing[0].replacement.ends_with("subdir/"));
+	assert!(listing[0].replacement.starts_with('@'));
+	assert!(listing.iter().any(|p| p.replacement.ends_with("notes.txt")));
+
+	// Prefix filtering is case-insensitive and keeps the typed prefix verbatim
+	let filtered = CC::complete_at_path(&format!("{}/NO", base.display()));
+	assert_eq!(filtered.len(), 1);
+	assert_eq!(
+		filtered[0].replacement,
+		format!("@{}/notes.txt", base.display())
+	);
+
+	// Relative parent paths resolve against the cwd
+	assert!(CC::is_path_query("../"));
+	assert!(CC::is_path_query("~/"));
+	assert!(!CC::is_path_query("src"));
+	assert!(!CC::complete_at_path("../").is_empty());
 }
 
 #[test]

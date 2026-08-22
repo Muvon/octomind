@@ -653,7 +653,7 @@ pub async fn check_and_compress_conversation(
 		preserve_recent_user_bridge
 			&& session.session.messages[end_idx + 1..]
 				.iter()
-				.any(|message| crate::session::is_real_user_task_message(message)),
+				.any(crate::session::is_real_user_task_message),
 	)
 	.await?;
 

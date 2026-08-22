@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.45.2] - 2026-08-22
+
+### 📋 Release Summary
+
+This release includes a dependency update for octolib to version 0.34.2 (4700560b).
+
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.45.1] - 2026-08-22
 
 ### 📋 Release Summary

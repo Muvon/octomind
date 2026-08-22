@@ -49,6 +49,24 @@ async fn test_inbox_fifo_roundtrip() {
 }
 
 #[tokio::test]
+async fn test_reinit_keeps_queued_messages() {
+	// Resuming a live session re-runs the init sequence. A schedule that fired
+	// in between must still be delivered — see the ws/acp resume path.
+	crate::session::context::with_session_id("inbox-test-reinit".to_string(), async {
+		init_inbox_for_session();
+		push_inbox_message(schedule_msg("queued before resume"));
+
+		init_inbox_for_session();
+
+		let msg = try_pop_inbox_message().expect("message survives re-init");
+		assert_eq!(msg.content, "queued before resume");
+
+		clear_inbox_for_session(&crate::session::context::expect_session_id());
+	})
+	.await;
+}
+
+#[tokio::test]
 async fn test_inbox_message_display_metadata() {
 	let msg = schedule_msg("do the rounds");
 	assert!(!msg.source.display_label().is_empty());

@@ -177,8 +177,12 @@ static INBOX: RwLock<Option<HashMap<SessionId, InboxQueue>>> = RwLock::new(None)
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-/// Create an empty inbox for a session.  Call once, right after
-/// `with_session_id` establishes the session context.
+/// Create an inbox for a session, right after `with_session_id` establishes
+/// the session context.
+///
+/// Idempotent: resuming a live session re-runs the init sequence, and a
+/// schedule or monitor can have queued a message in between. Replacing the
+/// queue there would destroy it — only `clear_inbox_for_session` drops one.
 pub fn init_inbox_for_session() {
 	let session_id = match crate::session::context::current_session_id() {
 		Some(id) => id,
@@ -186,13 +190,10 @@ pub fn init_inbox_for_session() {
 	};
 	let mut guard = INBOX.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
-	registry.insert(
-		session_id,
-		InboxQueue {
-			messages: VecDeque::new(),
-			notify: Arc::new(Notify::new()),
-		},
-	);
+	registry.entry(session_id).or_insert_with(|| InboxQueue {
+		messages: VecDeque::new(),
+		notify: Arc::new(Notify::new()),
+	});
 }
 
 /// Destroy the inbox for a session.  Called from `cleanup_session`.

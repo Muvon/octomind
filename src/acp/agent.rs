@@ -232,18 +232,38 @@ fn translate_server_message_to_acp(msg: ServerMessage) -> Option<SessionUpdate> 
 			} else {
 				ToolCallStatus::Failed
 			};
+			// Restore the title: a progress heartbeat may have replaced it with
+			// its liveness message while the call was running.
 			let upd = ToolCallUpdate::new(
 				p.tool_id.clone(),
-				ToolCallUpdateFields::new().status(status).raw_output(
-					serde_json::from_str::<serde_json::Value>(&p.content)
-						.unwrap_or(serde_json::Value::String(p.content)),
-				),
+				ToolCallUpdateFields::new()
+					.status(status)
+					.title(p.tool.clone())
+					.raw_output(
+						serde_json::from_str::<serde_json::Value>(&p.content)
+							.unwrap_or(serde_json::Value::String(p.content)),
+					),
+			);
+			Some(SessionUpdate::ToolCallUpdate(upd))
+		}
+		// ACP has no progress primitive — liveness belongs to the tool call the
+		// notification came from, so it renders as a title patch on that call.
+		ServerMessage::McpNotification(p) => {
+			let tool_id = p.tool_id?;
+			let message = p.params.get("message").and_then(|m| m.as_str())?;
+			let upd = ToolCallUpdate::new(
+				tool_id,
+				ToolCallUpdateFields::new().title(format!("[{}] {}", p.server, message)),
 			);
 			Some(SessionUpdate::ToolCallUpdate(upd))
 		}
 		_ => None,
 	}
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;
 
 /// Build the list of available slash commands to advertise to ACP clients.
 ///

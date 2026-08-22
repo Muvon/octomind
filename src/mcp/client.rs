@@ -28,8 +28,8 @@ use rmcp::model::{
 	CancelledNotificationParam, ClientCapabilities, ClientInfo, ClientRequest, ElicitRequestParams,
 	ElicitResult, ElicitationAction, ElicitationCapability, ExtensionCapabilities,
 	FormElicitationCapability, GetTaskParams, Implementation, InputRequest, InputResponses,
-	ProtocolVersion, ServerResult, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
-	DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
+	ProgressToken, ProtocolVersion, ServerResult, TaskPayload, UpdateTaskParams,
+	UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
@@ -51,6 +51,31 @@ lazy_static::lazy_static! {
 	/// connection so refreshed/rotated tokens trigger a reconnect (the
 	/// transport cannot change its Authorization header in place).
 	static ref HTTP_AUTH_TOKENS: RwLock<HashMap<String, Option<String>>> = RwLock::new(HashMap::new());
+
+	/// Tool call id behind each in-flight progress token. MCP progress carries
+	/// only the token, but clients render progress against the tool call it
+	/// belongs to, so the mapping is recorded for the life of the request.
+	static ref PROGRESS_TOOL_IDS: RwLock<HashMap<ProgressToken, String>> = RwLock::new(HashMap::new());
+}
+
+/// Register `token -> tool_id` and unregister on drop, covering the timeout,
+/// cancellation and `?` exits of a tool-call round.
+struct ProgressTokenBinding(ProgressToken);
+
+impl ProgressTokenBinding {
+	fn new(token: &ProgressToken, tool_id: &str) -> Self {
+		PROGRESS_TOOL_IDS
+			.write()
+			.unwrap()
+			.insert(token.clone(), tool_id.to_string());
+		Self(token.clone())
+	}
+}
+
+impl Drop for ProgressTokenBinding {
+	fn drop(&mut self) {
+		PROGRESS_TOOL_IDS.write().unwrap().remove(&self.0);
+	}
 }
 
 /// Client handler: identifies octomind (with the session context as an
@@ -80,6 +105,17 @@ impl OctoClientHandler {
 			method,
 			params,
 			self.session_id.as_deref(),
+			None,
+		);
+	}
+
+	fn emit_progress(&self, params: &serde_json::Value, tool_id: Option<String>) {
+		super::process::emit_notification(
+			&self.server_name,
+			"notifications/progress",
+			params,
+			self.session_id.as_deref(),
+			tool_id,
 		);
 	}
 }
@@ -98,8 +134,13 @@ impl ClientHandler for OctoClientHandler {
 		params: rmcp::model::ProgressNotificationParam,
 		_context: NotificationContext<RoleClient>,
 	) {
+		let tool_id = PROGRESS_TOOL_IDS
+			.read()
+			.unwrap()
+			.get(&params.progress_token)
+			.cloned();
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-		self.emit("notifications/progress", &value);
+		self.emit_progress(&value, tool_id);
 	}
 
 	// Logging is deprecated in MCP 2026-07-28 (SEP-2577) but legacy servers
@@ -676,6 +717,7 @@ async fn call_tool_round(
 	service: &McpService,
 	server: &McpServerConfig,
 	params: CallToolRequestParams,
+	tool_id: &str,
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<CallToolResponse> {
 	let idle_timeout_seconds = server.timeout_seconds();
@@ -700,6 +742,7 @@ async fn call_tool_round(
 		.map_err(|e| anyhow!("Failed to send tools/call to '{}': {}", server.name(), e))?;
 	let request_id = handle.id.clone();
 	let peer = handle.peer.clone();
+	let _progress_binding = ProgressTokenBinding::new(&handle.progress_token, tool_id);
 	let result = tokio::select! {
 		result = handle.await_response() => result,
 		_ = tokio::time::sleep(absolute_cap) => {
@@ -903,7 +946,15 @@ pub async fn call_tool(
 
 	let mut state_only_rounds = 0usize;
 	for _ in 0..DEFAULT_MRTR_MAX_ROUNDS {
-		match call_tool_round(&service, server, params.clone(), &mut cancellation_token).await? {
+		match call_tool_round(
+			&service,
+			server,
+			params.clone(),
+			&call.tool_id,
+			&mut cancellation_token,
+		)
+		.await?
+		{
 			CallToolResponse::Complete(result) => return Ok(result),
 			CallToolResponse::Task(task) => {
 				return drive_task(&service, server, task, &mut cancellation_token).await;

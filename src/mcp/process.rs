@@ -260,12 +260,14 @@ pub(crate) fn emit_notification(
 	method: &str,
 	params: &serde_json::Value,
 	session_id: Option<&str>,
+	tool_id: Option<String>,
 ) {
 	let msg = crate::websocket::ServerMessage::McpNotification(
 		crate::websocket::McpNotificationPayload {
 			server: server_name.to_string(),
 			method: method.to_string(),
 			params: params.clone(),
+			tool_id,
 		},
 	);
 

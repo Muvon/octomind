@@ -273,6 +273,10 @@ pub struct McpNotificationPayload {
 	pub method: String,
 	/// Notification params as-is from the server
 	pub params: Value,
+	/// Tool call the notification belongs to, when the MCP progress token
+	/// resolves to one. Lets clients attach progress to the right tool card.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub tool_id: Option<String>,
 }
 
 /// Outgoing message from server to client.

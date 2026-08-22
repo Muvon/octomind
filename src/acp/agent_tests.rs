@@ -14,6 +14,7 @@
 
 use super::*;
 use crate::websocket::McpNotificationPayload;
+use futures::AsyncReadExt;
 
 fn progress(tool_id: Option<&str>) -> ServerMessage {
 	ServerMessage::McpNotification(McpNotificationPayload {
@@ -51,4 +52,31 @@ fn progress_without_a_tool_call_is_dropped() {
 	// ACP has no session-level progress surface, so an unattributable beat has
 	// nowhere to go — better dropped than rendered as agent output.
 	assert!(translate_server_message_to_acp(progress(None)).is_none());
+}
+/// The disconnect signal must fire exactly when the stream hits EOF —
+/// not on ordinary reads. `serve` relies on it to shut the process down
+/// once the client closes our stdin; if it stops firing, every ACP
+/// subprocess outlives its parent again.
+#[tokio::test]
+async fn signal_on_eof_fires_exactly_at_eof() {
+	let (tx, mut rx) = tokio::sync::oneshot::channel();
+	let mut reader = SignalOnEof {
+		inner: futures::io::Cursor::new(b"data".to_vec()),
+		eof_tx: Some(tx),
+	};
+
+	let mut buf = [0u8; 4];
+	let n = reader.read(&mut buf).await.unwrap();
+	assert_eq!(n, 4);
+	assert!(
+		matches!(
+			rx.try_recv(),
+			Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+		),
+		"signal must not fire before EOF"
+	);
+
+	let n = reader.read(&mut buf).await.unwrap();
+	assert_eq!(n, 0);
+	rx.await.expect("EOF must fire the disconnect signal");
 }

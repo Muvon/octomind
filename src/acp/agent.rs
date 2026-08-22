@@ -1683,37 +1683,3 @@ impl<R: futures::io::AsyncRead + Unpin> futures::io::AsyncRead for SignalOnEof<R
 		poll
 	}
 }
-
-#[cfg(test)]
-mod tests {
-	use super::SignalOnEof;
-	use futures::AsyncReadExt;
-
-	/// The disconnect signal must fire exactly when the stream hits EOF —
-	/// not on ordinary reads. `serve` relies on it to shut the process down
-	/// once the client closes our stdin; if it stops firing, every ACP
-	/// subprocess outlives its parent again.
-	#[tokio::test]
-	async fn signal_on_eof_fires_exactly_at_eof() {
-		let (tx, mut rx) = tokio::sync::oneshot::channel();
-		let mut reader = SignalOnEof {
-			inner: futures::io::Cursor::new(b"data".to_vec()),
-			eof_tx: Some(tx),
-		};
-
-		let mut buf = [0u8; 4];
-		let n = reader.read(&mut buf).await.unwrap();
-		assert_eq!(n, 4);
-		assert!(
-			matches!(
-				rx.try_recv(),
-				Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-			),
-			"signal must not fire before EOF"
-		);
-
-		let n = reader.read(&mut buf).await.unwrap();
-		assert_eq!(n, 0);
-		rx.await.expect("EOF must fire the disconnect signal");
-	}
-}

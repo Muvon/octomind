@@ -259,7 +259,7 @@ pub(super) async fn apply_compression(
 	pact: Option<&super::attention::PactContext>,
 	pact_validation: Option<&super::attention::ValidationReport>,
 	force: bool,
-	preserve_recent_user_bridge: bool,
+	tail_carries_user_request: bool,
 ) -> Result<()> {
 	let continuation_request = last_user_message
 		.as_ref()
@@ -620,7 +620,7 @@ pub(super) async fn apply_compression(
 	// `last_user_message = None` is only possible on a session with no
 	// real user message anywhere (pathological bootstrap-only state); the
 	// wrapper falls back to pointing at the summary itself.
-	if preserve_recent_user_bridge {
+	if tail_carries_user_request {
 		log_debug!("Preserved exact previous-assistant/new-user bridge after compressed summary");
 	} else {
 		let continuation_msg = crate::session::Message {

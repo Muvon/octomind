@@ -645,7 +645,15 @@ pub async fn check_and_compress_conversation(
 		pact.as_ref(),
 		pact_validation.as_ref(),
 		force,
-		preserve_recent_user_bridge && end_idx + 1 < session.session.messages.len(),
+		// The continuation wrapper is the only user-role message a fold emits.
+		// Skip it only when the preserved tail already carries a real request:
+		// a mid-task fold keeps `[assistant, tool, ...]`, which carries none, and
+		// a payload with no user role at all is rejected outright by some
+		// providers (Z.ai 1214) and loses the task on the rest.
+		preserve_recent_user_bridge
+			&& session.session.messages[end_idx + 1..]
+				.iter()
+				.any(|message| crate::session::is_real_user_task_message(message)),
 	)
 	.await?;
 

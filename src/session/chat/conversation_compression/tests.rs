@@ -115,6 +115,46 @@ fn mid_task_fold_keeps_the_live_exchange_verbatim() {
 }
 
 #[test]
+fn mid_task_fold_leaves_no_user_role_in_the_tail() {
+	// The predicate the apply step uses to decide whether the synthetic
+	// continuation wrapper is still needed. A mid-task fold preserves
+	// `[assistant, tool]`, so the surviving payload carries no user role at all
+	// unless the wrapper is inserted — which Z.ai rejects with 1214 and every
+	// other provider silently accepts while losing the request.
+	let messages = vec![
+		msg("system"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("tool"),
+	];
+
+	let (_, mid_task_end) = find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	assert!(
+		!messages[mid_task_end + 1..]
+			.iter()
+			.any(crate::session::is_real_user_task_message),
+		"mid-task tail must be recognised as carrying no request"
+	);
+
+	// A fresh request at the tail does carry one, so the wrapper stays skipped.
+	let mut fresh = messages.clone();
+	fresh.push(msg("assistant"));
+	fresh.push(msg("user"));
+	let (_, fresh_end) = find_compression_range_preserving_turn(&fresh, false, true).unwrap();
+	assert!(
+		fresh[fresh_end + 1..]
+			.iter()
+			.any(crate::session::is_real_user_task_message),
+		"fresh-request tail must be recognised as carrying the request"
+	);
+}
+
+#[test]
 fn synthetic_user_messages_excluded_from_tasks() {
 	// Guards the bug that ate the work: supervisor steers / recall / skill /
 	// continuation are USER-role but must never be captured as user tasks or fed to

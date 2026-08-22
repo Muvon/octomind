@@ -187,3 +187,131 @@ async fn test_automatic_below_threshold_is_a_noop() {
 	assert!(!compressed);
 	assert_eq!(session.session.messages.len(), before);
 }
+
+// ===== TEMPORARY VERIFICATION TESTS (scratch — not part of the staged change) =====
+
+#[tokio::test]
+async fn verify_midturn_e2e_mid_task_automatic_compression_keeps_user_request() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	// Force the context ceiling so the Automatic trigger fires deterministically
+	// on a tiny session (current_tokens >= ceiling -> forced deepest compression).
+	config.max_session_tokens_threshold = 1;
+
+	// Mid-task tail: [assistant live step, tool result] — no user role at the tail.
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		msg("user", "build the frobnicator widget"),
+		msg("assistant", "starting on the widget now"),
+		msg("user", "make sure it compiles"),
+		msg("assistant", "phase one is done and compiling"),
+		msg("user", "add tests too"),
+		msg("assistant", "tests added"),
+		msg("assistant", "running the build now"),
+		msg("tool", "build output: ok"),
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(compressed, "mid-task automatic compression must compress");
+
+	let wrapper = session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "user" && m.content.contains("<continuation>"))
+		.expect("MID-TASK: a user-role continuation wrapper must be inserted after the summary");
+	assert!(
+		wrapper.content.contains("add tests too"),
+		"wrapper must carry the active request verbatim, got:\n{}",
+		wrapper.content
+	);
+	let joined = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.content.as_str())
+		.collect::<Vec<_>>()
+		.join("\n---\n");
+	assert!(
+		joined.contains("running the build now") && joined.contains("build output: ok"),
+		"live exchange must survive byte-exact, got:\n{joined}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.max_session_tokens_threshold = 1;
+
+	// Fresh-follow-up tail: [previous assistant answer, brand-new user request].
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		msg("user", "build the frobnicator widget"),
+		msg("assistant", "starting on the widget now"),
+		msg("user", "make sure it compiles"),
+		msg("assistant", "phase one is done and compiling"),
+		msg("user", "add tests too"),
+		msg("assistant", "the exact answer being followed up"),
+		msg("user", "brand-new follow-up request"),
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		compressed,
+		"fresh-follow-up automatic compression must compress"
+	);
+
+	let joined = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.content.as_str())
+		.collect::<Vec<_>>()
+		.join("\n---\n");
+	assert!(
+		joined.contains("brand-new follow-up request")
+			&& joined.contains("the exact answer being followed up"),
+		"exact [assistant, new request] bridge must survive verbatim, got:\n{joined}"
+	);
+	assert!(
+		!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("<continuation>")),
+		"no continuation wrapper may be inserted when the tail already carries the real request"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

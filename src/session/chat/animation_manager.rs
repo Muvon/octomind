@@ -326,6 +326,19 @@ impl AnimationManager {
 		}
 	}
 
+	/// Set the phase only when a spinner is already on screen.
+	///
+	/// `set_phase` reads the thread-local output mode, which a spawned task
+	/// does not inherit; callers that already know they are interactive (the
+	/// MCP notification drain) use this instead. Never starts a spinner.
+	pub fn set_phase_if_running(&self, phase: &str) {
+		let guard = self.spinner.lock().unwrap();
+		if let Some(ref pb) = *guard {
+			*self.phase.lock().unwrap() = Some(phase.to_string());
+			self.refresh_message(pb);
+		}
+	}
+
 	/// Set (or clear with `None`) the sticky activity label — the agent's
 	/// self-reported "what I'm doing". Unlike `set_phase` this never starts
 	/// the spinner; it only refreshes a live one. Survives `update_state`

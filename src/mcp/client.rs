@@ -886,6 +886,16 @@ pub async fn call_tool(
 ) -> Result<rmcp::model::CallToolResult> {
 	let service = get_or_connect(server).await?;
 
+	// Progress notifications from this call render as the spinner phase (see the
+	// notification drain in the chat loop); the phase must not outlive the call.
+	struct PhaseGuard;
+	impl Drop for PhaseGuard {
+		fn drop(&mut self) {
+			crate::session::chat::get_animation_manager().clear_phase();
+		}
+	}
+	let _phase_guard = PhaseGuard;
+
 	let mut params = CallToolRequestParams::new(call.tool_name.clone());
 	if let serde_json::Value::Object(arguments) = call.parameters.clone() {
 		params = params.with_arguments(arguments);

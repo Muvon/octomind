@@ -1233,31 +1233,23 @@ pub async fn run_interactive_session(
 
 			let api_result = {
 				// Set up notification forwarding for interactive terminal mode.
-				// Notifications (e.g. MCP server warnings) are printed to stderr so they
-				// don't interfere with the readline prompt on stdout.
+				// Notifications (e.g. an MCP server's progress heartbeat) go on the
+				// spinner, not stderr: a long shell call beats every few seconds and
+				// one printed line per beat scrolls the transcript away.
 				let (notif_tx, mut notif_rx) =
 					tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
 				crate::mcp::process::set_notification_sender(None, notif_tx);
 
-				// Drain notifications to stderr in a background task
 				let notif_drain = tokio::spawn(async move {
 					while let Some(msg) = notif_rx.recv().await {
 						if let crate::websocket::ServerMessage::McpNotification(n) = msg {
-							if !crate::logging::tracing_setup::is_structured_output_mode() {
-								use colored::Colorize;
-								eprintln!(
-									"{}",
-									format!(
-										"⚠ [{}] {}",
-										n.server,
-										n.params
-											.get("message")
-											.and_then(|m| m.as_str())
-											.unwrap_or(&n.method)
-									)
-									.yellow()
-								);
-							}
+							let text = n
+								.params
+								.get("message")
+								.and_then(|m| m.as_str())
+								.unwrap_or(&n.method);
+							crate::session::chat::get_animation_manager()
+								.set_phase_if_running(&format!("[{}] {}", n.server, text));
 						}
 					}
 				});

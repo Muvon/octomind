@@ -78,3 +78,13 @@ fn test_with_suspended_spinner_returns_closure_value() {
 	let value = manager.with_suspended_spinner(|| 41 + 1);
 	assert_eq!(value, 42);
 }
+
+#[test]
+fn test_set_phase_if_running_needs_a_live_spinner() {
+	// The MCP notification drain calls this from a spawned task; without a
+	// spinner on screen it must stay silent rather than conjure one.
+	let manager = AnimationManager::new();
+	manager.set_phase_if_running("[octofs] command still running");
+	assert!(!manager.is_running());
+	assert!(manager.phase.lock().unwrap().is_none());
+}

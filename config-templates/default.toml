@@ -629,7 +629,7 @@ knowledge_retention = 25
 # Hard token budget for analysis findings retained across compression cycles.
 # Findings are ranked for current-task relevance, recency, and diversity when
 # they do not all fit. 0 disables analysis-finding retention.
-analysis_findings_max_tokens = 4000
+analysis_findings_max_tokens = 6000
 
 # Single compression trigger in absolute tokens (0 = compression disabled).
 # Compression becomes eligible once the full context exceeds this. How deep each
@@ -637,7 +637,7 @@ analysis_findings_max_tokens = 4000
 # session growth rate and the context ceiling (the lower of
 # max_session_tokens_threshold and the model's usable window), so hot sessions
 # compress deeply and winding-down sessions compress gently.
-threshold = 90000
+threshold = 70000
 
 # Evidence-grounded causal compaction (PACT): runtime-owned task/constraint
 # pins, causal tool packets, an exact active frontier, attributed folds, and a

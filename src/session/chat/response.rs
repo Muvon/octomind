@@ -1150,13 +1150,6 @@ pub async fn process_response<S: OutputSink>(
 		crate::log_debug!("supervisor session stats: {}", stats);
 	}
 
-	// Inject compression hint if applicable (non-intrusive, appended to response)
-	// Skip if using structured output (JSONL/WebSocket - handled by sink)
-	if params.mode.is_terminal_mode() {
-		if let Some(hint) = params.chat_session.get_compression_hint(params.config) {
-			println!("{}", hint);
-		}
-	}
 	Ok(())
 }
 

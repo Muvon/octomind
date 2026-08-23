@@ -16,7 +16,6 @@
 
 use super::utils::format_number;
 use crate::config::Config;
-use crate::mcp::core::plan;
 use crate::session::{
 	estimate_full_context_tokens, get_sessions_dir, load_session, CompressionStats, Session,
 };
@@ -189,9 +188,6 @@ pub struct ChatSession {
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
 
 	pub initial_status_shown: bool, // Flag to track if initial status line was displayed
-	// Compression hint tracking
-	pub compression_hint_count: usize, // Counter for compression hints
-	pub last_compression_hint_shown: u64, // Timestamp of last compression hint
 	// Token calculation cache - SINGLE SOURCE OF TRUTH for context token counting
 
 	// This cache ensures all systems (display, compression) use identical calculations
@@ -380,9 +376,6 @@ impl ChatSession {
 			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
 
-			compression_hint_count: 0,
-			last_compression_hint_shown: 0,
-
 			context_tokens_after_last_compression: 0,
 			predicted_turns_at_last_compression: 0.0,
 			api_calls_at_last_compression: 0,
@@ -417,8 +410,6 @@ impl ChatSession {
 			max_retries: max_retries_value,     // Set max retries value
 			was_resumed: false,                 // This is a new session
 			initial_status_shown: false,        // Initialize status display flag
-			compression_hint_count: 0,          // Initialize compression hint counter
-			last_compression_hint_shown: 0,     // Initialize last hint timestamp
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			schema: None,                       // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
@@ -623,8 +614,6 @@ impl ChatSession {
 					// Restore runtime state from session.info
 					let cache_next = session.info.cache_next_user_message;
 					let spending_checkpoint = session.info.spending_threshold_checkpoint;
-					let compression_hint_count = session.info.compression_hint_count;
-					let last_compression_hint = session.info.last_compression_hint_shown;
 					// Restore the verify-gate's evidence ledger for the still-open
 					// turn. The gate re-derives its conditions from the persisted
 					// request; the recorded actions that satisfy them must survive
@@ -648,12 +637,10 @@ impl ChatSession {
 						pending_image: None,                 // Initialize pending image
 						pending_video: None,                 // Initialize pending video
 						max_retries: params.max_retries.unwrap_or(params.config.max_retries), // Use provided max_retries or fall back to config
-						was_resumed: true,          // This session was resumed from file
-						initial_status_shown: true, // Don't show status for resumed sessions
-						compression_hint_count,     // Restore from session.info
-						last_compression_hint_shown: last_compression_hint, // Restore from session.info
-						cached_tools: None,         // Initialize tool cache (populated on first use)
-						schema: None,               // Schema applied after init via CLI override
+						was_resumed: true,              // This session was resumed from file
+						initial_status_shown: true,     // Don't show status for resumed sessions
+						cached_tools: None,             // Initialize tool cache (populated on first use)
+						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
 						learning_injected: false,
@@ -1236,51 +1223,6 @@ impl ChatSession {
 		Ok(())
 	}
 
-	/// Check if compression hint should be shown based on context pressure
-	pub fn should_show_compression_hint(&mut self, config: &Config) -> bool {
-		// Only suggest if there's an active plan
-		if !plan::has_active_plan() {
-			return false;
-		}
-
-		// Check if hints are enabled in config
-		if !config.compression.hints_enabled {
-			return false;
-		}
-
-		// Check if compression is not disabled (no continuation_disabled check needed)
-
-		// Calculate context pressure
-		let current_tokens = estimate_full_context_tokens(&self.session.messages, None);
-		let max_tokens = config.max_session_tokens_threshold;
-
-		if max_tokens == 0 {
-			return false; // Threshold disabled
-		}
-
-		let pressure = current_tokens as f64 / max_tokens as f64;
-
-		// Only suggest at configured threshold
-		if pressure < config.compression.hints_pressure_threshold {
-			return false;
-		}
-
-		// Rate limit hints - only show every N tool executions
-		self.compression_hint_count += 1;
-		self.compression_hint_count % config.compression.hints_min_interval == 1
-	}
-
-	/// Get compression hint message if applicable
-	pub fn get_compression_hint(&mut self, config: &Config) -> Option<String> {
-		if self.should_show_compression_hint(config) {
-			Some(
-				"\n\n💡 Hint: Consider using `/plan next` to compress completed tasks and free up context space for remaining work.".to_string(),
-			)
-		} else {
-			None
-		}
-	}
-
 	/// Reinitialize session for new role - updates system prompt and MCP servers
 	pub async fn reinitialize_for_role(
 		&mut self,
@@ -1439,8 +1381,6 @@ impl ChatSession {
 
 			was_resumed: false,
 			initial_status_shown: false,
-			compression_hint_count: 0,
-			last_compression_hint_shown: 0,
 			cached_tools: None,
 			schema: None,
 			critical_knowledge: Vec::new(),

@@ -69,7 +69,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 5;
+pub const CURRENT_CONFIG_VERSION: u32 = 6;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -181,13 +181,7 @@ impl Default for CompressionAttentionConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CompressionHintConfig {
-	/// Enable compression system (task → phase → project, all automatic)
-	pub hints_enabled: bool,
-	/// Context pressure threshold (0.0-1.0) at which to start showing hints
-	pub hints_pressure_threshold: f64,
-	/// Minimum tool executions between hints
-	pub hints_min_interval: usize,
+pub struct CompressionConfig {
 	/// Absolute token threshold at which compression becomes eligible (0 = disabled).
 	/// This is the only compression knob: how deep each compression goes is
 	/// computed at runtime from the measured session growth rate and the context
@@ -388,7 +382,7 @@ pub struct Config {
 	pub prompts: Vec<PromptConfig>,
 
 	// Plan-driven compression configuration
-	pub compression: CompressionHintConfig,
+	pub compression: CompressionConfig,
 
 	// Supervisor: out-of-band control plane (learning, orientation, detectors, gate).
 	// Strict: required field — a missing [supervisor] section is a hard parse error.

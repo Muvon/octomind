@@ -14,8 +14,6 @@ Two related safety nets sit on top of the adaptive engine:
 - **The context ceiling** — the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's usable window; crossing it force-compresses unconditionally (see [The Hard Ceiling](#the-hard-ceiling)).
 - **Cache keepalive** — an opt-in subsystem that keeps the prompt cache warm during idle time (see [Cache Keepalive](#cache-keepalive)).
 
-> **Hints are not the compression engine.** The `hints_*` fields below only control a cosmetic `/plan next` suggestion shown when an active plan exists. They do **not** gate automatic compression — the engine is driven solely by `compression.threshold` and the context ceiling.
-
 ## Configuration
 
 ```toml
@@ -23,10 +21,6 @@ Two related safety nets sit on top of the adaptive engine:
 max_session_tokens_threshold = 200000
 
 [compression]
-# hints_* are cosmetic: they only drive the "/plan next" suggestion, NOT compression
-hints_enabled = true
-hints_pressure_threshold = 0.7
-hints_min_interval = 5
 knowledge_retention = 10
 
 # The single compression trigger, in absolute tokens (0 = compression disabled).
@@ -69,8 +63,6 @@ The target is clamped between the deepest and gentlest achievable sizes (derived
 ### The Hard Ceiling
 
 The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). When the full-context token count reaches it, compression is **forced unconditionally** — it bypasses the exponential cooldown, the cache-aware cost analysis, the feasibility check, and the AI's veto (the decision model cannot decline). The ratio used is the deepest allowed (**16.0x**).
-
-`max_session_tokens_threshold` is also the denominator for the `/plan next` hint pressure calculation. Setting it to `0` leaves the model-window half of the ceiling in force but disables the hints.
 
 ### Exponential Cooldown
 
@@ -268,7 +260,6 @@ Net benefit: negative --> SKIP (would cost money)
 - Check `compression.threshold` is non-zero and actually exceeded.
 - If you rely on the hard ceiling, confirm `max_session_tokens_threshold > 0`.
 - Use `/info` to see the current token count vs. your thresholds.
-- Note: `hints_enabled` does **not** control compression. It only gates the cosmetic `/plan next` hint (which additionally requires an active plan and a non-zero `max_session_tokens_threshold`). Changing it will not make compression trigger.
 
 **Compression too aggressive:**
 - Lower `target_ratio` values (e.g., 2.0 instead of 4.0)

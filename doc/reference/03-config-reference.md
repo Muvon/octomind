@@ -288,9 +288,6 @@ Automatic context compression system.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `hints_enabled` | bool | `true` | Enable compression system |
-| `hints_pressure_threshold` | f64 | `0.7` | Context pressure threshold (0.0-1.0) to start showing hints |
-| `hints_min_interval` | usize | `5` | Minimum tool executions between hints |
 | `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
 | `analysis_findings_max_tokens` | usize | `4000` | Hard token budget for retained analysis findings; `0` disables retention |
 | `threshold` | usize | `90000` | Single compression trigger in absolute tokens; `0` disables compression |
@@ -313,9 +310,6 @@ Model used for compression decisions and summary generation.
 
 ```toml
 [compression]
-hints_enabled = true
-hints_pressure_threshold = 0.7
-hints_min_interval = 5
 knowledge_retention = 25
 analysis_findings_max_tokens = 4000
 threshold = 90000

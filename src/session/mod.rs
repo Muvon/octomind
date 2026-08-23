@@ -298,10 +298,6 @@ pub struct SessionInfo {
 	pub cache_next_user_message: bool,
 	#[serde(default)]
 	pub spending_threshold_checkpoint: f64,
-	#[serde(default)]
-	pub compression_hint_count: usize,
-	#[serde(default)]
-	pub last_compression_hint_shown: u64,
 	// Exact post-compression context watermark used by the adaptive controller.
 	#[serde(default)]
 	pub context_tokens_after_last_compression: usize, // 0 = no prior compression, can compress immediately
@@ -449,8 +445,6 @@ impl Session {
 				cache_next_user_message: false,
 				spending_threshold_checkpoint: 0.0,
 
-				compression_hint_count: 0,
-				last_compression_hint_shown: 0,
 				context_tokens_after_last_compression: 0,
 				predicted_turns_at_last_compression: 0.0,
 				api_calls_at_last_compression: 0,
@@ -950,8 +944,6 @@ mod tests {
 					"cache_next_user_message": false,
 					"spending_threshold_checkpoint": 0.0,
 
-					"compression_hint_count": 0,
-					"last_compression_hint_shown": 0
 				}
 			}))
 			.unwrap(),
@@ -1044,8 +1036,6 @@ mod tests {
 					"cache_next_user_message": false,
 					"spending_threshold_checkpoint": 0.0,
 
-					"compression_hint_count": 0,
-					"last_compression_hint_shown": 0
 				}
 			}))
 			.unwrap(),
@@ -1169,8 +1159,6 @@ mod tests {
 					"cache_next_user_message": false,
 					"spending_threshold_checkpoint": 0.0,
 
-					"compression_hint_count": 0,
-					"last_compression_hint_shown": 0
 				}
 			}))
 			.unwrap(),
@@ -1240,8 +1228,6 @@ mod tests {
 					"cache_next_user_message": false,
 					"spending_threshold_checkpoint": 0.0,
 
-					"compression_hint_count": 0,
-					"last_compression_hint_shown": 0
 				}
 			}))
 			.unwrap(),
@@ -1310,8 +1296,6 @@ mod tests {
 					"cache_next_user_message": false,
 					"spending_threshold_checkpoint": 0.0,
 
-					"compression_hint_count": 0,
-					"last_compression_hint_shown": 0
 				}
 			}))
 			.unwrap(),

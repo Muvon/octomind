@@ -73,7 +73,7 @@ pub fn clear_task_start_index() {
 	crate::log_debug!("Cleared task start_index after successful compression");
 }
 
-/// Check if there's an active plan (for compression hints)
+/// Check if there's an active plan.
 pub fn has_active_plan() -> bool {
 	let storage = get_storage();
 	let storage = storage.lock().unwrap();

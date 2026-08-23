@@ -237,7 +237,6 @@ Long sessions can accumulate significant costs. Monitor with `/info`.
 **Enable compression for multi-day sessions:**
 ```toml
 [compression]
-hints_enabled = true
 knowledge_retention = 10
 threshold = 60000
 ```

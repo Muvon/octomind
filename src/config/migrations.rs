@@ -68,9 +68,32 @@ fn plan() -> MigrationPlan {
 				to: 5,
 				apply: add_v5_supervisor_fields,
 			},
+			VersionMigration {
+				from: 5,
+				to: 6,
+				apply: remove_v6_compression_hints,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v6 removes the obsolete terminal `/plan next` hint. Plan state is owned by
+/// the supervisor sidecar, and `/plan` is now a read-only display command.
+fn remove_v6_compression_hints(
+	document: &mut toml_edit::DocumentMut,
+	_template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	if let Some(compression) = document
+		.as_table_mut()
+		.get_mut("compression")
+		.and_then(|item| item.as_table_mut())
+	{
+		compression.remove("hints_enabled");
+		compression.remove("hints_pressure_threshold");
+		compression.remove("hints_min_interval");
+	}
+	Ok(())
 }
 
 /// v5 adds the configurable verifier budget, the external plan manager, and
@@ -347,7 +370,7 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(5));
+		assert_eq!(migrated["version"].as_integer(), Some(6));
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
 		assert!(migrated["supervisor"]["delegate"]["enabled"]
 			.as_bool()
@@ -397,7 +420,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 5);
+		assert_eq!(migration.to_version, 6);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -445,13 +468,13 @@ model = "openrouter:custom/model"
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 5);
+		assert_eq!(migration.to_version, 6);
 		assert!(migration.content.contains("# keep me"));
 		// The template's documentation comes across with the new section.
 		assert!(migration.content.contains("# Delegate gate"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(5));
+		assert_eq!(migrated["version"].as_integer(), Some(6));
 		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
 			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
@@ -547,12 +570,13 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 5);
+		assert_eq!(migration.to_version, 6);
 		assert!(migration.content.contains("# keep compression notes"));
-		assert_eq!(
-			migrated["compression"]["hints_enabled"].as_bool(),
-			Some(false)
-		);
+		assert!(migrated["compression"].get("hints_enabled").is_none());
+		assert!(migrated["compression"]
+			.get("hints_pressure_threshold")
+			.is_none());
+		assert!(migrated["compression"].get("hints_min_interval").is_none());
 		assert_eq!(
 			migrated["compression"]["knowledge_retention"].as_integer(),
 			Some(17)
@@ -594,7 +618,7 @@ target_ratio = 4.0
 			.expect("v3 must migrate");
 
 		assert_eq!(migration.from_version, 3);
-		assert_eq!(migration.to_version, 5);
+		assert_eq!(migration.to_version, 6);
 		assert!(migration.content.contains("# keep my notes"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -629,7 +653,7 @@ trajectory_max_tokens = 3072
 			.unwrap()
 			.expect("v4 must migrate");
 		assert_eq!(migration.from_version, 4);
-		assert_eq!(migration.to_version, 5);
+		assert_eq!(migration.to_version, 6);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
@@ -687,8 +711,36 @@ trajectory_max_tokens = 3072
 	}
 
 	#[test]
+	fn v5_removes_obsolete_compression_hints_and_keeps_compression_values() {
+		let existing = r#"version = 5
+
+[compression]
+hints_enabled = false
+hints_pressure_threshold = 0.8
+hints_min_interval = 9
+knowledge_retention = 17
+threshold = 12345
+"#;
+
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v5 must migrate");
+		assert_eq!(migration.from_version, 5);
+		assert_eq!(migration.to_version, 6);
+
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		let compression = migrated["compression"].as_table().unwrap();
+		assert!(!compression.contains_key("hints_enabled"));
+		assert!(!compression.contains_key("hints_pressure_threshold"));
+		assert!(!compression.contains_key("hints_min_interval"));
+		assert_eq!(compression["knowledge_retention"].as_integer(), Some(17));
+		assert_eq!(compression["threshold"].as_integer(), Some(12345));
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 5", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 6", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

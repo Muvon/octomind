@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! ChatSession surface methods: attachments, message-range removal,
-//! compressed-knowledge insertion, compression hints, builder wiring.
+//! compressed-knowledge insertion and builder wiring.
 
 use super::*;
 
@@ -115,19 +115,4 @@ fn test_insert_compressed_knowledge() {
 		.insert_compressed_knowledge(0, "critical: build on the box".to_string())
 		.expect("insert knowledge");
 	assert!(session.get_message_count() >= 2);
-}
-
-#[test]
-fn test_compression_hint_gating() {
-	let mut config = test_config();
-	let mut session = ChatSession::for_tests(Vec::new());
-
-	// Hints disabled → never shown
-	config.compression.hints_enabled = false;
-	assert!(!session.should_show_compression_hint(&config));
-	assert!(session.get_compression_hint(&config).is_none());
-
-	// Hints enabled but an empty session is under any pressure threshold
-	config.compression.hints_enabled = true;
-	assert!(!session.should_show_compression_hint(&config));
 }

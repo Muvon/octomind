@@ -851,6 +851,15 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 	if let Some(read_only) = tool_read_only_hint(tool) {
 		return !read_only;
 	}
+	has_explicit_mutation_intent(tool, parameters)
+}
+
+/// High-confidence mutation signal from the concrete call itself, ignoring a
+/// tool-level `readOnly=false` capability hint. Used by sparse pre-mutation
+/// readiness: a generic shell/browser/API tool may be capable of writes while
+/// the proposed call is only gathering evidence, and blocking that read would
+/// create the exact false positive the checkpoint exists to prevent.
+pub fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
 	if contains_mutation_intent(tool) {
 		return true;
 	}

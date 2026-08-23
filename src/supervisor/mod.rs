@@ -21,6 +21,8 @@
 //! - detectors — deterministic, free, every turn: loop / no-progress / stop-intent.
 //!   Fused with the agent's own self-report token before any model is woken.
 //! - gate — verify-gate on self-reported `done`; labels the run for learning.
+//! - readiness — one sparse, route-invariant check before a task's first
+//!   mutation when admission found a grounded state dependency.
 //! - condense — task-aware narrowing of oversized tool outputs (line-range
 //!   selection, never retyping) so the agent model sees only what the task needs.
 //!
@@ -41,6 +43,7 @@ pub mod gate;
 pub mod learning;
 pub mod ontrack;
 pub mod plan;
+pub mod readiness;
 pub mod recite;
 pub mod resolve;
 pub mod stats;

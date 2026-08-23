@@ -280,6 +280,51 @@ async fn execute_tools_with_context(
 	.map(|m| m.map(|msg| format!("[guardrail] {msg}")))
 	.collect();
 
+	// Sparse outcome-contract checkpoint: only when admission identified a
+	// load-bearing state dependency, and only before this task's first direct
+	// mutation. Reads remain free, every valid route is equivalent, and an
+	// unavailable supervisor passes the calls through. The final completion gate
+	// remains the backstop; this merely catches a costly wrong turn earlier.
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		let not_blocked: Vec<crate::mcp::McpToolCall> = current_tool_calls
+			.iter()
+			.enumerate()
+			.filter(|(i, _)| block_messages.get(*i).is_none_or(Option::is_none))
+			.map(|(_, call)| call.clone())
+			.collect();
+		let task = chat_session.gate_task.clone();
+		let should_check = config.supervisor.enabled
+			&& config.supervisor.gate.enabled
+			&& task
+				.as_ref()
+				.is_some_and(|task| !task.state_dependencies.is_empty())
+			&& crate::supervisor::readiness::has_mutations(&not_blocked)
+			&& chat_session.evidence.claim_readiness_check();
+		if should_check {
+			let actions = chat_session.evidence.render();
+			let cancel_rx = operation_cancelled
+				.clone()
+				.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
+			let rejected = crate::supervisor::readiness::gate_round(
+				&not_blocked,
+				config,
+				task.as_ref().expect("readiness task checked above"),
+				&actions,
+				chat_session.evidence.grounds(),
+				cancel_rx,
+			)
+			.await;
+			for (tool_id, message) in rejected {
+				if let Some(i) = current_tool_calls
+					.iter()
+					.position(|call| call.tool_id == tool_id)
+				{
+					block_messages[i] = Some(message);
+				}
+			}
+		}
+	}
+
 	// Supervisor delegate gate: subagent handoffs (`tap run`, `agent_*`) start a
 	// context-isolated child that sees only the prompt string, so an incomplete
 	// prompt is unrecoverable once spawned. Judged here — same pre-spawn seam as

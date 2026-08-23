@@ -32,6 +32,8 @@ pub enum CallKind {
 	Recall,
 	/// Verify-gate completion check.
 	Gate,
+	/// One-shot pre-mutation state-dependency check.
+	Readiness,
 	/// Current-turn dependency classification and minimal resolution.
 	Resolve,
 	/// External plan creation and phase transition decision.
@@ -49,6 +51,7 @@ struct Stats {
 	calls: u64,
 	recall_calls: u64,
 	gate_calls: u64,
+	readiness_calls: u64,
 	resolve_calls: u64,
 	plan_calls: u64,
 	distill_calls: u64,
@@ -75,6 +78,7 @@ struct Stats {
 	steer_reread: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
+	readiness_blocks: u64,
 	/// Compatibility tombstone for `/info` consumers. The checklist-count
 	/// pre-gate was removed; this remains zero and has no increment path.
 	plan_blocks: u64,
@@ -108,6 +112,7 @@ pub fn record_call(
 		match kind {
 			CallKind::Recall => s.recall_calls += 1,
 			CallKind::Gate => s.gate_calls += 1,
+			CallKind::Readiness => s.readiness_calls += 1,
 			CallKind::Resolve => s.resolve_calls += 1,
 			CallKind::Plan => s.plan_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
@@ -163,6 +168,10 @@ pub fn pregate_block() {
 pub fn claim_block() {
 	with(|s| s.claim_blocks += 1);
 }
+/// `n` state-changing calls were paused by the one-shot readiness check.
+pub fn readiness_block(n: u64) {
+	with(|s| s.readiness_blocks += n);
+}
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
 	with(|s| s.lessons_stored += n);
@@ -201,6 +210,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.steers == 0
 		&& s.pregate_blocks == 0
 		&& s.claim_blocks == 0
+		&& s.readiness_blocks == 0
 		&& s.plan_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
@@ -224,6 +234,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"calls": s.calls,
 		"recall_calls": s.recall_calls,
 		"gate_calls": s.gate_calls,
+		"readiness_calls": s.readiness_calls,
 		"resolve_calls": s.resolve_calls,
 		"plan_calls": s.plan_calls,
 		"distill_calls": s.distill_calls,
@@ -249,6 +260,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,
 		"claim_blocks": s.claim_blocks,
+		"readiness_blocks": s.readiness_blocks,
 		// Stable output shape for clients written before the plan pre-gate was
 		// removed. A value above zero can no longer be produced.
 		"plan_blocks": s.plan_blocks,

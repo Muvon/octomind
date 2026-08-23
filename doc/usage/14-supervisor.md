@@ -8,6 +8,8 @@ It exists to make the loop **more precise**: fewer side-tracks, fewer "looks don
 
 ```
 every turn, FREE:
+  outcome contract (admission) → observable goals + sparse state dependencies
+        │  before first dependent mutation → readiness check (model, rare)
   self-report  ⊕  detectors (counters)      <- two free signals, fused
         │  agree → act with no model
         │  conflict / `done` → ↓
@@ -20,7 +22,7 @@ every turn, FREE:
   steer  → advisory re-anchor when the agent loops or stalls
 ```
 
-The **verify-gate is the reward signal**: it labels a run pass/fail, so the supervisor only learns from work it has evidence was correct. Everything injected is **advisory** — a note the agent reads, never a silent rewrite of its context.
+The **verify-gate is the reward signal**: it labels a run pass/fail, so the supervisor only learns from work it has evidence was correct. Supervisor context is always explicit, never a silent rewrite. Most feedback is advisory; the sparse readiness and delegate gates may pause only their scoped state-changing call before it executes.
 
 ## Self-report
 
@@ -69,6 +71,19 @@ Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are m
 - **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed successful response gets one bounded format-only retry; substantive gaps do not.
 
 Set `verifier_model` to a **different model family** than your agent model — a same-family verifier inherits the same blind spots and rubber-stamps them.
+
+### Outcome contract and mutation readiness
+
+At task admission, the existing resolver may identify a **state dependency**: an observation whose value can materially change which state-changing action is correct. Each dependency must be grounded by an exact excerpt from the current user request; an invented or historically inherited dependency is discarded.
+
+The specialist sees a compact outcome contract before work begins. It describes the observation, never a required tool or route. Reads and research remain unrestricted. Immediately before the first direct mutation, one high-confidence readiness check compares the dependency with runtime-recorded actions and recent tool output:
+
+- any authoritative route that establishes the observation passes;
+- demonstrated source unavailability passes when the proposed action preserves that limitation;
+- ambiguity, parser failure, or verifier outage passes through;
+- a confident missing observation pauses only the mutation calls, once, with an actionable gap.
+
+There is no new configuration and no per-round judge. Most focused tasks have no state dependency and pay no readiness call. The normal completion gate remains the final backstop.
 
 ### Evidence-bound claims
 
@@ -183,7 +198,7 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 
 ## Invariants
 
-1. **Free signals gate the model.** Counters and the self-report run every turn at zero cost; the model (verify-gate / drift confirm) is woken only on a `done` or a conflict.
+1. **Free signals gate the model.** Counters and the self-report run every turn at zero cost; model checks are sparse — completion, a detector conflict, or the first mutation of a task with an explicitly grounded state dependency.
 2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. A wrong supervisor degrades gracefully instead of corrupting the run.
 3. **Out-of-band.** Status tokens are stripped from display; supervisor deliberation never reaches your transcript.
 
@@ -193,7 +208,9 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 |----------|------|------|--------|
 | Self-report | Every turn | Free | `[supervisor.detectors] self_report` |
 | Detectors (loop / no-progress / sequential / re-read) | Every turn | Free | `[supervisor.detectors]` |
-| Evidence-bound claims | Every answer with repo facts | Free | `[supervisor] claim_check` |
+| Evidence-bound claims | Every answer with task facts | Free | `[supervisor] claim_check` |
+| Outcome contract | Task admission | Existing resolver call | None (automatic) |
+| Mutation readiness | First mutation with a grounded state dependency | Model (rare, one-shot) | None (automatic) |
 | Free pre-gates (mutation→check, plan complete / coverage / conditions) | On self-reported `done` | Free | `[supervisor.gate]` |
 | Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
 | Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |

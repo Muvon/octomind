@@ -416,7 +416,7 @@ octomind workflow deep_review.toml
 - **Layers** — chained AI sub-agents that run after each response.
 - **Guardrails** — deterministic policy (guards, hooks, validators) and input pipes.
 - **Workflows** — multi-step orchestrated task runners with validation loops.
-- **Supervisor** — out-of-band control plane: loop/no-progress detectors, verify-gate on self-reported `done`, cross-session learning. See [Supervisor](doc/usage/14-supervisor.md).
+- **Supervisor** — out-of-band control plane: route-invariant outcome contracts, sparse pre-mutation readiness, loop/no-progress detectors, verify-gate on self-reported `done`, and cross-session learning. See [Supervisor](doc/usage/14-supervisor.md).
 
 See [Configuration Reference](doc/reference/03-config-reference.md) for everything.
 

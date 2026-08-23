@@ -934,6 +934,7 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 	use crate::supervisor::stats::CallKind;
 	match kind {
 		CallKind::Gate => ModelPurpose::SupervisorGate,
+		CallKind::Readiness => ModelPurpose::SupervisorGate,
 		CallKind::Resolve => ModelPurpose::SupervisorGate,
 		CallKind::Plan => ModelPurpose::SupervisorGate,
 		CallKind::Condense => ModelPurpose::SupervisorCondense,

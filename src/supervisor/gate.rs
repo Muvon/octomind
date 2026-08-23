@@ -13,9 +13,10 @@
 // limitations under the License.
 
 //! Verify-gate — when the agent self-reports `done`, an independent pass checks
-//! the result against the request before completion is accepted. On gaps the
-//! caller injects an advisory and re-runs the turn (bounded). A PASS labels the
-//! trajectory so only verified work is learned.
+//! the result against the request before completion is accepted. On gaps — or on
+//! a verdict the verifier could not produce — the caller injects an advisory and
+//! re-runs the turn (bounded). A PASS labels the trajectory so only verified work
+//! is learned.
 
 use crate::config::Config;
 use crate::supervisor::escape_xml_text as xml_text;
@@ -270,6 +271,19 @@ A response that omits any required line — even when the verdict is an obvious 
 </response_format>
 
 Be conservative — only flag real, actionable gaps. "When unsure, PASS" applies to inferring extra requirements, never to skipping listed conditions or checklist lines."#;
+
+/// Output-format appendix for the JSON wire mode. Every judging rule above still
+/// binds — only the encoding of the answer changes, because a schema can
+/// guarantee the shape of the protocol and free text cannot.
+const GATE_JSON_FORMAT: &str = r#"
+<output_encoding>
+Ignore the TAG SYNTAX in <response_format>; everything it says about WHAT to emit and when still binds. Answer with one JSON object matching the response schema:
+- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once; "status" is matched or unmatched; "observation" is the observation that demonstrates it, or what is missing. Empty array when no <evidence_conditions> block was given.
+- "shapes": all four evidence shapes, each exactly once, in this order: circular, context-stripped, acceptance-only, unenumerated-category. "found" is yes, no, or unknown; "reason" is the one-line reason; "settles" names the ONE observation that would clear the shape and is REQUIRED whenever "found" is yes (null otherwise) — a shape you cannot attach such an observation to is not yes.
+- "gaps": one entry per gap; "gap" names the specific missing or unverified item and "settles" the one observation that would close it. Empty array when the verdict is PASS.
+- "verdict": "PASS" when every part is evidenced, no condition is unmatched and no shape is yes; "GAPS" otherwise.
+- "readback": empty in every ruling answer. To spend the readback round instead of ruling, put up to 3 {"seq","need"} entries here, set "verdict" to "READBACK", and leave "conditions", "shapes" and "gaps" empty — an answer that carries shapes, gaps or a PASS/GAPS verdict has ruled, and its readback entries are ignored.
+</output_encoding>"#;
 
 /// Outcome of a verification pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -840,24 +854,50 @@ pub async fn verify(
 	// same-family verifier shares the generator's blind spots and rubber-stamps
 	// them. Strict config guarantees this is set; no fallback to the generator.
 	let model = config.supervisor.gate.verifier_model.clone();
-	let mut resp = match ask_verifier(config, &model, user.clone(), 0.3, operation_rx.clone()).await
+	let conditions = input.evidence_conditions.len();
+	let encoding = Encoding::for_model(&model);
+	crate::log_debug!(
+		"Verify-gate wire mode: {} (model '{}')",
+		encoding.as_str(),
+		model
+	);
+	let (raw, mut report) = match ask_verifier(
+		config,
+		&model,
+		encoding,
+		conditions,
+		user.clone(),
+		0.3,
+		operation_rx.clone(),
+	)
+	.await
 	{
-		Ok(resp) => resp,
+		Ok(answer) => answer,
 		Err(e) => {
 			crate::log_info!("Verify-gate verifier '{}' unavailable: {}", model, e);
 			return GateVerdict::Indeterminate(e.to_string());
 		}
 	};
-	crate::log_debug!("Verify-gate response ({}):\n{}", model, resp);
+	crate::log_debug!("Verify-gate response ({}):\n{}", model, raw);
 	// Readback round. The ledger names every call but never its output, so a
 	// verifier asked what a search or listing returned can only guess — and a
 	// guess about evidence it was never shown lands as an accusation the agent
 	// cannot answer. One bounded round lets it pull the recorded output first.
-	let wanted = parse_readback_request(&resp);
+	let wanted = report.readback_request();
 	if !wanted.is_empty() {
 		user.push_str(&render_readback(input.grounds, &wanted));
-		resp = match ask_verifier(config, &model, user.clone(), 0.3, operation_rx.clone()).await {
-			Ok(resp) => resp,
+		let (raw, answered) = match ask_verifier(
+			config,
+			&model,
+			encoding,
+			conditions,
+			user.clone(),
+			0.3,
+			operation_rx.clone(),
+		)
+		.await
+		{
+			Ok(answer) => answer,
 			Err(e) => {
 				crate::log_info!("Verify-gate readback unavailable: {}", e);
 				return GateVerdict::Indeterminate(e.to_string());
@@ -867,12 +907,13 @@ pub async fn verify(
 			"Verify-gate readback {:?} response ({}):\n{}",
 			wanted,
 			model,
-			resp
+			raw
 		);
+		report = answered;
 	}
 	// The evidence decision is one-shot. Only a structurally malformed response
 	// receives the bounded format-repair call below.
-	let mut verdict = parse_verdict(&resp, input.evidence_conditions.len());
+	let mut verdict = report.verdict(conditions);
 	if let GateVerdict::Indeterminate(reason) = verdict.clone() {
 		crate::log_info!(
 			"Verify-gate protocol invalid ({}); retrying format once",
@@ -882,13 +923,23 @@ pub async fn verify(
 		// into an instruction-bearing block. The retry needs the contract, not
 		// attacker-controlled tag names or content.
 		let retry_user = format!(
-			"{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit every numbered condition exactly once, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
-		);
-		match ask_verifier(config, &model, retry_user, 0.0, operation_rx).await {
-			Ok(retry) => {
-				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, retry);
-				verdict = parse_verdict(&retry, input.evidence_conditions.len());
-				resp = retry;
+            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit every numbered condition exactly once, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
+        );
+		match ask_verifier(
+			config,
+			&model,
+			encoding,
+			conditions,
+			retry_user,
+			0.0,
+			operation_rx,
+		)
+		.await
+		{
+			Ok((raw, retry)) => {
+				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, raw);
+				verdict = retry.verdict(conditions);
+				report = retry;
 			}
 			Err(error) => {
 				crate::log_info!("Verify-gate format retry unavailable: {}", error);
@@ -898,7 +949,7 @@ pub async fn verify(
 	// Everything the verifier raised but could not make actionable. None of it
 	// blocks the turn — and none of it silently vanishes either: a finding the
 	// runtime declines to charge is exactly the one a human should see.
-	let reported = reported_findings(&resp);
+	let reported = report.reported_findings();
 	if !reported.is_empty() {
 		crate::supervisor::notify(&format!(
 			"verification reported {} finding(s) it could not act on: {}",
@@ -909,31 +960,173 @@ pub async fn verify(
 	verdict
 }
 
+/// How the verifier is asked to encode its answer. The judging contract is the
+/// same either way: a provider that can enforce a response schema is asked for
+/// JSON, because what the text path hand-parses is exactly what a schema
+/// guarantees — and a verdict that cannot be read is a failed verification, not
+/// a passed one. Every other provider keeps the text protocol.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Encoding {
+	Json,
+	Text,
+}
+
+impl Encoding {
+	fn for_model(model: &str) -> Self {
+		match crate::providers::ProviderFactory::get_provider_for_model(model) {
+			Ok((provider, actual_model)) if provider.enforces_response_schema(&actual_model) => {
+				Encoding::Json
+			}
+			// An unresolvable model is a transport failure for the call itself to
+			// report, never a reason to attach a schema the provider may reject.
+			_ => Encoding::Text,
+		}
+	}
+
+	fn as_str(self) -> &'static str {
+		match self {
+			Encoding::Json => "json",
+			Encoding::Text => "text",
+		}
+	}
+}
+
 /// One call to the verifier model. The system contract is identical every time;
 /// only the user block and sampling differ between the first pass, a readback
-/// round, and a format repair.
+/// round, and a format repair. The answer is decoded here, so the decision never
+/// sees the wire format; the raw body comes back with it because a protocol
+/// violation is only diagnosable from what the model actually wrote.
 async fn ask_verifier(
 	config: &Config,
 	model: &str,
+	encoding: Encoding,
+	expected_conditions: usize,
 	user: String,
 	temperature: f32,
 	operation_rx: watch::Receiver<bool>,
-) -> anyhow::Result<String> {
-	crate::supervisor::learning::extract::call_supervisor_llm(
-		config,
-		model,
-		SupervisorPrompt::new(GATE_PROMPT.to_string(), user),
-		crate::supervisor::stats::CallKind::Gate,
-		SupervisorSampling {
-			temperature,
-			// A reasoning verifier spends output budget thinking before the
-			// verdict; a budget overflow becomes Indeterminate — give it real
-			// headroom so valid work is not blocked by truncated protocol.
-			max_tokens: config.supervisor.gate.max_tokens,
+) -> anyhow::Result<(String, VerifierReport)> {
+	let sampling = SupervisorSampling {
+		temperature,
+		// A reasoning verifier spends output budget thinking before the
+		// verdict; a budget overflow becomes Indeterminate — give it real
+		// headroom so valid work is not blocked by truncated protocol.
+		max_tokens: config.supervisor.gate.max_tokens,
+	};
+	match encoding {
+		Encoding::Json => {
+			let value = crate::supervisor::learning::extract::call_supervisor_json(
+				config,
+				model,
+				SupervisorPrompt::new(format!("{GATE_PROMPT}\n{GATE_JSON_FORMAT}"), user),
+				crate::supervisor::stats::CallKind::Gate,
+				sampling,
+				build_gate_schema(expected_conditions),
+				operation_rx,
+			)
+			.await?;
+			let report = json_report(&value);
+			Ok((value.to_string(), report))
+		}
+		Encoding::Text => {
+			let resp = crate::supervisor::learning::extract::call_supervisor_llm(
+				config,
+				model,
+				SupervisorPrompt::new(GATE_PROMPT.to_string(), user),
+				crate::supervisor::stats::CallKind::Gate,
+				sampling,
+				operation_rx,
+			)
+			.await?;
+			let report = text_report(&resp);
+			Ok((resp, report))
+		}
+	}
+}
+
+/// Response schema for the JSON wire mode — field for field what the text
+/// protocol asks for in tags. What a schema cannot state (all four shapes
+/// present exactly once, a `settles` accompanying every found="yes", the
+/// condition numbering) stays where it already was: [`VerifierReport::verdict`]
+/// checks it for both encodings.
+fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
+	serde_json::json!({
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {
+			"conditions": {
+				"type": "array",
+				"maxItems": expected_conditions,
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"n": { "type": "integer", "description": "Condition number, 1-based." },
+						"status": { "type": "string", "enum": ["matched", "unmatched"] },
+						"observation": {
+							"type": "string",
+							"description": "The observation that demonstrates it, or what is missing."
+						}
+					},
+					"required": ["n", "status", "observation"]
+				},
+				"description": "One entry per numbered evidence condition, each exactly once. Empty when none were given."
+			},
+			"shapes": {
+				"type": "array",
+				"maxItems": REQUIRED_SHAPES.len(),
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"name": { "type": "string", "enum": REQUIRED_SHAPES },
+						"found": { "type": "string", "enum": ["yes", "no", "unknown"] },
+						"reason": { "type": "string", "description": "One-line reason." },
+						"settles": {
+							"type": ["string", "null"],
+							"description": "Required when found is yes: the one observation that would clear it. Null otherwise."
+						}
+					},
+					"required": ["name", "found", "reason", "settles"]
+				},
+				"description": "All four evidence shapes, each exactly once, in every ruling answer."
+			},
+			"gaps": {
+				"type": "array",
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"gap": { "type": "string", "description": "The specific missing or unverified item." },
+						"settles": {
+							"type": ["string", "null"],
+							"description": "The one observation that would close it."
+						}
+					},
+					"required": ["gap", "settles"]
+				},
+				"description": "Empty when the verdict is PASS."
+			},
+			"verdict": {
+				"type": "string",
+				"enum": [JSON_VERDICT_PASS, JSON_VERDICT_GAPS, JSON_VERDICT_READBACK]
+			},
+			"readback": {
+				"type": "array",
+				"maxItems": READBACK_MAX,
+				"items": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"seq": { "type": "integer", "description": "The #N the recorded action carries." },
+						"need": { "type": "string", "description": "What its recorded output would settle." }
+					},
+					"required": ["seq", "need"]
+				},
+				"description": "Readback round only; empty in every ruling answer."
+			}
 		},
-		operation_rx,
-	)
-	.await
+		"required": ["conditions", "shapes", "gaps", "verdict", "readback"]
+	})
 }
 
 /// Every `<name …>body</name>` element in a verifier response, as (attributes,
@@ -980,60 +1173,11 @@ fn attr<'a>(attributes: &'a str, key: &str) -> &'a str {
 /// charged to the agent only when it names the observation that would close it.
 /// A finding no available action can close gives the repair loop nothing to
 /// converge on, so it is reported to the user instead of spent as a re-run.
-fn charged(attributes: &str, body: &str) -> Option<String> {
-	let settles = attr(attributes, "settles");
+fn charged(settles: &str, body: &str) -> Option<String> {
 	if settles.is_empty() {
 		return None;
 	}
 	Some(format!("{body} — clear it by: {settles}"))
-}
-
-/// Findings the verifier could not make actionable: a shape it could not
-/// settle, or a finding of either kind that names no observation to close it.
-/// Surfaced to the user, never charged to the agent.
-fn reported_findings(resp: &str) -> Vec<String> {
-	let mut reported = Vec::new();
-	for (attributes, body) in elements(resp, "shape") {
-		let name = attr(attributes, "name");
-		match attr(attributes, "found") {
-			"unknown" => reported.push(format!("{name} unsettled: {body}")),
-			"yes" if charged(attributes, body).is_none() => {
-				reported.push(format!("{name} names no closing observation: {body}"))
-			}
-			_ => {}
-		}
-	}
-	for (attributes, body) in elements(resp, "gap") {
-		if charged(attributes, body).is_none() {
-			reported.push(format!("gap names no closing observation: {body}"));
-		}
-	}
-	reported
-}
-
-/// Sequence numbers the verifier asked to see, capped at [`READBACK_MAX`].
-/// A readback is a response mode of its own: a reply that already carries
-/// shapes, gaps, or a verdict has ruled, so readback tags inside it are ignored.
-fn parse_readback_request(resp: &str) -> Vec<u64> {
-	if !elements(resp, "shape").is_empty()
-		|| !elements(resp, "gap").is_empty()
-		|| resp.contains("<verdict>")
-	{
-		return Vec::new();
-	}
-	let mut wanted: Vec<u64> = Vec::new();
-	for (attributes, _) in elements(resp, "readback") {
-		let Ok(sequence) = attr(attributes, "seq")
-			.trim_start_matches('#')
-			.parse::<u64>()
-		else {
-			continue;
-		};
-		if !wanted.contains(&sequence) && wanted.len() < READBACK_MAX {
-			wanted.push(sequence);
-		}
-	}
-	wanted
 }
 
 /// Answer a readback request from the outputs the runtime retained. A number
@@ -1204,89 +1348,313 @@ fn xml_attribute(value: &str) -> String {
 		.replace('\'', "&apos;")
 }
 
-fn parse_verdict(resp: &str, expected_conditions: usize) -> GateVerdict {
-	// Itemized condition verdicts outrank the holistic one: the verdict over a
-	// checklist is derived HERE, not trusted from the model — an unmatched
-	// condition is a gap even when the response also says PASS (holistic
-	// judgment demonstrably absorbs violated conditions when the overall
-	// picture looks done). Evidence-shape findings are enforced the same way.
-	let mut unmatched = Vec::new();
-	let mut seen_shapes = std::collections::HashSet::new();
-	for (attributes, body) in elements(resp, "shape") {
-		let name = attr(attributes, "name");
-		if name.is_empty() {
-			return GateVerdict::Indeterminate("shape without name".to_string());
-		}
-		if !seen_shapes.insert(name) {
-			return GateVerdict::Indeterminate(format!("duplicate evidence shape: {name}"));
-		}
-		// Three-valued, and deliberately asymmetric. "unknown" says the verifier
-		// could not see what would settle the shape — a limit of its input, never a
-		// defect in the work. "yes" is an accusation, and is charged only under the
-		// rule every finding answers to (see [`charged`]).
-		match attr(attributes, "found") {
-			"yes" => {
-				if let Some(finding) = charged(attributes, body) {
-					unmatched.push(format!("Evidence shape '{name}' present: {finding}"));
+/// The four evidence shapes every verdict rules on, in protocol order. One
+/// list: the checklist below and the JSON schema state the same contract.
+const REQUIRED_SHAPES: [&str; 4] = [
+	"circular",
+	"context-stripped",
+	"acceptance-only",
+	"unenumerated-category",
+];
+
+/// Verdict values on the JSON path — the same three answers the text protocol
+/// expresses with `<verdict>PASS</verdict>`, gap lines, and a readback-only
+/// reply.
+const JSON_VERDICT_PASS: &str = "PASS";
+const JSON_VERDICT_GAPS: &str = "GAPS";
+const JSON_VERDICT_READBACK: &str = "READBACK";
+
+/// One verifier answer, decoded from either wire format. The tag protocol and
+/// the schema-constrained JSON carry the same information, so both decode into
+/// this and meet the same checklist — which provider answered must never change
+/// what the gate concludes.
+#[derive(Debug)]
+struct VerifierReport {
+	conditions: Vec<ReportedCondition>,
+	shapes: Vec<ReportedShape>,
+	gaps: Vec<ReportedFinding>,
+	/// The answer carried a verdict at all — a ruled response, whatever it
+	/// ruled. Distinct from `pass`: a ruled response has spent its readback.
+	ruled: bool,
+	/// That verdict was PASS.
+	pass: bool,
+	/// Sequence numbers asked for, before dedup and bounding.
+	readback: Vec<u64>,
+}
+
+/// One `<condition>` line / `conditions[]` entry, as written.
+#[derive(Debug)]
+struct ReportedCondition {
+	/// `None` when the answer gave a non-numeric index. Whether that is fatal
+	/// is the checklist's call, not the decoder's.
+	index: Option<usize>,
+	status: String,
+	observation: String,
+}
+
+/// One `<shape>` line / `shapes[]` entry, as written.
+#[derive(Debug)]
+struct ReportedShape {
+	name: String,
+	found: String,
+	reason: String,
+	/// The observation that would clear it; empty when the answer named none.
+	settles: String,
+}
+
+/// One `<gap>` line / `gaps[]` entry, as written.
+#[derive(Debug)]
+struct ReportedFinding {
+	text: String,
+	settles: String,
+}
+
+/// Decode the tag protocol. Elements are collected exactly as written — a
+/// missing or malformed one is judged by [`VerifierReport::verdict`], so both
+/// encodings answer to one checklist.
+fn text_report(resp: &str) -> VerifierReport {
+	VerifierReport {
+		conditions: elements(resp, "condition")
+			.into_iter()
+			.map(|(attributes, body)| ReportedCondition {
+				index: attr(attributes, "n").parse::<usize>().ok(),
+				status: attr(attributes, "status").to_string(),
+				observation: body.to_string(),
+			})
+			.collect(),
+		shapes: elements(resp, "shape")
+			.into_iter()
+			.map(|(attributes, body)| ReportedShape {
+				name: attr(attributes, "name").to_string(),
+				found: attr(attributes, "found").to_string(),
+				reason: body.to_string(),
+				settles: attr(attributes, "settles").to_string(),
+			})
+			.collect(),
+		gaps: elements(resp, "gap")
+			.into_iter()
+			.map(|(attributes, body)| ReportedFinding {
+				text: body.to_string(),
+				settles: attr(attributes, "settles").to_string(),
+			})
+			.collect(),
+		ruled: resp.contains("<verdict>"),
+		pass: resp.contains("<verdict>PASS</verdict>"),
+		readback: elements(resp, "readback")
+			.into_iter()
+			.filter_map(|(attributes, _)| {
+				attr(attributes, "seq")
+					.trim_start_matches('#')
+					.parse::<u64>()
+					.ok()
+			})
+			.collect(),
+	}
+}
+
+/// Decode the schema-constrained JSON into the same report. Values are read as
+/// written and never validated here: a provider that returned the object
+/// without enforcing the schema must meet exactly the checks the text protocol
+/// meets.
+fn json_report(value: &serde_json::Value) -> VerifierReport {
+	fn field(object: &serde_json::Value, key: &str) -> String {
+		object
+			.get(key)
+			.and_then(|value| value.as_str())
+			.unwrap_or_default()
+			.trim()
+			.to_string()
+	}
+	fn entries<'a>(value: &'a serde_json::Value, key: &str) -> &'a [serde_json::Value] {
+		value
+			.get(key)
+			.and_then(|value| value.as_array())
+			.map(Vec::as_slice)
+			.unwrap_or_default()
+	}
+	let verdict = field(value, "verdict");
+	VerifierReport {
+		conditions: entries(value, "conditions")
+			.iter()
+			.map(|condition| ReportedCondition {
+				index: condition
+					.get("n")
+					.and_then(json_number)
+					.and_then(|n| usize::try_from(n).ok()),
+				status: field(condition, "status"),
+				observation: field(condition, "observation"),
+			})
+			.collect(),
+		shapes: entries(value, "shapes")
+			.iter()
+			.map(|shape| ReportedShape {
+				name: field(shape, "name"),
+				found: field(shape, "found"),
+				reason: field(shape, "reason"),
+				settles: field(shape, "settles"),
+			})
+			.collect(),
+		gaps: entries(value, "gaps")
+			.iter()
+			.map(|gap| ReportedFinding {
+				text: field(gap, "gap"),
+				settles: field(gap, "settles"),
+			})
+			.collect(),
+		ruled: verdict == JSON_VERDICT_PASS || verdict == JSON_VERDICT_GAPS,
+		pass: verdict == JSON_VERDICT_PASS,
+		readback: entries(value, "readback")
+			.iter()
+			.filter_map(|request| request.get("seq").and_then(json_number))
+			.collect(),
+	}
+}
+
+/// A JSON number, or the same number written as a string by a provider that
+/// answered without schema enforcement.
+fn json_number(value: &serde_json::Value) -> Option<u64> {
+	value
+		.as_u64()
+		.or_else(|| value.as_str()?.trim().trim_start_matches('#').parse().ok())
+}
+
+impl VerifierReport {
+	/// The gate's decision over one answer, whatever encoding carried it.
+	///
+	/// Itemized condition verdicts outrank the holistic one: the verdict over a
+	/// checklist is derived HERE, not trusted from the model — an unmatched
+	/// condition is a gap even when the answer also says PASS (holistic
+	/// judgment demonstrably absorbs violated conditions when the overall
+	/// picture looks done). Evidence-shape findings are enforced the same way.
+	fn verdict(&self, expected_conditions: usize) -> GateVerdict {
+		let mut unmatched = Vec::new();
+		let mut seen_shapes = std::collections::HashSet::new();
+		for shape in &self.shapes {
+			if shape.name.is_empty() {
+				return GateVerdict::Indeterminate("shape without name".to_string());
+			}
+			if !seen_shapes.insert(shape.name.as_str()) {
+				return GateVerdict::Indeterminate(format!(
+					"duplicate evidence shape: {}",
+					shape.name
+				));
+			}
+			// Three-valued, and deliberately asymmetric. "unknown" says the verifier
+			// could not see what would settle the shape — a limit of its input, never a
+			// defect in the work. "yes" is an accusation, and is charged only under the
+			// rule every finding answers to (see [`charged`]).
+			match shape.found.as_str() {
+				"yes" => {
+					if let Some(finding) = charged(&shape.settles, &shape.reason) {
+						unmatched.push(format!(
+							"Evidence shape '{}' present: {finding}",
+							shape.name
+						));
+					}
+				}
+				"no" | "unknown" => {}
+				_ => {
+					return GateVerdict::Indeterminate(
+						"shape without yes/no/unknown result".to_string(),
+					)
 				}
 			}
-			"no" | "unknown" => {}
-			_ => {
-				return GateVerdict::Indeterminate(
-					"shape without yes/no/unknown result".to_string(),
-				)
+		}
+		if REQUIRED_SHAPES
+			.iter()
+			.any(|shape| !seen_shapes.contains(*shape))
+			|| seen_shapes.len() != REQUIRED_SHAPES.len()
+		{
+			return GateVerdict::Indeterminate("incomplete evidence-shape checklist".to_string());
+		}
+		let mut seen_conditions = std::collections::HashSet::new();
+		for condition in &self.conditions {
+			let Some(n) = condition.index else {
+				return GateVerdict::Indeterminate("condition without numeric index".to_string());
+			};
+			if !seen_conditions.insert(n) {
+				return GateVerdict::Indeterminate(format!("duplicate condition: {n}"));
+			}
+			match condition.status.as_str() {
+				"unmatched" => unmatched.push(format!(
+					"Unmatched condition {n}: {}",
+					condition.observation
+				)),
+				"matched" => {}
+				_ => {
+					return GateVerdict::Indeterminate(format!("condition {n} has invalid status"))
+				}
 			}
 		}
-	}
-	const REQUIRED_SHAPES: [&str; 4] = [
-		"circular",
-		"context-stripped",
-		"acceptance-only",
-		"unenumerated-category",
-	];
-	if REQUIRED_SHAPES
-		.iter()
-		.any(|shape| !seen_shapes.contains(*shape))
-		|| seen_shapes.len() != REQUIRED_SHAPES.len()
-	{
-		return GateVerdict::Indeterminate("incomplete evidence-shape checklist".to_string());
-	}
-	let mut seen_conditions = std::collections::HashSet::new();
-	for (attributes, body) in elements(resp, "condition") {
-		let Ok(n) = attr(attributes, "n").parse::<usize>() else {
-			return GateVerdict::Indeterminate("condition without numeric index".to_string());
-		};
-		if !seen_conditions.insert(n) {
-			return GateVerdict::Indeterminate(format!("duplicate condition: {n}"));
+		if seen_conditions.len() != expected_conditions
+			|| (1..=expected_conditions).any(|n| !seen_conditions.contains(&n))
+		{
+			return GateVerdict::Indeterminate(format!(
+				"condition checklist mismatch: expected {expected_conditions}, received {}",
+				seen_conditions.len()
+			));
 		}
-		match attr(attributes, "status") {
-			"unmatched" => unmatched.push(format!("Unmatched condition {n}: {body}")),
-			"matched" => {}
-			_ => return GateVerdict::Indeterminate(format!("condition {n} has invalid status")),
+		if !unmatched.is_empty() {
+			return GateVerdict::Gaps(unmatched);
+		}
+		let gaps: Vec<String> = self
+			.gaps
+			.iter()
+			.filter(|finding| !finding.text.is_empty())
+			.filter_map(|finding| charged(&finding.settles, &finding.text))
+			.collect();
+		if !gaps.is_empty() {
+			GateVerdict::Gaps(gaps)
+		} else if self.pass {
+			GateVerdict::Pass
+		} else {
+			GateVerdict::Indeterminate("missing verdict markers".to_string())
 		}
 	}
-	if seen_conditions.len() != expected_conditions
-		|| (1..=expected_conditions).any(|n| !seen_conditions.contains(&n))
-	{
-		return GateVerdict::Indeterminate(format!(
-			"condition checklist mismatch: expected {expected_conditions}, received {}",
-			seen_conditions.len()
-		));
+
+	/// Findings the verifier could not make actionable: a shape it could not
+	/// settle, or a finding of either kind that names no observation to close
+	/// it. Surfaced to the user, never charged to the agent.
+	fn reported_findings(&self) -> Vec<String> {
+		let mut reported = Vec::new();
+		for shape in &self.shapes {
+			match shape.found.as_str() {
+				"unknown" => reported.push(format!("{} unsettled: {}", shape.name, shape.reason)),
+				"yes" if charged(&shape.settles, &shape.reason).is_none() => {
+					reported.push(format!(
+						"{} names no closing observation: {}",
+						shape.name, shape.reason
+					))
+				}
+				_ => {}
+			}
+		}
+		for finding in &self.gaps {
+			if charged(&finding.settles, &finding.text).is_none() {
+				reported.push(format!(
+					"gap names no closing observation: {}",
+					finding.text
+				));
+			}
+		}
+		reported
 	}
-	if !unmatched.is_empty() {
-		return GateVerdict::Gaps(unmatched);
-	}
-	let gaps: Vec<String> = elements(resp, "gap")
-		.into_iter()
-		.filter(|(_, body)| !body.is_empty())
-		.filter_map(|(attributes, body)| charged(attributes, body))
-		.collect();
-	if !gaps.is_empty() {
-		GateVerdict::Gaps(gaps)
-	} else if resp.contains("<verdict>PASS</verdict>") {
-		GateVerdict::Pass
-	} else {
-		GateVerdict::Indeterminate("missing verdict markers".to_string())
+
+	/// Sequence numbers the verifier asked to see, capped at [`READBACK_MAX`].
+	/// A readback is a response mode of its own: an answer that already carries
+	/// shapes, gaps, or a verdict has ruled, so readback requests inside it are
+	/// narrative and are ignored.
+	fn readback_request(&self) -> Vec<u64> {
+		if !self.shapes.is_empty() || !self.gaps.is_empty() || self.ruled {
+			return Vec::new();
+		}
+		let mut wanted: Vec<u64> = Vec::new();
+		for sequence in &self.readback {
+			if !wanted.contains(sequence) && wanted.len() < READBACK_MAX {
+				wanted.push(*sequence);
+			}
+		}
+		wanted
 	}
 }
 
@@ -1306,6 +1674,33 @@ pub fn format_advisory(gaps: &[String]) -> String {
 	s
 }
 
+/// Advisory injected when the verifier could not produce a verdict. It names no
+/// gap — the failure is the check's, not the agent's — and asks only for what
+/// makes the next pass readable: the observed evidence, restated one numbered
+/// condition at a time. The parser's reason is deliberately absent: it is
+/// derived from the malformed model response, and that text must never reach an
+/// instruction-bearing block.
+fn format_unverified_advisory() -> String {
+	let mut s = String::from(
+		"<pay-attention>\nYou reported this task complete, but the independent verification pass could not be completed, so completion is not accepted yet. This is a failure of the check itself, not a finding against your work.\n",
+	);
+	s.push_str(
+		"Make the next pass checkable: restate your result as a numbered list of the conditions the user's request has to satisfy — one per line — and for each give the observation that satisfies it: the action you ran and what its output showed, or the artifact and where it is. A condition you cannot point at an observation for must be listed as unsatisfied rather than argued.\n",
+	);
+	s.push_str(
+		"Then re-report status, and write your reply as the complete standalone answer to the user's original request — the version this note is about never reached them.\n</pay-attention>",
+	);
+	s
+}
+
+/// The gate's re-entry decision for a verdict it could not read: the advisory to
+/// inject while the budget allows another pass, or `None` once it is spent.
+/// An unverifiable verdict spends the SAME budget a substantive gap does — one
+/// that fell through instead was completion accepted without verification.
+pub fn unverified_reentry(iterations: u8, max_iterations: u8) -> Option<String> {
+	(iterations < max_iterations).then(format_unverified_advisory)
+}
+
 #[cfg(test)]
 #[path = "gate_tests.rs"]
 mod gate_tests;
@@ -1322,7 +1717,7 @@ mod tests {
 	#[test]
 	fn pass_parsed() {
 		let response = format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>");
-		assert_eq!(parse_verdict(&response, 0), GateVerdict::Pass);
+		assert_eq!(text_report(&response).verdict(0), GateVerdict::Pass);
 	}
 
 	#[test]
@@ -1330,7 +1725,7 @@ mod tests {
 		let response = format!(
 			"{CLEAN_SHAPES}\n<gap settles=\"a test run\">no tests</gap>\n<gap settles=\"the published page\">missing docs</gap>"
 		);
-		let v = parse_verdict(&response, 0);
+		let v = text_report(&response).verdict(0);
 		assert_eq!(
 			v,
 			GateVerdict::Gaps(vec![
@@ -1343,7 +1738,7 @@ mod tests {
 	#[test]
 	fn no_markers_is_indeterminate() {
 		assert!(matches!(
-			parse_verdict("looks good to me", 0),
+			text_report("looks good to me").verdict(0),
 			GateVerdict::Indeterminate(_)
 		));
 	}
@@ -1357,7 +1752,7 @@ mod tests {
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
 		assert_eq!(
-			parse_verdict(resp, 1),
+			text_report(resp).verdict(1),
 			GateVerdict::Gaps(vec![
 				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser — clear it by: a test feeding an invalid input".into()
 			])
@@ -1373,7 +1768,7 @@ mod tests {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
-		let v = parse_verdict(resp, 2);
+		let v = text_report(resp).verdict(2);
 		assert_eq!(
 			v,
 			GateVerdict::Gaps(vec![
@@ -1385,7 +1780,7 @@ mod tests {
 {CLEAN_SHAPES}
 <verdict>PASS</verdict>"#
 		);
-		assert_eq!(parse_verdict(&all_matched, 1), GateVerdict::Pass);
+		assert_eq!(text_report(&all_matched).verdict(1), GateVerdict::Pass);
 	}
 
 	#[test]

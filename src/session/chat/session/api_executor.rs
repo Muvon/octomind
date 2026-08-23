@@ -929,9 +929,40 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			}
 			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
 				chat_session.pending_plan_signal = None;
+				// A verdict the verifier could not produce is not verified work: the
+				// trajectory stays labelled unverified whatever the re-entry below
+				// does, and only a later PASS clears the label.
 				chat_session.gate_failed = true;
+				chat_session.gate_iterations += 1;
+				crate::log_debug!(
+					"Verify-gate: indeterminate: {} (iter {})",
+					reason,
+					chat_session.gate_iterations
+				);
+				// The same bounded budget a substantive gap spends: an unreadable
+				// verdict that fell through here was completion accepted without
+				// verification.
+				if let Some(note) = crate::supervisor::gate::unverified_reentry(
+					chat_session.gate_iterations,
+					config.supervisor.gate.max_iterations,
+				) {
+					chat_session.add_system_managed_user_message(&note)?;
+					chat_session.last_self_report = None; // force the re-run to re-evaluate
+					crate::supervisor::notify(&format!(
+						"completion could not be verified ({reason}) — re-running"
+					));
+					return Box::pin(execute_api_call_and_process_response(
+						chat_session,
+						config,
+						role,
+						operation_rx,
+						mode,
+						sink,
+					))
+					.await;
+				}
 				crate::supervisor::stats::gate_fail();
-				crate::log_debug!("Verify-gate: indeterminate: {}", reason);
+				crate::log_debug!("Verify-gate: iterations exhausted; completion unverified");
 				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
 				reinforce_recalled(chat_session, config, -0.05).await;
 			}

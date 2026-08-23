@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.45.3] - 2026-08-23
+
+### 📋 Release Summary
+
+This release improves token management and analysis thresholds for better performance (5fba86b, 6bfc0e5f, 8d3afa49). Additionally, the supervisor's verification and reporting processes have been refined (e9d7d383).
+
+
+### 🔧 Improvements & Optimizations
+
+- **compression**: update default token thresholds `5fba86b6`
+- **compression**: remove compression hint system `6bfc0e5f`
+- **config**: update analysis tokens and threshold `8d3afa49`
+- **supervisor**: rework gate verification and reporting `e9d7d383`
+
 ## [0.45.2] - 2026-08-22
 
 ### 📋 Release Summary

@@ -26,7 +26,7 @@ knowledge_retention = 10
 # The single compression trigger, in absolute tokens (0 = compression disabled).
 # Depth is NOT configured — it is computed per cycle from the measured session
 # growth rate and the context ceiling.
-threshold = 90000
+threshold = 70000
 
 [compression.decision]
 model = "openai:gpt-5-mini"

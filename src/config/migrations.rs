@@ -377,7 +377,7 @@ mod tests {
 			.is_some());
 		assert_eq!(
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
-			Some(4000)
+			Some(6000)
 		);
 		assert_eq!(
 			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
@@ -583,7 +583,7 @@ sequential_threshold = 3
 		);
 		assert_eq!(
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
-			Some(4000)
+			Some(6000)
 		);
 		assert_eq!(
 			migrated["supervisor"]["detectors"]["sequential_threshold"].as_integer(),
@@ -706,7 +706,7 @@ trajectory_max_tokens = 3072
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["threshold"].as_integer(),
-			Some(90000)
+			Some(70000)
 		);
 	}
 

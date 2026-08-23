@@ -289,8 +289,8 @@ Automatic context compression system.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `knowledge_retention` | usize | `25` | Max critical knowledge entries retained across compressions |
-| `analysis_findings_max_tokens` | usize | `4000` | Hard token budget for retained analysis findings; `0` disables retention |
-| `threshold` | usize | `90000` | Single compression trigger in absolute tokens; `0` disables compression |
+| `analysis_findings_max_tokens` | usize | `6000` | Hard token budget for retained analysis findings; `0` disables retention |
+| `threshold` | usize | `70000` | Single compression trigger in absolute tokens; `0` disables compression |
 
 > **Depth is computed, not configured.** Once context exceeds `threshold`, how deep each compression goes is derived per cycle from the measured session growth rate and the context ceiling — the lower of `max_session_tokens_threshold` (see Performance & Limits) and the session model's usable window. The derived ratio always lands in [2.0, 16.0].
 ### `[compression.decision]`
@@ -311,8 +311,8 @@ Model used for compression decisions and summary generation.
 ```toml
 [compression]
 knowledge_retention = 25
-analysis_findings_max_tokens = 4000
-threshold = 90000
+analysis_findings_max_tokens = 6000
+threshold = 70000
 
 [compression.decision]
 model = "openai:gpt-5-mini"

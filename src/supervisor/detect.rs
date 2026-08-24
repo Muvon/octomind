@@ -799,6 +799,18 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 	}
 }
 
+/// Stable identity for one command-shaped check. Recovery uses the concrete
+/// tool + command pair so a later success discharges only the failure it can
+/// actually prove resolved; an unrelated successful command is not progress on
+/// that check.
+pub fn verifier_key(tool: &str, parameters: &serde_json::Value) -> Option<u64> {
+	if !is_verifier_shaped(tool, parameters) {
+		return None;
+	}
+	let command = parameters.get("command")?.as_str()?.trim();
+	Some(hash2(tool, command))
+}
+
 /// Path-like values in a tool call's parameters — the artifact identities a
 /// mutation touches and a later read-back can verify. Generic across tools and
 /// domains: any non-empty string under a key containing "path" or "file", plus
@@ -929,6 +941,11 @@ const MUTATED_PATHS_CAP: usize = 32;
 /// stuck model orbits, not for a full-tree census.
 const PATH_READS_CAP: usize = 64;
 
+/// Cap on distinct command-shaped checks that have failed without a later
+/// success from the same check. Recovery tracking is a small current-turn
+/// ledger, not an unbounded command history.
+const FAILED_VERIFIERS_CAP: usize = 64;
+
 /// Smallest result that counts as a re-FETCH for the re-read advisory, in
 /// tokens (the unit of the cost being guarded — context spend). Below it a
 /// repeat read is a cheap membership probe ("no matches", a short lookup),
@@ -999,6 +1016,15 @@ pub struct Detectors {
 	/// (or since the streak reset). Mutating a path clears its counter, so
 	/// edit-verify loops never accumulate. Bounded by [`PATH_READS_CAP`].
 	path_read_counts: std::collections::HashMap<String, usize>,
+	/// Command-shaped checks that failed and have not subsequently succeeded
+	/// with the same tool + command identity. An unrelated successful read,
+	/// diff, or probe must not erase a failed behavioral check.
+	failed_verifiers: HashSet<u64>,
+	/// Failed verifier rounds accumulated while the ledger above remains
+	/// unresolved. Counted per round because a parallel batch is one model
+	/// decision; reset when all failed checks are discharged or after emitting
+	/// a recovery steer.
+	failed_verifier_rounds: usize,
 }
 
 /// What the deterministic layer concluded for an action.
@@ -1023,6 +1049,10 @@ pub enum DetectorSignal {
 	/// were re-reads ≈ 269k re-fetched tokens in one trajectory). Advisory:
 	/// mutating a path resets its counter, so edit-verify loops never trip it.
 	Reread,
+	/// Repeated command-shaped checks have failed without the same checks later
+	/// succeeding. Unlike generic no-progress, unrelated fresh reads cannot hide
+	/// this unresolved recovery episode.
+	Recovery,
 }
 
 impl DetectorSignal {
@@ -1033,8 +1063,9 @@ impl DetectorSignal {
 			Self::None => 0,
 			Self::Sequential => 1,
 			Self::Reread => 2,
-			Self::NoProgress => 3,
-			Self::Loop => 4,
+			Self::Recovery => 3,
+			Self::NoProgress => 4,
+			Self::Loop => 5,
 		}
 	}
 
@@ -1204,6 +1235,56 @@ impl Detectors {
 		}
 	}
 
+	/// Fold command-shaped verification outcomes into an unresolved-failure
+	/// ledger. A failed check is discharged only when that same tool + command
+	/// later succeeds; unrelated successful calls do not prove the failed
+	/// behavior. Once `threshold` failed verifier rounds accumulate, emit one
+	/// recovery signal and restart only the emission counter while retaining the
+	/// unresolved ledger. `threshold == 0` disables the signal.
+	pub fn record_round_verifier_outcomes(
+		&mut self,
+		outcomes: &[(u64, bool)],
+		threshold: usize,
+	) -> DetectorSignal {
+		if outcomes.is_empty() {
+			return DetectorSignal::None;
+		}
+		let mut failed = HashSet::new();
+		let mut succeeded = HashSet::new();
+		for &(key, success) in outcomes {
+			if success {
+				succeeded.insert(key);
+			} else {
+				failed.insert(key);
+			}
+		}
+
+		// A parallel batch with conflicting outcomes for the same check is not a
+		// clearance. Only unambiguously successful checks discharge prior debt.
+		for key in succeeded.difference(&failed) {
+			self.failed_verifiers.remove(key);
+		}
+		if !failed.is_empty() {
+			self.failed_verifier_rounds = self.failed_verifier_rounds.saturating_add(1);
+			for key in failed {
+				if self.failed_verifiers.len() < FAILED_VERIFIERS_CAP
+					|| self.failed_verifiers.contains(&key)
+				{
+					self.failed_verifiers.insert(key);
+				}
+			}
+		}
+		if self.failed_verifiers.is_empty() {
+			self.failed_verifier_rounds = 0;
+		}
+		if threshold > 0 && self.failed_verifier_rounds >= threshold {
+			self.failed_verifier_rounds = 0;
+			DetectorSignal::Recovery
+		} else {
+			DetectorSignal::None
+		}
+	}
+
 	/// Is this successful non-mutation call a READ-BACK of an artifact the agent
 	/// itself mutated — inspecting the resulting state, the correct verification
 	/// for work with no command to run (documents, config, prose, data files)?
@@ -1323,6 +1404,8 @@ impl Detectors {
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
 		self.path_read_counts.clear();
+		self.failed_verifiers.clear();
+		self.failed_verifier_rounds = 0;
 	}
 
 	/// Record the arity of a completed tool round (one AI turn's batch) and return
@@ -1445,6 +1528,9 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 		DetectorSignal::Reread => {
 			"repeated reads of the same file — content already received this session"
 		}
+		DetectorSignal::Recovery => {
+			"verification keeps failing — unresolved checks need a different recovery strategy"
+		}
 		DetectorSignal::None => "",
 	}
 }
@@ -1530,6 +1616,11 @@ pub fn steer_note(
 			"<pay-attention>\nStill re-reading the same unchanged file. Name in one line what you are looking for in it, then extract that from the content already in your context — or make ONE precisely-targeted read (exact line range or pattern) and act on the result instead of fetching the file again.\n</pay-attention>",
 			"<pay-attention>\nRepeated re-reads of an unchanged file are pure waste: the content is identical every time. Decide now what fact you need from it, take it from what you already received, and move to acting on it. If you genuinely cannot find it, say so in your next step rather than fetching the same bytes again.\n</pay-attention>",
 		],
+		DetectorSignal::Recovery => &[
+			"<pay-attention>\nSeveral command-shaped checks have failed, and unrelated successful calls do not resolve them. Use the latest failure to isolate one concrete cause, change that cause, then rerun the narrowest check that proves it. Do not repeat a broad check until relevant state has changed.\n</pay-attention>",
+			"<pay-attention>\nThe verification failures remain unresolved. Stop broad trial-and-error: name the single failing behavior you are fixing now, trace it to its owning source, make one focused correction, and run the smallest check that can confirm or reject that correction.\n</pay-attention>",
+			"<pay-attention>\nThis recovery strategy is still producing failed checks. Re-anchor on the latest concrete failure and take a fundamentally different diagnostic or implementation path. Continue only with a focused cause-and-check loop, or report the specific blocker instead of accumulating more broad retries.\n</pay-attention>",
+		],
 		DetectorSignal::None => return "",
 	};
 	variants[attempt.min(variants.len() - 1)]
@@ -1540,7 +1631,10 @@ pub fn steer_note(
 /// These escalate to [`PERSISTENT_VARIANTS`]; factored so the steer loop and the
 /// escalation ladder classify signals the same way.
 pub fn is_stuck(signal: DetectorSignal) -> bool {
-	matches!(signal, DetectorSignal::Loop | DetectorSignal::NoProgress)
+	matches!(
+		signal,
+		DetectorSignal::Loop | DetectorSignal::NoProgress | DetectorSignal::Recovery
+	)
 }
 
 /// The escalation rung at which a stuck signal stops reframing and holds the firmest
@@ -2444,6 +2538,77 @@ mod tests {
 		// Post-recovery: a full threshold of clean singletons is required to fire.
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
 		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
+	}
+
+	#[test]
+	fn failed_verifier_recovery_survives_unrelated_successes() {
+		let mut d = Detectors::default();
+		let failing_check = 11;
+		let unrelated_check = 22;
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+			DetectorSignal::None
+		);
+		// A different successful command does not prove the failed behavior.
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(unrelated_check, true)], 3),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+			DetectorSignal::Recovery
+		);
+	}
+
+	#[test]
+	fn same_verifier_success_discharges_recovery() {
+		let mut d = Detectors::default();
+		let check = 11;
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(check, false)], 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(check, true)], 2),
+			DetectorSignal::None
+		);
+		// The old failed episode is gone, so one new failure is below threshold.
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(check, false)], 2),
+			DetectorSignal::None
+		);
+	}
+
+	#[test]
+	fn conflicting_parallel_verifier_outcomes_do_not_clear_failure() {
+		let mut d = Detectors::default();
+		let check = 11;
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(check, false)], 2),
+			DetectorSignal::None
+		);
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(check, true), (check, false)], 2),
+			DetectorSignal::Recovery
+		);
+	}
+
+	#[test]
+	fn user_turn_reset_clears_failed_verifier_recovery() {
+		let mut d = Detectors::default();
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(11, false)], 2),
+			DetectorSignal::None
+		);
+		d.reset_streak();
+		assert_eq!(
+			d.record_round_verifier_outcomes(&[(11, false)], 2),
+			DetectorSignal::None
+		);
 	}
 
 	#[test]

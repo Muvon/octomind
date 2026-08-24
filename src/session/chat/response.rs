@@ -645,6 +645,10 @@ pub async fn process_response<S: OutputSink>(
 					// (fp_before / track_verification are captured above, BEFORE
 					// execute_tools_parallel — see the pre-execution comment.)
 					let mut round_verifier = false;
+					// Stable command-check identities and observed outcomes. A failed
+					// check remains unresolved until that same check later succeeds;
+					// unrelated successful reads/diffs cannot erase the recovery state.
+					let mut round_verifier_outcomes: Vec<(u64, bool)> = Vec::new();
 					let mut round_readback = false;
 					let mut round_mutation = false;
 					let mut round_write_capable = false;
@@ -686,6 +690,12 @@ pub async fn process_response<S: OutputSink>(
 							&call.tool_name,
 							&call.parameters,
 						);
+						if let Some(key) = crate::supervisor::detect::verifier_key(
+							&call.tool_name,
+							&call.parameters,
+						) {
+							round_verifier_outcomes.push((key, !is_error));
+						}
 						if verifier_shaped && !is_error {
 							let cmd = call
 								.parameters
@@ -795,6 +805,19 @@ pub async fn process_response<S: OutputSink>(
 						no_progress_window,
 					);
 					round_signal = round_signal.merge(batch_signal);
+
+					// Recovery is outcome-based rather than freshness-based: a stream of
+					// new reads may be useful, but it must not hide repeated failed
+					// behavioral checks. Reuse the existing no-progress window as the
+					// bounded failure budget instead of adding another tuning knob.
+					let recovery_signal = params
+						.chat_session
+						.detectors
+						.record_round_verifier_outcomes(
+							&round_verifier_outcomes,
+							no_progress_window,
+						);
+					round_signal = round_signal.merge(recovery_signal);
 
 					// Round-level Sequential: a turn of exactly one tool call grows the
 					// singleton streak; a parallel round resets it. Off by default

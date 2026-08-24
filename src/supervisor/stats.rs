@@ -76,6 +76,7 @@ struct Stats {
 	steer_no_progress: u64,
 	steer_sequential: u64,
 	steer_reread: u64,
+	steer_recovery: u64,
 	pregate_blocks: u64,
 	claim_blocks: u64,
 	readiness_blocks: u64,
@@ -156,6 +157,7 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 			DetectorSignal::NoProgress => s.steer_no_progress += 1,
 			DetectorSignal::Sequential => s.steer_sequential += 1,
 			DetectorSignal::Reread => s.steer_reread += 1,
+			DetectorSignal::Recovery => s.steer_recovery += 1,
 			DetectorSignal::None => {}
 		}
 	});
@@ -225,6 +227,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		("no-progress", s.steer_no_progress),
 		("sequential", s.steer_sequential),
 		("reread", s.steer_reread),
+		("recovery", s.steer_recovery),
 	]
 	.into_iter()
 	.filter(|(_, n)| *n > 0)

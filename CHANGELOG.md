@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.46.0] - 2026-08-24
+
+### 📋 Release Summary
+
+This release introduces verifier recovery tracking and mutation readiness contracts within the supervisor (e0c3227c, 5eb88af6). Additionally, supervisor logic and configuration were streamlined for improved performance (32f04374, 0b51d8e2).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: implement verifier recovery tracking `e0c3227c`
+- **supervisor**: implement mutation readiness and outcome contracts `5eb88af6`
+
+### 🔧 Improvements & Optimizations
+
+- **supervisor**: restrict visibility of detection helpers `32f04374`
+- **supervisor**: simplify configuration and logic `0b51d8e2`
+
 ## [0.45.3] - 2026-08-23
 
 ### 📋 Release Summary

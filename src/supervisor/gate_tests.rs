@@ -226,6 +226,31 @@ fn the_json_path_reports_an_inference_only_unmatched_condition_without_blocking(
 	assert!(report.reported_findings()[0].contains("condition 2 suspected by inference only"));
 }
 
+/// The refutation pass can only remove findings: one the second verifier marks
+/// refuted is dropped, one it marks stands (or never mentions) is kept, a
+/// number outside the list is ignored, and an off-protocol answer drops nothing.
+#[test]
+fn refutation_drops_only_findings_the_second_verifier_refuted() {
+	let gaps = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+	let text = r#"<finding n="1" verdict="refuted">#4 ran the suite green</finding>
+<finding n="2" verdict="stands">no listing recorded</finding>
+<finding n="9" verdict="refuted">out of range</finding>"#;
+	let (standing, refuted) = split_refuted(&gaps, &refuted_from_text(text));
+	assert_eq!(standing, vec!["b".to_string(), "c".to_string()]);
+	assert_eq!(refuted, vec!["a".to_string()]);
+
+	let json = serde_json::json!({"findings": [
+		{"n": 3, "verdict": "refuted", "citation": "the diff hunk contains the guard"},
+		{"n": "1", "verdict": "stands", "citation": "no action ran it"}
+	]});
+	let (standing, refuted) = split_refuted(&gaps, &refuted_from_json(&json));
+	assert_eq!(standing, vec!["a".to_string(), "b".to_string()]);
+	assert_eq!(refuted, vec!["c".to_string()]);
+
+	assert!(refuted_from_text("I think it is fine").is_empty());
+	assert!(refuted_from_json(&serde_json::json!({})).is_empty());
+}
+
 /// An accusation no action can close cannot be repaired — re-running only
 /// spends the budget to arrive at the same verdict. It is not silently dropped
 /// either: whatever the runtime declines to charge, the user sees.

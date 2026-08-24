@@ -327,26 +327,24 @@ ignore_cost = false
 
 ## `[supervisor]`
 
-The out-of-band control plane around the agent loop. It hosts learning (distill + recall), orientation memory, deterministic detectors, and the verify-gate. See the [Supervisor guide](../usage/14-supervisor.md) for how the mechanics fit together. **Strict:** the `[supervisor]` section and its required keys must be present — a missing section or key is a hard parse error, not a silent default. **Breaking change:** the former top-level `[learning]` table now lives at `[supervisor.learning]` — there is no migration.
+The out-of-band control plane around the agent loop. It hosts learning (distill + recall + orientation memory), deterministic detectors, the verify-gate, the external plan manager, and condense. See the [Supervisor guide](../usage/14-supervisor.md) for how the mechanics fit together. **Strict:** the `[supervisor]` section and its required keys must be present — a missing section or key is a hard parse error, not a silent default.
+
+Deterministic detectors (loop / no-progress / failed-check recovery), goal recitation, and the free check-after-mutation pre-gate are always on with fixed thresholds — they are behavior, not knobs.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
-| `model` | string | `"anthropic:claude-haiku-4-5"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
-| `claim_check` | bool | `true` | Evidence-bound claims: each explicit `<evidence>` quote must occur in current-turn tool provenance or the current user message. Ordinary URLs, paths, and code examples are not inferred as citations; unsupported explicit evidence is re-grounded via the verify-gate |
-| `max_consecutive_steers` | usize | `0` | Circuit-breaker: hard-stop a turn after this many consecutive steered tool rounds without breakout. `0` = unlimited (off) |
+| `model` | string | `"octohub:auto"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
 
 ### `[supervisor.learning]`
 
-Cross-session adaptive learning. Extracts lessons from sessions and injects them into future sessions. See [Learning Guide](../usage/13-learning.md) for full details.
+Cross-session adaptive learning. Extracts lessons and orientation memory (durable subject understanding, recalled as working assumptions to verify) from sessions and injects them into future sessions. See [Learning Guide](../usage/13-learning.md) for full details.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable the learning system |
-| `model` | string | `"anthropic:claude-haiku-4-5"` | Model for extraction and retrieval LLM calls |
+| `enabled` | bool | `true` | Enable the learning system (lessons + orientation) |
+| `model` | string | `"octohub:auto"` | Model for extraction and retrieval LLM calls |
 | `backend` | string | `"file"` | Backend: `"file"` or `"mcp"` |
-| `min_messages_for_intermediate` | usize | `3` | Min user messages before intermediate learning triggers |
-| `max_inject` | usize | `5` | Max lessons injected into system prompt |
 
 #### `[supervisor.learning.store]` (MCP backend only)
 
@@ -362,28 +360,6 @@ Cross-session adaptive learning. Extracts lessons from sessions and injects them
 | `tool` | string | MCP tool name for retrieving lessons (e.g. `"remember"`) |
 | `field_map` | table | Maps canonical fields to MCP argument names. Empty string = omit. |
 
-### `[supervisor.orientation]`
-
-Durable understanding of the subject (decisions, structure, constraints), stored in the same backend as lessons under `memory_type = "orientation"` and recalled as **working assumptions to verify**, never as truth.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable orientation memory |
-| `max_inject` | usize | `5` | Max orientation entries injected per session |
-| `decay_days` | u64 | `90` | Entries unused this many days lose confidence (no git) |
-
-### `[supervisor.detectors]`
-
-Deterministic, free, every-turn signals that decide when (rarely) to wake the model. Fused with the agent's own `<sup>…</sup>` self-report token.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `loop_threshold` | usize | `3` | Identical tool+args this many times in a row → loop fired |
-| `no_progress_window` | usize | `5` | Turns without new information → drift candidate |
-| `self_report` | bool | `true` | Inject and parse the hidden structured state/focus/next/carry handoff used by detectors and compression |
-| `sequential_threshold` | usize | `0` | Consecutive single-tool-call rounds → over-sequencing advisory. `0` = off |
-| `sequential_max_steers_per_turn` | usize | `0` | Maximum over-sequencing advisories per genuine user turn. Successful compression resets the budget. `0` = unlimited |
-
 ### `[supervisor.gate]`
 
 Verify-gate on self-reported completion. Free deterministic pre-gates run first (no model call); the LLM checklist runs only if those pass.
@@ -391,36 +367,21 @@ Verify-gate on self-reported completion. Free deterministic pre-gates run first 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
-| `max_iterations` | u8 | `2` | Max gate re-entry iterations (bounds over-verification). Applied separately to the free deterministic checks and to the LLM verify-gate, so a free nudge never consumes the verifier's repair budget |
 | `verifier_model` | string | supervisor `model` | Model the gate verifies with. Recommended: a **different family** than the agent model — a same-family verifier inherits the same blind spots |
-| `require_check_after_mutation` | bool | `true` | Free pre-gate: refuse `done` when state changed but no successful command execution ran since the change (tool-agnostic — works for any domain) |
-| `require_plan_complete` | bool | `true` | Free pre-gate: refuse `done` while more than the final live-plan phase remains open |
 | `max_tokens` | u32 | `8192` | Maximum verifier output tokens; also bounds the assembled turn deliverable supplied to it |
 
 ### `[supervisor.plan]`
 
-Adaptive external plan manager. The specialist has no plan mutation tool; sparse hidden signals wake this manager only when planning or a transition is needed.
+Adaptive external plan manager. The specialist has no plan mutation tool; a sparse hidden signal emitted alongside real work wakes this manager only when planning or a transition is needed.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable adaptive external planning |
 | `model` | string | `octohub:auto` | Model used for the single structured plan decision |
-| `max_tokens` | u32 | `2048` | Standard provider output cap: maximum generated decision tokens, not input context |
-| `trajectory_max_tokens` | usize | `4096` | Local input cap for only the newest current-phase assistant/tool trajectory; `0` omits that slice |
-| `adoption_min_actions` | usize | `8` | Successful actions before automatic plan adoption may be evaluated; `0` disables auto-adoption |
-| `adoption_min_distinct_actions` | usize | `4` | Distinct successful actions required by auto-adoption; `0` disables auto-adoption |
-
-### `[supervisor.recite]`
-
-Goal recitation: re-inject the live goal (anchor intent + next steps) at the context tail each turn on long (already-compacted) sessions, so it stays in the high-attention recency window. Short sessions pay nothing.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable goal recitation |
 
 ### `[supervisor.condense]`
 
-Task-aware narrowing of oversized plain-text tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Relevance uses trusted agent/project/active-skill instructions, the live goal/request/plan, and the current tool-round intent. The response contract is validated atomically and partial views cannot be discarded wholesale. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard plain-text ceiling; rich MCP payloads fail open rather than being flattened.
+Task-aware narrowing of oversized plain-text tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard plain-text ceiling.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -428,70 +389,29 @@ Task-aware narrowing of oversized plain-text tool outputs. One cheap-model call 
 | `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
 | `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
 
-### `[supervisor.delegate]`
-
-Delegate gate: handoff quality check before a subagent is spawned. `tap run` / `agent_*` children are context-isolated — one cheap-model call judges each proposed handoff against the parent's goal, live request and plan (faithful, self-contained, states the deliverable and scope edge). A failing handoff is not spawned; the gaps come back as a tool error so the agent rewrites the prompt. Fail-open on any gate outage.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable the delegate gate |
-| `model` | string | `anthropic:claude-haiku-4-5` | Model that judges the handoff (cheap + fast recommended) |
-| `max_revisions` | usize | `2` | Rejected rounds per turn before the gate lets the handoff through. `0` = never judge (same as off) |
-
 ```toml
 [supervisor]
 enabled = true
-model = "anthropic:claude-haiku-4-5"
-claim_check = true
-max_consecutive_steers = 0
+model = "octohub:auto"
 
 [supervisor.learning]
 enabled = true
-model = "anthropic:claude-haiku-4-5"
+model = "octohub:auto"
 backend = "file"
-min_messages_for_intermediate = 3
-max_inject = 5
-
-[supervisor.orientation]
-enabled = true
-max_inject = 5
-decay_days = 90
-
-[supervisor.detectors]
-loop_threshold = 3
-no_progress_window = 5
-self_report = true
-sequential_threshold = 0
-sequential_max_steers_per_turn = 0
 
 [supervisor.gate]
 enabled = true
-max_iterations = 2
-verifier_model = "anthropic:claude-haiku-4-5"
-require_check_after_mutation = true
-require_plan_complete = true
+verifier_model = "octohub:auto"
 max_tokens = 8192
 
 [supervisor.plan]
 enabled = true
 model = "octohub:auto"
-max_tokens = 2048
-trajectory_max_tokens = 4096
-adoption_min_actions = 8
-adoption_min_distinct_actions = 4
-
-[supervisor.recite]
-enabled = true
 
 [supervisor.condense]
 enabled = true
 tokens_threshold = 5000
 model = "anthropic:claude-haiku-4-5"
-
-[supervisor.delegate]
-enabled = true
-model = "anthropic:claude-haiku-4-5"
-max_revisions = 2
 ```
 
 ## `[registry]`

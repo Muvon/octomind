@@ -118,18 +118,6 @@ pub async fn process_tool_results(
 	// manager-owned state before the already-needed follow-up request. With no
 	// signal this is a free no-op.
 	if config.supervisor.enabled && config.supervisor.plan.enabled {
-		if chat_session.pending_plan_signal.is_none()
-			&& !chat_session.plan_evaluated
-			&& !crate::mcp::core::plan::has_active_plan()
-			&& chat_session.evidence.plan_adoption_signal(
-				config.supervisor.plan.adoption_min_actions,
-				config.supervisor.plan.adoption_min_distinct_actions,
-			) {
-			// Action breadth nominates the turn for evaluation; it does not prove
-			// the work is multi-phase. Reconciliation first applies the task
-			// classifier, then the planner considers only remaining outcomes.
-			chat_session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
-		}
 		animation_manager.set_phase("Reconciling plan …").await;
 		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
 			chat_session,
@@ -247,45 +235,6 @@ pub async fn process_tool_results(
 		animation_manager.stop_current().await;
 		crate::log_debug!("Operation cancelled by user.");
 		return Ok(None);
-	}
-
-	// Circuit-breaker: a steer is advisory, so a loop can ignore it forever. If the
-	// model has emitted a steer for `max_consecutive_steers` tool rounds in a row
-	// without breaking out, hard-stop the turn and return control to the user instead
-	// of burning more tokens. 0 = unlimited (off — delivery alone is relied on).
-	let steer_limit = config.supervisor.max_consecutive_steers;
-	if steer_limit > 0 && chat_session.consecutive_steers >= steer_limit {
-		// Mid-trajectory on-track checkpoint (one cheap classifier pass, only at
-		// the breaker — never per steer): a loop still serving the request gets
-		// the counter reset and more room; a drifted loop hard-stops. None (no
-		// task / LLM error / unparseable) keeps the pre-checkpoint hard stop.
-		let on_track = crate::supervisor::ontrack::check_on_track(chat_session, config).await;
-		if on_track == Some(true) {
-			crate::log_debug!(
-				"Steer breaker: on-track at {} steered rounds — counter reset, turn continues",
-				steer_limit
-			);
-			crate::supervisor::notify("steer limit reached but work is on-track — continuing");
-			chat_session.consecutive_steers = 0;
-		} else {
-			if on_track == Some(false) {
-				crate::log_debug!("Steer breaker: off-track — hard stop");
-			}
-			chat_session.consecutive_steers = 0;
-			chat_session.steer_attempt = 0;
-			chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
-			chat_session.last_steered_calls = None;
-			chat_session.steer_pending = None;
-			println!(
-				"{}",
-				format!(
-					"⚠ Supervisor stopped a runaway loop: {steer_limit} steered rounds in a row with no change — returning control to you."
-				)
-				.bright_yellow()
-			);
-			animation_manager.stop_current().await;
-			return Ok(None);
-		}
 	}
 
 	// Inject accumulated tool-misuse hints as a user message so the AI sees guidance

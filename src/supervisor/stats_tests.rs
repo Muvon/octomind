@@ -20,35 +20,22 @@ use super::*;
 #[test]
 fn test_recorders_and_snapshot_render() {
 	record_call(CallKind::Gate, 100, 50, 120, 0.001);
-	record_call(CallKind::Readiness, 20, 5, 10, 0.0);
 	record_call(CallKind::Recall, 10, 5, 15, 0.0);
 	gate_run();
 	gate_pass();
 	gate_fail();
 	steer(crate::supervisor::detect::DetectorSignal::None);
 	pregate_block();
-	claim_block();
-	readiness_block(1);
 	lessons(2);
 	orientation(1);
 	recall();
 	condensed(3, 1200);
-	delegate_run();
-	delegate_block(1);
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
 	// The snapshot is consumed by /info and telemetry — the load-bearing
 	// counters must be present as fields.
-	for key in [
-		"calls",
-		"gate",
-		"readiness",
-		"lessons",
-		"recalls",
-		"condense",
-		"delegate",
-	] {
+	for key in ["calls", "gate", "lessons", "recalls", "condense"] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");
 	}
 }

@@ -389,10 +389,6 @@ pub struct EvidenceLedger {
 	/// loop tell a re-run that gathered new evidence from one that only reworded
 	/// its answer.
 	gate_checkpoint: u64,
-	/// Whether this task has spent its one sparse pre-mutation readiness check.
-	/// The check is intentionally one-shot: it shifts a load-bearing observation
-	/// earlier without turning the supervisor into a per-action controller.
-	readiness_checked: bool,
 }
 
 impl EvidenceLedger {
@@ -407,18 +403,6 @@ impl EvidenceLedger {
 		self.grounds.clear();
 		self.ground_chars = 0;
 		self.gate_checkpoint = 0;
-		self.readiness_checked = false;
-	}
-
-	/// Claim the task's one pre-mutation readiness check. Returns `true` only to
-	/// the first caller; later mutations remain free and the completion gate is
-	/// still the final backstop.
-	pub fn claim_readiness_check(&mut self) -> bool {
-		if self.readiness_checked {
-			return false;
-		}
-		self.readiness_checked = true;
-		true
 	}
 
 	/// Retain verbatim output as current-turn provenance. This state survives
@@ -442,10 +426,6 @@ impl EvidenceLedger {
 			let (_, removed) = self.grounds.remove(0);
 			self.ground_chars = self.ground_chars.saturating_sub(removed.chars().count());
 		}
-	}
-
-	pub fn citation_grounds(&self) -> Vec<String> {
-		self.grounds.iter().map(|(_, g)| g.clone()).collect()
 	}
 
 	/// Retained outputs with the `#N` the rendered ledger shows for each call —
@@ -605,31 +585,12 @@ impl EvidenceLedger {
 		}
 		out
 	}
-
-	/// Domain-neutral plan-adoption signal. A planless trajectory that crosses
-	/// both configured thresholds has become broad enough to ask the external
-	/// planner; distinct reads, searches, sends, edits, queries, and other
-	/// actions all count. It catches work that *became* broad
-	/// during execution without imposing planning on small tasks. This is only a
-	/// nomination: the current-task classifier rejects answer-only work, then the
-	/// external planner makes the remaining semantic yes/no decision.
-	pub fn plan_adoption_signal(&self, min_actions: usize, min_distinct_actions: usize) -> bool {
-		if min_actions == 0 || min_distinct_actions == 0 {
-			return false;
-		}
-		let mut actions = 0usize;
-		let mut distinct = std::collections::HashSet::new();
-		for e in &self.entries {
-			if e.error {
-				continue;
-			}
-			actions += e.repeats;
-			distinct.insert((e.tool.as_str(), e.args.as_str()));
-		}
-		actions.saturating_add(self.dropped) >= min_actions
-			&& distinct.len() >= min_distinct_actions
-	}
 }
+
+/// Max gate re-entry iterations before giving up (bounds the self-verification
+/// dilemma). Shared budget across the free deterministic pre-gate nudges and
+/// the LLM verify-gate.
+pub const MAX_ITERATIONS: u8 = 2;
 
 /// Cap on the git diff inside the ground-truth block.
 const GT_DIFF_MAX: usize = 10_000;
@@ -2011,60 +1972,16 @@ mod tests {
 	}
 
 	#[test]
-	fn plan_adoption_signal_requires_action_breadth() {
-		const MIN_ACTIONS: usize = 8;
-		const MIN_DISTINCT_ACTIONS: usize = 4;
-		let mut l = EvidenceLedger::default();
-		for i in 0..MIN_DISTINCT_ACTIONS {
-			l.record(
-				"inspect",
-				&serde_json::json!({"resource":i}),
-				false,
-				false,
-				1,
-			);
-		}
-		assert!(!l.plan_adoption_signal(MIN_ACTIONS, MIN_DISTINCT_ACTIONS));
-		for i in MIN_DISTINCT_ACTIONS..MIN_ACTIONS {
-			l.record(
-				"inspect",
-				&serde_json::json!({"resource":i}),
-				false,
-				false,
-				1,
-			);
-		}
-		assert!(l.plan_adoption_signal(MIN_ACTIONS, MIN_DISTINCT_ACTIONS));
-	}
-
-	#[test]
-	fn plan_adoption_signal_ignores_repetitive_narrow_work() {
-		let mut l = EvidenceLedger::default();
-		// Many repeats of one action are not several dependent outcomes.
-		for _ in 0..10 {
-			l.record(
-				"poll",
-				&serde_json::json!({"resource":"job-1"}),
-				false,
-				false,
-				1,
-			);
-		}
-		assert!(!l.plan_adoption_signal(8, 4));
-		assert!(!l.plan_adoption_signal(0, 4));
-	}
-
-	#[test]
 	fn citation_provenance_resets_at_real_turn_boundary() {
 		let mut ledger = EvidenceLedger::default();
 		let sequence = ledger.record("view", &serde_json::json!({"path":"a"}), false, false, 16);
 		ledger.record_ground(sequence, "old task output");
-		assert_eq!(ledger.citation_grounds(), ["old task output"]);
+		assert_eq!(ledger.grounds()[0].1, "old task output");
 		ledger.reset();
-		assert!(ledger.citation_grounds().is_empty());
+		assert!(ledger.grounds().is_empty());
 		let sequence = ledger.record("view", &serde_json::json!({"path":"b"}), false, false, 20);
 		ledger.record_ground(sequence, "current task output");
-		assert_eq!(ledger.citation_grounds(), ["current task output"]);
+		assert_eq!(ledger.grounds()[0].1, "current task output");
 	}
 
 	#[test]
@@ -2094,7 +2011,6 @@ mod tests {
 		assert_eq!(restored.render(), l.render());
 		assert_eq!(restored.mutated_paths(), l.mutated_paths());
 		assert_eq!(restored.recent_commands(), l.recent_commands());
-		assert_eq!(restored.citation_grounds(), l.citation_grounds());
 		assert_eq!(restored.grounds(), l.grounds());
 	}
 
@@ -2114,15 +2030,6 @@ mod tests {
 		l.record("view", &serde_json::json!({}), false, false, 1);
 		l.reset();
 		assert_eq!(l.render(), "");
-	}
-
-	#[test]
-	fn readiness_check_is_one_shot_per_task_and_resettable() {
-		let mut ledger = EvidenceLedger::default();
-		assert!(ledger.claim_readiness_check());
-		assert!(!ledger.claim_readiness_check());
-		ledger.reset();
-		assert!(ledger.claim_readiness_check());
 	}
 
 	#[test]

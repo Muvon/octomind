@@ -1218,9 +1218,8 @@ impl OctomindAgent {
 			// tracks verification: an untracked child has no verdict to give, and
 			// silence keeps the parent on its own (conservative) signal.
 			if let Some(conn) = self.conn.borrow().as_ref().cloned() {
-				let tracks = config_for_role.supervisor.enabled
-					&& config_for_role.supervisor.gate.enabled
-					&& config_for_role.supervisor.gate.require_check_after_mutation;
+				let tracks =
+					config_for_role.supervisor.enabled && config_for_role.supervisor.gate.enabled;
 				let verified = tracks
 					&& !chat_session
 						.detectors

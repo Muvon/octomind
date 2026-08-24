@@ -102,7 +102,7 @@ pub fn get_all_functions(config: &crate::config::Config) -> Vec<McpFunction> {
 					"properties": {
 						"task": {
 							"type": "string",
-							"description": "Task description in human language for the agent to process"
+							"description": "Task description in human language for the agent to process. The agent starts with ZERO context — it sees ONLY this text, none of your conversation or findings. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like."
 						},
 						"async": {
 							"type": "boolean",

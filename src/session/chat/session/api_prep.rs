@@ -63,12 +63,7 @@ pub async fn prepare_for_api_call(
 				.info
 				.verification_policy
 				.apply(resolved.verification_policy_update);
-			let outcome_contract = crate::supervisor::resolve::outcome_contract_note(&resolved);
 			chat_session.gate_task = Some(resolved);
-			if let Some(note) = outcome_contract {
-				chat_session.add_system_managed_user_message(&note)?;
-				crate::log_debug!("Supervisor outcome contract injected");
-			}
 			if policy_changed {
 				// Persist at the ownership boundary. Most modes also save after the
 				// response, but cancellation and ACP monitor paths can return earlier.

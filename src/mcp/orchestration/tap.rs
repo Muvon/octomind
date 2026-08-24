@@ -88,7 +88,7 @@ Actions:
 				},
 				"prompt": {
 					"type": "string",
-					"description": "Prompt for run, or capability-need phrase for capability."
+					"description": "Prompt for run, or capability-need phrase for capability. A new run starts with ZERO context — the specialist sees ONLY this text, none of your conversation or findings. Make it self-contained: the goal, the concrete facts/names/locations/constraints you already established, what to produce, and what done looks like. Never reference things the specialist cannot see ('as discussed', 'the item we found')."
 				},
 				"session": {
 					"type": "string",

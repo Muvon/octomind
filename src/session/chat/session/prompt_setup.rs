@@ -41,14 +41,9 @@ pub async fn setup_system_prompt_and_cache(
 		// Create system prompt based on role - use merged config for role
 		let mut system_prompt = create_system_prompt(&current_dir, config_for_role, role).await;
 		// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
-		if config_for_role.supervisor.enabled && config_for_role.supervisor.detectors.self_report {
+		if config_for_role.supervisor.enabled {
 			system_prompt.push_str("\n\n");
 			system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
-		}
-		// Supervisor: evidence-bound claims contract (verified deterministically on done).
-		if config_for_role.supervisor.enabled && config_for_role.supervisor.claim_check {
-			system_prompt.push_str("\n\n");
-			system_prompt.push_str(crate::supervisor::detect::EVIDENCE_INSTRUCTION);
 		}
 		chat_session.add_system_message(&system_prompt)?;
 

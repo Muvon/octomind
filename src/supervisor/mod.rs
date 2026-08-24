@@ -17,12 +17,13 @@
 //! Runs *beside* the main loop, never in the user's transcript. Hosts:
 //! - `learning` — distill (end-of-trajectory lessons) + recall (inject).
 //! - orientation — a second memory kind: durable understanding of the subject
-//!   (decisions, structure, constraints), stored as `memory_type = "orientation"`.
-//! - detectors — deterministic, free, every turn: loop / no-progress / stop-intent.
+//!   (decisions, structure, constraints), stored as `memory_type = "orientation"`,
+//!   managed inside `learning`.
+//! - detectors — deterministic, free, every turn: loop / no-progress / recovery.
 //!   Fused with the agent's own self-report token before any model is woken.
+//!   Thresholds are fixed constants (`detect::LOOP_THRESHOLD`,
+//!   `detect::NO_PROGRESS_WINDOW`) — good defaults, not knobs.
 //! - gate — verify-gate on self-reported `done`; labels the run for learning.
-//! - readiness — one sparse, route-invariant check before a task's first
-//!   mutation when admission found a grounded state dependency.
 //! - condense — task-aware narrowing of oversized tool outputs (line-range
 //!   selection, never retyping) so the agent model sees only what the task needs.
 //!
@@ -41,9 +42,7 @@ pub mod delegate;
 pub mod detect;
 pub mod gate;
 pub mod learning;
-pub mod ontrack;
 pub mod plan;
-pub mod readiness;
 pub mod recite;
 pub mod resolve;
 pub mod stats;
@@ -205,47 +204,15 @@ pub struct SupervisorConfig {
 	pub enabled: bool,
 	/// Shared cheap model for supervisor mechanics (e.g. the verify-gate).
 	pub model: String,
-	/// Evidence-bound claims: instruct the agent to back load-bearing facts
-	/// with a verbatim quote in an `<evidence>` tag, then deterministically
-	/// verify each quoted line occurs in current-turn tool provenance. Ordinary
-	/// URLs, code samples, and file-like prose are never inferred to be citations.
-	/// Unsupported explicit evidence is repaired through a bounded re-run.
-	pub claim_check: bool,
-	/// Cross-session learning mechanic (distill + recall).
+	/// Cross-session learning mechanic (distill + recall + orientation).
 	pub learning: learning::LearningConfig,
-	/// Orientation memory (durable subject understanding).
-	pub orientation: OrientationConfig,
-	/// Deterministic detectors (loop / no-progress / stop-intent).
-	pub detectors: DetectorsConfig,
 	/// Verify-gate on self-reported completion.
 	pub gate: GateConfig,
 	/// External, adaptive plan manager. The specialist sees plan state but cannot
 	/// mutate it directly.
 	pub plan: PlanConfig,
-	/// Goal recitation: re-anchor the live goal at the context tail.
-	pub recite: ReciteConfig,
 	/// Task-aware condensation of oversized tool outputs.
 	pub condense: CondenseConfig,
-	/// Handoff quality gate on subagent delegation (`tap run`, `agent_*`).
-	pub delegate: DelegateConfig,
-	/// Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that
-	/// emitted (or backed-off-but-still-dominant) a steer without the model breaking out.
-	/// `0` = unlimited (off). The terminal hard ceiling under the adaptive steer backoff,
-	/// which is itself parameter-free (see the steer loop in `response.rs`).
-	pub max_consecutive_steers: usize,
-}
-
-/// Goal recitation. On long (already-compacted) sessions the durable goal lives
-/// in the `Anchor` but is only rendered inside the mid-transcript compressed
-/// summary, where attention is weak. Recitation re-emits a tiny goal block at
-/// the context *tail* each turn — the recency slot — so it stays salient. No
-/// model call, no new memory: pure reuse of the existing `Anchor`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReciteConfig {
-	/// Master switch. When on, recitation fires only once the anchor is
-	/// populated (i.e. the session has compacted at least once), so short
-	/// sessions pay nothing.
-	pub enabled: bool,
 }
 
 /// Condense: task-aware narrowing of oversized tool outputs. When a round
@@ -264,89 +231,15 @@ pub struct CondenseConfig {
 	pub model: String,
 }
 
-/// Delegate gate: handoff quality check before a subagent is spawned.
-/// `tap run` and `agent_*` start a context-isolated child that sees only the
-/// prompt string, so an incomplete prompt is unrecoverable downstream. One
-/// cheap-model call per round judges each handoff against the parent's goal;
-/// a handoff that is unfaithful to the request or not self-contained is
-/// rejected before the tool runs and the agent rewrites it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DelegateConfig {
-	pub enabled: bool,
-	/// Model that judges the handoff (cheap + fast recommended).
-	pub model: String,
-	/// Rejected rounds allowed per turn before the gate stops judging and lets
-	/// handoffs through. Bounds the rewrite loop — a gate that can block forever
-	/// is worse than a thin prompt. `0` = never judge (same as disabled).
-	pub max_revisions: u8,
-}
-
-/// Orientation memory: durable, expensive-to-re-derive understanding of the
-/// subject. Stored in the same backend as lessons under `memory_type =
-/// "orientation"`. Recalled as *working assumptions to verify*, never truth.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrientationConfig {
-	pub enabled: bool,
-	/// Max orientation entries injected per session.
-	pub max_inject: usize,
-	/// Soft time-decay: entries unused for this many days lose confidence.
-	pub decay_days: u64,
-}
-
-/// Deterministic detector thresholds. These never call a model themselves —
-/// they are the cheap trigger that decides when (rarely) to wake the Reflector.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DetectorsConfig {
-	/// Identical tool+args this many times in a row → loop fired.
-	pub loop_threshold: usize,
-	/// Turns without new information → drift candidate.
-	pub no_progress_window: usize,
-	/// Inject the self-report status-token instruction and parse it back.
-	pub self_report: bool,
-	/// Consecutive single-tool-call ROUNDS this many times in a row → the model is
-	/// issuing one tool call per turn when independent calls could be batched into a
-	/// single parallel round. `0` = OFF: single calls are often legitimate (genuinely
-	/// dependent calls, or one real action), so this is advisory and conservative.
-	pub sequential_threshold: usize,
-	/// Maximum Sequential advisories emitted during one genuine user turn. A
-	/// successful compression resets the budget because the prior advisory may no
-	/// longer be present in the live context. `0` = unlimited.
-	pub sequential_max_steers_per_turn: usize,
-	/// Successful READS of the same path this many times with no intervening
-	/// mutation of that path → the model is re-fetching content it already
-	/// received (attention failure, not exploration — measured 350 re-reads /
-	/// 374 views ≈ 269k re-fetched tokens in one trajectory). Mutating a path
-	/// resets its counter, so edit-verify loops never trip it. `0` = OFF
-	/// (advisory, Sequential-class; shares the sequential advisory budget).
-	pub reread_threshold: usize,
-}
-
 /// Verify-gate configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateConfig {
 	pub enabled: bool,
-	/// Max gate re-entry iterations before giving up (bounds the
-	/// self-verification dilemma). Bounds the free deterministic checks and the
-	/// LLM verify-gate separately: a zero-cost nudge the agent then satisfies
-	/// must not consume the verifier's repair budget.
-	pub max_iterations: u8,
 	/// Model the gate verifies WITH (`provider:model`). Deliberately separate
 	/// from the generator: a same-family verifier inherits the same blind spots
 	/// and rubber-stamps them, so the strongest signal comes from a *different*
 	/// family. Required — no silent fallback to the generator model.
 	pub verifier_model: String,
-	/// Free deterministic pre-gate: refuse a self-reported `done` when state
-	/// was changed but no successful command execution ran since the change.
-	/// A verifier is any non-mutation command-execution tool that succeeds on an
-	/// unchanged tree; the framework does not hard-code program names, so it is
-	/// domain-agnostic out of the box.
-	pub require_check_after_mutation: bool,
-	/// Include a relevant live plan's outcomes in independent completion
-	/// verification. Checklist status is not proof of incompletion: one verified
-	/// deliverable may satisfy several phases and closes them atomically on PASS.
-	/// When false, the authoritative user task is still verified and its PASS
-	/// retires any plan owned by that turn; the plan never adds requirements.
-	pub require_plan_complete: bool,
 	/// Max tokens for the verifier exchange, like every model block: the
 	/// call's output budget (a reasoning verifier thinks before its verdict —
 	/// an overflow returns an explicit indeterminate outcome) and the token
@@ -361,19 +254,6 @@ pub struct PlanConfig {
 	pub enabled: bool,
 	/// Model that decides whether to create, advance, hold, or revise a plan.
 	pub model: String,
-	/// Standard provider output limit: maximum tokens the manager may generate
-	/// for its single structured decision. This does not limit prompt input.
-	pub max_tokens: u32,
-	/// Locally enforced input budget for only the bounded current-phase
-	/// assistant/tool trajectory. Other planner-input fields are separate.
-	pub trajectory_max_tokens: usize,
-	/// Successful actions required before the runtime may nominate broad work
-	/// for automatic planning. The task classifier and planner may still reject
-	/// it. `0` disables automatic adoption.
-	pub adoption_min_actions: usize,
-	/// Distinct successful actions required by the same nomination detector. `0`
-	/// disables automatic adoption.
-	pub adoption_min_distinct_actions: usize,
 }
 
 #[cfg(test)]

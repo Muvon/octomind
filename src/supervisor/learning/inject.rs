@@ -79,7 +79,7 @@ pub async fn retrieve_and_format(
 	// call); afterwards they are already recorded in `injected`.
 	if first_call {
 		match backend.retrieve_global(config).await {
-			Ok(g) => candidates.extend(g.into_iter().take(learning.max_inject)),
+			Ok(g) => candidates.extend(g.into_iter().take(super::MAX_INJECT)),
 			Err(e) => crate::log_debug!("Learning: global retrieve failed: {}", e),
 		}
 	}
@@ -111,7 +111,7 @@ pub async fn retrieve_and_format(
 			&patterns,
 			role,
 			project,
-			learning.max_inject,
+			super::MAX_INJECT,
 			config,
 		)
 		.await
@@ -128,15 +128,14 @@ pub async fn retrieve_and_format(
 	let mut lesson_block = String::new();
 	let mut orient_block = String::new();
 	let mut orient_count = 0usize;
-	let orient_enabled = config.supervisor.orientation.enabled;
-	let orient_max = config.supervisor.orientation.max_inject;
+	let orient_max = super::MAX_INJECT;
 	let mut batch_seen = std::collections::HashSet::new();
 	for lesson in &candidates {
 		if injected.contains(&lesson.content) || !batch_seen.insert(lesson.content.as_str()) {
 			continue;
 		}
 		if lesson.memory_type == "orientation" {
-			if !orient_enabled || orient_count >= orient_max {
+			if orient_count >= orient_max {
 				continue;
 			}
 			orient_block.push_str(&format!(

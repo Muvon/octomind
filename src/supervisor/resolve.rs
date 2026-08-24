@@ -98,60 +98,12 @@ conversation, or a trivial ask. Each condition must be:
   particular way of doing the work;
 - checkable against a log of performed actions and observed outputs ("X was produced and
   the observed output shows Y"), never a restatement of intent.
-Six coverage classes are MANDATORY — walk them in order and emit conditions for each that
-applies (skipping an applicable class is an error):
-1. enumerated: every explicitly enumerated item, requirement, and stated constraint — ONE
-   CONDITION PER ITEM, never merged: when the request lists variants ("including X and Y",
-   "A, B, and C"), each listed variant gets its own condition, because merged conditions
-   get satisfied by evidence covering only some of the variants.
-2. examples: every stated example EXACTLY as shown, in the same composition and context the
-   request displays it (an example shown inside a document, list, sequence, or flow is
-   demonstrated in that composition, not in isolation).
-3. prohibitions: each prohibition, as a condition of the form "nothing done that ...".
-4. boundary: when the request extends what is accepted, recognized, or parsed, one condition
-   that a near-miss input is shown still rejected — and the near-miss must be one that could
-   LEAK: an input whose handled/rewritten form would be valid under a neighboring rule or
-   format of the same consumer, not one that everything rejects anyway.
-5. named_form: when the work must create or expose something whose name derives from a
-   name the request uses — directly, or EMBEDDED inside a longer form the work invents —
-   one condition that the produced form preserves EXACTLY the request's spelling, casing,
-   and word boundaries of that name (a form differing only in casing or joining still
-   fails); and when the request says to follow existing conventions, one condition that
-   every public form of the new thing mirrors its closest existing counterpart.
-6. quantified: when the request demands a guarantee over an open set of behaviors ("never",
-   "always", "any", "whatever/no matter what X does"), one condition per materially
-   different behavior of the quantified thing — at minimum the behavior the request shows
-   plus one other failure mode (misbehaving output, failing outright, absent) — because
-   evidence for the shown behavior alone does not demonstrate the guarantee.
 Never include a condition whose only demonstration would require an action the request
 forbids (e.g. the request says not to run, send, or change something) — express the
 prohibition itself as the condition instead.
 
-Field "coverage": for each of the six classes, "covered" when you emitted conditions for
-it, or "n/a" when that class genuinely does not appear in the request. This field is your
-own audit — fill it after the conditions, and add any condition you find missing while
-filling it.
-
-Field "state_dependencies": list only observations that must be established BEFORE any
-state-changing action because their value can materially change which action is correct. These
-are sequencing safeguards, not extra user requirements and not a plan. Keep the agent free to
-choose any valid route:
-- Describe the observation/state that must be known, never a tool, command, or preferred method.
-- Use this only for a task-anchoring dependency supplied by the request, such as the contents of a
-  linked failure report, the current state of a named external record, or a missing user choice.
-- When the primary source may be unavailable, allow authoritative evidence of that unavailability
-  and require conclusions to retain the resulting limit; do not demand impossible proof.
-- Do NOT include ordinary exploration (reading local code, discovering implementation details),
-  post-change validation, stylistic preferences, or facts whose value would not alter the action.
-- Do NOT include an observation whose acquisition the request or role instructions forbid.
-- Each entry must contain `evidence`: one short exact excerpt from current_user_request that
-  anchors the dependency. It is provenance, not the observation itself. An entry without an exact
-  supporting excerpt is invalid and will be discarded.
-- Return an empty list for answer-only turns and whenever no genuinely load-bearing dependency
-  exists. Most focused changes should have no state dependency.
-
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"state_dependencies":[{"observation":"state that must be known","evidence":"exact current-user excerpt"}],"coverage":{"enumerated":"covered|n/a","examples":"covered|n/a","prohibitions":"covered|n/a","boundary":"covered|n/a","named_form":"covered|n/a","quantified":"covered|n/a"}}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."]}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -246,11 +198,6 @@ pub struct ResolvedTask {
 	/// any work — so no implementation belief can shape what counts as done.
 	/// The verify-gate matches these against recorded actions and ground truth.
 	pub evidence_conditions: Vec<String>,
-	/// Observations that must be established before a state-changing action can
-	/// be chosen safely. They constrain sequencing, never the route: any tool or
-	/// approach that establishes the state is acceptable. Empty for the common
-	/// case where ordinary exploration is sufficient.
-	pub state_dependencies: Vec<StateDependency>,
 }
 
 impl ResolvedTask {
@@ -268,7 +215,6 @@ impl ResolvedTask {
 			verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 			answer_only: false,
 			evidence_conditions: Vec::new(),
-			state_dependencies: Vec::new(),
 		}
 	}
 
@@ -286,7 +232,6 @@ impl ResolvedTask {
 			verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 			answer_only: false,
 			evidence_conditions: Vec::new(),
-			state_dependencies: Vec::new(),
 		}
 	}
 }
@@ -300,29 +245,6 @@ impl ResolvedTask {
 pub fn plan_applies(task: &ResolvedTask, live_plan: &str) -> bool {
 	!live_plan.is_empty()
 		&& (live_plan != task.plan_at_turn_start || (task.plan_relevant && !task.answer_only))
-}
-
-/// Compact sequencing contract shown to the specialist before it starts work.
-/// It names observations, never actions: the specialist remains free to use
-/// any tool or route that establishes them. The authoritative request still
-/// owns scope; this note only shifts a load-bearing evidence check earlier.
-pub fn outcome_contract_note(task: &ResolvedTask) -> Option<String> {
-	if task.state_dependencies.is_empty() {
-		return None;
-	}
-	let mut note = String::from(
-		"<runtime-outcome-contract authority=\"execution-guidance\">\n\
-The route is yours to choose. Before changing external state, establish the following load-bearing observation(s), because their values can change which action is correct:\n",
-	);
-	for dependency in &task.state_dependencies {
-		note.push_str("- ");
-		note.push_str(&crate::supervisor::escape_xml_text(&dependency.observation));
-		note.push('\n');
-	}
-	note.push_str(
-		"Any authoritative approach is acceptable. If a primary source is unavailable, establish that fact, use a justified alternative when one exists, and preserve the limitation in your claims. These observations govern sequencing only; they add no user requirement and prescribe no tool.\n</runtime-outcome-contract>",
-	);
-	Some(note)
 }
 
 impl TaskContext {
@@ -392,8 +314,6 @@ struct ClassifierOutput {
 	answer_only: bool,
 	#[serde(default)]
 	conditions: Vec<String>,
-	#[serde(default)]
-	state_dependencies: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -410,15 +330,6 @@ struct ResolverOutput {
 pub struct ResolutionEvidence {
 	pub source: String,
 	pub excerpt: String,
-}
-
-/// A task-anchoring observation whose value can change which mutation is
-/// correct. `evidence` must occur verbatim in the current user request; this
-/// provenance rule prevents the supervisor from inventing process constraints.
-#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
-pub struct StateDependency {
-	pub observation: String,
-	pub evidence: String,
 }
 
 /// Resolve one captured turn. Any model or parse failure falls back to the
@@ -445,95 +356,84 @@ pub async fn resolve(
 		SupervisorSampling {
 			temperature: 0.0,
 			// Room for the conditions checklist on top of the scalar verdicts
-			// (a reasoning verifier model may also spend budget before the JSON).
-			// 2048 proved too small once the six coverage classes landed: on
-			// condition-heavy requests the reasoning pass ate the budget and the
-			// JSON arrived truncated — parse failed, the checklist silently
-			// dropped, and the gate lost its forcing structure.
+			// (a reasoning verifier model may also spend budget before the JSON);
+			// a truncated reply loses the checklist, so the budget stays generous.
 			max_tokens: 6144,
 		},
 		operation_rx.clone(),
 	)
 	.await;
-	let (
-		forbids_verification,
-		verification_policy_update,
-		answer_only,
-		conditions,
-		state_dependencies,
-	) = match classification {
-		Ok(response) => {
-			// One bounded retry on an unusable response before failing open.
-			// A truncated classifier reply loses the conditions checklist —
-			// the gate's forcing structure — precisely on requirement-dense
-			// requests. Doubled budget + a JSON-only nudge; same pattern as
-			// the gate's format retry.
-			let mut parsed = match parse_classifier_checked(&response) {
-				Some(parsed) => parsed,
-				None => {
-					crate::log_info!(
+	let (forbids_verification, verification_policy_update, answer_only, conditions) =
+		match classification {
+			Ok(response) => {
+				// One bounded retry on an unusable response before failing open.
+				// A truncated classifier reply loses the conditions checklist —
+				// the gate's forcing structure — precisely on requirement-dense
+				// requests. Doubled budget + a JSON-only nudge; same pattern as
+				// the gate's format retry.
+				let mut parsed = match parse_classifier_checked(&response) {
+					Some(parsed) => parsed,
+					None => {
+						crate::log_info!(
 						"Classifier response unusable; retrying once with doubled output budget"
 					);
-					let retry_payload = format!(
+						let retry_payload = format!(
 							"{}\n\n<format_violation>\nYour previous response was not one complete JSON object (truncated or malformed). Re-emit the classification now: output ONLY the JSON object, with no reasoning text before it.\n</format_violation>",
 							context.render_classification_payload()
 						);
-					match crate::supervisor::learning::extract::call_supervisor_llm(
-						config,
-						&model,
-						SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
-						crate::supervisor::stats::CallKind::Resolve,
-						SupervisorSampling {
-							temperature: 0.0,
-							max_tokens: 12288,
-						},
-						operation_rx.clone(),
-					)
-					.await
-					{
-						Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
-							crate::log_info!(
+						match crate::supervisor::learning::extract::call_supervisor_llm(
+							config,
+							&model,
+							SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
+							crate::supervisor::stats::CallKind::Resolve,
+							SupervisorSampling {
+								temperature: 0.0,
+								max_tokens: 12288,
+							},
+							operation_rx.clone(),
+						)
+						.await
+						{
+							Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
+								crate::log_info!(
 									"Classifier retry still unusable; conditions checklist lost (fail-open)"
 								);
-							classifier_fallback()
-						}),
-						Err(error) => {
-							crate::log_debug!("Classifier retry unavailable: {}", error);
-							classifier_fallback()
+								classifier_fallback()
+							}),
+							Err(error) => {
+								crate::log_debug!("Classifier retry unavailable: {}", error);
+								classifier_fallback()
+							}
 						}
 					}
+				};
+				parsed.validate_policy_update(context);
+				if !parsed.context_dependent {
+					let mut resolved = ResolvedTask::self_contained(raw);
+					resolved.plan_at_turn_start = context.active_plan.clone();
+					resolved.forbids_verification = parsed.forbids_verification;
+					resolved.verification_policy_update = parsed.verification_policy_update;
+					resolved.answer_only = parsed.answer_only;
+					resolved.evidence_conditions = parsed.conditions;
+					return resolved;
 				}
-			};
-			parsed.validate_policy_update(context);
-			parsed.validate_state_dependencies(context);
-			if !parsed.context_dependent {
+				(
+					parsed.forbids_verification,
+					parsed.verification_policy_update,
+					parsed.answer_only,
+					parsed.conditions,
+				)
+			}
+			Err(error) => {
+				crate::log_debug!(
+					"Task dependency classifier failed, using literal request: {}",
+					error
+				);
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
-				resolved.forbids_verification = parsed.forbids_verification;
-				resolved.verification_policy_update = parsed.verification_policy_update;
-				resolved.answer_only = parsed.answer_only;
-				resolved.evidence_conditions = parsed.conditions;
-				resolved.state_dependencies = parsed.state_dependencies;
 				return resolved;
 			}
-			(
-				parsed.forbids_verification,
-				parsed.verification_policy_update,
-				parsed.answer_only,
-				parsed.conditions,
-				parsed.state_dependencies,
-			)
-		}
-		Err(error) => {
-			crate::log_debug!(
-				"Task dependency classifier failed, using literal request: {}",
-				error
-			);
-			let mut resolved = ResolvedTask::self_contained(raw);
-			resolved.plan_at_turn_start = context.active_plan.clone();
-			return resolved;
-		}
-	};
+		};
 
 	let response = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
@@ -567,7 +467,6 @@ pub async fn resolve(
 	// the resolved request preserves that turn's actions and constraints, so
 	// they remain the fulfillment checklist.
 	resolved.evidence_conditions = conditions;
-	resolved.state_dependencies = state_dependencies;
 	resolved
 }
 
@@ -581,7 +480,6 @@ struct ClassifierVerdict {
 	verification_policy_evidence: String,
 	answer_only: bool,
 	conditions: Vec<String>,
-	state_dependencies: Vec<StateDependency>,
 }
 
 fn classifier_fallback() -> ClassifierVerdict {
@@ -592,7 +490,6 @@ fn classifier_fallback() -> ClassifierVerdict {
 		verification_policy_evidence: String::new(),
 		answer_only: false,
 		conditions: Vec::new(),
-		state_dependencies: Vec::new(),
 	}
 }
 
@@ -658,26 +555,6 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 				.take(24)
 				.collect()
 		},
-		state_dependencies: if parsed.answer_only {
-			Vec::new()
-		} else {
-			parsed
-				.state_dependencies
-				.into_iter()
-				.filter_map(|value| serde_json::from_value::<StateDependency>(value).ok())
-				.map(|dependency| StateDependency {
-					observation: dependency.observation.trim().to_string(),
-					evidence: dependency.evidence.trim().to_string(),
-				})
-				.filter(|dependency| {
-					!dependency.observation.is_empty() && !dependency.evidence.is_empty()
-				})
-				// A task with more than a few pre-action dependencies is a plan in
-				// disguise. Keep this mechanism sparse and leave ordinary discovery
-				// to the specialist.
-				.take(3)
-				.collect()
-		},
 	})
 }
 
@@ -703,13 +580,6 @@ impl ClassifierVerdict {
 			self.verification_policy_update =
 				crate::supervisor::VerificationPolicyUpdate::Unchanged;
 		}
-	}
-
-	fn validate_state_dependencies(&mut self, context: &TaskContext) {
-		self.state_dependencies.retain(|dependency| {
-			dependency.evidence.chars().count() <= RESOLUTION_EVIDENCE_CHARS
-				&& context.current_request.contains(&dependency.evidence)
-		});
 	}
 }
 
@@ -778,7 +648,6 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 				answer_only: false,
 				evidence_conditions: Vec::new(),
-				state_dependencies: Vec::new(),
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),
@@ -1208,53 +1077,5 @@ mod tests {
 		// Absent field, malformed JSON, and non-JSON all keep every gate armed.
 		assert!(!parse_classifier(r#"{"scope":"self_contained"}"#).answer_only);
 		assert!(!parse_classifier("not json").answer_only);
-	}
-
-	#[test]
-	fn classifier_keeps_sparse_state_dependencies_out_of_answer_only_turns() {
-		let mut change = parse_classifier(
-			r#"{"scope":"self_contained","answer_only":false,"conditions":["the requested state is updated"],"state_dependencies":[{"observation":"the current named record is observed before it is changed","evidence":"named record"}]}"#,
-		);
-		change.validate_state_dependencies(&context("Update the named record"));
-		assert_eq!(change.state_dependencies.len(), 1);
-		assert!(change.state_dependencies[0]
-			.observation
-			.contains("named record"));
-
-		let answer = parse_classifier(
-			r#"{"scope":"self_contained","answer_only":true,"state_dependencies":[{"observation":"should be ignored","evidence":"ignored"}]}"#,
-		);
-		assert!(answer.state_dependencies.is_empty());
-
-		let mut invented = parse_classifier(
-			r#"{"scope":"self_contained","state_dependencies":[{"observation":"obtain an invented approval","evidence":"approval"}]}"#,
-		);
-		invented.validate_state_dependencies(&context("Update the named record"));
-		assert!(invented.state_dependencies.is_empty());
-
-		let malformed_dependency = parse_classifier(
-			r#"{"scope":"self_contained","conditions":["keep this completion condition"],"state_dependencies":["old or malformed shape"]}"#,
-		);
-		assert_eq!(
-			malformed_dependency.conditions,
-			vec!["keep this completion condition".to_string()]
-		);
-		assert!(malformed_dependency.state_dependencies.is_empty());
-	}
-
-	#[test]
-	fn outcome_contract_preserves_route_freedom_and_escapes_data() {
-		let mut task = ResolvedTask::self_contained("Update the named record");
-		task.state_dependencies = vec![StateDependency {
-			observation: "current <record> state or authoritative unavailability is established"
-				.to_string(),
-			evidence: "named record".to_string(),
-		}];
-		let note = outcome_contract_note(&task).expect("dependency creates contract");
-		assert!(note.contains("route is yours to choose"));
-		assert!(note.contains("Any authoritative approach is acceptable"));
-		assert!(note.contains("&lt;record&gt;"));
-		assert!(!note.contains("current <record>"));
-		assert!(outcome_contract_note(&ResolvedTask::self_contained("simple task")).is_none());
 	}
 }

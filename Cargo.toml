@@ -36,7 +36,7 @@ overflow-checks = false # Disable overflow checks in release mode
 octolib = { version = "0.34.2", default-features = false, features = ["huggingface"] }
 # fancy-regex: 0.23+ requires an explicit regex backend; pure-Rust over onig (C)
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] } # model's own tokenizer for exact token counts
-rmcp = { version = "3.1.2", default-features = false, features = [
+rmcp = { version = "3.1.4", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process
 	"transport-streamable-http-client-reqwest", # Streamable HTTP client transport
@@ -50,7 +50,7 @@ indicatif = "0.18.6"
 parking_lot = "0.12.5"
 chrono = { version = "0.4.45", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
-uuid = { version = "1.24.0", features = ["v4"] }
+uuid = { version = "1.25.0", features = ["v4"] }
 tiktoken-rs = "0.12.0" # Token counter
 reqwest = { version = "0.13.4", features = ["json", "rustls", "gzip"], default-features = false }
 rustls-webpki = ">=0.103.12"
@@ -64,12 +64,12 @@ toml = "1.1"
 lazy_static = "1.5.0"
 fuzzy-matcher = "0.3.7"
 tokio-util = { version = "0.7", features = ["rt", "compat"] }
-reedline = { version = "0.50", features = ["bashisms", "external_printer"] }
+reedline = { version = "0.51", features = ["bashisms", "external_printer"] }
 nu-ansi-term = "0.50"
 regex = "1.13.1"
 colored = "3.1.1"
 async-trait = "0.1.92"
-termimad = "0.35.1"
+termimad = "0.35.2"
 # No plist-load/yaml-load: only bundled dumps are used (ThemeSet::load_defaults),
 # and plist pulls quick-xml with open RUSTSEC advisories (2026-0194/0195).
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
@@ -78,7 +78,7 @@ url = "2.5.8"
 dirs = "6.0.0"
 glob = "0.3.4"
 ignore = "0.4.33"
-futures = "0.3.33"
+futures = "0.3.34"
 dotenvy = "0.15.7"
 arboard = "3.6.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

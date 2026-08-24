@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.46.1] - 2026-08-24
+
+### 📋 Release Summary
+
+This release introduces a second-opinion refutation pass and enhanced condition matching within the supervisor (a1e90d58, db68c380). Improvements were also made to the supervisor's evaluation logic and evidence handling (44dfce1f, ea4a9a37), alongside general dependency updates (9949dc2a).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: implement second-opinion refutation pass `a1e90d58`
+- **supervisor**: implement basis for unmatched conditions `db68c380`
+
+### 🔧 Improvements & Optimizations
+
+- **supervisor**: rework gate prompt and evaluation `44dfce1f`
+- **supervisor**: handle unknown evidence conditions `ea4a9a37`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.46.0] - 2026-08-24
 
 ### 📋 Release Summary

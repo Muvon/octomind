@@ -143,7 +143,10 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
-pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
+/// Test-only harness for the legacy parse path; the runtime reaches it through
+/// [`parse_self_report_handoff`]'s fallback.
+#[cfg(test)]
+fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
 	let end = text.rfind("</sup>")?;
 	let start = text[..end].rfind("<sup>")? + "<sup>".len();
 	let inner = text[start..end].trim();
@@ -339,7 +342,7 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 /// tool-level `readOnly=false` capability hint: a generic shell/browser/API
 /// tool may be capable of writes while the concrete call is only gathering
 /// evidence, and classifying that read as a mutation would be a false positive.
-pub fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
+fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
 	if contains_mutation_intent(tool) {
 		return true;
 	}
@@ -931,7 +934,7 @@ pub fn steer_note(
 /// The "stuck" signal class — every real-waste failure mode. These escalate to
 /// [`PERSISTENT_VARIANTS`]; factored so the steer loop and the escalation
 /// ladder classify signals the same way.
-pub fn is_stuck(signal: DetectorSignal) -> bool {
+fn is_stuck(signal: DetectorSignal) -> bool {
 	matches!(
 		signal,
 		DetectorSignal::Loop | DetectorSignal::NoProgress | DetectorSignal::Recovery

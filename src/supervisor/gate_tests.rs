@@ -119,6 +119,39 @@ fn an_unsettled_shape_reports_without_blocking() {
 	assert!(reported[0].starts_with("unenumerated-category unsettled"));
 }
 
+/// A semantic suspicion is not a directly observed failure. This is the exact
+/// class of false positive that previously turned a safe short-circuit bounds
+/// check into a mandatory repair: the verifier proposed a rewrite without any
+/// failing execution showing that the existing expression violated the task.
+#[test]
+fn an_unobserved_condition_suspicion_reports_without_blocking() {
+	let response = r#"<condition n="1" status="unknown">the verifier suspects `i + 1 >= len` is wrong, but no recorded input demonstrates a failure and removing the guard may read out of bounds</condition>
+<shape name="circular" found="no">independent expectation</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>
+<verdict>PASS</verdict>"#;
+	let report = text_report(response);
+	assert_eq!(report.verdict(1), GateVerdict::Pass);
+	assert_eq!(report.reported_findings().len(), 1);
+	assert!(report.reported_findings()[0].contains("condition 1 unsettled"));
+
+	let answer = serde_json::json!({
+		"conditions": [{
+			"n": 1,
+			"status": "unknown",
+			"observation": "no recorded input demonstrates the suspected bounds failure"
+		}],
+		"shapes": clean_json_shapes(),
+		"gaps": [],
+		"verdict": "PASS",
+		"readback": []
+	});
+	let report = json_report(&answer);
+	assert_eq!(report.verdict(1), GateVerdict::Pass);
+	assert_eq!(report.reported_findings().len(), 1);
+}
+
 /// An accusation no action can close cannot be repaired — re-running only
 /// spends the budget to arrive at the same verdict. It is not silently dropped
 /// either: whatever the runtime declines to charge, the user sees.

@@ -131,14 +131,22 @@ the request itself forbade.
 When <evidence_conditions> is present, it is your PRIMARY checklist — work it first, one
 condition at a time, and your answer MUST begin with one line per condition:
 <condition n="N" status="matched">the specific observation that demonstrates it — the action and what its output showed</condition>
-<condition n="N" status="unmatched">what observation is missing</condition>
+<condition n="N" status="unmatched">the observation that shows the violation — the failing output, the diff, or the action the condition calls for that no recorded action performed</condition>
+<condition n="N" status="unknown">why the supplied evidence cannot establish either satisfaction or violation</condition>
 Judge each condition in isolation before any overall impression: a green overall check does
 not match a condition unless its recorded output demonstrably exercised THAT condition.
 For each condition, only an observation counts — the recorded action or ground-truth
 artifact whose OBSERVED OUTPUT demonstrates it; reasoning about why the work should satisfy
-it does not. Mark a condition matched ONLY with a citable observation; when in doubt about a
-specific condition, mark it unmatched — the overall "be conservative, PASS when unsure" rule
-applies to inferring extra requirements, never to skipping listed conditions. A condition
+it does not. Mark a condition matched ONLY with a citable observation. Mark it unmatched ONLY
+on an observation of the violation: a recorded action or ground-truth artifact whose OUTPUT
+shows the condition failing (a failing check, a diff without the required change, a file
+marked MISSING), or a condition that calls for an action or check that no successful recorded
+action performed — the runtime log is authoritative, so that absence is an observation. Your
+own reading of the code is not: a defect you infer from source, a rewrite you would prefer, or
+behavior you predict without a recorded output showing it is a suspicion, and a suspicion is
+unknown, never unmatched — above all when a recorded check exercising that condition
+succeeded. Unknown is a verification limit: it is reported to the user and does not block
+completion. A condition
 that contradicts the <current_user_turn> is void (mark it matched with reason "void:
 contradicts request"), and a condition whose only demonstration would require an action the
 request or standing instructions forbid is likewise void. Satisfying every condition does
@@ -254,7 +262,7 @@ round rather than flagging something you could have looked at.
 VERDICT (every other time). Your ENTIRE response is exactly this sequence of tag lines, in order,
 with no other text:
 1. When <evidence_conditions> is present: one
-   <condition n="N" status="matched|unmatched">observation that demonstrates it / what is missing</condition>
+   <condition n="N" status="matched|unmatched|unknown">observation that demonstrates it / directly observed violation / why the evidence cannot decide</condition>
    line per condition, n = 1 through the last condition, each exactly once.
 2. ALWAYS, whatever the verdict: the four evidence-shape lines, each exactly once, in this order
    (every found="yes" also carries settles="the observation that would clear it"):
@@ -264,13 +272,15 @@ with no other text:
    <shape name="unenumerated-category" found="yes|no|unknown">one-line reason</shape>
 3. The verdict:
    - every part evidenced, no condition unmatched, no shape found="yes" → <verdict>PASS</verdict>
-     (an unknown shape does not block — it is a limit of the evidence, not a defect)
+     (an unknown condition or shape does not block — it is a limit of the evidence, not a defect)
    - otherwise → one <gap settles="the observation that would close it">specific missing or
      unverified item</gap> line per gap.
 A response that omits any required line — even when the verdict is an obvious PASS — is invalid and gets re-requested; the checklist lines are never optional.
 </response_format>
 
-Be conservative — only flag real, actionable gaps. "When unsure, PASS" applies to inferring extra requirements, never to skipping listed conditions or checklist lines."#;
+Be conservative — only flag real, directly observed, actionable gaps. When unsure about a listed
+condition, emit unknown; when unsure about an inferred requirement, PASS. Never skip a condition
+or checklist line."#;
 
 /// Output-format appendix for the JSON wire mode. Every judging rule above still
 /// binds — only the encoding of the answer changes, because a schema can
@@ -278,7 +288,7 @@ Be conservative — only flag real, actionable gaps. "When unsure, PASS" applies
 const GATE_JSON_FORMAT: &str = r#"
 <output_encoding>
 Ignore the TAG SYNTAX in <response_format>; everything it says about WHAT to emit and when still binds. Answer with one JSON object matching the response schema:
-- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once; "status" is matched or unmatched; "observation" is the observation that demonstrates it, or what is missing. Empty array when no <evidence_conditions> block was given.
+- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once; "status" is matched, unmatched, or unknown; "observation" is the observation that demonstrates it, the observation that shows the violation (failing output, diff, or the called-for action no recorded action performed), or why the evidence cannot decide. Empty array when no <evidence_conditions> block was given.
 - "shapes": all four evidence shapes, each exactly once, in this order: circular, context-stripped, acceptance-only, unenumerated-category. "found" is yes, no, or unknown; "reason" is the one-line reason; "settles" names the ONE observation that would clear the shape and is REQUIRED whenever "found" is yes (null otherwise) — a shape you cannot attach such an observation to is not yes.
 - "gaps": one entry per gap; "gap" names the specific missing or unverified item and "settles" the one observation that would close it. Empty array when the verdict is PASS.
 - "verdict": "PASS" when every part is evidenced, no condition is unmatched and no shape is yes; "GAPS" otherwise.
@@ -1042,10 +1052,10 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 					"additionalProperties": false,
 					"properties": {
 						"n": { "type": "integer", "description": "Condition number, 1-based." },
-						"status": { "type": "string", "enum": ["matched", "unmatched"] },
+						"status": { "type": "string", "enum": ["matched", "unmatched", "unknown"] },
 						"observation": {
 							"type": "string",
-							"description": "The observation that demonstrates it, or what is missing."
+							"description": "The observation that demonstrates it, the observation that shows the violation (failing output, diff, or the called-for action no recorded action performed), or why the evidence cannot decide."
 						}
 					},
 					"required": ["n", "status", "observation"]
@@ -1561,7 +1571,7 @@ impl VerifierReport {
 					"Unmatched condition {n}: {}",
 					condition.observation
 				)),
-				"matched" => {}
+				"matched" | "unknown" => {}
 				_ => {
 					return GateVerdict::Indeterminate(format!("condition {n} has invalid status"))
 				}
@@ -1593,11 +1603,23 @@ impl VerifierReport {
 		}
 	}
 
-	/// Findings the verifier could not make actionable: a shape it could not
-	/// settle, or a finding of either kind that names no observation to close
-	/// it. Surfaced to the user, never charged to the agent.
+	/// Findings the verifier could not make actionable: an unknown condition or
+	/// shape, or a finding that names no observation to close it. Surfaced to the
+	/// user, never charged to the agent.
 	fn reported_findings(&self) -> Vec<String> {
 		let mut reported = Vec::new();
+		for condition in &self.conditions {
+			if condition.status == "unknown" {
+				let number = condition
+					.index
+					.map(|n| n.to_string())
+					.unwrap_or_else(|| "?".to_string());
+				reported.push(format!(
+					"condition {number} unsettled: {}",
+					condition.observation
+				));
+			}
+		}
 		for shape in &self.shapes {
 			match shape.found.as_str() {
 				"unknown" => reported.push(format!("{} unsettled: {}", shape.name, shape.reason)),

@@ -131,22 +131,29 @@ the request itself forbade.
 When <evidence_conditions> is present, it is your PRIMARY checklist — work it first, one
 condition at a time, and your answer MUST begin with one line per condition:
 <condition n="N" status="matched">the specific observation that demonstrates it — the action and what its output showed</condition>
-<condition n="N" status="unmatched">the observation that shows the violation — the failing output, the diff, or the action the condition calls for that no recorded action performed</condition>
+<condition n="N" status="unmatched" basis="recorded_output|ground_truth|absent_action|inference">the observation that shows the violation</condition>
 <condition n="N" status="unknown">why the supplied evidence cannot establish either satisfaction or violation</condition>
 Judge each condition in isolation before any overall impression: a green overall check does
 not match a condition unless its recorded output demonstrably exercised THAT condition.
 For each condition, only an observation counts — the recorded action or ground-truth
 artifact whose OBSERVED OUTPUT demonstrates it; reasoning about why the work should satisfy
 it does not. Mark a condition matched ONLY with a citable observation. Mark it unmatched ONLY
-on an observation of the violation: a recorded action or ground-truth artifact whose OUTPUT
-shows the condition failing (a failing check, a diff without the required change, a file
-marked MISSING), or a condition that calls for an action or check that no successful recorded
-action performed — the runtime log is authoritative, so that absence is an observation. Your
-own reading of the code is not: a defect you infer from source, a rewrite you would prefer, or
-behavior you predict without a recorded output showing it is a suspicion, and a suspicion is
-unknown, never unmatched — above all when a recorded check exercising that condition
-succeeded. Unknown is a verification limit: it is reported to the user and does not block
-completion. A condition
+on an observation of the violation, and name what that observation is in the `basis`
+attribute — the runtime charges an unmatched condition by its basis, not by its wording:
+- basis="recorded_output": a recorded action's OUTPUT shows the condition failing — a failing
+  check, an ERROR outcome on the decisive call.
+- basis="ground_truth": the diff, a new file's content, or the last command output shows it
+  directly — the required change is absent, a forbidden change is present, a file is MISSING.
+- basis="absent_action": the condition calls for an action or check and no successful
+  recorded action performed it; the runtime log is authoritative, so that absence is an
+  observation.
+- basis="inference": your own reading of the code — a defect you infer from source, a rewrite
+  you would prefer, or behavior you predict without a recorded output showing it. That is a
+  suspicion, not an observation: the runtime reports it to the user and does not block
+  completion — above all when a recorded check exercising that condition succeeded. Declaring
+  a suspicion under any other basis is the false positive this attribute exists to stop.
+When no basis fits, the status is unknown. Unknown is a verification limit: it is reported to
+the user and does not block completion. A condition
 that contradicts the <current_user_turn> is void (mark it matched with reason "void:
 contradicts request"), and a condition whose only demonstration would require an action the
 request or standing instructions forbid is likewise void. Satisfying every condition does
@@ -262,8 +269,9 @@ round rather than flagging something you could have looked at.
 VERDICT (every other time). Your ENTIRE response is exactly this sequence of tag lines, in order,
 with no other text:
 1. When <evidence_conditions> is present: one
-   <condition n="N" status="matched|unmatched|unknown">observation that demonstrates it / directly observed violation / why the evidence cannot decide</condition>
-   line per condition, n = 1 through the last condition, each exactly once.
+   <condition n="N" status="matched|unmatched|unknown">observation that demonstrates it / observed violation / why the evidence cannot decide</condition>
+   line per condition, n = 1 through the last condition, each exactly once; every
+   status="unmatched" line also carries basis="recorded_output|ground_truth|absent_action|inference".
 2. ALWAYS, whatever the verdict: the four evidence-shape lines, each exactly once, in this order
    (every found="yes" also carries settles="the observation that would clear it"):
    <shape name="circular" found="yes|no|unknown">one-line reason</shape>
@@ -288,7 +296,7 @@ or checklist line."#;
 const GATE_JSON_FORMAT: &str = r#"
 <output_encoding>
 Ignore the TAG SYNTAX in <response_format>; everything it says about WHAT to emit and when still binds. Answer with one JSON object matching the response schema:
-- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once; "status" is matched, unmatched, or unknown; "observation" is the observation that demonstrates it, the observation that shows the violation (failing output, diff, or the called-for action no recorded action performed), or why the evidence cannot decide. Empty array when no <evidence_conditions> block was given.
+- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once; "status" is matched, unmatched, or unknown; "observation" is the observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide; "basis" is REQUIRED when "status" is unmatched — recorded_output, ground_truth, absent_action, or inference, exactly as defined for the basis attribute — and null otherwise. Empty array when no <evidence_conditions> block was given.
 - "shapes": all four evidence shapes, each exactly once, in this order: circular, context-stripped, acceptance-only, unenumerated-category. "found" is yes, no, or unknown; "reason" is the one-line reason; "settles" names the ONE observation that would clear the shape and is REQUIRED whenever "found" is yes (null otherwise) — a shape you cannot attach such an observation to is not yes.
 - "gaps": one entry per gap; "gap" names the specific missing or unverified item and "settles" the one observation that would close it. Empty array when the verdict is PASS.
 - "verdict": "PASS" when every part is evidenced, no condition is unmatched and no shape is yes; "GAPS" otherwise.
@@ -910,7 +918,7 @@ pub async fn verify(
 		// into an instruction-bearing block. The retry needs the contract, not
 		// attacker-controlled tag names or content.
 		let retry_user = format!(
-            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit every numbered condition exactly once, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
+            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit every numbered condition exactly once (an unmatched one with its basis), all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
         );
 		match ask_verifier(
 			config,
@@ -1055,10 +1063,15 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 						"status": { "type": "string", "enum": ["matched", "unmatched", "unknown"] },
 						"observation": {
 							"type": "string",
-							"description": "The observation that demonstrates it, the observation that shows the violation (failing output, diff, or the called-for action no recorded action performed), or why the evidence cannot decide."
+							"description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."
+						},
+						"basis": {
+							"type": ["string", "null"],
+							"enum": [CONDITION_BASES[0], CONDITION_BASES[1], CONDITION_BASES[2], BASIS_INFERENCE, null],
+							"description": "Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
 						}
 					},
-					"required": ["n", "status", "observation"]
+					"required": ["n", "status", "observation", "basis"]
 				},
 				"description": "One entry per numbered evidence condition, each exactly once. Empty when none were given."
 			},
@@ -1348,6 +1361,19 @@ const REQUIRED_SHAPES: [&str; 4] = [
 	"unenumerated-category",
 ];
 
+/// What an unmatched condition's observation is. A violation is charged by its
+/// basis, never by how firmly it was worded: three name evidence the verifier
+/// was shown; the fourth names its own reading of the code — a suspicion that is
+/// reported to the user and never charged. One list: the prompt, the JSON
+/// schema, and [`VerifierReport::verdict`] state the same contract.
+const CONDITION_BASES: [&str; 4] = [
+	"recorded_output",
+	"ground_truth",
+	"absent_action",
+	BASIS_INFERENCE,
+];
+const BASIS_INFERENCE: &str = "inference";
+
 /// Verdict values on the JSON path — the same three answers the text protocol
 /// expresses with `<verdict>PASS</verdict>`, gap lines, and a readback-only
 /// reply.
@@ -1381,6 +1407,9 @@ struct ReportedCondition {
 	index: Option<usize>,
 	status: String,
 	observation: String,
+	/// Empty when the answer gave none — fatal for an unmatched condition,
+	/// irrelevant for the others.
+	basis: String,
 }
 
 /// One `<shape>` line / `shapes[]` entry, as written.
@@ -1411,6 +1440,7 @@ fn text_report(resp: &str) -> VerifierReport {
 				index: attr(attributes, "n").parse::<usize>().ok(),
 				status: attr(attributes, "status").to_string(),
 				observation: body.to_string(),
+				basis: attr(attributes, "basis").to_string(),
 			})
 			.collect(),
 		shapes: elements(resp, "shape")
@@ -1474,6 +1504,7 @@ fn json_report(value: &serde_json::Value) -> VerifierReport {
 					.and_then(|n| usize::try_from(n).ok()),
 				status: field(condition, "status"),
 				observation: field(condition, "observation"),
+				basis: field(condition, "basis"),
 			})
 			.collect(),
 		shapes: entries(value, "shapes")
@@ -1567,10 +1598,27 @@ impl VerifierReport {
 				return GateVerdict::Indeterminate(format!("duplicate condition: {n}"));
 			}
 			match condition.status.as_str() {
-				"unmatched" => unmatched.push(format!(
-					"Unmatched condition {n}: {}",
-					condition.observation
-				)),
+				// Charged by what the verifier saw, never by how firmly it wrote:
+				// an inference-only unmatched is a suspicion — reported (see
+				// `reported_findings`), not charged. No basis at all is a protocol
+				// violation: it can be neither charged nor excused.
+				"unmatched" => match condition.basis.as_str() {
+					BASIS_INFERENCE => {}
+					basis if CONDITION_BASES.contains(&basis) => unmatched.push(format!(
+						"Unmatched condition {n}: {}",
+						condition.observation
+					)),
+					"" => {
+						return GateVerdict::Indeterminate(format!(
+							"condition {n} unmatched without basis"
+						))
+					}
+					_ => {
+						return GateVerdict::Indeterminate(format!(
+							"condition {n} has invalid basis"
+						))
+					}
+				},
 				"matched" | "unknown" => {}
 				_ => {
 					return GateVerdict::Indeterminate(format!("condition {n} has invalid status"))
@@ -1603,22 +1651,26 @@ impl VerifierReport {
 		}
 	}
 
-	/// Findings the verifier could not make actionable: an unknown condition or
-	/// shape, or a finding that names no observation to close it. Surfaced to the
-	/// user, never charged to the agent.
+	/// Findings the verifier could not make actionable: an unknown condition, an
+	/// unmatched one it could only infer, an unknown shape, or a finding that
+	/// names no observation to close it. Surfaced to the user, never charged to
+	/// the agent.
 	fn reported_findings(&self) -> Vec<String> {
 		let mut reported = Vec::new();
 		for condition in &self.conditions {
-			if condition.status == "unknown" {
-				let number = condition
-					.index
-					.map(|n| n.to_string())
-					.unwrap_or_else(|| "?".to_string());
-				reported.push(format!(
-					"condition {number} unsettled: {}",
-					condition.observation
-				));
-			}
+			let limit = match condition.status.as_str() {
+				"unknown" => "unsettled",
+				"unmatched" if condition.basis == BASIS_INFERENCE => "suspected by inference only",
+				_ => continue,
+			};
+			let number = condition
+				.index
+				.map(|n| n.to_string())
+				.unwrap_or_else(|| "?".to_string());
+			reported.push(format!(
+				"condition {number} {limit}: {}",
+				condition.observation
+			));
 		}
 		for shape in &self.shapes {
 			match shape.found.as_str() {
@@ -1765,7 +1817,7 @@ mod tests {
 	#[test]
 	fn unmatched_condition_outranks_holistic_pass() {
 		let resp = r#"<condition n="1" status="matched">suite ran green</condition>
-<condition n="2" status="unmatched">no test shows custom prettifier output preserved</condition>
+<condition n="2" status="unmatched" basis="absent_action">no test shows custom prettifier output preserved</condition>
 <shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>

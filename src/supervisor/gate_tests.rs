@@ -152,6 +152,80 @@ fn an_unobserved_condition_suspicion_reports_without_blocking() {
 	assert_eq!(report.reported_findings().len(), 1);
 }
 
+/// The same false positive when the verifier does write "unmatched": the basis
+/// says the observation is its own reading of the code, so the runtime reports
+/// the suspicion and does not charge it — whatever the wording claims.
+#[test]
+fn an_inference_only_unmatched_condition_reports_without_blocking() {
+	let response = format!(
+		r#"<condition n="1" status="unmatched" basis="inference">`i + 1 >= len` short-circuits before the closing bracket is checked; the check should be rewritten</condition>
+{CLEAN_SHAPES}
+<verdict>PASS</verdict>"#
+	);
+	let report = text_report(&response);
+	assert_eq!(report.verdict(1), GateVerdict::Pass);
+	assert_eq!(report.reported_findings().len(), 1);
+	assert!(report.reported_findings()[0].contains("condition 1 suspected by inference only"));
+}
+
+/// A violation the verifier was shown — here the absence of a called-for check
+/// in the runtime log — is charged exactly as before.
+#[test]
+fn an_observed_unmatched_condition_is_charged() {
+	let response = format!(
+		r#"<condition n="1" status="unmatched" basis="absent_action">no recorded action ran the project's test suite</condition>
+{CLEAN_SHAPES}
+<gap settles="a run of the suite">tests never ran</gap>"#
+	);
+	assert_eq!(
+		text_report(&response).verdict(1),
+		GateVerdict::Gaps(vec![
+			"Unmatched condition 1: no recorded action ran the project's test suite".into()
+		])
+	);
+}
+
+/// An unmatched condition with no basis, or an invented one, can be neither
+/// charged nor excused: it is a protocol violation that gets the bounded
+/// format retry — never a silent pass and never a silent gap.
+#[test]
+fn an_unmatched_condition_without_a_known_basis_is_indeterminate() {
+	for attributes in ["", r#" basis="hunch""#] {
+		let response = format!(
+			r#"<condition n="1" status="unmatched"{attributes}>the function still returns a pair</condition>
+{CLEAN_SHAPES}
+<verdict>PASS</verdict>"#
+		);
+		assert!(
+			matches!(
+				text_report(&response).verdict(1),
+				GateVerdict::Indeterminate(_)
+			),
+			"attributes {attributes:?}"
+		);
+	}
+}
+
+/// The JSON path applies the same basis rule; `basis` is null on every entry
+/// that is not unmatched.
+#[test]
+fn the_json_path_reports_an_inference_only_unmatched_condition_without_blocking() {
+	let answer = serde_json::json!({
+		"conditions": [
+			{"n": 1, "status": "matched", "observation": "suite ran green", "basis": null},
+			{"n": 2, "status": "unmatched", "observation": "the bounds check looks wrong", "basis": "inference"}
+		],
+		"shapes": clean_json_shapes(),
+		"gaps": [],
+		"verdict": "PASS",
+		"readback": []
+	});
+	let report = json_report(&answer);
+	assert_eq!(report.verdict(2), GateVerdict::Pass);
+	assert_eq!(report.reported_findings().len(), 1);
+	assert!(report.reported_findings()[0].contains("condition 2 suspected by inference only"));
+}
+
 /// An accusation no action can close cannot be repaired — re-running only
 /// spends the budget to arrive at the same verdict. It is not silently dropped
 /// either: whatever the runtime declines to charge, the user sees.
@@ -304,7 +378,7 @@ fn the_json_path_charges_an_unmatched_condition_over_a_holistic_pass() {
 	let answer = serde_json::json!({
 		"conditions": [
 			{"n": 1, "status": "matched", "observation": "suite ran green"},
-			{"n": 2, "status": "unmatched", "observation": "no test shows custom prettifier output preserved"}
+			{"n": 2, "status": "unmatched", "observation": "no test shows custom prettifier output preserved", "basis": "absent_action"}
 		],
 		"shapes": clean_json_shapes(),
 		"gaps": [],

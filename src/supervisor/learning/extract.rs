@@ -127,16 +127,14 @@ pub async fn run_extraction(
 	}
 
 	let mut system = EXTRACTION_SYSTEM_PROMPT.replace("{existing_lessons}", &existing_text);
-	if config.supervisor.orientation.enabled {
-		system.push_str(ORIENTATION_SECTION);
-	}
+	system.push_str(ORIENTATION_SECTION);
 	let response = call_extraction_llm(config, &learning.model, system, transcript.clone()).await?;
 
 	let mut stored = 0;
 
 	// Orientation: durable subject understanding. Independent of the lesson
 	// decision gate; no user evidence required. Deduped vs existing orientation.
-	if config.supervisor.orientation.enabled {
+	{
 		let orientations = parse_orientation_tags(&response, role, project, session_name);
 		let existing_or: Vec<Lesson> = existing_scoped
 			.iter()
@@ -168,7 +166,7 @@ pub async fn run_extraction(
 		.prune_stale(
 			role,
 			project,
-			config.supervisor.orientation.decay_days,
+			crate::supervisor::learning::DECAY_DAYS,
 			config,
 		)
 		.await;
@@ -934,13 +932,11 @@ fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::Mo
 	use crate::supervisor::stats::CallKind;
 	match kind {
 		CallKind::Gate => ModelPurpose::SupervisorGate,
-		CallKind::Readiness => ModelPurpose::SupervisorGate,
 		CallKind::Resolve => ModelPurpose::SupervisorGate,
 		CallKind::Plan => ModelPurpose::SupervisorGate,
 		CallKind::Condense => ModelPurpose::SupervisorCondense,
 		CallKind::Distill => ModelPurpose::SupervisorDistill,
 		CallKind::Recall => ModelPurpose::SupervisorRecall,
-		CallKind::Delegate => ModelPurpose::SupervisorDelegate,
 	}
 }
 

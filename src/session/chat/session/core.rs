@@ -238,11 +238,6 @@ pub struct ChatSession {
 	/// verifier's repair budget, which would fail an otherwise correct turn on
 	/// the gate's first gap verdict. Same per-turn bound, own counter.
 	pub nudge_iterations: u8,
-	/// Supervisor: rounds the delegate gate rejected a subagent handoff in the
-	/// current turn. Bounds the rewrite loop — at `delegate.max_revisions` the
-	/// gate stops judging and lets the handoff through. Reset on each genuine
-	/// user turn.
-	pub delegate_revisions: u8,
 	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining;
 	/// suppresses distill so we never learn from an unverified trajectory.
 	pub gate_failed: bool,
@@ -253,10 +248,6 @@ pub struct ChatSession {
 	/// Supervisor: queued advisory steer note (loop / no-progress), injected at
 	/// the next request's safe pre-build point. None = nothing to steer.
 	pub steer_pending: Option<String>,
-	/// Supervisor circuit-breaker: consecutive tool rounds that emitted a steer
-	/// without the model breaking out. Caps a runaway loop — a steer is advisory,
-	/// so the model can ignore it forever. Reset by any non-steering round.
-	pub consecutive_steers: usize,
 	/// Supervisor: framing-rotation index for the steer note. When the *same*
 	/// signal re-fires without breakout, this advances so `steer_note` reframes the
 	/// constraint from a new angle instead of repeating identical (habituated) text.
@@ -424,11 +415,9 @@ impl ChatSession {
 			gate_iterations: 0,
 			completion_gate_eligible: true,
 			nudge_iterations: 0,
-			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,
-			consecutive_steers: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
@@ -653,11 +642,9 @@ impl ChatSession {
 						gate_iterations: 0,
 						completion_gate_eligible: true,
 						nudge_iterations: 0,
-						delegate_revisions: 0,
 						gate_failed: false,
 						last_gate_gaps: Vec::new(),
 						steer_pending: None,
-						consecutive_steers: 0,
 						steer_attempt: 0,
 						steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 						last_steered_calls: None,
@@ -1067,11 +1054,6 @@ impl ChatSession {
 		// truncate, manual summarize, future paths) gets it for free
 		// without needing to remember a separate cleanup call.
 		crate::session::dedup::clear_current_session();
-		// A successful history reduction starts a fresh context segment. The prior
-		// Sequential advisory may have been removed, so allow the compacted segment
-		// its own bounded advisory budget and require the threshold to accumulate
-		// again. Centralized here for every compression/truncation path.
-		self.detectors.reset_sequential_advisory_budget();
 
 		crate::log_debug!(
 			"Compressed {} messages (range {}-{}), had_cached={}",
@@ -1395,11 +1377,9 @@ impl ChatSession {
 			gate_iterations: 0,
 			completion_gate_eligible: true,
 			nudge_iterations: 0,
-			delegate_revisions: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
 			steer_pending: None,
-			consecutive_steers: 0,
 			steer_attempt: 0,
 			steer_last_signal: crate::supervisor::detect::DetectorSignal::None,
 			last_steered_calls: None,
@@ -1492,14 +1472,12 @@ mod tests {
 	#[test]
 	fn real_user_turn_resets_steer_streak() {
 		let mut cs = make_session(vec![msg("system", false)]);
-		cs.consecutive_steers = 3;
 		cs.steer_attempt = 2;
 		cs.steer_last_signal = crate::supervisor::detect::DetectorSignal::Loop;
 
 		cs.add_user_message("new task after prior loop stopped")
 			.unwrap();
 
-		assert_eq!(cs.consecutive_steers, 0);
 		assert_eq!(cs.steer_attempt, 0);
 		assert_eq!(
 			cs.steer_last_signal,
@@ -1523,21 +1501,6 @@ mod tests {
 			cs.session.info.context_tokens_after_last_compression, 42_000,
 			"the exact post-compression watermark remains usable"
 		);
-	}
-
-	#[test]
-	fn successful_history_removal_resets_sequential_advisory_budget() {
-		let mut cs = make_session(vec![
-			msg("system", false),
-			msg("user", false),
-			msg("assistant", false),
-		]);
-		cs.detectors.note_sequential_steer();
-		assert!(!cs.detectors.sequential_steer_allowed(1));
-
-		cs.remove_messages_in_range(0, 1).unwrap();
-
-		assert!(cs.detectors.sequential_steer_allowed(1));
 	}
 
 	// ── Case 1: no cache markers anywhere ────────────────────────────────────────

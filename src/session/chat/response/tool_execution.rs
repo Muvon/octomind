@@ -270,8 +270,8 @@ async fn execute_tools_with_context(
 	// roundtrip entirely.
 	let session_id_for_guardrails = context.session_name().to_string();
 	// Messages are stored already prefixed with their source, so the spawn loop
-	// below emits them verbatim (guardrails and the delegate gate both land here).
-	let mut block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
+	// below emits them verbatim.
+	let block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
 		&session_id_for_guardrails,
 		config,
 		&current_tool_calls,
@@ -279,87 +279,6 @@ async fn execute_tools_with_context(
 	.into_iter()
 	.map(|m| m.map(|msg| format!("[guardrail] {msg}")))
 	.collect();
-
-	// Sparse outcome-contract checkpoint: only when admission identified a
-	// load-bearing state dependency, and only before this task's first direct
-	// mutation. Reads remain free, every valid route is equivalent, and an
-	// unavailable supervisor passes the calls through. The final completion gate
-	// remains the backstop; this merely catches a costly wrong turn earlier.
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		let not_blocked: Vec<crate::mcp::McpToolCall> = current_tool_calls
-			.iter()
-			.enumerate()
-			.filter(|(i, _)| block_messages.get(*i).is_none_or(Option::is_none))
-			.map(|(_, call)| call.clone())
-			.collect();
-		let task = chat_session.gate_task.clone();
-		let should_check = config.supervisor.enabled
-			&& config.supervisor.gate.enabled
-			&& task
-				.as_ref()
-				.is_some_and(|task| !task.state_dependencies.is_empty())
-			&& crate::supervisor::readiness::has_mutations(&not_blocked)
-			&& chat_session.evidence.claim_readiness_check();
-		if should_check {
-			let actions = chat_session.evidence.render();
-			let cancel_rx = operation_cancelled
-				.clone()
-				.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
-			let rejected = crate::supervisor::readiness::gate_round(
-				&not_blocked,
-				config,
-				task.as_ref().expect("readiness task checked above"),
-				&actions,
-				chat_session.evidence.grounds(),
-				cancel_rx,
-			)
-			.await;
-			for (tool_id, message) in rejected {
-				if let Some(i) = current_tool_calls
-					.iter()
-					.position(|call| call.tool_id == tool_id)
-				{
-					block_messages[i] = Some(message);
-				}
-			}
-		}
-	}
-
-	// Supervisor delegate gate: subagent handoffs (`tap run`, `agent_*`) start a
-	// context-isolated child that sees only the prompt string, so an incomplete
-	// prompt is unrecoverable once spawned. Judged here — same pre-spawn seam as
-	// guardrails — against the parent's goal/request/plan, which only the main
-	// session has (a subagent's own supervisor gates its onward handoffs).
-	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
-		let not_blocked: Vec<crate::mcp::McpToolCall> = current_tool_calls
-			.iter()
-			.enumerate()
-			.filter(|(i, _)| block_messages.get(*i).is_none_or(Option::is_none))
-			.map(|(_, c)| c.clone())
-			.collect();
-		let task = parent_task_context(chat_session);
-		let role_context = crate::supervisor::role_context(&chat_session.session.messages);
-		let cancel_rx = operation_cancelled
-			.clone()
-			.unwrap_or_else(|| tokio::sync::watch::channel(false).1);
-		let rejected = crate::supervisor::delegate::gate_round(
-			&not_blocked,
-			config,
-			&task,
-			&role_context,
-			chat_session.delegate_revisions,
-			cancel_rx,
-		)
-		.await;
-		if !rejected.is_empty() {
-			chat_session.delegate_revisions = chat_session.delegate_revisions.saturating_add(1);
-			for (tool_id, message) in rejected {
-				if let Some(i) = current_tool_calls.iter().position(|c| c.tool_id == tool_id) {
-					block_messages[i] = Some(message);
-				}
-			}
-		}
-	}
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
@@ -788,9 +707,8 @@ async fn execute_tools_with_context(
 }
 
 /// The parent session's live task framing — durable goal, current user request
-/// and open plan items. Shared by the supervisor mechanics that must judge
-/// something against "what are we actually doing right now" (condense, the
-/// delegate gate).
+/// and open plan items. Used by supervisor mechanics that must judge
+/// something against "what are we actually doing right now" (condense).
 fn parent_task_context(chat_session: &ChatSession) -> String {
 	let mut task = String::new();
 	let intent = chat_session.session.info.anchor.intent.trim();

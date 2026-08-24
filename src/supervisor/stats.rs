@@ -32,8 +32,6 @@ pub enum CallKind {
 	Recall,
 	/// Verify-gate completion check.
 	Gate,
-	/// One-shot pre-mutation state-dependency check.
-	Readiness,
 	/// Current-turn dependency classification and minimal resolution.
 	Resolve,
 	/// External plan creation and phase transition decision.
@@ -42,8 +40,6 @@ pub enum CallKind {
 	Distill,
 	/// Tool-output condensation (task-aware narrowing).
 	Condense,
-	/// Subagent handoff quality gate (`tap run` / `agent_*`).
-	Delegate,
 }
 
 #[derive(Default, Clone)]
@@ -51,14 +47,10 @@ struct Stats {
 	calls: u64,
 	recall_calls: u64,
 	gate_calls: u64,
-	readiness_calls: u64,
 	resolve_calls: u64,
 	plan_calls: u64,
 	distill_calls: u64,
 	condense_calls: u64,
-	delegate_calls: u64,
-	delegate_runs: u64,
-	delegate_blocks: u64,
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	input_tokens: u64,
@@ -74,15 +66,8 @@ struct Stats {
 	// Per-signal steer breakdown — which detector signal fired each steer.
 	steer_loop: u64,
 	steer_no_progress: u64,
-	steer_sequential: u64,
-	steer_reread: u64,
 	steer_recovery: u64,
 	pregate_blocks: u64,
-	claim_blocks: u64,
-	readiness_blocks: u64,
-	/// Compatibility tombstone for `/info` consumers. The checklist-count
-	/// pre-gate was removed; this remains zero and has no increment path.
-	plan_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
 	recalls_injected: u64,
@@ -113,12 +98,10 @@ pub fn record_call(
 		match kind {
 			CallKind::Recall => s.recall_calls += 1,
 			CallKind::Gate => s.gate_calls += 1,
-			CallKind::Readiness => s.readiness_calls += 1,
 			CallKind::Resolve => s.resolve_calls += 1,
 			CallKind::Plan => s.plan_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
-			CallKind::Delegate => s.delegate_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -155,8 +138,6 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 		match signal {
 			DetectorSignal::Loop => s.steer_loop += 1,
 			DetectorSignal::NoProgress => s.steer_no_progress += 1,
-			DetectorSignal::Sequential => s.steer_sequential += 1,
-			DetectorSignal::Reread => s.steer_reread += 1,
 			DetectorSignal::Recovery => s.steer_recovery += 1,
 			DetectorSignal::None => {}
 		}
@@ -165,14 +146,6 @@ pub fn steer(signal: crate::supervisor::detect::DetectorSignal) {
 /// The deterministic pre-gate refused a `done` (code changed, no check ran).
 pub fn pregate_block() {
 	with(|s| s.pregate_blocks += 1);
-}
-/// The evidence check refused a `done` (cited quotes absent from tool output).
-pub fn claim_block() {
-	with(|s| s.claim_blocks += 1);
-}
-/// `n` state-changing calls were paused by the one-shot readiness check.
-pub fn readiness_block(n: u64) {
-	with(|s| s.readiness_blocks += n);
 }
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
@@ -194,15 +167,6 @@ pub fn condensed(results: u64, saved_tokens: u64) {
 		s.condense_saved_tokens += saved_tokens;
 	});
 }
-/// A delegate-gate check ran over a round's subagent handoffs.
-pub fn delegate_run() {
-	with(|s| s.delegate_runs += 1);
-}
-/// `n` subagent handoffs were rejected before spawning.
-pub fn delegate_block(n: u64) {
-	with(|s| s.delegate_blocks += n);
-}
-
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {
@@ -211,13 +175,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.gate_runs == 0
 		&& s.steers == 0
 		&& s.pregate_blocks == 0
-		&& s.claim_blocks == 0
-		&& s.readiness_blocks == 0
-		&& s.plan_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
-		&& s.recalls_injected == 0
-		&& s.delegate_runs == 0;
+		&& s.recalls_injected == 0;
 	if idle {
 		return None;
 	}
@@ -225,8 +185,6 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	let steer_signals: Vec<serde_json::Value> = [
 		("loop", s.steer_loop),
 		("no-progress", s.steer_no_progress),
-		("sequential", s.steer_sequential),
-		("reread", s.steer_reread),
 		("recovery", s.steer_recovery),
 	]
 	.into_iter()
@@ -237,14 +195,10 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"calls": s.calls,
 		"recall_calls": s.recall_calls,
 		"gate_calls": s.gate_calls,
-		"readiness_calls": s.readiness_calls,
 		"resolve_calls": s.resolve_calls,
 		"plan_calls": s.plan_calls,
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
-		"delegate_calls": s.delegate_calls,
-		"delegate_runs": s.delegate_runs,
-		"delegate_blocks": s.delegate_blocks,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,
 		"input_tokens": s.input_tokens,
@@ -262,11 +216,6 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"steers": s.steers,
 		"steer_signals": steer_signals,
 		"pregate_blocks": s.pregate_blocks,
-		"claim_blocks": s.claim_blocks,
-		"readiness_blocks": s.readiness_blocks,
-		// Stable output shape for clients written before the plan pre-gate was
-		// removed. A value above zero can no longer be produced.
-		"plan_blocks": s.plan_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,
 		"recalls_injected": s.recalls_injected,

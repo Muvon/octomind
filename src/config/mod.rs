@@ -69,7 +69,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 6;
+pub const CURRENT_CONFIG_VERSION: u32 = 7;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -384,7 +384,7 @@ pub struct Config {
 	// Plan-driven compression configuration
 	pub compression: CompressionConfig,
 
-	// Supervisor: out-of-band control plane (learning, orientation, detectors, gate).
+	// Supervisor: out-of-band control plane (learning, detectors, gate, plan, condense).
 	// Strict: required field — a missing [supervisor] section is a hard parse error.
 	pub supervisor: crate::supervisor::SupervisorConfig,
 

@@ -254,7 +254,6 @@ impl ChatSession {
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.
 		self.completion_gate_eligible = true;
-		self.consecutive_steers = 0;
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
@@ -276,9 +275,6 @@ impl ChatSession {
 		// New genuine task: the turn-answer ledger starts fresh — the previous
 		// turn's deliverable must not pad this turn's verification.
 		self.turn_answers.clear();
-		// New genuine task: the delegate gate's rewrite budget starts fresh, so a
-		// previous task's exhausted budget can't latch the gate off.
-		self.delegate_revisions = 0;
 		// Reset per-task detector state (loop / no-progress / truncation / dedup /
 		// drift streaks and the prior task's unverified-mutation latch).
 		self.detectors.reset_streak();

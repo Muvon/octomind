@@ -173,12 +173,6 @@ pub struct LearningConfig {
 	/// Backend type: "file" or "mcp".
 	#[serde(default = "default_backend")]
 	pub backend: String,
-	/// Minimum user messages before intermediate learning triggers during auto-compaction.
-	#[serde(default = "default_min_messages")]
-	pub min_messages_for_intermediate: usize,
-	/// Max lessons to inject into the system prompt.
-	#[serde(default = "default_max_inject")]
-	pub max_inject: usize,
 	/// MCP store configuration (only used when backend = "mcp").
 	#[serde(default)]
 	pub store: Option<McpEndpointConfig>,
@@ -203,12 +197,17 @@ fn default_learning_model() -> String {
 fn default_backend() -> String {
 	"file".into()
 }
-fn default_min_messages() -> usize {
-	3
-}
-fn default_max_inject() -> usize {
-	5
-}
+
+/// Minimum user messages before intermediate learning triggers during
+/// auto-compaction.
+pub const MIN_MESSAGES_FOR_INTERMEDIATE: usize = 3;
+
+/// Max lessons injected into the system prompt per session; orientation
+/// entries get the same bound in their own block.
+pub const MAX_INJECT: usize = 5;
+
+/// Soft time-decay: scoped entries unused for this many days lose confidence.
+pub const DECAY_DAYS: u64 = 90;
 
 impl Default for LearningConfig {
 	fn default() -> Self {
@@ -216,8 +215,6 @@ impl Default for LearningConfig {
 			enabled: false,
 			model: default_learning_model(),
 			backend: default_backend(),
-			min_messages_for_intermediate: default_min_messages(),
-			max_inject: default_max_inject(),
 			store: None,
 			retrieve: None,
 		}

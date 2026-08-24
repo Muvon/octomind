@@ -141,18 +141,6 @@ pub fn parse_self_report_handoff(text: &str) -> Option<ParsedSelfReport> {
 	})
 }
 
-/// One-time system-side instruction enabling evidence-bound claims. The agent
-/// backs load-bearing factual claims with a verbatim quote it actually saw in a
-/// tool result; [`unverified_citations`] then deterministically checks the
-/// quote really occurs in some tool output, catching fabricated citations for
-/// free (no model call). The tag is parseable markup: it stays in the message
-/// history (so the check and the model's own context keep it) but is stripped
-/// from user-facing display by [`strip_evidence`].
-pub const EVIDENCE_INSTRUCTION: &str = "\
-Before you assert a load-bearing fact about the task material (a path, value, statement, figure, or concrete behavior you were given or found), copy the supporting text you actually saw in a tool result, character-for-character, in this exact form:
-<evidence locator=\"source:location\">exact text copied verbatim from the tool output</evidence>
-The quote must be a literal copy that string-matches the tool output — rewording, summarizing, or trimming it breaks the match. Quote one line per tag; for a multi-line passage use one tag per line. Tag only load-bearing factual claims, not plans, reasoning, or general knowledge. If you cannot find text that supports a claim, say so and drop it — do not invent a quote. A quote not found in any tool result you received will be flagged to re-ground against real output or retract. Evidence tags are system metadata: they are hidden from the user, so never rely on them to carry your answer — state the substance in plain text as well.";
-
 /// Parse the *last* `<sup>…</sup>` token from a response. Returns the state and
 /// an optional short reason. Tolerant of the `·` or `|` reason separator.
 pub fn parse_self_report(text: &str) -> Option<(SelfReport, Option<String>)> {
@@ -246,516 +234,6 @@ pub fn strip_self_report(text: &str) -> String {
 	out.trim_end().to_string()
 }
 
-/// Deterministic evidence check: return the quoted lines inside
-/// `<evidence>…</evidence>` tags in `response` that do NOT appear in any of
-/// `tool_outputs`. Matching is line-wise: every non-empty line of a quote,
-/// whitespace-normalized, must occur in the normalized haystack. Line-wise
-/// (not whole-quote) matching is what tolerates tool outputs that inject
-/// per-line decoration — e.g. `view` prefixes every line with `NN:` — which a
-/// joined multi-line quote can never string-match across. Empty result =
-/// every cited line is grounded (or none were cited). No model call.
-pub fn unverified_citations(response: &str, tool_outputs: &[String]) -> Vec<String> {
-	let quotes = extract_quotes(response);
-	if quotes.is_empty() {
-		return Vec::new();
-	}
-	let haystack = tool_outputs
-		.iter()
-		.map(|o| normalize_ws(o))
-		.collect::<Vec<_>>()
-		.join("\n");
-	let mut bad = Vec::new();
-	for q in quotes {
-		for line in q.lines().map(normalize_ws).filter(|l| !l.is_empty()) {
-			if !haystack.contains(&line) && !joined_segments_grounded(&line, &haystack) {
-				bad.push(line);
-			}
-		}
-	}
-	bad
-}
-
-/// Fallback for a quote line that fails whole-line matching: models sometimes
-/// join several output lines into one with `·` or `|` (a habit our own
-/// self-report separator format teaches). Such a join is not fabrication as
-/// long as EVERY joined segment occurs verbatim in the outputs, so accept it —
-/// but only when each segment is substantial enough that a match still means
-/// something. Any short or unmatched segment keeps the line flagged.
-fn joined_segments_grounded(line: &str, haystack: &str) -> bool {
-	const MIN_SEGMENT_CHARS: usize = 8;
-	if !line.contains(['·', '|']) {
-		return false;
-	}
-	let segments: Vec<&str> = line
-		.split(['·', '|'])
-		.map(str::trim)
-		.filter(|s| !s.is_empty())
-		.collect();
-	segments.len() >= 2
-		&& segments
-			.iter()
-			.all(|s| s.chars().count() >= MIN_SEGMENT_CHARS && haystack.contains(s))
-}
-
-/// Extract the quote text inside each `<evidence …>…</evidence>` tag (the
-/// contract in [`EVIDENCE_INSTRUCTION`]). The locator attribute is metadata
-/// for the reader, not checked here — only the quote body is verified against
-/// tool outputs. Literal examples inside Markdown code spans/fences, escaped
-/// markup, and longer tag names such as `<evidence-note>` are not citations.
-fn extract_quotes(text: &str) -> Vec<String> {
-	let mut out = Vec::new();
-	let literal_ranges = markdown_code_ranges(text);
-	let mut cursor = 0;
-	while let Some(tag) = next_evidence_tag(text, cursor, &literal_ranges) {
-		let q = text[tag.body_start..tag.body_end].trim();
-		if !q.is_empty() {
-			out.push(q.to_string());
-		}
-		cursor = tag.end;
-	}
-	out
-}
-
-/// Remove `<evidence …>…</evidence>` tags for user-facing display. The tags
-/// stay in the stored message (the verifier and the model's own context need
-/// them); only the screen rendering drops them. Unclosed tags are left
-/// untouched — partial markup is a model error the user should see. Literal
-/// tag examples in Markdown code or escaped markup remain visible.
-pub fn strip_evidence(text: &str) -> String {
-	let mut out = String::with_capacity(text.len());
-	let literal_ranges = markdown_code_ranges(text);
-	let mut copied_to = 0;
-	let mut cursor = 0;
-	while let Some(tag) = next_evidence_tag(text, cursor, &literal_ranges) {
-		out.push_str(&text[copied_to..tag.start]);
-		copied_to = tag.end;
-		cursor = tag.end;
-	}
-	out.push_str(&text[copied_to..]);
-	out.trim().to_string()
-}
-
-#[derive(Clone, Copy)]
-struct EvidenceTag {
-	start: usize,
-	body_start: usize,
-	body_end: usize,
-	end: usize,
-}
-
-/// Find the next real metadata tag. Markdown code is a literal-content boundary:
-/// examples shown to a user must not become supervisor instructions merely
-/// because they contain the same bytes as the internal protocol.
-fn next_evidence_tag(
-	text: &str,
-	from: usize,
-	literal_ranges: &[std::ops::Range<usize>],
-) -> Option<EvidenceTag> {
-	const OPEN: &str = "<evidence";
-	const CLOSE: &str = "</evidence>";
-	let mut search_from = from;
-	while let Some(relative) = text[search_from..].find(OPEN) {
-		let start = search_from + relative;
-		let after_name = start + OPEN.len();
-		let boundary = text.as_bytes().get(after_name).copied();
-		let valid_name =
-			boundary.is_some_and(|b| b == b'>' || b == b'/' || b.is_ascii_whitespace());
-		let literal_index = literal_ranges.partition_point(|range| range.end <= start);
-		let in_literal = literal_ranges
-			.get(literal_index)
-			.is_some_and(|range| range.contains(&start));
-		if !valid_name || is_backslash_escaped(text.as_bytes(), start) || in_literal {
-			search_from = after_name;
-			continue;
-		}
-
-		let after = &text[after_name..];
-		let gt = after.find('>')?;
-		if after[..gt].trim_end().ends_with('/') {
-			search_from = after_name + gt + 1;
-			continue;
-		}
-		let body_start = after_name + gt + 1;
-		let body_end = body_start + text[body_start..].find(CLOSE)?;
-		return Some(EvidenceTag {
-			start,
-			body_start,
-			body_end,
-			end: body_end + CLOSE.len(),
-		});
-	}
-	None
-}
-
-fn is_backslash_escaped(bytes: &[u8], offset: usize) -> bool {
-	let mut count = 0;
-	let mut cursor = offset;
-	while cursor > 0 && bytes[cursor - 1] == b'\\' {
-		count += 1;
-		cursor -= 1;
-	}
-	count % 2 == 1
-}
-
-/// Byte ranges occupied by Markdown inline code spans or fenced code blocks.
-/// This intentionally recognizes only Markdown's structural delimiters; prose,
-/// XML, and ordinary source quotes remain eligible evidence bodies.
-fn markdown_code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-	let fenced = fenced_code_ranges(text);
-	let mut ranges = Vec::new();
-	let bytes = text.as_bytes();
-	let mut cursor = 0;
-	let mut fence_index = 0;
-	while cursor < bytes.len() {
-		while fenced
-			.get(fence_index)
-			.is_some_and(|range| range.end <= cursor)
-		{
-			fence_index += 1;
-		}
-		if let Some(range) = fenced
-			.get(fence_index)
-			.filter(|range| range.contains(&cursor))
-		{
-			cursor = range.end;
-			fence_index += 1;
-			continue;
-		}
-		if bytes[cursor] != b'`' {
-			cursor += 1;
-			continue;
-		}
-		let run = delimiter_run(bytes, cursor, b'`');
-		let mut close = cursor + run;
-		let mut found = None;
-		while close < bytes.len() {
-			if fenced
-				.get(fence_index)
-				.is_some_and(|range| close >= range.start)
-			{
-				break;
-			}
-			if bytes[close] == b'`' {
-				let close_run = delimiter_run(bytes, close, b'`');
-				if close_run == run {
-					found = Some(close + close_run);
-					break;
-				}
-				close += close_run;
-			} else {
-				close += 1;
-			}
-		}
-		if let Some(end) = found {
-			ranges.push(cursor..end);
-			cursor = end;
-		} else {
-			cursor += run;
-		}
-	}
-	ranges.extend(fenced);
-	ranges.sort_by_key(|range| range.start);
-	ranges
-}
-
-fn fenced_code_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-	let mut ranges = Vec::new();
-	let mut fence: Option<(u8, usize, usize)> = None;
-	let mut line_start = 0;
-	for line in text.split_inclusive('\n') {
-		let line_end = line_start + line.len();
-		let content = line.strip_suffix('\n').unwrap_or(line);
-		let indent = content
-			.as_bytes()
-			.iter()
-			.take_while(|b| **b == b' ')
-			.count();
-		if indent <= 3 {
-			let marker = content.as_bytes().get(indent).copied();
-			match fence {
-				Some((kind, width, start)) if marker == Some(kind) => {
-					let run = delimiter_run(content.as_bytes(), indent, kind);
-					if run >= width && content[indent + run..].trim().is_empty() {
-						ranges.push(start..line_end);
-						fence = None;
-					}
-				}
-				None if matches!(marker, Some(b'`' | b'~')) => {
-					let kind = marker.expect("matched marker");
-					let run = delimiter_run(content.as_bytes(), indent, kind);
-					if run >= 3 {
-						fence = Some((kind, run, line_start));
-					}
-				}
-				_ => {}
-			}
-		}
-		line_start = line_end;
-	}
-	if let Some((_, _, start)) = fence {
-		ranges.push(start..text.len());
-	}
-	ranges
-}
-
-fn delimiter_run(bytes: &[u8], start: usize, delimiter: u8) -> usize {
-	bytes[start..]
-		.iter()
-		.take_while(|byte| **byte == delimiter)
-		.count()
-}
-
-/// Collapse every run of whitespace to a single space and trim — the normal form
-/// both sides of the evidence check are compared in.
-fn normalize_ws(s: &str) -> String {
-	s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Deterministic evidence check: absolute URLs cited in `response` that appear
-/// in NONE of `grounds` (tool outputs, the current user turn, and the agent's
-/// executed call arguments — a link the user supplied is a legitimate thing to
-/// reference back, and one the agent passed to a tool is one it opened). A cited
-/// source link the agent never fetched, never issued a call for, and was never
-/// given is an invented source. Trailing prose/markdown punctuation is stripped,
-/// and a trailing-slash variant is accepted, so only genuinely absent links are
-/// flagged. Infrastructure endpoints — loopback/private/unspecified addresses
-/// and single-label hosts (`localhost`, Docker service names) — are exempt:
-/// they describe a deployment topology, not a source, and "fetch it now" is a
-/// category error for an address unreachable from here. No model call.
-pub fn unverified_urls(response: &str, grounds: &[String]) -> Vec<String> {
-	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-	let re =
-		RE.get_or_init(|| regex::Regex::new(r#"https?://[^\s<>"')\]]+"#).expect("static pattern"));
-	let haystack = grounds
-		.iter()
-		.map(|o| normalize_ws(o))
-		.collect::<Vec<_>>()
-		.join("\n");
-	let mut seen = std::collections::HashSet::new();
-	let mut flagged = Vec::new();
-	let literal_ranges = markdown_code_ranges(response);
-	for m in re.find_iter(response) {
-		let literal_index = literal_ranges.partition_point(|range| range.end <= m.start());
-		if literal_ranges
-			.get(literal_index)
-			.is_some_and(|range| range.contains(&m.start()))
-		{
-			continue;
-		}
-		let url = m
-			.as_str()
-			.trim_end_matches(['.', ',', ';', ':', '!', '?', '/']);
-		if url.is_empty() || !seen.insert(url.to_string()) {
-			continue;
-		}
-		// Infrastructure endpoint, not a citable source: prose describing a
-		// topology ("admin calls go to http://octohub:2780") fabricates nothing
-		// even when no tool output carries that exact concatenation.
-		let hostport = url
-			.split("://")
-			.nth(1)
-			.unwrap_or("")
-			.split(['/', '?'])
-			.next()
-			.unwrap_or("");
-		let host = if let Some(rest) = hostport.strip_prefix('[') {
-			rest.split(']').next().unwrap_or("")
-		} else {
-			match hostport.rsplit_once(':') {
-				Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
-				_ => hostport,
-			}
-		};
-		let non_public = match host.parse::<std::net::IpAddr>() {
-			Ok(std::net::IpAddr::V4(v4)) => {
-				v4.is_loopback() || v4.is_private() || v4.is_unspecified() || v4.is_link_local()
-			}
-			Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || v6.is_unspecified(),
-			// A host with no dot (`localhost`, a Docker service name) resolves
-			// only inside the described deployment.
-			Err(_) => !host.contains('.'),
-		};
-		if non_public {
-			continue;
-		}
-		// Grounded when the URL (with or without a trailing slash) appears in
-		// anything the agent actually received this turn — OR when it is a
-		// permalink CONSTRUCTED from verified pieces: `git remote` + `rev-parse`
-		// + diff paths never occur as one concatenated URL in any tool output,
-		// but every significant segment (host, repo, commit SHA, file name)
-		// does. Require ≥2 significant segments so a bare domain never passes.
-		let with_slash = format!("{url}/");
-		if haystack.contains(url) || haystack.contains(&with_slash) {
-			continue;
-		}
-		// A `#fragment` is client-side navigation, not a different resource:
-		// citing `url#section` when the fetched output carries the bare `url`
-		// is grounded.
-		let path = url.split('#').next().unwrap_or(url);
-		if path != url {
-			let path_slash = format!("{path}/");
-			if haystack.contains(path) || haystack.contains(&path_slash) {
-				continue;
-			}
-		}
-		let segments: Vec<&str> = path.split('/').filter(|s| s.len() >= 8).collect();
-		let constructed = segments.len() >= 2 && segments.iter().all(|s| haystack.contains(s));
-		if !constructed {
-			flagged.push(url.to_string());
-		}
-	}
-	flagged
-}
-
-/// Deterministic evidence check: `file:line` references in `response` that do
-/// not hold on disk — the file is missing, or the line number is beyond EOF.
-/// High-precision by construction: only paths containing a `/` and an extension
-/// starting with a letter are checked (bare `x.rs:3` or version-like `1.2:3`
-/// never match), URL interiors are excluded by the preceding-char guard, and
-/// GitHub-style `#L<n>` anchors count as line references too.
-///
-/// A reference resolves against every root the turn actually evidences, never
-/// the process cwd alone (a task legitimately spans other repos and working
-/// directories):
-/// - as given (cwd-relative or absolute);
-/// - as a suffix of another path cited in full in the same response (prose
-///   often abbreviates: "deals/create.php:199" after
-///   "app/actions/deals/create.php:199");
-/// - as a suffix of a path occurring in `grounds` (tool outputs plus the
-///   agent's executed call arguments) that exists on disk — a file the agent
-///   actually touched under another root this turn.
-///
-/// Every candidate that resolves is line-bound-checked. A path that resolves
-/// nowhere but occurs verbatim in `grounds` at a path boundary was received,
-/// not fabricated — benefit of the doubt (the line cannot be checked). Only a
-/// reference with no on-disk candidate and no occurrence in anything the
-/// agent received or executed is flagged. No model call.
-pub fn unverified_file_refs(response: &str, grounds: &[String]) -> Vec<String> {
-	static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-	let re = RE.get_or_init(|| {
-		regex::Regex::new(
-			r"(?:^|[^A-Za-z0-9_./:-])(/?(?:[A-Za-z0-9_@~.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z][A-Za-z0-9]{0,7})(?::|#L)([0-9]+)",
-		)
-		.expect("static pattern")
-	});
-	// Bound-check only files we can cheaply read as text; an unreadable or
-	// oversized file gets the benefit of the doubt (None = cannot check).
-	const MAX_CHECKED_FILE: u64 = 2_000_000;
-	fn line_count(path: &str) -> Option<usize> {
-		let p = std::path::Path::new(path);
-		if p.metadata().ok()?.len() > MAX_CHECKED_FILE {
-			return None;
-		}
-		Some(std::fs::read_to_string(p).ok()?.lines().count())
-	}
-	let mut refs: Vec<(String, usize)> = Vec::new();
-	let mut seen = std::collections::HashSet::new();
-	for cap in re.captures_iter(response) {
-		let Ok(line) = cap[2].parse::<usize>() else {
-			continue;
-		};
-		if seen.insert(format!("{}:{}", &cap[1], line)) {
-			refs.push((cap[1].to_string(), line));
-		}
-	}
-	let existing: Vec<String> = refs
-		.iter()
-		.map(|(p, _)| p.clone())
-		.filter(|p| std::path::Path::new(p).exists())
-		.collect();
-	let haystack = grounds.join("\n");
-	let mut flagged = Vec::new();
-	for (path, line) in &refs {
-		let key = format!("{path}:{line}");
-		let mut candidates: Vec<String> = if std::path::Path::new(path).exists() {
-			vec![path.clone()]
-		} else {
-			let suffix = format!("/{path}");
-			existing
-				.iter()
-				.filter(|full| full.ends_with(&suffix))
-				.cloned()
-				.collect()
-		};
-		let (ground_candidates, received) = grounds_path_evidence(path, &haystack);
-		candidates.extend(ground_candidates);
-		if candidates.is_empty() {
-			if !received {
-				flagged.push(format!("{key} (file not found)"));
-			}
-			continue;
-		}
-		// The reference holds if the line lands inside ANY candidate; an
-		// uncheckable candidate also passes (skip, not a flag).
-		let mut beyond_eof = None;
-		for c in &candidates {
-			match line_count(c) {
-				Some(count) if *line == 0 || *line > count => beyond_eof = Some(count),
-				_ => {
-					beyond_eof = None;
-					break;
-				}
-			}
-		}
-		if let Some(count) = beyond_eof {
-			flagged.push(format!("{key} (file has only {count} lines)"));
-		}
-	}
-	flagged
-}
-
-/// Path evidence for `path` inside the joined grounds: full on-disk paths that
-/// end with `/{path}` (each occurrence expanded backwards over path
-/// characters — recovers the absolute path a tool call or output named), and
-/// whether the grounds contain `path` at a path boundary at all ("received").
-/// Boundaries are enforced both ways: `a/b.ts` inside `a/b.tsx` is a different
-/// file, and `zz/a/b.ts` inside `xzz/a/b.ts` is a different path.
-fn grounds_path_evidence(path: &str, haystack: &str) -> (Vec<String>, bool) {
-	let bytes = haystack.as_bytes();
-	let mut candidates = Vec::new();
-	let mut received = false;
-	let mut from = 0;
-	while let Some(rel) = haystack[from..].find(path) {
-		let start = from + rel;
-		let end = start + path.len();
-		from = start + 1;
-		if bytes.get(end).is_some_and(|b| b.is_ascii_alphanumeric()) {
-			continue;
-		}
-		let boundary = start == 0 || bytes[start - 1] == b'/' || !is_path_byte(bytes[start - 1]);
-		if !boundary {
-			continue;
-		}
-		received = true;
-		let mut s = start;
-		while s > 0 && is_expansion_byte(bytes[s - 1]) {
-			s -= 1;
-		}
-		if s < start {
-			let full = &haystack[s..end];
-			if !candidates.iter().any(|c| c == full) && std::path::Path::new(full).exists() {
-				candidates.push(full.to_string());
-			}
-		}
-	}
-	(candidates, received)
-}
-
-/// Chars that form a path token in surrounding text — the component charset of
-/// the reference regex plus the separator. Used for the boundary check, so it
-/// deliberately excludes `:` (the file:line separator in prose and grep/view
-/// output — treating it as a path byte would deny receipt to `12:src/a.ts`).
-fn is_path_byte(b: u8) -> bool {
-	b.is_ascii_alphanumeric() || matches!(b, b'_' | b'@' | b'~' | b'.' | b'-' | b'/')
-}
-
-/// Bytes the backwards expansion may additionally cross when recovering a full
-/// path from grounds text: Windows separators (`\`, drive `:`). A junk
-/// crossing is harmless — every candidate must exist on disk to count.
-fn is_expansion_byte(b: u8) -> bool {
-	is_path_byte(b) || matches!(b, b':' | b'\\')
-}
-
 /// Shape-based: is this call a candidate VERIFIER — something that executes a
 /// command whose outcome can validate that the job is done? Judged from what
 /// the runtime actually knows, not from hard-coded program names: the call must
@@ -847,15 +325,6 @@ fn normalize_path(path: &str) -> String {
 		.unwrap_or_else(|_| path.trim().trim_start_matches("./").to_string())
 }
 
-/// Heuristic: does this tool change state, so a success is inherently progress?
-/// (Reads/searches only count as progress when they surface *new* content.)
-pub fn is_mutation_tool(tool: &str) -> bool {
-	if let Some(read_only) = tool_read_only_hint(tool) {
-		return !read_only;
-	}
-	contains_mutation_intent(tool)
-}
-
 /// Classify one concrete call. MCP annotations supply the generic cross-domain
 /// signal when present; command/action parameters cover multi-operation tools
 /// such as editors; normalized intent tokens are the compatibility fallback.
@@ -867,10 +336,9 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 }
 
 /// High-confidence mutation signal from the concrete call itself, ignoring a
-/// tool-level `readOnly=false` capability hint. Used by sparse pre-mutation
-/// readiness: a generic shell/browser/API tool may be capable of writes while
-/// the proposed call is only gathering evidence, and blocking that read would
-/// create the exact false positive the checkpoint exists to prevent.
+/// tool-level `readOnly=false` capability hint: a generic shell/browser/API
+/// tool may be capable of writes while the concrete call is only gathering
+/// evidence, and classifying that read as a mutation would be a false positive.
 pub fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
 	if contains_mutation_intent(tool) {
 		return true;
@@ -931,29 +399,22 @@ fn tool_read_only_hint(tool: &str) -> Option<bool> {
 
 const SEEN_CAP: usize = 128;
 
+/// Identical result this many times in a row → loop fired.
+pub const LOOP_THRESHOLD: usize = 3;
+
+/// Rounds without new information → no-progress fired. Also the bounded
+/// failure budget for the recovery signal (failed command-shaped checks).
+pub const NO_PROGRESS_WINDOW: usize = 5;
+
 /// Cap on remembered agent-mutated paths (read-back verification candidates).
 /// Oldest evicted — a task touching more artifacts than this verifies via the
 /// most recent ones, which is where the read-back lands anyway.
 const MUTATED_PATHS_CAP: usize = 32;
 
-/// Cap on distinct paths tracked by the re-read counter. A working set larger
-/// than this rotates naturally; the counter exists for the handful of files a
-/// stuck model orbits, not for a full-tree census.
-const PATH_READS_CAP: usize = 64;
-
 /// Cap on distinct command-shaped checks that have failed without a later
 /// success from the same check. Recovery tracking is a small current-turn
 /// ledger, not an unbounded command history.
 const FAILED_VERIFIERS_CAP: usize = 64;
-
-/// Smallest result that counts as a re-FETCH for the re-read advisory, in
-/// tokens (the unit of the cost being guarded — context spend). Below it a
-/// repeat read is a cheap membership probe ("no matches", a short lookup),
-/// legitimate however often it repeats; counting probes made the advisory
-/// nag on narrow targeted probing (observed: glm pattern-probes a test file
-/// once per symbol, ~15 tokens each). Measured with the real tokenizer at
-/// the call site, not a chars/4 proxy.
-pub const REREAD_MIN_RESULT_TOKENS: usize = 128;
 
 /// Deterministic per-session detector state, built on a single novelty primitive.
 #[derive(Debug, Default)]
@@ -965,21 +426,6 @@ pub struct Detectors {
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
 	seen: HashSet<u64>,
 	seen_order: VecDeque<u64>,
-	/// Single-tool-call rounds in a row. A round is a full AI turn's tool batch;
-	/// when it carries exactly one call and the model could have batched independent
-	/// calls, the streak grows. Reset by any multi-call (parallel) round.
-	consecutive_singletons: usize,
-	/// Sequential advisories actually emitted since the latest genuine user turn
-	/// or successful compression. Detection may keep running after the configured
-	/// cap is reached, but no further Sequential signal is surfaced.
-	sequential_steers_emitted: usize,
-	/// The current round carried at least one errored call (set by [`Detectors::note_call`],
-	/// consumed by [`Detectors::record_round_arity`]). An errored round — and the
-	/// singleton retry that follows it — is recovery, not a batchable drip-feed,
-	/// so neither may grow the singleton streak.
-	round_had_error: bool,
-	/// The PREVIOUS completed round carried an errored call.
-	prev_round_had_error: bool,
 	/// Observational verification state (see `supervisor::workdir::fingerprint`):
 	/// the working-tree fingerprint at the last clean verification — a
 	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
@@ -1012,10 +458,6 @@ pub struct Detectors {
 	/// kind of evidence blessed the tree instead of inferring it from a raw
 	/// action log ([`Detectors::cleared_by_readback_only`]).
 	readback_only_clearance: bool,
-	/// Successful reads per normalized path since that path was last mutated
-	/// (or since the streak reset). Mutating a path clears its counter, so
-	/// edit-verify loops never accumulate. Bounded by [`PATH_READS_CAP`].
-	path_read_counts: std::collections::HashMap<String, usize>,
 	/// Command-shaped checks that failed and have not subsequently succeeded
 	/// with the same tool + command identity. An unrelated successful read,
 	/// diff, or probe must not erase a failed behavioral check.
@@ -1037,18 +479,6 @@ pub enum DetectorSignal {
 	Loop,
 	/// `no_progress_window` actions elapsed with zero new information.
 	NoProgress,
-	/// `sequential_threshold` single-tool-call ROUNDS in a row — the model is
-	/// issuing one call per turn where independent calls could be batched into one
-	/// parallel round. Round-level (not per-call); recorded once per turn via
-	/// [`Detectors::record_round_arity`]. Off by default — single calls are often
-	/// legitimate, so this is the softest, most conservative signal.
-	Sequential,
-	/// `reread_threshold` successful reads of the SAME path with no intervening
-	/// mutation of that path — the model is re-fetching content it already
-	/// received instead of using it (attention failure; measured 350/374 views
-	/// were re-reads ≈ 269k re-fetched tokens in one trajectory). Advisory:
-	/// mutating a path resets its counter, so edit-verify loops never trip it.
-	Reread,
 	/// Repeated command-shaped checks have failed without the same checks later
 	/// succeeding. Unlike generic no-progress, unrelated fresh reads cannot hide
 	/// this unresolved recovery episode.
@@ -1061,11 +491,9 @@ impl DetectorSignal {
 	fn priority(self) -> u8 {
 		match self {
 			Self::None => 0,
-			Self::Sequential => 1,
-			Self::Reread => 2,
-			Self::Recovery => 3,
-			Self::NoProgress => 4,
-			Self::Loop => 5,
+			Self::Recovery => 1,
+			Self::NoProgress => 2,
+			Self::Loop => 3,
 		}
 	}
 
@@ -1115,7 +543,6 @@ impl Detectors {
 			}
 		}
 		let novel = is_mutation || (!is_error && fresh);
-		self.round_had_error |= is_error;
 		(rhash, novel)
 	}
 
@@ -1181,9 +608,6 @@ impl Detectors {
 			if n.is_empty() {
 				continue;
 			}
-			// A mutation makes the next read of this path fresh by definition —
-			// the re-read counter must never flag post-edit verification reads.
-			self.path_read_counts.remove(&n);
 			if self.mutated_paths.contains(&n) {
 				continue;
 			}
@@ -1191,47 +615,6 @@ impl Detectors {
 				self.mutated_paths.remove(0);
 			}
 			self.mutated_paths.push(n);
-		}
-	}
-
-	/// Fold one completed round's successfully-READ paths into the per-path
-	/// counters and return the re-read advisory verdict. A parallel batch is one
-	/// model decision, so a path counts once per round however many calls named
-	/// it. `threshold == 0` disables the signal. On fire, the offending path's
-	/// counter resets so the advisory must re-accumulate before nudging again.
-	pub fn record_round_path_reads(
-		&mut self,
-		read_paths: &[String],
-		threshold: usize,
-	) -> DetectorSignal {
-		if threshold == 0 || read_paths.is_empty() {
-			return DetectorSignal::None;
-		}
-		let mut seen_this_round = HashSet::new();
-		let mut fired = false;
-		for p in read_paths {
-			let n = normalize_path(p);
-			if n.is_empty() || !seen_this_round.insert(n.clone()) {
-				continue;
-			}
-			// Bounded: an untracked path beyond the cap simply isn't counted —
-			// the counter exists for the files a stuck model orbits.
-			if !self.path_read_counts.contains_key(&n)
-				&& self.path_read_counts.len() >= PATH_READS_CAP
-			{
-				continue;
-			}
-			let count = self.path_read_counts.entry(n.clone()).or_insert(0);
-			*count += 1;
-			if *count >= threshold {
-				self.path_read_counts.remove(&n);
-				fired = true;
-			}
-		}
-		if fired {
-			DetectorSignal::Reread
-		} else {
-			DetectorSignal::None
 		}
 	}
 
@@ -1396,72 +779,11 @@ impl Detectors {
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
-		self.consecutive_singletons = 0;
-		self.sequential_steers_emitted = 0;
-		self.round_had_error = false;
-		self.prev_round_had_error = false;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
-		self.path_read_counts.clear();
 		self.failed_verifiers.clear();
 		self.failed_verifier_rounds = 0;
-	}
-
-	/// Record the arity of a completed tool round (one AI turn's batch) and return
-	/// the sequential-batching signal. `call_count` is how many tool calls the round
-	/// carried; a round of exactly one grows the singleton streak, any parallel round
-	/// (>= 2) resets it. Fires `Sequential` once the streak reaches `threshold`.
-	/// `threshold == 0` disables the signal entirely (the default). Round-level, so
-	/// it is recorded once per turn — separately from the per-round
-	/// [`Detectors::record_round_signals`].
-	pub fn record_round_arity(&mut self, call_count: usize, threshold: usize) -> DetectorSignal {
-		// A round containing an errored call — or the singleton RETRY right after
-		// one — is recovery, not a silent drip-feed of independent calls. An error
-		// inside a singleton chain is hard proof the chain was dependent (a retry
-		// cannot be batched with the call that failed), so recovery RESETS the
-		// streak: the steer must re-accumulate a full threshold of clean
-		// single-call rounds after any failure.
-		let recovery = self.round_had_error || self.prev_round_had_error;
-		if call_count > 1 || recovery {
-			self.consecutive_singletons = 0;
-		} else if call_count == 1 {
-			self.consecutive_singletons += 1;
-		}
-		self.prev_round_had_error = self.round_had_error;
-		self.round_had_error = false;
-		if threshold > 0 && self.consecutive_singletons >= threshold {
-			DetectorSignal::Sequential
-		} else {
-			DetectorSignal::None
-		}
-	}
-
-	/// Reset the single-call streak. Called after a `Sequential` steer — so the
-	/// advisory nudge waits a full `sequential_threshold` single-call rounds before
-	/// firing again instead of every turn (spam) — and on a final message to the user
-	/// (need_input / done): a hand-back is not a silent drip-feed of independent calls.
-	pub fn reset_sequential_streak(&mut self) {
-		self.consecutive_singletons = 0;
-	}
-
-	/// Whether another Sequential advisory may be emitted in the current turn.
-	/// `limit == 0` preserves the historical unlimited behavior.
-	pub fn sequential_steer_allowed(&self, limit: usize) -> bool {
-		limit == 0 || self.sequential_steers_emitted < limit
-	}
-
-	/// Count one Sequential advisory once it is actually queued for delivery.
-	pub fn note_sequential_steer(&mut self) {
-		self.sequential_steers_emitted = self.sequential_steers_emitted.saturating_add(1);
-	}
-
-	/// Start a fresh Sequential advisory budget after successful compression.
-	/// Compression may remove the earlier advisory from the live context, so the
-	/// compacted segment gets a new budget and must re-accumulate the threshold.
-	pub fn reset_sequential_advisory_budget(&mut self) {
-		self.consecutive_singletons = 0;
-		self.sequential_steers_emitted = 0;
 	}
 
 	/// Free pre-gate signal: an agent round changed the tree and nothing has
@@ -1507,10 +829,7 @@ pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool 
 	match report {
 		Some(SelfReport::Done) => false,
 		// No-progress can be legitimate while exploring; every other signal steers
-		// regardless of intent. Sequential is NOT suppressed here: serializing
-		// independent calls is never "legitimate exploring" — the detector already
-		// gates on N consecutive single-call rounds, so the exploring excuse
-		// double-gates and leaves Opus unsteered.
+		// regardless of intent.
 		Some(SelfReport::Exploring) if signal == DetectorSignal::NoProgress => false,
 		_ => true,
 	}
@@ -1522,12 +841,6 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 	match signal {
 		DetectorSignal::Loop => "repeated action without new results",
 		DetectorSignal::NoProgress => "no new information in recent steps",
-		DetectorSignal::Sequential => {
-			"single tool calls in a row — independent calls could be batched"
-		}
-		DetectorSignal::Reread => {
-			"repeated reads of the same file — content already received this session"
-		}
 		DetectorSignal::Recovery => {
 			"verification keeps failing — unresolved checks need a different recovery strategy"
 		}
@@ -1537,8 +850,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 
 /// Shared persistent-failure frame: the model has been steered through the full
 /// 0→1→2 ladder on a *stuck* signal and still has not broken out, so small tweaks are
-/// clearly not working. Signal-agnostic and held on clamp. Only `Sequential` (advisory,
-/// false-positive-prone) never reaches it.
+/// clearly not working. Signal-agnostic and held on clamp.
 ///
 /// POLYMORPHIC by design: the persistent frame is re-emitted on the backoff schedule
 /// (attempts 3,4,6,10,…), and a *verbatim* repeat of a warning loses effect within 2-3
@@ -1606,16 +918,6 @@ pub fn steer_note(
 			"<pay-attention>\nStill nothing new. Name in one line what you still need but have not found, then take a single concrete step toward the goal using what you already know — a decision or an action, not another exploratory probe.\n</pay-attention>",
 			"<pay-attention>\nThis exploration has stalled. Re-anchor on the user's actual request: state the goal in one line, what is done, and the one next step that delivers it — then take it. If no such step exists, report `blocked` with what is missing.\n</pay-attention>",
 		],
-		DetectorSignal::Sequential => &[
-			"<pay-attention>\nYou have made several single-call turns in a row. For maximum efficiency, when your next operations are independent (none needs another's result), invoke them all in one parallel batch rather than one per turn — e.g. reading 3 files is 3 calls in one batch. It is faster and uses less context.\n</pay-attention>",
-			"<pay-attention>\nYou keep issuing one tool call per turn. Name the calls you need next, then send every one that does not depend on a prior result together in a single parallel batch — three independent reads go out as three calls at once. Only chain calls whose arguments genuinely depend on an earlier result.\n</pay-attention>",
-			"<pay-attention>\nStill one call per turn — stop serializing independent work. Name your next 2+ calls and send every independent one in a single parallel batch this turn. If each call truly depends on the previous result, serial is correct — keep it.\n</pay-attention>",
-		],
-		DetectorSignal::Reread => &[
-			"<pay-attention>\nYou have read this file several times without changing it — its content does not change between reads, and every re-fetch spends context on bytes you already hold. Use the copy already in your context (or the recall archive) instead of fetching it again.\n</pay-attention>",
-			"<pay-attention>\nStill re-reading the same unchanged file. Name in one line what you are looking for in it, then extract that from the content already in your context — or make ONE precisely-targeted read (exact line range or pattern) and act on the result instead of fetching the file again.\n</pay-attention>",
-			"<pay-attention>\nRepeated re-reads of an unchanged file are pure waste: the content is identical every time. Decide now what fact you need from it, take it from what you already received, and move to acting on it. If you genuinely cannot find it, say so in your next step rather than fetching the same bytes again.\n</pay-attention>",
-		],
 		DetectorSignal::Recovery => &[
 			"<pay-attention>\nSeveral command-shaped checks have failed, and unrelated successful calls do not resolve them. Use the latest failure to isolate one concrete cause, change that cause, then rerun the narrowest check that proves it. Do not repeat a broad check until relevant state has changed.\n</pay-attention>",
 			"<pay-attention>\nThe verification failures remain unresolved. Stop broad trial-and-error: name the single failing behavior you are fixing now, trace it to its owning source, make one focused correction, and run the smallest check that can confirm or reject that correction.\n</pay-attention>",
@@ -1626,10 +928,9 @@ pub fn steer_note(
 	variants[attempt.min(variants.len() - 1)]
 }
 
-/// The "stuck" signal class — every real-waste failure mode (loop / no-progress),
-/// i.e. everything except the advisory `Sequential` and `Reread`.
-/// These escalate to [`PERSISTENT_VARIANTS`]; factored so the steer loop and the
-/// escalation ladder classify signals the same way.
+/// The "stuck" signal class — every real-waste failure mode. These escalate to
+/// [`PERSISTENT_VARIANTS`]; factored so the steer loop and the escalation
+/// ladder classify signals the same way.
 pub fn is_stuck(signal: DetectorSignal) -> bool {
 	matches!(
 		signal,
@@ -2083,349 +1384,6 @@ mod tests {
 	}
 
 	#[test]
-	fn evidence_grounded_quote_passes() {
-		let outputs = vec!["274:\t\tif (!in_array($deal_data['status'], ...))".to_string()];
-		// Quote is a contiguous (whitespace-normalized) substring of the output.
-		let resp = "The guard is here <evidence locator=\"PayoutTaskService.php:274\">if (!in_array($deal_data['status'], ...))</evidence>.";
-		assert!(unverified_citations(resp, &outputs).is_empty());
-	}
-
-	#[test]
-	fn evidence_fabricated_quote_flagged() {
-		let outputs = vec!["fn record_action(&mut self) -> DetectorSignal".to_string()];
-		let resp =
-			"It does <evidence locator=\"detect.rs\">fn totally_made_up_symbol()</evidence>.";
-		let bad = unverified_citations(resp, &outputs);
-		assert_eq!(bad, vec!["fn totally_made_up_symbol()"]);
-	}
-
-	#[test]
-	fn evidence_multiline_quote_spanning_numbered_view_lines_passes() {
-		// Regression: `view` prefixes every line with `NN:`, so a joined
-		// multi-line quote can never string-match across the injected numbers.
-		// Line-wise matching must accept it — this was the false positive that
-		// re-ran grounded answers.
-		let outputs = vec![
-			"36:\t\t'week' => $midnight - ((int)gmdate('N', $now) - 1) * 86400,\n37:\t\t'month' => (int)gmmktime(0, 0, 0),"
-				.to_string(),
-		];
-		let resp = "Both anchors <evidence locator=\"Meter.php:36-37\">'week' => $midnight - ((int)gmdate('N', $now) - 1) * 86400,\n'month' => (int)gmmktime(0, 0, 0),</evidence>.";
-		assert!(unverified_citations(resp, &outputs).is_empty());
-	}
-
-	#[test]
-	fn evidence_multiline_quote_with_one_fabricated_line_flagged() {
-		let outputs = vec!["36:\t\t'week' => $midnight,".to_string()];
-		let resp = "<evidence locator=\"Meter.php:36-37\">'week' => $midnight,\n'month' => invented()</evidence>";
-		let bad = unverified_citations(resp, &outputs);
-		assert_eq!(bad, vec!["'month' => invented()"]);
-	}
-
-	#[test]
-	fn evidence_lines_joined_with_middot_pass_when_every_segment_grounded() {
-		// Regression (carbon run): the agent quoted three real output lines
-		// joined into one with `·`; the whole line matched nothing and a true
-		// claim was bounced. Every segment is verbatim output, so it passes.
-		let outputs = vec![
-			"setEnd: ->end=2012-08-01 getEnd=2012-08-01\nremoveEnd: ->end=NULL getEnd=NULL instanceof=y\nsetStart: ->start=2014-01-01 getStart=2014-01-01"
-				.to_string(),
-		];
-		let resp = "<evidence locator=\"/tmp/acc.php\">setEnd: ->end=2012-08-01 getEnd=2012-08-01 · removeEnd: ->end=NULL getEnd=NULL instanceof=y · setStart: ->start=2014-01-01 getStart=2014-01-01</evidence>";
-		assert!(unverified_citations(resp, &outputs).is_empty());
-	}
-
-	#[test]
-	fn evidence_joined_line_with_fabricated_segment_still_flagged() {
-		let outputs = vec!["setEnd: ->end=2012-08-01 getEnd=2012-08-01".to_string()];
-		let resp = "<evidence locator=\"x\">setEnd: ->end=2012-08-01 getEnd=2012-08-01 · removeEnd: ->end=fabricated()</evidence>";
-		assert_eq!(unverified_citations(resp, &outputs).len(), 1);
-	}
-
-	#[test]
-	fn evidence_joined_short_segments_not_eligible() {
-		// Segments below the minimum length would match noise ("ok", "0"), so
-		// the fallback refuses them and the line stays flagged.
-		let outputs = vec!["ok\n42".to_string()];
-		let resp = "<evidence locator=\"x\">ok · 42</evidence>";
-		assert_eq!(unverified_citations(resp, &outputs).len(), 1);
-	}
-
-	#[test]
-	fn evidence_self_closing_and_unclosed_tags_ignored() {
-		let outputs = vec!["x".to_string()];
-		assert!(unverified_citations("a <evidence/> b", &outputs).is_empty());
-		assert!(unverified_citations("a <evidence locator=\"f\" b", &outputs).is_empty());
-	}
-
-	#[test]
-	fn evidence_examples_in_markdown_code_are_not_citations() {
-		let inline =
-			"Use `<evidence locator=\"source:line\">verbatim text</evidence>` for citations.";
-		let fenced =
-			"Example:\n```xml\n<evidence locator=\"source:line\">verbatim text</evidence>\n```";
-		assert!(unverified_citations(inline, &[]).is_empty());
-		assert!(unverified_citations(fenced, &[]).is_empty());
-		assert_eq!(strip_evidence(inline), inline);
-		assert_eq!(strip_evidence(fenced), fenced);
-	}
-
-	#[test]
-	fn escaped_and_longer_evidence_markup_is_literal() {
-		let escaped = r#"Show \<evidence locator="source:line">text</evidence> literally."#;
-		let longer = "The <evidence-note>text</evidence> element is unrelated.";
-		assert!(unverified_citations(escaped, &[]).is_empty());
-		assert!(unverified_citations(longer, &[]).is_empty());
-		assert_eq!(strip_evidence(escaped), escaped);
-		assert_eq!(strip_evidence(longer), longer);
-	}
-
-	#[test]
-	fn real_evidence_next_to_literal_example_is_still_checked_and_stripped() {
-		let response = "Syntax: `<evidence locator=\"x\">quote</evidence>`. Claim: <evidence locator=\"real\">actual quote</evidence>.";
-		assert_eq!(
-			unverified_citations(response, &[]),
-			["actual quote".to_string()]
-		);
-		assert_eq!(
-			strip_evidence(response),
-			"Syntax: `<evidence locator=\"x\">quote</evidence>`. Claim: ."
-		);
-	}
-
-	#[test]
-	fn strip_evidence_removes_tags_keeps_prose() {
-		let resp = "The math is correct. <evidence locator=\"Meter.php:36\">'week' => $midnight,</evidence> Done.";
-		assert_eq!(strip_evidence(resp), "The math is correct.  Done.");
-	}
-
-	#[test]
-	fn strip_evidence_keeps_unclosed_tag() {
-		let resp = "text <evidence locator=\"f\">dangling quote";
-		assert_eq!(strip_evidence(resp), resp);
-	}
-
-	#[test]
-	fn strip_evidence_handles_multiple_and_none() {
-		assert_eq!(
-			strip_evidence("a <evidence>q1</evidence> b <evidence>x</evidence> c"),
-			"a  b  c"
-		);
-		assert_eq!(strip_evidence("plain"), "plain");
-	}
-
-	#[test]
-	fn url_fetched_this_turn_passes() {
-		let grounds = vec!["See https://example.com/study for details.".to_string()];
-		let resp = "According to https://example.com/study, the effect holds.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-	}
-
-	#[test]
-	fn url_from_user_message_passes() {
-		let grounds = vec!["user: check https://example.com/spec please".to_string()];
-		let resp = "The spec at https://example.com/spec says so.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-	}
-
-	#[test]
-	fn url_permalink_grounded_by_call_arguments() {
-		// A permalink built from a file the agent READ but that no tool OUTPUT
-		// names — `view` returns numbered lines, so the path exists only in the
-		// call arguments. Grounded, not invented.
-		let grounds = vec![
-			"git@github.com:Muvon/octolib.git\nd7269e6ce788af658b985da443e238e44058b363"
-				.to_string(),
-			r#"[{"name":"view","arguments":{"path":"src/llm/providers/ollama.rs","start":66}}]"#
-				.to_string(),
-			"66:    fn supports_caching(&self, _model: &str) -> bool {".to_string(),
-		];
-		let resp = "See https://github.com/Muvon/octolib/blob/d7269e6ce788af658b985da443e238e44058b363/src/llm/providers/ollama.rs#L66-L82 for the override.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-	}
-
-	#[test]
-	fn url_never_received_flagged() {
-		let grounds = vec!["some unrelated tool output".to_string()];
-		let resp = "Source: https://invented.example/paper.pdf — see also https://invented.example/paper.pdf.";
-		let bad = unverified_urls(resp, &grounds);
-		assert_eq!(bad, vec!["https://invented.example/paper.pdf"]);
-	}
-
-	#[test]
-	fn url_inside_markdown_code_is_not_a_citation() {
-		let grounds = vec!["unrelated".to_string()];
-		assert!(
-			unverified_urls("Example endpoint: `http://192.168.1.10:8080`", &grounds).is_empty()
-		);
-		assert!(
-			unverified_urls("```text\nhttps://example.invalid/source\n```", &grounds).is_empty()
-		);
-	}
-
-	#[test]
-	fn url_trailing_punctuation_and_slash_tolerated() {
-		let grounds = vec!["fetched https://example.com/".to_string()];
-		let resp = "From (https://example.com), we learn.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-	}
-
-	#[test]
-	fn url_infrastructure_endpoints_never_flagged() {
-		// Loopback/private addresses and single-label hosts (Docker service
-		// names) are deployment topology, not citable sources — prose like
-		// "admin calls go to http://octohub:2780" fabricates nothing even when
-		// no tool output carries that exact concatenation.
-		let grounds = vec!["some unrelated tool output".to_string()];
-		let resp =
-			"Admin traffic uses http://127.0.0.1:2780 in production, http://octohub:2780 in dev; \
-			see also http://localhost:3000, http://192.168.1.10:8080, and http://[::1]:8443.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-		// Public hosts are still held to grounding.
-		let resp = "Source: https://invented.example/paper.pdf";
-		assert_eq!(
-			unverified_urls(resp, &grounds),
-			vec!["https://invented.example/paper.pdf"]
-		);
-	}
-
-	#[test]
-	fn url_fragment_grounded_by_bare_url() {
-		// A `#fragment` is client-side navigation — citing `url#L10` when the
-		// tool output carried the bare `url` is grounded, not invented.
-		let grounds = vec!["fetched https://example.com/repo/file.rs".to_string()];
-		let resp = "See https://example.com/repo/file.rs#L10 for the guard.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-		// Trailing-slash ground also accepted for the fragment-stripped form.
-		let grounds = vec!["fetched https://example.com/docs/".to_string()];
-		let resp = "See https://example.com/docs#install.";
-		assert!(unverified_urls(resp, &grounds).is_empty());
-	}
-
-	#[test]
-	fn evidence_tolerates_reflowed_whitespace() {
-		let outputs = vec!["let signal = detectors.record_action(tool, result);".to_string()];
-		// Model reflowed the quote with extra indentation — normalization
-		// makes the single logical line match.
-		let resp = "see <evidence locator=\"x\">let signal = detectors.record_action(tool, result);</evidence>";
-		assert!(unverified_citations(resp, &outputs).is_empty());
-	}
-
-	#[test]
-	fn no_citations_is_clean() {
-		assert!(unverified_citations("plain answer, no tags", &["x".to_string()]).is_empty());
-	}
-
-	#[test]
-	fn file_refs_existing_line_is_clean() {
-		// cargo test runs with the crate root as cwd, so this very file resolves.
-		assert!(unverified_file_refs("see src/supervisor/detect.rs:1 for it", &[]).is_empty());
-	}
-
-	#[test]
-	fn file_refs_missing_file_flagged() {
-		let bad = unverified_file_refs("fixed in src/supervisor/zz_no_such_file.rs:5 now", &[]);
-		assert_eq!(
-			bad,
-			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
-		);
-	}
-
-	#[test]
-	fn file_refs_line_beyond_eof_flagged() {
-		let bad = unverified_file_refs("look at src/supervisor/mod.rs:999999", &[]);
-		assert_eq!(bad.len(), 1);
-		assert!(bad[0].starts_with("src/supervisor/mod.rs:999999 (file has only "));
-	}
-
-	#[test]
-	fn file_refs_urls_and_versions_not_matched() {
-		assert!(
-			unverified_file_refs("see https://x.com/a/b.rs:12 and v1.2/3.4:56", &[]).is_empty()
-		);
-	}
-
-	#[test]
-	fn file_refs_deduplicated() {
-		let bad = unverified_file_refs("a/missing.rs:1 and again a/missing.rs:1 twice", &[]);
-		assert_eq!(bad.len(), 1);
-	}
-
-	#[test]
-	fn file_refs_github_anchor_matched() {
-		assert!(unverified_file_refs("see src/supervisor/detect.rs#L1 for it", &[]).is_empty());
-		let bad = unverified_file_refs("see src/supervisor/zz_no_such_file.rs#L5 now", &[]);
-		assert_eq!(
-			bad,
-			vec!["src/supervisor/zz_no_such_file.rs:5 (file not found)"]
-		);
-	}
-
-	#[test]
-	fn file_refs_suffix_shorthand_resolves_against_cited_full_path() {
-		// Prose abbreviation of a path cited in full elsewhere is not fabrication.
-		assert!(unverified_file_refs(
-			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs:1)",
-			&[]
-		)
-		.is_empty());
-		// Also when the full path was cited GitHub-style.
-		assert!(unverified_file_refs(
-			"comment at supervisor/detect.rs:1 (full: src/supervisor/detect.rs#L1-L20)",
-			&[]
-		)
-		.is_empty());
-	}
-
-	#[test]
-	fn file_refs_suffix_shorthand_still_bound_checked() {
-		let bad = unverified_file_refs(
-			"comment at supervisor/mod.rs:999999 (full: src/supervisor/mod.rs:1)",
-			&[],
-		);
-		assert_eq!(bad.len(), 1);
-		assert!(bad[0].starts_with("supervisor/mod.rs:999999 (file has only "));
-	}
-
-	#[test]
-	fn file_refs_resolve_against_grounds_from_other_roots() {
-		// A ref that resolves at no cwd path but whose full path appears in the
-		// turn's executed call args (another repo root) is real — recovered by
-		// backwards expansion and still line-bound-checked against that root.
-		let grounds = vec![format!(
-			r#"{{"path":"{}/src/supervisor/detect.rs","start":1}}"#,
-			env!("CARGO_MANIFEST_DIR")
-		)];
-		assert!(unverified_file_refs("see supervisor/detect.rs:1", &grounds).is_empty());
-		let bad = unverified_file_refs("see supervisor/detect.rs:999999", &grounds);
-		assert_eq!(bad.len(), 1);
-		assert!(bad[0].starts_with("supervisor/detect.rs:999999 (file has only "));
-	}
-
-	#[test]
-	fn file_refs_received_in_grounds_get_benefit_of_doubt() {
-		// A path echoed by a real tool output (e.g. `wc -l` run in another cwd)
-		// was received, not fabricated — even when nothing resolves on disk.
-		let grounds = vec!["     164 zz/qq/other_root.ts".to_string()];
-		assert!(unverified_file_refs("see zz/qq/other_root.ts:86", &grounds).is_empty());
-		// Absent from grounds → still flagged.
-		assert_eq!(
-			unverified_file_refs("see zz/qq/other_root.ts:86", &[]),
-			vec!["zz/qq/other_root.ts:86 (file not found)"]
-		);
-	}
-
-	#[test]
-	fn file_refs_grounds_boundaries_respected() {
-		// A prefix of a longer filename or the interior of a different path is
-		// not receipt of this path.
-		let grounds = vec!["zz/qq/other_root.tsx and xzz/qq/other_root.ts".to_string()];
-		assert_eq!(
-			unverified_file_refs("see zz/qq/other_root.ts:1", &grounds),
-			vec!["zz/qq/other_root.ts:1 (file not found)"]
-		);
-	}
-
-	#[test]
 	fn steer_defers_to_gate_on_done() {
 		assert!(!should_steer(
 			DetectorSignal::NoProgress,
@@ -2458,86 +1416,6 @@ mod tests {
 		// Without the progressing claim it stays the generic no-progress note.
 		let generic = steer_note(DetectorSignal::NoProgress, None, 0);
 		assert!(!generic.contains("disagree"));
-	}
-
-	#[test]
-	fn sequential_steers_even_while_exploring() {
-		// Serializing independent calls is never "legitimate exploring" — the
-		// detector already gates on N consecutive single-call rounds, so the
-		// exploring excuse must not suppress the Sequential steer.
-		assert!(should_steer(
-			DetectorSignal::Sequential,
-			Some(SelfReport::Exploring)
-		));
-		assert!(should_steer(
-			DetectorSignal::Sequential,
-			Some(SelfReport::Progressing)
-		));
-		// Still defers to the gate on done.
-		assert!(!should_steer(
-			DetectorSignal::Sequential,
-			Some(SelfReport::Done)
-		));
-	}
-
-	#[test]
-	fn sequential_streak_resets_after_steer() {
-		let mut d = Detectors::default();
-		// threshold 2: two single-call rounds in a row → Sequential.
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
-		// Reset on steer → it must re-accumulate, so the very next single-call round
-		// is silent instead of nudging again every turn (the spam being fixed).
-		d.reset_sequential_streak();
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
-	}
-
-	#[test]
-	fn sequential_steer_cap_counts_only_emitted_advisories() {
-		let mut d = Detectors::default();
-		assert!(d.sequential_steer_allowed(1));
-		d.note_sequential_steer();
-		assert!(!d.sequential_steer_allowed(1));
-		assert!(d.sequential_steer_allowed(0), "zero means unlimited");
-
-		// Resetting only the threshold streak after an advisory must not replenish
-		// the full-turn budget.
-		d.reset_sequential_streak();
-		assert!(!d.sequential_steer_allowed(1));
-	}
-
-	#[test]
-	fn sequential_steer_cap_resets_for_user_turn_and_compression() {
-		let mut d = Detectors::default();
-		d.note_sequential_steer();
-		d.reset_streak();
-		assert!(d.sequential_steer_allowed(1));
-
-		// Compression resets both the cap and the partially accumulated streak.
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		d.note_sequential_steer();
-		d.reset_sequential_advisory_budget();
-		assert!(d.sequential_steer_allowed(1));
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-	}
-
-	#[test]
-	fn sequential_streak_ignores_error_recovery_rounds() {
-		let mut d = Detectors::default();
-		// One legit singleton accumulates.
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// An errored singleton round (e.g. git_diff ref not resolving) RESETS the
-		// streak — the failure proves the chain was dependent, not a batching choice.
-		d.note_call("git_diff", "ref did not resolve", true, false);
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// The singleton RETRY right after the errored round is recovery — also
-		// resets, so the steer re-accumulates a full threshold from scratch.
-		d.note_call("shell", "65ab1db…", false, false);
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		// Post-recovery: a full threshold of clean singletons is required to fire.
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::None);
-		assert_eq!(d.record_round_arity(1, 2), DetectorSignal::Sequential);
 	}
 
 	#[test]
@@ -2647,7 +1525,5 @@ mod tests {
 			steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT),
 			steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT + 1)
 		);
-		// Advisory Sequential never escalates to the persistent frame.
-		assert!(!steer_note(DetectorSignal::Sequential, None, 5).contains("blocked"));
 	}
 }

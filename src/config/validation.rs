@@ -37,9 +37,7 @@ impl Config {
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
-		// Optional mechanics are validated only when reachable. In particular,
-		// max_tokens = 0 means unbounded provider output and defeats the external
-		// planner's token budget, so an enabled planner must use a positive cap.
+		// Optional mechanics are validated only when reachable.
 		self.validate_supervisor_plan()?;
 
 		// Compression model: must resolve to a known provider, but EITHER
@@ -59,11 +57,6 @@ impl Config {
 		if plan.model.trim().is_empty() {
 			return Err(anyhow!(
 				"supervisor.plan.model cannot be empty while the external planner is enabled"
-			));
-		}
-		if plan.max_tokens == 0 {
-			return Err(anyhow!(
-				"supervisor.plan.max_tokens must be greater than 0 while the external planner is enabled"
 			));
 		}
 		Ok(())
@@ -366,12 +359,8 @@ mod tests {
 	}
 
 	#[test]
-	fn enabled_external_planner_requires_bounded_output_and_model() {
+	fn enabled_external_planner_requires_a_model() {
 		let mut config = template_config();
-		config.supervisor.plan.max_tokens = 0;
-		assert!(config.validate_supervisor_plan().is_err());
-
-		config.supervisor.plan.max_tokens = 128;
 		config.supervisor.plan.model.clear();
 		assert!(config.validate_supervisor_plan().is_err());
 

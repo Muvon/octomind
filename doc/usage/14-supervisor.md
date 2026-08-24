@@ -8,8 +8,6 @@ It exists to make the loop **more precise**: fewer side-tracks, fewer "looks don
 
 ```
 every turn, FREE:
-  outcome contract (admission) → observable goals + sparse state dependencies
-        │  before first dependent mutation → readiness check (model, rare)
   self-report  ⊕  detectors (counters)      <- two free signals, fused
         │  agree → act with no model
         │  conflict / `done` → ↓
@@ -22,11 +20,11 @@ every turn, FREE:
   steer  → advisory re-anchor when the agent loops or stalls
 ```
 
-The **verify-gate is the reward signal**: it labels a run pass/fail, so the supervisor only learns from work it has evidence was correct. Supervisor context is always explicit, never a silent rewrite. Most feedback is advisory; the sparse readiness and delegate gates may pause only their scoped state-changing call before it executes.
+The **verify-gate is the reward signal**: it labels a run pass/fail, so the supervisor only learns from work it has evidence was correct. Supervisor context is always explicit, never a silent rewrite. All mid-trajectory feedback is advisory — the supervisor steers, it never blocks the agent's route.
 
 ## Self-report
 
-When `[supervisor.detectors] self_report = true`, the agent ends every turn with a compact structured handoff:
+The agent ends every turn with a compact structured handoff:
 
 ```
 <sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum resume-critical fact or opaque reference"]}</sup>
@@ -43,15 +41,15 @@ When `[supervisor.detectors] self_report = true`, the agent ends every turn with
 
 ## Detectors
 
-Deterministic, free, every turn — they cost nothing and decide *when* (rarely) to spend a model call.
+Deterministic, free, every turn — they cost nothing and decide *when* (rarely) to spend a model call. Thresholds are fixed constants, not knobs: they are good defaults nobody should tune per-project.
 
-Both derive from one primitive — **information novelty**: did the action add new information? A mutation (edit/write) always advances state; a read/search advances only when its result is one not seen recently.
+The first two derive from one primitive — **information novelty**: did the action add new information? A mutation (edit/write) always advances state; a read/search advances only when its result is one not seen recently.
 
-- **Loop** — the same *result* repeats `loop_threshold` times in a row (default `3`). Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
-- **No-progress** — `no_progress_window` actions (default `5`) with **zero novelty** — churn, not genuine work.
-- **Sequential** (opt-in, `sequential_threshold = 0` is off) — single-tool-call rounds in a row where independent calls could have been batched into one parallel round. `sequential_max_steers_per_turn` caps emitted advisories within one genuine user turn; `0` is unlimited, and successful compression starts a fresh budget.
+- **Loop** — the same *result* repeats 3 times in a row. Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
+- **No-progress** — 5 actions with **zero novelty** — churn, not genuine work.
+- **Recovery** — command-shaped checks keep failing and no later success from the *same* check discharges them; unrelated fresh reads cannot hide the unresolved failure.
 
-The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, or no-progress otherwise, steers. Agreement needs no model at all.
+The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, recovery, or no-progress otherwise, steers. Agreement needs no model at all.
 
 ## Verify-gate
 
@@ -59,35 +57,18 @@ When the agent self-reports `done` and `[supervisor.gate] enabled = true`, the c
 
 **Free pre-gates (no model call):**
 
-- **Mutation → check** (`require_check_after_mutation`) — state was changed but no successful command execution ran since the change. Tool-agnostic: any non-mutation command that succeeds on an unchanged tree counts as a check, so it works for any domain (build/test/lint, booking confirmations, health checks).
-- **Plan complete** (`require_plan_complete`) — more than the final plan phase remains open. The final phase is judged with the complete result and committed only after `PASS`.
+- **Mutation → check** — state was changed but no successful command execution ran since the change. Tool-agnostic: any non-mutation command that succeeds on an unchanged tree counts as a check, so it works for any domain (build/test/lint, booking confirmations, health checks).
+- **Plan complete** — more than the final plan phase remains open. The final phase is judged with the complete result and committed only after `PASS`.
 
 Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are monitored during execution. A broken assumption emits `reassess`; the external planner revises or holds the unfinished route before completion.
 
 **Model pass (rare):** an independent verifier checks the result against your request:
 
 - **Pass** → the run is labelled verified; distill is allowed to learn from it.
-- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by `max_iterations` (default `2`). Exhaustion hard-stops instead of falling through to another judge.
+- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by a fixed re-entry budget. Exhaustion hard-stops instead of falling through to another judge.
 - **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed successful response gets one bounded format-only retry; substantive gaps do not.
 
 Set `verifier_model` to a **different model family** than your agent model — a same-family verifier inherits the same blind spots and rubber-stamps them.
-
-### Outcome contract and mutation readiness
-
-At task admission, the existing resolver may identify a **state dependency**: an observation whose value can materially change which state-changing action is correct. Each dependency must be grounded by an exact excerpt from the current user request; an invented or historically inherited dependency is discarded.
-
-The specialist sees a compact outcome contract before work begins. It describes the observation, never a required tool or route. Reads and research remain unrestricted. Immediately before the first direct mutation, one high-confidence readiness check compares the dependency with runtime-recorded actions and recent tool output:
-
-- any authoritative route that establishes the observation passes;
-- demonstrated source unavailability passes when the proposed action preserves that limitation;
-- ambiguity, parser failure, or verifier outage passes through;
-- a confident missing observation pauses only the mutation calls, once, with an actionable gap.
-
-There is no new configuration and no per-round judge. Most focused tasks have no state dependency and pay no readiness call. The normal completion gate remains the final backstop.
-
-### Evidence-bound claims
-
-With `claim_check = true`, the agent backs load-bearing facts with a verbatim quote inside an `<evidence locator="source:location">…</evidence>` tag. Each explicit quoted line must occur in current-turn tool provenance (or in the user's current message). Ordinary URLs, paths, and code examples are not inferred to be citations, which avoids treating fixture data as an external source. Unsupported explicit evidence is re-grounded through the verify-gate.
 
 ## Adaptive external planning
 
@@ -97,9 +78,7 @@ The specialist has no plan mutation tool. Later `phase_complete` or `reassess` s
 
 ## Steer
 
-When a detector fires (loop, or no-progress that the self-report doesn't excuse), the supervisor queues an advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report `blocked`"* — injected at the next request's safe point. It nudges; it never forces.
-
-**Circuit-breaker.** A steer is advisory, so a loop can otherwise ignore it forever and burn tokens. `max_consecutive_steers` (default `0` = off) hard-stops the turn after that many consecutive steered rounds without breakout. Before the hard stop, one cheap **on-track checkpoint** classifies whether the current line of work still serves your request: on-track (retrying a failing check, iterating on a fix) resets the steer counter and gets more room; off-track (drifted to unrequested work, cycling on an irrelevant file) stops immediately. Any uncertainty keeps the hard stop.
+When a detector fires (loop, recovery, or no-progress that the self-report doesn't excuse), the supervisor queues an advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report `blocked`"* — injected at the next request's safe point. It nudges; it never forces. Re-emission follows a parameter-free doubling backoff when the agent provably ignores the note (a byte-identical call-set), so an ignored steer stays cheap without going silent.
 
 ## Condense
 
@@ -117,106 +96,72 @@ The numbered-view budget is fixed **per round**, not per result. A large result 
 
 ## Memory: lessons + orientation
 
-The supervisor keeps two kinds of cross-session memory in one backend:
+The supervisor keeps two kinds of cross-session memory in one backend, both under `[supervisor.learning]`:
 
 - **Lessons** — procedural *do / avoid* rules, extracted from your corrections. The deep dive lives in **[Cross-Session Learning](13-learning.md)**.
 - **Orientation** — durable, descriptive understanding of the subject (architecture, decisions, constraints) that was expensive to discover and would otherwise be re-explored. Stored under `memory_type = "orientation"` and recalled as **working assumptions to verify**, never as truth.
 
 The rule for what to store: *cache what is expensive to re-derive, never what one search recovers.* A symbol's location is cheap (grep finds it); an architectural decision is not.
 
-**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict: entries that were in context when a run **passes** get reinforced (importance up); entries present when a run **fails after retries** are decayed (importance down) and dropped once they fall below a floor. A distill-time pass additionally prunes entries that have gone both stale (older than `decay_days`) and weak. So memory is validated by *outcome*, not by assertion — useful knowledge strengthens, misleading or unused knowledge fades out.
+**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict: entries that were in context when a run **passes** get reinforced (importance up); entries present when a run **fails after retries** are decayed (importance down) and dropped once they fall below a floor. A distill-time pass additionally prunes entries that have gone both stale and weak. So memory is validated by *outcome*, not by assertion — useful knowledge strengthens, misleading or unused knowledge fades out.
 
 **Verified lessons.** Extraction is quote-first: every lesson must carry a verbatim user quote as evidence. At distill time, one batched verifier pass re-checks each candidate lesson's evidence against the transcript and drops any lesson whose quote is unsupported — a lesson the model invented or stretched never reaches storage.
 
 ## Recite
 
-On long (already-compacted) sessions, the live goal — anchor intent plus next steps — is re-injected at the context tail each turn, so it stays in the high-attention recency window instead of buried in the mid-transcript summary. Short sessions (no compaction yet, empty anchor) pay nothing. Config: `[supervisor.recite] enabled`.
+On long (already-compacted) sessions, the live goal — anchor intent plus next steps — is re-injected at the context tail each turn, so it stays in the high-attention recency window instead of buried in the mid-transcript summary. Short sessions (no compaction yet, empty anchor) pay nothing. Always on; no configuration.
 
-## Delegate gate
+## Delegation
 
-`tap run` / `agent_*` spawn a **context-isolated** child that sees only the prompt string — no transcript, no prior tool output. Before the spawn, one cheap-model call judges each proposed handoff against the parent's goal, live request and plan: is it faithful to what you asked, self-contained (concrete paths, symbols, commands, constraints), does it state the deliverable and the scope edge? A failing handoff is **not spawned** — the gaps come back as a tool error so the agent rewrites the prompt, bounded by `max_revisions` per turn. Fail-open on any gate outage.
+`tap run` / `agent_*` spawn a **context-isolated** child that sees only the prompt string — no transcript, no prior tool output. Handoff quality is owned at prompt time: the spawn tools' own descriptions state that the child starts with zero context and must receive the goal, the established facts, constraints, and the expected deliverable. The child itself is the ground truth for whether the handoff worked — it reports its own end-of-turn verified/unverified verdict back to the parent, which folds it into detector and gate state.
 
 ## Configuration
 
-The supervisor is configured under `[supervisor]`. It is **strict**: a missing `[supervisor]` section — or any required key within it — is a hard parse error. We own the schema, so we fail loudly instead of degrading to silent defaults.
+The supervisor is configured under `[supervisor]`. It is **strict**: a missing `[supervisor]` section — or any required key within it — is a hard parse error. We own the schema, so we fail loudly instead of degrading to silent defaults. Detectors, recitation, and the free pre-gates are always on with fixed thresholds — behavior, not knobs.
 
 ```toml
 [supervisor]
 enabled = true
-model   = "anthropic:claude-haiku-4-5"   # shared cheap model for gate/reflection
-claim_check = true                       # evidence-bound claims, verified deterministically
-max_consecutive_steers = 0               # steer circuit-breaker; 0 = off
+model   = "octohub:auto"   # shared cheap model for supervisor mechanics
 
-[supervisor.learning]      # procedural lessons — see 13-learning.md
+[supervisor.learning]      # lessons + orientation — see 13-learning.md
 enabled = true
+model   = "octohub:auto"
 backend = "file"
-max_inject = 5
-
-[supervisor.orientation]   # durable subject understanding
-enabled = true
-max_inject = 5
-decay_days = 90
-
-[supervisor.detectors]     # deterministic, free, every turn
-loop_threshold = 3
-no_progress_window = 5
-self_report = true
-sequential_threshold = 0   # opt-in over-sequencing advisory
-sequential_max_steers_per_turn = 0 # 0 = unlimited; successful compression resets it
 
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true
-max_iterations = 2
 verifier_model = "openai:gpt-5-mini"     # recommended: a DIFFERENT family than the agent model
-require_check_after_mutation = true
-require_plan_complete = true
 max_tokens = 8192
 
 [supervisor.plan]          # adaptive external plan manager
 enabled = true
 model = "octohub:auto"
-max_tokens = 2048          # generated JSON decision; not input context
-trajectory_max_tokens = 4096 # locally bounded assistant/tool input slice
-adoption_min_actions = 8
-adoption_min_distinct_actions = 4
-
-[supervisor.recite]        # goal recitation on compacted sessions
-enabled = true
 
 [supervisor.condense]      # task-aware narrowing of oversized tool outputs
 enabled = true
 tokens_threshold = 5000
 model = "anthropic:claude-haiku-4-5"
-
-[supervisor.delegate]      # handoff quality check before spawning subagents
-enabled = true
-model = "anthropic:claude-haiku-4-5"
-max_revisions = 2
 ```
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
 
 ## Invariants
 
-1. **Free signals gate the model.** Counters and the self-report run every turn at zero cost; model checks are sparse — completion, a detector conflict, or the first mutation of a task with an explicitly grounded state dependency.
-2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. A wrong supervisor degrades gracefully instead of corrupting the run.
+1. **Free signals gate the model.** Counters and the self-report run every turn at zero cost; model checks are sparse — completion, a detector conflict, an oversized tool round.
+2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. A wrong supervisor degrades gracefully instead of corrupting the run. No mid-trajectory judge ever blocks a tool call.
 3. **Out-of-band.** Status tokens are stripped from display; supervisor deliberation never reaches your transcript.
 
 ## Mechanics at a glance
 
 | Mechanic | When | Cost | Config |
 |----------|------|------|--------|
-| Self-report | Every turn | Free | `[supervisor.detectors] self_report` |
-| Detectors (loop / no-progress / sequential / re-read) | Every turn | Free | `[supervisor.detectors]` |
-| Evidence-bound claims | Every answer with task facts | Free | `[supervisor] claim_check` |
-| Outcome contract | Task admission | Existing resolver call | None (automatic) |
-| Mutation readiness | First mutation with a grounded state dependency | Model (rare, one-shot) | None (automatic) |
-| Free pre-gates (mutation→check, plan complete / coverage / conditions) | On self-reported `done` | Free | `[supervisor.gate]` |
+| Self-report | Every turn | Free | None (automatic) |
+| Detectors (loop / no-progress / recovery) | Every turn | Free | None (automatic) |
+| Free pre-gates (mutation→check, plan complete) | On self-reported `done` | Free | `[supervisor.gate]` |
 | Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
 | Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |
-| Steer | On loop / no-progress | Free | `[supervisor.detectors]` |
-| Steer circuit-breaker + on-track checkpoint | After `max_consecutive_steers` steers | Model (cheap, per breaker trip) | `[supervisor] max_consecutive_steers` |
-| Recite | Every turn on compacted sessions | Free | `[supervisor.recite]` |
-| Delegate gate | Before each subagent spawn | Model (cheap) | `[supervisor.delegate]` |
-| Distill (learn) + lesson verification | End of a verified run | Model (cheap) | `[supervisor.learning]`, `[supervisor.orientation]` |
-| Recall | Session start + per turn | Embedding | `[supervisor.learning]`, `[supervisor.orientation]` |
+| Steer | On loop / no-progress / recovery | Free | None (automatic) |
+| Recite | Every turn on compacted sessions | Free | None (automatic) |
+| Distill (learn) + lesson verification | End of a verified run | Model (cheap) | `[supervisor.learning]` |
+| Recall | Session start + per turn | Embedding | `[supervisor.learning]` |

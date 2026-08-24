@@ -40,13 +40,10 @@ pub fn strip_system_tags(content: &str) -> String {
 /// Returns the content to display (either full content or trimmed content)
 pub fn get_content_to_display(content: &str, thinking: &Option<ThinkingBlock>) -> String {
 	// Defense in depth: strip the supervisor's internal status token
-	// (`<sup>state…</sup>`) and `<evidence>…</evidence>` citation tags so they
-	// can never reach the screen from any display path, independent of the
-	// parse/strip in process_response. Both stay in the stored message — only
-	// the rendering drops them.
-	let content_owned = crate::supervisor::detect::strip_evidence(
-		&crate::supervisor::detect::strip_self_report(content),
-	);
+	// (`<sup>state…</sup>`) so it can never reach the screen from any display
+	// path, independent of the parse/strip in process_response. It stays in the
+	// stored message — only the rendering drops it.
+	let content_owned = crate::supervisor::detect::strip_self_report(content);
 	let content = content_owned.as_str();
 	if let Some(ref thinking_block) = thinking {
 		// Check if thinking content is a prefix of the full content

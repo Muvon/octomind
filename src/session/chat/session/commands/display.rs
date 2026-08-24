@@ -683,9 +683,6 @@ pub fn display_info(output: &CommandOutput) {
 			let resolve_calls = get_u64("resolve_calls");
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
-			let delegate_calls = get_u64("delegate_calls");
-			let delegate_runs = get_u64("delegate_runs");
-			let delegate_blocks = get_u64("delegate_blocks");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
 			let sup_in = get_u64("input_tokens");
@@ -698,8 +695,6 @@ pub fn display_info(output: &CommandOutput) {
 			let gate_stall = get_u64("gate_stall");
 			let steers = get_u64("steers");
 			let pregate_blocks = get_u64("pregate_blocks");
-			let claim_blocks = get_u64("claim_blocks");
-			let plan_blocks = get_u64("plan_blocks");
 			let lessons = get_u64("lessons_stored");
 			let orientation = get_u64("orientation_stored");
 			let recalls = get_u64("recalls_injected");
@@ -738,12 +733,6 @@ pub fn display_info(output: &CommandOutput) {
 			if pregate_blocks > 0 {
 				activity.push(format!("{} check-blocks", pregate_blocks));
 			}
-			if claim_blocks > 0 {
-				activity.push(format!("{} claim-blocks", claim_blocks));
-			}
-			if plan_blocks > 0 {
-				activity.push(format!("{} plan-blocks", plan_blocks));
-			}
 			if lessons > 0 {
 				activity.push(format!("{} lessons", lessons));
 			}
@@ -755,12 +744,6 @@ pub fn display_info(output: &CommandOutput) {
 					"{} condensed (saved {} tok)",
 					condensed_results,
 					format_number(condense_saved)
-				));
-			}
-			if delegate_runs > 0 {
-				activity.push(format!(
-					"{} handoff-checks ({} rejected)",
-					delegate_runs, delegate_blocks
 				));
 			}
 			if !activity.is_empty() {
@@ -796,9 +779,6 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if condense_calls > 0 {
 					parts.push(format!("{} condense", condense_calls));
-				}
-				if delegate_calls > 0 {
-					parts.push(format!("{} delegate", delegate_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

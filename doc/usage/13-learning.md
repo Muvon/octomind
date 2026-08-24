@@ -17,15 +17,13 @@ So scoped lessons are organized **project first, then role** (project knowledge 
 
 ## Configuration
 
-Learning is one mechanic of the **supervisor** — the out-of-band control plane around the agent loop — so its config lives under `[supervisor.learning]`. (Earlier versions used a top-level `[learning]` table; that is a **breaking** rename with no migration.) See [`[supervisor]` in the config reference](../reference/03-config-reference.md#supervisor) for the sibling sections (orientation, detectors, gate).
+Learning is one mechanic of the **supervisor** — the out-of-band control plane around the agent loop — so its config lives under `[supervisor.learning]`. (Earlier versions used a top-level `[learning]` table; that is a **breaking** rename with no migration.) See [`[supervisor]` in the config reference](../reference/03-config-reference.md#supervisor) for the sibling sections (gate, plan, condense).
 
 ```toml
 [supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
 backend = "file"
-min_messages_for_intermediate = 3
-max_inject = 5
 ```
 
 | Field | Description | Default |
@@ -33,14 +31,14 @@ max_inject = 5
 | `enabled` | Enable the learning system. | `true` |
 | `model` | Model for extraction and retrieval-prep LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
 | `backend` | `"file"` (default) or `"mcp"` for external memory tools. | `"file"` |
-| `min_messages_for_intermediate` | Minimum user messages before intermediate learning triggers during auto-compaction. | `3` |
-| `max_inject` | Maximum lessons injected per tier per retrieval. | `5` |
+
+Intermediate-learning cadence (3 user messages) and the per-retrieval injection cap (5) are fixed constants, not knobs.
 
 > **Strict config, template-provided values.** The supervisor config is strict: the `[supervisor]` section and its `[supervisor.learning]` table are **required** — removing them is a hard parse error, not a silent fall-back. Within `[supervisor.learning]`, an *omitted field* still takes the code default (e.g. `enabled` → `false` (learning OFF), `model` → the dated build `anthropic:claude-haiku-4-5-20251001`). Learning is on out of the box only because the shipped template sets `enabled = true` explicitly. See [Supervisor](14-supervisor.md) for the sibling mechanics.
 
 ### Orientation memory
 
-Alongside lessons (the procedural *"do / avoid"*), the supervisor stores **orientation** — durable, descriptive understanding of the subject: how it works, key decisions, constraints. It rides the same backend under `memory_type = "orientation"` and is recalled as **working assumptions to verify**, never as truth, under its own `## Orientation` heading. Configure it under `[supervisor.orientation]` (`enabled`, `max_inject`, `decay_days`).
+Alongside lessons (the procedural *"do / avoid"*), the supervisor stores **orientation** — durable, descriptive understanding of the subject: how it works, key decisions, constraints. It rides the same backend under `memory_type = "orientation"` and is recalled as **working assumptions to verify**, never as truth, under its own `## Orientation` heading. It is part of learning — on whenever `[supervisor.learning]` is enabled, with fixed injection and decay bounds.
 
 ## How It Works
 
@@ -97,7 +95,7 @@ Files are human-readable and editable. Delete a file to remove a lesson — or u
 
 Extraction is triggered by:
 - **`/done`** — extracts (if `supervisor.learning.enabled`) regardless of the compression result, and marks the session so `/exit` and Ctrl+D don't extract a second time.
-- **Auto-compaction** — extracts during compression if the session has enough user messages (configurable via `min_messages_for_intermediate`).
+- **Auto-compaction** — extracts during compression once the session has at least 3 user messages.
 - **Session exit** — fire-and-forget extraction when the session ends naturally via `/exit`, `/quit`, or Ctrl+D. Skipped if `/done` already extracted during the session.
 
 Extraction always runs **detached** (a background task with no cost tracked against your session) and is deliberately strict about what counts as a lesson:

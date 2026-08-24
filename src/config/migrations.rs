@@ -73,9 +73,76 @@ fn plan() -> MigrationPlan {
 				to: 6,
 				apply: remove_v6_compression_hints,
 			},
+			VersionMigration {
+				from: 6,
+				to: 7,
+				apply: remove_v7_supervisor_judges,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v7 removes the supervisor's judge mechanics and their knobs: claim_check,
+/// the steer circuit-breaker, the delegate gate, per-knob detectors (now fixed
+/// constants), recitation/orientation switches (now always on with learning),
+/// hardcoded gate/plan budgets, and plan auto-adoption. The mechanics were
+/// deleted from the runtime; this keeps user configs free of dead keys.
+fn remove_v7_supervisor_judges(
+	document: &mut toml_edit::DocumentMut,
+	_template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let Some(supervisor) = document
+		.as_table_mut()
+		.get_mut("supervisor")
+		.and_then(|item| item.as_table_mut())
+	else {
+		return Ok(());
+	};
+	for key in [
+		"claim_check",
+		"max_consecutive_steers",
+		"orientation",
+		"detectors",
+		"recite",
+		"delegate",
+	] {
+		supervisor.remove(key);
+	}
+	if let Some(gate) = supervisor
+		.get_mut("gate")
+		.and_then(|item| item.as_table_mut())
+	{
+		for key in [
+			"max_iterations",
+			"require_check_after_mutation",
+			"require_plan_complete",
+		] {
+			gate.remove(key);
+		}
+	}
+	if let Some(plan) = supervisor
+		.get_mut("plan")
+		.and_then(|item| item.as_table_mut())
+	{
+		for key in [
+			"max_tokens",
+			"trajectory_max_tokens",
+			"adoption_min_actions",
+			"adoption_min_distinct_actions",
+		] {
+			plan.remove(key);
+		}
+	}
+	if let Some(learning) = supervisor
+		.get_mut("learning")
+		.and_then(|item| item.as_table_mut())
+	{
+		for key in ["min_messages_for_intermediate", "max_inject"] {
+			learning.remove(key);
+		}
+	}
+	Ok(())
 }
 
 /// v6 removes the obsolete terminal `/plan next` hint. Plan state is owned by
@@ -117,49 +184,30 @@ fn add_v5_supervisor_fields(
 	)?;
 
 	merge_missing(supervisor, template_supervisor, "gate")?;
-	merge_missing(supervisor, template_supervisor, "plan")?;
-	let template_detectors = required_table(
-		template_supervisor,
-		"detectors",
-		"embedded default configuration",
-	)?;
-	let detectors = ensure_table(
-		supervisor,
-		template_supervisor,
-		"detectors",
-		"user configuration",
-	)?;
-	merge_missing(detectors, template_detectors, "reread_threshold")
+	merge_missing(supervisor, template_supervisor, "plan")
 }
 
-/// v2 (octomind 0.40) adds `[supervisor.delegate]` — the handoff quality gate.
-///
-/// A config that predates `[supervisor]` altogether gets the whole section from
-/// the template (octomind requires every field to be present), otherwise only
-/// the missing `delegate` keys are filled in; user values always win.
+/// v2 (octomind 0.40) originally added the delegate gate; the gate is gone
+/// (v7 removes its keys), so this step now only guarantees a `[supervisor]`
+/// section exists — a config predating it gets the whole section from the
+/// template (octomind requires every field to be present).
 fn add_delegate_gate(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
-	let template_supervisor = required_table(
-		template.as_table(),
-		"supervisor",
-		"embedded default configuration",
-	)?;
-
-	let supervisor = ensure_table(
+	ensure_table(
 		document.as_table_mut(),
 		template.as_table(),
 		"supervisor",
 		"user configuration",
 	)?;
-
-	merge_missing(supervisor, template_supervisor, "delegate")
+	Ok(())
 }
 
-/// v3 adds required budgets for retained compression findings, Sequential
-/// advisories, and the PACT attention controller. Existing values and comments
-/// are preserved; only missing keys are copied from the embedded template.
+/// v3 adds required budgets for retained compression findings and the PACT
+/// attention controller. Existing values and comments are preserved; only
+/// missing keys are copied from the embedded template. (Its detector-advisory
+/// keys were removed again in v7.)
 fn add_v3_required_fields(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
@@ -181,35 +229,7 @@ fn add_v3_required_fields(
 		template_compression,
 		"analysis_findings_max_tokens",
 	)?;
-	merge_missing(compression, template_compression, "attention")?;
-	let template_supervisor = required_table(
-		template.as_table(),
-		"supervisor",
-		"embedded default configuration",
-	)?;
-	let template_detectors = required_table(
-		template_supervisor,
-		"detectors",
-		"embedded default configuration",
-	)?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
-		"supervisor",
-		"user configuration",
-	)?;
-	let detectors = ensure_table(
-		supervisor,
-		template_supervisor,
-		"detectors",
-		"user configuration",
-	)?;
-
-	merge_missing(
-		detectors,
-		template_detectors,
-		"sequential_max_steers_per_turn",
-	)
+	merge_missing(compression, template_compression, "attention")
 }
 
 /// v4 collapses the `[[compression.pressure_levels]]` ladder into the single
@@ -370,18 +390,11 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(6));
+		assert_eq!(migrated["version"].as_integer(), Some(7));
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
-		assert!(migrated["supervisor"]["delegate"]["enabled"]
-			.as_bool()
-			.is_some());
 		assert_eq!(
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 			Some(6000)
-		);
-		assert_eq!(
-			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
-			Some(0)
 		);
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -395,14 +408,9 @@ mod tests {
 			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
 			Some(8192)
 		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
-			Some(2048)
-		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["trajectory_max_tokens"].as_integer(),
-			Some(4096)
-		);
+		assert!(migrated["supervisor"]["plan"]["model"].as_str().is_some());
+		assert!(migrated["supervisor"].get("delegate").is_none());
+		assert!(migrated["supervisor"].get("detectors").is_none());
 	}
 
 	#[test]
@@ -420,7 +428,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 6);
+		assert_eq!(migration.to_version, 7);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -448,83 +456,20 @@ enabled = true
 	}
 
 	#[test]
-	fn v1_gains_delegate_and_keeps_user_values_and_comments() {
+	fn v1_keeps_user_values_and_comments_and_sheds_judge_keys() {
 		let existing = r#"# keep me
 version = 1
 
 [supervisor]
 enabled = false
 model = "openrouter:custom/model"
+claim_check = true
+max_consecutive_steers = 5
 
 [supervisor.condense]
 enabled = false
 tokens_threshold = 1234
 model = "openrouter:custom/model"
-"#;
-
-		let migration = plan()
-			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.expect("v1 must migrate");
-
-		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 6);
-		assert!(migration.content.contains("# keep me"));
-		// The template's documentation comes across with the new section.
-		assert!(migration.content.contains("# Delegate gate"));
-
-		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(6));
-		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
-		assert_eq!(
-			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
-			Some(1234)
-		);
-		assert_eq!(
-			migrated["supervisor"]["delegate"]["enabled"].as_bool(),
-			Some(true)
-		);
-		assert!(migrated["supervisor"]["delegate"]["max_revisions"]
-			.as_integer()
-			.is_some());
-	}
-
-	#[test]
-	fn partially_configured_delegate_keeps_user_keys() {
-		let existing = r#"version = 1
-
-[supervisor]
-enabled = true
-
-[supervisor.delegate]
-enabled = false
-"#;
-
-		let migration = plan()
-			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.expect("v1 must migrate");
-		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-
-		assert_eq!(
-			migrated["supervisor"]["delegate"]["enabled"].as_bool(),
-			Some(false)
-		);
-		// Keys the user never set are filled from the template.
-		assert!(migrated["supervisor"]["delegate"]["model"]
-			.as_str()
-			.is_some());
-		assert!(migrated["supervisor"]["delegate"]["max_revisions"]
-			.as_integer()
-			.is_some());
-	}
-
-	#[test]
-	fn fully_configured_delegate_is_untouched() {
-		let existing = r#"version = 1
-
-[supervisor]
-enabled = true
 
 [supervisor.delegate]
 enabled = false
@@ -535,17 +480,25 @@ max_revisions = 9
 		let migration = plan()
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
-			.expect("v1 must migrate to stamp the version");
-		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+			.expect("v1 must migrate");
 
+		assert_eq!(migration.from_version, 1);
+		assert_eq!(migration.to_version, 7);
+		assert!(migration.content.contains("# keep me"));
+
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(migrated["version"].as_integer(), Some(7));
+		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
-			migrated["supervisor"]["delegate"]["model"].as_str(),
-			Some("openrouter:custom/model")
+			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
+			Some(1234)
 		);
-		assert_eq!(
-			migrated["supervisor"]["delegate"]["max_revisions"].as_integer(),
-			Some(9)
-		);
+		// Dead judge keys are removed, whatever the user had set them to.
+		assert!(migrated["supervisor"].get("delegate").is_none());
+		assert!(migrated["supervisor"].get("claim_check").is_none());
+		assert!(migrated["supervisor"]
+			.get("max_consecutive_steers")
+			.is_none());
 	}
 
 	#[test]
@@ -570,7 +523,7 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 6);
+		assert_eq!(migration.to_version, 7);
 		assert!(migration.content.contains("# keep compression notes"));
 		assert!(migrated["compression"].get("hints_enabled").is_none());
 		assert!(migrated["compression"]
@@ -585,14 +538,7 @@ sequential_threshold = 3
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 			Some(6000)
 		);
-		assert_eq!(
-			migrated["supervisor"]["detectors"]["sequential_threshold"].as_integer(),
-			Some(3)
-		);
-		assert_eq!(
-			migrated["supervisor"]["detectors"]["sequential_max_steers_per_turn"].as_integer(),
-			Some(0)
-		);
+		assert!(migrated["supervisor"].get("detectors").is_none());
 	}
 
 	#[test]
@@ -618,7 +564,7 @@ target_ratio = 4.0
 			.expect("v3 must migrate");
 
 		assert_eq!(migration.from_version, 3);
-		assert_eq!(migration.to_version, 6);
+		assert_eq!(migration.to_version, 7);
 		assert!(migration.content.contains("# keep my notes"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -653,16 +599,12 @@ trajectory_max_tokens = 3072
 			.unwrap()
 			.expect("v4 must migrate");
 		assert_eq!(migration.from_version, 4);
-		assert_eq!(migration.to_version, 6);
+		assert_eq!(migration.to_version, 7);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["supervisor"]["gate"]["verifier_model"].as_str(),
 			Some("openai:custom-verifier")
-		);
-		assert_eq!(
-			migrated["supervisor"]["gate"]["max_iterations"].as_integer(),
-			Some(7)
 		);
 		assert_eq!(
 			migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
@@ -676,22 +618,14 @@ trajectory_max_tokens = 3072
 			migrated["supervisor"]["plan"]["model"].as_str(),
 			Some("openai:custom-planner")
 		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["max_tokens"].as_integer(),
-			Some(1536)
-		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["trajectory_max_tokens"].as_integer(),
-			Some(3072)
-		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["adoption_min_actions"].as_integer(),
-			Some(8)
-		);
-		assert_eq!(
-			migrated["supervisor"]["plan"]["adoption_min_distinct_actions"].as_integer(),
-			Some(4)
-		);
+		// Hardcoded budgets and auto-adoption knobs are shed by v7.
+		assert!(migrated["supervisor"]["gate"]
+			.get("max_iterations")
+			.is_none());
+		assert!(migrated["supervisor"]["plan"].get("max_tokens").is_none());
+		assert!(migrated["supervisor"]["plan"]
+			.get("adoption_min_actions")
+			.is_none());
 	}
 
 	#[test]
@@ -727,7 +661,7 @@ threshold = 12345
 			.unwrap()
 			.expect("v5 must migrate");
 		assert_eq!(migration.from_version, 5);
-		assert_eq!(migration.to_version, 6);
+		assert_eq!(migration.to_version, 7);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		let compression = migrated["compression"].as_table().unwrap();
@@ -740,7 +674,7 @@ threshold = 12345
 
 	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 6", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 7", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

@@ -68,8 +68,6 @@ pub enum ModelPurpose {
 	SupervisorCondense,
 	/// End-of-trajectory lesson/orientation extraction.
 	SupervisorDistill,
-	/// Subagent handoff quality gate (`tap run` / `agent_*`).
-	SupervisorDelegate,
 	/// Recall keyword/query preparation.
 	SupervisorRecall,
 	/// Conversation-compression decisions and summaries.
@@ -83,7 +81,6 @@ impl ModelPurpose {
 			Self::SupervisorGate => "supervisor-gate",
 			Self::SupervisorCondense => "supervisor-condense",
 			Self::SupervisorDistill => "supervisor-distill",
-			Self::SupervisorDelegate => "supervisor-delegate",
 			Self::SupervisorRecall => "supervisor-recall",
 			Self::Compression => "compression",
 		}
@@ -586,10 +583,6 @@ mod tests {
 			"supervisor-distill"
 		);
 		assert_eq!(ModelPurpose::SupervisorRecall.as_str(), "supervisor-recall");
-		assert_eq!(
-			ModelPurpose::SupervisorDelegate.as_str(),
-			"supervisor-delegate"
-		);
 		// Untagged calls are MAIN traffic — session turns must never silently
 		// become something a cheaper purpose route would catch.
 		assert_eq!(ModelPurpose::default(), ModelPurpose::Main);

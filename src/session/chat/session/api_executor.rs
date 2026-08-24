@@ -98,34 +98,6 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	crate::session::truncate_to_tokens(&kept.join(ANSWER_PART_SEPARATOR), max_tokens)
 }
 
-/// Everything the model may legitimately quote in an `<evidence>` tag: the
-/// current turn's ledger, the user's own message (a link they supplied is fair
-/// to reference back), every tool result still in context, and compaction
-/// summaries.
-///
-/// The ledger alone is not enough. It is reset at every genuine user turn —
-/// correct for the completion gate, which judges one task — so a follow-up like
-/// "summarize what you found" would have every quote from the previous turn
-/// flagged as fabricated even though the tool output is right there in context.
-/// Compaction summaries embed `<file_context>` read from disk at compression
-/// time and the system prompt tells the model to cite them WITHOUT re-reading,
-/// so they are grounds too even though the ledger never saw those reads.
-fn citation_grounds(chat_session: &ChatSession, turn_start: usize) -> Vec<String> {
-	let mut grounds = chat_session.evidence.citation_grounds();
-	if let Some(user_msg) = chat_session.session.messages.get(turn_start) {
-		grounds.push(user_msg.content.clone());
-	}
-	for message in &chat_session.session.messages {
-		if message.role == "tool"
-			|| message.name.as_deref()
-				== Some(crate::session::chat::conversation_compression::COMPRESSION_MESSAGE_NAME)
-		{
-			grounds.push(message.content.clone());
-		}
-	}
-	grounds
-}
-
 /// Apply the verify-gate's verdict back to the entries recalled this trajectory:
 /// positive `delta` reinforces (the recall helped); negative decays (it may have
 /// misled). Clears the recalled set either way.
@@ -283,11 +255,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.as_ref()
 			.is_some_and(|task| task.forbids_verification),
 	);
-	if config.supervisor.enabled
-		&& (config.supervisor.recite.enabled
-			|| crate::mcp::core::plan::has_active_plan()
-			|| effective_verification_policy != crate::supervisor::VerificationPolicy::Unspecified)
-	{
+	if config.supervisor.enabled {
 		// Prefer the live plan checklist (refreshed every turn from plan storage)
 		// over the anchor's stale next_steps snapshot for the recency-slot block.
 		// A plan untouched since before the latest user message carries a
@@ -533,7 +501,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.last_self_report,
 			Some(crate::supervisor::detect::SelfReport::Exploring)
 				| Some(crate::supervisor::detect::SelfReport::Progressing)
-		) && chat_session.nudge_iterations < config.supervisor.gate.max_iterations
+		) && chat_session.nudge_iterations < crate::supervisor::gate::MAX_ITERATIONS
 	{
 		chat_session.add_system_managed_user_message(CONTINUE_NOTE)?;
 		chat_session.last_self_report = None;
@@ -562,7 +530,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={}",
 			chat_session.last_self_report,
 			chat_session.gate_iterations,
-			config.supervisor.gate.max_iterations,
+			crate::supervisor::gate::MAX_ITERATIONS,
 			chat_session.nudge_iterations,
 			chat_session
 				.detectors
@@ -579,7 +547,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.completion_gate_eligible,
 			chat_session.last_self_report,
 			!chat_session.evidence.mutated_paths().is_empty(),
-		) && chat_session.gate_iterations < config.supervisor.gate.max_iterations
+		) && chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS
 	{
 		// One genuine user message defines the verification turn. Supervisor,
 		// recall, skill, and continuation injections after it remain part of the
@@ -650,8 +618,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// answer_only verdict stands this pre-gate down just as it suppresses
 		// automatic plan formation; the LLM verify-gate still judges the report
 		// itself under its observe-only rules.
-		if config.supervisor.gate.require_check_after_mutation
-			&& !resolved_task.answer_only
+		if !resolved_task.answer_only
 			&& !validators_configured
 			&& !check_run_forbidden
 			&& chat_session
@@ -659,7 +626,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.needs_verification(crate::supervisor::workdir::fingerprint())
 		{
 			let next_iteration = chat_session.nudge_iterations.saturating_add(1);
-			if next_iteration >= config.supervisor.gate.max_iterations {
+			if next_iteration >= crate::supervisor::gate::MAX_ITERATIONS {
 				chat_session.nudge_iterations = next_iteration;
 				chat_session.gate_failed = true;
 				chat_session.pending_plan_signal = None;
@@ -692,67 +659,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			.await;
 		}
 
-		// Free evidence check (no model call): validate only explicit
-		// `<evidence>` metadata. Ordinary URLs and file-like prose are task
-		// material, examples, or deliverable content just as often as citations;
-		// scanning all of them creates category-error false positives.
-		if config.supervisor.claim_check {
-			let grounds = citation_grounds(chat_session, turn_start);
-			let unverified = crate::supervisor::detect::unverified_citations(
-				&chat_session.last_response,
-				&grounds,
-			);
-			if !unverified.is_empty() {
-				let next_iteration = chat_session.nudge_iterations.saturating_add(1);
-				if next_iteration >= config.supervisor.gate.max_iterations {
-					chat_session.nudge_iterations = next_iteration;
-					chat_session.gate_failed = true;
-					chat_session.pending_plan_signal = None;
-					crate::supervisor::stats::claim_block();
-					crate::supervisor::stats::gate_fail();
-					crate::supervisor::notify(&format!(
-						"{} unsupported evidence quote(s) remain — repair budget exhausted",
-						unverified.len()
-					));
-					return Ok(());
-				}
-				let mut note = String::from("<pay-attention>\n");
-				note.push_str(
-					"Each quote below was presented as verbatim evidence from a tool result, but it string-matches no output you received — so it is unsupported. For each, go back to the actual tool output (not your earlier answer): copy the exact lines that support the claim, then restate the claim from them. If no tool output contains them, say so and drop that claim — \"not found in tool output\" is the correct answer here; never invent a source. Unsupported quotes:\n",
-				);
-				for q in &unverified {
-					note.push_str("- ");
-					note.push_str(q);
-					note.push('\n');
-				}
-				note.push_str(
-					"Then re-emit your full answer to the user's original request, self-contained — the version these quotes came from never reached them, so a correction or a remark about this repair answers nothing.\n</pay-attention>",
-				);
-				chat_session.add_system_managed_user_message(&note)?;
-				chat_session.last_self_report = None; // force the re-run to re-evaluate
-				chat_session.nudge_iterations = next_iteration;
-				crate::supervisor::stats::claim_block();
-				crate::supervisor::notify(&format!(
-					"{} unsupported evidence quote(s) — re-running",
-					unverified.len()
-				));
-				crate::log_debug!(
-					"Evidence check: {} unsupported quote(s); re-running (iter {})",
-					unverified.len(),
-					chat_session.nudge_iterations
-				);
-				return Box::pin(execute_api_call_and_process_response(
-					chat_session,
-					config,
-					role,
-					operation_rx,
-					mode,
-					sink,
-				))
-				.await;
-			}
-		}
-
 		// The whole turn's answer, not just its last message: a supervisor re-run
 		// answers the correction it was given, so the deliverable usually sits in an
 		// earlier part of the same turn.
@@ -769,7 +675,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let actions = chat_session.evidence.render();
 		// Only a relevant pre-existing plan or a plan changed by this turn reaches
 		// the verifier. Unrelated old plan state remains alive but cannot add scope.
-		let plan = if plan_applies && config.supervisor.gate.require_plan_complete {
+		let plan = if plan_applies {
 			live_plan
 		} else {
 			String::new()
@@ -897,7 +803,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					gaps.len(),
 					chat_session.gate_iterations
 				);
-				if chat_session.gate_iterations < config.supervisor.gate.max_iterations {
+				if chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS {
 					let mut msg = format!("verification found {} gap(s) — re-running", gaps.len());
 					for g in &gaps {
 						msg.push_str("\n- ");
@@ -944,7 +850,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// verification.
 				if let Some(note) = crate::supervisor::gate::unverified_reentry(
 					chat_session.gate_iterations,
-					config.supervisor.gate.max_iterations,
+					crate::supervisor::gate::MAX_ITERATIONS,
 				) {
 					chat_session.add_system_managed_user_message(&note)?;
 					chat_session.last_self_report = None; // force the re-run to re-evaluate
@@ -1023,38 +929,6 @@ mod tests {
 		let old = "many different words fill the older pass ".repeat(50);
 		let answers = vec![old, "the amendment".to_string()];
 		assert_eq!(current_turn_answer(&answers, 16), "the amendment");
-	}
-
-	/// Regression: a follow-up user turn resets the evidence ledger, so before
-	/// tool messages counted as grounds every quote sourced from the previous
-	/// turn's tool output was flagged as fabricated.
-	#[test]
-	fn tool_output_from_an_earlier_turn_is_still_citable() {
-		let mut session = ChatSession::for_tests(vec![
-			crate::session::Message {
-				role: "user".to_string(),
-				content: "review the diff".to_string(),
-				..Default::default()
-			},
-			crate::session::Message {
-				role: "tool".to_string(),
-				content: "312:17|\t\t\t\tif (!$ack_live_payment) {".to_string(),
-				..Default::default()
-			},
-			crate::session::Message {
-				role: "user".to_string(),
-				content: "restate that with evidence".to_string(),
-				..Default::default()
-			},
-		]);
-		// The genuine user turn wiped the ledger — the state the bug ran in.
-		session.evidence.reset();
-		let grounds = citation_grounds(&session, 2);
-		assert!(crate::supervisor::detect::unverified_citations(
-			"<evidence locator=\"DealService.php:312\">if (!$ack_live_payment) {</evidence>",
-			&grounds,
-		)
-		.is_empty());
 	}
 
 	#[test]

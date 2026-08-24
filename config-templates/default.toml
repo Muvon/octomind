@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 6
+version = 7
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -674,87 +674,26 @@ ignore_cost = false  # When true, compression decision API cost is not tracked (
 enabled = true
 # Shared cheap model for supervisor mechanics (a mechanic may override)
 model = "octohub:auto"
-# Evidence-bound claims: have the agent back load-bearing repo facts with a
-# verbatim <evidence> quote, then deterministically verify each quote occurs in
-# current-turn tool output. Ordinary URLs, paths, and code examples are not
-# inferred to be citations; unsupported explicit evidence is re-grounded via
-# the verify-gate (needs gate.enabled).
-claim_check = true
-# Circuit-breaker: hard-stop a turn after this many consecutive tool rounds that emitted
-# a steer without the model breaking out (a steer is advisory, so a loop can otherwise
-# ignore it forever and burn tokens). 0 = unlimited (off).
-max_consecutive_steers = 0
 
 [supervisor.learning]
-# Enable the learning system
+# Enable the learning system (lessons + orientation memory, distill + recall)
 enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
 model = "octohub:auto"
 # Backend: "file" (default, zero deps) or "mcp" (external tool with field mapping)
 backend = "file"
-# Minimum user messages before intermediate learning triggers during auto-compaction
-min_messages_for_intermediate = 3
-# Maximum lessons to inject into the system prompt per session
-max_inject = 5
-
-# Orientation memory: durable understanding of the subject (decisions,
-# structure, constraints). Injected as working assumptions to verify.
-[supervisor.orientation]
-enabled = true
-max_inject = 5
-# Soft time-decay: entries unused this many days lose confidence (no git needed)
-decay_days = 90
-
-# Detectors: deterministic, free, every turn -- the cheap trigger that decides
-# when (rarely) to wake the model.
-[supervisor.detectors]
-# Identical tool+args this many times in a row -> loop fired
-loop_threshold = 3
-# Turns without new information -> drift candidate
-no_progress_window = 5
-# Inject the hidden structured state/focus/next/carry handoff and parse it back.
-# Compression uses it as an untrusted attention hint grounded in the transcript.
-self_report = true
-# Consecutive single-tool-call ROUNDS in a row -> the model is issuing one tool call
-# per turn where independent calls could be batched into one parallel round. Scores
-# round arity (calls per turn), not call content. 0 = OFF (default): single calls are
-# often legitimate (dependent calls, or one real action), so this stays advisory and
-# off unless over-sequencing is hurting you. Set e.g. 3 to enable.
-sequential_threshold = 0
-# Maximum Sequential advisories emitted during one genuine user turn. A successful
-# compression resets the budget because the prior advisory may leave the live context.
-# 0 = unlimited (default).
-sequential_max_steers_per_turn = 0
-# Successful READS of the same path this many times with no intervening mutation of
-# that path -> re-read advisory: the model is re-fetching content it already received
-# instead of using it. Mutating a path resets its counter, so edit-verify loops never
-# trip this. Shares the sequential advisory budget. 0 = OFF (default). Set e.g. 4 to
-# enable.
-reread_threshold = 0
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
+# The free deterministic pre-gate (state changed but no successful check ran
+# since the change) and goal recitation are always on; detector thresholds
+# (loop / no-progress) are fixed constants.
 [supervisor.gate]
 enabled = true
-# Max gate re-entry iterations (bounds over-verification). Shared budget across
-# the free pre-gate and the LLM verify-gate.
-max_iterations = 2
 # Model the gate verifies WITH. RECOMMENDED: a DIFFERENT family than your agent
 # model -- a same-family verifier inherits the same blind spots and rubber-stamps
 # them; cross-family catches far more (e.g. openai:gpt-5-mini, google:gemini-2.5-flash).
 # Defaults to the cheap supervisor model so it works out of the box; change it.
 verifier_model = "octohub:auto"
-# Free deterministic pre-gate (no model call): refuse a `done` claim when state
-# was changed but no successful command execution ran since the change. A
-# verifier is any non-mutation command-execution tool that succeeds on an
-# unchanged tree; the framework does not hard-code program names, so it works
-# for any domain (build/test/lint, booking confirmations, health checks, etc.).
-require_check_after_mutation = true
-# Include relevant plan outcomes in independent completion verification. Open
-# checklist state alone never forces a re-run: one verified deliverable may
-# satisfy several phases, which are then closed atomically on PASS. When false,
-# PASS still retires a plan owned by this turn because the authoritative user
-# task was accepted; the plan never adds requirements.
-require_plan_complete = true
 # Max tokens for the verifier exchange: the call's output budget (a reasoning
 # verifier thinks before its verdict) and the token cap on the assembled turn
 # deliverable it is shown (newest answer always kept, older passes drop first).
@@ -767,63 +706,22 @@ max_tokens = 8192
 enabled = true
 # Keep this cheap and fast: each signal is exactly one request/response.
 model = "octohub:auto"
-# Maximum tokens the planner model may GENERATE for its JSON decision. This is
-# the standard provider output limit; it does not limit prompt or context input.
-max_tokens = 2048
-# Maximum INPUT tokens used by only the newest assistant/tool trajectory slice.
-# Octomind truncates that slice locally before constructing the planner prompt;
-# the request, active plan, capabilities, and evidence are separate input. Set
-# this to 0 to omit trajectory records while retaining those authoritative fields.
-trajectory_max_tokens = 4096
-# These thresholds only nominate broad work. The task classifier rejects
-# answer-only turns, then the planner considers genuinely remaining outcomes.
-# Set either threshold to 0 to disable automatic adoption; explicit signals
-# still pass through the same semantic guards.
-adoption_min_actions = 8
-adoption_min_distinct_actions = 4
-
-# Goal recitation: re-inject the live goal (anchor intent + next_steps) at the
-# context tail each turn on long (already-compacted) sessions, so it stays in the
-# high-attention recency window instead of buried in the mid-transcript summary.
-# Short sessions (no compaction yet -> empty anchor) pay nothing.
-[supervisor.recite]
-enabled = true
 
 # Condense: task-aware narrowing of oversized tool outputs. When a tool result
 # exceeds tokens_threshold, ONE cheap-model call per round decides what the
 # agent needs to see: all relevant -> kept in full; partly relevant -> only the
-# needed lines (selected by ORIGINAL LINE RANGES over a bounded query/diagnostic-
-# aware view and reconstructed verbatim -- never rewritten); irrelevant -> a
-# deterministic system notice (never a model-authored summary). The response is
-# validated atomically; partial views and errors cannot be discarded wholesale.
-# The full original is spilled only when the active role can read it back. Runs
-# BEFORE the blunt
-# mcp_response_tokens_threshold prefix-cut, which still applies as the ceiling.
+# needed lines (selected by ORIGINAL LINE RANGES and reconstructed verbatim --
+# never rewritten); irrelevant -> a deterministic system notice. Runs BEFORE
+# the blunt mcp_response_tokens_threshold prefix-cut, which stays the ceiling.
 [supervisor.condense]
 enabled = true
 # Round trigger (estimated tokens across all of the round's text results).
 # 0 = off. Keep well below mcp_response_tokens_threshold: that cap is the
-# backstop, this is the smart path that fires earlier. A round crosses it
-# whether that is one huge output or several middling ones.
+# backstop, this is the smart path that fires earlier.
 tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
 model = "anthropic:claude-haiku-4-5"
 
-# Delegate gate: handoff quality check before a subagent is spawned. `tap run`
-# and `agent_*` start a CONTEXT-ISOLATED child that sees only the prompt string
-# -- no transcript, no prior tool output. ONE cheap-model call per round judges
-# each proposed handoff against the parent's goal, live request and plan: is it
-# faithful to what the user asked, self-contained (concrete paths, symbols,
-# commands, constraints), does it state the deliverable and the scope edge?
-# A handoff that fails is NOT spawned -- the gaps come back as a tool error so
-# the agent rewrites the prompt. Fail-open on any gate outage.
-[supervisor.delegate]
-enabled = true
-# Model that judges the handoff (cheap + fast recommended).
-model = "anthropic:claude-haiku-4-5"
-# Rejected rounds allowed per turn before the gate stops judging and lets the
-# handoff through -- bounds the rewrite loop. 0 = never judge (same as off).
-max_revisions = 2
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.
 # Empty string = omit that field. Missing = omit.

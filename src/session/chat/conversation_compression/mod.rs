@@ -180,11 +180,15 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	// amortized over the calls this session's own pace predicts.
 	let compressible = compressible_tokens as f64;
 	let target_after = current_tokens as f64 - compressible + compressible / adjusted_ratio;
+	// Expected folder output: observed summaries run near the deepest ratio of
+	// the drained range (4-10k tokens for 80-180k folds), NOT the configured
+	// output cap — costing the fold at the cap overstated it ~3-5x and pinned
+	// the mid-turn decision at "wait".
 	let summary_cap = config.compression.decision.max_tokens;
 	let summary_tokens = if summary_cap > 0 {
-		(compressible / adjusted_ratio).min(summary_cap as f64)
+		(compressible / MAX_COMPRESSION_RATIO).min(summary_cap as f64)
 	} else {
-		compressible / adjusted_ratio
+		compressible / MAX_COMPRESSION_RATIO
 	};
 	let econ = FoldEconomics::resolve(session, config);
 	let fold = fold_decision(

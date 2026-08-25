@@ -241,40 +241,28 @@ pub(super) fn autonomous_runway(consecutive_compressions: u32) -> f64 {
 	MIN_RUNWAY_TURNS * 2usize.saturating_pow(consecutive_compressions) as f64
 }
 
-/// Dynamic soft trigger derived from the actual post-compression working set.
-///
-/// `configured_threshold` remains the minimum fire line. After compression the
-/// trigger expands to `post_tokens + runway * growth`, capped early enough to
-/// leave `MIN_RUNWAY_TURNS` of safety below the physical ceiling.
+/// The soft trigger. Geometric per-turn ladder: the k-th consecutive
+/// autonomous fold (or paid decline) in one turn doubles the line —
+/// threshold, 2x, 4x… capped just under the ceiling — so a single long turn
+/// earns progressively more room instead of re-folding at the same mark
+/// (measured failure: 7 folds in 4 turns, each at ~80k). A genuine user turn
+/// resets the level. Two floors keep it sane: never below the configured
+/// threshold, and never inside `MIN_RUNWAY_TURNS × growth` of the last fold's
+/// surviving context (a line the next few calls would re-cross buys nothing).
 pub(super) fn adaptive_fire_line(
 	configured_threshold: usize,
 	ceiling: usize,
 	post_tokens: usize,
 	growth: f64,
-	runway: f64,
+	consecutive_compressions: u32,
 ) -> usize {
 	let safety_tokens = (growth * MIN_RUNWAY_TURNS) as usize;
 	let safe_ceiling = ceiling.saturating_sub(safety_tokens);
-	let baseline = configured_threshold.min(safe_ceiling);
-	// The runway ladder must move the fire line itself: each autonomous
-	// compression doubles the runway, so the next trigger expands from the
-	// configured baseline by the extra runway bought. Anchoring expansion only
-	// on post_tokens pinned the fire line at the baseline forever — after a
-	// fold the surviving context sits far below the threshold, so
-	// `post + growth*runway` never exceeded it and every cycle re-fired at the
-	// same configured mark.
-	let extra_runway = (runway - MIN_RUNWAY_TURNS).max(0.0);
-	let ladder = baseline.saturating_add((growth * extra_runway) as usize);
-	if post_tokens == 0 {
-		// Before the first successful compression there is no post-state anchor.
-		// A paid model rejection still increments the autonomous counter, so grow
-		// from the configured baseline and avoid asking the same question again on
-		// the next round.
-		return ladder.min(safe_ceiling);
-	}
-
-	let expanded = post_tokens.saturating_add((growth * runway) as usize);
-	ladder.max(expanded).min(safe_ceiling)
+	let level = consecutive_compressions.min(16);
+	let ladder = configured_threshold.saturating_mul(1usize << level);
+	ladder
+		.max(post_tokens.saturating_add(safety_tokens))
+		.min(safe_ceiling)
 }
 
 /// Compute the compression ratio from measured session dynamics — the ladder
@@ -402,120 +390,54 @@ mod tests {
 	}
 
 	#[test]
-	fn adaptive_fire_line_expands_but_keeps_ceiling_safety() {
-		assert_eq!(adaptive_fire_line(80_000, 200_000, 0, 2_000.0, 5.0), 80_000);
+	fn adaptive_fire_line_doubles_per_consecutive_fold() {
+		// Level 0 fires at the configured threshold; each in-turn fold (or
+		// paid decline) doubles it; the cap sits one safety margin under the
+		// ceiling.
+		assert_eq!(adaptive_fire_line(70_000, 200_000, 0, 2_000.0, 0), 70_000);
 		assert_eq!(
-			adaptive_fire_line(80_000, 200_000, 70_000, 2_000.0, 10.0),
-			90_000
+			adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1),
+			140_000
 		);
 		assert_eq!(
-			adaptive_fire_line(80_000, 200_000, 0, 2_000.0, 10.0),
-			90_000,
-			"a pre-first-compression rejection must also buy quiet runway"
+			adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 2),
+			190_000,
+			"level 2 (280k) is capped at ceiling minus safety"
 		);
+	}
+
+	#[test]
+	fn fire_line_never_sits_inside_the_post_fold_safety_margin() {
+		// A gentle fold that lands just under the line must not re-fire within
+		// a few calls: the post-fold floor lifts the line above the watermark.
 		assert_eq!(
-			adaptive_fire_line(80_000, 100_000, 90_000, 2_000.0, 40.0),
+			adaptive_fire_line(70_000, 200_000, 85_000, 2_000.0, 0),
+			95_000
+		);
+		// The ceiling safety still wins over both floors.
+		assert_eq!(
+			adaptive_fire_line(70_000, 100_000, 95_000, 2_000.0, 0),
 			90_000
 		);
 	}
 
 	#[test]
-	fn fire_line_ladder_expands_even_when_post_tokens_sit_below_baseline() {
-		// Regression: after a fold the surviving context sits far below the
-		// configured threshold. The runway ladder must still lift the fire line
-		// above the baseline, otherwise every autonomous cycle re-fires at the
-		// same configured mark forever.
-		assert_eq!(
-			adaptive_fire_line(80_000, 200_000, 30_000, 2_000.0, 10.0),
-			90_000
-		);
-		assert_eq!(
-			adaptive_fire_line(80_000, 200_000, 30_000, 2_000.0, 20.0),
-			110_000
-		);
-	}
-
-	#[test]
-	fn composed_autonomous_cycles_raise_the_fire_line_every_round() {
-		// Composed regression for the "always compresses at the same 40% mark"
-		// loop: simulate consecutive autonomous compression cycles through the
-		// exact production wiring used by should_check_compression —
-		// measured_growth_rate → autonomous_runway → adaptive_fire_line —
-		// and assert the trigger strictly rises each round until capped by
-		// ceiling safety.
-		let configured_threshold = 80_000;
+	fn composed_in_turn_cycles_double_the_fire_line_until_the_cap() {
+		// Production wiring: fold → consecutive_compressions += 1 → next check.
+		// One long turn must see 70k → 140k → 190k (cap), never a re-fold at
+		// the same mark; a genuine user turn resets to the threshold.
+		let threshold = 70_000;
 		let ceiling = 200_000;
-		let mut info = SessionInfo {
-			total_api_calls: 20,
-			output_tokens: 8_000,
-			..Default::default()
-		};
-
-		// Round 0: no compression yet, live context just crossed the threshold.
-		let mut current_tokens = 81_000;
-		let growth = measured_growth_rate(&info, current_tokens);
-		let runway = autonomous_runway(info.consecutive_compressions);
-		let mut prev_fire_line =
-			adaptive_fire_line(configured_threshold, ceiling, 0, growth, runway);
-		assert_eq!(prev_fire_line, configured_threshold);
-		assert!(current_tokens >= prev_fire_line, "round 0 must fire");
-
-		// Simulate the post-fold bookkeeping apply_compression performs, then
-		// grow the session back up. Each next fire line must exceed the last.
-		for cycle in 1..=3u32 {
-			// Fold: surviving context drops well below the threshold.
-			info.context_tokens_after_last_compression = 35_000;
-			info.api_calls_at_last_compression = info.total_api_calls;
-			info.compression_stats.conversation_compressions += 1;
-			info.consecutive_compressions += 1; // autonomous fold, no user turn
-
-			// Session keeps working: 10 calls at ~4.6k tokens/call of growth.
-			info.total_api_calls += 10;
-			current_tokens = 35_000 + 46_000;
-
-			let growth = measured_growth_rate(&info, current_tokens);
-			let runway = autonomous_runway(info.consecutive_compressions);
-			let fire_line = adaptive_fire_line(
-				configured_threshold,
-				ceiling,
-				info.context_tokens_after_last_compression,
-				growth,
-				runway,
-			);
-			assert!(
-				fire_line > prev_fire_line,
-				"cycle {}: fire line must rise ({} <= {}) — pinned trigger is the repeat-compression loop",
-				cycle,
-				fire_line,
-				prev_fire_line
-			);
-			let safety = (growth * MIN_RUNWAY_TURNS) as usize;
-			assert!(
-				fire_line <= ceiling - safety,
-				"cycle {}: fire line {} must keep ceiling safety {}",
-				cycle,
-				fire_line,
-				ceiling - safety
-			);
-			prev_fire_line = fire_line;
-		}
-
-		// A genuine user turn resets the runway: the next fire line returns to
-		// the short-horizon baseline band instead of staying inflated.
-		info.consecutive_compressions = 0;
-		let growth = measured_growth_rate(&info, current_tokens);
-		let reset_line = adaptive_fire_line(
-			configured_threshold,
-			ceiling,
-			info.context_tokens_after_last_compression,
-			growth,
-			autonomous_runway(0),
-		);
-		assert!(
-			reset_line < prev_fire_line,
-			"user turn must shrink the horizon ({} >= {})",
-			reset_line,
-			prev_fire_line
+		let growth = 2_000.0;
+		let lines: Vec<usize> = (0..4u32)
+			.map(|k| adaptive_fire_line(threshold, ceiling, 45_000, growth, k))
+			.collect();
+		assert_eq!(lines, vec![70_000, 140_000, 190_000, 190_000]);
+		assert!(lines.windows(2).all(|w| w[1] >= w[0]));
+		// User turn resets the level (consecutive_compressions = 0).
+		assert_eq!(
+			adaptive_fire_line(threshold, ceiling, 45_000, growth, 0),
+			70_000
 		);
 	}
 

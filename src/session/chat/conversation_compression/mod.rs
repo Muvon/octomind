@@ -34,7 +34,7 @@ mod range;
 mod schema;
 
 // Submodule entrypoints used by this orchestrator file:
-// - `ai::ask_ai_decision_and_summary` runs the LLM round-trip (it builds the
+// - `ai::prepare_decision` + `ai::run_decision_call` run the LLM round-trip (they build the
 //   prompt internally via `prompt::build_compression_prompt`).
 // - `apply::{apply_compression, collect_preserved_skills}` materialises the
 //   chosen drain range against the session.
@@ -42,7 +42,6 @@ mod schema;
 //   math and the adaptive depth controller driving the should-we-compress gate.
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
-use ai::ask_ai_decision_and_summary;
 // Shared with the supervisor: recovery of JSON from a text body when the
 // provider does not enforce a response schema.
 pub(crate) use ai::extract_json_lenient;
@@ -50,7 +49,7 @@ use apply::{apply_compression, collect_preserved_skills};
 use decision::{
 	adaptive_fire_line, at_turn_boundary, autonomous_runway, compression_depth, context_ceiling,
 	expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
-	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
+	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 
@@ -94,10 +93,10 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (true, MAX_COMPRESSION_RATIO);
 	}
 
-	// ADAPTIVE FIRE LINE: a new user turn resets the runway to five measured
-	// rounds. Each autonomous compression doubles it (5, 10, 20, 40...), so a
-	// long uninterrupted task gets progressively more room instead of repeatedly
-	// firing at the same configured threshold. Ceiling safety remains fixed.
+	// ADAPTIVE FIRE LINE: geometric per-turn ladder. Each in-turn fold (or
+	// paid decline) doubles the line — threshold, 2x, 4x… capped under the
+	// ceiling — so a single long turn earns growing room; a genuine user turn
+	// resets it. The runway still paces the amortization gate and fold depth.
 	let growth = measured_growth_rate(&session.session.info, current_tokens);
 	let runway = autonomous_runway(session.session.info.consecutive_compressions);
 	let fire_line = adaptive_fire_line(
@@ -105,7 +104,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		ceiling,
 		session.session.info.context_tokens_after_last_compression,
 		growth,
-		runway,
+		session.session.info.consecutive_compressions,
 	);
 
 	if current_tokens < fire_line && current_tokens < ceiling {
@@ -264,15 +263,280 @@ pub(super) fn is_synthetic_user_message(content: &str) -> bool {
 	crate::session::is_system_managed_user_content(content)
 }
 
+/// A background fold in flight: the paid decision+summary call runs in a
+/// spawned task while the agent keeps working. Everything the apply step needs
+/// was captured at spawn time; the fingerprint pins the exact drained range so
+/// the summary is only ever applied to the messages it was computed from
+/// (mid-turn mutations only append, but this makes the invariant checked, not
+/// assumed).
+pub struct FoldJob {
+	handle: tokio::task::JoinHandle<
+		Result<(
+			schema::CompressionSummary,
+			Option<crate::providers::TokenUsage>,
+		)>,
+	>,
+	ctx: FoldContext,
+}
+
+struct FoldContext {
+	start_idx: usize,
+	end_idx: usize,
+	fingerprint: u64,
+	tokens_before: u64,
+	current_context_tokens: u64,
+	user_tasks_msgs: Vec<String>,
+	last_user_message: Option<crate::session::Message>,
+	previous_assistant_response: Option<String>,
+	preserved_skills: Vec<crate::session::Message>,
+	pact: Option<attention::PactContext>,
+	preserve_recent_user_bridge: bool,
+	started: std::time::Instant,
+}
+
+/// Content identity of the drained range. Excludes mutable presentation state
+/// (cache markers) — only what the summary was computed from.
+fn fold_fingerprint(messages: &[crate::session::Message], start_idx: usize, end_idx: usize) -> u64 {
+	use std::hash::{Hash, Hasher};
+	let mut hasher = std::collections::hash_map::DefaultHasher::new();
+	(end_idx - start_idx).hash(&mut hasher);
+	for message in &messages[start_idx + 1..=end_idx] {
+		message.role.hash(&mut hasher);
+		message.name.hash(&mut hasher);
+		message.tool_call_id.hash(&mut hasher);
+		message.content.hash(&mut hasher);
+	}
+	hasher.finish()
+}
+
+/// Join a finished (or force-awaited) background fold and apply it. Returns
+/// true when the fold was applied. A failed call, a declined decision, or a
+/// fingerprint mismatch discards the job (usage still recorded where known).
+async fn collect_fold_job(
+	session: &mut ChatSession,
+	config: &Config,
+	job: FoldJob,
+) -> Result<bool> {
+	let FoldJob { handle, ctx } = job;
+	let outcome = match handle.await {
+		Ok(outcome) => outcome,
+		Err(join_error) => {
+			log_debug!("Background fold task failed to join: {}", join_error);
+			return Ok(false);
+		}
+	};
+	let (summary, usage) = match outcome {
+		Ok(result) => result,
+		Err(error) => {
+			if crate::session::cancellation::is_cancelled(&error) {
+				log_debug!("Background fold cancelled");
+			} else {
+				log_debug!("Background fold call failed, continuing session: {}", error);
+			}
+			return Ok(false);
+		}
+	};
+	if ctx.end_idx >= session.session.messages.len()
+		|| fold_fingerprint(&session.session.messages, ctx.start_idx, ctx.end_idx)
+			!= ctx.fingerprint
+	{
+		ai::record_decision_usage(session, usage.as_ref());
+		log_info!(
+			"Background fold discarded: the drained range changed while the summary was being written"
+		);
+		return Ok(false);
+	}
+	finish_fold(session, config, ctx, summary, usage, false, false).await
+}
+
+/// Everything after the decision call: usage/metrics accounting, the veto and
+/// PACT validation, the drain itself, and the runway bookkeeping. Shared by
+/// the inline (forced) path and background collection.
+async fn finish_fold(
+	session: &mut ChatSession,
+	config: &Config,
+	mut ctx: FoldContext,
+	mut summary: schema::CompressionSummary,
+	usage: Option<crate::providers::TokenUsage>,
+	force: bool,
+	force_done: bool,
+) -> Result<bool> {
+	ai::record_decision_usage(session, usage.as_ref());
+	if let Some(pact) = ctx.pact.as_mut() {
+		pact.record_metrics(attention::PactMetrics {
+			controller_and_model_latency_ms: ctx.started.elapsed().as_millis() as u64,
+			compression_api_time_ms: usage.as_ref().and_then(|u| u.request_time_ms).unwrap_or(0),
+			compression_input_tokens: usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+			compression_output_tokens: usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+			compression_cost: usage.as_ref().and_then(|u| u.cost).unwrap_or(0.0),
+		});
+	}
+	let should_compress = ai::evaluate_decision(&summary, force, ctx.pact.is_some());
+
+	if !should_compress {
+		log_debug!("AI decided compression not beneficial at this point");
+		session.session.info.consecutive_compressions += 1;
+		return Ok(false);
+	}
+
+	let pact_validation = if let Some(pact) = ctx.pact.as_ref() {
+		pact.normalize_summary(&mut summary);
+		if config.compression.attention.enabled && config.compression.attention.validator {
+			pact.repair_summary(&mut summary);
+			match pact.validate_summary(&summary) {
+				Ok(report) => Some(report),
+				Err(error) if force => {
+					let fallback_reason = error.to_string();
+					crate::log_error!(
+						"PACT validation failed under forced compression: {} — using deterministic pins/frontier and dropping invalid folds",
+						error
+					);
+					pact.sanitize_for_forced_compression(&mut summary);
+					let post_fallback = pact.validate_summary(&summary).ok();
+					Some(attention::ValidationReport {
+						attribution_valid: false,
+						fallback_reason: Some(fallback_reason),
+						valid_units: post_fallback
+							.as_ref()
+							.map(|report| report.valid_units)
+							.unwrap_or(0),
+						referenced_blocks: post_fallback
+							.as_ref()
+							.map(|report| report.referenced_blocks)
+							.unwrap_or(0),
+						governance_hash: pact.pinned.governance_hash.clone(),
+					})
+				}
+				Err(error) => {
+					log_info!(
+						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
+						error
+					);
+					session.session.info.consecutive_compressions += 1;
+					return Ok(false);
+				}
+			}
+		} else {
+			Some(attention::ValidationReport {
+				attribution_valid: !config.compression.attention.enabled,
+				fallback_reason: config
+					.compression
+					.attention
+					.enabled
+					.then(|| "attribution validator disabled by configuration".to_string()),
+				valid_units: summary.folded_units.len(),
+				referenced_blocks: 0,
+				governance_hash: pact.pinned.governance_hash.clone(),
+			})
+		}
+	} else {
+		None
+	};
+
+	log_info!("AI decided to compress older conversation exchanges");
+
+	let preserve_bridge = ctx.preserve_recent_user_bridge
+		&& session.session.messages[ctx.end_idx + 1..]
+			.iter()
+			.any(crate::session::is_real_user_task_message);
+	apply_compression(
+		session,
+		ctx.start_idx,
+		ctx.end_idx,
+		&summary,
+		ctx.tokens_before,
+		ctx.current_context_tokens,
+		ctx.user_tasks_msgs,
+		ctx.last_user_message,
+		ctx.previous_assistant_response,
+		ctx.preserved_skills,
+		config,
+		ctx.pact.as_ref(),
+		pact_validation.as_ref(),
+		force,
+		preserve_bridge,
+	)
+	.await?;
+
+	if config.supervisor.learning.enabled {
+		let user_msg_count = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| crate::session::is_real_user_task_message(m))
+			.count();
+		if user_msg_count >= crate::supervisor::learning::MIN_MESSAGES_FOR_INTERMEDIATE {
+			let role = crate::config::get_thread_role().unwrap_or_default();
+			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
+				session, config, role, None,
+			);
+		}
+	}
+
+	if force_done {
+		session.session.info.consecutive_compressions = 0;
+		log_debug!("/done compression: autonomous runway reset for new task phase");
+	} else {
+		session.session.info.consecutive_compressions += 1;
+		log_debug!(
+			"Adaptive runway: consecutive_compressions={} (next runway {:.0} calls)",
+			session.session.info.consecutive_compressions,
+			autonomous_runway(session.session.info.consecutive_compressions)
+		);
+	}
+
+	Ok(true)
+}
+
+/// Turn boundary with a fold still in flight: await it and fold the session
+/// so the persisted state is the compacted one — replace, never auto-continue
+/// (no agent call happens here; the summary was already paid for).
+pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> Result<bool> {
+	let Some(job) = session.fold_job.take() else {
+		return Ok(false);
+	};
+	log_debug!("Turn finished with a background fold in flight — collecting before save");
+	collect_fold_job(session, config, job).await
+}
+
 pub async fn check_and_compress_conversation(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 	trigger: CompressionTrigger,
 ) -> Result<bool> {
-	let (should_check, computed_ratio) = should_check_compression(session, config).await;
-
 	let force_done = matches!(trigger, CompressionTrigger::Done);
+
+	// A background fold in flight: collect it when finished (or when a forced
+	// trigger cannot wait), otherwise leave it running and skip fresh checks —
+	// one fold at a time.
+	if session.fold_job.is_some() {
+		let finished = session
+			.fold_job
+			.as_ref()
+			.is_some_and(|job| job.handle.is_finished());
+		let must_wait = force_done || {
+			// Never run detached NEAR the window: within a few calls of the
+			// ceiling, block on the in-flight fold rather than risk the next
+			// round overshooting the model window. `ensure_context_within_ceiling`
+			// stays the hard error behind this.
+			let current = session.get_full_context_tokens(config).await;
+			let margin =
+				(measured_growth_rate(&session.session.info, current) * MIN_RUNWAY_TURNS) as usize;
+			current.saturating_add(margin) >= context_ceiling(session, config)
+		};
+		if finished || must_wait {
+			let job = session.fold_job.take().expect("checked above");
+			if collect_fold_job(session, config, job).await? {
+				return Ok(true);
+			}
+		// Declined or discarded: fall through — a forced trigger still folds.
+		} else {
+			return Ok(false);
+		}
+	}
+
+	let (should_check, computed_ratio) = should_check_compression(session, config).await;
 
 	if !force_done && !should_check {
 		return Ok(false);
@@ -500,8 +764,7 @@ pub async fn check_and_compress_conversation(
 	// excluded structurally by the packet builder and preserved through their
 	// existing dedicated paths.
 	let pact_started = std::time::Instant::now();
-	let compression_stats_before = session.session.info.compression_stats.clone();
-	let mut pact = if config.compression.attention.enabled
+	let pact = if config.compression.attention.enabled
 		|| config.compression.attention.governance.enabled
 	{
 		Some(
@@ -535,179 +798,70 @@ pub async fn check_and_compress_conversation(
 		}
 	}
 
-	// OPTIMIZATION: Single API call for decision + summary (1-hop instead of 2-hop)
-	// Response is schema-validated and arrives as a typed struct.
-	let (should_compress, mut summary) = ask_ai_decision_and_summary(
-		session,
-		config,
-		&messages_to_compress,
-		config
-			.compression
-			.attention
-			.enabled
-			.then_some(())
-			.and(pact.as_ref()),
-		operation_rx,
-		force,
-		target_ratio,
-	)
-	.await?;
-	if let Some(pact) = pact.as_mut() {
-		let after = &session.session.info.compression_stats;
-		pact.record_metrics(attention::PactMetrics {
-			controller_and_model_latency_ms: pact_started.elapsed().as_millis() as u64,
-			compression_api_time_ms: after
-				.api_time_ms
-				.saturating_sub(compression_stats_before.api_time_ms),
-			compression_input_tokens: after
-				.input_tokens
-				.saturating_sub(compression_stats_before.input_tokens),
-			compression_output_tokens: after
-				.output_tokens
-				.saturating_sub(compression_stats_before.output_tokens),
-			compression_cost: (after.cost - compression_stats_before.cost).max(0.0),
-		});
-	}
-
-	if !should_compress {
-		log_debug!("AI decided compression not beneficial at this point");
-		// A paid rejection expands the next fire line without overwriting the
-		// exact successful-compression watermark — same handling as a PACT
-		// validation reject below. Without this the fire line stays put and the
-		// very next tool batch re-crosses it, repeating the paid decision call
-		// every round.
-		session.session.info.consecutive_compressions += 1;
-		return Ok(false);
-	}
-
-	let pact_validation = if let Some(pact) = pact.as_ref() {
-		pact.normalize_summary(&mut summary);
-		if config.compression.attention.enabled && config.compression.attention.validator {
-			// Deterministic repair first: the generative fold is already paid
-			// for, so mechanical contract violations (archive-descriptor refs,
-			// frontier folded as completed, skipped summarize packets) are
-			// fixed instead of rejected. validate_summary stays the strict gate.
-			pact.repair_summary(&mut summary);
-			match pact.validate_summary(&summary) {
-				Ok(report) => Some(report),
-				Err(error) if force => {
-					let fallback_reason = error.to_string();
-					crate::log_error!(
-						"PACT validation failed under forced compression: {} — using deterministic pins/frontier and dropping invalid folds",
-						error
-					);
-					pact.sanitize_for_forced_compression(&mut summary);
-					let post_fallback = pact.validate_summary(&summary).ok();
-					Some(attention::ValidationReport {
-						attribution_valid: false,
-						fallback_reason: Some(fallback_reason),
-						valid_units: post_fallback
-							.as_ref()
-							.map(|report| report.valid_units)
-							.unwrap_or(0),
-						referenced_blocks: post_fallback
-							.as_ref()
-							.map(|report| report.referenced_blocks)
-							.unwrap_or(0),
-						governance_hash: pact.pinned.governance_hash.clone(),
-					})
-				}
-				Err(error) => {
-					log_info!(
-						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
-						error
-					);
-					// A paid rejection expands the next fire line without
-					// overwriting the exact successful-compression watermark.
-					session.session.info.consecutive_compressions += 1;
-					return Ok(false);
-				}
-			}
-		} else {
-			Some(attention::ValidationReport {
-				attribution_valid: !config.compression.attention.enabled,
-				fallback_reason: config
-					.compression
-					.attention
-					.enabled
-					.then(|| "attribution validator disabled by configuration".to_string()),
-				valid_units: summary.folded_units.len(),
-				referenced_blocks: 0,
-				governance_hash: pact.pinned.governance_hash.clone(),
-			})
-		}
-	} else {
-		None
-	};
-
-	log_info!("AI decided to compress older conversation exchanges");
-
-	// Apply compression with the typed summary
-	apply_compression(
-		session,
+	let ctx = FoldContext {
 		start_idx,
 		end_idx,
-		&summary,
+		fingerprint: fold_fingerprint(&session.session.messages, start_idx, end_idx),
 		tokens_before,
 		current_context_tokens,
 		user_tasks_msgs,
 		last_user_message,
 		previous_assistant_response,
 		preserved_skills,
+		pact,
+		preserve_recent_user_bridge,
+		started: pact_started,
+	};
+
+	// Unforced folds run in the background: the paid decision+summary call is
+	// the slow part (minutes on big transcripts), and nothing about it needs
+	// the live session once the prompt is built. The agent keeps working; the
+	// summary is applied at the next round boundary. Forced folds (ceiling,
+	// /done) cannot proceed without the result and stay inline.
+	if !force {
+		let prepared = ai::prepare_decision(
+			session,
+			config,
+			&messages_to_compress,
+			ctx.pact.as_ref(),
+			false,
+			target_ratio,
+		)?;
+		let config_for_task = config.clone();
+		let task_rx = operation_rx.clone();
+		let handle = tokio::spawn(async move {
+			ai::run_decision_call(
+				&config_for_task,
+				prepared.system_content,
+				prepared.user_content,
+				prepared.schema,
+				task_rx,
+			)
+			.await
+		});
+		session.fold_job = Some(FoldJob { handle, ctx });
+		crate::supervisor::notify("compaction started in background");
+		log_debug!("Compression decision spawned in background");
+		return Ok(false);
+	}
+
+	let prepared = ai::prepare_decision(
+		session,
 		config,
-		pact.as_ref(),
-		pact_validation.as_ref(),
+		&messages_to_compress,
+		ctx.pact.as_ref(),
 		force,
-		// The continuation wrapper is the only user-role message a fold emits.
-		// Skip it only when the preserved tail already carries a real request:
-		// a mid-task fold keeps `[assistant, tool, ...]`, which carries none, and
-		// a payload with no user role at all is rejected outright by some
-		// providers (Z.ai 1214) and loses the task on the rest.
-		preserve_recent_user_bridge
-			&& session.session.messages[end_idx + 1..]
-				.iter()
-				.any(crate::session::is_real_user_task_message),
+		target_ratio,
+	)?;
+	let (summary, usage) = ai::run_decision_call(
+		config,
+		prepared.system_content,
+		prepared.user_content,
+		prepared.schema,
+		operation_rx,
 	)
 	.await?;
-
-	// Intermediate learning: extract lessons during auto-compaction if enough user messages.
-	// Fire-and-forget — must NOT block compression on a second LLM round-trip.
-	if config.supervisor.learning.enabled {
-		let user_msg_count = session
-			.session
-			.messages
-			.iter()
-			.filter(|m| crate::session::is_real_user_task_message(m))
-			.count();
-		if user_msg_count >= crate::supervisor::learning::MIN_MESSAGES_FOR_INTERMEDIATE {
-			let role = crate::config::get_thread_role().unwrap_or_default();
-			// Mid-session: the process keeps living, dropping the handle is safe.
-			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
-				session, config, role, None,
-			);
-		}
-	}
-
-	if force_done {
-		// /done starts a new user-task phase, so autonomous expansion resets.
-		// Keep the exact post-compression watermark: the next turn can derive its
-		// fire line from real surviving context instead of reverting to a blind
-		// configured threshold.
-		session.session.info.consecutive_compressions = 0;
-		log_debug!("/done compression: autonomous runway reset for new task phase");
-	} else {
-		// Each uninterrupted autonomous fold expands the next quiet runway.
-		// Genuine user input resets this centrally in add_user_message.
-		session.session.info.consecutive_compressions += 1;
-		log_debug!(
-			"Adaptive runway: consecutive_compressions={} (next runway {:.0} calls)",
-			session.session.info.consecutive_compressions,
-			autonomous_runway(session.session.info.consecutive_compressions)
-		);
-	}
-
-	// PhaseGuard above clears the phase on drop — no manual call needed.
-	Ok(true)
+	finish_fold(session, config, ctx, summary, usage, force, force_done).await
 }
 
 #[cfg(test)]

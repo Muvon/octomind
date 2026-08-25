@@ -192,6 +192,10 @@ pub struct ChatSession {
 
 	// This cache ensures all systems (display, compression) use identical calculations
 	pub cached_tools: Option<Vec<crate::mcp::McpFunction>>, // Cached tool definitions for consistent token counting
+	/// A background compaction in flight (runtime-only, never persisted): the
+	/// paid fold call runs in a spawned task and is applied at a later round
+	/// boundary by `conversation_compression`.
+	pub fold_job: Option<crate::session::chat::conversation_compression::FoldJob>,
 	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
 	/// Critical knowledge entries extracted from compressions — persisted across
@@ -403,7 +407,8 @@ impl ChatSession {
 			was_resumed: false,                 // This is a new session
 			initial_status_shown: false,        // Initialize status display flag
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
-			schema: None,                       // Schema set later via CLI override
+			fold_job: None,
+			schema: None, // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
 			learning_injected: false,
@@ -627,9 +632,10 @@ impl ChatSession {
 						pending_image: None,                 // Initialize pending image
 						pending_video: None,                 // Initialize pending video
 						max_retries: params.max_retries.unwrap_or(params.config.max_retries), // Use provided max_retries or fall back to config
-						was_resumed: true,              // This session was resumed from file
-						initial_status_shown: true,     // Don't show status for resumed sessions
-						cached_tools: None,             // Initialize tool cache (populated on first use)
+						was_resumed: true,          // This session was resumed from file
+						initial_status_shown: true, // Don't show status for resumed sessions
+						cached_tools: None,         // Initialize tool cache (populated on first use)
+						fold_job: None,
 						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
@@ -1365,6 +1371,7 @@ impl ChatSession {
 			was_resumed: false,
 			initial_status_shown: false,
 			cached_tools: None,
+			fold_job: None,
 			schema: None,
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),

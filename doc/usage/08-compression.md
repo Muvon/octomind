@@ -95,6 +95,7 @@ fold iff expected_calls ≥ runway
 
 - `median_calls_per_turn` comes from the last 16 completed genuine turns (`turn_call_counts`); `turns_seen` is the Lindy horizon — a session that has run N turns is expected to run about N more.
 - `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a longer predicted horizon.
+- The fire line itself is a geometric per-turn ladder: the k-th consecutive in-turn fold (or paid decline) doubles it — `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 70k → 140k → cap of room instead of re-folding at the same mark. A genuine user turn resets the level.
 - The price terms are **ratios relative to one uncached agent input token** (`FoldEconomics`), from provider pricing when available. Missing pricing falls back to conservative defaults (cache read 0.1, folder input 1.0, folder output 3.0, cache write 1.25) with an info log — never a silent skip.
 - `sent` is the part of the drained range the fold prompt actually sends (recent bodies whole, older ones trimmed), `summary` the decision model's output budget.
 

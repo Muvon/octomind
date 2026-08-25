@@ -902,6 +902,25 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::log_debug!("External plan retained: completed turn does not own it");
 		}
 	}
+
+	// A background fold still in flight at turn end: collect and apply it so
+	// the session persists compacted — replace only, never auto-continue (no
+	// agent call is made here; the summary was already paid for).
+	match crate::session::chat::conversation_compression::settle_pending_fold(
+		chat_session,
+		&config_clone,
+	)
+	.await
+	{
+		Ok(true) => {
+			if let Err(error) = chat_session.save() {
+				crate::log_debug!("Session save after settled fold failed: {}", error);
+			}
+		}
+		Ok(false) => {}
+		Err(error) => crate::log_debug!("Settling background fold failed: {}", error),
+	}
+
 	Ok(())
 }
 

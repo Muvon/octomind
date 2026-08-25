@@ -14,7 +14,7 @@
 
 // LLM I/O for compression decision + summary generation.
 //
-// `ask_ai_decision_and_summary` picks one of two equal paths up-front from
+// `prepare_decision` picks one of two equal paths up-front from
 // the provider's `enforces_response_schema(model)` capability:
 //
 //   - JSON path (schema enforced): builds the JSON prompt + attaches the
@@ -53,14 +53,13 @@ use anyhow::Result;
 /// The decision call's spend is added to the session total. The system
 /// message is marked cached with 1h TTL so it's amortised across every
 /// compression call in a session.
-async fn call_ai_for_decision(
-	session: &mut ChatSession,
+pub(super) async fn run_decision_call(
 	config: &Config,
 	system_content: String,
 	user_content: String,
 	schema: Option<serde_json::Value>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
-) -> Result<CompressionSummary> {
+) -> Result<(CompressionSummary, Option<crate::providers::TokenUsage>)> {
 	let now = crate::utils::time::now_secs();
 	let decision_config = &config.compression.decision;
 
@@ -136,18 +135,75 @@ async fn call_ai_for_decision(
 	}
 
 	let response = crate::session::chat_completion_with_validation(params).await?;
+	let usage = response.exchange.usage.clone();
 
-	// Per-component spend for `/info` — recorded even when the decision ends up
-	// "don't compress" (the call happened).
-	if let Some(usage) = &response.exchange.usage {
-		let stats = &mut session.session.info.compression_stats;
-		stats.input_tokens += usage.input_tokens;
-		stats.output_tokens += usage.output_tokens;
-		stats.cost += usage.cost.unwrap_or(0.0);
-		stats.api_time_ms += usage.request_time_ms.unwrap_or(0);
-	}
+	let summary = if schema.is_some() {
+		parse_json_response(&response, &decision_config.model)?
+	} else {
+		parse_xml_summary(&response.content).map_err(|e| {
+			anyhow::anyhow!(
+				"Compression model '{}' (XML mode) produced an unparseable response: {}",
+				decision_config.model,
+				e
+			)
+		})?
+	};
+	Ok((summary, usage))
+}
 
-	if let Some(cost) = response.exchange.usage.as_ref().and_then(|u| u.cost) {
+/// The prompt/schema bundle a decision call needs — built in the foreground
+/// (it reads the live session), then runnable anywhere, including a spawned
+/// background task that holds no session reference.
+pub(super) struct PreparedDecision {
+	pub system_content: String,
+	pub user_content: String,
+	pub schema: Option<serde_json::Value>,
+}
+
+pub(super) fn prepare_decision(
+	session: &ChatSession,
+	config: &Config,
+	messages_to_compress: &[crate::session::Message],
+	pact: Option<&super::attention::PactContext>,
+	force: bool,
+	target_ratio: f64,
+) -> Result<PreparedDecision> {
+	let model = &config.compression.decision.model;
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	let use_json = provider.enforces_response_schema(&actual_model);
+
+	let (system_content, user_content) = if use_json {
+		build_compression_prompt_json(session, messages_to_compress, pact, force, target_ratio)
+	} else {
+		build_compression_prompt_xml(session, messages_to_compress, pact, force, target_ratio)
+	};
+	let schema = use_json.then(|| build_compression_schema(force, pact.is_some()));
+	log_debug!(
+		"Compression wire mode: {} (provider='{}', model='{}')",
+		if use_json { "json" } else { "xml" },
+		provider.name(),
+		actual_model
+	);
+	Ok(PreparedDecision {
+		system_content,
+		user_content,
+		schema,
+	})
+}
+
+/// Per-component spend for `/info` plus the session total — recorded even when
+/// the decision ends up "don't compress" (the call happened).
+pub(super) fn record_decision_usage(
+	session: &mut ChatSession,
+	usage: Option<&crate::providers::TokenUsage>,
+) {
+	let Some(usage) = usage else { return };
+	let stats = &mut session.session.info.compression_stats;
+	stats.input_tokens += usage.input_tokens;
+	stats.output_tokens += usage.output_tokens;
+	stats.cost += usage.cost.unwrap_or(0.0);
+	stats.api_time_ms += usage.request_time_ms.unwrap_or(0);
+	if let Some(cost) = usage.cost {
 		session.session.info.total_cost += cost;
 		session.estimated_cost = session.session.info.total_cost;
 		log_debug!(
@@ -156,18 +212,34 @@ async fn call_ai_for_decision(
 			session.session.info.total_cost
 		);
 	}
+}
 
-	if schema.is_some() {
-		parse_json_response(&response, &decision_config.model)
-	} else {
-		parse_xml_summary(&response.content).map_err(|e| {
-			anyhow::anyhow!(
-				"Compression model '{}' (XML mode) produced an unparseable response: {}",
-				decision_config.model,
-				e
-			)
-		})
+/// The veto and substantive-summary rules, shared by the inline and background
+/// paths. Returns the effective should_compress.
+pub(super) fn evaluate_decision(summary: &CompressionSummary, force: bool, has_pact: bool) -> bool {
+	let mut should_compress = summary.should_compress;
+	if !should_compress {
+		if force {
+			// Forced compression (ceiling breach or /done) grants the decision
+			// model no veto — the schema/prompt demand should_compress=true, so a
+			// false here is a protocol violation, not a decision. Override and let
+			// the substantive-summary guard stay the real safety.
+			log_info!(
+				"Forced compression: decision model returned should_compress=false — overriding (refusal is not an option under force)"
+			);
+			should_compress = true;
+		} else {
+			log_debug!("AI compression decision: should_compress=false");
+			return false;
+		}
 	}
+	if !has_pact && !is_summary_substantive(summary) {
+		log_info!(
+			"Compression aborted: AI set should_compress=true but every narrative field is empty. Skipping compression to avoid context loss."
+		);
+		return false;
+	}
+	should_compress
 }
 
 /// JSON-path response parser. Prefers `response.structured_output`; falls
@@ -312,82 +384,6 @@ fn find_first_balanced_json(s: &str) -> Option<serde_json::Value> {
 /// Substantive-content gate: if the model emits `should_compress: true` but
 /// every narrative field is empty, we refuse to compress. Better to skip
 /// than to wipe the session with a header-only summary.
-pub(super) async fn ask_ai_decision_and_summary(
-	session: &mut ChatSession,
-	config: &Config,
-	messages_to_compress: &[crate::session::Message],
-	pact: Option<&super::attention::PactContext>,
-	operation_rx: tokio::sync::watch::Receiver<bool>,
-	force: bool,
-	target_ratio: f64,
-) -> Result<(bool, CompressionSummary)> {
-	let model = &config.compression.decision.model;
-	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
-	let use_json = provider.enforces_response_schema(&actual_model);
-
-	let (system_content, user_content) = if use_json {
-		build_compression_prompt_json(session, messages_to_compress, pact, force, target_ratio)
-	} else {
-		build_compression_prompt_xml(session, messages_to_compress, pact, force, target_ratio)
-	};
-
-	let schema = if use_json {
-		Some(build_compression_schema(force, pact.is_some()))
-	} else {
-		None
-	};
-
-	log_debug!(
-		"Compression wire mode: {} (provider='{}', model='{}')",
-		if use_json { "json" } else { "xml" },
-		provider.name(),
-		actual_model
-	);
-
-	let summary = call_ai_for_decision(
-		session,
-		config,
-		system_content,
-		user_content,
-		schema,
-		operation_rx,
-	)
-	.await?;
-
-	if !summary.should_compress {
-		if force {
-			// Forced compression (ceiling breach or /done) grants the decision
-			// model no veto — the schema/prompt demand should_compress=true, so a
-			// false here is a protocol violation, not a decision. Override and let
-			// the substantive-summary guard below stay the real safety: an empty
-			// narrative still aborts rather than destroying context.
-			log_info!(
-				"Forced compression: decision model returned should_compress=false — overriding (refusal is not an option under force)"
-			);
-		} else {
-			log_debug!("AI compression decision: should_compress=false");
-			return Ok((false, summary));
-		}
-	}
-
-	if pact.is_none() && !is_summary_substantive(&summary) {
-		log_info!(
-			"Compression aborted: AI set should_compress=true but every narrative field is empty. Skipping compression to avoid context loss."
-		);
-		return Ok((false, summary));
-	}
-
-	log_debug!(
-		"AI compression decision: should_compress=true (findings={}, recent={}, knowledge={}, files={})",
-		summary.analysis_findings.len(),
-		summary.recent_exchanges.len(),
-		summary.critical_knowledge.len(),
-		summary.file_context.len()
-	);
-
-	Ok((true, summary))
-}
-
 #[cfg(test)]
 mod extract_json_lenient_tests {
 	use super::extract_json_lenient;

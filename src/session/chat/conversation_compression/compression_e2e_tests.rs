@@ -434,6 +434,27 @@ async fn regime_session(config: &mut crate::config::Config) -> ChatSession {
 	session
 }
 
+/// Drive the async fold to a settled state: a spawn returns false with a job
+/// parked on the session; keep re-entering until it is collected (or nothing
+/// is pending). Mirrors what the next tool-round boundary does in production.
+async fn settle_folds(session: &mut ChatSession, config: &crate::config::Config) -> bool {
+	for _ in 0..100 {
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let compressed =
+			check_and_compress_conversation(session, config, rx, CompressionTrigger::Automatic)
+				.await
+				.expect("compression pipeline");
+		if compressed {
+			return true;
+		}
+		if session.fold_job.is_none() {
+			return false;
+		}
+		tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+	}
+	panic!("background fold never settled");
+}
+
 #[tokio::test]
 async fn verify_turn_boundary_folds_on_crossing_the_line() {
 	let _guard = ENV_LOCK.lock().await;
@@ -450,14 +471,74 @@ async fn verify_turn_boundary_folds_on_crossing_the_line() {
 	// Between the user message and its first call: no history needed.
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 
+	assert!(
+		settle_folds(&mut session, &config).await,
+		"a genuine turn boundary over the line must fold"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// The core non-blocking guarantee: the trigger call spawns and returns
+/// without folding, and a stale summary is only ever discarded — the fold is
+/// applied solely to the exact range it was computed from.
+#[tokio::test]
+async fn verify_background_fold_discards_on_range_change() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let compressed =
 		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
 			.await
 			.expect("compression pipeline");
+	assert!(!compressed, "the trigger call must only spawn, not block");
 	assert!(
-		compressed,
-		"a genuine turn boundary over the line must fold"
+		session.fold_job.is_some(),
+		"a background fold must be parked"
+	);
+	let before = session.session.messages.len();
+
+	// The drained range changes while the fold is in flight: the stale
+	// summary must be discarded, never applied.
+	session.session.messages[2].content = "starting on the widget now (amended)".to_string();
+	while !session
+		.fold_job
+		.as_ref()
+		.expect("job still parked")
+		.handle
+		.is_finished()
+	{
+		tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+	}
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(!compressed, "a stale fold must be discarded");
+	assert_eq!(
+		session.session.messages.len(),
+		before,
+		"discarded fold must leave the transcript untouched"
+	);
+	assert!(
+		!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"stale summary must not be spliced in"
 	);
 
 	std::env::remove_var("OLLAMA_API_URL");
@@ -486,7 +567,7 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 			.await
 			.expect("compression pipeline");
 	assert!(
-		!compressed,
+		!compressed && session.fold_job.is_none(),
 		"mid-turn with a two-call horizon must not fold on size alone"
 	);
 
@@ -494,13 +575,8 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
 	session.session.info.turn_call_counts = vec![30, 30, 30];
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
 	assert!(
-		compressed,
+		settle_folds(&mut session, &config).await,
 		"a demonstrated long pace must amortize the fold"
 	);
 

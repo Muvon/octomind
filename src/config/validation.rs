@@ -42,7 +42,7 @@ impl Config {
 
 		// Compression model: must resolve to a known provider, but EITHER
 		// structured-output support (JSON path) OR no support (XML path)
-		// is acceptable — `ask_ai_decision_and_summary` dispatches on the
+		// is acceptable — `prepare_decision` dispatches on the
 		// provider's capability at call time.
 		self.validate_compression_model()?;
 

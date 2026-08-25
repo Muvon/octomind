@@ -315,3 +315,95 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+/// Regression guard for the server-side chaining leak. Providers that keep
+/// conversation state server-side (OpenAI/xAI `previous_response_id`, OctoHub
+/// `previous_completion_id`) chain off the id of the last assistant message and
+/// then send only the delta. If any assistant id survives compaction, the next
+/// request replays the full pre-compaction history from the server and the
+/// compacted transcript is never what the model sees. Every assistant id must
+/// therefore be gone after a fold — summary and retained live tail alike — so
+/// the next request rebases onto the compacted transcript.
+#[tokio::test]
+async fn verify_compaction_drops_provider_chain_ids() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.max_session_tokens_threshold = 1;
+
+	// Same mid-task shape as the wrapper test above: the trailing
+	// [assistant(tool_calls), tool] round is the live tail a fold retains.
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		msg("user", "build the frobnicator widget"),
+		msg("assistant", "starting on the widget now"),
+		msg("user", "make sure it compiles"),
+		msg("assistant", "phase one is done and compiling"),
+		msg("user", "add tests too"),
+		msg("assistant", "tests added"),
+		crate::session::Message {
+			tool_calls: Some(serde_json::json!([{
+				"id": "call_1", "type": "function",
+				"function": {"name": "shell", "arguments": "{\"command\":\"cargo build\"}"}
+			}])),
+			..msg("assistant", "running the build now")
+		},
+		crate::session::Message {
+			tool_call_id: Some("call_1".to_string()),
+			name: Some("shell".to_string()),
+			..msg("tool", "build output: ok")
+		},
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	for (n, message) in session
+		.session
+		.messages
+		.iter_mut()
+		.filter(|m| m.role == "assistant")
+		.enumerate()
+	{
+		message.id = Some(format!("resp_{n:032x}"));
+	}
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(compressed, "mid-task automatic compression must compress");
+
+	let messages = &session.session.messages;
+	assert!(
+		messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"summary missing after compression"
+	);
+	let live = messages
+		.iter()
+		.find(|m| m.content == "running the build now")
+		.expect("live tail assistant must survive the fold");
+	assert!(
+		live.id.is_none(),
+		"retained live assistant kept its chain id"
+	);
+	let leaked: Vec<String> = messages
+		.iter()
+		.filter(|m| m.role == "assistant")
+		.filter_map(|m| m.id.clone())
+		.collect();
+	assert!(
+		leaked.is_empty(),
+		"assistant ids survived compaction — the next request would chain the pre-compaction history: {leaked:?}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

@@ -505,54 +505,25 @@ pub(super) async fn apply_compression(
 		None => compressed_entry,
 	};
 
-	// CRITICAL: Capture the most recent assistant response_id from the range we're
-	// about to drain. The Responses API (OpenAI + OctoHub) chains via this id —
-	// the server stores prior turns under it and reconstructs full history from
-	// the chain. If we drain every id-bearing assistant and leave the summary
-	// without one, the next request finds no `previous_id`, falls into the
-	// "initial request" branch of `messages_to_input`, which filters out the
-	// summary (role=assistant) entirely. The model then receives only the
-	// re-injected user turn with zero context — exactly the "lost YES / plan
-	// approval" failure mode. Inheriting the id keeps the server-side chain
-	// intact while local view shrinks for token budget.
-	//
-	// The inherited id must point to a SETTLED completion — one whose stored
-	// output did not end with `function_call` items. When the server walks the
-	// chain back from an unsettled id, the reconstructed history ends with
-	// `assistant_with_tool_calls`, and the next request (whose `input` after
-	// compression is a re-injected user message, not the matching tool_results)
-	// produces `tool_use → user` upstream, which Anthropic rejects with:
-	//   "tool_use ids were found without tool_result blocks immediately after".
-	// An assistant message with non-empty `tool_calls` corresponds to a
-	// completion whose stored output had `function_call` items, so we skip
-	// those when scanning the drained range.
-	let inherited_response_id: Option<String> = session.session.messages[start_idx + 1..=end_idx]
-		.iter()
-		.rev()
-		.find(|m| {
-			m.role == "assistant"
-				&& m.id.is_some()
-				&& match m.tool_calls.as_ref() {
-					Some(serde_json::Value::Array(arr)) => arr.is_empty(),
-					Some(_) => false,
-					None => true,
-				}
-		})
-		.and_then(|m| m.id.clone());
-
-	if let Some(ref id) = inherited_response_id {
-		log_debug!(
-			"Compression: inheriting last assistant response_id={} onto summary to preserve chain continuity",
-			id
-		);
-	} else {
-		log_debug!(
-			"Compression: no assistant response_id found in drained range; summary will start a fresh chain"
-		);
-	}
-
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx
 	let (messages_removed, _) = session.remove_messages_in_range(start_idx, end_idx)?;
+
+	// Provider response ids chain server-side history (OpenAI/xAI
+	// `previous_response_id`, OctoHub `previous_completion_id`): with one present
+	// the next request sends only the delta and the server replays everything it
+	// stored under that id — including the turns just folded. Any id surviving
+	// compaction resurrects the uncompressed transcript (measured on gpt-5.6:
+	// 508k tokens billed per call against a 145k local view). Strip every id so
+	// the next request rebases onto the compacted transcript; the response it
+	// returns restarts the chain from there.
+	for message in session
+		.session
+		.messages
+		.iter_mut()
+		.filter(|m| m.role == "assistant")
+	{
+		message.id = None;
+	}
 
 	// Insert the post-compression state first. Cache markers are aligned only
 	// after every reinjection has finished, so the second boundary really is the
@@ -588,15 +559,12 @@ pub(super) async fn apply_compression(
 	}
 
 	// Summary marker placement is finalized after all reinjections below.
-	// The `id` is inherited from the most recent assistant turn in the drained range
-	// so the provider can chain via `previous_response_id` on the next API call.
 	let summary_msg = crate::session::Message {
 		role: "assistant".to_string(),
 		content: compressed_entry.clone(),
 		timestamp: now,
 		cached: false,
 		name: Some(COMPRESSION_MESSAGE_NAME.to_string()),
-		id: inherited_response_id,
 		..Default::default()
 	};
 	session

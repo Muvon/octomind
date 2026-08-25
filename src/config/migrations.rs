@@ -414,7 +414,10 @@ mod tests {
 		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(7));
+		assert_eq!(
+			migrated["version"].as_integer(),
+			Some(i64::from(CURRENT_CONFIG_VERSION))
+		);
 		assert_eq!(migrated["log_level"].as_str(), Some("info"));
 		assert_eq!(
 			migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
@@ -452,7 +455,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -507,11 +510,14 @@ max_revisions = 9
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 		assert!(migration.content.contains("# keep me"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-		assert_eq!(migrated["version"].as_integer(), Some(7));
+		assert_eq!(
+			migrated["version"].as_integer(),
+			Some(i64::from(CURRENT_CONFIG_VERSION))
+		);
 		assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(false));
 		assert_eq!(
 			migrated["supervisor"]["condense"]["tokens_threshold"].as_integer(),
@@ -547,7 +553,7 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 		assert!(migration.content.contains("# keep compression notes"));
 		assert!(migrated["compression"].get("hints_enabled").is_none());
 		assert!(migrated["compression"]
@@ -588,7 +594,7 @@ target_ratio = 4.0
 			.expect("v3 must migrate");
 
 		assert_eq!(migration.from_version, 3);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 		assert!(migration.content.contains("# keep my notes"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -623,7 +629,7 @@ trajectory_max_tokens = 3072
 			.unwrap()
 			.expect("v4 must migrate");
 		assert_eq!(migration.from_version, 4);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
@@ -685,7 +691,7 @@ threshold = 12345
 			.unwrap()
 			.expect("v5 must migrate");
 		assert_eq!(migration.from_version, 5);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		let compression = migrated["compression"].as_table().unwrap();
@@ -713,7 +719,7 @@ ignore_cost = true
 			.unwrap()
 			.expect("v7 must migrate");
 		assert_eq!(migration.from_version, 7);
-		assert_eq!(migration.to_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		let decision = migrated["compression"]["decision"].as_table().unwrap();
 		assert!(!decision.contains_key("ignore_cost"));

@@ -250,6 +250,7 @@ impl ChatSession {
 		// behavior identical; system-managed user-role injections use a different
 		// method and intentionally do not reset it.
 		self.session.info.consecutive_compressions = 0;
+		self.session.info.note_turn_start();
 
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.

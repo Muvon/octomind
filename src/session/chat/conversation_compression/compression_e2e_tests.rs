@@ -407,3 +407,102 @@ async fn verify_compaction_drops_provider_chain_ids() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+/// The two regimes behind the fire line, through the real pipeline. Same
+/// mid-task session shape, threshold set just under the live context so the
+/// line is crossed; the only difference is where in the turn the check runs.
+async fn regime_session(config: &mut crate::config::Config) -> ChatSession {
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		msg("user", "build the frobnicator widget"),
+		msg("assistant", "starting on the widget now"),
+		msg("user", "make sure it compiles"),
+		msg("assistant", "phase one is done and compiling"),
+		msg("user", "add tests too"),
+		msg("assistant", "tests added"),
+		msg("assistant", "running the build now"),
+		msg("tool", "build output: ok"),
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	// No tool schemas: the live context is the messages alone, so the
+	// threshold below sits in a known relation to it.
+	session.cached_tools = Some(Vec::new());
+	session.session.info.total_api_calls = 50;
+	let live = session.get_full_context_tokens(config).await;
+	config.compression.threshold = (live * 2 / 3).max(1);
+	session
+}
+
+#[tokio::test]
+async fn verify_turn_boundary_folds_on_crossing_the_line() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	// Between the user message and its first call: no history needed.
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		compressed,
+		"a genuine turn boundary over the line must fold"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	// Two calls into a turn with no completed-turn history: two calls of
+	// savings in evidence, below even the base runway — wait.
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed,
+		"mid-turn with a two-call horizon must not fold on size alone"
+	);
+
+	// Same context, but a session that has shown a long pace: fold.
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
+	session.session.info.turn_call_counts = vec![30, 30, 30];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		compressed,
+		"a demonstrated long pace must amortize the fold"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

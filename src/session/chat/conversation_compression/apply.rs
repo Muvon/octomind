@@ -17,7 +17,6 @@
 // chain continuity), re-inject the most recent user turn, fold knowledge,
 // update anchor + token bookkeeping. Pure side-effects on `ChatSession`.
 
-use super::decision::{estimate_future_turns, measured_growth_rate};
 use super::knowledge::{
 	fold_analysis_findings, fold_critical_knowledge, format_compressed_entry_with_context,
 	format_compressed_entry_with_pact,
@@ -721,10 +720,6 @@ pub(super) async fn apply_compression(
 			post_compression_tokens
 		);
 	}
-	// Growth over the interval since the LAST compression, measured before the
-	// watermark write below resets the baseline (afterwards the rate degenerates).
-	let growth_at_fold =
-		measured_growth_rate(&session.session.info, current_context_tokens as usize);
 	session.session.info.context_tokens_after_last_compression = post_compression_tokens as usize;
 
 	let metrics = crate::mcp::core::plan::compression::CompressionMetrics::new(
@@ -762,9 +757,6 @@ pub(super) async fn apply_compression(
 		}
 	}
 
-	let estimated_future_turns =
-		estimate_future_turns(&session.session.info, tokens_saved as f64, growth_at_fold);
-	session.session.info.predicted_turns_at_last_compression = estimated_future_turns;
 	session.session.info.api_calls_at_last_compression = session.session.info.total_api_calls;
 	session.session.info.output_tokens_at_last_compression = session.session.info.output_tokens;
 	log_debug!(

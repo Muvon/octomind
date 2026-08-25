@@ -38,9 +38,8 @@ mod schema;
 //   prompt internally via `prompt::build_compression_prompt`).
 // - `apply::{apply_compression, collect_preserved_skills}` materialises the
 //   chosen drain range against the session.
-// - `decision::{calculate_compression_net_benefit, compression_depth, ...}`
-//   is the cost/benefit math and the adaptive depth controller driving the
-//   should-we-compress gate.
+// - `decision::{fold_decision, compression_depth, ...}` is the amortization
+//   math and the adaptive depth controller driving the should-we-compress gate.
 // - `range::{find_compression_range, calculate_range_tokens}` decides which
 //   indices to drain and what they cost in tokens.
 use ai::ask_ai_decision_and_summary;
@@ -49,8 +48,9 @@ use ai::ask_ai_decision_and_summary;
 pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills};
 use decision::{
-	adaptive_fire_line, autonomous_runway, calculate_compression_net_benefit, compression_depth,
-	context_ceiling, measured_growth_rate, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
+	adaptive_fire_line, at_turn_boundary, autonomous_runway, compression_depth, context_ceiling,
+	expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
+	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 
@@ -176,28 +176,40 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (false, MIN_COMPRESSION_RATIO);
 	};
 
-	// CACHE-AWARE DECISION: Calculate if compression is profitable
-	let net_benefit = calculate_compression_net_benefit(
-		session,
-		config,
+	// The fold behind the fire line: free at a genuine turn boundary, otherwise
+	// amortized over the calls this session's own pace predicts.
+	let compressible = compressible_tokens as f64;
+	let target_after = current_tokens as f64 - compressible + compressible / adjusted_ratio;
+	let summary_cap = config.compression.decision.max_tokens;
+	let summary_tokens = if summary_cap > 0 {
+		(compressible / adjusted_ratio).min(summary_cap as f64)
+	} else {
+		compressible / adjusted_ratio
+	};
+	let econ = FoldEconomics::resolve(session, config);
+	let fold = fold_decision(
+		&session.session.info,
+		current_tokens as f64,
+		target_after,
+		compressible,
+		summary_tokens,
+		runway,
+		econ,
+	);
+	log_debug!(
+		"Fold decision: {} (boundary={}, expected_calls={:.0}, runway={:.0}, current={}, target_after={:.0}, ratio={:.1}x, econ={:?})",
+		if fold { "COMPRESS" } else { "WAIT" },
+		at_turn_boundary(&session.session.info),
+		expected_remaining_calls(&session.session.info),
+		runway,
 		current_tokens,
-		compressible_tokens,
+		target_after,
 		adjusted_ratio,
-	)
-	.await;
-
-	if net_benefit > 0.0 {
-		log_debug!(
-			"Cache-aware analysis: Net benefit ${:.5} → COMPRESS at {:.1}x",
-			net_benefit,
-			adjusted_ratio
-		);
+		econ
+	);
+	if fold {
 		(true, adjusted_ratio)
 	} else {
-		log_debug!(
-			"Cache-aware analysis: Net benefit ${:.5} → SKIP (would lose money)",
-			net_benefit
-		);
 		(false, MIN_COMPRESSION_RATIO)
 	}
 }

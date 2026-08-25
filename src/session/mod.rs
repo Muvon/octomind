@@ -249,6 +249,9 @@ pub fn latest_task_timestamp(messages: &[Message]) -> Option<u64> {
 		.map(|message| message.timestamp)
 }
 
+/// Completed genuine turns whose call counts feed the fold pace estimate.
+pub const TURN_HISTORY: usize = 16;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionInfo {
 	pub name: String,
@@ -301,9 +304,13 @@ pub struct SessionInfo {
 	// Exact post-compression context watermark used by the adaptive controller.
 	#[serde(default)]
 	pub context_tokens_after_last_compression: usize, // 0 = no prior compression, can compress immediately
-	// Self-tuning estimation tracking (for accuracy measurement)
+	// API call counts of completed genuine user turns, most recent last, capped
+	// at TURN_HISTORY. The fold amortization estimate runs on this pace.
 	#[serde(default)]
-	pub predicted_turns_at_last_compression: f64, // What we predicted at last compression
+	pub turn_call_counts: Vec<u32>,
+	// API call count when the current genuine user turn started.
+	#[serde(default)]
+	pub api_calls_at_turn_start: usize,
 	#[serde(default)]
 	pub api_calls_at_last_compression: usize, // API call count at last compression
 	#[serde(default)]
@@ -324,6 +331,23 @@ pub struct SessionInfo {
 	/// them against an empty ledger, producing false verification gaps.
 	#[serde(default)]
 	pub evidence: crate::supervisor::gate::EvidenceLedger,
+}
+
+impl SessionInfo {
+	/// Close the previous genuine turn's call count and open a new one. A turn
+	/// that made no calls (answered from context) carries no pace signal.
+	pub fn note_turn_start(&mut self) {
+		let calls = self
+			.total_api_calls
+			.saturating_sub(self.api_calls_at_turn_start);
+		if calls > 0 {
+			self.turn_call_counts.push(calls as u32);
+			if self.turn_call_counts.len() > TURN_HISTORY {
+				self.turn_call_counts.remove(0);
+			}
+		}
+		self.api_calls_at_turn_start = self.total_api_calls;
+	}
 }
 
 #[derive(Debug, Clone)]
@@ -446,7 +470,8 @@ impl Session {
 				spending_threshold_checkpoint: 0.0,
 
 				context_tokens_after_last_compression: 0,
-				predicted_turns_at_last_compression: 0.0,
+				turn_call_counts: Vec::new(),
+				api_calls_at_turn_start: 0,
 				api_calls_at_last_compression: 0,
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,

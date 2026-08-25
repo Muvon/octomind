@@ -78,9 +78,33 @@ fn plan() -> MigrationPlan {
 				to: 7,
 				apply: remove_v7_supervisor_judges,
 			},
+			VersionMigration {
+				from: 7,
+				to: 8,
+				apply: remove_v8_compression_ignore_cost,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v8 removes `compression.decision.ignore_cost`. The dollar gate it switched
+/// off is gone: a fold is now amortized over the session's own pace in price
+/// ratios, and the decision call's spend is always tracked.
+fn remove_v8_compression_ignore_cost(
+	document: &mut toml_edit::DocumentMut,
+	_template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	if let Some(decision) = document
+		.as_table_mut()
+		.get_mut("compression")
+		.and_then(|item| item.as_table_mut())
+		.and_then(|compression| compression.get_mut("decision"))
+		.and_then(|item| item.as_table_mut())
+	{
+		decision.remove("ignore_cost");
+	}
+	Ok(())
 }
 
 /// v7 removes the supervisor's judge mechanics and their knobs: claim_check,
@@ -428,7 +452,7 @@ enabled = true
 			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
 			.unwrap()
 			.expect("v2 must migrate");
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
 			migrated["compression"]["attention"]["enabled"].as_bool(),
@@ -483,7 +507,7 @@ max_revisions = 9
 			.expect("v1 must migrate");
 
 		assert_eq!(migration.from_version, 1);
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 		assert!(migration.content.contains("# keep me"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -523,7 +547,7 @@ sequential_threshold = 3
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 
 		assert_eq!(migration.from_version, 2);
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 		assert!(migration.content.contains("# keep compression notes"));
 		assert!(migrated["compression"].get("hints_enabled").is_none());
 		assert!(migrated["compression"]
@@ -564,7 +588,7 @@ target_ratio = 4.0
 			.expect("v3 must migrate");
 
 		assert_eq!(migration.from_version, 3);
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 		assert!(migration.content.contains("# keep my notes"));
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
@@ -599,7 +623,7 @@ trajectory_max_tokens = 3072
 			.unwrap()
 			.expect("v4 must migrate");
 		assert_eq!(migration.from_version, 4);
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(
@@ -661,7 +685,7 @@ threshold = 12345
 			.unwrap()
 			.expect("v5 must migrate");
 		assert_eq!(migration.from_version, 5);
-		assert_eq!(migration.to_version, 7);
+		assert_eq!(migration.to_version, 8);
 
 		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 		let compression = migrated["compression"].as_table().unwrap();
@@ -673,8 +697,36 @@ threshold = 12345
 	}
 
 	#[test]
+	fn v7_drops_compression_ignore_cost() {
+		let existing = r#"version = 7
+
+[compression]
+threshold = 70000
+
+[compression.decision]
+model = "openai:gpt-5-mini"
+max_tokens = 16000
+ignore_cost = true
+"#;
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v7 must migrate");
+		assert_eq!(migration.from_version, 7);
+		assert_eq!(migration.to_version, 8);
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		let decision = migrated["compression"]["decision"].as_table().unwrap();
+		assert!(!decision.contains_key("ignore_cost"));
+		assert_eq!(decision["max_tokens"].as_integer(), Some(16000));
+		assert_eq!(
+			migrated["compression"]["threshold"].as_integer(),
+			Some(70000)
+		);
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 7", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 8", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

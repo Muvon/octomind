@@ -306,7 +306,6 @@ Model used for compression decisions and summary generation.
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
-| `ignore_cost` | bool | `false` | When true, compression cost is not tracked |
 
 ```toml
 [compression]
@@ -322,7 +321,6 @@ top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
-ignore_cost = false
 ```
 
 ## `[supervisor]`

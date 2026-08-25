@@ -36,7 +36,6 @@ top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
-ignore_cost = false
 ```
 
 See [Configuration Reference](../reference/03-config-reference.md#compression) for all fields.
@@ -79,43 +78,27 @@ The watermark check is inactive until the first compression sets `context_tokens
 
 Two escape hatches set the **same** watermark (`context_tokens_after_last_compression = current_tokens`) to suppress re-analysis until context grows again — they are not a separate cooldown mechanism: (1) the chosen compression range is empty (`start_idx >= end_idx`), and (2) the depth controller finds no feasible target — even the deepest fold could not land usefully below the fire line. Both run before the cost analysis.
 
-### Cache-Aware Economics
+### Amortization Gate
 
-Before compressing, the system calculates net benefit:
+Behind the fire line, a fold has to earn its place. Two regimes:
 
-```
-net_benefit =
-    (cost of remaining turns with full context)
-  - (compression cost + cache invalidation cost + cost of remaining turns with compressed context)
-```
-
-**If net_benefit > 0**: Compress (saves money).
-**If net_benefit <= 0**: Skip (would cost money).
-
-**Cost factors** use **per-model pricing fetched from the provider** (`ModelPricing`: input / output / cache-write / cache-read per 1M tokens). The cache-write and cache-read multipliers vary by provider; the figures below are illustrative Anthropic-typical values, not octomind constants:
-
-- Cache write: ~1.25x base token cost (illustrative)
-- Cache read: ~0.1x base token cost (~90% savings on cached content; illustrative)
-- Compression cost: a single combined decision+summary LLM call (see below)
-- Cache invalidation: compression forces a cache rewrite of the surviving prefix
-
-Two short-circuits replace the cost math when pricing is unusable:
-- **Free/zero-priced session model** (e.g. local `ollama`): always compress, for context management (cost is irrelevant).
-- **Pricing unavailable**: skip compression — unless `ignore_cost = true`, which treats missing pricing as zero cost and compresses anyway.
-
-**One combined LLM call.** Compression is decided and summarized in a **single** request (`ask_ai_decision_and_summary`) that returns a typed `CompressionSummary` carrying both `should_compress` and the full narrative sections — there is no separate decision call followed by a summarization call. The call uses JSON-schema mode for providers that support structured output, and an XML-tagged prompt otherwise. If the model returns `should_compress = true` but every narrative field is empty, compression is **refused** (the substantive-summary gate) to avoid wiping context with a header-only summary.
-
-**Future turn estimation** uses no time or velocity signal. It is:
+- **Genuine turn boundary** (between a user message and its first API call): crossing the line is enough. Nothing is mid-flight, so no execution state is lost, and the new turn rewrites the cache tail anyway.
+- **Mid-turn**: the fold must be amortized over the work the session's own pace predicts.
 
 ```
-estimate    = min(headroom / growth_rate, api_calls_so_far)
-future_turns = max(estimate × accuracy, 5)
+expected_calls = (median_calls_per_turn − calls_this_turn)⁺ + median_calls_per_turn × turns_seen
+                 (never below calls_this_turn; first turn: calls_this_turn)
+fold iff expected_calls ≥ runway
+     and (current − target_after) × cache_read × expected_calls
+         ≥ sent × folder_input + summary × folder_output + target_after × cache_write
 ```
 
-- `headroom` = tokens freed by this compression; `growth_rate` = output tokens per call (incremental since the last compression, else lifetime average).
-- `api_calls_so_far` is the symmetry estimate (work remaining ≈ work done). When there are no calls yet (cold start), the physical ceiling is capped at **100** instead.
-- `accuracy` is a self-tuning factor (actual ÷ predicted from the last cycle, clamped **[0.25, 4.0]**) that corrects systematic over/under-estimation.
-- The result is floored at **5**. There is no "calls per minute", velocity decay, or "2x current calls" cap.
+- `median_calls_per_turn` comes from the last 16 completed genuine turns (`turn_call_counts`); `turns_seen` is the Lindy horizon — a session that has run N turns is expected to run about N more.
+- `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a longer predicted horizon.
+- The price terms are **ratios relative to one uncached agent input token** (`FoldEconomics`), from provider pricing when available. Missing pricing falls back to conservative defaults (cache read 0.1, folder input 1.0, folder output 3.0, cache write 1.25) with an info log — never a silent skip.
+- `sent` is the part of the drained range the fold prompt actually sends (recent bodies whole, older ones trimmed), `summary` the decision model's output budget.
+
+Net effect: a session that crosses the line on its last call does not fold; a long tool loop folds once it has shown it will keep going; on a cheap-cache model with an expensive folder the mid-turn fold waits for a longer horizon, on an expensive or uncached model it fires early.
 
 ### Forced vs Automatic Compression
 
@@ -124,7 +107,7 @@ The `/done` command triggers **forced compression**, which behaves differently f
 | Behavior | Forced (`/done`) | Automatic |
 |----------|------------------|-----------|
 | Exponential cooldown | Bypassed | Applied |
-| Cost gate (`net_benefit`) | Bypassed | Enforced |
+| Amortization gate | Bypassed | Enforced |
 | Feasibility check ("won't drop below threshold") | Bypassed | Enforced |
 | AI veto | Forced — AI cannot decline | AI may decline |
 | Min. conversation messages | 3 | 5 |
@@ -199,8 +182,6 @@ Use a fast, cheap model for compression decisions to minimize overhead. Relative
 | `anthropic:claude-haiku-4-5` | ~$0.0003 per decision | Alternative |
 | `anthropic:claude-sonnet-4` | ~$0.003 per decision (~10x Haiku) | More capable, more expensive |
 
-Set `ignore_cost = true` in `[compression.decision]` to exclude compression decision costs from session cost tracking.
-
 ## Monitoring
 
 Use `/info` to see compression statistics. The `compression` block shows:
@@ -268,4 +249,3 @@ Net benefit: negative --> SKIP (would cost money)
 **Compression not saving money:**
 - Use a cheaper `[compression.decision]` model
 - Increase thresholds to compress less frequently
-- Set `ignore_cost = true` if tracking is misleading

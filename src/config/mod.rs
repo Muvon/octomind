@@ -69,7 +69,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 7;
+pub const CURRENT_CONFIG_VERSION: u32 = 8;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -134,9 +134,6 @@ pub struct CompressionDecisionConfig {
 	pub max_retries: u32,
 	/// Base timeout for exponential backoff retry logic (seconds)
 	pub retry_timeout: u64,
-	/// Ignore compression decision cost in session tracking (useful for subscription models)
-	/// When true, the compression decision API call is treated as free and not added to total cost
-	pub ignore_cost: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

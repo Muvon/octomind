@@ -368,7 +368,8 @@ impl ChatSession {
 			spending_threshold_checkpoint: 0.0,
 
 			context_tokens_after_last_compression: 0,
-			predicted_turns_at_last_compression: 0.0,
+			turn_call_counts: Vec::new(),
+			api_calls_at_turn_start: 0,
 			api_calls_at_last_compression: 0,
 			output_tokens_at_last_compression: 0,
 			consecutive_compressions: 0,

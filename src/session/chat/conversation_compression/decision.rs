@@ -12,281 +12,137 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Cost-aware compression decision math.
+// Compression decision math.
 //
-// Pure pricing/forecast helpers — no LLM calls, no session mutation. The
-// orchestrator in `mod.rs` (`should_check_compression`) consults these to
-// decide whether compression is profitable considering cache-invalidation
-// costs vs. future savings over the predicted remaining turns.
+// Pure helpers — no LLM calls, no session mutation. The orchestrator in
+// `mod.rs` (`should_check_compression`) consults these for the adaptive fire
+// line, the fold depth, and whether a fold behind the line is amortized by the
+// work this session's own pace predicts.
 
 use crate::log_debug;
 use crate::session::chat::session::ChatSession;
-use crate::session::estimate_tokens;
 
-/// Calculate net benefit of compression using realistic cost analysis with REAL pricing
-///
-/// CRITICAL INSIGHT: Each API call pays for the ENTIRE context (base + all accumulated new tokens)
-/// New tokens added in call N become part of the base for calls N+1, N+2, etc.
-/// This cumulative effect makes compression MUCH more valuable!
-///
-/// Returns positive value if compression saves money, negative if it costs money
-pub(super) async fn calculate_compression_net_benefit(
-	session: &ChatSession,
-	config: &crate::config::Config,
-	current_tokens: usize,
-	compressible_tokens: u64,
-	compression_ratio: f64,
-) -> f64 {
-	let total_tokens = current_tokens as f64;
-	let compressible_tokens = compressible_tokens as f64;
-	let compressed_slice_tokens = compressible_tokens / compression_ratio;
-	let headroom = compressible_tokens - compressed_slice_tokens;
-	let growth = measured_growth_rate(&session.session.info, current_tokens);
-	let estimated_future_turns = estimate_future_turns(&session.session.info, headroom, growth);
-	let compressed_tokens = total_tokens - headroom;
-
-	// Get decision model (used for compression) and session model (used for future calls)
-	let decision_model = &config.compression.decision.model;
-	let session_model = &session.model;
-	// Get pricing for both models using provider factory
-	let decision_pricing = get_model_pricing(decision_model, config);
-	let session_pricing = get_model_pricing(session_model, config);
-
-	// If we can't get pricing, check ignore_cost before giving up.
-	// With ignore_cost=true the user explicitly opts out of cost-gating —
-	// treat missing pricing as zero-cost and compress for context management.
-	let ignore_cost = config.compression.decision.ignore_cost;
-	let (decision_pricing, session_pricing) = match (decision_pricing, session_pricing) {
-		(Some(d), Some(s)) => (d, s),
-		_ => {
-			if ignore_cost {
-				log_debug!(
-					"Cannot get pricing for models: decision='{}', session='{}' - ignore_cost=true, compressing anyway",
-					decision_model,
-					session_model
-				);
-				return 1.0; // Positive = compress (context management, cost ignored)
-			}
-			log_debug!(
-				"Cannot get pricing for models: decision='{}', session='{}' - skipping compression",
-				decision_model,
-				session_model
-			);
-			return -1.0; // Negative = don't compress
-		}
-	};
-
-	// SPECIAL CASE: Session model has zero pricing (free/local models like ollama)
-	// When pricing is $0.00, cost-based analysis shows no benefit, but user configured
-	// pressure levels for context management (not cost). Compress anyway when threshold exceeded.
-	let session_is_free = session_pricing.input_price_per_1m == 0.0
-		&& session_pricing.output_price_per_1m == 0.0
-		&& session_pricing.cache_write_price_per_1m == 0.0
-		&& session_pricing.cache_read_price_per_1m == 0.0;
-
-	if session_is_free {
-		log_debug!(
-			"Session model '{}' has zero pricing - compressing for context management (threshold exceeded)",
-			session_model
-		);
-		return 1.0; // Positive = compress (context management benefit)
-	}
-
-	// Average NEW tokens per API call: full-context growth — assistant output,
-	// tool results, and injections all become billed input next call. Output-only
-	// accounting missed tool results, the dominant source in agent sessions (see
-	// measured_growth_rate). Floor guards degenerate young sessions.
-	let avg_new_tokens_per_call = growth.max(2000.0);
-
-	// CRITICAL FIX: Estimate decision prompt size (the NEW content for compression API call)
-	// This is the only uncached part when using same model
-	let decision_prompt_tokens = estimate_tokens(
-		"Analyze the conversation history. Should older exchanges be compressed into a summary to save context space while preserving important information? Consider:\n\
-		- Are there repetitive or resolved topics that can be summarized?\n\
-		- Is there important context that must be preserved?\n\
-		- Would compression help focus on current topics?\n\n\
-		If YES, also provide a 2-3 sentence summary preserving logical structure (focus on what's needed to continue the conversation):\n\n\
-		[context chunks placeholder - ~500 tokens average]\n\n\
-		Respond with:\n\
-		'YES' followed by the summary on the next line, OR\n\
-		'NO' if compression is not beneficial."
-	) as f64;
-
-	// Check if decision model can reuse session cache
-	let same_model = decision_model == session_model;
-
-	// Cache-less providers (per the provider's own supports_caching capability)
-	// re-bill the ENTIRE context at full input price on every call. Pricing the
-	// base at cache_read rate there (glm-5.2: $0.26/M vs $1.40/M input) understates
-	// the no-compress cost ~5x and wrongly cost-gates compression OFF exactly
-	// where it is most profitable.
-	let session_caches = crate::session::model_supports_caching(session_model);
-
-	// Estimate actual output tokens from compression API call
-	// The AI generates a summary (not the full compressed_tokens size)
-	// Use compressed_tokens as estimate, but cap at max_tokens if set
-	let decision_max_tokens = config.compression.decision.max_tokens;
-	let estimated_output_tokens = if decision_max_tokens > 0 {
-		(compressed_slice_tokens as u64).min(decision_max_tokens as u64)
-	} else {
-		compressed_slice_tokens as u64
-	};
-
-	// SCENARIO A: NO compression
-	// Each call pays: cache_read(base) + input(new_tokens), base grows each turn
-	let mut total_cost_no_compress = 0.0;
-	let mut base_context = total_tokens;
-
-	for _ in 0..estimated_future_turns as i32 {
-		// Pay cache_read for base (already cached) + input for NEW tokens.
-		// Without provider caching the base is re-billed at input price.
-		let context_cost = if session_caches {
-			session_pricing.calculate_cost(
-				avg_new_tokens_per_call as u64, // NEW tokens: input price
-				0,                              // No cache write
-				base_context as u64,            // BASE: cache_read price
-				0,                              // No output in context calculation
-			)
-		} else {
-			session_pricing.calculate_cost(
-				(base_context + avg_new_tokens_per_call) as u64, // ALL at input price
-				0,
-				0,
-				0,
-			)
-		};
-
-		total_cost_no_compress += context_cost;
-
-		// New tokens become part of base for next call
-		base_context += avg_new_tokens_per_call;
-	}
-
-	// SCENARIO B: WITH compression
-	// 1. Compression cost (one-time) using DECISION model pricing
-	let compression_cost = if same_model && session_caches {
-		// Same model: session context is already cached, only decision prompt is new
-		decision_pricing.calculate_cost(
-			decision_prompt_tokens as u64, // Only new prompt is uncached
-			0,                             // No cache write
-			(total_tokens - decision_prompt_tokens) as u64, // Rest is cached
-			estimated_output_tokens,       // Actual output tokens (capped by max_tokens)
-		)
-	} else {
-		// Different model: NO cache reuse, everything is uncached
-		decision_pricing.calculate_cost(
-			total_tokens as u64,     // ALL tokens uncached
-			0,                       // No cache write
-			0,                       // NO cache
-			estimated_output_tokens, // Actual output tokens (capped by max_tokens)
-		)
-	};
-
-	// 2. Future calls with SMALLER accumulated context using SESSION model pricing
-	// If ignore_cost=true, we don't count compression_cost in benefit calculation
-	let mut total_cost_with_compress = if ignore_cost { 0.0 } else { compression_cost };
-	let mut base_context_compressed = compressed_tokens;
-
-	for call_num in 0..estimated_future_turns as i32 {
-		// First call after compression: cache_write for base (fresh cache)
-		// Subsequent calls: cache_read for base.
-		// Without provider caching the compressed base is input-priced every call.
-		let (input_tokens, cache_write, cache_read) = if !session_caches {
-			(
-				(base_context_compressed + avg_new_tokens_per_call) as u64,
-				0,
-				0,
-			)
-		} else if call_num == 0 {
-			// First call: write the compressed base to cache, pay input for NEW tokens
-			(
-				avg_new_tokens_per_call as u64,
-				base_context_compressed as u64,
-				0,
-			)
-		} else {
-			// Subsequent calls: read cached base, pay input for NEW tokens
-			(
-				avg_new_tokens_per_call as u64,
-				0,
-				base_context_compressed as u64,
-			)
-		};
-
-		let context_cost = session_pricing.calculate_cost(input_tokens, cache_write, cache_read, 0);
-		total_cost_with_compress += context_cost;
-
-		// New tokens become part of base for next call
-		base_context_compressed += avg_new_tokens_per_call;
-	}
-	let net_benefit = total_cost_no_compress - total_cost_with_compress;
-
-	// Log detailed analysis (this point is only reached for paid models)
-	log_debug!(
-		"Compression analysis (REAL PRICING):\n  \
-		Decision model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
-		Session model: {} (input: ${:.2}/1M, output: ${:.2}/1M, cache_write: ${:.2}/1M, cache_read: ${:.2}/1M)\n  \
-		Models match: {} (cache reuse: {})\n  \
-		Current: {:.0} tokens (decision prompt: ~{:.0} tokens)\n  \
-		After compression: {:.0} tokens ({:.1}x ratio) - saves {:.0} tokens\n  \
-		Avg new tokens/call: {:.0} (output_tokens={}, api_calls={})\n  \
-		Future calls: {:.0}\n  \
-		SCENARIO A (no compress): ${:.5}\n    \
-		- Per call: cache_read(base) + input({:.0} new tokens)\n    \
-		- Base grows: {:.0} → {:.0} tokens over {} calls\n  \
-		SCENARIO B (compress): ${:.5}\n    \
-		- Compression cost: ${:.5} (using {}, {} uncached, {} cached) {}\n    \
-		- Per call: cache_read/write(base) + input({:.0} new tokens)\n    \
-		- Base grows: {:.0} → {:.0} tokens over {} calls\n  \
-		Net benefit: ${:.5} → {}",
-		decision_model,
-		decision_pricing.input_price_per_1m,
-		decision_pricing.output_price_per_1m,
-		decision_pricing.cache_write_price_per_1m,
-		decision_pricing.cache_read_price_per_1m,
-		session_model,
-		session_pricing.input_price_per_1m,
-		session_pricing.output_price_per_1m,
-		session_pricing.cache_write_price_per_1m,
-		session_pricing.cache_read_price_per_1m,
-		if same_model { "YES" } else { "NO" },
-		if same_model { "YES" } else { "NO" },
-		total_tokens,
-		decision_prompt_tokens,
-		compressed_tokens,
-		compression_ratio,
-		total_tokens - compressed_tokens,
-		avg_new_tokens_per_call,
-		session.session.info.output_tokens,
-		session.session.info.total_api_calls,
-		estimated_future_turns,
-		total_cost_no_compress,
-		avg_new_tokens_per_call,
-		total_tokens,
-		base_context,
-		estimated_future_turns as i32,
-		total_cost_with_compress,
-		compression_cost,
-		decision_model,
-		if same_model { decision_prompt_tokens as u64 } else { total_tokens as u64 },
-		if same_model { (total_tokens - decision_prompt_tokens) as u64 } else { 0 },
-		if ignore_cost { "[IGNORED]" } else { "" },
-		avg_new_tokens_per_call,
-		compressed_tokens,
-		base_context_compressed,
-		estimated_future_turns as i32,
-		net_benefit,
-		if net_benefit > 0.0 {
-			"COMPRESS ✓"
-		} else {
-			"SKIP"
-		}
-	);
-
-	net_benefit
+/// Price ratios that decide whether a fold pays, each relative to ONE uncached
+/// agent input token. Ratios instead of dollars keep the rule provider-agnostic
+/// and defined even when a provider publishes no pricing — the old dollar gate
+/// silently disabled the soft threshold whenever a price was missing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct FoldEconomics {
+	/// Cached-prefix read cost per token of context carried into a call.
+	pub cache_read: f64,
+	/// Folder (decision model) input cost per transcript token it is sent.
+	pub folder_input: f64,
+	/// Folder output cost per summary token.
+	pub folder_output: f64,
+	/// One-off rewrite of the post-fold prefix into the cache.
+	pub cache_write: f64,
 }
 
-/// Get model pricing from provider
+impl FoldEconomics {
+	/// Conservative stand-ins when a price is unknown: a 10% cache discount and
+	/// a folder priced like the agent itself.
+	pub(super) const DEFAULT: Self = Self {
+		cache_read: 0.10,
+		folder_input: 1.0,
+		folder_output: 3.0,
+		cache_write: 1.25,
+	};
+
+	pub(super) fn from_pricing(
+		session: Option<&crate::providers::ModelPricing>,
+		folder: Option<&crate::providers::ModelPricing>,
+	) -> Self {
+		let Some(session) = session.filter(|p| p.input_price_per_1m > 0.0) else {
+			return Self::DEFAULT;
+		};
+		let unit = session.input_price_per_1m;
+		Self {
+			cache_read: session.cache_read_price_per_1m / unit,
+			folder_input: folder
+				.map_or(Self::DEFAULT.folder_input, |f| f.input_price_per_1m / unit),
+			folder_output: folder.map_or(Self::DEFAULT.folder_output, |f| {
+				f.output_price_per_1m / unit
+			}),
+			cache_write: session.cache_write_price_per_1m / unit,
+		}
+	}
+
+	pub(super) fn resolve(session: &ChatSession, config: &crate::config::Config) -> Self {
+		let session_pricing = get_model_pricing(&session.model, config);
+		let folder_pricing = get_model_pricing(&config.compression.decision.model, config);
+		if session_pricing.is_none() || folder_pricing.is_none() {
+			crate::log_info!(
+				"Fold economics: no pricing for {} — using default ratios",
+				if session_pricing.is_none() {
+					&session.model
+				} else {
+					&config.compression.decision.model
+				}
+			);
+		}
+		Self::from_pricing(session_pricing.as_ref(), folder_pricing.as_ref())
+	}
+}
+
+/// Fraction of the drained range the fold prompt actually sends: recent bodies
+/// whole, older tool bodies trimmed to 1/ratio (see `prompt::adaptive_preview`).
+pub(super) const FOLD_SENT_FRACTION: f64 = 0.45;
+
+/// True between a genuine user message and the first API call it triggers.
+pub(super) fn at_turn_boundary(info: &crate::session::SessionInfo) -> bool {
+	info.total_api_calls == info.api_calls_at_turn_start
+}
+
+/// Expected API calls still to come, from this session's own pace. The median
+/// calls per completed genuine turn is the rate; the rest of the current turn
+/// plus one such turn per turn already seen (Lindy: a session that has run N
+/// turns is expected to run about N more) is the horizon. Never below the calls
+/// already made this turn, so a long tool loop qualifies as it accumulates
+/// calls while a session with no history stays conservative.
+pub(super) fn expected_remaining_calls(info: &crate::session::SessionInfo) -> f64 {
+	let this_turn = info
+		.total_api_calls
+		.saturating_sub(info.api_calls_at_turn_start) as f64;
+	let mut counts = info.turn_call_counts.clone();
+	if counts.is_empty() {
+		return this_turn.max(1.0);
+	}
+	counts.sort_unstable();
+	let median = counts[counts.len() / 2] as f64;
+	let rest_of_turn = (median - this_turn).max(0.0);
+	(rest_of_turn + median * counts.len() as f64).max(this_turn)
+}
+
+/// The fold decision behind the fire line. At a turn boundary a fold loses no
+/// execution state (nothing is mid-flight) and the new turn rewrites the cache
+/// tail anyway, so crossing the line is enough. Mid-turn a fold must be
+/// amortized: the runway ladder sets how many expected calls the k-th
+/// consecutive fold needs, and the freed context times the cache discount over
+/// those calls must cover what the fold costs.
+pub(super) fn fold_decision(
+	info: &crate::session::SessionInfo,
+	current_tokens: f64,
+	target_after: f64,
+	compressible_tokens: f64,
+	summary_tokens: f64,
+	runway: f64,
+	econ: FoldEconomics,
+) -> bool {
+	if at_turn_boundary(info) {
+		return true;
+	}
+	let expected_calls = expected_remaining_calls(info);
+	if expected_calls < runway {
+		return false;
+	}
+	let freed = (current_tokens - target_after).max(0.0);
+	let gain = freed * econ.cache_read * expected_calls;
+	let cost = compressible_tokens * FOLD_SENT_FRACTION * econ.folder_input
+		+ summary_tokens * econ.folder_output
+		+ target_after * econ.cache_write;
+	gain >= cost
+}
+
 pub(super) fn get_model_pricing(
 	model: &str,
 	_config: &crate::config::Config,
@@ -507,122 +363,15 @@ pub(super) fn compression_depth(
 ///
 /// Only one justified constant: min=5 (compression cooldown must cover at least
 /// a few calls or the cost analysis is meaningless).
-pub(super) fn estimate_future_turns(
-	info: &crate::session::SessionInfo,
-	headroom: f64,
-	growth: f64,
-) -> f64 {
-	let api_calls = info.total_api_calls as f64;
 
-	// Physical ceiling: headroom / growth — exact math, no constants.
-	// Tells us precisely how many more calls fit before the threshold is hit again.
-	// headroom = actual tokens freed by compression (provided by caller).
-	let physical_ceiling = headroom / growth.max(1.0);
-
-	// Symmetry estimate: calls made so far ≈ calls remaining.
-	// Empirically true for interactive sessions; the min() with physical_ceiling
-	// handles cases where it breaks (burst sessions, long-running batch work).
-	// At api_calls=0 there is no symmetry signal — use physical ceiling alone,
-	// but cap it at 100 to avoid the nonsensical 60k+ sentinel from growth_rate=1.
-	let estimate = if api_calls > 0.0 {
-		// Conservative: take whichever signal says the session ends sooner.
-		// physical_ceiling = context budget constraint
-		// api_calls       = observed session depth so far
-		physical_ceiling.min(api_calls)
-	} else {
-		// No data yet — cap physical ceiling so cold-start doesn't produce 60k+.
-		// 100 is not a magic tuning constant; it's an upper bound on "we have no idea".
-		// Self-tuning will correct this after the first compression cycle.
-		physical_ceiling.min(100.0)
-	};
-
-	// Self-tuning: correct for systematic over/under-estimation from the last cycle.
-	// actual_turns / predicted_turns = how wrong we were → apply directly.
-	// Clamp to [0.25, 4.0]: one bad cycle shouldn't dominate all future estimates.
-	let accuracy = calculate_self_tuning_accuracy(info);
-	let adjusted = (estimate * accuracy).max(MIN_RUNWAY_TURNS); // cooldown must be meaningful
-
-	crate::log_debug!(
-		"Future calls estimation: api_calls={:.0}, growth={:.0} tok/call ({}), \
-		headroom={:.0}, physical_ceiling={:.1}, symmetry={:.1}, accuracy={:.2}, final={:.0}",
-		api_calls,
-		growth,
-		if info.context_tokens_after_last_compression > 0 {
-			"incremental"
-		} else {
-			"lifetime"
-		},
-		headroom,
-		physical_ceiling,
-		if api_calls > 0.0 {
-			api_calls
-		} else {
-			physical_ceiling.min(100.0)
-		},
-		accuracy,
-		adjusted
-	);
-
-	adjusted
-}
-
-/// Returns actual/predicted ratio from the last compression as a correction multiplier.
-///
-/// If we predicted 20 calls but only 10 happened before the next threshold was hit,
-/// ratio = 10/20 = 0.5 → we were overestimating → scale future estimates down.
-///
-/// Uses the ratio directly (no blending weight) — one sample is enough to correct
-/// systematic bias. Clamped to [0.25, 4.0] as a sanity guard against a single
-/// wildly anomalous compression cycle corrupting all future estimates.
-pub(super) fn calculate_self_tuning_accuracy(info: &crate::session::SessionInfo) -> f64 {
-	if info.compression_stats.conversation_compressions == 0 {
-		return 1.0; // No prior compression — no correction to apply
-	}
-
-	let predicted = info.predicted_turns_at_last_compression;
-	let actual = (info.total_api_calls as f64 - info.api_calls_at_last_compression as f64).max(0.0);
-
-	if predicted <= 0.0 || actual <= 0.0 {
-		return 1.0;
-	}
-
-	let ratio = actual / predicted;
-
-	crate::log_debug!(
-		"Self-tuning: predicted={:.1}, actual={:.1}, correction={:.2}",
-		predicted,
-		actual,
-		ratio
-	);
-
-	// Clamp: don't let a single bad cycle adjust by more than 4x in either direction
-	ratio.clamp(0.25, 4.0)
-}
+#[cfg(test)]
+#[path = "amortization_tests.rs"]
+mod amortization_tests;
 
 #[cfg(test)]
 mod tests {
 	use super::*;
 	use crate::session::SessionInfo;
-
-	fn info_after_compression(
-		predicted: f64,
-		calls_at_last: usize,
-		total_calls: usize,
-	) -> SessionInfo {
-		let mut info = SessionInfo {
-			predicted_turns_at_last_compression: predicted,
-			api_calls_at_last_compression: calls_at_last,
-			total_api_calls: total_calls,
-			..Default::default()
-		};
-		info.compression_stats.conversation_compressions = 1;
-		info
-	}
-
-	#[test]
-	fn accuracy_is_neutral_before_the_first_compression() {
-		assert_eq!(calculate_self_tuning_accuracy(&SessionInfo::default()), 1.0);
-	}
 
 	#[test]
 	fn growth_rate_uses_incremental_checkpoint_after_compression() {
@@ -785,48 +534,6 @@ mod tests {
 	}
 
 	#[test]
-	fn accuracy_scales_down_when_we_overestimated() {
-		// Predicted 20 more calls, only 10 happened → halve future estimates.
-		let info = info_after_compression(20.0, 100, 110);
-		assert!((calculate_self_tuning_accuracy(&info) - 0.5).abs() < 1e-9);
-	}
-
-	#[test]
-	fn accuracy_scales_up_when_we_underestimated() {
-		let info = info_after_compression(10.0, 100, 120);
-		assert!((calculate_self_tuning_accuracy(&info) - 2.0).abs() < 1e-9);
-	}
-
-	#[test]
-	fn accuracy_is_clamped_to_a_sane_band() {
-		// One wild cycle must not dominate all later estimates.
-		let way_over = info_after_compression(1.0, 100, 1_000);
-		assert_eq!(calculate_self_tuning_accuracy(&way_over), 4.0);
-
-		let way_under = info_after_compression(1_000.0, 100, 101);
-		assert_eq!(calculate_self_tuning_accuracy(&way_under), 0.25);
-	}
-
-	#[test]
-	fn accuracy_is_neutral_when_a_sample_is_degenerate() {
-		// No calls since the last compression — nothing measured yet.
-		assert_eq!(
-			calculate_self_tuning_accuracy(&info_after_compression(20.0, 100, 100)),
-			1.0
-		);
-		// No prediction recorded (older session logs).
-		assert_eq!(
-			calculate_self_tuning_accuracy(&info_after_compression(0.0, 100, 110)),
-			1.0
-		);
-		// Counters out of order must not yield a negative multiplier.
-		assert_eq!(
-			calculate_self_tuning_accuracy(&info_after_compression(20.0, 200, 100)),
-			1.0
-		);
-	}
-
-	#[test]
 	fn growth_rate_floors_at_one_when_context_shrank_below_watermark() {
 		// Dedup/truncation can leave the live context BELOW the last watermark;
 		// the rate must floor at 1, not go negative or divide runways by zero.
@@ -866,53 +573,6 @@ mod tests {
 		};
 		// full rate = 30k/10 = 3k/call, output rate = 50k/10 = 5k/call.
 		assert_eq!(measured_growth_rate(&info, 30_000), 5_000.0);
-	}
-
-	#[test]
-	fn future_turns_bound_by_physical_ceiling() {
-		// Freed headroom is consumed at the FULL-context growth rate: 20k of
-		// headroom at 2k/call is 10 calls, even though 40 calls happened so far.
-		let info = SessionInfo {
-			total_api_calls: 40,
-			..Default::default()
-		};
-		assert_eq!(estimate_future_turns(&info, 20_000.0, 2_000.0), 10.0);
-	}
-
-	#[test]
-	fn future_turns_bound_by_symmetry() {
-		// Plenty of headroom: the session-depth-so-far signal ends sooner.
-		let info = SessionInfo {
-			total_api_calls: 6,
-			..Default::default()
-		};
-		assert_eq!(estimate_future_turns(&info, 100_000.0, 1_000.0), 6.0);
-	}
-
-	#[test]
-	fn future_turns_apply_self_tuning_and_runway_floor() {
-		// Prior cycle overestimated 2x (predicted 20, saw 10) → halve the
-		// symmetry-bound estimate: min(200, 110) * 0.5 = 55.
-		let info = info_after_compression(20.0, 100, 110);
-		assert_eq!(estimate_future_turns(&info, 400_000.0, 2_000.0), 55.0);
-
-		// The result never drops below the meaningful-cooldown floor.
-		let young = SessionInfo {
-			total_api_calls: 4,
-			..Default::default()
-		};
-		assert_eq!(
-			estimate_future_turns(&young, 100_000.0, 1_000.0),
-			MIN_RUNWAY_TURNS
-		);
-	}
-
-	#[test]
-	fn future_turns_cold_start_is_capped() {
-		// No calls yet, growth floors at 1 → the raw ceiling is nonsense (1M
-		// calls); cap at 100 until self-tuning has a sample.
-		let info = SessionInfo::default();
-		assert_eq!(estimate_future_turns(&info, 1_000_000.0, 1.0), 100.0);
 	}
 
 	#[test]

@@ -50,7 +50,7 @@ use anyhow::Result;
 ///   - `None` → XML path. No schema attached, the model's textual
 ///     response is fed through `parse_xml_summary`.
 ///
-/// Cost tracking applies unless `decision.ignore_cost` is set. The system
+/// The decision call's spend is added to the session total. The system
 /// message is marked cached with 1h TTL so it's amortised across every
 /// compression call in a session.
 async fn call_ai_for_decision(
@@ -106,12 +106,11 @@ async fn call_ai_for_decision(
 
 	let mode_label = if schema.is_some() { "json" } else { "xml" };
 	log_debug!(
-		"Using compression decision model '{}' mode={} (max_tokens={}, temp={}, ignore_cost={})",
+		"Using compression decision model '{}' mode={} (max_tokens={}, temp={})",
 		decision_config.model,
 		mode_label,
 		decision_config.max_tokens,
-		decision_config.temperature,
-		decision_config.ignore_cost
+		decision_config.temperature
 	);
 
 	let mut params = crate::session::ChatCompletionWithValidationParams::new(
@@ -139,8 +138,7 @@ async fn call_ai_for_decision(
 	let response = crate::session::chat_completion_with_validation(params).await?;
 
 	// Per-component spend for `/info` — recorded even when the decision ends up
-	// "don't compress" (the call happened) and even with ignore_cost (which only
-	// controls whether the spend counts toward the session total).
+	// "don't compress" (the call happened).
 	if let Some(usage) = &response.exchange.usage {
 		let stats = &mut session.session.info.compression_stats;
 		stats.input_tokens += usage.input_tokens;
@@ -149,18 +147,14 @@ async fn call_ai_for_decision(
 		stats.api_time_ms += usage.request_time_ms.unwrap_or(0);
 	}
 
-	if !decision_config.ignore_cost {
-		if let Some(cost) = response.exchange.usage.as_ref().and_then(|u| u.cost) {
-			session.session.info.total_cost += cost;
-			session.estimated_cost = session.session.info.total_cost;
-			log_debug!(
-				"Compression decision cost: ${:.5} (total: ${:.5})",
-				cost,
-				session.session.info.total_cost
-			);
-		}
-	} else {
-		log_debug!("Compression decision cost ignored (ignore_cost=true)");
+	if let Some(cost) = response.exchange.usage.as_ref().and_then(|u| u.cost) {
+		session.session.info.total_cost += cost;
+		session.estimated_cost = session.session.info.total_cost;
+		log_debug!(
+			"Compression decision cost: ${:.5} (total: ${:.5})",
+			cost,
+			session.session.info.total_cost
+		);
 	}
 
 	if schema.is_some() {

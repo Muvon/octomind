@@ -86,8 +86,8 @@ impl<'a> CommandCompleter<'a> {
 	/// Check if the given file extension is a supported image format
 	fn is_image_file(path: &str) -> bool {
 		let supported_extensions = [
-			".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".ico", ".svg",
-			".avif", ".heic", ".heif",
+			".png", ".jpg", ".jpeg", ".gif", ".webp", ".tiff", ".tif", ".ico", ".svg", ".avif",
+			".heic", ".heif",
 		];
 
 		let path_lower = path.to_lowercase();

@@ -134,7 +134,7 @@ Attach images for AI analysis:
 /image                       # no argument: attach an image from the system clipboard
 ```
 
-Supported image formats: PNG, JPEG, GIF, WebP, BMP. Images larger than 5 MB are rejected, and images are automatically resized to fit within 1568x1568.
+Supported image formats: PNG, JPEG, GIF, WebP. Images larger than 5 MB are rejected, and images are automatically resized to fit within 1568x1568.
 
 Attach videos:
 ```

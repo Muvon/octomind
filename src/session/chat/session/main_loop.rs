@@ -138,8 +138,22 @@ fn apply_clipboard_items(
 	use crate::session::chat::reedline_adapter::PendingClipboardItem;
 	for item in items {
 		match item {
-			PendingClipboardItem::Image(att) => chat_session.pending_image = Some(att),
-			PendingClipboardItem::Video(att) => chat_session.pending_video = Some(att),
+			PendingClipboardItem::Image(att) => {
+				if let Err(error) = chat_session.ensure_model_supports_vision() {
+					chat_session.pending_image = None;
+					crate::log_error!("{}", error);
+				} else {
+					chat_session.pending_image = Some(att);
+				}
+			}
+			PendingClipboardItem::Video(att) => {
+				if let Err(error) = chat_session.ensure_model_supports_video() {
+					chat_session.pending_video = None;
+					crate::log_error!("{}", error);
+				} else {
+					chat_session.pending_video = Some(att);
+				}
+			}
 		}
 	}
 }

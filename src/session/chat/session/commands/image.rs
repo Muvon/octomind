@@ -20,24 +20,17 @@ use anyhow::Result;
 
 pub async fn handle_image(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Handle /image command for attaching images
-	if params.is_empty() {
-		// Check if current model supports vision
-		let (_provider, _model_name) =
-			match crate::providers::ProviderFactory::get_provider_for_model(&session.model) {
-				Ok((provider, model)) => (provider, model),
-				Err(_) => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Image {
-							image_attached: false,
-							path: None,
-							error: Some(
-								"Unable to check vision support for current model".to_string(),
-							),
-						},
-					)));
-				}
-			};
+	if let Err(error) = session.ensure_model_supports_vision() {
+		return Ok(CommandResult::HandledWithOutput(Box::new(
+			CommandOutput::Image {
+				image_attached: false,
+				path: None,
+				error: Some(error.to_string()),
+			},
+		)));
+	}
 
+	if params.is_empty() {
 		// Check clipboard for images
 		if let Ok(true) = session.try_attach_from_clipboard().await {
 			// Image was found and attached from clipboard

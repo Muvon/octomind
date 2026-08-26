@@ -65,3 +65,22 @@ fn test_missing_or_stale_index_preserves_state() {
 	// Empty session
 	assert_eq!(interrupted_call_truncation(&[], Some(0)), None);
 }
+
+#[test]
+fn test_clipboard_image_refused_for_known_non_vision_model() {
+	use crate::session::chat::reedline_adapter::PendingClipboardItem;
+	use crate::session::image::{ImageAttachment, ImageData, SourceType};
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.model = "openai:gpt-3.5-turbo".to_string();
+	let attachment = ImageAttachment {
+		data: ImageData::Base64("unused".to_string()),
+		media_type: "image/png".to_string(),
+		source_type: SourceType::Clipboard,
+		dimensions: Some((1, 1)),
+		size_bytes: None,
+	};
+
+	apply_clipboard_items(&mut session, vec![PendingClipboardItem::Image(attachment)]);
+	assert!(!session.has_pending_image());
+}

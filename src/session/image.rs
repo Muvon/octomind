@@ -254,7 +254,6 @@ impl ImageProcessor {
 			ImageFormat::Jpeg => "image/jpeg",
 			ImageFormat::Gif => "image/gif",
 			ImageFormat::WebP => "image/webp",
-			ImageFormat::Bmp => "image/bmp",
 			_ => return Err(anyhow::anyhow!("Unsupported image format for vision API")),
 		};
 		Ok(media_type.to_string())
@@ -463,7 +462,7 @@ impl ImageProcessor {
 	fn is_supported_extension(ext: &str) -> bool {
 		matches!(
 			ext.to_lowercase().as_str(),
-			"png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+			"png" | "jpg" | "jpeg" | "gif" | "webp"
 		)
 	}
 
@@ -475,7 +474,6 @@ impl ImageProcessor {
 				"jpg" | "jpeg" => Some("image/jpeg".to_string()),
 				"gif" => Some("image/gif".to_string()),
 				"webp" => Some("image/webp".to_string()),
-				"bmp" => Some("image/bmp".to_string()),
 				_ => None,
 			}
 		} else {
@@ -490,14 +488,15 @@ impl ImageProcessor {
 			"image/jpeg" => Ok(ImageFormat::Jpeg),
 			"image/gif" => Ok(ImageFormat::Gif),
 			"image/webp" => Ok(ImageFormat::WebP),
-			"image/bmp" => Ok(ImageFormat::Bmp),
-			_ => Ok(ImageFormat::Png), // Default to PNG
+			_ => Err(anyhow::anyhow!(
+				"Unsupported image media type: {media_type}"
+			)),
 		}
 	}
 
 	/// Get supported image extensions for autocomplete
 	pub fn supported_extensions() -> &'static [&'static str] {
-		&["png", "jpg", "jpeg", "gif", "webp", "bmp"]
+		&["png", "jpg", "jpeg", "gif", "webp"]
 	}
 
 	/// Check if input string is a URL

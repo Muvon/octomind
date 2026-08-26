@@ -868,7 +868,7 @@ pub fn display_image(output: &CommandOutput) {
 				block_row_text(&ex.dimmed().to_string());
 			}
 			block_line(
-				&"Formats: PNG, JPEG, GIF, WebP, BMP — or clipboard"
+				&"Formats: PNG, JPEG, GIF, WebP — or clipboard"
 					.dimmed()
 					.to_string(),
 			);

@@ -849,6 +849,8 @@ impl ChatSession {
 		use crate::session::image::ImageProcessor;
 		use std::path::Path;
 
+		self.ensure_model_supports_vision()?;
+
 		if ImageProcessor::is_url(path) {
 			println!("{}", "🌐 Downloading image from URL...".bright_cyan());
 			let attachment = ImageProcessor::load_from_url(path).await?;
@@ -884,6 +886,8 @@ impl ChatSession {
 	pub async fn try_attach_from_clipboard(&mut self) -> Result<bool> {
 		use crate::session::image::ImageProcessor;
 
+		self.ensure_model_supports_vision()?;
+
 		match ImageProcessor::load_from_clipboard()? {
 			Some(image_attachment) => {
 				println!("{}", "📋 Image detected in clipboard!".bright_cyan());
@@ -912,10 +916,28 @@ impl ChatSession {
 		self.pending_image.take()
 	}
 
+	/// Refuse known text-only models while leaving unknown proxy routes permissive.
+	pub fn ensure_model_supports_vision(&self) -> Result<()> {
+		match crate::session::model_utils::model_supports_vision(&self.model) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(anyhow::anyhow!(
+				"Current model '{}' does not support vision. Switch to a vision-capable model with /model before attaching an image.",
+				self.model
+			)),
+			Err(error) => Err(anyhow::anyhow!(
+				"Unable to check vision support for current model '{}': {}",
+				self.model,
+				error
+			)),
+		}
+	}
+
 	/// Attach video from file path
 	pub async fn attach_video_from_path(&mut self, path: &str) -> Result<()> {
 		use crate::session::video::VideoProcessor;
 		use std::path::Path;
+
+		self.ensure_model_supports_video()?;
 
 		if VideoProcessor::is_url(path) {
 			println!("{}", "🌐 Downloading video from URL...".bright_cyan());
@@ -956,6 +978,22 @@ impl ChatSession {
 	/// Take the pending video (consumes it)
 	pub fn take_pending_video(&mut self) -> Option<crate::session::video::VideoAttachment> {
 		self.pending_video.take()
+	}
+
+	/// Refuse known non-video models while leaving unknown proxy routes permissive.
+	pub fn ensure_model_supports_video(&self) -> Result<()> {
+		match crate::session::model_utils::model_supports_video(&self.model) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(anyhow::anyhow!(
+				"Current model '{}' does not support video. Switch to a video-capable model with /model before attaching a video.",
+				self.model
+			)),
+			Err(error) => Err(anyhow::anyhow!(
+				"Unable to check video support for current model '{}': {}",
+				self.model,
+				error
+			)),
+		}
 	}
 
 	/// Process user commands

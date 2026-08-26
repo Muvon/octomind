@@ -69,11 +69,42 @@ fn test_support_predicates() {
 
 	assert!(ImageProcessor::is_supported_image_by_name("shot.PNG"));
 	assert!(ImageProcessor::is_supported_image_by_name("photo.webp"));
+	assert!(!ImageProcessor::is_supported_image_by_name("legacy.bmp"));
 	assert!(!ImageProcessor::is_supported_image_by_name("notes.md"));
 
-	assert!(!ImageProcessor::supported_extensions().is_empty());
+	assert!(!ImageProcessor::supported_extensions().contains(&"bmp"));
 
 	assert!(ImageProcessor::is_url("https://example.com/x.png"));
 	assert!(ImageProcessor::is_url("http://example.com/x.png"));
 	assert!(!ImageProcessor::is_url("./local/x.png"));
+}
+
+#[tokio::test]
+async fn test_known_non_vision_model_refuses_image_attach_with_model_name() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let png = write_test_image(tmp.path(), "known-text-only.png");
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "openai:gpt-3.5-turbo".to_string();
+
+	let error = session
+		.attach_image_from_path(png.to_str().expect("utf-8 path"))
+		.await
+		.expect_err("known text-only model must refuse image");
+	assert!(error.to_string().contains("openai:gpt-3.5-turbo"));
+	assert!(error.to_string().contains("does not support vision"));
+	assert!(!session.has_pending_image());
+}
+
+#[tokio::test]
+async fn test_unknown_proxy_model_still_attaches_image() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let png = write_test_image(tmp.path(), "unknown-model.png");
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "openrouter:vendor/totally-unknown-model-xyz".to_string();
+
+	session
+		.attach_image_from_path(png.to_str().expect("utf-8 path"))
+		.await
+		.expect("unknown proxy model must remain permissive");
+	assert!(session.has_pending_image());
 }

@@ -16,6 +16,30 @@
 
 use crate::providers::ProviderFactory;
 
+/// Whether a model may receive image attachments.
+///
+/// Unknown models stay permissive because proxy providers can expose models
+/// that are newer than octolib's reference table.
+pub fn model_supports_vision(model: &str) -> anyhow::Result<bool> {
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	if octolib::llm::reference_capabilities::get_reference_capabilities(&actual_model).is_none() {
+		return Ok(true);
+	}
+	Ok(provider.supports_vision(&actual_model))
+}
+
+/// Whether a model may receive video attachments.
+///
+/// Unknown models stay permissive because proxy providers can expose models
+/// that are newer than octolib's reference table.
+pub fn model_supports_video(model: &str) -> anyhow::Result<bool> {
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	if octolib::llm::reference_capabilities::get_reference_capabilities(&actual_model).is_none() {
+		return Ok(true);
+	}
+	Ok(provider.supports_video(&actual_model))
+}
+
 /// Provider-reported context window (max input tokens) for a model.
 /// None when the model string doesn't resolve to a configured provider.
 pub fn model_max_input_tokens(model: &str) -> Option<usize> {

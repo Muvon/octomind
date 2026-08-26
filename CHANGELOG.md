@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.47.0] - 2026-08-26
+
+### 📋 Release Summary
+
+This release introduces support for message attachments across websockets and MCP tools (a1767140, fa17bef7), alongside new tracking for background shell jobs (411e93ae, 7be7451a). Improvements were made to session media validation, context compression logic, and overall job lifecycle management (23fc0d7d, 7dcadbd6, c751a779, 551a2eeb, b1e7b351). A fix also ensures assistant IDs are correctly stripped during compression (1cfc6f78).
+
+
+### ✨ New Features & Enhancements
+
+- **websocket**: implement message attachments support `a1767140`
+- **mcp**: add custom HTTP headers and message attachments `fa17bef7`
+- **session**: track and report pending shell jobs `411e93ae`
+- **session**: implement background shell job tracking `7be7451a`
+
+### 🔧 Improvements & Optimizations
+
+- **websocket**: update attachment loading call in tests `c3ffc44d`
+- **session**: add image and video model support tests `76c8066f`
+- **session**: validate model media capabilities `23fc0d7d`
+- **session**: improve background job lifecycle management `551a2eeb`
+- **compression**: enhance folding and ceiling logic `7dcadbd6`
+- **test**: update migration and compression test assertions `e9d28573`
+- **compression**: implement asynchronous background folding `c751a779`
+- **compression**: update summary token calculation `b1e7b351`
+- **compression**: rework decision logic to use amortization `d6f4c734`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: strip assistant ids during compression `1cfc6f78`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.46.1] - 2026-08-24
 
 ### 📋 Release Summary

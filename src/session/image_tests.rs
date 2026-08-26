@@ -108,3 +108,25 @@ async fn test_unknown_proxy_model_still_attaches_image() {
 		.expect("unknown proxy model must remain permissive");
 	assert!(session.has_pending_image());
 }
+
+#[test]
+fn test_known_non_video_model_refuses_video_attach_with_model_name() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "openai:gpt-3.5-turbo".to_string();
+
+	let error = session
+		.ensure_model_supports_video()
+		.expect_err("known non-video model must refuse video");
+	assert!(error.to_string().contains("openai:gpt-3.5-turbo"));
+	assert!(error.to_string().contains("does not support video"));
+}
+
+#[test]
+fn test_unknown_proxy_model_remains_permissive_for_video() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "openrouter:vendor/totally-unknown-model-xyz".to_string();
+
+	session
+		.ensure_model_supports_video()
+		.expect("unknown proxy model must remain permissive for video");
+}

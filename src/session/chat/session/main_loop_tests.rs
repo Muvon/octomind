@@ -84,3 +84,22 @@ fn test_clipboard_image_refused_for_known_non_vision_model() {
 	apply_clipboard_items(&mut session, vec![PendingClipboardItem::Image(attachment)]);
 	assert!(!session.has_pending_image());
 }
+
+#[test]
+fn test_clipboard_image_attached_for_unknown_proxy_model() {
+	use crate::session::chat::reedline_adapter::PendingClipboardItem;
+	use crate::session::image::{ImageAttachment, ImageData, SourceType};
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.model = "openrouter:vendor/totally-unknown-model-xyz".to_string();
+	let attachment = ImageAttachment {
+		data: ImageData::Base64("unused".to_string()),
+		media_type: "image/png".to_string(),
+		source_type: SourceType::Clipboard,
+		dimensions: Some((1, 1)),
+		size_bytes: None,
+	};
+
+	apply_clipboard_items(&mut session, vec![PendingClipboardItem::Image(attachment)]);
+	assert!(session.has_pending_image());
+}

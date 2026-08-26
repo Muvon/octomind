@@ -16,6 +16,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
+
+pub const MESSAGE_ATTACHMENTS_CAPABILITY: &str = "message_attachments_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -45,8 +48,49 @@ pub struct UserMessage {
 	/// Session name / ID — must refer to an established session.
 	pub session_id: String,
 
-	/// User input sent to the AI. Must be non-empty, max 10 MB.
+	/// User input sent to the AI. May be empty when attachments are present, max 10 MB.
 	pub content: String,
+
+	/// Media uploaded out-of-band and referenced by opaque IDs.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub attachments: Vec<Attachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attachment {
+	/// Opaque media identifier. Never interpreted as a caller-supplied path.
+	pub id: String,
+	pub kind: AttachmentKind,
+	pub media_type: String,
+	pub name: String,
+	pub size: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+	Image,
+	Video,
+	Audio,
+}
+
+impl Attachment {
+	fn validate_id(&self) -> Result<(), String> {
+		if self.id.len() != 24 || !self.id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+			return Err(format!(
+				"attachment id '{}' must be exactly 24 ASCII alphanumeric characters",
+				self.id
+			));
+		}
+		Ok(())
+	}
+
+	/// Resolve only after validating the opaque ID. Keeping this operation here
+	/// prevents transport metadata from ever being treated as a filesystem path.
+	pub(crate) fn resolve_path(&self, media_root: &Path) -> Result<PathBuf, String> {
+		self.validate_id()?;
+		Ok(media_root.join(&self.id))
+	}
 }
 
 /// Execute a session command (equivalent to `/command [args…]` in the CLI).
@@ -107,11 +151,14 @@ impl ClientMessage {
 				if m.session_id.trim().is_empty() {
 					return Err("session_id cannot be empty".to_string());
 				}
-				if m.content.trim().is_empty() {
-					return Err("content cannot be empty".to_string());
+				if m.content.trim().is_empty() && m.attachments.is_empty() {
+					return Err("content and attachments cannot both be empty".to_string());
 				}
 				if m.content.len() > 10 * 1024 * 1024 {
 					return Err("content exceeds maximum size (10MB)".to_string());
+				}
+				for attachment in &m.attachments {
+					attachment.validate_id()?;
 				}
 				Ok(())
 			}
@@ -230,6 +277,9 @@ pub struct AckPayload {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
 	pub status: String,
+	/// Protocol features supported for this bind.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub capabilities: Vec<String>,
 }
 
 /// Skill lifecycle event (activate via auto-activation, explicit use, or forget).
@@ -331,6 +381,10 @@ impl ServerMessage {
 			message_type: client_msg.message_type().to_string(),
 			session_id: client_msg.session_id().map(ToOwned::to_owned),
 			status: "received".to_string(),
+			capabilities: match client_msg {
+				ClientMessage::Session(_) => vec![MESSAGE_ATTACHMENTS_CAPABILITY.to_string()],
+				_ => Vec::new(),
+			},
 		})
 	}
 
@@ -424,6 +478,10 @@ mod tests {
 		let json = r#"{"type":"message","session_id":"sess_123","content":"Fix the bug"}"#;
 		let msg: ClientMessage = serde_json::from_str(json).unwrap();
 		assert!(msg.validate().is_ok());
+		let ClientMessage::Message(message) = msg else {
+			panic!("expected message frame");
+		};
+		assert!(message.attachments.is_empty());
 	}
 
 	#[test]
@@ -445,6 +503,7 @@ mod tests {
 			request_id: None,
 			session_id: "  ".to_string(),
 			content: "Fix the bug".to_string(),
+			attachments: Vec::new(),
 		});
 		assert!(msg.validate().is_err());
 	}
@@ -455,6 +514,7 @@ mod tests {
 			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "  ".to_string(),
+			attachments: Vec::new(),
 		});
 		assert!(msg.validate().is_err());
 	}
@@ -465,6 +525,7 @@ mod tests {
 			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "x".repeat(11 * 1024 * 1024),
+			attachments: Vec::new(),
 		});
 		assert!(msg.validate().is_err());
 	}
@@ -475,11 +536,44 @@ mod tests {
 			request_id: None,
 			session_id: "sess_123".to_string(),
 			content: "Hello".to_string(),
+			attachments: Vec::new(),
 		});
 		let json = serde_json::to_string(&msg).unwrap();
-		assert!(json.contains("\"type\":\"message\""));
-		assert!(json.contains("sess_123"));
-		assert!(json.contains("Hello"));
+		assert_eq!(
+			json,
+			r#"{"type":"message","session_id":"sess_123","content":"Hello"}"#
+		);
+	}
+
+	#[test]
+	fn test_message_with_attachment_and_empty_content_is_valid() {
+		let json = r#"{"type":"message","session_id":"sess_123","content":"","attachments":[{"id":"AbCdEf0123456789GhIjKlMn","kind":"image","media_type":"image/png","name":"screenshot.png","size":1234}]}"#;
+		let msg: ClientMessage = serde_json::from_str(json).unwrap();
+		assert!(msg.validate().is_ok());
+	}
+
+	#[test]
+	fn test_unsafe_attachment_ids_are_rejected() {
+		for id in [
+			"../etc/passwd",
+			"/absolute/path/to/file",
+			"short",
+			"AbCdEf0123456789GhIjKlM/",
+		] {
+			let msg = ClientMessage::Message(UserMessage {
+				request_id: None,
+				session_id: "sess_123".to_string(),
+				content: String::new(),
+				attachments: vec![Attachment {
+					id: id.to_string(),
+					kind: AttachmentKind::Image,
+					media_type: "image/png".to_string(),
+					name: "screenshot.png".to_string(),
+					size: 1234,
+				}],
+			});
+			assert!(msg.validate().is_err(), "unsafe id was accepted: {id}");
+		}
 	}
 
 	// CommandMessage
@@ -607,6 +701,18 @@ mod tests {
 		assert!(json.contains("\"message_type\":\"message\""));
 		assert!(json.contains("\"session_id\":\"sess_123\""));
 		assert!(json.contains("\"status\":\"received\""));
+		assert!(!json.contains("capabilities"));
+	}
+
+	#[test]
+	fn test_session_ack_advertises_message_attachments() {
+		let msg: ClientMessage = serde_json::from_str(
+			r#"{"type":"session","request_id":"bind-1","session_id":"sess_123"}"#,
+		)
+		.unwrap();
+		let ack = ServerMessage::ack(&msg);
+		let json = serde_json::to_string(&ack).unwrap();
+		assert!(json.contains("\"capabilities\":[\"message_attachments_v1\"]"));
 	}
 
 	#[test]

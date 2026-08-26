@@ -487,12 +487,14 @@ impl McpConfig {
 						url,
 						timeout_seconds,
 						tools,
+						headers,
 						auto_bind,
 					} => McpServerConfig::Http {
 						name,
 						url,
 						timeout_seconds,
 						tools,
+						headers,
 						auto_bind,
 					},
 					McpServerConfig::Stdin {

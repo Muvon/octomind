@@ -62,6 +62,7 @@ pub async fn start_health_monitor(config: Arc<Config>) -> Result<(), anyhow::Err
 				McpConnectionType::Http | McpConnectionType::Stdin
 			)
 		})
+		.filter(|server| crate::mcp::client::missing_env_keys(server).is_empty())
 		.cloned()
 		.collect();
 

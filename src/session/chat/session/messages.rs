@@ -212,22 +212,34 @@ impl ChatSession {
 
 	// Add a user message
 	pub fn add_user_message(&mut self, content: &str) -> Result<()> {
-		// Build the message in full WITHOUT pushing, attach pending image/video,
+		let images = self.take_pending_image().into_iter().collect();
+		let videos = self.take_pending_video().into_iter().collect();
+		self.add_user_message_with_attachments(content, images, videos)
+	}
+
+	/// Add a user message with attachments already loaded by a transport.
+	/// This keeps multi-attachment WebSocket turns on the same atomic persistence
+	/// path as interactive pending attachments.
+	pub fn add_user_message_with_attachments(
+		&mut self,
+		content: &str,
+		images: Vec<crate::session::image::ImageAttachment>,
+		videos: Vec<crate::session::video::VideoAttachment>,
+	) -> Result<()> {
+		// Build the message in full WITHOUT pushing, attach image/video media,
 		// persist it, and only THEN push to the in-memory Vec. This keeps memory
 		// and disk strictly in sync — a persist failure leaves no orphan message.
 		let mut message = crate::session::Session::build_message("user", content);
 
-		// Attach pending image if available
-		if let Some(image_attachment) = self.take_pending_image() {
-			message.images = Some(vec![image_attachment]);
+		if !images.is_empty() {
+			message.images = Some(images);
 			if !crate::logging::tracing_setup::is_structured_output_mode() {
 				println!("{}", "📎 Image attached to message".bright_green());
 			}
 		}
 
-		// Attach pending video if available
-		if let Some(video_attachment) = self.take_pending_video() {
-			message.videos = Some(vec![video_attachment]);
+		if !videos.is_empty() {
+			message.videos = Some(videos);
 			if !crate::logging::tracing_setup::is_structured_output_mode() {
 				println!("{}", "🎬 Video attached to message".bright_green());
 			}

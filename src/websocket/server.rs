@@ -15,8 +15,8 @@
 // WebSocket server implementation
 
 use super::protocol::{
-	ClientMessage, CommandMessage, CostPayload, ServerMessage, SessionMessage, StatusPayload,
-	UserMessage,
+	Attachment, AttachmentKind, ClientMessage, CommandMessage, CostPayload, ServerMessage,
+	SessionMessage, StatusPayload, UserMessage,
 };
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
@@ -30,6 +30,7 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -897,6 +898,7 @@ async fn handle_command_message(
 				request_id: None,
 				session_id: session_id.clone(),
 				content: instructions,
+				attachments: Vec::new(),
 			};
 			return handle_user_message(user_msg, ws_sender, config, role, sessions).await;
 		}
@@ -999,6 +1001,112 @@ async fn handle_command_message(
 	Ok(())
 }
 
+#[derive(Debug)]
+struct LoadedMessageAttachments {
+	images: Vec<crate::session::image::ImageAttachment>,
+	videos: Vec<crate::session::video::VideoAttachment>,
+}
+
+fn media_root() -> PathBuf {
+	std::env::var_os("OCTOMIND_MEDIA_ROOT")
+		.map(PathBuf::from)
+		.unwrap_or_else(|| PathBuf::from("/home/octo/.octomind/media"))
+}
+
+/// Validate modality support for the whole turn before resolving or opening a
+/// file, then load each attachment from its opaque-ID location.
+fn load_message_attachments(
+	chat_session: &ChatSession,
+	attachments: &[Attachment],
+	root: &Path,
+) -> Result<LoadedMessageAttachments> {
+	if attachments
+		.iter()
+		.any(|attachment| attachment.kind == AttachmentKind::Image)
+	{
+		chat_session.ensure_model_supports_vision()?;
+	}
+	if attachments
+		.iter()
+		.any(|attachment| attachment.kind == AttachmentKind::Video)
+	{
+		chat_session.ensure_model_supports_video()?;
+	}
+
+	let mut loaded = LoadedMessageAttachments {
+		images: Vec::new(),
+		videos: Vec::new(),
+	};
+	for attachment in attachments {
+		let path = attachment.resolve_path(root).map_err(anyhow::Error::msg)?;
+		let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+			anyhow::anyhow!(
+				"Attachment '{}' ({}) is missing or unreadable: {}",
+				attachment.name,
+				attachment.id,
+				error
+			)
+		})?;
+		if metadata.file_type().is_symlink() {
+			return Err(anyhow::anyhow!(
+				"Attachment '{}' ({}) must not be a symbolic link",
+				attachment.name,
+				attachment.id
+			));
+		}
+		if !metadata.is_file() {
+			return Err(anyhow::anyhow!(
+				"Attachment '{}' ({}) must be a regular file",
+				attachment.name,
+				attachment.id
+			));
+		}
+
+		match attachment.kind {
+			AttachmentKind::Image => {
+				let image = crate::session::image::ImageProcessor::load_from_path(&path).map_err(
+					|error| {
+						anyhow::anyhow!(
+							"Failed to load image attachment '{}' ({}): {}",
+							attachment.name,
+							attachment.id,
+							error
+						)
+					},
+				)?;
+				loaded.images.push(image);
+			}
+			AttachmentKind::Video => {
+				let video = crate::session::video::VideoProcessor::load_from_path_with_media_type(
+					&path,
+					&attachment.media_type,
+				)
+				.map_err(|error| {
+					anyhow::anyhow!(
+						"Failed to load video attachment '{}' ({}): {}",
+						attachment.name,
+						attachment.id,
+						error
+					)
+				})?;
+				loaded.videos.push(video);
+			}
+			AttachmentKind::Audio => {
+				std::fs::File::open(&path).map_err(|error| {
+					anyhow::anyhow!(
+						"Audio attachment '{}' ({}) is unreadable: {}",
+						attachment.name,
+						attachment.id,
+						error
+					)
+				})?;
+			}
+		}
+	}
+
+	Ok(loaded)
+}
+
 /// Handle a "message" type message: send content to an existing session and get AI response.
 /// session_id must refer to an already-established session (from a prior "session" message).
 async fn handle_user_message(
@@ -1015,9 +1123,10 @@ async fn handle_user_message(
 	let input = msg.content.clone();
 
 	log_debug!(
-		"Handling user message: session_id={}, content_len={}",
+		"Handling user message: session_id={}, content_len={}, attachments={}",
 		session_id,
-		input.len()
+		input.len(),
+		msg.attachments.len()
 	);
 
 	let mut chat_session = match lookup_session(session_id, sessions, config, role).await {
@@ -1029,6 +1138,25 @@ async fn handle_user_message(
 	};
 
 	let session_id = session_id.to_string();
+	let loaded_attachments =
+		match load_message_attachments(&chat_session, &msg.attachments, &media_root()) {
+			Ok(attachments) => attachments,
+			Err(error) => {
+				sessions
+					.lock()
+					.await
+					.insert(session_id.clone(), chat_session);
+				send_message(
+					ws_sender,
+					&ServerMessage::error_for_request(
+						format!("Error: {}", error),
+						msg.request_id.clone(),
+					),
+				)
+				.await?;
+				return Ok(());
+			}
+		};
 
 	let config_for_role = config.get_merged_config_for_role(role);
 	let mut cancellation = SessionCancellation::new();
@@ -1141,7 +1269,11 @@ async fn handle_user_message(
 	};
 
 	// Add user message
-	if let Err(e) = chat_session.add_user_message(&processed_input) {
+	if let Err(e) = chat_session.add_user_message_with_attachments(
+		&processed_input,
+		loaded_attachments.images,
+		loaded_attachments.videos,
+	) {
 		sessions
 			.lock()
 			.await
@@ -1322,5 +1454,53 @@ mod tests {
 	fn empty_allowlist_refuses_every_browser() {
 		let err = handshake(Some("https://evil.example.com"), &[]).unwrap_err();
 		assert_eq!(err.status(), StatusCode::FORBIDDEN);
+	}
+
+	fn image_attachment() -> Attachment {
+		Attachment {
+			id: "AbCdEf0123456789GhIjKlMn".to_string(),
+			kind: AttachmentKind::Image,
+			media_type: "image/png".to_string(),
+			name: "screenshot.png".to_string(),
+			size: 1234,
+		}
+	}
+
+	#[test]
+	fn known_non_vision_model_refuses_websocket_image_before_file_access() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.model = "openai:gpt-3.5-turbo".to_string();
+		let missing_root = Path::new("/definitely/missing/media/root");
+
+		let error = load_message_attachments(&session, &[image_attachment()], missing_root)
+			.expect_err("known text-only model must refuse image before resolving the file");
+		assert!(error.to_string().contains("openai:gpt-3.5-turbo"));
+		assert!(error.to_string().contains("does not support vision"));
+		assert!(!error.to_string().contains("missing or unreadable"));
+	}
+
+	#[test]
+	fn extensionless_websocket_image_is_attached_to_empty_user_turn() {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let source = tmp.path().join("source.png");
+		image::RgbImage::new(4, 4)
+			.save(&source)
+			.expect("save test image");
+		let attachment = image_attachment();
+		let media_path = attachment.resolve_path(tmp.path()).unwrap();
+		std::fs::rename(source, &media_path).expect("rename to opaque media id");
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.model = "openrouter:vendor/unknown-vision-model".to_string();
+		let loaded = load_message_attachments(&session, &[attachment], tmp.path())
+			.expect("load websocket attachment");
+		session
+			.add_user_message_with_attachments("", loaded.images, loaded.videos)
+			.expect("add attachment-only user turn");
+
+		let message = session.session.messages.last().expect("user message");
+		assert_eq!(message.content, "");
+		assert_eq!(message.images.as_ref().map(Vec::len), Some(1));
+		assert!(message.videos.is_none());
 	}
 }

@@ -666,9 +666,18 @@ pub fn parse_capability_toml(
 				match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
 					Ok(server_config) => {
 						// Collect {{ENV:KEY}} placeholders from the server's env
-						// block — these gate activation when the env var is unset.
+						// and HTTP headers — these gate activation when unset.
 						if let Some(env) = server_config.env() {
 							for value in env.values() {
+								for key in crate::agent::inputs::extract_env_keys(value) {
+									if !resolved.required_env_keys.contains(&key) {
+										resolved.required_env_keys.push(key);
+									}
+								}
+							}
+						}
+						if let Some(headers) = server_config.headers() {
+							for value in headers.values() {
 								for key in crate::agent::inputs::extract_env_keys(value) {
 									if !resolved.required_env_keys.contains(&key) {
 										resolved.required_env_keys.push(key);

@@ -460,17 +460,6 @@ fn build_http(name: &str, value: serde_json::Value, plugin: &Plugin) -> Option<M
 		}
 	};
 
-	// Our HTTP transport carries no custom headers; dropping them silently
-	// would break auth in confusing ways, so skip the entry instead.
-	if !entry.headers.is_empty() {
-		crate::log_debug!(
-			"plugin '{}': server '{}' declares headers (unsupported), skipping",
-			plugin.name,
-			name
-		);
-		return None;
-	}
-
 	if !url_allowed(&entry.url) {
 		crate::log_debug!(
 			"plugin '{}': server '{}' url '{}' rejected (non-loopback must be https)",
@@ -486,6 +475,7 @@ fn build_http(name: &str, value: serde_json::Value, plugin: &Plugin) -> Option<M
 		url: entry.url,
 		timeout_seconds: DEFAULT_MCP_TIMEOUT_SECONDS,
 		tools: Vec::new(),
+		headers: entry.headers,
 		auto_bind: None,
 	})
 }
@@ -744,7 +734,7 @@ mod tests {
 	}
 
 	#[test]
-	fn http_entries_enforce_https_and_reject_headers() {
+	fn http_entries_enforce_https_and_preserve_headers() {
 		let tmp = tempfile::tempdir().unwrap();
 		let (plugin, data) = plugin_with_mcp(
 			tmp.path(),
@@ -755,7 +745,18 @@ mod tests {
 		);
 		let servers = load_mcp_servers_with(&plugin, &data);
 		let names: Vec<&str> = servers.iter().map(|s| s.name()).collect();
-		assert_eq!(names, vec!["local", "ok"]);
+		assert_eq!(names, vec!["authed", "local", "ok"]);
+		let authed = servers
+			.iter()
+			.find(|server| server.name() == "authed")
+			.expect("plugin HTTP server with headers must load");
+		assert_eq!(
+			authed
+				.headers()
+				.and_then(|headers| headers.get("Authorization"))
+				.map(String::as_str),
+			Some("Bearer t")
+		);
 	}
 
 	#[test]

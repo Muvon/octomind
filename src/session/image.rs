@@ -16,7 +16,7 @@
 
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
-use image::{DynamicImage, ImageFormat};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -75,10 +75,13 @@ impl ImageProcessor {
 			));
 		}
 
-		// Load and process image
-		let img = image::open(path)?;
-		let format = ImageFormat::from_path(path)
-			.map_err(|_| anyhow::anyhow!("Unsupported image format"))?;
+		// Detect from bytes as well as extensions. WebSocket media IDs are opaque
+		// extensionless filenames, while CLI paths continue to work unchanged.
+		let reader = ImageReader::open(path)?.with_guessed_format()?;
+		let format = reader
+			.format()
+			.ok_or_else(|| anyhow::anyhow!("Unsupported image format"))?;
+		let img = reader.decode()?;
 
 		let media_type = Self::format_to_media_type(format)?;
 

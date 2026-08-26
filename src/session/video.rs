@@ -55,6 +55,32 @@ impl VideoProcessor {
 
 	/// Load video from file path
 	pub fn load_from_path(path: &Path) -> Result<VideoAttachment> {
+		let media_type = Self::get_media_type(path)?;
+		Self::load_from_path_with_media_type(path, &media_type)
+	}
+
+	/// Load video from an opaque extensionless media path using the transport's
+	/// declared media type. The same size, encoding, and metadata pipeline as
+	/// normal path loading is retained.
+	pub fn load_from_path_with_media_type(
+		path: &Path,
+		media_type: &str,
+	) -> Result<VideoAttachment> {
+		if !matches!(
+			media_type,
+			"video/mp4"
+				| "video/quicktime"
+				| "video/x-msvideo"
+				| "video/webm"
+				| "video/x-matroska"
+				| "video/3gpp"
+		) {
+			return Err(anyhow::anyhow!(
+				"Unsupported video media type: {}",
+				media_type
+			));
+		}
+
 		// Check file exists and size
 		let metadata = std::fs::metadata(path)?;
 		if metadata.len() > Self::MAX_FILE_SIZE {
@@ -64,27 +90,16 @@ impl VideoProcessor {
 			));
 		}
 
-		// Check if it's a supported video format
-		if !Self::is_supported_video(path) {
-			return Err(anyhow::anyhow!(
-				"Unsupported video format. Supported: {}",
-				Self::supported_extensions().join(", ")
-			));
-		}
-
 		// Read file and encode to base64
 		let video_bytes = std::fs::read(path)?;
 		let base64_data = general_purpose::STANDARD.encode(&video_bytes);
-
-		// Determine media type from extension
-		let media_type = Self::get_media_type(path)?;
 
 		// Try to get video dimensions using ffprobe if available
 		let dimensions = Self::get_video_dimensions(path).ok();
 
 		Ok(VideoAttachment {
 			data: VideoData::Base64(base64_data),
-			media_type,
+			media_type: media_type.to_string(),
 			source_type: SourceType::File(path.to_path_buf()),
 			dimensions,
 			size_bytes: Some(metadata.len()),

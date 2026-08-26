@@ -408,8 +408,8 @@ pub async fn connect_stdio(server: &McpServerConfig) -> Result<Arc<McpService>> 
 		})
 }
 
-/// Collect `{{ENV:KEY}}` placeholders from a server's command, args, and env
-/// values that reference unset or empty environment variables.
+/// Collect `{{ENV:KEY}}` placeholders from a server's command, args, env, and
+/// HTTP header values that reference unset or empty environment variables.
 /// Returns the list of missing keys (empty = all resolved).
 pub(crate) fn missing_env_keys(server: &McpServerConfig) -> Vec<String> {
 	let mut keys = Vec::new();
@@ -421,6 +421,11 @@ pub(crate) fn missing_env_keys(server: &McpServerConfig) -> Vec<String> {
 	}
 	if let Some(env_map) = server.env() {
 		for value in env_map.values() {
+			keys.extend(crate::agent::inputs::extract_env_keys(value));
+		}
+	}
+	if let Some(headers) = server.headers() {
+		for value in headers.values() {
 			keys.extend(crate::agent::inputs::extract_env_keys(value));
 		}
 	}
@@ -446,6 +451,55 @@ fn resolve_env_placeholders(s: &str) -> String {
 	}
 	result
 }
+
+#[derive(Debug, PartialEq)]
+enum HttpAuthSource {
+	StaticHeader,
+	OAuthDiscovery,
+}
+
+fn http_auth_source(server: &McpServerConfig) -> HttpAuthSource {
+	let has_authorization = server.headers().is_some_and(|headers| {
+		headers
+			.keys()
+			.any(|name| name.eq_ignore_ascii_case("authorization"))
+	});
+	if has_authorization {
+		HttpAuthSource::StaticHeader
+	} else {
+		HttpAuthSource::OAuthDiscovery
+	}
+}
+
+fn resolve_http_headers(server: &McpServerConfig) -> Result<reqwest::header::HeaderMap> {
+	let mut resolved = reqwest::header::HeaderMap::new();
+	let Some(headers) = server.headers() else {
+		return Ok(resolved);
+	};
+	for (name, value) in headers {
+		let header_name =
+			reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
+				anyhow!(
+					"Invalid HTTP header name '{}' for MCP server '{}': {}",
+					name,
+					server.name(),
+					e
+				)
+			})?;
+		let value = resolve_env_placeholders(value);
+		let header_value = reqwest::header::HeaderValue::from_str(&value).map_err(|e| {
+			anyhow!(
+				"Invalid value for HTTP header '{}' on MCP server '{}': {}",
+				name,
+				server.name(),
+				e
+			)
+		})?;
+		resolved.insert(header_name, header_value);
+	}
+	Ok(resolved)
+}
+
 /// Single stdio connection attempt. The spawned child is owned by the rmcp
 /// transport and killed when the transport drops (including on failure).
 async fn connect_stdio_once(server: &McpServerConfig, legacy: bool) -> Result<Arc<McpService>> {
@@ -555,8 +609,30 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 		_ => return Err(anyhow!("connect_http requires an http server config")),
 	};
 	let server_name = server.name().to_string();
+	let missing = missing_env_keys(server);
+	if !missing.is_empty() {
+		return Err(anyhow!(
+			"MCP server '{}' requires env vars: {} — set them before connecting",
+			server_name,
+			missing.join(", ")
+		));
+	}
+	let headers = resolve_http_headers(server)?;
+	let http_client = reqwest::Client::builder()
+		.default_headers(headers)
+		.build()
+		.map_err(|e| {
+			anyhow!(
+				"Failed to build HTTP client for MCP server '{}': {}",
+				server_name,
+				e
+			)
+		})?;
 
-	let auth_token = fetch_http_token(&url, &server_name).await;
+	let auth_token = match http_auth_source(server) {
+		HttpAuthSource::StaticHeader => None,
+		HttpAuthSource::OAuthDiscovery => fetch_http_token(&url, &server_name).await,
+	};
 
 	let make_transport = || {
 		let mut config =
@@ -566,10 +642,7 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 		if let Some(token) = &auth_token {
 			config = config.auth_header(token.clone());
 		}
-		rmcp::transport::StreamableHttpClientTransport::with_client(
-			reqwest::Client::default(),
-			config,
-		)
+		rmcp::transport::StreamableHttpClientTransport::with_client(http_client.clone(), config)
 	};
 
 	let handler = OctoClientHandler::new(&server_name);
@@ -696,6 +769,9 @@ pub async fn get_or_connect(server: &McpServerConfig) -> Result<Arc<McpService>>
 /// pre-rmcp implementation resolved the token before every HTTP call, and
 /// this check preserves that self-healing behavior for persistent connections.
 async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
+	if http_auth_source(server) == HttpAuthSource::StaticHeader {
+		return true;
+	}
 	let McpServerConfig::Http { url, .. } = server else {
 		return true;
 	};
@@ -1102,6 +1178,44 @@ mod tests {
 		assert!(message.contains("check for side effects"));
 		assert!(!message.contains("timeout_seconds"));
 		assert!(message.len() < 250);
+	}
+
+	#[test]
+	fn http_header_placeholders_resolve_from_environment() {
+		const KEY: &str = "OCTOMIND_TEST_MCP_STATIC_HEADER";
+		std::env::set_var(KEY, "secret-token");
+		let mut server = McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]);
+		if let McpServerConfig::Http { headers, .. } = &mut server {
+			headers.insert(
+				"Authorization".to_string(),
+				format!("Bearer {{{{ENV:{KEY}}}}}"),
+			);
+		}
+
+		assert!(missing_env_keys(&server).is_empty());
+		let headers = resolve_http_headers(&server).expect("header resolution must succeed");
+		assert_eq!(
+			headers
+				.get(reqwest::header::AUTHORIZATION)
+				.expect("Authorization header must exist"),
+			"Bearer secret-token"
+		);
+		std::env::remove_var(KEY);
+	}
+
+	#[test]
+	fn authorization_header_selects_static_auth_without_discovery() {
+		let mut server = McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]);
+		if let McpServerConfig::Http { headers, .. } = &mut server {
+			headers.insert("aUtHoRiZaTiOn".to_string(), "Bearer static".to_string());
+		}
+		assert_eq!(http_auth_source(&server), HttpAuthSource::StaticHeader);
+
+		let oauth_server = McpServerConfig::http("oauth", "https://example.com/mcp", 30, vec![]);
+		assert_eq!(
+			http_auth_source(&oauth_server),
+			HttpAuthSource::OAuthDiscovery
+		);
 	}
 
 	#[tokio::test]

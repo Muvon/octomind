@@ -46,6 +46,18 @@ fn test_load_from_path_png_and_jpeg() {
 }
 
 #[test]
+fn test_load_from_extensionless_media_id() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let png = write_test_image(tmp.path(), "source.png");
+	let media_id = tmp.path().join("AbCdEf0123456789GhIjKlMn");
+	std::fs::rename(png, &media_id).expect("rename to opaque media id");
+
+	let attachment = ImageProcessor::load_from_path(&media_id).expect("load opaque media id");
+	assert_eq!(attachment.media_type, "image/png");
+	assert_eq!(attachment.dimensions, Some((4, 4)));
+}
+
+#[test]
 fn test_load_rejections() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 

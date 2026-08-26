@@ -39,6 +39,10 @@ pub enum McpServerConfig {
 		url: String,
 		timeout_seconds: u64,
 		tools: Vec<String>,
+		/// Headers sent with every request. Values may contain `{{ENV:KEY}}`
+		/// placeholders resolved from the parent environment before connecting.
+		#[serde(default, skip_serializing_if = "HashMap::is_empty")]
+		headers: HashMap<String, String>,
 		/// Roles that should automatically include this server (without explicit server_refs)
 		#[serde(skip_serializing_if = "Option::is_none")]
 		auto_bind: Option<Vec<String>>,
@@ -180,6 +184,14 @@ impl McpServerConfig {
 		}
 	}
 
+	/// Get headers for HTTP servers (if available)
+	pub fn headers(&self) -> Option<&HashMap<String, String>> {
+		match self {
+			McpServerConfig::Http { headers, .. } => Some(headers),
+			_ => None,
+		}
+	}
+
 	/// Create a builtin server configuration
 	pub fn builtin(name: &str, timeout_seconds: u64, tools: Vec<String>) -> Self {
 		Self::Builtin {
@@ -197,6 +209,7 @@ impl McpServerConfig {
 			url: url.to_string(),
 			timeout_seconds,
 			tools,
+			headers: HashMap::new(),
 			auto_bind: None,
 		}
 	}
@@ -242,12 +255,14 @@ impl McpServerConfig {
 				url,
 				timeout_seconds,
 				tools,
+				headers,
 				..
 			} => McpServerConfig::Http {
 				name: name.clone(),
 				url: url.clone(),
 				timeout_seconds: *timeout_seconds,
 				tools: tools.clone(),
+				headers: headers.clone(),
 				auto_bind,
 			},
 			McpServerConfig::Stdin {
@@ -403,6 +418,7 @@ impl RoleMcpConfig {
 							name,
 							url,
 							timeout_seconds,
+							headers,
 							auto_bind,
 							tools: _,
 						} => McpServerConfig::Http {
@@ -410,6 +426,7 @@ impl RoleMcpConfig {
 							url,
 							timeout_seconds,
 							tools: filtered_tools,
+							headers,
 							auto_bind,
 						},
 						McpServerConfig::Stdin {
@@ -546,6 +563,48 @@ mod tests {
 		assert_eq!(McpConnectionType::Builtin.as_str(), "builtin");
 		assert_eq!(McpConnectionType::Stdin.as_str(), "stdin");
 		assert_eq!(McpConnectionType::Http.as_str(), "http");
+	}
+
+	#[test]
+	fn http_headers_deserialize_from_inline_table() {
+		let server: McpServerConfig = toml::from_str(
+			r#"
+type = "http"
+name = "remote"
+url = "https://example.com/mcp"
+timeout_seconds = 30
+tools = []
+headers = { Authorization = "Bearer {{ENV:MY_MCP_TOKEN}}", X_Client = "octomind" }
+"#,
+		)
+		.expect("HTTP config with inline headers must deserialize");
+		let headers = server.headers().expect("HTTP config must expose headers");
+		assert_eq!(
+			headers.get("Authorization").map(String::as_str),
+			Some("Bearer {{ENV:MY_MCP_TOKEN}}")
+		);
+		assert_eq!(
+			headers.get("X_Client").map(String::as_str),
+			Some("octomind")
+		);
+	}
+
+	#[test]
+	fn absent_http_headers_deserialize_as_empty() {
+		let server: McpServerConfig = toml::from_str(
+			r#"
+type = "http"
+name = "remote"
+url = "https://example.com/mcp"
+timeout_seconds = 30
+tools = []
+"#,
+		)
+		.expect("HTTP config without headers must deserialize");
+		assert!(server
+			.headers()
+			.expect("HTTP config must expose headers")
+			.is_empty());
 	}
 
 	#[test]

@@ -399,6 +399,7 @@ tools = []
 # name = "my_http_server"
 # type = "http"
 # url = "http://localhost:3000/mcp"  # URL to connect to
+# headers = { Authorization = "Bearer {{ENV:MY_MCP_TOKEN}}" }
 # timeout_seconds = 30
 # tools = []
 

@@ -216,12 +216,12 @@ pub async fn initialize_servers_for_role_with_callback(
 			)
 		})
 		.filter(|server| {
-			// Skip stdio servers whose {{ENV:KEY}} placeholders reference
-			// unset env vars — they would crash on spawn with a literal
-			// placeholder in their args/command.
+			// Skip servers whose {{ENV:KEY}} placeholders reference unset env
+			// vars — connecting with a literal placeholder would fail in a
+			// confusing way.
 			let missing = client::missing_env_keys(server);
 			if !missing.is_empty() {
-				crate::log_debug!(
+				crate::log_error!(
 					"Skipping server '{}' — missing env vars: {}",
 					server.name(),
 					missing.join(", ")

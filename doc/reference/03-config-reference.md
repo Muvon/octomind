@@ -147,8 +147,9 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `url` | string | yes | Server endpoint URL |
+| `headers` | map | no | Headers sent on every request. Values support `{{ENV:KEY}}` placeholders. A configured `Authorization` header disables OAuth discovery. |
 
-> **OAuth Authentication:** HTTP servers requiring authentication are handled automatically via MCP Authorization Discovery (RFC 9728). No manual configuration needed — just provide the URL and Octomind will discover OAuth endpoints, register via CIMD/DCR, and authenticate using PKCE.
+> **Authentication:** Configure a static `Authorization` header for bearer tokens or API keys. Without one, Octomind uses MCP Authorization Discovery (RFC 9728), registers via CIMD/DCR, and authenticates using PKCE.
 
 #### Stdio-Specific Fields
 

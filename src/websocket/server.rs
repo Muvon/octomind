@@ -1480,15 +1480,15 @@ mod tests {
 	}
 
 	#[test]
-	fn extensionless_websocket_image_is_attached_to_empty_user_turn() {
+	fn prefixed_websocket_image_is_attached_to_empty_user_turn() {
 		let tmp = tempfile::tempdir().expect("tempdir");
-		let source = tmp.path().join("source.png");
-		image::RgbImage::new(4, 4)
-			.save(&source)
-			.expect("save test image");
 		let attachment = image_attachment();
-		let media_path = attachment.resolve_path(tmp.path()).unwrap();
-		std::fs::rename(source, &media_path).expect("rename to opaque media id");
+		// The writer stores media as `<id>.<ext>`; resolve_path locates it by
+		// prefix, so the fixture must be laid out the same way.
+		let media_path = tmp.path().join(format!("{}.png", attachment.id));
+		image::RgbImage::new(4, 4)
+			.save(&media_path)
+			.expect("save test image");
 
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.model = "openrouter:vendor/unknown-vision-model".to_string();
@@ -1502,5 +1502,18 @@ mod tests {
 		assert_eq!(message.content, "");
 		assert_eq!(message.images.as_ref().map(Vec::len), Some(1));
 		assert!(message.videos.is_none());
+	}
+
+	#[test]
+	fn attachment_with_no_matching_file_is_reported_as_not_found() {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let attachment = image_attachment();
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.model = "openrouter:vendor/unknown-vision-model".to_string();
+		let error = load_message_attachments(&session, &[attachment.clone()], tmp.path())
+			.expect_err("no file on disk must be reported as not found");
+		assert!(error.to_string().contains("not found"));
+		assert!(error.to_string().contains(&attachment.id));
 	}
 }

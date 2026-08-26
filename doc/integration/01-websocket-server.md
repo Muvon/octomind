@@ -75,6 +75,20 @@ Communication uses JSON messages over WebSocket.
 
 `request_id` is optional on every client frame. When present, the server echoes it in the immediate `ack` frame and in validation errors, so clients can correlate accepted/rejected inputs without relying only on ordering.
 
+**Message with attachments** -- media uploaded out-of-band and referenced by opaque ID:
+```json
+{
+  "type": "message",
+  "session_id": "my-session",
+  "content": "What is wrong with this screenshot?",
+  "attachments": [
+    {"id": "AbCdEf0123456789GhIjKlMn", "kind": "image", "media_type": "image/png", "name": "screenshot.png", "size": 1234}
+  ]
+}
+```
+
+`attachments` is optional. `content` may be empty when at least one attachment is present. `kind` is `image`, `video`, or `audio`. `id` is exactly 24 ASCII alphanumeric characters and is never interpreted as a path: the server locates the file in the media root (`OCTOMIND_MEDIA_ROOT`, default `/home/octo/.octomind/media`) whose name starts with `<id>.`. The writer must store the file as `<id>.<ext>` — the extension is required, both because format detection needs it and so the file stays browsable in a Files UI — and there must be exactly one such file, or the attachment is reported as not found. The file must be a regular file (symlinks are rejected). Before any file is opened, the server checks that the session's model supports the requested modality (vision for `image`, video for `video`) and rejects the whole message with an `error` frame otherwise. `audio` attachments are validated for readability only and are not forwarded to the model yet.
+
 `command` is the slash-command name **without** the leading `/` (see [Session Commands](../reference/02-session-commands.md) for the full list). `args` is optional. The command channel only accepts recognized commands: an unknown command returns `{"type":"error","message":"Unknown command: '...'..."}` — it is **not** treated as free-text AI input. Use a `message` frame for that.
 
 The `done` command (`/done`) is special: it compresses the conversation and replies with a data-carrying `status` frame (`"Conversation compressed"` or `"Nothing to compress"`). If you supply `args`, they are joined and immediately processed as a follow-up user message after compression.
@@ -137,6 +151,8 @@ For every valid JSON text input frame (`session`, `message`, or `command`), the 
 ```
 
 `request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do not produce `ack`; they produce an `error` frame instead. If a validation failure includes a `request_id`, the error echoes it.
+
+The `ack` for a `session` frame additionally carries `"capabilities": ["message_attachments_v1"]`, advertising that `message` frames may include `attachments`. It is omitted on other acks.
 
 Responses to a single `message` arrive as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
 
@@ -333,9 +349,11 @@ asyncio.run(main())
 
 ## Validation
 
-- `session_id` (when provided) and `content` must be non-empty strings
+- `session_id` (when provided) must be a non-empty string
+- `content` must be non-empty unless the message carries at least one attachment
 - `request_id` is optional, but when provided must be non-empty and no more than 256 bytes
 - Message `content` is limited to 10MB
+- Attachment `id` must be exactly 24 ASCII alphanumeric characters
 - Commands must be non-empty strings (without leading `/`)
 - Command `args` is optional
 

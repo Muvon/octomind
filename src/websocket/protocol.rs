@@ -87,9 +87,37 @@ impl Attachment {
 
 	/// Resolve only after validating the opaque ID. Keeping this operation here
 	/// prevents transport metadata from ever being treated as a filesystem path.
+	///
+	/// The writer stores the file as `<id>.<ext>` (the extension is required on
+	/// its side, both for format detection and so the file is browsable in a
+	/// Files UI), so we locate it by prefix rather than reconstructing the
+	/// extension from `media_type` — that would need a mime→extension table
+	/// kept in sync across two repos forever, and any drift becomes a silent
+	/// "file not found".
 	pub(crate) fn resolve_path(&self, media_root: &Path) -> Result<PathBuf, String> {
 		self.validate_id()?;
-		Ok(media_root.join(&self.id))
+		let prefix = format!("{}.", self.id);
+		let entries = std::fs::read_dir(media_root)
+			.map_err(|error| format!("attachment '{}' could not be located: {}", self.id, error))?;
+
+		let mut matches = Vec::new();
+		for entry in entries {
+			let entry = entry.map_err(|error| {
+				format!("attachment '{}' could not be located: {}", self.id, error)
+			})?;
+			if entry.file_name().to_string_lossy().starts_with(&prefix) {
+				matches.push(entry.path());
+			}
+		}
+
+		match matches.len() {
+			0 => Err(format!("attachment '{}' not found", self.id)),
+			1 => Ok(matches.remove(0)),
+			_ => Err(format!(
+				"attachment '{}' has multiple matching files in the media store",
+				self.id
+			)),
+		}
 	}
 }
 

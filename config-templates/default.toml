@@ -392,8 +392,8 @@ tools = []
 
 # HTTP MCP server configuration:
 # - Just provide a URL (localhost or remote - doesn't matter)
-# - OAuth authentication is handled automatically via MCP Authorization Discovery (RFC 9728)
-# - No manual OAuth configuration needed — just provide the URL
+# - Add headers for static tokens or API keys; values support {{ENV:KEY}}
+# - Without an Authorization header, OAuth is handled via MCP Authorization Discovery (RFC 9728)
 # - Use Stdin type for local processes instead
 # [[mcp.servers]]
 # name = "my_http_server"

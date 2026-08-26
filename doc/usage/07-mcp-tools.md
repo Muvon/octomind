@@ -337,9 +337,12 @@ Max concurrent async jobs is configurable. Jobs cancelled on session exit.
 name = "custom_api"
 type = "http"
 url = "https://api.example.com/mcp"
+headers = { Authorization = "Bearer {{ENV:CUSTOM_API_TOKEN}}" }  # optional
 timeout_seconds = 30
 tools = []
 ```
+
+`headers` is sent on every request. Values may use `{{ENV:KEY}}` placeholders; a server whose placeholders reference unset env vars is skipped at startup with an error log. When an `Authorization` header is configured it is used as-is and OAuth discovery is disabled for that server; without one, Octomind runs MCP Authorization Discovery (RFC 9728) and authenticates via PKCE automatically.
 
 ### Adding Stdio Servers
 

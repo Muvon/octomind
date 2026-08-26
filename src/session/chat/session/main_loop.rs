@@ -855,23 +855,12 @@ pub async fn run_interactive_session(
 					continue;
 				}
 				InputResult::Exit => {
-					// A detached background job (a build, a test suite) is still
-					// running. Do NOT end the run — that would orphan it and lose
-					// the result the turn is waiting for. Wait for its completion
-					// to land on the inbox, then loop back: the next iteration
-					// drains the inbox and injects the job's output so the model
-					// is woken with the result. The timeout only bounds a single
-					// wait; a job that legitimately runs longer is re-awaited.
-					if crate::session::shell_jobs::has_pending() {
-						if let Some(notify) = crate::session::inbox::get_inbox_notify() {
-							let _ = tokio::time::timeout(
-								std::time::Duration::from_secs(3600),
-								notify.notified(),
-							)
-							.await;
-						}
-						continue;
-					}
+					// Ctrl+D is an explicit request to quit: exit now. Any detached
+					// background job dies with the process (octofs is killed on
+					// shutdown), so there is nothing to wait for — an interactive
+					// user asking to leave must not be held on a build. (A one-shot
+					// `--format` run is different: there the model is mid-task
+					// waiting for a job it launched, so that loop does wait.)
 					// Ctrl+D pressed - graceful exit handled in input.rs
 					// Learning extraction on exit (skip if /done already extracted).
 					// Handed to a detached child process: the runtime dies with this
@@ -1947,6 +1936,12 @@ pub async fn run_interactive_session_with_input(
 
 		// Wait for the next event: either a schedule timer fires or an inbox message arrives.
 		let inbox_notify = crate::session::inbox::get_inbox_notify();
+		// Safety backstop for a pending background job whose completion signal
+		// never arrives (server crash, or a tool that linked a resource it never
+		// updates): far longer than any real build, but finite, so a lost signal
+		// can never hang the run forever. Armed only while background jobs are
+		// what is keeping the loop alive.
+		const BACKGROUND_JOB_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
 		tokio::select! {
 			_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 			_ = async {
@@ -1956,6 +1951,15 @@ pub async fn run_interactive_session_with_input(
 					std::future::pending::<()>().await;
 				}
 			} => {}
+			_ = tokio::time::sleep(BACKGROUND_JOB_MAX_WAIT), if has_background_jobs => {
+				if let Some(session_id) = crate::session::context::current_session_id() {
+					crate::session::shell_jobs::clear_for_session(&session_id);
+				}
+				log_debug!(
+					"A background job never signalled completion within the safety window; \
+					 abandoning it so the run can exit"
+				);
+			}
 		}
 	}
 

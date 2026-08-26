@@ -1003,7 +1003,18 @@ pub async fn call_tool(
 		)
 		.await?
 		{
-			CallToolResponse::Complete(result) => return Ok(result),
+			CallToolResponse::Complete(result) => {
+				// Register any resource link the tool advertised (a detached
+				// background job) BEFORE returning — synchronously, while the
+				// tool's response is in hand and the job cannot have exited yet
+				// (its `resources/updated` fires only on exit, which the server
+				// sends after this response). Doing it here rather than in the
+				// batch's later result-processing closes the race where a fast
+				// job completes before its link is registered and the completion
+				// is dropped.
+				crate::session::shell_jobs::note_watched_from_result(&result);
+				return Ok(result);
+			}
 			CallToolResponse::Task(task) => {
 				return drive_task(&service, server, task, &mut cancellation_token).await;
 			}

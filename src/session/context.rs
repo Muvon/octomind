@@ -1097,6 +1097,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_capability_refcounts(session_id);
 	clear_skill_capability_servers(session_id);
 	crate::session::inbox::clear_inbox_for_session(session_id);
+	crate::session::shell_jobs::clear_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
 	crate::supervisor::delegate::clear_handback_for_session(session_id);

@@ -140,6 +140,14 @@ pub async fn process_tool_results(
 	)
 	.await
 	{
+		if crate::session::chat::conversation_compression::within_ceiling_margin(
+			chat_session,
+			config,
+		)
+		.await
+		{
+			return Err(e.context("forced compression inside the context ceiling margin failed"));
+		}
 		log_debug!(
 			"Adaptive conversation compression failed during tool processing: {}.",
 			e

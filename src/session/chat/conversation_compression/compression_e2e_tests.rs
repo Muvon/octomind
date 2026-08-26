@@ -582,3 +582,241 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+fn veto_summary_body() -> String {
+	xml_summary_body().replace(
+		"<should_compress>true</should_compress>",
+		"<should_compress>false</should_compress>",
+	)
+}
+
+async fn wait_until_finished(session: &ChatSession) {
+	while !session
+		.fold_job
+		.as_ref()
+		.expect("job still parked")
+		.handle
+		.is_finished()
+	{
+		tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+	}
+}
+
+/// Inside the ceiling margin nothing is detached and nothing is vetoable: the
+/// fold runs inline on the trigger call and lands even when the decision
+/// model declines (measured failure: a turn crawled for three hours, every
+/// round blocking on a fresh vetoable background fold 17k under the ceiling).
+#[tokio::test]
+async fn verify_ceiling_margin_folds_inline_and_overrides_the_veto() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&veto_summary_body()),
+		final_response(&veto_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	// Mid-turn with a two-call horizon: below the margin this shape waits.
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
+	// The ceiling one token above the live context: inside the runway margin.
+	let live = session.get_full_context_tokens(&config).await;
+	config.max_session_tokens_threshold = live + 1;
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		compressed,
+		"inside the ceiling margin the fold must land on the trigger call, veto or not"
+	);
+	assert!(
+		session.fold_job.is_none(),
+		"no background job inside the ceiling margin"
+	);
+	assert!(
+		session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"the forced fold must be applied"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// A background fold that fails is not retried on the next round: unforced
+/// attempts wait one runway of calls, then try again.
+#[tokio::test]
+async fn verify_failed_background_fold_backs_off_for_a_runway() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response("not xml at all"),
+		final_response("not xml at all"),
+		final_response("not xml at all"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+	let before = session.session.messages.len();
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_some(),
+		"the trigger call spawns"
+	);
+	wait_until_finished(&session).await;
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(!compressed, "a garbage summary must not fold");
+	assert_eq!(
+		session.session.messages.len(),
+		before,
+		"transcript untouched"
+	);
+	assert!(
+		session.fold_job.is_none(),
+		"a failed attempt must not be re-spawned on the same round"
+	);
+	let calls = session.session.info.total_api_calls;
+	assert!(
+		session.fold_cooldown_until_call > calls,
+		"a failure must start the cooldown"
+	);
+
+	// One call short of the cooldown, still a genuine boundary: held.
+	session.session.info.total_api_calls = session.fold_cooldown_until_call - 1;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_none(),
+		"no unforced attempt inside the cooldown"
+	);
+
+	// Cooldown over: the fold is attempted again.
+	session.session.info.total_api_calls = session.fold_cooldown_until_call;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_some(),
+		"after the cooldown a fresh attempt is spawned"
+	);
+	session.fold_job.take().expect("parked").handle.abort();
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// Turn end applies a finished fold and never waits for a running one.
+#[tokio::test]
+async fn verify_turn_end_settle_applies_only_a_finished_fold() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+	let before = session.session.messages.len();
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_some(),
+		"the trigger call spawns"
+	);
+
+	// A fold that never finishes: turn end leaves it parked and returns at once.
+	let FoldJob { handle, ctx } = session.fold_job.take().expect("parked");
+	handle.abort();
+	let never = tokio::spawn(async {
+		std::future::pending::<
+			Result<(
+				schema::CompressionSummary,
+				Option<crate::providers::TokenUsage>,
+			)>,
+		>()
+		.await
+	});
+	session.fold_job = Some(FoldJob { handle: never, ctx });
+	let settled = tokio::time::timeout(
+		std::time::Duration::from_secs(2),
+		settle_pending_fold(&mut session, &config),
+	)
+	.await
+	.expect("turn end must not block on a running fold")
+	.expect("settle");
+	assert!(!settled, "nothing to apply while the fold is running");
+	assert!(
+		session.fold_job.is_some(),
+		"a running fold stays parked for the next round"
+	);
+	assert_eq!(
+		session.session.messages.len(),
+		before,
+		"transcript untouched"
+	);
+	session.fold_job.take().expect("parked").handle.abort();
+
+	// A finished fold is applied at turn end.
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_some(),
+		"a fresh attempt spawns"
+	);
+	wait_until_finished(&session).await;
+	assert!(
+		settle_pending_fold(&mut session, &config)
+			.await
+			.expect("settle"),
+		"a finished fold is applied at turn end"
+	);
+	assert!(session.fold_job.is_none(), "collected");
+	assert!(
+		session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"the settled summary must be spliced in"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

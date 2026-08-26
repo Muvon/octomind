@@ -47,9 +47,9 @@ mod schema;
 pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills};
 use decision::{
-	adaptive_fire_line, at_turn_boundary, autonomous_runway, compression_depth, context_ceiling,
-	expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
-	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
+	adaptive_fire_line, at_turn_boundary, autonomous_runway, ceiling_reached, compression_depth,
+	context_ceiling, expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
+	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 
@@ -78,15 +78,19 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (false, MIN_COMPRESSION_RATIO);
 	}
 
-	// HARD CEILING: unconditional last line of defense. A cooldown may delay a
-	// soft fold, but it must never permit an over-window API request. If the fold
-	// cannot get below this bound, the caller reports a hard error instead of
-	// looping compression or sending an invalid request.
+	// HARD CEILING: unconditional last line of defense, entered one runway
+	// margin early. A cooldown may delay a soft fold, but it must never permit
+	// an over-window API request. If the fold cannot get below this bound, the
+	// caller reports a hard error instead of looping compression or sending an
+	// invalid request.
 	let ceiling = context_ceiling(session, config);
-	if current_tokens >= ceiling {
+	let growth = measured_growth_rate(&session.session.info, current_tokens);
+	if ceiling_reached(&session.session.info, current_tokens, ceiling) {
 		log_debug!(
-			"Context ceiling exceeded ({} >= {}) - FORCE triggering deepest compression ({:.0}x)",
+			"Context ceiling margin reached ({} + {:.0}x{} >= {}) - FORCE triggering deepest compression ({:.0}x)",
 			current_tokens,
+			growth,
+			decision::MIN_RUNWAY_TURNS,
 			ceiling,
 			MAX_COMPRESSION_RATIO
 		);
@@ -97,7 +101,6 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	// paid decline) doubles the line — threshold, 2x, 4x… capped under the
 	// ceiling — so a single long turn earns growing room; a genuine user turn
 	// resets it. The runway still paces the amortization gate and fold depth.
-	let growth = measured_growth_rate(&session.session.info, current_tokens);
 	let runway = autonomous_runway(session.session.info.consecutive_compressions);
 	let fire_line = adaptive_fire_line(
 		config.compression.threshold,
@@ -309,19 +312,36 @@ fn fold_fingerprint(messages: &[crate::session::Message], start_idx: usize, end_
 	hasher.finish()
 }
 
+/// A background attempt that produced nothing to apply: hold unforced attempts
+/// for one runway of calls. Retrying on the very next round turned a slow or
+/// broken folder into a session-long crawl (every call paid the failing fold
+/// again, ~10 minutes each on a 300s request timeout with one retry).
+fn note_fold_failure(session: &mut ChatSession) {
+	let runway = autonomous_runway(session.session.info.consecutive_compressions) as usize;
+	session.fold_cooldown_until_call = session.session.info.total_api_calls + runway;
+	log_info!(
+		"Background fold produced nothing to apply — next unforced attempt after {} calls",
+		runway
+	);
+}
+
 /// Join a finished (or force-awaited) background fold and apply it. Returns
-/// true when the fold was applied. A failed call, a declined decision, or a
-/// fingerprint mismatch discards the job (usage still recorded where known).
+/// true when the fold was applied. A failed call or a fingerprint mismatch
+/// discards the job and starts the failure cooldown (usage still recorded
+/// where known). `force` is the ceiling-margin wait: the summary exists and
+/// the window is nearly full, so the decision model's veto no longer applies.
 async fn collect_fold_job(
 	session: &mut ChatSession,
 	config: &Config,
 	job: FoldJob,
+	force: bool,
 ) -> Result<bool> {
 	let FoldJob { handle, ctx } = job;
 	let outcome = match handle.await {
 		Ok(outcome) => outcome,
 		Err(join_error) => {
 			log_debug!("Background fold task failed to join: {}", join_error);
+			note_fold_failure(session);
 			return Ok(false);
 		}
 	};
@@ -331,8 +351,9 @@ async fn collect_fold_job(
 			if crate::session::cancellation::is_cancelled(&error) {
 				log_debug!("Background fold cancelled");
 			} else {
-				log_debug!("Background fold call failed, continuing session: {}", error);
+				log_info!("Background fold call failed, continuing session: {}", error);
 			}
+			note_fold_failure(session);
 			return Ok(false);
 		}
 	};
@@ -344,9 +365,10 @@ async fn collect_fold_job(
 		log_info!(
 			"Background fold discarded: the drained range changed while the summary was being written"
 		);
+		note_fold_failure(session);
 		return Ok(false);
 	}
-	finish_fold(session, config, ctx, summary, usage, false, false).await
+	finish_fold(session, config, ctx, summary, usage, force, false).await
 }
 
 /// Everything after the decision call: usage/metrics accounting, the veto and
@@ -488,15 +510,37 @@ async fn finish_fold(
 	Ok(true)
 }
 
-/// Turn boundary with a fold still in flight: await it and fold the session
-/// so the persisted state is the compacted one — replace, never auto-continue
-/// (no agent call happens here; the summary was already paid for).
+/// Turn end with a background fold parked: apply it when it has finished so
+/// the persisted state is the compacted one — replace, never auto-continue
+/// (no agent call happens here; the summary was already paid for). A fold
+/// still running stays parked and is collected at the next round: waiting
+/// here charged every turn end the full fold latency (up to 20 minutes
+/// measured) for a summary the next turn's boundary check would produce
+/// again anyway.
 pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> Result<bool> {
-	let Some(job) = session.fold_job.take() else {
+	let finished = session
+		.fold_job
+		.as_ref()
+		.is_some_and(|job| job.handle.is_finished());
+	if !finished {
 		return Ok(false);
-	};
-	log_debug!("Turn finished with a background fold in flight — collecting before save");
-	collect_fold_job(session, config, job).await
+	}
+	let job = session.fold_job.take().expect("checked above");
+	log_debug!("Turn finished with a completed background fold — applying before save");
+	collect_fold_job(session, config, job, false).await
+}
+
+/// Inside the ceiling margin (see `decision::ceiling_reached`): folds are
+/// forced and inline here, and a failed one is a hard error for the request —
+/// the next rounds would cross the window, and retrying the same failing fold
+/// every round is the crawl this replaces.
+pub async fn within_ceiling_margin(session: &mut ChatSession, config: &Config) -> bool {
+	let current = session.get_full_context_tokens(config).await;
+	ceiling_reached(
+		&session.session.info,
+		current,
+		context_ceiling(session, config),
+	)
 }
 
 pub async fn check_and_compress_conversation(
@@ -515,19 +559,14 @@ pub async fn check_and_compress_conversation(
 			.fold_job
 			.as_ref()
 			.is_some_and(|job| job.handle.is_finished());
-		let must_wait = force_done || {
-			// Never run detached NEAR the window: within a few calls of the
-			// ceiling, block on the in-flight fold rather than risk the next
-			// round overshooting the model window. `ensure_context_within_ceiling`
-			// stays the hard error behind this.
-			let current = session.get_full_context_tokens(config).await;
-			let margin =
-				(measured_growth_rate(&session.session.info, current) * MIN_RUNWAY_TURNS) as usize;
-			current.saturating_add(margin) >= context_ceiling(session, config)
-		};
+		// Never run detached NEAR the window: within a few calls of the
+		// ceiling, block on the in-flight fold rather than risk the next round
+		// overshooting the model window. `ensure_context_within_ceiling` stays
+		// the hard error behind this.
+		let must_wait = force_done || within_ceiling_margin(session, config).await;
 		if finished || must_wait {
 			let job = session.fold_job.take().expect("checked above");
-			if collect_fold_job(session, config, job).await? {
+			if collect_fold_job(session, config, job, must_wait).await? {
 				return Ok(true);
 			}
 		// Declined or discarded: fall through — a forced trigger still folds.
@@ -542,14 +581,18 @@ pub async fn check_and_compress_conversation(
 		return Ok(false);
 	}
 
-	// When the context ceiling is exceeded, force compression — AI cannot refuse.
-	// The ceiling is the user's explicit safety limit or the model's physical
-	// window, whichever is lower; the decision model has no veto here.
-	let force_ceiling = {
-		let current_tokens = session.get_full_context_tokens(config).await;
-		current_tokens >= context_ceiling(session, config)
-	};
-	let force = force_done || force_ceiling;
+	// Inside the ceiling margin, force compression — inline, deepest ratio,
+	// and the AI cannot refuse. The ceiling is the user's explicit safety
+	// limit or the model's physical window, whichever is lower.
+	let force = force_done || within_ceiling_margin(session, config).await;
+
+	if !force && session.session.info.total_api_calls < session.fold_cooldown_until_call {
+		log_debug!(
+			"Fold cooldown after a failed background attempt: {} calls remaining",
+			session.fold_cooldown_until_call - session.session.info.total_api_calls
+		);
+		return Ok(false);
+	}
 
 	// /done uses the gentlest fixed ratio: it's a task boundary, so there are no
 	// session dynamics to project onto the next task. The hard-ceiling force must

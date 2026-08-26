@@ -196,6 +196,10 @@ pub struct ChatSession {
 	/// paid fold call runs in a spawned task and is applied at a later round
 	/// boundary by `conversation_compression`.
 	pub fold_job: Option<crate::session::chat::conversation_compression::FoldJob>,
+	/// No unforced fold attempt before this API-call index (runtime-only): set
+	/// when a background fold fails or is discarded, so a broken folder is
+	/// retried on the runway ladder instead of on every round.
+	pub fold_cooldown_until_call: usize,
 	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
 	/// Critical knowledge entries extracted from compressions — persisted across
@@ -408,6 +412,7 @@ impl ChatSession {
 			initial_status_shown: false,        // Initialize status display flag
 			cached_tools: None,                 // Initialize tool cache (populated on first use)
 			fold_job: None,
+			fold_cooldown_until_call: 0,
 			schema: None, // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
@@ -636,6 +641,7 @@ impl ChatSession {
 						initial_status_shown: true, // Don't show status for resumed sessions
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						fold_job: None,
+						fold_cooldown_until_call: 0,
 						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
@@ -1372,6 +1378,7 @@ impl ChatSession {
 			initial_status_shown: false,
 			cached_tools: None,
 			fold_job: None,
+			fold_cooldown_until_call: 0,
 			schema: None,
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),

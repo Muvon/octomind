@@ -61,7 +61,7 @@ The target is clamped between the deepest and gentlest achievable sizes (derived
 
 ### The Hard Ceiling
 
-The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). When the full-context token count reaches it, compression is **forced unconditionally** — it bypasses the exponential cooldown, the cache-aware cost analysis, the feasibility check, and the AI's veto (the decision model cannot decline). The ratio used is the deepest allowed (**16.0x**).
+The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). Compression is **forced unconditionally** one runway margin early — when the full-context token count plus 5 calls of measured growth reaches the ceiling (the margin applies once at least 5 calls have been measured since the last fold; before that only the bare ceiling counts) — so the next few rounds cannot overshoot the window. A forced fold bypasses the amortization gate, the failure cooldown, and the AI's veto (the decision model cannot decline), runs inline (never in the background), and uses the deepest allowed ratio (**16.0x**). If the fold call itself fails inside the margin, the error surfaces on the request instead of being retried round after round.
 
 ### Exponential Cooldown
 
@@ -100,6 +100,14 @@ fold iff expected_calls ≥ runway
 - `sent` is the part of the drained range the fold prompt actually sends (recent bodies whole, older ones trimmed), `summary` the decision model's output budget.
 
 Net effect: a session that crosses the line on its last call does not fold; a long tool loop folds once it has shown it will keep going; on a cheap-cache model with an expensive folder the mid-turn fold waits for a longer horizon, on an expensive or uncached model it fires early.
+
+### Background Folds
+
+An automatic fold outside the ceiling margin does not block the agent. The prompt is built from the drained range, the decision+summary call runs in a spawned task, and the agent keeps working; the summary is applied at a later round boundary, and only to the exact range it was computed from (a content fingerprint of the drained messages — a changed range discards the summary). One fold is in flight at a time.
+
+- **Turn end**: a finished fold is applied before the session is saved — replace only, never auto-continue. A fold still running stays parked and is collected at the next round; turn end never waits on it.
+- **Ceiling margin**: a pending fold is awaited, and its result applied without the veto; with no fold pending the trigger runs inline and forced (see [The Hard Ceiling](#the-hard-ceiling)).
+- **Failure cooldown**: a fold that fails, is cancelled, or is discarded holds unforced attempts for one runway of calls (5, 10, 20… on the ladder) instead of retrying on the next round. A slow or broken decision model therefore costs one attempt per runway, never one per call — the measured failure mode was a turn that spent ten minutes per round on a fold that died on its request timeout every time.
 
 ### Forced vs Automatic Compression
 

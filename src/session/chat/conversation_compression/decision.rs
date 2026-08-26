@@ -177,6 +177,32 @@ pub(super) const MAX_COMPRESSION_RATIO: f64 = 16.0;
 /// runway projections when a session is too young to have a symmetry signal.
 pub(super) const MIN_RUNWAY_TURNS: f64 = 5.0;
 
+/// Inside the ceiling margin: fewer than `MIN_RUNWAY_TURNS` calls of measured
+/// growth remain before the hard ceiling. Everything here is forced and
+/// inline — no background job, no decision-model veto — because the next few
+/// rounds would otherwise overshoot the window (measured failure: 17 calls in
+/// one turn each blocked ~10 minutes on a fresh vetoable background fold that
+/// died on its request timeout, while the context sat 17k under the ceiling).
+///
+/// The margin needs a measured pace: with fewer than `MIN_RUNWAY_TURNS` calls
+/// since the last fold (or session start) the per-call rate is one or two
+/// samples — a 40k system prompt on call one reads as 40k/call — so only the
+/// bare ceiling applies until the pace is real.
+pub(super) fn ceiling_reached(
+	info: &crate::session::SessionInfo,
+	current_tokens: usize,
+	ceiling: usize,
+) -> bool {
+	let calls_measured = info
+		.total_api_calls
+		.saturating_sub(info.api_calls_at_last_compression);
+	if (calls_measured as f64) < MIN_RUNWAY_TURNS {
+		return current_tokens >= ceiling;
+	}
+	let margin = (measured_growth_rate(info, current_tokens) * MIN_RUNWAY_TURNS) as usize;
+	current_tokens.saturating_add(margin) >= ceiling
+}
+
 /// Usable context ceiling: the hard cap the session must never cross.
 /// The lower of the user's explicit safety limit (when set) and the session
 /// model's physical window minus the reserved completion budget. A session
@@ -322,35 +348,6 @@ pub(super) fn compression_depth(
 
 	Some(ratio)
 }
-
-/// Estimate remaining API calls in this session.
-///
-/// Two real signals, no magic constants:
-///
-/// 1. PHYSICAL CEILING — headroom / growth_rate
-///    How many calls until context fills up again at the current growth rate.
-///    This is a hard upper bound: you literally cannot make more calls than this
-///    before hitting the threshold again.
-///    headroom  = actual tokens freed by compression (passed by caller)
-///    growth = full-context tokens added per call (measured_growth_rate, passed
-///    by caller — output-only accounting missed tool-result growth and inflated
-///    this ceiling by an order of magnitude)
-///
-/// 2. SYMMETRY ESTIMATE — api_calls made so far
-///    Empirically, sessions are roughly symmetric: work remaining ≈ work done.
-///    This is the standard production heuristic (no tunable constant needed).
-///    When api_calls=0, falls back to physical ceiling only.
-///
-/// Final estimate = min(physical_ceiling, symmetry_estimate)
-///   → conservative: take whichever signal says the session ends sooner.
-///   → if physical ceiling < symmetry: context growth is fast, compress soon.
-///   → if symmetry < physical ceiling: session is likely winding down.
-///
-/// Self-tuning multiplies by actual/predicted ratio from the last compression
-/// (pure measurement — corrects systematic over/under-estimation over time).
-///
-/// Only one justified constant: min=5 (compression cooldown must cover at least
-/// a few calls or the cost analysis is meaningless).
 
 #[cfg(test)]
 #[path = "amortization_tests.rs"]

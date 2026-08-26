@@ -1511,8 +1511,9 @@ mod tests {
 
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.model = "openrouter:vendor/unknown-vision-model".to_string();
-		let error = load_message_attachments(&session, &[attachment.clone()], tmp.path())
-			.expect_err("no file on disk must be reported as not found");
+		let error =
+			load_message_attachments(&session, std::slice::from_ref(&attachment), tmp.path())
+				.expect_err("no file on disk must be reported as not found");
 		assert!(error.to_string().contains("not found"));
 		assert!(error.to_string().contains(&attachment.id));
 	}

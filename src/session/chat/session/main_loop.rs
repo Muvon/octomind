@@ -855,6 +855,23 @@ pub async fn run_interactive_session(
 					continue;
 				}
 				InputResult::Exit => {
+					// A detached background job (a build, a test suite) is still
+					// running. Do NOT end the run — that would orphan it and lose
+					// the result the turn is waiting for. Wait for its completion
+					// to land on the inbox, then loop back: the next iteration
+					// drains the inbox and injects the job's output so the model
+					// is woken with the result. The timeout only bounds a single
+					// wait; a job that legitimately runs longer is re-awaited.
+					if crate::session::shell_jobs::has_pending() {
+						if let Some(notify) = crate::session::inbox::get_inbox_notify() {
+							let _ = tokio::time::timeout(
+								std::time::Duration::from_secs(3600),
+								notify.notified(),
+							)
+							.await;
+						}
+						continue;
+					}
 					// Ctrl+D pressed - graceful exit handled in input.rs
 					// Learning extraction on exit (skip if /done already extracted).
 					// Handed to a detached child process: the runtime dies with this
@@ -1918,8 +1935,13 @@ pub async fn run_interactive_session_with_input(
 			.map(|m| m.active_count())
 			.unwrap_or(0);
 		let has_monitors = crate::mcp::orchestration::has_running_monitors();
+		// A detached shell job (a build, a test suite) is still running: its
+		// completion arrives as an inbox message that wakes the model with the
+		// output, so the run must not end here or it would orphan the job and
+		// drop the result the turn is waiting for.
+		let has_background_jobs = crate::session::shell_jobs::has_pending();
 
-		if !daemon && !has_schedules && !has_monitors && active_jobs == 0 {
+		if !daemon && !has_schedules && !has_monitors && active_jobs == 0 && !has_background_jobs {
 			break;
 		}
 

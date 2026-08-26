@@ -85,6 +85,13 @@ pub async fn process_tool_results(
 		// Here we just extract and pass the body through.
 		let tool_content = extract_tool_content(tool_result);
 
+		// A tool that handed back an MCP resource link (octofs does this for
+		// every detached shell job) is asking the client to follow that
+		// resource. Track it as pending so a one-shot run waits for the resource
+		// update instead of exiting and orphaning the work — generic, no
+		// knowledge of which server or URI scheme produced the link.
+		crate::session::shell_jobs::note_watched_from_result(&tool_result.result);
+
 		// Apply global MCP response token truncation before adding to session
 		let (tool_content, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(
 			&tool_content,

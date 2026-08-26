@@ -172,10 +172,58 @@ impl ClientHandler for OctoClientHandler {
 	async fn on_resource_updated(
 		&self,
 		params: rmcp::model::ResourceUpdatedNotificationParam,
-		_context: NotificationContext<RoleClient>,
+		context: NotificationContext<RoleClient>,
 	) {
 		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
 		self.emit("notifications/resources/updated", &value);
+
+		// A resource we are following just updated (octofs fires this when a
+		// detached shell job exits). Recognition is by membership in the watched
+		// set — a resource link a tool handed back — not by any URI scheme, so
+		// this stays generic across MCP servers. Read the resource and inject its
+		// contents so the run loop wakes the model with the result: event-driven,
+		// no polling. The read + push runs in a detached task so it neither
+		// blocks this notification handler nor re-enters the receive loop.
+		let uri = params.uri;
+		let Some(session_id) = self.session_id.clone() else {
+			return;
+		};
+		if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
+			return;
+		}
+		// Clear it now so the loop can never wait forever, even if the read
+		// below fails.
+		crate::session::shell_jobs::complete_for_session(&session_id, &uri);
+		let peer = context.peer.clone();
+		tokio::spawn(async move {
+			let body = match peer
+				.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
+				.await
+			{
+				Ok(result) => result
+					.contents
+					.into_iter()
+					.filter_map(|content| match content {
+						rmcp::model::ResourceContents::TextResourceContents { text, .. } => {
+							Some(text)
+						}
+						_ => None,
+					})
+					.collect::<Vec<_>>()
+					.join("\n"),
+				Err(error) => {
+					format!("resource {uri} updated, but reading it failed: {error}")
+				}
+			};
+			let content = format!("<background_job resource=\"{uri}\">\n{body}\n</background_job>");
+			crate::session::inbox::push_inbox_message_for_session(
+				&session_id,
+				crate::session::inbox::InboxMessage {
+					source: crate::session::inbox::InboxSource::BackgroundJob { id: uri },
+					content,
+				},
+			);
+		});
 	}
 
 	async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {

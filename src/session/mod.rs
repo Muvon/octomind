@@ -42,6 +42,7 @@ pub mod inject_listener; // Unix Domain Socket listener for external message inj
 pub mod pipe; // Pre-model pipe execution from guardrails
 pub mod report; // Session usage reporting
 pub mod share; // /share: upload session JSONL → octomind.run/r/<id>
+pub mod shell_jobs; // Pending octofs background shell jobs (detached builds/tests)
 pub mod smart_summarizer; // Smart text summarization for context management
 pub mod tap_runs; // Registry for agents launched via the `tap` core tool
 pub mod titles; // Session titles/metadata sidecar store (titles.json)

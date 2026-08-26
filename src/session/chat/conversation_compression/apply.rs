@@ -156,12 +156,35 @@ fn build_continuation_content(
 	} else {
 		""
 	};
+	// Deterministically preserve awareness of detached jobs that are still
+	// running: the launch message may have just been folded away, but their
+	// result will still arrive as a message (the watch registry survives
+	// compaction). This is read straight from the registry, not left to the
+	// summarizer. Empty outside a live session (e.g. in unit tests).
+	let jobs_block = {
+		let pending = crate::session::shell_jobs::pending_labels();
+		if pending.is_empty() {
+			String::new()
+		} else {
+			let list = pending
+				.iter()
+				.map(|job| format!("- {job}"))
+				.collect::<Vec<_>>()
+				.join("\n");
+			format!(
+				"<background_jobs_running>\n\
+				As of this point these detached shell jobs were still running. Their output is delivered to you as a message the moment each finishes — do NOT relaunch them, poll them, or wait on them by hand; continue other work or wait. If that completion message never arrives (for example because this session was resumed in a fresh process), the job is gone: re-run the command whose result you still need.\n\
+				{list}\n\
+				</background_jobs_running>\n\n"
+			)
+		}
+	};
 	format!(
 		"<continuation>\n\
 		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <previous_assistant_response> and <request> blocks preserve the exact turn boundary and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
-		{}{}{}<task>\n{}\n</task>\n\
+		{}{}{}{}<task>\n{}\n</task>\n\
 		</continuation>",
-		plan_note, previous_assistant_block, request_block, task_body
+		plan_note, jobs_block, previous_assistant_block, request_block, task_body
 	)
 }
 

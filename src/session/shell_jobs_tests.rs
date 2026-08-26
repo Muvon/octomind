@@ -16,27 +16,34 @@ use super::*;
 use rmcp::model::{CallToolResult, ContentBlock, Resource};
 
 #[test]
-fn extracts_resource_links_and_ignores_plain_text() {
+fn extracts_resource_links_with_labels_and_ignores_plain_text() {
 	let launched = CallToolResult::success(vec![
 		ContentBlock::text("Started background job. Follow the linked resource."),
 		ContentBlock::resource_link(Resource::new(
 			"octofs://jobs/1234-7",
-			"background shell job",
+			"shell: make reldebug",
 		)),
 	]);
 	assert_eq!(
 		resource_links_in(&launched),
-		vec!["octofs://jobs/1234-7".to_string()]
+		vec![(
+			"octofs://jobs/1234-7".to_string(),
+			"shell: make reldebug".to_string()
+		)]
 	);
 
-	// Recognition is not scheme-bound: any resource link is followed.
+	// Recognition is not scheme-bound: any resource link is followed. An empty
+	// name falls back to the URI as the label.
 	let other = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
 		"custommcp://tasks/9",
-		"task",
+		"",
 	))]);
 	assert_eq!(
 		resource_links_in(&other),
-		vec!["custommcp://tasks/9".to_string()]
+		vec![(
+			"custommcp://tasks/9".to_string(),
+			"custommcp://tasks/9".to_string()
+		)]
 	);
 
 	let plain = CallToolResult::success(vec![ContentBlock::text("just text, no resource")]);
@@ -44,15 +51,15 @@ fn extracts_resource_links_and_ignores_plain_text() {
 }
 
 #[test]
-fn watch_complete_and_pending_roundtrip() {
+fn watch_complete_pending_and_labels_roundtrip() {
 	let sid = "shell-jobs-unit-test-session";
 	clear_for_session(sid);
 	assert!(!has_pending_for_session(sid));
 
 	let a = "octofs://jobs/a-1";
 	let b = "octofs://jobs/a-2";
-	register_for_session(sid, a);
-	register_for_session(sid, b);
+	register_for_session(sid, a, "shell: make reldebug");
+	register_for_session(sid, b, "shell: run tests");
 	assert!(has_pending_for_session(sid));
 	assert!(is_watched_for_session(sid, a));
 	assert!(!is_watched_for_session(sid, "octofs://jobs/never"));
@@ -77,4 +84,5 @@ fn watch_complete_and_pending_roundtrip() {
 		!complete_for_session(sid, b),
 		"already-cleared uri reports not-watched"
 	);
+	clear_for_session(sid);
 }

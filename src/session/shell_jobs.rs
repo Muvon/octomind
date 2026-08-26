@@ -21,25 +21,42 @@
 //! the URI scheme or which server produced it.
 //!
 //! A watched resource is *pending* from the moment its link appears until its
-//! `resources/updated` arrives. The run loop must not treat a stdin-EOF as
-//! "done" while anything is pending, or a one-shot run would exit and orphan
-//! the build; the MCP client clears the entry and injects the resource's
-//! contents when the update lands (see `mcp::client::on_resource_updated`).
+//! `resources/updated` arrives. This registry is in-memory and independent of
+//! the conversation transcript, so it survives context compaction: a job
+//! launched before a fold is still delivered after it (see
+//! `mcp::client::on_resource_updated`). It is deliberately NOT persisted — a
+//! resumed process cannot reattach to a dead OS job — so a resume starts empty.
+//! Each entry keeps a short human label (the launching command, from the
+//! resource link's name) so pending jobs can be described deterministically,
+//! e.g. when re-injected into a compaction summary.
 
 use rmcp::model::{CallToolResult, ContentBlock};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::RwLock;
 
-// session id -> set of resource URIs advertised but not yet updated.
-static WATCHED: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
+// session id -> (resource URI -> label) for links advertised but not yet updated.
+static WATCHED: RwLock<Option<HashMap<String, HashMap<String, String>>>> = RwLock::new(None);
 
-/// Every resource-link URI advertised by a tool result.
-pub fn resource_links_in(result: &CallToolResult) -> Vec<String> {
+/// Every resource link (URI, label) a tool result advertised. The label is the
+/// link's name (octofs sets it to the launching command); falls back to the URI.
+pub fn resource_links_in(result: &CallToolResult) -> Vec<(String, String)> {
 	result
 		.content
 		.iter()
 		.filter_map(|block| match block {
-			ContentBlock::ResourceLink(resource) => Some(resource.uri.clone()),
+			ContentBlock::ResourceLink(resource) => {
+				let label = resource
+					.title
+					.clone()
+					.filter(|title| !title.is_empty())
+					.unwrap_or_else(|| resource.name.clone());
+				let label = if label.is_empty() {
+					resource.uri.clone()
+				} else {
+					label
+				};
+				Some((resource.uri.clone(), label))
+			}
 			_ => None,
 		})
 		.collect()
@@ -55,18 +72,18 @@ pub fn note_watched_from_result(result: &CallToolResult) {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return;
 	};
-	for uri in links {
-		register_for_session(&session_id, &uri);
+	for (uri, label) in links {
+		register_for_session(&session_id, &uri, &label);
 	}
 }
 
-pub fn register_for_session(session_id: &str, uri: &str) {
+pub fn register_for_session(session_id: &str, uri: &str, label: &str) {
 	let mut guard = WATCHED.write().unwrap();
 	guard
 		.get_or_insert_with(HashMap::new)
 		.entry(session_id.to_string())
 		.or_default()
-		.insert(uri.to_string());
+		.insert(uri.to_string(), label.to_string());
 }
 
 pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
@@ -75,7 +92,7 @@ pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
 		.unwrap()
 		.as_ref()
 		.and_then(|registry| registry.get(session_id))
-		.map(|set| set.contains(uri))
+		.map(|jobs| jobs.contains_key(uri))
 		.unwrap_or(false)
 }
 
@@ -83,9 +100,9 @@ pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
 pub fn complete_for_session(session_id: &str, uri: &str) -> bool {
 	let mut guard = WATCHED.write().unwrap();
 	if let Some(registry) = guard.as_mut() {
-		if let Some(set) = registry.get_mut(session_id) {
-			let was_watched = set.remove(uri);
-			if set.is_empty() {
+		if let Some(jobs) = registry.get_mut(session_id) {
+			let was_watched = jobs.remove(uri).is_some();
+			if jobs.is_empty() {
 				registry.remove(session_id);
 			}
 			return was_watched;
@@ -100,7 +117,7 @@ pub fn has_pending_for_session(session_id: &str) -> bool {
 		.unwrap()
 		.as_ref()
 		.and_then(|registry| registry.get(session_id))
-		.map(|set| !set.is_empty())
+		.map(|jobs| !jobs.is_empty())
 		.unwrap_or(false)
 }
 
@@ -110,6 +127,28 @@ pub fn has_pending() -> bool {
 		Some(id) => has_pending_for_session(&id),
 		None => false,
 	}
+}
+
+/// Labels of the current session's outstanding jobs, `"label (uri)"` each, for
+/// deterministically reminding the model a job is still running — e.g. when a
+/// compaction would otherwise drop the launch message from context.
+pub fn pending_labels() -> Vec<String> {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return Vec::new();
+	};
+	let guard = WATCHED.read().unwrap();
+	let Some(jobs) = guard
+		.as_ref()
+		.and_then(|registry| registry.get(&session_id))
+	else {
+		return Vec::new();
+	};
+	let mut labels: Vec<String> = jobs
+		.iter()
+		.map(|(uri, label)| format!("{label} ({uri})"))
+		.collect();
+	labels.sort();
+	labels
 }
 
 pub fn clear_for_session(session_id: &str) {

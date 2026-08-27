@@ -86,3 +86,64 @@ fn watch_complete_pending_and_labels_roundtrip() {
 	);
 	clear_for_session(sid);
 }
+
+/// Receive the next event for `session_id`, skipping events other parallel
+/// tests publish for their own sessions (the channel is global).
+async fn next_event_for(
+	events: &mut tokio::sync::broadcast::Receiver<WatchEvent>,
+	session_id: &str,
+) -> WatchEvent {
+	loop {
+		let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+			.await
+			.expect("event within timeout")
+			.expect("channel open");
+		let foreign = match &event {
+			WatchEvent::Completed { session_id: s, .. } => s != session_id,
+			WatchEvent::Cleared { session_id: s } => s != session_id,
+		};
+		if !foreign {
+			return event;
+		}
+	}
+}
+
+#[tokio::test]
+async fn completing_a_watched_resource_publishes_an_event() {
+	let sid = "shell-jobs-events-complete-session";
+	clear_for_session(sid);
+	register_for_session(sid, "octofs://jobs/ev-1", "shell: build");
+	let mut events = subscribe_events();
+
+	assert!(complete_for_session(sid, "octofs://jobs/ev-1"));
+	match next_event_for(&mut events, sid).await {
+		WatchEvent::Completed { session_id, uri } => {
+			assert_eq!(session_id, sid);
+			assert_eq!(uri, "octofs://jobs/ev-1");
+		}
+		other => panic!("expected Completed event, got {other:?}"),
+	}
+
+	// Unwatched completions publish nothing.
+	assert!(!complete_for_session(sid, "octofs://jobs/ev-1"));
+	assert!(events.try_recv().is_err());
+	clear_for_session(sid);
+}
+
+#[tokio::test]
+async fn clearing_a_session_publishes_one_cleared_event() {
+	let sid = "shell-jobs-events-clear-session";
+	clear_for_session(sid);
+	register_for_session(sid, "octofs://jobs/ev-2", "shell: test");
+	let mut events = subscribe_events();
+
+	clear_for_session(sid);
+	match next_event_for(&mut events, sid).await {
+		WatchEvent::Cleared { session_id } => assert_eq!(session_id, sid),
+		other => panic!("expected Cleared event, got {other:?}"),
+	}
+
+	// Clearing an already-empty session publishes nothing.
+	clear_for_session(sid);
+	assert!(events.try_recv().is_err());
+}

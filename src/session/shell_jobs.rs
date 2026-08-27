@@ -37,6 +37,31 @@ use std::sync::RwLock;
 // session id -> (resource URI -> label) for links advertised but not yet updated.
 static WATCHED: RwLock<Option<HashMap<String, HashMap<String, String>>>> = RwLock::new(None);
 
+/// Lifecycle events for watched resources. Subscription tasks (which hold a
+/// `subscriptions/listen` stream open) listen for these so they can end the
+/// stream when the update was already delivered another way — e.g. the
+/// legacy unsolicited push winning the race with stream establishment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchEvent {
+	/// The resource's update arrived and was delivered.
+	Completed { session_id: String, uri: String },
+	/// The session's watched set was wiped (session teardown).
+	Cleared { session_id: String },
+}
+
+lazy_static::lazy_static! {
+	static ref WATCH_EVENTS: tokio::sync::broadcast::Sender<WatchEvent> =
+		tokio::sync::broadcast::channel(64).0;
+}
+
+/// Subscribe to watched-resource lifecycle events. A receiver that lags
+/// misses events — acceptable, as these only end a stream early; a missed
+/// hint leaves the subscription open until its next notification or the
+/// job's update, which still terminates it.
+pub fn subscribe_events() -> tokio::sync::broadcast::Receiver<WatchEvent> {
+	WATCH_EVENTS.subscribe()
+}
+
 /// Every resource link (URI, label) a tool result advertised. The label is the
 /// link's name (octofs sets it to the launching command); falls back to the URI.
 pub fn resource_links_in(result: &CallToolResult) -> Vec<(String, String)> {
@@ -105,6 +130,13 @@ pub fn complete_for_session(session_id: &str, uri: &str) -> bool {
 			if jobs.is_empty() {
 				registry.remove(session_id);
 			}
+			if was_watched {
+				drop(guard);
+				let _ = WATCH_EVENTS.send(WatchEvent::Completed {
+					session_id: session_id.to_string(),
+					uri: uri.to_string(),
+				});
+			}
 			return was_watched;
 		}
 	}
@@ -152,8 +184,15 @@ pub fn pending_labels() -> Vec<String> {
 }
 
 pub fn clear_for_session(session_id: &str) {
-	if let Some(registry) = WATCHED.write().unwrap().as_mut() {
-		registry.remove(session_id);
+	let removed = WATCHED
+		.write()
+		.unwrap()
+		.as_mut()
+		.is_some_and(|registry| registry.remove(session_id).is_some());
+	if removed {
+		let _ = WATCH_EVENTS.send(WatchEvent::Cleared {
+			session_id: session_id.to_string(),
+		});
 	}
 }
 

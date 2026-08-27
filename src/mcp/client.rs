@@ -28,14 +28,15 @@ use rmcp::model::{
 	CancelledNotificationParam, ClientCapabilities, ClientInfo, ClientRequest, ElicitRequestParams,
 	ElicitResult, ElicitationAction, ElicitationCapability, ExtensionCapabilities,
 	FormElicitationCapability, GetTaskParams, Implementation, InputRequest, InputResponses,
-	ProgressToken, ProtocolVersion, ServerResult, TaskPayload, UpdateTaskParams,
-	UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
+	ProgressToken, ProtocolVersion, ServerNotification, ServerResult, SubscriptionFilter,
+	TaskPayload, UpdateTaskParams, UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS,
+	TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
 	RunningService, ServiceError,
 };
-use rmcp::{ClientHandler, RoleClient};
+use rmcp::{ClientHandler, Peer, RoleClient};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -174,56 +175,13 @@ impl ClientHandler for OctoClientHandler {
 		params: rmcp::model::ResourceUpdatedNotificationParam,
 		context: NotificationContext<RoleClient>,
 	) {
-		let value = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-		self.emit("notifications/resources/updated", &value);
-
-		// A resource we are following just updated (octofs fires this when a
-		// detached shell job exits). Recognition is by membership in the watched
-		// set — a resource link a tool handed back — not by any URI scheme, so
-		// this stays generic across MCP servers. Read the resource and inject its
-		// contents so the run loop wakes the model with the result: event-driven,
-		// no polling. The read + push runs in a detached task so it neither
-		// blocks this notification handler nor re-enters the receive loop.
-		let uri = params.uri;
-		let Some(session_id) = self.session_id.clone() else {
-			return;
-		};
-		if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
-			return;
-		}
-		// Clear it now so the loop can never wait forever, even if the read
-		// below fails.
-		crate::session::shell_jobs::complete_for_session(&session_id, &uri);
-		let peer = context.peer.clone();
-		tokio::spawn(async move {
-			let body = match peer
-				.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
-				.await
-			{
-				Ok(result) => result
-					.contents
-					.into_iter()
-					.filter_map(|content| match content {
-						rmcp::model::ResourceContents::TextResourceContents { text, .. } => {
-							Some(text)
-						}
-						_ => None,
-					})
-					.collect::<Vec<_>>()
-					.join("\n"),
-				Err(error) => {
-					format!("resource {uri} updated, but reading it failed: {error}")
-				}
-			};
-			let content = format!("<background_job resource=\"{uri}\">\n{body}\n</background_job>");
-			crate::session::inbox::push_inbox_message_for_session(
-				&session_id,
-				crate::session::inbox::InboxMessage {
-					source: crate::session::inbox::InboxSource::BackgroundJob { id: uri },
-					content,
-				},
-			);
-		});
+		deliver_resource_update(
+			&self.server_name,
+			self.session_id.as_deref(),
+			params.uri,
+			context.peer.clone(),
+		)
+		.await;
 	}
 
 	async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
@@ -282,6 +240,72 @@ impl ClientHandler for OctoClientHandler {
 		let params = notification.params.unwrap_or(serde_json::Value::Null);
 		self.emit(&notification.method, &params);
 	}
+}
+
+/// Deliver one `resources/updated` event for a resource we are following
+/// (octofs fires this when a detached shell job exits). Recognition is by
+/// membership in the watched set — a resource link a tool handed back — not
+/// by any URI scheme, so this stays generic across MCP servers. Read the
+/// resource and inject its contents so the run loop wakes the model with the
+/// result: event-driven, no polling. The read + push runs in a detached task
+/// so it neither blocks the caller nor re-enters the receive loop. Shared by
+/// both delivery paths: the unsolicited push (legacy servers) and the
+/// `subscriptions/listen` stream (2026-07-28).
+async fn deliver_resource_update(
+	server_name: &str,
+	session_id: Option<&str>,
+	uri: String,
+	peer: Peer<RoleClient>,
+) {
+	let param = rmcp::model::ResourceUpdatedNotificationParam::new(uri.clone());
+	let value = serde_json::to_value(&param).unwrap_or(serde_json::Value::Null);
+	super::process::emit_notification(
+		server_name,
+		"notifications/resources/updated",
+		&value,
+		session_id,
+		None,
+	);
+
+	let Some(session_id) = session_id else {
+		return;
+	};
+	// Owned copy: the delivery task outlives this call, and a borrowed
+	// &str cannot cross `tokio::spawn`.
+	let session_id = session_id.to_string();
+	if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
+		return;
+	}
+	// Clear it now so the loop can never wait forever, even if the read below
+	// fails.
+	crate::session::shell_jobs::complete_for_session(&session_id, &uri);
+	tokio::spawn(async move {
+		let body = match peer
+			.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
+			.await
+		{
+			Ok(result) => result
+				.contents
+				.into_iter()
+				.filter_map(|content| match content {
+					rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text),
+					_ => None,
+				})
+				.collect::<Vec<_>>()
+				.join("\n"),
+			Err(error) => {
+				format!("resource {uri} updated, but reading it failed: {error}")
+			}
+		};
+		let content = format!("<background_job resource=\"{uri}\">\n{body}\n</background_job>");
+		crate::session::inbox::push_inbox_message_for_session(
+			&session_id,
+			crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: uri },
+				content,
+			},
+		);
+	});
 }
 
 /// Client identity + capabilities sent on every request (modern) or during
@@ -1044,6 +1068,111 @@ async fn drive_task(
 	}
 }
 
+/// Open a `subscriptions/listen` stream (MCP 2026-07-28) for every resource
+/// link a tool result advertised, so the server delivers the job's completion
+/// on an acknowledged, contract-clean channel instead of an unsolicited push.
+/// Best-effort by design: on any failure — legacy server, no subscribe
+/// capability, transport — the unsolicited-push path in `on_resource_updated`
+/// still covers delivery, so this only upgrades the channel, never gates the
+/// feature.
+async fn watch_resource_links(
+	service: &McpService,
+	server_name: &str,
+	result: &rmcp::model::CallToolResult,
+) {
+	use crate::session::shell_jobs::WatchEvent;
+
+	let links = crate::session::shell_jobs::resource_links_in(result);
+	if links.is_empty() {
+		return;
+	}
+	// Task-locals do not cross `tokio::spawn`; capture the session now.
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	let session_id = session_id.to_string();
+	for (uri, _label) in links {
+		let mut filter = SubscriptionFilter::new();
+		filter.resource_subscriptions = Some(vec![uri.clone()]);
+		let mut subscription = match service.peer().listen(filter).await {
+			Ok(subscription) => subscription,
+			Err(error) => {
+				// Expected for legacy servers (method unknown) — the
+				// unsolicited push remains the delivery path.
+				crate::log_debug!(format!(
+					"subscriptions/listen for {uri} unavailable: {error}"
+				));
+				continue;
+			}
+		};
+		let accepted = subscription
+			.acknowledged()
+			.resource_subscriptions
+			.as_ref()
+			.is_some_and(|uris| uris.contains(&uri));
+		if !accepted {
+			let _ = subscription.cancel().await;
+			continue;
+		}
+		// The unsolicited push may have won the race with stream establishment
+		// and already delivered the update — nothing left to wait for.
+		if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
+			let _ = subscription.cancel().await;
+			continue;
+		}
+		let peer = service.peer().clone();
+		let mut events = crate::session::shell_jobs::subscribe_events();
+		let server_name = server_name.to_string();
+		// Per-link copies: each spawned watcher owns its session id, and the
+		// loop keeps using the original for the next link.
+		let session_id = session_id.clone();
+		let uri = uri.clone();
+		tokio::spawn(async move {
+			loop {
+				tokio::select! {
+					biased;
+					event = events.recv() => {
+						match event {
+							Ok(WatchEvent::Completed { session_id: s, uri: u })
+								if s == session_id && u == uri =>
+							{
+								break;
+								}
+							Ok(WatchEvent::Cleared { session_id: s }) if s == session_id => {
+								break;
+							}
+							_ => {
+								continue;
+							}
+						}
+					}
+					update = subscription.next() => {
+						match update {
+							Ok(Some(ServerNotification::ResourceUpdatedNotification(update))) => {
+								deliver_resource_update(
+									&server_name,
+									Some(&session_id),
+									update.params.uri,
+									peer.clone(),
+								)
+								.await;
+								break;
+							}
+							// The filter admits only resource updates; anything else
+							// means the stream ended or misbehaved — drop it and let
+							// the watched-set reminder cover the job.
+							Ok(Some(_)) | Ok(None) | Err(_) => {
+								break;
+							}
+						}
+					}
+				}
+			}
+			let _ = subscription.cancel().await;
+		});
+	}
+}
+
 /// Execute a tool call with progress-resetting request timeouts, targeted
 /// cancellation, SEP-2322 MRTR follow-up rounds, and SEP-2663 task polling.
 pub async fn call_tool(
@@ -1089,6 +1218,10 @@ pub async fn call_tool(
 				// job completes before its link is registered and the completion
 				// is dropped.
 				crate::session::shell_jobs::note_watched_from_result(&result);
+				// Upgrade delivery to a subscriptions/listen stream where the
+				// server supports it (2026-07-28). Established before the result
+				// is returned so the stream is active before the job can exit.
+				watch_resource_links(&service, server.name(), &result).await;
 				return Ok(result);
 			}
 			CallToolResponse::Task(task) => {

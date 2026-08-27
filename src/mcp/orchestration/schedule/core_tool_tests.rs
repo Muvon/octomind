@@ -111,20 +111,27 @@ async fn test_idle_default_and_due_flush() {
 		.await
 		.expect("add repeating");
 		assert!(!added.is_error());
+		let id = extract_id(&added.extract_content());
 		flush_due_to_inbox();
 		assert!(
 			has_pending_schedules(),
 			"repeating entry must be rescheduled after firing"
 		);
 
-		// Cleanup so the store does not leak into the session registry
+		// The ID survives the reschedule, otherwise the entry can never be removed.
 		let listing = render_pending_entries().expect("rescheduled entry listed");
-		let id = extract_id(&listing);
-		let _ = execute_schedule_tool(&call(serde_json::json!({
+		assert!(
+			listing.contains(&id),
+			"rescheduled entry must keep id {id}: {listing}"
+		);
+		let removed = execute_schedule_tool(&call(serde_json::json!({
 			"command": "remove",
 			"id": id
 		})))
-		.await;
+		.await
+		.expect("remove");
+		assert!(!removed.is_error(), "{}", removed.extract_content());
+		assert!(!has_pending_schedules());
 	})
 	.await;
 }

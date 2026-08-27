@@ -85,10 +85,14 @@ impl ScheduleEntry {
 		}
 	}
 
-	/// Create a rescheduled copy of this entry with a new ID.
+	/// Create a rescheduled copy of this entry, keeping the same ID.
+	/// The ID must stay stable: `remove <id>` is the only way to stop a repeating
+	/// entry, and the only ID the model ever sees is the one handed out at `add`
+	/// time (and echoed on each firing). Minting a fresh ID here made every
+	/// repeating entry unstoppable.
 	/// Only valid when interval_secs is Some — caller must check before calling.
 	pub fn reschedule(&self) -> Self {
-		let id = Uuid::new_v4().to_string()[..8].to_string();
+		let id = self.id.clone();
 		let trigger_at = match self.trigger_mode {
 			TriggerMode::Idle => Local::now(),
 			TriggerMode::Time => {

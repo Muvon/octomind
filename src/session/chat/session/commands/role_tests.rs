@@ -170,7 +170,13 @@ async fn test_tap_tag_resolution_failure_leaves_session_untouched() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_switch_without_session_file_fails_and_reverts() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	// Throwaway data dir: reinitializing for the new role touches the shared
+	// MCP registries under OCTOMIND_DATA_DIR — keep that off the real dir and
+	// serialized against the other role-switch tests.
+	let _data = TestDataDir::new();
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.role = "task_refiner".to_string();
 	let mut config = template_config();

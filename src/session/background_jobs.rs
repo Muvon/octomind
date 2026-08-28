@@ -68,7 +68,6 @@ impl BackgroundJobManager {
 	/// Call when an async job finishes (success or failure).
 	/// Pushes the result directly into the session inbox.
 	pub fn release(&self, job: CompletedJob) {
-		self.active.fetch_sub(1, Ordering::SeqCst);
 		let content = if job.output.starts_with("ERROR: ") {
 			format!(
 				"[Async agent '{}' failed]\n\n{}",
@@ -87,6 +86,9 @@ impl BackgroundJobManager {
 			},
 			content,
 		});
+		// Publish the completion before clearing the final active count. An idle
+		// observer therefore always sees either active work or its queued result.
+		self.active.fetch_sub(1, Ordering::SeqCst);
 	}
 
 	/// Register a spawned job handle for later cancellation.

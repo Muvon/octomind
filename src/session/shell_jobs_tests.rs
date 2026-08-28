@@ -63,6 +63,15 @@ fn watch_complete_pending_and_labels_roundtrip() {
 	assert!(has_pending_for_session(sid));
 	assert!(is_watched_for_session(sid, a));
 	assert!(!is_watched_for_session(sid, "octofs://jobs/never"));
+	assert!(begin_delivery_for_session(sid, a));
+	assert!(
+		!begin_delivery_for_session(sid, a),
+		"a duplicate update cannot start a second delivery"
+	);
+	assert!(
+		has_pending_for_session(sid),
+		"a resource remains pending until its inbox delivery exists"
+	);
 
 	assert!(complete_for_session(sid, a), "a was watched");
 	assert!(!is_watched_for_session(sid, a));

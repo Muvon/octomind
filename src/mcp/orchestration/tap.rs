@@ -958,3 +958,7 @@ mod tests {
 		assert_eq!(v["started_at"].as_u64(), Some(0));
 	}
 }
+
+#[cfg(test)]
+#[path = "tap_unit_tests.rs"]
+mod unit_tests;

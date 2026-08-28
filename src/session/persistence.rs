@@ -1490,3 +1490,7 @@ mod tests {
 #[cfg(test)]
 #[path = "persistence_runtime_tests.rs"]
 mod runtime_tests;
+
+#[cfg(test)]
+#[path = "persistence_unit_tests.rs"]
+mod unit_tests;

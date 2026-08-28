@@ -910,3 +910,7 @@ pub fn get_server_status_report() -> HashMap<String, (ServerHealth, ServerRestar
 #[cfg(test)]
 #[path = "process_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "process_additional_tests.rs"]
+mod additional_tests;

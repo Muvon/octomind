@@ -943,3 +943,7 @@ impl ChatSession {
 #[cfg(test)]
 #[path = "display_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "display_additional_tests.rs"]
+mod additional_tests;

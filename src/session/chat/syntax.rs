@@ -76,23 +76,5 @@ impl Default for SyntaxHighlighter {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_syntax_highlighter_creation() {
-		let highlighter = SyntaxHighlighter::new();
-		assert!(!highlighter.syntax_set.syntaxes().is_empty());
-		assert!(!highlighter.theme_set.themes.is_empty());
-	}
-
-	#[test]
-	fn test_rust_highlighting() {
-		let highlighter = SyntaxHighlighter::new();
-		let code = "fn main() {\n    println!(\"Hello, world!\");\n}";
-		let result = highlighter.highlight_code_with_theme(code, "rust", "base16-ocean.dark");
-		assert!(result.is_ok());
-		// The result should contain ANSI escape codes for coloring
-		assert!(result.unwrap().contains("\x1b["));
-	}
-}
+#[path = "syntax_tests.rs"]
+mod tests;

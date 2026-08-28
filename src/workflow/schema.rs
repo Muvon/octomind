@@ -259,3 +259,7 @@ impl Step {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod tests;

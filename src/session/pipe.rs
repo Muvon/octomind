@@ -180,3 +180,7 @@ pub async fn run_pipe(
 	let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 	Ok(Some(stdout))
 }
+
+#[cfg(test)]
+#[path = "pipe_tests.rs"]
+mod tests;

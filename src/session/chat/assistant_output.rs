@@ -107,3 +107,7 @@ pub fn print_assistant_response(
 
 	println!("{}", rule);
 }
+
+#[cfg(test)]
+#[path = "assistant_output_tests.rs"]
+mod tests;

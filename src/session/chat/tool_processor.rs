@@ -33,3 +33,7 @@ impl Default for ToolProcessor {
 		Self::new()
 	}
 }
+
+#[cfg(test)]
+#[path = "tool_processor_tests.rs"]
+mod tests;

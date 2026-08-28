@@ -288,3 +288,7 @@ pub trait Layer {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "layer_trait_tests.rs"]
+mod tests;

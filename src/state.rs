@@ -34,3 +34,7 @@ pub type SharedState = Arc<RwLock<IndexState>>;
 pub fn create_shared_state() -> SharedState {
 	Arc::new(RwLock::new(IndexState::default()))
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

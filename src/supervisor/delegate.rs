@@ -91,3 +91,7 @@ pub fn clear_handback_for_session(session_id: &crate::session::context::SessionI
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "delegate_tests.rs"]
+mod tests;

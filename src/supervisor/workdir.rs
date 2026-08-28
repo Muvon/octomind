@@ -60,3 +60,7 @@ pub fn fingerprint() -> Option<u64> {
 	}
 	Some(h.finish())
 }
+
+#[cfg(test)]
+#[path = "workdir_tests.rs"]
+mod tests;

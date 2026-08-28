@@ -38,3 +38,7 @@ pub struct OpenRouterConfig {
 }
 
 // REMOVED: Default implementations - all config must be explicit
+
+#[cfg(test)]
+#[path = "providers_tests.rs"]
+mod tests;

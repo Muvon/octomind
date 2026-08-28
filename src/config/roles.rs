@@ -73,3 +73,7 @@ impl RoleMcpConfig {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "roles_tests.rs"]
+mod tests;

@@ -271,3 +271,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 	}
 	diff == 0
 }
+
+#[cfg(test)]
+#[path = "bridge_tests.rs"]
+mod tests;

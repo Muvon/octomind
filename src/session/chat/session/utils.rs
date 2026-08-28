@@ -138,3 +138,7 @@ pub async fn get_initial_messages(
 
 	Ok(initial_messages)
 }
+
+#[cfg(test)]
+#[path = "utils_tests.rs"]
+mod tests;

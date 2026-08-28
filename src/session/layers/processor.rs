@@ -78,3 +78,7 @@ impl Layer for LayerProcessor {
 		})
 	}
 }
+
+#[cfg(test)]
+#[path = "processor_tests.rs"]
+mod tests;

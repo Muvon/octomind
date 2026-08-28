@@ -35,3 +35,7 @@ pub struct HookConfig {
 fn default_hook_timeout() -> u64 {
 	30
 }
+
+#[cfg(test)]
+#[path = "hooks_tests.rs"]
+mod tests;

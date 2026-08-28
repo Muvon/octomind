@@ -206,6 +206,25 @@ output, anonymous schema/privacy, every session mode, and tests for each claimed
 sink. Never describe a local snapshot as telemetry unless `Event` actually
 carries it.
 
+### Learning and memory boundaries
+
+- Short `memory_type = "learning"` records remain quote-first user rules: a
+  verbatim real-user quote plus a separate verifier is required.
+- Long `memory_type = "experience"` records are formed by a separate learner
+  only for valuable trajectories. They cite addressable REAL USER/TOOL messages,
+  carry `verified|failed|unknown`, and pass a grounding verifier; one bounded
+  repair is allowed, then formation fails closed.
+- File records are the authority for learning. `related` stores stable file IDs,
+  `evidence` stores `session://.../message/...` provenance, and file retrieval
+  expands explicit links one hop. Do not silently collapse this into the current
+  generic MCP text adapter.
+- Recall is one runtime-only Active Memory Pack per genuine user turn, not
+  conversation history. It is token-bounded, materialized only for provider
+  requests, and drops when context headroom is insufficient.
+- Outcome credit applies only to pack IDs the specialist reports materially
+  using. Exposure is neutral. Guardrail generation from learned constraints is
+  intentionally future work; do not make learned text executable policy yet.
+
 ### MCP misuse hints — guide, never block
 
 When a dedicated tool would be better, append a hint to the result — but only if that tool is actually enabled:

@@ -49,6 +49,18 @@ fn escape(s: &str) -> String {
 		.replace('\n', "\\n")
 }
 
+fn parse_string_list(value: &str) -> Vec<String> {
+	serde_json::from_str::<Vec<String>>(value).unwrap_or_else(|_| {
+		value
+			.trim_start_matches('[')
+			.trim_end_matches(']')
+			.split(',')
+			.map(|item| item.trim().trim_matches('"').to_string())
+			.filter(|item| !item.is_empty())
+			.collect()
+	})
+}
+
 impl FileBackend {
 	fn learning_dir(role: &str, project: &str) -> Result<PathBuf> {
 		crate::directories::get_learning_dir(role, project)
@@ -100,6 +112,11 @@ impl FileBackend {
 				"project" => lesson.project = unescape(val),
 				"scope" => lesson.scope = val.to_string(),
 				"created" => lesson.created = unescape(val),
+				"related" => lesson.related = parse_string_list(val),
+				"evidence" => lesson.evidence = parse_string_list(val),
+				"outcome" => {
+					lesson.outcome = val.parse().unwrap_or_default();
+				}
 				_ => {}
 			}
 		}
@@ -158,7 +175,7 @@ impl LearningBackend for FileBackend {
 
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\n---\n",
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\noutcome: {}\n---\n",
 			escape(&lesson.title),
 			escape(&lesson.content),
 			lesson.memory_type,
@@ -170,6 +187,9 @@ impl LearningBackend for FileBackend {
 			escape(&lesson.project),
 			lesson.scope,
 			escape(&lesson.created),
+			serde_json::to_string(&lesson.related)?,
+			serde_json::to_string(&lesson.evidence)?,
+			lesson.outcome.as_str(),
 		);
 
 		std::fs::write(dir.join(filename), content)?;
@@ -233,14 +253,14 @@ impl LearningBackend for FileBackend {
 		// fresh context a mild edge over stale.
 		for (score, idx) in fused.iter_mut() {
 			*score *= 1.0 + RECENCY_WEIGHT * recency_factor(&all[*idx].created);
+			// Outcome credit must influence future scoped recall, not only global
+			// ordering and eventual pruning. Keep it a bounded rerank factor so
+			// lexical/semantic relevance remains the admission signal.
+			*score *= importance_factor(all[*idx].importance);
 		}
 		fused.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-		Ok(fused
-			.into_iter()
-			.take(limit)
-			.map(|(_, i)| all[i].clone())
-			.collect())
+		Ok(expand_ranked_with_links(&all, &fused, limit))
 	}
 
 	async fn delete(&self, id: &str, role: &str, project: &str, _config: &Config) -> Result<()> {
@@ -377,6 +397,68 @@ const RRF_K: f32 = 60.0;
 const RECENCY_WEIGHT: f32 = 0.5;
 /// Recency half-life in days: a lesson this old gets a ~0.5 recency factor.
 const RECENCY_HALFLIFE_DAYS: f32 = 30.0;
+/// Importance 0..1 maps to a modest 0.75x..1.25x rerank multiplier.
+const IMPORTANCE_RERANK_WEIGHT: f32 = 0.5;
+
+fn importance_factor(importance: f64) -> f32 {
+	1.0 + IMPORTANCE_RERANK_WEIGHT * (importance.clamp(0.0, 1.0) as f32 - 0.5)
+}
+
+/// Interleave each directly retrieved memory with its explicit one-hop targets
+/// and backlinks. Direct ranking still chooses every root; graph edges only
+/// spend remaining result slots and never recurse.
+fn expand_ranked_with_links(all: &[Lesson], ranked: &[(f32, usize)], limit: usize) -> Vec<Lesson> {
+	if limit == 0 {
+		return Vec::new();
+	}
+	let mut by_id = std::collections::HashMap::new();
+	for (index, lesson) in all.iter().enumerate() {
+		by_id.insert(lesson.file_id(), index);
+	}
+	let mut backlinks: std::collections::HashMap<&str, Vec<usize>> =
+		std::collections::HashMap::new();
+	for (index, lesson) in all.iter().enumerate() {
+		for target in &lesson.related {
+			backlinks.entry(target.as_str()).or_default().push(index);
+		}
+	}
+
+	let mut selected = Vec::new();
+	let mut seen = std::collections::HashSet::new();
+	for &(_, root) in ranked {
+		if root >= all.len() {
+			continue;
+		}
+		let root_id = all[root].file_id();
+		if seen.insert(root) {
+			selected.push(all[root].clone());
+		}
+		if selected.len() >= limit {
+			break;
+		}
+
+		let forward = all[root]
+			.related
+			.iter()
+			.filter_map(|id| by_id.get(id).copied());
+		let reverse = backlinks
+			.get(root_id.as_str())
+			.into_iter()
+			.flat_map(|indices| indices.iter().copied());
+		for neighbor in forward.chain(reverse) {
+			if seen.insert(neighbor) {
+				selected.push(all[neighbor].clone());
+				if selected.len() >= limit {
+					break;
+				}
+			}
+		}
+		if selected.len() >= limit {
+			break;
+		}
+	}
+	selected
+}
 
 /// Map a lesson's `created` (RFC3339) to a recency factor in (0, 1]: ~1.0 for
 /// brand-new, decaying toward 0 with age. Unparseable/empty dates → 0 (no boost).
@@ -595,6 +677,9 @@ source: "test-session"
 role: "developer"
 project: "octofs"
 created: "2026-04-05T14:30:00Z"
+related: ["memory-a","memory-b"]
+evidence: ["session://test/message/2"]
+outcome: failed
 ---
 "#;
 		let lesson = FileBackend::parse_lesson_file(content).unwrap();
@@ -604,6 +689,12 @@ created: "2026-04-05T14:30:00Z"
 		assert_eq!(lesson.tags, vec!["auth", "api"]);
 		assert_eq!(lesson.role, "developer");
 		assert_eq!(lesson.project, "octofs");
+		assert_eq!(lesson.related, vec!["memory-a", "memory-b"]);
+		assert_eq!(lesson.evidence, vec!["session://test/message/2"]);
+		assert_eq!(
+			lesson.outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Failed
+		);
 	}
 
 	#[test]
@@ -747,6 +838,35 @@ created: "2026-04-05T00:00:00Z"
 		let lessons = vec![lesson_with("PostgreSQL EXPLAIN ANALYZE", &[])];
 		let ranking = rank_by_keywords(&lessons, &["postgresql".to_string()]);
 		assert_eq!(ranking, vec![0]);
+	}
+
+	#[test]
+	fn importance_rerank_is_bounded_and_neutral_at_half() {
+		assert_eq!(importance_factor(-1.0), 0.75);
+		assert_eq!(importance_factor(0.5), 1.0);
+		assert_eq!(importance_factor(2.0), 1.25);
+	}
+
+	#[test]
+	fn ranked_retrieval_expands_forward_links_and_backlinks_once() {
+		let mut root = lesson_with("root memory", &[]);
+		root.created = "2026-01-01T00:00:01Z".to_string();
+		let mut target = lesson_with("target memory", &[]);
+		target.created = "2026-01-01T00:00:02Z".to_string();
+		let mut backlink = lesson_with("backlink memory", &[]);
+		backlink.created = "2026-01-01T00:00:03Z".to_string();
+		root.related.push(target.file_id());
+		backlink.related.push(root.file_id());
+		let all = vec![root, target, backlink];
+
+		let expanded = expand_ranked_with_links(&all, &[(1.0, 0)], 3);
+		assert_eq!(
+			expanded
+				.iter()
+				.map(|memory| memory.content.as_str())
+				.collect::<Vec<_>>(),
+			vec!["root memory", "target memory", "backlink memory"]
+		);
 	}
 
 	#[test]

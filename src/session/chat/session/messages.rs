@@ -23,6 +23,54 @@ use colored::Colorize;
 use std::io::IsTerminal;
 
 impl ChatSession {
+	const ACTIVE_MEMORY_MESSAGE_NAME: &'static str = "__active_memory_pack";
+
+	fn is_active_memory_message(message: &crate::session::Message) -> bool {
+		message.name.as_deref() == Some(Self::ACTIVE_MEMORY_MESSAGE_NAME)
+	}
+
+	/// Replace the current turn's active memory pack without writing it to the
+	/// session log. The message is runtime context, not conversation history.
+	pub fn set_active_memory_pack(&mut self, pack: Option<String>) {
+		self.remove_active_memory_pack_message();
+		self.active_memory_pack = pack.filter(|value| !value.trim().is_empty());
+	}
+
+	/// Re-materialize the runtime pack if compression or error cleanup removed its
+	/// transient message. At most one copy may exist in the live request context.
+	pub fn ensure_active_memory_pack_message(&mut self) {
+		if self
+			.session
+			.messages
+			.iter()
+			.any(Self::is_active_memory_message)
+		{
+			return;
+		}
+		let Some(pack) = self.active_memory_pack.as_deref() else {
+			return;
+		};
+		let content = crate::session::ensure_system_managed(pack);
+		let mut message = crate::session::Session::build_message("user", &content);
+		message.name = Some(Self::ACTIVE_MEMORY_MESSAGE_NAME.to_string());
+		self.session.messages.push(message);
+	}
+
+	/// Remove only the materialized request copy; keep `active_memory_pack` so a
+	/// tool follow-up can inject the same pack into its next specialist request.
+	pub fn remove_active_memory_pack_message(&mut self) {
+		self.session
+			.messages
+			.retain(|message| !Self::is_active_memory_message(message));
+	}
+
+	pub fn clear_active_memory_pack(&mut self) {
+		self.remove_active_memory_pack_message();
+		self.active_memory_pack = None;
+		self.recalled_refs.clear();
+		self.used_memory_ids.clear();
+	}
+
 	// Sync runtime state from ChatSession fields to session.info (for persistence)
 	fn sync_runtime_state(&mut self) {
 		self.session.info.role = self.role.clone();
@@ -255,6 +303,9 @@ impl ChatSession {
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 		self.session.messages.push(message);
+		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime
+		// pack only after persistence succeeds, preserving the atomic-add contract.
+		self.clear_active_memory_pack();
 		// A genuine user turn starts a new adaptive-compression phase. Preserve
 		// the exact post-compression watermark, but reset autonomous runway
 		// expansion so this request gets the normal short safety horizon. Keeping
@@ -263,6 +314,7 @@ impl ChatSession {
 		// method and intentionally do not reset it.
 		self.session.info.consecutive_compressions = 0;
 		self.session.info.note_turn_start();
+		self.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.

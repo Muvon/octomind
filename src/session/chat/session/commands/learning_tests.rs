@@ -23,6 +23,32 @@ use crate::supervisor::learning::Lesson;
 
 const ROLE: &str = "__learning_cmd_role";
 
+struct TestDataDir {
+	previous: Option<std::ffi::OsString>,
+	_dir: tempfile::TempDir,
+}
+
+impl TestDataDir {
+	fn new() -> Self {
+		let dir = tempfile::tempdir().expect("temporary data dir");
+		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+		Self {
+			previous,
+			_dir: dir,
+		}
+	}
+}
+
+impl Drop for TestDataDir {
+	fn drop(&mut self) {
+		match self.previous.take() {
+			Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+	}
+}
+
 fn project() -> String {
 	std::env::current_dir()
 		.ok()
@@ -66,6 +92,7 @@ async fn store(content: &str, config: &Config) {
 				project: project(),
 				scope: "scoped".to_string(),
 				created: chrono::Utc::now().to_rfc3339(),
+				..Default::default()
 			},
 			config,
 		)
@@ -85,6 +112,8 @@ fn learning_data(result: CommandResult) -> serde_json::Value {
 
 #[tokio::test]
 async fn test_learning_list_and_delete_lifecycle() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
 	cleanup();
 	let config = test_config();
 	let mut session = test_session();
@@ -102,6 +131,19 @@ async fn test_learning_list_and_delete_lifecycle() {
 	let listed = data["lessons"].to_string();
 	assert!(listed.contains("first learning-cmd lesson"), "{listed}");
 	assert!(listed.contains("second learning-cmd lesson"), "{listed}");
+	let shown = learning_data(
+		handle_learning(&mut session, &config, &["show", "1"])
+			.await
+			.expect("show dispatches"),
+	);
+	assert_eq!(shown["subcommand"], "show");
+	assert!(shown["content"]
+		.as_str()
+		.unwrap_or_default()
+		.contains("learning-cmd"));
+	assert!(shown["path"]
+		.as_str()
+		.is_some_and(|path| path.ends_with(".md")));
 
 	// Glob filter narrows to the matching lesson
 	let data = learning_data(
@@ -140,6 +182,8 @@ async fn test_learning_list_and_delete_lifecycle() {
 
 #[tokio::test]
 async fn test_learning_error_arms() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
 	let config = test_config();
 	let mut session = test_session();
 
@@ -164,6 +208,12 @@ async fn test_learning_error_arms() {
 	// far out-of-range index → out-of-range error
 	let data = learning_data(
 		handle_learning(&mut session, &config, &["delete", "999999"])
+			.await
+			.expect("dispatches"),
+	);
+	assert_eq!(data["subcommand"], "error");
+	let data = learning_data(
+		handle_learning(&mut session, &config, &["show", "999999"])
 			.await
 			.expect("dispatches"),
 	);

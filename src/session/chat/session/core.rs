@@ -212,17 +212,23 @@ pub struct ChatSession {
 	/// and keeps it within `compression.analysis_findings_max_tokens` using
 	/// current-task relevance, recency, and diversity.
 	pub analysis_findings: Vec<String>,
-	/// Whether the session-start learning injection has happened (global tier +
-	/// first hybrid scoped recall). Gates the once-per-session global injection.
+	/// Whether the first hybrid scoped recall has happened. Later genuine turns
+	/// rebuild the active pack with embedding-only scoped recall.
 	pub learning_injected: bool,
-	/// Lesson contents already injected this session — dedup key for per-message
-	/// recall so the same lesson is never injected twice.
-	pub injected_lessons: std::collections::HashSet<String>,
+	/// One runtime-only memory pack materialized as a non-persisted, replaceable
+	/// system-managed message before specialist calls in the active user turn.
+	pub active_memory_pack: Option<String>,
+	/// Pack-local IDs the specialist reported materially using this turn. Unioned
+	/// across tool rounds and consumed by outcome-driven reinforcement.
+	pub used_memory_ids: std::collections::HashSet<String>,
 	/// Set when a new user message arrives; consumed by the API executor to run
 	/// per-message scoped lesson recall (embedding-only) for that turn.
 	pub pending_recall: bool,
 	/// Whether learning extraction already ran for this session (prevents double extraction on exit).
 	pub learning_extracted: bool,
+	/// Completion evidence available to detached learning extraction for the
+	/// active genuine user trajectory.
+	pub learning_outcome: crate::supervisor::learning::TrajectoryOutcome,
 	/// Runtime override for reasoning effort (set via /effort). None = use config default.
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 	/// Supervisor: agent's self-reported state for the latest turn, parsed from
@@ -246,8 +252,9 @@ pub struct ChatSession {
 	/// verifier's repair budget, which would fail an otherwise correct turn on
 	/// the gate's first gap verdict. Same per-turn bound, own counter.
 	pub nudge_iterations: u8,
-	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining;
-	/// suppresses distill so we never learn from an unverified trajectory.
+	/// Supervisor: set when the verify-gate exhausted retries with gaps remaining.
+	/// Distill may retain it only as an explicitly failed experience; it can never
+	/// be promoted as a verified successful procedure.
 	pub gate_failed: bool,
 	/// Supervisor: gaps the last verify-gate pass found this task, handed to the
 	/// next pass so it confirms each is closed instead of judging from scratch.
@@ -290,9 +297,9 @@ pub struct ChatSession {
 	/// Evidence-ledger boundary for the active plan phase. Only actions at or
 	/// after this checkpoint may authorize its transition.
 	pub plan_evidence_checkpoint: u64,
-	/// Supervisor: entries recalled during the current trajectory (content, role,
-	/// project). The verify-gate reinforces (pass) or decays (fail) them, then clears.
-	pub recalled_refs: Vec<(String, String, String)>,
+	/// Supervisor: entries in the active pack (pack id, content, role, project).
+	/// Only IDs the specialist reports using receive verify-gate outcome credit.
+	pub recalled_refs: Vec<(String, String, String, String)>,
 	/// Supervisor: runtime-recorded tool log for the current task — ground truth
 	/// the verify-gate checks completion claims against. Reset on each genuine
 	/// user turn; gate/steer re-runs (system-managed messages) keep accumulating.
@@ -417,9 +424,11 @@ impl ChatSession {
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
 			learning_injected: false,
-			injected_lessons: std::collections::HashSet::new(),
+			active_memory_pack: None,
+			used_memory_ids: std::collections::HashSet::new(),
 			pending_recall: false,
 			learning_extracted: false,
+			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 			reasoning_effort: None,
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
@@ -646,9 +655,11 @@ impl ChatSession {
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
 						learning_injected: false,
-						injected_lessons: std::collections::HashSet::new(),
+						active_memory_pack: None,
+						used_memory_ids: std::collections::HashSet::new(),
 						pending_recall: false,
 						learning_extracted: false,
+						learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 						reasoning_effort: None,
 						last_self_report: None,
 						detectors: crate::supervisor::detect::Detectors::default(),
@@ -1368,9 +1379,25 @@ impl ChatSession {
 			self.cached_tools = Some(crate::mcp::get_available_functions(config).await);
 		}
 
-		// System prompt is already included in session.messages (first message with role="system")
-		// No need to pass it separately - estimate_full_context_tokens counts all messages
-		estimate_full_context_tokens(&self.session.messages, self.cached_tools.as_deref())
+		// System prompt is already included in session.messages. The active memory
+		// pack normally is not: it materializes only around the provider request, so
+		// account for its bounded request cost explicitly when absent from the slice.
+		let mut total =
+			estimate_full_context_tokens(&self.session.messages, self.cached_tools.as_deref());
+		if !self
+			.session
+			.messages
+			.iter()
+			.any(|message| message.name.as_deref() == Some("__active_memory_pack"))
+		{
+			if let Some(pack) = self.active_memory_pack.as_deref() {
+				let content = crate::session::ensure_system_managed(pack);
+				let mut message = crate::session::Session::build_message("user", &content);
+				message.name = Some("__active_memory_pack".to_string());
+				total = total.saturating_add(crate::session::estimate_message_tokens(&message));
+			}
+		}
+		total
 	}
 
 	/// Invalidate tool cache (call when MCP configuration changes)
@@ -1421,9 +1448,11 @@ impl ChatSession {
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
 			learning_injected: false,
-			injected_lessons: std::collections::HashSet::new(),
+			active_memory_pack: None,
+			used_memory_ids: std::collections::HashSet::new(),
 			pending_recall: false,
 			learning_extracted: false,
+			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
 			reasoning_effort: None,
 			last_self_report: None,
 			detectors: crate::supervisor::detect::Detectors::default(),
@@ -1480,6 +1509,54 @@ mod tests {
 			vec!["load-bearing root cause"],
 			"task continuity is resolved later; message insertion must not destroy findings"
 		);
+	}
+
+	#[test]
+	fn active_memory_pack_is_single_runtime_message_and_clears_on_new_turn() {
+		let mut session = make_session(vec![msg("system", false)]);
+		session.set_active_memory_pack(Some(
+			"<active_memory_pack trust=\"test\">first</active_memory_pack>".to_string(),
+		));
+		session.set_active_memory_pack(Some(
+			"<active_memory_pack trust=\"test\">second</active_memory_pack>".to_string(),
+		));
+		assert_eq!(session.session.messages.len(), 1);
+		session.ensure_active_memory_pack_message();
+		session.ensure_active_memory_pack_message();
+		let packs: Vec<_> = session
+			.session
+			.messages
+			.iter()
+			.filter(|message| message.name.as_deref() == Some("__active_memory_pack"))
+			.collect();
+		assert_eq!(packs.len(), 1);
+		assert!(packs[0].content.contains("second"));
+		session.remove_active_memory_pack_message();
+		assert_eq!(session.session.messages.len(), 1);
+		assert!(session.active_memory_pack.is_some());
+		session.ensure_active_memory_pack_message();
+
+		session.used_memory_ids.insert("M1".to_string());
+		session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
+		session.recalled_refs.push((
+			"M1".to_string(),
+			"rule".to_string(),
+			"role".to_string(),
+			"project".to_string(),
+		));
+		session.add_user_message("new task").unwrap();
+		assert!(session.active_memory_pack.is_none());
+		assert!(session.used_memory_ids.is_empty());
+		assert!(session.recalled_refs.is_empty());
+		assert_eq!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Unknown
+		);
+		assert!(!session
+			.session
+			.messages
+			.iter()
+			.any(|message| message.name.as_deref() == Some("__active_memory_pack")));
 	}
 
 	#[test]

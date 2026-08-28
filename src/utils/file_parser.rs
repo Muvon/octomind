@@ -579,4 +579,136 @@ src/lib.rs:20:30
 		assert_eq!(refs["src/main.rs"][0], LineRange { start: 1, end: 10 });
 		assert_eq!(refs["src/lib.rs"][0], LineRange { start: 20, end: 30 });
 	}
+
+	#[test]
+	fn test_parse_file_references_empty_and_malformed() {
+		// Empty and ref-free content yields no references
+		assert!(parse_file_references("").is_empty());
+		assert!(parse_file_references("Just plain text, no refs").is_empty());
+
+		// Malformed line numbers never match
+		assert!(parse_file_references("src/main.rs:a:b").is_empty());
+		assert!(parse_file_references("src/main.rs:1:").is_empty());
+		assert!(parse_file_references("src/main.rs:-1:5").is_empty());
+		assert!(parse_file_references("1:2").is_empty());
+	}
+
+	#[test]
+	fn test_parse_file_references_windows_paths() {
+		// Backslash drive path inside <context> tags
+		let content = r"<context>
+C:\Users\dk\main.rs:10:20
+</context>";
+		let refs = parse_file_references(content);
+		assert_eq!(refs.len(), 1);
+		assert_eq!(
+			refs[r"C:\Users\dk\main.rs"][0],
+			LineRange { start: 10, end: 20 }
+		);
+
+		// Forward-slash drive path in free text (fallback pattern)
+		let refs = parse_file_references(r"See C:/dev/project/src/main.rs:1:5 for details");
+		assert_eq!(refs.len(), 1);
+		assert_eq!(
+			refs["C:/dev/project/src/main.rs"][0],
+			LineRange { start: 1, end: 5 }
+		);
+
+		// Backslash drive path in free text (fallback pattern)
+		let refs = parse_file_references(r"See C:\Users\dk\main.rs:5:10 for details");
+		assert_eq!(refs.len(), 1);
+		assert_eq!(
+			refs[r"C:\Users\dk\main.rs"][0],
+			LineRange { start: 5, end: 10 }
+		);
+	}
+
+	#[test]
+	fn test_line_range_boundaries() {
+		assert_eq!(LineRange::new(1, 1), Some(LineRange { start: 1, end: 1 }));
+		assert_eq!(
+			LineRange::new(1, 10000),
+			Some(LineRange {
+				start: 1,
+				end: 10000
+			})
+		);
+		assert!(LineRange::new(1, 10001).is_none());
+		assert!(LineRange::new(10000, 10000).is_some());
+	}
+
+	#[test]
+	fn test_parse_file_references_ten_file_limit() {
+		let mut content = String::from("<context>\n");
+		for i in 1..=12 {
+			content.push_str(&format!("file{:02}.rs:1:10\n", i));
+		}
+		content.push_str("</context>");
+
+		let refs = parse_file_references(&content);
+		assert_eq!(refs.len(), 10); // capped at 10 files for performance
+	}
+
+	#[test]
+	fn test_read_file_lines_range_beyond_eof() {
+		let temp_dir = TempDir::new().unwrap();
+		let file_path = create_test_file(&temp_dir, "short.txt", "line1\nline2\nline3");
+
+		let content = read_file_lines(&file_path, &LineRange::new(2, 100).unwrap());
+
+		// Reading past EOF just stops at the last line — not an error
+		assert!(content.error.is_none());
+		assert_eq!(content.lines.len(), 2);
+		assert_eq!(content.lines[0], "2: line2");
+		assert_eq!(content.lines[1], "3: line3");
+	}
+
+	#[test]
+	fn test_read_file_lines_single_line_range() {
+		let temp_dir = TempDir::new().unwrap();
+		let file_path = create_test_file(&temp_dir, "one.txt", "line1\nline2\nline3");
+
+		let content = read_file_lines(&file_path, &LineRange::new(2, 2).unwrap());
+
+		assert!(content.error.is_none());
+		assert_eq!(content.lines, vec!["2: line2".to_string()]);
+	}
+
+	#[test]
+	fn test_read_multiple_files_missing_file_and_multiple_ranges() {
+		let temp_dir = TempDir::new().unwrap();
+		let existing = create_test_file(&temp_dir, "exists.txt", "line1\nline2\nline3\nline4");
+
+		let mut file_refs = HashMap::new();
+		file_refs.insert(
+			existing.clone(),
+			vec![LineRange::new(1, 2).unwrap(), LineRange::new(3, 4).unwrap()],
+		);
+		file_refs.insert(
+			"does_not_exist.txt".to_string(),
+			vec![LineRange::new(1, 10).unwrap()],
+		);
+
+		let results = read_multiple_files(&file_refs);
+
+		assert_eq!(results.len(), 2);
+		assert_eq!(results[&existing].len(), 2);
+		assert_eq!(
+			results[&existing][0].lines,
+			vec!["1: line1".to_string(), "2: line2".to_string()]
+		);
+		assert_eq!(
+			results[&existing][1].lines,
+			vec!["3: line3".to_string(), "4: line4".to_string()]
+		);
+
+		let missing = &results["does_not_exist.txt"];
+		assert_eq!(missing.len(), 1);
+		assert!(missing[0]
+			.error
+			.as_deref()
+			.unwrap_or_default()
+			.contains("File not found"));
+		assert!(missing[0].lines.is_empty());
+	}
 }

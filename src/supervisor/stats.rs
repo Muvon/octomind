@@ -53,6 +53,10 @@ struct Stats {
 	condense_calls: u64,
 	condensed_results: u64,
 	condense_saved_tokens: u64,
+	memory_pack_items: u64,
+	memory_pack_tokens: u64,
+	memory_credit_positive: u64,
+	memory_credit_negative: u64,
 	input_tokens: u64,
 	output_tokens: u64,
 	/// Wall time of the supervisor's own API requests, for throughput.
@@ -70,6 +74,7 @@ struct Stats {
 	pregate_blocks: u64,
 	lessons_stored: u64,
 	orientation_stored: u64,
+	experiences_stored: u64,
 	recalls_injected: u64,
 }
 
@@ -155,6 +160,10 @@ pub fn lessons(n: u64) {
 pub fn orientation(n: u64) {
 	with(|s| s.orientation_stored += n);
 }
+/// `n` grounded long-lived experience records were stored by distill.
+pub fn experience(n: u64) {
+	with(|s| s.experiences_stored += n);
+}
 /// One recall injection happened.
 pub fn recall() {
 	with(|s| s.recalls_injected += 1);
@@ -167,6 +176,23 @@ pub fn condensed(results: u64, saved_tokens: u64) {
 		s.condense_saved_tokens += saved_tokens;
 	});
 }
+/// One bounded active-memory pack was selected for a genuine user turn.
+pub fn memory_pack(items: u64, tokens: u64) {
+	with(|s| {
+		s.memory_pack_items += items;
+		s.memory_pack_tokens += tokens;
+	});
+}
+/// One materially used memory received outcome credit from the verify-gate.
+pub fn memory_credit(positive: bool) {
+	with(|s| {
+		if positive {
+			s.memory_credit_positive += 1;
+		} else {
+			s.memory_credit_negative += 1;
+		}
+	});
+}
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {
@@ -177,6 +203,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.pregate_blocks == 0
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
+		&& s.experiences_stored == 0
 		&& s.recalls_injected == 0;
 	if idle {
 		return None;
@@ -201,6 +228,10 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"condense_calls": s.condense_calls,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,
+		"memory_pack_items": s.memory_pack_items,
+		"memory_pack_tokens": s.memory_pack_tokens,
+		"memory_credit_positive": s.memory_credit_positive,
+		"memory_credit_negative": s.memory_credit_negative,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
 		"tokens_per_second": if s.api_time_ms > 0 {
@@ -218,6 +249,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"pregate_blocks": s.pregate_blocks,
 		"lessons_stored": s.lessons_stored,
 		"orientation_stored": s.orientation_stored,
+		"experiences_stored": s.experiences_stored,
 		"recalls_injected": s.recalls_injected,
 	}))
 }

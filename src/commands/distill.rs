@@ -38,6 +38,10 @@ pub struct DistillArgs {
 	/// Session name recorded on each stored lesson.
 	#[arg(long, default_value = "")]
 	pub session: String,
+
+	/// Completion evidence available when the parent spawned extraction.
+	#[arg(long, default_value = "unknown")]
+	pub outcome: octomind::supervisor::learning::TrajectoryOutcome,
 }
 
 pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
@@ -58,11 +62,12 @@ pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
 		&args.role,
 		&args.project,
 		&args.session,
+		args.outcome,
 	)
 	.await?;
 
 	if stored > 0 {
-		octomind::supervisor::notify(&format!("distilled {stored} lesson(s)"));
+		octomind::supervisor::notify(&format!("distilled {stored} memory item(s)"));
 	}
 	Ok(())
 }

@@ -17,6 +17,7 @@
 //! `/learning`                  → list all lessons for current role+project (page 1)
 //! `/learning list [page]`      → same, explicit; page defaults to 1
 //! `/learning list *pattern*`   → filter by glob on content/title/tags
+//! `/learning show <index>`     → inspect full content, provenance, and links
 //! `/learning delete <index>`   → delete lesson by 1-based index from last list
 //! `/learning clear`            → delete ALL lessons for current role+project
 
@@ -83,16 +84,89 @@ pub async fn handle_learning(
 			};
 			handle_delete(session, config, index).await
 		}
+		Some("show") | Some("get") => {
+			let index = params
+				.get(1)
+				.and_then(|value| value.parse::<usize>().ok())
+				.filter(|value| *value > 0);
+			match index {
+				Some(index) => handle_show(session, config, index).await,
+				None => Ok(CommandResult::HandledWithOutput(Box::new(
+					CommandOutput::Learning {
+						data: json!({
+							"subcommand": "error",
+							"message": "usage: /learning show <index>",
+						}),
+					},
+				))),
+			}
+		}
 		Some("clear") => handle_clear(session, config).await,
 		Some(other) => Ok(CommandResult::HandledWithOutput(Box::new(
 			CommandOutput::Learning {
 				data: json!({
 					"subcommand": "error",
-					"message": format!("unknown subcommand '{}' — use: list, delete, clear", other),
+					"message": format!("unknown subcommand '{}' — use: list, show, delete, clear", other),
 				}),
 			},
 		))),
 	}
+}
+
+async fn handle_show(
+	session: &ChatSession,
+	config: &Config,
+	index: usize,
+) -> Result<CommandResult> {
+	let (role, project) = role_and_project(session);
+	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
+	let all = all_lessons(&*backend, &role, &project, config).await?;
+	let Some(memory) = all.get(index - 1) else {
+		return Ok(CommandResult::HandledWithOutput(Box::new(
+			CommandOutput::Learning {
+				data: json!({
+					"subcommand": "error",
+					"message": format!("index {} out of range — {} memory item(s) total", index, all.len()),
+				}),
+			},
+		)));
+	};
+	let path = if config.supervisor.learning.backend == "file" {
+		let dir = if memory.scope == "global" {
+			crate::directories::get_global_learning_dir().ok()
+		} else {
+			crate::directories::get_learning_dir(&memory.role, &memory.project).ok()
+		};
+		dir.map(|dir| {
+			dir.join(format!("{}.md", memory.file_id()))
+				.display()
+				.to_string()
+		})
+	} else {
+		None
+	};
+	Ok(CommandResult::HandledWithOutput(Box::new(
+		CommandOutput::Learning {
+			data: json!({
+				"subcommand": "show",
+				"index": index,
+				"id": memory.file_id(),
+				"title": memory.title,
+				"content": memory.content,
+				"memory_type": memory.memory_type,
+				"scope": memory.scope,
+				"confidence": memory.confidence,
+				"importance": memory.importance,
+				"tags": memory.tags,
+				"source": memory.source,
+				"created": memory.created,
+				"related": memory.related,
+				"evidence": memory.evidence,
+				"outcome": memory.outcome.as_str(),
+				"path": path,
+			}),
+		},
+	)))
 }
 
 async fn handle_list(
@@ -159,11 +233,15 @@ async fn handle_list(
 				"id": l.file_id(),
 				"content": l.content,
 				"title": l.title,
+				"memory_type": l.memory_type,
 				"importance": l.importance,
 				"confidence": l.confidence,
 				"scope": l.scope,
 				"tags": l.tags,
 				"created": l.created,
+				"related": l.related,
+				"evidence": l.evidence,
+				"outcome": l.outcome.as_str(),
 			})
 		})
 		.collect();

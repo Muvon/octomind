@@ -73,3 +73,30 @@ fn test_check_cancellation() {
 	let err = check_cancellation(&rx).expect_err("cancelled must error");
 	assert!(crate::session::cancellation::is_cancelled(&err));
 }
+
+#[test]
+fn test_capture_self_report_credits_only_ids_in_active_pack() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.recalled_refs = vec![
+		(
+			"M1".to_string(),
+			"first".to_string(),
+			"role".to_string(),
+			"project".to_string(),
+		),
+		(
+			"M2".to_string(),
+			"second".to_string(),
+			"role".to_string(),
+			"project".to_string(),
+		),
+	];
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.enabled = true;
+	let content = r#"answer
+<sup>{"state":"progressing","focus":"used one memory","next":"continue","carry":[],"plan":null,"memories":["M2","M9"]}</sup>"#;
+	let visible = capture_self_report(&mut session, &config, content);
+	assert_eq!(visible, "answer");
+	assert_eq!(session.used_memory_ids.len(), 1);
+	assert!(session.used_memory_ids.contains("M2"));
+}

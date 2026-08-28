@@ -367,4 +367,284 @@ mod tests {
 		config.supervisor.plan.enabled = false;
 		assert!(config.validate_supervisor_plan().is_ok());
 	}
+	use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
+
+	fn hook(name: &str, bind: &str, script: &str, timeout: u64) -> HookConfig {
+		HookConfig {
+			name: name.to_string(),
+			bind: bind.to_string(),
+			script: script.to_string(),
+			timeout,
+		}
+	}
+
+	fn role_with(name: &str, temperature: f32, top_p: f32, top_k: u32) -> Role {
+		Role {
+			name: name.to_string(),
+			config: RoleConfig {
+				model: None,
+				system: "system prompt".to_string(),
+				welcome: "welcome".to_string(),
+				temperature,
+				top_p,
+				top_k,
+			},
+			mcp: Default::default(),
+		}
+	}
+
+	#[test]
+	fn template_config_passes_full_validation() {
+		template_config()
+			.validate()
+			.expect("the shipped default configuration must validate");
+	}
+
+	#[test]
+	fn validate_rejects_an_empty_model() {
+		let mut config = template_config();
+		config.model.clear();
+		let error = config.validate().unwrap_err().to_string();
+		assert!(
+			error.contains("Model field cannot be empty"),
+			"got: {error}"
+		);
+	}
+
+	#[test]
+	fn layers_validation_runs_through_the_real_validate_path() {
+		let mut config = template_config();
+		config.layers = Some(vec![valid_layer()]);
+		config
+			.validate()
+			.expect("a well-formed layer must pass full validation");
+
+		let mut bad = valid_layer();
+		bad.name = String::new();
+		config.layers = Some(vec![bad]);
+		let error = config.validate().unwrap_err().to_string();
+		assert!(error.contains("empty name"), "got: {error}");
+	}
+
+	#[test]
+	fn session_token_threshold_caps_at_two_million() {
+		let mut config = template_config();
+		config.max_session_tokens_threshold = 2_000_001;
+		let error = config.validate_thresholds().unwrap_err().to_string();
+		assert!(error.contains("2,000,000"), "got: {error}");
+
+		config.max_session_tokens_threshold = 2_000_000;
+		config
+			.validate_thresholds()
+			.expect("the boundary itself must pass");
+	}
+
+	#[test]
+	fn cache_keepalive_idle_cap_allows_a_day_and_zero() {
+		let mut config = template_config();
+		config.cache_keepalive_max_idle_seconds = 86401;
+		assert!(config.validate_thresholds().is_err());
+
+		config.cache_keepalive_max_idle_seconds = 86400;
+		config.validate_thresholds().expect("exactly 24h must pass");
+
+		config.cache_keepalive_max_idle_seconds = 0;
+		config
+			.validate_thresholds()
+			.expect("zero means unbounded and must pass");
+	}
+
+	#[test]
+	fn role_sampling_bounds_are_enforced_with_inclusive_boundaries() {
+		let mut config = template_config();
+		config.roles = vec![
+			role_with("lower-edge", 0.0, 0.0, 1),
+			role_with("upper-edge", 2.0, 1.0, 1000),
+		];
+		config
+			.validate_required_fields()
+			.expect("both edges are legal values");
+
+		let cases = [
+			("too-hot", 2.1, 1.0, 1000, "temperature"),
+			("too-cold", -0.1, 1.0, 1000, "temperature"),
+			("too-wide", 1.0, 1.1, 1000, "top_p"),
+			("too-narrow", 1.0, -0.1, 1000, "top_p"),
+			("no-choices", 1.0, 1.0, 0, "top_k"),
+			("too-many", 1.0, 1.0, 1001, "top_k"),
+		];
+		for (name, temperature, top_p, top_k, knob) in cases {
+			config.roles = vec![role_with(name, temperature, top_p, top_k)];
+			let error = config.validate_required_fields().unwrap_err().to_string();
+			assert!(error.contains(name), "must name the role, got: {error}");
+			assert!(error.contains(knob), "must name {knob}, got: {error}");
+		}
+	}
+
+	#[test]
+	fn markdown_theme_cannot_be_empty() {
+		let mut config = template_config();
+		config.markdown_theme.clear();
+		let error = config.validate_required_fields().unwrap_err().to_string();
+		assert!(
+			error.contains("Markdown theme field cannot be empty"),
+			"got: {error}"
+		);
+	}
+
+	#[test]
+	fn hooks_validation_accepts_well_formed_hooks() {
+		let mut config = template_config();
+		config.hooks = vec![
+			hook("deploy", "127.0.0.1:9876", "./hooks/deploy.sh", 30),
+			hook("notify", "0.0.0.0:9999", "./hooks/notify.sh", 3600),
+		];
+		config
+			.validate_hooks()
+			.expect("valid hooks (3600s boundary included) must pass");
+	}
+
+	#[test]
+	fn hooks_validation_rejects_each_malformed_shape() {
+		let cases = [
+			(
+				"empty name",
+				hook("", "127.0.0.1:1", "s.sh", 30),
+				"empty name",
+			),
+			(
+				"empty bind",
+				hook("a", "", "s.sh", 30),
+				"empty bind address",
+			),
+			(
+				"invalid bind",
+				hook("a", "not-an-address", "s.sh", 30),
+				"invalid bind address",
+			),
+			(
+				"empty script",
+				hook("a", "127.0.0.1:1", "", 30),
+				"empty script path",
+			),
+			(
+				"zero timeout",
+				hook("a", "127.0.0.1:1", "s.sh", 0),
+				"timeout must be > 0",
+			),
+			(
+				"over-large timeout",
+				hook("a", "127.0.0.1:1", "s.sh", 3601),
+				"timeout too high",
+			),
+		];
+		for (description, bad, needle) in cases {
+			let mut config = template_config();
+			config.hooks = vec![bad];
+			let error = config.validate_hooks().unwrap_err().to_string();
+			assert!(
+				error.contains(needle),
+				"{description} must fail with '{needle}', got: {error}"
+			);
+		}
+	}
+
+	#[test]
+	fn hooks_validation_rejects_duplicate_names_and_bind_addresses() {
+		let mut config = template_config();
+		config.hooks = vec![
+			hook("first", "127.0.0.1:1111", "a.sh", 30),
+			hook("first", "127.0.0.1:2222", "b.sh", 30),
+		];
+		assert!(config
+			.validate_hooks()
+			.unwrap_err()
+			.to_string()
+			.contains("Duplicate hook name"));
+
+		config.hooks = vec![
+			hook("first", "127.0.0.1:1111", "a.sh", 30),
+			hook("second", "127.0.0.1:1111", "b.sh", 30),
+		];
+		assert!(config
+			.validate_hooks()
+			.unwrap_err()
+			.to_string()
+			.contains("duplicate bind address"));
+	}
+
+	#[test]
+	fn mcp_validation_rejects_zero_and_over_large_timeouts() {
+		let mut config = template_config();
+		config.mcp.servers = vec![McpServerConfig::stdin("local", "node", vec![], 0, vec![])];
+		let error = config.validate_mcp_config().unwrap_err().to_string();
+		assert!(error.contains("invalid timeout"), "got: {error}");
+
+		config.mcp.servers = vec![McpServerConfig::stdin(
+			"local",
+			"node",
+			vec![],
+			3601,
+			vec![],
+		)];
+		let error = config.validate_mcp_config().unwrap_err().to_string();
+		assert!(error.contains("too high"), "got: {error}");
+	}
+
+	#[test]
+	fn mcp_validation_accepts_boundary_timeouts_and_every_server_kind() {
+		let mut config = template_config();
+		config.mcp.servers = vec![
+			McpServerConfig::stdin("local", "node", vec![], 3600, vec![]),
+			McpServerConfig::builtin("core", 30, vec![]),
+			McpServerConfig::http("remote", "https://example.com/mcp", 30, vec![]),
+		];
+		config
+			.validate_mcp_config()
+			.expect("servers at legal timeouts must pass");
+	}
+
+	#[test]
+	fn compression_model_check_skips_when_compression_is_disabled() {
+		let mut config = template_config();
+		config.compression.threshold = 0;
+		config.compression.decision.model.clear();
+		config
+			.validate_compression_model()
+			.expect("threshold 0 means there is no compression call to validate");
+	}
+
+	#[test]
+	fn compression_model_check_requires_a_resolvable_model() {
+		let mut config = template_config();
+		let shipped = config.compression.decision.model.clone();
+		config.compression.decision.model.clear();
+		let error = config.validate_compression_model().unwrap_err().to_string();
+		assert!(
+			error.contains("compression.decision.model is empty"),
+			"got: {error}"
+		);
+
+		config.compression.decision.model = "not-a-provider:model".to_string();
+		let error = config.validate_compression_model().unwrap_err().to_string();
+		assert!(
+			error.contains("compression.decision.model 'not-a-provider:model' is invalid"),
+			"got: {error}"
+		);
+
+		config.compression.decision.model = shipped;
+		config
+			.validate_compression_model()
+			.expect("the shipped decision model must resolve");
+	}
+
+	#[test]
+	fn supervisor_plan_model_is_not_required_when_the_supervisor_is_off() {
+		let mut config = template_config();
+		config.supervisor.plan.model.clear();
+		config.supervisor.enabled = false;
+		config
+			.validate_supervisor_plan()
+			.expect("a disabled supervisor never runs the planner");
+	}
 }

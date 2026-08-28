@@ -685,6 +685,10 @@ pub fn display_info(output: &CommandOutput) {
 			let condense_calls = get_u64("condense_calls");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
+			let memory_pack_items = get_u64("memory_pack_items");
+			let memory_pack_tokens = get_u64("memory_pack_tokens");
+			let memory_credit_positive = get_u64("memory_credit_positive");
+			let memory_credit_negative = get_u64("memory_credit_negative");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
 			let sup_tps = get_f64("tokens_per_second");
@@ -697,6 +701,7 @@ pub fn display_info(output: &CommandOutput) {
 			let pregate_blocks = get_u64("pregate_blocks");
 			let lessons = get_u64("lessons_stored");
 			let orientation = get_u64("orientation_stored");
+			let experiences = get_u64("experiences_stored");
 			let recalls = get_u64("recalls_injected");
 			block_section("supervisor");
 			let kw_sv = key_width(["activity", "gate", "calls", "tokens", "throughput"]);
@@ -739,11 +744,23 @@ pub fn display_info(output: &CommandOutput) {
 			if orientation > 0 {
 				activity.push(format!("{} orientation", orientation));
 			}
+			if experiences > 0 {
+				activity.push(format!("{} experiences", experiences));
+			}
 			if condensed_results > 0 {
 				activity.push(format!(
 					"{} condensed (saved {} tok)",
 					condensed_results,
 					format_number(condense_saved)
+				));
+			}
+			if memory_pack_items > 0 {
+				activity.push(format!(
+					"{} memory items ({} tok, +{}/-{} credit)",
+					memory_pack_items,
+					format_number(memory_pack_tokens),
+					memory_credit_positive,
+					memory_credit_negative
 				));
 			}
 			if !activity.is_empty() {
@@ -2455,6 +2472,11 @@ pub fn display_learning(output: &CommandOutput) {
 			for lesson in lessons {
 				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
 				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
+				let title = lesson.get("title").and_then(|v| v.as_str()).unwrap_or("");
+				let memory_type = lesson
+					.get("memory_type")
+					.and_then(|v| v.as_str())
+					.unwrap_or("learning");
 				let importance = lesson
 					.get("importance")
 					.and_then(|v| v.as_f64())
@@ -2478,6 +2500,15 @@ pub fn display_learning(output: &CommandOutput) {
 					})
 					.unwrap_or_default();
 				let created = lesson.get("created").and_then(|v| v.as_str()).unwrap_or("");
+				let outcome = lesson.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+				let related = lesson
+					.get("related")
+					.and_then(|v| v.as_array())
+					.map_or(0, Vec::len);
+				let evidence = lesson
+					.get("evidence")
+					.and_then(|v| v.as_array())
+					.map_or(0, Vec::len);
 
 				let imp_indicator = if importance >= 0.7 {
 					"[high]".bright_yellow().to_string()
@@ -2487,10 +2518,15 @@ pub fn display_learning(output: &CommandOutput) {
 					"[low] ".dimmed().to_string()
 				};
 
-				let content_display = if content.chars().count() > 80 {
-					format!("{}…", content.chars().take(79).collect::<String>())
+				let display_source = if memory_type == "experience" && !title.is_empty() {
+					title
 				} else {
-					content.to_string()
+					content
+				};
+				let content_display = if display_source.chars().count() > 80 {
+					format!("{}…", display_source.chars().take(79).collect::<String>())
+				} else {
+					display_source.to_string()
 				};
 
 				let scope_tag = if scope == "global" {
@@ -2498,7 +2534,10 @@ pub fn display_learning(output: &CommandOutput) {
 				} else {
 					String::new()
 				};
-				block_section(&format!("#{} {}{}", index, imp_indicator, scope_tag));
+				block_section(&format!(
+					"#{} {}{} ({})",
+					index, imp_indicator, scope_tag, memory_type
+				));
 				block_row_text(&content_display.bright_white().to_string());
 
 				let mut meta = Vec::new();
@@ -2511,6 +2550,15 @@ pub fn display_learning(output: &CommandOutput) {
 				if !created.is_empty() {
 					let date: String = created.chars().take(10).collect();
 					meta.push(format!("created: {}", date));
+				}
+				if !outcome.is_empty() && outcome != "unknown" {
+					meta.push(format!("outcome: {}", outcome));
+				}
+				if related > 0 {
+					meta.push(format!("links: {}", related));
+				}
+				if evidence > 0 {
+					meta.push(format!("evidence: {}", evidence));
 				}
 				if !meta.is_empty() {
 					block_row_text(&meta.join(" | ").dimmed().to_string());
@@ -2532,11 +2580,76 @@ pub fn display_learning(output: &CommandOutput) {
 				);
 			}
 			block_line(
-				&"/learning delete <n> · /learning clear"
+				&"/learning show <n> · /learning delete <n> · /learning clear"
 					.dimmed()
 					.to_string(),
 			);
 			block_close_ok("/learning", Some(&format!("{} lesson(s)", total)));
+			println!();
+		}
+		"show" => {
+			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+			let memory_type = data
+				.get("memory_type")
+				.and_then(|v| v.as_str())
+				.unwrap_or("learning");
+			let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
+			let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
+			block_open(
+				"/learning",
+				Some(&format!("#{} · {} · {}", index, memory_type, title)),
+			);
+			for line in content.lines() {
+				block_row_text(line);
+			}
+			let mut meta = Vec::new();
+			for (key, label) in [
+				("outcome", "outcome"),
+				("confidence", "confidence"),
+				("scope", "scope"),
+				("path", "file"),
+			] {
+				if let Some(value) = data.get(key).and_then(|v| v.as_str()) {
+					if !value.is_empty() {
+						meta.push(format!("{label}: {value}"));
+					}
+				}
+			}
+			let related = data
+				.get("related")
+				.and_then(|v| v.as_array())
+				.map(|items| {
+					items
+						.iter()
+						.filter_map(|item| item.as_str())
+						.collect::<Vec<_>>()
+						.join(", ")
+				})
+				.unwrap_or_default();
+			if !related.is_empty() {
+				meta.push(format!("related: {related}"));
+			}
+			let evidence = data
+				.get("evidence")
+				.and_then(|v| v.as_array())
+				.map(|items| {
+					items
+						.iter()
+						.filter_map(|item| item.as_str())
+						.collect::<Vec<_>>()
+						.join(", ")
+				})
+				.unwrap_or_default();
+			if !evidence.is_empty() {
+				meta.push(format!("evidence: {evidence}"));
+			}
+			if !meta.is_empty() {
+				block_section("provenance");
+				for line in meta {
+					block_row_text(&line.dimmed().to_string());
+				}
+			}
+			block_close_ok("/learning", Some("memory inspected"));
 			println!();
 		}
 		"delete" => {

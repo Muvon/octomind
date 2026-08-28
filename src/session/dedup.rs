@@ -305,4 +305,138 @@ mod tests {
 		clear_session("nonexistent-session-id");
 		assert_eq!(session_size("nonexistent-session-id"), 0);
 	}
+
+	#[test]
+	fn content_hash_is_deterministic_and_sensitive_to_tool_name() {
+		assert_eq!(
+			content_hash("view", "{}", "body"),
+			content_hash("view", "{}", "body")
+		);
+		assert_ne!(
+			content_hash("view", "{}", "body"),
+			content_hash("shell", "{}", "body")
+		);
+	}
+
+	#[test]
+	fn min_length_boundary_is_exactly_500_chars() {
+		// 499 chars: below the gate, never recorded → never a duplicate.
+		let short = "a".repeat(MIN_DEDUP_CONTENT_LEN - 1);
+		record("test_gate_short", "{}", &short);
+		assert!(!is_duplicate("test_gate_short", "{}", &short));
+
+		// Exactly 500 chars: at the gate, eligible for dedup.
+		let exact = "b".repeat(MIN_DEDUP_CONTENT_LEN);
+		assert!(!is_duplicate("test_gate_exact", "{}", &exact));
+		record("test_gate_exact", "{}", &exact);
+		assert!(is_duplicate("test_gate_exact", "{}", &exact));
+		clear_session("_global_");
+	}
+
+	#[test]
+	fn snippet_trims_surrounding_whitespace() {
+		assert_eq!(snippet("  hello world  "), "hello world");
+		assert_eq!(snippet("\tline\n"), "line");
+	}
+
+	#[test]
+	fn snippet_keeps_short_lines_verbatim() {
+		let exact: String = "x".repeat(SNIPPET_CHARS);
+		assert_eq!(
+			snippet(&exact),
+			exact,
+			"line at exactly SNIPPET_CHARS is not cut"
+		);
+		assert_eq!(snippet("short"), "short");
+	}
+
+	#[test]
+	fn snippet_truncates_long_lines_at_char_boundary() {
+		let line: String = "y".repeat(SNIPPET_CHARS + 50);
+		let cut = snippet(&line);
+		assert_eq!(
+			cut.chars().count(),
+			SNIPPET_CHARS + 1,
+			"120 chars + ellipsis"
+		);
+		assert!(cut.ends_with('…'));
+		assert!(cut.starts_with(&"y".repeat(SNIPPET_CHARS)));
+	}
+
+	#[test]
+	fn snippet_is_multibyte_safe() {
+		// 130 three-byte chars: char-based truncation must not split a char.
+		let line: String = "日".repeat(SNIPPET_CHARS + 10);
+		let cut = snippet(&line);
+		assert_eq!(cut.chars().count(), SNIPPET_CHARS + 1);
+		assert!(cut.chars().all(|c| c == '日' || c == '…'));
+	}
+
+	#[test]
+	fn snippet_of_empty_line_is_empty() {
+		assert_eq!(snippet(""), "");
+		assert_eq!(snippet("   "), "");
+	}
+
+	#[test]
+	fn placeholder_skips_blank_lines_when_fingerprinting() {
+		let content = "\n\n   \nfirst real line\nmiddle\n   \nlast real line\n\n";
+		let s = placeholder("view", content, false);
+		assert!(s.contains("first real line"));
+		assert!(s.contains("last real line"));
+		assert!(
+			s.contains("and ends"),
+			"distinct first/last must both be quoted"
+		);
+	}
+
+	#[test]
+	fn placeholder_whitespace_only_content_quotes_a_single_empty_fingerprint() {
+		let s = placeholder("view", "\n   \n\n", false);
+		assert!(s.contains(DEDUP_NOTICE_TAG));
+		assert!(s.contains("it begins:"));
+		assert!(
+			!s.contains("and ends"),
+			"first == last must collapse to one quote"
+		);
+	}
+
+	#[test]
+	fn placeholder_snippets_overlong_fingerprint_lines() {
+		let long_line = "a".repeat(SNIPPET_CHARS + 100);
+		let content = format!("{long_line}\ntail\n");
+		let s = placeholder("view", &content, false);
+		assert!(s.contains(&"a".repeat(SNIPPET_CHARS)));
+		assert!(s.contains('…'));
+		assert!(
+			!s.contains(&"a".repeat(SNIPPET_CHARS + 1)),
+			"chars past the cut must not leak"
+		);
+	}
+
+	#[test]
+	fn clear_current_session_empties_the_fallback_bucket() {
+		// Without a session context the state lives in "_global_";
+		// clear_current_session must drop exactly that bucket.
+		let tool = "test_clear_current";
+		let content = "z\n".repeat(300);
+		record(tool, "{}", &content);
+		assert!(is_duplicate(tool, "{}", &content));
+		clear_current_session();
+		assert!(!is_duplicate(tool, "{}", &content));
+	}
+
+	#[test]
+	fn clearing_one_session_leaves_the_fallback_bucket_intact() {
+		let tool = "test_isolation_other_session";
+		let content = "w\n".repeat(300);
+		record(tool, "{}", &content);
+		assert!(is_duplicate(tool, "{}", &content));
+		clear_session("some-other-session-id");
+		assert!(
+			is_duplicate(tool, "{}", &content),
+			"unrelated session clear must not touch our state"
+		);
+		clear_session("_global_");
+	}
 }

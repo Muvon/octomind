@@ -33,8 +33,8 @@ fn test_recorders_and_snapshot_render() {
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
-	// The snapshot is consumed by /info and telemetry — the load-bearing
-	// counters must be present as fields.
+	// The snapshot is consumed by /info and debug reporting — the load-bearing
+	// counters must be present as fields. Anonymous telemetry has its own schema.
 	for key in ["calls", "gate", "lessons", "recalls", "condense"] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");
 	}

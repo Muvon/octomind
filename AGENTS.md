@@ -178,6 +178,34 @@ std::println!("...");
 
 `println!`, `print!`, `eprintln!`, `eprint!` in this crate automatically suspend the animation spinner. Always use these. Never call `std::println!` directly.
 
+### Telemetry and accounting boundaries
+
+These are separate systems; wiring a metric into one does not make it available
+in the others:
+
+- `src/supervisor/stats.rs` is a process-global local accumulator used by
+  `/info` and debug snapshots. It is not persisted and is not part of anonymous
+  telemetry. Its one-process/one-session assumption means concurrent daemon,
+  ACP, or WebSocket sessions can mix supervisor counters.
+- `SessionInfo` in `src/session/mod.rs` is the persisted per-session record.
+  Put a metric there, with `#[serde(default)]` and persistence/resume coverage,
+  only when it must survive process restart.
+- `src/telemetry.rs::Event` is the exact anonymous wire schema. A field is not
+  remotely reported unless it is added there and populated by `record_session`.
+  Audit every lifecycle separately: CLI/piped/daemon session exit, ACP
+  disconnect, workflow, and WebSocket. WebSocket does not currently emit its
+  own session row.
+- Runtime controllers may intentionally stay session-keyed and ephemeral. For
+  example, adaptive condenser state resets on a new process and is cleared by
+  `session::context::cleanup_session`; do not persist it merely to make it
+  observable.
+
+For any new adaptive/controller metric, state explicitly which questions it
+must answer, then audit: per-session isolation, resume behavior, `/info`, debug
+output, anonymous schema/privacy, every session mode, and tests for each claimed
+sink. Never describe a local snapshot as telemetry unless `Event` actually
+carries it.
+
 ### MCP misuse hints — guide, never block
 
 When a dedicated tool would be better, append a hint to the result — but only if that tool is actually enabled:
@@ -227,6 +255,9 @@ Before any commit:
 - **Builtin servers** — `core`: `plan`. `orchestration`: `tap`, `schedule` (orchestrator-tier). `runtime`: `mcp`, `agent`, `skill`, `capability` (tool-surface reconfiguration). `agent`: `agent_*`. Each is its own match arm in `route_builtin_tool()` and `tool_map`.
 - **Dynamic tool session ownership** — tools registered by one session are rejected from another. Intentional isolation.
 - **Compression decision model** is separate from the main model — configured at `[compression.decision]` in config, not `model`.
+- **Supervisor stats are not anonymous telemetry** — `/info` and debug snapshots
+  do not reach `src/telemetry.rs::Event`; process-global counters also mix
+  concurrent sessions.
 
 ## Never
 

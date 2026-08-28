@@ -1122,18 +1122,26 @@ mod tests {
 	// Validate script subprocess contract
 	// -------------------------------------------------------------------------
 
+	// Callers all run `#!/bin/sh` scripts and are `#[cfg(unix)]`-gated below;
+	// the helper itself stays cross-platform (chmod is Unix-only) so Windows
+	// test builds compile it without a dead-code warning.
+	#[cfg_attr(not(unix), allow(dead_code))]
 	fn write_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
-		use std::os::unix::fs::PermissionsExt;
 		let path = dir.join("validate");
 		std::fs::write(&path, body).expect("write validate script");
-		let mut perms = std::fs::metadata(&path)
-			.expect("script metadata")
-			.permissions();
-		perms.set_mode(0o755);
-		std::fs::set_permissions(&path, perms).expect("make script executable");
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			let mut perms = std::fs::metadata(&path)
+				.expect("script metadata")
+				.permissions();
+			perms.set_mode(0o755);
+			std::fs::set_permissions(&path, perms).expect("make script executable");
+		}
 		path
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_exit_zero_with_no_output_is_ok() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1146,6 +1154,7 @@ mod tests {
 		assert_eq!(output, "");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_failure_captures_stderr() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1158,6 +1167,7 @@ mod tests {
 		assert_eq!(output, "boom\n");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_uses_stdout_when_stderr_empty() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1170,6 +1180,7 @@ mod tests {
 		assert_eq!(output, "stdout noise\n");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_receives_content_on_stdin() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1186,6 +1197,7 @@ mod tests {
 		assert_eq!(output, "ASSISTANT-BODY");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_receives_assistant_role_arg() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1198,6 +1210,7 @@ mod tests {
 		assert_eq!(output, "assistant\n");
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_runs_in_workdir() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -1211,6 +1224,7 @@ mod tests {
 		assert_eq!(output.trim(), canonical.to_str().expect("utf8 workdir"));
 	}
 
+	#[cfg(unix)]
 	#[tokio::test]
 	async fn validate_script_times_out() {
 		let dir = tempfile::tempdir().expect("tempdir");

@@ -1333,3 +1333,7 @@ mod tests {
 		get_retry_tracker().write().unwrap().clear();
 	}
 }
+
+#[cfg(test)]
+#[path = "skill_auto_tests.rs"]
+mod skill_auto_tests;

@@ -1325,3 +1325,7 @@ max_inject = 4
 		assert!(!learning.contains_key("store"));
 	}
 }
+
+#[cfg(test)]
+#[path = "migrations_tests.rs"]
+mod migrations_tests;

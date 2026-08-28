@@ -318,3 +318,7 @@ mod tests {
 		assert!(err.to_string().contains("expected key=value"));
 	}
 }
+
+#[cfg(test)]
+#[path = "schedule_tests.rs"]
+mod command_tests;

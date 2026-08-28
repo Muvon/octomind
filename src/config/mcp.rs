@@ -770,3 +770,7 @@ tools = []
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod mcp_tests;

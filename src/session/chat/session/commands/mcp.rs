@@ -594,3 +594,7 @@ async fn perform_http_health_check_sync(server: &crate::config::McpServerConfig)
 		Err(anyhow::anyhow!("No URL configured for HTTP server"))
 	}
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;

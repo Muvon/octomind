@@ -593,3 +593,7 @@ mod tests {
 		assert_eq!(store.entries()[0].id, "soon0001");
 	}
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod storage_tests;

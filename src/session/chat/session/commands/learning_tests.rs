@@ -19,6 +19,7 @@
 use super::*;
 use crate::supervisor::learning::backend::FileBackend;
 use crate::supervisor::learning::Lesson;
+use serial_test::serial;
 
 const ROLE: &str = "__learning_cmd_role";
 
@@ -98,6 +99,7 @@ fn learning_data(result: CommandResult) -> serde_json::Value {
 	}
 }
 
+#[serial]
 #[tokio::test]
 async fn test_learning_list_and_delete_lifecycle() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
@@ -192,6 +194,7 @@ async fn test_learning_list_and_delete_lifecycle() {
 	cleanup();
 }
 
+#[serial]
 #[tokio::test]
 async fn test_learning_error_arms() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
@@ -239,6 +242,7 @@ async fn test_learning_error_arms() {
 	assert_eq!(data["subcommand"], "error");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_learning_storage_summary_counts_cold_memory() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;

@@ -221,3 +221,7 @@ pub fn handle_list(
 		))),
 	}
 }
+
+#[cfg(test)]
+#[path = "list_tests.rs"]
+mod tests;

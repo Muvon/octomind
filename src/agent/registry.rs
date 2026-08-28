@@ -997,3 +997,7 @@ fn merge_string_array(
 		toml::Value::Array(merged.into_iter().map(toml::Value::String).collect()),
 	);
 }
+
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

@@ -1549,3 +1549,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "detect_tests.rs"]
+mod unit_tests;

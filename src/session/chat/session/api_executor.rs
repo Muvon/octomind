@@ -991,7 +991,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use serial_test::serial;
 
+	#[serial]
 	#[tokio::test]
 	async fn outcome_credit_updates_only_materially_used_memory() {
 		let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;

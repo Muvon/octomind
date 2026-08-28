@@ -380,12 +380,12 @@ Adaptive external plan manager. The specialist has no plan mutation tool; a spar
 
 ### `[supervisor.condense]`
 
-Task-aware narrowing of oversized plain-text tool outputs. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the hard plain-text ceiling.
+Task-aware narrowing of oversized plain-text tool outputs. A result whose own output exceeds `tokens_threshold` becomes a candidate; smaller results in the same round are passed through untouched and never shown to the condenser. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation, so the condenser narrows only what the agent would actually have received.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable condensation |
-| `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens); `0` = off. Keep well below `mcp_response_tokens_threshold` |
+| `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens of that single result); `0` = off. Keep well below `mcp_response_tokens_threshold` |
 | `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
 
 ```toml

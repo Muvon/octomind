@@ -215,17 +215,20 @@ pub struct SupervisorConfig {
 	pub condense: CondenseConfig,
 }
 
-/// Condense: task-aware narrowing of oversized tool outputs. When a round
-/// returns results over `tokens_threshold`, one cheap-model call selects per
-/// result what the current task needs — by ORIGINAL LINE RANGES over a bounded
-/// task-aware view, reconstructed verbatim (never retyped). Full originals are
-/// spilled when the active role can read them back; the hard
-/// `mcp_response_tokens_threshold` cap still applies afterwards as the ceiling.
+/// Condense: task-aware narrowing of oversized tool outputs. A result whose own
+/// output exceeds `tokens_threshold` is a candidate; smaller results in the same
+/// round are untouched and never shown to the condenser. One cheap-model call
+/// per round selects per candidate what the current task needs — by ORIGINAL
+/// LINE RANGES over a bounded task-aware view, reconstructed verbatim (never
+/// retyped). Full originals are spilled when the active role can read them back.
+/// The hard `mcp_response_tokens_threshold` cap is applied BEFORE this, so
+/// condensation only ever narrows what the agent would actually receive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CondenseConfig {
 	pub enabled: bool,
-	/// Per-result trigger (estimated tokens); results above this are condensed.
-	/// `0` disables. Keep well below `mcp_response_tokens_threshold`.
+	/// Per-result trigger (estimated tokens of that single text result); results
+	/// above this are condensed. `0` disables. Keep well below
+	/// `mcp_response_tokens_threshold`.
 	pub tokens_threshold: usize,
 	/// Model that does the narrowing (cheap + fast recommended).
 	pub model: String,

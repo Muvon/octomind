@@ -144,7 +144,9 @@ pub async fn execute_tools_parallel(
 		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
 		let (result, elapsed_ms) =
 			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
-		let mut results = vec![result];
+		// Hard cap first: the condenser must only ever see (and select over) what
+		// the agent would actually receive.
+		let mut results = handle_large_tool_results(vec![result], config, mode).await?;
 		condense_main_results(
 			&mut results,
 			&current_tool_calls,
@@ -154,8 +156,7 @@ pub async fn execute_tools_parallel(
 			operation_cancelled,
 		)
 		.await;
-		let processed = handle_large_tool_results(results, config, mode).await?;
-		return Ok((processed, elapsed_ms));
+		return Ok((results, elapsed_ms));
 	}
 
 	let mut context = ToolExecutionContext::MainSession {
@@ -677,9 +678,14 @@ async fn execute_tools_with_context(
 	)
 	.await;
 
-	// Supervisor condense: task-aware narrowing of oversized results — runs
-	// AFTER hooks (they must see full output) and BEFORE the hard truncation
-	// cap below, which still applies to whatever survives as the ceiling.
+	// Hard per-tool cap first: whatever the agent would actually receive is what
+	// the condenser sees and selects line ranges over. Condensing the untruncated
+	// body would let it keep lines the truncated result never contains.
+	let mut tool_results = handle_large_tool_results(tool_results, config, mode).await?;
+
+	// Supervisor condense: task-aware narrowing of results that individually
+	// exceed condense.tokens_threshold — runs AFTER hooks (they must see full
+	// output) and after the hard cap above.
 	// Main-session only: layers have no anchor/user-request to condition on.
 	if let ToolExecutionContext::MainSession {
 		chat_session,
@@ -701,9 +707,7 @@ async fn execute_tools_with_context(
 		.await;
 	}
 
-	// Handle large outputs with batched confirmation
-	let processed_results = handle_large_tool_results(tool_results, config, mode).await?;
-	Ok((processed_results, total_tool_time_ms))
+	Ok((tool_results, total_tool_time_ms))
 }
 
 /// The parent session's live task framing — durable goal, current user request

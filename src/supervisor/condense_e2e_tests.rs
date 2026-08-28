@@ -88,6 +88,25 @@ async fn test_condense_below_threshold_is_a_noop() {
 	assert_eq!(results[0].extract_content(), before);
 }
 
+/// The trigger is per result, not per round: many modest outputs that only add
+/// up to something large are left exactly as returned.
+#[tokio::test]
+async fn test_condense_ignores_small_results_in_a_large_round() {
+	let config = condense_config();
+	let body = (1..=20)
+		.map(|i| format!("short line {i}"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	let mut results: Vec<McpToolResult> = (0..20)
+		.map(|i| tool_result(&format!("t{i}"), &body))
+		.collect();
+	let before: Vec<String> = results.iter().map(|r| r.extract_content()).collect();
+	run_round(&config, &mut results).await;
+	for (result, original) in results.iter().zip(before) {
+		assert_eq!(result.extract_content(), original);
+	}
+}
+
 /// Supervisor disabled: the very first gate — even an oversized round stays
 /// untouched.
 #[tokio::test]

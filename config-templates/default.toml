@@ -707,17 +707,20 @@ enabled = true
 # Keep this cheap and fast: each signal is exactly one request/response.
 model = "octohub:auto"
 
-# Condense: task-aware narrowing of oversized tool outputs. When a tool result
-# exceeds tokens_threshold, ONE cheap-model call per round decides what the
-# agent needs to see: all relevant -> kept in full; partly relevant -> only the
-# needed lines (selected by ORIGINAL LINE RANGES and reconstructed verbatim --
-# never rewritten); irrelevant -> a deterministic system notice. Runs BEFORE
-# the blunt mcp_response_tokens_threshold prefix-cut, which stays the ceiling.
+# Condense: task-aware narrowing of oversized tool outputs. A result whose own
+# output exceeds tokens_threshold becomes a candidate; results under it are kept
+# exactly as returned and never shown to the condenser. ONE cheap-model call per
+# round decides, for the candidates only, what the agent needs to see: all
+# relevant -> kept in full; partly relevant -> only the needed lines (selected by
+# ORIGINAL LINE RANGES and reconstructed verbatim -- never rewritten);
+# irrelevant -> a deterministic system notice. Runs AFTER the blunt
+# mcp_response_tokens_threshold prefix-cut, so it only ever narrows what the
+# agent would actually have received.
 [supervisor.condense]
 enabled = true
-# Round trigger (estimated tokens across all of the round's text results).
-# 0 = off. Keep well below mcp_response_tokens_threshold: that cap is the
-# backstop, this is the smart path that fires earlier.
+# Per-result trigger (estimated tokens of that single text result). 0 = off.
+# Keep well below mcp_response_tokens_threshold: that cap is the ceiling applied
+# first, this is the smart narrowing applied to what survives it.
 tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
 model = "anthropic:claude-haiku-4-5"

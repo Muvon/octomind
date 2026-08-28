@@ -82,17 +82,17 @@ When a detector fires (loop, recovery, or no-progress that the self-report doesn
 
 ## Condense
 
-When a tool round returns oversized results (over `[supervisor.condense] tokens_threshold`), one cheap-model call decides per result what the agent actually needs to see for the current task:
+When a tool result's own output exceeds `[supervisor.condense] tokens_threshold`, it becomes a condense candidate. Results under the threshold are passed through exactly as returned and are never shown to the condenser. One cheap-model call per round decides, for the candidates only, what the agent actually needs to see for the current task:
 
 - **All relevant** → kept in full, byte-for-byte.
 - **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**; the kept lines are reconstructed verbatim from the original — the model never retypes content, so nothing can be mis-copied.
 - **Irrelevant** → replaced with a deterministic system notice. The condenser cannot write a factual summary that could hallucinate tool output.
 
-It is recoverable: condensation runs only for plain-text results when the active role has a local file-reading tool, the full original is spilled to a session file first, and every condensed result carries the path so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut still applies afterwards as the plain-text ceiling. Structured/non-text MCP payloads fail open instead of being flattened and corrupted. Any condenser or response-contract error leaves results untouched. Main session only (layers/agents are not condensed).
+It is recoverable: condensation runs only for plain-text results when the active role has a local file-reading tool, the full original is spilled to a session file first, and every condensed result carries the path so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation, so the condenser only ever sees — and only ever selects line ranges over — the body the agent would actually have received. Structured/non-text MCP payloads fail open instead of being flattened and corrupted. Any condenser or response-contract error leaves results untouched. Main session only (layers/agents are not condensed).
 
 Relevance is conditioned on three separate signals: trusted standing context (system prompt, project instructions, and currently active skills), the live goal/request/plan, and the assistant text explaining why the current tool batch was issued. Tool data is serialized as JSON, treated as untrusted reference data, and cannot create instructions for the condenser.
 
-The numbered-view budget is fixed **per round**, not per result. A large result is represented by task/argument matches, diagnostics with context, head and tail lines, and stratified middle samples, all carrying their original line numbers. A partial view can be extracted but never discarded wholesale; selected ranges must fall entirely inside visible spans. The response is atomic: missing, duplicate, unknown, malformed, or unsafe entries keep every original. Error/diagnostic lines are also retained deterministically even if the model overlooks them.
+The numbered-view budget is fixed **per round**, shared across that round's candidates. A large result is represented by task/argument matches, diagnostics with context, head and tail lines, and stratified middle samples, all carrying their original line numbers. A partial view can be extracted but never discarded wholesale; selected ranges must fall entirely inside visible spans. The response is atomic: missing, duplicate, unknown, malformed, or unsafe entries keep every original. Error/diagnostic lines are also retained deterministically even if the model overlooks them.
 
 ## Memory: lessons + orientation
 

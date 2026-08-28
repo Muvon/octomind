@@ -14,9 +14,10 @@
 
 //! Condense — task-aware narrowing of oversized tool outputs.
 //!
-//! When a tool round's plain-text outputs total more than
-//! `condense.tokens_threshold`, ONE cheap-model call decides per result what
-//! the agent actually needs to see:
+//! When a tool result's plain-text output exceeds `condense.tokens_threshold`
+//! ON ITS OWN, it becomes a candidate. Under-threshold results in the same
+//! round are never sent to the condenser and never touched. ONE cheap-model
+//! call per round decides, for the candidates only, what the agent needs:
 //! - all relevant → kept in full, byte-for-byte;
 //! - partly relevant → only the needed lines, selected by LINE RANGES over a
 //!   numbered copy and reconstructed verbatim from the original (the model
@@ -26,11 +27,12 @@
 //! - irrelevant → replaced with a deterministic handle (the pruning model is
 //!   never allowed to author facts that the agent may mistake for tool output).
 //!
-//! The full original is spilled to a session file first (same mechanism as
-//! truncation), so condensation is lossless: the agent can read any cut span
-//! on demand. No spill → no condensation for that result (fail-open to the
-//! `mcp_response_tokens_threshold` truncation backstop, which still applies
-//! after us as the hard ceiling). An unusable verdict — malformed ranges,
+//! The hard `mcp_response_tokens_threshold` cap is applied BEFORE us, so the
+//! condenser only ever sees (and only ever selects over) content the agent
+//! would actually have received. The full original is spilled to a session file
+//! first (same mechanism as truncation), so condensation is lossless: the agent
+//! can read any cut span on demand. No spill → no condensation for that result
+//! (fail-open, the truncated body stays inline). An unusable verdict — malformed ranges,
 //! unknown id, spill failure — leaves that one result untouched while the
 //! round's other results still condense; the supervisor must never block the
 //! agent, but one sloppy line range must not cost the whole round either.
@@ -55,9 +57,9 @@ const MAX_RESULTS_PER_REQUEST: usize = 32;
 /// Minimum useful view allocation. Extra oversized results fail open to the
 /// ordinary hard-cap path rather than making the condenser request unbounded.
 const MIN_RESULT_VIEW_TOKENS: usize = 256;
-/// Smallest result worth a line-range round trip. A round crosses the threshold
-/// on its total, so without this a 6k round would drag its 40-token siblings
-/// into the request and split the view budget for nothing.
+/// Smallest result worth a line-range round trip, regardless of how low
+/// `tokens_threshold` is configured: below this a request costs more than the
+/// selection can save.
 const MIN_CANDIDATE_TOKENS: usize = 512;
 /// Cap on the task block (a pasted user request can itself be huge).
 const TASK_CAP_TOKENS: usize = 3_000;
@@ -160,8 +162,9 @@ pub async fn condense_round(
 		return;
 	}
 
-	// The round's total is what the agent pays. Triggering per result let a batch
-	// of individually-modest outputs inject an arbitrarily large round for free.
+	// Per-result trigger: only outputs that individually exceed the threshold are
+	// worth a line-range round trip. Everything below it is left exactly as the
+	// tool returned it and is never shown to the condenser.
 	let sizes: Vec<usize> = results
 		.iter()
 		.map(|r| {
@@ -172,13 +175,11 @@ pub async fn condense_round(
 			}
 		})
 		.collect();
-	if sizes.iter().sum::<usize>() <= cfg.tokens_threshold {
-		return;
-	}
+	let floor = cfg.tokens_threshold.max(MIN_CANDIDATE_TOKENS);
 	let sizable: Vec<usize> = sizes
 		.iter()
 		.enumerate()
-		.filter(|(_, &tokens)| tokens >= MIN_CANDIDATE_TOKENS)
+		.filter(|(_, &tokens)| tokens > floor)
 		.map(|(i, _)| i)
 		.collect();
 	if sizable.is_empty() {
@@ -304,10 +305,11 @@ fn build_request(
 	agent_context: &str,
 	tool_round_intent: &str,
 ) -> (Vec<Candidate>, String) {
-	// Keep one request bounded across a whole parallel batch. Results beyond the
-	// safe batch size remain untouched and flow to the hard truncation backstop.
-	// Biggest first: if the batch overflows, the outputs that actually cost the
-	// agent context are the ones that get condensed.
+	// ONE request per round carrying every over-threshold result (under-threshold
+	// ones were filtered out by the caller and are never sent). Keep that single
+	// request bounded across a whole parallel batch; results beyond the safe batch
+	// size remain untouched. Biggest first: if the batch overflows, the outputs
+	// that actually cost the agent context are the ones that get condensed.
 	let mut selected = sizable.to_vec();
 	selected.sort_by_key(|&i| std::cmp::Reverse(sizes[i]));
 	selected.truncate(MAX_RESULTS_PER_REQUEST);
@@ -360,7 +362,7 @@ fn build_request(
 		"agent_context": agent_block,
 		"task_context": task_block,
 		"tool_round_intent": intent_block,
-		"round_output_tokens": sizes.iter().sum::<usize>(),
+		"candidate_output_tokens": selected_tokens,
 		"results_considered": candidates.len(),
 		"results": payload_results,
 	}))
@@ -407,6 +409,10 @@ fn apply_verdict(
 			// protected deterministically even if its selection misses one. This
 			// can only retain more original evidence; it never invents content.
 			ranges.extend(diagnostic_ranges(&lines));
+			// The hard cap runs before us, so a candidate may already carry the
+			// truncation notice with the path to its untruncated body. Cutting that
+			// away would strand the tail the agent was told how to recover.
+			ranges.extend(truncation_notice_range(&lines));
 			ranges = merge_ranges(ranges);
 			let (body, kept) = reconstruct(&lines, &ranges, lines.len());
 			if kept >= lines.len() {
@@ -731,6 +737,18 @@ fn is_diagnostic_line(line: &str) -> bool {
 	]
 	.iter()
 	.any(|needle| lower.contains(needle))
+}
+
+/// Lines of the truncation notice a candidate may already carry (the hard cap
+/// runs first). It names where the untruncated output lives, so it is kept
+/// deterministically — a selection that drops it makes the cut tail
+/// unrecoverable.
+fn truncation_notice_range(lines: &[&str]) -> Vec<(usize, usize)> {
+	lines
+		.iter()
+		.position(|line| line.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG))
+		.map(|index| vec![(index + 1, lines.len())])
+		.unwrap_or_default()
 }
 
 fn diagnostic_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
@@ -1106,6 +1124,17 @@ mod tests {
 	fn diagnostics_are_retained_with_context() {
 		let lines = vec!["a", "b", "fatal: nope", "d", "e", "f"];
 		assert_eq!(diagnostic_ranges(&lines), vec![(1, 5)]);
+	}
+
+	#[test]
+	fn truncation_notice_is_never_selected_away() {
+		let notice = format!(
+			"{}: showing only the first tokens",
+			crate::utils::truncation::TRUNCATION_NOTICE_TAG
+		);
+		let lines = vec!["a", "b", notice.as_str(), "  /tmp/spill.txt"];
+		assert_eq!(truncation_notice_range(&lines), vec![(3, 4)]);
+		assert!(truncation_notice_range(&["a", "b"]).is_empty());
 	}
 
 	#[test]

@@ -18,10 +18,8 @@
 //!
 //! - `run`      — launch a fresh tap-tag (e.g. `developer:general`) or resume
 //!   an existing run by `session` id. `prompt` is required.
-//!   `background=true` (default) returns the id immediately and
-//!   pushes the result to the parent session inbox when done;
-//!   `background=false` blocks until the specialist turn completes
-//!   and returns inline.
+//!   Returns the id immediately and pushes the result to the parent session
+//!   inbox when done.
 //! - `list`     — show every tap-run in the current session with id, tag,
 //!   status, and start time.
 //! - `stop`     — cancel a running tap-run by id (sends the cancel watch).
@@ -58,7 +56,7 @@ pub fn get_tap_function() -> McpFunction {
 
 When to use:
 - The current task fits a specialist better than your generalist context (legal review, docker debugging, financial analysis, …).
-- You want a long-running side task while continuing other work — call `run` with `background=true`; the specialist's reply lands in your next turn.
+- You want to delegate a side task while continuing other work — the specialist's reply lands in your next turn.
 - You want to keep a focused dialog with one specialist across multiple turns — keep the returned `session` id and pass it back on subsequent `run` calls.
 
 Important: Every `run` call WITHOUT a `session` id starts a completely fresh agent with zero memory of prior work. If you are continuing, following up, or building on a previous tap call, you MUST pass `session=<id>` from that prior call. Omitting it is ALWAYS wrong when there is prior context to preserve.
@@ -69,7 +67,7 @@ Discovery flow:
 - If needed tools, skills, or capabilities are missing: `tap(action="capability", prompt="<underlying capability need>")` triggers the same auto-activation checks used for user messages.
 
 Actions:
-- `run`        — launch a role. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd), `background` (default **true**; set false only when you need the reply inline before the next step). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
+- `run`        — launch a role in the background. Required: `role` (for new runs) OR `session` (to resume), plus `prompt`. Optional: `workdir` (defaults to current cwd). **Always supply `session` when continuing an existing run — omitting it discards all prior context.**
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
@@ -97,11 +95,6 @@ Actions:
 				"workdir": {
 					"type": "string",
 					"description": "Working directory the specialist operates in. Optional — defaults to the current working directory. Useful when the specialist must reason over a different repo or sub-project than the parent."
-				},
-				"background": {
-					"type": "boolean",
-					"description": "When true (default), return immediately and inject the reply into this conversation when ready. Set false only when you explicitly need the result inline before the next step.",
-					"default": true
 				},
 				"intent": {
 					"type": "string",
@@ -363,12 +356,6 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		.and_then(|v| v.as_str())
 		.map(|s| s.trim().to_string())
 		.filter(|s| !s.is_empty());
-	let background = call
-		.parameters
-		.get("background")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(true);
-
 	// Default workdir is the parent session's current cwd. Use the thread-local
 	// session working directory (not the process cwd, which is wrong under the
 	// server/daemon where all sessions share one process). Resolved early so
@@ -484,129 +471,67 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	];
 	let workdir_path = std::path::PathBuf::from(&workdir);
 
-	if background {
-		let id_owned = id.clone();
-		let role_owned = role.clone();
-		let workdir_owned = workdir_path.clone();
-		let prompt_owned = prompt.clone();
-		let exe_owned = exe.clone();
-		let args_owned = acp_args.clone();
-		let status_bg = Arc::clone(&status);
-		let session_id = crate::session::context::current_session_id();
-		tokio::spawn(async move {
-			let run = async move {
-				let arg_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
-				let outcome = run_acp_command(
-					&exe_owned,
-					&arg_refs,
-					&prompt_owned,
-					&workdir_owned,
-					cancel_rx,
-					Some(&id_owned),
-					true,
-				)
-				.await;
-				let (terminal, content) = match outcome {
-					Ok(text) => (
-						TapJobStatus::Done,
-						format!("[Tap-run '{id_owned}' ({role_owned}) completed]\n\n{text}"),
-					),
-					Err(e) if crate::session::cancellation::is_cancelled(&e) => (
-						TapJobStatus::Cancelled,
-						format!("[Tap-run '{id_owned}' ({role_owned}) cancelled]"),
-					),
-					Err(e) => (
-						TapJobStatus::Failed,
-						format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
-					),
-				};
-				if let Ok(mut s) = status_bg.write() {
-					if *s == TapJobStatus::Running {
-						*s = terminal;
-					}
-				}
-				crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-					source: crate::session::inbox::InboxSource::TapRun {
-						id: id_owned,
-						role: role_owned,
-					},
-					content,
-				});
+	let id_owned = id.clone();
+	let role_owned = role.clone();
+	let status_bg = Arc::clone(&status);
+	let session_id = crate::session::context::current_session_id();
+	tokio::spawn(async move {
+		let run = async move {
+			let arg_refs: Vec<&str> = acp_args.iter().map(|s| s.as_str()).collect();
+			let outcome = run_acp_command(
+				&exe,
+				&arg_refs,
+				&prompt,
+				&workdir_path,
+				cancel_rx,
+				Some(&id_owned),
+				true,
+			)
+			.await;
+			let (terminal, content) = match outcome {
+				Ok(text) => (
+					TapJobStatus::Done,
+					format!("[Tap-run '{id_owned}' ({role_owned}) completed]\n\n{text}"),
+				),
+				Err(e) if crate::session::cancellation::is_cancelled(&e) => (
+					TapJobStatus::Cancelled,
+					format!("[Tap-run '{id_owned}' ({role_owned}) cancelled]"),
+				),
+				Err(e) => (
+					TapJobStatus::Failed,
+					format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
+				),
 			};
-			if let Some(sid) = session_id {
-				crate::session::context::with_session_id(sid, run).await;
-			} else {
-				run.await;
-			}
-		});
-		return Ok(McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			json!({
-				"id": id,
-				"role": role,
-				"workdir": workdir,
-				"background": true,
-				"message": "Tap-run started. Reply will be injected as a user message when ready.",
-			})
-			.to_string(),
-		));
-	}
-
-	// Foreground — block until the ACP subprocess completes the prompt.
-	let arg_refs: Vec<&str> = acp_args.iter().map(|s| s.as_str()).collect();
-	let outcome = run_acp_command(
-		&exe,
-		&arg_refs,
-		&prompt,
-		&workdir_path,
-		cancel_rx,
-		Some(&id),
-		true,
-	)
-	.await;
-	match outcome {
-		Ok(text) => {
-			if let Ok(mut s) = status.write() {
+			if let Ok(mut s) = status_bg.write() {
 				if *s == TapJobStatus::Running {
-					*s = TapJobStatus::Done;
+					*s = terminal;
 				}
 			}
-			Ok(McpToolResult::success(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				json!({
-					"id": id,
-					"role": role,
-					"workdir": workdir,
-					"background": false,
-					"output": text,
-				})
-				.to_string(),
-			))
-		}
-		Err(e) => {
-			let cancelled = crate::session::cancellation::is_cancelled(&e);
-			if let Ok(mut s) = status.write() {
-				if *s == TapJobStatus::Running {
-					*s = if cancelled {
-						TapJobStatus::Cancelled
-					} else {
-						TapJobStatus::Failed
-					};
-				}
-			}
-			Ok(McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				if cancelled {
-					format!("Tap-run '{id}' ({role}) cancelled")
-				} else {
-					format!("Tap-run '{id}' ({role}) failed: {e:#}")
+			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::TapRun {
+					id: id_owned,
+					role: role_owned,
 				},
-			))
+				content,
+			});
+		};
+		if let Some(sid) = session_id {
+			crate::session::context::with_session_id(sid, run).await;
+		} else {
+			run.await;
 		}
-	}
+	});
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		json!({
+			"id": id,
+			"role": role,
+			"workdir": workdir,
+			"message": "Tap-run started. Reply will be injected as a user message when ready.",
+		})
+		.to_string(),
+	))
 }
 
 // ---------------------------------------------------------------------------
@@ -660,5 +585,16 @@ mod tests {
 		assert!(names.contains(&"stop"));
 		assert!(names.contains(&"discover"));
 		assert!(names.contains(&"capability"));
+	}
+
+	#[test]
+	fn schema_does_not_expose_background_choice() {
+		let f = get_tap_function();
+		let properties = f
+			.parameters
+			.get("properties")
+			.and_then(|p| p.as_object())
+			.expect("properties object");
+		assert!(!properties.contains_key("background"));
 	}
 }

@@ -36,12 +36,11 @@ Delegate work to a specialist role installed via a tap (e.g. `developer:general`
 - `prompt` (string): User message to send. Required for `run`.
 - `session` (string): Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop`. For `run`, supply this to resume an existing run instead of starting a new one.
 - `workdir` (string): Working directory the role operates in. Optional -- defaults to the parent session's current cwd.
-- `background` (boolean, default: false): When true, return immediately and inject the reply as a user message when ready.
 - `intent` (string): Free-text intent for `discover`.
 
 | Action | Description |
 |--------|-------------|
-| `run` | Launch a role (or resume one via `session`). Foreground blocks for the reply; background returns the run id and injects the reply later. Resuming a run that is still executing a prior turn is rejected with a busy error — wait for it to finish or `stop` it first. |
+| `run` | Launch a role (or resume one via `session`) in the background. Returns the run id immediately and injects the reply later. Resuming a run that is still executing a prior turn is rejected with a busy error — wait for it to finish or `stop` it first. |
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
 | `discover` | Semantic match free-text intent against installed roles' titles/descriptions. Requires the local embedding model (errors if not ready). Returns roles scoring above 0.2 cosine, top 5. |
@@ -49,7 +48,7 @@ Delegate work to a specialist role installed via a tap (e.g. `developer:general`
 ```json
 {"action": "discover", "intent": "review a Singapore employment contract"}
 {"action": "run", "role": "lawyer:sg", "prompt": "What are the notice period rules for termination?"}
-{"action": "run", "role": "security:owasp", "prompt": "Audit this auth module", "background": true}
+{"action": "run", "role": "security:owasp", "prompt": "Audit this auth module"}
 {"action": "list"}
 {"action": "stop", "session": "tap-security-owasp-a3f1c2"}
 {"action": "run", "session": "tap-lawyer-sg-9b2c1d", "prompt": "What about probationary periods?"}

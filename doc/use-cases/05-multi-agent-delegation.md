@@ -146,10 +146,10 @@ If a tap registry already provides a specialist role for the sub-task, use the `
 ```json
 // Discover, then delegate — no config edits, no subprocess setup.
 {"action": "discover", "intent": "review code for OWASP Top 10 issues"}
-{"action": "run", "role": "security:owasp", "prompt": "Audit src/auth/ for OWASP issues", "background": true}
+{"action": "run", "role": "security:owasp", "prompt": "Audit src/auth/ for OWASP issues"}
 ```
 
-Tap roles share their own system prompt + model + tool kit. `background: true` returns the run id immediately and, when the run finishes, the reply lands as a user message in the next turn labeled `[Tap-run '<id>' (<role>) completed]` (or `… failed]` on error) — distinct from the `[Async agent '...' completed]` label used by `agent_*` jobs. Resume with `{"action": "run", "session": "<id>", "prompt": "follow-up question"}`.
+Tap roles share their own system prompt + model + tool kit. `run` returns the run id immediately and, when it finishes, the reply lands as a user message in the next turn labeled `[Tap-run '<id>' (<role>) completed]` (or `… failed]` on error) — distinct from the `[Async agent '...' completed]` label used by `agent_*` jobs. Resume with `{"action": "run", "session": "<id>", "prompt": "follow-up question"}`.
 
 A few runtime constraints worth knowing:
 

@@ -412,26 +412,6 @@ fn rerank_hybrid(keyword: &[usize], dense: &[usize], lessons: &[Lesson]) -> Vec<
 	fused.into_iter().map(|(_, index)| index).collect()
 }
 
-fn rerank_trust_hybrid(
-	keyword: &[usize],
-	dense: &[usize],
-	lessons: &[Lesson],
-	strength: f32,
-) -> Vec<usize> {
-	let mut fused = reciprocal_rank_fusion(lessons.len(), &[keyword, dense]);
-	for (score, index) in &mut fused {
-		let trust = 1.0 + strength * (lessons[*index].importance.clamp(0.0, 1.0) as f32 - 0.5);
-		*score *= trust;
-	}
-	fused.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
-	fused.into_iter().map(|(_, index)| index).collect()
-}
-
 fn rerank_weighted_hybrid(
 	keyword: &[usize],
 	dense: &[usize],
@@ -459,18 +439,6 @@ fn rerank_weighted_hybrid(
 			.unwrap_or(std::cmp::Ordering::Equal)
 	});
 	ranked.into_iter().map(|(_, index)| index).collect()
-}
-
-fn adaptive_sparse_weight(sparse: &[usize], lessons: &[Lesson]) -> f32 {
-	if sparse
-		.iter()
-		.take(3)
-		.any(|index| lessons[*index].importance < 0.4)
-	{
-		0.25
-	} else {
-		1.0
-	}
 }
 
 fn dense_at_floor(scores: &[(f32, usize)], floor: f32) -> Vec<usize> {
@@ -585,16 +553,8 @@ async fn compact_learning_retrieval_frontier() {
 	let mut dense = Metrics::default();
 	let mut hybrid_raw = Metrics::default();
 	let mut hybrid_rewrite = Metrics::default();
-	let mut weighted_025 = Metrics::default();
-	let mut weighted_050 = Metrics::default();
-	let mut weighted_075 = Metrics::default();
-	let mut floor_025_rescue = Metrics::default();
-	let mut floor_020_rescue = Metrics::default();
-	let mut floor_030_rescue = Metrics::default();
-	let mut floor_035_rescue = Metrics::default();
-	let mut trust_075 = Metrics::default();
-	let mut trust_100 = Metrics::default();
-	let mut adaptive_conflict = Metrics::default();
+	let mut fixed_weight = Metrics::default();
+	let mut production = Metrics::default();
 	let mut case_details = Vec::new();
 
 	for case in &cases {
@@ -653,86 +613,31 @@ async fn compact_learning_retrieval_frontier() {
 
 		let keyword_raw_rank = rerank_single(&rank_by_keywords(&lessons, &raw), &lessons);
 		let started = Instant::now();
-		let dense_rank = rank_by_cosine(&lessons, case.query)
+		let scores = cosine_scores(&lessons, case.query, PRODUCTION_DENSE_SCORING)
 			.await
-			.expect("embedding ranking succeeds");
+			.expect("embedding scoring succeeds");
 		embedding_ms += started.elapsed().as_millis();
-		let dense_rank = rerank_single(&dense_rank, &lessons);
-		let hybrid_raw_rank = rerank_hybrid(
-			&rank_by_keywords(&lessons, &raw),
-			&rank_by_cosine(&lessons, case.query).await.unwrap(),
-			&lessons,
-		);
+		let dense_indices = dense_at_floor(&scores, COSINE_FLOOR);
+		let dense_rank = rerank_single(&dense_indices, &lessons);
+		let hybrid_raw_rank =
+			rerank_hybrid(&rank_by_keywords(&lessons, &raw), &dense_indices, &lessons);
 		let hybrid_rewrite_rank = rerank_hybrid(
 			&rank_by_keywords(&lessons, &rewritten),
-			&rank_by_cosine(&lessons, case.query).await.unwrap(),
+			&dense_indices,
 			&lessons,
 		);
 		let rewrite_keywords = rank_by_keywords(&lessons, &rewritten);
-		let dense_for_weighted = rank_by_cosine(&lessons, case.query).await.unwrap();
-		let weighted_025_rank =
-			rerank_weighted_hybrid(&rewrite_keywords, &dense_for_weighted, &lessons, 0.25);
-		let weighted_050_rank =
-			rerank_weighted_hybrid(&rewrite_keywords, &dense_for_weighted, &lessons, 0.50);
-		let weighted_075_rank =
-			rerank_weighted_hybrid(&rewrite_keywords, &dense_for_weighted, &lessons, 0.75);
-		let cosine_scores = score_by_cosine(&lessons, case.query).await.unwrap();
-		let floor_020_rank = sparse_rescue(
+		let fixed_weight_rank = sparse_rescue(
+			rerank_weighted_hybrid(&rewrite_keywords, &dense_indices, &lessons, 0.25),
+			&rewrite_keywords,
+			&lessons,
+		);
+		let production_rank = sparse_rescue(
 			rerank_weighted_hybrid(
 				&rewrite_keywords,
-				&dense_at_floor(&cosine_scores, 0.20),
+				&dense_indices,
 				&lessons,
-				0.25,
-			),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let floor_025_rank = sparse_rescue(
-			rerank_weighted_hybrid(
-				&rewrite_keywords,
-				&dense_at_floor(&cosine_scores, 0.25),
-				&lessons,
-				0.25,
-			),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let floor_030_rank = sparse_rescue(
-			rerank_weighted_hybrid(
-				&rewrite_keywords,
-				&dense_at_floor(&cosine_scores, 0.30),
-				&lessons,
-				0.25,
-			),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let floor_035_rank = sparse_rescue(
-			rerank_weighted_hybrid(
-				&rewrite_keywords,
-				&dense_at_floor(&cosine_scores, 0.35),
-				&lessons,
-				0.25,
-			),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let trust_075_rank = sparse_rescue(
-			rerank_trust_hybrid(&rewrite_keywords, &dense_for_weighted, &lessons, 0.75),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let trust_100_rank = sparse_rescue(
-			rerank_trust_hybrid(&rewrite_keywords, &dense_for_weighted, &lessons, 1.0),
-			&rewrite_keywords,
-			&lessons,
-		);
-		let adaptive_conflict_rank = sparse_rescue(
-			rerank_weighted_hybrid(
-				&rewrite_keywords,
-				&dense_for_weighted,
-				&lessons,
-				adaptive_sparse_weight(&rewrite_keywords, &lessons),
+				adaptive_keyword_weight(&rewrite_keywords, &dense_indices, &lessons),
 			),
 			&rewrite_keywords,
 			&lessons,
@@ -749,32 +654,16 @@ async fn compact_learning_retrieval_frontier() {
 			"dense_top5": source_ids(&dense_rank, &lessons, 5),
 			"hybrid_raw_top5": source_ids(&hybrid_raw_rank, &lessons, 5),
 			"hybrid_rewrite_top5": source_ids(&hybrid_rewrite_rank, &lessons, 5),
-			"weighted_025_top5": source_ids(&weighted_025_rank, &lessons, 5),
-			"weighted_050_top5": source_ids(&weighted_050_rank, &lessons, 5),
-			"weighted_075_top5": source_ids(&weighted_075_rank, &lessons, 5),
-			"floor_025_rescue_top5": source_ids(&floor_025_rank, &lessons, 5),
-			"floor_020_rescue_top5": source_ids(&floor_020_rank, &lessons, 5),
-			"floor_030_rescue_top5": source_ids(&floor_030_rank, &lessons, 5),
-			"floor_035_rescue_top5": source_ids(&floor_035_rank, &lessons, 5),
-			"trust_075_top5": source_ids(&trust_075_rank, &lessons, 5),
-			"trust_100_top5": source_ids(&trust_100_rank, &lessons, 5),
-			"adaptive_conflict_top5": source_ids(&adaptive_conflict_rank, &lessons, 5),
+			"fixed_weight_top5": source_ids(&fixed_weight_rank, &lessons, 5),
+			"production_top5": source_ids(&production_rank, &lessons, 5),
 		}));
 
 		keyword_raw.observe(case, &keyword_raw_rank, &lessons);
 		dense.observe(case, &dense_rank, &lessons);
 		hybrid_raw.observe(case, &hybrid_raw_rank, &lessons);
 		hybrid_rewrite.observe(case, &hybrid_rewrite_rank, &lessons);
-		weighted_025.observe(case, &weighted_025_rank, &lessons);
-		weighted_050.observe(case, &weighted_050_rank, &lessons);
-		weighted_075.observe(case, &weighted_075_rank, &lessons);
-		floor_025_rescue.observe(case, &floor_025_rank, &lessons);
-		floor_020_rescue.observe(case, &floor_020_rank, &lessons);
-		floor_030_rescue.observe(case, &floor_030_rank, &lessons);
-		floor_035_rescue.observe(case, &floor_035_rank, &lessons);
-		trust_075.observe(case, &trust_075_rank, &lessons);
-		trust_100.observe(case, &trust_100_rank, &lessons);
-		adaptive_conflict.observe(case, &adaptive_conflict_rank, &lessons);
+		fixed_weight.observe(case, &fixed_weight_rank, &lessons);
+		production.observe(case, &production_rank, &lessons);
 	}
 
 	let report = serde_json::json!({
@@ -797,16 +686,8 @@ async fn compact_learning_retrieval_frontier() {
 			"dense": dense.rates(),
 			"hybrid_raw": hybrid_raw.rates(),
 			"hybrid_rewrite": hybrid_rewrite.rates(),
-			"fixed_weight_025_no_rescue": weighted_025.rates(),
-			"weighted_rewrite_050": weighted_050.rates(),
-			"weighted_rewrite_075": weighted_075.rates(),
-			"floor_025_sparse_rescue": floor_025_rescue.rates(),
-			"fixed_weight_025_with_rescue": floor_020_rescue.rates(),
-			"floor_030_sparse_rescue": floor_030_rescue.rates(),
-			"floor_035_sparse_rescue": floor_035_rescue.rates(),
-			"equal_hybrid_trust_075": trust_075.rates(),
-			"equal_hybrid_trust_100": trust_100.rates(),
-			"production_adaptive_hybrid": adaptive_conflict.rates(),
+			"fixed_weight_025": fixed_weight.rates(),
+			"production_adaptive_hybrid": production.rates(),
 		},
 		"cases": case_details,
 	});

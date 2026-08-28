@@ -307,8 +307,9 @@ async fn compact_longmemeval_oracle_retrieval() {
 	let mut rewrite_stats = RewriteStats::default();
 	let mut dense_metrics = PublicMetrics::default();
 	let mut equal_metrics = PublicMetrics::default();
+	let mut fixed_metrics = PublicMetrics::default();
 	let mut production_metrics = PublicMetrics::default();
-	let mut adaptive_metrics = PublicMetrics::default();
+	let mut production_dense_latency_ms = 0u128;
 	let mut details = Vec::new();
 
 	for item in &selected {
@@ -323,27 +324,45 @@ async fn compact_longmemeval_oracle_retrieval() {
 		)
 		.await;
 		let keyword = rank_by_keywords(&lessons, &patterns);
-		let dense = rank_by_cosine(&lessons, &item.question)
+		let baseline_dense = cosine_scores(
+			&lessons,
+			&item.question,
+			DenseScoring {
+				chunk_tokens: crate::embeddings::EMBED_MAX_INPUT_TOKENS,
+				max_chunk_weight: 0.0,
+			},
+		)
+		.await
+		.expect("baseline embedding scoring")
+		.into_iter()
+		.filter_map(|(score, index)| (score > COSINE_FLOOR).then_some(index))
+		.collect::<Vec<_>>();
+		let dense_started = Instant::now();
+		let production_dense = cosine_scores(&lessons, &item.question, PRODUCTION_DENSE_SCORING)
 			.await
-			.expect("local embedding ranking");
-		let equal = rank_equal(&keyword, &dense, &lessons);
-		let production = rank_production(&keyword, &dense, &lessons);
-		let adaptive = rank_adaptive(&keyword, &dense, &lessons);
+			.expect("local embedding scoring")
+			.into_iter()
+			.filter_map(|(score, index)| (score > COSINE_FLOOR).then_some(index))
+			.collect::<Vec<_>>();
+		production_dense_latency_ms += dense_started.elapsed().as_millis();
+		let equal = rank_equal(&keyword, &baseline_dense, &lessons);
+		let fixed = rank_production(&keyword, &baseline_dense, &lessons);
+		let production = rank_adaptive(&keyword, &production_dense, &lessons);
 		let expected: HashSet<&str> = item.answer_session_ids.iter().map(String::as_str).collect();
-		dense_metrics.observe(&expected, &dense, &lessons);
+		dense_metrics.observe(&expected, &baseline_dense, &lessons);
 		equal_metrics.observe(&expected, &equal, &lessons);
+		fixed_metrics.observe(&expected, &fixed, &lessons);
 		production_metrics.observe(&expected, &production, &lessons);
-		adaptive_metrics.observe(&expected, &adaptive, &lessons);
 		details.push(serde_json::json!({
 			"question_id": item.question_id,
 			"question_type": item.question_type,
 			"question": item.question,
 			"answer_session_ids": item.answer_session_ids,
 			"patterns": patterns,
-			"dense_top5": top_ids(&dense, &lessons),
+			"dense_top5": top_ids(&baseline_dense, &lessons),
 			"equal_hybrid_top5": top_ids(&equal, &lessons),
-			"fixed_weight_top5": top_ids(&production, &lessons),
-			"production_top5": top_ids(&adaptive, &lessons),
+			"fixed_weight_top5": top_ids(&fixed, &lessons),
+			"production_top5": top_ids(&production, &lessons),
 		}));
 	}
 
@@ -357,11 +376,12 @@ async fn compact_longmemeval_oracle_retrieval() {
 		"memory_sessions": lessons.len(),
 		"rewrite": rewrite_stats,
 		"supervisor_usage": crate::supervisor::stats::snapshot(),
+		"production_dense_latency_ms": production_dense_latency_ms,
 		"modes": {
 			"dense": dense_metrics.report(),
 			"equal_hybrid": equal_metrics.report(),
-			"fixed_weight_025": production_metrics.report(),
-			"production": adaptive_metrics.report(),
+			"fixed_weight_025": fixed_metrics.report(),
+			"production": production_metrics.report(),
 		},
 		"cases": details,
 	});
@@ -378,7 +398,7 @@ async fn compact_longmemeval_oracle_retrieval() {
 		report["modes"]["production"]["recall_at_5"]
 			.as_f64()
 			.unwrap_or_default()
-			>= 0.80,
+			>= 0.95,
 		"public retrieval recall below contract: {report}"
 	);
 }

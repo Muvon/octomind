@@ -420,8 +420,11 @@ impl LearningBackend for FileBackend {
 		let cosine_ranking = if intent.trim().is_empty() || !crate::embeddings::is_ready() {
 			Vec::new()
 		} else {
-			match rank_by_cosine(&all, intent).await {
-				Ok(r) => r,
+			match cosine_scores(&all, intent, PRODUCTION_DENSE_SCORING).await {
+				Ok(scores) => scores
+					.into_iter()
+					.filter_map(|(score, index)| (score > COSINE_FLOOR).then_some(index))
+					.collect(),
 				Err(e) => {
 					crate::log_debug!("learning retrieve: cosine ranking failed ({})", e);
 					Vec::new()
@@ -647,6 +650,17 @@ const RECENCY_HALFLIFE_DAYS: f32 = 30.0;
 const IMPORTANCE_RERANK_WEIGHT: f32 = 0.5;
 const COSINE_FLOOR: f32 = 0.2;
 
+#[derive(Clone, Copy)]
+struct DenseScoring {
+	chunk_tokens: usize,
+	max_chunk_weight: f32,
+}
+
+const PRODUCTION_DENSE_SCORING: DenseScoring = DenseScoring {
+	chunk_tokens: 128,
+	max_chunk_weight: 1.0,
+};
+
 fn importance_factor(importance: f64) -> f32 {
 	1.0 + IMPORTANCE_RERANK_WEIGHT * (importance.clamp(0.0, 1.0) as f32 - 0.5)
 }
@@ -841,21 +855,14 @@ fn pool_normalize(chunk_vecs: &[&[f32]]) -> Vec<f32> {
 	acc
 }
 
-/// Rank lessons by MiniLM-L6 cosine vs the user intent (descending). Each lesson
-/// becomes exactly one vector — embedded directly if it fits the cap, or
-/// recursively chunked and mean-pooled if oversized, so no text is lost while
-/// ranking stays 1-to-1. Lessons with cosine ≤ 0.2 are excluded as noise.
-/// Returns indices into the input slice.
-async fn rank_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<usize>> {
-	Ok(score_by_cosine(lessons, intent)
-		.await?
-		.into_iter()
-		.filter(|(score, _)| *score > COSINE_FLOOR)
-		.map(|(_, index)| index)
-		.collect())
-}
-
-async fn score_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<(f32, usize)>> {
+/// Score every memory against the intent under one explicit dense policy.
+/// Results are descending and remain one-to-one with memories; admission
+/// thresholds belong to the caller because benchmarks need the raw scores.
+async fn cosine_scores(
+	lessons: &[Lesson],
+	intent: &str,
+	scoring: DenseScoring,
+) -> Result<Vec<(f32, usize)>> {
 	// Query gets the same no-truncation treatment as lessons: a within-cap query
 	// embeds as one vector — kept on `embed`, which deliberately doesn't persist
 	// high-volume per-turn input to the disk cache — while an oversized query is
@@ -876,11 +883,7 @@ async fn score_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<(f32, u
 	let mut chunk_texts: Vec<String> = Vec::new();
 	let mut chunk_owner: Vec<usize> = Vec::new();
 	for (i, l) in lessons.iter().enumerate() {
-		let combined = format!("{} {} {}", l.title, l.content, l.tags.join(" "));
-		for chunk in crate::embeddings::chunk_to_token_limit(
-			&combined,
-			crate::embeddings::EMBED_MAX_INPUT_TOKENS,
-		) {
+		for chunk in semantic_retrieval_chunks(l, scoring.chunk_tokens) {
 			chunk_texts.push(chunk);
 			chunk_owner.push(i);
 		}
@@ -902,12 +905,63 @@ async fn score_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<(f32, u
 		.enumerate()
 		.filter(|(_, chunks)| !chunks.is_empty())
 		.map(|(i, chunks)| {
-			let vec = pool_normalize(chunks);
-			(crate::embeddings::cosine(&intent_vec, &vec), i)
+			let mean_vec = pool_normalize(chunks);
+			let mean_score = crate::embeddings::cosine(&intent_vec, &mean_vec);
+			let max_score = chunks
+				.iter()
+				.map(|chunk| crate::embeddings::cosine(&intent_vec, chunk))
+				.fold(f32::NEG_INFINITY, f32::max);
+			let weight = scoring.max_chunk_weight.clamp(0.0, 1.0);
+			(mean_score * (1.0 - weight) + max_score * weight, i)
 		})
 		.collect();
 	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	Ok(scored)
+}
+
+fn semantic_retrieval_chunks(lesson: &Lesson, max_tokens: usize) -> Vec<String> {
+	let max_tokens = max_tokens.clamp(32, crate::embeddings::EMBED_MAX_INPUT_TOKENS);
+	let metadata = format!("{} {}", lesson.title, lesson.tags.join(" "));
+	let mut chunks = Vec::new();
+	let mut current = String::new();
+	for paragraph in lesson
+		.content
+		.lines()
+		.map(str::trim)
+		.filter(|line| !line.is_empty())
+	{
+		for part in crate::embeddings::chunk_to_token_limit(paragraph, max_tokens) {
+			let prospective = if current.is_empty() {
+				part.clone()
+			} else {
+				format!("{current}\n{part}")
+			};
+			if !current.is_empty() && crate::session::estimate_tokens(&prospective) > max_tokens {
+				chunks.push(current);
+				current = part;
+			} else {
+				current = prospective;
+			}
+		}
+	}
+	if !current.is_empty() {
+		chunks.push(current);
+	}
+	if chunks.is_empty() {
+		return vec![metadata];
+	}
+	if chunks.len() == 1 {
+		return vec![format!(
+			"{} {} {}",
+			lesson.title,
+			lesson.content,
+			lesson.tags.join(" ")
+		)];
+	}
+	chunks
+		.into_iter()
+		.map(|chunk| format!("{metadata}\n{chunk}"))
+		.collect()
 }
 
 /// Reciprocal Rank Fusion: given multiple ranked lists of indices into
@@ -1186,6 +1240,28 @@ created: "2026-04-05T00:00:00Z"
 			&["state parameter".to_string(), "oauth callback".to_string()],
 		);
 		assert_eq!(ranking.first().copied(), Some(0));
+	}
+
+	#[test]
+	fn semantic_chunks_leave_short_memories_whole_and_split_long_sections() {
+		let short = lesson_with("retain the exact provider identity", &["provider"]);
+		let short_chunks = semantic_retrieval_chunks(&short, 128);
+		assert_eq!(
+			short_chunks,
+			vec![" retain the exact provider identity provider".to_string()]
+		);
+
+		let long = lesson_with(
+			&[
+				"first focused section ".repeat(40),
+				"second independent section ".repeat(40),
+			]
+			.join("\n"),
+			&["memory"],
+		);
+		let long_chunks = semantic_retrieval_chunks(&long, 32);
+		assert!(long_chunks.len() > 2);
+		assert!(long_chunks.iter().all(|chunk| chunk.contains("memory")));
 	}
 
 	#[test]

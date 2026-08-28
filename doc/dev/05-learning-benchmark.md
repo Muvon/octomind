@@ -83,7 +83,7 @@ The curated production mode must have:
 - zero stale memories at rank one;
 - zero rewrite transport failures.
 
-The public subset requires retrieval recall@5 of at least `0.80`. Always report
+The pinned public subset requires retrieval recall@5 of at least `0.95`. Always report
 top-1, recall@5, MRR, model, rewrite calls/cache hits/rejections, question count,
 and memory-session count. Do not call the subset a full LongMemEval score.
 
@@ -99,13 +99,15 @@ frontier only; they are not a full LongMemEval score or a universal SOTA claim.
 
 | Retrieval mode | Internal top-1 | Internal R@5 | Abstain | Stale@1 | Public top-1 | Public R@5 |
 |---|---:|---:|---:|---:|---:|---:|
-| Dense | 80.0% | 97.5% | 83.3% | 0 | 56.7% | 73.3% |
-| Equal hybrid | 80.0% | 100% | 83.3% | 5 | 66.7% | 86.7% |
-| Adaptive production | **87.5%** | **100%** | **83.3%** | **0** | **66.7%** | **86.7%** |
+| Dense | 80.0% | 97.5% | 83.3% | 0 | 76.7% | 90.0% |
+| Equal hybrid | 80.0% | 100% | 83.3% | 5 | 73.3% | 90.0% |
+| Adaptive production | **87.5%** | **100%** | **83.3%** | **0** | **83.3%** | **96.7%** |
 
-Production therefore matches the best public-subset retrieval and removes the
-equal hybrid's stale-memory failures, while improving the internal top-1 score
-by 7.5 points over both baselines.
+Production therefore leads every tested public-subset retrieval baseline,
+removes the equal hybrid's stale-memory failures, and improves internal top-1
+by 7.5 points over both baselines. The public gain comes from 128-token semantic
+chunks with max-chunk late interaction; one-chunk memories retain their exact
+legacy embedding input.
 
 The consolidation check accepted one of two safe merges, compressed it from
 445 to 126 estimated tokens, and rejected both unsafe pairs: zero false accepts,
@@ -125,3 +127,7 @@ Dense-only retrieval is therefore the latency baseline. Adaptive hybrid is on
 the measured accuracy-latency frontier: it costs one rewrite on the first
 session retrieval, improves internal top-1 and recall, removes stale winners,
 and subsequent user turns remain embedding-only.
+
+On the public 52-session pool, cached semantic scoring took 15.7 seconds for 30
+queries (`523 ms/query`). This is the long heterogeneous-memory cost; ordinary
+short lesson stores remain substantially cheaper.

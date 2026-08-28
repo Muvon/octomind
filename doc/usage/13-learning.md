@@ -220,6 +220,13 @@ restores full sparse ordering. One highest-importance sparse candidate may be
 reserved at rank five when fusion buried it, preserving identifier and indirect
 cue recall without letting lexical noise control ranks one through four.
 
+Dense retrieval keeps a short memory as one unchanged embedding input. A long
+heterogeneous memory is divided at semantic line/paragraph boundaries into
+bounded 128-token chunks, with title and tags attached to every chunk; the
+memory's dense score is its strongest chunk match. This late interaction keeps
+small facts from being diluted by unrelated sections while preserving the
+legacy score exactly for ordinary one-chunk lessons.
+
 Recency uses a 30-day half-life with up to a +50% boost; importance contributes
 a bounded 0.75x–1.25x multiplier so relevance remains primary. Embedding
 candidates below a `0.2` cosine floor are dropped as noise, and if the embedding

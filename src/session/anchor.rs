@@ -451,8 +451,10 @@ mod tests {
 
 	#[test]
 	fn compactions_folded_saturates_instead_of_overflowing() {
-		let mut a = Anchor::default();
-		a.compactions_folded = u32::MAX;
+		let mut a = Anchor {
+			compactions_folded: u32::MAX,
+			..Default::default()
+		};
 		a.extend(AnchorUpdate::default(), 0);
 		assert_eq!(a.compactions_folded, u32::MAX);
 	}

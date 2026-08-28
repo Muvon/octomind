@@ -1734,7 +1734,7 @@ mod tests {
 			&ExperienceParseContext {
 				messages: &messages,
 				transcript: &build_transcript(&messages),
-				reconcile: &[existing.clone()],
+				reconcile: std::slice::from_ref(&existing),
 				role: "developer",
 				project: "octomind",
 				source: "session-a",

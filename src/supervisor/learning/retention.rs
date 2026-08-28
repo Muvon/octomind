@@ -297,7 +297,7 @@ fn best_pair(items: &[Lesson]) -> Option<(usize, usize)> {
 	best
 }
 
-async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -> Option<Lesson> {
+pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -> Option<Lesson> {
 	let source_tokens = storage_tokens(sources);
 	if source_tokens > MAX_CONSOLIDATION_INPUT_TOKENS {
 		return None;
@@ -750,3 +750,7 @@ mod tests {
 		assert_eq!(hot.len() + cold_files, before.len());
 	}
 }
+
+#[cfg(test)]
+#[path = "retention_benchmark_tests.rs"]
+mod benchmark_tests;

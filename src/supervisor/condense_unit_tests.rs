@@ -182,11 +182,17 @@ fn ranges_parse_rejects_empty_specs_zero_and_zero_max() {
 	assert!(parse_ranges(&specs(&["0-3"]), 10).is_none());
 	assert!(parse_ranges(&specs(&["1"]), 0).is_none());
 	// Whitespace around the numbers is tolerated.
-	assert_eq!(parse_ranges(&specs(&[" 3 - 5 "]), 10).unwrap(), vec![(3, 5)]);
+	assert_eq!(
+		parse_ranges(&specs(&[" 3 - 5 "]), 10).unwrap(),
+		vec![(3, 5)]
+	);
 	// Open-ended at the exact last line collapses to that line.
 	assert_eq!(parse_ranges(&specs(&["10-"]), 10).unwrap(), vec![(10, 10)]);
 	// Duplicate selections merge instead of double-counting.
-	assert_eq!(parse_ranges(&specs(&["2", "2-3"]), 10).unwrap(), vec![(2, 3)]);
+	assert_eq!(
+		parse_ranges(&specs(&["2", "2-3"]), 10).unwrap(),
+		vec![(2, 3)]
+	);
 }
 
 #[test]
@@ -250,7 +256,10 @@ fn empty_content_yields_an_empty_view() {
 #[test]
 fn format_ranges_renders_singles_and_spans() {
 	assert_eq!(format_ranges(&[]), Vec::<String>::new());
-	assert_eq!(format_ranges(&[(3, 3), (1, 5)]), vec!["3".to_string(), "1-5".to_string()]);
+	assert_eq!(
+		format_ranges(&[(3, 3), (1, 5)]),
+		vec!["3".to_string(), "1-5".to_string()]
+	);
 }
 
 #[test]
@@ -290,7 +299,10 @@ fn unique_ids_are_all_indexed_and_empty_stays_empty() {
 	assert_eq!(entries.len(), 3);
 	assert_eq!(entries["t2"].verdict, "extract");
 
-	assert!(unambiguous_entries(&CondenseResponse { results: Vec::new() }).is_empty());
+	assert!(unambiguous_entries(&CondenseResponse {
+		results: Vec::new()
+	})
+	.is_empty());
 }
 
 #[test]
@@ -321,7 +333,10 @@ fn set_content_replaces_text_and_preserves_the_error_flag() {
 	let mut failed = McpToolResult::error("tool".into(), "t".into(), "old".into());
 	set_content(&mut failed, "new body".into());
 	assert_eq!(failed.extract_content(), "new body");
-	assert!(failed.is_error(), "a condensed failing tool must stay an error");
+	assert!(
+		failed.is_error(),
+		"a condensed failing tool must stay an error"
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +348,10 @@ fn diagnostic_context_clamps_at_edges_and_merges_nearby_windows() {
 	assert_eq!(diagnostic_ranges(&["a", "b"]), Vec::<(usize, usize)>::new());
 
 	// Hit on the first line: the ±2 context cannot underflow below line 1.
-	assert_eq!(diagnostic_ranges(&["error: first", "b", "c", "d"]), vec![(1, 3)]);
+	assert_eq!(
+		diagnostic_ranges(&["error: first", "b", "c", "d"]),
+		vec![(1, 3)]
+	);
 
 	// Hit on the last line: the window stops at the end of the file.
 	assert_eq!(
@@ -353,13 +371,14 @@ fn focus_terms_keep_paths_intact_and_drop_stopwords_short_and_duplicates() {
 	assert!(focus_terms("").is_empty());
 	assert_eq!(
 		focus_terms("Fix this error in src/main.rs"),
-		vec!["fix".to_string(), "error".to_string(), "src/main.rs".to_string()]
+		vec![
+			"fix".to_string(),
+			"error".to_string(),
+			"src/main.rs".to_string()
+		]
 	);
 	// Punctuation splits terms; digits are alphanumeric and survive.
-	assert_eq!(
-		focus_terms("a,b 123"),
-		vec!["123".to_string()]
-	);
+	assert_eq!(focus_terms("a,b 123"), vec!["123".to_string()]);
 	// Duplicates collapse to one term.
 	assert_eq!(focus_terms("error error"), vec!["error".to_string()]);
 }
@@ -430,7 +449,10 @@ async fn extract_protects_diagnostics_the_selection_missed() {
 			.expect("a partial selection applies");
 		assert!(out.starts_with("l1\nl2\n"));
 		assert!(out.contains("[... 3 lines omitted]"));
-		assert!(out.contains("error: boom"), "diagnostics survive a selection that missed them");
+		assert!(
+			out.contains("error: boom"),
+			"diagnostics survive a selection that missed them"
+		);
 		assert!(out.contains(CONDENSE_NOTICE_TAG));
 		assert!(out.contains("kept 7 of 10 original lines"));
 	})
@@ -473,8 +495,8 @@ async fn replace_on_a_full_success_view_writes_the_factual_notice() {
 	crate::session::context::with_session_id("condense-unit-replace".to_string(), async {
 		let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
 		let original = ok.extract_content();
-		let out =
-			apply_verdict(&entry("replace", &[]), &ok, &original, &full_view(6)).expect("replace applies");
+		let out = apply_verdict(&entry("replace", &[]), &ok, &original, &full_view(6))
+			.expect("replace applies");
 		assert!(out.starts_with(CONDENSE_NOTICE_TAG));
 		assert!(out.contains("6-line"));
 		assert!(out.contains("`shell`"));
@@ -493,12 +515,18 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 	let big = McpToolResult::success(
 		"shell".into(),
 		"t0".into(),
-		(0..3_000).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n"),
+		(0..3_000)
+			.map(|i| format!("line {i}"))
+			.collect::<Vec<_>>()
+			.join("\n"),
 	);
 	let failing = McpToolResult::error(
 		"view".into(),
 		"t1".into(),
-		(0..200).map(|i| format!("row {i}")).collect::<Vec<_>>().join("\n"),
+		(0..200)
+			.map(|i| format!("row {i}"))
+			.collect::<Vec<_>>()
+			.join("\n"),
 	);
 	let small = McpToolResult::success("grep".into(), "t2".into(), "one\nmatch".into());
 	let results = vec![big, failing, small];
@@ -515,12 +543,18 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 		},
 		// t2 has no matching call: its arguments default to empty.
 	];
-	let sizes: Vec<usize> = results.iter().map(|r| estimate_tokens(&r.extract_content())).collect();
+	let sizes: Vec<usize> = results
+		.iter()
+		.map(|r| estimate_tokens(&r.extract_content()))
+		.collect();
 	let sizable = vec![0, 1, 2];
 	let (candidates, user) = build_request(&results, &calls, &sizable, &sizes, "", "", "");
 
 	assert_eq!(
-		candidates.iter().map(|c| c.result_index).collect::<Vec<_>>(),
+		candidates
+			.iter()
+			.map(|c| c.result_index)
+			.collect::<Vec<_>>(),
 		vec![0, 1, 2],
 		"candidates come back in result order"
 	);
@@ -528,7 +562,10 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 
 	let payload: serde_json::Value = serde_json::from_str(&user).expect("payload is valid JSON");
 	assert_eq!(payload["results_considered"], 3);
-	assert_eq!(payload["candidate_output_tokens"], sizes.iter().sum::<usize>() as u64);
+	assert_eq!(
+		payload["candidate_output_tokens"],
+		sizes.iter().sum::<usize>() as u64
+	);
 	assert!(
 		payload["task_context"]
 			.as_str()
@@ -541,7 +578,9 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 	assert_eq!(payload["results"][0]["arguments"], r#"{"command":"ls"}"#);
 	assert_eq!(payload["results"][1]["status"], "error");
 	assert_eq!(payload["results"][2]["arguments"], "");
-	assert!(payload["results"][0]["numbered_output"].as_str().is_some_and(|b| !b.is_empty()));
+	assert!(payload["results"][0]["numbered_output"]
+		.as_str()
+		.is_some_and(|b| !b.is_empty()));
 }
 
 #[test]
@@ -551,11 +590,14 @@ fn build_request_truncates_to_the_safe_batch_size_biggest_first() {
 			McpToolResult::success(
 				"shell".into(),
 				format!("t{i}"),
-					format!("filler output number {:02} padding", i),
+				format!("filler output number {:02} padding", i),
 			)
 		})
 		.collect();
-	let sizes: Vec<usize> = results.iter().map(|r| estimate_tokens(&r.extract_content())).collect();
+	let sizes: Vec<usize> = results
+		.iter()
+		.map(|r| estimate_tokens(&r.extract_content()))
+		.collect();
 	let sizable: Vec<usize> = (0..40).collect();
 	let (candidates, user) = build_request(&results, &[], &sizable, &sizes, "task", "", "");
 
@@ -594,13 +636,19 @@ fn suffix_to_tokens_returns_whole_text_under_budget_and_a_suffix_over() {
 	let long = "token ".repeat(500);
 	let suffix = suffix_to_tokens(&long, 5);
 	assert!(!suffix.is_empty());
-	assert!(long.ends_with(suffix), "the suffix is a real tail of the text");
+	assert!(
+		long.ends_with(suffix),
+		"the suffix is a real tail of the text"
+	);
 	assert!(estimate_tokens(suffix) <= 5);
 }
 
 #[test]
 fn response_parse_rejects_reversed_braces_unterminated_fences_and_bad_json() {
-	assert!(parse_response("}{").is_none(), "closing before opening is not JSON");
+	assert!(
+		parse_response("}{").is_none(),
+		"closing before opening is not JSON"
+	);
 	assert!(
 		parse_response("```json\n{\"results\":[]}").is_none(),
 		"an unterminated fence has no extractable block"

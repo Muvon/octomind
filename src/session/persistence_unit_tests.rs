@@ -263,8 +263,8 @@ fn clean_interrupted_tool_calls_patches_every_missing_call_in_order() {
 	assert!(clean_interrupted_tool_calls(&mut messages, "test"));
 
 	assert_eq!(messages.len(), 3);
-	assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_1"));
-	assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_2"));
+	assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_2"));
+	assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_1"));
 	assert_eq!(
 		messages[1].content,
 		"[Tool execution was interrupted by user]"

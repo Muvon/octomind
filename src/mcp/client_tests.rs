@@ -177,7 +177,10 @@ async fn logging_message_notification_is_forwarded() {
 		payload.params.get("level"),
 		Some(&serde_json::json!("info"))
 	);
-	assert_eq!(payload.params.get("line"), Some(&serde_json::json!(7)));
+	assert_eq!(
+		payload.params.get("data").and_then(|d| d.get("line")),
+		Some(&serde_json::json!(7))
+	);
 }
 
 #[serial_test::serial]

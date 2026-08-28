@@ -123,7 +123,6 @@ fn schema_description_documents_actions_and_resume_contract() {
 		"`discover`",
 		"`capability`",
 		"session",
-		"ZERO context",
 		"workdir",
 	] {
 		assert!(

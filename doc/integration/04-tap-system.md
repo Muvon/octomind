@@ -98,9 +98,7 @@ Inside a running session you can launch a tap role as a subagent via the `tap` c
 
 Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `tap-lawyer-sg-9b2c1d` for `lawyer:sg`). Use that id to `stop` a run or to resume it (pass it back as `session` on a subsequent `run`).
 
-`discover` matches your `intent` semantically against each agent's title + description (cosine score must exceed `0.2`, top 5 returned) and requires the local embedding model to be ready, erroring if it is not.
-
-Use `background: true` for long tasks; the reply lands as a user message in the next turn. See [MCP Tools — `tap`](../usage/07-mcp-tools.md#tap----run-specialist-roles-from-taps) for the full schema.
+`discover` matches your `intent` semantically against each agent's title + description (cosine score must exceed `0.2`, top 5 returned) and requires the local embedding model to be ready, erroring if it is not. Runs always execute in the background; the reply lands as a user message in the next turn. See [MCP Tools — `tap`](../usage/07-mcp-tools.md#tap----run-specialist-roles-from-taps) for the full schema.
 
 ### Model Overrides
 

@@ -322,7 +322,7 @@ Every agent has built-in power tools that let it acquire new capabilities and sp
 
 | Tool | What it does |
 |---|---|
-| `tap` | Delegate to any specialist role from the tap registry. Foreground for an inline reply or background for long tasks. |
+| `tap` | Delegate work in the background to any specialist role from the tap registry. |
 | `mcp` | Enable or disable MCP servers on the fly. Agent picks the server it needs and registers it mid-conversation. |
 | `agent` | Spawn a specialist sub-agent for a sub-task. Sub-agent runs, returns, parent continues. |
 

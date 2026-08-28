@@ -63,7 +63,8 @@ Display comprehensive session statistics:
 - Cache savings (tokens and USD)
 - Compression statistics (if compression has occurred)
 - Learning packs, items/tokens shown, materially used memories, outcome credit,
-  active-pack state, and maintenance activity
+  active-pack state, and maintenance activity. Cumulative learning usage is
+  persisted with the named session and survives resume.
 - Model information
 
 ### `/report`

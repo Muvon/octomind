@@ -84,13 +84,13 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	let mut active_used_ids: Vec<String> = session.used_memory_ids.iter().cloned().collect();
 	active_used_ids.sort();
 	let learning_stats = serde_json::json!({
-		"packs": session.learning_stats.packs,
-		"items": session.learning_stats.items,
-		"tokens": session.learning_stats.tokens,
-		"used": session.learning_stats.used,
-		"credit_positive": session.learning_stats.credit_positive,
-		"credit_negative": session.learning_stats.credit_negative,
-		"used_without_verdict": session.learning_stats.used_without_verdict,
+		"packs": info.learning_stats.packs,
+		"items": info.learning_stats.items,
+		"tokens": info.learning_stats.tokens,
+		"used": info.learning_stats.used,
+		"credit_positive": info.learning_stats.credit_positive,
+		"credit_negative": info.learning_stats.credit_negative,
+		"used_without_verdict": info.learning_stats.used_without_verdict,
 		"active_items": session.recalled_refs.len(),
 		"active_tokens": session.active_memory_pack
 			.as_deref()

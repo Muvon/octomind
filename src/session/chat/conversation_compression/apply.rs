@@ -179,12 +179,37 @@ fn build_continuation_content(
 			)
 		}
 	};
+	// Same contract for backgrounded tap-runs: the specialist's reply arrives as
+	// a message, so the model must not relaunch or poll one that is still working.
+	let tap_runs_block = {
+		let pending = crate::session::tap_runs::pending_labels();
+		if pending.is_empty() {
+			String::new()
+		} else {
+			let list = pending
+				.iter()
+				.map(|run| format!("- {run}"))
+				.collect::<Vec<_>>()
+				.join("\n");
+			format!(
+				"<tap_runs_running>\n\
+				As of this point these backgrounded tap-runs were still working. Each reply is delivered to you as a message the moment that specialist finishes — do NOT relaunch them, poll them, or wait on them by hand. To continue a dialog with one, pass its id as `session` on a later `tap(action=\"run\")` call.\n\
+				{list}\n\
+				</tap_runs_running>\n\n"
+			)
+		}
+	};
 	format!(
 		"<continuation>\n\
 		The conversation summary above is the concise record of prior work on this task, and its archive points to the lossless transcript. Resume from where the previous turn left off; do not restart or re-discover what is already established. If an exact detail required for the next action is absent, read the archive before acting; never guess. The <previous_assistant_response> and <request> blocks preserve the exact turn boundary and may already have been acted on; <task> is the validated frontier to resume now.\n\n\
-		{}{}{}{}<task>\n{}\n</task>\n\
+		{}{}{}{}{}<task>\n{}\n</task>\n\
 		</continuation>",
-		plan_note, jobs_block, previous_assistant_block, request_block, task_body
+		plan_note,
+		jobs_block,
+		tap_runs_block,
+		previous_assistant_block,
+		request_block,
+		task_body
 	)
 }
 

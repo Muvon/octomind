@@ -1943,8 +1943,18 @@ pub async fn run_interactive_session_with_input(
 		// output, so the run must not end here or it would orphan the job and
 		// drop the result the turn is waiting for.
 		let has_background_jobs = crate::session::shell_jobs::has_pending();
+		// A backgrounded tap-run is the same contract: its reply is injected into
+		// the inbox when the specialist finishes, so exiting here would orphan the
+		// subprocess and drop the reply the turn is waiting for.
+		let has_tap_runs = crate::session::tap_runs::has_running_jobs();
 
-		if !daemon && !has_schedules && !has_monitors && active_jobs == 0 && !has_background_jobs {
+		if !daemon
+			&& !has_schedules
+			&& !has_monitors
+			&& active_jobs == 0
+			&& !has_background_jobs
+			&& !has_tap_runs
+		{
 			break;
 		}
 

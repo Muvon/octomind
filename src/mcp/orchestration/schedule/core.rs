@@ -78,11 +78,15 @@ pub fn flush_due_to_inbox() {
 	}
 }
 
-/// True when the session has no in-flight work: no running tap-runs and no
-/// running background agent jobs. The main response loop having returned to
-/// the input-waiting state is implicit at the only call site.
+/// True when the session has no in-flight work: no running tap-runs, no
+/// pending detached shell jobs, and no running background agent jobs. The
+/// main response loop having returned to the input-waiting state is implicit
+/// at the only call site.
 pub fn is_session_idle() -> bool {
 	if crate::session::tap_runs::has_running_jobs() {
+		return false;
+	}
+	if crate::session::shell_jobs::has_pending() {
 		return false;
 	}
 	let active_jobs = crate::mcp::agent::functions::get_job_manager()

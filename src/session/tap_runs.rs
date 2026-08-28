@@ -209,6 +209,19 @@ pub fn has_running_jobs() -> bool {
 	})
 }
 
+/// Labels of the current session's still-running tap-runs, `"role (id)"` each,
+/// for deterministically reminding the model a specialist is still working —
+/// e.g. when a compaction would otherwise drop the launch message.
+pub fn pending_labels() -> Vec<String> {
+	let mut labels: Vec<String> = list_jobs()
+		.into_iter()
+		.filter(|j| j.status == TapJobStatus::Running)
+		.map(|j| format!("{} ({})", j.role, j.id))
+		.collect();
+	labels.sort();
+	labels
+}
+
 /// List all jobs for the current session, newest first.
 pub fn list_jobs() -> Vec<TapJobInfo> {
 	let session_id = match crate::session::context::current_session_id() {

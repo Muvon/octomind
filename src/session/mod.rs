@@ -253,6 +253,36 @@ pub fn latest_task_timestamp(messages: &[Message]) -> Option<u64> {
 /// Completed genuine turns whose call counts feed the fold pace estimate.
 pub const TURN_HISTORY: usize = 16;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearningSessionStats {
+	pub packs: u64,
+	pub items: u64,
+	pub tokens: u64,
+	pub used: u64,
+	pub credit_positive: u64,
+	pub credit_negative: u64,
+	pub used_without_verdict: u64,
+}
+
+impl LearningSessionStats {
+	pub fn record_pack(&mut self, items: u64, tokens: u64) {
+		self.packs += 1;
+		self.items += items;
+		self.tokens += tokens;
+	}
+
+	pub fn record_use(&mut self, delta: f64) {
+		self.used += 1;
+		if delta > 0.0 {
+			self.credit_positive += 1;
+		} else if delta < 0.0 {
+			self.credit_negative += 1;
+		} else {
+			self.used_without_verdict += 1;
+		}
+	}
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionInfo {
 	pub name: String,
@@ -320,6 +350,10 @@ pub struct SessionInfo {
 	// runway; a genuine user turn resets it so new work gets a short horizon.
 	#[serde(default)]
 	pub consecutive_compressions: u32,
+	/// Persisted learning usage for this named session. Active pack contents and
+	/// pack-local IDs remain runtime-only in `ChatSession`.
+	#[serde(default)]
+	pub learning_stats: LearningSessionStats,
 	/// Standing user policy for assistant-run verification. Updated from genuine
 	/// user turns only; persisted independently of detector streaks and context
 	/// compression.
@@ -643,6 +677,35 @@ mod tests {
 	use super::*;
 	use crate::session::persistence::has_incomplete_tool_calls;
 	use serde_json::json;
+
+	#[test]
+	fn learning_stats_persist_and_default_for_old_sessions() {
+		let old: SessionInfo = serde_json::from_value(json!({
+			"name": "old",
+			"created_at": 1,
+			"model": "test",
+			"role": "assistant",
+			"input_tokens": 0,
+			"output_tokens": 0,
+			"cache_read_tokens": 0,
+			"cache_write_tokens": 0,
+			"total_cost": 0.0,
+			"duration_seconds": 0,
+			"layer_stats": []
+		}))
+		.unwrap();
+		assert_eq!(old.learning_stats.packs, 0);
+
+		let mut current = SessionInfo::default();
+		current.learning_stats.record_pack(4, 700);
+		current.learning_stats.record_use(0.05);
+		let restored: SessionInfo =
+			serde_json::from_value(serde_json::to_value(current).unwrap()).unwrap();
+		assert_eq!(restored.learning_stats.items, 4);
+		assert_eq!(restored.learning_stats.tokens, 700);
+		assert_eq!(restored.learning_stats.used, 1);
+		assert_eq!(restored.learning_stats.credit_positive, 1);
+	}
 
 	#[test]
 	fn latest_task_timestamp_is_the_live_request_message_timestamp() {

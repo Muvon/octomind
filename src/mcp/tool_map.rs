@@ -785,3 +785,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "tool_map_tests.rs"]
+mod tool_map_tests;

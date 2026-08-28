@@ -206,3 +206,7 @@ pub async fn handle_role(
 		},
 	)))
 }
+
+#[cfg(test)]
+#[path = "role_tests.rs"]
+mod tests;

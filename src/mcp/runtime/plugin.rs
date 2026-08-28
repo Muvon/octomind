@@ -821,3 +821,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "plugin_tests.rs"]
+mod plugin_tests;

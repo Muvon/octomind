@@ -648,3 +648,7 @@ mod tests {
 			.expect("a disabled supervisor never runs the planner");
 	}
 }
+
+#[cfg(test)]
+#[path = "validation_tests.rs"]
+mod validation_tests;

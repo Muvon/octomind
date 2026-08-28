@@ -23,6 +23,7 @@ use crate::session::chat::test_support::{
 };
 use crate::supervisor::learning::backend::FileBackend;
 use crate::supervisor::learning::Lesson;
+use serial_test::serial;
 
 const ROLE: &str = "__inject_test_role";
 
@@ -84,6 +85,7 @@ fn cancel_pair() -> (
 	tokio::sync::watch::channel(false)
 }
 
+#[serial]
 #[tokio::test]
 async fn test_followup_retrieval_injects_and_dedupes() {
 	let _guard = ENV_LOCK.lock().await;
@@ -155,6 +157,7 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	cleanup(proj);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_first_call_retrieval_uses_keyword_query() {
 	let _guard = ENV_LOCK.lock().await;
@@ -215,6 +218,7 @@ async fn test_disabled_learning_injects_nothing() {
 	assert!(injected.is_empty());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_active_pack_is_token_bounded_with_stable_pack_ids() {
 	let _guard = ENV_LOCK.lock().await;
@@ -248,6 +252,7 @@ async fn test_active_pack_is_token_bounded_with_stable_pack_ids() {
 	cleanup(proj);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_long_experience_injects_card_with_full_file_reference() {
 	let _guard = ENV_LOCK.lock().await;

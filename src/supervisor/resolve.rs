@@ -1079,3 +1079,7 @@ mod tests {
 		assert!(!parse_classifier("not json").answer_only);
 	}
 }
+
+#[cfg(test)]
+#[path = "resolve_tests.rs"]
+mod unit_tests;

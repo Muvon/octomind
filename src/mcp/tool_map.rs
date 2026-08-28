@@ -728,7 +728,7 @@ mod tests {
 
 		// Capability-deactivation path: the tool belongs to the static role
 		// config, so unregistering it as "dynamic" must be refused.
-		unregister_dynamic_server_tools("core", &[static_tool.clone()]);
+		unregister_dynamic_server_tools("core", std::slice::from_ref(&static_tool));
 
 		let server = get_server_for_tool(&static_tool)
 			.expect("static role-owned tool must survive dynamic unregister");

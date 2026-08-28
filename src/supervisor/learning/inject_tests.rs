@@ -303,3 +303,17 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 
 	cleanup(proj);
 }
+
+#[test]
+fn retrieval_rewrite_validation_accepts_keywords_and_rejects_answers() {
+	let valid = validate_retrieval_patterns(
+		"oauth callback\npkce verifier\nstate parameter\nsession fixation\ncsrf protection",
+	)
+	.expect("valid keyword rewrite");
+	assert_eq!(valid.len(), 5);
+	assert!(validate_retrieval_patterns(
+		"Good morning!\nThis is the answer to the user's request.\ntranslation\nicelandic\ngreeting\nlanguage"
+	)
+	.is_err());
+	assert!(validate_retrieval_patterns("one\ntwo").is_err());
+}

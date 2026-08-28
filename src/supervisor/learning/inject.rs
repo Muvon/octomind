@@ -327,7 +327,7 @@ fn format_pack(selected: &[SelectedMemory]) -> String {
 }
 
 /// Call LLM to prepare retrieval patterns/query based on backend type.
-async fn prepare_retrieval_query(
+pub(crate) async fn prepare_retrieval_query(
 	config: &Config,
 	user_input: &str,
 	backend_type: &str,
@@ -349,11 +349,33 @@ async fn prepare_retrieval_query(
 	)
 	.await?;
 
+	validate_retrieval_patterns(&response)
+}
+
+pub(crate) fn validate_retrieval_patterns(response: &str) -> Result<Vec<String>> {
 	let patterns: Vec<String> = response
 		.lines()
-		.map(|l| l.trim().to_string())
+		.map(|l| l.trim().to_lowercase())
 		.filter(|l| !l.is_empty())
 		.collect();
+	if !(3..=5).contains(&patterns.len()) {
+		anyhow::bail!(
+			"invalid retrieval rewrite: expected 3-5 lines, received {}",
+			patterns.len()
+		);
+	}
+	for pattern in &patterns {
+		let words = pattern.split_whitespace().count();
+		let forbidden = ['<', '>', '=', '"', '\'', '!', '?'];
+		if pattern.chars().count() > 64
+			|| !(1..=5).contains(&words)
+			|| pattern
+				.chars()
+				.any(|character| forbidden.contains(&character))
+		{
+			anyhow::bail!("invalid retrieval rewrite: non-keyword line");
+		}
+	}
 
 	Ok(patterns)
 }

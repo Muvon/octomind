@@ -55,9 +55,10 @@ fn extract_json_lenient_returns_none_for_empty_input() {
 }
 
 fn summary_with_signal(signal: &str) -> CompressionSummary {
-	let mut summary = CompressionSummary::default();
-	summary.current_task = signal.to_string();
-	summary
+	CompressionSummary {
+		current_task: signal.to_string(),
+		..Default::default()
+	}
 }
 
 #[test]
@@ -81,8 +82,10 @@ fn evaluate_decision_force_overrides_a_veto_but_not_the_substantive_guard() {
 
 #[test]
 fn evaluate_decision_requires_a_substantive_summary_without_pact() {
-	let mut empty = CompressionSummary::default();
-	empty.should_compress = true;
+	let empty = CompressionSummary {
+		should_compress: true,
+		..Default::default()
+	};
 	assert!(!evaluate_decision(&empty, false, false));
 
 	let mut substantive = summary_with_signal("finish the widget");
@@ -94,7 +97,9 @@ fn evaluate_decision_requires_a_substantive_summary_without_pact() {
 fn evaluate_decision_pact_bypasses_the_substantive_guard() {
 	// PACT carries its own attributed evidence, so the narrative-field
 	// heuristic must not veto it.
-	let mut empty = CompressionSummary::default();
-	empty.should_compress = true;
+	let empty = CompressionSummary {
+		should_compress: true,
+		..Default::default()
+	};
 	assert!(evaluate_decision(&empty, false, true));
 }

@@ -206,7 +206,28 @@ The pack is materialized as a system-managed user-role message only around the p
 
 ### Retrieval (File Backend)
 
-Scoped recall is a **hybrid search**: LLM-extracted keywords (sparse substring ranking) are fused with BGE-small embedding cosine similarity (dense) via Reciprocal Rank Fusion (RRF, `k=60`), then reweighted by recency and the lesson's learned importance. Recency uses a 30-day half-life with up to a +50% boost; importance contributes a bounded 0.75x–1.25x multiplier so relevance remains primary. Embedding candidates below a `0.2` cosine floor are dropped as noise, and if the embedding model isn't ready yet the cosine signal is silently skipped. The LLM keyword-prep call runs only on the **first** retrieval of a session; follow-up messages use embedding-only recall (no extra LLM call).
+Scoped recall is a **hybrid search**: LLM-extracted keywords and short phrases
+(sparse) are fused with embedding cosine similarity (dense) via Reciprocal Rank
+Fusion (RRF, `k=60`), then reweighted by recency and learned importance. An
+exact sparse phrase receives strong credit; when the phrase is absent, at least
+two selective constituent terms must match, preventing one generic word from
+admitting a memory.
+
+Sparse and dense normally receive equal RRF weight. If one of the first three
+sparse hits has learned importance below `0.4`, that query is treated as
+correction-conflicted and sparse weight becomes `0.25`; dense outage always
+restores full sparse ordering. One highest-importance sparse candidate may be
+reserved at rank five when fusion buried it, preserving identifier and indirect
+cue recall without letting lexical noise control ranks one through four.
+
+Recency uses a 30-day half-life with up to a +50% boost; importance contributes
+a bounded 0.75x–1.25x multiplier so relevance remains primary. Embedding
+candidates below a `0.2` cosine floor are dropped as noise, and if the embedding
+model isn't ready yet the cosine signal is silently skipped. The query-rewrite
+output is accepted only as 3–5 short keyword lines; malformed or answer-like
+responses fail safely to retrieval without rewritten patterns. The rewrite call
+runs only on the **first** retrieval of a session; follow-up messages use
+embedding-only recall.
 
 ### Managing Lessons (`/learning`)
 

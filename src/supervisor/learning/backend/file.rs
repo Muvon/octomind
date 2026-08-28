@@ -431,12 +431,13 @@ impl LearningBackend for FileBackend {
 
 		// Fuse both rankings via Reciprocal Rank Fusion (Cormack et al. 2009).
 		// Returns indices into `all` sorted by fused score descending.
-		let mut rankings: Vec<&[usize]> = Vec::with_capacity(2);
-		rankings.push(&keyword_ranking);
+		let keyword_weight = adaptive_keyword_weight(&keyword_ranking, &cosine_ranking, &all);
+		let mut rankings: Vec<(&[usize], f32)> = Vec::with_capacity(2);
+		rankings.push((&keyword_ranking, keyword_weight));
 		if !cosine_ranking.is_empty() {
-			rankings.push(&cosine_ranking);
+			rankings.push((&cosine_ranking, 1.0));
 		}
-		let mut fused = reciprocal_rank_fusion(all.len(), &rankings);
+		let mut fused = weighted_reciprocal_rank_fusion(all.len(), &rankings);
 
 		// Recency reweight: nudge recent lessons up *among the already-relevant*
 		// candidates. RRF has already dropped zero-signal items, so this only
@@ -451,6 +452,7 @@ impl LearningBackend for FileBackend {
 			*score *= importance_factor(all[*idx].importance);
 		}
 		fused.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+		promote_sparse_rescue(&mut fused, &keyword_ranking, &all);
 
 		let hot = expand_ranked_with_links(&all, &fused, limit);
 		let mut recalled = Vec::with_capacity(limit);
@@ -530,12 +532,13 @@ impl LearningBackend for FileBackend {
 		let Ok(dir) = Self::learning_dir(role, project) else {
 			return false;
 		};
-		let Ok(entries) = std::fs::read_dir(&dir) else {
-			return false;
-		};
-		entries
-			.flatten()
-			.any(|e| e.path().extension().is_some_and(|x| x == "md"))
+		let hot = std::fs::read_dir(&dir).is_ok_and(|entries| {
+			entries
+				.flatten()
+				.any(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
+		});
+		hot || std::fs::metadata(dir.join(".archive").join("catalog.jsonl"))
+			.is_ok_and(|metadata| metadata.len() > 0)
 	}
 
 	async fn reinforce(
@@ -612,11 +615,9 @@ impl LearningBackend for FileBackend {
 			let stale = chrono::DateTime::parse_from_rfc3339(&entry.created)
 				.map(|c| (now - c.with_timezone(&chrono::Utc)).num_seconds() > cutoff_secs)
 				.unwrap_or(false);
-			if stale {
-				if super::super::retention::archive_record(&entry).is_ok() {
-					archived += 1;
-					crate::log_debug!("Decay: cold-archived stale weak entry: {}", entry.content);
-				}
+			if stale && super::super::retention::archive_record(&entry).is_ok() {
+				archived += 1;
+				crate::log_debug!("Decay: cold-archived stale weak entry: {}", entry.content);
 			}
 		}
 		if archived > 0 {
@@ -630,6 +631,12 @@ impl LearningBackend for FileBackend {
 /// canonical value — high enough that early ranks dominate without
 /// crushing later ranks completely.
 const RRF_K: f32 = 60.0;
+/// Dense relevance is the primary semantic signal. Sparse matches are valuable
+/// for exact identifiers but noisier around stale/corrected memories, so when
+/// dense evidence exists they contribute one quarter of its RRF mass. With no
+/// dense ranking, uniform scaling preserves the complete keyword order.
+const KEYWORD_RRF_WEIGHT: f32 = 0.25;
+const LOW_TRUST_IMPORTANCE: f64 = 0.4;
 
 /// Recency reweight strength: a brand-new lesson gets at most +50% on its
 /// fused relevance score. Small enough that relevance still leads.
@@ -638,9 +645,55 @@ const RECENCY_WEIGHT: f32 = 0.5;
 const RECENCY_HALFLIFE_DAYS: f32 = 30.0;
 /// Importance 0..1 maps to a modest 0.75x..1.25x rerank multiplier.
 const IMPORTANCE_RERANK_WEIGHT: f32 = 0.5;
+const COSINE_FLOOR: f32 = 0.2;
 
 fn importance_factor(importance: f64) -> f32 {
 	1.0 + IMPORTANCE_RERANK_WEIGHT * (importance.clamp(0.0, 1.0) as f32 - 0.5)
+}
+
+/// Equal RRF is strongest for neutral memories, but sparse phrasing becomes
+/// hazardous when a weak/stale correction candidate is among its first hits.
+/// Downweight sparse evidence only for that conflict-contaminated query; dense
+/// outage still preserves the full sparse order.
+fn adaptive_keyword_weight(sparse: &[usize], dense: &[usize], lessons: &[Lesson]) -> f32 {
+	if dense.is_empty() {
+		return 1.0;
+	}
+	if sparse
+		.iter()
+		.take(3)
+		.any(|index| lessons[*index].importance < LOW_TRUST_IMPORTANCE)
+	{
+		KEYWORD_RRF_WEIGHT
+	} else {
+		1.0
+	}
+}
+
+/// Preserve one precise sparse avenue without letting lexical noise control
+/// the head of the ranking. Among the first three sparse hits, the strongest
+/// outcome-adjusted memory may occupy rank five when dense fusion buried it.
+/// This protects indirect identifier/correction recall while ranks 1-4 remain
+/// entirely score-driven.
+fn promote_sparse_rescue(ranked: &mut Vec<(f32, usize)>, sparse: &[usize], lessons: &[Lesson]) {
+	let candidate = sparse.iter().take(3).copied().max_by(|left, right| {
+		lessons[*left]
+			.importance
+			.partial_cmp(&lessons[*right].importance)
+			.unwrap_or(std::cmp::Ordering::Equal)
+	});
+	let Some(candidate) = candidate else {
+		return;
+	};
+	if ranked.iter().take(5).any(|(_, index)| *index == candidate) {
+		return;
+	}
+	let Some(current) = ranked.iter().position(|(_, index)| *index == candidate) else {
+		return;
+	};
+	let item = ranked.remove(current);
+	let position = ranked.len().min(4);
+	ranked.insert(position, item);
 }
 
 /// Interleave each directly retrieved memory with its explicit one-hop targets
@@ -720,6 +773,10 @@ fn rank_by_keywords(lessons: &[Lesson], patterns: &[String]) -> Vec<usize> {
 	if patterns.is_empty() {
 		return Vec::new();
 	}
+	const STOPWORDS: &[&str] = &[
+		"about", "after", "before", "could", "from", "have", "into", "should", "their", "there",
+		"these", "this", "using", "what", "when", "where", "which", "with", "would", "your",
+	];
 	let patterns_lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
 	let mut scored: Vec<(usize, usize)> = lessons
 		.iter()
@@ -731,10 +788,25 @@ fn rank_by_keywords(lessons: &[Lesson], patterns: &[String]) -> Vec<usize> {
 				l.content.to_lowercase(),
 				l.tags.join(" ").to_lowercase()
 			);
-			let hits = patterns_lower
-				.iter()
-				.filter(|p| haystack.contains(p.as_str()))
-				.count();
+			let hits = patterns_lower.iter().fold(0usize, |score, pattern| {
+				if haystack.contains(pattern.as_str()) {
+					return score + 4; // exact phrase or identifier
+				}
+				let mut terms: Vec<&str> = pattern
+					.split(|character: char| !character.is_alphanumeric() && character != '_')
+					.filter(|term| term.len() >= 3 && !STOPWORDS.contains(term))
+					.collect();
+				terms.sort_unstable();
+				terms.dedup();
+				let term_hits = terms
+					.into_iter()
+					.filter(|term| haystack.contains(term))
+					.count();
+				// One generic shared word ("summary", "query", "model") is
+				// not sparse evidence. Require two concepts when the exact phrase
+				// is absent; asymmetric RRF keeps this fallback secondary to dense.
+				score + if term_hits >= 2 { term_hits } else { 0 }
+			});
 			(hits, i)
 		})
 		.filter(|(hits, _)| *hits > 0)
@@ -775,6 +847,15 @@ fn pool_normalize(chunk_vecs: &[&[f32]]) -> Vec<f32> {
 /// ranking stays 1-to-1. Lessons with cosine ≤ 0.2 are excluded as noise.
 /// Returns indices into the input slice.
 async fn rank_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<usize>> {
+	Ok(score_by_cosine(lessons, intent)
+		.await?
+		.into_iter()
+		.filter(|(score, _)| *score > COSINE_FLOOR)
+		.map(|(_, index)| index)
+		.collect())
+}
+
+async fn score_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<(f32, usize)>> {
 	// Query gets the same no-truncation treatment as lessons: a within-cap query
 	// embeds as one vector — kept on `embed`, which deliberately doesn't persist
 	// high-volume per-turn input to the disk cache — while an oversized query is
@@ -824,10 +905,9 @@ async fn rank_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<usize>> 
 			let vec = pool_normalize(chunks);
 			(crate::embeddings::cosine(&intent_vec, &vec), i)
 		})
-		.filter(|(s, _)| *s > 0.2)
 		.collect();
 	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	Ok(scored.into_iter().map(|(_, i)| i).collect())
+	Ok(scored)
 }
 
 /// Reciprocal Rank Fusion: given multiple ranked lists of indices into
@@ -841,16 +921,25 @@ async fn rank_by_cosine(lessons: &[Lesson], intent: &str) -> Result<Vec<usize>> 
 /// outperforms Condorcet and individual rank learning methods" (SIGIR
 /// 2009). Used in production by Anthropic Contextual Retrieval and
 /// most modern hybrid-search engines.
+#[cfg(test)]
 fn reciprocal_rank_fusion(total: usize, rankings: &[&[usize]]) -> Vec<(f32, usize)> {
+	let weighted: Vec<(&[usize], f32)> = rankings.iter().map(|ranking| (*ranking, 1.0)).collect();
+	weighted_reciprocal_rank_fusion(total, &weighted)
+}
+
+fn weighted_reciprocal_rank_fusion(
+	total: usize,
+	rankings: &[(&[usize], f32)],
+) -> Vec<(f32, usize)> {
 	if total == 0 || rankings.is_empty() {
 		return Vec::new();
 	}
 	let mut scores = vec![0.0_f32; total];
-	for ranking in rankings {
+	for (ranking, weight) in rankings {
 		for (rank_zero_based, &idx) in ranking.iter().enumerate() {
 			if idx < scores.len() {
 				// RRF uses 1-indexed rank; +1 to convert from zero-based.
-				scores[idx] += 1.0 / (RRF_K + rank_zero_based as f32 + 1.0);
+				scores[idx] += weight / (RRF_K + rank_zero_based as f32 + 1.0);
 			}
 		}
 	}
@@ -1084,6 +1173,22 @@ created: "2026-04-05T00:00:00Z"
 	}
 
 	#[test]
+	fn rank_by_keywords_uses_phrase_terms_as_weak_fallback() {
+		let lessons = vec![
+			lesson_with(
+				"validate callback state and retain the PKCE verifier",
+				&["oauth"],
+			),
+			lesson_with("unrelated callback rendering", &["ui"]),
+		];
+		let ranking = rank_by_keywords(
+			&lessons,
+			&["state parameter".to_string(), "oauth callback".to_string()],
+		);
+		assert_eq!(ranking.first().copied(), Some(0));
+	}
+
+	#[test]
 	fn importance_rerank_is_bounded_and_neutral_at_half() {
 		assert_eq!(importance_factor(-1.0), 0.75);
 		assert_eq!(importance_factor(0.5), 1.0);
@@ -1163,6 +1268,57 @@ created: "2026-04-05T00:00:00Z"
 	}
 
 	#[test]
+	fn weighted_rrf_keeps_dense_correction_ahead_of_sparse_stale_match() {
+		let sparse = vec![1usize, 0]; // stale phrasing matches first
+		let dense = vec![0usize, 2]; // current rule is semantically strongest
+		let fused =
+			weighted_reciprocal_rank_fusion(3, &[(&sparse, KEYWORD_RRF_WEIGHT), (&dense, 1.0)]);
+		assert_eq!(fused.first().unwrap().1, 0);
+
+		// When embeddings are absent, keyword weighting is uniform and cannot
+		// disturb its original exact-match order.
+		let sparse_only = weighted_reciprocal_rank_fusion(3, &[(&sparse, 1.0)]);
+		assert_eq!(
+			sparse_only.iter().map(|item| item.1).collect::<Vec<_>>(),
+			sparse
+		);
+	}
+
+	#[test]
+	fn adaptive_keyword_weight_changes_only_conflict_contaminated_queries() {
+		let mut lessons = vec![lesson_with("current", &[]), lesson_with("stale", &[])];
+		lessons[0].importance = 0.9;
+		lessons[1].importance = 0.2;
+		assert_eq!(
+			adaptive_keyword_weight(&[1, 0], &[0], &lessons),
+			KEYWORD_RRF_WEIGHT
+		);
+		lessons[1].importance = 0.5;
+		assert_eq!(adaptive_keyword_weight(&[1, 0], &[0], &lessons), 1.0);
+		assert_eq!(adaptive_keyword_weight(&[1, 0], &[], &lessons), 1.0);
+	}
+
+	#[test]
+	fn sparse_rescue_uses_rank_five_and_prefers_outcome_importance() {
+		let mut lessons = vec![
+			lesson_with("current callback state verifier", &["oauth"]),
+			lesson_with("stale callback state", &["oauth"]),
+		];
+		lessons[0].importance = 0.9;
+		lessons[1].importance = 0.2;
+		lessons.extend((0..6).map(|index| lesson_with(&format!("dense {index}"), &[])));
+		let sparse = vec![1usize, 0];
+		let mut ranked = (2..8)
+			.enumerate()
+			.map(|(rank, index)| (1.0 - rank as f32 / 10.0, index))
+			.chain([(0.01, 1), (0.009, 0)])
+			.collect::<Vec<_>>();
+		promote_sparse_rescue(&mut ranked, &sparse, &lessons);
+		assert_eq!(ranked[4].1, 0);
+		assert_ne!(ranked[0].1, 0);
+	}
+
+	#[test]
 	fn rrf_uses_one_indexed_ranks() {
 		// With k=60, item at rank-0 (1-indexed: 1) scores 1/(60+1) = 1/61
 		// across one ranker. Item at rank-1 scores 1/62. Verify the math.
@@ -1189,3 +1345,11 @@ created: "2026-04-05T00:00:00Z"
 		assert!(s_first > s_second, "rank-1 must outscore rank-2");
 	}
 }
+
+#[cfg(test)]
+#[path = "file_benchmark_tests.rs"]
+mod benchmark_tests;
+
+#[cfg(test)]
+#[path = "longmemeval_benchmark_tests.rs"]
+mod longmemeval_benchmark_tests;

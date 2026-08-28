@@ -1,9 +1,9 @@
 <div align="center">
   <a href="https://octomind.run" target="_blank">
-    <img src="assets/logo.svg" width="640" alt="Octomind — AI Agent Runtime" />
+    <img src="assets/logo.svg" width="640" alt="Octomind — AI Coding Agent Runtime" />
   </a>
   <br /><br />
-  <strong>The CLI-first AI agent runtime.</strong><br />
+  <strong>The CLI-first AI coding agent runtime.</strong><br />
   <em>Pipe it, schedule it, embed it. One binary, any model, MCP-native — built for autonomous work, not just chat.</em>
   <br /><br />
 

@@ -57,6 +57,8 @@ struct Stats {
 	memory_pack_tokens: u64,
 	memory_credit_positive: u64,
 	memory_credit_negative: u64,
+	memory_consolidations: u64,
+	memory_archived: u64,
 	input_tokens: u64,
 	output_tokens: u64,
 	/// Wall time of the supervisor's own API requests, for throughput.
@@ -193,6 +195,15 @@ pub fn memory_credit(positive: bool) {
 		}
 	});
 }
+/// File-authoritative long-run maintenance completed. These process-local
+/// counters answer how much consolidation/archive work occurred; they are not
+/// anonymous telemetry and detached exit distillers have their own process.
+pub fn memory_retention(consolidated: u64, archived: u64) {
+	with(|s| {
+		s.memory_consolidations += consolidated;
+		s.memory_archived += archived;
+	});
+}
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {
@@ -204,6 +215,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.lessons_stored == 0
 		&& s.orientation_stored == 0
 		&& s.experiences_stored == 0
+		&& s.memory_consolidations == 0
+		&& s.memory_archived == 0
 		&& s.recalls_injected == 0;
 	if idle {
 		return None;
@@ -232,6 +245,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"memory_pack_tokens": s.memory_pack_tokens,
 		"memory_credit_positive": s.memory_credit_positive,
 		"memory_credit_negative": s.memory_credit_negative,
+		"memory_consolidations": s.memory_consolidations,
+		"memory_archived": s.memory_archived,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
 		"tokens_per_second": if s.api_time_ms > 0 {

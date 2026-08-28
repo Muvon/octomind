@@ -25,6 +25,7 @@
 pub mod backend;
 pub mod extract;
 pub mod inject;
+pub mod retention;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -66,6 +67,18 @@ pub struct Lesson {
 	/// Outcome of the trajectory that produced this record.
 	#[serde(default)]
 	pub outcome: TrajectoryOutcome,
+	/// Last time this memory was materially used by the specialist. Exposure
+	/// alone does not update it.
+	#[serde(default)]
+	pub last_used: String,
+	/// Number of materially-attributed uses. This is retention evidence, not a
+	/// proxy for truth; outcome credit remains in `importance`.
+	#[serde(default)]
+	pub use_count: u64,
+	/// Runtime source path populated by the file backend. It is deliberately not
+	/// serialized into records: hot/cold moves must not make stored metadata stale.
+	#[serde(skip)]
+	pub storage_path: String,
 }
 
 /// Runtime outcome label handed to detached extraction. Unknown is honest: a
@@ -132,6 +145,9 @@ impl Default for Lesson {
 			related: Vec::new(),
 			evidence: Vec::new(),
 			outcome: TrajectoryOutcome::Unknown,
+			last_used: String::new(),
+			use_count: 0,
+			storage_path: String::new(),
 		}
 	}
 }
@@ -161,6 +177,8 @@ impl Lesson {
 			"related" => Some(serde_json::json!(self.related)),
 			"evidence" => Some(serde_json::json!(self.evidence)),
 			"outcome" => Some(serde_json::Value::String(self.outcome.as_str().to_string())),
+			"last_used" => Some(serde_json::Value::String(self.last_used.clone())),
+			"use_count" => Some(serde_json::json!(self.use_count)),
 			_ => None,
 		}
 	}

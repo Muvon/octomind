@@ -7,9 +7,54 @@ use super::LearningBackend;
 use crate::config::Config;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct FileBackend;
+
+const COLD_RECALL_LIMIT: usize = 2;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Write beside the destination, sync, then rename into place. Same-directory
+/// rename gives the learning authority an atomic old-or-new view without
+/// pulling the test-only `tempfile` crate into production dependencies.
+fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<()> {
+	let dir = path
+		.parent()
+		.ok_or_else(|| anyhow::anyhow!("learning file has no parent: {}", path.display()))?;
+	let name = path
+		.file_name()
+		.and_then(|value| value.to_str())
+		.unwrap_or("memory");
+	for _ in 0..32 {
+		let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+		let temporary = dir.join(format!(".{name}.{}.{sequence}.tmp", std::process::id()));
+		let opened = std::fs::OpenOptions::new()
+			.create_new(true)
+			.write(true)
+			.open(&temporary);
+		let mut file = match opened {
+			Ok(file) => file,
+			Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+			Err(error) => return Err(error.into()),
+		};
+		let result = (|| -> std::io::Result<()> {
+			file.write_all(content)?;
+			file.sync_all()?;
+			drop(file);
+			std::fs::rename(&temporary, path)
+		})();
+		if result.is_err() {
+			let _ = std::fs::remove_file(&temporary);
+		}
+		return result.map_err(Into::into);
+	}
+	anyhow::bail!(
+		"could not reserve temporary learning file in {}",
+		dir.display()
+	)
+}
 
 /// Reverse the `store` escaping of the quoted YAML string values: `\"` -> `"`,
 /// `\\` -> `\`, `\n` -> newline. Single-pass so an escaped backslash is never
@@ -117,6 +162,8 @@ impl FileBackend {
 				"outcome" => {
 					lesson.outcome = val.parse().unwrap_or_default();
 				}
+				"last_used" => lesson.last_used = unescape(val),
+				"use_count" => lesson.use_count = val.parse().unwrap_or(0),
 				_ => {}
 			}
 		}
@@ -140,7 +187,8 @@ impl FileBackend {
 			let path = entry.path();
 			if path.extension().is_some_and(|e| e == "md") {
 				if let Ok(content) = std::fs::read_to_string(&path) {
-					if let Some(lesson) = Self::parse_lesson_file(&content) {
+					if let Some(mut lesson) = Self::parse_lesson_file(&content) {
+						lesson.storage_path = path.display().to_string();
 						lessons.push(lesson);
 					}
 				}
@@ -153,9 +201,147 @@ impl FileBackend {
 		});
 		lessons
 	}
+
+	/// Page a tiny exact-match slice from cold storage. The append-only catalog
+	/// avoids embedding or parsing the entire archive; stale catalog rows are
+	/// harmless because their file path is checked before use.
+	pub(crate) fn retrieve_archived(
+		dir: &std::path::Path,
+		patterns: &[String],
+		intent: &str,
+		limit: usize,
+	) -> Vec<Lesson> {
+		if limit == 0 {
+			return Vec::new();
+		}
+		let mut pattern_terms: Vec<String> = patterns
+			.iter()
+			.map(|term| term.trim().to_ascii_lowercase())
+			.filter(|term| !term.is_empty())
+			.collect();
+		pattern_terms.sort();
+		pattern_terms.dedup();
+		let stopwords = [
+			"about", "after", "before", "could", "from", "have", "into", "memory", "right",
+			"should", "their", "there", "these", "this", "using", "what", "when", "where", "which",
+			"with", "would", "your",
+		];
+		let mut intent_terms: Vec<String> = intent
+			.split(|character: char| !character.is_alphanumeric())
+			.map(str::to_ascii_lowercase)
+			.filter(|term| term.len() >= 4 && !stopwords.contains(&term.as_str()))
+			.take(12)
+			.collect();
+		intent_terms.sort();
+		intent_terms.dedup();
+		if pattern_terms.is_empty() && intent_terms.is_empty() {
+			return Vec::new();
+		}
+
+		let catalog = dir.join(".archive").join("catalog.jsonl");
+		let Ok(content) = std::fs::read_to_string(catalog) else {
+			return Vec::new();
+		};
+		let mut ranked = content
+			.lines()
+			.filter_map(|line| {
+				serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line).ok()
+			})
+			.filter_map(|entry| {
+				let text = entry.search_text();
+				let pattern_hits = pattern_terms
+					.iter()
+					.filter(|term| text.contains(term.as_str()))
+					.count();
+				let intent_hits = intent_terms
+					.iter()
+					.filter(|term| text.contains(term.as_str()))
+					.count();
+				// LLM-prepared patterns are already selective. Raw follow-up intent
+				// needs two independent terms so one generic word cannot page noise.
+				(pattern_hits > 0 || intent_hits >= 2).then_some((
+					pattern_hits * 4 + intent_hits,
+					entry.importance,
+					entry,
+				))
+			})
+			.collect::<Vec<_>>();
+		ranked.sort_by(|left, right| {
+			right.0.cmp(&left.0).then_with(|| {
+				right
+					.1
+					.partial_cmp(&left.1)
+					.unwrap_or(std::cmp::Ordering::Equal)
+			})
+		});
+
+		let mut recalled = Vec::new();
+		let mut seen = std::collections::HashSet::new();
+		for (_, _, entry) in ranked {
+			let path = entry.path(dir);
+			if !seen.insert(path.clone()) {
+				continue;
+			}
+			let Ok(content) = std::fs::read_to_string(&path) else {
+				continue;
+			};
+			if let Some(mut lesson) = Self::parse_lesson_file(&content) {
+				lesson.storage_path = path.display().to_string();
+				recalled.push(lesson);
+				if recalled.len() >= limit {
+					break;
+				}
+			}
+		}
+		recalled
+	}
+
+	fn find_archived_by_content(dir: &std::path::Path, content: &str) -> Option<Lesson> {
+		let catalog = std::fs::read_to_string(dir.join(".archive").join("catalog.jsonl")).ok()?;
+		for line in catalog.lines().rev() {
+			let Ok(entry) =
+				serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line)
+			else {
+				continue;
+			};
+			let path = entry.path(dir);
+			let Ok(stored) = std::fs::read_to_string(&path) else {
+				continue;
+			};
+			let Some(mut lesson) = Self::parse_lesson_file(&stored) else {
+				continue;
+			};
+			if lesson.content.trim() == content.trim() {
+				lesson.storage_path = path.display().to_string();
+				return Some(lesson);
+			}
+		}
+		None
+	}
+
+	fn reactivate_archived(item: &mut Lesson) -> Result<()> {
+		let cold = std::path::PathBuf::from(&item.storage_path);
+		if item.storage_path.is_empty()
+			|| !cold
+				.components()
+				.any(|component| component.as_os_str() == std::ffi::OsStr::new(".archive"))
+		{
+			return Ok(());
+		}
+		let hot_dir = if item.scope == "global" {
+			crate::directories::get_global_learning_dir()?
+		} else {
+			Self::learning_dir(&item.role, &item.project)?
+		};
+		let hot = hot_dir.join(format!("{}.md", item.file_id()));
+		std::fs::rename(&cold, &hot)?;
+		item.storage_path = hot.display().to_string();
+		Ok(())
+	}
 }
 
-/// Importance at/below which a reinforced entry is dropped entirely.
+/// Importance at/below which a reinforced entry leaves ordinary recall for the
+/// lossless cold archive.
 const IMPORTANCE_FLOOR: f64 = 0.1;
 /// Stale entries are pruned only once their importance has fallen to/below this;
 /// entries bumped above it by reinforcement survive regardless of age.
@@ -175,7 +361,7 @@ impl LearningBackend for FileBackend {
 
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\noutcome: {}\n---\n",
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
 			escape(&lesson.title),
 			escape(&lesson.content),
 			lesson.memory_type,
@@ -190,9 +376,14 @@ impl LearningBackend for FileBackend {
 			serde_json::to_string(&lesson.related)?,
 			serde_json::to_string(&lesson.evidence)?,
 			lesson.outcome.as_str(),
+			escape(&lesson.last_used),
+			lesson.use_count,
 		);
 
-		std::fs::write(dir.join(filename), content)?;
+		// A consolidation stores its replacement before moving source files. Make
+		// that ordering crash-safe: a partial write must never become the durable
+		// authority for either ordinary extraction or retention maintenance.
+		atomic_write(&dir.join(filename), content.as_bytes())?;
 		Ok(())
 	}
 
@@ -211,11 +402,12 @@ impl LearningBackend for FileBackend {
 		}
 
 		let all = self.retrieve_all(role, project, config).await?;
-		if all.is_empty() {
-			return Ok(Vec::new());
-		}
 		if patterns.is_empty() && intent.trim().is_empty() {
 			return Ok(all.into_iter().take(limit).collect());
+		}
+		let cold = Self::retrieve_archived(&dir, patterns, intent, COLD_RECALL_LIMIT.min(limit));
+		if all.is_empty() {
+			return Ok(cold);
 		}
 
 		// Sparse signal: LLM-extracted keywords → substring count → ranked by hits.
@@ -260,7 +452,20 @@ impl LearningBackend for FileBackend {
 		}
 		fused.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-		Ok(expand_ranked_with_links(&all, &fused, limit))
+		let hot = expand_ranked_with_links(&all, &fused, limit);
+		let mut recalled = Vec::with_capacity(limit);
+		let mut seen = std::collections::HashSet::new();
+		// Cold entries require exact lexical evidence while hot entries may arrive
+		// semantically. Put the precise cold page first, then fill from hot rank.
+		for lesson in cold.into_iter().chain(hot) {
+			if seen.insert(lesson.content.clone()) {
+				recalled.push(lesson);
+				if recalled.len() >= limit {
+					break;
+				}
+			}
+		}
+		Ok(recalled)
 	}
 
 	async fn delete(&self, id: &str, role: &str, project: &str, _config: &Config) -> Result<()> {
@@ -303,6 +508,22 @@ impl LearningBackend for FileBackend {
 		Ok(Self::read_lessons_sorted(&dir))
 	}
 
+	async fn retrieve_archived_global(
+		&self,
+		intent: &str,
+		patterns: &[String],
+		limit: usize,
+		_config: &Config,
+	) -> Result<Vec<Lesson>> {
+		let dir = crate::directories::get_global_learning_dir()?;
+		Ok(Self::retrieve_archived(
+			&dir,
+			patterns,
+			intent,
+			limit.min(COLD_RECALL_LIMIT),
+		))
+	}
+
 	/// Dir scan only — no parsing: the caller just needs to know whether the
 	/// scope is worth a retrieval query.
 	async fn has_lessons(&self, role: &str, project: &str, _config: &Config) -> bool {
@@ -330,18 +551,32 @@ impl LearningBackend for FileBackend {
 		entries.extend(Self::read_lessons_sorted(
 			&crate::directories::get_global_learning_dir()?,
 		));
-		let Some(mut entry) = entries
+		let mut entry = entries
 			.into_iter()
 			.find(|l| l.content.trim() == content.trim())
-		else {
+			.or_else(|| {
+				Self::find_archived_by_content(&Self::learning_dir(role, project).ok()?, content)
+			})
+			.or_else(|| {
+				Self::find_archived_by_content(
+					&crate::directories::get_global_learning_dir().ok()?,
+					content,
+				)
+			});
+		let Some(mut entry) = entry.take() else {
 			return Ok(());
 		};
+		Self::reactivate_archived(&mut entry)?;
 		let new_importance = (entry.importance + delta).clamp(0.0, 1.0);
+		entry.last_used = chrono::Utc::now().to_rfc3339();
+		entry.use_count = entry.use_count.saturating_add(1);
 		if new_importance <= IMPORTANCE_FLOOR {
-			self.delete(&entry.file_id(), &entry.role, &entry.project, config)
-				.await?;
+			entry.importance = new_importance;
+			self.store(&entry, config).await?;
+			super::super::retention::archive_record(&entry)?;
+			crate::supervisor::stats::memory_retention(0, 1);
 			crate::log_debug!(
-				"Reinforce: dropped (importance {:.2}): {}",
+				"Reinforce: cold-archived (importance {:.2}): {}",
 				new_importance,
 				entry.content
 			);
@@ -362,13 +597,14 @@ impl LearningBackend for FileBackend {
 		role: &str,
 		project: &str,
 		decay_days: u64,
-		config: &Config,
+		_config: &Config,
 	) -> Result<()> {
 		if decay_days == 0 {
 			return Ok(());
 		}
 		let cutoff_secs = (decay_days * 86_400) as i64;
 		let now = chrono::Utc::now();
+		let mut archived = 0;
 		for entry in Self::read_lessons_sorted(&Self::learning_dir(role, project)?) {
 			if entry.importance > PRUNE_THRESHOLD {
 				continue; // proven useful — keep regardless of age
@@ -377,11 +613,14 @@ impl LearningBackend for FileBackend {
 				.map(|c| (now - c.with_timezone(&chrono::Utc)).num_seconds() > cutoff_secs)
 				.unwrap_or(false);
 			if stale {
-				let _ = self
-					.delete(&entry.file_id(), &entry.role, &entry.project, config)
-					.await;
-				crate::log_debug!("Decay: pruned stale weak entry: {}", entry.content);
+				if super::super::retention::archive_record(&entry).is_ok() {
+					archived += 1;
+					crate::log_debug!("Decay: cold-archived stale weak entry: {}", entry.content);
+				}
 			}
+		}
+		if archived > 0 {
+			crate::supervisor::stats::memory_retention(0, archived);
 		}
 		Ok(())
 	}
@@ -680,6 +919,8 @@ created: "2026-04-05T14:30:00Z"
 related: ["memory-a","memory-b"]
 evidence: ["session://test/message/2"]
 outcome: failed
+last_used: "2026-08-28T00:00:00Z"
+use_count: 7
 ---
 "#;
 		let lesson = FileBackend::parse_lesson_file(content).unwrap();
@@ -691,6 +932,8 @@ outcome: failed
 		assert_eq!(lesson.project, "octofs");
 		assert_eq!(lesson.related, vec!["memory-a", "memory-b"]);
 		assert_eq!(lesson.evidence, vec!["session://test/message/2"]);
+		assert_eq!(lesson.last_used, "2026-08-28T00:00:00Z");
+		assert_eq!(lesson.use_count, 7);
 		assert_eq!(
 			lesson.outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Failed

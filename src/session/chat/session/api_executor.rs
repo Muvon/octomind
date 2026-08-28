@@ -115,7 +115,7 @@ async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, del
 		let applied = backend
 			.reinforce(content, role, project, delta, config)
 			.await;
-		if applied.is_ok() {
+		if applied.is_ok() && delta != 0.0 {
 			crate::supervisor::stats::memory_credit(delta > 0.0);
 		}
 	}
@@ -801,6 +801,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						crate::supervisor::notify(&format!(
 							"completion evidence passed, but plan finalization failed: {error}"
 						));
+						reinforce_recalled(chat_session, config, -0.05).await;
 						return Ok(());
 					}
 				}
@@ -842,6 +843,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						"Verify-gate: {} gap(s) unchanged after new evidence; not re-running",
 						gaps.len()
 					);
+					reinforce_recalled(chat_session, config, -0.15).await;
 					return Ok(());
 				}
 				let note = crate::supervisor::gate::format_advisory(&gaps);
@@ -976,6 +978,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		Err(error) => crate::log_debug!("Settling background fold failed: {}", error),
 	}
 
+	// A terminal turn without a verify-gate verdict still records materially
+	// reported use for retention, but applies no correctness credit. Gate paths
+	// already consumed the references above, so this is a no-op for them.
+	reinforce_recalled(chat_session, config, 0.0).await;
+
 	Ok(())
 }
 
@@ -994,7 +1001,11 @@ mod tests {
 		let project = "__credit_project";
 		let backend =
 			crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
-		for content in ["exposed but unused", "materially used"] {
+		for content in [
+			"exposed but unused",
+			"materially used",
+			"used without verdict",
+		] {
 			backend
 				.store(
 					&crate::supervisor::learning::Lesson {
@@ -1026,6 +1037,14 @@ mod tests {
 		];
 		session.used_memory_ids.insert("M2".to_string());
 		reinforce_recalled(&mut session, &config, 0.05).await;
+		session.recalled_refs = vec![(
+			"M3".to_string(),
+			"used without verdict".to_string(),
+			role.to_string(),
+			project.to_string(),
+		)];
+		session.used_memory_ids.insert("M3".to_string());
+		reinforce_recalled(&mut session, &config, 0.0).await;
 		let memories = backend.retrieve_all(role, project, &config).await.unwrap();
 		let unused = memories
 			.iter()
@@ -1037,6 +1056,14 @@ mod tests {
 			.unwrap();
 		let unused_importance = unused.importance;
 		let used_importance = used.importance;
+		let used_count = used.use_count;
+		let used_last_used = used.last_used.clone();
+		let neutral = memories
+			.iter()
+			.find(|memory| memory.content == "used without verdict")
+			.unwrap();
+		let neutral_importance = neutral.importance;
+		let neutral_count = neutral.use_count;
 
 		match previous {
 			Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
@@ -1044,6 +1071,10 @@ mod tests {
 		}
 		assert_eq!(unused_importance, 0.5);
 		assert!((used_importance - 0.55).abs() < f64::EPSILON);
+		assert_eq!(used_count, 1);
+		assert!(!used_last_used.is_empty());
+		assert_eq!(neutral_importance, 0.5);
+		assert_eq!(neutral_count, 1);
 	}
 
 	#[test]

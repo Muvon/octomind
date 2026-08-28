@@ -123,20 +123,28 @@ async fn run(
 ) -> KeepaliveExchanges {
 	let mut exchanges = Vec::new();
 	let started = Instant::now();
-	let max_idle_enabled = max_idle.as_secs() > 0;
+	let max_idle_enabled = max_idle > Duration::ZERO;
+	let idle_deadline = started + max_idle;
 
 	loop {
 		// Stop if max_idle has elapsed (cheap session-abandoned guard).
-		if max_idle_enabled && started.elapsed() >= max_idle {
+		if max_idle_enabled && Instant::now() >= idle_deadline {
 			crate::log_debug!(
-				"Cache keepalive: max_idle ({}s) reached, stopping",
-				max_idle.as_secs()
+				"Cache keepalive: max_idle ({:?}) reached, stopping",
+				max_idle
 			);
 			break;
 		}
 
-		// Wait one interval, with cancel as the override.
-		let sleep = tokio::time::sleep(interval);
+		// Wait one interval, with cancel as the override. The wait is capped
+		// at the idle deadline so the guard above always gets to run, even
+		// when interval is longer than the remaining idle budget.
+		let wait = if max_idle_enabled {
+			interval.min(idle_deadline.saturating_duration_since(Instant::now()))
+		} else {
+			interval
+		};
+		let sleep = tokio::time::sleep(wait);
 		tokio::pin!(sleep);
 		tokio::select! {
 			_ = &mut sleep => {}

@@ -34,8 +34,15 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-// session id -> (resource URI -> label) for links advertised but not yet updated.
-static WATCHED: RwLock<Option<HashMap<String, HashMap<String, String>>>> = RwLock::new(None);
+#[derive(Debug)]
+struct WatchedResource {
+	label: String,
+	delivering: bool,
+}
+
+// session id -> resources advertised but not yet delivered into the inbox.
+static WATCHED: RwLock<Option<HashMap<String, HashMap<String, WatchedResource>>>> =
+	RwLock::new(None);
 
 /// Lifecycle events for watched resources. Subscription tasks (which hold a
 /// `subscriptions/listen` stream open) listen for these so they can end the
@@ -108,7 +115,13 @@ pub fn register_for_session(session_id: &str, uri: &str, label: &str) {
 		.get_or_insert_with(HashMap::new)
 		.entry(session_id.to_string())
 		.or_default()
-		.insert(uri.to_string(), label.to_string());
+		.insert(
+			uri.to_string(),
+			WatchedResource {
+				label: label.to_string(),
+				delivering: false,
+			},
+		);
 }
 
 pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
@@ -119,6 +132,25 @@ pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
 		.and_then(|registry| registry.get(session_id))
 		.map(|jobs| jobs.contains_key(uri))
 		.unwrap_or(false)
+}
+
+/// Atomically claim one watched resource for delivery while keeping it
+/// pending until its inbox message exists. Duplicate update paths therefore
+/// cannot race two reads, and graceful shutdown cannot observe a false idle.
+pub fn begin_delivery_for_session(session_id: &str, uri: &str) -> bool {
+	let mut guard = WATCHED.write().unwrap();
+	let Some(resource) = guard
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+		.and_then(|jobs| jobs.get_mut(uri))
+	else {
+		return false;
+	};
+	if resource.delivering {
+		return false;
+	}
+	resource.delivering = true;
+	true
 }
 
 /// Clear a resource once its update has arrived. Returns true if it was watched.
@@ -177,7 +209,7 @@ pub fn pending_labels() -> Vec<String> {
 	};
 	let mut labels: Vec<String> = jobs
 		.iter()
-		.map(|(uri, label)| format!("{label} ({uri})"))
+		.map(|(uri, resource)| format!("{} ({uri})", resource.label))
 		.collect();
 	labels.sort();
 	labels

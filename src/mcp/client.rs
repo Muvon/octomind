@@ -273,12 +273,9 @@ async fn deliver_resource_update(
 	// Owned copy: the delivery task outlives this call, and a borrowed
 	// &str cannot cross `tokio::spawn`.
 	let session_id = session_id.to_string();
-	if !crate::session::shell_jobs::is_watched_for_session(&session_id, &uri) {
+	if !crate::session::shell_jobs::begin_delivery_for_session(&session_id, &uri) {
 		return;
 	}
-	// Clear it now so the loop can never wait forever, even if the read below
-	// fails.
-	crate::session::shell_jobs::complete_for_session(&session_id, &uri);
 	tokio::spawn(async move {
 		let body = match peer
 			.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.clone()))
@@ -301,10 +298,11 @@ async fn deliver_resource_update(
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob { id: uri },
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: uri.clone() },
 				content,
 			},
 		);
+		crate::session::shell_jobs::complete_for_session(&session_id, &uri);
 	});
 }
 

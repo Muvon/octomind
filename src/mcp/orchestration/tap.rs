@@ -502,11 +502,6 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 					format!("[Tap-run '{id_owned}' ({role_owned}) failed]\n\n{e:#}"),
 				),
 			};
-			if let Ok(mut s) = status_bg.write() {
-				if *s == TapJobStatus::Running {
-					*s = terminal;
-				}
-			}
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
 				source: crate::session::inbox::InboxSource::TapRun {
 					id: id_owned,
@@ -514,6 +509,13 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				},
 				content,
 			});
+			// Queue the handback before clearing Running. Graceful session shutdown
+			// can therefore never observe neither the job nor its result.
+			if let Ok(mut s) = status_bg.write() {
+				if *s == TapJobStatus::Running {
+					*s = terminal;
+				}
+			}
 		};
 		if let Some(sid) = session_id {
 			crate::session::context::with_session_id(sid, run).await;

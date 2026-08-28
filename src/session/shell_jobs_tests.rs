@@ -108,6 +108,29 @@ async fn next_event_for(
 	}
 }
 
+/// Assert no event for `session_id` is pending. Own-session events are
+/// published synchronously by the mutating call, so anything queued for us is
+/// already here; foreign events from parallel tests are drained and ignored.
+fn assert_no_event_for(
+	events: &mut tokio::sync::broadcast::Receiver<WatchEvent>,
+	session_id: &str,
+) {
+	loop {
+		match events.try_recv() {
+			Ok(event) => {
+				let mine = match &event {
+					WatchEvent::Completed { session_id: s, .. } => s == session_id,
+					WatchEvent::Cleared { session_id: s } => s == session_id,
+				};
+				assert!(!mine, "expected no event for {session_id}, got {event:?}");
+			}
+			// Lagged: foreign traffic overflowed the buffer. Keep draining.
+			Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+			Err(_) => return,
+		}
+	}
+}
+
 #[tokio::test]
 async fn completing_a_watched_resource_publishes_an_event() {
 	let sid = "shell-jobs-events-complete-session";
@@ -126,7 +149,7 @@ async fn completing_a_watched_resource_publishes_an_event() {
 
 	// Unwatched completions publish nothing.
 	assert!(!complete_for_session(sid, "octofs://jobs/ev-1"));
-	assert!(events.try_recv().is_err());
+	assert_no_event_for(&mut events, sid);
 	clear_for_session(sid);
 }
 
@@ -145,5 +168,5 @@ async fn clearing_a_session_publishes_one_cleared_event() {
 
 	// Clearing an already-empty session publishes nothing.
 	clear_for_session(sid);
-	assert!(events.try_recv().is_err());
+	assert_no_event_for(&mut events, sid);
 }

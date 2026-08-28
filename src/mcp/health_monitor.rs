@@ -139,6 +139,23 @@ pub fn stop_health_monitor() {
 async fn check_server_health_and_restart_if_dead(
 	server: &McpServerConfig,
 ) -> Result<(), anyhow::Error> {
+	// A server already in the terminal Failed state gave up on purpose — it
+	// failed its initial startup, or exhausted its restart budget. Don't
+	// recompute it to Dead and re-spawn it: "if it failed to start, leave it."
+	// Shutdown/death after a successful run is recorded as Dead (not Failed),
+	// so legitimate Ctrl+C recovery is unaffected.
+	// This check must run BEFORE any probe: `is_server_running` overwrites
+	// health_status/last_health_check as a side effect and would clobber the
+	// terminal Failed state before we could observe it.
+	let restart_info = process::get_server_restart_info(server.name());
+	if matches!(restart_info.health_status, ServerHealth::Failed) {
+		crate::log_debug!(
+			"Health monitor: server '{}' is in Failed state — not restarting",
+			server.name()
+		);
+		return Ok(());
+	}
+
 	// Perform different health checks based on server type
 	let health_status = match server.connection_type() {
 		McpConnectionType::Stdin => {
@@ -163,27 +180,12 @@ async fn check_server_health_and_restart_if_dead(
 		}
 	};
 
-	let restart_info = process::get_server_restart_info(server.name());
-
 	crate::log_debug!(
 		"Health check: server '{}' status = {:?}, restart_count = {}",
 		server.name(),
 		health_status,
 		restart_info.restart_count
 	);
-
-	// A server already in the terminal Failed state gave up on purpose — it
-	// failed its initial startup, or exhausted its restart budget. Don't
-	// recompute it to Dead and re-spawn it: "if it failed to start, leave it."
-	// Shutdown/death after a successful run is recorded as Dead (not Failed),
-	// so legitimate Ctrl+C recovery is unaffected.
-	if matches!(restart_info.health_status, ServerHealth::Failed) {
-		crate::log_debug!(
-			"Health monitor: server '{}' is in Failed state — not restarting",
-			server.name()
-		);
-		return Ok(());
-	}
 
 	// Update health status and last health check time
 	{

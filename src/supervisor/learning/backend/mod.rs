@@ -61,13 +61,25 @@ pub trait LearningBackend: Send + Sync {
 	/// task — so there is no relevance query, just an importance ranking.
 	async fn retrieve_global(&self, config: &Config) -> Result<Vec<Lesson>>;
 
+	/// Query a small cold global tier for reactivation. File storage implements
+	/// exact lexical paging; other backends own their archival semantics.
+	async fn retrieve_archived_global(
+		&self,
+		_intent: &str,
+		_patterns: &[String],
+		_limit: usize,
+		_config: &Config,
+	) -> Result<Vec<Lesson>> {
+		Ok(Vec::new())
+	}
+
 	/// Delete a lesson by its id (file backend: filename stem; MCP backend: unsupported).
 	async fn delete(&self, id: &str, role: &str, project: &str, config: &Config) -> Result<()>;
 
 	/// Outcome-driven reinforcement: nudge a recalled entry's importance after the
 	/// verify-gate labels the run that used it (+delta on pass, −delta on fail).
-	/// Entries falling to/below the floor are dropped. Default no-op (the MCP
-	/// backend owns its own scoring).
+	/// Entries falling to/below the floor leave ordinary recall. The file backend
+	/// retains them in cold storage; MCP owns its own scoring and retention.
 	async fn reinforce(
 		&self,
 		_content: &str,
@@ -79,9 +91,9 @@ pub trait LearningBackend: Send + Sync {
 		Ok(())
 	}
 
-	/// Grow-and-refine: drop scoped entries older than `decay_days` whose
-	/// importance has fallen to/below the prune threshold (stale and unproven or
-	/// misleading). Default no-op.
+	/// Grow-and-refine: remove scoped entries older than `decay_days` whose
+	/// importance has fallen to/below the prune threshold from ordinary recall.
+	/// The file backend cold-archives them losslessly. Default no-op.
 	async fn prune_stale(
 		&self,
 		_role: &str,

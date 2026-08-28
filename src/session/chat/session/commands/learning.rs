@@ -163,6 +163,8 @@ async fn handle_show(
 				"related": memory.related,
 				"evidence": memory.evidence,
 				"outcome": memory.outcome.as_str(),
+				"last_used": memory.last_used,
+				"use_count": memory.use_count,
 				"path": path,
 			}),
 		},
@@ -242,6 +244,8 @@ async fn handle_list(
 				"related": l.related,
 				"evidence": l.evidence,
 				"outcome": l.outcome.as_str(),
+				"last_used": l.last_used,
+				"use_count": l.use_count,
 			})
 		})
 		.collect();
@@ -311,19 +315,10 @@ async fn handle_delete(
 async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
 	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
-	let all = all_lessons(&*backend, &role, &project, config).await?;
-
-	if all.is_empty() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "clear",
-					"deleted": 0,
-					"message": "no lessons to clear",
-				}),
-			},
-		)));
-	}
+	// Listing includes globals for visibility, but clear is scope-local: one
+	// project must never wipe user-wide rules. Cold files belong to the same
+	// explicit destructive command and are removed below for the file backend.
+	let all = backend.retrieve_all(&role, &project, config).await?;
 
 	let total = all.len();
 	let mut deleted = 0;
@@ -337,12 +332,24 @@ async fn handle_clear(session: &ChatSession, config: &Config) -> Result<CommandR
 		}
 	}
 
+	let mut archived_cleared = false;
+	if config.supervisor.learning.backend == "file" {
+		let archive = crate::directories::get_learning_dir(&role, &project)?.join(".archive");
+		if archive.exists() {
+			match std::fs::remove_dir_all(&archive) {
+				Ok(()) => archived_cleared = true,
+				Err(error) => errors.push(format!("{}: {}", archive.display(), error)),
+			}
+		}
+	}
+
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Learning {
 			data: json!({
 				"subcommand": "clear",
 				"deleted": deleted,
 				"total": total,
+				"archived_cleared": archived_cleared,
 				"errors": errors,
 			}),
 		},

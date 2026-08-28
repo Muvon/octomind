@@ -224,6 +224,14 @@ carries it.
 - Outcome credit applies only to pack IDs the specialist reports materially
   using. Exposure is neutral. Guardrail generation from learned constraints is
   intentionally future work; do not make learned text executable policy yet.
+- File retention is a two-watermark hot/cold lifecycle with independent token
+  budgets per memory type. Similarity may select consolidation candidates but
+  never authorize a merge. Short quote-backed rules are not synthesized;
+  orientation/experience merges require a separate grounding verifier and move
+  sources to `.archive/` only after the replacement is stored. Hard-bound
+  overflow cold-archives by usefulness without deleting the source record.
+  Cold recall is exact lexical paging through `.archive/catalog.jsonl`, never a
+  full-archive embedding scan; materially used cold records promote back to hot.
 
 ### MCP misuse hints — guide, never block
 

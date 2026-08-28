@@ -128,6 +128,16 @@ pub async fn retrieve_and_format(
 	} else {
 		Vec::new()
 	};
+	// Cold global rules are not injected unconditionally: page only exact
+	// lexical matches from their compact catalog, then charge them to the same
+	// 512-token global sub-budget as hot global rules.
+	match backend
+		.retrieve_archived_global(user_input, &patterns, 2, config)
+		.await
+	{
+		Ok(items) => candidates.extend(items.into_iter().map(|lesson| (lesson, true))),
+		Err(error) => crate::log_debug!("Learning: cold global retrieve failed: {}", error),
+	}
 	let candidate_limit = if learning.backend == "mcp" {
 		MCP_RETRIEVAL_CANDIDATES
 	} else {
@@ -260,6 +270,9 @@ fn memory_reference(
 ) -> Option<String> {
 	if backend != "file" {
 		return None;
+	}
+	if !lesson.storage_path.is_empty() {
+		return Some(lesson.storage_path.clone());
 	}
 	let dir = if global || lesson.scope == "global" {
 		crate::directories::get_global_learning_dir().ok()?

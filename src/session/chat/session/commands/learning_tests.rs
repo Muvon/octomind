@@ -13,9 +13,8 @@
 // limitations under the License.
 
 //! Tests for the `/learning` command against the real file backend under a
-//! throwaway role scope. `clear` is deliberately NOT exercised: its lesson
-//! walk includes the global tier, so on a developer machine it would wipe
-//! real user-wide lessons.
+//! throwaway role scope. `clear` is scope-local and must never touch the global
+//! tier.
 
 use super::*;
 use crate::supervisor::learning::backend::create_backend;
@@ -176,6 +175,34 @@ async fn test_learning_list_and_delete_lifecycle() {
 		.filter(|s| listed.contains(*s))
 		.count();
 	assert_eq!(survivors, 1, "exactly one lesson must remain: {listed}");
+	let backend = create_backend(&config.supervisor.learning);
+	backend
+		.store(
+			&Lesson {
+				content: "global rule must survive scoped clear".to_string(),
+				scope: "global".to_string(),
+				created: chrono::Utc::now().to_rfc3339(),
+				..Default::default()
+			},
+			&config,
+		)
+		.await
+		.expect("store global rule");
+
+	let cleared = learning_data(
+		handle_learning(&mut session, &config, &["clear"])
+			.await
+			.expect("clear dispatches"),
+	);
+	assert_eq!(cleared["subcommand"], "clear");
+	assert_eq!(cleared["deleted"], 1);
+	let globals = backend
+		.retrieve_global(&config)
+		.await
+		.expect("retrieve globals");
+	assert!(globals
+		.iter()
+		.any(|memory| memory.content == "global rule must survive scoped clear"));
 
 	cleanup();
 }

@@ -34,6 +34,7 @@ fn test_recorders_and_snapshot_render() {
 	memory_pack(4, 900);
 	memory_credit(true);
 	memory_credit(false);
+	memory_retention(1, 2);
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
@@ -46,6 +47,8 @@ fn test_recorders_and_snapshot_render() {
 		"recalls",
 		"condense",
 		"memory_pack",
+		"memory_consolidations",
+		"memory_archived",
 		"experiences",
 	] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");

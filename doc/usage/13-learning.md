@@ -99,11 +99,15 @@ created: "2026-04-05T14:30:00Z"
 related: []
 evidence: []
 outcome: unknown
+last_used: ""
+use_count: 0
 ---
 ```
 
 - `title` is a short summary auto-derived from the first ~80 characters of the content (trimmed to a word boundary).
 - `scope` is `scoped` or `global` and determines which directory the file lives in.
+- `last_used` and `use_count` change only when the specialist reports that the
+  memory materially affected its work. Recall exposure alone is neutral.
 
 Files are human-readable and editable. Delete a file to remove a lesson — or use the [`/learning` command](#managing-lessons-learning).
 
@@ -125,7 +129,66 @@ Long-lived experiences are evaluated independently from that short-lesson decisi
 
 Confidence drives importance: `confidence=high` (a direct correction) → `importance 0.9`; anything else (a stated preference, `confidence=medium`) → `importance 0.6`.
 
-**Dedup and supersede.** The extraction LLM receives the existing lessons (both scoped and global) so it can avoid duplicates. Before storing, within the same scope: an identical-content lesson is skipped, and a refinement — a new lesson with **more than 60% word overlap** against an existing one — *supersedes* it (the old file is deleted, the new one written). This is why a hand-edited near-duplicate can disappear after the next extraction.
+**Dedup and supersede.** The extraction LLM receives a bounded, ID-labelled
+view of existing scoped and global lessons. Identical content is skipped. A
+refinement or reversal removes an older lesson only when the new quote-backed
+candidate explicitly names its ID through `supersedes` and both records have
+the same scope. Similarity alone never deletes a short user rule.
+
+### Long-run retention
+
+File-backed learning uses a two-watermark hot store with fixed internal token
+budgets per scope and memory type. The soft watermark is 80% of the hard bound:
+
+| Memory type | Scoped hard bound | Global hard bound |
+|-------------|------------------:|------------------:|
+| Short user-backed rules | 16,000 tokens | 4,000 tokens |
+| Orientation | 24,000 tokens | 8,000 tokens |
+| Experience | 48,000 tokens | 16,000 tokens |
+
+Maintenance runs after detached extraction, never in the user-response hot
+path. Crossing the hard watermark selects at most one similar
+orientation/experience pair as a *candidate* and asks the learning model for a
+shorter consolidation. Similarity only chooses what to review; it never proves
+equivalence. A separate verifier must confirm that the replacement adds no
+claim, hides no contradiction, preserves applicability/outcome boundaries, and
+retains all non-duplicate constraints. Only then is the replacement stored and
+the sources moved atomically to cold storage. The replacement keeps the source
+IDs in `related`, unions their evidence, inherits the lower importance, and
+does not strengthen confidence or outcome.
+
+Short user-backed rules are never synthesized by this pass because a generated
+merge would break their quote-first contract. They continue to change only
+through explicit, separately verified extraction and `supersedes`.
+
+After that single consolidation attempt, the lowest-utility records move to
+`.archive/<memory_type>/` until the hot store is back at 80%. Utility combines
+bounded importance, direct-use count, confidence, and last-use recency:
+
+`U = 0.55I + 0.15C + 0.15 min(1, ln(1+uses)/ln(11)) + 0.15/(1+age_days/180)`
+
+Here `I` is outcome-adjusted importance in `[0,1]`, `C` is `1` for high
+confidence and `0.5` otherwise, and age is measured from `last_used` (falling
+back to creation time). The logarithm rewards repeated demonstrated use without
+letting frequency dominate correctness. Task relevance is deliberately absent
+from eviction utility because maintenance has no current task; relevance stays
+the admission signal during recall.
+
+Cold files are retained losslessly and are
+excluded from hot embedding recall. A compact append-only catalog keeps their
+title, tags, and a short preview; exact lexical matches can page at most two
+cold records into a request without embedding the archive. Long cold
+experiences carry their real archive path in the Active Memory Pack, so the
+specialist can open the full record. A cold record reported as materially used
+is automatically promoted back to its hot scope before its use/outcome metadata
+is updated. Moving a file back manually has the same effect. This hysteresis
+prevents maintenance from moving one record on every extraction.
+
+Independently of the hard budget, a scoped record that is both weak
+(`importance <= 0.4`) and older than 90 days also moves to the same cold
+archive. Repeated negative outcome credit that lowers importance to `0.1` does
+the same immediately. Automatic retention never permanently deletes a file;
+explicit `/learning delete` and `clear` remain destructive user actions.
 
 ### Active Memory Pack
 
@@ -156,7 +219,7 @@ The interactive `/learning` command lets you browse and prune lessons for the cu
 | `/learning list *pattern*` | Filter by a glob pattern matched against content, title, and tags (e.g. `/learning list *auth*`). Combine with a page number. |
 | `/learning show <index>` | Inspect the complete memory body, file path, outcome, evidence handles, and related IDs. Alias: `get`. |
 | `/learning delete <index>` | Delete a lesson by its **1-based index** from the last list. Aliases: `rm`, `remove`. |
-| `/learning clear` | Delete **all** lessons for the current role + project scope. |
+| `/learning clear` | Delete all hot and cold lessons for the current role + project scope; global rules are untouched. |
 
 The list (and therefore delete indexing) covers the current scoped lessons followed by the global lessons, in a stable order. `clear` only wipes the current role+project scope. See [Session Commands](../reference/02-session-commands.md) for the full command reference.
 
@@ -196,7 +259,7 @@ Each entry in `field_map` maps a canonical learning field to the MCP tool's actu
 
 **Mappable canonical keys differ by endpoint:**
 
-- **store** can map any lesson field: `content`, `title`, `memory_type`, `importance`, `confidence`, `tags`, `source`, `role`, `project`, `scope`, `created`.
+- **store** can map any lesson field: `content`, `title`, `memory_type`, `importance`, `confidence`, `tags`, `source`, `role`, `project`, `scope`, `created`, `related`, `evidence`, `outcome`, `last_used`, `use_count`.
 - **retrieve** can map only these five: `query`, `role`, `project`, `limit`, `memory_type`. `memory_type` is always sent as the array `["learning"]` regardless of the value.
 
 **Value remapping.** When `confidence` is mapped, the value sent is **not** the literal `"high"`/`"medium"` string — it is remapped to a trust tier: `high` → `"user_confirmed"`, anything else → `"agent_inferred"`. This is what makes `confidence = "source"` line up with octobrain's source field.

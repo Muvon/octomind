@@ -304,21 +304,11 @@ pub async fn run_extraction(
 		}
 	}
 
-	// Grow-and-refine: prune scoped entries that have gone stale and weak.
-	let _ = backend
-		.prune_stale(
-			role,
-			project,
-			crate::supervisor::learning::DECAY_DAYS,
-			config,
-		)
-		.await;
-
 	// Lessons: gated by the model's decision; require user evidence. Orientation
 	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {
 		crate::log_debug!("Learning extraction: model decided NONE — no lessons");
-		return Ok(stored);
+		return finish_extraction(&*backend, config, role, project, stored).await;
 	}
 
 	let candidates =
@@ -328,7 +318,7 @@ pub async fn run_extraction(
 		candidates.len()
 	);
 	if candidates.is_empty() {
-		return Ok(stored);
+		return finish_extraction(&*backend, config, role, project, stored).await;
 	}
 
 	// Verification gate (closes the Self-Confirmation Trap at entry): a lesson
@@ -366,7 +356,7 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return Ok(stored);
+		return finish_extraction(&*backend, config, role, project, stored).await;
 	}
 
 	// 2. One batched LLM pass: does the evidence actually support each lesson's
@@ -386,7 +376,7 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return Ok(stored);
+		return finish_extraction(&*backend, config, role, project, stored).await;
 	}
 
 	// Store each. Identical content is skipped. A refinement or reversal deletes
@@ -451,6 +441,34 @@ pub async fn run_extraction(
 		}
 	}
 
+	finish_extraction(&*backend, config, role, project, stored).await
+}
+
+/// Run deterministic cleanup and bounded file-store maintenance after every
+/// extraction path that may have changed durable memory. Maintenance failures
+/// do not erase successfully extracted records; they are retried by the next
+/// extraction and remain visible in debug logs.
+async fn finish_extraction(
+	backend: &dyn crate::supervisor::learning::backend::LearningBackend,
+	config: &Config,
+	role: &str,
+	project: &str,
+	stored: usize,
+) -> Result<usize> {
+	if let Err(error) = backend
+		.prune_stale(
+			role,
+			project,
+			crate::supervisor::learning::DECAY_DAYS,
+			config,
+		)
+		.await
+	{
+		crate::log_debug!("Learning stale-prune failed: {}", error);
+	}
+	if let Err(error) = super::retention::maintain(backend, config, role, project).await {
+		crate::log_debug!("Learning retention maintenance failed: {}", error);
+	}
 	Ok(stored)
 }
 
@@ -674,6 +692,9 @@ fn parse_lessons_with_evidence(
 					related: Vec::new(),
 					evidence: Vec::new(),
 					outcome: super::TrajectoryOutcome::Unknown,
+					last_used: String::new(),
+					use_count: 0,
+					storage_path: String::new(),
 				},
 				evidence,
 				supersedes: parse_supersedes(attrs, candidate_count),
@@ -830,6 +851,9 @@ fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &st
 				related: Vec::new(),
 				evidence: Vec::new(),
 				outcome: super::TrajectoryOutcome::Unknown,
+				last_used: String::new(),
+				use_count: 0,
+				storage_path: String::new(),
 			});
 		}
 		remaining = &after_open[end_tag + 14..]; // skip past </orientation>
@@ -972,6 +996,9 @@ fn parse_experience_tag(
 			related,
 			evidence,
 			outcome,
+			last_used: String::new(),
+			use_count: 0,
+			storage_path: String::new(),
 		},
 		message_numbers,
 	})

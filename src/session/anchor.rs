@@ -391,9 +391,9 @@ mod tests {
 	fn task_sig_pins_the_fnv1a_reference_values() {
 		// Anchors are serialized and re-read by later processes, so the hash
 		// must never drift. FNV-1a 64 reference values (offset basis for "").
-		assert_eq!(task_sig("fix the login bug"), 12_820_283_829_725_102_688);
-		assert_eq!(task_sig("a"), 12_638_187_185_959_464_076);
-		assert_eq!(task_sig(""), 14_695_981_039_313_101_605);
+		assert_eq!(task_sig("fix the login bug"), 11_728_636_376_826_184_288);
+		assert_eq!(task_sig("a"), 12_638_187_200_555_641_996);
+		assert_eq!(task_sig(""), 14_695_981_039_346_656_037);
 	}
 
 	#[test]

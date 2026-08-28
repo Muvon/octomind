@@ -264,11 +264,10 @@ fn step_deserializes_conditional_flag() {
 		r#"
 		name = "gate"
 		conditional = true
+		on_match = ["proceed"]
 
 		[condition]
 		contains = "ready"
-
-		on_match = ["proceed"]
 
 		[[run]]
 		name = "proceed"

@@ -125,7 +125,7 @@ async fn fresh_session_non_interactive_loads_agents_file_as_instructions() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	std::fs::write(dir.path().join("AGENTS.md"), "Project rule: be terse.")
 		.expect("write AGENTS.md");
-	crate::mcp::set_thread_working_directory(dir.path().to_path_buf());
+	crate::mcp::set_session_working_directory(dir.path().to_path_buf());
 	let mut session = ChatSession::for_tests(Vec::new());
 
 	setup_system_prompt_and_cache(&mut session, &config, "assistant", false)
@@ -153,7 +153,7 @@ async fn fresh_session_interactive_adds_welcome_and_instructions() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	std::fs::write(dir.path().join("AGENTS.md"), "Project rule: be terse.")
 		.expect("write AGENTS.md");
-	crate::mcp::set_thread_working_directory(dir.path().to_path_buf());
+	crate::mcp::set_session_working_directory(dir.path().to_path_buf());
 	let mut session = ChatSession::for_tests(Vec::new());
 
 	setup_system_prompt_and_cache(&mut session, &config, "assistant", true)

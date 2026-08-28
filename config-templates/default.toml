@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 8
+version = 9
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -718,12 +718,16 @@ model = "octohub:auto"
 # agent would actually have received.
 [supervisor.condense]
 enabled = true
+# Learn a bounded per-session trigger from realized condenser savings. The
+# runtime multiplier starts at 1.0 and stays within 0.5x..2.0x of
+# tokens_threshold. False preserves the fixed threshold exactly.
+adaptive = false
 # Per-result trigger (estimated tokens of that single text result). 0 = off.
 # Keep well below mcp_response_tokens_threshold: that cap is the ceiling applied
 # first, this is the smart narrowing applied to what survives it.
 tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
-model = "anthropic:claude-haiku-4-5"
+model = "octohub:auto"
 
 # MCP backend configuration (uncomment to use instead of file backend):
 # Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.

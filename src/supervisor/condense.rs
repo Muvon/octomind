@@ -42,6 +42,7 @@ use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::{estimate_tokens, truncate_to_tokens};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 /// Sentinel marking a condensed result (mirrors `TRUNCATION_NOTICE_TAG`):
 /// stable + distinctive so downstream code and humans can key on it.
@@ -75,6 +76,23 @@ const TOOL_INTENT_CAP_TOKENS: usize = 1_000;
 const ARGS_CAP_CHARS: usize = 1_200;
 /// Context around query/diagnostic hits in a sampled oversized result.
 const SIGNAL_CONTEXT_LINES: usize = 2;
+
+/// Runtime adaptation is deliberately a bounded controller, not another set
+/// of user knobs. A strong condenser may see outputs down to half the configured
+/// baseline; a weak or poorly matched one is never allowed to push the trigger
+/// beyond twice it.
+const ADAPTIVE_MIN_MULTIPLIER: f64 = 0.5;
+const ADAPTIVE_MAX_MULTIPLIER: f64 = 2.0;
+/// The live condenser evaluation already treats saving more than half as its
+/// aggregate usefulness gate, so 50% is the neutral point for adaptation too.
+const ADAPTIVE_TARGET_SAVINGS: f64 = 0.5;
+/// One tool round contributes a quarter of the running estimate. This is fast
+/// enough to follow a model/task change while damping one-off result shapes.
+const ADAPTIVE_EWMA_ALPHA: f64 = 0.25;
+/// If a raised trigger hides outputs that the configured baseline would have
+/// sampled, relax slowly toward neutral until their real yield can be observed.
+/// This prevents permanent selection-bias lockout after an early weak streak.
+const ADAPTIVE_REPROBE_ALPHA: f64 = 0.1;
 
 const SYSTEM_PROMPT: &str = r#"You are an extractive context-pruning filter that sits between an AI agent and its tool outputs. The agent issued tool calls while working on a task; some outputs are large. Decide, per output, what the agent needs to see to converge on that task. Whatever you drop will not remain inline; the full original is saved to a file the agent can read on demand.
 
@@ -145,6 +163,126 @@ struct Candidate {
 	view: NumberedView,
 }
 
+#[derive(Debug, Clone)]
+struct AdaptiveThresholdState {
+	baseline: usize,
+	model: String,
+	savings_ewma: f64,
+}
+
+impl AdaptiveThresholdState {
+	fn new(baseline: usize, model: &str) -> Self {
+		Self {
+			baseline,
+			model: model.to_string(),
+			// Neutral prior: the first round uses exactly the configured baseline.
+			savings_ewma: ADAPTIVE_TARGET_SAVINGS,
+		}
+	}
+
+	fn matches(&self, cfg: &crate::supervisor::CondenseConfig) -> bool {
+		self.baseline == cfg.tokens_threshold && self.model == cfg.model
+	}
+
+	fn multiplier(&self) -> f64 {
+		// A log-space proportional controller centered at 50% savings:
+		//   m = 2^(1 - 2q)
+		// q=0 => 2x, q=.5 => 1x, q=1 => .5x. Unlike accumulated AIMD, this
+		// direct bounded mapping cannot drift or grow without limit.
+		2f64.powf(1.0 - 2.0 * self.savings_ewma)
+			.clamp(ADAPTIVE_MIN_MULTIPLIER, ADAPTIVE_MAX_MULTIPLIER)
+	}
+
+	fn threshold(&self) -> usize {
+		let lower = self.baseline.div_ceil(2);
+		let upper = self.baseline.saturating_mul(2);
+		((self.baseline as f64 * self.multiplier()).round() as usize).clamp(lower, upper)
+	}
+
+	fn observe(&mut self, attempted_tokens: u64, saved_tokens: u64) {
+		if attempted_tokens == 0 {
+			return;
+		}
+		let round_savings = saved_tokens.min(attempted_tokens) as f64 / attempted_tokens as f64;
+		self.savings_ewma += ADAPTIVE_EWMA_ALPHA * (round_savings - self.savings_ewma);
+	}
+
+	fn relax_toward_baseline(&mut self) {
+		self.savings_ewma += ADAPTIVE_REPROBE_ALPHA * (ADAPTIVE_TARGET_SAVINGS - self.savings_ewma);
+	}
+}
+
+type AdaptiveRegistry = HashMap<crate::session::context::SessionId, AdaptiveThresholdState>;
+
+fn adaptive_registry() -> &'static Mutex<AdaptiveRegistry> {
+	static REGISTRY: OnceLock<Mutex<AdaptiveRegistry>> = OnceLock::new();
+	REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn adaptive_threshold(cfg: &crate::supervisor::CondenseConfig) -> usize {
+	if !cfg.adaptive {
+		return cfg.tokens_threshold;
+	}
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return cfg.tokens_threshold;
+	};
+	let mut registry = adaptive_registry().lock().unwrap();
+	let state = registry
+		.entry(session_id)
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+	if !state.matches(cfg) {
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+	}
+	state.threshold()
+}
+
+fn observe_adaptive_round(
+	cfg: &crate::supervisor::CondenseConfig,
+	attempted_tokens: u64,
+	saved_tokens: u64,
+) -> usize {
+	if !cfg.adaptive {
+		return cfg.tokens_threshold;
+	}
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return cfg.tokens_threshold;
+	};
+	let mut registry = adaptive_registry().lock().unwrap();
+	let state = registry
+		.entry(session_id)
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+	if !state.matches(cfg) {
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+	}
+	state.observe(attempted_tokens, saved_tokens);
+	state.threshold()
+}
+
+fn relax_adaptive_threshold(cfg: &crate::supervisor::CondenseConfig) -> usize {
+	if !cfg.adaptive {
+		return cfg.tokens_threshold;
+	}
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return cfg.tokens_threshold;
+	};
+	let mut registry = adaptive_registry().lock().unwrap();
+	let state = registry
+		.entry(session_id)
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+	if !state.matches(cfg) {
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+	}
+	state.relax_toward_baseline();
+	state.threshold()
+}
+
+/// Remove process-local adaptive state when its owning session is torn down.
+pub(crate) fn clear_for_session(session_id: &crate::session::context::SessionId) {
+	if let Ok(mut registry) = adaptive_registry().lock() {
+		registry.remove(session_id);
+	}
+}
+
 /// Condense the round's oversized results in place. One model call for the
 /// whole round; under-threshold results are never touched. Fail-open: any
 /// error leaves everything as-is for the truncation backstop.
@@ -175,7 +313,8 @@ pub async fn condense_round(
 			}
 		})
 		.collect();
-	let floor = cfg.tokens_threshold.max(MIN_CANDIDATE_TOKENS);
+	let threshold = adaptive_threshold(cfg);
+	let floor = threshold.max(MIN_CANDIDATE_TOKENS);
 	let sizable: Vec<usize> = sizes
 		.iter()
 		.enumerate()
@@ -183,6 +322,20 @@ pub async fn condense_round(
 		.map(|(i, _)| i)
 		.collect();
 	if sizable.is_empty() {
+		let baseline_floor = cfg.tokens_threshold.max(MIN_CANDIDATE_TOKENS);
+		if cfg.adaptive
+			&& floor > baseline_floor
+			&& sizes
+				.iter()
+				.any(|&tokens| tokens > baseline_floor && tokens <= floor)
+		{
+			let next = relax_adaptive_threshold(cfg).max(MIN_CANDIDATE_TOKENS);
+			crate::log_debug!(
+				"Condense: adaptive threshold {}→{} to re-probe skipped baseline candidates",
+				crate::session::chat::format_number(floor as u64),
+				crate::session::chat::format_number(next as u64)
+			);
+		}
 		return;
 	}
 	if !spill_reader_available() {
@@ -215,10 +368,22 @@ pub async fn condense_round(
 		})
 		.collect::<Vec<_>>()
 		.join(" · ");
+	let adaptive_start = if cfg.adaptive {
+		format!(
+			" at adaptive threshold {}",
+			crate::session::chat::format_number(floor as u64)
+		)
+	} else {
+		String::new()
+	};
 	crate::supervisor::notify(&format!(
-		"condensing {} tool result(s): {culprits}",
+		"condensing {} tool result(s){adaptive_start}: {culprits}",
 		candidates.len()
 	));
+	let attempted_tokens = candidates
+		.iter()
+		.map(|candidate| sizes[candidate.result_index] as u64)
+		.sum();
 
 	let model = config.supervisor.condense.model.clone();
 	let response = match crate::supervisor::learning::extract::call_learning_llm(
@@ -239,7 +404,15 @@ pub async fn condense_round(
 	};
 
 	let Some(parsed) = parse_response(&response) else {
+		let next = observe_adaptive_round(cfg, attempted_tokens, 0);
 		crate::log_debug!("Condense: unparseable response, leaving results as-is");
+		if cfg.adaptive {
+			crate::log_debug!(
+				"Condense: adaptive threshold {}→{} after 0% realized savings",
+				crate::session::chat::format_number(floor as u64),
+				crate::session::chat::format_number(next.max(MIN_CANDIDATE_TOKENS) as u64)
+			);
+		}
 		return;
 	};
 
@@ -287,9 +460,25 @@ pub async fn condense_round(
 	if !untouched.is_empty() {
 		crate::log_debug!("Condense: left inline in full: {}", untouched.join(" · "));
 	}
+	let next_threshold = observe_adaptive_round(cfg, attempted_tokens, saved_tokens);
 	if n_condensed > 0 {
 		crate::supervisor::stats::condensed(n_condensed, saved_tokens);
-		crate::supervisor::notify(&format!("condensed: {}", summary.join(" · ")));
+		let adaptive_end = if cfg.adaptive {
+			format!(
+				" · adaptive threshold {}→{}",
+				crate::session::chat::format_number(floor as u64),
+				crate::session::chat::format_number(next_threshold.max(MIN_CANDIDATE_TOKENS) as u64)
+			)
+		} else {
+			String::new()
+		};
+		crate::supervisor::notify(&format!("condensed: {}{adaptive_end}", summary.join(" · ")));
+	} else if cfg.adaptive {
+		crate::log_debug!(
+			"Condense: adaptive threshold {}→{} after 0% realized savings",
+			crate::session::chat::format_number(floor as u64),
+			crate::session::chat::format_number(next_threshold.max(MIN_CANDIDATE_TOKENS) as u64)
+		);
 	}
 }
 
@@ -940,6 +1129,77 @@ mod tests {
 
 	fn specs(v: &[&str]) -> Vec<String> {
 		v.iter().map(|s| s.to_string()).collect()
+	}
+
+	fn adaptive_config(enabled: bool) -> crate::supervisor::CondenseConfig {
+		crate::supervisor::CondenseConfig {
+			enabled: true,
+			adaptive: enabled,
+			tokens_threshold: 5_000,
+			model: "test:model".to_string(),
+		}
+	}
+
+	#[test]
+	fn adaptive_threshold_starts_neutral_and_moves_with_realized_savings() {
+		let mut strong = AdaptiveThresholdState::new(5_000, "test:model");
+		assert_eq!(strong.threshold(), 5_000);
+		strong.observe(10_000, 10_000);
+		assert!(strong.threshold() < 5_000);
+
+		let mut weak = AdaptiveThresholdState::new(5_000, "test:model");
+		weak.observe(10_000, 0);
+		assert!(weak.threshold() > 5_000);
+
+		let mut neutral = AdaptiveThresholdState::new(5_000, "test:model");
+		neutral.observe(10_000, 5_000);
+		assert_eq!(neutral.threshold(), 5_000);
+	}
+
+	#[test]
+	fn adaptive_threshold_cannot_escape_half_to_double_baseline() {
+		let mut state = AdaptiveThresholdState::new(5_000, "test:model");
+		for _ in 0..1_000 {
+			state.observe(10_000, 10_000);
+		}
+		assert!((2_500..=10_000).contains(&state.threshold()));
+
+		for _ in 0..2_000 {
+			state.observe(10_000, 0);
+		}
+		assert!((2_500..=10_000).contains(&state.threshold()));
+	}
+
+	#[test]
+	fn skipped_baseline_candidates_relax_a_raised_threshold_for_reprobe() {
+		let mut state = AdaptiveThresholdState::new(5_000, "test:model");
+		state.observe(10_000, 0);
+		let raised = state.threshold();
+		assert!(raised > 5_000);
+		state.relax_toward_baseline();
+		assert!(state.threshold() < raised);
+	}
+
+	#[tokio::test]
+	async fn adaptive_runtime_is_session_scoped_and_disabled_mode_stays_fixed() {
+		let adaptive = adaptive_config(true);
+		let fixed = adaptive_config(false);
+		let first = "condense-adaptive-session-a".to_string();
+		let second = "condense-adaptive-session-b".to_string();
+
+		crate::session::context::with_session_id(first.clone(), async {
+			assert_eq!(adaptive_threshold(&adaptive), 5_000);
+			assert!(observe_adaptive_round(&adaptive, 10_000, 10_000) < 5_000);
+			assert_eq!(adaptive_threshold(&fixed), 5_000);
+		})
+		.await;
+		crate::session::context::with_session_id(second.clone(), async {
+			assert_eq!(adaptive_threshold(&adaptive), 5_000);
+		})
+		.await;
+
+		clear_for_session(&first);
+		clear_for_session(&second);
 	}
 
 	#[test]

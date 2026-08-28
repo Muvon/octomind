@@ -226,6 +226,10 @@ pub struct SupervisorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CondenseConfig {
 	pub enabled: bool,
+	/// Adapt the trigger during this process-local session from the condenser's
+	/// realized token savings. The configured threshold remains the baseline;
+	/// the runtime multiplier starts at 1.0 and is bounded to 0.5x..2.0x.
+	pub adaptive: bool,
 	/// Per-result trigger (estimated tokens of that single text result); results
 	/// above this are condensed. `0` disables. Keep well below
 	/// `mcp_response_tokens_threshold`.

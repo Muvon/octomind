@@ -83,9 +83,48 @@ fn plan() -> MigrationPlan {
 				to: 8,
 				apply: remove_v8_compression_ignore_cost,
 			},
+			VersionMigration {
+				from: 8,
+				to: 9,
+				apply: add_v9_adaptive_condense,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v9 adds the opt-in runtime-only adaptive condenser trigger. Existing
+/// configurations remain on the exact fixed-threshold behavior.
+fn add_v9_adaptive_condense(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_condense = required_table(
+		required_table(
+			template.as_table(),
+			"supervisor",
+			"embedded default configuration",
+		)?,
+		"condense",
+		"embedded default supervisor configuration",
+	)?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user configuration",
+	)?;
+	let condense = ensure_table(
+		supervisor,
+		required_table(
+			template.as_table(),
+			"supervisor",
+			"embedded default configuration",
+		)?,
+		"condense",
+		"user supervisor configuration",
+	)?;
+	merge_missing(condense, template_condense, "adaptive")
 }
 
 /// v8 removes `compression.decision.ignore_cost`. The dollar gate it switched
@@ -731,8 +770,30 @@ ignore_cost = true
 	}
 
 	#[test]
+	fn v8_gains_disabled_adaptive_condense_and_keeps_threshold() {
+		let existing = r#"version = 8
+
+[supervisor.condense]
+enabled = true
+tokens_threshold = 4321
+model = "anthropic:custom"
+"#;
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v8 must migrate");
+		assert_eq!(migration.from_version, 8);
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		let condense = &migrated["supervisor"]["condense"];
+		assert_eq!(condense["adaptive"].as_bool(), Some(false));
+		assert_eq!(condense["tokens_threshold"].as_integer(), Some(4321));
+		assert_eq!(condense["model"].as_str(), Some("anthropic:custom"));
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 8", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 9", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

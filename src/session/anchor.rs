@@ -370,4 +370,201 @@ mod tests {
 		assert_eq!(restored.last_compacted_at, 42);
 		assert_eq!(restored.compactions_folded, 1);
 	}
+
+	#[test]
+	fn task_sig_is_deterministic_and_trim_insensitive() {
+		assert_eq!(task_sig("fix the login bug"), task_sig("fix the login bug"));
+		assert_eq!(
+			task_sig("  fix the login bug  "),
+			task_sig("fix the login bug")
+		);
+		assert_ne!(
+			task_sig("fix the login bug"),
+			task_sig("fix the logout bug")
+		);
+		// 0 is reserved for "unknown" — no real input may produce it.
+		assert_ne!(task_sig(""), 0);
+		assert_ne!(task_sig("a"), 0);
+	}
+
+	#[test]
+	fn task_sig_pins_the_fnv1a_reference_values() {
+		// Anchors are serialized and re-read by later processes, so the hash
+		// must never drift. FNV-1a 64 reference values (offset basis for "").
+		assert_eq!(task_sig("fix the login bug"), 12_820_283_829_725_102_688);
+		assert_eq!(task_sig("a"), 12_638_187_185_959_464_076);
+		assert_eq!(task_sig(""), 14_695_981_039_313_101_605);
+	}
+
+	#[test]
+	fn extend_tracks_intent_task_sig_lifecycle() {
+		let mut a = Anchor::default();
+		// Intent + signature: the signature is recorded.
+		a.extend(
+			AnchorUpdate {
+				intent: Some("Ship the parser".to_string()),
+				intent_task_sig: Some(42),
+				..Default::default()
+			},
+			0,
+		);
+		assert_eq!(a.intent_task_sig, 42);
+		// No intent in the update: the existing signature is untouched.
+		a.extend(
+			AnchorUpdate {
+				intent_task_sig: Some(99),
+				..Default::default()
+			},
+			0,
+		);
+		assert_eq!(a.intent_task_sig, 42);
+		// Intent supplied without a signature: resets to 0 (unknown).
+		a.extend(
+			AnchorUpdate {
+				intent: Some("New goal".to_string()),
+				..Default::default()
+			},
+			0,
+		);
+		assert_eq!(a.intent_task_sig, 0);
+		// Whitespace-only intent is not an intent: goal and signature untouched.
+		a.extend(
+			AnchorUpdate {
+				intent: Some("   ".to_string()),
+				intent_task_sig: Some(7),
+				..Default::default()
+			},
+			0,
+		);
+		assert_eq!(a.intent_task_sig, 0);
+		assert_eq!(a.intent, "New goal");
+	}
+
+	#[test]
+	fn extend_with_empty_update_only_bumps_counters() {
+		let mut a = Anchor::default();
+		a.extend(AnchorUpdate::default(), 77);
+		assert!(a.is_empty());
+		assert_eq!(a.compactions_folded, 1);
+		assert_eq!(a.last_compacted_at, 77);
+	}
+
+	#[test]
+	fn compactions_folded_saturates_instead_of_overflowing() {
+		let mut a = Anchor::default();
+		a.compactions_folded = u32::MAX;
+		a.extend(AnchorUpdate::default(), 0);
+		assert_eq!(a.compactions_folded, u32::MAX);
+	}
+
+	#[test]
+	fn is_empty_turns_false_once_any_field_is_set() {
+		let mut a = Anchor::default();
+		a.extend(
+			AnchorUpdate {
+				errors_seen: vec!["boom".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		assert!(!a.is_empty());
+	}
+
+	#[test]
+	fn to_xml_reports_fold_count_once_compacted() {
+		assert!(!Anchor::default().to_xml().contains("<folds>"));
+		let mut a = Anchor::default();
+		a.extend(AnchorUpdate::default(), 0);
+		a.extend(AnchorUpdate::default(), 0);
+		assert!(a.to_xml().contains("<folds>2</folds>"));
+	}
+
+	#[test]
+	fn to_xml_trims_whitespace_around_list_items() {
+		let mut a = Anchor::default();
+		a.extend(
+			AnchorUpdate {
+				decisions: vec!["  use JWT  ".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		assert!(a.to_xml().contains("<decision>use JWT</decision>"));
+	}
+
+	#[test]
+	fn extend_dedup_trims_before_comparing() {
+		let mut a = Anchor::default();
+		a.extend(
+			AnchorUpdate {
+				file_refs: vec!["src/main.rs".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		a.extend(
+			AnchorUpdate {
+				file_refs: vec!["  src/main.rs  ".to_string()],
+				..Default::default()
+			},
+			0,
+		);
+		assert_eq!(a.file_refs, vec!["src/main.rs"]);
+	}
+
+	#[test]
+	fn default_anchor_serializes_to_empty_object() {
+		let json = serde_json::to_string(&Anchor::default()).expect("serialize");
+		assert_eq!(json, "{}");
+		let restored: Anchor = serde_json::from_str("{}").expect("deserialize");
+		assert!(restored.is_empty());
+		assert_eq!(restored.compactions_folded, 0);
+		assert_eq!(restored.last_compacted_at, 0);
+		assert_eq!(restored.intent_task_sig, 0);
+	}
+
+	#[test]
+	fn anchor_skips_default_fields_when_serializing() {
+		let mut a = Anchor::default();
+		a.extend(AnchorUpdate::default(), 12);
+		let json = serde_json::to_string(&a).expect("serialize");
+		assert!(json.contains("\"compactions_folded\":1"));
+		assert!(json.contains("\"last_compacted_at\":12"));
+		assert!(!json.contains("intent"));
+		assert!(!json.contains("decisions"));
+	}
+
+	#[test]
+	fn anchor_update_deserializes_missing_fields_to_defaults() {
+		let update: AnchorUpdate = serde_json::from_str("{}").expect("deserialize");
+		assert!(update.intent.is_none());
+		assert!(update.intent_task_sig.is_none());
+		assert!(update.changes_made.is_empty());
+		assert!(update.decisions.is_empty());
+		assert!(update.file_refs.is_empty());
+		assert!(update.errors_seen.is_empty());
+		assert!(update.next_steps.is_empty());
+	}
+
+	#[test]
+	fn anchor_update_round_trips_all_fields() {
+		let update = AnchorUpdate {
+			intent: Some("goal".to_string()),
+			changes_made: vec!["c".to_string()],
+			decisions: vec!["d".to_string()],
+			file_refs: vec!["f".to_string()],
+			errors_seen: vec!["e".to_string()],
+			next_steps: vec!["n".to_string()],
+			intent_task_sig: Some(5),
+		};
+		let json = serde_json::to_string(&update).expect("serialize");
+		let restored: AnchorUpdate = serde_json::from_str(&json).expect("deserialize");
+		assert_eq!(restored.intent.as_deref(), Some("goal"));
+		assert_eq!(restored.intent_task_sig, Some(5));
+		assert_eq!(restored.changes_made, vec!["c"]);
+		assert_eq!(restored.decisions, vec!["d"]);
+		assert_eq!(restored.file_refs, vec!["f"]);
+		assert_eq!(restored.errors_seen, vec!["e"]);
+		assert_eq!(restored.next_steps, vec!["n"]);
+	}
 }

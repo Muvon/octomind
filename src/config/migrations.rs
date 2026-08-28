@@ -850,4 +850,401 @@ model = "anthropic:custom"
 			std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
 		assert!(force_upgrade_config(&missing).is_err());
 	}
+	// --- plan() structure -------------------------------------------------
+
+	/// The chain must be walkable from every declared version up to the
+	/// current one. A missing step, a non-advancing step, or an overshooting
+	/// step anywhere in 0..CURRENT makes one of these iterations fail, so this
+	/// pins the from/to sequencing without reaching into MigrationPlan's
+	/// private step list.
+	#[test]
+	fn every_declared_version_migrates_up_to_current() {
+		for version in 0..CURRENT_CONFIG_VERSION {
+			let existing = format!("version = {version}\n");
+			let migration = plan()
+				.migrate(&existing, DEFAULT_CONFIG_TEMPLATE)
+				.unwrap_or_else(|e| panic!("version {version} must migrate: {e}"))
+				.unwrap_or_else(|| panic!("version {version} must not already be current"));
+			assert_eq!(migration.from_version, version);
+			assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+		}
+	}
+
+	#[test]
+	fn a_sparse_config_at_the_current_version_is_left_untouched() {
+		// At the target version migrate short-circuits before any step runs,
+		// so even a document missing every migrated field is not rewritten.
+		assert!(plan()
+			.migrate(
+				&format!("version = {}\n", CURRENT_CONFIG_VERSION),
+				DEFAULT_CONFIG_TEMPLATE
+			)
+			.unwrap()
+			.is_none());
+	}
+
+	// --- individual steps, called directly on DocumentMut -----------------
+
+	fn template_document() -> toml_edit::DocumentMut {
+		DEFAULT_CONFIG_TEMPLATE
+			.parse()
+			.expect("embedded template must parse")
+	}
+
+	fn user_document(content: &str) -> toml_edit::DocumentMut {
+		content.parse().expect("test fixture must parse")
+	}
+
+	fn roundtrip(document: &toml_edit::DocumentMut) -> toml::Value {
+		toml::from_str(&document.to_string()).expect("migrated document must be valid TOML")
+	}
+
+	#[test]
+	fn additive_steps_are_noops_on_an_already_current_document() {
+		let template = template_document();
+		let mut document = template.clone();
+		add_delegate_gate(&mut document, &template).unwrap();
+		add_v3_required_fields(&mut document, &template).unwrap();
+		collapse_pressure_levels(&mut document, &template).unwrap();
+		add_v5_supervisor_fields(&mut document, &template).unwrap();
+		add_v9_adaptive_condense(&mut document, &template).unwrap();
+		assert_eq!(document.to_string(), template.to_string());
+	}
+
+	#[test]
+	fn removal_steps_leave_an_already_current_document_untouched() {
+		let template = template_document();
+		let mut document = template.clone();
+		remove_v6_compression_hints(&mut document, &template).unwrap();
+		remove_v7_supervisor_judges(&mut document, &template).unwrap();
+		remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
+		assert_eq!(document.to_string(), template.to_string());
+	}
+
+	#[test]
+	fn add_delegate_gate_creates_supervisor_from_template_on_empty_document() {
+		let template = template_document();
+		let mut document = toml_edit::DocumentMut::new();
+		add_delegate_gate(&mut document, &template).unwrap();
+
+		let supervisor = roundtrip(&document)["supervisor"].clone();
+		assert!(supervisor["enabled"].as_bool().is_some());
+		assert!(supervisor["gate"].is_table());
+	}
+
+	#[test]
+	fn add_delegate_gate_preserves_an_existing_supervisor_section() {
+		let template = template_document();
+		let mut document =
+			user_document("[supervisor]\nenabled = false\nmodel = \"openrouter:custom/model\"\n");
+		add_delegate_gate(&mut document, &template).unwrap();
+
+		let supervisor = roundtrip(&document)["supervisor"].clone();
+		assert_eq!(supervisor["enabled"].as_bool(), Some(false));
+		assert_eq!(
+			supervisor["model"].as_str(),
+			Some("openrouter:custom/model")
+		);
+	}
+
+	#[test]
+	fn add_v3_required_fields_fills_gaps_without_overwriting() {
+		let template = template_document();
+		let mut document =
+			user_document("[compression]\nthreshold = 12345\nanalysis_findings_max_tokens = 99\n");
+		add_v3_required_fields(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(compression["threshold"].as_integer(), Some(12345));
+		assert_eq!(
+			compression["analysis_findings_max_tokens"].as_integer(),
+			Some(99)
+		);
+		assert_eq!(compression["attention"]["enabled"].as_bool(), Some(false));
+	}
+
+	#[test]
+	fn add_v3_required_fields_creates_compression_whole_on_empty_document() {
+		let template = template_document();
+		let mut document = toml_edit::DocumentMut::new();
+		add_v3_required_fields(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(
+			compression["analysis_findings_max_tokens"].as_integer(),
+			Some(6000)
+		);
+		assert!(compression["attention"].is_table());
+	}
+
+	#[test]
+	fn collapse_pressure_levels_keeps_an_existing_threshold_and_drops_the_ladder() {
+		let template = template_document();
+		let mut document = user_document(
+			"[compression]\nthreshold = 50000\n\n[[compression.pressure_levels]]\nthreshold = 80000\ntarget_ratio = 2.0\n",
+		);
+		collapse_pressure_levels(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(compression["threshold"].as_integer(), Some(50000));
+		assert!(compression.get("pressure_levels").is_none());
+	}
+
+	#[test]
+	fn collapse_pressure_levels_takes_the_lowest_threshold_wherever_it_sits() {
+		let template = template_document();
+		let mut document = user_document(
+			"[compression]\n\n[[compression.pressure_levels]]\nthreshold = 120000\n\n[[compression.pressure_levels]]\nthreshold = 60000\n\n[[compression.pressure_levels]]\nthreshold = 90000\n",
+		);
+		collapse_pressure_levels(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(compression["threshold"].as_integer(), Some(60000));
+		assert!(compression.get("pressure_levels").is_none());
+	}
+
+	#[test]
+	fn collapse_pressure_levels_ignores_levels_without_an_integer_threshold() {
+		let template = template_document();
+		let mut document = user_document(
+			"[compression]\n\n[[compression.pressure_levels]]\ntarget_ratio = 2.0\n\n[[compression.pressure_levels]]\nthreshold = \"high\"\n\n[[compression.pressure_levels]]\nthreshold = 95000\n",
+		);
+		collapse_pressure_levels(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(compression["threshold"].as_integer(), Some(95000));
+	}
+
+	#[test]
+	fn collapse_pressure_levels_falls_back_to_the_template_without_usable_levels() {
+		let template = template_document();
+		let mut document = user_document("[compression]\nknowledge_retention = 17\n");
+		collapse_pressure_levels(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		assert_eq!(compression["threshold"].as_integer(), Some(70000));
+		assert_eq!(compression["knowledge_retention"].as_integer(), Some(17));
+	}
+
+	#[test]
+	fn add_v5_supervisor_fields_merges_gate_and_plan_into_a_partial_supervisor() {
+		let template = template_document();
+		let mut document = user_document("[supervisor]\nenabled = false\n");
+		add_v5_supervisor_fields(&mut document, &template).unwrap();
+
+		let supervisor = roundtrip(&document)["supervisor"].clone();
+		assert_eq!(supervisor["enabled"].as_bool(), Some(false));
+		assert_eq!(supervisor["gate"]["max_tokens"].as_integer(), Some(8192));
+		assert!(supervisor["plan"]["model"].as_str().is_some());
+	}
+
+	#[test]
+	fn add_v5_supervisor_fields_never_overwrites_custom_gate_values() {
+		let template = template_document();
+		let mut document = user_document(
+			"[supervisor.gate]\nenabled = false\nverifier_model = \"openai:custom-verifier\"\n",
+		);
+		add_v5_supervisor_fields(&mut document, &template).unwrap();
+
+		let gate = roundtrip(&document)["supervisor"]["gate"].clone();
+		assert_eq!(gate["enabled"].as_bool(), Some(false));
+		assert_eq!(
+			gate["verifier_model"].as_str(),
+			Some("openai:custom-verifier")
+		);
+		assert_eq!(gate["max_tokens"].as_integer(), Some(8192));
+	}
+
+	#[test]
+	fn remove_v6_compression_hints_drops_only_the_hint_keys() {
+		let template = template_document();
+		let mut document = user_document(
+			"[compression]\nhints_enabled = true\nhints_pressure_threshold = 0.8\nhints_min_interval = 9\nthreshold = 70000\n",
+		);
+		remove_v6_compression_hints(&mut document, &template).unwrap();
+
+		let compression = roundtrip(&document)["compression"].clone();
+		let table = compression.as_table().unwrap();
+		assert!(!table.contains_key("hints_enabled"));
+		assert!(!table.contains_key("hints_pressure_threshold"));
+		assert!(!table.contains_key("hints_min_interval"));
+		assert_eq!(compression["threshold"].as_integer(), Some(70000));
+	}
+
+	#[test]
+	fn remove_v6_compression_hints_is_a_noop_without_a_compression_table() {
+		let template = template_document();
+		let mut document = toml_edit::DocumentMut::new();
+		remove_v6_compression_hints(&mut document, &template).unwrap();
+		assert!(document.as_table().is_empty());
+	}
+
+	#[test]
+	fn remove_v7_supervisor_judges_strips_dead_keys_at_every_level() {
+		let template = template_document();
+		let mut document = user_document(
+			r#"[supervisor]
+enabled = true
+claim_check = true
+max_consecutive_steers = 5
+orientation = "strict"
+recite = true
+
+[supervisor.detectors]
+sequential_threshold = 3
+
+[supervisor.delegate]
+enabled = false
+
+[supervisor.gate]
+enabled = true
+verifier_model = "openai:custom-verifier"
+max_tokens = 1024
+max_iterations = 7
+require_check_after_mutation = false
+require_plan_complete = false
+
+[supervisor.plan]
+enabled = false
+model = "openai:custom-planner"
+max_tokens = 1536
+trajectory_max_tokens = 3072
+adoption_min_actions = 3
+adoption_min_distinct_actions = 2
+
+[supervisor.learning]
+min_messages_for_intermediate = 5
+max_inject = 4
+"#,
+		);
+		remove_v7_supervisor_judges(&mut document, &template).unwrap();
+
+		let supervisor = roundtrip(&document)["supervisor"].clone();
+		for key in [
+			"claim_check",
+			"max_consecutive_steers",
+			"orientation",
+			"detectors",
+			"recite",
+			"delegate",
+		] {
+			assert!(supervisor.get(key).is_none(), "{key} must be removed");
+		}
+		assert_eq!(supervisor["enabled"].as_bool(), Some(true));
+
+		let gate = supervisor["gate"].clone();
+		assert_eq!(gate["enabled"].as_bool(), Some(true));
+		assert_eq!(
+			gate["verifier_model"].as_str(),
+			Some("openai:custom-verifier")
+		);
+		assert_eq!(gate["max_tokens"].as_integer(), Some(1024));
+		for key in [
+			"max_iterations",
+			"require_check_after_mutation",
+			"require_plan_complete",
+		] {
+			assert!(gate.get(key).is_none(), "gate.{key} must be removed");
+		}
+
+		let plan = supervisor["plan"].clone();
+		assert_eq!(plan["enabled"].as_bool(), Some(false));
+		assert_eq!(plan["model"].as_str(), Some("openai:custom-planner"));
+		for key in [
+			"max_tokens",
+			"trajectory_max_tokens",
+			"adoption_min_actions",
+			"adoption_min_distinct_actions",
+		] {
+			assert!(plan.get(key).is_none(), "plan.{key} must be removed");
+		}
+
+		let learning = supervisor["learning"].as_table().unwrap();
+		assert!(learning.is_empty(), "both learning knobs are dead keys");
+	}
+
+	#[test]
+	fn remove_v7_supervisor_judges_is_a_noop_without_supervisor() {
+		let template = template_document();
+		let mut document = user_document("[compression]\nthreshold = 70000\n");
+		remove_v7_supervisor_judges(&mut document, &template).unwrap();
+		assert!(document.as_table().contains_key("compression"));
+		assert!(!document.as_table().contains_key("supervisor"));
+	}
+
+	#[test]
+	fn remove_v8_compression_ignore_cost_drops_only_that_key() {
+		let template = template_document();
+		let mut document = user_document(
+			"[compression.decision]\nmodel = \"openai:gpt-5-mini\"\nmax_tokens = 16000\nignore_cost = true\n",
+		);
+		remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
+
+		let decision = roundtrip(&document)["compression"]["decision"].clone();
+		assert!(!decision.as_table().unwrap().contains_key("ignore_cost"));
+		assert_eq!(decision["model"].as_str(), Some("openai:gpt-5-mini"));
+		assert_eq!(decision["max_tokens"].as_integer(), Some(16000));
+	}
+
+	#[test]
+	fn remove_v8_compression_ignore_cost_tolerates_missing_or_malformed_sections() {
+		let template = template_document();
+
+		// no [compression] table at all
+		let mut document = toml_edit::DocumentMut::new();
+		remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
+		assert!(document.as_table().is_empty());
+
+		// [compression] without a decision table
+		let mut document = user_document("[compression]\nthreshold = 70000\n");
+		remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
+		assert_eq!(
+			roundtrip(&document)["compression"]["threshold"].as_integer(),
+			Some(70000)
+		);
+
+		// compression present but not a table — left exactly as-is
+		let mut document = user_document("compression = 5\n");
+		remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
+		assert_eq!(roundtrip(&document)["compression"].as_integer(), Some(5));
+	}
+
+	#[test]
+	fn add_v9_adaptive_condense_adds_the_switch_without_touching_existing_values() {
+		let template = template_document();
+		let mut document = user_document(
+			"[supervisor.condense]\nenabled = true\ntokens_threshold = 4321\nmodel = \"anthropic:custom\"\n",
+		);
+		add_v9_adaptive_condense(&mut document, &template).unwrap();
+
+		let condense = roundtrip(&document)["supervisor"]["condense"].clone();
+		assert_eq!(condense["adaptive"].as_bool(), Some(false));
+		assert_eq!(condense["enabled"].as_bool(), Some(true));
+		assert_eq!(condense["tokens_threshold"].as_integer(), Some(4321));
+		assert_eq!(condense["model"].as_str(), Some("anthropic:custom"));
+	}
+
+	#[test]
+	fn add_v9_adaptive_condense_never_overwrites_an_existing_adaptive_value() {
+		let template = template_document();
+		let mut document =
+			user_document("[supervisor.condense]\nadaptive = true\ntokens_threshold = 1000\n");
+		add_v9_adaptive_condense(&mut document, &template).unwrap();
+		// Running the step twice must stay a no-op for user-set values.
+		add_v9_adaptive_condense(&mut document, &template).unwrap();
+
+		let condense = roundtrip(&document)["supervisor"]["condense"].clone();
+		assert_eq!(condense["adaptive"].as_bool(), Some(true));
+	}
+
+	#[test]
+	fn add_v9_adaptive_condense_builds_the_full_chain_on_an_empty_document() {
+		let template = template_document();
+		let mut document = toml_edit::DocumentMut::new();
+		add_v9_adaptive_condense(&mut document, &template).unwrap();
+
+		let condense = roundtrip(&document)["supervisor"]["condense"].clone();
+		assert_eq!(condense["adaptive"].as_bool(), Some(false));
+		assert!(condense["tokens_threshold"].as_integer().is_some());
+	}
 }

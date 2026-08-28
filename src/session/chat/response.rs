@@ -392,6 +392,17 @@ fn add_assistant_message_with_tool_calls(
 fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content: &str) -> String {
 	if config.supervisor.enabled {
 		let parsed = crate::supervisor::detect::parse_self_report_handoff(content);
+		if let Some(report) = parsed.as_ref() {
+			for id in &report.used_memories {
+				if chat_session
+					.recalled_refs
+					.iter()
+					.any(|(known, _, _, _)| known == id)
+				{
+					chat_session.used_memory_ids.insert(id.clone());
+				}
+			}
+		}
 		chat_session.pending_plan_signal = parsed.as_ref().and_then(|report| report.plan);
 		chat_session.last_self_report = parsed.as_ref().map(|report| report.state);
 		chat_session.last_self_report_reason = parsed.as_ref().and_then(|report| {

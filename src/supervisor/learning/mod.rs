@@ -56,6 +56,50 @@ pub struct Lesson {
 	pub scope: String,
 	#[serde(default)]
 	pub created: String,
+	/// Stable memory IDs this record directly relates to. File records retain
+	/// these as inspectable graph edges; retrieval expands one hop in either direction.
+	#[serde(default)]
+	pub related: Vec<String>,
+	/// Addressable provenance handles, currently `session://<name>/message/<n>`.
+	#[serde(default)]
+	pub evidence: Vec<String>,
+	/// Outcome of the trajectory that produced this record.
+	#[serde(default)]
+	pub outcome: TrajectoryOutcome,
+}
+
+/// Runtime outcome label handed to detached extraction. Unknown is honest: a
+/// compaction or explicit `/done` can happen before the completion gate runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrajectoryOutcome {
+	#[default]
+	Unknown,
+	Verified,
+	Failed,
+}
+
+impl TrajectoryOutcome {
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Unknown => "unknown",
+			Self::Verified => "verified",
+			Self::Failed => "failed",
+		}
+	}
+}
+
+impl std::str::FromStr for TrajectoryOutcome {
+	type Err = String;
+
+	fn from_str(value: &str) -> Result<Self, Self::Err> {
+		match value.trim().to_ascii_lowercase().as_str() {
+			"unknown" => Ok(Self::Unknown),
+			"verified" => Ok(Self::Verified),
+			"failed" => Ok(Self::Failed),
+			other => Err(format!("unknown learning outcome '{other}'")),
+		}
+	}
 }
 
 fn default_memory_type() -> String {
@@ -85,6 +129,9 @@ impl Default for Lesson {
 			project: String::new(),
 			scope: "scoped".into(),
 			created: String::new(),
+			related: Vec::new(),
+			evidence: Vec::new(),
+			outcome: TrajectoryOutcome::Unknown,
 		}
 	}
 }
@@ -111,6 +158,9 @@ impl Lesson {
 			"project" => Some(serde_json::Value::String(self.project.clone())),
 			"scope" => Some(serde_json::Value::String(self.scope.clone())),
 			"created" => Some(serde_json::Value::String(self.created.clone())),
+			"related" => Some(serde_json::json!(self.related)),
+			"evidence" => Some(serde_json::json!(self.evidence)),
+			"outcome" => Some(serde_json::Value::String(self.outcome.as_str().to_string())),
 			_ => None,
 		}
 	}
@@ -201,10 +251,6 @@ fn default_backend() -> String {
 /// Minimum user messages before intermediate learning triggers during
 /// auto-compaction.
 pub const MIN_MESSAGES_FOR_INTERMEDIATE: usize = 3;
-
-/// Max lessons injected into the system prompt per session; orientation
-/// entries get the same bound in their own block.
-pub const MAX_INJECT: usize = 5;
 
 /// Soft time-decay: scoped entries unused for this many days lose confidence.
 pub const DECAY_DAYS: u64 = 90;

@@ -138,3 +138,104 @@ async fn mcp_init_with_spinner(role: &str, config: &Config, spinner: &ProgressBa
 
 	octomind::mcp::initialize_mcp_for_role_with_callback(role, config, Some(&cb)).await
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use octomind::config::McpServerConfig;
+
+	fn template_config() -> Config {
+		let mut config: Config =
+			toml::from_str(include_str!("../../config-templates/default.toml"))
+				.expect("parse default config template");
+		config.build_role_map();
+		config
+	}
+
+	#[test]
+	fn make_spinner_starts_unfinished_and_finishes_cleanly() {
+		let spinner = make_spinner();
+		assert!(!spinner.is_finished());
+		spinner.set_message("working");
+		spinner.finish_and_clear();
+		assert!(spinner.is_finished());
+	}
+
+	#[test]
+	fn make_spinner_renders_without_a_terminal() {
+		// The test harness pipes stdout — drawing must still be safe.
+		let spinner = make_spinner();
+		spinner.tick();
+		assert!(!spinner.is_finished());
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn startup_non_interactive_plain_role_succeeds() {
+		let config = template_config();
+		let (run_config, role) = startup(Some("assistant"), &config, false)
+			.await
+			.expect("plain role resolves and MCP init returns Ok");
+		assert_eq!(role, "assistant");
+		assert!(!run_config.model.is_empty());
+	}
+
+	#[tokio::test]
+	async fn startup_non_interactive_unknown_tap_tag_errors() {
+		let config = template_config();
+		let result = startup(Some("no-such-category:missing-variant"), &config, false).await;
+		assert!(result.is_err());
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn startup_interactive_plain_role_succeeds() {
+		let config = template_config();
+		let (_run_config, role) = startup(Some("assistant"), &config, true)
+			.await
+			.expect("interactive startup clears the spinner and returns the role");
+		assert_eq!(role, "assistant");
+	}
+
+	#[tokio::test]
+	async fn startup_interactive_unknown_tap_tag_errors() {
+		let config = template_config();
+		let result = startup(Some("no-such-category:missing-variant"), &config, true).await;
+		assert!(result.is_err());
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn startup_mcp_only_non_interactive_initializes_role() {
+		let config = template_config();
+		startup_mcp_only("assistant", &config, false)
+			.await
+			.expect("MCP init is tolerant of per-server failures and returns Ok");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn startup_mcp_only_interactive_tracks_external_server_progress() {
+		let mut config = template_config();
+		// Bind an external HTTP server that refuses connections instantly so
+		// the spinner callback observes a non-empty Starting list and a
+		// Completed event (success: false) without any real MCP endpoint.
+		config.mcp.servers.push(McpServerConfig::http(
+			"stub-unreachable",
+			"http://127.0.0.1:1/mcp",
+			2,
+			Vec::new(),
+		));
+		config
+			.role_map
+			.get_mut("assistant")
+			.expect("assistant role exists in the template")
+			.mcp
+			.server_refs
+			.push("stub-unreachable".to_string());
+
+		startup_mcp_only("assistant", &config, true)
+			.await
+			.expect("interactive MCP init succeeds even with an unreachable external server");
+	}
+}

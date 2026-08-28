@@ -28,14 +28,26 @@ fn test_recorders_and_snapshot_render() {
 	pregate_block();
 	lessons(2);
 	orientation(1);
+	experience(1);
 	recall();
 	condensed(3, 1200);
+	memory_pack(4, 900);
+	memory_credit(true);
+	memory_credit(false);
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
 	// The snapshot is consumed by /info and debug reporting — the load-bearing
 	// counters must be present as fields. Anonymous telemetry has its own schema.
-	for key in ["calls", "gate", "lessons", "recalls", "condense"] {
+	for key in [
+		"calls",
+		"gate",
+		"lessons",
+		"recalls",
+		"condense",
+		"memory_pack",
+		"experiences",
+	] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");
 	}
 }

@@ -465,4 +465,121 @@ mod tests {
 		assert_eq!(fallback_token_count("abc"), 1);
 		assert_eq!(fallback_token_count("12345678"), 2);
 	}
+
+	#[test]
+	fn estimate_tokens_counts_unicode_and_whitespace_text() {
+		// CJK chars are individual BPE tokens; the count must be non-trivial.
+		assert!(estimate_tokens("日本語のテキスト") >= 3);
+		assert!(estimate_tokens("🎉🎉🎉") > 0);
+		assert!(estimate_tokens("héllo wörld") > 0);
+		// Whitespace-only text still encodes to tokens.
+		assert!(estimate_tokens("   \n\t  ") > 0);
+	}
+
+	#[test]
+	fn truncate_of_empty_input_stays_empty() {
+		assert_eq!(truncate_to_tokens("", 0), "");
+		assert_eq!(truncate_to_tokens("", 100), "");
+	}
+
+	#[test]
+	fn message_tokens_count_thinking() {
+		let base = estimate_message_tokens(&msg("assistant", "text"));
+		let mut with_thinking = msg("assistant", "text");
+		with_thinking.thinking =
+			Some(serde_json::json!({"reasoning": "deep thoughts about the problem"}));
+		assert!(estimate_message_tokens(&with_thinking) > base);
+	}
+
+	fn tool(name: &str) -> crate::mcp::McpFunction {
+		crate::mcp::McpFunction {
+			name: name.to_string(),
+			description: format!("Description for {name}"),
+			parameters: serde_json::json!({"type": "object", "properties": {}}),
+		}
+	}
+
+	#[test]
+	fn full_context_with_empty_tool_list_adds_only_array_overhead() {
+		let messages = vec![msg("user", "hi")];
+		assert_eq!(
+			estimate_full_context_tokens(&messages, Some(&[])),
+			estimate_session_tokens(&messages) + 10
+		);
+	}
+
+	#[test]
+	fn full_context_tool_overhead_is_linear_per_tool() {
+		let messages = vec![msg("user", "hi")];
+		let one = [tool("shell")];
+		let two = [tool("shell"), tool("shell")];
+		let with_one = estimate_full_context_tokens(&messages, Some(&one));
+		let with_two = estimate_full_context_tokens(&messages, Some(&two));
+		assert!(with_one > estimate_session_tokens(&messages));
+		// A second identical tool adds exactly its JSON tokens + 5 formatting
+		// tokens; the +10 tools-array overhead is constant.
+		let tool_json = serde_json::to_string(&serde_json::json!({
+			"name": "shell",
+			"description": "Description for shell",
+			"input_schema": one[0].parameters,
+		}))
+		.expect("serialize tool json");
+		assert_eq!(with_two - with_one, estimate_tokens(&tool_json) + 5);
+	}
+
+	fn template_config() -> crate::config::Config {
+		let mut config: crate::config::Config =
+			toml::from_str(include_str!("../../config-templates/default.toml"))
+				.expect("parse default config template");
+		config.build_role_map();
+		config
+	}
+
+	#[tokio::test]
+	async fn threshold_validation_is_disabled_when_threshold_is_zero() {
+		let mut config = template_config();
+		config.max_session_tokens_threshold = 0;
+		validate_session_token_threshold(&config, "assistant", std::path::Path::new("."))
+			.await
+			.expect("zero threshold must skip validation entirely");
+	}
+
+	#[tokio::test]
+	async fn threshold_validation_rejects_a_tiny_threshold() {
+		let mut config = template_config();
+		config.max_session_tokens_threshold = 1;
+		let dir = tempfile::tempdir().expect("tempdir");
+		let err = validate_session_token_threshold(&config, "assistant", dir.path())
+			.await
+			.expect_err("threshold of 1 must be rejected");
+		let message = format!("{err:#}");
+		assert!(
+			message.contains("max_session_tokens_threshold (1)"),
+			"{message}"
+		);
+		assert!(message.contains("role 'assistant'"), "{message}");
+	}
+
+	#[tokio::test]
+	async fn default_template_threshold_passes_its_own_validation() {
+		let config = template_config();
+		let dir = tempfile::tempdir().expect("tempdir");
+		validate_session_token_threshold(&config, "assistant", dir.path())
+			.await
+			.expect("shipped default threshold must satisfy the 2x safety check");
+	}
+
+	#[tokio::test]
+	async fn minimum_tokens_cover_system_prompt_and_request_overhead() {
+		let config = template_config();
+		let dir = tempfile::tempdir().expect("tempdir");
+		let minimum = calculate_minimum_session_tokens(&config, "assistant", dir.path())
+			.await
+			.expect("minimum calculation");
+		let (_, _, _, _, system_prompt) = config.get_role_config("assistant");
+		let system_tokens = estimate_tokens(system_prompt);
+		// request_overhead (50) + at least the welcome message's 20-token
+		// structure cost — the welcome message is always present.
+		assert!(minimum >= system_tokens + 70);
+	}
 }

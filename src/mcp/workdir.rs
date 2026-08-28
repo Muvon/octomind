@@ -124,6 +124,7 @@ pub fn get_thread_original_working_directory() -> PathBuf {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::session::context::{clear_session_workdir, with_session_id};
 
 	// Each #[test] runs on a fresh thread, so the `thread_local!(WORKDIR)`
 	// cell is independently empty per test. No cross-test interference
@@ -163,5 +164,101 @@ mod tests {
 		let cwd = std::env::current_dir().unwrap_or_default();
 		set_thread_working_directory(PathBuf::from("/tmp/should-be-ignored"));
 		assert_eq!(get_thread_original_working_directory(), cwd);
+	}
+
+	// Session-scoped (WebSocket mode) coverage. Each test uses a distinct
+	// session id and clears its registry entry, so parallel tests never share
+	// SESSION_WORKDIRS state.
+
+	#[tokio::test]
+	async fn session_scoped_workdir_round_trip() {
+		let id = "workdir-test-session-round-trip".to_string();
+		let root = PathBuf::from("/tmp/octomind-test-session-root");
+		with_session_id(id.clone(), async {
+			set_session_working_directory(root.clone());
+			assert_eq!(get_thread_working_directory(), root.clone());
+			assert_eq!(get_thread_original_working_directory(), root);
+		})
+		.await;
+		clear_session_workdir(&id);
+	}
+
+	#[tokio::test]
+	async fn session_scoped_override_moves_active_but_not_anchor() {
+		let tmp = tempfile::tempdir().expect("create tempdir");
+		let root = tmp.path().to_path_buf();
+		let nested = root.join("nested");
+		std::fs::create_dir_all(&nested).expect("create nested dir");
+
+		let id = "workdir-test-session-override".to_string();
+		with_session_id(id.clone(), async {
+			set_session_working_directory(root.clone());
+			set_thread_working_directory(nested.clone());
+			assert_eq!(get_thread_working_directory(), nested);
+			assert_eq!(get_thread_original_working_directory(), root);
+		})
+		.await;
+		clear_session_workdir(&id);
+	}
+
+	#[tokio::test]
+	async fn session_scoped_state_takes_precedence_over_thread_local() {
+		// Outside any session scope the set lands in thread-local storage.
+		let thread_local_dir = PathBuf::from("/tmp/octomind-test-thread-local");
+		set_session_working_directory(thread_local_dir.clone());
+
+		let id = "workdir-test-session-precedence".to_string();
+		let session_dir = PathBuf::from("/tmp/octomind-test-session-scoped");
+		with_session_id(id.clone(), async {
+			set_session_working_directory(session_dir.clone());
+			assert_eq!(get_thread_working_directory(), session_dir);
+		})
+		.await;
+
+		// Scope ended: lookup falls back to the thread-local value.
+		assert_eq!(get_thread_working_directory(), thread_local_dir);
+		clear_session_workdir(&id);
+	}
+
+	#[tokio::test]
+	async fn cleared_session_workdir_falls_back_to_thread_local() {
+		let thread_local_dir = PathBuf::from("/tmp/octomind-test-cleared-fallback");
+		set_session_working_directory(thread_local_dir.clone());
+
+		let id = "workdir-test-session-cleared".to_string();
+		with_session_id(id.clone(), async {
+			set_session_working_directory(PathBuf::from("/tmp/octomind-test-session-doomed"));
+			clear_session_workdir(&id);
+			// Session id is still in scope, but the registry entry is gone:
+			// lookup must fall through to thread-local storage.
+			assert_eq!(get_thread_working_directory(), thread_local_dir.clone());
+			assert_eq!(get_thread_original_working_directory(), thread_local_dir);
+		})
+		.await;
+	}
+
+	#[test]
+	fn tempdir_round_trip_in_thread_local_mode() {
+		let tmp = tempfile::tempdir().expect("create tempdir");
+		let root = tmp.path().to_path_buf();
+		let nested = root.join("nested");
+		std::fs::create_dir_all(&nested).expect("create nested dir");
+
+		set_session_working_directory(root.clone());
+		set_thread_working_directory(nested.clone());
+
+		let active = get_thread_working_directory();
+		let anchor = get_thread_original_working_directory();
+		assert_eq!(active, nested);
+		assert_eq!(anchor, root);
+		assert!(active.is_dir());
+		assert!(anchor.is_dir());
+	}
+
+	#[test]
+	fn paths_are_stored_verbatim_without_normalization() {
+		let raw = PathBuf::from("/tmp/octomind-test-verbatim/");
+		set_session_working_directory(raw.clone());
+		assert_eq!(get_thread_working_directory(), raw);
 	}
 }

@@ -98,19 +98,26 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	crate::session::truncate_to_tokens(&kept.join(ANSWER_PART_SEPARATOR), max_tokens)
 }
 
-/// Apply the verify-gate's verdict back to the entries recalled this trajectory:
-/// positive `delta` reinforces (the recall helped); negative decays (it may have
-/// misled). Clears the recalled set either way.
+/// Apply the verify-gate's verdict only to active-pack entries the specialist
+/// reported materially using. Exposure alone earns no positive or negative
+/// credit. Clears the pack references and used-ID set either way.
 async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
 	let refs = std::mem::take(&mut chat_session.recalled_refs);
-	if refs.is_empty() {
+	let used = std::mem::take(&mut chat_session.used_memory_ids);
+	if refs.is_empty() || used.is_empty() {
 		return;
 	}
 	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
-	for (content, role, project) in &refs {
-		let _ = backend
+	for (id, content, role, project) in &refs {
+		if !used.contains(id) {
+			continue;
+		}
+		let applied = backend
 			.reinforce(content, role, project, delta, config)
 			.await;
+		if applied.is_ok() {
+			crate::supervisor::stats::memory_credit(delta > 0.0);
+		}
 	}
 }
 
@@ -186,11 +193,14 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// CRITICAL: Connect session cancellation to animation for INSTANT Ctrl+C response
 	animation_manager.set_cancel_receiver(operation_rx.clone());
 
-	// Inject learned lessons. Two triggers:
-	//   - first call of the session → global tier + full hybrid scoped recall;
+	// Build the runtime-only active memory pack. Two triggers:
+	//   - first call of the session → full hybrid scoped recall;
 	//   - a new user message (pending_recall) → embedding-only scoped recall.
-	// Already-injected lessons are skipped (no duplication), and tool follow-up
-	// rounds — which set neither flag — don't re-run recall.
+	// Tool follow-up rounds keep the same pack without retrieving again.
+	if !config.supervisor.learning.enabled && chat_session.active_memory_pack.is_some() {
+		chat_session.clear_active_memory_pack();
+	}
+	let mut memory_pack_rebuilt = false;
 	if config.supervisor.learning.enabled
 		&& (!chat_session.learning_injected || chat_session.pending_recall)
 	{
@@ -210,31 +220,29 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				.unwrap_or_default()
 				.to_string();
 		animation_manager.set_phase("Recalling lessons …").await;
-		let (block, new_contents) = crate::supervisor::learning::inject::retrieve_and_format(
+		let (block, selected) = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
 			&user_input,
 			role,
 			&project,
 			first_call,
-			&chat_session.injected_lessons,
 			operation_rx.clone(),
 		)
 		.await;
 		animation_manager.clear_phase();
-		if !block.is_empty() {
-			chat_session.add_system_managed_user_message(&block)?;
-			crate::supervisor::stats::recall();
-			crate::supervisor::notify(&format!(
-				"recalled {} lesson(s) into context",
-				new_contents.len()
-			));
-			for c in new_contents {
-				chat_session
-					.recalled_refs
-					.push((c.clone(), role.to_string(), project.clone()));
-				chat_session.injected_lessons.insert(c);
-			}
-		}
+		chat_session.recalled_refs = selected
+			.iter()
+			.map(|memory| {
+				(
+					memory.id.clone(),
+					memory.content.clone(),
+					role.to_string(),
+					project.clone(),
+				)
+			})
+			.collect();
+		chat_session.set_active_memory_pack((!block.is_empty()).then_some(block));
+		memory_pack_rebuilt = true;
 	}
 
 	// Supervisor: inject any queued steer note (advisory re-anchor) at the safe
@@ -351,8 +359,39 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		animation_manager.clear_phase();
 	}
 
-	// Advance Anthropic-style content cache markers after all pre-call message injections
-	// (learning context, inbox hints, etc.) and immediately before building the request.
+	// The pack is optional context. If it is the only reason the fully assembled
+	// request crosses the model's usable ceiling, drop it rather than blocking the
+	// user's task; then re-check so unrelated injected state still fails closed.
+	if chat_session.active_memory_pack.is_some()
+		&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(
+			chat_session,
+			config,
+		)
+		.await
+		.is_err()
+	{
+		crate::log_debug!("Active memory pack dropped: insufficient context headroom");
+		chat_session.clear_active_memory_pack();
+	}
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
+		chat_session,
+		config,
+	)
+	.await?;
+	if memory_pack_rebuilt {
+		if let Some(pack) = chat_session.active_memory_pack.as_deref() {
+			let items = chat_session.recalled_refs.len() as u64;
+			crate::supervisor::stats::recall();
+			crate::supervisor::stats::memory_pack(
+				items,
+				crate::session::estimate_tokens(pack) as u64,
+			);
+			crate::supervisor::notify(&format!("active memory pack: {items} item(s)"));
+		}
+	}
+
+	// Advance Anthropic-style content cache markers after persistent pre-call
+	// injections (inbox hints, steers, etc.) and before the runtime-only memory pack.
 	// This preserves the previous marker while moving the oldest marker to the latest
 	// user/tool boundary for this new request.
 	let cache_manager = crate::session::cache::CacheManager::new();
@@ -365,6 +404,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	) {
 		crate::log_debug!("pre-request cache marker advance failed: {}", e);
 	}
+	// Materialize the active pack only for the provider request. It must never
+	// enter persistence, compression, extraction, or later conversation history.
+	chat_session.ensure_active_memory_pack_message();
 
 	// Make API call. `session.messages` is borrowed directly — no clone — and
 	// the validation params hold that shared borrow only until they're consumed
@@ -395,6 +437,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		validation_params
 	};
 	let api_result = chat_completion_with_validation(validation_params).await;
+	chat_session.remove_active_memory_pack_message();
 
 	// DON'T stop animation here - process_response stops it before tool output.
 	// After the tool header is printed, response.rs restarts the animation so it
@@ -629,6 +672,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			if next_iteration >= crate::supervisor::gate::MAX_ITERATIONS {
 				chat_session.nudge_iterations = next_iteration;
 				chat_session.gate_failed = true;
+				chat_session.learning_outcome =
+					crate::supervisor::learning::TrajectoryOutcome::Failed;
 				chat_session.pending_plan_signal = None;
 				crate::supervisor::stats::pregate_block();
 				crate::supervisor::stats::gate_fail();
@@ -750,6 +795,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary)
 					{
 						chat_session.gate_failed = true;
+						chat_session.learning_outcome =
+							crate::supervisor::learning::TrajectoryOutcome::Failed;
 						crate::supervisor::stats::gate_fail();
 						crate::supervisor::notify(&format!(
 							"completion evidence passed, but plan finalization failed: {error}"
@@ -760,6 +807,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_iterations = 0;
 				chat_session.nudge_iterations = 0;
 				chat_session.gate_failed = false;
+				chat_session.learning_outcome =
+					crate::supervisor::learning::TrajectoryOutcome::Verified;
 				chat_session.last_gate_gaps.clear();
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
@@ -773,11 +822,13 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// answered it and the verdict did not move. Repeating the advisory
 				// only spends the budget to arrive here again, so hand the finding
 				// to the user instead of blocking on it. The trajectory stays
-				// unverified (no distill) but the turn is not failed on it.
+				// unverified; learning may retain only a failure-labelled experience.
 				if new_evidence && crate::supervisor::gate::gaps_unchanged(&prior_gaps, &gaps) {
 					chat_session.gate_iterations = 0;
 					chat_session.last_gate_gaps.clear();
 					chat_session.gate_failed = true;
+					chat_session.learning_outcome =
+						crate::supervisor::learning::TrajectoryOutcome::Failed;
 					crate::supervisor::stats::gate_stall();
 					let mut msg = String::from(
 						"verification did not converge — unchanged after new evidence",
@@ -821,6 +872,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					.await;
 				}
 				chat_session.gate_failed = true;
+				chat_session.learning_outcome =
+					crate::supervisor::learning::TrajectoryOutcome::Failed;
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
 				// Name the gaps here too: this is the user's last word on the turn,
@@ -839,6 +892,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// trajectory stays labelled unverified whatever the re-entry below
 				// does, and only a later PASS clears the label.
 				chat_session.gate_failed = true;
+				chat_session.learning_outcome =
+					crate::supervisor::learning::TrajectoryOutcome::Failed;
 				chat_session.gate_iterations += 1;
 				crate::log_debug!(
 					"Verify-gate: indeterminate: {} (iter {})",
@@ -927,6 +982,69 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[tokio::test]
+	async fn outcome_credit_updates_only_materially_used_memory() {
+		let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+		let data = tempfile::tempdir().unwrap();
+		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+		std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+		let config = crate::session::chat::test_support::fake_provider_config();
+		let role = "__credit_role";
+		let project = "__credit_project";
+		let backend =
+			crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
+		for content in ["exposed but unused", "materially used"] {
+			backend
+				.store(
+					&crate::supervisor::learning::Lesson {
+						content: content.to_string(),
+						role: role.to_string(),
+						project: project.to_string(),
+						created: chrono::Utc::now().to_rfc3339(),
+						..Default::default()
+					},
+					&config,
+				)
+				.await
+				.unwrap();
+		}
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.recalled_refs = vec![
+			(
+				"M1".to_string(),
+				"exposed but unused".to_string(),
+				role.to_string(),
+				project.to_string(),
+			),
+			(
+				"M2".to_string(),
+				"materially used".to_string(),
+				role.to_string(),
+				project.to_string(),
+			),
+		];
+		session.used_memory_ids.insert("M2".to_string());
+		reinforce_recalled(&mut session, &config, 0.05).await;
+		let memories = backend.retrieve_all(role, project, &config).await.unwrap();
+		let unused = memories
+			.iter()
+			.find(|memory| memory.content == "exposed but unused")
+			.unwrap();
+		let used = memories
+			.iter()
+			.find(|memory| memory.content == "materially used")
+			.unwrap();
+		let unused_importance = unused.importance;
+		let used_importance = used.importance;
+
+		match previous {
+			Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+		assert_eq!(unused_importance, 0.5);
+		assert!((used_importance - 0.55).abs() < f64::EPSILON);
+	}
 
 	#[test]
 	fn turn_answer_joins_every_pass_oldest_first() {

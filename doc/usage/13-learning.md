@@ -1,17 +1,17 @@
 # Cross-Session Learning
 
-Octomind can extract and reuse lessons across sessions — mistakes corrected, patterns that worked, user preferences — so the same issues aren't repeated.
+Octomind can extract and reuse short lessons and grounded long-lived experiences across sessions, so corrections, architectural discoveries, outcomes, and failed approaches do not need to be rediscovered.
 
 ## Overview
 
 The learning system has two phases:
 1. **Extraction** — after `/done` (or during auto-compaction), an LLM analyzes the conversation and extracts a small number of lessons from your corrections and stated rules.
-2. **Injection** — at the start of a session (and as the conversation continues) relevant stored lessons are injected as a user-role message the model reads before responding.
+2. **Active packing** — before each genuine user turn, relevant stored lessons are selected into one bounded runtime pack that accompanies specialist requests for that turn.
 
 Each lesson has a **scope** that decides where it lands and how it is retrieved:
 
 - **`scoped`** (the default) — tied to a single project and role. Stored under `learning/{project}/{role_base}/` and retrieved by relevance to what you're working on right now.
-- **`global`** — a durable, user-wide preference that applies in every project and role. Stored under `learning/_/` and injected once per session by importance, with no relevance gating.
+- **`global`** — a durable, user-wide preference that applies in every project and role. Stored under `learning/_/` and reconsidered for every replacement pack by importance, with no relevance gating.
 
 So scoped lessons are organized **project first, then role** (project knowledge stays within the project, the role filters it further), while global lessons deliberately cross both boundaries. See [Lesson Scope](#lesson-scope) for details.
 
@@ -32,13 +32,26 @@ backend = "file"
 | `model` | Model for extraction and retrieval-prep LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
 | `backend` | `"file"` (default) or `"mcp"` for external memory tools. | `"file"` |
 
-Intermediate-learning cadence (3 user messages) and the per-retrieval injection cap (5) are fixed constants, not knobs.
+Intermediate-learning cadence (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
 > **Strict config, template-provided values.** The supervisor config is strict: the `[supervisor]` section and its `[supervisor.learning]` table are **required** — removing them is a hard parse error, not a silent fall-back. Within `[supervisor.learning]`, an *omitted field* still takes the code default (e.g. `enabled` → `false` (learning OFF), `model` → the dated build `anthropic:claude-haiku-4-5-20251001`). Learning is on out of the box only because the shipped template sets `enabled = true` explicitly. See [Supervisor](14-supervisor.md) for the sibling mechanics.
 
 ### Orientation memory
 
 Alongside lessons (the procedural *"do / avoid"*), the supervisor stores **orientation** — durable, descriptive understanding of the subject: how it works, key decisions, constraints. It rides the same backend under `memory_type = "orientation"` and is recalled as **working assumptions to verify**, never as truth, under its own `## Orientation` heading. It is part of learning — on whenever `[supervisor.learning]` is enabled, with fixed injection and decay bounds.
+
+### Long-lived experience memory
+
+A separate detached learner may emit one `memory_type = "experience"` record when a trajectory contains substantial non-obvious knowledge that would save several searches or failed attempts. The extra call is value-gated: verified/failed work needs real user plus tool evidence, while an outcome-unknown trajectory must also be large (at least eight tool results and 8,000 bounded transcript tokens). Routine sessions pay only for the existing short learner. Generic advice, activity logs, transient status, secrets, exact line numbers, and facts recoverable with one obvious search are rejected.
+
+An experience is 150–600 words with Objective, Durable knowledge, Outcome and evidence, and Reuse conditions sections. It carries:
+
+- the external trajectory outcome: `verified`, `failed`, or honestly `unknown`;
+- 1–6 addressable `session://<session>/message/<n>` evidence handles, including real user/tool evidence;
+- stable IDs of related short lessons or prior memories;
+- a separate grounding-verifier verdict before storage. A rejected candidate gets at most one issue-driven repair and one final verification, then fails closed.
+
+Failed trajectories may therefore produce failure-labelled experience records, while short user-backed lessons retain their existing quote-first verification contract.
 
 ## How It Works
 
@@ -49,7 +62,7 @@ Every lesson is classified as either `scoped` or `global`, and the extraction LL
 | Scope | Stored in | Retrieved how |
 |-------|-----------|---------------|
 | `scoped` (default) | `learning/{project}/{role_base}/` | By relevance to your current request (hybrid keyword + embedding search) |
-| `global` | `learning/_/` | Once per session, ranked by importance, with no relevance gating — they always apply |
+| `global` | `learning/_/` | Reconsidered for each active pack, ranked by importance, with no relevance gating — they always apply |
 
 A worked example: you tell the agent *"always open a single PR"* while working in project `octofs` as `developer:general`. That is a general working preference, so it becomes a **global** lesson and lands in `learning/_/`. Later you tell it *"in this repo, all API endpoints require bearer auth"* — that is specific to this project, so it is **scoped** and lands in `learning/octofs/developer/` (note the role is truncated at `:` to its base, `developer`).
 
@@ -83,6 +96,9 @@ role: "developer"
 project: "octofs"
 scope: scoped
 created: "2026-04-05T14:30:00Z"
+related: []
+evidence: []
+outcome: unknown
 ---
 ```
 
@@ -105,22 +121,29 @@ Extraction always runs **detached** (a background task with no cost tracked agai
 3. **At most 3 lessons** per extraction — one strong lesson beats three weak ones.
 4. **Only user corrections and user-stated rules qualify** — explicit corrections, declared project conventions/preferences/constraints, or a repeated correction of the same mistake. Things the AI figured out on its own, one-off debugging steps, generic developer knowledge, and anything derivable by reading the codebase do **not** qualify.
 
+Long-lived experiences are evaluated independently from that short-lesson decision. Their cited message handles are checked structurally, system-managed recall/steer messages are excluded from the transcript, and a separate verifier rejects unsupported or outcome-inflated records.
+
 Confidence drives importance: `confidence=high` (a direct correction) → `importance 0.9`; anything else (a stated preference, `confidence=medium`) → `importance 0.6`.
 
 **Dedup and supersede.** The extraction LLM receives the existing lessons (both scoped and global) so it can avoid duplicates. Before storing, within the same scope: an identical-content lesson is skipped, and a refinement — a new lesson with **more than 60% word overlap** against an existing one — *supersedes* it (the old file is deleted, the new one written). This is why a hand-edited near-duplicate can disappear after the next extraction.
 
-### Injection
+### Active Memory Pack
 
-Injected lessons are added as a **user-role message** (under a `##` heading) that the model reads before it responds — not appended to the system prompt. Injection happens in two moments:
+Every genuine user turn **replaces** the previous runtime pack:
 
-- **First message of the session** — the global tier (ranked by importance) plus a full hybrid scoped recall are retrieved and injected under `## Lessons from Past Sessions`.
-- **Each subsequent new user message** — an embedding-only scoped recall runs and any *newly* relevant lessons are injected under `## Additional Relevant Lessons`. Lessons already injected earlier in the session are deduped out, so nothing is repeated.
+- **First message of the session** — global rules plus a full hybrid scoped recall are considered.
+- **Each subsequent new user message** — global rules are reconsidered and scoped recall is embedding-only, with no retrieval-prep LLM call.
+- **Tool follow-up rounds** — reuse the same pack without another retrieval.
 
-There is therefore a small per-turn cost on new user messages (the scoped recall), not a one-time cached append. Tool follow-up rounds within a single turn do not trigger another recall.
+The file backend may rank up to 20 scoped candidates and expands explicit relationships one hop in either direction, but only items fitting the exact 2,000-token pack budget reach the specialist; global rules may consume at most 512 of those tokens. Each selected item gets a short pack-local ID (`M1`, `M2`, …). The specialist reports only IDs that materially affected its answer or action in the hidden supervisor status, and verify-gate outcomes reinforce or weaken only those used items. Mere exposure receives no credit.
+
+Long experience bodies are represented by a compact card (up to 320 inline tokens) plus the exact `.md` file path, outcome, evidence handles, and related IDs. The specialist can inspect the full file with its normal local reader when the card is insufficient; the full record is never silently lost to the injection budget.
+
+The pack is materialized as a system-managed user-role message only around the provider request. It is removed immediately afterwards, never appended to the session log, never accumulated across turns, and rebuilt automatically on the next genuine request. If the bounded pack alone would cross the model's usable context ceiling, it is dropped for that turn rather than blocking the user's task.
 
 ### Retrieval (File Backend)
 
-Scoped recall is a **hybrid search**: LLM-extracted keywords (sparse substring ranking) are fused with BGE-small embedding cosine similarity (dense) via Reciprocal Rank Fusion (RRF, `k=60`), then recency-reweighted (30-day half-life, up to a +50% boost so fresh lessons edge out stale ones among already-relevant matches). Embedding candidates below a `0.2` cosine floor are dropped as noise, and if the embedding model isn't ready yet the cosine signal is silently skipped — keyword ranking alone still returns results. The LLM keyword-prep call runs only on the **first** retrieval of a session; follow-up messages use embedding-only recall (no extra LLM call).
+Scoped recall is a **hybrid search**: LLM-extracted keywords (sparse substring ranking) are fused with BGE-small embedding cosine similarity (dense) via Reciprocal Rank Fusion (RRF, `k=60`), then reweighted by recency and the lesson's learned importance. Recency uses a 30-day half-life with up to a +50% boost; importance contributes a bounded 0.75x–1.25x multiplier so relevance remains primary. Embedding candidates below a `0.2` cosine floor are dropped as noise, and if the embedding model isn't ready yet the cosine signal is silently skipped. The LLM keyword-prep call runs only on the **first** retrieval of a session; follow-up messages use embedding-only recall (no extra LLM call).
 
 ### Managing Lessons (`/learning`)
 
@@ -131,6 +154,7 @@ The interactive `/learning` command lets you browse and prune lessons for the cu
 | `/learning` | List lessons (page 1). |
 | `/learning list [page]` | List a specific page. 15 lessons per page. |
 | `/learning list *pattern*` | Filter by a glob pattern matched against content, title, and tags (e.g. `/learning list *auth*`). Combine with a page number. |
+| `/learning show <index>` | Inspect the complete memory body, file path, outcome, evidence handles, and related IDs. Alias: `get`. |
 | `/learning delete <index>` | Delete a lesson by its **1-based index** from the last list. Aliases: `rm`, `remove`. |
 | `/learning clear` | Delete **all** lessons for the current role + project scope. |
 

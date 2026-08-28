@@ -63,7 +63,7 @@ pub async fn handle_done(
 		session.learning_extracted = true;
 		// Reset so next user message triggers fresh injection with new query.
 		session.learning_injected = false;
-		session.injected_lessons.clear();
+		session.clear_active_memory_pack();
 		session.pending_recall = false;
 	}
 

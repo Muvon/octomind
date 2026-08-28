@@ -302,4 +302,101 @@ mod tests {
 		// Should not panic when channel is closed
 		sink.emit(msg);
 	}
+
+	#[test]
+	fn test_detect_output_mode_jsonl_is_terminal_independent() {
+		assert_eq!(detect_output_mode("jsonl"), OutputMode::Jsonl);
+	}
+
+	#[test]
+	fn test_detect_output_mode_keeps_unknown_modes_on_the_terminal() {
+		// stdin terminal-ness varies by harness; both outcomes are terminal
+		// modes, so assert the invariant instead of the exact variant.
+		assert!(detect_output_mode("plain").is_terminal_mode());
+		assert!(detect_output_mode("").is_terminal_mode());
+		assert!(detect_output_mode("no-such-mode").is_terminal_mode());
+	}
+
+	#[test]
+	fn test_from_cli_arg_is_case_sensitive() {
+		// Only lowercase "jsonl"/"plain" are recognized; anything else —
+		// including different casing — falls back to terminal detection.
+		assert_ne!(OutputMode::from_cli_arg("JSONL", true), OutputMode::Jsonl);
+		assert_eq!(
+			OutputMode::from_cli_arg("JSONL", true),
+			OutputMode::Interactive
+		);
+		assert_eq!(
+			OutputMode::from_cli_arg("Plain", false),
+			OutputMode::NonInteractive
+		);
+	}
+
+	#[test]
+	fn test_from_cli_arg_has_no_websocket_arm() {
+		// WebSocket is a runtime mode only; the CLI arg falls through to the
+		// terminal-based default rather than selecting the WebSocket sink.
+		assert_eq!(
+			OutputMode::from_cli_arg("websocket", true),
+			OutputMode::Interactive
+		);
+		assert_eq!(
+			OutputMode::from_cli_arg("websocket", false),
+			OutputMode::NonInteractive
+		);
+	}
+
+	#[test]
+	fn test_output_mode_is_copy_and_debuggable() {
+		let mode = OutputMode::Jsonl;
+		let copied = mode; // Copy: `mode` stays usable after the "move"
+		assert_eq!(mode, copied);
+		assert!(format!("{:?}", OutputMode::WebSocket).contains("WebSocket"));
+	}
+
+	#[test]
+	fn test_websocket_sink_preserves_order_across_messages() {
+		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+		let sink = WebSocketSink::new(tx);
+
+		for i in 0..3 {
+			sink.emit(ServerMessage::Assistant(AssistantPayload {
+				content: format!("msg-{i}"),
+				session_id: "session_123".to_string(),
+				step: None,
+			}));
+		}
+
+		for i in 0..3 {
+			let received = rx.try_recv().expect("message must be queued");
+			assert!(
+				matches!(&received, ServerMessage::Assistant(p) if p.content == format!("msg-{i}")),
+				"expected msg-{i}, got {received:?}"
+			);
+		}
+		assert!(rx.try_recv().is_err(), "channel must be drained");
+	}
+
+	#[test]
+	fn test_websocket_sink_clone_shares_the_channel() {
+		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+		let sink = WebSocketSink::new(tx);
+		let cloned = sink.clone();
+
+		sink.emit(ServerMessage::Assistant(AssistantPayload {
+			content: "from-original".to_string(),
+			session_id: "session_123".to_string(),
+			step: None,
+		}));
+		cloned.emit(ServerMessage::Assistant(AssistantPayload {
+			content: "from-clone".to_string(),
+			session_id: "session_123".to_string(),
+			step: None,
+		}));
+
+		let first = rx.try_recv().expect("first message must be queued");
+		let second = rx.try_recv().expect("second message must be queued");
+		assert!(matches!(&first, ServerMessage::Assistant(p) if p.content == "from-original"));
+		assert!(matches!(&second, ServerMessage::Assistant(p) if p.content == "from-clone"));
+	}
 }

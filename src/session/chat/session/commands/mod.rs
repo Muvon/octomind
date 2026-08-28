@@ -423,7 +423,7 @@ pub async fn process_command(
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
 		MONITOR_COMMAND => monitor::handle_monitor().await,
-		LEARNING_COMMAND => learning::handle_learning(session, config, params).await,
+		LEARNING_COMMAND => learning::handle_learning(session, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
 		AGENTS_COMMAND => agents::handle_agents(params),

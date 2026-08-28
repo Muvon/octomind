@@ -21,7 +21,7 @@ use super::*;
 use crate::session::chat::test_support::{
 	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
 };
-use crate::supervisor::learning::backend::create_backend;
+use crate::supervisor::learning::backend::FileBackend;
 use crate::supervisor::learning::Lesson;
 
 const ROLE: &str = "__inject_test_role";
@@ -91,29 +91,23 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 	let proj = "__inject_test_proj_followup";
 	cleanup(proj);
 	let config = fake_provider_config();
-	let backend = create_backend(&config.supervisor.learning);
+	let backend = FileBackend;
 	backend
-		.store(
-			&lesson(
-				proj,
-				"always run the test suite on the dev box",
-				"learning",
-				&["testing", "box"],
-			),
-			&config,
-		)
+		.store(&lesson(
+			proj,
+			"always run the test suite on the dev box",
+			"learning",
+			&["testing", "box"],
+		))
 		.await
 		.expect("store lesson");
 	backend
-		.store(
-			&lesson(
-				proj,
-				"the build uses a cargo workspace",
-				"orientation",
-				&["build"],
-			),
-			&config,
-		)
+		.store(&lesson(
+			proj,
+			"the build uses a cargo workspace",
+			"orientation",
+			&["build"],
+		))
 		.await
 		.expect("store orientation");
 
@@ -131,10 +125,7 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 				.collect()
 		})
 		.unwrap_or_default();
-	let all = backend
-		.retrieve_all(ROLE, proj, &config)
-		.await
-		.unwrap_or_default();
+	let all = backend.retrieve_all(ROLE, proj).await.unwrap_or_default();
 	assert!(
 		text.contains("always run the test suite on the dev box"),
 		"lesson missing from recall block:\ntext={text:?}\nstore dir {dir:?} files={files:?}\nretrieve_all={}",
@@ -172,17 +163,14 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 	cleanup(proj);
 	let mut config = fake_provider_config();
 	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	let backend = create_backend(&config.supervisor.learning);
+	let backend = FileBackend;
 	backend
-		.store(
-			&lesson(
-				proj,
-				"prefer rsync over scp for box deployments",
-				"learning",
-				&["deploy", "rsync"],
-			),
-			&config,
-		)
+		.store(&lesson(
+			proj,
+			"prefer rsync over scp for box deployments",
+			"learning",
+			&["deploy", "rsync"],
+		))
 		.await
 		.expect("store lesson");
 
@@ -234,18 +222,15 @@ async fn test_active_pack_is_token_bounded_with_stable_pack_ids() {
 	let proj = "__inject_test_proj_budget";
 	cleanup(proj);
 	let config = fake_provider_config();
-	let backend = create_backend(&config.supervisor.learning);
+	let backend = FileBackend;
 	for i in 0..20 {
 		backend
-			.store(
-				&lesson(
-					proj,
-					&format!("memory {i}: {}", "long reusable context ".repeat(120)),
-					"learning",
-					&["memory"],
-				),
-				&config,
-			)
+			.store(&lesson(
+				proj,
+				&format!("memory {i}: {}", "long reusable context ".repeat(120)),
+				"learning",
+				&["memory"],
+			))
 			.await
 			.expect("store lesson");
 	}
@@ -270,7 +255,7 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 	let proj = "__inject_test_proj_experience";
 	cleanup(proj);
 	let config = fake_provider_config();
-	let backend = create_backend(&config.supervisor.learning);
+	let backend = FileBackend;
 	let mut experience = lesson(
 		proj,
 		&format!(
@@ -284,10 +269,7 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 	experience.outcome = crate::supervisor::learning::TrajectoryOutcome::Verified;
 	experience.related = vec!["related-memory-id".to_string()];
 	experience.evidence = vec!["session://s/message/3".to_string()];
-	backend
-		.store(&experience, &config)
-		.await
-		.expect("store experience");
+	backend.store(&experience).await.expect("store experience");
 
 	let (_tx, rx) = cancel_pair();
 	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx).await;

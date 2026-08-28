@@ -5,7 +5,7 @@
 //! Lesson extraction: calls LLM to analyze a session transcript and extract
 //! generalizable lessons, then stores them via the configured backend.
 
-use super::backend::create_backend;
+use super::backend::FileBackend;
 use super::Lesson;
 use crate::config::Config;
 use anyhow::Result;
@@ -155,20 +155,15 @@ pub async fn run_extraction(
 		return Ok(0);
 	}
 
-	let backend = create_backend(learning);
-	crate::log_debug!(
-		"Learning extraction: backend={}, role={}, project={}",
-		learning.backend,
-		role,
-		project
-	);
+	let backend = FileBackend;
+	crate::log_debug!("Learning extraction: role={}, project={}", role, project);
 
 	// Retrieve existing lessons (scoped + global) for dedup context and supersede.
 	let existing_scoped = backend
-		.retrieve_all(role, project, config)
+		.retrieve_all(role, project)
 		.await
 		.unwrap_or_default();
-	let existing_global = backend.retrieve_global(config).await.unwrap_or_default();
+	let existing_global = backend.retrieve_global().await.unwrap_or_default();
 	crate::log_debug!(
 		"Learning extraction: {} scoped + {} global existing lessons",
 		existing_scoped.len(),
@@ -259,7 +254,7 @@ pub async fn run_extraction(
 			};
 			if let Some(experience) = validated {
 				let id = experience.lesson.file_id();
-				if backend.store(&experience.lesson, config).await.is_ok() {
+				if backend.store(&experience.lesson).await.is_ok() {
 					experience_id = Some(id);
 					stored += 1;
 					crate::supervisor::stats::experience(1);
@@ -293,10 +288,10 @@ pub async fn run_extraction(
 			}
 			if let Some(old) = best_overlap(&o.content, &existing_or) {
 				let _ = backend
-					.delete(&old.file_id(), &old.role, &old.project, config)
+					.delete(&old.file_id(), &old.role, &old.project)
 					.await;
 			}
-			if backend.store(&o, config).await.is_ok() {
+			if backend.store(&o).await.is_ok() {
 				stored += 1;
 				crate::supervisor::stats::orientation(1);
 				crate::log_debug!("Orientation stored: {}", o.content);
@@ -308,7 +303,7 @@ pub async fn run_extraction(
 	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {
 		crate::log_debug!("Learning extraction: model decided NONE — no lessons");
-		return finish_extraction(&*backend, config, role, project, stored).await;
+		return finish_extraction(&backend, config, role, project, stored).await;
 	}
 
 	let candidates =
@@ -318,7 +313,7 @@ pub async fn run_extraction(
 		candidates.len()
 	);
 	if candidates.is_empty() {
-		return finish_extraction(&*backend, config, role, project, stored).await;
+		return finish_extraction(&backend, config, role, project, stored).await;
 	}
 
 	// Verification gate (closes the Self-Confirmation Trap at entry): a lesson
@@ -356,7 +351,7 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(&*backend, config, role, project, stored).await;
+		return finish_extraction(&backend, config, role, project, stored).await;
 	}
 
 	// 2. One batched LLM pass: does the evidence actually support each lesson's
@@ -376,7 +371,7 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(&*backend, config, role, project, stored).await;
+		return finish_extraction(&backend, config, role, project, stored).await;
 	}
 
 	// Store each. Identical content is skipped. A refinement or reversal deletes
@@ -418,7 +413,7 @@ pub async fn run_extraction(
 			.filter(|old| old.scope == lesson.scope)
 		{
 			if let Err(e) = backend
-				.delete(&old.file_id(), &old.role, &old.project, config)
+				.delete(&old.file_id(), &old.role, &old.project)
 				.await
 			{
 				crate::log_debug!("Learning supersede delete failed: {}", e);
@@ -427,7 +422,7 @@ pub async fn run_extraction(
 			}
 		}
 
-		if let Err(e) = backend.store(&lesson, config).await {
+		if let Err(e) = backend.store(&lesson).await {
 			crate::log_debug!("Learning store failed: {}", e);
 		} else {
 			stored += 1;
@@ -441,7 +436,7 @@ pub async fn run_extraction(
 		}
 	}
 
-	finish_extraction(&*backend, config, role, project, stored).await
+	finish_extraction(&backend, config, role, project, stored).await
 }
 
 /// Run deterministic cleanup and bounded file-store maintenance after every
@@ -449,24 +444,19 @@ pub async fn run_extraction(
 /// do not erase successfully extracted records; they are retried by the next
 /// extraction and remain visible in debug logs.
 async fn finish_extraction(
-	backend: &dyn crate::supervisor::learning::backend::LearningBackend,
+	backend: &FileBackend,
 	config: &Config,
 	role: &str,
 	project: &str,
 	stored: usize,
 ) -> Result<usize> {
 	if let Err(error) = backend
-		.prune_stale(
-			role,
-			project,
-			crate::supervisor::learning::DECAY_DAYS,
-			config,
-		)
+		.prune_stale(role, project, crate::supervisor::learning::DECAY_DAYS)
 		.await
 	{
 		crate::log_debug!("Learning stale-prune failed: {}", error);
 	}
-	if let Err(error) = super::retention::maintain(backend, config, role, project).await {
+	if let Err(error) = super::retention::maintain(config, role, project).await {
 		crate::log_debug!("Learning retention maintenance failed: {}", error);
 	}
 	Ok(stored)
@@ -1835,8 +1825,8 @@ mod tests {
 		.await
 		.expect("extraction succeeds");
 		assert_eq!(stored, 1);
-		let backend = create_backend(&config.supervisor.learning);
-		let memories = backend.retrieve_all(role, project, &config).await.unwrap();
+		let backend = FileBackend;
+		let memories = backend.retrieve_all(role, project).await.unwrap();
 		assert_eq!(memories.len(), 1);
 		assert_eq!(memories[0].memory_type, "experience");
 		assert_eq!(
@@ -1897,8 +1887,8 @@ mod tests {
 		.await
 		.unwrap();
 		assert_eq!(stored, 1);
-		let backend = create_backend(&config.supervisor.learning);
-		let records = backend.retrieve_all(role, project, &config).await.unwrap();
+		let backend = FileBackend;
+		let records = backend.retrieve_all(role, project).await.unwrap();
 		let experience = records
 			.iter()
 			.find(|record| record.memory_type == "experience")
@@ -1955,8 +1945,8 @@ mod tests {
 		.await
 		.unwrap();
 		assert_eq!(stored, 1);
-		let backend = create_backend(&config.supervisor.learning);
-		let records = backend.retrieve_all(role, project, &config).await.unwrap();
+		let backend = FileBackend;
+		let records = backend.retrieve_all(role, project).await.unwrap();
 		assert_eq!(
 			records[0].outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Failed
@@ -2006,8 +1996,7 @@ mod tests {
 			.expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
 		let messages = load_replay_messages(std::path::Path::new(&path));
 		assert!(!messages.is_empty());
-		let mut config = crate::config::Config::load().expect("real config loads");
-		config.supervisor.learning.backend = "file".to_string();
+		let config = crate::config::Config::load().expect("real config loads");
 		let _data = TestDataDir::new();
 		let role = "__learning_replay_eval";
 		let project = "__learning_replay_eval";
@@ -2023,9 +2012,9 @@ mod tests {
 		)
 		.await
 		.expect("live replay extraction succeeds");
-		let backend = create_backend(&config.supervisor.learning);
-		let mut records = backend.retrieve_all(role, project, &config).await.unwrap();
-		records.extend(backend.retrieve_global(&config).await.unwrap());
+		let backend = FileBackend;
+		let mut records = backend.retrieve_all(role, project).await.unwrap();
+		records.extend(backend.retrieve_global().await.unwrap());
 		assert_eq!(records.len(), stored);
 		assert!(
 			records

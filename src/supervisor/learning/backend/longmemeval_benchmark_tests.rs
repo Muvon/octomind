@@ -141,10 +141,9 @@ async fn rewrite(
 
 	let started = Instant::now();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let result = crate::supervisor::learning::inject::prepare_retrieval_query(
-		config, query, "file", model, rx,
-	)
-	.await;
+	let result =
+		crate::supervisor::learning::inject::prepare_retrieval_query(config, query, model, rx)
+			.await;
 	stats.latency_ms += started.elapsed().as_millis();
 	stats.calls += 1;
 	match result {

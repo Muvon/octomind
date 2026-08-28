@@ -50,9 +50,8 @@ src/
     extract.rs               # Lesson extraction from conversations (LLM-based)
     inject.rs                # Lesson retrieval and system prompt injection
     backend/
-      mod.rs                 # LearningBackend trait, factory
-      file.rs                # File-based backend (markdown + YAML frontmatter)
-      mcp.rs                 # MCP tool backend (e.g., octobrain)
+      mod.rs                 # FileBackend export
+      file.rs                # Learning store, hybrid retrieval, and retention
 
   session/
     mod.rs                   # Message types, session entry points

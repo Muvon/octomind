@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 9
+version = 10
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -680,8 +680,6 @@ model = "octohub:auto"
 enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
 model = "octohub:auto"
-# Backend: "file" (default, zero deps) or "mcp" (external tool with field mapping)
-backend = "file"
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 # The free deterministic pre-gate (state changed but no successful check ran
@@ -728,30 +726,3 @@ adaptive = false
 tokens_threshold = 5000
 # Model that does the narrowing (cheap + fast recommended).
 model = "octohub:auto"
-
-# MCP backend configuration (uncomment to use instead of file backend):
-# Octobrain example — field_map maps canonical learning fields to the MCP tool's actual arguments.
-# Empty string = omit that field. Missing = omit.
-#
-# backend = "mcp"
-#
-# [supervisor.learning.store]
-# tool = "memorize"
-# [supervisor.learning.store.field_map]
-# content = "content"              # required by memorize
-# title = "title"                  # required by memorize (short summary)
-# memory_type = "memory_type"      # "learning" — valid octobrain category
-# importance = "importance"        # 0.0-1.0
-# confidence = "source"            # maps high/medium/low → user_confirmed/agent_inferred
-# tags = "tags"                    # array of strings, max 10
-# role = "role"
-# project = "project"
-#
-# [supervisor.learning.retrieve]
-# tool = "remember"
-# [supervisor.learning.retrieve.field_map]
-# query = "query"                  # string or array of search terms
-# memory_type = "memory_types"     # passed as ["learning"] array to match octobrain schema
-# role = "role"
-# project = "project"
-# limit = "limit"                  # max 5 for octobrain

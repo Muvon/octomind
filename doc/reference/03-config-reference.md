@@ -343,21 +343,6 @@ Cross-session adaptive learning. Extracts lessons and orientation memory (durabl
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the learning system (lessons + orientation) |
 | `model` | string | `"octohub:auto"` | Model for extraction and retrieval LLM calls |
-| `backend` | string | `"file"` | Backend: `"file"` or `"mcp"` |
-
-#### `[supervisor.learning.store]` (MCP backend only)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool` | string | MCP tool name for storing lessons (e.g. `"memorize"`) |
-| `field_map` | table | Maps canonical fields to MCP argument names. Empty string = omit. |
-
-#### `[supervisor.learning.retrieve]` (MCP backend only)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool` | string | MCP tool name for retrieving lessons (e.g. `"remember"`) |
-| `field_map` | table | Maps canonical fields to MCP argument names. Empty string = omit. |
 
 ### `[supervisor.gate]`
 
@@ -396,7 +381,6 @@ model = "octohub:auto"
 [supervisor.learning]
 enabled = true
 model = "octohub:auto"
-backend = "file"
 
 [supervisor.gate]
 enabled = true

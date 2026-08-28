@@ -181,6 +181,13 @@ fn test_render_learning_variants() {
 			"total": 2,
 			"page": 1,
 			"total_pages": 2,
+			"storage": {
+				"hot_items": 2, "hot_tokens": 120,
+				"cold_items": 1, "cold_tokens": 40,
+				"scoped_hot": 1, "global_hot": 1,
+				"scoped_cold": 1, "global_cold": 0,
+				"by_type": {"learning": {"hot": 2, "cold": 1}}
+			},
 			"lessons": [
 				{
 					"index": 1,

@@ -28,13 +28,12 @@ pub mod inject;
 pub mod retention;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-/// A single learned lesson — the canonical schema all backends map to/from.
+/// A single learned lesson stored in the file-backed learning corpus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lesson {
 	pub content: String,
-	/// Short summary title (required by some MCP backends like octobrain).
+	/// Short summary title used for retrieval and display.
 	#[serde(default)]
 	pub title: String,
 	#[serde(default = "default_memory_type")]
@@ -153,36 +152,6 @@ impl Default for Lesson {
 }
 
 impl Lesson {
-	/// Get a field value by canonical name for field mapping.
-	pub fn get_field(&self, name: &str) -> Option<serde_json::Value> {
-		match name {
-			"content" => Some(serde_json::Value::String(self.content.clone())),
-			"title" => Some(serde_json::Value::String(self.title.clone())),
-			"memory_type" => Some(serde_json::Value::String(self.memory_type.clone())),
-			"importance" => Some(serde_json::json!(self.importance)),
-			// confidence → maps to octobrain's "source" trust tier when field_map says so
-			"confidence" => {
-				let mapped = match self.confidence.as_str() {
-					"high" => "user_confirmed",
-					_ => "agent_inferred",
-				};
-				Some(serde_json::Value::String(mapped.to_string()))
-			}
-			"tags" => Some(serde_json::json!(self.tags)),
-			"source" => Some(serde_json::Value::String(self.source.clone())),
-			"role" => Some(serde_json::Value::String(self.role.clone())),
-			"project" => Some(serde_json::Value::String(self.project.clone())),
-			"scope" => Some(serde_json::Value::String(self.scope.clone())),
-			"created" => Some(serde_json::Value::String(self.created.clone())),
-			"related" => Some(serde_json::json!(self.related)),
-			"evidence" => Some(serde_json::json!(self.evidence)),
-			"outcome" => Some(serde_json::Value::String(self.outcome.as_str().to_string())),
-			"last_used" => Some(serde_json::Value::String(self.last_used.clone())),
-			"use_count" => Some(serde_json::json!(self.use_count)),
-			_ => None,
-		}
-	}
-
 	/// Stable file id (filename stem) for the file backend: `{ts}-{slug}` of
 	/// content + created timestamp. Canonical — used by store, supersede, and
 	/// the `/learning` command so all three agree on identity.
@@ -217,18 +186,6 @@ impl Lesson {
 	}
 }
 
-/// Context for retrieving relevant lessons.
-pub struct RetrievalContext {
-	/// The user's task/input text.
-	pub query: String,
-	/// Current role (e.g. "developer:general").
-	pub role: String,
-	/// Current project basename.
-	pub project: String,
-	/// Max lessons to return.
-	pub limit: usize,
-}
-
 /// Learning configuration — added to the main Config struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearningConfig {
@@ -238,32 +195,10 @@ pub struct LearningConfig {
 	/// Model for extraction and retrieval prep LLM calls (cheap model recommended).
 	#[serde(default = "default_learning_model")]
 	pub model: String,
-	/// Backend type: "file" or "mcp".
-	#[serde(default = "default_backend")]
-	pub backend: String,
-	/// MCP store configuration (only used when backend = "mcp").
-	#[serde(default)]
-	pub store: Option<McpEndpointConfig>,
-	/// MCP retrieve configuration (only used when backend = "mcp").
-	#[serde(default)]
-	pub retrieve: Option<McpEndpointConfig>,
-}
-
-/// Configuration for an MCP endpoint (store or retrieve).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpEndpointConfig {
-	/// MCP tool name (e.g. "memorize", "remember").
-	pub tool: String,
-	/// Field mapping: canonical field name → MCP argument name. Empty string = omit.
-	#[serde(default)]
-	pub field_map: HashMap<String, String>,
 }
 
 fn default_learning_model() -> String {
 	"anthropic:claude-haiku-4-5-20251001".into()
-}
-fn default_backend() -> String {
-	"file".into()
 }
 
 /// Minimum user messages before intermediate learning triggers during
@@ -278,9 +213,6 @@ impl Default for LearningConfig {
 		Self {
 			enabled: false,
 			model: default_learning_model(),
-			backend: default_backend(),
-			store: None,
-			retrieve: None,
 		}
 	}
 }

@@ -510,6 +510,7 @@ impl Session {
 				api_calls_at_last_compression: 0,
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
+				learning_stats: LearningSessionStats::default(),
 				verification_policy: crate::supervisor::VerificationPolicy::default(),
 				evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			},

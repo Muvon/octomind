@@ -370,6 +370,7 @@ mod adaptive_compression_tests {
 				api_calls_at_last_compression: 0,
 				output_tokens_at_last_compression: 0,
 				consecutive_compressions: 0,
+				learning_stats: Default::default(),
 				verification_policy: Default::default(),
 				evidence: Default::default(),
 			},

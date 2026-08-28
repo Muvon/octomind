@@ -62,6 +62,8 @@ Display comprehensive session statistics:
 - Cost breakdown (per-request and cumulative)
 - Cache savings (tokens and USD)
 - Compression statistics (if compression has occurred)
+- Learning packs, items/tokens shown, materially used memories, outcome credit,
+  active-pack state, and maintenance activity
 - Model information
 
 ### `/report`

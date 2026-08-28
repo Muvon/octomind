@@ -81,6 +81,25 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let cache_stats =
 		cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
+	let mut active_used_ids: Vec<String> = session.used_memory_ids.iter().cloned().collect();
+	active_used_ids.sort();
+	let learning_stats = serde_json::json!({
+		"packs": session.learning_stats.packs,
+		"items": session.learning_stats.items,
+		"tokens": session.learning_stats.tokens,
+		"used": session.learning_stats.used,
+		"credit_positive": session.learning_stats.credit_positive,
+		"credit_negative": session.learning_stats.credit_negative,
+		"used_without_verdict": session.learning_stats.used_without_verdict,
+		"active_items": session.recalled_refs.len(),
+		"active_tokens": session.active_memory_pack
+			.as_deref()
+			.map(crate::session::estimate_tokens)
+			.unwrap_or(0),
+		"active_used_ids": active_used_ids,
+		"outcome": session.learning_outcome.as_str(),
+		"extracted": session.learning_extracted,
+	});
 
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Info {
@@ -107,6 +126,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 			agents_stats: super::agents::get_agents_stats(),
 			supervisor_stats: crate::supervisor::stats::snapshot(),
+			learning_stats,
 		},
 	)))
 }

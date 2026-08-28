@@ -96,6 +96,8 @@ pub enum CommandOutput {
 		agents_stats: Option<serde_json::Value>,
 		/// Supervisor activity + usage tally this session.
 		supervisor_stats: Option<serde_json::Value>,
+		/// Session-isolated learning usage and current active-pack state.
+		learning_stats: serde_json::Value,
 	},
 	Model {
 		old_model: Option<String>,

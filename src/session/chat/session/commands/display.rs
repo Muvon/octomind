@@ -386,6 +386,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_non_cached_tokens,
 		agents_stats,
 		supervisor_stats,
+		learning_stats,
 		..
 	} = output
 	{
@@ -685,10 +686,8 @@ pub fn display_info(output: &CommandOutput) {
 			let condense_calls = get_u64("condense_calls");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
-			let memory_pack_items = get_u64("memory_pack_items");
-			let memory_pack_tokens = get_u64("memory_pack_tokens");
-			let memory_credit_positive = get_u64("memory_credit_positive");
-			let memory_credit_negative = get_u64("memory_credit_negative");
+			let memory_consolidations = get_u64("memory_consolidations");
+			let memory_archived = get_u64("memory_archived");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
 			let sup_tps = get_f64("tokens_per_second");
@@ -704,7 +703,14 @@ pub fn display_info(output: &CommandOutput) {
 			let experiences = get_u64("experiences_stored");
 			let recalls = get_u64("recalls_injected");
 			block_section("supervisor");
-			let kw_sv = key_width(["activity", "gate", "calls", "tokens", "throughput"]);
+			let kw_sv = key_width([
+				"activity",
+				"learning",
+				"gate",
+				"calls",
+				"tokens",
+				"throughput",
+			]);
 			let dot = "·".bright_black();
 
 			let mut activity = Vec::new();
@@ -747,6 +753,12 @@ pub fn display_info(output: &CommandOutput) {
 			if experiences > 0 {
 				activity.push(format!("{} experiences", experiences));
 			}
+			if memory_consolidations > 0 {
+				activity.push(format!("{} consolidated", memory_consolidations));
+			}
+			if memory_archived > 0 {
+				activity.push(format!("{} archived", memory_archived));
+			}
 			if condensed_results > 0 {
 				activity.push(format!(
 					"{} condensed (saved {} tok)",
@@ -754,17 +766,62 @@ pub fn display_info(output: &CommandOutput) {
 					format_number(condense_saved)
 				));
 			}
-			if memory_pack_items > 0 {
-				activity.push(format!(
-					"{} memory items ({} tok, +{}/-{} credit)",
-					memory_pack_items,
-					format_number(memory_pack_tokens),
-					memory_credit_positive,
-					memory_credit_negative
-				));
-			}
 			if !activity.is_empty() {
 				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
+			}
+			let learning_u64 = |key: &str| {
+				learning_stats
+					.get(key)
+					.and_then(|value| value.as_u64())
+					.unwrap_or(0)
+			};
+			let packs = learning_u64("packs");
+			let used = learning_u64("used");
+			let active_items = learning_u64("active_items");
+			if packs > 0 || used > 0 || active_items > 0 {
+				let mut learning = vec![format!(
+					"{} packs {} {} items / {} tok {} {} used (+{}/-{}, {} neutral)",
+					packs,
+					dot,
+					learning_u64("items"),
+					format_number(learning_u64("tokens")),
+					dot,
+					used,
+					learning_u64("credit_positive"),
+					learning_u64("credit_negative"),
+					learning_u64("used_without_verdict")
+				)];
+				if active_items > 0 {
+					let used_ids = learning_stats
+						.get("active_used_ids")
+						.and_then(|value| value.as_array())
+						.map(|items| {
+							items
+								.iter()
+								.filter_map(|item| item.as_str())
+								.collect::<Vec<_>>()
+								.join(",")
+						})
+						.unwrap_or_default();
+					learning.push(format!(
+						"active {} / {} tok{}",
+						active_items,
+						format_number(learning_u64("active_tokens")),
+						if used_ids.is_empty() {
+							String::new()
+						} else {
+							format!(" (used {used_ids})")
+						}
+					));
+				}
+				let outcome = learning_stats
+					.get("outcome")
+					.and_then(|value| value.as_str())
+					.unwrap_or("unknown");
+				if outcome != "unknown" {
+					learning.push(format!("outcome {outcome}"));
+				}
+				block_row("learning", &learning.join(&format!(" {} ", dot)), kw_sv);
 			}
 			if gate_runs > 0 {
 				let mut g = vec![format!("{} runs", gate_runs)];

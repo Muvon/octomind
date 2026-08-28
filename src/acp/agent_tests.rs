@@ -80,3 +80,59 @@ async fn signal_on_eof_fires_exactly_at_eof() {
 	assert_eq!(n, 0);
 	rx.await.expect("EOF must fire the disconnect signal");
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn graceful_shutdown_waits_for_pending_work_in_every_session() {
+	let config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("default config parses");
+	let agent = Rc::new(OctomindAgent::new(
+		config,
+		"assistant".into(),
+		Default::default(),
+	));
+	let idle_session = "acp-idle-session".to_string();
+	let busy_session = "acp-busy-session".to_string();
+
+	agent.sessions.borrow_mut().insert(
+		idle_session.clone(),
+		(ChatSession::for_tests(Vec::new()), PathBuf::new()),
+	);
+	agent.sessions.borrow_mut().insert(
+		busy_session.clone(),
+		(ChatSession::for_tests(Vec::new()), PathBuf::new()),
+	);
+
+	for session_id in [&idle_session, &busy_session] {
+		crate::session::context::with_session_id(session_id.clone(), async {
+			crate::session::context::init_session_services("assistant");
+		})
+		.await;
+	}
+	crate::session::shell_jobs::register_for_session(
+		&busy_session,
+		"job://coverage",
+		"cargo test --workspace",
+	);
+
+	let waiter = agent.wait_until_idle();
+	tokio::pin!(waiter);
+	assert!(
+		tokio::time::timeout(std::time::Duration::from_millis(20), waiter.as_mut())
+			.await
+			.is_err(),
+		"one busy session must hold ACP open"
+	);
+
+	assert!(crate::session::shell_jobs::complete_for_session(
+		&busy_session,
+		"job://coverage"
+	));
+	agent.idle_notify.notify_waiters();
+	tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+		.await
+		.expect("idle transition wakes graceful shutdown");
+
+	crate::session::context::cleanup_session(&idle_session);
+	crate::session::context::cleanup_session(&busy_session);
+}

@@ -68,6 +68,17 @@ pub use token_counter::{
 	estimate_session_tokens, estimate_tokens, truncate_to_tokens, validate_session_token_threshold,
 }; // Export token counting functions // Export cache management
 
+/// Whether the current session still owns asynchronous work whose completion
+/// must be delivered before a headless session may exit.
+pub fn has_pending_async_work() -> bool {
+	crate::mcp::orchestration::has_pending_schedules()
+		|| crate::mcp::orchestration::has_running_monitors()
+		|| shell_jobs::has_pending()
+		|| tap_runs::has_running_jobs()
+		|| context::get_job_manager_for_session().is_some_and(|manager| manager.active_count() > 0)
+		|| inbox::has_inbox_messages()
+}
+
 // Re-export constants
 // Constants moved to config
 

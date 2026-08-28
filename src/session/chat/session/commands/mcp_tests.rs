@@ -144,8 +144,8 @@ async fn test_list_enumerates_builtin_servers_and_tools() {
 		.expect("core server listed");
 	assert!(!core_tools.is_empty(), "core exposes no tools: {data}");
 	assert!(
-		core_tools.iter().any(|t| t == "plan"),
-		"core must expose `plan`: {data}"
+		core_tools.iter().any(|t| t == "recall"),
+		"core must expose `recall`: {data}"
 	);
 	assert!(
 		data["total_tools"].as_u64().unwrap_or_default() > 0,

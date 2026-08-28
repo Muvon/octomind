@@ -730,10 +730,12 @@ pub async fn run_acp_command(
 		.kill_on_drop(true);
 	let mut child = command.spawn()?;
 
-	let mut stdin = child
-		.stdin
-		.take()
-		.ok_or_else(|| anyhow::anyhow!("No stdin"))?;
+	let mut stdin = Some(
+		child
+			.stdin
+			.take()
+			.ok_or_else(|| anyhow::anyhow!("No stdin"))?,
+	);
 	let stdout = child
 		.stdout
 		.take()
@@ -745,6 +747,8 @@ pub async fn run_acp_command(
 
 	// 1. initialize
 	stdin
+		.as_mut()
+		.expect("child stdin is open during initialize")
 		.write_all(
 			msg_line(json!({
 				"jsonrpc": "2.0",
@@ -759,6 +763,8 @@ pub async fn run_acp_command(
 
 	// 2. session/new
 	stdin
+		.as_mut()
+		.expect("child stdin is open during session creation")
 		.write_all(
 			msg_line(json!({
 				"jsonrpc": "2.0",
@@ -778,8 +784,11 @@ pub async fn run_acp_command(
 		.ok_or_else(|| anyhow::anyhow!("No sessionId in session/new response"))?
 		.to_string();
 
-	// 3. session/prompt — collect chunks until we get the response (id=3)
+	// 3. session/prompt — collect the initial response, then close stdin and
+	// keep consuming updates until the ACP child has drained finite background work.
 	stdin
+		.as_mut()
+		.expect("child stdin is open during prompt")
 		.write_all(
 			msg_line(json!({
 				"jsonrpc": "2.0",
@@ -798,6 +807,8 @@ pub async fn run_acp_command(
 	// with status `done` even when the API call inside the subprocess failed.
 	let mut prompt_error: Option<Value> = None;
 	let mut prompt_response_received = false;
+	let mut pending_work = false;
+	let mut shutdown_deadline: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
 	// Last cost the child reported, so repeated cumulative notifications bank
 	// deltas. A tap run resumes the same child session (`--name <id>`), so its
 	// reported total already covers earlier turns — resume from what we banked.
@@ -830,6 +841,17 @@ pub async fn run_acp_command(
 					crate::session::cancellation::Cancelled,
 				));
 			}
+			_ = async {
+				match shutdown_deadline.as_mut() {
+					Some(deadline) => deadline.as_mut().await,
+					None => std::future::pending::<()>().await,
+				}
+			} => {
+				// A child that declared no finite work should close promptly after
+				// stdin EOF. Preserve the existing wedged-child safety guard.
+				let _ = child.kill().await;
+				break;
+			}
 		};
 
 		if line.trim().is_empty() {
@@ -839,6 +861,14 @@ pub async fn run_acp_command(
 			Ok(v) => v,
 			Err(_) => continue,
 		};
+
+		if let Some(value) = msg
+			.pointer("/params/_meta/octomind.pending_work")
+			.or_else(|| msg.pointer("/result/_meta/octomind.pending_work"))
+			.and_then(Value::as_bool)
+		{
+			pending_work = value;
+		}
 
 		// The child's end-of-turn verification verdict rides in `_meta` next to
 		// usage (see acp/agent.rs) — the last thing it sends before the prompt
@@ -873,9 +903,15 @@ pub async fn run_acp_command(
 			}
 			if let Some(update) = msg.pointer("/params/update") {
 				forward_session_update_to_parent(update);
-				if update.get("sessionUpdate").and_then(|u| u.as_str())
-					== Some("agent_message_chunk")
+				let update_kind = update.get("sessionUpdate").and_then(|u| u.as_str());
+				if update_kind == Some("user_message_chunk")
+					&& prompt_response_received
+					&& !output.is_empty()
+					&& !output.ends_with("\n\n")
 				{
+					output.push_str("\n\n");
+				}
+				if update_kind == Some("agent_message_chunk") {
 					if let Some(text) = update.pointer("/content/text").and_then(|t| t.as_str()) {
 						output.push_str(text);
 					}
@@ -883,21 +919,26 @@ pub async fn run_acp_command(
 			}
 		}
 
-		// Stop when we get the prompt response (id=3). Capture any error
-		// payload so we can fail the call instead of returning empty output.
+		// The first prompt response ends client input, not necessarily the child
+		// session: after EOF the ACP server drains jobs/inbox turns before closing
+		// stdout. Keep reading those updates into the same tap handback.
 		if msg.get("id").and_then(|i| i.as_u64()) == Some(3) {
 			prompt_response_received = true;
 			if let Some(err) = msg.get("error") {
 				prompt_error = Some(err.clone());
 			}
-			break;
+			drop(stdin.take());
+			if !pending_work {
+				shutdown_deadline = Some(Box::pin(tokio::time::sleep(
+					std::time::Duration::from_secs(5),
+				)));
+			}
 		}
 	}
 
-	// Shut down the subprocess: closing stdin signals it to exit. The response
-	// is already in hand, so a child that fails to exit must not wedge this
-	// run in `running` forever — grace-wait, then kill.
-	drop(stdin);
+	// Ensure stdin is closed on pre-response EOF/error too. A clean post-response
+	// stdout EOF now means the child reached session idle.
+	drop(stdin.take());
 	if tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
 		.await
 		.is_err()
@@ -1332,6 +1373,20 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 		assert_eq!(out, "hello");
 		// Child exited on its own — the kill grace period must not be consumed.
 		assert!(started.elapsed() < Duration::from_secs(4));
+	}
+
+	#[tokio::test]
+	async fn collects_background_turn_after_initial_prompt_response() {
+		let script = format!(
+			"{HANDSHAKE}echo '{}'\ncat >/dev/null\necho '{}'\necho '{}'",
+			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"octomind.pending_work":true}}}"#,
+			r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"job finished"}}}}"#,
+			r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"final result"}}}}"#,
+		);
+		let out = run_fake_server(script, watch::channel(false).1)
+			.await
+			.expect("background turn is collected before child EOF");
+		assert_eq!(out, "hello\n\nfinal result");
 	}
 
 	#[tokio::test]

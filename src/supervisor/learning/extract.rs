@@ -2552,3 +2552,7 @@ Bearer token auth is required
 		assert!(out.contains("[L2] (global, medium) global rule"));
 	}
 }
+
+#[cfg(test)]
+#[path = "extract_unit_tests.rs"]
+mod unit_tests;

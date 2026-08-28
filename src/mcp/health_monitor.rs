@@ -701,3 +701,7 @@ mod tests {
 		clear_restart_info(NAME);
 	}
 }
+
+#[cfg(test)]
+#[path = "health_monitor_tests.rs"]
+mod additional_tests;

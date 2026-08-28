@@ -1747,3 +1747,7 @@ mod tests {
 		assert!(message.len() < 250);
 	}
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod client_tests;

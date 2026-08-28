@@ -1590,3 +1590,7 @@ mod tests {
 #[cfg(test)]
 #[path = "condense_e2e_tests.rs"]
 mod condense_e2e_tests;
+
+#[cfg(test)]
+#[path = "condense_unit_tests.rs"]
+mod unit_tests;

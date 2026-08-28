@@ -66,6 +66,9 @@ pub struct OctomindAgent {
 	/// `ConnectionTo<Client>` is `Clone` and channel-backed, so notifications can be
 	/// emitted from any task on the LocalSet (streaming forwarders, inbox monitor).
 	conn: Rc<RefCell<Option<ConnectionTo<Client>>>>,
+	/// Wakes graceful EOF shutdown after an inbox-driven turn changes whether
+	/// the served sessions still own asynchronous work.
+	idle_notify: Rc<tokio::sync::Notify>,
 	/// Preferred session name for the next `new_session` (consumed once).
 	pending_name: RefCell<Option<String>>,
 	/// Resume target for the next `new_session` (consumed once).
@@ -87,6 +90,7 @@ impl OctomindAgent {
 			session_locks: Rc::new(RefCell::new(HashMap::new())),
 			cancellations: Rc::new(RefCell::new(HashMap::new())),
 			conn: Rc::new(RefCell::new(None)),
+			idle_notify: Rc::new(tokio::sync::Notify::new()),
 			pending_name: RefCell::new(options.name),
 			pending_resume: RefCell::new(options.resume),
 			pending_resume_recent: RefCell::new(options.resume_recent),
@@ -124,6 +128,50 @@ impl OctomindAgent {
 	/// by the `with_spawned` runner, which hands us a long-lived `ConnectionTo<Client>`.
 	pub fn set_connection(&self, conn: ConnectionTo<Client>) {
 		*self.conn.borrow_mut() = Some(conn);
+	}
+
+	/// Wait until every served session has delivered all asynchronous
+	/// work. Called only after stdin EOF, so no new client prompt can race the
+	/// idle decision; inbox-driven turns remain active through their monitors.
+	async fn wait_until_idle(&self) {
+		loop {
+			let notified = self.idle_notify.notified();
+			tokio::pin!(notified);
+			notified.as_mut().enable();
+
+			// An active prompt temporarily removes its ChatSession from `sessions`
+			// while holding its lock. Include lock keys so EOF can never declare the
+			// whole process idle in that interval.
+			let mut session_ids: Vec<String> = self.sessions.borrow().keys().cloned().collect();
+			for session_id in self.session_locks.borrow().keys() {
+				if !session_ids.contains(session_id) {
+					session_ids.push(session_id.clone());
+				}
+			}
+			let mut all_idle = true;
+			for session_id in session_ids {
+				let lock = self
+					.session_locks
+					.borrow_mut()
+					.entry(session_id.clone())
+					.or_default()
+					.clone();
+				let _guard = lock.lock().await;
+				let pending = crate::session::context::with_session_id(session_id, async {
+					crate::session::has_pending_async_work()
+				})
+				.await;
+				if pending {
+					all_idle = false;
+					break;
+				}
+			}
+
+			if all_idle {
+				return;
+			}
+			notified.await;
+		}
 	}
 
 	/// Get or create the exclusion lock for a session.
@@ -344,203 +392,227 @@ async fn send_available_commands(conn: Option<ConnectionTo<Client>>, session_id:
 /// message arrives, the task takes the session from the map, processes the message
 /// through the full AI pipeline, streams results to the ACP client, and puts the
 /// session back. Exits when the session is removed from the map.
-fn spawn_inbox_monitor(
-	session_id: String,
-	sessions: Rc<RefCell<HashMap<String, (ChatSession, PathBuf)>>>,
-	session_locks: super::SessionLocks,
-	cancellations: Rc<RefCell<HashMap<String, SessionCancellation>>>,
-	config: RefCell<Config>,
-	role: String,
-	conn: Rc<RefCell<Option<ConnectionTo<Client>>>>,
-) {
-	tokio::task::spawn_local(async move {
-		log_debug!("ACP: inbox monitor started for session: {}", session_id);
-		loop {
-			// Process phase: flush due schedules into inbox, then drain.
-			// Returns true to exit the monitor loop.
-			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::mcp::orchestration::flush_due_to_inbox();
-				// Idle-mode entries fire here too — ACP monitor runs only when nothing
-				// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
-				crate::mcp::orchestration::flush_idle_to_inbox();
+impl OctomindAgent {
+	fn spawn_inbox_monitor(&self, session_id: String) {
+		let sessions = Rc::clone(&self.sessions);
+		let session_locks = Rc::clone(&self.session_locks);
+		let cancellations = Rc::clone(&self.cancellations);
+		let config = RefCell::new(self.config.borrow().clone());
+		let role = self.role.clone();
+		let conn = Rc::clone(&self.conn);
+		let idle_notify = Rc::clone(&self.idle_notify);
 
-				// Drain inbox while there are messages. Acquire the per-session
-				// exclusion lock BEFORE removing the session from the map so a
-				// concurrent user prompt waits instead of seeing "session not found".
-				while crate::session::inbox::has_inbox_messages()
-					&& sessions.borrow().contains_key(&session_id)
-				{
-					let inbox_msg = match crate::session::inbox::try_pop_inbox_message() {
-						Some(msg) => msg,
-						None => break,
-					};
+		tokio::task::spawn_local(async move {
+			log_debug!("ACP: inbox monitor started for session: {}", session_id);
+			loop {
+				// Process phase: flush due schedules into inbox, then drain.
+				// Returns true to exit the monitor loop.
+				let should_exit =
+					crate::session::context::with_session_id(session_id.clone(), async {
+						crate::mcp::orchestration::flush_due_to_inbox();
+						// Idle-mode entries fire here too — ACP monitor runs only when nothing
+						// is in flight, so flush_idle_to_inbox()'s idle check covers tap/job state.
+						crate::mcp::orchestration::flush_idle_to_inbox();
 
-					log_debug!(
-						"ACP monitor: processing inbox message from {:?} for {}",
-						inbox_msg.source,
-						session_id
-					);
+						// Drain inbox while there are messages. Acquire the per-session
+						// exclusion lock before POPPING the message: graceful shutdown also
+						// takes this lock when checking for idle, so it can never mistake a
+						// popped-but-not-yet-processed completion for an empty inbox.
+						while crate::session::inbox::has_inbox_messages()
+							&& sessions.borrow().contains_key(&session_id)
+						{
+							// Acquire exclusion lock for this session. If prompt() is
+							// currently holding it (mid-API-call), we wait here until it
+							// releases — instead of removing an empty entry and racing.
+							let lock = session_locks
+								.borrow_mut()
+								.entry(session_id.clone())
+								.or_default()
+								.clone();
+							let _guard = lock.lock().await;
+							if !sessions.borrow().contains_key(&session_id) {
+								break;
+							}
+							let inbox_msg = match crate::session::inbox::try_pop_inbox_message() {
+								Some(msg) => msg,
+								None => break,
+							};
 
-					// Acquire exclusion lock for this session. If prompt() is
-					// currently holding it (mid-API-call), we wait here until it
-					// releases — instead of removing an empty entry and racing.
-					let lock = session_locks
-						.borrow_mut()
-						.entry(session_id.clone())
-						.or_default()
-						.clone();
-					let _guard = lock.lock().await;
+							log_debug!(
+								"ACP monitor: processing inbox message from {:?} for {}",
+								inbox_msg.source,
+								session_id
+							);
 
-					// Take session for exclusive access.
-					let entry = sessions.borrow_mut().remove(&session_id);
-					let (mut chat_session, session_cwd) = match entry {
-						Some(s) => s,
-						None => {
-							// Session truly gone (cleanup_session). Drop the message.
-							crate::session::inbox::push_inbox_message(inbox_msg);
-							return false;
-						}
-					};
+							// Take session for exclusive access.
+							let entry = sessions.borrow_mut().remove(&session_id);
+							let (mut chat_session, session_cwd) = match entry {
+								Some(s) => s,
+								None => {
+									// Session truly gone (cleanup_session). Preserve the message
+									// only if its inbox still exists.
+									crate::session::inbox::push_inbox_message(inbox_msg);
+									break;
+								}
+							};
 
-					// Restore working directory for tool calls.
-					crate::mcp::set_session_working_directory(session_cwd.clone());
-					let config_for_role = config.borrow().get_merged_config_for_role(&role);
+							// Restore working directory for tool calls.
+							crate::mcp::set_session_working_directory(session_cwd.clone());
+							let config_for_role = config.borrow().get_merged_config_for_role(&role);
 
-					let op_rx = cancellations
-						.borrow_mut()
-						.entry(session_id.clone())
-						.or_default()
-						.new_operation();
+							let op_rx = cancellations
+								.borrow_mut()
+								.entry(session_id.clone())
+								.or_default()
+								.new_operation();
 
-					// Tell the client what's about to drive the AI, before we kick off
-					// the API call. Rendered as a user-side chunk so the client UI shows
-					// the injected message in the conversation, prefixed with its source.
-					let conn_client = conn.borrow().as_ref().cloned();
-					if let Some(c) = conn_client {
-						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-						let text = format!(
-							"[{}] {}",
-							inbox_msg.source.display_label(),
-							inbox_msg.content
-						);
-						let update =
-							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
-						let notif = SessionNotification::new(sid_arc, update);
-						if let Err(e) = c.send_notification(notif) {
-							log_error!(
+							// Tell the client what's about to drive the AI, before we kick off
+							// the API call. Rendered as a user-side chunk so the client UI shows
+							// the injected message in the conversation, prefixed with its source.
+							let conn_client = conn.borrow().as_ref().cloned();
+							if let Some(c) = conn_client {
+								let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+								let text = format!(
+									"[{}] {}",
+									inbox_msg.source.display_label(),
+									inbox_msg.content
+								);
+								let update =
+									SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+								let notif = SessionNotification::new(sid_arc, update);
+								if let Err(e) = c.send_notification(notif) {
+									log_error!(
 								"ACP monitor: failed to send injected-message notification: {}",
 								e
 							);
-						}
-					}
-
-					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_turn_message(&inbox_msg.content)
-					} else {
-						chat_session.add_user_message(&inbox_msg.content)
-					};
-					if let Err(e) = add_result {
-						log_error!("ACP monitor: failed to add inbox message: {}", e);
-						sessions
-							.borrow_mut()
-							.insert(session_id.clone(), (chat_session, session_cwd));
-						continue;
-					}
-
-					if let Err(e) =
-						prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone())
-							.await
-					{
-						log_error!("ACP monitor: failed to prepare API call: {}", e);
-						sessions
-							.borrow_mut()
-							.insert(session_id.clone(), (chat_session, session_cwd));
-						continue;
-					}
-
-					// Stream results to the ACP client via a forwarding task.
-					let (ws_tx, mut ws_rx) =
-						tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
-					let ws_sink = WebSocketSink::new(ws_tx.clone());
-
-					crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
-
-					let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-					let conn_for_fwd = conn.borrow().as_ref().cloned();
-					let forward_task = tokio::task::spawn_local(async move {
-						while let Some(msg) = ws_rx.recv().await {
-							if let (Some(update), Some(c)) =
-								(translate_server_message_to_acp(msg), conn_for_fwd.as_ref())
-							{
-								let notif = SessionNotification::new(sid_arc.clone(), update);
-								if let Err(e) = c.send_notification(notif) {
-									log_error!("ACP monitor: failed to send notification: {}", e);
 								}
 							}
-						}
-					});
 
-					let result = execute_api_call_and_process_response(
-						&mut chat_session,
-						&config_for_role,
-						&role,
-						op_rx,
-						OutputMode::WebSocket,
-						ws_sink,
-					)
+							let add_result = if inbox_msg.source.is_system_managed() {
+								chat_session.add_system_managed_turn_message(&inbox_msg.content)
+							} else {
+								chat_session.add_user_message(&inbox_msg.content)
+							};
+							if let Err(e) = add_result {
+								log_error!("ACP monitor: failed to add inbox message: {}", e);
+								sessions
+									.borrow_mut()
+									.insert(session_id.clone(), (chat_session, session_cwd));
+								idle_notify.notify_waiters();
+								continue;
+							}
+
+							if let Err(e) = prepare_for_api_call(
+								&mut chat_session,
+								&config_for_role,
+								op_rx.clone(),
+							)
+							.await
+							{
+								log_error!("ACP monitor: failed to prepare API call: {}", e);
+								sessions
+									.borrow_mut()
+									.insert(session_id.clone(), (chat_session, session_cwd));
+								idle_notify.notify_waiters();
+								continue;
+							}
+
+							// Stream results to the ACP client via a forwarding task.
+							let (ws_tx, mut ws_rx) =
+								tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+							let ws_sink = WebSocketSink::new(ws_tx.clone());
+
+							crate::mcp::process::set_notification_sender(
+								Some(session_id.clone()),
+								ws_tx,
+							);
+
+							let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+							let conn_for_fwd = conn.borrow().as_ref().cloned();
+							let forward_task = tokio::task::spawn_local(async move {
+								while let Some(msg) = ws_rx.recv().await {
+									if let (Some(update), Some(c)) = (
+										translate_server_message_to_acp(msg),
+										conn_for_fwd.as_ref(),
+									) {
+										let notif =
+											SessionNotification::new(sid_arc.clone(), update);
+										if let Err(e) = c.send_notification(notif) {
+											log_error!(
+												"ACP monitor: failed to send notification: {}",
+												e
+											);
+										}
+									}
+								}
+							});
+
+							let result = execute_api_call_and_process_response(
+								&mut chat_session,
+								&config_for_role,
+								&role,
+								op_rx,
+								OutputMode::WebSocket,
+								ws_sink,
+							)
+							.await;
+
+							crate::mcp::process::clear_notification_sender(Some(
+								session_id.clone(),
+							));
+							let _ = forward_task.await;
+
+							if let Err(e) = result {
+								log_debug!("ACP monitor: error processing inbox message: {}", e);
+							}
+
+							// Put session back.
+							sessions
+								.borrow_mut()
+								.insert(session_id.clone(), (chat_session, session_cwd));
+							idle_notify.notify_waiters();
+						}
+
+						false // don't exit
+					})
 					.await;
 
-					crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
-					let _ = forward_task.await;
+				if should_exit {
+					break;
+				}
 
-					if let Err(e) = result {
-						log_debug!("ACP monitor: error processing inbox message: {}", e);
+				// Exit if session inbox was destroyed (session truly gone via cleanup_session).
+				let inbox_gone =
+					crate::session::context::with_session_id(session_id.clone(), async {
+						crate::session::inbox::get_inbox_notify().is_none()
+					})
+					.await;
+				if inbox_gone {
+					log_debug!("ACP monitor: inbox cleared for {}, exiting", session_id);
+					break;
+				}
+
+				// Wait for the next event: schedule timer, inbox message, or schedule change.
+				// next_schedule_sleep() handles the empty case (waits for schedule-change notify),
+				// so no special polling branch is needed.
+				crate::session::context::with_session_id(session_id.clone(), async {
+					let inbox_notify = crate::session::inbox::get_inbox_notify();
+					tokio::select! {
+						_ = crate::mcp::orchestration::next_schedule_sleep() => {}
+						_ = async {
+							if let Some(notify) = inbox_notify {
+								notify.notified().await;
+							} else {
+								std::future::pending::<()>().await;
+							}
+						} => {}
 					}
-
-					// Put session back.
-					sessions
-						.borrow_mut()
-						.insert(session_id.clone(), (chat_session, session_cwd));
-				}
-
-				false // don't exit
-			})
-			.await;
-
-			if should_exit {
-				break;
+				})
+				.await;
 			}
-
-			// Exit if session inbox was destroyed (session truly gone via cleanup_session).
-			let inbox_gone = crate::session::context::with_session_id(session_id.clone(), async {
-				crate::session::inbox::get_inbox_notify().is_none()
-			})
-			.await;
-			if inbox_gone {
-				log_debug!("ACP monitor: inbox cleared for {}, exiting", session_id);
-				break;
-			}
-
-			// Wait for the next event: schedule timer, inbox message, or schedule change.
-			// next_schedule_sleep() handles the empty case (waits for schedule-change notify),
-			// so no special polling branch is needed.
-			crate::session::context::with_session_id(session_id.clone(), async {
-				let inbox_notify = crate::session::inbox::get_inbox_notify();
-				tokio::select! {
-					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
-					_ = async {
-						if let Some(notify) = inbox_notify {
-							notify.notified().await;
-						} else {
-							std::future::pending::<()>().await;
-						}
-					} => {}
-				}
-			})
-			.await;
-		}
-		log_debug!("ACP: inbox monitor exited for session: {}", session_id);
-	});
+			log_debug!("ACP: inbox monitor exited for session: {}", session_id);
+		});
+	}
 }
 
 impl OctomindAgent {
@@ -663,15 +735,7 @@ impl OctomindAgent {
 
 		// Spawn independent background task that monitors schedules/inbox
 		// and processes messages automatically without waiting for user prompts.
-		spawn_inbox_monitor(
-			session_id.clone(),
-			Rc::clone(&self.sessions),
-			Rc::clone(&self.session_locks),
-			Rc::clone(&self.cancellations),
-			RefCell::new(self.config.borrow().clone()),
-			self.role.clone(),
-			Rc::clone(&self.conn),
-		);
+		self.spawn_inbox_monitor(session_id.clone());
 
 		Ok(NewSessionResponse::new(session_id))
 	}
@@ -1229,6 +1293,10 @@ impl OctomindAgent {
 					"octomind.verified".to_string(),
 					serde_json::Value::Bool(verified),
 				);
+				meta.insert(
+					"octomind.pending_work".to_string(),
+					serde_json::Value::Bool(crate::session::has_pending_async_work()),
+				);
 				let notif = SessionNotification::new(
 					std::sync::Arc::<str>::from(session_id.as_str()),
 					SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
@@ -1256,11 +1324,17 @@ impl OctomindAgent {
 
 			match api_result {
 				Ok(_) => {
-					if *operation_rx.borrow() {
-						Ok(PromptResponse::new(StopReason::Cancelled))
+					let stop_reason = if *operation_rx.borrow() {
+						StopReason::Cancelled
 					} else {
-						Ok(PromptResponse::new(StopReason::EndTurn))
-					}
+						StopReason::EndTurn
+					};
+					let mut meta = Meta::new();
+					meta.insert(
+						"octomind.pending_work".to_string(),
+						serde_json::Value::Bool(crate::session::has_pending_async_work()),
+					);
+					Ok(PromptResponse::new(stop_reason).meta(meta))
 				}
 				Err(e) => {
 					log_error!("ACP: prompt API call failed: {}", e);
@@ -1360,15 +1434,7 @@ impl OctomindAgent {
 
 		// Spawn independent background task that monitors schedules/inbox
 		// and processes messages automatically without waiting for user prompts.
-		spawn_inbox_monitor(
-			session_id.clone(),
-			Rc::clone(&self.sessions),
-			Rc::clone(&self.session_locks),
-			Rc::clone(&self.cancellations),
-			RefCell::new(self.config.borrow().clone()),
-			self.role.clone(),
-			Rc::clone(&self.conn),
-		);
+		self.spawn_inbox_monitor(session_id.clone());
 
 		Ok(LoadSessionResponse::new())
 	}
@@ -1428,6 +1494,7 @@ pub(super) enum Command {
 		oneshot::Sender<Result<ExtResponse, agent_client_protocol::Error>>,
 	),
 	Cancel(CancelNotification),
+	WaitUntilIdle(oneshot::Sender<()>),
 }
 
 /// Actor loop: owns the `!Send` `OctomindAgent` and dispatches each command on its
@@ -1437,6 +1504,13 @@ async fn run_actor(agent: Rc<OctomindAgent>, mut rx: mpsc::UnboundedReceiver<Com
 	while let Some(cmd) = rx.recv().await {
 		match cmd {
 			Command::SetConnection(cx) => agent.set_connection(cx),
+			Command::WaitUntilIdle(reply) => {
+				let agent = Rc::clone(&agent);
+				tokio::task::spawn_local(async move {
+					agent.wait_until_idle().await;
+					let _ = reply.send(());
+				});
+			}
 			// Cancel only flips the session's cancellation flag — instantaneous, so
 			// run it inline to take effect immediately even while a prompt is in flight.
 			Command::Cancel(n) => {
@@ -1646,8 +1720,14 @@ pub(super) async fn serve(
 		.connect_with(transport, async move |cx: ConnectionTo<Client>| {
 			// Hand the long-lived client connection to the actor once serving starts.
 			let _ = cmd_tx.send(Command::SetConnection(cx));
-			// Hold the connection open until the client closes our stdin.
+			// EOF means the client will send no more prompts. Keep stdout and the
+			// session monitors alive until finite background work has reported and
+			// every resulting inbox turn has finished.
 			let _ = eof_rx.await;
+			let (idle_tx, idle_rx) = oneshot::channel();
+			if cmd_tx.send(Command::WaitUntilIdle(idle_tx)).is_ok() {
+				let _ = idle_rx.await;
+			}
 			Ok(())
 		})
 		.await;

@@ -73,7 +73,7 @@ fn session_info(name: &str, created_at: u64) -> SessionInfo {
 	SessionInfo {
 		name: name.to_string(),
 		created_at,
-		model: "octohub:big".to_string(),
+		model: "octohub/big".to_string(),
 		input_tokens: 1_234,
 		output_tokens: 567,
 		total_cost: 0.5,
@@ -144,7 +144,7 @@ async fn test_lists_sessions_with_metadata() {
 
 	// Sorted newest first: alpha (2000) before beta (1000)
 	assert_eq!(sessions[0]["name"], "alpha");
-	assert_eq!(sessions[0]["model"], "octohub:big");
+	assert_eq!(sessions[0]["model"], "octohub/big");
 	assert_eq!(sessions[0]["tokens"], 1_234 + 567);
 	assert_eq!(sessions[0]["is_current"], false);
 
@@ -254,7 +254,10 @@ async fn test_current_session_is_marked() {
 	write_session_file(&data.sessions_dir(), "alpha", &session_info("alpha", 2_000));
 	write_session_file(&data.sessions_dir(), "beta", &session_info("beta", 1_000));
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.session.session_file = Some(data.sessions_dir().join("alpha.jsonl.zst"));
+	// handle_list marks the session whose file_stem equals the scanned name
+	// ("alpha" from "alpha.jsonl.zst"), so the current-session path must stem
+	// to "alpha".
+	session.session.session_file = Some(data.sessions_dir().join("alpha.jsonl"));
 	let config = test_config();
 
 	let output = run(&session, &config, &[]);

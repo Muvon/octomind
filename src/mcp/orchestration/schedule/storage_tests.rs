@@ -63,17 +63,24 @@ fn countdown_formats_by_magnitude() {
 	assert_eq!(idle.countdown(), "when idle");
 
 	assert_eq!(
-		time_entry("p", Local::now() - Duration::seconds(10)).countdown(),
+		time_entry("p", Local::now() - Duration::seconds(60)).countdown(),
 		"now"
 	);
-	assert_eq!(
-		time_entry("s", Local::now() + Duration::seconds(50)).countdown(),
-		"in 50s"
+	// countdown() samples Local::now() itself, so a moment elapses between
+	// building the entry and formatting it — assert the format category with
+	// ±2s of slack instead of the exact second count.
+	let secs = time_entry("s", Local::now() + Duration::seconds(50)).countdown();
+	assert!(
+		secs.starts_with("in ") && secs.ends_with('s') && !secs.contains('m'),
+		"seconds magnitude: {secs}"
 	);
-	assert_eq!(
-		time_entry("m", Local::now() + Duration::seconds(150)).countdown(),
-		"in 2m 30s"
+	let mins = time_entry("m", Local::now() + Duration::seconds(150)).countdown();
+	assert!(
+		mins.starts_with("in 2m ") && mins.ends_with('s'),
+		"minutes magnitude: {mins}"
 	);
+	// 7300s = 2h 1m 40s; seconds are not rendered in the hours magnitude, so
+	// ±2s of elapsed time cannot change the expected string.
 	assert_eq!(
 		time_entry("h", Local::now() + Duration::seconds(7300)).countdown(),
 		"in 2h 1m"

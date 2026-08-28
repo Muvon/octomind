@@ -571,6 +571,13 @@ fn test_render_info_full_and_minimal() {
 			"gate_runs": 4, "gate_pass": 3, "gate_fail": 1,
 			"steers": 1, "steer_signals": {"loop": 1}
 		})),
+		learning_stats: json!({
+			"packs": 3, "items": 9, "tokens": 1400,
+			"used": 4, "credit_positive": 2, "credit_negative": 1,
+			"used_without_verdict": 1, "active_items": 2,
+			"active_tokens": 320, "active_used_ids": ["M2"],
+			"outcome": "verified", "extracted": false
+		}),
 	});
 
 	// Minimal: fresh session, nothing optional present
@@ -598,6 +605,7 @@ fn test_render_info_full_and_minimal() {
 		cache_non_cached_tokens: 0,
 		agents_stats: None,
 		supervisor_stats: None,
+		learning_stats: json!({}),
 	});
 }
 

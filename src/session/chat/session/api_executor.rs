@@ -112,6 +112,7 @@ async fn reinforce_recalled(chat_session: &mut ChatSession, delta: f64) {
 		if !used.contains(id) {
 			continue;
 		}
+		chat_session.learning_stats.record_use(delta);
 		let applied = backend.reinforce(content, role, project, delta).await;
 		if applied.is_ok() && delta != 0.0 {
 			crate::supervisor::stats::memory_credit(delta > 0.0);
@@ -379,11 +380,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	if memory_pack_rebuilt {
 		if let Some(pack) = chat_session.active_memory_pack.as_deref() {
 			let items = chat_session.recalled_refs.len() as u64;
+			let tokens = crate::session::estimate_tokens(pack) as u64;
+			chat_session.learning_stats.record_pack(items, tokens);
 			crate::supervisor::stats::recall();
-			crate::supervisor::stats::memory_pack(
-				items,
-				crate::session::estimate_tokens(pack) as u64,
-			);
+			crate::supervisor::stats::memory_pack(items, tokens);
 			crate::supervisor::notify(&format!("active memory pack: {items} item(s)"));
 		}
 	}
@@ -1068,6 +1068,9 @@ mod tests {
 		assert!(!used_last_used.is_empty());
 		assert_eq!(neutral_importance, 0.5);
 		assert_eq!(neutral_count, 1);
+		assert_eq!(session.learning_stats.used, 2);
+		assert_eq!(session.learning_stats.credit_positive, 1);
+		assert_eq!(session.learning_stats.used_without_verdict, 1);
 	}
 
 	#[test]

@@ -159,6 +159,36 @@ pub(crate) fn generate_session_name() -> String {
 	format!("{}-{}-{}-{}", date_str, basename, time_str, short_uuid)
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LearningSessionStats {
+	pub packs: u64,
+	pub items: u64,
+	pub tokens: u64,
+	pub used: u64,
+	pub credit_positive: u64,
+	pub credit_negative: u64,
+	pub used_without_verdict: u64,
+}
+
+impl LearningSessionStats {
+	pub fn record_pack(&mut self, items: u64, tokens: u64) {
+		self.packs += 1;
+		self.items += items;
+		self.tokens += tokens;
+	}
+
+	pub fn record_use(&mut self, delta: f64) {
+		self.used += 1;
+		if delta > 0.0 {
+			self.credit_positive += 1;
+		} else if delta < 0.0 {
+			self.credit_negative += 1;
+		} else {
+			self.used_without_verdict += 1;
+		}
+	}
+}
+
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
 	pub session: Session,
@@ -221,6 +251,9 @@ pub struct ChatSession {
 	/// Pack-local IDs the specialist reported materially using this turn. Unioned
 	/// across tool rounds and consumed by outcome-driven reinforcement.
 	pub used_memory_ids: std::collections::HashSet<String>,
+	/// Session-owned learning counters used by `/info`; unlike supervisor's
+	/// process accumulator these remain isolated across concurrent sessions.
+	pub learning_stats: LearningSessionStats,
 	/// Set when a new user message arrives; consumed by the API executor to run
 	/// per-message scoped lesson recall (embedding-only) for that turn.
 	pub pending_recall: bool,
@@ -426,6 +459,7 @@ impl ChatSession {
 			learning_injected: false,
 			active_memory_pack: None,
 			used_memory_ids: std::collections::HashSet::new(),
+			learning_stats: LearningSessionStats::default(),
 			pending_recall: false,
 			learning_extracted: false,
 			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
@@ -657,6 +691,7 @@ impl ChatSession {
 						learning_injected: false,
 						active_memory_pack: None,
 						used_memory_ids: std::collections::HashSet::new(),
+						learning_stats: LearningSessionStats::default(),
 						pending_recall: false,
 						learning_extracted: false,
 						learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
@@ -1450,6 +1485,7 @@ impl ChatSession {
 			learning_injected: false,
 			active_memory_pack: None,
 			used_memory_ids: std::collections::HashSet::new(),
+			learning_stats: LearningSessionStats::default(),
 			pending_recall: false,
 			learning_extracted: false,
 			learning_outcome: crate::supervisor::learning::TrajectoryOutcome::Unknown,
@@ -1557,6 +1593,22 @@ mod tests {
 			.messages
 			.iter()
 			.any(|message| message.name.as_deref() == Some("__active_memory_pack")));
+	}
+
+	#[test]
+	fn learning_session_stats_separate_use_from_outcome_credit() {
+		let mut stats = LearningSessionStats::default();
+		stats.record_pack(3, 420);
+		stats.record_use(0.05);
+		stats.record_use(-0.15);
+		stats.record_use(0.0);
+		assert_eq!(stats.packs, 1);
+		assert_eq!(stats.items, 3);
+		assert_eq!(stats.tokens, 420);
+		assert_eq!(stats.used, 3);
+		assert_eq!(stats.credit_positive, 1);
+		assert_eq!(stats.credit_negative, 1);
+		assert_eq!(stats.used_without_verdict, 1);
 	}
 
 	#[test]

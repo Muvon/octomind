@@ -284,7 +284,7 @@ Browse and manage the lessons stored for the current role + project by the cross
 
 | Usage | Description |
 |-------|-------------|
-| `/learning` or `/learning list` | List lessons for the current role + project, 15 per page |
+| `/learning` or `/learning list` | List lessons plus hot/cold retention totals for the current role + project, 15 per page |
 | `/learning list <page>` | Show page N of the lesson list |
 | `/learning list *pattern*` | Glob-filter lessons by content, title, or tags (combinable with a page number) |
 | `/learning delete <index>` | Delete the lesson at the 1-based `<index>` from the last list (aliases: `rm`, `remove`) |

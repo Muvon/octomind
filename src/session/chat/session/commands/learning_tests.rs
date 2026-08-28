@@ -17,7 +17,7 @@
 //! tier.
 
 use super::*;
-use crate::supervisor::learning::backend::create_backend;
+use crate::supervisor::learning::backend::FileBackend;
 use crate::supervisor::learning::Lesson;
 
 const ROLE: &str = "__learning_cmd_role";
@@ -61,40 +61,29 @@ fn cleanup() {
 	}
 }
 
-fn test_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
-	config.build_role_map();
-	config
-}
-
 fn test_session() -> ChatSession {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.role = ROLE.to_string();
 	session
 }
 
-async fn store(content: &str, config: &Config) {
-	let backend = create_backend(&config.supervisor.learning);
+async fn store(content: &str) {
+	let backend = FileBackend;
 	backend
-		.store(
-			&Lesson {
-				content: content.to_string(),
-				title: String::new(),
-				memory_type: "learning".to_string(),
-				importance: 0.7,
-				confidence: "high".to_string(),
-				tags: vec!["cmd-test".to_string()],
-				source: "learning-cmd-test".to_string(),
-				role: ROLE.to_string(),
-				project: project(),
-				scope: "scoped".to_string(),
-				created: chrono::Utc::now().to_rfc3339(),
-				..Default::default()
-			},
-			config,
-		)
+		.store(&Lesson {
+			content: content.to_string(),
+			title: String::new(),
+			memory_type: "learning".to_string(),
+			importance: 0.7,
+			confidence: "high".to_string(),
+			tags: vec!["cmd-test".to_string()],
+			source: "learning-cmd-test".to_string(),
+			role: ROLE.to_string(),
+			project: project(),
+			scope: "scoped".to_string(),
+			created: chrono::Utc::now().to_rfc3339(),
+			..Default::default()
+		})
 		.await
 		.expect("store lesson");
 }
@@ -114,24 +103,26 @@ async fn test_learning_list_and_delete_lifecycle() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	cleanup();
-	let config = test_config();
 	let mut session = test_session();
-	store("first learning-cmd lesson about widgets", &config).await;
-	store("second learning-cmd lesson about gadgets", &config).await;
+	store("first learning-cmd lesson about widgets").await;
+	store("second learning-cmd lesson about gadgets").await;
 
 	// Bare /learning lists both (global-tier entries from the machine may
 	// follow ours, so assert containment, not exact counts).
 	let data = learning_data(
-		handle_learning(&mut session, &config, &[])
+		handle_learning(&mut session, &[])
 			.await
 			.expect("list dispatches"),
 	);
 	assert_eq!(data["subcommand"], "list");
+	assert_eq!(data["storage"]["hot_items"], 2);
+	assert_eq!(data["storage"]["cold_items"], 0);
+	assert_eq!(data["storage"]["by_type"]["learning"]["hot"], 2);
 	let listed = data["lessons"].to_string();
 	assert!(listed.contains("first learning-cmd lesson"), "{listed}");
 	assert!(listed.contains("second learning-cmd lesson"), "{listed}");
 	let shown = learning_data(
-		handle_learning(&mut session, &config, &["show", "1"])
+		handle_learning(&mut session, &["show", "1"])
 			.await
 			.expect("show dispatches"),
 	);
@@ -146,7 +137,7 @@ async fn test_learning_list_and_delete_lifecycle() {
 
 	// Glob filter narrows to the matching lesson
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["list", "*widgets*"])
+		handle_learning(&mut session, &["list", "*widgets*"])
 			.await
 			.expect("filtered list dispatches"),
 	);
@@ -156,14 +147,14 @@ async fn test_learning_list_and_delete_lifecycle() {
 
 	// Scoped lessons sort before the global tier, so index 1 is ours
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["delete", "1"])
+		handle_learning(&mut session, &["delete", "1"])
 			.await
 			.expect("delete dispatches"),
 	);
 	assert_eq!(data["subcommand"], "delete", "delete failed: {data}");
 
 	let data = learning_data(
-		handle_learning(&mut session, &config, &[])
+		handle_learning(&mut session, &[])
 			.await
 			.expect("list after delete"),
 	);
@@ -175,31 +166,25 @@ async fn test_learning_list_and_delete_lifecycle() {
 		.filter(|s| listed.contains(*s))
 		.count();
 	assert_eq!(survivors, 1, "exactly one lesson must remain: {listed}");
-	let backend = create_backend(&config.supervisor.learning);
+	let backend = FileBackend;
 	backend
-		.store(
-			&Lesson {
-				content: "global rule must survive scoped clear".to_string(),
-				scope: "global".to_string(),
-				created: chrono::Utc::now().to_rfc3339(),
-				..Default::default()
-			},
-			&config,
-		)
+		.store(&Lesson {
+			content: "global rule must survive scoped clear".to_string(),
+			scope: "global".to_string(),
+			created: chrono::Utc::now().to_rfc3339(),
+			..Default::default()
+		})
 		.await
 		.expect("store global rule");
 
 	let cleared = learning_data(
-		handle_learning(&mut session, &config, &["clear"])
+		handle_learning(&mut session, &["clear"])
 			.await
 			.expect("clear dispatches"),
 	);
 	assert_eq!(cleared["subcommand"], "clear");
 	assert_eq!(cleared["deleted"], 1);
-	let globals = backend
-		.retrieve_global(&config)
-		.await
-		.expect("retrieve globals");
+	let globals = backend.retrieve_global().await.expect("retrieve globals");
 	assert!(globals
 		.iter()
 		.any(|memory| memory.content == "global rule must survive scoped clear"));
@@ -211,12 +196,11 @@ async fn test_learning_list_and_delete_lifecycle() {
 async fn test_learning_error_arms() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
-	let config = test_config();
 	let mut session = test_session();
 
 	// delete without an index → usage error
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["delete"])
+		handle_learning(&mut session, &["delete"])
 			.await
 			.expect("dispatches"),
 	);
@@ -225,7 +209,7 @@ async fn test_learning_error_arms() {
 	// non-numeric and zero indices → validation error
 	for bad in ["abc", "0"] {
 		let data = learning_data(
-			handle_learning(&mut session, &config, &["delete", bad])
+			handle_learning(&mut session, &["delete", bad])
 				.await
 				.expect("dispatches"),
 		);
@@ -234,13 +218,13 @@ async fn test_learning_error_arms() {
 
 	// far out-of-range index → out-of-range error
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["delete", "999999"])
+		handle_learning(&mut session, &["delete", "999999"])
 			.await
 			.expect("dispatches"),
 	);
 	assert_eq!(data["subcommand"], "error");
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["show", "999999"])
+		handle_learning(&mut session, &["show", "999999"])
 			.await
 			.expect("dispatches"),
 	);
@@ -248,9 +232,33 @@ async fn test_learning_error_arms() {
 
 	// unknown subcommand → usage error
 	let data = learning_data(
-		handle_learning(&mut session, &config, &["frobnicate"])
+		handle_learning(&mut session, &["frobnicate"])
 			.await
 			.expect("dispatches"),
 	);
 	assert_eq!(data["subcommand"], "error");
+}
+
+#[tokio::test]
+async fn test_learning_storage_summary_counts_cold_memory() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = FileBackend;
+	let memory = Lesson {
+		content: "cold retention summary memory".to_string(),
+		memory_type: "orientation".to_string(),
+		role: ROLE.to_string(),
+		project: project(),
+		created: chrono::Utc::now().to_rfc3339(),
+		..Default::default()
+	};
+	backend.store(&memory).await.unwrap();
+	crate::supervisor::learning::retention::archive_record(&memory).unwrap();
+
+	let hot = all_lessons(ROLE, &project()).await.unwrap();
+	let summary = learning_storage_summary(ROLE, &project(), &hot).unwrap();
+	assert_eq!(summary["hot_items"], 0);
+	assert_eq!(summary["cold_items"], 1);
+	assert_eq!(summary["by_type"]["orientation"]["cold"], 1);
+	assert!(summary["cold_tokens"].as_u64().unwrap_or_default() > 0);
 }

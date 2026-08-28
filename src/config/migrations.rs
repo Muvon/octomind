@@ -88,9 +88,36 @@ fn plan() -> MigrationPlan {
 				to: 9,
 				apply: add_v9_adaptive_condense,
 			},
+			VersionMigration {
+				from: 9,
+				to: 10,
+				apply: remove_v10_learning_backends,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v10 makes supervisor learning file-authoritative. The alternate MCP adapter
+/// and its field maps could not preserve the verified memory schema, outcome
+/// feedback, graph identity, or bounded retention lifecycle.
+fn remove_v10_learning_backends(
+	document: &mut toml_edit::DocumentMut,
+	_template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let Some(learning) = document
+		.as_table_mut()
+		.get_mut("supervisor")
+		.and_then(|item| item.as_table_mut())
+		.and_then(|supervisor| supervisor.get_mut("learning"))
+		.and_then(|item| item.as_table_mut())
+	else {
+		return Ok(());
+	};
+	for key in ["backend", "store", "retrieve"] {
+		learning.remove(key);
+	}
+	Ok(())
 }
 
 /// v9 adds the opt-in runtime-only adaptive condenser trigger. Existing
@@ -792,8 +819,38 @@ model = "anthropic:custom"
 	}
 
 	#[test]
+	fn v9_removes_learning_backend_configuration_and_keeps_learning_values() {
+		let existing = r#"version = 9
+
+[supervisor.learning]
+enabled = true
+model = "alibaba:qwen3.8-flash"
+backend = "mcp"
+
+[supervisor.learning.store]
+tool = "memorize"
+[supervisor.learning.store.field_map]
+content = "content"
+
+[supervisor.learning.retrieve]
+tool = "remember"
+"#;
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v9 must migrate");
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		let learning = migrated["supervisor"]["learning"].as_table().unwrap();
+		assert_eq!(learning["enabled"].as_bool(), Some(true));
+		assert_eq!(learning["model"].as_str(), Some("alibaba:qwen3.8-flash"));
+		for removed in ["backend", "store", "retrieve"] {
+			assert!(!learning.contains_key(removed));
+		}
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 9", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 10", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");
@@ -1246,5 +1303,25 @@ max_inject = 4
 		let condense = roundtrip(&document)["supervisor"]["condense"].clone();
 		assert_eq!(condense["adaptive"].as_bool(), Some(false));
 		assert!(condense["tokens_threshold"].as_integer().is_some());
+	}
+
+	#[test]
+	fn remove_v10_learning_backends_tolerates_missing_sections() {
+		let template = template_document();
+		let mut empty = toml_edit::DocumentMut::new();
+		remove_v10_learning_backends(&mut empty, &template).unwrap();
+		assert!(empty.as_table().is_empty());
+
+		let mut document = user_document(
+			"[supervisor.learning]\nenabled = true\nbackend = \"mcp\"\nstore = \"bad\"\n",
+		);
+		remove_v10_learning_backends(&mut document, &template).unwrap();
+		let learning = roundtrip(&document)["supervisor"]["learning"]
+			.as_table()
+			.unwrap()
+			.clone();
+		assert_eq!(learning["enabled"].as_bool(), Some(true));
+		assert!(!learning.contains_key("backend"));
+		assert!(!learning.contains_key("store"));
 	}
 }

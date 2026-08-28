@@ -23,14 +23,12 @@ Learning is one mechanic of the **supervisor** — the out-of-band control plane
 [supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
-backend = "file"
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
 | `enabled` | Enable the learning system. | `true` |
 | `model` | Model for extraction and retrieval-prep LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
-| `backend` | `"file"` (default) or `"mcp"` for external memory tools. | `"file"` |
 
 Intermediate-learning cadence (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
@@ -240,6 +238,10 @@ embedding-only recall.
 
 The interactive `/learning` command lets you browse and prune lessons for the current role and project:
 
+The list header summarizes hot/cold item and token totals, local/global scope
+counts, and per-type hot/cold counts. Individual rows stay compact; use `show`
+for full provenance and retention metadata.
+
 | Command | Effect |
 |---------|--------|
 | `/learning` | List lessons (page 1). |
@@ -251,61 +253,6 @@ The interactive `/learning` command lets you browse and prune lessons for the cu
 
 The list (and therefore delete indexing) covers the current scoped lessons followed by the global lessons, in a stable order. `clear` only wipes the current role+project scope. See [Session Commands](../reference/02-session-commands.md) for the full command reference.
 
-## MCP Backend
-
-For projects using external memory tools (e.g. octobrain), configure the MCP backend with field mapping:
-
-```toml
-[supervisor.learning]
-enabled = true
-model = "anthropic:claude-haiku-4-5"
-backend = "mcp"
-
-[supervisor.learning.store]
-tool = "memorize"
-[supervisor.learning.store.field_map]
-content = "content"        # required by memorize
-title = "title"            # required by memorize — short summary
-memory_type = "memory_type"
-importance = "importance"
-confidence = "source"      # remapped to octobrain's source trust tier (see below)
-tags = "tags"
-role = "role"
-project = "project"
-
-[supervisor.learning.retrieve]
-tool = "remember"
-[supervisor.learning.retrieve.field_map]
-query = "query"            # the LLM-prepared search query (or raw intent)
-memory_type = "memory_types" # always sent as ["learning"] to match octobrain schema
-role = "role"
-project = "project"
-limit = "limit"            # octobrain max is 5
-```
-
-Each entry in `field_map` maps a canonical learning field to the MCP tool's actual argument name. Set a value to `""` to omit that field. Missing entries are also omitted. Store and retrieve have separate field maps because MCP tools have different argument schemas.
-
-**Mappable canonical keys differ by endpoint:**
-
-- **store** can map any lesson field: `content`, `title`, `memory_type`, `importance`, `confidence`, `tags`, `source`, `role`, `project`, `scope`, `created`, `related`, `evidence`, `outcome`, `last_used`, `use_count`.
-- **retrieve** can map only these five: `query`, `role`, `project`, `limit`, `memory_type`. `memory_type` is always sent as the array `["learning"]` regardless of the value.
-
-**Value remapping.** When `confidence` is mapped, the value sent is **not** the literal `"high"`/`"medium"` string — it is remapped to a trust tier: `high` → `"user_confirmed"`, anything else → `"agent_inferred"`. This is what makes `confidence = "source"` line up with octobrain's source field.
-
-**MCP backend limitations:**
-
-- **Deletion is not supported** — `delete` always errors. Manage lessons through the MCP tool directly. (This also means `/learning delete`/`clear` won't work against an MCP backend.)
-- The internal "all lessons" and "all global lessons" reads used for dedup/supersede during extraction issue a wildcard query (`["*"]`) with a hardcoded `limit = 100`, and rely on the tool returning the existing lessons. Global lessons are queried with empty `role`/`project` — the MCP server owns the scoping semantics.
-
-### `McpEndpointConfig`
-
-Both `store` and `retrieve` use the same structure:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tool` | `String` | MCP tool name (e.g. `"memorize"`, `"remember"`) |
-| `field_map` | `HashMap<String, String>` | Maps canonical learning fields to the tool's argument names |
-
 ## Relationship to Memory
 
 Learning is **separate from memory** (octobrain, CLAUDE.md, etc.):
@@ -313,4 +260,7 @@ Learning is **separate from memory** (octobrain, CLAUDE.md, etc.):
 - **Memory** is broad context storage — code patterns, architecture, project state, references.
 - **Learning** is narrow and structured — actionable facts scored by confidence, extracted from outcomes, with deduplication.
 
-Both can coexist. Learning focuses on the corrections and rules you gave the agent, and surfaces the relevant ones into future sessions automatically.
+Both can coexist. Supervisor learning is always file-backed and owns its
+verified retention lifecycle; external memory tools remain independent MCP
+tools the specialist may use directly. Learning focuses on the corrections and
+rules you gave the agent, and surfaces relevant ones automatically.

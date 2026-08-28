@@ -2458,6 +2458,50 @@ pub fn display_learning(output: &CommandOutput) {
 				format!("{}/{}", role, project)
 			};
 			block_open("/learning", Some(&subtitle));
+			if let Some(storage) = data.get("storage") {
+				let number = |key| {
+					storage
+						.get(key)
+						.and_then(|value| value.as_u64())
+						.unwrap_or(0)
+				};
+				block_row_text(
+					&format!(
+						"hot: {} item(s) / {} tok · cold: {} item(s) / {} tok · scope: {} local + {} global",
+						number("hot_items"),
+						number("hot_tokens"),
+						number("cold_items"),
+						number("cold_tokens"),
+						number("scoped_hot") + number("scoped_cold"),
+						number("global_hot") + number("global_cold")
+					)
+					.dimmed()
+					.to_string(),
+				);
+				if let Some(types) = storage.get("by_type").and_then(|value| value.as_object()) {
+					let summary = types
+						.iter()
+						.map(|(name, counts)| {
+							format!(
+								"{} {}/{}",
+								name,
+								counts
+									.get("hot")
+									.and_then(|value| value.as_u64())
+									.unwrap_or(0),
+								counts
+									.get("cold")
+									.and_then(|value| value.as_u64())
+									.unwrap_or(0)
+							)
+						})
+						.collect::<Vec<_>>()
+						.join(" · ");
+					if !summary.is_empty() {
+						block_row_text(&format!("types hot/cold: {summary}").dimmed().to_string());
+					}
+				}
+			}
 
 			let lessons = match data.get("lessons").and_then(|v| v.as_array()) {
 				Some(l) if !l.is_empty() => l,

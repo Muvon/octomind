@@ -22,7 +22,7 @@
 //! rules are never synthesized here: only an explicit, quote-grounded
 //! extraction may supersede one.
 
-use super::backend::LearningBackend;
+use super::backend::FileBackend;
 use super::{Lesson, TrajectoryOutcome};
 use crate::config::Config;
 use anyhow::Result;
@@ -111,30 +111,20 @@ impl ArchiveCatalogEntry {
 	}
 }
 
-/// Maintain both the current project/role scope and the global scope. The file
-/// backend is authoritative for archive paths; MCP servers own their retention
-/// and intentionally receive no imitation of this lifecycle.
-pub async fn maintain(
-	backend: &dyn LearningBackend,
-	config: &Config,
-	role: &str,
-	project: &str,
-) -> Result<RetentionReport> {
-	if config.supervisor.learning.backend != "file" {
-		return Ok(RetentionReport::default());
-	}
-
-	let scoped = backend.retrieve_all(role, project, config).await?;
-	let global = backend.retrieve_global(config).await?;
-	let mut report = maintain_scope(backend, config, scoped, false).await?;
-	let global_report = maintain_scope(backend, config, global, true).await?;
+/// Maintain both the current project/role scope and the global scope.
+pub async fn maintain(config: &Config, role: &str, project: &str) -> Result<RetentionReport> {
+	let backend = FileBackend;
+	let scoped = backend.retrieve_all(role, project).await?;
+	let global = backend.retrieve_global().await?;
+	let mut report = maintain_scope(&backend, config, scoped, false).await?;
+	let global_report = maintain_scope(&backend, config, global, true).await?;
 	report.consolidated += global_report.consolidated;
 	report.archived += global_report.archived;
 	Ok(report)
 }
 
 async fn maintain_scope(
-	backend: &dyn LearningBackend,
+	backend: &FileBackend,
 	config: &Config,
 	records: Vec<Lesson>,
 	global: bool,
@@ -169,7 +159,7 @@ async fn maintain_scope(
 			if let Some((left, right)) = best_pair(&bucket) {
 				let sources = [bucket[left].clone(), bucket[right].clone()];
 				if let Some(merged) = propose_and_verify(config, &sources).await {
-					if replace_with_consolidation(backend, config, &sources, &merged).await? {
+					if replace_with_consolidation(backend, &sources, &merged).await? {
 						let mut retained = Vec::with_capacity(bucket.len() - 1);
 						for (index, item) in bucket.into_iter().enumerate() {
 							if index != left && index != right {
@@ -477,12 +467,11 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 }
 
 async fn replace_with_consolidation(
-	backend: &dyn LearningBackend,
-	config: &Config,
+	backend: &FileBackend,
 	sources: &[Lesson; 2],
 	merged: &Lesson,
 ) -> Result<bool> {
-	backend.store(merged, config).await?;
+	backend.store(merged).await?;
 	let mut moved = Vec::new();
 	for source in sources {
 		match archive_record(source) {
@@ -497,7 +486,7 @@ async fn replace_with_consolidation(
 					}
 				}
 				let _ = backend
-					.delete(&merged.file_id(), &merged.role, &merged.project, config)
+					.delete(&merged.file_id(), &merged.role, &merged.project)
 					.await;
 				crate::log_debug!("Learning consolidation archive failed: {}", error);
 				return Ok(false);
@@ -669,9 +658,8 @@ mod tests {
 		let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 		let _data = TestDataDir::new();
 		let item = memory("archived durable memory", "orientation");
-		let config = crate::session::chat::test_support::fake_provider_config();
 		let backend = super::super::backend::file::FileBackend;
-		backend.store(&item, &config).await.unwrap();
+		backend.store(&item).await.unwrap();
 		let hot_dir = crate::directories::get_learning_dir(&item.role, &item.project).unwrap();
 		let hot = hot_dir.join(format!("{}.md", item.file_id()));
 
@@ -690,13 +678,13 @@ mod tests {
 		assert_eq!(recalled[0].storage_path, cold.display().to_string());
 
 		backend
-			.reinforce(&item.content, &item.role, &item.project, 0.0, &config)
+			.reinforce(&item.content, &item.role, &item.project, 0.0)
 			.await
 			.unwrap();
 		assert!(hot.exists());
 		assert!(!cold.exists());
 		let promoted = backend
-			.retrieve_all(&item.role, &item.project, &config)
+			.retrieve_all(&item.role, &item.project)
 			.await
 			.unwrap();
 		assert_eq!(promoted.len(), 1);
@@ -718,23 +706,15 @@ mod tests {
 				"learning",
 			);
 			item.created = format!("2026-01-01T00:00:{index:02}Z");
-			backend.store(&item, &config).await.unwrap();
+			backend.store(&item).await.unwrap();
 		}
-		let before = backend
-			.retrieve_all("developer", "project", &config)
-			.await
-			.unwrap();
+		let before = backend.retrieve_all("developer", "project").await.unwrap();
 		assert!(storage_tokens(&before) > SCOPED_LEARNING_HARD_TOKENS);
 
-		let report = maintain(&backend, &config, "developer", "project")
-			.await
-			.unwrap();
+		let report = maintain(&config, "developer", "project").await.unwrap();
 		assert_eq!(report.consolidated, 0);
 		assert!(report.archived > 0);
-		let hot = backend
-			.retrieve_all("developer", "project", &config)
-			.await
-			.unwrap();
+		let hot = backend.retrieve_all("developer", "project").await.unwrap();
 		assert!(
 			storage_tokens(&hot) <= SCOPED_LEARNING_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR
 		);

@@ -579,7 +579,6 @@ async fn compact_learning_retrieval_frontier() {
 			let result = crate::supervisor::learning::inject::prepare_retrieval_query(
 				&config,
 				case.query,
-				"file",
 				&rewrite_model,
 				rx,
 			)

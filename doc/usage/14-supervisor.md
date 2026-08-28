@@ -127,7 +127,6 @@ model   = "octohub:auto"   # shared cheap model for supervisor mechanics
 [supervisor.learning]      # lessons + orientation — see 13-learning.md
 enabled = true
 model   = "octohub:auto"
-backend = "file"
 
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true

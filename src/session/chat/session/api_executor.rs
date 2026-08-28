@@ -101,20 +101,18 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 /// Apply the verify-gate's verdict only to active-pack entries the specialist
 /// reported materially using. Exposure alone earns no positive or negative
 /// credit. Clears the pack references and used-ID set either way.
-async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
+async fn reinforce_recalled(chat_session: &mut ChatSession, delta: f64) {
 	let refs = std::mem::take(&mut chat_session.recalled_refs);
 	let used = std::mem::take(&mut chat_session.used_memory_ids);
 	if refs.is_empty() || used.is_empty() {
 		return;
 	}
-	let backend = crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
+	let backend = crate::supervisor::learning::backend::FileBackend;
 	for (id, content, role, project) in &refs {
 		if !used.contains(id) {
 			continue;
 		}
-		let applied = backend
-			.reinforce(content, role, project, delta, config)
-			.await;
+		let applied = backend.reinforce(content, role, project, delta).await;
 		if applied.is_ok() && delta != 0.0 {
 			crate::supervisor::stats::memory_credit(delta > 0.0);
 		}
@@ -801,7 +799,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						crate::supervisor::notify(&format!(
 							"completion evidence passed, but plan finalization failed: {error}"
 						));
-						reinforce_recalled(chat_session, config, -0.05).await;
+						reinforce_recalled(chat_session, -0.05).await;
 						return Ok(());
 					}
 				}
@@ -814,7 +812,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
 				crate::supervisor::notify("completion verified");
-				reinforce_recalled(chat_session, config, 0.05).await;
+				reinforce_recalled(chat_session, 0.05).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
@@ -843,7 +841,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						"Verify-gate: {} gap(s) unchanged after new evidence; not re-running",
 						gaps.len()
 					);
-					reinforce_recalled(chat_session, config, -0.15).await;
+					reinforce_recalled(chat_session, -0.15).await;
 					return Ok(());
 				}
 				let note = crate::supervisor::gate::format_advisory(&gaps);
@@ -886,7 +884,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					msg.push_str(g);
 				}
 				crate::supervisor::notify(&msg);
-				reinforce_recalled(chat_session, config, -0.15).await;
+				reinforce_recalled(chat_session, -0.15).await;
 			}
 			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
 				chat_session.pending_plan_signal = None;
@@ -927,7 +925,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; completion unverified");
 				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
-				reinforce_recalled(chat_session, config, -0.05).await;
+				reinforce_recalled(chat_session, -0.05).await;
 			}
 		}
 	}
@@ -981,7 +979,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// A terminal turn without a verify-gate verdict still records materially
 	// reported use for retention, but applies no correctness credit. Gate paths
 	// already consumed the references above, so this is a no-op for them.
-	reinforce_recalled(chat_session, config, 0.0).await;
+	reinforce_recalled(chat_session, 0.0).await;
 
 	Ok(())
 }
@@ -996,27 +994,22 @@ mod tests {
 		let data = tempfile::tempdir().unwrap();
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", data.path());
-		let config = crate::session::chat::test_support::fake_provider_config();
 		let role = "__credit_role";
 		let project = "__credit_project";
-		let backend =
-			crate::supervisor::learning::backend::create_backend(&config.supervisor.learning);
+		let backend = crate::supervisor::learning::backend::FileBackend;
 		for content in [
 			"exposed but unused",
 			"materially used",
 			"used without verdict",
 		] {
 			backend
-				.store(
-					&crate::supervisor::learning::Lesson {
-						content: content.to_string(),
-						role: role.to_string(),
-						project: project.to_string(),
-						created: chrono::Utc::now().to_rfc3339(),
-						..Default::default()
-					},
-					&config,
-				)
+				.store(&crate::supervisor::learning::Lesson {
+					content: content.to_string(),
+					role: role.to_string(),
+					project: project.to_string(),
+					created: chrono::Utc::now().to_rfc3339(),
+					..Default::default()
+				})
 				.await
 				.unwrap();
 		}
@@ -1036,7 +1029,7 @@ mod tests {
 			),
 		];
 		session.used_memory_ids.insert("M2".to_string());
-		reinforce_recalled(&mut session, &config, 0.05).await;
+		reinforce_recalled(&mut session, 0.05).await;
 		session.recalled_refs = vec![(
 			"M3".to_string(),
 			"used without verdict".to_string(),
@@ -1044,8 +1037,8 @@ mod tests {
 			project.to_string(),
 		)];
 		session.used_memory_ids.insert("M3".to_string());
-		reinforce_recalled(&mut session, &config, 0.0).await;
-		let memories = backend.retrieve_all(role, project, &config).await.unwrap();
+		reinforce_recalled(&mut session, 0.0).await;
+		let memories = backend.retrieve_all(role, project).await.unwrap();
 		let unused = memories
 			.iter()
 			.find(|memory| memory.content == "exposed but unused")

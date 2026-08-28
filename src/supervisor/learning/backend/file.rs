@@ -3,10 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License")
 
 use super::super::Lesson;
-use super::LearningBackend;
-use crate::config::Config;
 use anyhow::Result;
-use async_trait::async_trait;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -202,6 +199,31 @@ impl FileBackend {
 		lessons
 	}
 
+	pub(crate) fn read_archived(dir: &std::path::Path) -> Vec<Lesson> {
+		let archive = dir.join(".archive");
+		let Ok(types) = std::fs::read_dir(archive) else {
+			return Vec::new();
+		};
+		let mut lessons = Vec::new();
+		for type_dir in types.flatten().filter(|entry| entry.path().is_dir()) {
+			let Ok(entries) = std::fs::read_dir(type_dir.path()) else {
+				continue;
+			};
+			for entry in entries.flatten() {
+				let path = entry.path();
+				if path.extension().is_some_and(|extension| extension == "md") {
+					if let Ok(content) = std::fs::read_to_string(&path) {
+						if let Some(mut lesson) = Self::parse_lesson_file(&content) {
+							lesson.storage_path = path.display().to_string();
+							lessons.push(lesson);
+						}
+					}
+				}
+			}
+		}
+		lessons
+	}
+
 	/// Page a tiny exact-match slice from cold storage. The append-only catalog
 	/// avoids embedding or parsing the entire archive; stale catalog rows are
 	/// harmless because their file path is checked before use.
@@ -347,9 +369,8 @@ const IMPORTANCE_FLOOR: f64 = 0.1;
 /// entries bumped above it by reinforcement survive regardless of age.
 const PRUNE_THRESHOLD: f64 = 0.4;
 
-#[async_trait]
-impl LearningBackend for FileBackend {
-	async fn store(&self, lesson: &Lesson, _config: &Config) -> Result<()> {
+impl FileBackend {
+	pub(crate) async fn store(&self, lesson: &Lesson) -> Result<()> {
 		// Global lessons live in the shared `learning/_/` dir; scoped lessons
 		// in `learning/{project}/{role}/`. Filename is the canonical file_id.
 		let dir = if lesson.scope == "global" {
@@ -387,21 +408,20 @@ impl LearningBackend for FileBackend {
 		Ok(())
 	}
 
-	async fn retrieve(
+	pub(crate) async fn retrieve(
 		&self,
 		intent: &str,
 		patterns: &[String],
 		role: &str,
 		project: &str,
 		limit: usize,
-		config: &Config,
 	) -> Result<Vec<Lesson>> {
 		let dir = Self::learning_dir(role, project)?;
 		if !dir.exists() {
 			return Ok(Vec::new());
 		}
 
-		let all = self.retrieve_all(role, project, config).await?;
+		let all = self.retrieve_all(role, project).await?;
 		if patterns.is_empty() && intent.trim().is_empty() {
 			return Ok(all.into_iter().take(limit).collect());
 		}
@@ -473,7 +493,7 @@ impl LearningBackend for FileBackend {
 		Ok(recalled)
 	}
 
-	async fn delete(&self, id: &str, role: &str, project: &str, _config: &Config) -> Result<()> {
+	pub(crate) async fn delete(&self, id: &str, role: &str, project: &str) -> Result<()> {
 		// A lesson id is unique across scopes (content slug + timestamp), so we
 		// search both the scoped dir and the global dir; first match wins.
 		let dirs = [
@@ -498,27 +518,21 @@ impl LearningBackend for FileBackend {
 		anyhow::bail!("lesson '{}' not found", id)
 	}
 
-	async fn retrieve_all(
-		&self,
-		role: &str,
-		project: &str,
-		_config: &Config,
-	) -> Result<Vec<Lesson>> {
+	pub(crate) async fn retrieve_all(&self, role: &str, project: &str) -> Result<Vec<Lesson>> {
 		let dir = Self::learning_dir(role, project)?;
 		Ok(Self::read_lessons_sorted(&dir))
 	}
 
-	async fn retrieve_global(&self, _config: &Config) -> Result<Vec<Lesson>> {
+	pub(crate) async fn retrieve_global(&self) -> Result<Vec<Lesson>> {
 		let dir = crate::directories::get_global_learning_dir()?;
 		Ok(Self::read_lessons_sorted(&dir))
 	}
 
-	async fn retrieve_archived_global(
+	pub(crate) async fn retrieve_archived_global(
 		&self,
 		intent: &str,
 		patterns: &[String],
 		limit: usize,
-		_config: &Config,
 	) -> Result<Vec<Lesson>> {
 		let dir = crate::directories::get_global_learning_dir()?;
 		Ok(Self::retrieve_archived(
@@ -531,7 +545,7 @@ impl LearningBackend for FileBackend {
 
 	/// Dir scan only — no parsing: the caller just needs to know whether the
 	/// scope is worth a retrieval query.
-	async fn has_lessons(&self, role: &str, project: &str, _config: &Config) -> bool {
+	pub(crate) async fn has_lessons(&self, role: &str, project: &str) -> bool {
 		let Ok(dir) = Self::learning_dir(role, project) else {
 			return false;
 		};
@@ -544,13 +558,12 @@ impl LearningBackend for FileBackend {
 			.is_ok_and(|metadata| metadata.len() > 0)
 	}
 
-	async fn reinforce(
+	pub(crate) async fn reinforce(
 		&self,
 		content: &str,
 		role: &str,
 		project: &str,
 		delta: f64,
-		config: &Config,
 	) -> Result<()> {
 		// Find the recalled entry (scoped first, then global) by content.
 		let mut entries = Self::read_lessons_sorted(&Self::learning_dir(role, project)?);
@@ -578,7 +591,7 @@ impl LearningBackend for FileBackend {
 		entry.use_count = entry.use_count.saturating_add(1);
 		if new_importance <= IMPORTANCE_FLOOR {
 			entry.importance = new_importance;
-			self.store(&entry, config).await?;
+			self.store(&entry).await?;
 			super::super::retention::archive_record(&entry)?;
 			crate::supervisor::stats::memory_retention(0, 1);
 			crate::log_debug!(
@@ -588,7 +601,7 @@ impl LearningBackend for FileBackend {
 			);
 		} else {
 			entry.importance = new_importance;
-			self.store(&entry, config).await?; // same file_id → overwrites in place
+			self.store(&entry).await?; // same file_id → overwrites in place
 			crate::log_debug!(
 				"Reinforce: {} importance -> {:.2}",
 				entry.content,
@@ -598,12 +611,11 @@ impl LearningBackend for FileBackend {
 		Ok(())
 	}
 
-	async fn prune_stale(
+	pub(crate) async fn prune_stale(
 		&self,
 		role: &str,
 		project: &str,
 		decay_days: u64,
-		_config: &Config,
 	) -> Result<()> {
 		if decay_days == 0 {
 			return Ok(());

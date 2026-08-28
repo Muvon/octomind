@@ -49,3 +49,7 @@ impl LayersConfig {
 
 // Note: Core layer configurations are now defined in the config file
 // The get_core_layer_config function is removed as we rely entirely on config
+
+#[cfg(test)]
+#[path = "layers_tests.rs"]
+mod tests;

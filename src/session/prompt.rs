@@ -117,3 +117,7 @@ pub fn add_compression_hints_to_prompt(
 		compression_stats.avg_compression_ratio() * 100.0
 	));
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;

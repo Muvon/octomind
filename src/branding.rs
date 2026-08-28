@@ -101,3 +101,7 @@ pub fn print_startup_banner(role: &str, model: &str, cwd: &Path, extra: &[String
 		println!("{icon_line}{pad}{info_line}");
 	}
 }
+
+#[cfg(test)]
+#[path = "branding_tests.rs"]
+mod tests;

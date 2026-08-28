@@ -191,3 +191,7 @@ pub async fn setup_system_prompt_and_cache(
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "prompt_setup_tests.rs"]
+mod tests;

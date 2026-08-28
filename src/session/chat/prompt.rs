@@ -65,3 +65,7 @@ impl Prompt for ChatPrompt {
 		Cow::Owned(format!("(search: {}) ", history_search.term))
 	}
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;

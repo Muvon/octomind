@@ -158,3 +158,7 @@ fn get_timestamp() -> u64 {
 		.unwrap_or_default()
 		.as_secs()
 }
+
+#[cfg(test)]
+#[path = "logger_tests.rs"]
+mod tests;

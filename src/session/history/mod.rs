@@ -243,3 +243,7 @@ pub fn append_to_session_history_file(role: &str, line: &str) -> Result<()> {
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

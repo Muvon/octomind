@@ -66,3 +66,7 @@ impl GenericSessionArgs {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "params_tests.rs"]
+mod tests;

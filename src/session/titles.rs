@@ -100,3 +100,7 @@ pub fn record_session_meta(session_name: &str, role: &str, model: &str) {
 		crate::log_debug!("Failed to update titles.json: {}", e);
 	}
 }
+
+#[cfg(test)]
+#[path = "titles_tests.rs"]
+mod tests;

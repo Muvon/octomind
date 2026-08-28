@@ -147,3 +147,7 @@ pub trait PlanStorage {
 	/// Overwrites any existing plan.
 	fn load_plan(&mut self, plan: ExecutionPlan) -> Result<()>;
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

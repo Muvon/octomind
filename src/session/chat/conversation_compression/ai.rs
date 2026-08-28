@@ -472,3 +472,7 @@ mod extract_json_lenient_tests {
 		assert_eq!(v["ok"], true);
 	}
 }
+
+#[cfg(test)]
+#[path = "ai_tests.rs"]
+mod tests;

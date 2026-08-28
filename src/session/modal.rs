@@ -48,16 +48,5 @@ pub fn clear_overlay(lines: usize) {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_overlay_api() {
-		// Test that the API compiles correctly
-		let lines = 5;
-		show_overlay(lines, || {
-			println!("test");
-		});
-		clear_overlay(lines);
-	}
-}
+#[path = "modal_tests.rs"]
+mod tests;

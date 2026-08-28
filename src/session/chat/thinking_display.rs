@@ -24,3 +24,7 @@ pub fn display_thinking(thinking: &ThinkingBlock) {
 	println!("{}", "· thinking".bright_black());
 	println!("{}", thinking.content.bright_black().italic());
 }
+
+#[cfg(test)]
+#[path = "thinking_display_tests.rs"]
+mod tests;

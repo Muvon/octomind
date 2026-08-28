@@ -68,3 +68,7 @@ pub fn model_supports_caching(model: &str) -> bool {
 		.iter()
 		.any(|prefix| model.to_lowercase().contains(prefix))
 }
+
+#[cfg(test)]
+#[path = "model_utils_tests.rs"]
+mod tests;

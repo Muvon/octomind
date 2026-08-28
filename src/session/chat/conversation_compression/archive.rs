@@ -457,3 +457,7 @@ mod archive_tests {
 		let _ = std::fs::remove_file(blocker);
 	}
 }
+
+#[cfg(test)]
+#[path = "archive_tests.rs"]
+mod tests;

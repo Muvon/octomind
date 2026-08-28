@@ -47,3 +47,7 @@ pub fn format_duration(milliseconds: u64) -> String {
 
 	parts.join(" ")
 }
+
+#[cfg(test)]
+#[path = "formatting_tests.rs"]
+mod tests;

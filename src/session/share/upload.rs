@@ -158,3 +158,7 @@ fn extract_title(raw: &[u8]) -> Option<String> {
 	}
 	None
 }
+
+#[cfg(test)]
+#[path = "upload_tests.rs"]
+mod tests;

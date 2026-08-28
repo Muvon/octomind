@@ -34,3 +34,7 @@ impl Default for RegistryConfig {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

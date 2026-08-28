@@ -354,7 +354,7 @@ pub(super) fn compression_depth(
 mod amortization_tests;
 
 #[cfg(test)]
-mod tests {
+mod pacing_tests {
 	use super::*;
 	use crate::session::SessionInfo;
 
@@ -530,3 +530,7 @@ mod tests {
 		assert_eq!(compression_depth(100_000, 0, 100_000, 2_000.0, 5.0), None);
 	}
 }
+
+#[cfg(test)]
+#[path = "decision_tests.rs"]
+mod tests;

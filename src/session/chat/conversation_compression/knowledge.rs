@@ -429,3 +429,7 @@ pub(super) fn select_newest_with_budget(findings: &[String], budget: usize) -> V
 	selected.sort_unstable();
 	selected.into_iter().map(|i| findings[i].clone()).collect()
 }
+
+#[cfg(test)]
+#[path = "knowledge_tests.rs"]
+mod tests;

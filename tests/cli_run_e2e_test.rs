@@ -741,7 +741,7 @@ async fn test_distill_stores_lessons() {
 		"evidence=\"always run the tests on the box\">",
 		"Run the tests on the box, never locally",
 		"</lesson>\n",
-		"<orientation tags=\"arch\" confidence=\"high\">",
+		"<orientation tags=\"arch\" confidence=\"high\" evidence=\"M3\">",
 		"The project is a Rust CLI with a workspace build",
 		"</orientation>"
 	));
@@ -773,11 +773,12 @@ async fn test_distill_stores_lessons() {
 	}
 
 	// Transcript snapshot exactly as an exiting session writes it. The user
-	// turn carries the evidence quote verbatim — the distill verification
-	// gate rejects any lesson whose evidence it cannot find there.
+	// turn carries the lesson quote verbatim, while the tool observation is
+	// addressable grounding for the orientation.
 	let transcript = serde_json::json!([
 		{"role": "user", "content": "for this repo, always run the tests on the box please", "timestamp": 1},
-		{"role": "assistant", "content": "Understood — running everything on the box.", "timestamp": 2}
+		{"role": "assistant", "content": "Understood — running everything on the box.", "timestamp": 2},
+		{"role": "tool", "content": "Cargo.toml defines the Rust CLI workspace build", "timestamp": 3, "tool_call_id": "call-1", "name": "read"}
 	]);
 	let transcript_path = home.path().join("transcript.json");
 	std::fs::write(&transcript_path, transcript.to_string()).expect("write transcript");

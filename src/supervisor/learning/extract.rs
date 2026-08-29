@@ -75,8 +75,10 @@ structure, constraints, or non-obvious facts (e.g. "auth is delegated to octolib
 "deploy runs on GitLab not GitHub", "the dataset's date column is epoch milliseconds").
 Capture a fact ONLY if you can point to where in this work it was established; if you cannot,
 omit it — capturing 0 is fine. Skip transient state, exact line numbers, and anything one
-search recovers. These need no user quote.
-<orientation tags="keyword1,keyword2" confidence="high|medium">
+search recovers. Every orientation MUST cite 1-4 shown M# messages in `evidence`. Cite only
+REAL USER or TOOL messages that directly establish the fact; ASSISTANT and ASSISTANT THINKING
+may help you find a candidate but are never evidence.
+<orientation tags="keyword1,keyword2" confidence="high|medium" evidence="M2,M7">
 A durable, reusable fact about how the subject works.
 </orientation>"#;
 
@@ -267,9 +269,19 @@ pub async fn run_extraction(
 	}
 
 	// Orientation: durable subject understanding. Independent of the lesson
-	// decision gate; no user evidence required. Deduped vs existing orientation.
+	// decision gate, but every record must cite visible real-user/tool evidence.
+	// Invalid or assistant-only provenance fails closed before dedup/storage.
 	{
-		let orientations = parse_orientation_tags(&response, role, project, session_name);
+		let orientations = parse_orientation_tags(
+			&response,
+			&OrientationParseContext {
+				messages,
+				transcript: &transcript,
+				role,
+				project,
+				source: session_name,
+			},
+		);
 		let existing_or: Vec<Lesson> = existing_scoped
 			.iter()
 			.filter(|l| l.memory_type == "orientation")
@@ -897,9 +909,18 @@ fn parse_unsupported(resp: &str, count: usize) -> Option<Vec<usize>> {
 	)
 }
 
-/// Parse `<orientation>` tags — durable subject understanding. No evidence
-/// required; stored with memory_type = "orientation", always scoped.
-fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &str) -> Vec<Lesson> {
+struct OrientationParseContext<'a> {
+	messages: &'a [crate::session::Message],
+	transcript: &'a str,
+	role: &'a str,
+	project: &'a str,
+	source: &'a str,
+}
+
+/// Parse `<orientation>` tags — durable subject understanding. Every accepted
+/// record has 1-4 addressable citations to visible real-user/tool messages;
+/// missing, malformed, assistant-only, or budget-hidden evidence fails closed.
+fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>) -> Vec<Lesson> {
 	let mut out = Vec::new();
 	let now = chrono::Utc::now().to_rfc3339();
 	let mut remaining = response;
@@ -915,6 +936,14 @@ fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &st
 		};
 		let content = after_open[..end_tag].trim();
 		if !content.is_empty() {
+			let Some(evidence) = parse_orientation_evidence(attrs, context) else {
+				crate::log_debug!(
+					"Orientation rejected (missing or invalid REAL USER/TOOL evidence): {}",
+					content
+				);
+				remaining = &after_open[end_tag + 14..];
+				continue;
+			};
 			let confidence = extract_attr(attrs, "confidence").unwrap_or("medium".into());
 			let tags: Vec<String> = extract_attr(attrs, "tags")
 				.unwrap_or_default()
@@ -936,13 +965,13 @@ fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &st
 				importance,
 				confidence,
 				tags,
-				source: source.to_string(),
-				role: role.to_string(),
-				project: project.to_string(),
+				source: context.source.to_string(),
+				role: context.role.to_string(),
+				project: context.project.to_string(),
 				scope: "scoped".into(),
 				created: now.clone(),
 				related: Vec::new(),
-				evidence: Vec::new(),
+				evidence,
 				outcome: super::TrajectoryOutcome::Unknown,
 				last_used: String::new(),
 				use_count: 0,
@@ -952,6 +981,46 @@ fn parse_orientation_tags(response: &str, role: &str, project: &str, source: &st
 		remaining = &after_open[end_tag + 14..]; // skip past </orientation>
 	}
 	out
+}
+
+fn parse_orientation_evidence(
+	attrs: &str,
+	context: &OrientationParseContext<'_>,
+) -> Option<Vec<String>> {
+	let raw = extract_attr(attrs, "evidence")?;
+	let ids = raw.split(',').map(str::trim).collect::<Vec<_>>();
+	if ids.is_empty() || ids.len() > 4 || ids.iter().any(|id| id.is_empty()) {
+		return None;
+	}
+
+	let mut numbers = Vec::with_capacity(ids.len());
+	for id in ids {
+		let number = id
+			.strip_prefix('M')
+			.or_else(|| id.strip_prefix('m'))?
+			.parse::<usize>()
+			.ok()?;
+		if numbers.contains(&number) {
+			return None;
+		}
+		let message = context.messages.get(number.checked_sub(1)?)?;
+		let eligible = match message.role.as_str() {
+			"user" => crate::session::is_real_user_task_message(message),
+			"tool" => true,
+			_ => false,
+		};
+		if !eligible || !context.transcript.contains(&format!("[M{number} ")) {
+			return None;
+		}
+		numbers.push(number);
+	}
+
+	Some(
+		numbers
+			.into_iter()
+			.map(|number| format!("session://{}/message/{number}", context.source))
+			.collect(),
+	)
 }
 
 #[derive(Debug)]

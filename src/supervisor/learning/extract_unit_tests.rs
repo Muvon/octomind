@@ -270,12 +270,30 @@ fn extract_attr_empty_value_order_and_spaced_values() {
 
 // --- parse_orientation_tags --------------------------------------------------
 
+fn parse_orientations(
+	response: &str,
+	messages: &[crate::session::Message],
+) -> Vec<crate::supervisor::learning::Lesson> {
+	let transcript = build_transcript(messages);
+	parse_orientation_tags(
+		response,
+		&OrientationParseContext {
+			messages,
+			transcript: &transcript,
+			role: "developer",
+			project: "octomind",
+			source: "session-a",
+		},
+	)
+}
+
 #[test]
 fn orientation_parses_attributes_and_provenance() {
-	let response = r#"<orientation confidence="high" tags=" arch , rust ">
+	let messages = vec![msg("tool", "octolib owns provider authentication")];
+	let response = r#"<orientation confidence="high" tags=" arch , rust " evidence="M1">
 Auth is delegated to octolib
 </orientation>"#;
-	let parsed = parse_orientation_tags(response, "developer", "octomind", "session-a");
+	let parsed = parse_orientations(response, &messages);
 	assert_eq!(parsed.len(), 1);
 	let lesson = &parsed[0];
 	assert_eq!(lesson.content, "Auth is delegated to octolib");
@@ -288,14 +306,19 @@ Auth is delegated to octolib
 	assert_eq!(lesson.role, "developer");
 	assert_eq!(lesson.project, "octomind");
 	assert_eq!(lesson.source, "session-a");
+	assert_eq!(
+		lesson.evidence,
+		vec!["session://session-a/message/1".to_string()]
+	);
 	assert!(!lesson.created.is_empty());
 }
 
 #[test]
 fn orientation_defaults_and_multiple_tags() {
-	let response = r#"<orientation>first subject</orientation>
-<orientation confidence="medium" tags="t">second subject</orientation>"#;
-	let parsed = parse_orientation_tags(response, "dev", "proj", "src");
+	let messages = vec![msg("user", "first subject"), msg("tool", "second subject")];
+	let response = r#"<orientation evidence="M1">first subject</orientation>
+<orientation confidence="medium" tags="t" evidence="M2">second subject</orientation>"#;
+	let parsed = parse_orientations(response, &messages);
 	assert_eq!(parsed.len(), 2);
 	// Missing confidence defaults to medium with the lower importance.
 	assert_eq!(parsed[0].confidence, "medium");
@@ -304,26 +327,85 @@ fn orientation_defaults_and_multiple_tags() {
 	assert_eq!(parsed[1].importance, 0.55);
 	assert_eq!(parsed[1].tags, vec!["t".to_string()]);
 
-	assert!(parse_orientation_tags("no tags here", "dev", "proj", "src").is_empty());
+	assert!(parse_orientations("no tags here", &messages).is_empty());
 }
 
 #[test]
 fn orientation_skips_empty_content_and_truncates_title() {
-	let empty = "<orientation confidence=\"high\">\n</orientation>";
-	let parsed = parse_orientation_tags(empty, "dev", "proj", "src");
+	let messages = vec![msg("tool", "durable evidence")];
+	let empty = "<orientation confidence=\"high\" evidence=\"M1\">\n</orientation>";
+	let parsed = parse_orientations(empty, &messages);
 	assert!(parsed.is_empty());
 
 	// ASCII long content: hard cut at 80 bytes plus ellipsis (no word trim).
-	let long = format!("<orientation>{}</orientation>", "b".repeat(100));
-	let parsed = parse_orientation_tags(&long, "dev", "proj", "src");
+	let long = format!(
+		"<orientation evidence=\"M1\">{}</orientation>",
+		"b".repeat(100)
+	);
+	let parsed = parse_orientations(&long, &messages);
 	assert_eq!(parsed[0].title, format!("{}...", "b".repeat(80)));
 
 	// Multibyte content: the cut floors to a char boundary.
-	let cjk = format!("<orientation>{}</orientation>", "日".repeat(100));
-	let parsed = parse_orientation_tags(&cjk, "dev", "proj", "src");
+	let cjk = format!(
+		"<orientation evidence=\"M1\">{}</orientation>",
+		"日".repeat(100)
+	);
+	let parsed = parse_orientations(&cjk, &messages);
 	let title = &parsed[0].title;
 	assert!(title.ends_with("..."));
 	assert_eq!(title.chars().count(), 26 + 3);
+}
+
+#[test]
+fn orientation_rejects_missing_invalid_or_untrusted_evidence() {
+	let messages = vec![
+		msg("user", "real project fact"),
+		msg("assistant", "unsupported self-report"),
+		msg("tool", "observed project fact"),
+		msg(
+			"user",
+			"<instructions>synthetic control-plane note</instructions>",
+		),
+	];
+	for evidence in [
+		"",
+		"M2",
+		"M4",
+		"M9",
+		"M1,M1",
+		"M1,M2",
+		"M1,M3,M1",
+		"M1,M3,M1,M3,M1",
+	] {
+		let attr = if evidence.is_empty() {
+			String::new()
+		} else {
+			format!(" evidence=\"{evidence}\"")
+		};
+		let response = format!("<orientation{attr}>unsupported orientation</orientation>");
+		assert!(
+			parse_orientations(&response, &messages).is_empty(),
+			"evidence {evidence:?} must fail closed"
+		);
+	}
+}
+
+#[test]
+fn orientation_rejects_evidence_hidden_by_transcript_budget() {
+	let messages = (0..400)
+		.map(|index| {
+			msg(
+				"tool",
+				&format!("tool evidence {index} {}", "x".repeat(1_000)),
+			)
+		})
+		.collect::<Vec<_>>();
+	let transcript = build_transcript(&messages);
+	let hidden = (1..=messages.len())
+		.find(|number| !transcript.contains(&format!("[M{number} ")))
+		.expect("bounded transcript omits at least one middle message");
+	let response = format!("<orientation evidence=\"M{hidden}\">hidden evidence</orientation>");
+	assert!(parse_orientations(&response, &messages).is_empty());
 }
 
 // --- word_overlap / best_overlap ---------------------------------------------

@@ -330,11 +330,14 @@ fn note_fold_failure(session: &mut ChatSession) {
 /// discards the job and starts the failure cooldown (usage still recorded
 /// where known). `force` is the ceiling-margin wait: the summary exists and
 /// the window is nearly full, so the decision model's veto no longer applies.
+/// `force_done` preserves `/done`'s task-boundary bookkeeping when that command
+/// collects a fold which was originally started in the background.
 async fn collect_fold_job(
 	session: &mut ChatSession,
 	config: &Config,
 	job: FoldJob,
 	force: bool,
+	force_done: bool,
 ) -> Result<bool> {
 	let FoldJob { handle, ctx } = job;
 	let outcome = match handle.await {
@@ -368,7 +371,7 @@ async fn collect_fold_job(
 		note_fold_failure(session);
 		return Ok(false);
 	}
-	finish_fold(session, config, ctx, summary, usage, force, false).await
+	finish_fold(session, config, ctx, summary, usage, force, force_done).await
 }
 
 /// Everything after the decision call: usage/metrics accounting, the veto and
@@ -456,6 +459,27 @@ async fn finish_fold(
 	};
 
 	log_info!("AI decided to compress older conversation exchanges");
+	// Capture learning input before apply_compression replaces the raw turns
+	// with one assistant summary. The extraction itself starts only after a
+	// successful apply, so a rejected/failed fold never teaches from a state
+	// transition that did not happen.
+	let learning_snapshot = if !force_done && config.supervisor.learning.enabled {
+		let user_msg_count = session
+			.session
+			.messages
+			.iter()
+			.filter(|message| crate::session::is_real_user_task_message(message))
+			.count();
+		(user_msg_count >= crate::supervisor::learning::MIN_MESSAGES_FOR_INTERMEDIATE).then(|| {
+			(
+				session.session.messages.clone(),
+				session.session.info.name.clone(),
+				session.learning_outcome,
+			)
+		})
+	} else {
+		None
+	};
 
 	let preserve_bridge = ctx.preserve_recent_user_bridge
 		&& session.session.messages[ctx.end_idx + 1..]
@@ -480,19 +504,16 @@ async fn finish_fold(
 	)
 	.await?;
 
-	if config.supervisor.learning.enabled {
-		let user_msg_count = session
-			.session
-			.messages
-			.iter()
-			.filter(|m| crate::session::is_real_user_task_message(m))
-			.count();
-		if user_msg_count >= crate::supervisor::learning::MIN_MESSAGES_FOR_INTERMEDIATE {
-			let role = crate::config::get_thread_role().unwrap_or_default();
-			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
-				session, config, role, None,
-			);
-		}
+	if let Some((messages, session_name, outcome)) = learning_snapshot {
+		let role = crate::config::get_thread_role().unwrap_or_default();
+		let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
+			messages,
+			config,
+			role,
+			None,
+			session_name,
+			outcome,
+		);
 	}
 
 	if force_done {
@@ -527,7 +548,7 @@ pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> 
 	}
 	let job = session.fold_job.take().expect("checked above");
 	log_debug!("Turn finished with a completed background fold — applying before save");
-	collect_fold_job(session, config, job, false).await
+	collect_fold_job(session, config, job, false, false).await
 }
 
 /// Inside the ceiling margin (see `decision::ceiling_reached`): folds are
@@ -566,7 +587,7 @@ pub async fn check_and_compress_conversation(
 		let must_wait = force_done || within_ceiling_margin(session, config).await;
 		if finished || must_wait {
 			let job = session.fold_job.take().expect("checked above");
-			if collect_fold_job(session, config, job, must_wait).await? {
+			if collect_fold_job(session, config, job, must_wait, force_done).await? {
 				return Ok(true);
 			}
 		// Declined or discarded: fall through — a forced trigger still folds.

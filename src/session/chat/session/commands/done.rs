@@ -35,6 +35,16 @@ pub async fn handle_done(
 	config: &Config,
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) -> Result<DoneOutcome> {
+	// `/done` compresses before it starts learning. Preserve the raw transcript
+	// now; otherwise extraction sees only the generated summary and cannot cite
+	// the user's actual words or the original tool evidence.
+	let learning_snapshot = config.supervisor.learning.enabled.then(|| {
+		(
+			session.session.messages.clone(),
+			session.session.info.name.clone(),
+			session.learning_outcome,
+		)
+	});
 	let outcome =
 		match crate::session::chat::conversation_compression::check_and_compress_conversation(
 			session,
@@ -56,12 +66,16 @@ pub async fn handle_done(
 	// (unlike the /exit and Ctrl+D paths, which must await it).
 	if config.supervisor.learning.enabled {
 		let role = crate::config::get_thread_role().unwrap_or_default();
-		let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
-			session,
-			config,
-			role.clone(),
-			None,
-		);
+		if let Some((messages, session_name, outcome)) = learning_snapshot {
+			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
+				messages,
+				config,
+				role.clone(),
+				None,
+				session_name,
+				outcome,
+			);
+		}
 		// Mark as extracted so /exit and Ctrl+D don't double-extract.
 		session.learning_extracted = true;
 		// Reset so next user message triggers fresh injection with new query.

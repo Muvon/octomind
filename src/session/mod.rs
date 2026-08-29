@@ -140,6 +140,24 @@ impl Default for Message {
 	}
 }
 
+/// Return the textual reasoning stored with an assistant message.
+///
+/// Current providers persist [`ThinkingBlock`](crate::providers::ThinkingBlock)
+/// as `{ "content": ..., "tokens": ... }`. The string and legacy field
+/// fallbacks keep older session logs useful without exposing accounting or
+/// provider metadata as transcript prose.
+pub fn message_thinking_content(message: &Message) -> Option<&str> {
+	let thinking = message.thinking.as_ref()?;
+	let content = thinking.as_str().or_else(|| {
+		thinking
+			.get("content")
+			.or_else(|| thinking.get("reasoning"))
+			.or_else(|| thinking.get("thinking"))
+			.and_then(serde_json::Value::as_str)
+	})?;
+	(!content.trim().is_empty()).then_some(content.trim())
+}
+
 pub fn is_system_managed_user_content(content: &str) -> bool {
 	let trimmed = content.trim_start();
 	trimmed.starts_with("<instructions>")

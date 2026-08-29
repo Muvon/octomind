@@ -1010,6 +1010,11 @@ fn render_packet_with_spans(
 				if !content.is_empty() {
 					rendered.push_str(&format!("[MESSAGE {source} ASSISTANT]\n{}\n", content));
 				}
+				if let Some(thinking) = crate::session::message_thinking_content(message) {
+					rendered.push_str(&format!(
+						"[MESSAGE {source} ASSISTANT THINKING]\n{thinking}\n"
+					));
+				}
 				if let Some(calls) = message.tool_calls.as_ref() {
 					rendered.push_str(&format!(
 						"[MESSAGE {source} STRUCTURED TOOL CALLS]\n{calls}\n"
@@ -2946,6 +2951,22 @@ mod tests {
 		assert!(!rendered.contains("<file_context>"));
 		assert!(!rendered.contains("b:unreferenced"));
 		assert!(!rendered.contains("<recall_index"));
+	}
+
+	#[test]
+	fn pact_packet_includes_assistant_thinking() {
+		let mut assistant = message("assistant", "Selected the narrow fix.");
+		assistant.thinking = Some(serde_json::json!({
+			"content": "The alternative changes an unrelated API.",
+			"tokens": 9
+		}));
+		let messages = vec![assistant];
+		let packets = build_packets("session", &messages);
+
+		let rendered = render_packet(&messages, &packets[0], usize::MAX);
+		assert!(rendered.contains("[MESSAGE 1 ASSISTANT THINKING]"));
+		assert!(rendered.contains("The alternative changes an unrelated API."));
+		assert!(!rendered.contains("\"tokens\":9"));
 	}
 
 	#[test]

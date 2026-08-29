@@ -659,12 +659,7 @@ mod tests {
 			.add_tool_message("tool result", "call-1", "view", &config)
 			.unwrap();
 		session
-			.add_assistant_message(
-				"assistant answer",
-				None,
-				&config,
-				"assistant",
-			)
+			.add_assistant_message("assistant answer", None, &config, "assistant")
 			.unwrap();
 		session.save().unwrap();
 

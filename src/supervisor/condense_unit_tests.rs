@@ -466,7 +466,7 @@ async fn extract_retains_a_truncation_notice_and_its_spill_pointer() {
 			"{}: showing only the first tokens",
 			crate::utils::truncation::TRUNCATION_NOTICE_TAG
 		);
-		let lines = vec![
+		let lines = [
 			"l1".to_string(),
 			"l2".to_string(),
 			"l3".to_string(),

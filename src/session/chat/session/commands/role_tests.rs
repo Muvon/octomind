@@ -86,7 +86,7 @@ async fn test_bare_command_shows_current_and_available_roles() {
 	assert_eq!(old_role, None);
 	assert_eq!(new_role, "task_refiner");
 	assert_eq!(current_role.as_deref(), Some("task_refiner"));
-	assert_eq!(changed, false);
+	assert!(!changed);
 	let roles = available_roles.expect("available roles");
 	for expected in ["assistant", "task_refiner", "task_researcher", "reduce"] {
 		assert!(roles.contains(&expected.to_string()), "roles: {roles:?}");
@@ -138,7 +138,7 @@ async fn test_same_role_is_a_no_op() {
 	);
 	assert_eq!(new_role, "assistant");
 	assert_eq!(current_role.as_deref(), Some("assistant"));
-	assert_eq!(changed, false);
+	assert!(!changed);
 }
 
 #[tokio::test]

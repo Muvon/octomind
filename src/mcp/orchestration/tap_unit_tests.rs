@@ -222,6 +222,10 @@ async fn capability_with_low_signal_prompt_reports_no_match() {
 #[serial]
 async fn discover_with_installed_agents_requires_embeddings() {
 	let guard = TempDataDir::new();
+	if crate::embeddings::is_ready() {
+		eprintln!("skipping: embedding provider already initialized by a prior test");
+		return;
+	}
 	// Fabricate one agent inside the default tap's agents tree so
 	// list_all_tap_agents() finds it, then rely on the embedding model not
 	// being warmed in the unit-test binary.

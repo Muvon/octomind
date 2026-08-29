@@ -26,6 +26,7 @@ fn default_config() -> crate::config::Config {
 	config
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layer(
 	layer_type: &str,
 	model: &str,

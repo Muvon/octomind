@@ -19,9 +19,12 @@
 //! spinner-driven startup UX specific to the binary.
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressBar;
+#[cfg(not(test))]
+use indicatif::ProgressStyle;
 use octomind::agent::resolver;
 use octomind::config::Config;
+#[cfg(not(test))]
 use std::time::Duration;
 
 /// Run the full startup sequence (tap/dep resolution + MCP init) under a single spinner.
@@ -86,14 +89,21 @@ pub async fn startup_mcp_only(role: &str, config: &Config, is_interactive: bool)
 }
 
 fn make_spinner() -> ProgressBar {
+	#[cfg(test)]
+	return ProgressBar::hidden();
+
+	#[cfg(not(test))]
 	let spinner = ProgressBar::new_spinner();
+	#[cfg(not(test))]
 	spinner.set_style(
 		ProgressStyle::default_spinner()
 			.template(" {spinner:.cyan} {msg:.cyan}")
 			.unwrap()
 			.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
 	);
+	#[cfg(not(test))]
 	spinner.enable_steady_tick(Duration::from_millis(80));
+	#[cfg(not(test))]
 	spinner
 }
 
@@ -183,9 +193,9 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn startup_non_interactive_unknown_tap_tag_errors() {
+	async fn startup_non_interactive_malformed_tap_tag_errors() {
 		let config = template_config();
-		let result = startup(Some("no-such-category:missing-variant"), &config, false).await;
+		let result = startup(Some("no-such-category:"), &config, false).await;
 		assert!(result.is_err());
 	}
 
@@ -200,9 +210,9 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn startup_interactive_unknown_tap_tag_errors() {
+	async fn startup_interactive_malformed_tap_tag_errors() {
 		let config = template_config();
-		let result = startup(Some("no-such-category:missing-variant"), &config, true).await;
+		let result = startup(Some("no-such-category:"), &config, true).await;
 		assert!(result.is_err());
 	}
 

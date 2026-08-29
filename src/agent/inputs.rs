@@ -402,3 +402,7 @@ mod tests {
 		assert_eq!(result, "Example: {{ENV:URL}}");
 	}
 }
+
+#[cfg(test)]
+#[path = "inputs_tests.rs"]
+mod external_tests;

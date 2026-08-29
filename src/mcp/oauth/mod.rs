@@ -418,3 +418,7 @@ mod tests {
 		assert!(!is_authenticated(&server, 300).await);
 	}
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;

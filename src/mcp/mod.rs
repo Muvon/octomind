@@ -935,3 +935,7 @@ mod tests {
 		assert_eq!(error_result.extract_content(), "Error message");
 	}
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;

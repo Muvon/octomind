@@ -159,3 +159,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "recall_tests.rs"]
+mod recall_tests;

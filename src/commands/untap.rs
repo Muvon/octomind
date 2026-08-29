@@ -34,3 +34,7 @@ pub fn execute(args: &UntapArgs) -> Result<()> {
 	println!();
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "untap_tests.rs"]
+mod tests;

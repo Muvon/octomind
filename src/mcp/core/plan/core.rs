@@ -689,3 +689,7 @@ mod tests {
 #[cfg(test)]
 #[path = "core_sidecar_tests.rs"]
 mod sidecar_tests;
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod core_tests;

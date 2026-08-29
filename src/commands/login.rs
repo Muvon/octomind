@@ -103,3 +103,7 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 	println!();
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "login_tests.rs"]
+mod tests;

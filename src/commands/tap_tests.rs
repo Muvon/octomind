@@ -68,8 +68,8 @@ fn tap_args_parse_optional_positionals() {
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert!(cli.args.local_path.is_none());
 
-	let cli = Cli::try_parse_from(["octomind", "myorg/repo", "./local"])
-		.expect("tap with local path");
+	let cli =
+		Cli::try_parse_from(["octomind", "myorg/repo", "./local"]).expect("tap with local path");
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert_eq!(cli.args.local_path.as_deref(), Some("./local"));
 }
@@ -168,7 +168,7 @@ fn execute_rejects_malformed_and_duplicate_taps() {
 	})
 	.expect_err("malformed tap refused")
 	.to_string();
-	assert!(err.contains("Invalid tap"), "{err}");
+	assert!(err.contains("user/repo format"), "{err}");
 
 	let local = tempfile::tempdir().expect("local tap dir");
 	execute(&TapArgs {

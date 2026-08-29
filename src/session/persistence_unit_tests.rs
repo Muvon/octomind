@@ -21,7 +21,7 @@
 
 use super::*;
 use serde_json::json;
-use std::io::{BufRead, BufReader, Cursor};
+use std::io::{BufRead, Cursor};
 use std::path::{Path, PathBuf};
 
 // ---- helpers ----

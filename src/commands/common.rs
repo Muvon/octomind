@@ -167,6 +167,8 @@ mod tests {
 		let spinner = make_spinner();
 		spinner.tick();
 		assert!(!spinner.is_finished());
+		spinner.finish_and_clear();
+		assert!(spinner.is_finished());
 	}
 
 	#[tokio::test]

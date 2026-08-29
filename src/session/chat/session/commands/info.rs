@@ -26,8 +26,12 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	let info = &session.session.info;
 
 	let tokens_used = info.input_tokens + info.output_tokens;
+	// Real throughput: generated tokens (visible + reasoning) over the summed
+	// request wall time. Reasoning tokens are produced inside the same request
+	// window, so excluding them understates thinking models by their share.
 	let tokens_per_second = if info.total_api_time_ms > 0 {
-		(info.output_tokens as f64) / (info.total_api_time_ms as f64 / 1000.0)
+		(info.output_tokens + info.reasoning_tokens) as f64
+			/ (info.total_api_time_ms as f64 / 1000.0)
 	} else {
 		0.0
 	};

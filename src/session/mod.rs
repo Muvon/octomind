@@ -419,6 +419,8 @@ pub struct CompressionStats {
 	#[serde(default)]
 	pub output_tokens: u64,
 	#[serde(default)]
+	pub reasoning_tokens: u64,
+	#[serde(default)]
 	pub cost: f64,
 	/// Wall time of the compression model's own API requests, for throughput.
 	#[serde(default)]

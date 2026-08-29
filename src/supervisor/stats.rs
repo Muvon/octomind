@@ -61,6 +61,7 @@ struct Stats {
 	memory_archived: u64,
 	input_tokens: u64,
 	output_tokens: u64,
+	reasoning_tokens: u64,
 	/// Wall time of the supervisor's own API requests, for throughput.
 	api_time_ms: u64,
 	cost: f64,
@@ -104,6 +105,7 @@ pub fn record_call(
 	kind: CallKind,
 	input_tokens: u64,
 	output_tokens: u64,
+	reasoning_tokens: u64,
 	api_time_ms: u64,
 	cost: f64,
 ) {
@@ -119,6 +121,7 @@ pub fn record_call(
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
+		s.reasoning_tokens += reasoning_tokens;
 		s.api_time_ms += api_time_ms;
 		s.cost += cost;
 	});
@@ -277,7 +280,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
 		"tokens_per_second": if s.api_time_ms > 0 {
-			s.output_tokens as f64 / (s.api_time_ms as f64 / 1000.0)
+			(s.output_tokens + s.reasoning_tokens) as f64
+				/ (s.api_time_ms as f64 / 1000.0)
 		} else {
 			0.0
 		},

@@ -362,3 +362,29 @@ async fn test_inline_output_render_arms() {
 		output.display_cli(&mut session, &config).await;
 	}
 }
+
+#[tokio::test]
+async fn info_throughput_counts_reasoning_tokens() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.output_tokens = 406;
+	session.session.info.reasoning_tokens = 8_900;
+	session.session.info.total_api_time_ms = 63_400;
+	let mut config = test_config();
+	let result = dispatch(&mut session, &mut config, "/info")
+		.await
+		.expect("info succeeds");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected rendered info output");
+	};
+	let CommandOutput::Info {
+		tokens_per_second, ..
+	} = *output
+	else {
+		panic!("expected info output variant");
+	};
+	// (406 + 8_900) / 63.4 s ≈ 146.8 tok/s; output-only math would show 6.4.
+	assert!(
+		(tokens_per_second - 146.8).abs() < 0.1,
+		"{tokens_per_second}"
+	);
+}

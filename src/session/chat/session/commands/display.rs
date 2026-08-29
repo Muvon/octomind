@@ -581,8 +581,10 @@ pub fn display_info(output: &CommandOutput) {
 					kw,
 				);
 			}
-			if stats.api_time_ms > 0 && stats.output_tokens > 0 {
-				let tps = stats.output_tokens as f64 / (stats.api_time_ms as f64 / 1000.0);
+			if stats.api_time_ms > 0 && stats.output_tokens + stats.reasoning_tokens > 0 {
+				// Reasoning tokens are generated in the same request window.
+				let tps = (stats.output_tokens + stats.reasoning_tokens) as f64
+					/ (stats.api_time_ms as f64 / 1000.0);
 				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
 			}
 			if stats.cost > 0.0 {

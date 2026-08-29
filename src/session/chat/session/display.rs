@@ -249,8 +249,10 @@ impl ChatSession {
 					kw,
 				);
 			}
-			if cs.api_time_ms > 0 && cs.output_tokens > 0 {
-				let tps = cs.output_tokens as f64 / (cs.api_time_ms as f64 / 1000.0);
+			if cs.api_time_ms > 0 && cs.output_tokens + cs.reasoning_tokens > 0 {
+				// Reasoning tokens are generated in the same request window.
+				let tps = (cs.output_tokens + cs.reasoning_tokens) as f64
+					/ (cs.api_time_ms as f64 / 1000.0);
 				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
 			}
 			if cs.cost > 0.0 {

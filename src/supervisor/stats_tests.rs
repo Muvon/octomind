@@ -19,8 +19,8 @@ use super::*;
 
 #[test]
 fn test_recorders_and_snapshot_render() {
-	record_call(CallKind::Gate, 100, 50, 120, 0.001);
-	record_call(CallKind::Recall, 10, 5, 15, 0.0);
+	record_call(CallKind::Gate, 100, 50, 0, 120, 0.001);
+	record_call(CallKind::Recall, 10, 5, 0, 15, 0.0);
 	gate_run();
 	gate_pass();
 	gate_fail();

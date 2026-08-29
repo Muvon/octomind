@@ -1504,6 +1504,7 @@ async fn call_extraction_llm(
 			crate::supervisor::stats::CallKind::Distill,
 			usage.input_tokens,
 			usage.output_tokens,
+			usage.reasoning_tokens,
 			usage.request_time_ms.unwrap_or(0),
 			usage.cost.unwrap_or(0.0),
 		);
@@ -1687,6 +1688,7 @@ async fn call_supervisor_model(
 			kind,
 			usage.input_tokens,
 			usage.output_tokens,
+			usage.reasoning_tokens,
 			usage.request_time_ms.unwrap_or(0),
 			usage.cost.unwrap_or(0.0),
 		);

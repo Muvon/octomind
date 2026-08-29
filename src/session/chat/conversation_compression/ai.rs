@@ -201,6 +201,7 @@ pub(super) fn record_decision_usage(
 	let stats = &mut session.session.info.compression_stats;
 	stats.input_tokens += usage.input_tokens;
 	stats.output_tokens += usage.output_tokens;
+	stats.reasoning_tokens += usage.reasoning_tokens;
 	stats.cost += usage.cost.unwrap_or(0.0);
 	stats.api_time_ms += usage.request_time_ms.unwrap_or(0);
 	if let Some(cost) = usage.cost {

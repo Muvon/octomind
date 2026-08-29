@@ -605,4 +605,62 @@ mod tests {
 		assert!(md.contains("| **TOTAL** |"));
 		assert!(md.contains("**0** requests"));
 	}
+
+	#[test]
+	fn generate_from_log_tracks_messages_commands_tools_cost_and_time() {
+		let dir = tempfile::tempdir().expect("temp dir");
+		let path = dir.path().join("report.jsonl.zst");
+		let entries = [
+			serde_json::json!({"role":"user","content":"build the report","timestamp":100}),
+			serde_json::json!({
+				"role":"assistant",
+				"content":"working",
+				"timestamp":102,
+				"tool_calls":[{"name":"shell"},{"name":"view"}]
+			}),
+			serde_json::json!({
+				"type":"STATS","timestamp":103,"total_cost":0.5,
+				"total_api_time_ms":100,"total_tool_time_ms":30
+			}),
+			serde_json::json!({"type":"COMMAND","command":"/info","timestamp":110}),
+			serde_json::json!({"type":"TOOL_CALL","tool_name":"schedule","timestamp":111}),
+			serde_json::json!({
+				"type":"SUMMARY","timestamp":112,
+				"session_info":{
+					"total_cost":1.0,"total_api_time_ms":160,"total_tool_time_ms":50
+				}
+			}),
+			serde_json::json!({"role":"assistant","content":"done","timestamp":114}),
+		];
+		for entry in entries {
+			crate::session::append_to_session_file(&path, &entry.to_string())
+				.expect("append report frame");
+		}
+
+		let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
+		assert_eq!(report.entries.len(), 2);
+		assert_eq!(report.entries[0].user_request, "build the report");
+		assert_eq!(report.entries[0].tool_calls, 2);
+		assert_eq!(report.entries[0].tools_used, "shell(1), view(1)");
+		assert_eq!(report.entries[0].cost, "0.50000");
+		assert_eq!(report.entries[1].user_request, "/info");
+		assert_eq!(report.entries[1].tools_used, "schedule(1)");
+		assert_eq!(report.totals.total_requests, 2);
+		assert_eq!(report.totals.total_tool_calls, 3);
+		assert!((report.totals.total_cost - 1.0).abs() < f64::EPSILON);
+		assert_eq!(report.totals.total_ai_time_ms, 160);
+		assert_eq!(report.totals.total_processing_time_ms, 50);
+		assert_eq!(report.totals.total_task_time_ms, 7_000);
+	}
+
+	#[test]
+	fn generate_from_log_rejects_missing_or_invalid_zstd_files() {
+		let dir = tempfile::tempdir().expect("temp dir");
+		let missing = dir.path().join("missing.zst");
+		assert!(SessionReport::generate_from_log(missing.to_str().unwrap()).is_err());
+
+		let invalid = dir.path().join("invalid.zst");
+		std::fs::write(&invalid, b"not zstd").unwrap();
+		assert!(SessionReport::generate_from_log(invalid.to_str().unwrap()).is_err());
+	}
 }

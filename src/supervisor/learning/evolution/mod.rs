@@ -120,6 +120,16 @@ pub struct GeneratedScript {
 	pub content: String,
 }
 
+/// Synthetic trigger case proposed with an artifact. These screen trigger
+/// breadth and boundaries but never count as live utility or outcome credit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplayCase {
+	pub label: String,
+	pub input: String,
+	pub expected_match: bool,
+	pub boundary: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEvent {
 	pub at: String,
@@ -142,6 +152,8 @@ pub struct EvolutionRecord {
 	pub explicit_authorization: bool,
 	pub source_memory_ids: Vec<String>,
 	pub evidence: Vec<String>,
+	#[serde(default)]
+	pub replay_cases: Vec<ReplayCase>,
 	pub artifact_version: u32,
 	pub parent_version: Option<String>,
 	pub superseded_ids: Vec<String>,
@@ -234,6 +246,7 @@ pub fn record_summary(record: &EvolutionRecord) -> serde_json::Value {
 		"successes": record.successes,
 		"failures": record.failures,
 		"false_triggers": record.false_triggers,
+		"replay_cases": record.replay_cases.len(),
 		"created": record.created,
 		"updated": record.updated,
 	})

@@ -50,6 +50,7 @@ struct Proposal {
 	effect: String,
 	source_memory_ids: Vec<String>,
 	supersedes_artifact_ids: Vec<String>,
+	replay_cases: Vec<super::ReplayCase>,
 	explicit_authorization: bool,
 }
 
@@ -201,6 +202,7 @@ pub async fn synthesize(
 	}
 
 	let source = selected_memories(&proposal, &memories)?;
+	validate_replay_cases(&proposal.replay_cases)?;
 	let kind = parse_kind(&proposal.kind)?;
 	let explicit_scope = explicit_scope_supported(&proposal, messages);
 	let scope = admitted_scope(&proposal, &source, role, project, explicit_scope);
@@ -305,6 +307,7 @@ pub async fn synthesize(
 			.iter()
 			.flat_map(|memory| memory.evidence.clone())
 			.collect(),
+		replay_cases: proposal.replay_cases.clone(),
 		artifact_version: 1,
 		parent_version: superseded.first().cloned(),
 		superseded_ids: superseded.clone(),
@@ -654,6 +657,23 @@ fn validate_runtime_references(
 	Ok(())
 }
 
+fn validate_replay_cases(cases: &[super::ReplayCase]) -> Result<()> {
+	if cases.len() < 2
+		|| !cases.iter().any(|case| case.expected_match)
+		|| !cases.iter().any(|case| !case.expected_match)
+	{
+		anyhow::bail!("candidate requires positive and negative replay cases");
+	}
+	if cases.iter().any(|case| {
+		case.label.trim().is_empty()
+			|| case.input.trim().is_empty()
+			|| case.input.chars().count() > 2_000
+	}) {
+		anyhow::bail!("candidate replay case is empty or over budget");
+	}
+	Ok(())
+}
+
 fn safe_script_name(value: &str) -> Result<String> {
 	let path = std::path::Path::new(value);
 	if value.trim().is_empty()
@@ -804,7 +824,7 @@ Native syntax contract:
 - hook uses hook_on success|error|any and optional result_regex.
 - scripts receive the existing phase-specific stdin/env contract. Pipe stdout replaces input. Hook/validator exit 0 is silent; nonzero stdout is feedback.
 
-Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. Output only the response-schema object."#.to_string()
+Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. Output only the response-schema object."#.to_string()
 }
 
 fn verifier_prompt() -> String {
@@ -840,9 +860,23 @@ fn proposal_schema() -> serde_json::Value {
 			"effect": {"type":"string","enum":["advisory","observational","effectful"]},
 			"source_memory_ids": {"type":"array","items":{"type":"string"}},
 			"supersedes_artifact_ids": {"type":"array","items":{"type":"string"}},
+			"replay_cases": {
+				"type":"array",
+				"items": {
+					"type":"object",
+					"additionalProperties":false,
+					"properties": {
+						"label":{"type":"string"},
+						"input":{"type":"string"},
+						"expected_match":{"type":"boolean"},
+						"boundary":{"type":"boolean"}
+					},
+					"required":["label","input","expected_match","boundary"]
+				}
+			},
 			"explicit_authorization": {"type":"boolean"}
 		},
-		"required": ["decision","kind","name","description","scope_project","scope_domain","explicit_scope_quote","activation_rules","body","match_rule","when","has","message","pipe_when","result_regex","hook_on","assistant_match","script_name","script_content","effect","source_memory_ids","supersedes_artifact_ids","explicit_authorization"]
+		"required": ["decision","kind","name","description","scope_project","scope_domain","explicit_scope_quote","activation_rules","body","match_rule","when","has","message","pipe_when","result_regex","hook_on","assistant_match","script_name","script_content","effect","source_memory_ids","supersedes_artifact_ids","replay_cases","explicit_authorization"]
 	})
 }
 
@@ -886,6 +920,20 @@ mod tests {
 			effect: "effectful".to_string(),
 			source_memory_ids: vec!["memory".to_string()],
 			supersedes_artifact_ids: Vec::new(),
+			replay_cases: vec![
+				super::super::ReplayCase {
+					label: "matching schema task".to_string(),
+					input: "change the schema".to_string(),
+					expected_match: true,
+					boundary: false,
+				},
+				super::super::ReplayCase {
+					label: "unrelated task".to_string(),
+					input: "write release notes".to_string(),
+					expected_match: false,
+					boundary: false,
+				},
+			],
 			explicit_authorization: true,
 		}
 	}
@@ -1033,5 +1081,17 @@ mod tests {
 			&[],
 		)
 		.unwrap();
+	}
+
+	#[test]
+	fn replay_screen_requires_both_matching_and_abstaining_cases() {
+		let candidate = proposal("skill");
+		validate_replay_cases(&candidate.replay_cases).unwrap();
+		let only_positive = candidate
+			.replay_cases
+			.into_iter()
+			.filter(|case| case.expected_match)
+			.collect::<Vec<_>>();
+		assert!(validate_replay_cases(&only_positive).is_err());
 	}
 }

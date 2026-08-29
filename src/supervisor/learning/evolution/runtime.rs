@@ -250,6 +250,7 @@ pub fn mark_shadow_match(id: &str) {
 		}
 		Ok(())
 	});
+	crate::supervisor::stats::evolution("shadow_match");
 	if let Ok(record) = update {
 		if record.state == EvolutionState::Trial {
 			emit_lifecycle(&record, "trial");
@@ -335,8 +336,8 @@ pub async fn reinforce_session(session_id: &str, delta: f64) {
 				&& record.trial_uses >= TRIAL_MAX_USES
 				&& record.successes < TRIAL_SUCCESSES_REQUIRED
 			{
-				record.state = EvolutionState::Shadow;
-				record.shadow_matches = 0;
+				record.state = EvolutionState::Retired;
+				record.retired = Some(chrono::Utc::now().to_rfc3339());
 				super::registry::append_history(
 					record,
 					"trial_inconclusive",
@@ -369,6 +370,7 @@ pub async fn reinforce_session(session_id: &str, delta: f64) {
 }
 
 pub(super) fn emit_lifecycle(record: &EvolutionRecord, action: &str) {
+	crate::supervisor::stats::evolution(action);
 	crate::supervisor::notify(&format!(
 		"evolution {}: {} ({}, {}/{})",
 		action,

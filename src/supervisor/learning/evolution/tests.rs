@@ -35,6 +35,7 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		explicit_authorization: true,
 		source_memory_ids: vec!["memory-1".to_string()],
 		evidence: vec!["session://s/message/1".to_string()],
+		replay_cases: Vec::new(),
 		artifact_version: 1,
 		parent_version: None,
 		superseded_ids: Vec::new(),
@@ -357,6 +358,10 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		"effect":"effectful",
 		"source_memory_ids":[memory_id],
 		"supersedes_artifact_ids":[],
+		"replay_cases":[
+			{"label":"schema response","input":"schema changed","expected_match":true,"boundary":false},
+			{"label":"unrelated response","input":"documentation only","expected_match":false,"boundary":false}
+		],
 		"explicit_authorization":true
 	});
 	let verdict = serde_json::json!({"supported":true,"issues":[]});

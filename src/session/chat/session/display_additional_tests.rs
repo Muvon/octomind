@@ -276,8 +276,8 @@ fn display_session_info_renders_layer_notes() {
 // display_session_context (populated-session path)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn display_session_context_with_populated_session() {
+#[tokio::test]
+async fn display_session_context_with_populated_session() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let config = default_config();
 	session
@@ -286,5 +286,5 @@ fn display_session_context_with_populated_session() {
 	session
 		.add_assistant_message("On it.", None, &config, "assistant")
 		.expect("add assistant message");
-	session.display_session_context(&config);
+	session.display_session_context(&config).await;
 }

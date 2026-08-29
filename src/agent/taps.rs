@@ -468,3 +468,7 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 #[cfg(test)]
 #[path = "taps_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "taps_additional_tests.rs"]
+mod additional_tests;

@@ -168,3 +168,7 @@ where
 		bail!("session '{}' returned: {}", session_name, response);
 	}
 }
+
+#[cfg(test)]
+#[path = "send_tests.rs"]
+mod tests;

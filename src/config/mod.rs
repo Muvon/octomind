@@ -893,3 +893,7 @@ macro_rules! log_conditional {
 		}
 	};
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;

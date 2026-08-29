@@ -328,3 +328,7 @@ fn truncate(s: &str, n: usize) -> String {
 		format!("{head}…")
 	}
 }
+
+#[cfg(test)]
+#[path = "workflow_tests.rs"]
+mod tests;

@@ -208,10 +208,10 @@ async fn handle_cimd_request(mut stream: tokio::net::TcpStream, metadata_json: &
 		let response = format!(
 			"HTTP/1.1 200 OK\r\n\
 			 Content-Type: application/json\r\n\
-			 {}\r\n\
-			 Content-Length: {}\r\n\r\n{}",
-			cors_headers,
+			 Content-Length: {}\r\n\
+			 {}\r\n{}",
 			metadata_json.len(),
+			cors_headers,
 			metadata_json
 		);
 		stream.write_all(response.as_bytes()).await?;
@@ -405,3 +405,7 @@ mod tests {
 		assert!(json.contains("none"));
 	}
 }
+
+#[cfg(test)]
+#[path = "cimd_tests.rs"]
+mod cimd_tests;

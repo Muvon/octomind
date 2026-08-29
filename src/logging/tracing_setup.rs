@@ -281,3 +281,7 @@ mod tests {
 		let _ = is_tracing_initialized();
 	}
 }
+
+#[cfg(test)]
+#[path = "tracing_setup_tests.rs"]
+mod external_tests;

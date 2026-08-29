@@ -473,3 +473,7 @@ mod tests {
 		);
 	}
 }
+
+#[cfg(test)]
+#[path = "account_tests.rs"]
+mod account_tests;

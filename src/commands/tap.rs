@@ -90,3 +90,7 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 	}
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "tap_tests.rs"]
+mod tests;

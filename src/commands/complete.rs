@@ -49,3 +49,7 @@ pub fn execute(args: &CompleteArgs, config: &Config) -> Result<()> {
 	}
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "complete_tests.rs"]
+mod tests;

@@ -210,3 +210,7 @@ pub async fn handle_ext_method(
 	let raw = RawValue::from_string(serde_json::to_string(&response).unwrap()).unwrap();
 	Ok(ExtResponse::new(std::sync::Arc::from(raw)))
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

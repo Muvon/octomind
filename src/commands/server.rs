@@ -73,3 +73,7 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

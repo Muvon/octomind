@@ -615,3 +615,7 @@ mod tests {
 		assert_eq!(f.parameters["properties"]["b"]["type"], "integer");
 	}
 }
+
+#[cfg(test)]
+#[path = "local_tool_tests.rs"]
+mod local_tool_tests;

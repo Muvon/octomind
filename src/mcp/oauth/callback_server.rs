@@ -666,3 +666,7 @@ mod tests {
 			.unwrap();
 	}
 }
+
+#[cfg(test)]
+#[path = "callback_server_tests.rs"]
+mod callback_server_tests;

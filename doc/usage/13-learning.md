@@ -243,6 +243,11 @@ responses fail safely to retrieval without rewritten patterns. The rewrite call
 runs only on the **first** retrieval of a session; follow-up messages use
 embedding-only recall.
 
+With `/loglevel debug`, retrieval prints the accepted query-rewrite keywords and
+the exact final Active Memory Pack after context-headroom checks, immediately
+before it is materialized for the provider request. Normal and info logging keep
+showing only compact retrieval and pack totals.
+
 ### Managing Lessons (`/learning`)
 
 The interactive `/learning` command lets you browse and prune lessons for the current role and project:

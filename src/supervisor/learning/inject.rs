@@ -108,6 +108,12 @@ pub async fn retrieve_and_format(
 	} else {
 		Vec::new()
 	};
+	if !patterns.is_empty() {
+		crate::log_debug!(
+			"Learning retrieval: query keywords: {}",
+			patterns.join(", ")
+		);
+	}
 	// Cold global rules are not injected unconditionally: page only exact
 	// lexical matches from their compact catalog, then charge them to the same
 	// 512-token global sub-budget as hot global rules.

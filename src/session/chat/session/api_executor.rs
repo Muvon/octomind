@@ -391,6 +391,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::supervisor::stats::recall();
 			crate::supervisor::stats::memory_pack(items, tokens);
 			crate::supervisor::notify(&format!("active memory pack: {items} item(s)"));
+			crate::log_debug!(
+				"Learning injection: final provider-bound active memory pack:\n{}",
+				pack
+			);
 		}
 	}
 

@@ -664,4 +664,71 @@ mod tests {
 		.unwrap();
 		assert_eq!(json, r#"{"name":"start","ts":1,"command":"run"}"#);
 	}
+
+	#[test]
+	#[serial_test::serial]
+	fn enabled_recorders_fold_counters_into_session_events() {
+		ENABLED.store(true, Ordering::Relaxed);
+		FIRST_RUN.store(true, Ordering::Relaxed);
+		CANCELS.store(0, Ordering::Relaxed);
+		*STATE.lock() = State::default();
+
+		record_start("run", vec!["--format".into()]);
+		record_tool("shell");
+		record_tool("github_create_pr");
+		record_tool_error("github_create_pr");
+		record_command("/info");
+		record_api_error(&anyhow::anyhow!("429 rate limit"));
+		record_cancel();
+		record_workflow(WorkflowEnd {
+			name: "release",
+			steps: 3,
+			duration_ms: 500,
+			cost_usd: 0.25,
+			tokens_in: 100,
+			tokens_out: 20,
+			tool_calls: 2,
+			graph: true,
+		});
+
+		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+		session.session.info.model = "openai:gpt-test".into();
+		session.session.info.role = "assistant".into();
+		session.session.info.total_api_calls = 4;
+		session.session.info.tool_calls = 2;
+		session.session.info.input_tokens = 100;
+		session.session.info.output_tokens = 25;
+		session.session.info.cache_read_tokens = 50;
+		session.session.info.reasoning_tokens = 5;
+		session.session.info.total_cost = 0.5;
+		record_session(SessionEnd {
+			kind: "interactive",
+			outcome: "ok",
+			error_kind: "",
+			resumed: true,
+			sandbox: true,
+			mcp_servers: 3,
+			info: &session.session.info,
+		});
+		record_error("config", "parse");
+
+		let state = STATE.lock();
+		assert_eq!(state.events.len(), 4);
+		let workflow = &state.events[1];
+		assert_eq!(workflow.kind, "workflow_graph");
+		assert_eq!(workflow.cost_micro, 250_000);
+		let session = &state.events[2];
+		assert_eq!(session.provider, "openai");
+		assert_eq!(session.model, "gpt-test");
+		assert_eq!(session.cancels, 1);
+		assert_eq!(session.tools.get("shell"), Some(&1));
+		assert_eq!(session.tools.get("ext:github"), Some(&1));
+		assert_eq!(session.tool_errors.get("ext:github"), Some(&1));
+		assert_eq!(session.commands.get("/info"), Some(&1));
+		assert_eq!(session.api_errors.get("rate_limit"), Some(&1));
+		drop(state);
+
+		ENABLED.store(false, Ordering::Relaxed);
+		*STATE.lock() = State::default();
+	}
 }

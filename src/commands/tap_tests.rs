@@ -45,6 +45,9 @@ impl Drop for EnvGuard {
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
 	let dir = std::env::temp_dir().join(format!("octomind-tap-{tag}-{}", std::process::id()));
+	if dir.exists() {
+		std::fs::remove_dir_all(&dir).expect("clear stale sandbox data dir");
+	}
 	std::fs::create_dir_all(&dir).expect("create sandbox data dir");
 	dir
 }
@@ -57,15 +60,15 @@ struct Cli {
 
 #[test]
 fn tap_args_parse_optional_positionals() {
-	let cli = Cli::try_parse_from(["octomind", "tap"]).expect("bare tap lists");
+	let cli = Cli::try_parse_from(["octomind"]).expect("bare tap lists");
 	assert!(cli.args.tap.is_none());
 	assert!(cli.args.local_path.is_none());
 
-	let cli = Cli::try_parse_from(["octomind", "tap", "myorg/repo"]).expect("tap only");
+	let cli = Cli::try_parse_from(["octomind", "myorg/repo"]).expect("tap only");
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert!(cli.args.local_path.is_none());
 
-	let cli = Cli::try_parse_from(["octomind", "tap", "myorg/repo", "./local"])
+	let cli = Cli::try_parse_from(["octomind", "myorg/repo", "./local"])
 		.expect("tap with local path");
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert_eq!(cli.args.local_path.as_deref(), Some("./local"));

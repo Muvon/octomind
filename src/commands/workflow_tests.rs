@@ -138,7 +138,8 @@ fn truncate_flattens_and_elides_on_char_boundaries() {
 	let unicode = "é".repeat(130);
 	let cut = truncate(&unicode, 120);
 	assert_eq!(cut.chars().count(), 121);
-	assert!(cut.ends_with('é'));
+	assert!(cut.ends_with('…'));
+	assert!(cut.chars().take(120).all(|ch| ch == 'é'));
 }
 
 // ── plan rendering ──────────────────────────────────────────────────────────

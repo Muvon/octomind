@@ -44,6 +44,9 @@ impl Drop for EnvGuard {
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
 	let dir = std::env::temp_dir().join(format!("octomind-untap-{tag}-{}", std::process::id()));
+	if dir.exists() {
+		std::fs::remove_dir_all(&dir).expect("clear stale sandbox data dir");
+	}
 	std::fs::create_dir_all(&dir).expect("create sandbox data dir");
 	dir
 }
@@ -56,11 +59,11 @@ struct Cli {
 
 #[test]
 fn untap_args_require_a_name() {
-	let cli = Cli::try_parse_from(["octomind", "untap", "myorg/repo"]).expect("name parses");
+	let cli = Cli::try_parse_from(["octomind", "myorg/repo"]).expect("name parses");
 	assert_eq!(cli.args.name, "myorg/repo");
 
 	assert!(
-		Cli::try_parse_from(["octomind", "untap"]).is_err(),
+		Cli::try_parse_from(["octomind"]).is_err(),
 		"the tap name is required"
 	);
 }

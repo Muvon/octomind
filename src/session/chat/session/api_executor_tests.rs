@@ -67,6 +67,40 @@ async fn test_simple_completion_turn() {
 }
 
 #[tokio::test]
+async fn pending_async_work_allows_progressing_handback() {
+	let _guard = ENV_LOCK.lock().await;
+	let response = r#"Waiting for the background job.
+<sup>{"state":"progressing","focus":"waiting for the background job","next":"report its result","carry":[],"plan":null,"memories":[]}</sup>"#;
+	let url = spawn_stub(vec![final_response(response)]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.supervisor.enabled = true;
+	config.supervisor.gate.enabled = true;
+	let mut session = fake_session("start the background job");
+	session.completion_gate_eligible = true;
+	let session_id = "pending-work-handback-test".to_string();
+
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::session::shell_jobs::register_for_session(
+			&session_id,
+			"job://test",
+			"cargo test --lib",
+		);
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("pending work is a valid progressing handback");
+
+		assert_eq!(session.session.info.total_api_calls, 1);
+		assert_eq!(session.last_response, "Waiting for the background job.");
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
 async fn test_tool_round_trip_with_unknown_tool() {
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![

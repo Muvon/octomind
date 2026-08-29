@@ -150,6 +150,43 @@ async fn test_interactive_session_prompt_and_exit() {
 	assert!(persisted > 0, "no session file written in sandbox");
 }
 
+/// Bare `octomind` (no subcommand) opens the interactive shell exactly like
+/// `octomind run`: the prompt opens, a typed question is answered, /exit exits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_bare_invocation_opens_interactive_session() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let driver = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pty_driver.py");
+	let child = Command::new("python3")
+		.arg(driver)
+		.arg(MARKER)
+		.arg("please answer with the marker")
+		.arg("--")
+		.arg(env!("CARGO_BIN_EXE_octomind"))
+		.env("HOME", home.path())
+		.env("OLLAMA_API_URL", &stub_url)
+		.env("DO_NOT_TRACK", "1")
+		.current_dir(home.path())
+		.stdin(Stdio::null())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn pty driver");
+
+	let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+		.await
+		.expect("join")
+		.expect("driver exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		output.status.success() && stdout.contains("PTY_OK"),
+		"bare interactive pty session failed.\nstdout:\n{stdout}\ntranscript:\n{stderr}"
+	);
+}
+
 /// Interactive slash-command dispatch: typing /help must render the command
 /// list through the terminal display path (no model call involved).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

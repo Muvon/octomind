@@ -29,7 +29,7 @@ mod commands;
 #[command(about = "Octomind is a smart AI developer assistant with configurable MCP support")]
 struct CliArgs {
 	#[command(subcommand)]
-	command: Commands,
+	command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -40,6 +40,7 @@ enum Commands {
 	/// Run an agent or start an interactive session.
 	/// TAG can be a registry agent (e.g. `developer:general`) or a role name (e.g. `developer`).
 	/// Use --format to run non-interactively.
+	/// Default when no subcommand is given.
 	Run(commands::RunArgs),
 
 	/// Sign in to your Octomind account — confirm a code in the browser and the CLI
@@ -112,10 +113,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
 	let args = CliArgs::parse();
 
+	// Bare `octomind` (no subcommand) behaves like `octomind run`: drop into
+	// the interactive shell with the default role. Non-interactive callers
+	// still fail loudly inside run — empty piped stdin bails out.
+	let command = args
+		.command
+		.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
+
 	// Set process/terminal title for long-running subcommands so they're
 	// self-identifying in `ps` and terminal tabs. `Run` is handled later in
 	// the session main loop once the session ID is known.
-	match &args.command {
+	match &command {
 		Commands::Acp(a) => {
 			// Include the session name so individual runs are identifiable in
 			// `ps` (tap runs pass `--name tap-<role>-<id>`).
@@ -143,14 +151,14 @@ async fn main() -> Result<(), anyhow::Error> {
 	// the middle of a completion. Everything downstream no-ops when uninitialised.
 	// `distill` is excluded too: it is spawned by an exiting `run`, so recording
 	// it would double-count that one session.
-	let command = command_name(&args.command);
-	if command != "complete" && command != "distill" {
+	let slug = command_name(&command);
+	if slug != "complete" && slug != "distill" {
 		octomind::telemetry::init(&config);
-		octomind::telemetry::record_start(command, used_flags(command));
+		octomind::telemetry::record_start(slug, used_flags(slug));
 	}
 
 	// Setup cleanup for MCP server processes when the program exits
-	let result = run_with_cleanup(args, config).await;
+	let result = run_with_cleanup(command, config).await;
 
 	// Make sure to clean up any started server processes
 	if let Err(e) = octomind::mcp::server::cleanup_servers() {
@@ -158,7 +166,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	}
 
 	if let Err(e) = &result {
-		octomind::telemetry::record_error(command, octomind::telemetry::error_kind(e));
+		octomind::telemetry::record_error(slug, octomind::telemetry::error_kind(e));
 	}
 	octomind::telemetry::flush().await;
 
@@ -208,9 +216,9 @@ fn used_flags(command: &str) -> Vec<String> {
 	flags
 }
 
-async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::Error> {
+async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyhow::Error> {
 	let log_level = config.log_level.as_str();
-	if let Commands::Run(_) = &args.command {
+	if let Commands::Run(_) = &command {
 		if let Err(e) = octomind::logging::tracing_setup::init_tracing(
 			octomind::logging::tracing_setup::LoggingMode::Cli,
 			log_level,
@@ -219,7 +227,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		}
 	}
 
-	let sandbox_enabled = match &args.command {
+	let sandbox_enabled = match &command {
 		Commands::Run(a) => config.sandbox || a.sandbox,
 		Commands::Server(a) => config.sandbox || a.sandbox,
 		Commands::Acp(a) => config.sandbox || a.sandbox,
@@ -230,7 +238,7 @@ async fn run_with_cleanup(args: CliArgs, config: Config) -> Result<(), anyhow::E
 		octomind::sandbox::apply(&cwd)?;
 	}
 
-	match args.command {
+	match command {
 		Commands::Config(config_args) => commands::config::execute(&config_args, config)?,
 		Commands::Run(run_args) => commands::run::execute(&run_args, &config).await?,
 		Commands::Login(login_args) => commands::login::execute(&login_args).await?,

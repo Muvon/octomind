@@ -18,7 +18,7 @@ use octomind::config::Config;
 use octomind::session;
 use std::io::{self, IsTerminal, Read};
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct RunArgs {
 	/// Agent tag (e.g. `developer:general`) or role name (e.g. `developer`).
 	/// Omit to use the default role from config.

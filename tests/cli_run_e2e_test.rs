@@ -158,6 +158,35 @@ async fn test_run_non_interactive_end_to_end() {
 	assert!(persisted > 0, "no session file written in sandbox");
 }
 
+/// Bare `octomind` (no subcommand) defaults to `run`. Non-interactively that
+/// must still fail loudly: empty piped stdin is an error, not a silent hang.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_bare_invocation_non_interactive_requires_input() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn bare octomind");
+	drop(child.stdin.take());
+
+	let output = child.wait_with_output().expect("octomind exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		!output.status.success(),
+		"bare octomind with empty stdin must fail.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+	assert!(
+		stderr.contains("No input provided via stdin"),
+		"expected stdin error.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_config_show_against_sandbox() {
 	let stub_url = spawn_openai_stub().await;

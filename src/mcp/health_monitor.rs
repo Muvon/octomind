@@ -531,6 +531,7 @@ mod tests {
 	#[tokio::test]
 	async fn start_health_monitor_without_external_servers_stops_cleanly() {
 		let config = Arc::new(template_config());
+		stop_health_monitor();
 		start_health_monitor(config)
 			.await
 			.expect("no external servers must start cleanly");
@@ -540,6 +541,8 @@ mod tests {
 	#[serial]
 	#[tokio::test]
 	async fn start_health_monitor_is_idempotent_while_running() {
+		// Ensure clean state: any prior test's background task must be stopped.
+		stop_health_monitor();
 		HEALTH_MONITOR_RUNNING.store(true, Ordering::SeqCst);
 		let config = Arc::new(template_config());
 		start_health_monitor(config)
@@ -553,6 +556,7 @@ mod tests {
 	#[tokio::test]
 	async fn start_health_monitor_with_external_server_runs_until_stopped() {
 		let mut config = template_config();
+		stop_health_monitor();
 		// Port 9 (discard) is never a live MCP endpoint; the monitor's first
 		// check only fires after its 2s startup delay, well past this test.
 		config.mcp.servers.push(McpServerConfig::http(

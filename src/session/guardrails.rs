@@ -80,6 +80,18 @@ pub fn init_for_session() {
 	registry.insert(sid, Arc::new(rules));
 }
 
+/// Append generated rules after the already-loaded project authority. Invalid
+/// generated artifacts are rejected before this boundary, so they cannot make
+/// a valid project guardrail set disappear.
+pub fn merge_generated_for_session(session_id: &SessionId, generated: Guardrails) {
+	let mut guard = RULES.write().unwrap();
+	let registry = guard.get_or_insert_with(HashMap::new);
+	let current = registry.entry(session_id.clone()).or_default();
+	let mut merged = (**current).clone();
+	merged.append_compiled(generated);
+	registry.insert(session_id.clone(), Arc::new(merged));
+}
+
 pub fn get_rules(session_id: &SessionId) -> Option<Arc<Guardrails>> {
 	let guard = RULES.read().ok()?;
 	guard.as_ref()?.get(session_id).cloned()
@@ -257,13 +269,27 @@ pub fn check_batch(
 		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
 		let msg = if has_guards {
 			let log = get_call_log(session_id);
-			crate::config::guardrails::check(
+			let evaluation = crate::config::guardrails::evaluate_guards(
 				rules_opt.as_ref().unwrap(),
 				cap.as_deref(),
 				&call.parameters,
 				&log,
 				&loaded,
-			)
+			);
+			for id in evaluation.shadow_ids {
+				crate::supervisor::learning::evolution::mark_shadow_match(&id);
+			}
+			if let Some((message, binding)) = evaluation.blocked {
+				if let Some(binding) = binding {
+					crate::supervisor::learning::evolution::mark_behavior_used(
+						session_id,
+						&binding.id,
+					);
+				}
+				Some(message)
+			} else {
+				None
+			}
 		} else {
 			None
 		};

@@ -102,6 +102,11 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 /// reported materially using. Exposure alone earns no positive or negative
 /// credit. Clears the pack references and used-ID set either way.
 async fn reinforce_recalled(chat_session: &mut ChatSession, delta: f64) {
+	crate::supervisor::learning::evolution::reinforce_session(
+		&chat_session.session.info.name,
+		delta,
+	)
+	.await;
 	let refs = std::mem::take(&mut chat_session.recalled_refs);
 	let used = std::mem::take(&mut chat_session.used_memory_ids);
 	if refs.is_empty() || used.is_empty() {

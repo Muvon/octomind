@@ -401,6 +401,12 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 				{
 					chat_session.used_memory_ids.insert(id.clone());
 				}
+				let session_id = &chat_session.session.info.name;
+				for id in &report.used_behaviors {
+					if crate::supervisor::learning::evolution::behavior_available(session_id, id) {
+						crate::supervisor::learning::evolution::mark_behavior_used(session_id, id);
+					}
+				}
 			}
 		}
 		chat_session.pending_plan_signal = parsed.as_ref().and_then(|report| report.plan);

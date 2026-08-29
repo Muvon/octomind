@@ -57,7 +57,10 @@ pub async fn handle_done(
 	if config.supervisor.learning.enabled {
 		let role = crate::config::get_thread_role().unwrap_or_default();
 		let _ = crate::supervisor::learning::extract::spawn_lesson_extraction(
-			session, config, role, None,
+			session,
+			config,
+			role.clone(),
+			None,
 		);
 		// Mark as extracted so /exit and Ctrl+D don't double-extract.
 		session.learning_extracted = true;
@@ -65,6 +68,12 @@ pub async fn handle_done(
 		session.learning_injected = false;
 		session.clear_active_memory_pack();
 		session.pending_recall = false;
+		// `/done` is an explicit task boundary: refresh the immutable runtime
+		// snapshot so promotions completed since session start become eligible,
+		// never in the middle of a tool batch.
+		crate::session::guardrails::init_for_session();
+		crate::supervisor::learning::evolution::init_for_session(&role);
+		crate::mcp::runtime::skill_auto::init_pool(role.split(':').next().unwrap_or(&role));
 	}
 
 	Ok(outcome)

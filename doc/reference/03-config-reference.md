@@ -344,6 +344,18 @@ Cross-session adaptive learning. Extracts lessons and orientation memory (durabl
 | `enabled` | bool | `true` | Enable the learning system (lessons + orientation) |
 | `model` | string | `"octohub:auto"` | Model for extraction and retrieval LLM calls |
 
+### `[supervisor.learning.evolution]`
+
+Optional grounded behavior evolution. When enabled, newly stored quote-backed
+rules and verified experiences may produce scoped native skill or guardrail
+candidates. Synthesis uses `supervisor.learning.model`; independent admission
+uses `supervisor.gate.verifier_model`. Both must enforce structured output.
+Thresholds and trial limits are fixed internal constants.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable detached candidate synthesis and lifecycle-managed trials |
+
 ### `[supervisor.gate]`
 
 Verify-gate on self-reported completion. Free deterministic pre-gates run first (no model call); the LLM checklist runs only if those pass.
@@ -381,6 +393,9 @@ model = "octohub:auto"
 [supervisor.learning]
 enabled = true
 model = "octohub:auto"
+
+[supervisor.learning.evolution]
+enabled = false
 
 [supervisor.gate]
 enabled = true

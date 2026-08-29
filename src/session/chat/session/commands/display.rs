@@ -2802,6 +2802,68 @@ pub fn display_learning(output: &CommandOutput) {
 			}
 			println!();
 		}
+		"evolution_list" => {
+			let records = data
+				.get("records")
+				.and_then(|value| value.as_array())
+				.cloned()
+				.unwrap_or_default();
+			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
+			let domain = data.get("domain").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", Some(&format!("{project}/{domain}")));
+			if records.is_empty() {
+				block_line(&"No matching evolved behavior.".yellow().to_string());
+			} else {
+				for record in &records {
+					let id = record.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+					let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+					let kind = record.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+					let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+					block_section(&format!("{name} · {kind} · {state}"));
+					block_row_text(&id.dimmed().to_string());
+				}
+			}
+			block_line(
+				&"/learning evolution show <id> · approve · reject · rollback"
+					.dimmed()
+					.to_string(),
+			);
+			block_close_ok(
+				"/learning evolution",
+				Some(&format!("{} artifact(s)", records.len())),
+			);
+			println!();
+		}
+		"evolution_show" => {
+			let record = data.get("record").cloned().unwrap_or_default();
+			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", Some(&format!("{name} · {state}")));
+			if let Some(native) = data.get("native_artifact").and_then(|v| v.as_str()) {
+				for line in native.lines() {
+					block_row_text(line);
+				}
+			}
+			block_close_ok("/learning evolution", Some("artifact inspected"));
+			println!();
+		}
+		"evolution_action" => {
+			let action = data
+				.get("action")
+				.and_then(|v| v.as_str())
+				.unwrap_or("updated");
+			let record = data.get("record").cloned().unwrap_or_default();
+			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
+			block_open("/learning evolution", None);
+			block_row_text(
+				&format!("{action}: {name} -> {state}")
+					.bright_green()
+					.to_string(),
+			);
+			block_close_ok("/learning evolution", Some(action));
+			println!();
+		}
 		"error" => {
 			let msg = data
 				.get("message")

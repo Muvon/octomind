@@ -266,3 +266,86 @@ async fn test_learning_storage_summary_counts_cold_memory() {
 	assert_eq!(summary["by_type"]["orientation"]["cold"], 1);
 	assert!(summary["cold_tokens"].as_u64().unwrap_or_default() > 0);
 }
+
+#[serial]
+#[tokio::test]
+async fn test_learning_evolution_command_lifecycle() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let now = chrono::Utc::now().to_rfc3339();
+	let id = "evo-command-test";
+	crate::supervisor::learning::evolution::create_record(
+		crate::supervisor::learning::evolution::EvolutionRecord {
+			schema_version: crate::supervisor::learning::evolution::REGISTRY_SCHEMA_VERSION,
+			id: id.to_string(),
+			name: "evolved-command-test".to_string(),
+			description: "command lifecycle test".to_string(),
+			kind: crate::supervisor::learning::evolution::ArtifactKind::Guard,
+			scope: crate::supervisor::learning::evolution::ArtifactScope {
+				project: Some(project()),
+				domain: Some(ROLE.to_string()),
+			},
+			state: crate::supervisor::learning::evolution::EvolutionState::Shadow,
+			effect: crate::supervisor::learning::evolution::EffectClass::Effectful,
+			explicit_authorization: true,
+			source_memory_ids: vec!["memory".to_string()],
+			evidence: vec!["session://s/message/1".to_string()],
+			artifact_version: 1,
+			parent_version: None,
+			superseded_ids: Vec::new(),
+			generator_model: "openai:generator".to_string(),
+			verifier_model: "google:verifier".to_string(),
+			artifact_path: "guardrail.toml".to_string(),
+			script_path: None,
+			shadow_matches: 0,
+			trial_uses: 0,
+			successes: 0,
+			failures: 0,
+			false_triggers: 0,
+			created: now.clone(),
+			updated: now,
+			promoted: None,
+			last_used: None,
+			retired: None,
+			history: Vec::new(),
+		},
+		"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
+		None,
+	)
+	.unwrap();
+	let mut session = test_session();
+	let listed = learning_data(handle_learning(&mut session, &["evolution"]).await.unwrap());
+	assert_eq!(listed["subcommand"], "evolution_list");
+	assert_eq!(listed["total"], 1);
+	assert_eq!(listed["records"][0]["id"], id);
+
+	let shown = learning_data(
+		handle_learning(&mut session, &["evolution", "show", id])
+			.await
+			.unwrap(),
+	);
+	assert_eq!(shown["subcommand"], "evolution_show");
+	assert!(shown["native_artifact"]
+		.as_str()
+		.unwrap_or_default()
+		.contains("[[guard]]"));
+
+	let approved = learning_data(
+		handle_learning(&mut session, &["evolution", "approve", id])
+			.await
+			.unwrap(),
+	);
+	assert_eq!(approved["record"]["state"], "trial");
+	let rolled_back = learning_data(
+		handle_learning(&mut session, &["evolution", "rollback", id])
+			.await
+			.unwrap(),
+	);
+	assert_eq!(rolled_back["record"]["state"], "shadow");
+	let rejected = learning_data(
+		handle_learning(&mut session, &["evolution", "reject", id])
+			.await
+			.unwrap(),
+	);
+	assert_eq!(rejected["record"]["state"], "rejected");
+}

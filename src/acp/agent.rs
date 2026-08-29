@@ -1242,6 +1242,34 @@ impl OctomindAgent {
 							}
 							None
 						}
+						ServerMessage::Evolution(p) => {
+							if let Some(conn) = conn_for_task.as_ref() {
+								let mut meta = serde_json::Map::new();
+								meta.insert(
+									"octomind.evolution".to_string(),
+									serde_json::json!({
+										"action": p.action,
+										"id": p.id,
+										"name": p.name,
+										"kind": p.kind,
+										"state": p.state,
+										"scope": p.scope,
+									}),
+								);
+								let notification = SessionNotification::new(
+									session_id_for_task.clone(),
+									SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+								)
+								.meta(meta);
+								if let Err(error) = conn.send_notification(notification) {
+									log_error!(
+										"ACP: failed to send evolution notification: {}",
+										error
+									);
+								}
+							}
+							None
+						}
 						_ => None,
 					};
 					if let (Some(update), Some(conn)) = (update, conn_for_task.as_ref()) {

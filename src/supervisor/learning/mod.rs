@@ -23,6 +23,7 @@
 //! - `mcp`: any MCP tool (e.g. octobrain) with configurable field mapping
 
 pub mod backend;
+pub mod evolution;
 pub mod extract;
 pub mod inject;
 pub mod retention;
@@ -195,6 +196,8 @@ pub struct LearningConfig {
 	/// Model for extraction and retrieval prep LLM calls (cheap model recommended).
 	#[serde(default = "default_learning_model")]
 	pub model: String,
+	/// Grounded behavior synthesis and lifecycle management.
+	pub evolution: evolution::EvolutionConfig,
 }
 
 fn default_learning_model() -> String {
@@ -213,6 +216,7 @@ impl Default for LearningConfig {
 		Self {
 			enabled: false,
 			model: default_learning_model(),
+			evolution: evolution::EvolutionConfig::default(),
 		}
 	}
 }

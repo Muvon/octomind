@@ -34,17 +34,28 @@ use tokio::io::AsyncWriteExt;
 struct PoolEntry {
 	name: String,
 	rules: Vec<Vec<super::skill::ActivateCheck>>,
+	evolution: Option<crate::supervisor::learning::evolution::SkillBinding>,
 }
 
 /// Cached pool of auto-activatable skills, filtered by domain.
+#[derive(Clone)]
 struct SkillPool {
 	entries: Vec<PoolEntry>,
 }
 
-static SKILL_POOL: OnceLock<Arc<RwLock<Option<SkillPool>>>> = OnceLock::new();
+static SKILL_POOLS: OnceLock<Arc<RwLock<std::collections::HashMap<String, SkillPool>>>> =
+	OnceLock::new();
 
-fn get_pool() -> &'static Arc<RwLock<Option<SkillPool>>> {
-	SKILL_POOL.get_or_init(|| Arc::new(RwLock::new(None)))
+fn get_pool() -> &'static Arc<RwLock<std::collections::HashMap<String, SkillPool>>> {
+	SKILL_POOLS.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
+}
+
+fn current_pool_key() -> String {
+	crate::session::context::current_session_id().unwrap_or_else(|| "__default__".to_string())
+}
+
+pub fn clear_pool_for_session(session_id: &str) {
+	get_pool().write().unwrap().remove(session_id);
 }
 
 /// Load skills from OCTOMIND_SKILLS env var (if set). Called at session start from all five entry points.
@@ -203,7 +214,7 @@ pub fn init_pool(domain: &str) {
 			}
 
 			// Must have domains that include the current domain
-			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain) {
+			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
 				continue;
 			}
 
@@ -211,6 +222,7 @@ pub fn init_pool(domain: &str) {
 				entries.push(PoolEntry {
 					name: meta.name,
 					rules: meta.rules,
+					evolution: None,
 				});
 			}
 		}
@@ -245,7 +257,7 @@ pub fn init_pool(domain: &str) {
 				continue;
 			}
 
-			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain) {
+			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
 				continue;
 			}
 
@@ -253,8 +265,33 @@ pub fn init_pool(domain: &str) {
 				entries.push(PoolEntry {
 					name: meta.name,
 					rules: meta.rules,
+					evolution: None,
 				});
 			}
+		}
+	}
+
+	// Generated skills are lowest authority and include shadow entries so the
+	// native activation engine can measure trigger precision without injection.
+	for (expected_name, binding) in crate::supervisor::learning::evolution::all_skill_bindings() {
+		let Ok(content) = std::fs::read_to_string(binding.path.join("SKILL.md")) else {
+			continue;
+		};
+		let Some(meta) = super::skill::parse_skill_meta(&content) else {
+			continue;
+		};
+		if meta.name != expected_name || meta.rules.is_empty() {
+			continue;
+		}
+		if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
+			continue;
+		}
+		if seen_names.insert(meta.name.clone()) {
+			entries.push(PoolEntry {
+				name: meta.name,
+				rules: meta.rules,
+				evolution: Some(binding),
+			});
 		}
 	}
 
@@ -270,8 +307,10 @@ pub fn init_pool(domain: &str) {
 		retries.clear();
 	}
 
-	let mut pool = get_pool().write().unwrap();
-	*pool = Some(SkillPool { entries });
+	get_pool()
+		.write()
+		.unwrap()
+		.insert(current_pool_key(), SkillPool { entries });
 }
 
 /// Get the skills config from the current session config.
@@ -400,8 +439,8 @@ pub async fn run_activation(
 
 	let entries = {
 		let pool = get_pool().read().unwrap();
-		match pool.as_ref() {
-			Some(p) => p.entries.clone(),
+		match pool.get(&session_id).or_else(|| pool.get("__default__")) {
+			Some(pool) => pool.entries.clone(),
 			None => return,
 		}
 	};
@@ -433,8 +472,17 @@ pub async fn run_activation(
 	//     where ambiguous prompts ("rewrite my landing page text") clear
 	//     the floor for many marketing/copy skills at once.
 	//   - no match: skipped silently.
-	let mut deterministic: Vec<(String, String)> = Vec::new();
-	let mut semantic_candidates: Vec<(f32, String, String)> = Vec::new();
+	let mut deterministic: Vec<(
+		String,
+		String,
+		Option<crate::supervisor::learning::evolution::SkillBinding>,
+	)> = Vec::new();
+	let mut semantic_candidates: Vec<(
+		f32,
+		String,
+		String,
+		Option<crate::supervisor::learning::evolution::SkillBinding>,
+	)> = Vec::new();
 
 	for entry in &entries {
 		if active_skills.contains(&entry.name) {
@@ -490,21 +538,30 @@ pub async fn run_activation(
 		}
 
 		if let Some(trigger) = det_trigger {
-			deterministic.push((entry.name.clone(), trigger));
+			deterministic.push((entry.name.clone(), trigger, entry.evolution.clone()));
 		} else if let Some((score, trigger)) = sem_best {
-			semantic_candidates.push((score, entry.name.clone(), trigger));
+			semantic_candidates.push((score, entry.name.clone(), trigger, entry.evolution.clone()));
 		} else {
 			crate::log_debug!("skill_auto: no rule matched for '{}'", entry.name);
 		}
 	}
 
-	for (name, trigger) in &deterministic {
+	for (name, trigger, evolution) in &deterministic {
+		if let Some(binding) = evolution {
+			if crate::supervisor::learning::evolution::binding_is_shadow(
+				&binding.id,
+				binding.shadow,
+			) {
+				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+				continue;
+			}
+		}
 		crate::log_debug!("skill_auto: activated '{}' via [{}]", name, trigger);
 		auto_activate_skill(name, trigger, session).await;
 	}
 
 	semantic_candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	if let Some((top1, name, trigger)) = semantic_candidates.first().cloned() {
+	if let Some((top1, name, trigger, evolution)) = semantic_candidates.first().cloned() {
 		let top2 = semantic_candidates.get(1).map(|x| x.0).unwrap_or(0.0);
 		if top1 - top2 >= super::skill::SEMANTIC_MARGIN {
 			crate::log_debug!(
@@ -514,7 +571,16 @@ pub async fn run_activation(
 				top1,
 				top2
 			);
-			auto_activate_skill(&name, &trigger, session).await;
+			if let Some(binding) = evolution.filter(|binding| {
+				crate::supervisor::learning::evolution::binding_is_shadow(
+					&binding.id,
+					binding.shadow,
+				)
+			}) {
+				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+			} else {
+				auto_activate_skill(&name, &trigger, session).await;
+			}
 		} else {
 			crate::log_debug!(
 				"skill_auto: {} semantic candidate(s) abstained — top1={:.3} top2={:.3} gap {:.3} < {} (winner: '{}')",
@@ -1022,6 +1088,7 @@ mod tests {
 				phrase: phrase.to_string(),
 				threshold: 0.45,
 			}]],
+			evolution: None,
 		}
 	}
 
@@ -1032,6 +1099,7 @@ mod tests {
 			rules: vec![vec![crate::mcp::runtime::skill::ActivateCheck::File(
 				"Cargo.toml".to_string(),
 			)]],
+			evolution: None,
 		}];
 		// Returns before ever touching the embedding model.
 		assert!(compute_semantic_scores("deploy the app", &entries, &[])
@@ -1313,7 +1381,7 @@ mod tests {
 
 		{
 			let pool = get_pool().read().unwrap();
-			let pool = pool.as_ref().expect("pool initialized");
+			let pool = pool.get("__default__").expect("pool initialized");
 			assert!(
 				pool.entries.is_empty(),
 				"no taps in the fresh data dir, so no entries"
@@ -1329,7 +1397,7 @@ mod tests {
 		);
 
 		// Restore pre-test global state for other tests in this binary.
-		*get_pool().write().unwrap() = None;
+		get_pool().write().unwrap().clear();
 		get_retry_tracker().write().unwrap().clear();
 	}
 }

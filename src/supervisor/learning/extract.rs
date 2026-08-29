@@ -303,7 +303,16 @@ pub async fn run_extraction(
 	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {
 		crate::log_debug!("Learning extraction: model decided NONE — no lessons");
-		return finish_extraction(&backend, config, role, project, stored).await;
+		return finish_extraction(
+			&backend,
+			config,
+			role,
+			project,
+			session_name,
+			messages,
+			stored,
+		)
+		.await;
 	}
 
 	let candidates =
@@ -313,7 +322,16 @@ pub async fn run_extraction(
 		candidates.len()
 	);
 	if candidates.is_empty() {
-		return finish_extraction(&backend, config, role, project, stored).await;
+		return finish_extraction(
+			&backend,
+			config,
+			role,
+			project,
+			session_name,
+			messages,
+			stored,
+		)
+		.await;
 	}
 
 	// Verification gate (closes the Self-Confirmation Trap at entry): a lesson
@@ -351,7 +369,16 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(&backend, config, role, project, stored).await;
+		return finish_extraction(
+			&backend,
+			config,
+			role,
+			project,
+			session_name,
+			messages,
+			stored,
+		)
+		.await;
 	}
 
 	// 2. One batched LLM pass: does the evidence actually support each lesson's
@@ -371,7 +398,16 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(&backend, config, role, project, stored).await;
+		return finish_extraction(
+			&backend,
+			config,
+			role,
+			project,
+			session_name,
+			messages,
+			stored,
+		)
+		.await;
 	}
 
 	// Store each. Identical content is skipped. A refinement or reversal deletes
@@ -436,7 +472,16 @@ pub async fn run_extraction(
 		}
 	}
 
-	finish_extraction(&backend, config, role, project, stored).await
+	finish_extraction(
+		&backend,
+		config,
+		role,
+		project,
+		session_name,
+		messages,
+		stored,
+	)
+	.await
 }
 
 /// Run deterministic cleanup and bounded file-store maintenance after every
@@ -448,6 +493,8 @@ async fn finish_extraction(
 	config: &Config,
 	role: &str,
 	project: &str,
+	session_name: &str,
+	messages: &[crate::session::Message],
 	stored: usize,
 ) -> Result<usize> {
 	if let Err(error) = backend
@@ -458,6 +505,21 @@ async fn finish_extraction(
 	}
 	if let Err(error) = super::retention::maintain(config, role, project).await {
 		crate::log_debug!("Learning retention maintenance failed: {}", error);
+	}
+	if stored > 0 {
+		match super::evolution::synthesize_after_extraction(
+			messages,
+			config,
+			role,
+			project,
+			session_name,
+		)
+		.await
+		{
+			Ok(Some(id)) => crate::log_debug!("Evolution candidate stored: {}", id),
+			Ok(None) => crate::log_debug!("Evolution synthesis: no candidate"),
+			Err(error) => crate::log_debug!("Evolution synthesis failed closed: {}", error),
+		}
 	}
 	Ok(stored)
 }
@@ -1310,19 +1372,7 @@ pub fn spawn_lesson_extraction(
 /// Lesson scope derived from the session's working directory (process cwd when
 /// the caller doesn't thread one).
 fn project_name(current_dir: Option<&std::path::Path>) -> String {
-	let owned_cwd;
-	let resolved_dir: Option<&std::path::Path> = match current_dir {
-		Some(p) => Some(p),
-		None => {
-			owned_cwd = std::env::current_dir().ok();
-			owned_cwd.as_deref()
-		}
-	};
-	resolved_dir
-		.and_then(|p| p.file_name())
-		.and_then(|n| n.to_str())
-		.map(String::from)
-		.unwrap_or_else(|| "unknown".to_string())
+	super::evolution::project_name(current_dir)
 }
 
 /// Exit-path variant: hands the extraction to a DETACHED CHILD PROCESS

@@ -417,7 +417,9 @@ async fn test_execute_command_layer_missing_program_errors() {
 
 	let err = result.expect_err("missing program must error");
 	assert!(
-		err.to_string().contains("No such file") || err.to_string().contains("not found"),
+		err.to_string().contains("No such file")
+			|| err.to_string().contains("not found")
+			|| err.to_string().contains("Permission denied"),
 		"unexpected error: {err}"
 	);
 

@@ -101,14 +101,34 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 /// preserving constraints that a genuine contextual follow-up still carries.
 pub fn active_constraints(
 	messages: &[crate::session::Message],
-	resolved_request: Option<&str>,
+	resolved: Option<&crate::supervisor::resolve::ResolvedTask>,
 ) -> Vec<String> {
-	resolved_request
+	let mut constraints = resolved
+		.map(|task| task.resolved_request.as_str())
 		.map(str::trim)
 		.filter(|request| !request.is_empty())
 		.or_else(|| crate::session::latest_real_user_task_content(messages))
 		.map(extract_constraints)
-		.unwrap_or_default()
+		.unwrap_or_default();
+	// Affirmative operational facts ("we work on the remote server", "I
+	// deploy it myself") carry no negation marker, so the deterministic
+	// extractor above can never catch them; the resolver captured them
+	// verbatim at the only moment they are provably user-stated. They ride
+	// the same recitation/pin channel under the same cap, after the negation
+	// constraints — those are the ones models violate first.
+	for fact in resolved
+		.into_iter()
+		.flat_map(|task| task.operational_constraints.iter())
+	{
+		let fact = fact.trim();
+		if !fact.is_empty()
+			&& constraints.len() < CONSTRAINTS_MAX
+			&& !constraints.iter().any(|existing| existing == fact)
+		{
+			constraints.push(fact.to_string());
+		}
+	}
+	constraints
 }
 
 /// Is this trimmed line quoted/pasted material rather than the user's own
@@ -473,10 +493,29 @@ This long descriptive sentence merely mentions that the value must not exceed th
 		];
 		assert!(active_constraints(&messages, None).is_empty());
 
-		let resolved = "Continue task A. Never run tests for task A.";
+		let resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
+			"Continue task A. Never run tests for task A.",
+		);
 		assert_eq!(
-			active_constraints(&messages, Some(resolved)),
+			active_constraints(&messages, Some(&resolved)),
 			vec!["Never run tests for task A."]
+		);
+	}
+
+	#[test]
+	fn operational_constraints_from_the_resolver_ride_the_same_channel() {
+		let messages = vec![crate::session::Message {
+			role: "user".into(),
+			content: "Swap the models; I will rerun it on the server.".into(),
+			..Default::default()
+		}];
+		let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
+			"Swap the models; I will rerun it on the server.",
+		);
+		resolved.operational_constraints = vec!["I will rerun it on the server".into()];
+		assert_eq!(
+			active_constraints(&messages, Some(&resolved)),
+			vec!["I will rerun it on the server"]
 		);
 	}
 

@@ -154,6 +154,40 @@ fn classifier_trims_filters_and_caps_conditions() {
 }
 
 #[test]
+fn classifier_operational_constraints_acceptance_and_rejection() {
+	// Well-formed array of excerpts → captured verbatim after trim/filter.
+	let parsed = parse_classifier(
+		r#"{"scope":"self_contained","operational_constraints":["  we work on the remote server  ","","i will rerun it on the server"]}"#,
+	);
+	assert_eq!(
+		parsed.operational_constraints,
+		vec![
+			"we work on the remote server",
+			"i will rerun it on the server"
+		]
+	);
+	// Runaway list is capped at the recitation slot's entire budget.
+	let many: Vec<String> = (0..9).map(|i| format!("fact {i}")).collect();
+	let wire = format!(
+		r#"{{"scope":"self_contained","operational_constraints":{}}}"#,
+		serde_json::to_string(&many).expect("serializes")
+	);
+	assert_eq!(parse_classifier(&wire).operational_constraints.len(), 4);
+	// Neighboring format — the field as a bare string instead of an array —
+	// must not ride the serde default into a silent empty list: the payload
+	// is rejected whole and the fail-open path runs.
+	assert!(parse_classifier_checked(
+		r#"{"scope":"self_contained","operational_constraints":"we work on the remote server"}"#
+	)
+	.is_none());
+	// Absent field stays accepted (a turn that states no facts) — the same
+	// contract `conditions` already has.
+	assert!(parse_classifier(r#"{"scope":"self_contained"}"#)
+		.operational_constraints
+		.is_empty());
+}
+
+#[test]
 fn classifier_answer_only_clears_conditions() {
 	let parsed =
 		parse_classifier(r#"{"scope":"self_contained","answer_only":true,"conditions":["a","b"]}"#);

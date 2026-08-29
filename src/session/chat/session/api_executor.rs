@@ -284,10 +284,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::session::latest_real_user_task_content(&chat_session.session.messages);
 		let constraints = crate::supervisor::recite::active_constraints(
 			&chat_session.session.messages,
-			chat_session
-				.gate_task
-				.as_ref()
-				.map(|task| task.resolved_request.as_str()),
+			chat_session.gate_task.as_ref(),
 		);
 		if let Some(note) = crate::supervisor::recite::recite_note(
 			&chat_session.session.info.anchor,

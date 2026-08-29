@@ -90,7 +90,11 @@ pub(super) fn extract_previous_assistant_response(content: &str) -> Option<Strin
 /// the wrapper for task identity, constraints, and completion verification.
 /// A pending/tentative/unknown `next_action` is source-attributed and has
 /// survived PACT validation; an established/failed/superseded action is not a
-/// live frontier. Legacy compression keeps its existing request-as-task path.
+/// live frontier. When no pending `next_action` exists, a pending `open_loop`
+/// — an unresolved thread such as a proposal awaiting user approval — is the
+/// frontier; without that fallback a completed request is replayed verbatim
+/// as <task> and the model re-executes finished work. Newest unit wins across
+/// both kinds. Legacy compression keeps its existing request-as-task path.
 fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) -> Option<String> {
 	if !pact_enabled {
 		return None;
@@ -101,7 +105,7 @@ fn select_continuation_action(summary: &CompressionSummary, pact_enabled: bool) 
 		.iter()
 		.rev()
 		.find(|unit| {
-			unit.kind == "next_action"
+			matches!(unit.kind.as_str(), "next_action" | "open_loop")
 				&& matches!(unit.status.as_str(), "pending" | "tentative" | "unknown")
 				&& !unit.text.trim().is_empty()
 		})
@@ -738,6 +742,14 @@ pub(super) async fn apply_compression(
 	session.session.info.current_non_cached_tokens = 0;
 	session.session.info.current_total_tokens = 0;
 
+	// Compression replaced the live frontier: the continuation wrapper's
+	// <task> is now what every consumer (recall query, recitation signature)
+	// sees. The active memory pack is still keyed to the pre-compression
+	// request, so re-arm pending_recall — the next provider request
+	// re-retrieves against the post-compression task instead of carrying the
+	// stale pack until the next real user message.
+	session.pending_recall = true;
+
 	// Reset cache checkpoint time
 	session.session.info.last_cache_checkpoint_time = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
@@ -1049,6 +1061,35 @@ mod apply_tests {
 			"<task>\nContinue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running.\n</task>"
 		));
 		assert!(!wrapper.contains("<task>\nShould work now\n</task>"));
+	}
+
+	#[test]
+	fn pact_continuation_falls_back_to_pending_open_loop_over_completed_request() {
+		let summary = CompressionSummary {
+			folded_units: vec![
+				super::super::schema::FoldedUnit {
+					text: "Model swap completed; config verified on box.".to_string(),
+					kind: "outcome".to_string(),
+					status: "established".to_string(),
+					refs: vec!["b:done".to_string()],
+				},
+				super::super::schema::FoldedUnit {
+					text: "Proposed fix pending approval: catch the validation error.".to_string(),
+					kind: "open_loop".to_string(),
+					status: "pending".to_string(),
+					refs: vec!["b:loop".to_string()],
+				},
+			],
+			..Default::default()
+		};
+		let action = select_continuation_action(&summary, true);
+		let wrapper =
+			build_continuation_content(None, Some("disable plan also"), action.as_deref(), false);
+
+		assert!(wrapper.contains(
+			"<task>\nProposed fix pending approval: catch the validation error.\n</task>"
+		));
+		assert!(!wrapper.contains("<task>\ndisable plan also\n</task>"));
 	}
 
 	#[test]

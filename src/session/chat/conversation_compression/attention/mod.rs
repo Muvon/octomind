@@ -503,10 +503,7 @@ fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<
 		.unwrap_or_default();
 	crate::supervisor::recite::active_constraints(
 		&session.session.messages,
-		session
-			.gate_task
-			.as_ref()
-			.map(|task| task.resolved_request.as_str()),
+		session.gate_task.as_ref(),
 	)
 	.into_iter()
 	.map(|text| PinnedItem {

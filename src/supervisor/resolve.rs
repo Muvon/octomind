@@ -102,8 +102,17 @@ Never include a condition whose only demonstration would require an action the r
 forbids (e.g. the request says not to run, send, or change something) — express the
 prohibition itself as the condition instead.
 
+Field "operational_constraints": copy short verbatim excerpts (each under 120 characters,
+at most 4) of standing operational facts the user states about how or where the work
+happens — host or environment ("we work on the remote server", "it runs in the staging
+cluster"), division of labor ("I will deploy it myself", "you change the files, I run the
+tests"), or a durable workflow fact ("all commands go through the make target"). Copy the
+user's exact words from current_user_request only — never from role_context, pasted logs,
+or quoted text. Empty when the turn states none. Never include the task's deliverables,
+one-off actions, or prohibitions.
+
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."]}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"operational_constraints":["..."]}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -198,6 +207,13 @@ pub struct ResolvedTask {
 	/// any work — so no implementation belief can shape what counts as done.
 	/// The verify-gate matches these against recorded actions and ground truth.
 	pub evidence_conditions: Vec<String>,
+	/// Verbatim excerpts of standing operational facts the user stated in
+	/// this turn — where/how the work happens and who does what ("we work
+	/// on the remote server", "I deploy it myself"). Affirmative phrasing the
+	/// negation-only [`crate::supervisor::recite::extract_constraints`] can
+	/// never catch; recited per-turn and pinned by PACT alongside
+	/// prohibitions while this turn is the live task.
+	pub operational_constraints: Vec<String>,
 }
 
 impl ResolvedTask {
@@ -215,6 +231,7 @@ impl ResolvedTask {
 			verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 			answer_only: false,
 			evidence_conditions: Vec::new(),
+			operational_constraints: Vec::new(),
 		}
 	}
 
@@ -232,6 +249,7 @@ impl ResolvedTask {
 			verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 			answer_only: false,
 			evidence_conditions: Vec::new(),
+			operational_constraints: Vec::new(),
 		}
 	}
 }
@@ -314,6 +332,8 @@ struct ClassifierOutput {
 	answer_only: bool,
 	#[serde(default)]
 	conditions: Vec<String>,
+	#[serde(default)]
+	operational_constraints: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -363,77 +383,84 @@ pub async fn resolve(
 		operation_rx.clone(),
 	)
 	.await;
-	let (forbids_verification, verification_policy_update, answer_only, conditions) =
-		match classification {
-			Ok(response) => {
-				// One bounded retry on an unusable response before failing open.
-				// A truncated classifier reply loses the conditions checklist —
-				// the gate's forcing structure — precisely on requirement-dense
-				// requests. Doubled budget + a JSON-only nudge; same pattern as
-				// the gate's format retry.
-				let mut parsed = match parse_classifier_checked(&response) {
-					Some(parsed) => parsed,
-					None => {
-						crate::log_info!(
+	let (
+		forbids_verification,
+		verification_policy_update,
+		answer_only,
+		conditions,
+		operational_constraints,
+	) = match classification {
+		Ok(response) => {
+			// One bounded retry on an unusable response before failing open.
+			// A truncated classifier reply loses the conditions checklist —
+			// the gate's forcing structure — precisely on requirement-dense
+			// requests. Doubled budget + a JSON-only nudge; same pattern as
+			// the gate's format retry.
+			let mut parsed = match parse_classifier_checked(&response) {
+				Some(parsed) => parsed,
+				None => {
+					crate::log_info!(
 						"Classifier response unusable; retrying once with doubled output budget"
 					);
-						let retry_payload = format!(
+					let retry_payload = format!(
 							"{}\n\n<format_violation>\nYour previous response was not one complete JSON object (truncated or malformed). Re-emit the classification now: output ONLY the JSON object, with no reasoning text before it.\n</format_violation>",
 							context.render_classification_payload()
 						);
-						match crate::supervisor::learning::extract::call_supervisor_llm(
-							config,
-							&model,
-							SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
-							crate::supervisor::stats::CallKind::Resolve,
-							SupervisorSampling {
-								temperature: 0.0,
-								max_tokens: 12288,
-							},
-							operation_rx.clone(),
-						)
-						.await
-						{
-							Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
-								crate::log_info!(
+					match crate::supervisor::learning::extract::call_supervisor_llm(
+						config,
+						&model,
+						SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
+						crate::supervisor::stats::CallKind::Resolve,
+						SupervisorSampling {
+							temperature: 0.0,
+							max_tokens: 12288,
+						},
+						operation_rx.clone(),
+					)
+					.await
+					{
+						Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
+							crate::log_info!(
 									"Classifier retry still unusable; conditions checklist lost (fail-open)"
 								);
-								classifier_fallback()
-							}),
-							Err(error) => {
-								crate::log_debug!("Classifier retry unavailable: {}", error);
-								classifier_fallback()
-							}
+							classifier_fallback()
+						}),
+						Err(error) => {
+							crate::log_debug!("Classifier retry unavailable: {}", error);
+							classifier_fallback()
 						}
 					}
-				};
-				parsed.validate_policy_update(context);
-				if !parsed.context_dependent {
-					let mut resolved = ResolvedTask::self_contained(raw);
-					resolved.plan_at_turn_start = context.active_plan.clone();
-					resolved.forbids_verification = parsed.forbids_verification;
-					resolved.verification_policy_update = parsed.verification_policy_update;
-					resolved.answer_only = parsed.answer_only;
-					resolved.evidence_conditions = parsed.conditions;
-					return resolved;
 				}
-				(
-					parsed.forbids_verification,
-					parsed.verification_policy_update,
-					parsed.answer_only,
-					parsed.conditions,
-				)
-			}
-			Err(error) => {
-				crate::log_debug!(
-					"Task dependency classifier failed, using literal request: {}",
-					error
-				);
+			};
+			parsed.validate_policy_update(context);
+			if !parsed.context_dependent {
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
+				resolved.forbids_verification = parsed.forbids_verification;
+				resolved.verification_policy_update = parsed.verification_policy_update;
+				resolved.answer_only = parsed.answer_only;
+				resolved.evidence_conditions = parsed.conditions;
+				resolved.operational_constraints = parsed.operational_constraints;
 				return resolved;
 			}
-		};
+			(
+				parsed.forbids_verification,
+				parsed.verification_policy_update,
+				parsed.answer_only,
+				parsed.conditions,
+				parsed.operational_constraints,
+			)
+		}
+		Err(error) => {
+			crate::log_debug!(
+				"Task dependency classifier failed, using literal request: {}",
+				error
+			);
+			let mut resolved = ResolvedTask::self_contained(raw);
+			resolved.plan_at_turn_start = context.active_plan.clone();
+			return resolved;
+		}
+	};
 
 	let response = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
@@ -467,6 +494,7 @@ pub async fn resolve(
 	// the resolved request preserves that turn's actions and constraints, so
 	// they remain the fulfillment checklist.
 	resolved.evidence_conditions = conditions;
+	resolved.operational_constraints = operational_constraints;
 	resolved
 }
 
@@ -480,6 +508,7 @@ struct ClassifierVerdict {
 	verification_policy_evidence: String,
 	answer_only: bool,
 	conditions: Vec<String>,
+	operational_constraints: Vec<String>,
 }
 
 fn classifier_fallback() -> ClassifierVerdict {
@@ -490,6 +519,7 @@ fn classifier_fallback() -> ClassifierVerdict {
 		verification_policy_evidence: String::new(),
 		answer_only: false,
 		conditions: Vec::new(),
+		operational_constraints: Vec::new(),
 	}
 }
 
@@ -555,6 +585,15 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 				.take(24)
 				.collect()
 		},
+		operational_constraints: parsed
+			.operational_constraints
+			.into_iter()
+			.map(|c| c.trim().to_string())
+			.filter(|c| !c.is_empty())
+			// Same runaway-bound rationale as conditions; four standing
+			// facts is the recitation slot's entire budget for them.
+			.take(4)
+			.collect(),
 	})
 }
 
@@ -648,6 +687,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
 				answer_only: false,
 				evidence_conditions: Vec::new(),
+				operational_constraints: Vec::new(),
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),

@@ -575,10 +575,19 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
 	session.session.info.turn_call_counts = vec![30, 30, 30];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
 	assert!(
-		settle_folds(&mut session, &config).await,
-		"a demonstrated long pace must amortize the fold"
+		!compressed && session.fold_job.is_some(),
+		"a demonstrated long pace must schedule a background fold"
 	);
+	if let Some(job) = session.fold_job.take() {
+		job.handle.abort();
+		let _ = job.handle.await;
+	}
 
 	std::env::remove_var("OLLAMA_API_URL");
 }

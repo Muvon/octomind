@@ -552,3 +552,130 @@ async fn user_authored_pipe_prevents_generated_pipe_conflict() {
 		std::env::remove_var("OCTOMIND_DATA_DIR");
 	}
 }
+
+#[cfg(unix)]
+#[serial_test::serial]
+#[tokio::test]
+async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let project_dir = data.path().join("project");
+	std::fs::create_dir_all(&project_dir).unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let evolution_dir = crate::directories::get_learning_evolution_dir().unwrap();
+	let mut items = Vec::new();
+
+	for (kind, label) in [
+		(ArtifactKind::Pipe, "pipe"),
+		(ArtifactKind::Hook, "hook"),
+		(ArtifactKind::Validator, "validator"),
+	] {
+		for (state, state_label) in [
+			(EvolutionState::Shadow, "shadow"),
+			(EvolutionState::Trial, "trial"),
+		] {
+			let id = format!("evo-{label}-{state_label}");
+			let script_name = format!("{label}-{state_label}.sh");
+			let marker = data.path().join(format!("{label}-{state_label}.ran"));
+			let script_path = evolution_dir.join(&id).join("artifact").join(&script_name);
+			let native = match kind {
+				ArtifactKind::Pipe => format!(
+					"[[pipe]]\nname = \"{id}\"\ncommand = \"{}\"\nmatch = \"schema\"\n",
+					script_path.display()
+				),
+				ArtifactKind::Hook => format!(
+					"[[hook]]\non = \"any\"\nscript = \"{}\"\n",
+					script_path.display()
+				),
+				ArtifactKind::Validator => format!(
+					"[[validator]]\nname = \"{id}\"\nmatch = \"done\"\nscript = \"{}\"\n",
+					script_path.display()
+				),
+				_ => unreachable!(),
+			};
+			let script = if kind == ArtifactKind::Pipe {
+				format!(
+					"#!/bin/sh\ninput=$(cat)\ntouch '{}'\nprintf '%s' \"$input\"\n",
+					marker.display()
+				)
+			} else {
+				format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display())
+			};
+			let mut item = record(&id, kind, state);
+			item.script_path = Some(script_name.clone());
+			super::registry::create_record(
+				item.clone(),
+				&native,
+				Some(&GeneratedScript {
+					file_name: script_name,
+					content: script,
+				}),
+			)
+			.unwrap();
+			items.push((item, marker));
+		}
+	}
+
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	config.supervisor.learning.evolution.enabled = true;
+	let session_id = "evolution-native-phases".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::set_session_workdir(&session_id, project_dir);
+		crate::session::context::set_session_role(&session_id, "developer:general");
+		crate::session::context::set_session_config(&session_id, &config);
+		crate::session::guardrails::init_for_session();
+		let records = items
+			.iter()
+			.map(|(record, _)| record.clone())
+			.collect::<Vec<_>>();
+		let generated = generated_guardrails(&records).unwrap();
+		crate::session::guardrails::merge_generated_for_session(&session_id, generated);
+
+		let piped = crate::session::pipe::run_pipe(
+			&session_id,
+			"developer:general",
+			"schema changed",
+			false,
+		)
+		.await
+		.unwrap();
+		assert_eq!(piped.as_deref(), Some("schema changed"));
+		let call = crate::mcp::McpToolCall {
+			tool_name: "unknown-test-tool".to_string(),
+			tool_id: "call-1".to_string(),
+			parameters: serde_json::json!({}),
+		};
+		let result = crate::mcp::McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			"ok".to_string(),
+		);
+		crate::session::hooks::run_hooks(&session_id, &config, &[call], &[result], &[false]).await;
+		crate::session::hooks::run_turn_validators(&session_id, "developer:general", "done").await;
+
+		for (item, marker) in &items {
+			if item.state == EvolutionState::Shadow {
+				assert!(!marker.exists(), "shadow {} executed", item.id);
+				assert_eq!(get_record(&item.id).unwrap().unwrap().shadow_matches, 1);
+			} else {
+				assert!(marker.exists(), "trial {} did not execute", item.id);
+			}
+		}
+		reinforce_session(&session_id, 0.05).await;
+		for (item, _) in &items {
+			if item.state == EvolutionState::Trial {
+				assert_eq!(get_record(&item.id).unwrap().unwrap().successes, 1);
+			}
+		}
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}

@@ -236,6 +236,42 @@ async fn test_ws_session_message_roundtrip() {
 	})
 	.await;
 
+	// Exercise the remaining read-only/session-local command surfaces through
+	// the production WebSocket dispatcher. Each command must acknowledge its
+	// request id; rendering details are covered by command unit tests.
+	for (index, (command, args)) in [
+		("info", serde_json::json!([])),
+		("context", serde_json::json!(["all"])),
+		("agents", serde_json::json!([])),
+		("learning", serde_json::json!([])),
+		("plan", serde_json::json!([])),
+		("mcp", serde_json::json!(["list"])),
+		("effort", serde_json::json!(["low"])),
+		("loglevel", serde_json::json!(["none"])),
+		("cache", serde_json::json!([])),
+		("report", serde_json::json!([])),
+	]
+	.into_iter()
+	.enumerate()
+	{
+		let request_id = format!("cmd-extra-{index}");
+		socket
+			.send(WsMessage::Text(
+				serde_json::json!({
+					"type": "command",
+					"session_id": "ws-e2e",
+					"command": command,
+					"args": args,
+					"request_id": request_id,
+				})
+				.to_string()
+				.into(),
+			))
+			.await
+			.expect("send command");
+		read_until(&mut socket, command, 30, |text| text.contains(&request_id)).await;
+	}
+
 	// Re-sending the same session id takes the resume arm of create-or-resume
 	socket
 		.send(WsMessage::Text(

@@ -35,6 +35,9 @@ fn test_recorders_and_snapshot_render() {
 	memory_credit(true);
 	memory_credit(false);
 	memory_retention(1, 2);
+	evolution("shadow");
+	evolution("trial");
+	evolution("promoted");
 
 	let snapshot = snapshot().expect("non-idle stats render a snapshot");
 	let text = snapshot.to_string();
@@ -50,6 +53,9 @@ fn test_recorders_and_snapshot_render() {
 		"memory_consolidations",
 		"memory_archived",
 		"experiences",
+		"evolution_candidates",
+		"evolution_trials",
+		"evolution_promoted",
 	] {
 		assert!(text.contains(key), "snapshot missing '{key}': {text}");
 	}

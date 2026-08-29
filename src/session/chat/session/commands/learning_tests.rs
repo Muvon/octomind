@@ -290,6 +290,7 @@ async fn test_learning_evolution_command_lifecycle() {
 			explicit_authorization: true,
 			source_memory_ids: vec!["memory".to_string()],
 			evidence: vec!["session://s/message/1".to_string()],
+			replay_cases: Vec::new(),
 			artifact_version: 1,
 			parent_version: None,
 			superseded_ids: Vec::new(),

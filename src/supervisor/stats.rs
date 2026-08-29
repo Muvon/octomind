@@ -78,6 +78,13 @@ struct Stats {
 	orientation_stored: u64,
 	experiences_stored: u64,
 	recalls_injected: u64,
+	evolution_candidates: u64,
+	evolution_rejected: u64,
+	evolution_shadow_matches: u64,
+	evolution_trials: u64,
+	evolution_promoted: u64,
+	evolution_rollbacks: u64,
+	evolution_retired: u64,
 }
 
 fn global() -> &'static Mutex<Stats> {
@@ -204,6 +211,19 @@ pub fn memory_retention(consolidated: u64, archived: u64) {
 		s.memory_archived += archived;
 	});
 }
+
+pub fn evolution(action: &str) {
+	with(|stats| match action {
+		"shadow" | "candidate" => stats.evolution_candidates += 1,
+		"rejected" => stats.evolution_rejected += 1,
+		"shadow_match" => stats.evolution_shadow_matches += 1,
+		"trial" => stats.evolution_trials += 1,
+		"promoted" => stats.evolution_promoted += 1,
+		"rollback" => stats.evolution_rollbacks += 1,
+		"retired" | "trial_inconclusive" => stats.evolution_retired += 1,
+		_ => {}
+	});
+}
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {
@@ -217,7 +237,14 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.experiences_stored == 0
 		&& s.memory_consolidations == 0
 		&& s.memory_archived == 0
-		&& s.recalls_injected == 0;
+		&& s.recalls_injected == 0
+		&& s.evolution_candidates == 0
+		&& s.evolution_rejected == 0
+		&& s.evolution_shadow_matches == 0
+		&& s.evolution_trials == 0
+		&& s.evolution_promoted == 0
+		&& s.evolution_rollbacks == 0
+		&& s.evolution_retired == 0;
 	if idle {
 		return None;
 	}
@@ -266,6 +293,13 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"orientation_stored": s.orientation_stored,
 		"experiences_stored": s.experiences_stored,
 		"recalls_injected": s.recalls_injected,
+		"evolution_candidates": s.evolution_candidates,
+		"evolution_rejected": s.evolution_rejected,
+		"evolution_shadow_matches": s.evolution_shadow_matches,
+		"evolution_trials": s.evolution_trials,
+		"evolution_promoted": s.evolution_promoted,
+		"evolution_rollbacks": s.evolution_rollbacks,
+		"evolution_retired": s.evolution_retired,
 	}))
 }
 

@@ -446,7 +446,8 @@ fn call_set_hash_is_sensitive_to_tool_and_params() {
 	};
 	assert_eq!(call_set_hash(&[]), call_set_hash(&[]));
 	let read = mk("read", json!({"path": "x"}));
-	assert_eq!(call_set_hash(&[read.clone()]), call_set_hash(&[read]));
+	let read_copy = read.clone();
+	assert_eq!(call_set_hash(&[read_copy]), call_set_hash(&[read]));
 	assert_ne!(
 		call_set_hash(&[mk("read", json!({"path": "x"}))]),
 		call_set_hash(&[mk("view", json!({"path": "x"}))])

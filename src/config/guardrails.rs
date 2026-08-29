@@ -143,6 +143,12 @@ struct RawFile {
 }
 
 #[derive(Debug, Clone)]
+pub struct EvolutionBinding {
+	pub id: String,
+	pub shadow: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct CompiledPipe {
 	pub name: String,
 	pub command: PathBuf,
@@ -153,6 +159,7 @@ pub struct CompiledPipe {
 	/// Role filter; entries match exact role (`developer:general`) or domain
 	/// prefix (`developer` matches `developer:general` via `<name>:` check).
 	pub roles: Vec<String>,
+	pub evolution: Option<EvolutionBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +176,7 @@ pub struct CompiledGuard {
 	pub when_used: Vec<Target>,
 	pub when_unused: Vec<Target>,
 	pub message: String,
+	pub evolution: Option<EvolutionBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +187,7 @@ pub struct CompiledHook {
 	pub result_regex: Option<Regex>,
 	pub on: HookOn,
 	pub script: PathBuf,
+	pub evolution: Option<EvolutionBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +201,7 @@ pub struct CompiledValidator {
 	/// prefix (`developer` matches `developer:general` via `<name>:` check).
 	pub roles: Vec<String>,
 	pub script: PathBuf,
+	pub evolution: Option<EvolutionBinding>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -203,6 +213,36 @@ pub struct Guardrails {
 }
 
 impl Guardrails {
+	pub fn append_compiled(&mut self, generated: Self) {
+		self.pipes.extend(generated.pipes);
+		self.guards.extend(generated.guards);
+		self.hooks.extend(generated.hooks);
+		self.validators.extend(generated.validators);
+	}
+
+	/// Append a generated native artifact after user-authored rules. The existing
+	/// runtime remains the sole executor; the binding only carries lifecycle
+	/// attribution and shadow behavior.
+	pub fn append_generated(&mut self, mut generated: Self, id: &str, shadow: bool) {
+		let binding = || EvolutionBinding {
+			id: id.to_string(),
+			shadow,
+		};
+		for item in &mut generated.pipes {
+			item.evolution = Some(binding());
+		}
+		for item in &mut generated.guards {
+			item.evolution = Some(binding());
+		}
+		for item in &mut generated.hooks {
+			item.evolution = Some(binding());
+		}
+		for item in &mut generated.validators {
+			item.evolution = Some(binding());
+		}
+		self.append_compiled(generated);
+	}
+
 	/// Load `.agents/guardrails.toml` from the given workdir.
 	/// Missing file = empty guardrails (silent). Parse errors are logged
 	/// and treated as empty so a broken file never crashes the session.
@@ -259,6 +299,7 @@ impl Guardrails {
 				match_regex,
 				when: p.when,
 				roles: p.roles,
+				evolution: None,
 			});
 		}
 
@@ -289,6 +330,7 @@ impl Guardrails {
 				when_used,
 				when_unused,
 				message: r.message,
+				evolution: None,
 			});
 		}
 		let mut hooks = Vec::with_capacity(raw.hooks.len());
@@ -314,6 +356,7 @@ impl Guardrails {
 				result_regex,
 				on: h.on,
 				script: PathBuf::from(h.script),
+				evolution: None,
 			});
 		}
 		let mut validators = Vec::with_capacity(raw.validators.len());
@@ -370,6 +413,7 @@ impl Guardrails {
 				when_unused,
 				roles: v.roles,
 				script: PathBuf::from(v.script),
+				evolution: None,
 			});
 		}
 		Ok(Self {
@@ -495,6 +539,24 @@ pub fn check(
 	call_log: &[CallRecord],
 	loaded: &HashSet<String>,
 ) -> Option<String> {
+	evaluate_guards(rules, capability, params, call_log, loaded)
+		.blocked
+		.map(|(message, _)| message)
+}
+
+pub struct GuardEvaluation {
+	pub blocked: Option<(String, Option<EvolutionBinding>)>,
+	pub shadow_ids: Vec<String>,
+}
+
+pub fn evaluate_guards(
+	rules: &Guardrails,
+	capability: Option<&str>,
+	params: &Value,
+	call_log: &[CallRecord],
+	loaded: &HashSet<String>,
+) -> GuardEvaluation {
+	let mut shadow_ids = Vec::new();
 	for rule in &rules.guards {
 		if !target_matches(&rule.trigger, capability, params) {
 			continue;
@@ -518,9 +580,24 @@ pub fn check(
 		if !unused_ok {
 			continue;
 		}
-		return Some(rule.message.clone());
+		if let Some(binding) = &rule.evolution {
+			if crate::supervisor::learning::evolution::binding_is_shadow(
+				&binding.id,
+				binding.shadow,
+			) {
+				shadow_ids.push(binding.id.clone());
+				continue;
+			}
+		}
+		return GuardEvaluation {
+			blocked: Some((rule.message.clone(), rule.evolution.clone())),
+			shadow_ids,
+		};
 	}
-	None
+	GuardEvaluation {
+		blocked: None,
+		shadow_ids,
+	}
 }
 
 #[cfg(test)]
@@ -573,6 +650,40 @@ mod tests {
 		);
 		let p_ok = json!({ "command": "ls -lt" });
 		assert!(check(&g, Some("shell"), &p_ok, &[], &loaded(&[])).is_none());
+	}
+
+	#[test]
+	fn generated_shadow_guard_observes_without_blocking() {
+		let mut rules = Guardrails::default();
+		let generated = Guardrails::parse(
+			r#"
+			[[guard]]
+			match = "shell"
+			message = "generated block"
+			"#,
+		)
+		.unwrap();
+		rules.append_generated(generated, "evo-shadow", true);
+		let evaluation = evaluate_guards(&rules, Some("shell"), &json!({}), &[], &loaded(&[]));
+		assert!(evaluation.blocked.is_none());
+		assert_eq!(evaluation.shadow_ids, vec!["evo-shadow"]);
+	}
+
+	#[test]
+	fn generated_binding_without_registry_fails_closed() {
+		let mut rules = Guardrails::default();
+		let generated = Guardrails::parse(
+			r#"
+			[[guard]]
+			match = "shell"
+			message = "generated block"
+			"#,
+		)
+		.unwrap();
+		rules.append_generated(generated, "evo-trial", false);
+		let evaluation = evaluate_guards(&rules, Some("shell"), &json!({}), &[], &loaded(&[]));
+		assert!(evaluation.blocked.is_none());
+		assert_eq!(evaluation.shadow_ids, vec!["evo-trial"]);
 	}
 
 	#[test]

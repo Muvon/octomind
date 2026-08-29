@@ -38,6 +38,11 @@ The agent reads JSON-RPC messages from stdin and writes responses to stdout. Std
 
 > ACP output reuses the same internal `ServerMessage` pipeline as the WebSocket server — `ToolCall`/`ToolCallUpdate` translation mirrors the WebSocket message types. See [WebSocket Server](01-websocket-server.md) for the shared message shapes.
 
+Grounded behavior lifecycle changes are delivered as `SessionInfoUpdate`
+notifications with an `octomind.evolution` `_meta` object, preserving the same
+action/id/name/kind/state/scope fields without rendering control-plane text as
+an assistant message.
+
 ## Protocol Flow
 
 Each step is labelled with who acts — **(host)** = the editor/parent client, **(agent)** = Octomind.

@@ -1093,6 +1093,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_dynamic_servers_for_session(session_id);
 	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
+	crate::mcp::runtime::skill_auto::clear_pool_for_session(session_id);
 	clear_env_skills(session_id);
 	clear_capability_refcounts(session_id);
 	clear_skill_capability_servers(session_id);
@@ -1100,6 +1101,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::session::shell_jobs::clear_for_session(session_id);
 	crate::session::tap_runs::clear_for_session(session_id);
 	crate::session::guardrails::clear_for_session(session_id);
+	crate::supervisor::learning::evolution::clear_for_session(session_id);
 	crate::supervisor::delegate::clear_handback_for_session(session_id);
 	crate::supervisor::condense::clear_for_session(session_id);
 	clear_schedule_notify(session_id);
@@ -1112,6 +1114,7 @@ pub fn init_session_services(role: &str) {
 	crate::mcp::orchestration::monitor::init_for_session();
 	crate::session::tap_runs::init_for_session();
 	crate::session::guardrails::init_for_session();
+	crate::supervisor::learning::evolution::init_for_session(role);
 	crate::mcp::agent::functions::init_job_manager();
 	// Extract domain from role/tag (e.g., "developer:general" → "developer")
 	let domain = role.split(':').next().unwrap_or(role);

@@ -705,6 +705,19 @@ fn find_all_skills() -> Vec<(SkillMeta, PathBuf)> {
 		}
 	}
 
+	// 4. Generated user-owned skills — always lowest authority.
+	for skill_dir in crate::supervisor::learning::evolution::active_skill_dirs() {
+		let skill_md = skill_dir.join("SKILL.md");
+		let Ok(content) = std::fs::read_to_string(&skill_md) else {
+			continue;
+		};
+		if let Some(meta) = parse_skill_meta(&content) {
+			if seen_names.insert(meta.name.clone()) {
+				skills.push((meta, skill_dir));
+			}
+		}
+	}
+
 	skills
 }
 
@@ -783,6 +796,19 @@ fn find_skill_by_name(name: &str) -> Option<(SkillMeta, PathBuf, String)> {
 			Err(_) => continue,
 		};
 
+		if let Some(meta) = parse_skill_meta(&content) {
+			if meta.name == name {
+				return Some((meta, skill_dir, content));
+			}
+		}
+	}
+
+	// 4. Generated user-owned skills — never shadow authored sources.
+	for skill_dir in crate::supervisor::learning::evolution::active_skill_dirs() {
+		let skill_md = skill_dir.join("SKILL.md");
+		let Ok(content) = std::fs::read_to_string(&skill_md) else {
+			continue;
+		};
 		if let Some(meta) = parse_skill_meta(&content) {
 			if meta.name == name {
 				return Some((meta, skill_dir, content));
@@ -1223,9 +1249,13 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Inject skill body wrapped in tags for detection on session resume.
 	let body = strip_frontmatter(&content);
 	let description = meta.description.replace('"', "&quot;");
+	let evolution_attr = crate::supervisor::learning::evolution::skill_binding(&name)
+		.filter(|binding| !binding.shadow && binding.path == skill_dir)
+		.map(|binding| format!(" evolution_id=\"{}\"", binding.id))
+		.unwrap_or_default();
 	let mut injection_content = format!(
-		"<skill name=\"{}\" description=\"{}\">\n{}",
-		name, description, body
+		"<skill name=\"{}\" description=\"{}\"{}>\n{}",
+		name, description, evolution_attr, body
 	);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);

@@ -223,8 +223,10 @@ carries it.
   conversation history. It is token-bounded, materialized only for provider
   requests, and drops when context headroom is insufficient.
 - Outcome credit applies only to pack IDs the specialist reports materially
-  using. Exposure is neutral. Guardrail generation from learned constraints is
-  intentionally future work; do not make learned text executable policy yet.
+  using. Exposure is neutral. When `[supervisor.learning.evolution]` is enabled,
+  generated behavior must pass the separate structured candidate, native-parser,
+  verifier, shadow, and bounded-trial lifecycle; learning text never becomes
+  executable policy directly.
 - File retention is a two-watermark hot/cold lifecycle with independent token
   budgets per memory type. Similarity may select consolidation candidates but
   never authorize a merge. Short quote-backed rules are not synthesized;

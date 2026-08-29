@@ -326,6 +326,19 @@ pub struct SkillPayload {
 	pub session_id: String,
 }
 
+/// Grounded behavior-evolution lifecycle event. Separate from `Status`: status
+/// messages carrying data are command completions in existing clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvolutionPayload {
+	pub action: String,
+	pub id: String,
+	pub name: String,
+	pub kind: String,
+	pub state: String,
+	pub scope: Value,
+	pub session_id: String,
+}
+
 /// A message injected into the session by something other than the user
 /// (a scheduled timer fired, a background agent completed, a skill activated, …).
 /// Emitted just before the AI is invoked, so clients can render what the AI
@@ -382,6 +395,8 @@ pub enum ServerMessage {
 	McpNotification(McpNotificationPayload),
 	/// Skill lifecycle event (activate / use / forget) — emitted for structured output
 	Skill(SkillPayload),
+	/// Generated behavior lifecycle event (candidate / trial / promote / rollback).
+	Evolution(EvolutionPayload),
 	/// A message injected into the session loop by a non-user source
 	/// (scheduled timer, background agent, skill, …). Emitted just before
 	/// the AI processes it so clients can render the trigger.
@@ -447,6 +462,26 @@ impl ServerMessage {
 			action: action.into(),
 			name: name.into(),
 			trigger,
+			session_id: session_id.into(),
+		})
+	}
+
+	pub fn evolution(
+		action: impl Into<String>,
+		id: impl Into<String>,
+		name: impl Into<String>,
+		kind: impl Into<String>,
+		state: impl Into<String>,
+		scope: Value,
+		session_id: impl Into<String>,
+	) -> Self {
+		ServerMessage::Evolution(EvolutionPayload {
+			action: action.into(),
+			id: id.into(),
+			name: name.into(),
+			kind: kind.into(),
+			state: state.into(),
+			scope,
 			session_id: session_id.into(),
 		})
 	}
@@ -843,6 +878,23 @@ mod tests {
 		assert!(json.contains("\"action\":\"activate\""));
 		assert!(json.contains("\"name\":\"programming-rust\""));
 		assert!(json.contains("\"trigger\":\"file(Cargo.toml)\""));
+	}
+
+	#[test]
+	fn test_server_message_evolution_is_not_a_command_status() {
+		let msg = ServerMessage::evolution(
+			"promoted",
+			"evo-1",
+			"evolved-rust",
+			"skill",
+			"active",
+			serde_json::json!({"project":"octomind","domain":"developer"}),
+			"sess_123",
+		);
+		let value = serde_json::to_value(msg).unwrap();
+		assert_eq!(value["type"], "evolution");
+		assert_eq!(value["action"], "promoted");
+		assert!(value.get("data").is_none());
 	}
 
 	#[test]

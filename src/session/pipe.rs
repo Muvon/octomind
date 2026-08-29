@@ -74,6 +74,15 @@ pub async fn run_pipe(
 				continue;
 			}
 		}
+		if let Some(binding) = &pipe.evolution {
+			if crate::supervisor::learning::evolution::binding_is_shadow(
+				&binding.id,
+				binding.shadow,
+			) {
+				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+				continue;
+			}
+		}
 		matched.push(pipe);
 	}
 
@@ -89,6 +98,9 @@ pub async fn run_pipe(
 	}
 
 	let pipe = matched[0];
+	if let Some(binding) = &pipe.evolution {
+		crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+	}
 	let run_count = crate::session::guardrails::increment_pipe_run_count(session_id, &pipe.name);
 
 	let workdir = crate::session::context::get_current_workdir(session_id)

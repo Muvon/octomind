@@ -273,6 +273,16 @@ pub fn get_global_learning_dir() -> Result<PathBuf> {
 	Ok(global_dir)
 }
 
+/// Machine-local registry for generated behavior artifacts. Kept beneath the
+/// learning authority but outside project checkouts and ordinary recall dirs.
+pub fn get_learning_evolution_dir() -> Result<PathBuf> {
+	let dir = get_octomind_data_dir()?.join("learning").join(".evolution");
+	if !dir.exists() {
+		fs::create_dir_all(&dir)?;
+	}
+	Ok(dir)
+}
+
 /// Get the default configuration file path
 pub fn get_config_file_path() -> Result<PathBuf> {
 	let config_dir = get_config_dir()?;

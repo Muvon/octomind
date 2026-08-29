@@ -90,6 +90,16 @@ pub async fn run_hooks(
 			) {
 				continue;
 			}
+			if let Some(binding) = &hook.evolution {
+				if crate::supervisor::learning::evolution::binding_is_shadow(
+					&binding.id,
+					binding.shadow,
+				) {
+					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+					continue;
+				}
+				crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+			}
 			let script = hook.script.clone();
 			let workdir = workdir.clone();
 			let call_clone = call.clone();
@@ -302,6 +312,16 @@ pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_t
 			if !re.is_match(assistant_text) {
 				continue;
 			}
+			if let Some(binding) = &v.evolution {
+				if crate::supervisor::learning::evolution::binding_is_shadow(
+					&binding.id,
+					binding.shadow,
+				) {
+					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+					continue;
+				}
+				crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
+			}
 		}
 
 		// Build triggered_by list once per validator: calls in the slice that
@@ -486,6 +506,7 @@ mod tests {
 			result_regex: result.map(|r| Regex::new(r).expect("valid regex")),
 			on,
 			script: PathBuf::from("hook.sh"),
+			evolution: None,
 		}
 	}
 
@@ -602,6 +623,7 @@ mod tests {
 			when_unused,
 			roles: Vec::new(),
 			script: PathBuf::from("v.sh"),
+			evolution: None,
 		}
 	}
 

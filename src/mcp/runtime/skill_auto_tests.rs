@@ -127,11 +127,14 @@ fn install_tap_skill(name: &str, domains: &str, rules: &[&str]) -> String {
 }
 
 fn set_pool(entries: Vec<PoolEntry>) {
-	*get_pool().write().unwrap() = Some(SkillPool { entries });
+	get_pool()
+		.write()
+		.unwrap()
+		.insert("__default__".to_string(), SkillPool { entries });
 }
 
 fn clear_pool() {
-	*get_pool().write().unwrap() = None;
+	get_pool().write().unwrap().clear();
 }
 
 fn content_rule(pattern: &str) -> Vec<Vec<ActivateCheck>> {
@@ -274,6 +277,7 @@ async fn run_activation_disabled_in_config_activates_nothing() {
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
 		rules: content_rule("rust"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -307,6 +311,7 @@ async fn run_activation_skips_system_managed_content() {
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
 		rules: content_rule("rust"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -338,6 +343,7 @@ async fn run_activation_rejects_low_intent_input() {
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
 		rules: content_rule("try"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -393,6 +399,7 @@ async fn run_activation_deterministic_match_injects_skill() {
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
 		rules: content_rule("rust"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -426,6 +433,7 @@ async fn run_activation_no_matching_rule_is_silent() {
 	set_pool(vec![PoolEntry {
 		name: "py-helper".to_string(),
 		rules: content_rule("python"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -457,6 +465,7 @@ async fn run_activation_skips_already_active_skills() {
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
 		rules: content_rule("rust"),
+		evolution: None,
 	}]);
 
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -491,10 +500,12 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 		PoolEntry {
 			name: "rust-a".to_string(),
 			rules: content_rule("rust"),
+			evolution: None,
 		},
 		PoolEntry {
 			name: "rust-b".to_string(),
 			rules: content_rule("rust"),
+			evolution: None,
 		},
 	]);
 
@@ -534,7 +545,7 @@ fn init_pool_collects_domain_matching_rule_bearing_skills() {
 
 	{
 		let pool = get_pool().read().unwrap();
-		let pool = pool.as_ref().expect("pool initialized");
+		let pool = pool.get("__default__").expect("pool initialized");
 		let names: Vec<&str> = pool.entries.iter().map(|e| e.name.as_str()).collect();
 		assert!(names.contains(&"in-domain"));
 		assert!(

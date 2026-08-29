@@ -31,6 +31,7 @@ const LESSONS_PER_PAGE: usize = 15;
 
 pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	match params.first().copied() {
+		Some("evolution") => handle_evolution(session, &params[1..]),
 		None | Some("list") => {
 			// Determine page and optional glob pattern from remaining params.
 			// Accepts: `list`, `list 2`, `list *pattern*`, `list *pattern* 2`
@@ -102,11 +103,100 @@ pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Resu
 			CommandOutput::Learning {
 				data: json!({
 					"subcommand": "error",
-					"message": format!("unknown subcommand '{}' — use: list, show, delete, clear", other),
+					"message": format!("unknown subcommand '{}' — use: list, show, delete, clear, evolution", other),
 				}),
 			},
 		))),
 	}
+}
+
+fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandResult> {
+	use crate::supervisor::learning::evolution::{EvolutionState, HistoryEvent};
+	let (role, project) = role_and_project(session);
+	let domain = crate::supervisor::learning::evolution::domain_name(&role);
+	let action = params.first().copied().unwrap_or("list");
+	let output = match action {
+		"list" => {
+			let records = crate::supervisor::learning::evolution::list_records()?
+				.into_iter()
+				.filter(|record| record.scope.matches(&project, &domain))
+				.map(|record| crate::supervisor::learning::evolution::record_summary(&record))
+				.collect::<Vec<_>>();
+			json!({
+				"subcommand": "evolution_list",
+				"project": project,
+				"domain": domain,
+				"total": records.len(),
+				"records": records,
+			})
+		}
+		"show" => {
+			let id = params.get(1).copied().unwrap_or_default();
+			let record = crate::supervisor::learning::evolution::get_record(id)?
+				.ok_or_else(|| anyhow::anyhow!("evolution record '{}' not found", id))?;
+			let native = std::fs::read_to_string(record.native_path()?).unwrap_or_default();
+			json!({
+				"subcommand": "evolution_show",
+				"record": record,
+				"native_artifact": native,
+			})
+		}
+		"approve" => {
+			let id = params.get(1).copied().unwrap_or_default();
+			let record = crate::supervisor::learning::evolution::mutate_record(id, |record| {
+				if record.state != EvolutionState::Shadow {
+					anyhow::bail!("only a shadow candidate can be approved");
+				}
+				record.explicit_authorization = true;
+				record.state = EvolutionState::Trial;
+				record.history.push(HistoryEvent {
+					at: chrono::Utc::now().to_rfc3339(),
+					event: "approved".to_string(),
+					detail: "user approved bounded live trial".to_string(),
+				});
+				Ok(())
+			})?;
+			json!({"subcommand":"evolution_action","action":"approve","record":crate::supervisor::learning::evolution::record_summary(&record)})
+		}
+		"reject" => {
+			let id = params.get(1).copied().unwrap_or_default();
+			let record = crate::supervisor::learning::evolution::mutate_record(id, |record| {
+				record.state = EvolutionState::Rejected;
+				record.history.push(HistoryEvent {
+					at: chrono::Utc::now().to_rfc3339(),
+					event: "rejected".to_string(),
+					detail: "user rejected generated behavior".to_string(),
+				});
+				Ok(())
+			})?;
+			json!({"subcommand":"evolution_action","action":"reject","record":crate::supervisor::learning::evolution::record_summary(&record)})
+		}
+		"rollback" => {
+			let id = params.get(1).copied().unwrap_or_default();
+			let record = crate::supervisor::learning::evolution::mutate_record(id, |record| {
+				if !matches!(record.state, EvolutionState::Trial | EvolutionState::Active) {
+					anyhow::bail!("only a trial or active behavior can be rolled back");
+				}
+				record.state = EvolutionState::Shadow;
+				record.shadow_matches = 0;
+				record.successes = 0;
+				record.history.push(HistoryEvent {
+					at: chrono::Utc::now().to_rfc3339(),
+					event: "rollback".to_string(),
+					detail: "user requested rollback".to_string(),
+				});
+				Ok(())
+			})?;
+			json!({"subcommand":"evolution_action","action":"rollback","record":crate::supervisor::learning::evolution::record_summary(&record)})
+		}
+		_ => json!({
+			"subcommand":"error",
+			"message":"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>]"
+		}),
+	};
+	Ok(CommandResult::HandledWithOutput(Box::new(
+		CommandOutput::Learning { data: output },
+	)))
 }
 
 async fn handle_show(session: &ChatSession, index: usize) -> Result<CommandResult> {
@@ -339,10 +429,9 @@ async fn handle_clear(session: &ChatSession) -> Result<CommandResult> {
 
 fn role_and_project(session: &ChatSession) -> (String, String) {
 	let role = session.role.clone();
-	let project = std::env::current_dir()
-		.ok()
-		.and_then(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
-		.unwrap_or_else(|| "unknown".to_string());
+	let workdir = crate::session::context::current_session_id()
+		.and_then(|id| crate::session::context::get_current_workdir(&id));
+	let project = crate::supervisor::learning::evolution::project_name(workdir.as_deref());
 	(role, project)
 }
 

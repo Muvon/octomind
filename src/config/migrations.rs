@@ -93,9 +93,46 @@ fn plan() -> MigrationPlan {
 				to: 10,
 				apply: remove_v10_learning_backends,
 			},
+			VersionMigration {
+				from: 10,
+				to: 11,
+				apply: add_v11_learning_evolution,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v11 adds the opt-in grounded behavior-evolution stage beneath learning.
+/// The table is required after migration so runtime behavior never depends on
+/// a silent serde fallback; existing users remain disabled until they opt in.
+fn add_v11_learning_evolution(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_supervisor = required_table(
+		template.as_table(),
+		"supervisor",
+		"embedded default configuration",
+	)?;
+	let template_learning = required_table(
+		template_supervisor,
+		"learning",
+		"embedded default supervisor configuration",
+	)?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user configuration",
+	)?;
+	let learning = ensure_table(
+		supervisor,
+		template_supervisor,
+		"learning",
+		"user supervisor configuration",
+	)?;
+	merge_missing(learning, template_learning, "evolution")
 }
 
 /// v10 makes supervisor learning file-authoritative. The alternate MCP adapter
@@ -849,8 +886,32 @@ tool = "remember"
 	}
 
 	#[test]
+	fn v10_adds_disabled_required_learning_evolution_table() {
+		let existing = r#"version = 10
+
+[supervisor.learning]
+enabled = true
+model = "openai:gpt-5-mini"
+"#;
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.expect("v10 must migrate");
+		assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+		let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(
+			migrated["supervisor"]["learning"]["evolution"]["enabled"].as_bool(),
+			Some(false)
+		);
+		assert_eq!(
+			migrated["supervisor"]["learning"]["model"].as_str(),
+			Some("openai:gpt-5-mini")
+		);
+	}
+
+	#[test]
 	fn future_version_is_rejected_rather_than_downgraded() {
-		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 10", "version = 99", 1);
+		let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 11", "version = 99", 1);
 		let error = plan()
 			.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 			.expect_err("a newer config must not be rewritten");

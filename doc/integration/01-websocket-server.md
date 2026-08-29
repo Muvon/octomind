@@ -258,6 +258,23 @@ Both `session_id` and `data` are optional. The connection-time welcome status om
 }
 ```
 
+**Grounded behavior evolution lifecycle:**
+```json
+{
+  "type": "evolution",
+  "action": "promoted",
+  "id": "evo-schema-check-a1b2c3d4",
+  "name": "evolved-schema-check-a1b2c3",
+  "kind": "validator",
+  "state": "active",
+  "scope": { "project": "octomind", "domain": "developer" },
+  "session_id": "my-session"
+}
+```
+
+Evolution is a dedicated event rather than a `status` with `data`, because
+existing clients treat data-bearing statuses as command completion.
+
 **Injected message** -- a message added to the session by something other than the user, emitted just before the AI processes it:
 ```json
 {

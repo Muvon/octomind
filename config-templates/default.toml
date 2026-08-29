@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 10
+version = 11
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -680,6 +680,11 @@ model = "octohub:auto"
 enabled = true
 # Model for extraction and retrieval LLM calls (cheap model recommended)
 model = "octohub:auto"
+
+[supervisor.learning.evolution]
+# Compile grounded memories into scoped skills and guardrail candidates.
+# Disabled by default: enable to allow detached synthesis and low-risk trials.
+enabled = false
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 # The free deterministic pre-gate (state changed but no successful check ran

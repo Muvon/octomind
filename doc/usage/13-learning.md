@@ -23,12 +23,21 @@ Learning is one mechanic of the **supervisor** — the out-of-band control plane
 [supervisor.learning]
 enabled = true
 model = "anthropic:claude-haiku-4-5"
+
+[supervisor.learning.evolution]
+enabled = false
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
 | `enabled` | Enable the learning system. | `true` |
 | `model` | Model for extraction and retrieval-prep LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
+
+`[supervisor.learning.evolution]` has one field, `enabled` (default `false`).
+When enabled, the detached learner may compile one highest-value grounded memory
+per extraction into a machine-local skill or guardrail candidate. Candidates
+move through shadow, bounded trial, active, and rollback states; generated
+behavior never overwrites authored skills or `.agents/guardrails.toml`.
 
 Intermediate-learning cadence (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
@@ -250,6 +259,9 @@ for full provenance and retention metadata.
 | `/learning show <index>` | Inspect the complete memory body, file path, outcome, evidence handles, and related IDs. Alias: `get`. |
 | `/learning delete <index>` | Delete a lesson by its **1-based index** from the last list. Aliases: `rm`, `remove`. |
 | `/learning clear` | Delete all hot and cold lessons for the current role + project scope; global rules are untouched. |
+| `/learning evolution` | List evolved behavior matching the current project/domain. |
+| `/learning evolution show <id>` | Inspect scope, provenance, native artifact, trials, and history. |
+| `/learning evolution approve\|reject\|rollback <id>` | Explicitly control a generated behavior lifecycle. |
 
 The list (and therefore delete indexing) covers the current scoped lessons followed by the global lessons, in a stable order. `clear` only wipes the current role+project scope. See [Session Commands](../reference/02-session-commands.md) for the full command reference.
 

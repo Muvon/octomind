@@ -537,11 +537,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// tool calls while the agent's OWN status still says exploring/progressing is
 	// a promise, not a result ("Let me implement the fix." → session end). Advisory
 	// continuation driven purely by the self-report — done stays gated,
-	// blocked/need_input stay legitimate hand-backs. Bounded by the free-check
-	// budget, so a model that keeps yielding cannot loop it.
+	// blocked/need_input stay legitimate hand-backs. A session-owned background
+	// job is also a legitimate hand-back: the inbox monitor resumes the agent
+	// when its result arrives, whereas recursively nudging here keeps the ACP
+	// prompt open and prevents that monitor from acquiring the session. Bounded
+	// by the free-check budget, so a model that keeps yielding cannot loop it.
 	if config.supervisor.gate.enabled
 		&& chat_session.completion_gate_eligible
 		&& !mode.is_interactive()
+		&& !crate::session::has_pending_async_work()
 		&& matches!(
 			chat_session.last_self_report,
 			Some(crate::supervisor::detect::SelfReport::Exploring)

@@ -550,16 +550,6 @@ pub async fn execute_tool_call(
 	config: &crate::config::Config,
 	cancellation_token: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(McpToolResult, u64)> {
-	// Debug logging for tool execution
-	log_debug!("Debug: Executing tool call: {}", call.tool_name);
-	log_debug!(
-		"Debug: MCP has {} servers configured",
-		config.mcp.servers.len()
-	);
-	if let Ok(params) = serde_json::to_string_pretty(&call.parameters) {
-		log_debug!("Debug: Tool parameters: {}", params);
-	}
-
 	// Only execute if MCP has any servers configured
 	if config.mcp.servers.is_empty() {
 		return Err(anyhow::anyhow!("MCP has no servers configured"));
@@ -682,7 +672,6 @@ async fn route_builtin_tool(
 ) -> Result<McpToolResult> {
 	match server_name {
 		"core" => {
-			crate::log_debug!("Executing '{}' via core builtin server", call.tool_name);
 			let result = match call.tool_name.as_str() {
 				"recall" => core::recall::execute_recall(call)
 					.await
@@ -707,10 +696,6 @@ async fn route_builtin_tool(
 			}
 		}
 		"orchestration" => {
-			crate::log_debug!(
-				"Executing '{}' via orchestration builtin server",
-				call.tool_name
-			);
 			let result = match call.tool_name.as_str() {
 				"tap" => orchestration::execute_tap_command(call, config)
 					.await
@@ -741,7 +726,6 @@ async fn route_builtin_tool(
 			}
 		}
 		"runtime" => {
-			crate::log_debug!("Executing '{}' via runtime builtin server", call.tool_name);
 			let result = runtime::execute_runtime_tool(call, config)
 				.await
 				.map_err(|e| format!("Runtime tool failed: {}", e));
@@ -764,19 +748,11 @@ async fn route_builtin_tool(
 					call.tool_name
 				));
 			}
-			crate::log_debug!(
-				"Executing agent tool '{}' via agent builtin server",
-				call.tool_name
-			);
 			let mut result = agent::execute_agent_command(call, config, cancellation_token).await?;
 			result.tool_id = call.tool_id.clone();
 			Ok(result)
 		}
 		"local" => {
-			crate::log_debug!(
-				"Executing '{}' via local-tool runner (.agents/tools)",
-				call.tool_name
-			);
 			let result = match core::local_tool::execute(call).await {
 				Ok(mut r) => {
 					r.tool_id = call.tool_id.clone();
@@ -845,10 +821,22 @@ async fn execute_tool_without_cancellation(
 		}
 
 		crate::log_debug!(
-			"Routing tool '{}' to server '{}' ({:?})",
+			"Tool dispatch: name={}, server={}, transport={:?}, params={}",
 			call.tool_name,
 			target_server.name(),
-			target_server.connection_type()
+			target_server.connection_type(),
+			serde_json::to_string(&call.parameters)
+				.map(|value| {
+					if crate::session::estimate_tokens(&value) > 200 {
+						format!(
+							"{}… [truncated]",
+							crate::session::truncate_to_tokens(&value, 200)
+						)
+					} else {
+						value
+					}
+				})
+				.unwrap_or_else(|error| format!("<unavailable: {error}>"))
 		);
 
 		return match target_server.connection_type() {

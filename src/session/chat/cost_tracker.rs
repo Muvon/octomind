@@ -61,17 +61,36 @@ impl CostTracker {
 				cache_write_tokens,
 				usage.reasoning_tokens,
 			);
-			// Update cost
+			// Update cost and emit one compact diagnostic for the whole exchange.
 			if let Some(cost) = usage.cost {
 				chat_session.session.info.total_cost += cost;
 				chat_session.estimated_cost = chat_session.session.info.total_cost;
-
-				log_debug!(
-					"Adding ${:.5} to total cost (total now: ${:.5})",
-					cost,
-					chat_session.session.info.total_cost
-				);
 			}
+			let cost_summary = usage
+				.cost
+				.map(|value| format!("${value:.5}"))
+				.unwrap_or_else(|| "unreported".to_string());
+			let latency = usage
+				.request_time_ms
+				.map(|value| format!("{value}ms"))
+				.unwrap_or_else(|| "unreported".to_string());
+			log_debug!(
+				"Provider usage: provider={}, input={}, output={}, cache_read={}, cache_write={}, reasoning={}, cost={}, session_total=${:.5}, latency={}",
+				exchange.provider,
+				usage.input_tokens,
+				usage.output_tokens,
+				usage.cache_read_tokens,
+				usage.cache_write_tokens,
+				usage.reasoning_tokens,
+				cost_summary,
+				chat_session.session.info.total_cost,
+				latency
+			);
+		} else {
+			log_debug!(
+				"Provider usage: provider={}, usage unavailable",
+				exchange.provider
+			);
 		}
 
 		Ok(())

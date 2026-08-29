@@ -514,79 +514,34 @@ impl ChatSession {
 					);
 				}
 
-				// If OpenRouter provided cost data, use it directly
-				if let Some(cost) = usage.cost {
-					// OpenRouter credits = dollars, use the value directly
+				let raw_cost = ex
+					.response
+					.get("usage")
+					.and_then(|value| value.get("cost"))
+					.and_then(|value| value.as_f64());
+				let (cost, cost_source) = match (usage.cost, raw_cost) {
+					(Some(cost), _) => (Some(cost), "normalized"),
+					(None, Some(cost)) => (Some(cost), "raw"),
+					(None, None) => (None, "unreported"),
+				};
+				if let Some(cost) = cost {
 					self.session.info.total_cost += cost;
 					self.estimated_cost = self.session.info.total_cost;
-
-					// Log the actual cost received from the API for debugging
-					log_debug!(
-						"Adding ${:.5} from OpenRouter API (total now: ${:.5})",
-						cost,
-						self.session.info.total_cost
-					);
-
-					// Check if there's a raw usage object with additional fields
-					if let Some(raw_usage) = ex.response.get("usage") {
-						log_debug!("Raw usage from response:");
-						if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
-							log_debug!("{}", raw_str);
-						}
-					}
-				} else {
-					// No explicit cost data, look at the raw response to check if it contains cost data
-					let cost_from_raw = ex
-						.response
-						.get("usage")
-						.and_then(|u| u.get("cost"))
-						.and_then(|c| c.as_f64());
-
-					if let Some(cost) = cost_from_raw {
-						// Use the cost value directly
-						self.session.info.total_cost += cost;
-						self.estimated_cost = self.session.info.total_cost;
-
-						// Log that we had to fetch cost from raw response
-						log_debug!(
-							"Using cost from raw response: ${:.5} (total now: ${:.5})",
-							cost,
-							self.session.info.total_cost
-						);
-					} else {
-						// Provider did not provide cost data - this is normal for some providers (e.g., Ollama)
-						let provider_name = &ex.provider;
-						log_debug!("{} did not provide cost data.", provider_name);
-
-						// Dump the raw response JSON to debug
-						log_debug!("Raw {} response:", provider_name);
-						if let Ok(resp_str) = serde_json::to_string_pretty(&ex.response) {
-							log_debug!("{}", resp_str);
-						}
-
-						// Check if usage tracking was explicitly requested (OpenRouter-specific)
-						if provider_name == "openrouter" {
-							let has_usage_flag = ex
-								.request
-								.get("usage")
-								.and_then(|u| u.get("include"))
-								.and_then(|i| i.as_bool())
-								.unwrap_or(false);
-
-							log_debug!(
-								"{} request had usage.include flag: {}",
-								provider_name,
-								has_usage_flag
-							);
-							if !has_usage_flag {
-								log_debug!(
-									"Make sure usage.include=true is set for {} to get cost data",
-									provider_name
-								);
-							}
-						}
-					}
 				}
+				let cost_summary = cost
+					.map(|value| format!("${value:.5} ({cost_source})"))
+					.unwrap_or_else(|| cost_source.to_string());
+				log_debug!(
+					"Provider usage [message]: provider={}, input={}, output={}, cache_read={}, cache_write={}, reasoning={}, cost={}, session_total=${:.5}",
+					ex.provider,
+					usage.input_tokens,
+					usage.output_tokens,
+					usage.cache_read_tokens,
+					usage.cache_write_tokens,
+					usage.reasoning_tokens,
+					cost_summary,
+					self.session.info.total_cost
+				);
 
 				// Update session duration
 				let current_time = std::time::SystemTime::now()

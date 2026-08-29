@@ -175,13 +175,11 @@ impl AnimationManager {
 	pub async fn suspend(&self) {
 		self.suspended.store(true, Ordering::SeqCst);
 		self.stop_current().await;
-		log_debug!("Animation suspended — user prompt imminent");
 	}
 
 	/// Resume animation — allows animation to start again.
 	pub fn resume(&self) {
 		self.suspended.store(false, Ordering::SeqCst);
-		log_debug!("Animation resumed");
 	}
 
 	/// Check if animation is suspended.
@@ -231,7 +229,6 @@ impl AnimationManager {
 	/// output mode.
 	pub async fn start_animation(&self, mode: &crate::session::output::OutputMode) {
 		if self.is_suspended() {
-			log_debug!("start_animation: manager suspended — skipping");
 			return;
 		}
 		if !mode.should_show_animations() {
@@ -246,7 +243,6 @@ impl AnimationManager {
 	/// In non-interactive terminal modes this prints a single static status line.
 	pub async fn start_with_params(&self, cost: f64, context_tokens: u64, max_threshold: usize) {
 		if self.is_suspended() {
-			log_debug!("start_with_params: manager suspended — skipping");
 			return;
 		}
 

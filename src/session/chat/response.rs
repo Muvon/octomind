@@ -87,12 +87,11 @@ fn log_response_debug(
 	finish_reason: &Option<String>,
 	tool_calls: &Option<Vec<crate::mcp::McpToolCall>>,
 ) {
-	if let Some(ref reason) = finish_reason {
-		log_debug!("Processing response with finish_reason: {}", reason);
-	}
-	if let Some(ref calls) = tool_calls {
-		log_debug!("Processing {} tool calls", calls.len());
-	}
+	log_debug!(
+		"Provider response: finish={}, tool_calls={}",
+		finish_reason.as_deref().unwrap_or("none"),
+		tool_calls.as_ref().map_or(0, Vec::len)
+	);
 }
 
 // Helper function to handle final response when no tool calls are present

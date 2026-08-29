@@ -63,8 +63,6 @@ pub async fn process_tool_results(
 					.unwrap_or(crate::session::output::OutputMode::NonInteractive),
 			)
 			.await;
-	} else {
-		log_debug!("Animation suspended during tool result processing - not restarting");
 	}
 
 	// 🔍 PERFORMANCE DEBUG: Track where time is spent during tool result processing
@@ -293,14 +291,15 @@ pub async fn process_tool_results(
 				.as_ref()
 				.is_some_and(|calls| !calls.is_empty());
 
-			// Debug logging for follow-up finish_reason
-			if let Some(ref reason) = response.finish_reason {
-				log_debug!("Follow-up finish_reason: {}", reason);
-			}
-
 			// Check finish_reason to determine if we should continue the conversation
 			let should_continue_conversation =
 				check_should_continue(&response, config, has_more_tools);
+			log_debug!(
+				"Provider response [follow-up]: finish={}, tool_calls={}, continue={}",
+				response.finish_reason.as_deref().unwrap_or("none"),
+				response.tool_calls.as_ref().map_or(0, Vec::len),
+				should_continue_conversation
+			);
 
 			// Handle cost tracking from follow-up API call
 			handle_follow_up_cost_tracking(chat_session, &response.exchange, config);
@@ -411,29 +410,14 @@ pub fn check_should_continue(
 	has_more_tools: bool,
 ) -> bool {
 	match response.finish_reason.as_deref() {
-		Some("tool_calls") | Some("tool_use") => {
-			// Model wants to make more tool calls
-			log_debug!("finish_reason is 'tool_calls', continuing conversation");
-			true
-		}
-		Some("stop") | Some("length") | Some("end_turn") => {
-			// Model finished normally or hit length limit
-			log_debug!(
-				"finish_reason is '{}', ending conversation",
-				response.finish_reason.as_deref().unwrap()
-			);
-			false
-		}
+		Some("tool_calls") | Some("tool_use") => true,
+		Some("stop") | Some("length") | Some("end_turn") => false,
 		Some(other) => {
 			// Unknown finish_reason, be conservative and continue
 			log_info!("Unknown finish_reason '{}', continuing conversation", other);
 			true
 		}
-		None => {
-			// No finish_reason, check for tool calls
-			log_debug!("Debug: No finish_reason, checking for tool calls");
-			has_more_tools
-		}
+		None => has_more_tools,
 	}
 }
 
@@ -463,102 +447,54 @@ fn handle_follow_up_cost_tracking(
 			chat_session.session.info.total_api_time_ms += api_time_ms;
 		}
 
-		// Update cost
-		if let Some(cost) = usage.cost {
-			// OpenRouter credits = dollars, use the value directly
+		let raw_cost = exchange
+			.response
+			.get("usage")
+			.and_then(|value| value.get("cost"))
+			.and_then(|value| value.as_f64());
+		let (cost, cost_source) = match (usage.cost, raw_cost) {
+			(Some(cost), _) => (Some(cost), "normalized"),
+			(None, Some(cost)) => (Some(cost), "raw"),
+			(None, None) => (None, "unreported"),
+		};
+		if let Some(cost) = cost {
 			chat_session.session.info.total_cost += cost;
 			chat_session.estimated_cost = chat_session.session.info.total_cost;
-
-			log_debug!(
-				"Adding ${:.5} to total cost (total now: ${:.5})",
-				cost,
-				chat_session.session.info.total_cost
-			);
-
-			// Enhanced debug for follow-up calls
-			log_debug!("Tool response usage detail:");
-			if let Ok(usage_str) = serde_json::to_string_pretty(usage) {
-				log_debug!("{}", usage_str);
-			}
-
-			// Check for cache-related fields
-			if let Some(raw_usage) = exchange.response.get("usage") {
-				log_debug!("Raw tool response usage object:");
-				if let Ok(raw_str) = serde_json::to_string_pretty(raw_usage) {
-					log_debug!("{}", raw_str);
-				}
-
-				// Look specifically for cache-related fields
-				if let Some(cache_cost) = raw_usage.get("cache_cost") {
-					log_debug!("Found cache_cost field: {}", cache_cost);
-				}
-
-				if let Some(cached_cost) = raw_usage.get("cached_cost") {
-					log_debug!("Found cached_cost field: {}", cached_cost);
-				}
-
-				if let Some(any_cache) = raw_usage.get("cached") {
-					log_debug!("Found cached field: {}", any_cache);
-				}
-			}
-		} else {
-			// Try to get cost from the raw response if not in usage struct
-			let cost_from_raw = exchange
-				.response
+		}
+		let cost_summary = cost
+			.map(|value| format!("${value:.5} ({cost_source})"))
+			.unwrap_or_else(|| cost_source.to_string());
+		let latency = usage
+			.request_time_ms
+			.map(|value| format!("{value}ms"))
+			.unwrap_or_else(|| "unreported".to_string());
+		log_debug!(
+			"Provider usage [follow-up]: provider={}, input={}, output={}, cache_read={}, cache_write={}, reasoning={}, cost={}, session_total=${:.5}, latency={}",
+			exchange.provider,
+			usage.input_tokens,
+			usage.output_tokens,
+			usage.cache_read_tokens,
+			usage.cache_write_tokens,
+			usage.reasoning_tokens,
+			cost_summary,
+			chat_session.session.info.total_cost,
+			latency
+		);
+		if cost.is_none()
+			&& exchange.provider == "openrouter"
+			&& !exchange
+				.request
 				.get("usage")
-				.and_then(|u| u.get("cost"))
-				.and_then(|c| c.as_f64());
-
-			if let Some(cost) = cost_from_raw {
-				// Use the cost value directly
-				chat_session.session.info.total_cost += cost;
-				chat_session.estimated_cost = chat_session.session.info.total_cost;
-
-				log_debug!(
-					"Using cost ${:.5} from raw response (total now: ${:.5})",
-					cost,
-					chat_session.session.info.total_cost
-				);
-				// Provider did not provide cost data - this is normal for some providers (e.g., Ollama)
-				let provider_name = &exchange.provider;
-				log_debug!(
-					"{} did not provide cost data for tool response API call",
-					provider_name
-				);
-
-				// Check if usage tracking was explicitly requested (OpenRouter-specific)
-				if provider_name == "openrouter" {
-					let has_usage_flag = exchange
-						.request
-						.get("usage")
-						.and_then(|u| u.get("include"))
-						.and_then(|i| i.as_bool())
-						.unwrap_or(false);
-
-					log_debug!(
-						"{} request had usage.include flag: {}",
-						provider_name,
-						has_usage_flag
-					);
-					if !has_usage_flag {
-						log_debug!(
-							"Make sure usage.include=true is set for {} to get cost data",
-							provider_name
-						);
-					}
-				}
-
-				// Dump the raw response for debugging
-				log_debug!("Raw {} response for debugging:", provider_name);
-				if let Ok(resp_str) = serde_json::to_string_pretty(&exchange.response) {
-					log_debug!("Partial response JSON:\n{}", resp_str);
-				}
-			}
+				.and_then(|value| value.get("include"))
+				.and_then(|value| value.as_bool())
+				.unwrap_or(false)
+		{
+			log_debug!("OpenRouter cost unavailable: request usage.include was false");
 		}
 	} else {
-		println!(
-			"{}",
-			"ERROR: No usage data for tool response API call".bright_red()
+		log_debug!(
+			"Provider usage [follow-up]: provider={}, usage unavailable",
+			exchange.provider
 		);
 	}
 }

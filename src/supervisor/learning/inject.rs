@@ -188,11 +188,6 @@ pub async fn retrieve_and_format(
 			content: item.lesson.content,
 		})
 		.collect::<Vec<_>>();
-	crate::log_debug!(
-		"Learning retrieval: active pack {} item(s), {} tokens",
-		refs.len(),
-		crate::session::estimate_tokens(&out)
-	);
 	(out, refs)
 }
 

@@ -148,6 +148,12 @@ Change the log level. Options: `none`, `info`, `debug`. This is **runtime-only**
 /loglevel debug
 ```
 
+Debug output favors one compact event per provider response, usage update, and
+tool dispatch. Tool parameters are serialized on one line and capped at 200
+tokens; routine animation transitions and full raw provider responses are not
+printed. Learning recall is the deliberate exception: its bounded final Active
+Memory Pack is printed exactly so injection correctness can be inspected.
+
 ## Context Management
 
 ### `/context [FILTER]`

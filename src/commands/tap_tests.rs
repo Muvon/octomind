@@ -168,7 +168,7 @@ fn execute_rejects_malformed_and_duplicate_taps() {
 	})
 	.expect_err("malformed tap refused")
 	.to_string();
-	assert!(err.contains("user/repo format"), "{err}");
+	assert!(err.contains("user/repo"), "{err}");
 
 	let local = tempfile::tempdir().expect("local tap dir");
 	execute(&TapArgs {

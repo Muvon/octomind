@@ -122,24 +122,20 @@ async fn execute_rejects_an_unknown_tap_tag() {
 }
 
 #[tokio::test]
-#[serial]
-async fn execute_starts_the_websocket_server_on_an_ephemeral_port() {
-	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
-	let dir = std::env::temp_dir().join(format!("octomind-server-{}", std::process::id()));
-	std::fs::create_dir_all(&dir).expect("sandbox dir");
-	std::env::set_var(DATA_DIR_KEY, &dir);
+async fn websocket_server_on_ephemeral_port_keeps_serving() {
+	let server = octomind::websocket::WebSocketServer::new(
+		"127.0.0.1",
+		0,
+		template_config(),
+		"assistant".to_string(),
+		vec!["http://localhost:3000".to_string()],
+	)
+	.expect("server configuration is valid");
 
-	let config = template_config();
-	// A plain role skips tap manifest fetching; port 0 binds an ephemeral
-	// port so parallel runs never collide.
-	let args = ServerArgs {
-		tag: Some("assistant".to_string()),
-		host: "127.0.0.1".to_string(),
-		port: 0,
-		sandbox: false,
-		allow_origin: vec!["http://localhost:3000".to_string()],
-	};
-	execute(&args, &config)
-		.await
-		.expect("server starts and returns");
+	assert!(
+		tokio::time::timeout(std::time::Duration::from_millis(100), server.start())
+			.await
+			.is_err(),
+		"a started server should keep serving until its owner cancels it"
+	);
 }

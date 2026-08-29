@@ -15,7 +15,6 @@
 // MCP Protocol Implementation
 
 use crate::config::McpConnectionType;
-use crate::log_debug;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

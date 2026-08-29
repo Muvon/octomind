@@ -308,6 +308,32 @@ async fn test_acp_initialize_new_session_prompt() {
 		"/help prompt result: {help_result}"
 	);
 
+	// ACP extension commands share the live session but return structured
+	// responses, making broad command coverage deterministic without terminal
+	// rendering or model calls.
+	for (command, args) in [
+		("/info", serde_json::json!([])),
+		("/context", serde_json::json!(["all"])),
+		("/agents", serde_json::json!([])),
+		("/learning", serde_json::json!([])),
+		("/plan", serde_json::json!([])),
+		("/mcp", serde_json::json!(["list"])),
+		("/effort", serde_json::json!(["low"])),
+		("/report", serde_json::json!([])),
+	] {
+		let (response, _) = client
+			.request(
+				"_octomind/command",
+				serde_json::json!({
+					"session_id": session_id,
+					"command": command,
+					"args": args,
+				}),
+			)
+			.await;
+		assert_eq!(response["success"], true, "{command}: {response}");
+	}
+
 	// Multi-turn: a second real prompt on the same session still round-trips
 	let (second_result, second_updates) = client
 		.request(

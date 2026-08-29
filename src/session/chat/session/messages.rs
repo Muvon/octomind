@@ -603,3 +603,91 @@ impl ChatSession {
 		Ok(())
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.set_active_memory_pack(Some("memory pack".into()));
+		session.ensure_active_memory_pack_message();
+		session.ensure_active_memory_pack_message();
+		assert_eq!(
+			session
+				.session
+				.messages
+				.iter()
+				.filter(|message| message.name.as_deref() == Some("__active_memory_pack"))
+				.count(),
+			1
+		);
+
+		session.remove_active_memory_pack_message();
+		assert!(session.session.messages.is_empty());
+		session.ensure_active_memory_pack_message();
+		assert_eq!(session.session.messages.len(), 1);
+		session.recalled_refs.push((
+			"M1".into(),
+			"memory".into(),
+			"assistant".into(),
+			"project".into(),
+		));
+		session.used_memory_ids.insert("M1".into());
+		session.clear_active_memory_pack();
+		assert!(session.session.messages.is_empty());
+		assert!(session.recalled_refs.is_empty());
+		assert!(session.used_memory_ids.is_empty());
+	}
+
+	#[test]
+	fn message_lifecycle_persists_each_role_and_runtime_summary() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("messages.jsonl.zst");
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.session_file = Some(path.clone());
+		session.session.info.name = "message-lifecycle".into();
+		let config = crate::session::chat::test_support::fake_provider_config();
+
+		session.add_system_message("system prompt").unwrap();
+		session.add_user_message("user request").unwrap();
+		session
+			.add_system_managed_turn_message("<system-note>event</system-note>")
+			.unwrap();
+		session
+			.add_tool_message("tool result", "call-1", "view", &config)
+			.unwrap();
+		session
+			.add_assistant_message(
+				"assistant answer",
+				None,
+				&config,
+				"assistant",
+			)
+			.unwrap();
+		session.save().unwrap();
+
+		assert!(path.exists());
+		assert_eq!(session.session.messages[0].role, "system");
+		assert_eq!(session.session.messages[1].role, "user");
+		assert_eq!(session.session.messages[2].role, "user");
+		assert_eq!(session.session.messages[3].role, "tool");
+		assert_eq!(session.session.messages[4].role, "assistant");
+		assert_eq!(session.last_response, "assistant answer");
+		assert_eq!(session.turn_answers, vec!["assistant answer"]);
+	}
+
+	#[test]
+	fn disabled_spending_limits_continue_and_request_checkpoint_tracks_cost() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.max_session_spending_threshold = 0.0;
+		config.max_request_spending_threshold = -1.0;
+		session.session.info.total_cost = 2.5;
+		assert!(session.check_spending_threshold(&config).unwrap());
+		assert!(session.check_request_spending_threshold(&config).unwrap());
+		session.start_request_spending_tracking();
+		assert_eq!(session.request_spending_checkpoint, 2.5);
+	}
+}

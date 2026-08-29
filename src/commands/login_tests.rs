@@ -123,12 +123,11 @@ struct Cli {
 
 #[test]
 fn login_args_parse_flags_and_default_to_off() {
-	let cli = Cli::try_parse_from(["octomind", "login"]).expect("bare login parses");
+	let cli = Cli::try_parse_from(["octomind"]).expect("bare login parses");
 	assert!(!cli.args.force);
 	assert!(!cli.args.no_browser);
 
-	let cli =
-		Cli::try_parse_from(["octomind", "login", "--force", "--no-browser"]).expect("flags parse");
+	let cli = Cli::try_parse_from(["octomind", "--force", "--no-browser"]).expect("flags parse");
 	assert!(cli.args.force);
 	assert!(cli.args.no_browser);
 }

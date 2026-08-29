@@ -50,18 +50,17 @@ struct Cli {
 
 #[test]
 fn send_args_parse_name_short_flag_and_message() {
-	let cli = Cli::try_parse_from(["octomind", "send", "-n", "work", "hello there"])
+	let cli = Cli::try_parse_from(["octomind", "-n", "work", "hello there"])
 		.expect("name + message parse");
 	assert_eq!(cli.args.name, "work");
 	assert_eq!(cli.args.message.as_deref(), Some("hello there"));
 
-	let cli =
-		Cli::try_parse_from(["octomind", "send", "--name", "work"]).expect("message optional");
+	let cli = Cli::try_parse_from(["octomind", "--name", "work"]).expect("message optional");
 	assert_eq!(cli.args.name, "work");
 	assert!(cli.args.message.is_none());
 
 	assert!(
-		Cli::try_parse_from(["octomind", "send", "hello"]).is_err(),
+		Cli::try_parse_from(["octomind", "hello"]).is_err(),
 		"name is required"
 	);
 }

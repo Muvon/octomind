@@ -396,8 +396,9 @@ fn test_stdio_mcp_server_persists_with_args() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_server =
-		Some("local,command=node,args=server.js --verbose,timeout_seconds=20".to_string());
+	a.mcp_server = Some(
+		"local,type=stdio,command=node,args=server.js --verbose,timeout_seconds=20".to_string(),
+	);
 	execute(&a, template_config()).expect("add stdio server saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");

@@ -57,7 +57,7 @@ struct Cli {
 
 #[test]
 fn server_args_default_host_port_and_parse_overrides() {
-	let cli = Cli::try_parse_from(["octomind", "server"]).expect("bare server parses");
+	let cli = Cli::try_parse_from(["octomind"]).expect("bare server parses");
 	assert_eq!(cli.args.tag, None);
 	assert_eq!(cli.args.host, "127.0.0.1");
 	assert_eq!(cli.args.port, 8080);
@@ -66,7 +66,6 @@ fn server_args_default_host_port_and_parse_overrides() {
 
 	let cli = Cli::try_parse_from([
 		"octomind",
-		"server",
 		"developer:general",
 		"--host",
 		"0.0.0.0",
@@ -93,7 +92,18 @@ fn server_args_default_host_port_and_parse_overrides() {
 }
 
 #[tokio::test]
+#[serial]
 async fn execute_rejects_an_unknown_tap_tag() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = tempfile::tempdir().expect("sandbox dir");
+	std::env::set_var(DATA_DIR_KEY, dir.path());
+	let default_tap = octomind::agent::taps::Tap {
+		name: octomind::agent::taps::DEFAULT_TAP.to_string(),
+		local_path: None,
+	};
+	std::fs::create_dir_all(default_tap.local_dir().expect("default tap dir"))
+		.expect("create empty default tap");
+
 	let config = template_config();
 	let args = ServerArgs {
 		tag: Some("no-such-category:missing-variant".to_string()),

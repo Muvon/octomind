@@ -162,7 +162,10 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 	};
 	assert!(!signed_in, "no credentials means signed out");
 	assert!(account.is_none());
-	assert!(windows.is_empty(), "nothing to report when signed out: {windows:?}");
+	assert!(
+		windows.is_empty(),
+		"nothing to report when signed out: {windows:?}"
+	);
 	assert_eq!(balance_usd, 0.0);
 	assert_eq!(storage_gb, 0.0);
 	assert_eq!(storage_quota_gb, 0.0);
@@ -212,10 +215,17 @@ async fn signed_in_state_maps_every_window_and_the_account_label() {
 	assert_eq!(windows[0].resets_at, "soon");
 	assert_eq!(windows[1].label, "week");
 	assert_eq!(windows[1].spent_usd, 2.0);
-	assert_eq!(windows[1].reserved_usd, Some(0.5), "week carries the reservation");
+	assert_eq!(
+		windows[1].reserved_usd,
+		Some(0.5),
+		"week carries the reservation"
+	);
 	assert_eq!(windows[2].label, "month");
 	assert_eq!(windows[2].spent_usd, 3.0);
-	assert_eq!(windows[2].reserved_usd, None, "month fixture has no reservation");
+	assert_eq!(
+		windows[2].reserved_usd, None,
+		"month fixture has no reservation"
+	);
 	assert_eq!(balance_usd, 9.0);
 	assert_eq!(storage_gb, 1.0);
 	assert_eq!(storage_quota_gb, 2.0);

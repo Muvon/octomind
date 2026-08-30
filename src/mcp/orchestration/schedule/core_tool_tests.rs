@@ -299,11 +299,7 @@ async fn idle_add_with_description_echoes_it_in_the_response() {
 		})))
 		.await
 		.expect("add");
-		assert!(
-			!added.is_error(),
-			"add failed: {}",
-			added.extract_content()
-		);
+		assert!(!added.is_error(), "add failed: {}", added.extract_content());
 		let content = added.extract_content();
 		assert!(
 			content.contains("Description: idle probe"),
@@ -374,8 +370,7 @@ async fn add_survives_an_unloggable_snapshot_and_restore_handles_a_blocked_data_
 #[cfg(unix)]
 fn chmod(path: &std::path::Path, mode: u32) {
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-		.expect("set permissions");
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("set permissions");
 }
 
 #[tokio::test]

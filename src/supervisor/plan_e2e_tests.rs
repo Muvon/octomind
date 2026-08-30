@@ -150,15 +150,13 @@ async fn test_plan_signal_noop_without_supervisor() {
 // ---------------------------------------------------------------------------
 
 const CREATE: &str = "{\"decision\":\"create\",\"title\":\"Ship the widget\",\"tasks\":[{\"title\":\"build it\",\"done_when\":\"it compiles\"},{\"title\":\"test it\",\"done_when\":\"tests pass\"}]}";
-const NO_PLAN: &str = "{\"decision\":\"no_plan\",\"reason\":\"single deliverable, no phases needed\"}";
+const NO_PLAN: &str =
+	"{\"decision\":\"no_plan\",\"reason\":\"single deliverable, no phases needed\"}";
 const ADVANCE: &str = "{\"decision\":\"advance\",\"summary\":\"scaffolding compiles\"}";
 const REVISE: &str = "{\"decision\":\"revise\",\"reason\":\"assumptions changed\",\"tasks\":[{\"title\":\"rebuild it\",\"done_when\":\"it links\"}]}";
 const HOLD: &str = "{\"decision\":\"hold\",\"reason\":\"waiting on evidence\"}";
 
-async fn reconcile_with(
-	session: &mut ChatSession,
-	url: &str,
-) -> anyhow::Result<()> {
+async fn reconcile_with(session: &mut ChatSession, url: &str) -> anyhow::Result<()> {
 	let config = plan_config();
 	let (_tx, rx) = cancel_pair();
 	std::env::set_var("OLLAMA_API_URL", url);
@@ -306,11 +304,7 @@ async fn a_phase_signal_without_an_active_plan_is_consumed() {
 async fn a_phase_complete_advance_moves_the_plan_and_recharges_the_gate() {
 	let _guard = ENV_LOCK.lock().await;
 	in_plan_session("__plan_e2e_advance", async {
-		let url = spawn_stub(vec![
-			final_response(CREATE),
-			final_response(ADVANCE),
-		])
-		.await;
+		let url = spawn_stub(vec![final_response(CREATE), final_response(ADVANCE)]).await;
 		let mut session = plan_session();
 		session.nudge_iterations = 5;
 		reconcile_with(&mut session, &url).await.expect("create");
@@ -343,7 +337,8 @@ async fn a_phase_complete_hold_keeps_the_phase_open_with_feedback() {
 			.map(|m| m.content.as_str())
 			.collect();
 		assert!(
-			msgs.iter().any(|m| m.contains("runtime-plan-feedback") && m.contains("remains open")),
+			msgs.iter()
+				.any(|m| m.contains("runtime-plan-feedback") && m.contains("remains open")),
 			"a hold explains itself to the agent: {msgs:?}"
 		);
 	})
@@ -373,7 +368,9 @@ async fn a_reassess_revise_rewrites_the_plan() {
 		let mut session = plan_session();
 		reconcile_with(&mut session, &url).await.expect("create");
 		session.pending_plan_signal = Some(PlanSignal::Reassess);
-		reconcile_with(&mut session, &url).await.expect("reassess revise");
+		reconcile_with(&mut session, &url)
+			.await
+			.expect("reassess revise");
 		assert!(crate::mcp::core::plan::has_active_plan());
 		assert!(!session.planner_failed);
 	})
@@ -388,7 +385,9 @@ async fn a_reassess_hold_reports_the_failed_assumption() {
 		let mut session = plan_session();
 		reconcile_with(&mut session, &url).await.expect("create");
 		session.pending_plan_signal = Some(PlanSignal::Reassess);
-		reconcile_with(&mut session, &url).await.expect("reassess hold");
+		reconcile_with(&mut session, &url)
+			.await
+			.expect("reassess hold");
 		let msgs: Vec<&str> = session
 			.session
 			.messages

@@ -28,16 +28,12 @@ fn write_dep(root: &Path, entry: &str, body: &str) {
 
 #[test]
 fn parse_dep_entries_returns_empty_without_deps_section() {
-	assert!(
-		parse_dep_entries("[[roles]]\nname = \"x\"\n")
-			.expect("manifest without [deps] parses")
-			.is_empty()
-	);
-	assert!(
-		parse_dep_entries("[deps]\n")
-			.expect("[deps] without require parses")
-			.is_empty()
-	);
+	assert!(parse_dep_entries("[[roles]]\nname = \"x\"\n")
+		.expect("manifest without [deps] parses")
+		.is_empty());
+	assert!(parse_dep_entries("[deps]\n")
+		.expect("[deps] without require parses")
+		.is_empty());
 }
 
 #[test]
@@ -126,10 +122,7 @@ async fn run_dep_entries_failure_without_stderr_omits_stderr_trailer() {
 		.await
 		.expect_err("failing dep script must fail");
 	let message = format!("{err:#}");
-	assert!(
-		message.contains("exited with status 4"),
-		"got: {message}"
-	);
+	assert!(message.contains("exited with status 4"), "got: {message}");
 	assert!(
 		!message.contains("stderr:"),
 		"no stderr trailer without output: {message}"
@@ -139,16 +132,17 @@ async fn run_dep_entries_failure_without_stderr_omits_stderr_trailer() {
 #[tokio::test]
 async fn run_dep_entries_failure_includes_captured_stderr() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	write_dep(tmp.path(), "acme/loud", "echo 'installer exploded' >&2\nexit 3\n");
+	write_dep(
+		tmp.path(),
+		"acme/loud",
+		"echo 'installer exploded' >&2\nexit 3\n",
+	);
 
 	let err = run_dep_entries(&["acme/loud".to_string()], tmp.path(), None)
 		.await
 		.expect_err("failing dep script must fail");
 	let message = format!("{err:#}");
-	assert!(
-		message.contains("exited with status 3"),
-		"got: {message}"
-	);
+	assert!(message.contains("exited with status 3"), "got: {message}");
 	assert!(
 		message.contains("installer exploded"),
 		"stderr must be surfaced: {message}"

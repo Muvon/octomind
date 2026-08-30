@@ -491,13 +491,9 @@ async fn test_run_session_with_input_unknown_slash_treated_as_user_input() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = fake_provider_config();
-	run_interactive_session_with_input(
-		&session_args(),
-		&config,
-		"/definitely-not-a-command hello",
-	)
-	.await
-	.expect("unknown slash input runs as a normal turn");
+	run_interactive_session_with_input(&session_args(), &config, "/definitely-not-a-command hello")
+		.await
+		.expect("unknown slash input runs as a normal turn");
 
 	let loaded =
 		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
@@ -648,13 +644,11 @@ async fn test_run_session_with_input_due_schedule_drives_second_turn() {
 
 	let loaded =
 		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
-	let contents: Vec<&str> = loaded
-		.messages
-		.iter()
-		.map(|m| m.content.as_str())
-		.collect();
+	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
 	assert!(
-		contents.iter().any(|c| c.contains("scheduled follow-up work")),
+		contents
+			.iter()
+			.any(|c| c.contains("scheduled follow-up work")),
 		"the fired schedule entry must land as a user turn: {contents:?}"
 	);
 	assert!(
@@ -740,13 +734,11 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 
 	let loaded =
 		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
-	let contents: Vec<&str> = loaded
-		.messages
-		.iter()
-		.map(|m| m.content.as_str())
-		.collect();
+	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
 	assert!(
-		contents.iter().any(|c| c.contains("COMPRESS-RESUME-CONTEXT")),
+		contents
+			.iter()
+			.any(|c| c.contains("COMPRESS-RESUME-CONTEXT")),
 		"the compression summary must replace the drained turns: {contents:?}"
 	);
 	assert!(

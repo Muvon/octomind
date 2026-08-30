@@ -560,11 +560,14 @@ fn grounded_messages() -> Vec<crate::session::Message> {
 fn experience_body_missing_a_required_heading_is_rejected() {
 	let messages = grounded_messages();
 	let transcript = build_transcript(&messages);
-	let context = experience_context(&messages, &transcript, crate::supervisor::learning::TrajectoryOutcome::Verified);
-	let body = experience_body().replace("## Reuse conditions", "## Notes");
-	let tag = format!(
-		r#"<experience title="T" confidence="high" evidence="M1,M2">{body}</experience>"#
+	let context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
 	);
+	let body = experience_body().replace("## Reuse conditions", "## Notes");
+	let tag =
+		format!(r#"<experience title="T" confidence="high" evidence="M1,M2">{body}</experience>"#);
 	assert!(
 		parse_experience_tag(&tag, &context).is_none(),
 		"a body without every required section is not an experience"
@@ -575,7 +578,11 @@ fn experience_body_missing_a_required_heading_is_rejected() {
 fn experience_with_an_empty_title_is_rejected() {
 	let messages = grounded_messages();
 	let transcript = build_transcript(&messages);
-	let context = experience_context(&messages, &transcript, crate::supervisor::learning::TrajectoryOutcome::Verified);
+	let context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	);
 	let tag = format!(
 		r#"<experience title="   " confidence="high" evidence="M1,M2">{}</experience>"#,
 		experience_body()
@@ -588,10 +595,26 @@ fn experience_importance_follows_the_outcome_and_confidence_ladder() {
 	let messages = grounded_messages();
 	let transcript = build_transcript(&messages);
 	let cases = [
-		(crate::supervisor::learning::TrajectoryOutcome::Verified, "high", 0.85),
-		(crate::supervisor::learning::TrajectoryOutcome::Verified, "medium", 0.75),
-		(crate::supervisor::learning::TrajectoryOutcome::Failed, "high", 0.7),
-		(crate::supervisor::learning::TrajectoryOutcome::Unknown, "high", 0.55),
+		(
+			crate::supervisor::learning::TrajectoryOutcome::Verified,
+			"high",
+			0.85,
+		),
+		(
+			crate::supervisor::learning::TrajectoryOutcome::Verified,
+			"medium",
+			0.75,
+		),
+		(
+			crate::supervisor::learning::TrajectoryOutcome::Failed,
+			"high",
+			0.7,
+		),
+		(
+			crate::supervisor::learning::TrajectoryOutcome::Unknown,
+			"high",
+			0.55,
+		),
 	];
 	for (outcome, confidence, expected) in cases {
 		let context = experience_context(&messages, &transcript, outcome);
@@ -611,8 +634,14 @@ fn experience_importance_follows_the_outcome_and_confidence_ladder() {
 
 #[test]
 fn experience_verdict_support_helper_parses_and_rejects() {
-	assert_eq!(parse_experience_supported(r#"{"supported":true}"#), Some(true));
-	assert_eq!(parse_experience_supported(r#"{"supported":false}"#), Some(false));
+	assert_eq!(
+		parse_experience_supported(r#"{"supported":true}"#),
+		Some(true)
+	);
+	assert_eq!(
+		parse_experience_supported(r#"{"supported":false}"#),
+		Some(false)
+	);
 	assert_eq!(parse_experience_supported("not json"), None);
 }
 
@@ -620,7 +649,11 @@ fn experience_verdict_support_helper_parses_and_rejects() {
 fn experience_evidence_render_bails_on_an_absent_citation() {
 	let messages = grounded_messages();
 	let transcript = build_transcript(&messages);
-	let context = experience_context(&messages, &transcript, crate::supervisor::learning::TrajectoryOutcome::Verified);
+	let context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	);
 	let tag = format!(
 		r#"<experience title="T" confidence="high" evidence="M1,M9">{}</experience>"#,
 		experience_body()
@@ -633,11 +666,14 @@ fn experience_evidence_render_bails_on_an_absent_citation() {
 		r#"<experience title="T" confidence="high" evidence="M1,M2">{}</experience>"#,
 		experience_body()
 	);
-	let ok = parse_experience_tag(&ok_tag, &context)
-		.expect("M1,M2 parse against the real transcript");
+	let ok =
+		parse_experience_tag(&ok_tag, &context).expect("M1,M2 parse against the real transcript");
 	let error = render_experience_evidence(&ok, &messages[..1])
 		.expect_err("M2 is absent from the truncated slice");
-	assert!(error.to_string().contains("M2"), "the absent citation is named: {error}");
+	assert!(
+		error.to_string().contains("M2"),
+		"the absent citation is named: {error}"
+	);
 }
 
 #[test]
@@ -649,7 +685,11 @@ fn experience_evidence_render_labels_each_cited_role() {
 		..Default::default()
 	});
 	let transcript = build_transcript(&messages);
-	let context = experience_context(&messages, &transcript, crate::supervisor::learning::TrajectoryOutcome::Verified);
+	let context = experience_context(
+		&messages,
+		&transcript,
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	);
 	let tag = format!(
 		r#"<experience title="T" confidence="high" evidence="M1,M2,M3">{}</experience>"#,
 		experience_body()

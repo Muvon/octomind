@@ -55,10 +55,7 @@ fn test_global_hint_bucket_without_session() {
 	let drained = drain_hints();
 	assert_eq!(
 		drained,
-		vec![
-			"global hint one".to_string(),
-			"global hint two".to_string()
-		],
+		vec!["global hint one".to_string(), "global hint two".to_string()],
 		"drain must deduplicate and preserve insertion order"
 	);
 	assert!(!has_hints(), "drain must clear the global bucket");

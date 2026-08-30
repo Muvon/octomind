@@ -155,15 +155,11 @@ async fn enable_spill_reader() {
 /// decline keep their meaning after this file runs. Re-initializing alone
 /// would short-circuit on an unchanged config hash and leave `view` mapped.
 async fn reset_tool_map() {
-	crate::mcp::tool_map::unregister_dynamic_server_tools(
-		"spill-reader",
-		&["view".to_string()],
-	);
+	crate::mcp::tool_map::unregister_dynamic_server_tools("spill-reader", &["view".to_string()]);
 }
 fn verdict_json(body: &str) -> String {
 	format!(r#"{{"results":{body}}}"#)
 }
-
 
 #[tokio::test]
 #[serial_test::serial]
@@ -192,12 +188,17 @@ async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 	std::env::remove_var("OLLAMA_API_URL");
 	reset_tool_map().await;
 	let _ = std::fs::remove_dir_all(
-		std::env::temp_dir().join("octomind-spill").join("__condense_e2e_full"),
+		std::env::temp_dir()
+			.join("octomind-spill")
+			.join("__condense_e2e_full"),
 	);
 
 	plain = results.remove(0);
 	let condensed = plain.extract_content();
-	assert!(condensed.contains(CONDENSE_NOTICE_TAG), "the notice names the spill");
+	assert!(
+		condensed.contains(CONDENSE_NOTICE_TAG),
+		"the notice names the spill"
+	);
 	assert!(
 		condensed.contains("kept 11 of 200 original lines"),
 		"the kept-line count is factual: {condensed}"
@@ -258,7 +259,10 @@ async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	let _guard = ENV_LOCK.lock().await;
 	enable_spill_reader().await;
 	let config = condense_config();
-	let mut results = vec![tool_result("t1", &big_body()), tool_result("t2", &big_body())];
+	let mut results = vec![
+		tool_result("t1", &big_body()),
+		tool_result("t2", &big_body()),
+	];
 	let t1_before = results[0].extract_content();
 
 	let url = spawn_stub(vec![final_response(&verdict_json(
@@ -274,7 +278,9 @@ async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	std::env::remove_var("OLLAMA_API_URL");
 	reset_tool_map().await;
 	let _ = std::fs::remove_dir_all(
-		std::env::temp_dir().join("octomind-spill").join("__condense_e2e_missing"),
+		std::env::temp_dir()
+			.join("octomind-spill")
+			.join("__condense_e2e_missing"),
 	);
 
 	assert_eq!(

@@ -325,14 +325,14 @@ fn truncate_edges_hard_budget_holds_when_fragments_merge() {
 
 #[test]
 fn request_context_reports_a_divergent_follow_up_rewrite() {
-	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
-		crate::session::Message {
+	let mut session =
+		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
 			role: "user".to_string(),
 			content: "and do the second part".to_string(),
 			..Default::default()
-		},
-	]);
-	let mut task = crate::supervisor::resolve::ResolvedTask::self_contained("and do the second part");
+		}]);
+	let mut task =
+		crate::supervisor::resolve::ResolvedTask::self_contained("and do the second part");
 	task.scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
 	task.resolved_request = "Deploy the staging service and run its checks".to_string();
 	session.gate_task = Some(task);

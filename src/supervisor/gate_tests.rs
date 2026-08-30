@@ -578,7 +578,11 @@ fn record_ground_evicts_the_oldest_once_the_total_exceeds_the_cap() {
 	ledger.record_ground(1, &three_quarters);
 	ledger.record_ground(2, &three_quarters);
 	let grounds = ledger.grounds();
-	assert_eq!(grounds.len(), 1, "the oldest ground is evicted, not the newest");
+	assert_eq!(
+		grounds.len(),
+		1,
+		"the oldest ground is evicted, not the newest"
+	);
 	assert_eq!(grounds[0].0, 2);
 }
 
@@ -597,8 +601,9 @@ fn a_shape_without_a_name_is_indeterminate() {
 
 #[test]
 fn a_condition_without_a_numeric_index_is_indeterminate() {
-	let resp =
-		format!(r#"{CLEAN_SHAPES}<condition status="matched">ok</condition><verdict>PASS</verdict>"#);
+	let resp = format!(
+		r#"{CLEAN_SHAPES}<condition status="matched">ok</condition><verdict>PASS</verdict>"#
+	);
 	assert!(matches!(
 		text_report(&resp).verdict(1),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition without numeric index")
@@ -618,8 +623,9 @@ fn a_duplicate_condition_index_is_indeterminate() {
 
 #[test]
 fn a_condition_status_outside_the_contract_is_indeterminate() {
-	let resp =
-		format!(r#"{CLEAN_SHAPES}<condition n="1" status="bogus">x</condition><verdict>PASS</verdict>"#);
+	let resp = format!(
+		r#"{CLEAN_SHAPES}<condition n="1" status="bogus">x</condition><verdict>PASS</verdict>"#
+	);
 	assert!(matches!(
 		text_report(&resp).verdict(1),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition 1 has invalid status")
@@ -628,8 +634,9 @@ fn a_condition_status_outside_the_contract_is_indeterminate() {
 
 #[test]
 fn a_condition_checklist_mismatch_is_indeterminate() {
-	let resp =
-		format!(r#"{CLEAN_SHAPES}<condition n="1" status="matched">only one</condition><verdict>PASS</verdict>"#);
+	let resp = format!(
+		r#"{CLEAN_SHAPES}<condition n="1" status="matched">only one</condition><verdict>PASS</verdict>"#
+	);
 	assert!(matches!(
 		text_report(&resp).verdict(2),
 		GateVerdict::Indeterminate(reason) if reason
@@ -800,7 +807,10 @@ mod verify_round_trip {
 		}
 	}
 
-	fn rx() -> (tokio::sync::watch::Sender<bool>, tokio::sync::watch::Receiver<bool>) {
+	fn rx() -> (
+		tokio::sync::watch::Sender<bool>,
+		tokio::sync::watch::Receiver<bool>,
+	) {
 		tokio::sync::watch::channel(false)
 	}
 
@@ -872,7 +882,10 @@ mod verify_round_trip {
 	async fn a_readback_round_that_cannot_be_answered_is_indeterminate() {
 		let _guard = ENV_LOCK.lock().await;
 		let url = spawn_stub_with_status(vec![
-			(200, final_response(r#"<readback seq="1">need the output</readback>"#)),
+			(
+				200,
+				final_response(r#"<readback seq="1">need the output</readback>"#),
+			),
 			(500, serde_json::json!({"error": "verifier unavailable"})),
 		])
 		.await;

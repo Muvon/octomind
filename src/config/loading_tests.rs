@@ -348,8 +348,7 @@ fn load_uses_sibling_toml_files_when_config_toml_is_absent() {
 	let config = Config::load();
 	std::env::remove_var("OCTOMIND_CONFIG_PATH");
 
-	let config =
-		config.expect("sibling toml files are merged when config.toml is absent");
+	let config = config.expect("sibling toml files are merged when config.toml is absent");
 	assert_eq!(config.max_tokens, 1234);
 }
 
@@ -402,7 +401,10 @@ fn update_and_save_persists_the_mutation() {
 		on_disk.contains("enabled = true"),
 		"the mutation reached the file"
 	);
-	assert!(config.supervisor.enabled, "the in-memory copy is updated too");
+	assert!(
+		config.supervisor.enabled,
+		"the in-memory copy is updated too"
+	);
 }
 
 #[test]
@@ -462,7 +464,11 @@ welcome = "agent extra role welcome"
 		"servers concatenate"
 	);
 	assert!(
-		merged.mcp.servers.iter().any(|s| s.name() == "agent-extra-server"),
+		merged
+			.mcp
+			.servers
+			.iter()
+			.any(|s| s.name() == "agent-extra-server"),
 		"the agent's server is present"
 	);
 	assert_eq!(merged.roles.len(), base_role_count + 1, "roles concatenate");
@@ -502,5 +508,9 @@ model = "ollama:dup"
 		servers,
 		"a same-named server is not duplicated"
 	);
-	assert_eq!(merged.roles.len(), roles, "a same-named role is not duplicated");
+	assert_eq!(
+		merged.roles.len(),
+		roles,
+		"a same-named role is not duplicated"
+	);
 }

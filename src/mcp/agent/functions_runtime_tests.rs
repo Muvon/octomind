@@ -262,17 +262,17 @@ async fn dynamic_async_failure_releases_error_to_session_inbox() {
 		);
 
 		let manager = get_job_manager().expect("session job manager");
-		let completed = tokio::time::timeout(
-			std::time::Duration::from_secs(60),
-			manager.wait_all(),
-		)
-		.await
-		.expect("background job must finish");
+		let completed =
+			tokio::time::timeout(std::time::Duration::from_secs(60), manager.wait_all())
+				.await
+				.expect("background job must finish");
 		assert_eq!(completed, 1, "the background job completed");
 
 		let message = next_inbox_message().await;
 		assert!(
-			message.content.contains("[Async agent 'octo-probe-dyn' failed]"),
+			message
+				.content
+				.contains("[Async agent 'octo-probe-dyn' failed]"),
 			"content: {}",
 			message.content
 		);
@@ -319,12 +319,10 @@ async fn config_agent_async_failure_releases_error_to_session_inbox() {
 		assert!(!is_err(&result), "content: {}", text_of(&result));
 
 		let manager = get_job_manager().expect("session job manager");
-		let completed = tokio::time::timeout(
-			std::time::Duration::from_secs(30),
-			manager.wait_all(),
-		)
-		.await
-		.expect("background job must finish");
+		let completed =
+			tokio::time::timeout(std::time::Duration::from_secs(30), manager.wait_all())
+				.await
+				.expect("background job must finish");
 		assert_eq!(completed, 1);
 
 		let message = next_inbox_message().await;
@@ -361,11 +359,9 @@ async fn run_script(script: &str) -> anyhow::Result<String> {
 #[tokio::test]
 async fn acp_session_new_eof_after_initialize_fails_the_run() {
 	// Answers initialize (id 1) then exits before the new/session response (id 2).
-	let err = run_script(
-		"echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\nexit 0",
-	)
-	.await
-	.expect_err("EOF before the session response must fail");
+	let err = run_script("echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\nexit 0")
+		.await
+		.expect_err("EOF before the session response must fail");
 	assert!(
 		format!("{err:#}").contains("Subprocess closed before response"),
 		"got: {err:#}"

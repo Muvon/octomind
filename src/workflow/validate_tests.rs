@@ -536,7 +536,10 @@ fn max_transitions_requires_graph_mode() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("max_transitions outside graph mode must fail");
-	assert!(err.to_string().contains("requires graph mode"), "got: {err}");
+	assert!(
+		err.to_string().contains("requires graph mode"),
+		"got: {err}"
+	);
 }
 
 // ── graph validation ────────────────────────────────────────────────────────
@@ -690,7 +693,8 @@ fn graph_edge_condition_output_must_be_a_known_step() {
 	);
 	let err = validate(&bad).expect_err("unknown condition output must fail");
 	assert!(
-		err.to_string().contains("condition references unknown output"),
+		err.to_string()
+			.contains("condition references unknown output"),
 		"got: {err}"
 	);
 
@@ -743,7 +747,10 @@ fn graph_node_without_outgoing_route_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("orphan node must fail");
-	assert!(err.to_string().contains("has no outgoing route"), "got: {err}");
+	assert!(
+		err.to_string().contains("has no outgoing route"),
+		"got: {err}"
+	);
 }
 
 #[test]
@@ -854,7 +861,11 @@ fn condition_requires_contains_or_matches() {
 
 #[test]
 fn reserved_and_empty_step_names_are_rejected() {
-	for (name, needle) in [("input", "reserved"), ("$end", "reserved"), ("", "non-empty")] {
+	for (name, needle) in [
+		("input", "reserved"),
+		("$end", "reserved"),
+		("", "non-empty"),
+	] {
 		let wf = parse(&format!(
 			r#"
 		name = "wf"
@@ -919,7 +930,10 @@ fn static_parallel_source_requires_match() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("source without match must fail");
-	assert!(err.to_string().contains("source requires match"), "got: {err}");
+	assert!(
+		err.to_string().contains("source requires match"),
+		"got: {err}"
+	);
 }
 
 #[test]
@@ -937,7 +951,10 @@ fn static_parallel_requires_two_sub_steps() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("single sub-step must fail");
-	assert!(err.to_string().contains("at least 2 sub-steps"), "got: {err}");
+	assert!(
+		err.to_string().contains("at least 2 sub-steps"),
+		"got: {err}"
+	);
 }
 
 #[test]
@@ -980,7 +997,10 @@ fn loop_without_sub_steps_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("empty loop body must fail");
-	assert!(err.to_string().contains("at least 1 sub-step"), "got: {err}");
+	assert!(
+		err.to_string().contains("at least 1 sub-step"),
+		"got: {err}"
+	);
 }
 
 #[test]
@@ -1107,7 +1127,8 @@ fn conditional_without_any_branch_is_rejected() {
 	);
 	let err = validate(&wf).expect_err("branchless conditional must fail");
 	assert!(
-		err.to_string().contains("requires on_match and/or on_no_match"),
+		err.to_string()
+			.contains("requires on_match and/or on_no_match"),
 		"got: {err}"
 	);
 }
@@ -1131,7 +1152,8 @@ fn conditional_branch_must_reference_a_sub_step() {
 	);
 	let err = validate(&wf).expect_err("unknown branch name must fail");
 	assert!(
-		err.to_string().contains("branch references unknown sub-step"),
+		err.to_string()
+			.contains("branch references unknown sub-step"),
 		"got: {err}"
 	);
 }
@@ -1160,7 +1182,8 @@ fn dynamic_parallel_source_must_already_be_available() {
 	);
 	let err = validate(&wf).expect_err("forward source must fail in ordered mode");
 	assert!(
-		err.to_string().contains("source references unavailable output"),
+		err.to_string()
+			.contains("source references unavailable output"),
 		"got: {err}"
 	);
 }
@@ -1184,7 +1207,8 @@ fn loop_exit_when_output_must_be_a_known_step() {
 	);
 	let err = validate(&wf).expect_err("unknown exit_when output must fail");
 	assert!(
-		err.to_string().contains("exit_when.output references unknown step"),
+		err.to_string()
+			.contains("exit_when.output references unknown step"),
 		"got: {err}"
 	);
 }
@@ -1338,9 +1362,7 @@ fn public_role_validation_covers_every_step_kind() {
 		prompt = "p"
 		"#,
 	);
-	let public: HashSet<String> = ["developer:general".to_string()]
-		.into_iter()
-		.collect();
+	let public: HashSet<String> = ["developer:general".to_string()].into_iter().collect();
 	validate_public_roles(&wf, &public).expect("all-public workflow passes");
 
 	let none: HashSet<String> = HashSet::new();

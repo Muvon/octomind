@@ -649,3 +649,951 @@ async fn run_actor_dispatches_initialize_cancel_and_idle() {
 		.await
 		.expect("actor loop must stop after its sender is dropped");
 }
+
+// ---- full session lifecycle against the scripted provider ----
+
+use std::time::Duration;
+
+use crate::session::chat::test_support::{final_response, spawn_stub_with_status, ENV_LOCK};
+use crate::session::context;
+use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
+
+/// Points OCTOMIND_DATA_DIR at a unique temp dir and restores the previous
+/// value on drop. Session storage and the evolution registry live under it.
+struct TestDataDirGuard {
+	previous: Option<String>,
+	_dir: tempfile::TempDir,
+}
+
+impl TestDataDirGuard {
+	fn new() -> Self {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let previous = std::env::var("OCTOMIND_DATA_DIR").ok();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+		Self {
+			previous,
+			_dir: dir,
+		}
+	}
+}
+
+impl Drop for TestDataDirGuard {
+	fn drop(&mut self) {
+		match &self.previous {
+			Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+	}
+}
+
+/// Holds ENV_LOCK and points OLLAMA_API_URL at a scripted stub for the
+/// duration of the test. Serial tests only — the env var is process-global.
+struct StubEnv {
+	_guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl StubEnv {
+	async fn new(responses: Vec<serde_json::Value>) -> Self {
+		Self::with_status(responses.into_iter().map(|r| (200u16, r)).collect()).await
+	}
+
+	async fn with_status(responses: Vec<(u16, serde_json::Value)>) -> Self {
+		let guard = ENV_LOCK.lock().await;
+		let url = spawn_stub_with_status(responses).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		Self { _guard: guard }
+	}
+}
+
+impl Drop for StubEnv {
+	fn drop(&mut self) {
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+/// A stub that delays its response, so a prompt is genuinely in flight when
+/// the client cancels.
+async fn spawn_slow_stub(delay_ms: u64) -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind slow stub");
+	let addr = listener.local_addr().expect("addr");
+	tokio::spawn(async move {
+		while let Ok((mut sock, _)) = listener.accept().await {
+			tokio::spawn(async move {
+				use tokio::io::{AsyncReadExt, AsyncWriteExt};
+				let mut buf = vec![0u8; 65536];
+				let mut total = 0usize;
+				loop {
+					if total >= buf.len() {
+						return;
+					}
+					let n = sock.read(&mut buf[total..]).await.unwrap_or(0);
+					if n == 0 {
+						return;
+					}
+					total += n;
+					let head_end = buf[..total].windows(4).position(|w| w == b"\r\n\r\n");
+					let Some(head_end) = head_end else {
+						continue;
+					};
+					let head = String::from_utf8_lossy(&buf[..total]).to_string();
+					let content_length = head
+						.split("content-length:")
+						.nth(1)
+						.and_then(|s| s.split(|c| c == '\r' || c == '\n').next())
+						.and_then(|s| s.trim().parse::<usize>().ok())
+						.unwrap_or(0);
+					let body_start = head_end + 4;
+					while total - body_start < content_length {
+						let n = sock.read(&mut buf[total..]).await.unwrap_or(0);
+						if n == 0 {
+							break;
+						}
+						total += n;
+					}
+					break;
+				}
+				tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+				let body = final_response("SLOW-TURN").to_string();
+				let response = format!(
+					"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+					body.len(),
+					body
+				);
+				let _ = sock.write_all(response.as_bytes()).await;
+				let _ = sock.shutdown().await;
+			});
+		}
+	});
+	format!("http://{addr}/v1/chat/completions")
+}
+
+fn acp_fake_config() -> Config {
+	let mut config = template_config();
+	config.model = "ollama:fake-model".to_string();
+	config.supervisor.enabled = false;
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	config
+}
+
+fn acp_agent() -> Rc<OctomindAgent> {
+	Rc::new(OctomindAgent::new(
+		acp_fake_config(),
+		"assistant".to_string(),
+		Default::default(),
+	))
+}
+
+fn msg(role: &str, content: &str) -> crate::session::Message {
+	crate::session::Session::build_message(role, content)
+}
+
+fn compressible_session() -> ChatSession {
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		msg("user", "build the frobnicator widget"),
+		msg("assistant", "starting on the widget now"),
+		msg("user", "make sure it compiles"),
+		msg("assistant", "phase one is done and compiling"),
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	session
+}
+
+fn xml_summary_body() -> String {
+	concat!(
+		"<should_compress>true</should_compress>\n",
+		"<original_request>build the frobnicator widget</original_request>\n",
+		"<session_context>COMPRESS-E2E-CONTEXT: rust repo, widget work</session_context>\n",
+		"<current_task>finish the frobnicator widget</current_task>\n",
+		"<progress>phase one complete</progress>\n",
+		"<analysis_findings><finding>widget lives in src/widget.rs</finding></analysis_findings>\n",
+		"<errors_and_corrections><entry>fixed a compile error</entry></errors_and_corrections>\n",
+		"<recent_exchanges><exchange>user asked for compilation, assistant confirmed</exchange></recent_exchanges>\n",
+		"<key_entities><files><file>src/widget.rs</file></files>",
+		"<names><name>Frobnicator</name></names>",
+		"<decisions><decision>keep the widget minimal</decision></decisions></key_entities>\n",
+		"<next_steps>wire the widget tests</next_steps>\n",
+		"<critical_knowledge><knowledge>widget must stay allocation-free</knowledge></critical_knowledge>\n",
+		"<open_loops><open_loop>widget rendering</open_loop></open_loops>\n",
+		"<file_states><state>src/widget.rs modified</state></file_states>"
+	)
+	.to_string()
+}
+
+/// Inserts a memory-only session and initializes its session-scoped services.
+async fn install_session(agent: &Rc<OctomindAgent>, session_id: &str, session: ChatSession) {
+	agent.sessions.borrow_mut().insert(
+		session_id.to_string(),
+		(session, std::env::current_dir().expect("cwd")),
+	);
+	context::with_session_id(session_id.to_string(), async {
+		context::init_session_services("assistant");
+	})
+	.await;
+}
+
+async fn inbox_has_messages(session_id: &str) -> bool {
+	context::with_session_id(session_id.to_string(), async {
+		crate::session::inbox::has_inbox_messages()
+	})
+	.await
+}
+
+// ---- idle / config injection ----
+
+#[tokio::test]
+async fn wait_until_idle_treats_lock_only_sessions_as_idle() {
+	let agent = agent_with(Default::default());
+	// A session known only to the lock map (e.g. a prompt in flight elsewhere)
+	// must still be waited on, but with no services it has no pending work.
+	agent.session_lock("ghost-session");
+	tokio::time::timeout(Duration::from_secs(2), agent.wait_until_idle())
+		.await
+		.expect("lock-only session must count as idle");
+}
+
+#[test]
+fn injected_servers_are_added_to_the_role_entry_server_refs() {
+	let base = template_config();
+	let servers = vec![McpServer::Stdio(
+		McpServerStdio::new("injected-stdio", "/usr/local/bin/fs")
+			.args(vec!["--stdio".to_string()]),
+	)];
+
+	let merged = build_config_with_injected_servers(&base, "assistant", &servers);
+	let entry = merged
+		.role_map
+		.get("assistant")
+		.expect("assistant role exists in the template");
+	assert!(
+		entry.mcp.server_refs.iter().any(|r| r == "injected-stdio"),
+		"the injected server must be bound to the role, got: {:?}",
+		entry.mcp.server_refs
+	);
+}
+
+// ---- new_session / prompt / load_session ----
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn new_session_creates_and_registers_a_session_with_cancellation() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	let session_id = local
+		.run_until(async {
+			let response = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = response.session_id.to_string();
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the session is registered"
+			);
+			assert!(
+				agent.cancellations.borrow().contains_key(&session_id),
+				"a cancellation handle is registered"
+			);
+			session_id
+		})
+		.await;
+
+	context::cleanup_session(&session_id);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_runs_a_full_turn_against_the_scripted_provider() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("ACP-TURN-OK")]).await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+
+			let response = agent
+				.prompt(PromptRequest::new(session_id.clone(), vec!["hello".into()]))
+				.await
+				.expect("prompt completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get(session_id.as_str())
+				.expect("session returned to the map");
+			let last = session.session.messages.last().expect("assistant message");
+			assert_eq!(last.role, "assistant");
+			assert!(
+				last.content.contains("ACP-TURN-OK"),
+				"got: {}",
+				last.content
+			);
+			drop(sessions);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_streams_tool_lifecycle_updates() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		crate::session::chat::test_support::tool_call_response(
+			"no_such_tool_zzz",
+			serde_json::json!({}),
+		),
+		final_response("TOOL-DONE"),
+	])
+	.await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+
+			let response = agent
+				.prompt(PromptRequest::new(
+					session_id.clone(),
+					vec!["use the tool".into()],
+				))
+				.await
+				.expect("prompt completes after the tool round");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get(session_id.as_str())
+				.expect("session returned to the map");
+			assert!(
+				session.session.messages.iter().any(|m| m.role == "tool"),
+				"the unknown tool must have produced a tool result message"
+			);
+			drop(sessions);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_done_with_instructions_compression_then_turn() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("AFTER-DONE")]).await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+
+			let response = agent
+				.prompt(PromptRequest::new(
+					session_id.clone(),
+					vec!["/done continue with this".into()],
+				))
+				.await
+				.expect("prompt completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get(session_id.as_str())
+				.expect("session returned to the map");
+			let last = session.session.messages.last().expect("assistant message");
+			assert!(
+				last.role == "assistant" && last.content.contains("AFTER-DONE"),
+				"the trailing instructions must run as a user turn, got: {} {}",
+				last.role,
+				last.content
+			);
+			drop(sessions);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_done_compresses_a_loaded_session() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	let agent = acp_agent();
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "done-c-1", compressible_session()).await;
+			let response = agent
+				.prompt(PromptRequest::new("done-c-1", vec!["/done".into()]))
+				.await
+				.expect("plain /done completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get("done-c-1")
+				.expect("session returned to the map after /done");
+			let contents = session
+				.session
+				.messages
+				.iter()
+				.map(|m| m.content.clone())
+				.collect::<String>();
+			assert!(
+				contents.contains("COMPRESS-E2E-CONTEXT"),
+				"the compressed summary must replace the old turns, got: {contents}"
+			);
+			assert!(
+				session.session.messages.len() < 5,
+				"compression must shrink the session, got {} messages",
+				session.session.messages.len()
+			);
+			drop(sessions);
+			context::cleanup_session(&"done-c-1".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_slash_help_is_handled_without_a_model_call() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "slash-1", ChatSession::for_tests(Vec::new())).await;
+			let response = agent
+				.prompt(PromptRequest::new("slash-1", vec!["/help".into()]))
+				.await
+				.expect("/help completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get("slash-1")
+				.expect("session returned to the map");
+			assert!(
+				session.session.messages.is_empty(),
+				"a handled command must not add messages"
+			);
+			drop(sessions);
+			context::cleanup_session(&"slash-1".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_slash_exit_ends_the_turn() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "slash-2", ChatSession::for_tests(Vec::new())).await;
+			let response = agent
+				.prompt(PromptRequest::new("slash-2", vec!["/exit".into()]))
+				.await
+				.expect("/exit completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			assert!(
+				agent.sessions.borrow().contains_key("slash-2"),
+				"the session map entry is kept by the ACP path"
+			);
+			context::cleanup_session(&"slash-2".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_unknown_slash_command_is_answered_not_forwarded() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "slash-3", ChatSession::for_tests(Vec::new())).await;
+			let response = agent
+				.prompt(PromptRequest::new(
+					"slash-3",
+					vec!["/definitely-not-a-command".into()],
+				))
+				.await
+				.expect("unknown command completes");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			let sessions = agent.sessions.borrow();
+			let (session, _) = sessions
+				.get("slash-3")
+				.expect("session returned to the map");
+			assert!(
+				session.session.messages.is_empty(),
+				"an unknown command must not be treated as user input"
+			);
+			drop(sessions);
+			context::cleanup_session(&"slash-3".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_failing_slash_command_still_ends_the_turn() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "slash-4", ChatSession::for_tests(Vec::new())).await;
+			let response = agent
+				.prompt(PromptRequest::new(
+					"slash-4",
+					vec!["/learning evolution show no-such-record".into()],
+				))
+				.await
+				.expect("a failing command still ends the turn");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			assert!(
+				agent.sessions.borrow().contains_key("slash-4"),
+				"the session is returned even when the command fails"
+			);
+			context::cleanup_session(&"slash-4".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn load_session_resumes_a_saved_session() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("SAVE-ME")]).await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd.clone()))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			agent
+				.prompt(PromptRequest::new(session_id.clone(), vec!["hello".into()]))
+				.await
+				.expect("prompt saves the session");
+
+			// Simulate a restart: the in-memory copy is gone, the file remains.
+			agent.sessions.borrow_mut().remove(&session_id);
+
+			agent
+				.load_session(LoadSessionRequest::new(session_id.clone(), cwd))
+				.await
+				.expect("load session");
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the loaded session is registered"
+			);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn cancel_during_a_prompt_returns_a_cancelled_stop_reason() {
+	let _data = TestDataDirGuard::new();
+	let guard = ENV_LOCK.lock().await;
+	let url = spawn_slow_stub(400).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	drop(guard);
+	struct EnvRestore;
+	impl Drop for EnvRestore {
+		fn drop(&mut self) {
+			std::env::remove_var("OLLAMA_API_URL");
+		}
+	}
+	let _restore = EnvRestore;
+
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id;
+
+			let prompt_agent = agent.clone();
+			let sid_for_task = session_id.clone();
+			let task = tokio::task::spawn_local(async move {
+				prompt_agent
+					.prompt(PromptRequest::new(sid_for_task, vec!["slow please".into()]))
+					.await
+			});
+			// Let the prompt reach the in-flight provider call.
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			agent
+				.cancel(CancelNotification::new(session_id.clone()))
+				.await
+				.expect("cancel acknowledged");
+
+			let response = tokio::time::timeout(Duration::from_secs(15), task)
+				.await
+				.expect("prompt must finish after cancel")
+				.expect("prompt task must not panic")
+				.expect("prompt must still succeed");
+			assert!(
+				matches!(response.stop_reason, StopReason::Cancelled),
+				"got: {:?}",
+				response.stop_reason
+			);
+			context::cleanup_session(&session_id.to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn prompt_api_failure_maps_to_an_internal_error() {
+	let _data = TestDataDirGuard::new();
+	let failures: Vec<(u16, serde_json::Value)> = (0..6)
+		.map(|_| (500u16, serde_json::json!({"error": {"message": "boom"}})))
+		.collect();
+	let _env = StubEnv::with_status(failures).await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			let error = agent
+				.prompt(PromptRequest::new(session_id.clone(), vec!["hello".into()]))
+				.await
+				.expect_err("persistent provider failures must fail the turn");
+			assert!(
+				!error.to_string().is_empty(),
+				"the error must carry the failure"
+			);
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the session is returned even when the API call fails"
+			);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+// ---- inbox monitor ----
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn acp_monitor_processes_inbox_messages_end_to_end() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("ACP-MON-DONE")]).await;
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			// Let the monitor park.
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Inject,
+					content: "background work".to_string(),
+				},
+			);
+
+			let completed = tokio::time::timeout(Duration::from_secs(20), async {
+				loop {
+					let done = agent
+						.sessions
+						.borrow()
+						.get(&session_id)
+						.and_then(|(s, _)| s.session.messages.last().cloned())
+						.is_some_and(|m| {
+							m.role == "assistant" && m.content.contains("ACP-MON-DONE")
+						});
+					if done {
+						break;
+					}
+					tokio::time::sleep(Duration::from_millis(50)).await;
+				}
+			})
+			.await;
+			assert!(
+				completed.is_ok(),
+				"the monitor must run the background turn and store the session back"
+			);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn acp_monitor_breaks_when_the_session_is_removed_mid_drain() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			tokio::time::sleep(Duration::from_millis(100)).await;
+
+			// Hold the per-session lock BEFORE waking the monitor: it parks on
+			// lock().await inside the drain loop.
+			let lock = agent.session_lock(&session_id);
+			let guard = lock.lock().await;
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Inject,
+					content: "orphaned work".to_string(),
+				},
+			);
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			// The session vanishes while the monitor is parked on the lock.
+			agent.sessions.borrow_mut().remove(&session_id);
+			drop(guard);
+
+			tokio::time::sleep(Duration::from_millis(300)).await;
+			assert!(
+				inbox_has_messages(&session_id).await,
+				"the monitor must break before popping, leaving the message queued"
+			);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn acp_monitor_breaks_when_the_inbox_is_emptied_by_another_consumer() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			tokio::time::sleep(Duration::from_millis(100)).await;
+
+			let lock = agent.session_lock(&session_id);
+			let guard = lock.lock().await;
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Inject,
+					content: "stolen work".to_string(),
+				},
+			);
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			// Another consumer drains the inbox while the monitor is parked.
+			let popped = context::with_session_id(session_id.clone(), async {
+				crate::session::inbox::try_pop_inbox_message()
+			})
+			.await;
+			assert!(popped.is_some(), "the test must consume the message");
+			drop(guard);
+
+			tokio::time::sleep(Duration::from_millis(300)).await;
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the session must stay in the map untouched"
+			);
+			assert!(
+				!inbox_has_messages(&session_id).await,
+				"nothing may be requeued"
+			);
+			context::cleanup_session(&session_id);
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn acp_monitor_exits_when_the_session_inbox_is_destroyed() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let new = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("new session");
+			let session_id = new.session_id.to_string();
+			tokio::time::sleep(Duration::from_millis(100)).await;
+
+			let lock = agent.session_lock(&session_id);
+			let guard = lock.lock().await;
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Inject,
+					content: "doomed work".to_string(),
+				},
+			);
+			tokio::time::sleep(Duration::from_millis(100)).await;
+			// cleanup_session destroys the inbox while the monitor is parked.
+			context::cleanup_session(&session_id);
+			drop(guard);
+
+			tokio::time::sleep(Duration::from_millis(300)).await;
+			let notify = context::with_session_id(session_id.clone(), async {
+				crate::session::inbox::get_inbox_notify()
+			})
+			.await;
+			assert!(notify.is_none(), "the inbox must be destroyed");
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the monitor must not remove or resurrect the session"
+			);
+		})
+		.await;
+}
+
+// ---- run_actor dispatch ----
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn run_actor_dispatches_session_lifecycle_commands() {
+	let _data = TestDataDirGuard::new();
+	let agent = acp_agent();
+	let (tx, rx) = mpsc::unbounded_channel();
+
+	let local = tokio::task::LocalSet::new();
+	local.spawn_local(run_actor(agent.clone(), rx));
+
+	tokio::time::timeout(
+		Duration::from_secs(20),
+		local.run_until(async move {
+			let cwd = std::env::current_dir().expect("cwd");
+
+			let (reply, rx_reply) = oneshot::channel();
+			tx.send(Command::NewSession(
+				NewSessionRequest::new(cwd.clone()),
+				reply,
+			))
+			.expect("actor alive");
+			let response = rx_reply.await.expect("reply").expect("new session ok");
+			let session_id = response.session_id.to_string();
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the actor registers the session"
+			);
+
+			// Empty input short-circuits before the session lookup: the
+			// dispatch arm itself is exercised without a provider call.
+			let (reply, rx_reply) = oneshot::channel();
+			tx.send(Command::Prompt(
+				PromptRequest::new(session_id.clone(), vec!["".into()]),
+				reply,
+			))
+			.expect("actor alive");
+			let response = rx_reply.await.expect("reply").expect("prompt ok");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+
+			// Simulate a restart, then load the saved session through the actor.
+			agent.sessions.borrow_mut().remove(&session_id);
+			let (reply, rx_reply) = oneshot::channel();
+			tx.send(Command::LoadSession(
+				LoadSessionRequest::new(session_id.clone(), cwd),
+				reply,
+			))
+			.expect("actor alive");
+			rx_reply.await.expect("reply").expect("load session ok");
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the actor re-registers the loaded session"
+			);
+
+			let raw = serde_json::value::RawValue::from_string(
+				serde_json::json!({"session_id": session_id, "command": "/help"}).to_string(),
+			)
+			.expect("raw params");
+			let (reply, rx_reply) = oneshot::channel();
+			tx.send(Command::Ext(
+				ExtRequest::new("foreign/namespace", std::sync::Arc::from(raw)),
+				reply,
+			))
+			.expect("actor alive");
+			assert!(
+				rx_reply.await.expect("reply").is_err(),
+				"foreign ext namespaces must be rejected"
+			);
+
+			context::cleanup_session(&session_id);
+			drop(tx); // ends the actor loop
+		}),
+	)
+	.await
+	.expect("actor commands must complete within the timeout");
+
+	tokio::time::timeout(Duration::from_secs(5), local)
+		.await
+		.expect("actor loop must stop after its sender is dropped");
+}

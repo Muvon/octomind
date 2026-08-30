@@ -83,3 +83,7 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 	let local = tokio::task::LocalSet::new();
 	local.run_until(agent::serve(config, role, options)).await
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

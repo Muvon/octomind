@@ -93,9 +93,8 @@ fn install_default_tap_agent(data_dir: &std::path::Path, manifest: &str) {
 }
 
 fn base_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -138,8 +137,7 @@ async fn resolve_config_and_role_merges_tap_manifest_end_to_end() {
 		.find(|r| r.name == "ztest:zz")
 		.expect("merged config carries the tap role");
 	assert_eq!(
-		resolved_role.config.system,
-		"You are the resolver agent.",
+		resolved_role.config.system, "You are the resolver agent.",
 		"ENV placeholder substituted through the full path: {}",
 		resolved_role.config.system
 	);
@@ -154,7 +152,12 @@ async fn resolve_config_and_role_merges_tap_manifest_end_to_end() {
 	);
 	// The manifest is cached for future runs.
 	assert!(
-		guard.path().join("agents").join("ztest").join("zz.toml").exists(),
+		guard
+			.path()
+			.join("agents")
+			.join("ztest")
+			.join("zz.toml")
+			.exists(),
 		"manifest cached under <data>/agents"
 	);
 }

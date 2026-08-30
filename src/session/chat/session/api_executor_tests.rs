@@ -1200,15 +1200,7 @@ async fn run_turn_mode(
 	mode: crate::session::output::OutputMode,
 ) -> anyhow::Result<()> {
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	execute_api_call_and_process_response(
-		session,
-		config,
-		"assistant",
-		rx,
-		mode,
-		SilentSink,
-	)
-	.await
+	execute_api_call_and_process_response(session, config, "assistant", rx, mode, SilentSink).await
 }
 
 #[tokio::test]

@@ -28,8 +28,8 @@ use rmcp::model::{
 	ElicitRequestParams, GetTaskResult, InputRequest, InputRequests, InputRequiredResult,
 	JsonRpcMessage, Notification, ProgressNotificationParam, ReadResourceResult, Request,
 	RequestId, RequestParamsMeta, Resource, ResourceContents, ResourceUpdatedNotificationParam,
-	ServerNotification, ServerResult, SubscriptionsAcknowledgedNotificationParams,
-	SubscriptionFilter, Task, TaskPayload, TaskStatus,
+	ServerNotification, ServerResult, SubscriptionFilter,
+	SubscriptionsAcknowledgedNotificationParams, Task, TaskPayload, TaskStatus,
 };
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use serial_test::serial;
@@ -44,7 +44,12 @@ fn unique_server(tag: &str) -> String {
 	format!("octomind-test-cov-{tag}")
 }
 
-fn stdin_config(name: &str, command: &str, args: Vec<String>, timeout_seconds: u64) -> McpServerConfig {
+fn stdin_config(
+	name: &str,
+	command: &str,
+	args: Vec<String>,
+	timeout_seconds: u64,
+) -> McpServerConfig {
 	McpServerConfig::Stdin {
 		name: name.to_string(),
 		command: command.to_string(),
@@ -250,10 +255,8 @@ server.serve_forever()
 "#;
 
 fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
-	let path = std::env::temp_dir().join(format!(
-		"octomind-test-cov-{tag}-{}.py",
-		std::process::id()
-	));
+	let path =
+		std::env::temp_dir().join(format!("octomind-test-cov-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, body).expect("write fake server script");
 	path
 }
@@ -280,8 +283,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 		})
 		.await
 		.expect("fake http server startup within 10s");
-		line
-			.trim()
+		line.trim()
 			.strip_prefix("PORT=")
 			.and_then(|p| p.parse::<u16>().ok())
 			.expect("PORT=<n> line from fake server")
@@ -300,10 +302,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 	let name = unique_server("stdio-real");
 	let script = write_script("stdio-real", FAKE_STDIO_SERVER);
-	let workdir = std::env::temp_dir().join(format!(
-		"octomind-test-cwd-{}",
-		std::process::id()
-	));
+	let workdir = std::env::temp_dir().join(format!("octomind-test-cwd-{}", std::process::id()));
 	std::fs::create_dir_all(&workdir).expect("create cwd dir");
 	let server = McpServerConfig::Stdin {
 		name: name.clone(),
@@ -355,7 +354,7 @@ async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 		})
 		.collect::<Vec<_>>()
 		.join("\n");
-assert!(text.contains("marker-abc-123"), "echo payload: {text}");
+	assert!(text.contains("marker-abc-123"), "echo payload: {text}");
 	assert!(text.contains("payload"), "echo payload: {text}");
 
 	// The stderr drain task captures the child's diagnostics: the ready line
@@ -465,16 +464,12 @@ async fn connect_http_times_out_on_hanging_endpoint() {
 		)]),
 		auto_bind: None,
 	};
-	let error = match tokio::time::timeout(
-		WAIT + Duration::from_secs(5),
-		connect_http(&server),
-	)
-	.await
-	{
-		Ok(Ok(_service)) => panic!("hanging endpoint must fail"),
-		Ok(Err(e)) => e,
-		Err(_) => panic!("connect must hit its timeout, not hang forever"),
-	};
+	let error =
+		match tokio::time::timeout(WAIT + Duration::from_secs(5), connect_http(&server)).await {
+			Ok(Ok(_service)) => panic!("hanging endpoint must fail"),
+			Ok(Err(e)) => e,
+			Err(_) => panic!("connect must hit its timeout, not hang forever"),
+		};
 	assert!(
 		error.to_string().contains("Timed out connecting"),
 		"unexpected error: {}",
@@ -559,10 +554,7 @@ async fn http_auth_token_currency_for_builtin_and_tokenless_http() {
 		url: "http://127.0.0.1:9/mcp".to_string(),
 		timeout_seconds: 2,
 		tools: vec![],
-		headers: HashMap::from([(
-			"Authorization".to_string(),
-			"Bearer static".to_string(),
-		)]),
+		headers: HashMap::from([("Authorization".to_string(), "Bearer static".to_string())]),
 		auto_bind: None,
 	};
 	assert!(
@@ -605,7 +597,9 @@ async fn get_or_connect_replaces_stale_stdio_process() {
 	register(&name, peer.service);
 
 	// Point the pgid registry at a process that has already exited.
-	let short_lived = std::process::Command::new("true").spawn().expect("spawn true");
+	let short_lived = std::process::Command::new("true")
+		.spawn()
+		.expect("spawn true");
 	let dead_pid = short_lived.id();
 	let _ = short_lived.wait_with_output();
 	// Give the OS a moment to reap the child so kill(pid, 0) fails.
@@ -617,7 +611,10 @@ async fn get_or_connect_replaces_stale_stdio_process() {
 		}
 		std::thread::sleep(std::time::Duration::from_millis(20));
 	}
-	assert!(reaped, "short-lived child must exit before the test continues");
+	assert!(
+		reaped,
+		"short-lived child must exit before the test continues"
+	);
 	super::super::process::register_pgid(&name, dead_pid);
 
 	let service = tokio::time::timeout(WAIT, get_or_connect(&server))
@@ -744,9 +741,9 @@ async fn call_tool_fulfills_elicitation_round() {
 						} else {
 							let mut rounds = InputRequests::new();
 							rounds.insert("k1".to_string(), elicitation_request());
-							ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(
-								rounds,
-							))
+							ServerResult::InputRequiredResult(
+								InputRequiredResult::from_input_requests(rounds),
+							)
 						}
 					}
 					_ => continue,
@@ -922,12 +919,16 @@ async fn call_tool_exhausts_input_required_round_limit() {
 	)
 	.await
 	{
-		Ok(Ok(result)) => panic!("perpetual input_required must hit the round limit, got {result:?}"),
+		Ok(Ok(result)) => {
+			panic!("perpetual input_required must hit the round limit, got {result:?}")
+		}
 		Ok(Err(e)) => e,
 		Err(_) => panic!("round limit must be reached within 15s"),
 	};
 	assert!(
-		error.to_string().contains("exceeded the MCP input-required round limit"),
+		error
+			.to_string()
+			.contains("exceeded the MCP input-required round limit"),
 		"unexpected error: {error}"
 	);
 
@@ -958,14 +959,14 @@ async fn task_input_required_round_updates_and_completes() {
 		while let Some(message) = outgoing.next().await {
 			if let JsonRpcMessage::Request(request) = message {
 				let response = match request.request {
-					ClientRequest::CallToolRequest(_) => ServerResult::CreateTaskResult(
-						CreateTaskResult::new(Task::new(
+					ClientRequest::CallToolRequest(_) => {
+						ServerResult::CreateTaskResult(CreateTaskResult::new(Task::new(
 							"task-in",
 							TaskStatus::Working,
 							"2026-01-01T00:00:00Z",
 							"2026-01-01T00:00:00Z",
-						)),
-					),
+						)))
+					}
 					ClientRequest::GetTaskRequest(_) => {
 						get_count += 1;
 						let task = if get_count == 1 {
@@ -1005,7 +1006,7 @@ async fn task_input_required_round_updates_and_completes() {
 					}
 					ClientRequest::UpdateTaskRequest(_) => {
 						updated_flag.store(true, Ordering::SeqCst);
-					ServerResult::task_ack(())
+						ServerResult::task_ack(())
 					}
 					_ => continue,
 				};
@@ -1061,8 +1062,8 @@ async fn task_failed_and_cancelled_payloads_surface_as_errors() {
 		register(&name, peer.service);
 		let server = stdin_config(&name, "unused", Vec::new(), 5);
 
-		let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| {
-			match request {
+		let responder =
+			spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
 				ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
 					CreateTaskResult::new(Task::new(
 						tag,
@@ -1084,15 +1085,14 @@ async fn task_failed_and_cancelled_payloads_surface_as_errors() {
 					Some(ServerResult::GetTaskResult(GetTaskResult::new(task)))
 				}
 				_ => None,
-			}
-		});
+			});
 
 		let error = tokio::time::timeout(WAIT, call_tool(&server, &tool_call(tag), None))
 			.await
 			.expect("terminal task states must not hang")
 			.expect_err("terminal payload must fail the call");
 		assert!(
-		error.to_string().to_lowercase().contains(expected),
+			error.to_string().to_lowercase().contains(expected),
 			"unexpected error for {tag}: {error}"
 		);
 
@@ -1106,9 +1106,7 @@ async fn task_failed_and_cancelled_payloads_surface_as_errors() {
 // ---------------------------------------------------------------------------
 
 fn result_with_resource_link(uri: &str) -> CallToolResult {
-	CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
-		uri, uri,
-	))])
+	CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(uri, uri))])
 }
 
 /// Early returns: no links in the result, and links without a session scope.
@@ -1137,10 +1135,7 @@ async fn watch_resource_links_returns_early_without_links_or_session() {
 		loop {
 			match outgoing.next().await {
 				Some(JsonRpcMessage::Request(r)) => {
-					if matches!(
-						r.request,
-						ClientRequest::SubscriptionsListenRequest(_)
-					) {
+					if matches!(r.request, ClientRequest::SubscriptionsListenRequest(_)) {
 						return true;
 					}
 				}
@@ -1174,16 +1169,13 @@ async fn watch_resource_links_continues_when_listen_fails() {
 			crate::session::shell_jobs::note_watched_from_result(&linked);
 			// Answer the listen request with an unrelated result type → the
 			// client treats the stream as misbehaving and returns Err.
-			let responder = spawn_responder(
-				peer.outgoing,
-				peer.incoming,
-				|request| match request {
-					ClientRequest::SubscriptionsListenRequest(_) => {
-						Some(ServerResult::CallToolResult(CallToolResult::success(vec![])))
-					}
+			let responder =
+				spawn_responder(peer.outgoing, peer.incoming, |request| match request {
+					ClientRequest::SubscriptionsListenRequest(_) => Some(
+						ServerResult::CallToolResult(CallToolResult::success(vec![])),
+					),
 					_ => None,
-				},
-			);
+				});
 			tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
 				.await
 				.expect("listen failure must not hang the loop");
@@ -1219,12 +1211,13 @@ async fn watch_resource_links_cancels_unacknowledged_subscription() {
 						if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
 							// Acknowledge an EMPTY filter: the requested uri
 							// is not included.
-							let mut ack =
-								ServerNotification::SubscriptionsAcknowledgedNotification(
-									Notification::new(SubscriptionsAcknowledgedNotificationParams::new(
+							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(
+								Notification::new(
+									SubscriptionsAcknowledgedNotificationParams::new(
 										SubscriptionFilter::new(),
-									)),
-								);
+									),
+								),
+							);
 							ack.get_meta_mut().set_subscription_id(request.id.clone());
 							incoming
 								.unbounded_send(JsonRpcMessage::notification(ack))
@@ -1268,12 +1261,11 @@ async fn watch_resource_links_cancels_unwatched_subscription() {
 						if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
 							let mut filter = SubscriptionFilter::new();
 							filter.resource_subscriptions = Some(vec![uri.clone()]);
-							let mut ack =
-								ServerNotification::SubscriptionsAcknowledgedNotification(
-									Notification::new(SubscriptionsAcknowledgedNotificationParams::new(
-										filter,
-									)),
-								);
+							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(
+								Notification::new(
+									SubscriptionsAcknowledgedNotificationParams::new(filter),
+								),
+							);
 							ack.get_meta_mut().set_subscription_id(request.id.clone());
 							incoming
 								.unbounded_send(JsonRpcMessage::notification(ack))
@@ -1328,9 +1320,11 @@ async fn watch_resource_links_delivers_update_and_completes() {
 								filter.resource_subscriptions = Some(vec![watched_uri.clone()]);
 								let mut ack =
 									ServerNotification::SubscriptionsAcknowledgedNotification(
-										Notification::new(SubscriptionsAcknowledgedNotificationParams::new(
-											filter,
-										)),
+										Notification::new(
+											SubscriptionsAcknowledgedNotificationParams::new(
+												filter,
+											),
+										),
 									);
 								ack.get_meta_mut().set_subscription_id(request.id.clone());
 								seen_id
@@ -1344,14 +1338,14 @@ async fn watch_resource_links_delivers_update_and_completes() {
 							ClientRequest::ReadResourceRequest(_) => {
 								incoming
 									.unbounded_send(JsonRpcMessage::response(
-										ServerResult::ReadResourceResult(ReadResourceResult::new(vec![
-											ResourceContents::TextResourceContents {
+										ServerResult::ReadResourceResult(ReadResourceResult::new(
+											vec![ResourceContents::TextResourceContents {
 												uri: watched_uri.clone(),
 												mime_type: Some("text/plain".to_string()),
 												text: "job output body".to_string(),
 												meta: None,
-											},
-										])),
+											}],
+										)),
 										request.id,
 									))
 									.expect("fake server channel must stay open");
@@ -1386,9 +1380,7 @@ async fn watch_resource_links_delivers_update_and_completes() {
 			let mut update = ServerNotification::ResourceUpdatedNotification(Notification::new(
 				ResourceUpdatedNotificationParam::new(uri.clone()),
 			));
-			update
-				.get_meta_mut()
-				.set_subscription_id(subscription_id);
+			update.get_meta_mut().set_subscription_id(subscription_id);
 			push_update
 				.unbounded_send(JsonRpcMessage::notification(update))
 				.expect("fake server channel must stay open");
@@ -1401,7 +1393,10 @@ async fn watch_resource_links_delivers_update_and_completes() {
 				.expect("update must be delivered within the wait")
 				.expect("watch event channel must stay open");
 			match event {
-				crate::session::shell_jobs::WatchEvent::Completed { session_id: s, uri: u } => {
+				crate::session::shell_jobs::WatchEvent::Completed {
+					session_id: s,
+					uri: u,
+				} => {
 					assert_eq!(s, session_id);
 					assert_eq!(u, uri);
 				}
@@ -1448,8 +1443,8 @@ async fn connect_stdio_spawn_failure_combines_modern_and_legacy_errors() {
 	};
 	let message = error.to_string();
 	assert!(
-			message.contains(&format!("Failed to initialize MCP server '{name}'")),
-			"unexpected error: {message}"
+		message.contains(&format!("Failed to initialize MCP server '{name}'")),
+		"unexpected error: {message}"
 	);
 	assert!(message.contains("modern:"), "unexpected error: {message}");
 	assert!(message.contains("legacy:"), "unexpected error: {message}");
@@ -1675,9 +1670,9 @@ async fn task_get_wrong_response_type_fails_the_call() {
 				"2026-01-01T00:00:00Z",
 			)),
 		)),
-		ClientRequest::GetTaskRequest(_) => {
-			Some(ServerResult::CallToolResult(CallToolResult::success(vec![])))
-		}
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::CallToolResult(
+			CallToolResult::success(vec![]),
+		)),
 		_ => None,
 	});
 

@@ -734,7 +734,11 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 
 	// Universal (project) skill.
 	let workdir = tempfile::tempdir().expect("workdir");
-	write_project_skill(workdir.path(), "skilltest-uni", "description: Universal fixture\n");
+	write_project_skill(
+		workdir.path(),
+		"skilltest-uni",
+		"description: Universal fixture\n",
+	);
 
 	// Agent plugin with one skill.
 	let plugin_root = workdir.path().join(".agents").join("plugins").join("plug1");
@@ -749,7 +753,10 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 	)
 	.expect("plugin.json");
 	std::fs::write(
-		plugin_root.join("skills").join("skilltest-plug").join("SKILL.md"),
+		plugin_root
+			.join("skills")
+			.join("skilltest-plug")
+			.join("SKILL.md"),
 		"---\nname: skilltest-plug\ndescription: Plugin fixture\n---\n\nPLUG-BODY\n",
 	)
 	.expect("write SKILL.md");
@@ -907,7 +914,10 @@ async fn test_skill_use_env_gated_capability_skips_with_warning() {
 			text_of(&result)
 		);
 		// The skill still activates without the unconfigured capability.
-		assert!(crate::session::context::has_active_skill(&sid, "skilltest-envcap-skill"));
+		assert!(crate::session::context::has_active_skill(
+			&sid,
+			"skilltest-envcap-skill"
+		));
 	})
 	.await;
 
@@ -941,9 +951,11 @@ async fn test_skill_use_refcounts_already_enabled_server() {
 		// Pre-register and mark the server enabled in the session registry so
 		// the skill hits the already-enabled refcount branch instead of a
 		// fresh enable (builtin servers cannot go through enable_server).
-		crate::mcp::runtime::dynamic::register_server(
-			crate::config::McpServerConfig::builtin("skilltest-refcap-srv", 30, vec![]),
-		)
+		crate::mcp::runtime::dynamic::register_server(crate::config::McpServerConfig::builtin(
+			"skilltest-refcap-srv",
+			30,
+			vec![],
+		))
 		.expect("register");
 		crate::session::context::enable_dynamic_server_for_session(
 			&sid,
@@ -1025,11 +1037,17 @@ async fn test_skill_use_capability_enable_failures_fail_open() {
 			!text.contains("Loaded capability 'skilltest-broken'"),
 			"unspawnable server must not load: {text}"
 		);
-		assert!(crate::session::context::has_active_skill(&sid, "skilltest-capfail-skill"));
+		assert!(crate::session::context::has_active_skill(
+			&sid,
+			"skilltest-capfail-skill"
+		));
 		// Neither broken server became skill-owned.
 		let owned =
 			crate::session::context::take_skill_capability_servers(&sid, "skilltest-capfail-skill");
-		assert!(owned.is_empty(), "broken servers must not be owned: {owned:?}");
+		assert!(
+			owned.is_empty(),
+			"broken servers must not be owned: {owned:?}"
+		);
 	})
 	.await;
 
@@ -1056,7 +1074,10 @@ async fn test_skill_use_plugin_servers_fail_open() {
 	)
 	.expect("plugin.json");
 	std::fs::write(
-		plugin_root.join("skills").join("skilltest-plugfail").join("SKILL.md"),
+		plugin_root
+			.join("skills")
+			.join("skilltest-plugfail")
+			.join("SKILL.md"),
 		"---\nname: skilltest-plugfail\ndescription: Plugin server fixture\n---\n\nPLUGFAIL-BODY\n",
 	)
 	.expect("write SKILL.md");
@@ -1096,7 +1117,10 @@ async fn test_skill_use_plugin_servers_fail_open() {
 			!text.contains("Loaded plugin 'plug2'"),
 			"unspawnable plugin server must not load: {text}"
 		);
-		assert!(crate::session::context::has_active_skill(&sid, "skilltest-plugfail"));
+		assert!(crate::session::context::has_active_skill(
+			&sid,
+			"skilltest-plugfail"
+		));
 	})
 	.await;
 
@@ -1111,15 +1135,22 @@ async fn test_skill_use_appends_resource_catalog() {
 	let sid = "__skilltest_resources".to_string();
 
 	let workdir = tempfile::tempdir().expect("workdir");
-	let skill_dir = workdir.path().join(".agents").join("skills").join("skilltest-res");
+	let skill_dir = workdir
+		.path()
+		.join(".agents")
+		.join("skills")
+		.join("skilltest-res");
 	std::fs::create_dir_all(skill_dir.join("scripts")).expect("scripts dir");
 	std::fs::write(
 		skill_dir.join("SKILL.md"),
 		"---\nname: skilltest-res\ndescription: Resource catalog fixture\n---\n\nRES-BODY\n",
 	)
 	.expect("write SKILL.md");
-	std::fs::write(skill_dir.join("scripts").join("hello.sh"), "#!/bin/sh\necho hi\n")
-		.expect("write script");
+	std::fs::write(
+		skill_dir.join("scripts").join("hello.sh"),
+		"#!/bin/sh\necho hi\n",
+	)
+	.expect("write script");
 
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(
@@ -1137,8 +1168,8 @@ async fn test_skill_use_appends_resource_catalog() {
 
 		// Non-silent use queues the injection (with resource catalog) in the
 		// session inbox for the main loop to process.
-		let injected = crate::session::inbox::try_pop_inbox_message()
-			.expect("skill content queued in inbox");
+		let injected =
+			crate::session::inbox::try_pop_inbox_message().expect("skill content queued in inbox");
 		assert!(
 			injected.content.contains("## Skill Resources"),
 			"resource catalog missing from injection: {}",
@@ -1163,7 +1194,11 @@ async fn test_skill_forget_offload_failure_still_reports() {
 	let sid = "__skilltest_ghostoffload".to_string();
 
 	let workdir = tempfile::tempdir().expect("workdir");
-	write_project_skill(workdir.path(), "skilltest-ghost", "description: Ghost server fixture\n");
+	write_project_skill(
+		workdir.path(),
+		"skilltest-ghost",
+		"description: Ghost server fixture\n",
+	);
 
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::set_session_workdir(
@@ -1191,7 +1226,10 @@ async fn test_skill_forget_offload_failure_still_reports() {
 			"got: {}",
 			text_of(&result)
 		);
-		assert!(!crate::session::context::has_active_skill(&sid, "skilltest-ghost"));
+		assert!(!crate::session::context::has_active_skill(
+			&sid,
+			"skilltest-ghost"
+		));
 	})
 	.await;
 

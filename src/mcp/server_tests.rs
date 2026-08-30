@@ -453,10 +453,8 @@ for line in sys.stdin:
 "#;
 
 fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
-	let path = std::env::temp_dir().join(format!(
-		"octomind-test-srv-{tag}-{}.py",
-		std::process::id()
-	));
+	let path =
+		std::env::temp_dir().join(format!("octomind-test-srv-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, body).expect("write fake server script");
 	path
 }
@@ -485,8 +483,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 		})
 		.await
 		.expect("fake http server startup within 10s");
-		line
-			.trim()
+		line.trim()
 			.strip_prefix("PORT=")
 			.and_then(|p| p.parse::<u16>().ok())
 			.expect("PORT=<n> line from fake server")
@@ -517,12 +514,16 @@ async fn test_get_server_functions_lists_tools_from_live_http_server() {
 	let (url, mut child) = spawn_fake_http_server("list", "modern").await;
 	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
 
-	let functions =
-		get_server_functions(&server).await.expect("live tools/list must succeed");
+	let functions = get_server_functions(&server)
+		.await
+		.expect("live tools/list must succeed");
 	let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
 	assert!(names.contains(&"echo"), "functions: {names:?}");
 	assert!(names.contains(&"extra_tool"), "functions: {names:?}");
-	let echo = functions.iter().find(|f| f.name == "echo").expect("echo fn");
+	let echo = functions
+		.iter()
+		.find(|f| f.name == "echo")
+		.expect("echo fn");
 	assert_eq!(echo.description, "echo over http");
 
 	let _ = child.kill().await;
@@ -708,22 +709,13 @@ async fn test_execute_tool_call_unreachable_http_proceeds() {
 #[tokio::test]
 async fn test_execute_tool_call_dead_stdio_restart_failure_is_err() {
 	const NAME: &str = "srv-dead-stdio-fail";
-	let server = McpServerConfig::stdin(
-		NAME,
-		"definitely-not-a-real-binary",
-		vec![],
-		2,
-		vec![],
-	);
+	let server = McpServerConfig::stdin(NAME, "definitely-not-a-real-binary", vec![], 2, vec![]);
 	seed_health(NAME, process::ServerHealth::Dead);
 
 	let err = execute_tool_call(&tool_call("echo"), &server, None)
 		.await
 		.expect_err("unstartable server must fail the call");
-	assert!(
-		err.to_string().contains("failed to restart"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("failed to restart"), "{err}");
 	clear_health(NAME);
 }
 

@@ -402,10 +402,7 @@ async fn run_step_missing_workdir_classifies_spawn_error() {
 	let RunOutcome::SpawnError { source, .. } = outcome else {
 		panic!("expected SpawnError, got {outcome:?}");
 	};
-	assert!(
-		source.to_string().contains("spawn failed"),
-		"got: {source}"
-	);
+	assert!(source.to_string().contains("spawn failed"), "got: {source}");
 }
 
 #[tokio::test]

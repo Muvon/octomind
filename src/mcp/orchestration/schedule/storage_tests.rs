@@ -397,7 +397,10 @@ fn parse_time_of_day_returns_today_when_the_time_is_still_ahead() {
 	let expected_date = if target.date_naive() == Local::now().date_naive() {
 		Local::now().date_naive()
 	} else {
-		Local::now().date_naive().succ_opt().expect("tomorrow exists")
+		Local::now()
+			.date_naive()
+			.succ_opt()
+			.expect("tomorrow exists")
 	};
 	assert_eq!(
 		parsed.date_naive(),

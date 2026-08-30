@@ -676,14 +676,19 @@ fn observe_and_relax_return_the_configured_baseline_when_adaptive_is_off() {
 
 #[test]
 fn diagnostics_on_the_first_and_last_lines_survive_a_sampled_view() {
-	let mut lines: Vec<String> = (1..=300).map(|i| format!("plain filler line {i}")).collect();
+	let mut lines: Vec<String> = (1..=300)
+		.map(|i| format!("plain filler line {i}"))
+		.collect();
 	lines[0] = "error: boom at startup".to_string();
 	lines[299] = "error: deprecation at the end".to_string();
 	let content = lines.join("\n");
 
 	let view = build_numbered_view(&content, 250, "");
 
-	assert!(view.partial, "300 lines under a 250-token budget must sample");
+	assert!(
+		view.partial,
+		"300 lines under a 250-token budget must sample"
+	);
 	assert!(
 		view.body.contains("error: boom at startup"),
 		"a diagnostic on line 1 is queued with its context window"
@@ -789,7 +794,10 @@ fn edge_truncation_shrinks_the_tail_until_the_combined_view_fits() {
 			"budget {max_tokens} exceeded: {}",
 			estimate_tokens(&out)
 		);
-		assert!(out.starts_with("token"), "the head survives at budget {max_tokens}");
+		assert!(
+			out.starts_with("token"),
+			"the head survives at budget {max_tokens}"
+		);
 	}
 	// At a budget where the tail allowance spans whole lines the final line
 	// survives; at tiny budgets the tail shrinks to a couple of tokens and

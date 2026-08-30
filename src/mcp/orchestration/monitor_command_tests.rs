@@ -151,7 +151,10 @@ fn init_for_session_without_session_context_creates_no_global_bucket() {
 	init_for_session();
 	let guard = MONITORS.read().expect("monitors registry lock");
 	assert!(
-		guard.as_ref().map(|registry| registry.is_empty()).unwrap_or(true),
+		guard
+			.as_ref()
+			.map(|registry| registry.is_empty())
+			.unwrap_or(true),
 		"no session bucket may be created outside a session"
 	);
 }
@@ -388,10 +391,7 @@ async fn monitor_timeout_kills_the_command_and_reports_it() {
 			"got: {}",
 			message.content
 		);
-		assert!(
-			!has_running_monitors(),
-			"timed-out monitor must be removed"
-		);
+		assert!(!has_running_monitors(), "timed-out monitor must be removed");
 	})
 	.await;
 	crate::session::context::cleanup_session(&sid);
@@ -455,7 +455,9 @@ async fn monitor_failed_exit_without_stderr_omits_stderr_section() {
 
 		let message = next_message().await;
 		assert!(
-			message.content.contains("command exited unsuccessfully (9)"),
+			message
+				.content
+				.contains("command exited unsuccessfully (9)"),
 			"got: {}",
 			message.content
 		);

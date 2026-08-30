@@ -901,7 +901,10 @@ mod tests {
 			ActivateCheck::Match(r"\bdeploy\b".to_string()).to_string(),
 			r"match(\bdeploy\b)"
 		);
-		assert_eq!(ActivateCheck::Bin("cargo".to_string()).to_string(), "bin(cargo)");
+		assert_eq!(
+			ActivateCheck::Bin("cargo".to_string()).to_string(),
+			"bin(cargo)"
+		);
 		assert_eq!(
 			ActivateCheck::Session("octomind".to_string()).to_string(),
 			"session(octomind)"

@@ -669,7 +669,10 @@ async fn init_pool_skips_malformed_tap_entries() {
 	init_pool("developer");
 
 	let names = pool_names("__default__");
-	assert!(names.is_empty(), "malformed entries must be skipped: {names:?}");
+	assert!(
+		names.is_empty(),
+		"malformed entries must be skipped: {names:?}"
+	);
 
 	clear_pool();
 }
@@ -711,10 +714,7 @@ fn init_pool_reads_universal_skill_dirs() {
 	// Dir without SKILL.md.
 	std::fs::create_dir_all(skills.join("uni-noskill")).expect("dir");
 	// Unparseable SKILL.md.
-	write_file(
-		&skills.join("uni-badmeta").join("SKILL.md"),
-		"garbage\n",
-	);
+	write_file(&skills.join("uni-badmeta").join("SKILL.md"), "garbage\n");
 	// Wrong domain.
 	write_file(
 		&skills.join("uni-writer").join("SKILL.md"),
@@ -728,7 +728,11 @@ fn init_pool_reads_universal_skill_dirs() {
 	init_pool("developer");
 
 	let names = pool_names("__default__");
-	assert_eq!(names, vec!["uni-ok".to_string()], "only the valid universal skill may enter the pool");
+	assert_eq!(
+		names,
+		vec!["uni-ok".to_string()],
+		"only the valid universal skill may enter the pool"
+	);
 
 	clear_pool();
 	crate::mcp::workdir::set_session_working_directory(
@@ -828,10 +832,12 @@ async fn run_activation_with_empty_pool_entries_returns_early() {
 	let sid = "__skillauto_emptyentries".to_string();
 	// A pool for the session that exists but holds no entries: activation
 	// must return before any matching work.
-	get_pool()
-		.write()
-		.expect("pool lock")
-		.insert(sid.clone(), SkillPool { entries: Vec::new() });
+	get_pool().write().expect("pool lock").insert(
+		sid.clone(),
+		SkillPool {
+			entries: Vec::new(),
+		},
+	);
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
@@ -900,11 +906,20 @@ async fn run_validators_end_to_end_reports_failures_and_skips_bad_skills() {
 
 	// Failing validator with stderr output.
 	let fail_dir = tap.join("skills").join("val-fail");
-	write_file(&fail_dir.join("SKILL.md"), &skill_md("val-fail", "developer", &[]));
-	write_validate_script(&fail_dir, "#!/bin/sh\necho 'val-fail: broken' >&2\nexit 1\n");
+	write_file(
+		&fail_dir.join("SKILL.md"),
+		&skill_md("val-fail", "developer", &[]),
+	);
+	write_validate_script(
+		&fail_dir,
+		"#!/bin/sh\necho 'val-fail: broken' >&2\nexit 1\n",
+	);
 	// Existing but non-executable validator: spawn fails.
 	let noexec_dir = tap.join("skills").join("val-noexec");
-	write_file(&noexec_dir.join("SKILL.md"), &skill_md("val-noexec", "developer", &[]));
+	write_file(
+		&noexec_dir.join("SKILL.md"),
+		&skill_md("val-noexec", "developer", &[]),
+	);
 	write_file(&noexec_dir.join("validate"), "#!/bin/sh\nexit 0\n");
 	// Skill dir without any validate script.
 	write_file(
@@ -919,7 +934,9 @@ async fn run_validators_end_to_end_reports_failures_and_skips_bad_skills() {
 		.join("tap");
 	std::fs::create_dir_all(&bare_tap).expect("bare tap dir");
 	std::fs::write(
-		crate::directories::get_octomind_data_dir().expect("data dir").join("taps.toml"),
+		crate::directories::get_octomind_data_dir()
+			.expect("data dir")
+			.join("taps.toml"),
 		format!(
 			"[[taps]]\nname = \"bare/tap\"\nlocal_path = {}\n",
 			toml::Value::String(bare_tap.to_string_lossy().into_owned())
@@ -960,7 +977,10 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	let capped_dir = tap.join("skills").join("val-capped");
-	write_file(&capped_dir.join("SKILL.md"), &skill_md("val-capped", "developer", &[]));
+	write_file(
+		&capped_dir.join("SKILL.md"),
+		&skill_md("val-capped", "developer", &[]),
+	);
 	write_validate_script(&capped_dir, "#!/bin/sh\necho 'still failing' >&2\nexit 1\n");
 
 	let sid = "__skillauto_val_cap".to_string();
@@ -973,7 +993,10 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 			.expect("retry lock")
 			.insert("val-capped".to_string(), max);
 		let failures = run_validators("assistant output", Path::new("/tmp")).await;
-		assert!(failures.is_empty(), "capped validator must be skipped: {failures:?}");
+		assert!(
+			failures.is_empty(),
+			"capped validator must be skipped: {failures:?}"
+		);
 		max
 	})
 	.await;
@@ -984,7 +1007,10 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	std::fs::write(data.join("taps.toml"), "not valid toml [[[").expect("broken taps.toml");
 	with_session_id(sid.clone(), async {
 		let failures = run_validators("assistant output", Path::new("/tmp")).await;
-		assert!(failures.is_empty(), "broken taps must degrade to no validators");
+		assert!(
+			failures.is_empty(),
+			"broken taps must degrade to no validators"
+		);
 	})
 	.await;
 
@@ -999,7 +1025,10 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	let pass_dir = tap.join("skills").join("val-pass");
-	write_file(&pass_dir.join("SKILL.md"), &skill_md("val-pass", "developer", &[]));
+	write_file(
+		&pass_dir.join("SKILL.md"),
+		&skill_md("val-pass", "developer", &[]),
+	);
 	write_validate_script(&pass_dir, "#!/bin/sh\nexit 0\n");
 
 	let mut config: crate::config::Config =
@@ -1020,7 +1049,10 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 	with_session_id(sid.clone(), async {
 		add_active_skill(&sid, "val-pass");
 		let failures = run_validators("assistant output", Path::new("/tmp")).await;
-		assert!(failures.is_empty(), "passing validator reports nothing: {failures:?}");
+		assert!(
+			failures.is_empty(),
+			"passing validator reports nothing: {failures:?}"
+		);
 	})
 	.await;
 

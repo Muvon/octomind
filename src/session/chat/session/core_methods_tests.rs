@@ -316,13 +316,15 @@ async fn initialize_resume_recent_finds_project_session() {
 
 #[test]
 fn test_remove_messages_in_range_end_out_of_bounds_errors() {
-	let mut session = ChatSession::for_tests(vec![
-		message("user", "m0"),
-		message("assistant", "m1"),
-	]);
+	let mut session =
+		ChatSession::for_tests(vec![message("user", "m0"), message("assistant", "m1")]);
 	// start is in bounds but end is past the transcript: must fail, not clamp
 	assert!(session.remove_messages_in_range(0, 9).is_err());
-	assert_eq!(session.get_message_count(), 2, "failed removal must not mutate");
+	assert_eq!(
+		session.get_message_count(),
+		2,
+		"failed removal must not mutate"
+	);
 }
 
 #[test]
@@ -338,7 +340,10 @@ fn test_remove_messages_in_range_reports_cached_content() {
 		.remove_messages_in_range(0, 1)
 		.expect("range removal");
 	assert_eq!(removed, 1);
-	assert!(had_cached, "a cached message inside the range must be reported");
+	assert!(
+		had_cached,
+		"a cached message inside the range must be reported"
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -379,7 +384,10 @@ fn test_insert_compressed_knowledge_evicts_oldest_and_marks_preserved_tail() {
 	assert_eq!(compressed.role, "assistant");
 	assert_eq!(compressed.content, "compressed summary");
 	assert_eq!(compressed.name.as_deref(), Some("plan_compression"));
-	assert!(compressed.cached, "compressed block is the new history boundary");
+	assert!(
+		compressed.cached,
+		"compressed block is the new history boundary"
+	);
 
 	// At 2 existing markers the OLDEST was evicted to make room
 	assert!(
@@ -395,10 +403,8 @@ fn test_insert_compressed_knowledge_evicts_oldest_and_marks_preserved_tail() {
 
 #[test]
 fn test_insert_compressed_knowledge_skips_markers_for_non_caching_model() {
-	let mut session = ChatSession::for_tests(vec![
-		message("system", "anchor"),
-		message("user", "q"),
-	]);
+	let mut session =
+		ChatSession::for_tests(vec![message("system", "anchor"), message("user", "q")]);
 	session.session.info.model = "ollama:fake-model".to_string();
 
 	session
@@ -406,7 +412,10 @@ fn test_insert_compressed_knowledge_skips_markers_for_non_caching_model() {
 		.expect("insert knowledge");
 
 	let compressed = &session.session.messages[1];
-	assert!(!compressed.cached, "no cache marker for a non-caching model");
+	assert!(
+		!compressed.cached,
+		"no cache marker for a non-caching model"
+	);
 	assert!(
 		!session.session.messages.last().expect("tail").cached,
 		"tail must stay uncached for a non-caching model"
@@ -552,10 +561,8 @@ async fn test_attach_video_from_file_and_url() {
 #[tokio::test]
 async fn test_get_full_context_tokens_counts_active_memory_pack_once() {
 	let config = test_config();
-	let mut session = ChatSession::for_tests(vec![
-		message("system", "anchor"),
-		message("user", "hello"),
-	]);
+	let mut session =
+		ChatSession::for_tests(vec![message("system", "anchor"), message("user", "hello")]);
 	let without_pack = session.get_full_context_tokens(&config).await;
 
 	// A pack that is NOT materialized in messages adds its bounded cost
@@ -606,7 +613,10 @@ async fn reinitialize_for_role_replaces_system_prompt_and_saves() {
 		first.content, "old system prompt",
 		"system prompt must be rebuilt for the new role"
 	);
-	assert_eq!(session.session.messages[1].content, "hi", "history preserved");
+	assert_eq!(
+		session.session.messages[1].content, "hi",
+		"history preserved"
+	);
 	assert!(
 		session.session.session_file.as_ref().unwrap().exists(),
 		"reinitialization must persist the session"
@@ -628,7 +638,8 @@ async fn reinitialize_for_role_without_system_first_message_errors() {
 		.await
 		.expect_err("non-system first message must fail");
 	assert!(
-		err.to_string().contains("Expected first message to be system"),
+		err.to_string()
+			.contains("Expected first message to be system"),
 		"{err}"
 	);
 }
@@ -710,7 +721,10 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 
 	assert!(session.was_resumed);
 	// /role core was logged and the caller did not name a role explicitly
-	assert_eq!(session.role, "core", "logged /role must win over the default");
+	assert_eq!(
+		session.role, "core",
+		"logged /role must win over the default"
+	);
 	assert_eq!(
 		session.critical_knowledge,
 		vec!["keep the widget minimal".to_string()],

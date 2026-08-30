@@ -1362,13 +1362,12 @@ async fn test_auto_activate_requires_real_user_message() {
 	let config = test_config();
 
 	// Last message is an assistant turn — activation must not fire.
-	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
-		crate::session::Message {
+	let mut session =
+		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
 			role: "assistant".to_string(),
 			content: "use the static cap please".to_string(),
 			..Default::default()
-		},
-	]);
+		}]);
 	auto_activate_capabilities(&mut session, &config).await;
 	assert!(!is_active("captest-static"));
 
@@ -1392,9 +1391,11 @@ async fn test_auto_activate_for_intent_gates() {
 	let config = test_config();
 
 	// System-managed content is never an intent.
-	let activated =
-		auto_activate_capabilities_for_intent("<system-note>\nuse the static cap\n</system-note>", &config)
-			.await;
+	let activated = auto_activate_capabilities_for_intent(
+		"<system-note>\nuse the static cap\n</system-note>",
+		&config,
+	)
+	.await;
 	assert!(activated.is_empty());
 
 	// Below the minimum-intent gate.

@@ -486,7 +486,9 @@ fn verifier_guidance_is_domain_agnostic() {
 // ---------------------------------------------------------------------------
 
 fn run_git(args: &[&str]) {
-	let out = std::process::Command::new("git").args(args).output()
+	let out = std::process::Command::new("git")
+		.args(args)
+		.output()
 		.expect("git is available on the test host");
 	assert!(
 		out.status.success(),
@@ -515,7 +517,11 @@ fn temp_repo_with_dirty_file() -> tempfile::TempDir {
 		"-m",
 		"seed",
 	]);
-	std::fs::write(repo.join("tracked.txt"), "original line\nchanged this task\n").expect("dirty the file");
+	std::fs::write(
+		repo.join("tracked.txt"),
+		"original line\nchanged this task\n",
+	)
+	.expect("dirty the file");
 	tmp
 }
 
@@ -591,13 +597,20 @@ fn git_diff_fair_shares_the_budget_across_files() {
 
 	clear_repo_env(old_dir, old_tree);
 	for name in ["big_a.txt", "big_b.txt", "big_c.txt"] {
-		assert!(diff.contains(name), "every changed file stays visible: {name}");
+		assert!(
+			diff.contains(name),
+			"every changed file stays visible: {name}"
+		);
 	}
 	assert!(
 		diff.contains("(diff of big_a.txt truncated to fit)"),
 		"an over-budget file is truncated with an explicit marker"
 	);
-	assert!(diff.len() <= GT_DIFF_MAX + 512, "the cap holds: {}", diff.len());
+	assert!(
+		diff.len() <= GT_DIFF_MAX + 512,
+		"the cap holds: {}",
+		diff.len()
+	);
 }
 
 #[test]
@@ -619,7 +632,11 @@ fn git_status_caps_entries_and_names_the_overflow() {
 
 	clear_repo_env(old_dir, old_tree);
 	let lines = status.lines().count();
-	assert_eq!(lines, GT_STATUS_MAX_LINES + 1, "40 entries plus the overflow note");
+	assert_eq!(
+		lines,
+		GT_STATUS_MAX_LINES + 1,
+		"40 entries plus the overflow note"
+	);
 	assert!(
 		status.contains("(+5 more entries)"),
 		"the overflow must be counted, not silently dropped: {status}"
@@ -667,5 +684,9 @@ fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 		truth.contains("(ground truth truncated)"),
 		"a head that alone exceeds the total budget is cut with a marker"
 	);
-	assert!(truth.len() <= GT_TOTAL_MAX + 64, "the total cap holds: {}", truth.len());
+	assert!(
+		truth.len() <= GT_TOTAL_MAX + 64,
+		"the total cap holds: {}",
+		truth.len()
+	);
 }

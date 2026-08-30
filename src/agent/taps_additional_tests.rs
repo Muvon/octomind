@@ -486,7 +486,9 @@ fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
 	fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
 
 	fs::create_dir_all(agents.join("cat2")).expect("create cat2");
-	let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![0xfe, b'.', b't', b'o', b'm', b'l']));
+	let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![
+		0xfe, b'.', b't', b'o', b'm', b'l',
+	]));
 	fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
 
 	let tags = list_agent_tags().expect("tag discovery succeeds");
@@ -538,10 +540,7 @@ fn add_tap_rejects_duplicate_names() {
 	}]);
 
 	let err = add_tap("probe/one").expect_err("duplicate tap must fail");
-	assert!(
-		err.to_string().contains("already added"),
-		"got: {err:#}"
-	);
+	assert!(err.to_string().contains("already added"), "got: {err:#}");
 }
 
 #[test]
@@ -578,7 +577,8 @@ fn add_tap_local_errors_when_existing_tap_path_cannot_be_removed() {
 	let err = add_tap(&format!("probe/occupied {}", target.path().display()))
 		.expect_err("occupied tap path must fail");
 	assert!(
-		err.to_string().contains("Failed to remove existing tap path"),
+		err.to_string()
+			.contains("Failed to remove existing tap path"),
 		"got: {err:#}"
 	);
 }
@@ -649,8 +649,7 @@ fn remove_tap_deletes_the_local_tap_symlink() {
 	let target = tempfile::tempdir().expect("local tap source");
 	fs::write(target.path().join("marker.txt"), "x").expect("write marker");
 
-	add_tap(&format!("probe/local {}", target.path().display()))
-		.expect("local tap added");
+	add_tap(&format!("probe/local {}", target.path().display())).expect("local tap added");
 	let tap_dir = tap_dir_for("probe/local");
 	assert!(tap_dir.is_symlink(), "local tap is a symlink");
 

@@ -528,7 +528,10 @@ fn merge_string_array_creates_missing_key() {
 /// A local tap directory layout: `<data>/taps/<user>/octomind-<repo>`.
 fn user_tap_dir(data_dir: &Path, name: &str) -> PathBuf {
 	let (user, repo) = name.split_once('/').expect("tap name is user/repo");
-	data_dir.join("taps").join(user).join(format!("octomind-{repo}"))
+	data_dir
+		.join("taps")
+		.join(user)
+		.join(format!("octomind-{repo}"))
 }
 
 /// Write a taps.toml listing user taps (local_path kept so load_taps never
@@ -557,8 +560,7 @@ fn registry_config() -> crate::config::RegistryConfig {
 #[cfg(unix)]
 fn chmod(path: &Path, mode: u32) {
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-		.expect("set permissions");
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("set permissions");
 }
 
 /// Make a file older than any plausible cache TTL so `is_stale` flips true.
@@ -612,7 +614,10 @@ async fn fetch_manifest_first_tap_wins_on_duplicate_manifests() {
 	write_agent_manifest(&second, "dup", "var", "# second tap manifest\n");
 	install_taps_file(
 		&data_dir,
-		&[("probe/first", Some(&first)), ("probe/second", Some(&second))],
+		&[
+			("probe/first", Some(&first)),
+			("probe/second", Some(&second)),
+		],
 	);
 
 	let (raw, tap_root) = fetch_manifest("dup:var", &registry_config())
@@ -702,7 +707,10 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 		"# Title: Dup\n# Description: From the user tap.\n",
 	);
 	// A second user tap whose directory does not exist (agents_dir() errors).
-	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
+	install_taps_file(
+		&data_dir,
+		&[("probe/dup", Some(&user_tap)), ("probe/ghost", None)],
+	);
 
 	// Default tap: one good agent, a duplicate of the user tap's role, a stray
 	// non-directory entry, an unreadable category, and a directory named *.toml.
@@ -718,18 +726,27 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 		"var",
 		"# Title: Good\n# Description: The good agent.\n",
 	);
-	std::fs::write(default_tap.join("agents").join("stray.md"), "not a category")
-		.expect("write stray file");
+	std::fs::write(
+		default_tap.join("agents").join("stray.md"),
+		"not a category",
+	)
+	.expect("write stray file");
 	let locked = default_tap.join("agents").join("locked");
 	std::fs::create_dir_all(&locked).expect("create locked category");
 	chmod(&locked, 0o000);
-	let toml_dir = default_tap.join("agents").join("good").join("dirnamed.toml");
+	let toml_dir = default_tap
+		.join("agents")
+		.join("good")
+		.join("dirnamed.toml");
 	std::fs::create_dir_all(&toml_dir).expect("create dir named like a manifest");
 
 	let agents = list_all_tap_agents().expect("enumeration succeeds");
 	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
 	assert_eq!(roles, vec!["dup:both", "good:var"], "skipped entries");
-	let dup = agents.iter().find(|a| a.role == "dup:both").expect("dup listed");
+	let dup = agents
+		.iter()
+		.find(|a| a.role == "dup:both")
+		.expect("dup listed");
 	assert_eq!(
 		dup.source_tap, "probe/dup",
 		"first tap wins over the default tap"
@@ -759,13 +776,18 @@ fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
 	let user_tap = user_tap_dir(&data_dir, "probe/locked");
 	let locked_workflows = user_tap.join("workflows");
 	std::fs::create_dir_all(&locked_workflows).expect("create locked workflows");
-	std::fs::write(locked_workflows.join("hidden.toml"), "description = \"x\"\n")
-		.expect("write hidden workflow");
+	std::fs::write(
+		locked_workflows.join("hidden.toml"),
+		"description = \"x\"\n",
+	)
+	.expect("write hidden workflow");
 	chmod(&locked_workflows, 0o000);
 	install_taps_file(&data_dir, &[("probe/locked", Some(&user_tap))]);
 
 	// Non-UTF-8 file stem and an unreadable workflow file in the default tap.
-	let non_utf8 = workflows.join(std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'.', b't', b'o', b'm', b'l']));
+	let non_utf8 = workflows.join(std::ffi::OsString::from_vec(vec![
+		0xff, 0xfe, b'.', b't', b'o', b'm', b'l',
+	]));
 	std::fs::write(&non_utf8, "description = \"x\"\n").expect("write non-utf8 workflow");
 	let unreadable = workflows.join("unreadable.toml");
 	std::fs::write(&unreadable, "description = \"x\"\n").expect("write unreadable workflow");
@@ -773,7 +795,11 @@ fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
 
 	let workflows_list = list_all_tap_workflows().expect("enumeration succeeds");
 	let names: Vec<&str> = workflows_list.iter().map(|w| w.name.as_str()).collect();
-	assert_eq!(names, vec!["good"], "only the readable UTF-8 workflow is listed");
+	assert_eq!(
+		names,
+		vec!["good"],
+		"only the readable UTF-8 workflow is listed"
+	);
 
 	chmod(&locked_workflows, 0o755);
 	chmod(&unreadable, 0o644);
@@ -880,11 +906,7 @@ type = "http"
 		vec!["HDR_TOKEN".to_string(), "STDIN_TOKEN".to_string()],
 		"env and header placeholders both gate activation"
 	);
-	let server_names: Vec<&str> = resolved
-		.mcp_servers
-		.iter()
-		.map(|s| s.name())
-		.collect();
+	let server_names: Vec<&str> = resolved.mcp_servers.iter().map(|s| s.name()).collect();
 	assert_eq!(
 		server_names,
 		vec!["stdio-srv", "http-srv"],
@@ -906,7 +928,10 @@ fn list_all_capabilities_skips_broken_unreadable_and_duplicate_entries() {
 	std::fs::create_dir_all(&dup_dir).expect("create dup capability");
 	std::fs::write(dup_dir.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
 	std::fs::write(dup_dir.join("default.toml"), "[deps]\n").expect("provider");
-	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
+	install_taps_file(
+		&data_dir,
+		&[("probe/dup", Some(&user_tap)), ("probe/ghost", None)],
+	);
 
 	// Default tap: duplicate of the user capability, one good capability, a
 	// stray file, and an unreadable capability directory.

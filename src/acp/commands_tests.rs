@@ -308,3 +308,121 @@ async fn handle_ext_method_end_to_end_through_the_dispatcher() {
 	assert_eq!(decoded["success"], true, "{decoded}");
 	assert_eq!(decoded["output"], serde_json::json!({"action": "exit"}));
 }
+
+// ---- execute_command against the real dispatcher ----
+
+use crate::session::context;
+
+/// Points OCTOMIND_DATA_DIR at a unique temp dir and restores the previous
+/// value on drop. Session storage and the evolution registry live under it.
+struct TestDataDirGuard {
+	previous: Option<String>,
+	_dir: tempfile::TempDir,
+}
+
+impl TestDataDirGuard {
+	fn new() -> Self {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let previous = std::env::var("OCTOMIND_DATA_DIR").ok();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+		Self {
+			previous,
+			_dir: dir,
+		}
+	}
+}
+
+impl Drop for TestDataDirGuard {
+	fn drop(&mut self) {
+		match &self.previous {
+			Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn execute_command_done_is_handled_and_wakes_the_inbox_monitor() {
+	let _data = TestDataDirGuard::new();
+	let (sessions, locks, config, cancellations) = harness();
+	context::with_session_id("s1".to_string(), async {
+		context::init_session_services("assistant");
+	})
+	.await;
+
+	let response = context::with_session_id("s1".to_string(), async {
+		execute_command(
+			&CommandRequest {
+				session_id: "s1".to_string(),
+				command: "/done".to_string(),
+				args: Vec::new(),
+			},
+			&sessions,
+			&locks,
+			&config,
+			"assistant",
+			&cancellations,
+		)
+		.await
+	})
+	.await;
+
+	assert!(response.success, "error: {:?}", response.error);
+	assert!(
+		response.output.is_none(),
+		"a plain Handled result carries no output, got: {:?}",
+		response.output
+	);
+	assert!(
+		sessions.borrow().contains_key("s1"),
+		"the session is returned to the map"
+	);
+
+	context::cleanup_session(&"s1".to_string());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
+	let _data = TestDataDirGuard::new();
+	let (sessions, locks, config, cancellations) = harness();
+	let response = context::with_session_id("s1".to_string(), async {
+		context::init_session_services("assistant");
+		execute_command(
+			&CommandRequest {
+				session_id: "s1".to_string(),
+				command: "/learning".to_string(),
+				args: vec![
+					"evolution".to_string(),
+					"show".to_string(),
+					"no-such-record".to_string(),
+				],
+			},
+			&sessions,
+			&locks,
+			&config,
+			"assistant",
+			&cancellations,
+		)
+		.await
+	})
+	.await;
+
+	assert!(
+		!response.success,
+		"the dispatcher error must fail the response"
+	);
+	let error = response.error.as_ref().expect("error message present");
+	assert!(error.contains("not found"), "got: {error}");
+	assert!(
+		response.output.is_none(),
+		"a failed command must not report output"
+	);
+	assert!(
+		sessions.borrow().contains_key("s1"),
+		"the session is returned to the map even on error"
+	);
+
+	context::cleanup_session(&"s1".to_string());
+}

@@ -662,7 +662,10 @@ async fn exec_sequential_retries_tag_attempts_and_fail_loudly() {
 		.await
 		.expect_err("both attempts must fail");
 	let msg = err.to_string();
-	assert!(msg.contains("step 'flaky' failed after 2 attempts"), "got: {msg}");
+	assert!(
+		msg.contains("step 'flaky' failed after 2 attempts"),
+		"got: {msg}"
+	);
 }
 
 #[tokio::test]
@@ -685,7 +688,11 @@ async fn exec_sequential_continue_creates_and_reuses_session_id() {
 	ex.exec_sequential(s, "DO", "")
 		.await
 		.expect_err("subprocess fails on first use");
-	let id = ex.session_ids.get("cont").cloned().expect("session id created");
+	let id = ex
+		.session_ids
+		.get("cont")
+		.cloned()
+		.expect("session id created");
 	assert!(id.starts_with("wf-c-cont-"), "got: {id}");
 
 	ex.exec_sequential(s, "DO", "")
@@ -772,10 +779,7 @@ async fn exec_sequential_spawn_error_names_the_cause() {
 	impl Drop for Restore {
 		fn drop(&mut self) {
 			use std::os::unix::fs::PermissionsExt;
-			let _ = std::fs::set_permissions(
-				&self.0,
-				std::fs::Permissions::from_mode(0o755),
-			);
+			let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
 		}
 	}
 	let _restore = Restore(dir.path().to_path_buf());
@@ -951,10 +955,7 @@ async fn exec_parallel_static_spawn_errors_throttled_abort() {
 	impl Drop for Restore {
 		fn drop(&mut self) {
 			use std::os::unix::fs::PermissionsExt;
-			let _ = std::fs::set_permissions(
-				&self.0,
-				std::fs::Permissions::from_mode(0o755),
-			);
+			let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
 		}
 	}
 	let _restore = Restore(dir.path().to_path_buf());
@@ -1083,7 +1084,8 @@ async fn exec_conditional_unknown_target_fails() {
 		.await
 		.expect_err("a target that never ran must fail");
 	assert!(
-		err.to_string().contains("condition target 'ghost' has no output"),
+		err.to_string()
+			.contains("condition target 'ghost' has no output"),
 		"got: {err}"
 	);
 }
@@ -1113,14 +1115,14 @@ async fn exec_conditional_matched_branch_runs_and_fails() {
 	)
 	.expect("workflow parses");
 	let mut ex = executor_for("wf", false);
-	ex.outputs
-		.insert("prev".to_string(), "PASS GO".to_string());
+	ex.outputs.insert("prev".to_string(), "PASS GO".to_string());
 	let err = ex
 		.exec_node(&wf.steps[0], "DO")
 		.await
 		.expect_err("the chosen branch's subprocess fails");
 	assert!(
-		err.to_string().contains("step 'yes' failed after 1 attempts"),
+		err.to_string()
+			.contains("step 'yes' failed after 1 attempts"),
 		"got: {err}"
 	);
 }
@@ -1250,7 +1252,8 @@ async fn execute_graph_aborts_when_first_node_fails() {
 		.await
 		.expect_err("the entry node's subprocess fails");
 	assert!(
-		err.to_string().contains("step 'start' failed after 1 attempts"),
+		err.to_string()
+			.contains("step 'start' failed after 1 attempts"),
 		"got: {err}"
 	);
 }

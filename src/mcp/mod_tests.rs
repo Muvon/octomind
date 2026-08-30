@@ -796,10 +796,8 @@ server.serve_forever()
 "#;
 
 async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
-	let path = std::env::temp_dir().join(format!(
-		"octomind-test-mod-{tag}-{}.py",
-		std::process::id()
-	));
+	let path =
+		std::env::temp_dir().join(format!("octomind-test-mod-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, FAKE_HTTP_SERVER).expect("write fake server script");
 	let mut child = tokio::process::Command::new("python3")
 		.arg(&path)
@@ -820,8 +818,7 @@ async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
 		})
 		.await
 		.expect("fake http server startup within 10s");
-		line
-			.trim()
+		line.trim()
 			.strip_prefix("PORT=")
 			.and_then(|p| p.parse::<u16>().ok())
 			.expect("PORT=<n> line from fake server")
@@ -922,10 +919,7 @@ async fn available_functions_merge_capability_overlay_extras() {
 	)]);
 
 	let mut extras = std::collections::HashMap::new();
-	extras.insert(
-		NAME.to_string(),
-		vec!["extra_tool".to_string()],
-	);
+	extras.insert(NAME.to_string(), vec!["extra_tool".to_string()]);
 	crate::config::runtime_overlay::set_capability_extras("mod-overlay-cap", extras);
 
 	let names = names_of(&get_available_functions(&config).await);
@@ -992,13 +986,10 @@ async fn external_tool_routes_through_tool_map_and_executes() {
 		.await
 		.expect("init tool map");
 
-	let (result, _elapsed) = execute_tool_call(
-		&tool_call("echo", json!({"text": "routed"})),
-		&config,
-		None,
-	)
-	.await
-	.expect("external routing must succeed");
+	let (result, _elapsed) =
+		execute_tool_call(&tool_call("echo", json!({"text": "routed"})), &config, None)
+			.await
+			.expect("external routing must succeed");
 	assert!(!result.is_error(), "{}", result.extract_content());
 	assert_eq!(result.tool_id, "id-echo");
 	assert!(result.extract_content().contains("routed"));
@@ -1058,9 +1049,13 @@ async fn dynamic_server_tool_execution_succeeds_in_owning_session() {
 /// before touching any tool.
 #[tokio::test]
 async fn try_execute_tool_call_guards_empty_config_and_cancellation() {
-	let err = try_execute_tool_call(&tool_call("x", json!({})), &config_with_servers(vec![]), None)
-		.await
-		.expect_err("empty config must be rejected");
+	let err = try_execute_tool_call(
+		&tool_call("x", json!({})),
+		&config_with_servers(vec![]),
+		None,
+	)
+	.await
+	.expect_err("empty config must be rejected");
 	assert!(err.to_string().contains("no servers configured"), "{err}");
 
 	let config = config_with_servers(vec![McpServerConfig::builtin("core", 30, vec![])]);
@@ -1084,9 +1079,10 @@ async fn dispatch_log_covers_small_and_truncated_params() {
 		.expect("init tool map");
 
 	// Small params → plain serialization branch.
-	let (small, _) = execute_tool_call(&tool_call("recall", json!({"ids": ["b:1"]})), &config, None)
-		.await
-		.expect("small-params dispatch must route");
+	let (small, _) =
+		execute_tool_call(&tool_call("recall", json!({"ids": ["b:1"]})), &config, None)
+			.await
+			.expect("small-params dispatch must route");
 	assert!(small.is_error(), "recall without an archive errors softly");
 
 	// >200 tokens of params → truncation branch.

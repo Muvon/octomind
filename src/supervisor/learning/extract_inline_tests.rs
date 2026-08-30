@@ -1303,9 +1303,7 @@ fn experience_tag(body: &str) -> String {
 
 #[tokio::test]
 async fn a_failed_experience_call_never_costs_the_short_memory_path() {
-	use crate::session::chat::test_support::{
-		final_response, spawn_stub_with_status, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{final_response, spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__experience_fail_role";
@@ -1390,10 +1388,17 @@ async fn a_same_source_near_duplicate_experience_is_skipped() {
 	.await
 	.expect("second extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
-	assert_eq!(second, 0, "a near-duplicate from the same source is skipped");
+	assert_eq!(
+		second, 0,
+		"a near-duplicate from the same source is skipped"
+	);
 
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
-	assert_eq!(memories.len(), 1, "the original experience is the only copy");
+	assert_eq!(
+		memories.len(),
+		1,
+		"the original experience is the only copy"
+	);
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1428,7 +1433,10 @@ async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
 	.expect("extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
 
-	assert_eq!(stored, 0, "ungrounded work must fail closed after one repair");
+	assert_eq!(
+		stored, 0,
+		"ungrounded work must fail closed after one repair"
+	);
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
 	assert!(memories.is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
@@ -1436,9 +1444,7 @@ async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
 
 #[tokio::test]
 async fn an_experience_with_no_verifier_answer_is_rejected() {
-	use crate::session::chat::test_support::{
-		final_response, spawn_stub_with_status, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{final_response, spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__experience_noverify_role";
@@ -1466,7 +1472,11 @@ async fn an_experience_with_no_verifier_answer_is_rejected() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(stored, 0, "no verifier verdict means no experience record");
-	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
+	assert!(FileBackend
+		.retrieve_all(role, project)
+		.await
+		.unwrap()
+		.is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1603,7 +1613,9 @@ async fn a_refining_orientation_replaces_the_one_it_overlaps() {
 		.filter(|m| m.memory_type == "orientation")
 		.collect();
 	assert_eq!(orientations.len(), 1, "the overlapping original is deleted");
-	assert!(orientations[0].content.contains("forbids silent model fallback"));
+	assert!(orientations[0]
+		.content
+		.contains("forbids silent model fallback"));
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1632,7 +1644,11 @@ async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(stored, 0, "LEARN with no lesson tags stores nothing");
-	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
+	assert!(FileBackend
+		.retrieve_all(role, project)
+		.await
+		.unwrap()
+		.is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1716,20 +1732,15 @@ async fn a_learned_lesson_cites_a_stored_experience_and_duplicates_are_skipped()
 
 #[tokio::test]
 async fn verify_lessons_rejects_everything_when_the_verifier_is_down() {
-	use crate::session::chat::test_support::{
-		spawn_stub_with_status, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let response = r#"<decision>LEARN</decision>
 <lesson confidence="high" evidence="quote from the user">A real user rule worth keeping</lesson>"#;
 	let candidates = parse_lessons_with_evidence(response, "r", "p", "s", 0);
 	assert_eq!(candidates.len(), 1);
 
-	let url = spawn_stub_with_status(vec![(
-		500,
-		serde_json::json!({"error": "verifier down"}),
-	)])
-	.await;
+	let url =
+		spawn_stub_with_status(vec![(500, serde_json::json!({"error": "verifier down"}))]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let verdicts = verify_lessons(&learning_config(), &candidates, "transcript").await;
 	std::env::remove_var("OLLAMA_API_URL");
@@ -1772,10 +1783,7 @@ async fn detached_extraction_reports_zero_without_learning_enabled() {
 		.retrieve_all("role", "project")
 		.await
 		.expect("store readable");
-	assert!(
-		stored.is_empty(),
-		"disabled learning must persist nothing"
-	);
+	assert!(stored.is_empty(), "disabled learning must persist nothing");
 }
 
 #[tokio::test]
@@ -1816,9 +1824,8 @@ async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
 async fn before_exit_extraction_gates_on_the_enabled_flag_and_spawns_a_child() {
 	let mut config = learning_config();
 	config.supervisor.learning.enabled = false;
-	let session = crate::session::chat::session::ChatSession::for_tests(vec![
-		message("user", "hello"),
-	]);
+	let session =
+		crate::session::chat::session::ChatSession::for_tests(vec![message("user", "hello")]);
 	// Disabled: returns without touching the filesystem.
 	extract_lessons_before_exit(&session, &config, "role".to_string(), None);
 
@@ -1828,8 +1835,6 @@ async fn before_exit_extraction_gates_on_the_enabled_flag_and_spawns_a_child() {
 	extract_lessons_before_exit(&session, &config, "role".to_string(), None);
 	// The child is the test binary itself (harmless: unknown subcommand → exit).
 	// Clean the snapshot the parent wrote for it.
-	let snapshot = std::env::temp_dir().join(format!(
-		"octomind-distill-{session_name}-{pid}.json"
-	));
+	let snapshot = std::env::temp_dir().join(format!("octomind-distill-{session_name}-{pid}.json"));
 	let _ = std::fs::remove_file(&snapshot);
 }

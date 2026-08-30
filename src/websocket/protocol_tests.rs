@@ -430,3 +430,46 @@ fn test_unknown_type_fails_deserialize() {
 	let json = r#"{"type":"unknown","session_id":"sess_123"}"#;
 	assert!(serde_json::from_str::<ClientMessage>(json).is_err());
 }
+
+// ---- request_id size boundary ----
+
+#[test]
+fn request_id_longer_than_256_bytes_is_rejected() {
+	let long_id = "x".repeat(257);
+	let json = format!(
+		r#"{{"type":"command","session_id":"s","command":"info","request_id":"{long_id}"}}"#
+	);
+	let msg: ClientMessage = serde_json::from_str(&json).expect("parse");
+	let error = msg
+		.validate()
+		.expect_err("257 bytes exceeds the documented maximum");
+	assert!(error.contains("256"), "got: {error}");
+
+	let exact = "x".repeat(256);
+	let json =
+		format!(r#"{{"type":"command","session_id":"s","command":"info","request_id":"{exact}"}}"#);
+	let msg: ClientMessage = serde_json::from_str(&json).expect("parse");
+	assert!(
+		msg.validate().is_ok(),
+		"exactly 256 bytes is the documented maximum"
+	);
+}
+
+// ---- command_status ----
+
+#[test]
+fn command_status_carries_data_so_clients_finalize_the_turn() {
+	let message = ServerMessage::command_status(
+		"Nothing to compress".to_string(),
+		Some("s1".to_string()),
+		serde_json::json!({"command_type": "done", "message": "Nothing to compress"}),
+	);
+	let value = serde_json::to_value(&message).expect("serialize");
+	assert_eq!(value["type"], "status");
+	assert_eq!(value["message"], "Nothing to compress");
+	assert_eq!(value["session_id"], "s1");
+	assert_eq!(
+		value["data"]["command_type"], "done",
+		"a data-carrying status is what distinguishes a finished command from the handshake ack"
+	);
+}

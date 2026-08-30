@@ -936,8 +936,13 @@ fn test_list_active_names_is_sorted() {
 	seed_cap("captest-names-a", "captest-names-srv", &["t"], 1);
 	seed_cap("captest-names-b", "captest-names-srv", &["t"], 1);
 
+	// Foreign entries can appear mid-flight (see `captest_active_count`): compare only our `captest-names-*` namespace.
+	let names: Vec<String> = list_active_names()
+		.into_iter()
+		.filter(|n| n.starts_with("captest-names-"))
+		.collect();
 	assert_eq!(
-		list_active_names(),
+		names,
 		vec![
 			"captest-names-a".to_string(),
 			"captest-names-b".to_string(),

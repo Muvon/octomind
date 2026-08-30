@@ -143,7 +143,7 @@ fn transport_errors_classify_by_downcast() {
 #[test]
 #[serial_test::serial]
 fn install_source_detects_a_cargo_test_binary() {
-	// The test harness runs from target/debug → "source"
+	// The test harness runs from a target build dir (target/debug, or llvm-cov-target/debug under cargo llvm-cov) → "source"
 	assert_eq!(install_source(), "source");
 }
 

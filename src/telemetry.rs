@@ -546,6 +546,17 @@ fn split_model(full: &str) -> (String, String) {
 	}
 }
 
+/// True for executables running from a cargo target-dir build profile —
+/// `/target/debug/`, `/target/release/`, or an alternate target dir such as
+/// `/target/llvm-cov-target/debug/` used by `cargo llvm-cov`.
+fn is_cargo_target_build(path: &str) -> bool {
+	let Some(idx) = path.find("/target/") else {
+		return false;
+	};
+	let rest = &path[idx..];
+	rest.contains("/debug/") || rest.contains("/release/")
+}
+
 fn install_source() -> &'static str {
 	if std::path::Path::new("/.dockerenv").exists() {
 		return "docker";
@@ -558,7 +569,7 @@ fn install_source() -> &'static str {
 		"brew"
 	} else if path.contains("/.cargo/") {
 		"cargo"
-	} else if path.contains("/target/debug/") || path.contains("/target/release/") {
+	} else if is_cargo_target_build(&path) {
 		"source"
 	} else {
 		"binary"

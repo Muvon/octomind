@@ -418,3 +418,249 @@ fn git_pull_on_non_repository_is_ok() {
 	fs::create_dir_all(dir.path().join("sub")).unwrap();
 	git_pull(&dir.path().to_path_buf()).expect("pull failures are logged, not propagated");
 }
+
+// --- load_taps / list_agent_tags / fetch_workflow edge branches -------------
+
+#[cfg(unix)]
+fn chmod(path: &std::path::Path, mode: u32) {
+	use std::os::unix::fs::PermissionsExt;
+	fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set permissions");
+}
+
+#[test]
+#[serial]
+fn load_taps_pulls_existing_github_tap_dirs_silently() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	// A GitHub-format tap (no local_path) whose directory exists but is not a
+	// git repo: the pull fails and is swallowed — load must still succeed.
+	let gh_dir = tap_dir_for("probe/github");
+	fs::create_dir_all(&gh_dir).expect("create github tap dir");
+	write_taps(vec![Tap {
+		name: "probe/github".to_string(),
+		local_path: None,
+	}]);
+
+	let taps = load_taps().expect("load_taps survives a failed pull");
+	let names: Vec<&str> = taps.iter().map(|t| t.name.as_str()).collect();
+	assert_eq!(
+		names,
+		vec!["probe/github", DEFAULT_TAP],
+		"user taps first, built-in default last"
+	);
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
+	use std::os::unix::ffi::OsStringExt;
+
+	let _guard = DataDirGuard::new();
+	let default_tap = create_default_tap();
+
+	// A user tap whose agents dir cannot be read is skipped entirely.
+	let locked_tap = tap_dir_for("probe/locked");
+	let locked_agents = locked_tap.join("agents");
+	fs::create_dir_all(locked_agents.join("hidden")).expect("create hidden category");
+	fs::write(locked_agents.join("hidden").join("var.toml"), "x").expect("write hidden agent");
+	chmod(&locked_agents, 0o000);
+	write_taps(vec![Tap {
+		name: "probe/locked".to_string(),
+		local_path: None,
+	}]);
+
+	// Default tap: a good agent, an unreadable category, a non-UTF-8 category,
+	// and a non-UTF-8 variant stem.
+	let agents = default_tap.join("agents");
+	fs::create_dir_all(agents.join("good")).expect("create good category");
+	fs::write(agents.join("good").join("var.toml"), "x").expect("write good agent");
+
+	let locked_category = agents.join("sealed");
+	fs::create_dir_all(&locked_category).expect("create sealed category");
+	fs::write(locked_category.join("var.toml"), "x").expect("write sealed agent");
+	chmod(&locked_category, 0o000);
+
+	let non_utf8_category = agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
+	fs::create_dir_all(&non_utf8_category).expect("create non-utf8 category");
+	fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
+
+	fs::create_dir_all(agents.join("cat2")).expect("create cat2");
+	let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![0xfe, b'.', b't', b'o', b'm', b'l']));
+	fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
+
+	let tags = list_agent_tags().expect("tag discovery succeeds");
+	assert_eq!(
+		tags,
+		vec!["good:var".to_string()],
+		"unreadable and non-UTF-8 entries are skipped"
+	);
+
+	chmod(&locked_agents, 0o755);
+	chmod(&locked_category, 0o755);
+}
+
+#[test]
+#[serial]
+fn fetch_workflow_falls_back_past_a_tap_with_invalid_name() {
+	let _guard = DataDirGuard::new();
+	let default_tap = create_default_tap();
+	let workflows = default_tap.join("workflows");
+	fs::create_dir_all(&workflows).expect("create workflows dir");
+	fs::write(
+		workflows.join("probe.toml"),
+		"description = \"probe workflow\"\n",
+	)
+	.expect("write workflow");
+
+	// A tap whose name is not `user/repo` cannot resolve a workflows dir and
+	// must be skipped so later taps still answer.
+	write_taps(vec![Tap {
+		name: "not-a-tap-name".to_string(),
+		local_path: None,
+	}]);
+
+	let (content, source) = fetch_workflow("probe").expect("workflow found via default tap");
+	assert!(content.contains("probe workflow"));
+	assert_eq!(source, DEFAULT_TAP);
+}
+
+// --- add_tap / remove_tap failure and lifecycle branches --------------------
+
+#[test]
+#[serial]
+fn add_tap_rejects_duplicate_names() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	write_taps(vec![Tap {
+		name: "probe/one".to_string(),
+		local_path: None,
+	}]);
+
+	let err = add_tap("probe/one").expect_err("duplicate tap must fail");
+	assert!(
+		err.to_string().contains("already added"),
+		"got: {err:#}"
+	);
+}
+
+#[test]
+#[serial]
+fn add_tap_local_errors_when_parent_dir_cannot_be_created() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	// A file where `<data>/taps/probe` should be makes create_dir_all fail.
+	let parent = data_dir.join("taps").join("probe");
+	fs::write(&parent, "not a directory").expect("write blocker file");
+
+	let target = tempfile::tempdir().expect("local tap source");
+	let err = add_tap(&format!("probe/blocked {}", target.path().display()))
+		.expect_err("unwritable tap parent must fail");
+	assert!(
+		err.to_string().contains("Failed to create tap parent dir"),
+		"got: {err:#}"
+	);
+}
+
+#[test]
+#[serial]
+fn add_tap_local_errors_when_existing_tap_path_cannot_be_removed() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let tap_dir = tap_dir_for("probe/occupied");
+	// A non-empty directory at the tap path: remove_file (the unix link
+	// remover) fails with EISDIR.
+	fs::create_dir_all(tap_dir.join("payload")).expect("create occupied tap dir");
+	fs::write(tap_dir.join("payload").join("keep.txt"), "x").expect("write payload");
+
+	let target = tempfile::tempdir().expect("local tap source");
+	let err = add_tap(&format!("probe/occupied {}", target.path().display()))
+		.expect_err("occupied tap path must fail");
+	assert!(
+		err.to_string().contains("Failed to remove existing tap path"),
+		"got: {err:#}"
+	);
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn add_tap_local_errors_when_symlink_cannot_be_created() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	// A read-only parent lets create_dir_all succeed (dir exists) but denies
+	// the symlink write.
+	let parent = data_dir.join("taps").join("probe");
+	fs::create_dir_all(&parent).expect("create tap parent");
+	chmod(&parent, 0o555);
+
+	let target = tempfile::tempdir().expect("local tap source");
+	let err = add_tap(&format!("probe/readonly {}", target.path().display()))
+		.expect_err("read-only tap parent must fail");
+	assert!(
+		err.to_string().contains("Failed to create symlink"),
+		"got: {err:#}"
+	);
+
+	chmod(&parent, 0o755);
+}
+
+#[test]
+#[serial]
+fn add_tap_github_clone_failure_surfaces_git_error() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+
+	// The repo is guaranteed not to exist, so git clone fails whether the box
+	// is online (404) or offline (DNS) — the error must surface either way.
+	let err = add_tap("octomind-probe/nonexistent-tap-repo")
+		.expect_err("clone of a nonexistent repo must fail");
+	assert!(
+		err.to_string().contains("Failed to clone tap from"),
+		"got: {err:#}"
+	);
+}
+
+#[test]
+#[serial]
+fn add_tap_github_existing_dir_pulls_and_succeeds_on_non_repo() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let tap_dir = tap_dir_for("probe/stale");
+	fs::create_dir_all(&tap_dir).expect("pre-create tap dir");
+
+	// An existing directory that is not a git repo: the update path runs, the
+	// pull failure is swallowed by git_pull, and the tap is still registered.
+	add_tap("probe/stale").expect("tap added despite failed pull");
+	let taps = load_taps().expect("reload taps");
+	assert!(
+		taps.iter().any(|t| t.name == "probe/stale"),
+		"tap persisted to taps.toml"
+	);
+}
+
+#[test]
+#[serial]
+fn remove_tap_deletes_the_local_tap_symlink() {
+	let _guard = DataDirGuard::new();
+	create_default_tap();
+	let target = tempfile::tempdir().expect("local tap source");
+	fs::write(target.path().join("marker.txt"), "x").expect("write marker");
+
+	add_tap(&format!("probe/local {}", target.path().display()))
+		.expect("local tap added");
+	let tap_dir = tap_dir_for("probe/local");
+	assert!(tap_dir.is_symlink(), "local tap is a symlink");
+
+	remove_tap("probe/local").expect("tap removed");
+	assert!(
+		!tap_dir.symlink_metadata().is_ok(),
+		"symlink removed with the tap"
+	);
+	assert!(
+		target.path().join("marker.txt").exists(),
+		"the local target directory is untouched"
+	);
+}

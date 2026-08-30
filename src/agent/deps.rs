@@ -146,3 +146,7 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "deps_tests.rs"]
+mod tests;

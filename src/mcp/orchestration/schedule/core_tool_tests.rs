@@ -245,3 +245,211 @@ async fn test_has_pending_schedules_and_idle_flags() {
 	})
 	.await;
 }
+
+// --- add/edit/remove validation arms and snapshot restore paths -------------
+
+use serial_test::serial;
+
+fn unique_session(tag: &str) -> String {
+	format!("sched-probe-{tag}-{}", uuid::Uuid::new_v4())
+}
+
+#[tokio::test]
+async fn add_rejects_non_string_message_and_remove_rejects_non_string_id() {
+	let sid = unique_session("validation");
+	crate::session::context::with_session_id(sid, async {
+		let cases: Vec<(serde_json::Value, &str)> = vec![
+			(
+				serde_json::json!({"command": "add", "message": 42}),
+				"'message' must be a non-empty string",
+			),
+			(
+				serde_json::json!({"command": "remove", "id": 99}),
+				"'id' must be a non-empty string",
+			),
+			(
+				serde_json::json!({"command": "edit"}),
+				"missing required parameter 'id' for edit",
+			),
+		];
+		for (params, expected) in cases {
+			let result = execute_schedule_tool(&call(params.clone()))
+				.await
+				.expect("tool returns a result");
+			assert!(result.is_error(), "expected error for {params}");
+			assert!(
+				result.extract_content().contains(expected),
+				"expected '{expected}', got: {}",
+				result.extract_content()
+			);
+		}
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn idle_add_with_description_echoes_it_in_the_response() {
+	let sid = unique_session("idledesc");
+	crate::session::context::with_session_id(sid, async {
+		let added = execute_schedule_tool(&call(serde_json::json!({
+			"command": "add",
+			"message": "nudge me when idle",
+			"description": "idle probe",
+			"every": "idle"
+		})))
+		.await
+		.expect("add");
+		assert!(
+			!added.is_error(),
+			"add failed: {}",
+			added.extract_content()
+		);
+		let content = added.extract_content();
+		assert!(
+			content.contains("Description: idle probe"),
+			"description must be echoed: {content}"
+		);
+		assert!(
+			content.contains("Repeats: every idle"),
+			"idle repeat must be echoed: {content}"
+		);
+	})
+	.await;
+}
+
+/// Point `OCTOMIND_DATA_DIR` at `path` for the duration of a test.
+struct DataDirAt {
+	previous: Option<std::ffi::OsString>,
+}
+
+impl DataDirAt {
+	fn new(path: std::path::PathBuf) -> Self {
+		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+		std::env::set_var("OCTOMIND_DATA_DIR", path);
+		Self { previous }
+	}
+}
+
+impl Drop for DataDirAt {
+	fn drop(&mut self) {
+		match self.previous.take() {
+			Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn add_survives_an_unloggable_snapshot_and_restore_handles_a_blocked_data_dir() {
+	// A file where the data dir should be makes every path under it fail.
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let blocker = tmp.path().join("blocker");
+	std::fs::write(&blocker, "not a directory").expect("write blocker");
+	let _guard = DataDirAt::new(blocker.join("nested"));
+
+	let sid = unique_session("blocked");
+	crate::session::context::with_session_id(sid, async {
+		// Persistence is best-effort: a failing snapshot log must not break add.
+		let added = execute_schedule_tool(&call(serde_json::json!({
+			"command": "add",
+			"message": "still schedules",
+			"when": "in 10m"
+		})))
+		.await
+		.expect("add");
+		assert!(
+			!added.is_error(),
+			"add must survive a failed snapshot log: {}",
+			added.extract_content()
+		);
+		assert!(has_pending_schedules());
+
+		// Restore from an unresolvable log path is a silent no-op.
+		restore_schedule_for_session("any-session");
+	})
+	.await;
+}
+
+#[cfg(unix)]
+fn chmod(path: &std::path::Path, mode: u32) {
+	use std::os::unix::fs::PermissionsExt;
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+		.expect("set permissions");
+}
+
+#[tokio::test]
+#[serial]
+#[cfg(unix)]
+async fn restore_is_a_noop_for_unreadable_and_non_zstd_logs() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let sessions = tmp.path().join("sessions");
+	std::fs::create_dir_all(&sessions).expect("create sessions dir");
+	let _guard = DataDirAt::new(tmp.path().to_path_buf());
+
+	let unreadable = sessions.join("unreadable.jsonl.zst");
+	std::fs::write(&unreadable, b"placeholder").expect("write log");
+	chmod(&unreadable, 0o000);
+
+	let garbage = sessions.join("garbage.jsonl.zst");
+	std::fs::write(&garbage, b"definitely not zstd data").expect("write log");
+
+	let sid = unique_session("restore-noop");
+	crate::session::context::with_session_id(sid, async {
+		restore_schedule_for_session("unreadable");
+		restore_schedule_for_session("garbage");
+		assert!(
+			!has_pending_schedules(),
+			"failed restores must leave the store empty"
+		);
+	})
+	.await;
+
+	chmod(&unreadable, 0o644);
+}
+
+#[tokio::test]
+#[serial]
+async fn restore_replays_the_latest_snapshot_into_a_new_session() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let _guard = DataDirAt::new(tmp.path().to_path_buf());
+
+	// Session one schedules something — the snapshot lands in its log.
+	let writer = unique_session("writer");
+	crate::session::context::with_session_id(writer.clone(), async {
+		let added = execute_schedule_tool(&call(serde_json::json!({
+			"command": "add",
+			"message": "resume me",
+			"description": "resume probe",
+			"when": "in 30m"
+		})))
+		.await
+		.expect("add");
+		assert!(!added.is_error(), "add failed: {}", added.extract_content());
+	})
+	.await;
+
+	// Simulate a process restart: the in-memory store for the writer session
+	// is gone, only the persisted log remains.
+	crate::session::context::cleanup_session(&writer);
+
+	crate::session::context::with_session_id(writer.clone(), async {
+		assert!(
+			!has_pending_schedules(),
+			"store must be empty after the simulated restart"
+		);
+		restore_schedule_for_session(&writer);
+		assert!(
+			has_pending_schedules(),
+			"the snapshot must be replayed into the restarted session"
+		);
+		let listing = render_pending_entries().expect("entries pending");
+		assert!(
+			listing.contains("resume me"),
+			"restored entry must be listed: {listing}"
+		);
+	})
+	.await;
+
+	crate::session::context::cleanup_session(&writer);
+}

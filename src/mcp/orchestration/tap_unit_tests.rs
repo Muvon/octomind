@@ -467,3 +467,28 @@ async fn run_outside_session_scope_still_starts_and_reports() {
 	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
 }
+
+// --- discover: tap-enumeration failure --------------------------------------
+
+#[tokio::test]
+#[serial]
+async fn discover_reports_tap_enumeration_failures() {
+	let guard = TempDataDir::new();
+	// A malformed taps.toml breaks tap loading; discover must surface the
+	// enumeration failure instead of reporting an empty catalog.
+	std::fs::write(guard.path().join("taps.toml"), "not [valid toml")
+		.expect("write malformed taps.toml");
+
+	let result = execute_tap_command(
+		&tap_call(json!({"action": "discover", "intent": "debug a rust build"})),
+		&unit_config(),
+	)
+	.await
+	.expect("dispatch");
+	assert!(result.is_error());
+	let content = result.extract_content();
+	assert!(
+		content.contains("Failed to enumerate tap agents"),
+		"content: {content}"
+	);
+}

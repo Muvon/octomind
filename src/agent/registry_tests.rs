@@ -522,3 +522,417 @@ fn merge_string_array_creates_missing_key() {
 		.collect();
 	assert_eq!(items, vec!["x"]);
 }
+
+// --- fetch_manifest cache & multi-tap precedence ----------------------------
+
+/// A local tap directory layout: `<data>/taps/<user>/octomind-<repo>`.
+fn user_tap_dir(data_dir: &Path, name: &str) -> PathBuf {
+	let (user, repo) = name.split_once('/').expect("tap name is user/repo");
+	data_dir.join("taps").join(user).join(format!("octomind-{repo}"))
+}
+
+/// Write a taps.toml listing user taps (local_path kept so load_taps never
+/// attempts git operations on them).
+fn install_taps_file(data_dir: &Path, taps: &[(&str, Option<&Path>)]) {
+	let mut content = String::new();
+	for (name, local_path) in taps {
+		content.push_str(&format!("[[taps]]\nname = \"{name}\"\n"));
+		if let Some(path) = local_path {
+			content.push_str(&format!("local_path = \"{}\"\n", path.display()));
+		}
+	}
+	std::fs::write(data_dir.join("taps.toml"), content).expect("write taps.toml");
+}
+
+fn write_agent_manifest(tap_root: &Path, category: &str, variant: &str, body: &str) {
+	let dir = tap_root.join("agents").join(category);
+	std::fs::create_dir_all(&dir).expect("create category dir");
+	std::fs::write(dir.join(format!("{variant}.toml")), body).expect("write manifest");
+}
+
+fn registry_config() -> crate::config::RegistryConfig {
+	crate::config::RegistryConfig::default()
+}
+
+#[cfg(unix)]
+fn chmod(path: &Path, mode: u32) {
+	use std::os::unix::fs::PermissionsExt;
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+		.expect("set permissions");
+}
+
+/// Make a file older than any plausible cache TTL so `is_stale` flips true.
+#[cfg(unix)]
+fn age_beyond_ttl(path: &Path) {
+	let file = std::fs::File::options()
+		.write(true)
+		.open(path)
+		.expect("open cache file for mtime update");
+	file.set_times(
+		std::fs::FileTimes::new()
+			.set_accessed(std::time::UNIX_EPOCH)
+			.set_modified(std::time::UNIX_EPOCH),
+	)
+	.expect("set mtime beyond ttl");
+}
+
+#[tokio::test]
+#[serial]
+async fn fetch_manifest_errors_when_cache_dir_cannot_be_created() {
+	// The data dir exists, but `agents` inside it is a file, so creating the
+	// cache dir underneath fails after the data dir itself resolves fine.
+	let tmp = tempfile::tempdir().expect("tempdir");
+	std::fs::write(tmp.path().join("agents"), "not a directory").expect("write blocker");
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", tmp.path());
+
+	let err = fetch_manifest("cat:var", &registry_config())
+		.await
+		.expect_err("unwritable data dir must fail");
+	assert!(
+		err.to_string().contains("Failed to create agent cache dir"),
+		"got: {err:#}"
+	);
+
+	match previous {
+		Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn fetch_manifest_first_tap_wins_on_duplicate_manifests() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	default_tap_dir(); // load_taps() requires the default tap dir to exist
+	let first = user_tap_dir(&data_dir, "probe/first");
+	let second = user_tap_dir(&data_dir, "probe/second");
+	write_agent_manifest(&first, "dup", "var", "# first tap manifest\n");
+	write_agent_manifest(&second, "dup", "var", "# second tap manifest\n");
+	install_taps_file(
+		&data_dir,
+		&[("probe/first", Some(&first)), ("probe/second", Some(&second))],
+	);
+
+	let (raw, tap_root) = fetch_manifest("dup:var", &registry_config())
+		.await
+		.expect("duplicate manifests resolve");
+	assert_eq!(raw, "# first tap manifest\n", "first tap wins");
+	assert_eq!(tap_root, first, "tap root is the first providing tap");
+}
+
+#[tokio::test]
+#[serial]
+#[cfg(unix)]
+async fn fetch_manifest_errors_on_unreadable_fresh_cache() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let cache = data_dir.join("agents").join("locked");
+	std::fs::create_dir_all(&cache).expect("create cache dir");
+	let cache_file = cache.join("var.toml");
+	std::fs::write(&cache_file, "cached manifest").expect("write cache");
+	chmod(&cache_file, 0o000);
+
+	let err = fetch_manifest("locked:var", &registry_config())
+		.await
+		.expect_err("unreadable cache must fail");
+	assert!(
+		err.to_string().contains("Failed to read cached manifest"),
+		"got: {err:#}"
+	);
+	chmod(&cache_file, 0o644);
+}
+
+#[tokio::test]
+#[serial]
+#[cfg(unix)]
+async fn fetch_manifest_serves_stale_cache_and_refreshes_in_background() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let default_tap = default_tap_dir();
+	write_agent_manifest(&default_tap, "stale", "var", "# fresh tap manifest\n");
+
+	let cache_dir = data_dir.join("agents").join("stale");
+	std::fs::create_dir_all(&cache_dir).expect("create cache dir");
+	let cache_file = cache_dir.join("var.toml");
+	std::fs::write(&cache_file, "# stale cached manifest\n").expect("write stale cache");
+	age_beyond_ttl(&cache_file);
+
+	// The stale cache is served synchronously…
+	let (raw, _) = fetch_manifest("stale:var", &registry_config())
+		.await
+		.expect("stale cache still resolves");
+	assert_eq!(raw, "# stale cached manifest\n");
+
+	// …while the background refresh eventually replaces it from the tap.
+	let refreshed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+		loop {
+			if let Ok(content) = std::fs::read_to_string(&cache_file) {
+				if content == "# fresh tap manifest\n" {
+					return;
+				}
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+		}
+	})
+	.await;
+	assert!(
+		refreshed.is_ok(),
+		"background refresh did not rewrite the cache"
+	);
+}
+
+// --- list_all_tap_agents / list_all_tap_workflows edge branches -------------
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let default_tap = default_tap_dir();
+
+	// A user tap providing a duplicate role — first tap wins.
+	let user_tap = user_tap_dir(&data_dir, "probe/dup");
+	write_agent_manifest(
+		&user_tap,
+		"dup",
+		"both",
+		"# Title: Dup\n# Description: From the user tap.\n",
+	);
+	// A second user tap whose directory does not exist (agents_dir() errors).
+	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
+
+	// Default tap: one good agent, a duplicate of the user tap's role, a stray
+	// non-directory entry, an unreadable category, and a directory named *.toml.
+	write_agent_manifest(
+		&default_tap,
+		"dup",
+		"both",
+		"# Title: Dup\n# Description: From the default tap.\n",
+	);
+	write_agent_manifest(
+		&default_tap,
+		"good",
+		"var",
+		"# Title: Good\n# Description: The good agent.\n",
+	);
+	std::fs::write(default_tap.join("agents").join("stray.md"), "not a category")
+		.expect("write stray file");
+	let locked = default_tap.join("agents").join("locked");
+	std::fs::create_dir_all(&locked).expect("create locked category");
+	chmod(&locked, 0o000);
+	let toml_dir = default_tap.join("agents").join("good").join("dirnamed.toml");
+	std::fs::create_dir_all(&toml_dir).expect("create dir named like a manifest");
+
+	let agents = list_all_tap_agents().expect("enumeration succeeds");
+	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
+	assert_eq!(roles, vec!["dup:both", "good:var"], "skipped entries");
+	let dup = agents.iter().find(|a| a.role == "dup:both").expect("dup listed");
+	assert_eq!(
+		dup.source_tap, "probe/dup",
+		"first tap wins over the default tap"
+	);
+
+	chmod(&locked, 0o755);
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
+	use std::os::unix::ffi::OsStringExt;
+
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let default_tap = default_tap_dir();
+	let workflows = default_tap.join("workflows");
+	std::fs::create_dir_all(&workflows).expect("create workflows dir");
+	std::fs::write(
+		workflows.join("good.toml"),
+		"description = \"the good workflow\"\n",
+	)
+	.expect("write good workflow");
+
+	// A user tap whose workflows dir cannot be read is skipped entirely.
+	let user_tap = user_tap_dir(&data_dir, "probe/locked");
+	let locked_workflows = user_tap.join("workflows");
+	std::fs::create_dir_all(&locked_workflows).expect("create locked workflows");
+	std::fs::write(locked_workflows.join("hidden.toml"), "description = \"x\"\n")
+		.expect("write hidden workflow");
+	chmod(&locked_workflows, 0o000);
+	install_taps_file(&data_dir, &[("probe/locked", Some(&user_tap))]);
+
+	// Non-UTF-8 file stem and an unreadable workflow file in the default tap.
+	let non_utf8 = workflows.join(std::ffi::OsString::from_vec(vec![0xff, 0xfe, b'.', b't', b'o', b'm', b'l']));
+	std::fs::write(&non_utf8, "description = \"x\"\n").expect("write non-utf8 workflow");
+	let unreadable = workflows.join("unreadable.toml");
+	std::fs::write(&unreadable, "description = \"x\"\n").expect("write unreadable workflow");
+	chmod(&unreadable, 0o000);
+
+	let workflows_list = list_all_tap_workflows().expect("enumeration succeeds");
+	let names: Vec<&str> = workflows_list.iter().map(|w| w.name.as_str()).collect();
+	assert_eq!(names, vec!["good"], "only the readable UTF-8 workflow is listed");
+
+	chmod(&locked_workflows, 0o755);
+	chmod(&unreadable, 0o644);
+}
+
+// --- capability resolution edge branches ------------------------------------
+
+#[test]
+#[serial]
+fn parse_capability_toml_skips_taps_with_missing_directories() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let default_tap = default_tap_dir();
+	let cap_dir = default_tap.join("capabilities").join("probe-cap");
+	std::fs::create_dir_all(&cap_dir).expect("create capability dir");
+	std::fs::write(
+		cap_dir.join("config.toml"),
+		"triggers = [\"probe thing\"]\n",
+	)
+	.expect("write config");
+	std::fs::write(cap_dir.join("default.toml"), "[deps]\n").expect("write provider");
+
+	// A user tap whose directory does not exist must be skipped, not fatal.
+	install_taps_file(&data_dir, &[("probe/ghost", None)]);
+
+	let resolved =
+		parse_capability_toml("probe-cap", &HashMap::new()).expect("capability resolves");
+	assert_eq!(resolved.name, "probe-cap");
+	assert_eq!(resolved.triggers, vec!["probe thing".to_string()]);
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn parse_capability_toml_surfaces_provider_file_failures() {
+	let _guard = DataDirGuard::new();
+	let default_tap = default_tap_dir();
+
+	let unreadable = default_tap.join("capabilities").join("unreadable-cap");
+	std::fs::create_dir_all(&unreadable).expect("create capability dir");
+	std::fs::write(unreadable.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
+	std::fs::write(unreadable.join("default.toml"), "[deps]\n").expect("provider");
+	chmod(&unreadable.join("default.toml"), 0o000);
+	let err = parse_capability_toml("unreadable-cap", &HashMap::new())
+		.expect_err("unreadable provider must fail");
+	assert!(
+		err.to_string().contains("Failed to read provider file"),
+		"got: {err:#}"
+	);
+	chmod(&unreadable.join("default.toml"), 0o644);
+
+	let malformed = default_tap.join("capabilities").join("malformed-cap");
+	std::fs::create_dir_all(&malformed).expect("create capability dir");
+	std::fs::write(malformed.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
+	std::fs::write(malformed.join("default.toml"), "not = = toml").expect("provider");
+	let err = parse_capability_toml("malformed-cap", &HashMap::new())
+		.expect_err("malformed provider must fail");
+	assert!(
+		err.to_string().contains("Failed to parse provider file"),
+		"got: {err:#}"
+	);
+}
+
+#[test]
+#[serial]
+fn parse_capability_toml_collects_env_keys_and_skips_malformed_servers() {
+	let _guard = DataDirGuard::new();
+	let default_tap = default_tap_dir();
+	let cap_dir = default_tap.join("capabilities").join("wired-cap");
+	std::fs::create_dir_all(&cap_dir).expect("create capability dir");
+	std::fs::write(cap_dir.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
+	std::fs::write(
+		cap_dir.join("default.toml"),
+		r#"
+[[mcp.servers]]
+name = "stdio-srv"
+type = "stdio"
+command = "probe-server"
+args = []
+timeout_seconds = 5
+tools = []
+env = { TOKEN = "{{ENV:STDIN_TOKEN}}" }
+
+[[mcp.servers]]
+name = "http-srv"
+type = "http"
+url = "https://probe.test"
+timeout_seconds = 5
+tools = []
+headers = { Authorization = "{{ENV:HDR_TOKEN}}" }
+
+[[mcp.servers]]
+type = "http"
+"#,
+	)
+	.expect("write provider");
+
+	let resolved =
+		parse_capability_toml("wired-cap", &HashMap::new()).expect("capability resolves");
+	let mut keys = resolved.required_env_keys.clone();
+	keys.sort();
+	assert_eq!(
+		keys,
+		vec!["HDR_TOKEN".to_string(), "STDIN_TOKEN".to_string()],
+		"env and header placeholders both gate activation"
+	);
+	let server_names: Vec<&str> = resolved
+		.mcp_servers
+		.iter()
+		.map(|s| s.name())
+		.collect();
+	assert_eq!(
+		server_names,
+		vec!["stdio-srv", "http-srv"],
+		"malformed server block is skipped, not fatal"
+	);
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn list_all_capabilities_skips_broken_unreadable_and_duplicate_entries() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let default_tap = default_tap_dir();
+
+	// A user tap providing a duplicate capability name — first tap wins.
+	let user_tap = user_tap_dir(&data_dir, "probe/dup");
+	let dup_dir = user_tap.join("capabilities").join("dup-cap");
+	std::fs::create_dir_all(&dup_dir).expect("create dup capability");
+	std::fs::write(dup_dir.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
+	std::fs::write(dup_dir.join("default.toml"), "[deps]\n").expect("provider");
+	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
+
+	// Default tap: duplicate of the user capability, one good capability, a
+	// stray file, and an unreadable capability directory.
+	let dup_default = default_tap.join("capabilities").join("dup-cap");
+	std::fs::create_dir_all(&dup_default).expect("create dup capability");
+	std::fs::write(dup_default.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
+	std::fs::write(dup_default.join("default.toml"), "[deps]\n").expect("provider");
+
+	let good = default_tap.join("capabilities").join("good-cap");
+	std::fs::create_dir_all(&good).expect("create good capability");
+	std::fs::write(good.join("config.toml"), "triggers = [\"good thing\"]\n").expect("config");
+	std::fs::write(good.join("default.toml"), "[deps]\n").expect("provider");
+
+	std::fs::write(
+		default_tap.join("capabilities").join("stray.md"),
+		"not a capability",
+	)
+	.expect("write stray file");
+	let locked = default_tap.join("capabilities").join("locked-cap");
+	std::fs::create_dir_all(&locked).expect("create locked capability");
+	chmod(&locked, 0o000);
+
+	let caps = list_all_capabilities(&HashMap::new()).expect("enumeration succeeds");
+	let mut names: Vec<&str> = caps.iter().map(|c| c.name.as_str()).collect();
+	names.sort();
+	assert_eq!(names, vec!["dup-cap", "good-cap"], "skipped entries");
+
+	chmod(&locked, 0o755);
+}

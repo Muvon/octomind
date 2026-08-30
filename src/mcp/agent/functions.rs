@@ -1300,3 +1300,7 @@ mod inline_tests;
 #[cfg(test)]
 #[path = "functions_command_tests.rs"]
 mod command_tests;
+
+#[cfg(test)]
+#[path = "functions_runtime_tests.rs"]
+mod runtime_tests;

@@ -184,3 +184,106 @@ async fn resolve_env_vars_without_placeholders_is_passthrough() {
 		.unwrap();
 	assert_eq!(resolved, "plain text, nothing to resolve");
 }
+
+// --- interactive prompt paths (stdin at EOF) -------------------------------
+
+/// Replace fd 0 with `/dev/null` for the duration of a test so the blocking
+/// `prompt_user` stdin read returns EOF immediately and deterministically,
+/// whatever stdin the test harness inherited.
+struct StdinNullGuard {
+	saved_fd: i32,
+}
+
+impl StdinNullGuard {
+	#[cfg(unix)]
+	fn new() -> Self {
+		use std::os::unix::io::AsRawFd;
+		let saved_fd = unsafe { libc::dup(0) };
+		assert!(saved_fd >= 0, "failed to dup stdin for the guard");
+		let devnull = std::fs::File::open("/dev/null").expect("open /dev/null");
+		unsafe {
+			assert!(
+				libc::dup2(devnull.as_raw_fd(), 0) == 0,
+				"failed to redirect stdin"
+			);
+		}
+		Self { saved_fd }
+	}
+}
+
+impl Drop for StdinNullGuard {
+	#[cfg(unix)]
+	fn drop(&mut self) {
+		unsafe {
+			assert!(libc::dup2(self.saved_fd, 0) == 0, "failed to restore stdin");
+			libc::close(self.saved_fd);
+		}
+	}
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn resolve_inputs_prompts_on_missing_key_and_persists_the_eof_value() {
+	let _guard = DataDirGuard::new();
+	let _stdin = StdinNullGuard::new();
+
+	// No stored value → prompt_user runs; stdin is at EOF so the value is the
+	// empty string, which must be persisted so later runs stop prompting.
+	let resolved = resolve_inputs("token={{INPUT:ProbeMissingKey}}")
+		.await
+		.expect("resolve with missing key");
+	assert_eq!(resolved, "token=");
+
+	let data_dir = std::env::var("OCTOMIND_DATA_DIR").expect("data dir is set");
+	let stored = std::fs::read_to_string(std::path::Path::new(&data_dir).join("inputs.toml"))
+		.expect("inputs.toml persisted after prompting");
+	assert!(
+		stored.contains("ProbeMissingKey"),
+		"prompted key must be persisted: {stored}"
+	);
+
+	// A second resolution reads the stored value instead of prompting again.
+	let again = resolve_inputs("token={{INPUT:ProbeMissingKey}}")
+		.await
+		.expect("resolve with stored key");
+	assert_eq!(again, "token=");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn resolve_env_vars_prompts_missing_key_writes_dotenv_and_sets_process_env() {
+	let dir = tempfile::tempdir().expect("tempdir for cwd");
+	let previous_cwd = std::env::current_dir().expect("current dir");
+	std::env::set_current_dir(dir.path()).expect("enter temp cwd");
+	// Unique key so the process-env mutation cannot clash with anything else.
+	const KEY: &str = "OCTOMIND_PROBE_ENV_KEY";
+	let had_value = std::env::var_os(KEY);
+	std::env::remove_var(KEY);
+	let _stdin = StdinNullGuard::new();
+
+	let resolved = resolve_env_vars("key={{ENV:OCTOMIND_PROBE_ENV_KEY}}")
+		.await
+		.expect("resolve with missing env key");
+	assert_eq!(resolved, "key=");
+
+	// The EOF value is persisted to ./.env and set for the running process.
+	assert_eq!(
+		std::env::var(KEY).as_deref(),
+		Ok(""),
+		"prompted env value must be set in the process"
+	);
+	let dotenv = std::fs::read_to_string(dir.path().join(".env")).expect(".env written");
+	assert!(
+		dotenv.contains(&format!("{KEY}=")),
+		"key must be appended to .env: {dotenv}"
+	);
+
+	// Restore the process state the test mutated.
+	std::env::set_current_dir(previous_cwd).expect("restore cwd");
+	match had_value {
+		Some(value) => std::env::set_var(KEY, value),
+		None => std::env::remove_var(KEY),
+	}
+}

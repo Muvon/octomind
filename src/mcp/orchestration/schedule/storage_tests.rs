@@ -380,3 +380,35 @@ fn parse_when_rejects_malformed_input() {
 		"date without a time part"
 	);
 }
+
+// --- parse_time_of_day: future-today branch ---------------------------------
+
+#[test]
+fn parse_time_of_day_returns_today_when_the_time_is_still_ahead() {
+	use chrono::{Duration, Local, Timelike};
+
+	// Pick a time-of-day ten minutes from now. If that crosses midnight the
+	// function must answer tomorrow instead — assert whichever is expected at
+	// run time so the test is deterministic at any hour.
+	let target = Local::now() + Duration::minutes(10);
+	let hhmm = format!("{:02}:{:02}", target.hour(), target.minute());
+	let parsed = parse_time_of_day(&hhmm).expect("valid HH:MM parses");
+
+	let expected_date = if target.date_naive() == Local::now().date_naive() {
+		Local::now().date_naive()
+	} else {
+		Local::now().date_naive().succ_opt().expect("tomorrow exists")
+	};
+	assert_eq!(
+		parsed.date_naive(),
+		expected_date,
+		"parsed {hhmm} at {:?} → {:?}",
+		Local::now(),
+		parsed
+	);
+	assert_eq!(
+		(parsed.hour(), parsed.minute()),
+		(target.hour(), target.minute()),
+		"time-of-day preserved"
+	);
+}

@@ -280,49 +280,8 @@ pub fn parse_agent_meta(raw_toml: &str, tag: &str) -> Result<AgentMeta> {
 }
 
 #[cfg(test)]
-mod meta_tests {
-	use super::*;
-
-	#[test]
-	fn parses_title_and_description_from_header_comments() {
-		let raw = "# agents/developer/general.toml\n\
-		           # Agent: developer:general\n\
-		           # Title: General Developer\n\
-		           # Description: Elite senior developer.\n\
-		           \n\
-		           [[roles]]\n\
-		           temperature = 0.1\n";
-		let m = parse_agent_meta(raw, "developer:general").unwrap();
-		assert_eq!(m.title, "General Developer");
-		assert_eq!(m.description, "Elite senior developer.");
-	}
-
-	#[test]
-	fn errors_when_title_missing() {
-		let raw = "# Description: Only description\n[[roles]]\n";
-		let err = parse_agent_meta(raw, "x:y").unwrap_err().to_string();
-		assert!(err.contains("Title"));
-	}
-
-	#[test]
-	fn errors_when_description_missing() {
-		let raw = "# Title: Only title\n[[roles]]\n";
-		let err = parse_agent_meta(raw, "x:y").unwrap_err().to_string();
-		assert!(err.contains("Description"));
-	}
-
-	#[test]
-	fn stops_at_first_non_comment_line() {
-		// A `# Title:` after the header block should NOT be picked up.
-		let raw = "# Title: Real\n\
-		           # Description: Real desc\n\
-		           [[roles]]\n\
-		           system = \"# Title: not metadata\"\n";
-		let m = parse_agent_meta(raw, "x:y").unwrap();
-		assert_eq!(m.title, "Real");
-		assert_eq!(m.description, "Real desc");
-	}
-}
+#[path = "registry_meta_tests.rs"]
+mod meta_tests;
 
 /// Enumerate every agent installed across all configured taps.
 ///

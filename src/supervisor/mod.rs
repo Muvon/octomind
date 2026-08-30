@@ -119,29 +119,8 @@ pub enum VerificationPolicyUpdate {
 }
 
 #[cfg(test)]
-mod verification_policy_tests {
-	use super::*;
-
-	#[test]
-	fn silence_preserves_policy_and_explicit_updates_replace_it() {
-		let mut policy = VerificationPolicy::default();
-		assert!(policy.apply(VerificationPolicyUpdate::Forbid));
-		assert!(policy.forbids());
-		assert!(!policy.apply(VerificationPolicyUpdate::Unchanged));
-		assert!(policy.forbids());
-		assert!(policy.apply(VerificationPolicyUpdate::Allow));
-		assert!(!policy.forbids());
-		assert_eq!(policy.effective(true), VerificationPolicy::Forbidden);
-		assert_eq!(policy.effective(false), VerificationPolicy::Allowed);
-	}
-
-	#[test]
-	fn allow_without_a_prior_prohibition_is_a_noop() {
-		let mut policy = VerificationPolicy::default();
-		assert!(!policy.apply(VerificationPolicyUpdate::Allow));
-		assert_eq!(policy, VerificationPolicy::Unspecified);
-	}
-}
+#[path = "verification_policy_tests.rs"]
+mod verification_policy_tests;
 
 /// Escape untrusted text before embedding it inside supervisor-owned XML-like
 /// control blocks. This preserves field boundaries against literal closing tags.

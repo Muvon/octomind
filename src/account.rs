@@ -431,48 +431,8 @@ async fn hub_usage() -> Result<Option<HubUsageResponse>> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn upsert_replaces_the_key_and_keeps_the_rest() {
-		let before = "OPENROUTER_API_KEY=abc\nOCTOHUB_API_KEY=old\nFOO=bar\n";
-		let after = upsert(before, "new");
-		assert_eq!(
-			after,
-			"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=new\n"
-		);
-		// Empty file, exported form, and repeated logins all converge on one line.
-		assert_eq!(upsert("", "k"), "OCTOHUB_API_KEY=k\n");
-		assert_eq!(
-			upsert("export OCTOHUB_API_KEY=old", "k"),
-			"OCTOHUB_API_KEY=k\n"
-		);
-		assert_eq!(
-			upsert(&after, "third"),
-			"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=third\n"
-		);
-	}
-
-	#[test]
-	fn repoint_swaps_origin_keeps_path_and_query() {
-		assert_eq!(
-			repoint(
-				"https://octomind.run/app/login/cli?code=AB12-CD34",
-				"http://localhost:5199"
-			),
-			"http://localhost:5199/app/login/cli?code=AB12-CD34"
-		);
-	}
-
-	#[test]
-	fn repoint_leaves_unrecognized_urls_alone() {
-		assert_eq!(
-			repoint("https://example.com/x", "http://localhost:1"),
-			"https://example.com/x"
-		);
-	}
-}
+#[path = "account_inline_tests.rs"]
+mod inline_tests;
 
 #[cfg(test)]
 #[path = "account_tests.rs"]

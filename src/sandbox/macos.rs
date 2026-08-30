@@ -120,29 +120,5 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn ordinary_paths_are_unchanged() {
-		assert_eq!(
-			escape_profile_str("/Users/dev/project"),
-			"/Users/dev/project"
-		);
-		assert_eq!(escape_profile_str("/tmp/a b/c-d.e"), "/tmp/a b/c-d.e");
-	}
-
-	#[test]
-	fn quotes_and_backslashes_stay_inside_the_string_literal() {
-		// A directory literally named `x") (allow file-write* (subpath "/` would
-		// otherwise close the literal and re-open writes to the whole disk.
-		let escaped = escape_profile_str("/tmp/x\") (allow file-write* (subpath \"/");
-		// Every quote that reaches the profile is escaped — none can terminate it.
-		assert_eq!(escaped.matches('"').count(), 2);
-		assert_eq!(escaped.matches("\\\"").count(), 2);
-
-		assert_eq!(escape_profile_str(r"a\b"), r"a\\b");
-		// Backslashes are escaped before quotes, so `\"` does not become `\\"`.
-		assert_eq!(escape_profile_str("a\\\"b"), "a\\\\\\\"b");
-	}
-}
+#[path = "macos_tests.rs"]
+mod tests;

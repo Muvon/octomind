@@ -61,36 +61,5 @@ impl AgentConfig {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_get_resolved_workdir_relative() {
-		let agent = AgentConfig {
-			name: "test".to_string(),
-			description: "Test".to_string(),
-			command: "octomind acp --role test".to_string(),
-			workdir: ".".to_string(),
-		};
-		let session_dir = PathBuf::from("/home/user/project");
-		assert_eq!(
-			agent.get_resolved_workdir(&session_dir),
-			PathBuf::from("/home/user/project")
-		);
-	}
-
-	#[test]
-	fn test_get_resolved_workdir_absolute() {
-		let agent = AgentConfig {
-			name: "test".to_string(),
-			description: "Test".to_string(),
-			command: "octomind acp --role test".to_string(),
-			workdir: "/absolute/path".to_string(),
-		};
-		let session_dir = PathBuf::from("/home/user/project");
-		assert_eq!(
-			agent.get_resolved_workdir(&session_dir),
-			PathBuf::from("/absolute/path")
-		);
-	}
-}
+#[path = "agents_tests.rs"]
+mod tests;

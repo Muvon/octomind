@@ -143,34 +143,5 @@ impl BackgroundJobManager {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_acquire_and_release() {
-		let mgr = BackgroundJobManager::new(2);
-		assert!(mgr.try_acquire().is_ok());
-		assert!(mgr.try_acquire().is_ok());
-		assert!(mgr.try_acquire().is_err());
-		// release decrements the counter; inbox push is a no-op (no inbox registered)
-		mgr.release(CompletedJob {
-			agent_name: "a".into(),
-			output: "done".into(),
-		});
-		assert!(mgr.try_acquire().is_ok());
-	}
-
-	#[test]
-	fn test_active_count() {
-		let mgr = BackgroundJobManager::new(10);
-		assert_eq!(mgr.active_count(), 0);
-		mgr.try_acquire().unwrap();
-		mgr.try_acquire().unwrap();
-		assert_eq!(mgr.active_count(), 2);
-		mgr.release(CompletedJob {
-			agent_name: "a".into(),
-			output: "x".into(),
-		});
-		assert_eq!(mgr.active_count(), 1);
-	}
-}
+#[path = "background_jobs_tests.rs"]
+mod tests;

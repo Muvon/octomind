@@ -364,22 +364,5 @@ pub fn generate_id(role: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn id_format_is_stable() {
-		let id = generate_id("developer:general");
-		assert!(id.starts_with("tap-developer-general-"));
-		// 4 (tap-) + 17 (developer-general-) + 6 (hex) = 27
-		assert_eq!(id.len(), "tap-developer-general-".len() + 6);
-	}
-
-	#[test]
-	fn status_strings_are_stable() {
-		assert_eq!(TapJobStatus::Running.as_str(), "running");
-		assert_eq!(TapJobStatus::Done.as_str(), "done");
-		assert_eq!(TapJobStatus::Failed.as_str(), "failed");
-		assert_eq!(TapJobStatus::Cancelled.as_str(), "cancelled");
-	}
-}
+#[path = "tap_runs_tests.rs"]
+mod tests;

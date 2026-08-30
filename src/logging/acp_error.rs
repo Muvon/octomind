@@ -133,22 +133,5 @@ impl Drop for AcpErrorSink {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use tempfile::tempdir;
-
-	#[test]
-	fn test_acp_error_sink_path() {
-		let dir = tempdir().unwrap();
-		let logs_dir = dir.path().join("logs");
-		std::fs::create_dir_all(&logs_dir).unwrap();
-
-		let path = logs_dir.join("acp-errors.jsonl");
-		let sink = AcpErrorSink::new(path.clone()).unwrap();
-
-		sink.log_error_simple("Test error").unwrap();
-
-		let content = std::fs::read_to_string(&path).unwrap();
-		assert!(content.contains("Test error"));
-	}
-}
+#[path = "acp_error_tests.rs"]
+mod tests;

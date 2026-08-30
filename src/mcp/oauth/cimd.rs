@@ -368,43 +368,8 @@ pub async fn resolve_client_id(
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_build_client_metadata() {
-		let metadata = build_client_metadata(
-			"http://localhost:34567/oauth/callback",
-			&["read".to_string(), "write".to_string()],
-		);
-		assert_eq!(metadata.client_name, "Octomind");
-		assert_eq!(
-			metadata.redirect_uris,
-			vec!["http://localhost:34567/oauth/callback"]
-		);
-		assert_eq!(metadata.grant_types, vec!["authorization_code"]);
-		assert_eq!(metadata.token_endpoint_auth_method, "none");
-		assert_eq!(metadata.scope, Some("read write".to_string()));
-	}
-
-	#[test]
-	fn test_build_client_metadata_empty_scopes() {
-		let metadata = build_client_metadata("http://localhost:34567/oauth/callback", &[]);
-		assert!(metadata.scope.is_none());
-	}
-
-	#[test]
-	fn test_client_metadata_serialization() {
-		let metadata = build_client_metadata(
-			"http://localhost:34567/oauth/callback",
-			&["openid".to_string()],
-		);
-		let json = serde_json::to_string(&metadata).unwrap();
-		assert!(json.contains("Octomind"));
-		assert!(json.contains("authorization_code"));
-		assert!(json.contains("none"));
-	}
-}
+#[path = "cimd_inline_tests.rs"]
+mod inline_tests;
 
 #[cfg(test)]
 #[path = "cimd_tests.rs"]

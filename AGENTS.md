@@ -135,6 +135,21 @@ User input
 // limitations under the License.
 ```
 
+### Tests — sibling files, not inline
+
+Keep unit test bodies in sibling files ending in `_tests.rs`. Production files
+only declare the test module:
+
+```rust
+#[cfg(test)]
+#[path = "feature_tests.rs"]
+mod tests;
+```
+
+Do not add inline `#[cfg(test)] mod tests { ... }` bodies to production `.rs`
+files. Use a descriptive sibling filename and module name when a source file
+has multiple test modules.
+
 ### Errors: fail fast, never hide
 
 ```rust
@@ -268,6 +283,7 @@ See `src/mcp/hint_accumulator.rs` and `src/mcp/core/schedule/core.rs` for exampl
 
 Before any commit:
 - [ ] Apache 2.0 copyright header on every new `.rs` file
+- [ ] Unit test bodies live in sibling `*_tests.rs` files, not production files
 - [ ] No `std::println!` / `std::eprintln!` — use crate macros
 - [ ] No `unwrap_or_else(|_| ...)` that swallows real errors
 - [ ] MCP tool failures return `Ok(McpToolResult::error(...))` not `Err(...)`

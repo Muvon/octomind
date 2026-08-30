@@ -777,25 +777,8 @@ pub fn is_markdown_content(content: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_markdown_detection() {
-		assert!(is_markdown_content("# Heading"));
-		assert!(is_markdown_content("```rust\ncode\n```"));
-		assert!(is_markdown_content("**bold text**"));
-		assert!(is_markdown_content("[link](url)"));
-		assert!(!is_markdown_content("plain text"));
-	}
-
-	#[test]
-	fn test_renderer_creation() {
-		let renderer = MarkdownRenderer::new();
-		// Just test that it doesn't panic
-		assert!(!renderer.skin.headers.is_empty());
-	}
-}
+#[path = "markdown_inline_tests.rs"]
+mod inline_tests;
 
 #[cfg(test)]
 #[path = "markdown_tests.rs"]

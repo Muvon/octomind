@@ -146,42 +146,5 @@ impl Default for EnvTracker {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use std::env;
-
-	#[test]
-	fn test_env_tracker_new() {
-		let tracker = EnvTracker::new();
-		// Should capture current environment
-		assert!(!tracker.pre_dotenv_vars.is_empty());
-		assert!(!tracker.dotenv_loaded);
-	}
-
-	#[test]
-	fn test_source_detection_system_only() {
-		// Set a test variable
-		env::set_var("TEST_SYSTEM_VAR", "system_value");
-
-		let tracker = EnvTracker::new();
-
-		// Should detect as system source
-		assert_eq!(tracker.get_source("TEST_SYSTEM_VAR"), EnvSource::System);
-		assert_eq!(
-			tracker.get_source_description("TEST_SYSTEM_VAR"),
-			"environment variable"
-		);
-
-		// Clean up
-		env::remove_var("TEST_SYSTEM_VAR");
-	}
-
-	#[test]
-	fn test_source_detection_not_found() {
-		let tracker = EnvTracker::new();
-
-		// Should detect as not found
-		assert_eq!(tracker.get_source("NONEXISTENT_VAR"), EnvSource::NotFound);
-		assert_eq!(tracker.get_source_description("NONEXISTENT_VAR"), "not set");
-	}
-}
+#[path = "env_source_tests.rs"]
+mod tests;

@@ -279,12 +279,16 @@ impl<'a> CommandCompleter<'a> {
 
 		// Adjust the replacement paths to be relative to the original input
 		for candidate in &mut candidates {
+			let is_directory = candidate.replacement.ends_with('/');
 			if file_part.starts_with("~/") {
 				// Convert back to tilde notation
 				if let Some(home) = dirs::home_dir() {
 					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(&home)
 					{
 						candidate.replacement = format!("~/{}", relative.to_string_lossy());
+						if is_directory && !candidate.replacement.ends_with('/') {
+							candidate.replacement.push('/');
+						}
 					}
 				}
 			} else if file_part.starts_with('/') {
@@ -296,6 +300,16 @@ impl<'a> CommandCompleter<'a> {
 					.strip_prefix(crate::mcp::get_thread_working_directory())
 				{
 					candidate.replacement = relative.to_string_lossy().to_string();
+					if is_directory && !candidate.replacement.ends_with('/') {
+						candidate.replacement.push('/');
+					}
+				}
+			} else if let Ok(relative) =
+				PathBuf::from(&candidate.replacement).strip_prefix(Path::new("."))
+			{
+				candidate.replacement = relative.to_string_lossy().to_string();
+				if is_directory && !candidate.replacement.ends_with('/') {
+					candidate.replacement.push('/');
 				}
 			}
 		}

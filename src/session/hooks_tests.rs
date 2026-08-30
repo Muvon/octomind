@@ -165,10 +165,11 @@ fn validator_workdir(extra: &str) -> tempfile::TempDir {
 }
 
 async fn run_validators_in(sid: &str, tmp: &tempfile::TempDir, role: &str, text: &str) {
-	crate::session::context::set_session_workdir(sid, tmp.path().to_path_buf());
+	let sid = sid.to_string();
+	crate::session::context::set_session_workdir(&sid, tmp.path().to_path_buf());
 	crate::session::guardrails::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
-	crate::session::hooks::run_turn_validators(sid, role, text).await;
+	crate::session::hooks::run_turn_validators(&sid, role, text).await;
 }
 
 #[tokio::test]

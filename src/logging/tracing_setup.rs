@@ -231,56 +231,8 @@ fn create_env_filter(level: &str) -> Result<EnvFilter> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_create_env_filter() {
-		// Test that filters are created successfully
-		assert!(create_env_filter("debug").is_ok());
-		assert!(create_env_filter("info").is_ok());
-		assert!(create_env_filter("warn").is_ok());
-		assert!(create_env_filter("error").is_ok());
-		assert!(create_env_filter("trace").is_ok());
-		assert!(create_env_filter("off").is_ok());
-		// Unknown level defaults to info
-		assert!(create_env_filter("unknown").is_ok());
-	}
-
-	#[test]
-	fn test_logging_mode_tracking() {
-		// Test that we can set and get logging mode
-		// Note: OnceLock can only be set once, so we test the getter
-		// The setter is tested implicitly by init_tracing
-		let mode = get_logging_mode();
-		// Mode might be None if tests run before any init
-		assert!(
-			mode.is_none()
-				|| matches!(
-					mode,
-					Some(
-						LoggingMode::Cli
-							| LoggingMode::Acp | LoggingMode::WebSocket
-							| LoggingMode::Silent
-					)
-				)
-		);
-	}
-
-	#[test]
-	fn test_is_structured_output_mode() {
-		// Without initialization, should return false
-		// (or true if a previous test initialized it to Acp/WebSocket)
-		let _ = is_structured_output_mode();
-	}
-
-	#[test]
-	fn test_is_tracing_initialized() {
-		// Test that we can check if tracing is initialized
-		// This should not panic
-		let _ = is_tracing_initialized();
-	}
-}
+#[path = "tracing_setup_inline_tests.rs"]
+mod inline_tests;
 
 #[cfg(test)]
 #[path = "tracing_setup_tests.rs"]

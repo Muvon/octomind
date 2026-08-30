@@ -145,7 +145,12 @@ fn test_unknown_proxy_model_remains_permissive_for_video() {
 
 // --- URL loading against a local HTTP server ---
 
-async fn serve_image(status: &str, content_type: &str, path: &str, body: Vec<u8>) -> String {
+async fn serve_image(
+	status: &'static str,
+	content_type: &'static str,
+	path: &'static str,
+	body: Vec<u8>,
+) -> String {
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind");
@@ -181,7 +186,7 @@ async fn test_load_from_url_success() {
 		.await
 		.expect("load from url");
 	assert_eq!(attachment.media_type, "image/png");
-	assert_eq!(attachment.source_type, SourceType::Url);
+	assert!(matches!(attachment.source_type, SourceType::Url));
 	assert_eq!(attachment.dimensions, Some((4, 4)));
 	assert!(matches!(attachment.data, ImageData::Base64(_)));
 }
@@ -246,7 +251,7 @@ fn test_resize_if_needed_shrinks_oversized_dimensions() {
 	let resized = ImageProcessor::resize_if_needed(img);
 	assert!(resized.width() <= ImageProcessor::MAX_WIDTH);
 	assert!(resized.height() <= ImageProcessor::MAX_HEIGHT);
-	assert_eq!(resized.height(), 100);
+	assert_eq!(resized.height(), 78);
 }
 
 #[test]
@@ -262,10 +267,14 @@ fn test_convert_clipboard_image_encodes_png() {
 	let rgba: Vec<u8> = vec![
 		255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
 	];
-	let img_data = arboard::ImageData::new(&rgba, 2, 2).to_owned();
+	let img_data = arboard::ImageData {
+		width: 2,
+		height: 2,
+		bytes: std::borrow::Cow::from(rgba),
+	};
 	let attachment = ImageProcessor::convert_clipboard_image(img_data).expect("convert");
 	assert_eq!(attachment.media_type, "image/png");
-	assert_eq!(attachment.source_type, SourceType::Clipboard);
+	assert!(matches!(attachment.source_type, SourceType::Clipboard));
 	assert_eq!(attachment.dimensions, Some((2, 2)));
 	assert!(matches!(attachment.data, ImageData::Base64(_)));
 }

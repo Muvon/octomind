@@ -1,0 +1,260 @@
+// Copyright 2026 Muvon Un Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use super::*;
+use std::time::{Duration, Instant};
+
+/// The tap/agent client speaks raw JSON while the octomind ACP server
+/// deserializes with the `agent-client-protocol` schema — pin every
+/// outgoing params shape against those types so a crate upgrade that
+/// changes the wire format fails here instead of at runtime (e.g. the
+/// protocolVersion string → u16 break).
+#[test]
+fn outgoing_params_match_acp_schema() {
+	use agent_client_protocol::schema::v1::{InitializeRequest, NewSessionRequest, PromptRequest};
+
+	serde_json::from_value::<InitializeRequest>(acp_initialize_params())
+		.expect("initialize params must match ACP v1 schema");
+	serde_json::from_value::<NewSessionRequest>(acp_new_session_params(std::path::Path::new(
+		"/tmp",
+	)))
+	.expect("session/new params must match ACP v1 schema");
+	serde_json::from_value::<PromptRequest>(acp_prompt_params("sess", "task"))
+		.expect("session/prompt params must match ACP v1 schema");
+}
+
+/// initialize (id=1) + session/new (id=2) + one streamed message chunk.
+const HANDSHAKE: &str = r#"
+echo '{"jsonrpc":"2.0","id":1,"result":{}}'
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s"}}'
+echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}'
+"#;
+
+/// Keeps the fake server alive until the client closes stdin. A script
+/// that exits the instant its echos finish races the client's pipelined
+/// writes: once the process is gone the stdin pipe has no reader, so
+/// write_all fails with EPIPE (seen on macOS) before the client reads
+/// the id=3 response.
+const WAIT_STDIN_EOF: &str = "\ncat >/dev/null";
+
+async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Result<String> {
+	run_acp_command(
+		"sh",
+		&["-c", &script],
+		"task",
+		&std::env::temp_dir(),
+		cancel_rx,
+		None,
+		false,
+	)
+	.await
+}
+
+#[tokio::test]
+async fn streams_live_updates_into_tap_registry() {
+	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
+	use std::sync::{Arc, RwLock};
+	use std::time::SystemTime;
+
+	crate::session::context::with_session_id("tap-live-test-session".to_string(), async {
+			let (cancel_tx, _keep_alive) = watch::channel(false);
+			tap_runs::register_job(TapJob {
+				id: "tap-test-live-000001".to_string(),
+				role: "test:live".to_string(),
+				workdir: ".".to_string(),
+				started_at: SystemTime::now(),
+				status: Arc::new(RwLock::new(TapJobStatus::Running)),
+				cancel_tx,
+				live: Arc::new(RwLock::new(TapLiveState::default())),
+			});
+
+			let script = format!(
+				"{HANDSHAKE}{}\n{}\n{}{WAIT_STDIN_EOF}",
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"shell","rawInput":{"command":"ls -la"}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.usage":{"session_tokens":100,"session_cost":0.5,"input_tokens":80,"output_tokens":20,"cache_read_tokens":7,"cache_write_tokens":0,"reasoning_tokens":0}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'"#
+			);
+			run_acp_command(
+				"sh",
+				&["-c", &script],
+				"task",
+				&std::env::temp_dir(),
+				watch::channel(false).1,
+				Some("tap-test-live-000001"),
+				false,
+			)
+			.await
+			.expect("run succeeds");
+
+			let job = tap_runs::find_job("tap-test-live-000001").expect("job registered");
+			assert_eq!(job.live.last_action.as_deref(), Some("shell ls -la"));
+			let usage = job.live.usage.expect("usage recorded from _meta");
+			assert_eq!(usage.input_tokens, 80);
+			assert_eq!(usage.output_tokens, 20);
+			assert_eq!(usage.cache_read_tokens, 7);
+			assert!((usage.cost - 0.5).abs() < 1e-9);
+
+			// Resuming the same tap run replays the child's cumulative total, so
+			// only the increment may be banked: 0.5 then 0.8 owes 0.8, not 1.3.
+			let script = format!(
+				"{HANDSHAKE}{}\n{}{WAIT_STDIN_EOF}",
+				r#"echo '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update"},"_meta":{"octomind.usage":{"session_tokens":160,"session_cost":0.8,"input_tokens":120,"output_tokens":40,"cache_read_tokens":7,"cache_write_tokens":0,"reasoning_tokens":0}}}}'"#,
+				r#"echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}'"#
+			);
+			run_acp_command(
+				"sh",
+				&["-c", &script],
+				"task",
+				&std::env::temp_dir(),
+				watch::channel(false).1,
+				Some("tap-test-live-000001"),
+				false,
+			)
+			.await
+			.expect("resume succeeds");
+
+			let banked = crate::session::external_spend::take();
+			assert!(
+				(banked - 0.8).abs() < 1e-9,
+				"expected 0.8 banked for the parent, got {banked}"
+			);
+		})
+		.await;
+}
+
+#[tokio::test]
+async fn collects_output_and_returns_on_clean_exit() {
+	let script = format!(
+		"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+	);
+	let started = Instant::now();
+	let out = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect("clean run succeeds");
+	assert_eq!(out, "hello");
+	// Child exited on its own — the kill grace period must not be consumed.
+	assert!(started.elapsed() < Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn collects_background_turn_after_initial_prompt_response() {
+	let script = format!(
+		"{HANDSHAKE}echo '{}'\ncat >/dev/null\necho '{}'\necho '{}'",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","_meta":{"octomind.pending_work":true}}}"#,
+		r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"job finished"}}}}"#,
+		r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"final result"}}}}"#,
+	);
+	let out = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect("background turn is collected before child EOF");
+	assert_eq!(out, "hello\n\nfinal result");
+}
+
+#[tokio::test]
+async fn kills_child_that_does_not_exit_after_response() {
+	// `exec` keeps the same PID so the kill hits the sleeping process.
+	let script = format!(
+		"{HANDSHAKE}echo '{}'\nexec sleep 1000",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+	);
+	let started = Instant::now();
+	let out = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect("wedged child still yields the response");
+	assert_eq!(out, "hello");
+	let elapsed = started.elapsed();
+	// Returned via the grace-wait + kill path, not by hanging on wait().
+	assert!(
+		elapsed >= Duration::from_secs(5),
+		"kill fired too early: {elapsed:?}"
+	);
+	assert!(elapsed < Duration::from_secs(15), "run hung: {elapsed:?}");
+}
+
+#[tokio::test]
+async fn surfaces_prompt_error_instead_of_empty_output() {
+	let script = format!(
+		"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
+		r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"boom"}}"#
+	);
+	let err = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect_err("prompt error must fail the run");
+	assert!(err.to_string().contains("boom"), "got: {err:#}");
+}
+
+/// Real octomind failures arrive as `-32603` with the fixed JSON-RPC
+/// message and the cause in `data` — reporting only `message` would tell
+/// the parent nothing but "Internal error".
+#[tokio::test]
+async fn surfaces_error_data_over_generic_message() {
+	let script = format!(
+		"{HANDSHAKE}echo '{}'{WAIT_STDIN_EOF}",
+		r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"Internal error","data":"API call failed: 429 rate limit"}}"#
+	);
+	let err = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect_err("prompt error must fail the run");
+	assert!(err.to_string().contains("429 rate limit"), "got: {err:#}");
+}
+
+#[tokio::test]
+async fn cancellation_kills_child_mid_prompt() {
+	// Server never answers the prompt (no id=3) and never exits.
+	let script = format!("{HANDSHAKE}exec sleep 1000");
+	let (cancel_tx, cancel_rx) = watch::channel(false);
+	tokio::spawn(async move {
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		let _ = cancel_tx.send(true);
+	});
+	let started = Instant::now();
+	let err = run_fake_server(script, cancel_rx)
+		.await
+		.expect_err("cancellation must fail the run");
+	assert!(
+		crate::session::cancellation::is_cancelled(&err),
+		"got: {err:#}"
+	);
+	// Cancel must act immediately — not wait out any grace period.
+	assert!(started.elapsed() < Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn cancellation_kills_child_during_handshake() {
+	let (cancel_tx, cancel_rx) = watch::channel(false);
+	tokio::spawn(async move {
+		tokio::time::sleep(Duration::from_millis(200)).await;
+		let _ = cancel_tx.send(true);
+	});
+	let started = Instant::now();
+	let err = run_fake_server("exec sleep 1000".to_string(), cancel_rx)
+		.await
+		.expect_err("handshake cancellation must fail the run");
+	assert!(crate::session::cancellation::is_cancelled(&err));
+	assert!(started.elapsed() < Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn eof_before_prompt_response_is_failure() {
+	let script = format!("{HANDSHAKE}IFS= read -r _\nIFS= read -r _\nIFS= read -r _\nexit 0");
+	let err = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect_err("missing id=3 response must fail the run");
+	assert!(
+		err.to_string()
+			.contains("closed before the session/prompt response"),
+		"got: {err:#}"
+	);
+}

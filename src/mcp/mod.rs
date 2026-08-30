@@ -891,37 +891,8 @@ pub async fn execute_tool_calls(
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn test_mcp_tool_result_is_error() {
-		// Test success result
-		let success_result = McpToolResult::success(
-			"test_tool".to_string(),
-			"test_id".to_string(),
-			"Success message".to_string(),
-		);
-		assert!(
-			!success_result.is_error(),
-			"Success result should not be an error"
-		);
-
-		// Test error result
-		let error_result = McpToolResult::error(
-			"test_tool".to_string(),
-			"test_id".to_string(),
-			"Error message".to_string(),
-		);
-		assert!(error_result.is_error(), "Error result should be an error");
-
-		// Test extract_content on success
-		assert_eq!(success_result.extract_content(), "Success message");
-
-		// Test extract_content on error
-		assert_eq!(error_result.extract_content(), "Error message");
-	}
-}
+#[path = "mod_inline_tests.rs"]
+mod inline_tests;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

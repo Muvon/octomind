@@ -238,36 +238,5 @@ async fn revoke_token(
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	// Isolated per-process keystore file so tests never touch the real one.
-	pub(super) fn test_keystore_path() -> PathBuf {
-		std::env::temp_dir()
-			.join(format!("octomind-keystore-test-{}", std::process::id()))
-			.join("keystore.json")
-	}
-
-	#[tokio::test]
-	async fn save_load_clear_roundtrip() {
-		let server = "test-roundtrip";
-		let meta = TokenMetadata {
-			server_name: server.to_string(),
-			access_token: "abc123".to_string(),
-			refresh_token: Some("refresh".to_string()),
-			expires_at: 0,
-			scopes: vec!["read".to_string()],
-		};
-
-		save_token(server, &meta).await.unwrap();
-		assert_eq!(load_token(server).await.unwrap(), Some(meta));
-
-		clear_token(server, false, None, None, None).await.unwrap();
-		assert_eq!(load_token(server).await.unwrap(), None);
-	}
-
-	#[tokio::test]
-	async fn load_missing_is_none() {
-		assert_eq!(load_token("never-saved-server").await.unwrap(), None);
-	}
-}
+#[path = "token_store_tests.rs"]
+mod tests;

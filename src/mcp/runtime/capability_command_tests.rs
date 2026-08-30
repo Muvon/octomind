@@ -1159,3 +1159,288 @@ async fn test_activate_capability_inline_branches() {
 	reset_registry();
 	crate::mcp::runtime::dynamic::clear_all();
 }
+
+// ---------------------------------------------------------------------------
+// Wave-1 coverage additions: env markers in `list`, broken-tap enumeration
+// failures, non-fatal LRU eviction, env-capability output modes, and the
+// auto-activation pipeline gates.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[serial]
+async fn test_capability_list_marks_missing_env() {
+	let sb = CapSandbox::new("listenv");
+	install_fixture_caps(&sb);
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+	let _env = EnvGuard::new(&["CAPTEST_MISSING_KEY"]);
+	std::env::remove_var("CAPTEST_MISSING_KEY");
+
+	let config = test_config();
+	let result =
+		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+			.await
+			.expect("dispatch");
+	assert!(!is_err(&result), "got: {}", text_of(&result));
+	assert!(
+		text_of(&result).contains("[missing env] captest-envgate"),
+		"missing-env marker absent: {}",
+		text_of(&result)
+	);
+	assert!(
+		text_of(&result).contains("(missing env: CAPTEST_MISSING_KEY)"),
+		"env note absent: {}",
+		text_of(&result)
+	);
+
+	reset_registry();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_capability_enumeration_fails_when_taps_broken() {
+	let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+	let dir = std::env::temp_dir().join(format!("octomind-cap-broken-{}", std::process::id()));
+	let _ = std::fs::remove_dir_all(&dir);
+	std::fs::create_dir_all(&dir).expect("create sandbox");
+	std::fs::write(dir.join("taps.toml"), "not valid toml [[[").expect("broken taps.toml");
+	std::env::set_var("OCTOMIND_DATA_DIR", &dir);
+
+	let config = test_config();
+
+	// `list` surfaces the enumeration failure as an error value.
+	let result =
+		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+			.await
+			.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(
+		text_of(&result).contains("Failed to enumerate capabilities"),
+		"got: {}",
+		text_of(&result)
+	);
+
+	// `discover` fails the same way instead of hanging or panicking.
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "discover", "intent": "review some rust code"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(
+		text_of(&result).contains("Failed to enumerate capabilities"),
+		"got: {}",
+		text_of(&result)
+	);
+
+	// Auto-activation degrades to a silent no-op, never an error.
+	let activated = auto_activate_capabilities_for_intent("review some rust code", &config).await;
+	assert!(activated.is_empty());
+
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_lru_eviction_disable_failure_is_nonfatal() {
+	let sb = CapSandbox::new("lrufail");
+	install_fixture_caps(&sb);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+
+	let mut config = test_config();
+	// Debug level + a present config so the eviction-failure log arguments
+	// actually evaluate inside the session scope.
+	config.log_level = crate::config::LogLevel::Debug;
+
+	let sid = "__captest_lru_fail".to_string();
+	crate::session::context::set_session_config(&sid, &config);
+	crate::session::context::with_session_id(sid.clone(), async {
+		// Fill the registry to the soft cap; every seeded server is a ghost
+		// (not registered, not in config) so each eviction disable fails.
+		seed_cap("captest-lrufail-a", "captest-lrufail-a-srv", &["t_a"], 400);
+		seed_cap("captest-lrufail-b", "captest-lrufail-b-srv", &["t_b"], 300);
+		seed_cap("captest-lrufail-c", "captest-lrufail-c-srv", &["t_c"], 200);
+		seed_cap("captest-lrufail-d", "captest-lrufail-d-srv", &["t_d"], 100);
+
+		let result = execute_capability_command(
+			&cap_call(serde_json::json!({"action": "enable", "name": "captest-deps-ok"})),
+			&config,
+		)
+		.await
+		.expect("dispatch");
+		assert!(
+			!is_err(&result),
+			"eviction disable failure must not fail enable: {}",
+			text_of(&result)
+		);
+
+		// The LRU entry was still evicted despite the failed server disable.
+		assert!(!is_active("captest-lrufail-a"), "LRU entry must be evicted");
+		assert!(is_active("captest-deps-ok"));
+	})
+	.await;
+
+	crate::session::context::cleanup_session(&sid);
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_load_env_capabilities_blank_names_yield_no_events() {
+	let config = test_config();
+	let _env = EnvGuard::new(&["OCTOMIND_CAPABILITIES"]);
+
+	std::env::set_var("OCTOMIND_CAPABILITIES", "  ,  ,\t");
+	let events = std::sync::Mutex::new(Vec::new());
+	let cb = |e: EnvCapabilityProgress| {
+		events.lock().unwrap().push(e);
+	};
+	load_env_capabilities(&config, Some(&cb)).await;
+	assert!(
+		events.into_inner().unwrap().is_empty(),
+		"blank names must not produce progress events"
+	);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_load_env_capabilities_suppressed_mode_still_reports_failure() {
+	let sb = CapSandbox::new("envsuppress");
+	install_fixture_caps(&sb);
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+	let _env = EnvGuard::new(&["OCTOMIND_CAPABILITIES", "CAPTEST_MISSING_KEY"]);
+	std::env::remove_var("CAPTEST_MISSING_KEY");
+
+	// jsonl output mode suppresses CLI stderr; the failure must still be
+	// reported through the progress callback as Completed(false).
+	let mut config = test_config();
+	config.runtime_output_mode = Some("jsonl".to_string());
+	let sid = "__captest_env_suppress".to_string();
+	crate::session::context::set_session_config(&sid, &config);
+
+	let events = std::sync::Mutex::new(Vec::new());
+	let cb = |e: EnvCapabilityProgress| {
+		events.lock().unwrap().push(e);
+	};
+
+	std::env::set_var("OCTOMIND_CAPABILITIES", "captest-envgate");
+	crate::session::context::with_session_id(sid.clone(), async {
+		load_env_capabilities(&config, Some(&cb)).await;
+	})
+	.await;
+	std::env::remove_var("OCTOMIND_CAPABILITIES");
+
+	let events = events.into_inner().unwrap();
+	assert_eq!(events.len(), 2, "{events:?}");
+	assert!(matches!(
+		events[0],
+		EnvCapabilityProgress::Starting { ref capabilities }
+			if *capabilities == vec!["captest-envgate".to_string()]
+	));
+	assert!(matches!(
+		events[1],
+		EnvCapabilityProgress::Completed { ref capability, success: false }
+			if capability == "captest-envgate"
+	));
+	assert!(!is_active("captest-envgate"));
+
+	crate::session::context::cleanup_session(&sid);
+	reset_registry();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_auto_activate_requires_real_user_message() {
+	let sb = CapSandbox::new("autogate");
+	install_fixture_caps(&sb);
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+	let config = test_config();
+
+	// Last message is an assistant turn — activation must not fire.
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		crate::session::Message {
+			role: "assistant".to_string(),
+			content: "use the static cap please".to_string(),
+			..Default::default()
+		},
+	]);
+	auto_activate_capabilities(&mut session, &config).await;
+	assert!(!is_active("captest-static"));
+
+	// Empty session — same early return.
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	auto_activate_capabilities(&mut session, &config).await;
+	assert!(!is_active("captest-static"));
+
+	reset_registry();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_auto_activate_for_intent_gates() {
+	let sb = CapSandbox::new("intentgate");
+	install_fixture_caps(&sb);
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+	let _env = EnvGuard::new(&["CAPTEST_MISSING_KEY"]);
+	std::env::remove_var("CAPTEST_MISSING_KEY");
+	let config = test_config();
+
+	// System-managed content is never an intent.
+	let activated =
+		auto_activate_capabilities_for_intent("<system-note>\nuse the static cap\n</system-note>", &config)
+			.await;
+	assert!(activated.is_empty());
+
+	// Below the minimum-intent gate.
+	let activated = auto_activate_capabilities_for_intent("ok do it", &config).await;
+	assert!(activated.is_empty());
+
+	// A real intent with only an env-gated candidate: the env gate filters
+	// the sole candidate out before any embedding work, so nothing activates.
+	let activated =
+		auto_activate_capabilities_for_intent("use the env cap for the thing", &config).await;
+	assert!(activated.is_empty());
+	assert!(!is_active("captest-envgate"));
+
+	reset_registry();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_enable_fails_when_server_registration_fails() {
+	let sb = CapSandbox::new("badreg");
+	install_fixture_caps(&sb);
+	// A stdio server with an empty command cannot be registered — the
+	// enable must surface that as an error value, not panic.
+	sb.cap(
+		"captest-badreg",
+		"triggers = [\"use the badreg cap\"]\n",
+		"[[mcp.servers]]\nname = \"captest-badreg-srv\"\ntype = \"stdio\"\ncommand = \"\"\nargs = []\ntimeout_seconds = 5\ntools = []\n",
+	);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let config = test_config();
+
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "enable", "name": "captest-badreg"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(
+		text_of(&result).contains("Failed to register server 'captest-badreg-srv'"),
+		"got: {}",
+		text_of(&result)
+	);
+	assert!(!is_active("captest-badreg"));
+
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+}

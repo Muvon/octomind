@@ -841,6 +841,137 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn test_parse_check_rejects_malformed_parens() {
+		use crate::mcp::runtime::skill::ActivateCheck;
+		// Close paren before the open paren: not a check.
+		assert!(ActivateCheck::parse(")file(").is_none());
+		// No parens at all.
+		assert!(ActivateCheck::parse("file").is_none());
+	}
+
+	#[test]
+	fn test_parse_grep_without_path() {
+		use crate::mcp::runtime::skill::ActivateCheck;
+		assert!(matches!(
+			ActivateCheck::parse("grep(fn main)"),
+			Some(ActivateCheck::Grep {
+				pattern,
+				path: None,
+			}) if pattern == "fn main"
+		));
+	}
+
+	#[test]
+	fn test_display_renders_all_check_variants() {
+		use crate::mcp::runtime::skill::ActivateCheck;
+		assert_eq!(
+			ActivateCheck::Grep {
+				pattern: "fn main".to_string(),
+				path: Some("*.rs".to_string()),
+			}
+			.to_string(),
+			"grep(fn main, *.rs)"
+		);
+		assert_eq!(
+			ActivateCheck::Grep {
+				pattern: "fn main".to_string(),
+				path: None,
+			}
+			.to_string(),
+			"grep(fn main)"
+		);
+		assert_eq!(
+			ActivateCheck::Env {
+				var: "KEY".to_string(),
+				value: Some("val".to_string()),
+			}
+			.to_string(),
+			"env(KEY=val)"
+		);
+		assert_eq!(
+			ActivateCheck::Env {
+				var: "KEY".to_string(),
+				value: None,
+			}
+			.to_string(),
+			"env(KEY)"
+		);
+		assert_eq!(
+			ActivateCheck::Match(r"\bdeploy\b".to_string()).to_string(),
+			r"match(\bdeploy\b)"
+		);
+		assert_eq!(ActivateCheck::Bin("cargo".to_string()).to_string(), "bin(cargo)");
+		assert_eq!(
+			ActivateCheck::Session("octomind".to_string()).to_string(),
+			"session(octomind)"
+		);
+		assert_eq!(
+			ActivateCheck::Workdir("rust".to_string()).to_string(),
+			"workdir(rust)"
+		);
+	}
+
+	#[test]
+	fn test_grep_workdir_path_filter() {
+		use crate::mcp::runtime::skill::ActivateCheck;
+		let dir = tempfile::tempdir().unwrap();
+		fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+		fs::write(dir.path().join("notes.md"), "fn main mentioned in notes").unwrap();
+
+		// grep_workdir is exercised through the Grep check's matcher: the
+		// path filter must restrict the search and a miss must fall through
+		// to the final `false`.
+		let rs_only = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: Some("*.rs".to_string()),
+		};
+		let toml_only = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: Some("*.toml".to_string()),
+		};
+		let everywhere = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: None,
+		};
+		let nowhere = ActivateCheck::Grep {
+			pattern: "no_such_symbol_anywhere".to_string(),
+			path: None,
+		};
+		assert!(rs_only.matches("", dir.path(), "", None));
+		assert!(!toml_only.matches("", dir.path(), "", None));
+		assert!(everywhere.matches("", dir.path(), "", None));
+		assert!(!nowhere.matches("", dir.path(), "", None));
+	}
+
+	#[test]
+	fn test_parse_skill_meta_rules_skips_non_check_lines() {
+		let content = "---\nname: s\ndescription: d\nunknown-key: ignored\nrules:\n  # a comment line, not a check\n  - content(rust)\n---\nbody\n";
+		let meta = parse_skill_meta(content).expect("should parse");
+		assert_eq!(meta.rules.len(), 1, "{:?}", meta.rules);
+		assert_eq!(
+			crate::mcp::runtime::skill::ActivateCheck::Content("rust".to_string()).to_string(),
+			meta.rules[0][0].to_string()
+		);
+	}
+
+	#[test]
+	#[serial_test::serial]
+	fn test_universal_skill_dirs_includes_global_home_dir() {
+		let _env = EnvGuard::new(&["HOME"]);
+		let home = tempfile::tempdir().unwrap();
+		let global = home.path().join(".config").join("agents").join("skills");
+		fs::create_dir_all(&global).unwrap();
+		std::env::set_var("HOME", home.path());
+
+		let workdir = tempfile::tempdir().unwrap();
+		let dirs = universal_skill_dirs(workdir.path());
+		assert!(
+			dirs.contains(&global),
+			"global skills dir must be listed: {dirs:?}"
+		);
+	}
+
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn test_find_all_skills_dedupes_tap_over_project() {

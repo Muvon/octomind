@@ -1268,3 +1268,7 @@ mod stdio_tests;
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod client_tests;
+
+#[cfg(test)]
+#[path = "client_coverage_tests.rs"]
+mod client_coverage_tests;

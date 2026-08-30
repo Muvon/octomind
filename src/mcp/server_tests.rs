@@ -19,6 +19,7 @@
 //! health gates by seeding SERVER_RESTART_INFO with unique server names.
 
 use super::*;
+use serial_test::serial;
 
 fn rmcp_tool(name: &str, description: Option<&str>, read_only: Option<bool>) -> rmcp::model::Tool {
 	let mut value = serde_json::json!({
@@ -294,5 +295,494 @@ fn test_status_report_wrappers_track_and_reset() {
 	assert_eq!(info.restart_count, 0);
 	assert_eq!(info.consecutive_failures, 0);
 
+	clear_health(NAME);
+}
+
+// ---------------------------------------------------------------------------
+// Live-server coverage: a python fake MCP server over real transports.
+// ---------------------------------------------------------------------------
+
+/// Streamable-HTTP JSON-RPC MCP server. Answers `server/discover` (modern),
+/// `initialize` (legacy fallback when FAKE_MODE=legacy), `tools/list` with
+/// `echo` + `extra_tool`, and `tools/call` echoing arguments plus the
+/// Authorization header. Also serves the RFC 9728 / RFC 8414 OAuth discovery
+/// documents and a DCR registration endpoint on the same port.
+const FAKE_HTTP_SERVER: &str = r#"
+import json, os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+MODE = os.environ.get("FAKE_MODE", "modern")
+
+def rpc_result(rid, res):
+    return {"jsonrpc": "2.0", "id": rid, "result": res}
+
+def rpc_error(rid, code, message):
+    return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
+
+def handle_rpc(req, auth):
+    method = req.get("method")
+    rid = req.get("id")
+    if method == "server/discover":
+        if MODE == "legacy":
+            return rpc_error(rid, -32601, "discover not supported")
+        return rpc_result(rid, {"resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": {}, "ttlMs": 0, "cacheScope": "private"})
+    if method == "initialize":
+        return rpc_result(rid, {"protocolVersion": "2025-03-26", "capabilities": {}, "serverInfo": {"name": "octomind-fake-http", "version": "1.0"}, "instructions": "fake"})
+    if method == "tools/list":
+        return rpc_result(rid, {"tools": [
+            {"name": "echo", "description": "echo over http", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}},
+            {"name": "extra_tool", "description": "overlay probe", "inputSchema": {"type": "object"}},
+        ]})
+    if method == "tools/call":
+        params = req.get("params") or {}
+        payload = {"echo": True, "arguments": params.get("arguments"), "auth": auth}
+        return rpc_result(rid, {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": False})
+    if method == "ping":
+        return rpc_result(rid, {})
+    if rid is not None:
+        return rpc_error(rid, -32601, "method not found")
+    return None
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_empty(self, code):
+        self.send_response(code)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/mcp":
+            length = int(self.headers.get("Content-Length") or 0)
+            req = json.loads(self.rfile.read(length) or b"{}")
+            resp = handle_rpc(req, self.headers.get("Authorization"))
+            if resp is None:
+                self._send_empty(202)
+            else:
+                self._send_json(200, resp)
+        elif self.path == "/register":
+            self._send_json(201, {"client_id": "dcr-client-123", "client_secret": "s3cret", "client_name": "octomind", "redirect_uris": ["http://localhost:34567/oauth/callback"]})
+        elif self.path == "/token":
+            self._send_json(200, {"access_token": "test-token-xyz", "token_type": "Bearer", "expires_in": 3600, "refresh_token": "rt-1", "scope": ""})
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    def do_GET(self):
+        base = "http://127.0.0.1:{}".format(self.server.server_address[1])
+        if self.path == "/mcp":
+            self._send_empty(405)
+            return
+        if ".well-known" in self.path:
+            # RFC 9728 metadata exists only in "oauth" mode. Without it
+            # discovery fails fast and the client connects unauthenticated;
+            # with it, a tokenless connect would launch the interactive
+            # browser flow (minutes-long callback wait) instead.
+            if MODE != "oauth":
+                self._send_json(404, {"error": "not found"})
+                return
+            # Discovery probes {mcp_url}/.well-known/... (pre-discovery
+            # derives the path from the MCP URL), so serve the documents
+            # under both the root and the /mcp prefix.
+            if self.path.endswith("/.well-known/oauth-protected-resource"):
+                self._send_json(200, {"resource": base, "authorization_servers": [base]})
+            elif self.path.endswith("/.well-known/oauth-authorization-server"):
+                self._send_json(200, {"issuer": base, "authorization_endpoint": base + "/authorize", "token_endpoint": base + "/token", "registration_endpoint": base + "/register", "response_types_supported": ["code"], "code_challenge_methods_supported": ["S256"], "grant_types_supported": ["authorization_code", "refresh_token"]})
+            else:
+                self._send_json(404, {"error": "not found"})
+            return
+        self._send_json(404, {"error": "not found"})
+
+    def do_DELETE(self):
+        self._send_empty(200)
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+print("PORT={}".format(server.server_address[1]), flush=True)
+server.serve_forever()
+"#;
+
+/// Newline-delimited JSON-RPC MCP server over stdio (discover + initialize +
+/// tools/list + echo).
+const FAKE_STDIO_SERVER: &str = r#"
+import json, os, sys
+
+def result(rid, res):
+    return json.dumps({"jsonrpc": "2.0", "id": rid, "result": res})
+
+def handle(req):
+    method = req.get("method")
+    rid = req.get("id")
+    if method == "server/discover":
+        return result(rid, {"resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": {}, "ttlMs": 0, "cacheScope": "private"})
+    if method == "initialize":
+        return result(rid, {"protocolVersion": "2025-03-26", "capabilities": {}, "serverInfo": {"name": "octomind-fake-stdio", "version": "1.0"}, "instructions": "fake"})
+    if method == "tools/list":
+        return result(rid, {"tools": [{"name": "echo", "description": "echo tool", "inputSchema": {"type": "object"}}]})
+    if method == "tools/call":
+        params = req.get("params") or {}
+        payload = {"echo": True, "arguments": params.get("arguments"), "cwd": os.getcwd(), "env": os.environ.get("OCTOMIND_TEST_ENV_MARKER", "unset")}
+        return result(rid, {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": False})
+    if method == "ping":
+        return result(rid, {})
+    if rid is not None:
+        return json.dumps({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "method not found"}})
+    return None
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        req = json.loads(line)
+    except ValueError:
+        continue
+    out = handle(req)
+    if out is not None:
+        sys.stdout.write(out + "\n")
+        sys.stdout.flush()
+"#;
+
+fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
+	let path = std::env::temp_dir().join(format!(
+		"octomind-test-srv-{tag}-{}.py",
+		std::process::id()
+	));
+	std::fs::write(&path, body).expect("write fake server script");
+	path
+}
+
+/// Spawn the fake HTTP MCP server; returns its `/mcp` endpoint URL. The child
+/// must be killed by the caller.
+async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::process::Child) {
+	let script = write_script(tag, FAKE_HTTP_SERVER);
+	let mut child = tokio::process::Command::new("python3")
+		.arg(&script)
+		.env("FAKE_MODE", mode)
+		.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::null())
+		.spawn()
+		.expect("spawn fake http server");
+	let port = {
+		let mut stdout = child.stdout.take().expect("piped stdout");
+		let mut line = String::new();
+		tokio::time::timeout(std::time::Duration::from_secs(10), async {
+			use tokio::io::AsyncBufReadExt;
+			let mut reader = tokio::io::BufReader::new(&mut stdout);
+			reader
+				.read_line(&mut line)
+				.await
+				.expect("fake server must print its port");
+		})
+		.await
+		.expect("fake http server startup within 10s");
+		line
+			.trim()
+			.strip_prefix("PORT=")
+			.and_then(|p| p.parse::<u16>().ok())
+			.expect("PORT=<n> line from fake server")
+	};
+	(format!("http://127.0.0.1:{port}/mcp"), child)
+}
+
+fn fake_stdio_config(name: &str, tag: &str) -> McpServerConfig {
+	let script = write_script(tag, FAKE_STDIO_SERVER);
+	McpServerConfig::Stdin {
+		name: name.to_string(),
+		command: "python3".to_string(),
+		args: vec![script.to_string_lossy().into_owned()],
+		timeout_seconds: 10,
+		tools: vec![],
+		env: std::collections::HashMap::new(),
+		cwd: None,
+		auto_bind: None,
+	}
+}
+
+/// `get_server_functions` against a live HTTP server: real tools/list round
+/// trip mapped to McpFunction definitions.
+#[serial]
+#[tokio::test]
+async fn test_get_server_functions_lists_tools_from_live_http_server() {
+	const NAME: &str = "srv-live-http-list";
+	let (url, mut child) = spawn_fake_http_server("list", "modern").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+
+	let functions =
+		get_server_functions(&server).await.expect("live tools/list must succeed");
+	let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
+	assert!(names.contains(&"echo"), "functions: {names:?}");
+	assert!(names.contains(&"extra_tool"), "functions: {names:?}");
+	let echo = functions.iter().find(|f| f.name == "echo").expect("echo fn");
+	assert_eq!(echo.description, "echo over http");
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+}
+
+/// The cached variant fetches over HTTP on first call and serves from
+/// FUNCTION_CACHE afterwards — proven by killing the server before the
+/// second call.
+#[serial]
+#[tokio::test]
+async fn test_cached_functions_fetch_once_then_serve_from_cache() {
+	const NAME: &str = "srv-live-http-cache";
+	let (url, mut child) = spawn_fake_http_server("cache", "modern").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+
+	let first = get_server_functions_cached(&server)
+		.await
+		.expect("first fetch must succeed");
+	assert!(first.iter().any(|f| f.name == "echo"));
+
+	// Server gone → the second call must still succeed from the cache.
+	let _ = child.kill().await;
+	let second = get_server_functions_cached(&server)
+		.await
+		.expect("cached copy must survive server death");
+	assert_eq!(first.len(), second.len());
+
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache_for_server(NAME);
+}
+
+/// A fetch failure returns an EMPTY list without caching it — the next call
+/// must retry the fetch (cache stays unset).
+#[tokio::test]
+async fn test_cached_functions_http_failure_returns_empty_uncached() {
+	const NAME: &str = "srv-http-fail-uncached";
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:1/mcp", 2, vec![]);
+
+	let functions = get_server_functions_cached(&server)
+		.await
+		.expect("fetch failure is mapped to an empty Ok list");
+	assert!(functions.is_empty());
+	assert!(
+		FUNCTION_CACHE.read().unwrap().get(NAME).is_none(),
+		"transient failure must not poison the cache"
+	);
+}
+
+/// An OAuth-discovered server with no stored token yields no functions and
+/// never contacts the MCP endpoint (no OAuth flow is triggered).
+#[serial]
+#[tokio::test]
+async fn test_oauth_discovered_server_without_token_yields_no_functions() {
+	const NAME: &str = "srv-oauth-no-token";
+	let (url, mut child) = spawn_fake_http_server("oauth-none", "oauth").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+
+	crate::mcp::oauth::discovery::discover_oauth_from_mcp_server(&url, NAME)
+		.await
+		.expect("fake discovery documents must satisfy the chain");
+
+	let functions = get_server_functions_cached(&server)
+		.await
+		.expect("missing token is an Ok(empty), not an error");
+	assert!(functions.is_empty(), "no token → no fetch → no functions");
+
+	let _ = child.kill().await;
+	crate::mcp::oauth::discovery::clear_discovered_oauth_cache(NAME);
+}
+
+/// An OAuth-discovered server WITH a valid stored token proceeds to the real
+/// fetch and caches the functions.
+#[serial]
+#[tokio::test]
+async fn test_oauth_discovered_server_with_token_fetches_functions() {
+	const NAME: &str = "srv-oauth-with-token";
+	let (url, mut child) = spawn_fake_http_server("oauth-token", "oauth").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+
+	crate::mcp::oauth::discovery::discover_oauth_from_mcp_server(&url, NAME)
+		.await
+		.expect("fake discovery documents must satisfy the chain");
+	let expires_at = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.expect("clock after epoch")
+		.as_secs()
+		+ 3600;
+	token_store::save_token(
+		NAME,
+		&token_store::TokenMetadata {
+			server_name: NAME.to_string(),
+			access_token: "test-token-xyz".to_string(),
+			refresh_token: None,
+			expires_at,
+			scopes: vec![],
+		},
+	)
+	.await
+	.expect("seed token");
+
+	let functions = get_server_functions_cached(&server)
+		.await
+		.expect("valid token must allow the fetch");
+	assert!(
+		functions.iter().any(|f| f.name == "echo"),
+		"functions: {:?}",
+		functions.iter().map(|f| f.name.clone()).collect::<Vec<_>>()
+	);
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache_for_server(NAME);
+	crate::mcp::oauth::discovery::clear_discovered_oauth_cache(NAME);
+	let _ = token_store::clear_token(NAME, false, None, None, None).await;
+}
+
+/// A Dead stdio server is restarted in place and the tool call then succeeds
+/// end-to-end over the real transport.
+#[serial]
+#[tokio::test]
+async fn test_execute_tool_call_restarts_dead_stdio_server_and_executes() {
+	const NAME: &str = "srv-dead-stdio-restart";
+	let server = fake_stdio_config(NAME, "exec-restart");
+	seed_health(NAME, process::ServerHealth::Dead);
+
+	let call = McpToolCall {
+		tool_name: "echo".to_string(),
+		parameters: serde_json::json!({"text": "round-trip"}),
+		tool_id: "t-echo".to_string(),
+	};
+	let result = execute_tool_call(&call, &server, None)
+		.await
+		.expect("restart + execute must succeed");
+	assert!(!result.is_error(), "{}", result.extract_content());
+	assert!(result.extract_content().contains("round-trip"));
+
+	assert_eq!(
+		process::get_server_health(NAME),
+		process::ServerHealth::Running
+	);
+	crate::mcp::client::disconnect(NAME);
+	process::cleanup_server_process(NAME).ok();
+	clear_health(NAME);
+}
+
+/// A Dead HTTP server is allowed to proceed (fresh connection on demand); when
+/// the endpoint is unreachable the failure surfaces as a soft error result.
+#[tokio::test]
+async fn test_execute_tool_call_dead_http_proceeds_then_reports_soft_error() {
+	const NAME: &str = "srv-dead-http";
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:1/mcp", 2, vec![]);
+	seed_health(NAME, process::ServerHealth::Dead);
+
+	let result = execute_tool_call(&tool_call("echo"), &server, None)
+		.await
+		.expect("execution failures are soft errors, not Err");
+	assert!(result.is_error());
+	assert!(
+		result.extract_content().contains("Error executing tool"),
+		"{}",
+		result.extract_content()
+	);
+	clear_health(NAME);
+}
+
+/// An Unreachable (auth-failed) HTTP server is also allowed to proceed.
+#[tokio::test]
+async fn test_execute_tool_call_unreachable_http_proceeds() {
+	const NAME: &str = "srv-unreachable-http";
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:1/mcp", 2, vec![]);
+	seed_health(NAME, process::ServerHealth::Unreachable);
+
+	let result = execute_tool_call(&tool_call("echo"), &server, None)
+		.await
+		.expect("unreachable gate must let execution proceed");
+	assert!(result.is_error());
+	clear_health(NAME);
+}
+
+/// A Dead stdio server whose binary cannot start fails the restart loudly.
+#[serial]
+#[tokio::test]
+async fn test_execute_tool_call_dead_stdio_restart_failure_is_err() {
+	const NAME: &str = "srv-dead-stdio-fail";
+	let server = McpServerConfig::stdin(
+		NAME,
+		"definitely-not-a-real-binary",
+		vec![],
+		2,
+		vec![],
+	);
+	seed_health(NAME, process::ServerHealth::Dead);
+
+	let err = execute_tool_call(&tool_call("echo"), &server, None)
+		.await
+		.expect_err("unstartable server must fail the call");
+	assert!(
+		err.to_string().contains("failed to restart"),
+		"{err}"
+	);
+	clear_health(NAME);
+}
+
+/// The inner cancellation entry rejects an already-cancelled token.
+#[tokio::test]
+async fn test_execute_tool_with_cancellation_rejects_precancelled_token() {
+	let server = McpServerConfig::http("srv-precancel", "http://127.0.0.1:1/mcp", 2, vec![]);
+	let (_tx, rx) = tokio::sync::watch::channel(true);
+	let err = execute_tool_with_cancellation(&tool_call("echo"), &server, Some(rx))
+		.await
+		.expect_err("pre-cancelled token must abort before any I/O");
+	assert!(err.to_string().contains("cancelled"), "{err}");
+}
+
+/// `get_all_server_functions` includes live external servers with their
+/// resolved configs.
+#[serial]
+#[tokio::test]
+async fn test_get_all_server_functions_includes_live_http_server() {
+	const NAME: &str = "srv-all-functions";
+	let (url, mut child) = spawn_fake_http_server("allfns", "modern").await;
+	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("parse default config template");
+	config.mcp.servers = vec![McpServerConfig::http(NAME, &url, 10, vec![])];
+
+	let functions = get_all_server_functions(&config)
+		.await
+		.expect("live server must contribute functions");
+	let (echo_fn, owner) = functions
+		.get("echo")
+		.expect("live server's echo tool must be in the map");
+	assert_eq!(owner.name(), NAME);
+	assert_eq!(echo_fn.description, "echo over http");
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache_for_server(NAME);
+}
+
+/// `perform_health_check_all_servers` reports a connected HTTP server as
+/// Running.
+#[serial]
+#[tokio::test]
+async fn test_perform_health_check_reports_connected_http_running() {
+	const NAME: &str = "srv-health-check-live";
+	let (url, mut child) = spawn_fake_http_server("health", "modern").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+	crate::mcp::client::connect_http(&server)
+		.await
+		.expect("fake http server must accept the MCP handshake");
+
+	let report = perform_health_check_all_servers().await;
+	assert_eq!(
+		report.get(NAME).copied(),
+		Some(process::ServerHealth::Running),
+		"a connected client must classify as Running"
+	);
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
 	clear_health(NAME);
 }

@@ -720,3 +720,381 @@ async fn initialize_mcp_for_role_with_callback_forwards_progress() {
 		"callback should observe Starting"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// Live external server (python fake over HTTP) + dispatch/log coverage.
+// ---------------------------------------------------------------------------
+
+/// Streamable-HTTP JSON-RPC MCP server: `server/discover`, `initialize`,
+/// `tools/list` (echo + extra_tool), `tools/call` echo. See server_tests.rs
+/// for the OAuth-capable variant; this copy keeps the module self-contained.
+const FAKE_HTTP_SERVER: &str = r#"
+import json, os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+def rpc_result(rid, res):
+    return {"jsonrpc": "2.0", "id": rid, "result": res}
+
+def handle_rpc(req):
+    method = req.get("method")
+    rid = req.get("id")
+    if method == "server/discover":
+        return rpc_result(rid, {"resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": {}, "ttlMs": 0, "cacheScope": "private"})
+    if method == "initialize":
+        return rpc_result(rid, {"protocolVersion": "2025-03-26", "capabilities": {}, "serverInfo": {"name": "octomind-fake-http", "version": "1.0"}, "instructions": "fake"})
+    if method == "tools/list":
+        return rpc_result(rid, {"tools": [
+            {"name": "echo", "description": "echo over http", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}},
+            {"name": "extra_tool", "description": "overlay probe", "inputSchema": {"type": "object"}},
+        ]})
+    if method == "tools/call":
+        params = req.get("params") or {}
+        return rpc_result(rid, {"content": [{"type": "text", "text": json.dumps({"echo": True, "arguments": params.get("arguments")})}], "isError": False})
+    if method == "ping":
+        return rpc_result(rid, {})
+    if rid is not None:
+        return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "method not found"}}
+    return None
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def _send_json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_empty(self, code):
+        self.send_response(code)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        req = json.loads(self.rfile.read(length) or b"{}")
+        resp = handle_rpc(req)
+        if resp is None:
+            self._send_empty(202)
+        else:
+            self._send_json(200, resp)
+
+    def do_GET(self):
+        self._send_empty(405)
+
+    def do_DELETE(self):
+        self._send_empty(200)
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+print("PORT={}".format(server.server_address[1]), flush=True)
+server.serve_forever()
+"#;
+
+async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
+	let path = std::env::temp_dir().join(format!(
+		"octomind-test-mod-{tag}-{}.py",
+		std::process::id()
+	));
+	std::fs::write(&path, FAKE_HTTP_SERVER).expect("write fake server script");
+	let mut child = tokio::process::Command::new("python3")
+		.arg(&path)
+		.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::null())
+		.spawn()
+		.expect("spawn fake http server");
+	let port = {
+		let mut stdout = child.stdout.take().expect("piped stdout");
+		let mut line = String::new();
+		tokio::time::timeout(std::time::Duration::from_secs(10), async {
+			use tokio::io::AsyncBufReadExt;
+			let mut reader = tokio::io::BufReader::new(&mut stdout);
+			reader
+				.read_line(&mut line)
+				.await
+				.expect("fake server must print its port");
+		})
+		.await
+		.expect("fake http server startup within 10s");
+		line
+			.trim()
+			.strip_prefix("PORT=")
+			.and_then(|p| p.parse::<u16>().ok())
+			.expect("PORT=<n> line from fake server")
+	};
+	(format!("http://127.0.0.1:{port}/mcp"), child)
+}
+
+fn enable_debug_logging() {
+	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("parse default config template");
+	config.log_level = crate::config::LogLevel::Debug;
+	crate::config::set_thread_config(&config);
+}
+
+/// Non-text content blocks are skipped by extract_content — only text blocks
+/// contribute, in order.
+#[test]
+fn extract_content_skips_non_text_blocks() {
+	let call_result: rmcp::model::CallToolResult = serde_json::from_value(json!({
+		"content": [
+			{"type": "resource_link", "uri": "job://1", "name": "job"},
+			{"type": "text", "text": "only-text"},
+			{"type": "resource_link", "uri": "job://2", "name": "job2"}
+		]
+	}))
+	.expect("deserialize mixed content");
+	let result = McpToolResult {
+		tool_name: "tool".to_string(),
+		tool_id: "id-1".to_string(),
+		result: call_result,
+	};
+	assert_eq!(result.extract_content(), "only-text");
+}
+
+/// External server initialization succeeds end-to-end against a live HTTP
+/// server and reports the real function count via the progress callback.
+#[serial]
+#[tokio::test]
+async fn initialize_servers_external_http_reports_success() {
+	enable_debug_logging();
+	clear_function_cache();
+	const NAME: &str = "mod-live-http-init";
+	let (url, mut child) = spawn_fake_http_server("init").await;
+	let config = config_with_servers(vec![
+		McpServerConfig::builtin("core", 30, vec![]),
+		McpServerConfig::http(NAME, &url, 10, vec![]),
+	]);
+
+	let events: std::sync::Mutex<Vec<(String, bool, usize)>> = std::sync::Mutex::new(Vec::new());
+	initialize_servers_for_role_with_callback(
+		&config,
+		Some(&|p| {
+			if let McpInitProgress::Completed {
+				server,
+				success,
+				function_count,
+			} = p
+			{
+				events
+					.lock()
+					.unwrap()
+					.push((server, success, function_count));
+			}
+		}),
+	)
+	.await
+	.expect("live server init must succeed");
+
+	let events = events.lock().unwrap();
+	let external = events
+		.iter()
+		.find(|(server, _, _)| server == NAME)
+		.expect("external server must report completion");
+	assert_eq!(external.1, true, "live server must initialize successfully");
+	assert_eq!(external.2, 2, "echo + extra_tool must be counted");
+
+	let _ = child.kill().await;
+	server::clear_function_cache_for_server(NAME);
+	crate::mcp::client::disconnect(NAME);
+	health_monitor::stop_health_monitor();
+	clear_function_cache();
+}
+
+/// Capability overlay extras extend a restrictive static filter at function
+/// gathering time.
+#[serial]
+#[tokio::test]
+async fn available_functions_merge_capability_overlay_extras() {
+	clear_function_cache();
+	const NAME: &str = "mod-overlay-http";
+	let (url, mut child) = spawn_fake_http_server("overlay").await;
+	// Restrictive filter: only `echo` is statically allowed.
+	let config = config_with_servers(vec![McpServerConfig::http(
+		NAME,
+		&url,
+		10,
+		vec!["echo".to_string()],
+	)]);
+
+	let mut extras = std::collections::HashMap::new();
+	extras.insert(
+		NAME.to_string(),
+		vec!["extra_tool".to_string()],
+	);
+	crate::config::runtime_overlay::set_capability_extras("mod-overlay-cap", extras);
+
+	let names = names_of(&get_available_functions(&config).await);
+	assert!(
+		names.contains(&"echo".to_string()),
+		"static filter must keep echo: {names:?}"
+	);
+	assert!(
+		names.contains(&"extra_tool".to_string()),
+		"overlay extra must survive the filter: {names:?}"
+	);
+
+	crate::config::runtime_overlay::clear_capability_extras("mod-overlay-cap");
+	let _ = child.kill().await;
+	server::clear_function_cache_for_server(NAME);
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache();
+}
+
+/// A config server disabled in the session's dynamic registry contributes no
+/// functions, even though the server is reachable.
+#[serial]
+#[tokio::test]
+async fn available_functions_skip_disabled_dynamic_servers() {
+	clear_function_cache();
+	const NAME: &str = "mod-disabled-http";
+	let (url, mut child) = spawn_fake_http_server("disabled").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+	let config = config_with_servers(vec![server.clone()]);
+
+	crate::session::context::with_session_id(
+		format!("mod-disabled-{}", uuid::Uuid::new_v4()),
+		async {
+			crate::session::context::register_dynamic_server_for_session(
+				&crate::session::context::current_session_id().expect("session id"),
+				server,
+			);
+			let names = names_of(&get_available_functions(&config).await);
+			assert!(
+				names.is_empty(),
+				"disabled dynamic server must contribute nothing: {names:?}"
+			);
+		},
+	)
+	.await;
+
+	let _ = child.kill().await;
+	server::clear_function_cache_for_server(NAME);
+	crate::mcp::client::disconnect(NAME);
+	clear_function_cache();
+}
+
+/// A tool-map-routed external tool executes over the real transport and
+/// returns its result with the tool id attached.
+#[serial]
+#[tokio::test]
+async fn external_tool_routes_through_tool_map_and_executes() {
+	enable_debug_logging();
+	clear_function_cache();
+	const NAME: &str = "mod-route-http";
+	let (url, mut child) = spawn_fake_http_server("route").await;
+	let config = config_with_servers(vec![McpServerConfig::http(NAME, &url, 10, vec![])]);
+	tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	let (result, _elapsed) = execute_tool_call(
+		&tool_call("echo", json!({"text": "routed"})),
+		&config,
+		None,
+	)
+	.await
+	.expect("external routing must succeed");
+	assert!(!result.is_error(), "{}", result.extract_content());
+	assert_eq!(result.tool_id, "id-echo");
+	assert!(result.extract_content().contains("routed"));
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	server::clear_function_cache_for_server(NAME);
+	clear_function_cache();
+}
+
+/// Dynamic-server tools execute inside the owning session and bump the
+/// capability LRU (last_used) on success.
+#[serial]
+#[tokio::test]
+async fn dynamic_server_tool_execution_succeeds_in_owning_session() {
+	clear_function_cache();
+	const NAME: &str = "mod-dynamic-http";
+	let (url, mut child) = spawn_fake_http_server("dynamic").await;
+	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
+	let config = config_with_servers(vec![server.clone()]);
+	tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	crate::session::context::with_session_id(
+		format!("mod-dynamic-{}", uuid::Uuid::new_v4()),
+		async {
+			let sid = crate::session::context::current_session_id().expect("session id");
+			crate::session::context::register_dynamic_server_for_session(&sid, server);
+			let enabled = crate::session::context::enable_dynamic_server_for_session(
+				&sid,
+				NAME,
+				vec![fn_def("echo")],
+			);
+			assert!(enabled, "enabling a registered dynamic server must succeed");
+
+			let (result, _) = execute_tool_call(
+				&tool_call("echo", json!({"text": "dynamic"})),
+				&config,
+				None,
+			)
+			.await
+			.expect("dynamic tool must execute");
+			assert!(!result.is_error(), "{}", result.extract_content());
+			assert!(result.extract_content().contains("dynamic"));
+		},
+	)
+	.await;
+
+	let _ = child.kill().await;
+	crate::mcp::client::disconnect(NAME);
+	server::clear_function_cache_for_server(NAME);
+	clear_function_cache();
+}
+
+/// The internal dispatcher rejects empty configs and pre-cancelled tokens
+/// before touching any tool.
+#[tokio::test]
+async fn try_execute_tool_call_guards_empty_config_and_cancellation() {
+	let err = try_execute_tool_call(&tool_call("x", json!({})), &config_with_servers(vec![]), None)
+		.await
+		.expect_err("empty config must be rejected");
+	assert!(err.to_string().contains("no servers configured"), "{err}");
+
+	let config = config_with_servers(vec![McpServerConfig::builtin("core", 30, vec![])]);
+	let (_tx, rx) = tokio::sync::watch::channel(true);
+	let err = try_execute_tool_call(&tool_call("recall", json!({})), &config, Some(rx))
+		.await
+		.expect_err("pre-cancelled token must be rejected");
+	assert!(err.to_string().contains("cancelled"), "{err}");
+}
+
+/// Dispatch logging evaluates its format args under debug logging, including
+/// the >200-token truncation branch.
+#[serial]
+#[tokio::test]
+async fn dispatch_log_covers_small_and_truncated_params() {
+	enable_debug_logging();
+	clear_function_cache();
+	let config = core_server_config();
+	tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	// Small params → plain serialization branch.
+	let (small, _) = execute_tool_call(&tool_call("recall", json!({"ids": ["b:1"]})), &config, None)
+		.await
+		.expect("small-params dispatch must route");
+	assert!(small.is_error(), "recall without an archive errors softly");
+
+	// >200 tokens of params → truncation branch.
+	let big = "x".repeat(4000);
+	let (large, _) = execute_tool_call(&tool_call("recall", json!({"blob": big})), &config, None)
+		.await
+		.expect("large-params dispatch must route");
+	assert!(large.is_error());
+
+	clear_function_cache();
+}

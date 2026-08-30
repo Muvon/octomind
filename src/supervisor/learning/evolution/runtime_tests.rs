@@ -377,6 +377,7 @@ async fn behavior_available_requires_runtime_affecting_binding() {
 		crate::session::context::set_session_role(&session_id, "developer:general");
 		crate::session::context::set_session_config(&session_id, &enabled_config());
 		crate::session::guardrails::init_for_session();
+		init_for_session("developer:general");
 		assert!(behavior_available(&session_id, trial_id));
 		assert!(!behavior_available(&session_id, shadow_id));
 		assert!(!behavior_available("other-session", trial_id));

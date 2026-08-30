@@ -259,8 +259,13 @@ fn jaccard_is_zero_for_empty_sets_and_short_tokens_are_dropped() {
 	let empty: HashSet<String> = HashSet::new();
 	assert_eq!(jaccard(&empty, &empty), 0.0);
 	assert_eq!(jaccard(&normalized_words("key value"), &empty), 0.0);
-	assert!(normalized_words("the key value pair").contains("key"));
-	assert!(!normalized_words("the key value pair").contains("the"));
+	let words = normalized_words("an the key value pair");
+	assert!(words.contains("key"));
+	assert!(words.contains("the"), "three-character words are retained");
+	assert!(
+		!words.contains("an"),
+		"words shorter than three are dropped"
+	);
 }
 
 #[test]

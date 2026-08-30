@@ -794,12 +794,27 @@ async fn test_ensure_server_running_treats_locked_http_process_as_alive() {
 		.unwrap()
 		.insert(NAME.to_string(), process_arc.clone());
 
-	let guard = process_arc.lock().unwrap();
+	// The per-process lock must stay held for the whole call — a locked
+	// process counts as "managed elsewhere ⇒ alive" — but a MutexGuard may
+	// not live across .await, so a helper thread holds it until the call
+	// completes.
+	let (locked_tx, locked_rx) = std::sync::mpsc::channel::<()>();
+	let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+	let held_arc = process_arc.clone();
+	let lock_holder = std::thread::spawn(move || {
+		let _guard = held_arc.lock().unwrap();
+		let _ = locked_tx.send(());
+		let _ = release_rx.recv();
+	});
+	locked_rx
+		.recv()
+		.expect("helper thread holds the process lock");
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9/mcp", 2, Vec::new());
 	let url = ensure_server_running(&server)
 		.await
 		.expect("locked process counts as alive, not restartable");
-	drop(guard);
+	drop(release_tx);
+	lock_holder.join().expect("lock holder thread exits");
 	assert_eq!(url, "http://127.0.0.1:9/mcp");
 	assert_eq!(
 		get_server_restart_info(NAME).restart_count,

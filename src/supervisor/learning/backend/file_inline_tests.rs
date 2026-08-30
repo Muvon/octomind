@@ -803,7 +803,7 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let backend = FileBackend;
 
-	let mut lesson = |content: &str, importance: f64, created: &str| {
+	let lesson = |content: &str, importance: f64, created: &str| {
 		let mut item = lesson_with(content, &[]);
 		item.role = "developer".to_string();
 		item.project = "project".to_string();

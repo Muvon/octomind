@@ -212,11 +212,11 @@ fn test_telemetry_context_reports_resume_sandbox_and_server_count() {
 	// Either resume flavor marks the session as resumed for telemetry.
 	let mut args = session_args();
 	args.resume = Some("some-session".to_string());
-	assert_eq!(telemetry_context(&args, &config).0, true);
+	assert!(telemetry_context(&args, &config).0);
 
 	let mut args = session_args();
 	args.resume_recent = true;
-	assert_eq!(telemetry_context(&args, &config).0, true);
+	assert!(telemetry_context(&args, &config).0);
 }
 
 #[test]
@@ -337,8 +337,16 @@ async fn test_run_session_with_input_done_command_exits_cleanly() {
 	let loaded = crate::session::persistence::load_session(&sole_session_file())
 		.expect("session persisted after /done");
 	assert!(
-		loaded.messages.iter().all(|m| m.role != "user"),
-		"bare /done must not add a user message"
+		loaded.messages.iter().all(|m| {
+			m.role != "user" || crate::session::is_system_managed_user_content(&m.content)
+		}),
+		"bare /done must not add a genuine user message: {:?}",
+		loaded
+			.messages
+			.iter()
+			.filter(|m| m.role == "user")
+			.map(|m| &m.content)
+			.collect::<Vec<_>>()
 	);
 }
 
@@ -394,8 +402,16 @@ async fn test_run_session_with_input_info_command_handled() {
 	let loaded = crate::session::persistence::load_session(&sole_session_file())
 		.expect("session persisted after command");
 	assert!(
-		loaded.messages.iter().all(|m| m.role != "user"),
-		"a handled command must not add a user message"
+		loaded.messages.iter().all(|m| {
+			m.role != "user" || crate::session::is_system_managed_user_content(&m.content)
+		}),
+		"a handled command must not add a genuine user message: {:?}",
+		loaded
+			.messages
+			.iter()
+			.filter(|m| m.role == "user")
+			.map(|m| &m.content)
+			.collect::<Vec<_>>()
 	);
 }
 

@@ -211,6 +211,10 @@ async fn test_is_persisted_tracks_file_and_unpersist_missing_is_ok() {
 	))
 	.unwrap();
 	let result = persist_server("__dyn_persist_probe", None).expect("persist");
+	assert!(
+		result.path.is_file(),
+		"persist result must name the written file"
+	);
 	assert!(is_persisted("__dyn_persist_probe"));
 
 	unpersist_server("__dyn_persist_probe").expect("unpersist");

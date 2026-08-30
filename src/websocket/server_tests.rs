@@ -297,7 +297,7 @@ fn audio_attachment_opens_the_file_and_adds_no_media() {
 #[test]
 fn corrupt_image_file_reports_a_load_failure() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let id = "CorruptIm0123456789AbCdEf";
+	let id = "CorruptIm0123456789AbCdE";
 	std::fs::write(tmp.path().join(format!("{id}.png")), b"not a real png").expect("fixture");
 
 	let mut session = ChatSession::for_tests(Vec::new());

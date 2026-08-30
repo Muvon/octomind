@@ -179,7 +179,7 @@ fn effectful_artifact_fails_closed_without_quote_backed_authorization() {
 #[test]
 fn structured_schema_is_closed_and_requires_supersession_field() {
 	let schema = proposal_schema();
-	assert_eq!(schema["additionalProperties"], false);
+	assert!(schema["additionalProperties"].as_bool() == Some(false));
 	assert!(schema["required"]
 		.as_array()
 		.unwrap()
@@ -272,14 +272,14 @@ fn selected_memories_requires_known_ids_and_deduplicates() {
 	let id = source.file_id();
 	let mut candidate = proposal("skill");
 	candidate.source_memory_ids = Vec::new();
-	let error = selected_memories(&candidate, &[source.clone()]).unwrap_err();
+	let error = selected_memories(&candidate, std::slice::from_ref(&source)).unwrap_err();
 	assert!(error.to_string().contains("cited no source memories"));
 
 	candidate.source_memory_ids = vec!["missing".to_string()];
-	let error = selected_memories(&candidate, &[source.clone()]).unwrap_err();
+	let error = selected_memories(&candidate, std::slice::from_ref(&source)).unwrap_err();
 	assert!(error.to_string().contains("cited unavailable memory"));
 
-	candidate.source_memory_ids = vec![id.clone(), id.clone()];
+	candidate.source_memory_ids = vec![id.clone(), id];
 	let pool = [source];
 	let selected = selected_memories(&candidate, &pool).unwrap();
 	assert_eq!(selected.len(), 1);
@@ -578,6 +578,7 @@ fn render_native_shapes_pipe_hook_and_validator_and_rejects_incomplete() {
 	assert!(native.contains("evo-validator"));
 
 	let mut broken = proposal("pipe");
+	broken.script_name = None;
 	broken.script_content = None;
 	let error = render_native(&broken, ArtifactKind::Pipe, &scope, "name", "id").unwrap_err();
 	assert!(error.to_string().contains("pipe requires a script"));
@@ -632,9 +633,9 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let backend = FileBackend;
-	let mut lesson = |content: &str,
-	                  memory_type: &str,
-	                  outcome: crate::supervisor::learning::TrajectoryOutcome| {
+	let lesson = |content: &str,
+	              memory_type: &str,
+	              outcome: crate::supervisor::learning::TrajectoryOutcome| {
 		let mut item = memory("scoped");
 		item.content = content.to_string();
 		item.memory_type = memory_type.to_string();

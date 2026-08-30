@@ -197,8 +197,11 @@ async fn test_flush_idle_waits_for_idle_then_consumes_and_reschedules() {
 		let second = crate::session::inbox::try_pop_inbox_message().expect("second message");
 		assert_eq!(second.content, "every idle");
 
-		// Nothing left to flush — early return on has_idle.
+		// A later idle transition fires the surviving repeating entry again.
 		flush_idle_to_inbox();
+		let repeated = crate::session::inbox::try_pop_inbox_message()
+			.expect("repeating idle message fires again");
+		assert_eq!(repeated.content, "every idle");
 		assert!(!crate::session::inbox::has_inbox_messages());
 
 		// The surviving entry is the repeating one; remove it to clean up.
@@ -564,7 +567,10 @@ async fn test_render_pending_entries_formats_idle_truncation_and_repeats() {
 
 		let listing = render_pending_entries().expect("entries rendered");
 		assert!(listing.contains("(no description)"), "{listing}");
-		assert!(listing.contains("(idle)"), "idle trigger format: {listing}");
+		assert!(
+			listing.contains("idle (when idle)"),
+			"idle trigger format: {listing}"
+		);
 		assert!(
 			listing.contains("…"),
 			"long message preview truncated: {listing}"

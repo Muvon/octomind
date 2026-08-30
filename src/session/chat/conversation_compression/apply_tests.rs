@@ -637,20 +637,6 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 		"file:///tmp/watched",
 		"watch the build",
 	);
-	let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
-	crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
-		id: "tap-unit-1".to_string(),
-		role: "developer:general".to_string(),
-		workdir: ".".to_string(),
-		started_at: std::time::SystemTime::now(),
-		status: std::sync::Arc::new(std::sync::RwLock::new(
-			crate::session::tap_runs::TapJobStatus::Running,
-		)),
-		cancel_tx,
-		live: std::sync::Arc::new(std::sync::RwLock::new(
-			crate::session::tap_runs::TapLiveState::default(),
-		)),
-	});
 	let mut session = drained_session(&session_id);
 	let summary = CompressionSummary {
 		should_compress: true,
@@ -658,7 +644,22 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 		progress: "parser fixed".to_string(),
 		..Default::default()
 	};
-	let applied = crate::session::context::with_session_id(session_id.clone(), async {
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::tap_runs::init_for_session();
+		let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
+		crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
+			id: "tap-unit-1".to_string(),
+			role: "developer:general".to_string(),
+			workdir: ".".to_string(),
+			started_at: std::time::SystemTime::now(),
+			status: std::sync::Arc::new(std::sync::RwLock::new(
+				crate::session::tap_runs::TapJobStatus::Running,
+			)),
+			cancel_tx,
+			live: std::sync::Arc::new(std::sync::RwLock::new(
+				crate::session::tap_runs::TapLiveState::default(),
+			)),
+		});
 		apply_compression(
 			&mut session,
 			0,

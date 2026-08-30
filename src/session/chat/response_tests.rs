@@ -599,6 +599,7 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = fake_session("keep dumping");
+		session.session.info.name = session_id.clone();
 		let (_tx, rx) = tokio::sync::watch::channel(false);
 		let sink = recording_sink();
 
@@ -671,6 +672,7 @@ async fn test_process_response_cancelled_mid_execution_skips_assistant_message()
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 		let mut session = fake_session("run the slow tool");
+		session.session.info.name = session_id.clone();
 		let (tx, rx) = tokio::sync::watch::channel(false);
 		let sink = recording_sink();
 

@@ -24,6 +24,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::watch;
 
+/// ACP children are local protocol servers and must answer each startup
+/// request promptly. Without a deadline, a silent or malformed child can keep
+/// an agent, tap run, or layer waiting forever while its stdout stays open.
+const ACP_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Global singleton — created once when the first async agent call arrives.
 /// Used as fallback for CLI mode when not in a session context.
 static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
@@ -728,6 +733,12 @@ pub async fn run_acp_command(
 		// Every error path below must own the subprocess lifetime. Without this,
 		// a handshake error/cancellation drops `Child` but leaves octomind running.
 		.kill_on_drop(true);
+	// Give the ACP child its own process group so Unix cancellation and timeout
+	// also terminate helper processes spawned by wrapper scripts.
+	#[cfg(unix)]
+	command.process_group(0);
+	#[cfg(windows)]
+	command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
 	let mut child = command.spawn()?;
 
 	let mut stdin = Some(
@@ -759,7 +770,12 @@ pub async fn run_acp_command(
 			.as_bytes(),
 		)
 		.await?;
-	wait_for_response(&mut lines, 1, &mut cancel_rx).await?;
+	if let Err(error) =
+		wait_for_response(&mut lines, 1, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await
+	{
+		terminate_acp_child(&mut child).await;
+		return Err(error);
+	}
 
 	// 2. session/new
 	stdin
@@ -776,13 +792,23 @@ pub async fn run_acp_command(
 		)
 		.await?;
 
-	let session_resp = wait_for_response(&mut lines, 2, &mut cancel_rx).await?;
-	let session_id = session_resp
+	let session_resp =
+		match wait_for_response(&mut lines, 2, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
+			Ok(response) => response,
+			Err(error) => {
+				terminate_acp_child(&mut child).await;
+				return Err(error);
+			}
+		};
+	let Some(session_id) = session_resp
 		.get("result")
 		.and_then(|r| r.get("sessionId"))
 		.and_then(|s| s.as_str())
-		.ok_or_else(|| anyhow::anyhow!("No sessionId in session/new response"))?
-		.to_string();
+	else {
+		terminate_acp_child(&mut child).await;
+		return Err(anyhow::anyhow!("No sessionId in session/new response"));
+	};
+	let session_id = session_id.to_string();
 
 	// 3. session/prompt — collect the initial response, then close stdin and
 	// keep consuming updates until the ACP child has drained finite background work.
@@ -822,7 +848,7 @@ pub async fn run_acp_command(
 		// Check for cancellation before each line read
 		if *cancel_rx.borrow() {
 			// Kill the child process on cancellation
-			let _ = child.kill().await;
+			terminate_acp_child(&mut child).await;
 			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
 
@@ -836,7 +862,7 @@ pub async fn run_acp_command(
 			}
 			_ = cancel_rx.changed() => {
 				// Cancellation received - kill child and return
-				let _ = child.kill().await;
+				terminate_acp_child(&mut child).await;
 				return Err(anyhow::Error::new(
 					crate::session::cancellation::Cancelled,
 				));
@@ -849,7 +875,7 @@ pub async fn run_acp_command(
 			} => {
 				// A child that declared no finite work should close promptly after
 				// stdin EOF. Preserve the existing wedged-child safety guard.
-				let _ = child.kill().await;
+				terminate_acp_child(&mut child).await;
 				break;
 			}
 		};
@@ -943,7 +969,7 @@ pub async fn run_acp_command(
 		.await
 		.is_err()
 	{
-		let _ = child.kill().await;
+		terminate_acp_child(&mut child).await;
 	}
 
 	if !prompt_response_received {
@@ -1189,45 +1215,77 @@ fn acp_prompt_params(session_id: &str, task: &str) -> Value {
 }
 
 /// Read lines until we find a JSON-RPC response with the given id, return it.
-async fn wait_for_response(
-	lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+async fn wait_for_response<R>(
+	lines: &mut tokio::io::Lines<R>,
 	id: u64,
 	cancel_rx: &mut watch::Receiver<bool>,
-) -> Result<Value> {
-	loop {
-		if *cancel_rx.borrow() {
-			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
-		}
-		let line = tokio::select! {
-			line = lines.next_line() => match line? {
-				Some(line) => line,
-				None => return Err(anyhow::anyhow!("Subprocess closed before response id={id}")),
-			},
-			changed = cancel_rx.changed() => {
-				// A dropped sender has the same terminal meaning as an explicit
-				// cancellation: nobody can resume ownership of this request.
-				if changed.is_err() || *cancel_rx.borrow() {
-					return Err(anyhow::Error::new(
-						crate::session::cancellation::Cancelled,
-					));
+	timeout: std::time::Duration,
+) -> Result<Value>
+where
+	R: tokio::io::AsyncBufRead + Unpin,
+{
+	let response = tokio::time::timeout(timeout, async {
+		loop {
+			if *cancel_rx.borrow() {
+				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
+			}
+			let line = tokio::select! {
+				line = lines.next_line() => match line? {
+					Some(line) => line,
+					None => return Err(anyhow::anyhow!("Subprocess closed before response id={id}")),
+				},
+				changed = cancel_rx.changed() => {
+					// A dropped sender has the same terminal meaning as an explicit
+					// cancellation: nobody can resume ownership of this request.
+					if changed.is_err() || *cancel_rx.borrow() {
+						return Err(anyhow::Error::new(
+							crate::session::cancellation::Cancelled,
+						));
+					}
+					continue;
 				}
+			};
+			if line.trim().is_empty() {
 				continue;
 			}
-		};
-		if line.trim().is_empty() {
-			continue;
-		}
-		let msg: Value = match serde_json::from_str(&line) {
-			Ok(v) => v,
-			Err(_) => continue,
-		};
-		if msg.get("id").and_then(|i| i.as_u64()) == Some(id) {
-			if let Some(err) = msg.get("error") {
-				return Err(anyhow::anyhow!("ACP error: {err}"));
+			let msg: Value = match serde_json::from_str(&line) {
+				Ok(v) => v,
+				Err(_) => continue,
+			};
+			if msg.get("id").and_then(|i| i.as_u64()) == Some(id) {
+				if let Some(err) = msg.get("error") {
+					return Err(anyhow::anyhow!("ACP error: {err}"));
+				}
+				return Ok(msg);
 			}
-			return Ok(msg);
 		}
+	})
+	.await;
+
+	response.map_err(|_| {
+		anyhow::anyhow!(
+			"Timed out waiting for ACP response id={id} after {:.0}s",
+			timeout.as_secs_f64()
+		)
+	})?
+}
+
+/// Terminate the ACP process group on Unix, or the direct child elsewhere,
+/// and reap the direct child before returning.
+async fn terminate_acp_child(child: &mut tokio::process::Child) {
+	#[cfg(unix)]
+	if let Some(pid) = child.id() {
+		// The command is spawned with process_group(0), so its pid is also the
+		// process-group id. Negative pid targets the complete group.
+		unsafe {
+			libc::kill(-(pid as i32), libc::SIGKILL);
+		}
+		let _ = child.wait().await;
+		return;
 	}
+
+	let _ = child.kill().await;
+	let _ = child.wait().await;
 }
 
 /// Lifecycle tests for `run_acp_command` — drive it against a fake ACP server

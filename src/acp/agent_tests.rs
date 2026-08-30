@@ -609,8 +609,9 @@ async fn run_actor_dispatches_initialize_cancel_and_idle() {
 	let local = tokio::task::LocalSet::new();
 	local.spawn_local(run_actor(agent, rx));
 
-	local
-		.spawn_local(async move {
+	tokio::time::timeout(
+		std::time::Duration::from_secs(5),
+		local.run_until(async move {
 			let (reply, rx_reply) = oneshot::channel();
 			tx.send(Command::Initialize(
 				Box::new(InitializeRequest::new(ProtocolVersion::LATEST)),
@@ -639,9 +640,12 @@ async fn run_actor_dispatches_initialize_cancel_and_idle() {
 			rx_reply.await.expect("idle reply");
 
 			drop(tx); // ends the actor loop
-		})
-		.await
-		.expect("driver task");
+		}),
+	)
+	.await
+	.expect("actor commands must complete within the timeout");
 
-	local.await;
+	tokio::time::timeout(std::time::Duration::from_secs(5), local)
+		.await
+		.expect("actor loop must stop after its sender is dropped");
 }

@@ -156,7 +156,7 @@ echo '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpd
 fn write_agent_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 	use std::os::unix::fs::PermissionsExt;
 	let path = dir.join("fake-agent.sh");
-	std::fs::write(&path, body).expect("write fake agent script");
+	std::fs::write(&path, format!("#!/bin/sh\n{body}")).expect("write fake agent script");
 	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
 		.expect("make fake agent script executable");
 	path
@@ -599,7 +599,7 @@ async fn record_tap_live_updates_action_and_usage() {
 		// usage meta is banked and short-circuits update handling
 		record_tap_live(
 			"tap-agenttest-live",
-			&serde_json::json!({"params": {"_meta": {"octomind": {"usage": {"input_tokens": 5, "output_tokens": 6, "cache_read_tokens": 1, "session_cost": 0.25}}}}}),
+			&serde_json::json!({"params": {"_meta": {"octomind.usage": {"input_tokens": 5, "output_tokens": 6, "cache_read_tokens": 1, "session_cost": 0.25}}}}),
 		);
 		let usage = tap_runs::find_job("tap-agenttest-live")
 			.unwrap()

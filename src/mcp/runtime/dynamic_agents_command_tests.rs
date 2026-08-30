@@ -216,7 +216,7 @@ async fn test_agent_add_rejects_unknown_server_ref() {
 async fn test_agent_add_infers_server_refs_from_allowed_tools() {
 	clear_all();
 
-	// The template config's `core` builtin server is made visible via the
+	// The template config's `runtime` builtin server is made visible via the
 	// global tool map — the inference path resolves allowed_tools entries
 	// through get_tool_server_name.
 	let config: crate::config::Config =
@@ -230,7 +230,7 @@ async fn test_agent_add_infers_server_refs_from_allowed_tools() {
 		"action": "add",
 		"name": "__dynagent_infer",
 		"system": "You are a test.",
-		"allowed_tools": ["plan"]
+		"allowed_tools": ["skill"]
 	})))
 	.await
 	.expect("dispatch");
@@ -241,7 +241,7 @@ async fn test_agent_add_infers_server_refs_from_allowed_tools() {
 		.iter()
 		.find(|(a, _)| a.name == "__dynagent_infer")
 		.expect("agent registered");
-	assert_eq!(added.0.server_refs, vec!["core".to_string()]);
+	assert_eq!(added.0.server_refs, vec!["runtime".to_string()]);
 
 	clear_all();
 }

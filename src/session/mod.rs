@@ -328,11 +328,7 @@ impl TurnTimingStats {
 	}
 
 	pub fn average_time_ms(&self) -> u64 {
-		if self.completed == 0 {
-			0
-		} else {
-			self.total_time_ms / self.completed
-		}
+		self.total_time_ms.checked_div(self.completed).unwrap_or(0)
 	}
 }
 

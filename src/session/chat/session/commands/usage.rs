@@ -96,3 +96,7 @@ pub struct UsageWindow {
 	pub cap_usd: f64,
 	pub resets_at: String,
 }
+
+#[cfg(test)]
+#[path = "usage_tests.rs"]
+mod tests;

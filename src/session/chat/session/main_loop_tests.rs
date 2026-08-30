@@ -438,3 +438,325 @@ async fn test_print_command_output_jsonl_and_cli_branches() {
 	};
 	print_command_output(&mut output, &mut session, &config).await;
 }
+
+// ---------------------------------------------------------------------------
+// run_interactive_session_with_input: command dispatch + error propagation
+// ---------------------------------------------------------------------------
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_exit_command_saves_and_exits() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let config = fake_provider_config();
+	run_interactive_session_with_input(&session_args(), &config, "/exit")
+		.await
+		.expect("/exit exits cleanly");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	assert!(
+		loaded.messages.iter().all(|m| m.role != "user"),
+		"/exit must not record a user message: {:?}",
+		loaded.messages
+	);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_new_command_exits_with_note() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let config = fake_provider_config();
+	run_interactive_session_with_input(&session_args(), &config, "/new")
+		.await
+		.expect("/new exits cleanly in run mode");
+
+	// /new in run mode terminates the run; the session file still exists.
+	assert!(sole_session_file().exists());
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_unknown_slash_treated_as_user_input() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let url = spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"Hello from stub",
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	run_interactive_session_with_input(
+		&session_args(),
+		&config,
+		"/definitely-not-a-command hello",
+	)
+	.await
+	.expect("unknown slash input runs as a normal turn");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	assert!(
+		loaded
+			.messages
+			.iter()
+			.any(|m| m.role == "user" && m.content.contains("/definitely-not-a-command")),
+		"unknown slash input must be preserved verbatim as the user turn"
+	);
+	assert!(
+		loaded
+			.messages
+			.iter()
+			.any(|m| m.role == "assistant" && m.content.contains("Hello from stub")),
+		"the turn must still reach the model"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_api_error_propagates() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let url = crate::session::chat::test_support::spawn_stub_with_status(vec![(
+		500,
+		serde_json::json!({"error": {"message": "stub exploded"}}),
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	let err = run_interactive_session_with_input(&session_args(), &config, "hi")
+		.await
+		.expect_err("a 500 from the provider must fail the run");
+	assert!(
+		err.to_string().contains("stub exploded") || err.to_string().contains("500"),
+		"error must surface the provider failure: {err}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_followup_api_error_propagates() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	// First call returns a tool call; the tool executes fine, but the
+	// follow-up completion fails — the run must surface that error.
+	let url = crate::session::chat::test_support::spawn_stub_with_status(vec![
+		(
+			200,
+			crate::session::chat::test_support::tool_call_response(
+				"schedule",
+				serde_json::json!({"command": "list"}),
+			),
+		),
+		(
+			500,
+			serde_json::json!({"error": {"message": "follow-up exploded"}}),
+		),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	let err = run_interactive_session_with_input(&session_args(), &config, "list schedules")
+		.await
+		.expect_err("a failed follow-up completion must fail the run");
+	assert!(
+		err.to_string().contains("follow-up exploded"),
+		"error must surface the follow-up failure: {err}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_jsonl_mode_completes_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	let url = spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"Hello from stub",
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.runtime_output_mode = Some("jsonl".to_string());
+	let mut args = session_args();
+	args.mode = "jsonl".to_string();
+	run_interactive_session_with_input(&args, &config, "hi")
+		.await
+		.expect("jsonl-mode turn completes");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	assert!(
+		loaded
+			.messages
+			.iter()
+			.any(|m| m.role == "assistant" && m.content.contains("Hello from stub")),
+		"jsonl mode must still persist the assistant reply"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+// ---------------------------------------------------------------------------
+// run_interactive_session_with_input: scheduled inbox turn
+// ---------------------------------------------------------------------------
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_due_schedule_drives_second_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	// Turn 1: the model registers a schedule entry firing immediately
+	// (`when: "now"`). Turn 2: the flushed inbox message drives a second
+	// completion without any user input.
+	let url = spawn_stub(vec![
+		crate::session::chat::test_support::tool_call_response(
+			"schedule",
+			serde_json::json!({
+				"command": "add",
+				"message": "scheduled follow-up work",
+				"when": "now",
+			}),
+		),
+		crate::session::chat::test_support::final_response("reminder stored"),
+		crate::session::chat::test_support::final_response("handled the reminder"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	run_interactive_session_with_input(&session_args(), &config, "set a reminder")
+		.await
+		.expect("schedule round trip completes");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let contents: Vec<&str> = loaded
+		.messages
+		.iter()
+		.map(|m| m.content.as_str())
+		.collect();
+	assert!(
+		contents.iter().any(|c| c.contains("scheduled follow-up work")),
+		"the fired schedule entry must land as a user turn: {contents:?}"
+	);
+	assert!(
+		contents.iter().any(|c| c.contains("handled the reminder")),
+		"the inbox-driven turn must reach the model: {contents:?}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+// ---------------------------------------------------------------------------
+// run_interactive_session_with_input: resume + /done compression
+// ---------------------------------------------------------------------------
+
+/// A compressible named session: system anchor + two full user/assistant
+/// turns, persisted like a real prior run.
+async fn persisted_compressible_session(name: &str) {
+	let config = fake_provider_config();
+	let params = SessionInitParams::new(&config, "assistant").with_name(name.to_string());
+	let mut session = crate::session::chat::session::ChatSession::initialize(params)
+		.await
+		.expect("seed session initializes");
+
+	for (role, content) in [
+		("user", "build the frobnicator widget"),
+		("assistant", "starting on the widget now"),
+		("user", "make sure it compiles"),
+		("assistant", "phase one is done and compiling"),
+	] {
+		if role == "user" {
+			session.add_user_message(content).expect("seed user msg");
+		} else {
+			session
+				.add_assistant_message(content, None, &config, "assistant")
+				.expect("seed reply");
+		}
+	}
+	session.save().expect("seed session save");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_done_compresses_resumed_session() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+	persisted_compressible_session("cov-done-compress").await;
+
+	// The /done compression decision+summary call, then the wrap-up turn.
+	let xml_summary = concat!(
+		"<should_compress>true</should_compress>\n",
+		"<original_request>build the frobnicator widget</original_request>\n",
+		"<session_context>COMPRESS-RESUME-CONTEXT: rust repo, widget work</session_context>\n",
+		"<current_task>finish the frobnicator widget</current_task>\n",
+		"<progress>phase one complete</progress>\n",
+		"<analysis_findings><finding>widget lives in src/widget.rs</finding></analysis_findings>\n",
+		"<errors_and_corrections><entry>fixed a compile error</entry></errors_and_corrections>\n",
+		"<recent_exchanges><exchange>user asked for compilation, assistant confirmed</exchange></recent_exchanges>\n",
+		"<key_entities><files><file>src/widget.rs</file></files>",
+		"<names><name>Frobnicator</name></names>",
+		"<decisions><decision>keep the widget minimal</decision></decisions></key_entities>\n",
+		"<next_steps>wire the widget tests</next_steps>\n",
+		"<critical_knowledge><knowledge>widget must stay allocation-free</knowledge></critical_knowledge>\n",
+		"<open_loops><open_loop>widget rendering</open_loop></open_loops>\n",
+		"<file_states><state>src/widget.rs modified</state></file_states>"
+	)
+	.to_string();
+	let url = spawn_stub(vec![
+		crate::session::chat::test_support::final_response(&xml_summary),
+		crate::session::chat::test_support::final_response("wrapped up"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	let args = super::super::GenericSessionArgs::resume(
+		"cov-done-compress".to_string(),
+		"assistant".to_string(),
+	);
+	run_interactive_session_with_input(&args, &config, "/done wrap up the task")
+		.await
+		.expect("resumed /done with instructions completes");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let contents: Vec<&str> = loaded
+		.messages
+		.iter()
+		.map(|m| m.content.as_str())
+		.collect();
+	assert!(
+		contents.iter().any(|c| c.contains("COMPRESS-RESUME-CONTEXT")),
+		"the compression summary must replace the drained turns: {contents:?}"
+	);
+	assert!(
+		contents.iter().any(|c| c.contains("wrap up the task")),
+		"the /done instructions must drive the follow-up turn: {contents:?}"
+	);
+	assert!(
+		contents.iter().any(|c| c.contains("wrapped up")),
+		"the wrap-up reply must be persisted: {contents:?}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

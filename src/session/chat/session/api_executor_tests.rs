@@ -1188,3 +1188,147 @@ async fn test_learning_injection_builds_active_memory_pack() {
 		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Interactive-mode spending gates
+// ---------------------------------------------------------------------------
+
+/// Run one turn in a chosen output mode, mirroring `run_turn`.
+async fn run_turn_mode(
+	session: &mut ChatSession,
+	config: &Config,
+	mode: crate::session::output::OutputMode,
+) -> anyhow::Result<()> {
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	execute_api_call_and_process_response(
+		session,
+		config,
+		"assistant",
+		rx,
+		mode,
+		SilentSink,
+	)
+	.await
+}
+
+#[tokio::test]
+async fn test_interactive_mode_session_threshold_decline_skips_api_call() {
+	let _guard = ENV_LOCK.lock().await;
+	// No stub: if the gate leaks, the provider call fails loudly and the test
+	// fails — proving the decline path really returns before any request.
+	let mut config = fake_provider_config();
+	config.max_session_spending_threshold = 0.01;
+	config.max_request_spending_threshold = 0.0;
+
+	let mut session = fake_session("hi there");
+	session.session.info.total_cost = 1.0;
+	let messages_before = session.session.messages.len();
+	let calls_before = session.session.info.total_api_calls;
+
+	run_turn_mode(
+		&mut session,
+		&config,
+		crate::session::output::OutputMode::Interactive,
+	)
+	.await
+	.expect("declined turn returns Ok");
+
+	assert_eq!(
+		session.session.messages.len(),
+		messages_before,
+		"a declined turn must not add messages"
+	);
+	assert_eq!(
+		session.session.info.total_api_calls, calls_before,
+		"a declined turn must not call the API"
+	);
+}
+
+#[tokio::test]
+async fn test_interactive_mode_request_threshold_decline_skips_api_call() {
+	let _guard = ENV_LOCK.lock().await;
+	let mut config = fake_provider_config();
+	config.max_session_spending_threshold = 0.0;
+	config.max_request_spending_threshold = 0.01;
+
+	let mut session = fake_session("hi there");
+	session.session.info.total_cost = 1.0;
+	let messages_before = session.session.messages.len();
+
+	run_turn_mode(
+		&mut session,
+		&config,
+		crate::session::output::OutputMode::Interactive,
+	)
+	.await
+	.expect("declined turn returns Ok");
+
+	assert_eq!(
+		session.session.messages.len(),
+		messages_before,
+		"a request-threshold decline must not add messages"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Structured-output schema branch
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_schema_branch_completes_structured_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	// The stub replies with a JSON-encoded string, which satisfies a
+	// {"type": "string"} schema through the validation path.
+	let url = spawn_stub(vec![final_response("\"structured hello\"")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	let mut session = fake_session("give me a string");
+	session.schema = Some(serde_json::json!({"type": "string"}));
+
+	run_turn(&mut session, &config)
+		.await
+		.expect("schema-constrained turn succeeds");
+
+	let assistant = session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.role == "assistant")
+		.expect("assistant reply recorded");
+	assert!(
+		assistant.content.contains("structured hello"),
+		"unexpected reply: {}",
+		assistant.content
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+// ---------------------------------------------------------------------------
+// Active memory pack lifecycle
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![final_response("Hello from stub")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	// fake_provider_config disables supervisor learning, so a pack left over
+	// from a previous configuration must be dropped before the request.
+	let config = fake_provider_config();
+	let mut session = fake_session("hi there");
+	session.active_memory_pack = Some("stale pack content".to_string());
+
+	run_turn(&mut session, &config)
+		.await
+		.expect("turn succeeds");
+
+	assert!(
+		session.active_memory_pack.is_none(),
+		"a pack must not survive into a request when learning is disabled"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}

@@ -142,3 +142,99 @@ async fn execution_failure_surfaces_spawn_error() {
 		"unexpected error: {error}"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// Success path against a fake ACP server + implicit input selection
+// ---------------------------------------------------------------------------
+
+/// A minimal ACP server script: initialize → new_session → one agent message
+/// chunk → end_turn. Speaks just enough JSON-RPC for the command layer.
+#[cfg(unix)]
+fn write_fake_acp_server(dir: &std::path::Path) -> std::path::PathBuf {
+	let script = dir.join("fake_acp_server.sh");
+	std::fs::write(
+		&script,
+		r#"#!/bin/sh
+read -r _req
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+read -r _req
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+read -r _req
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"FAKE LAYER OUTPUT"}}}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"sessionId":"fake-session","stopReason":"end_turn"}}'
+"#,
+	)
+	.expect("write fake ACP server script");
+	use std::os::unix::fs::PermissionsExt;
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+		.expect("make fake ACP server executable");
+	script
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn implicit_input_uses_last_real_user_message_and_succeeds() {
+	let dir = tempfile::tempdir().unwrap();
+	let script = write_fake_acp_server(dir.path());
+	let mut config = config_with_commands(Some(vec![command_layer(
+		"cov-cmd",
+		&format!("/bin/sh {}", script.display()),
+	)]));
+	config.max_session_spending_threshold = 0.0;
+	config.max_request_spending_threshold = 0.0;
+
+	// No params after the command name: the input falls back to the most
+	// recent genuine user message in the session.
+	let mut session = ChatSession::for_tests(Vec::new());
+	session
+		.add_user_message("please review the widget")
+		.expect("seed user message");
+
+	let (executed, data) = run_command(&mut session, &config, &["cov-cmd"]).await;
+	assert_eq!(executed, "cov-cmd");
+	assert_eq!(data["action"], "execute");
+	assert_eq!(data["success"], true, "data: {data}");
+	assert_eq!(data["result"], "FAKE LAYER OUTPUT");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn implicit_input_without_any_user_message_uses_default_placeholder() {
+	let dir = tempfile::tempdir().unwrap();
+	let script = write_fake_acp_server(dir.path());
+	let mut config = config_with_commands(Some(vec![command_layer(
+		"cov-cmd",
+		&format!("/bin/sh {}", script.display()),
+	)]));
+	config.max_session_spending_threshold = 0.0;
+	config.max_request_spending_threshold = 0.0;
+
+	// Empty session: there is no user message to reuse, the placeholder input
+	// ("No recent user input found") is used and the layer still runs.
+	let mut session = ChatSession::for_tests(Vec::new());
+	let (executed, data) = run_command(&mut session, &config, &["cov-cmd"]).await;
+	assert_eq!(executed, "cov-cmd");
+	assert_eq!(data["success"], true, "data: {data}");
+	assert_eq!(data["result"], "FAKE LAYER OUTPUT");
+}
+
+#[tokio::test]
+async fn session_threshold_breach_cancels_execution() {
+	let mut config = config_with_commands(Some(vec![command_layer("cov-cmd", "cov-role")]));
+	// A session threshold breach auto-declines without reading stdin (the test
+	// harness stdin is not a terminal), so no interactive prompt can block.
+	config.max_session_spending_threshold = 0.01;
+	config.max_request_spending_threshold = 0.0;
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.total_cost = 1.0;
+
+	let (executed, data) = run_command(&mut session, &config, &["cov-cmd", "do", "things"]).await;
+	assert_eq!(executed, "cov-cmd");
+	assert_eq!(data["action"], "execute");
+	assert_eq!(data["success"], false);
+	assert_eq!(
+		data["error"],
+		"Command execution cancelled due to spending threshold."
+	);
+}

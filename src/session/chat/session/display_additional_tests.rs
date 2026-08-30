@@ -299,3 +299,62 @@ async fn display_session_context_with_populated_session() {
 		.expect("add assistant message");
 	session.display_session_context(&config).await;
 }
+
+#[tokio::test]
+async fn test_context_rendering_rich_messages_and_edge_filters() {
+	let config = default_config();
+
+	// Long content exercises the >200-char truncation branch; the assistant
+	// message carries cache + tool_calls rows, the tool message carries
+	// tool_call_id/name/images rows.
+	let long_content = "word ".repeat(60);
+	let assistant = crate::session::Message {
+		role: "assistant".to_string(),
+		content: long_content,
+		timestamp: 1_700_000_000,
+		cached: true,
+		tool_calls: Some(serde_json::json!([
+			{"id": "call_1", "function": {"name": "shell", "arguments": "{}"}}
+		])),
+		..Default::default()
+	};
+
+	let tool = crate::session::Message {
+		role: "tool".to_string(),
+		content: "ok".to_string(),
+		timestamp: 1_700_000_001,
+		tool_call_id: Some("call_1".to_string()),
+		name: Some("shell".to_string()),
+		images: Some(vec![crate::session::image::ImageAttachment {
+			data: crate::session::image::ImageData::Base64("unused".to_string()),
+			media_type: "image/png".to_string(),
+			source_type: crate::session::image::SourceType::Clipboard,
+			dimensions: Some((1, 1)),
+			size_bytes: None,
+		}]),
+		..Default::default()
+	};
+
+	let mut session = ChatSession::for_tests(vec![assistant, tool]);
+
+	// "all" renders every optional row: cached, tool call id, name, images,
+	// tool calls, and the truncation notice.
+	session
+		.display_session_context_filtered(&config, "all")
+		.await;
+
+	// Unknown filter → error block; "user" with no user messages → empty match.
+	session
+		.display_session_context_filtered(&config, "bogus")
+		.await;
+	session
+		.display_session_context_filtered(&config, "user")
+		.await;
+
+	// Debug mode lifts the content limit and switches the mode footer.
+	let mut debug_config = default_config();
+	debug_config.log_level = crate::config::LogLevel::Debug;
+	session
+		.display_session_context_filtered(&debug_config, "all")
+		.await;
+}

@@ -470,3 +470,440 @@ async fn test_ensure_server_running_marks_failed_when_spawn_fails() {
 	assert_eq!(info.consecutive_failures, 1);
 	clear_restart_info(NAME);
 }
+
+// ---------------------------------------------------------------------------
+// Session-scoped context and notification routing
+// ---------------------------------------------------------------------------
+
+#[serial]
+#[tokio::test]
+async fn test_get_session_context_prefers_session_scoped_role_and_anchor() {
+	let sid = "proc-add-ctx-session".to_string();
+	let anchor = std::path::PathBuf::from("/tmp/octomind-proc-add-anchor");
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::set_session_role(&sid, "doctor:blood");
+		crate::mcp::workdir::set_session_working_directory(anchor.clone());
+
+		let (domain, spec, project, session_id, workdir) = get_session_context();
+		assert_eq!(domain, "doctor");
+		assert_eq!(spec, "blood");
+		assert_eq!(project, derive_project_id_from_path(&anchor));
+		assert_eq!(session_id, sid);
+		assert_eq!(workdir, anchor.to_string_lossy());
+	})
+	.await;
+	crate::session::context::clear_session_role(&sid);
+	crate::session::context::clear_session_workdir(&sid);
+}
+
+#[serial]
+#[tokio::test]
+async fn test_notification_sender_session_scoped_round_trip() {
+	let sid = "proc-add-notify-session".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+		set_notification_sender(Some(sid.clone()), tx);
+
+		send_notification_message(crate::websocket::ServerMessage::Thinking(
+			crate::websocket::ThinkingPayload {
+				content: "live".to_string(),
+				session_id: sid.clone(),
+			},
+		));
+		match rx.try_recv().expect("session sender must receive") {
+			crate::websocket::ServerMessage::Thinking(p) => assert_eq!(p.content, "live"),
+			_ => panic!("expected Thinking"),
+		}
+
+		clear_notification_sender(Some(sid.clone()));
+		send_notification_message(crate::websocket::ServerMessage::Thinking(
+			crate::websocket::ThinkingPayload {
+				content: "dropped".to_string(),
+				session_id: sid.clone(),
+			},
+		));
+		assert!(rx.try_recv().is_err(), "cleared sender must not receive");
+	})
+	.await;
+}
+
+// ---------------------------------------------------------------------------
+// ensure_server_running — alive short-circuit and non-spawnable types
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn test_ensure_server_running_returns_url_for_live_http_process() {
+	const NAME: &str = "proc-add-live-http";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9/mcp", 2, Vec::new());
+	let url = ensure_server_running(&server)
+		.await
+		.expect("live process must be reused, not restarted");
+	assert_eq!(url, "http://127.0.0.1:9/mcp");
+	assert_eq!(get_server_health(NAME), ServerHealth::Running);
+	assert_eq!(
+		get_server_restart_info(NAME).restart_count,
+		0,
+		"no restart may be counted for an alive server"
+	);
+
+	SERVER_PROCESSES.write().unwrap().remove(NAME);
+	{
+		let mut guard = process_arc.lock().unwrap();
+		let _ = guard.kill();
+	}
+	clear_restart_info(NAME);
+}
+
+#[serial]
+#[tokio::test]
+async fn test_ensure_server_running_http_without_process_fails_cleanly() {
+	const NAME: &str = "proc-add-http-dead";
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9/mcp", 2, Vec::new());
+	let err = ensure_server_running(&server)
+		.await
+		.expect_err("http configs must never be spawned as processes");
+	assert!(
+		err.to_string()
+			.contains("should not be started as a process"),
+		"err: {err}"
+	);
+	assert_eq!(get_server_health(NAME), ServerHealth::Failed);
+	assert_eq!(get_server_restart_info(NAME).consecutive_failures, 1);
+	clear_restart_info(NAME);
+}
+
+#[tokio::test]
+async fn test_start_server_process_rejects_builtin_configs() {
+	let server = McpServerConfig::builtin("proc-add-builtin", 5, Vec::new());
+	let err = start_server_process(&server)
+		.await
+		.expect_err("builtin servers must never spawn");
+	assert!(
+		err.to_string()
+			.contains("should not be started as external process"),
+		"err: {err}"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// is_server_running — known-dead stdio child overrides a live client handle
+// ---------------------------------------------------------------------------
+
+#[serial]
+#[test]
+fn test_is_server_running_dead_pgid_reports_dead() {
+	const NAME: &str = "proc-add-dead-pgid";
+	// A pid beyond the OS allocation range can never resolve: the liveness
+	// probe deterministically reports Some(false) without spawning anything.
+	register_pgid(NAME, 4_000_000);
+	assert_eq!(is_stdio_process_alive(NAME), Some(false));
+	assert!(!is_server_running(NAME));
+	assert_eq!(get_server_health(NAME), ServerHealth::Dead);
+
+	SERVER_PGIDS.write().unwrap().remove(NAME);
+	clear_restart_info(NAME);
+}
+
+// ---------------------------------------------------------------------------
+// stop_all_servers — full registry teardown
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn test_stop_all_servers_clears_every_registry() {
+	const NAME: &str = "proc-add-stop-all";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+
+	// An unallocatable pid keeps the PGID sweep a verified no-op (kill fails
+	// with ESRCH), so the test can never signal a real process group.
+	register_pgid(NAME, 4_000_000);
+	stderr_buffer_for(NAME)
+		.lock()
+		.unwrap()
+		.push("line".to_string());
+	let mutex_before = get_server_restart_mutex(NAME);
+
+	stop_all_servers().expect("stop-all must succeed");
+
+	assert!(!SERVER_PROCESSES.read().unwrap().contains_key(NAME));
+	assert!(
+		!Arc::ptr_eq(&mutex_before, &get_server_restart_mutex(NAME)),
+		"restart mutexes must be cleared"
+	);
+	assert!(
+		stderr_lines_for(NAME).is_empty(),
+		"stderr buffers must be cleared"
+	);
+	assert!(
+		is_stdio_process_alive(NAME).is_none(),
+		"pgids must be cleared"
+	);
+
+	// Reap the child stop_all killed.
+	let mut guard = process_arc.lock().unwrap();
+	let _ = guard.try_wait();
+}
+
+// ---------------------------------------------------------------------------
+// Remaining branches: CLI-global fallback, explicit-session notifications,
+// locked-process liveness, reaped-process kill, and stdio failure diagnostics
+// ---------------------------------------------------------------------------
+
+#[serial]
+#[tokio::test]
+async fn test_get_session_context_falls_back_to_cli_global_without_session_role() {
+	let (prev_domain, prev_spec, prev_project, _, prev_workdir) = get_session_context();
+	let prev_role = if prev_spec.is_empty() {
+		prev_domain
+	} else {
+		format!("{prev_domain}:{prev_spec}")
+	};
+
+	let sid = "proc-add-ctx-no-role".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		// No session role registered for this id: the CLI global must win.
+		set_session_context("developer:general", "proj-cli-fallback", "/tmp/w-cli");
+		let (domain, spec, project, session_id, workdir) = get_session_context();
+		assert_eq!(domain, "developer");
+		assert_eq!(spec, "general");
+		assert_eq!(project, "proj-cli-fallback");
+		assert_eq!(session_id, sid);
+		assert_eq!(workdir, "/tmp/w-cli");
+	})
+	.await;
+
+	set_session_context(&prev_role, &prev_project, &prev_workdir);
+}
+
+#[serial]
+#[tokio::test]
+async fn test_emit_notification_with_explicit_session_id_routes_to_session_sender() {
+	let sid = "proc-add-emit-session".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+		set_notification_sender(Some(sid.clone()), tx);
+
+		emit_notification(
+			"proc-add-emit",
+			"notifications/message",
+			&serde_json::json!({"level": "warning"}),
+			Some(&sid),
+			None,
+		);
+		match rx.try_recv().expect("explicit session sender must receive") {
+			crate::websocket::ServerMessage::McpNotification(p) => {
+				assert_eq!(p.server, "proc-add-emit");
+				assert_eq!(p.method, "notifications/message");
+				assert_eq!(p.params, serde_json::json!({"level": "warning"}));
+			}
+			other => panic!("expected McpNotification, got {:?}", other),
+		}
+
+		clear_notification_sender(Some(sid));
+	})
+	.await;
+}
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn test_perform_health_check_reports_dead_for_exited_process() {
+	const NAME: &str = "proc-add-sweep-dead";
+	let mut child = std::process::Command::new("sleep")
+		.arg("0")
+		.spawn()
+		.expect("spawn sleep 0");
+	while child.try_wait().expect("try_wait exited child").is_none() {
+		tokio::time::sleep(Duration::from_millis(10)).await;
+	}
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc);
+
+	let health = perform_health_check_all_servers().await;
+	assert_eq!(health.get(NAME), Some(&ServerHealth::Dead));
+
+	SERVER_PROCESSES.write().unwrap().remove(NAME);
+	clear_restart_info(NAME);
+}
+
+#[cfg(unix)]
+#[serial]
+#[test]
+fn test_is_server_running_treats_locked_process_as_alive() {
+	const NAME: &str = "proc-add-locked-alive";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+
+	// A held registry mutex means someone is actively managing the process.
+	let guard = process_arc.lock().unwrap();
+	assert!(is_server_running(NAME));
+	assert_eq!(get_server_health(NAME), ServerHealth::Running);
+	drop(guard);
+
+	SERVER_PROCESSES.write().unwrap().remove(NAME);
+	{
+		let mut guard = process_arc.lock().unwrap();
+		let _ = guard.kill();
+	}
+	clear_restart_info(NAME);
+}
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn test_ensure_server_running_treats_locked_http_process_as_alive() {
+	const NAME: &str = "proc-add-ensure-locked";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+
+	let guard = process_arc.lock().unwrap();
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9/mcp", 2, Vec::new());
+	let url = ensure_server_running(&server)
+		.await
+		.expect("locked process counts as alive, not restartable");
+	drop(guard);
+	assert_eq!(url, "http://127.0.0.1:9/mcp");
+	assert_eq!(
+		get_server_restart_info(NAME).restart_count,
+		0,
+		"no restart may be counted for a locked-alive server"
+	);
+
+	SERVER_PROCESSES.write().unwrap().remove(NAME);
+	{
+		let mut guard = process_arc.lock().unwrap();
+		let _ = guard.kill();
+	}
+	clear_restart_info(NAME);
+}
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn test_stop_all_servers_locked_process_falls_back_to_pgid() {
+	const NAME: &str = "proc-add-stop-locked";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+	// Unallocatable pid keeps the PGID backstop a verified no-op.
+	register_pgid(NAME, 4_000_000);
+
+	let guard = process_arc.lock().unwrap();
+	stop_all_servers().expect("stop-all must succeed even with a locked process");
+	drop(guard);
+
+	assert!(!SERVER_PROCESSES.read().unwrap().contains_key(NAME));
+	// Reap the child the held lock protected from stop_all's kill.
+	{
+		let mut guard = process_arc.lock().unwrap();
+		let _ = guard.kill();
+		let _ = guard.try_wait();
+	}
+}
+
+#[cfg(unix)]
+#[serial]
+#[test]
+fn test_cleanup_server_process_locked_process_uses_pgid_path() {
+	const NAME: &str = "proc-add-cleanup-locked";
+	let child = std::process::Command::new("sleep")
+		.arg("30")
+		.spawn()
+		.expect("spawn sleep");
+	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), process_arc.clone());
+	register_pgid(NAME, 4_000_000);
+
+	let guard = process_arc.lock().unwrap();
+	cleanup_server_process(NAME).expect("cleanup must succeed via the PGID path");
+	drop(guard);
+
+	assert!(!SERVER_PROCESSES.read().unwrap().contains_key(NAME));
+	{
+		let mut guard = process_arc.lock().unwrap();
+		let _ = guard.kill();
+		let _ = guard.try_wait();
+	}
+}
+
+#[serial]
+#[tokio::test]
+async fn test_ensure_server_running_stdio_failure_includes_stderr_detail() {
+	const NAME: &str = "proc-add-stdio-stderr";
+	// Seed the diagnostic buffer so the failure error deterministically
+	// includes the stderr section (the drain task may not have run yet).
+	stderr_buffer_for(NAME)
+		.lock()
+		.unwrap()
+		.push("stub exploded".to_string());
+
+	let server = McpServerConfig::stdin(
+		NAME,
+		"sh",
+		vec!["-c".to_string(), "exec sleep 30".to_string()],
+		1,
+		Vec::new(),
+	);
+	let error = ensure_server_running(&server)
+		.await
+		.expect_err("silent stub must fail both handshake attempts");
+	let msg = error.to_string();
+	assert!(msg.contains("Failed to start server"), "err: {msg}");
+	assert!(
+		msg.contains("Failed to initialize stdin MCP server"),
+		"err: {msg}"
+	);
+	assert!(msg.contains("Server stderr:"), "err: {msg}");
+	assert!(msg.contains("stub exploded"), "err: {msg}");
+
+	assert_eq!(get_server_health(NAME), ServerHealth::Failed);
+	assert_eq!(get_server_restart_info(NAME).consecutive_failures, 1);
+	clear_restart_info(NAME);
+}

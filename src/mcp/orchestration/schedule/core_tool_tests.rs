@@ -174,3 +174,74 @@ async fn test_error_paths() {
 	})
 	.await;
 }
+
+#[test]
+fn test_schedule_function_schema_contract() {
+	let f = get_schedule_function();
+	assert_eq!(f.name, "schedule");
+	let command = f
+		.parameters
+		.get("properties")
+		.and_then(|p| p.get("command"))
+		.expect("command property");
+	let actions: Vec<&str> = command
+		.get("enum")
+		.and_then(|e| e.as_array())
+		.expect("command enum")
+		.iter()
+		.filter_map(|v| v.as_str())
+		.collect();
+	assert_eq!(actions, vec!["add", "list", "remove", "edit"]);
+	let required = f
+		.parameters
+		.get("required")
+		.and_then(|r| r.as_array())
+		.expect("required array");
+	assert_eq!(required, &vec![json!("command")]);
+}
+
+#[tokio::test]
+async fn test_non_string_command_is_error() {
+	crate::session::context::with_session_id("sched-test-nonstring".to_string(), async {
+		let result = execute_schedule_tool(&call(serde_json::json!({"command": 42})))
+			.await
+			.expect("tool returns a result");
+		assert!(result.is_error());
+		assert!(result
+			.extract_content()
+			.contains("'command' must be a non-empty string"));
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn test_has_pending_schedules_and_idle_flags() {
+	crate::session::context::with_session_id("sched-test-pending-flags".to_string(), async {
+		assert!(!has_pending_schedules());
+		assert!(!has_pending_idle_schedules());
+
+		let timed = execute_schedule_tool(&call(serde_json::json!({
+			"command": "add",
+			"message": "later",
+			"when": "in 2h"
+		})))
+		.await
+		.expect("add timed entry");
+		assert!(!timed.is_error(), "content: {}", timed.extract_content());
+		assert!(has_pending_schedules());
+		assert!(
+			!has_pending_idle_schedules(),
+			"timed entry is not idle-mode"
+		);
+
+		let idle = execute_schedule_tool(&call(serde_json::json!({
+			"command": "add",
+			"message": "when the session settles"
+		})))
+		.await
+		.expect("add idle entry");
+		assert!(!idle.is_error(), "content: {}", idle.extract_content());
+		assert!(has_pending_idle_schedules());
+	})
+	.await;
+}

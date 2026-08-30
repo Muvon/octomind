@@ -329,3 +329,252 @@ async fn test_handle_large_tool_results_short_content_untouched() {
 	assert_eq!(processed[1].extract_content(), "bad");
 	assert!(processed[1].is_error());
 }
+
+fn make_executable(path: &std::path::Path) {
+	use std::os::unix::fs::PermissionsExt;
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+		.expect("chmod +x fixture");
+}
+
+/// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
+fn write_local_tool(workdir: &std::path::Path, name: &str, body: &str) {
+	let dir = workdir.join(".agents/tools");
+	std::fs::create_dir_all(&dir).expect("create tools dir");
+	let path = dir.join(name);
+	std::fs::write(&path, body).expect("write tool script");
+	make_executable(&path);
+}
+
+fn main_session_context<'a>(
+	session: &'a mut ChatSession,
+	processor: &'a mut ToolProcessor,
+) -> ToolExecutionContext<'a> {
+	ToolExecutionContext::MainSession {
+		chat_session: session,
+		tool_processor: processor,
+		tool_round_intent: "",
+	}
+}
+
+/// `ChatSession::for_tests` reports session name "test", and spawned tool
+/// tasks re-establish the session id from `context.session_name()` — so the
+/// session-scoped workdir registry must be keyed "test" for local-tool
+/// discovery to see the fixture directory.
+const TEST_SESSION: &str = "test";
+
+#[tokio::test]
+async fn test_execute_tap_capability_inline_short_prompt_reports_no_match() {
+	let config = template_config();
+	let mut session = ChatSession::for_tests(Vec::new());
+	// "x" is below the auto-activation signal floor, so both the skill and
+	// capability scanners abstain deterministically — no model, no filesystem.
+	let call = crate::mcp::McpToolCall {
+		tool_name: "tap".to_string(),
+		parameters: serde_json::json!({"action": "capability", "prompt": "x"}),
+		tool_id: "t1".to_string(),
+	};
+
+	let (result, _elapsed_ms) = execute_tap_capability_inline(&call, &mut session, &config).await;
+	assert!(!result.is_error(), "{}", result.extract_content());
+
+	let content = result.extract_content();
+	let parsed: serde_json::Value = serde_json::from_str(&content).expect("json payload");
+	assert_eq!(parsed["activated_skills"], serde_json::json!([]));
+	assert_eq!(parsed["activated_capabilities"], serde_json::json!([]));
+	assert_eq!(
+		parsed["message"],
+		"No skill or capability matched the prompt."
+	);
+}
+
+#[tokio::test]
+async fn test_execute_tools_parallel_routes_single_tap_capability_inline() {
+	let config = template_config();
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut processor = ToolProcessor::new();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let (results, _elapsed_ms) = execute_tools_parallel(
+		vec![crate::mcp::McpToolCall {
+			tool_name: "tap".to_string(),
+			parameters: serde_json::json!({"action": "capability", "prompt": "x"}),
+			tool_id: "t1".to_string(),
+		}],
+		"",
+		&mut session,
+		&config,
+		&mut processor,
+		rx,
+		OutputMode::Jsonl,
+	)
+	.await
+	.expect("inline tap capability execution");
+
+	assert_eq!(results.len(), 1);
+	assert!(!results[0].is_error(), "{}", results[0].extract_content());
+	assert!(results[0]
+		.extract_content()
+		.contains("No skill or capability matched"));
+	// The inline path counts the call itself
+	assert_eq!(session.session.info.tool_calls, 1);
+}
+
+/// Pre-fired cancellation with a tool that cannot finish: `select!` has only
+/// the cancel branch ready, so the empty-return branch is deterministic.
+#[tokio::test]
+#[serial_test::serial]
+async fn test_execute_tools_in_context_cancelled_before_execution_returns_empty() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		"slowtool",
+		"#!/bin/sh\n# @description Sleep for a long time.\nsleep 30\n",
+	);
+
+	let config = template_config();
+	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (tx, rx) = tokio::sync::watch::channel(false);
+		tx.send(true).expect("pre-fire cancellation");
+
+		let (results, total_ms) = execute_tools_in_context(
+			vec![crate::mcp::McpToolCall {
+				tool_name: "slowtool".to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: "t1".to_string(),
+			}],
+			&mut context,
+			&config,
+			Some(rx),
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("cancellation is Ok(empty), not Err");
+
+		assert!(results.is_empty());
+		assert_eq!(total_ms, 0);
+
+		crate::session::context::cleanup_session(&TEST_SESSION.to_string());
+	})
+	.await;
+}
+
+/// Two identical successful calls in one batch: the sequential post-loop
+/// records the first `(tool, args, content)` triple and elides the second into
+/// the dedup placeholder error. 600 chars is above MIN_DEDUP_CONTENT_LEN.
+#[tokio::test]
+#[serial_test::serial]
+async fn test_execute_tools_in_context_local_tool_success_then_duplicate_placeholder() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		"dumpbig",
+		&format!(
+			"#!/bin/sh\n# @description Dump a fixed payload.\nprintf '%s' '{}'\n",
+			"A".repeat(600)
+		),
+	);
+
+	let config = template_config();
+	crate::session::context::with_session_id(TEST_SESSION.to_string(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+
+		let call = |id: &str| crate::mcp::McpToolCall {
+			tool_name: "dumpbig".to_string(),
+			parameters: serde_json::json!({}),
+			tool_id: id.to_string(),
+		};
+		let (results, _total_ms) = execute_tools_in_context(
+			vec![call("d1"), call("d2")],
+			&mut context,
+			&config,
+			Some(rx),
+			OutputMode::NonInteractive,
+		)
+		.await
+		.expect("local tool execution");
+
+		assert_eq!(results.len(), 2);
+		assert!(!results[0].is_error(), "{}", results[0].extract_content());
+		assert!(results[0].extract_content().len() >= 500);
+		assert!(results[1].is_error());
+		assert!(
+			results[1].extract_content().contains("duplicate tool call"),
+			"{}",
+			results[1].extract_content()
+		);
+		assert_eq!(session.session.info.tool_calls, 2);
+
+		crate::session::context::cleanup_session(&TEST_SESSION.to_string());
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn test_execute_layer_tool_calls_parallel_unknown_tool_error_result() {
+	let config = template_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let (results, _total_ms) = execute_layer_tool_calls_parallel(
+		&config,
+		LayerToolExecutionParams {
+			tool_calls: vec![crate::mcp::McpToolCall {
+				tool_name: "layer_missing_tool".to_string(),
+				parameters: serde_json::json!({}),
+				tool_id: "l1".to_string(),
+			}],
+			session_name: "layer-sess".to_string(),
+			layer_name: "reviewer".to_string(),
+			operation_cancelled: Some(rx),
+			mode: OutputMode::Jsonl,
+		},
+	)
+	.await
+	.expect("layer execution");
+
+	assert_eq!(results.len(), 1);
+	assert!(results[0].is_error());
+	assert!(results[0].extract_content().contains("not found"));
+}
+
+#[tokio::test]
+async fn test_parent_task_context_includes_active_plan_checklist() {
+	use crate::mcp::core::plan::storage::PlanStorage;
+
+	let session_id = "tool-exec-plan-ctx-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		let storage = crate::session::context::get_plan_storage(&session_id);
+		storage
+			.lock()
+			.expect("plan storage lock")
+			.create_plan(
+				"Ship the feature".to_string(),
+				vec![crate::mcp::core::plan::storage::TaskData::new(
+					"Write tests".to_string(),
+					"Cover the loop detector".to_string(),
+					None,
+					None,
+				)],
+			)
+			.expect("create plan");
+
+		let session = ChatSession::for_tests(Vec::new());
+		let task = parent_task_context(&session);
+		assert!(task.contains("Live plan"), "{task}");
+		assert!(task.contains("Write tests"), "{task}");
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}

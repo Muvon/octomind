@@ -227,3 +227,471 @@ fn continuation_round_trips_exact_previous_assistant_response() {
 	);
 	assert!(wrapper.contains(&format!("<request>{request}</request>")));
 }
+
+fn default_config() -> crate::config::Config {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml"))
+			.expect("parse default config");
+	config.build_role_map();
+	config
+}
+
+fn plain_message(role: &str, content: &str) -> crate::session::Message {
+	crate::session::Message {
+		role: role.to_string(),
+		content: content.to_string(),
+		..Default::default()
+	}
+}
+
+fn drained_session(name: &str) -> ChatSession {
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system prompt"),
+		plain_message("user", "fix the parser"),
+		plain_message("assistant", "on it"),
+		plain_message("user", "also add tests"),
+		plain_message("assistant", "done with tests"),
+	]);
+	session.session.info.name = name.to_string();
+	session
+}
+
+#[tokio::test]
+async fn apply_compression_validates_clamps_and_budget_drops_file_contexts() {
+	let config = default_config();
+	let mut session = drained_session("apply-fc-unit");
+	let summary = CompressionSummary {
+		should_compress: true,
+		original_request: "fix the parser".to_string(),
+		current_task: "finish parser tests".to_string(),
+		progress: "parser fixed".to_string(),
+		file_context: vec![
+			super::super::schema::FileContextEntry {
+				filepath: "src/parser.rs".to_string(),
+				start_line: 1,
+				end_line: 10,
+			},
+			super::super::schema::FileContextEntry {
+				filepath: "bad.rs".to_string(),
+				start_line: 0,
+				end_line: 5,
+			},
+			super::super::schema::FileContextEntry {
+				filepath: "worse.rs".to_string(),
+				start_line: 9,
+				end_line: 3,
+			},
+			super::super::schema::FileContextEntry {
+				filepath: "big.log".to_string(),
+				start_line: 1,
+				end_line: 98_765,
+			},
+			super::super::schema::FileContextEntry {
+				filepath: format!("{}.rs", "p".repeat(40_000)),
+				start_line: 1,
+				end_line: 2,
+			},
+		],
+		..Default::default()
+	};
+	apply_compression(
+		&mut session,
+		0,
+		4,
+		&summary,
+		500,
+		600,
+		vec!["fix the parser".to_string()],
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply compression");
+	// 5 messages - 4 drained + summary + continuation wrapper.
+	assert_eq!(session.session.messages.len(), 3);
+	let rendered: String = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.content.as_str())
+		.collect::<Vec<_>>()
+		.join("\n");
+	assert!(rendered.contains("src/parser.rs"));
+	assert!(rendered.contains("big.log")); // clamped span survives
+	assert!(!rendered.contains("bad.rs")); // start_line 0 rejected
+	assert!(!rendered.contains("worse.rs")); // start > end rejected
+	assert!(!rendered.contains("ppppp")); // over-budget entry dropped
+	assert!(rendered.contains("## EARLIER USER REQUESTS"));
+}
+
+#[tokio::test]
+async fn apply_compression_pact_live_renders_pact_entry_and_skips_legacy_folds() {
+	let mut config = default_config();
+	config.compression.attention.enabled = true;
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system prompt"),
+		plain_message("user", "stabilise the deploy pipeline"),
+		plain_message("assistant", "investigating flakiness"),
+		plain_message("assistant", "found the race"),
+	]);
+	session.session.info.name = "apply-pact-unit".to_string();
+	let pact = super::super::attention::build(&session, 1, 3, 2.0, true, false)
+		.await
+		.expect("pact context builds");
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "stabilise the deploy pipeline".to_string(),
+		folded_units: vec![super::super::schema::FoldedUnit {
+			text: "race identified in runner".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: vec!["b:nonexistent".to_string()],
+		}],
+		critical_knowledge: vec!["must never be committed in pact mode".to_string()],
+		..Default::default()
+	};
+	apply_compression(
+		&mut session,
+		0,
+		3,
+		&summary,
+		800,
+		900,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		Some(&pact),
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply pact compression");
+	let summary_message = &session.session.messages[1];
+	assert_eq!(
+		summary_message.name.as_deref(),
+		Some(COMPRESSION_MESSAGE_NAME)
+	);
+	assert!(summary_message.content.contains("controller=\"pact-v"));
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.content.trim_start().starts_with(CONTINUATION_TAG_OPEN)));
+	// Legacy narrative fields are wire-compat only in PACT mode — never folded.
+	assert!(session.critical_knowledge.is_empty());
+	assert!(session.analysis_findings.is_empty());
+}
+
+#[tokio::test]
+async fn apply_compression_reinserts_preserved_skills_between_anchor_and_summary() {
+	let config = default_config();
+	let mut session = drained_session("apply-skills-unit");
+	let mut skill = plain_message(
+		"user",
+		"<skill name=\"rust\">follow rust conventions</skill>",
+	);
+	skill.cached = true;
+	skill.cache_ttl = Some("stale".to_string());
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "finish parser tests".to_string(),
+		progress: "parser fixed".to_string(),
+		..Default::default()
+	};
+	apply_compression(
+		&mut session,
+		0,
+		4,
+		&summary,
+		500,
+		600,
+		Vec::new(),
+		None,
+		None,
+		vec![skill],
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply compression with skills");
+	let messages = &session.session.messages;
+	assert_eq!(messages.len(), 4); // system + skill + summary + continuation
+	assert!(messages[1].content.contains("<skill name=\"rust\">"));
+	assert!(!messages[1].cached);
+	assert!(messages[1].cache_ttl.is_none());
+	assert_eq!(messages[2].name.as_deref(), Some(COMPRESSION_MESSAGE_NAME));
+	assert!(messages[3]
+		.content
+		.trim_start()
+		.starts_with(CONTINUATION_TAG_OPEN));
+}
+
+#[tokio::test]
+async fn apply_compression_seeds_intent_from_anchor_request_or_free_form_fallback() {
+	let config = default_config();
+	let summary = CompressionSummary {
+		should_compress: true,
+		progress: "narrative".to_string(),
+		..Default::default()
+	};
+
+	// A pre-set anchor intent survives untouched.
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system"),
+		plain_message("assistant", "a"),
+		plain_message("assistant", "b"),
+	]);
+	session.session.info.name = "apply-intent-anchor-unit".to_string();
+	session.session.info.anchor.intent = "keep me".to_string();
+	apply_compression(
+		&mut session,
+		0,
+		2,
+		&summary,
+		100,
+		200,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply with anchor");
+	assert_eq!(session.session.info.anchor.intent, "keep me");
+
+	// Empty anchor falls back to the summary's original_request.
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system"),
+		plain_message("assistant", "a"),
+		plain_message("assistant", "b"),
+	]);
+	session.session.info.name = "apply-intent-request-unit".to_string();
+	let mut summary_with_request = summary.clone();
+	summary_with_request.original_request = "orig task".to_string();
+	apply_compression(
+		&mut session,
+		0,
+		2,
+		&summary_with_request,
+		100,
+		200,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply with request");
+	assert_eq!(session.session.info.anchor.intent, "orig task");
+
+	// Nothing anywhere: the free-form placeholder seeds the anchor.
+	let mut session = ChatSession::for_tests(vec![
+		plain_message("system", "system"),
+		plain_message("assistant", "a"),
+		plain_message("assistant", "b"),
+	]);
+	session.session.info.name = "apply-intent-freeform-unit".to_string();
+	apply_compression(
+		&mut session,
+		0,
+		2,
+		&summary,
+		100,
+		200,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply free-form");
+	assert_eq!(
+		session.session.info.anchor.intent,
+		"Free-form conversation session"
+	);
+}
+
+#[tokio::test]
+async fn apply_compression_reports_growth_when_summary_outweighs_drain() {
+	let config = default_config();
+	let mut session = drained_session("apply-growth-unit");
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "finish parser tests".to_string(),
+		progress: "parser fixed".to_string(),
+		..Default::default()
+	};
+	// current_context_tokens = 0 forces post > current: the growth branch fires.
+	apply_compression(
+		&mut session,
+		0,
+		4,
+		&summary,
+		500,
+		0,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply compression");
+	assert!(session.session.info.context_tokens_after_last_compression > 0);
+}
+
+#[tokio::test]
+async fn apply_compression_with_tail_bridge_keeps_exchange_without_wrapper() {
+	let config = default_config();
+	let mut session = drained_session("apply-bridge-unit");
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "finish parser tests".to_string(),
+		progress: "parser fixed".to_string(),
+		..Default::default()
+	};
+	apply_compression(
+		&mut session,
+		0,
+		2,
+		&summary,
+		500,
+		600,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		true,
+	)
+	.await
+	.expect("apply compression with tail bridge");
+	// 5 messages - 2 drained + summary; the trailing user/assistant pair stays verbatim.
+	assert_eq!(session.session.messages.len(), 4);
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.all(|m| !m.content.trim_start().starts_with(CONTINUATION_TAG_OPEN)));
+	assert_eq!(session.session.messages[3].content, "done with tests");
+}
+
+#[test]
+fn select_continuation_action_is_disabled_without_pact() {
+	let summary = CompressionSummary {
+		folded_units: vec![super::super::schema::FoldedUnit {
+			text: "run the verifier".to_string(),
+			kind: "next_action".to_string(),
+			status: "pending".to_string(),
+			refs: Vec::new(),
+		}],
+		..Default::default()
+	};
+	assert_eq!(select_continuation_action(&summary, false), None);
+	assert_eq!(
+		select_continuation_action(&summary, true),
+		Some("run the verifier".to_string())
+	);
+}
+
+#[tokio::test]
+async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
+	let config = default_config();
+	let session_id = "apply-jobs-unit".to_string();
+	crate::session::shell_jobs::register_for_session(
+		&session_id,
+		"file:///tmp/watched",
+		"watch the build",
+	);
+	let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
+	crate::session::tap_runs::register_job(crate::session::tap_runs::TapJob {
+		id: "tap-unit-1".to_string(),
+		role: "developer:general".to_string(),
+		workdir: ".".to_string(),
+		started_at: std::time::SystemTime::now(),
+		status: std::sync::Arc::new(std::sync::RwLock::new(
+			crate::session::tap_runs::TapJobStatus::Running,
+		)),
+		cancel_tx,
+		live: std::sync::Arc::new(std::sync::RwLock::new(
+			crate::session::tap_runs::TapLiveState::default(),
+		)),
+	});
+	let mut session = drained_session(&session_id);
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "finish parser tests".to_string(),
+		progress: "parser fixed".to_string(),
+		..Default::default()
+	};
+	let applied = crate::session::context::with_session_id(session_id.clone(), async {
+		apply_compression(
+			&mut session,
+			0,
+			4,
+			&summary,
+			500,
+			600,
+			Vec::new(),
+			None,
+			None,
+			Vec::new(),
+			&config,
+			None,
+			None,
+			false,
+			false,
+		)
+		.await
+	})
+	.await
+	.expect("apply compression inside session context");
+	let wrapper = session
+		.session
+		.messages
+		.iter()
+		.find(|m| m.content.trim_start().starts_with(CONTINUATION_TAG_OPEN))
+		.expect("continuation wrapper");
+	assert!(wrapper.content.contains("<background_jobs_running>"));
+	assert!(wrapper
+		.content
+		.contains("watch the build (file:///tmp/watched)"));
+	assert!(wrapper.content.contains("<tap_runs_running>"));
+	assert!(wrapper.content.contains("developer:general (tap-unit-1)"));
+	crate::session::shell_jobs::clear_for_session(&session_id);
+	crate::session::tap_runs::clear_for_session(&session_id);
+}

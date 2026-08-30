@@ -794,3 +794,7 @@ mod inline_tests;
 #[cfg(test)]
 #[path = "core_tool_tests.rs"]
 mod tool_tests;
+
+#[cfg(test)]
+#[path = "core_session_tests.rs"]
+mod session_tests;

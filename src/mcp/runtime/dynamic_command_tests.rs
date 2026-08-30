@@ -599,3 +599,106 @@ async fn test_list_output_sections() {
 	drop(env);
 	let _ = std::fs::remove_dir_all(&dir);
 }
+#[tokio::test]
+#[serial]
+async fn test_add_http_server_registers() {
+	clear_all();
+	let config = test_config();
+	let name = "__cmdtest_http_srv";
+
+	let result = execute_mcp_command(
+		&call(serde_json::json!({
+			"action": "add",
+			"name": name,
+			"server_type": "http",
+			"url": "http://localhost:9/mcp"
+		})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "add failed: {}", text_of(&result));
+	assert!(is_dynamic(name));
+	// Registered but not enabled.
+	let (_, _, enabled) = list_servers()
+		.into_iter()
+		.find(|(n, _, _)| n == name)
+		.expect("registered server listed");
+	assert!(!enabled);
+
+	// http add without a url is a validation error.
+	let result = execute_mcp_command(
+		&call(serde_json::json!({
+			"action": "add",
+			"name": "__cmdtest_http_nourl",
+			"server_type": "http"
+		})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(text_of(&result).contains("url"));
+
+	clear_all();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_action_name_validation_arms() {
+	clear_all();
+	let config = test_config();
+
+	// add's missing-name arm is covered above; these are the remaining actions.
+	for action in ["enable", "disable", "remove", "persist", "unpersist"] {
+		let result = execute_mcp_command(&call(serde_json::json!({"action": action})), &config)
+			.await
+			.unwrap_or_else(|e| panic!("{action} dispatch errored: {e}"));
+		assert!(
+			is_err(&result),
+			"{action} without a name must error, got: {}",
+			text_of(&result)
+		);
+		assert!(
+			text_of(&result).contains("name"),
+			"{action}: {}",
+			text_of(&result)
+		);
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn test_disable_config_server_in_session_registers_shadow() {
+	let sid = "__cmdtest_sess_shadow".to_string();
+	let mut config = test_config();
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::builtin(
+			"__cmdtest_cfg_srv",
+			30,
+			vec![],
+		));
+
+	crate::session::context::with_session_id(sid.clone(), async {
+		// Not in the session dynamic registry — the disable falls back to the
+		// config lookup and registers a disabled shadow entry.
+		let result = execute_mcp_command(
+			&call(serde_json::json!({"action": "disable", "name": "__cmdtest_cfg_srv"})),
+			&config,
+		)
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "disable failed: {}", text_of(&result));
+
+		let shadow =
+			crate::session::context::get_dynamic_server_for_session(&sid, "__cmdtest_cfg_srv");
+		let (_, enabled) = shadow.expect("shadow entry registered");
+		assert!(!enabled);
+	})
+	.await;
+
+	crate::session::context::cleanup_session(&sid);
+	clear_all();
+}

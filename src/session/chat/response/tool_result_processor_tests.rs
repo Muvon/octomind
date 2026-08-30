@@ -240,3 +240,207 @@ async fn test_process_tool_results_cancelled_returns_none() {
 	// The accumulated tool time is recorded before the cancellation check
 	assert_eq!(session.session.info.total_tool_time_ms, 500);
 }
+
+#[tokio::test]
+async fn test_process_tool_results_request_spending_stop_returns_none() {
+	let mut config = template_config();
+	config.supervisor.enabled = true;
+	config.supervisor.plan.enabled = true;
+	config.max_request_spending_threshold = 0.0001;
+
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.session.info.total_cost = 1.0;
+	session.request_spending_checkpoint = 0.0;
+
+	let results = vec![
+		crate::mcp::McpToolResult::success(
+			"view".to_string(),
+			"i1".to_string(),
+			"body one".to_string(),
+		),
+		crate::mcp::McpToolResult::error("shell".to_string(), "i2".to_string(), "boom".to_string()),
+	];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 700, &mut session, &config, "assistant", rx)
+		.await
+		.expect("spending stop is a clean exit, not an error");
+
+	assert!(outcome.is_none());
+	// Both tool results were appended as tool-role messages before the stop
+	let tool_messages: Vec<&crate::session::Message> = session
+		.session
+		.messages
+		.iter()
+		.filter(|m| m.role == "tool")
+		.collect();
+	assert_eq!(tool_messages.len(), 2);
+	assert_eq!(tool_messages[0].content, "body one");
+	assert_eq!(tool_messages[1].content, "boom");
+	assert_eq!(session.session.info.total_tool_time_ms, 700);
+}
+
+#[tokio::test]
+async fn test_process_tool_results_follow_up_final_answer() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::final_response("All done"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("do the work");
+	let results = vec![crate::mcp::McpToolResult::success(
+		"view".to_string(),
+		"i1".to_string(),
+		"body".to_string(),
+	)];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+		.await
+		.expect("follow-up round trip");
+
+	let (content, _exchange, tool_calls, _response_id, _thinking) =
+		outcome.expect("final answer is Some");
+	assert!(content.contains("All done"));
+	assert!(tool_calls.is_none());
+	assert_eq!(session.session.info.total_api_calls, 1);
+	assert!(session.session.info.total_cost > 0.0);
+}
+
+#[tokio::test]
+async fn test_process_tool_results_follow_up_more_tools_continues() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::tool_call_response("view", serde_json::json!({})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("keep going");
+	let results = vec![crate::mcp::McpToolResult::success(
+		"view".to_string(),
+		"i1".to_string(),
+		"body".to_string(),
+	)];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+		.await
+		.expect("follow-up round trip");
+
+	let (_content, _exchange, tool_calls, _response_id, _thinking) =
+		outcome.expect("tool_calls finish keeps the loop alive");
+	let calls = tool_calls.expect("structured tool calls present");
+	assert_eq!(calls.len(), 1);
+	assert_eq!(calls[0].tool_name, "view");
+}
+
+#[tokio::test]
+async fn test_process_tool_results_injects_pending_hints_before_follow_up() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::final_response("noted"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let session_id = "tool-result-hints-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::mcp::hint_accumulator::push_hint("Prefer `view` over shell cat");
+
+		let config = crate::session::chat::test_support::fake_provider_config();
+		let mut session = crate::session::chat::test_support::fake_session("do the work");
+		let results = vec![crate::mcp::McpToolResult::success(
+			"shell".to_string(),
+			"i1".to_string(),
+			"body".to_string(),
+		)];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+
+		let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+			.await
+			.expect("follow-up round trip");
+		assert!(outcome.is_some());
+
+		let hint_message = session
+			.session
+			.messages
+			.iter()
+			.find(|m| m.role == "user" && m.content.contains("Tool usage notice"))
+			.expect("hint injected as user message");
+		assert!(hint_message
+			.content
+			.contains("Prefer `view` over shell cat"));
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn test_process_tool_results_injects_supervisor_steer_note() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::final_response("steered"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("do the work");
+	session.steer_pending = Some("<pay-attention>change approach</pay-attention>".to_string());
+	let results = vec![crate::mcp::McpToolResult::success(
+		"view".to_string(),
+		"i1".to_string(),
+		"body".to_string(),
+	)];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+		.await
+		.expect("follow-up round trip");
+	assert!(outcome.is_some());
+
+	assert!(
+		session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.role == "user" && m.content.contains("change approach")),
+		"steer note injected during the tool loop"
+	);
+	assert!(session.steer_pending.is_none());
+}
+
+#[tokio::test]
+async fn test_process_tool_results_follow_up_error_propagates() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let error_body = serde_json::json!({"error": {"message": "upstream exploded"}});
+	let url = crate::session::chat::test_support::spawn_stub_with_status(vec![
+		(500, error_body.clone()),
+		(500, error_body.clone()),
+		(500, error_body),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = crate::session::chat::test_support::fake_session("do the work");
+	session.max_retries = 0;
+	let results = vec![crate::mcp::McpToolResult::success(
+		"view".to_string(),
+		"i1".to_string(),
+		"body".to_string(),
+	)];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+
+	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx).await;
+	assert!(
+		outcome.is_err(),
+		"provider failure must propagate to the caller"
+	);
+}

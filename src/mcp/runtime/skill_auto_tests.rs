@@ -574,3 +574,57 @@ async fn skills_config_reads_session_override() {
 
 	cleanup_session(&sid);
 }
+#[tokio::test]
+#[serial]
+async fn run_activation_skips_shadow_bound_skills() {
+	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _guard = DataDirGuard::new();
+	install_tap_skill("shadowed", "developer", &["content(rust)"]);
+	install_tap_skill("failclosed", "developer", &["content(rust)"]);
+
+	let sid = "__skillauto_shadow".to_string();
+
+	// A shadow-flagged binding and a non-shadow binding whose id has no
+	// registry record: both classify as shadow (fail-closed) and must be
+	// skipped despite a deterministic rule match.
+	set_pool(vec![
+		PoolEntry {
+			name: "shadowed".to_string(),
+			rules: content_rule("rust"),
+			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
+				id: "__skillauto_shadow_binding".to_string(),
+				shadow: true,
+				path: PathBuf::new(),
+			}),
+		},
+		PoolEntry {
+			name: "failclosed".to_string(),
+			rules: content_rule("rust"),
+			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
+				id: "__skillauto_unknown_binding".to_string(),
+				shadow: false,
+				path: PathBuf::new(),
+			}),
+		},
+	]);
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(
+			"please help with rust development",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+
+	assert!(
+		session.session.messages.is_empty(),
+		"shadow-bound skills must not inject content"
+	);
+	assert!(!has_active_skill(&sid, "shadowed"));
+	assert!(!has_active_skill(&sid, "failclosed"));
+	cleanup_session(&sid);
+	clear_pool();
+}

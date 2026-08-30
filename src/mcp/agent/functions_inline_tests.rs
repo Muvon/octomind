@@ -258,3 +258,91 @@ async fn eof_before_prompt_response_is_failure() {
 		"got: {err:#}"
 	);
 }
+
+#[tokio::test]
+async fn handshake_error_response_fails_the_run() {
+	let script = format!(
+		"echo '{}'\ncat >/dev/null",
+		r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"handshake refused"}}"#
+	);
+	let err = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect_err("initialize error must fail the run");
+	assert!(err.to_string().contains("ACP error"), "got: {err:#}");
+	assert!(
+		err.to_string().contains("handshake refused"),
+		"got: {err:#}"
+	);
+}
+
+#[tokio::test]
+async fn session_new_without_session_id_fails_the_run() {
+	let script = concat!(
+		"echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}}'\n",
+		"echo '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}}'\n",
+		"cat >/dev/null"
+	)
+	.to_string();
+	let err = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect_err("missing sessionId must fail the run");
+	assert!(err.to_string().contains("No sessionId"), "got: {err:#}");
+}
+
+#[tokio::test]
+async fn non_json_and_blank_lines_are_skipped() {
+	let script = format!(
+		"echo 'not json'\necho ''\n{HANDSHAKE}echo 'garbage'\necho '{}'\ncat >/dev/null",
+		r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+	);
+	let out = run_fake_server(script, watch::channel(false).1)
+		.await
+		.expect("noise lines must not break the protocol");
+	assert_eq!(out, "hello");
+}
+
+/// The handback guard reports exactly one verdict per run: the child's own
+/// `_meta.octomind.verified` when present, unverified otherwise.
+#[tokio::test]
+async fn handback_banks_the_childs_verified_verdict() {
+	let sid = "__agenttest_handback".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let script = format!(
+			"{HANDSHAKE}echo '{}'\necho '{}'\ncat >/dev/null",
+			r#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"plan"},"_meta":{"octomind":{"verified":true}}}}"#,
+			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+		);
+		run_acp_command(
+			"sh",
+			&["-c", &script],
+			"task",
+			&std::env::temp_dir(),
+			watch::channel(false).1,
+			None,
+			true,
+		)
+		.await
+		.expect("verified run succeeds");
+		assert_eq!(crate::supervisor::delegate::take_handback(), (1, 1));
+
+		let script = format!(
+			"{HANDSHAKE}echo '{}'\ncat >/dev/null",
+			r#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}"#
+		);
+		run_acp_command(
+			"sh",
+			&["-c", &script],
+			"task",
+			&std::env::temp_dir(),
+			watch::channel(false).1,
+			None,
+			true,
+		)
+		.await
+		.expect("unverified run succeeds");
+		assert_eq!(crate::supervisor::delegate::take_handback(), (1, 0));
+
+		crate::supervisor::delegate::clear_handback_for_session(&sid);
+	})
+	.await;
+}

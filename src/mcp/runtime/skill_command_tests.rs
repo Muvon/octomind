@@ -483,3 +483,185 @@ async fn test_skill_use_and_forget_require_active_session() {
 		);
 	}
 }
+/// Point `OCTOMIND_DATA_DIR` at a tempdir so tap capability resolution sees
+/// only fixtures. Tests using it must be `#[serial]` (env is process-global).
+struct DataDirGuard {
+	previous: Option<std::ffi::OsString>,
+	_dir: tempfile::TempDir,
+}
+
+impl DataDirGuard {
+	fn new() -> Self {
+		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+		let dir = tempfile::tempdir().expect("tempdir");
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+		Self {
+			previous,
+			_dir: dir,
+		}
+	}
+}
+
+impl Drop for DataDirGuard {
+	fn drop(&mut self) {
+		match self.previous.take() {
+			Some(v) => std::env::set_var("OCTOMIND_DATA_DIR", v),
+			None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+		}
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_warns_on_unavailable_allowed_tools() {
+	let sid = "__skilltest_toolwarn".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let skill_dir = tmp.path().join(".agents/skills").join("skilltest-toolwarn");
+		std::fs::create_dir_all(&skill_dir).expect("skill dir");
+		std::fs::write(
+			skill_dir.join("SKILL.md"),
+			"---\nname: skilltest-toolwarn\ndescription: Missing tool fixture\nallowed-tools: __skilltest_no_such_tool\n---\n\nBody\n",
+		)
+		.expect("write SKILL.md");
+		crate::session::context::set_session_workdir(&sid.to_string(), tmp.path().to_path_buf());
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use", "name": "skilltest-toolwarn"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "use must succeed: {}", text_of(&result));
+		assert!(
+			text_of(&result)
+				.contains("⚠️ Some tools still unavailable after capability loading: __skilltest_no_such_tool"),
+			"got: {}",
+			text_of(&result)
+		);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_loads_capability_with_config_level_server() {
+	let _guard = DataDirGuard::new();
+	let sid = "__skilltest_capload".to_string();
+
+	// A tap-provided capability whose server is ALSO a config-level server:
+	// enable_skill_server must count it as loaded but skip registration.
+	let tap_cap = crate::directories::get_octomind_data_dir()
+		.expect("data dir")
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("capabilities")
+		.join("skilltest-cap");
+	std::fs::create_dir_all(&tap_cap).expect("tap cap dir");
+	std::fs::write(tap_cap.join("config.toml"), "triggers = [\"x\"]\n").expect("config.toml");
+	std::fs::write(
+		tap_cap.join("default.toml"),
+		"[[mcp.servers]]\nname = \"skilltest-cap-srv\"\ntype = \"builtin\"\ntimeout_seconds = 30\ntools = []\n",
+	)
+	.expect("default.toml");
+
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::builtin(
+			"skilltest-cap-srv",
+			30,
+			vec![],
+		));
+	crate::session::context::set_session_config(&sid, &config);
+
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let skill_dir = tmp.path().join(".agents/skills").join("skilltest-capload");
+		std::fs::create_dir_all(&skill_dir).expect("skill dir");
+		std::fs::write(
+			skill_dir.join("SKILL.md"),
+			"---\nname: skilltest-capload\ndescription: Capability loading fixture\ncapabilities: skilltest-cap\n---\n\nBody\n",
+		)
+		.expect("write SKILL.md");
+		crate::session::context::set_session_workdir(&sid.to_string(), tmp.path().to_path_buf());
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use", "name": "skilltest-capload"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "use failed: {}", text_of(&result));
+		assert!(
+			text_of(&result).contains("Loaded capability 'skilltest-cap' (servers: skilltest-cap-srv)"),
+			"got: {}",
+			text_of(&result)
+		);
+
+		// Config-level skip: no dynamic registration, no skill-owned servers.
+		assert!(crate::session::context::get_dynamic_server_for_session(
+			&sid,
+			"skilltest-cap-srv"
+		)
+		.is_none());
+		let owned = crate::session::context::take_skill_capability_servers(&sid, "skilltest-capload");
+		assert!(owned.is_empty(), "config-level servers are not skill-owned");
+	})
+	.await;
+
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_forget_shared_server_keeps_it() {
+	let sid = "__skilltest_shared".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let skill_dir = tmp.path().join(".agents/skills").join("skilltest-shared-a");
+		std::fs::create_dir_all(&skill_dir).expect("skill dir");
+		std::fs::write(
+			skill_dir.join("SKILL.md"),
+			"---\nname: skilltest-shared-a\ndescription: Shared server fixture\n---\n\nBody\n",
+		)
+		.expect("write SKILL.md");
+		crate::session::context::set_session_workdir(&sid.to_string(), tmp.path().to_path_buf());
+
+		// Two skills share one server with refcount 2: forgetting one must
+		// leave the server in place for the other.
+		crate::session::context::add_active_skill(&sid, "skilltest-shared-a");
+		crate::session::context::add_active_skill(&sid, "skilltest-shared-b");
+		for skill in ["skilltest-shared-a", "skilltest-shared-b"] {
+			crate::session::context::set_skill_capability_servers(
+				&sid,
+				skill,
+				vec!["__skilltest_shared_srv".to_string()],
+			);
+		}
+		crate::session::context::increment_capability_refcount(&sid, "__skilltest_shared_srv");
+		crate::session::context::increment_capability_refcount(&sid, "__skilltest_shared_srv");
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "forget", "name": "skilltest-shared-a"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
+		assert!(
+			!text_of(&result).contains("offloaded servers"),
+			"shared server must not be offloaded: {}",
+			text_of(&result)
+		);
+
+		// The surviving skill still owns the server.
+		let remaining =
+			crate::session::context::take_skill_capability_servers(&sid, "skilltest-shared-b");
+		assert_eq!(remaining, vec!["__skilltest_shared_srv".to_string()]);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

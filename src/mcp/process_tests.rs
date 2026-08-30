@@ -58,6 +58,7 @@ fn test_get_server_url() {
 	);
 }
 
+#[serial_test::serial]
 #[test]
 fn test_stderr_buffer_is_shared() {
 	let name = "proc-test-stderr";
@@ -70,6 +71,7 @@ fn test_stderr_buffer_is_shared() {
 	assert_eq!(stderr_lines_for(name), vec!["boom".to_string()]);
 }
 
+#[serial_test::serial]
 #[test]
 fn test_restart_mutex_identity() {
 	let name = "proc-test-mutex";
@@ -82,6 +84,7 @@ fn test_restart_mutex_identity() {
 	assert!(!Arc::ptr_eq(&first, &third));
 }
 
+#[serial_test::serial]
 #[cfg(unix)]
 #[test]
 fn test_stdio_liveness_tracks_real_process() {

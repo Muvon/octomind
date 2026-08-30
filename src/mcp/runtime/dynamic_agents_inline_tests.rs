@@ -93,3 +93,112 @@ fn test_agent_function_definition() {
 	assert_eq!(func.name, "agent");
 	assert!(func.parameters.get("properties").is_some());
 }
+fn fixture_agent(name: &str) -> DynamicAgentConfig {
+	DynamicAgentConfig {
+		name: name.to_string(),
+		description: "Fixture agent".to_string(),
+		system: "You are a fixture agent.".to_string(),
+		welcome: String::new(),
+		model: None,
+		temperature: None,
+		top_p: None,
+		top_k: None,
+		server_refs: vec![],
+		allowed_tools: vec![],
+		workdir: ".".to_string(),
+	}
+}
+
+#[test]
+fn test_agent_register_validation() {
+	let _guard = TEST_MUTEX.lock().unwrap();
+	clear_all();
+
+	let err = register_agent(fixture_agent("")).expect_err("blank name must bail");
+	assert!(err.to_string().contains("name is required"));
+
+	let mut blank_system = fixture_agent("__dynagent_blank_system");
+	blank_system.system = String::new();
+	let err = register_agent(blank_system).expect_err("blank system must bail");
+	assert!(err.to_string().contains("system prompt is required"));
+}
+
+#[test]
+fn test_get_all_configs_and_functions_track_enabled_only() {
+	let _guard = TEST_MUTEX.lock().unwrap();
+	clear_all();
+
+	register_agent(fixture_agent("__dynagent_a")).unwrap();
+	register_agent(fixture_agent("__dynagent_b")).unwrap();
+	enable_agent("__dynagent_a").unwrap();
+
+	let enabled = get_all_configs();
+	assert_eq!(enabled.len(), 1);
+	assert_eq!(enabled[0].name, "__dynagent_a");
+
+	let funcs = get_all_functions();
+	assert_eq!(funcs.len(), 1);
+	assert_eq!(funcs[0].name, "agent___dynagent_a");
+	assert!(funcs[0].parameters.get("properties").is_some());
+
+	// Disabled and unknown agents are not resolvable as enabled.
+	disable_agent("__dynagent_a").unwrap();
+	assert!(get_enabled_agent("__dynagent_a").is_none());
+	assert!(get_enabled_agent("__dynagent_nope").is_none());
+	assert!(get_all_configs().is_empty());
+	assert!(get_all_functions().is_empty());
+}
+
+#[test]
+fn test_dynamic_agent_tool_lookup_helpers() {
+	let _guard = TEST_MUTEX.lock().unwrap();
+	clear_all();
+
+	register_agent(fixture_agent("__dynagent_lookup")).unwrap();
+	assert!(is_dynamic_by_tool("agent___dynagent_lookup"));
+	assert!(!is_dynamic_by_tool("agent_unknown_agent"));
+	assert!(!is_dynamic_by_tool("notagent___dynagent_lookup"));
+	assert_eq!(
+		get_dynamic_agent_name_by_tool("agent___dynagent_lookup"),
+		Some("__dynagent_lookup".to_string())
+	);
+	assert_eq!(
+		get_dynamic_agent_name_by_tool("agent___dynagent_nope"),
+		None
+	);
+	assert_eq!(get_dynamic_agent_name_by_tool("shell"), None);
+
+	// Removing an unknown agent is a None, not an error.
+	assert!(remove_agent("__dynagent_nope").is_none());
+}
+
+#[tokio::test]
+async fn test_agent_session_scoped_registry_branches() {
+	let sid = "__dynagent_session".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		// register/enable/disable/remove/list all take the session branch.
+		register_agent(fixture_agent("__dynagent_sess")).expect("session register");
+		assert!(is_dynamic("__dynagent_sess"));
+		assert_eq!(list_agents().len(), 1);
+
+		enable_agent("__dynagent_sess").expect("session enable");
+		assert!(is_enabled("__dynagent_sess"));
+		assert!(get_enabled_agent("__dynagent_sess").is_some());
+		assert_eq!(get_all_configs().len(), 1);
+
+		// Unknown agent inside a session errors through the session branch.
+		let err = enable_agent("__dynagent_sess_nope").expect_err("must bail");
+		assert!(err.to_string().contains("not registered"));
+		let err = disable_agent("__dynagent_sess_nope").expect_err("must bail");
+		assert!(err.to_string().contains("not found"));
+
+		disable_agent("__dynagent_sess").expect("session disable");
+		assert!(!is_enabled("__dynagent_sess"));
+
+		let removed = remove_agent("__dynagent_sess");
+		assert!(removed.is_some());
+		assert!(!is_dynamic("__dynagent_sess"));
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

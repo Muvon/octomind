@@ -301,3 +301,169 @@ fn generate_id_formats_role_slug_with_hex_suffix() {
 		tap_runs::generate_id("developer:general")
 	);
 }
+
+// ---------------------------------------------------------------------------
+// handle_run — fresh run and resume both reach a terminal state
+// ---------------------------------------------------------------------------
+
+/// The spawned ACP child is the test binary itself (`current_exe()`), which
+/// rejects the `--name` flag and exits immediately — so every background
+/// turn is short-lived and lands in a terminal state. Poll until it does.
+async fn wait_terminal_status(id: &str) -> TapJobStatus {
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+	loop {
+		if let Some(info) = tap_runs::find_job(id) {
+			if info.status != TapJobStatus::Running {
+				return info.status;
+			}
+		}
+		assert!(
+			std::time::Instant::now() < deadline,
+			"tap-run '{id}' never left Running"
+		);
+		tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn run_fresh_registers_job_and_reports_started_payload() {
+	let session_id = "__tapunit_fresh".to_string();
+	let out = crate::session::context::with_session_id(session_id.clone(), async {
+		execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"role": "developer:general",
+				"prompt": "do a tiny thing",
+				"workdir": "/tmp",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch")
+	})
+	.await;
+
+	assert!(!out.is_error(), "content: {}", out.extract_content());
+	let payload: serde_json::Value =
+		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	let id = payload["id"].as_str().expect("id").to_string();
+	assert!(id.starts_with("tap-developer-general-"), "id: {id}");
+	assert_eq!(payload["role"].as_str(), Some("developer:general"));
+	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
+
+	let status = crate::session::context::with_session_id(session_id.clone(), async {
+		wait_terminal_status(&id).await
+	})
+	.await;
+	assert!(
+		matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
+		"status: {status:?}"
+	);
+	tap_runs::clear_for_session(&session_id);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_resume_restarts_a_finished_job_with_its_original_role() {
+	let session_id = "__tapunit_resume".to_string();
+	let out = crate::session::context::with_session_id(session_id.clone(), async {
+		register_unit_job("tap-unit-resume", "lawyer:us", TapJobStatus::Done);
+		execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"prompt": "continue",
+				"session": "tap-unit-resume",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch")
+	})
+	.await;
+
+	assert!(!out.is_error(), "content: {}", out.extract_content());
+	let payload: serde_json::Value =
+		serde_json::from_str(&out.extract_content()).expect("resume payload is JSON");
+	// Resume reuses the registered job's role and workdir, not the caller's.
+	assert_eq!(payload["id"].as_str(), Some("tap-unit-resume"));
+	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
+	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
+
+	let status = crate::session::context::with_session_id(session_id.clone(), async {
+		wait_terminal_status("tap-unit-resume").await
+	})
+	.await;
+	assert!(
+		matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
+		"status: {status:?}"
+	);
+	tap_runs::clear_for_session(&session_id);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_without_workdir_defaults_to_thread_working_directory() {
+	let session_id = "__tapunit_cwd_default".to_string();
+	let (out, expected) = crate::session::context::with_session_id(session_id.clone(), async {
+		let expected = crate::mcp::get_thread_working_directory()
+			.to_string_lossy()
+			.to_string();
+		let out = execute_tap_command(
+			&tap_call(json!({
+				"action": "run",
+				"role": "developer:general",
+				"prompt": "do a tiny thing",
+			})),
+			&unit_config(),
+		)
+		.await
+		.expect("dispatch");
+		(out, expected)
+	})
+	.await;
+
+	assert!(!out.is_error(), "content: {}", out.extract_content());
+	let payload: serde_json::Value =
+		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	assert_eq!(payload["workdir"].as_str(), Some(expected.as_str()));
+
+	let id = payload["id"].as_str().expect("id").to_string();
+	let status = crate::session::context::with_session_id(session_id.clone(), async {
+		wait_terminal_status(&id).await
+	})
+	.await;
+	assert!(
+		matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
+		"status: {status:?}"
+	);
+	tap_runs::clear_for_session(&session_id);
+}
+
+#[tokio::test]
+#[serial]
+async fn run_outside_session_scope_still_starts_and_reports() {
+	// Outside a session scope the job is not registered (register_job
+	// no-ops), but the run still starts and reports its payload; the
+	// background turn executes on the bare future (no with_session_id
+	// wrapper). The child is the test binary, which rejects `--name` and
+	// exits immediately, so nothing outlives the test.
+	let out = execute_tap_command(
+		&tap_call(json!({
+			"action": "run",
+			"role": "lawyer:us",
+			"prompt": "do a tiny thing",
+			"workdir": "/tmp",
+		})),
+		&unit_config(),
+	)
+	.await
+	.expect("dispatch");
+
+	assert!(!out.is_error(), "content: {}", out.extract_content());
+	let payload: serde_json::Value =
+		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	assert!(payload["id"].as_str().is_some_and(|id| !id.is_empty()));
+	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
+	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
+}

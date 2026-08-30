@@ -1262,5 +1262,9 @@ pub async fn call_tool(
 mod inline_tests;
 
 #[cfg(test)]
+#[path = "client_stdio_tests.rs"]
+mod stdio_tests;
+
+#[cfg(test)]
 #[path = "client_tests.rs"]
 mod client_tests;

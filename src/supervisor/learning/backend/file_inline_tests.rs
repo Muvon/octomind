@@ -422,3 +422,583 @@ fn rrf_uses_one_indexed_ranks() {
 	);
 	assert!(s_first > s_second, "rank-1 must outscore rank-2");
 }
+
+#[test]
+fn parse_string_list_prefers_json_and_falls_back_to_brackets() {
+	assert_eq!(
+		parse_string_list(r#"["a","b"]"#),
+		vec!["a".to_string(), "b".to_string()]
+	);
+	assert_eq!(
+		parse_string_list(r#"[a, "b"]"#),
+		vec!["a".to_string(), "b".to_string()]
+	);
+	assert!(parse_string_list("[]").is_empty());
+	assert!(parse_string_list("").is_empty());
+}
+
+#[test]
+fn parse_lesson_file_tolerates_bad_scalars_and_unknown_keys() {
+	let content = r#"---
+content: "keeps the record alive"
+importance: high
+confidence: medium
+outcome: bogus
+use_count: many
+unknown_key: ignored
+not a key value line
+related: not json
+---
+"#;
+	let lesson = FileBackend::parse_lesson_file(content).unwrap();
+	assert_eq!(lesson.importance, 0.5);
+	assert_eq!(
+		lesson.outcome,
+		crate::supervisor::learning::TrajectoryOutcome::Unknown
+	);
+	assert_eq!(lesson.use_count, 0);
+	assert_eq!(lesson.related, vec!["not json".to_string()]);
+
+	// No closing frontmatter delimiter -> nothing to parse.
+	assert!(FileBackend::parse_lesson_file("---\ncontent: \"x\"\n").is_none());
+}
+
+#[test]
+fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
+	let dir = tempfile::tempdir().unwrap();
+	let record = |importance: &str| {
+		format!("---\ncontent: \"record {importance}\"\nimportance: {importance}\n---\n")
+	};
+	std::fs::write(dir.path().join("low.md"), record("0.3")).unwrap();
+	std::fs::write(dir.path().join("high.md"), record("0.9")).unwrap();
+	std::fs::write(dir.path().join("mid.md"), record("0.6")).unwrap();
+	std::fs::write(dir.path().join("broken.md"), "not a lesson").unwrap();
+	std::fs::write(dir.path().join("ignored.txt"), record("1.0")).unwrap();
+
+	let lessons = FileBackend::read_lessons_sorted(dir.path());
+	assert_eq!(
+		lessons
+			.iter()
+			.map(|lesson| lesson.content.as_str())
+			.collect::<Vec<_>>(),
+		vec!["record 0.9", "record 0.6", "record 0.3"]
+	);
+	assert!(lessons[0].storage_path.ends_with("high.md"));
+
+	// A missing directory is an empty scope, not an error.
+	assert!(FileBackend::read_lessons_sorted(&dir.path().join("absent")).is_empty());
+}
+
+fn write_catalog(dir: &std::path::Path, rows: &[serde_json::Value]) {
+	let catalog = dir.join(".archive").join("catalog.jsonl");
+	std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+	let body = rows
+		.iter()
+		.map(|row| row.to_string())
+		.collect::<Vec<_>>()
+		.join("\n");
+	std::fs::write(catalog, body).unwrap();
+}
+
+fn catalog_row(memory_type: &str, file: &str, title: &str, importance: f64) -> serde_json::Value {
+	serde_json::json!({
+		"memory_type": memory_type,
+		"file": file,
+		"title": title,
+		"preview": title,
+		"tags": [],
+		"importance": importance,
+		"created": "2026-01-01T00:00:00Z"
+	})
+}
+
+fn write_archived_lesson(dir: &std::path::Path, memory_type: &str, file: &str, content: &str) {
+	let path = dir.join(".archive").join(memory_type).join(file);
+	std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+	std::fs::write(
+		&path,
+		format!("---\ncontent: \"{content}\"\nimportance: 0.5\n---\n"),
+	)
+	.unwrap();
+}
+
+#[test]
+fn read_archived_walks_type_dirs_and_skips_non_markdown() {
+	let dir = tempfile::tempdir().unwrap();
+	write_archived_lesson(dir.path(), "learning", "a.md", "archived learning");
+	write_archived_lesson(dir.path(), "orientation", "b.md", "archived orientation");
+	write_archived_lesson(dir.path(), "learning", "note.txt", "ignored");
+	std::fs::write(
+		dir.path().join(".archive").join("learning").join("bad.md"),
+		"garbage",
+	)
+	.unwrap();
+
+	let lessons = FileBackend::read_archived(dir.path());
+	assert_eq!(lessons.len(), 2);
+	assert!(lessons
+		.iter()
+		.any(|lesson| lesson.content == "archived learning"));
+	assert!(lessons
+		.iter()
+		.any(|lesson| lesson.content == "archived orientation"));
+
+	// No archive at all -> empty.
+	let empty = tempfile::tempdir().unwrap();
+	assert!(FileBackend::read_archived(empty.path()).is_empty());
+}
+
+#[test]
+fn retrieve_archived_guards_limit_terms_and_ranking() {
+	let dir = tempfile::tempdir().unwrap();
+	write_archived_lesson(dir.path(), "learning", "pg.md", "postgres migration notes");
+	write_archived_lesson(dir.path(), "learning", "oauth.md", "oauth callback state");
+	write_catalog(
+		dir.path(),
+		&[
+			catalog_row("learning", "pg.md", "postgres migration notes", 0.5),
+			catalog_row("learning", "oauth.md", "oauth callback state", 0.9),
+			catalog_row("learning", "pg.md", "postgres migration notes", 0.5),
+			catalog_row("learning", "missing.md", "postgres gone", 0.9),
+			serde_json::json!({"broken": true}),
+		],
+	);
+
+	assert!(FileBackend::retrieve_archived(dir.path(), &[], "", 2).is_empty());
+	assert!(
+		FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "", 0).is_empty()
+	);
+
+	let no_catalog = tempfile::tempdir().unwrap();
+	assert!(
+		FileBackend::retrieve_archived(no_catalog.path(), &["postgres".to_string()], "", 2)
+			.is_empty()
+	);
+
+	// One generic intent term never pages noise; two independent terms do.
+	assert!(FileBackend::retrieve_archived(dir.path(), &[], "oauth", 2).is_empty());
+	let intent_hits = FileBackend::retrieve_archived(dir.path(), &[], "oauth callback", 2);
+	assert_eq!(intent_hits.len(), 1);
+	assert_eq!(intent_hits[0].content, "oauth callback state");
+
+	// Exact patterns outrank intent-only hits; duplicate rows dedup to one file.
+	let ranked =
+		FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "oauth callback", 2);
+	assert_eq!(ranked.len(), 2);
+	assert_eq!(ranked[0].content, "postgres migration notes");
+	assert_eq!(ranked[1].content, "oauth callback state");
+}
+
+#[test]
+fn find_archived_by_content_prefers_the_latest_row_and_returns_none_when_absent() {
+	let dir = tempfile::tempdir().unwrap();
+	write_archived_lesson(dir.path(), "learning", "old.md", "same durable content");
+	write_archived_lesson(dir.path(), "learning", "new.md", "same durable content");
+	write_catalog(
+		dir.path(),
+		&[
+			catalog_row("learning", "old.md", "old title", 0.5),
+			catalog_row("learning", "new.md", "new title", 0.5),
+		],
+	);
+	let found = FileBackend::find_archived_by_content(dir.path(), "same durable content");
+	assert_eq!(
+		found.unwrap().storage_path,
+		dir.path()
+			.join(".archive")
+			.join("learning")
+			.join("new.md")
+			.display()
+			.to_string()
+	);
+
+	assert!(FileBackend::find_archived_by_content(dir.path(), "absent content").is_none());
+	let no_catalog = tempfile::tempdir().unwrap();
+	assert!(
+		FileBackend::find_archived_by_content(no_catalog.path(), "same durable content").is_none()
+	);
+}
+
+#[test]
+fn reactivate_archived_ignores_hot_storage_paths() {
+	let mut item = lesson_with("hot entry", &[]);
+	item.storage_path = "learning/project/developer/hot.md".to_string();
+	assert!(FileBackend::reactivate_archived(&mut item).is_ok());
+	assert_eq!(item.storage_path, "learning/project/developer/hot.md");
+
+	item.storage_path = String::new();
+	assert!(FileBackend::reactivate_archived(&mut item).is_ok());
+}
+
+#[test]
+fn pool_normalize_mean_pools_and_renormalizes_multiple_chunks() {
+	let single: Vec<f32> = vec![0.6, 0.8];
+	assert_eq!(pool_normalize(&[single.as_slice()]), single);
+
+	let pooled = pool_normalize(&[&[1.0, 0.0], &[0.0, 1.0]]);
+	assert!((pooled[0] - pooled[1]).abs() < 1e-6);
+	assert!((pooled[0].hypot(pooled[1]) - 1.0).abs() < 1e-6);
+
+	// All-zero chunks stay zero instead of dividing by zero.
+	assert_eq!(pool_normalize(&[&[0.0, 0.0], &[0.0, 0.0]]), vec![0.0, 0.0]);
+}
+
+#[test]
+fn recency_factor_handles_invalid_and_future_dates() {
+	let fresh = recency_factor(&chrono::Utc::now().to_rfc3339());
+	assert!((fresh - 1.0).abs() < 1e-6);
+	assert_eq!(recency_factor("not a date"), 0.0);
+	assert_eq!(recency_factor(""), 0.0);
+	let future = recency_factor("2999-01-01T00:00:00Z");
+	assert!((future - 1.0).abs() < 1e-6);
+	let old = recency_factor("2020-01-01T00:00:00Z");
+	assert!(old > 0.0 && old < fresh);
+}
+
+#[test]
+fn semantic_retrieval_chunks_falls_back_to_metadata_for_empty_content() {
+	let mut lesson = lesson_with("", &[]);
+	lesson.title = "metadata only".to_string();
+	lesson.tags = vec!["tagged".to_string()];
+	assert_eq!(
+		semantic_retrieval_chunks(&lesson, 128),
+		vec!["metadata only tagged".to_string()]
+	);
+}
+
+#[test]
+fn unescape_preserves_unknown_escapes_and_trailing_backslash() {
+	assert_eq!(unescape(r"a\xb"), r"a\xb");
+	assert_eq!(unescape("trailing\\"), "trailing\\");
+	assert_eq!(unescape(r#"\"\n\\"#), "\"\n\\");
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn store_retrieve_delete_and_has_lessons_across_scopes() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut scoped = lesson_with("scoped bearer token rule", &["auth"]);
+	scoped.role = "developer".to_string();
+	scoped.project = "project".to_string();
+	scoped.created = "2026-01-01T00:00:00Z".to_string();
+	scoped.importance = 0.8;
+	backend.store(&scoped).await.unwrap();
+	let mut global = lesson_with("global editor style rule", &["style"]);
+	global.scope = "global".to_string();
+	global.created = "2026-01-02T00:00:00Z".to_string();
+	backend.store(&global).await.unwrap();
+
+	assert_eq!(
+		backend
+			.retrieve_all("developer", "project")
+			.await
+			.unwrap()
+			.len(),
+		1
+	);
+	assert_eq!(backend.retrieve_global().await.unwrap().len(), 1);
+	assert!(backend.has_lessons("developer", "project").await);
+	assert!(!backend.has_lessons("writer", "other").await);
+	assert!(backend
+		.retrieve("", &[], "writer", "other", 5)
+		.await
+		.unwrap()
+		.is_empty());
+
+	// Empty query short-circuits to the importance-ordered head.
+	let head = backend
+		.retrieve("", &[], "developer", "project", 5)
+		.await
+		.unwrap();
+	assert_eq!(head.len(), 1);
+	assert_eq!(head[0].content, "scoped bearer token rule");
+
+	// Keyword retrieval ranks the matching hot record without embeddings.
+	let ranked = backend
+		.retrieve(
+			"auth intent",
+			&["bearer".to_string()],
+			"developer",
+			"project",
+			5,
+		)
+		.await
+		.unwrap();
+	assert_eq!(ranked.len(), 1);
+	assert_eq!(ranked[0].content, "scoped bearer token rule");
+
+	// Global ids delete from the shared dir; unknown ids fail loudly.
+	backend
+		.delete(&global.file_id(), "developer", "project")
+		.await
+		.unwrap();
+	assert!(backend.retrieve_global().await.unwrap().is_empty());
+	assert!(backend
+		.delete("missing-id", "developer", "project")
+		.await
+		.is_err());
+
+	// An archive-only scope still reports lessons via the catalog.
+	crate::supervisor::learning::retention::archive_record(&scoped).unwrap();
+	assert!(backend.has_lessons("developer", "project").await);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn reinforce_cold_archives_floor_importance_and_ignores_unknown_content() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut weak = lesson_with("barely useful rule", &[]);
+	weak.role = "developer".to_string();
+	weak.project = "project".to_string();
+	weak.created = "2026-01-01T00:00:00Z".to_string();
+	weak.importance = 0.05;
+	backend.store(&weak).await.unwrap();
+
+	backend
+		.reinforce("content that exists nowhere", "developer", "project", 0.1)
+		.await
+		.unwrap();
+
+	backend
+		.reinforce(&weak.content, "developer", "project", -0.1)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all("developer", "project").await.unwrap();
+	assert!(hot.is_empty());
+	let cold = FileBackend::read_archived(
+		&crate::directories::get_learning_dir("developer", "project").unwrap(),
+	);
+	assert_eq!(cold.len(), 1);
+	assert_eq!(cold[0].importance, 0.0);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn prune_stale_archives_only_stale_weak_entries() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut lesson = |content: &str, importance: f64, created: &str| {
+		let mut item = lesson_with(content, &[]);
+		item.role = "developer".to_string();
+		item.project = "project".to_string();
+		item.importance = importance;
+		item.created = created.to_string();
+		item
+	};
+	backend
+		.store(&lesson("stale weak rule", 0.3, "2020-01-01T00:00:00Z"))
+		.await
+		.unwrap();
+	backend
+		.store(&lesson(
+			"fresh weak rule",
+			0.3,
+			&chrono::Utc::now().to_rfc3339(),
+		))
+		.await
+		.unwrap();
+	backend
+		.store(&lesson("stale strong rule", 0.9, "2020-01-01T00:00:00Z"))
+		.await
+		.unwrap();
+	backend
+		.store(&lesson("undated weak rule", 0.3, "not a date"))
+		.await
+		.unwrap();
+
+	backend
+		.prune_stale("developer", "project", 0)
+		.await
+		.unwrap();
+	assert_eq!(
+		backend
+			.retrieve_all("developer", "project")
+			.await
+			.unwrap()
+			.len(),
+		4
+	);
+
+	backend
+		.prune_stale("developer", "project", 365)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all("developer", "project").await.unwrap();
+	assert_eq!(hot.len(), 3);
+	assert!(hot.iter().all(|item| item.content != "stale weak rule"));
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[test]
+fn expand_ranked_with_links_returns_empty_at_zero_limit() {
+	let all = vec![lesson_with("root memory", &[])];
+	assert!(expand_ranked_with_links(&all, &[(1.0, 0)], 0).is_empty());
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn reinforce_reactivates_archived_entries_and_bumps_them_in_place() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	// Scoped entry: archived, then reinforced above the floor — it must move
+	// back from .archive to the hot dir with bumped importance and use stats.
+	let mut scoped = lesson_with("archived scoped rule about retries", &[]);
+	scoped.role = "developer".to_string();
+	scoped.project = "project".to_string();
+	scoped.title = scoped.content.clone();
+	scoped.created = "2026-01-01T00:00:00Z".to_string();
+	scoped.importance = 0.3;
+	backend.store(&scoped).await.unwrap();
+	crate::supervisor::learning::retention::archive_record(&scoped).unwrap();
+	assert!(backend
+		.retrieve_all("developer", "project")
+		.await
+		.unwrap()
+		.is_empty());
+
+	backend
+		.reinforce(&scoped.content, "developer", "project", 0.3)
+		.await
+		.unwrap();
+	let hot = backend.retrieve_all("developer", "project").await.unwrap();
+	assert_eq!(hot.len(), 1);
+	assert_eq!(hot[0].content, "archived scoped rule about retries");
+	assert!((hot[0].importance - 0.6).abs() < 1e-9);
+	assert_eq!(hot[0].use_count, 1);
+	assert!(!hot[0].last_used.is_empty());
+
+	// Global entry: found through the global-archive fallback and reactivated
+	// into the shared global dir.
+	let mut global = lesson_with("archived global rule about logging", &[]);
+	global.scope = "global".to_string();
+	global.title = global.content.clone();
+	global.created = "2026-01-02T00:00:00Z".to_string();
+	global.importance = 0.3;
+	backend.store(&global).await.unwrap();
+	crate::supervisor::learning::retention::archive_record(&global).unwrap();
+
+	backend
+		.reinforce(&global.content, "developer", "project", 0.3)
+		.await
+		.unwrap();
+	let hot_global = backend.retrieve_global().await.unwrap();
+	assert_eq!(hot_global.len(), 1);
+	assert_eq!(hot_global[0].content, "archived global rule about logging");
+	assert!((hot_global[0].importance - 0.6).abs() < 1e-9);
+
+	// A scoped id deletes from the scoped dir on the first candidate path.
+	backend
+		.delete(&scoped.file_id(), "developer", "project")
+		.await
+		.unwrap();
+	assert!(backend
+		.retrieve_all("developer", "project")
+		.await
+		.unwrap()
+		.is_empty());
+	assert_eq!(backend.retrieve_global().await.unwrap().len(), 1);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn retrieve_pages_cold_archive_when_hot_scope_is_empty() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut item = lesson_with("cold only rule about migrations", &[]);
+	item.role = "developer".to_string();
+	item.project = "project".to_string();
+	item.title = item.content.clone();
+	item.created = "2026-01-01T00:00:00Z".to_string();
+	backend.store(&item).await.unwrap();
+	crate::supervisor::learning::retention::archive_record(&item).unwrap();
+
+	// Hot scope is empty but the catalog still pages the exact cold record.
+	let recalled = backend
+		.retrieve("", &["migrations".to_string()], "developer", "project", 5)
+		.await
+		.unwrap();
+	assert_eq!(recalled.len(), 1);
+	assert_eq!(recalled[0].content, "cold only rule about migrations");
+	assert!(recalled[0].storage_path.contains(".archive"));
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn retrieve_archived_global_pages_the_shared_archive() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+
+	let mut item = lesson_with("global cold rule about deployments", &[]);
+	item.scope = "global".to_string();
+	item.title = item.content.clone();
+	item.created = "2026-01-01T00:00:00Z".to_string();
+	backend.store(&item).await.unwrap();
+	crate::supervisor::learning::retention::archive_record(&item).unwrap();
+
+	let recalled = backend
+		.retrieve_archived_global("", &["deployments".to_string()], 5)
+		.await
+		.unwrap();
+	assert_eq!(recalled.len(), 1);
+	assert_eq!(recalled[0].content, "global cold rule about deployments");
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}

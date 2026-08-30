@@ -123,3 +123,9 @@ fn test_add_completion_menu_keybindings_smoke() {
 	let mut keybindings = Keybindings::new();
 	add_completion_menu_keybindings(&mut keybindings);
 }
+
+#[test]
+fn test_display_shortcuts_help_prints_all_rows_without_panicking() {
+	// Pure println box — smoke-cover every row of the shortcuts help.
+	display_shortcuts_help();
+}

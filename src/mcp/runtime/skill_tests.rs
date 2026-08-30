@@ -804,4 +804,84 @@ mod tests {
 			assert!(dirs.is_empty());
 		}
 	}
+	#[test]
+	#[serial_test::serial]
+	fn test_find_skill_by_name_tap_source_and_name_mismatch() {
+		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		let dir = tempfile::tempdir().unwrap();
+		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+
+		// The default tap needs no taps.toml — creating the dir is enough.
+		let tap = dir.path().join("taps").join("muvon").join("octomind-tap");
+		fs::create_dir_all(tap.join("skills").join("skilltest-tapfind")).unwrap();
+		fs::write(
+			tap.join("skills")
+				.join("skilltest-tapfind")
+				.join("SKILL.md"),
+			"---\nname: skilltest-tapfind\ndescription: Tap fixture\n---\n\nTAPFIND-BODY\n",
+		)
+		.unwrap();
+		// Directory name and frontmatter name disagree: must NOT resolve.
+		fs::create_dir_all(tap.join("skills").join("skilltest-mismatch")).unwrap();
+		fs::write(
+			tap.join("skills")
+				.join("skilltest-mismatch")
+				.join("SKILL.md"),
+			"---\nname: skilltest-other-name\ndescription: Mismatched fixture\n---\n\nBody\n",
+		)
+		.unwrap();
+
+		let (_, _, content) =
+			crate::mcp::runtime::skill::find_skill_by_name_pub("skilltest-tapfind")
+				.expect("tap skill resolves by name");
+		assert!(content.contains("TAPFIND-BODY"));
+		assert!(
+			crate::mcp::runtime::skill::find_skill_by_name_pub("skilltest-mismatch").is_none(),
+			"dir/name mismatch must not resolve"
+		);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn test_find_all_skills_dedupes_tap_over_project() {
+		let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR"]);
+		let data = tempfile::tempdir().unwrap();
+		std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+
+		let tap = data.path().join("taps").join("muvon").join("octomind-tap");
+		fs::create_dir_all(tap.join("skills").join("skilltest-dup")).unwrap();
+		fs::write(
+			tap.join("skills").join("skilltest-dup").join("SKILL.md"),
+			"---\nname: skilltest-dup\ndescription: Tap copy\n---\n\nTAP-COPY\n",
+		)
+		.unwrap();
+
+		let sid = "__skilltests_dedup".to_string();
+		let project = tempfile::tempdir().unwrap();
+		fs::create_dir_all(project.path().join(".agents/skills/skilltest-dup")).unwrap();
+		fs::write(
+			project.path().join(".agents/skills/skilltest-dup/SKILL.md"),
+			"---\nname: skilltest-dup\ndescription: Project copy\n---\n\nPROJECT-COPY\n",
+		)
+		.unwrap();
+
+		crate::session::context::with_session_id(sid.clone(), async {
+			crate::session::context::set_session_workdir(&sid, project.path().to_path_buf());
+
+			let found = crate::mcp::runtime::skill::find_all_skills_with_details();
+			let hits: Vec<&std::path::PathBuf> = found
+				.iter()
+				.filter(|(meta, _)| meta.name == "skilltest-dup")
+				.map(|(_, path)| path)
+				.collect();
+			assert_eq!(hits.len(), 1, "tap copy must win over the project copy");
+			assert!(
+				hits[0].starts_with(&tap),
+				"expected the tap copy, got {:?}",
+				hits[0]
+			);
+		})
+		.await;
+		crate::session::context::cleanup_session(&sid);
+	}
 }

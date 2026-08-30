@@ -391,3 +391,7 @@ pub(super) fn emit_lifecycle(record: &EvolutionRecord, action: &str) {
 		));
 	}
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

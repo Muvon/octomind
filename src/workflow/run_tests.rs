@@ -361,3 +361,265 @@ fn resolve_workdir_makes_relative_paths_absolute() {
 	assert!(resolved.is_absolute());
 	assert!(resolved.ends_with("src"));
 }
+
+// ---- Executor: fold_stats / enforce_budget / substitute / next_graph_node ----
+
+fn template_config() -> Config {
+	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("parse default config template");
+	config.build_role_map();
+	config
+}
+
+#[test]
+fn fold_stats_passes_fresh_sessions_through_unchanged() {
+	let mut ex = Executor::new(
+		"wf".to_string(),
+		&template_config(),
+		false,
+		None,
+		false,
+		HashSet::new(),
+	);
+	// Fresh sessions never advance a baseline — every invocation reports as-is.
+	let first = ex.fold_stats("s", SessionMode::Fresh, &cumulative(0.25, 250));
+	assert!((first.cost - 0.25).abs() < 1e-9);
+	let second = ex.fold_stats("s", SessionMode::Fresh, &cumulative(0.40, 400));
+	assert!((second.cost - 0.40).abs() < 1e-9);
+}
+
+#[test]
+fn fold_stats_folds_continue_sessions_into_per_turn_deltas() {
+	let mut ex = Executor::new(
+		"wf".to_string(),
+		&template_config(),
+		false,
+		None,
+		false,
+		HashSet::new(),
+	);
+	let d1 = ex.fold_stats("c", SessionMode::Continue, &cumulative(0.10, 100));
+	let d2 = ex.fold_stats("c", SessionMode::Continue, &cumulative(0.25, 250));
+	assert!(
+		(d1.cost - 0.10).abs() < 1e-9,
+		"first turn reports its full spend"
+	);
+	assert!(
+		(d2.cost - 0.15).abs() < 1e-9,
+		"second turn reports only the delta"
+	);
+	assert_eq!(d1.total_tokens + d2.total_tokens, 250);
+}
+
+#[test]
+fn enforce_budget_aborts_only_when_the_cap_is_crossed() {
+	let mut ex = Executor::new(
+		"wf".to_string(),
+		&template_config(),
+		false,
+		None,
+		false,
+		HashSet::new(),
+	);
+	// No cap: never aborts.
+	ex.totals.cost = 99.0;
+	assert!(ex.enforce_budget("any").is_ok());
+
+	ex.max_cost = Some(2.0);
+	ex.totals.cost = 1.5;
+	assert!(ex.enforce_budget("under").is_ok());
+
+	ex.totals.cost = 2.5;
+	let err = ex.enforce_budget("runaway").expect_err("cap must abort");
+	let msg = err.to_string();
+	assert!(msg.contains("budget exceeded"), "got: {msg}");
+	assert!(
+		msg.contains("runaway"),
+		"the offending step is named: {msg}"
+	);
+}
+
+#[tokio::test]
+async fn substitute_resolves_input_and_prior_outputs_and_keeps_unknowns() {
+	let mut ex = Executor::new(
+		"wf".to_string(),
+		&template_config(),
+		false,
+		None,
+		false,
+		HashSet::new(),
+	);
+	ex.outputs.insert("plan".to_string(), "PLANNED".to_string());
+
+	let resolved = ex
+		.substitute(
+			"{{input}} then {{plan}} then {{not_a_var}}",
+			"DO",
+			"developer:general",
+		)
+		.await
+		.expect("substitution is pure text resolution");
+	assert_eq!(resolved, "DO then PLANNED then {{not_a_var}}");
+}
+
+#[tokio::test]
+async fn substitute_graph_mode_rejects_outputs_not_on_the_route() {
+	let known: HashSet<String> = ["later".to_string()].into_iter().collect();
+	let mut ex = Executor::new(
+		"wf".to_string(),
+		&template_config(),
+		false,
+		None,
+		true,
+		known,
+	);
+
+	let err = ex
+		.substitute("use {{later}}", "DO", "developer:general")
+		.await
+		.expect_err("a known output that never ran must fail clearly");
+	assert!(
+		err.to_string().contains("unavailable on the current route"),
+		"got: {err}"
+	);
+
+	// Once the producer has run the same template resolves.
+	ex.outputs.insert("later".to_string(), "READY".to_string());
+	let ok = ex
+		.substitute("use {{later}}", "DO", "developer:general")
+		.await
+		.expect("produced output resolves");
+	assert_eq!(ok, "use READY");
+
+	// Names the workflow never declared stay literal — no false route error.
+	let unknown = ex
+		.substitute("{{totally_unknown}}", "DO", "developer:general")
+		.await
+		.expect("unknown names are not route-checked");
+	assert_eq!(unknown, "{{totally_unknown}}");
+}
+
+#[test]
+fn next_graph_node_routes_on_condition_then_default() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+name = "g"
+entry = "review"
+max_transitions = 5
+
+[[steps]]
+name = "review"
+role = "developer:general"
+prompt = "review it"
+
+[[steps]]
+name = "fix"
+role = "developer:general"
+prompt = "fix it"
+
+[[edges]]
+from = "review"
+to = "$end"
+[edges.when]
+contains = "PASS"
+
+[[edges]]
+from = "review"
+to = "fix"
+"#,
+	)
+	.expect("graph workflow parses");
+
+	let mut ex = Executor::new(
+		"g".to_string(),
+		&template_config(),
+		false,
+		None,
+		true,
+		HashSet::new(),
+	);
+	ex.outputs
+		.insert("review".to_string(), "needs work".to_string());
+	assert_eq!(
+		ex.next_graph_node(&wf, "review").expect("default edge"),
+		"fix"
+	);
+
+	ex.outputs.insert("review".to_string(), "PASS".to_string());
+	assert_eq!(
+		ex.next_graph_node(&wf, "review").expect("conditional edge"),
+		END_NODE
+	);
+}
+
+// ---- Totals ----
+
+#[test]
+fn totals_add_sums_every_counter() {
+	let mut totals = Totals::default();
+	totals.add(&cumulative(0.25, 100));
+	totals.add(&StepStats {
+		duration: Duration::from_secs(2),
+		cost: 0.5,
+		total_tokens: 200,
+		input_tokens: 150,
+		output_tokens: 50,
+		tool_count: 2,
+		tool_failed: 1,
+		..Default::default()
+	});
+	assert!((totals.cost - 0.75).abs() < 1e-9);
+	assert_eq!(totals.tokens, 300);
+	assert_eq!(totals.input_tokens, 250);
+	assert_eq!(totals.output_tokens, 50);
+	assert_eq!(totals.tools, 2);
+	assert_eq!(totals.tools_failed, 1);
+	assert_eq!(totals.duration, Duration::from_secs(2));
+}
+
+// ---- display helpers ----
+
+#[test]
+fn with_stderr_appends_a_tail_only_when_present() {
+	assert_eq!(with_stderr("boom".to_string(), "   "), "boom");
+	assert_eq!(
+		with_stderr("boom".to_string(), "details"),
+		"boom\n  stderr: details"
+	);
+}
+
+#[test]
+fn fmt_stats_renders_duration_cost_tokens_and_tools() {
+	let stats = StepStats {
+		duration: Duration::from_millis(1500),
+		cost: 0.1,
+		total_tokens: 450,
+		tool_count: 2,
+		..Default::default()
+	};
+	let line = fmt_stats(&stats);
+	assert!(line.contains("1.5s"), "got: {line}");
+	assert!(line.contains("$0.1000"), "got: {line}");
+	assert!(line.contains("450 tok"), "got: {line}");
+	assert!(line.contains("⚒2"), "got: {line}");
+}
+
+#[test]
+fn short_uuid_is_the_first_uuid_segment() {
+	let id = short_uuid();
+	assert_eq!(id.len(), 8, "uuid v4 first segment is 8 hex chars");
+	assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "got: {id}");
+}
+
+#[test]
+fn display_helpers_write_without_panicking() {
+	// These render to stderr only; the contract under test is that every
+	// block/line shape completes for both empty and populated content.
+	box_open("title");
+	box_close_ok("name", "1.0s · $0.0000");
+	box_close_err("name", "failed");
+	box_line("inner");
+	info_line("note");
+	print_response("", false, "");
+	print_response("plain text", false, "");
+}

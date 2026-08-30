@@ -952,3 +952,317 @@ fn test_format_existing_emits_ids_and_scope() {
 	assert!(out.contains("[L1] (this project/role, medium) scoped rule"));
 	assert!(out.contains("[L2] (global, medium) global rule"));
 }
+
+#[tokio::test]
+async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__learn_e2e_role";
+	let project = "__learn_e2e_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	// An existing stale rule the new lesson explicitly supersedes via L1.
+	let backend = FileBackend;
+	let mut old = lesson(
+		"Bearer token auth is required for all API endpoints",
+		"scoped",
+		0.9,
+	);
+	old.memory_type = "learning".to_string();
+	old.role = role.to_string();
+	old.project = project.to_string();
+	backend.store(&old).await.unwrap();
+
+	let response = r#"<decision>LEARN</decision>
+<lesson confidence="high" tags="auth" evidence="always use bearer tokens for every api call" supersedes="L1">Bearer token auth is required for all API endpoints, including internal ones</lesson>
+<orientation confidence="high" tags="auth" evidence="M1">The subject authenticates every API call with bearer tokens</orientation>"#;
+	let url = spawn_stub(vec![
+		final_response(response),
+		final_response(r#"{"unsupported":[]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.learning.evolution.enabled = false;
+
+	// No tool turn: the experience value gate stays closed, so exactly one
+	// extraction call and one verifier call hit the stub.
+	let messages = vec![
+		message("user", "always use bearer tokens for every api call"),
+		message("assistant", "understood, bearer tokens everywhere"),
+	];
+	let stored = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"learn-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("extraction succeeds");
+	assert_eq!(stored, 2);
+
+	let memories = backend.retrieve_all(role, project).await.unwrap();
+	assert_eq!(memories.len(), 2);
+	let lesson_stored = memories
+		.iter()
+		.find(|memory| memory.memory_type == "learning")
+		.unwrap();
+	assert_eq!(
+		lesson_stored.content,
+		"Bearer token auth is required for all API endpoints, including internal ones"
+	);
+	assert!(lesson_stored
+		.evidence
+		.contains(&"session://learn-session/message/1".to_string()));
+	// The superseded stale rule is gone.
+	assert!(!memories.iter().any(|memory| memory.content == old.content));
+	let orientation = memories
+		.iter()
+		.find(|memory| memory.memory_type == "orientation")
+		.unwrap();
+	assert_eq!(
+		orientation.outcome,
+		crate::supervisor::learning::TrajectoryOutcome::Unknown
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn learn_path_rejects_fabricated_evidence_entirely() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__learn_fabricated_role";
+	let project = "__learn_fabricated_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let response = r#"<decision>LEARN</decision>
+<lesson confidence="high" tags="auth" evidence="quote that appears in no user turn">Fabricated rule with no verbatim evidence</lesson>"#;
+	let url = spawn_stub(vec![final_response(response)]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+
+	let messages = vec![message("user", "an unrelated real user turn")];
+	let stored = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"fabricated-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.unwrap();
+	assert_eq!(stored, 0);
+	assert!(FileBackend
+		.retrieve_all(role, project)
+		.await
+		.unwrap()
+		.is_empty());
+
+	std::env::remove_var("OLLAMA_API_URL");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__learn_unsupported_role";
+	let project = "__learn_unsupported_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let response = r#"<decision>LEARN</decision>
+<lesson confidence="high" tags="auth" evidence="verbatim user quote survives the gate">A rule the verifier will reject</lesson>"#;
+	let url = spawn_stub(vec![
+		final_response(response),
+		final_response(r#"{"unsupported":[1]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+
+	let messages = vec![message("user", "verbatim user quote survives the gate")];
+	let stored = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"unsupported-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.unwrap();
+	assert_eq!(stored, 0);
+	assert!(FileBackend
+		.retrieve_all(role, project)
+		.await
+		.unwrap()
+		.is_empty());
+
+	std::env::remove_var("OLLAMA_API_URL");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn duplicate_experience_trajectory_is_skipped() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__experience_dup_role";
+	let project = "__experience_dup_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	// The same trajectory memory is already stored from this very session.
+	let backend = FileBackend;
+	let mut existing = lesson(&experience_body(), "scoped", 0.9);
+	existing.memory_type = "experience".to_string();
+	existing.role = role.to_string();
+	existing.project = project.to_string();
+	existing.source = "dup-session".to_string();
+	existing.outcome = crate::supervisor::learning::TrajectoryOutcome::Verified;
+	backend.store(&existing).await.unwrap();
+
+	let experience = format!(
+		"<experience title=\"Provider continuation recovery\" confidence=\"high\" tags=\"provider\" evidence=\"M1,M2\">\n{}\n</experience>",
+		experience_body()
+	);
+	let url = spawn_stub(vec![
+		final_response("<decision>NONE</decision>"),
+		final_response(&experience),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+
+	let messages = vec![
+		message("user", "never silently switch the resolved model"),
+		message(
+			"tool",
+			&format!(
+				"provider error: invalid continuation id c_123. {}",
+				"diagnostic evidence confirms the continuation belongs to the resolved provider. "
+					.repeat(300)
+			),
+		),
+	];
+	let stored = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"dup-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.unwrap();
+	assert_eq!(stored, 0);
+	let memories = backend.retrieve_all(role, project).await.unwrap();
+	assert_eq!(memories.len(), 1);
+	assert_eq!(memories[0].memory_type, "experience");
+
+	std::env::remove_var("OLLAMA_API_URL");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
+	use crate::session::chat::test_support::{fake_provider_config, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let work = tempfile::tempdir().unwrap();
+	let mut config = fake_provider_config();
+
+	config.supervisor.learning.enabled = false;
+	assert!(spawn_lesson_extraction_snapshot(
+		Vec::new(),
+		&config,
+		"developer".to_string(),
+		Some(work.path()),
+		"wrapper-session".to_string(),
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.is_none());
+	extract_lessons_detached(
+		Vec::new(),
+		config.clone(),
+		"developer".to_string(),
+		"wrapper-project".to_string(),
+		"wrapper-session".to_string(),
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.unwrap();
+
+	// Enabled with an empty transcript: the run stops before any LLM call and
+	// derives the project from the supplied working directory.
+	config.supervisor.learning.enabled = true;
+	let handle = spawn_lesson_extraction_snapshot(
+		Vec::new(),
+		&config,
+		"developer".to_string(),
+		Some(work.path()),
+		"wrapper-session".to_string(),
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.expect("enabled learning spawns extraction");
+	handle.await.unwrap();
+	let project = work
+		.path()
+		.file_name()
+		.and_then(|name| name.to_str())
+		.unwrap()
+		.to_string();
+	assert!(FileBackend
+		.retrieve_all("developer", &project)
+		.await
+		.unwrap()
+		.is_empty());
+}
+
+#[test]
+fn purpose_for_maps_every_call_kind_to_its_routing_purpose() {
+	use crate::providers::ModelPurpose;
+	use crate::supervisor::stats::CallKind;
+	assert_eq!(purpose_for(CallKind::Gate), ModelPurpose::SupervisorGate);
+	assert_eq!(purpose_for(CallKind::Resolve), ModelPurpose::SupervisorGate);
+	assert_eq!(purpose_for(CallKind::Plan), ModelPurpose::SupervisorGate);
+	assert_eq!(
+		purpose_for(CallKind::Condense),
+		ModelPurpose::SupervisorCondense
+	);
+	assert_eq!(
+		purpose_for(CallKind::Distill),
+		ModelPurpose::SupervisorDistill
+	);
+	assert_eq!(
+		purpose_for(CallKind::Recall),
+		ModelPurpose::SupervisorRecall
+	);
+}

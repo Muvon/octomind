@@ -2728,3 +2728,293 @@ fn anchor_is_stable_when_only_synthetic_messages_precede_the_task() {
 		"the continuation wrapper carrying the task must be re-summarised"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// Fold lifecycle: fingerprinting, failure cooldowns, background collection,
+// and the shared finish_fold commit path.
+// ---------------------------------------------------------------------------
+
+fn fold_message(role: &str, content: &str) -> Message {
+	Message {
+		role: role.to_string(),
+		content: content.to_string(),
+		..Default::default()
+	}
+}
+
+fn fold_config() -> crate::config::Config {
+	crate::session::chat::test_support::fake_provider_config()
+}
+
+fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldContext {
+	super::FoldContext {
+		start_idx,
+		end_idx,
+		fingerprint,
+		tokens_before: 100,
+		current_context_tokens: 200,
+		user_tasks_msgs: Vec::new(),
+		last_user_message: None,
+		previous_assistant_response: None,
+		preserved_skills: Vec::new(),
+		pact: None,
+		preserve_recent_user_bridge: false,
+		started: std::time::Instant::now(),
+	}
+}
+
+#[tokio::test]
+async fn should_check_compression_ceiling_forces_deepest_ratio() {
+	let mut config = fold_config();
+	config.max_session_tokens_threshold = 8;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "notaprovider:no-such-model".to_string();
+	session
+		.add_user_message(&"word ".repeat(200))
+		.expect("user message");
+	let (should, ratio) = super::should_check_compression(&mut session, &config).await;
+	assert!(should);
+	assert_eq!(ratio, MAX_COMPRESSION_RATIO);
+}
+
+#[tokio::test]
+async fn should_check_compression_skips_when_range_is_empty() {
+	let mut config = fold_config();
+	config.compression.threshold = 1;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("assistant", "no task stated here"),
+		fold_message("assistant", "still no task"),
+	]);
+	session.model = "notaprovider:no-such-model".to_string();
+	let (should, ratio) = super::should_check_compression(&mut session, &config).await;
+	assert!(!should);
+	assert_eq!(ratio, MIN_COMPRESSION_RATIO);
+}
+
+#[tokio::test]
+async fn ensure_context_within_ceiling_rejects_oversized_context() {
+	let mut config = fold_config();
+	config.max_session_tokens_threshold = 8;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.model = "notaprovider:no-such-model".to_string();
+	session
+		.add_user_message(&"word ".repeat(200))
+		.expect("user message");
+	assert!(super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.is_err());
+}
+
+#[test]
+fn fold_fingerprint_ignores_presentation_state_but_not_content() {
+	let mut messages = vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	];
+	let base = super::fold_fingerprint(&messages, 0, 2);
+	assert_eq!(super::fold_fingerprint(&messages, 0, 2), base);
+	messages[2].cached = true; // presentation-only marker
+	assert_eq!(super::fold_fingerprint(&messages, 0, 2), base);
+	messages[2].content.push_str(" changed");
+	assert_ne!(super::fold_fingerprint(&messages, 0, 2), base);
+}
+
+#[test]
+fn note_fold_failure_cooldown_advances_by_autonomous_runway() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.session.info.total_api_calls = 10;
+	session.session.info.consecutive_compressions = 3;
+	super::note_fold_failure(&mut session);
+	let runway = super::decision::autonomous_runway(3) as usize;
+	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
+}
+
+#[tokio::test]
+async fn collect_fold_job_join_error_discards_and_sets_cooldown() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	]);
+	let handle: tokio::task::JoinHandle<
+		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
+	> = tokio::spawn(async { panic!("fold task crashed") });
+	let applied = super::collect_fold_job(
+		&mut session,
+		&config,
+		super::FoldJob {
+			handle,
+			ctx: fold_ctx(0, 2, 0),
+		},
+		false,
+		false,
+	)
+	.await
+	.expect("collect join error");
+	assert!(!applied);
+	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
+	assert_eq!(session.session.messages.len(), 3);
+}
+
+#[tokio::test]
+async fn collect_fold_job_cancelled_fold_sets_cooldown_without_applying() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	]);
+	let handle: tokio::task::JoinHandle<
+		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
+	> = tokio::spawn(async { Err(anyhow::Error::new(crate::session::cancellation::Cancelled)) });
+	let applied = super::collect_fold_job(
+		&mut session,
+		&config,
+		super::FoldJob {
+			handle,
+			ctx: fold_ctx(0, 2, 0),
+		},
+		false,
+		false,
+	)
+	.await
+	.expect("collect cancelled");
+	assert!(!applied);
+	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
+	assert_eq!(session.session.messages.len(), 3);
+}
+
+#[tokio::test]
+async fn collect_fold_job_discards_when_range_fingerprint_changed() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	]);
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "task".to_string(),
+		progress: "done".to_string(),
+		..Default::default()
+	};
+	let handle: tokio::task::JoinHandle<
+		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
+	> = tokio::spawn(async move { Ok((summary, None)) });
+	// Fingerprint 42 matches nothing: the mid-turn mutation guard discards.
+	let applied = super::collect_fold_job(
+		&mut session,
+		&config,
+		super::FoldJob {
+			handle,
+			ctx: fold_ctx(0, 2, 42),
+		},
+		false,
+		false,
+	)
+	.await
+	.expect("collect stale fingerprint");
+	assert!(!applied);
+	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
+	assert_eq!(session.session.messages.len(), 3);
+}
+
+#[tokio::test]
+async fn finish_fold_veto_counts_as_a_paid_decline() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	]);
+	session.session.info.consecutive_compressions = 1;
+	let fingerprint = super::fold_fingerprint(&session.session.messages, 0, 2);
+	let summary = CompressionSummary {
+		should_compress: false,
+		..Default::default()
+	};
+	let applied = super::finish_fold(
+		&mut session,
+		&config,
+		fold_ctx(0, 2, fingerprint),
+		summary,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("finish veto");
+	assert!(!applied);
+	assert_eq!(session.session.info.consecutive_compressions, 2);
+	assert_eq!(session.session.messages.len(), 3);
+}
+
+#[tokio::test]
+async fn finish_fold_forced_with_pact_applies_compacted_state() {
+	let mut config = fold_config();
+	config.compression.attention.enabled = true;
+	config.compression.attention.validator = true;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "stabilise the deploy pipeline"),
+		fold_message("assistant", "investigating"),
+		fold_message("assistant", "found the race"),
+	]);
+	session.session.info.name = "finish-fold-pact-unit".to_string();
+	let (start, end) =
+		find_compression_range_preserving_turn(&session.session.messages, true, false)
+			.expect("compressible range");
+	let pact = super::attention::build(&session, start + 1, end, 2.0, true, false)
+		.await
+		.expect("pact context builds");
+	let mut ctx = fold_ctx(
+		start,
+		end,
+		super::fold_fingerprint(&session.session.messages, start, end),
+	);
+	ctx.pact = Some(pact);
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "stabilise the deploy pipeline".to_string(),
+		folded_units: vec![super::schema::FoldedUnit {
+			text: "race identified".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: vec!["b:missing".to_string()],
+		}],
+		..Default::default()
+	};
+	// force=true: even if the validator rejects the unknown ref, the forced
+	// fallback sanitizes and commits rather than dropping the fold.
+	let applied = super::finish_fold(&mut session, &config, ctx, summary, None, true, false)
+		.await
+		.expect("forced pact fold");
+	assert!(applied);
+	assert_eq!(session.session.messages.len(), 3); // system + summary + continuation
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)));
+}
+
+#[tokio::test]
+async fn done_trigger_with_no_compressible_range_is_a_noop() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("assistant", "no task stated"),
+		fold_message("assistant", "still none"),
+	]);
+	session.session.info.name = "done-noop-unit".to_string();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		super::check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done)
+			.await
+			.expect("done noop");
+	assert!(!compressed);
+	assert_eq!(session.session.messages.len(), 3);
+}

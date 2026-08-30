@@ -289,3 +289,148 @@ fn test_cleanup_session_clears_all_registries() {
 	assert!(get_task_start_index(&sid).is_none());
 	assert!(get_active_skills(&sid).is_empty());
 }
+
+// ---- SessionContext ----
+
+#[test]
+fn session_context_new_and_for_session_populate_fields() {
+	let ctx = SessionContext::new(
+		"s1".to_string(),
+		"developer:general".to_string(),
+		"proj".to_string(),
+		PathBuf::from("/tmp"),
+	);
+	assert_eq!(ctx.session_id, "s1");
+	assert_eq!(ctx.role, "developer:general");
+	assert_eq!(ctx.project_id, "proj");
+	assert_eq!(ctx.workdir, PathBuf::from("/tmp"));
+
+	let for_session = SessionContext::for_session("s2", "assistant");
+	assert_eq!(for_session.session_id, "s2");
+	assert_eq!(for_session.role, "assistant");
+	assert_eq!(
+		for_session.workdir,
+		std::env::current_dir().unwrap_or_default(),
+		"for_session anchors the workdir at the current directory"
+	);
+}
+
+#[tokio::test]
+async fn expect_session_id_returns_the_scoped_id() {
+	let sid = unique("expect");
+	let seen = with_session_id(sid.clone(), async { expect_session_id() }).await;
+	assert_eq!(seen, sid);
+}
+
+#[test]
+#[should_panic(expected = "not in a session context")]
+fn expect_session_id_panics_outside_any_scope() {
+	// A bare test thread carries no task-local session id.
+	let _ = expect_session_id();
+}
+
+// ---- notification registry init + aliases ----
+
+#[test]
+fn notification_registry_init_is_idempotent_and_aliases_roundtrip() {
+	init_notification_registry();
+	// A second init must not clear senders registered in between.
+	init_notification_registry();
+
+	let sid = unique("alias");
+	let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+	register_notification_sender(sid.clone(), tx);
+	assert!(get_notification_sender_by_id(&sid).is_some());
+
+	unregister_notification_sender(sid.clone());
+	assert!(get_notification_sender_by_id(&sid).is_none());
+}
+
+// ---- session config registry ----
+
+#[test]
+fn session_config_set_get_clear_roundtrip() {
+	let sid = unique("cfg");
+	assert!(get_session_config(&sid).is_none());
+
+	let config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
+		.expect("parse default config template");
+	set_session_config(&sid, &config);
+
+	let stored = get_session_config(&sid).expect("config stored per session");
+	assert_eq!(stored.get_effective_model(), config.get_effective_model());
+
+	clear_session_config(&sid);
+	assert!(get_session_config(&sid).is_none());
+}
+
+// ---- env skills ----
+
+#[test]
+fn env_skills_lifecycle_is_session_scoped_and_idempotent() {
+	let sid = unique("envskill");
+	assert!(get_env_skills(&sid).is_empty());
+
+	add_env_skill(&sid, "rust");
+	add_env_skill(&sid, "rust");
+	add_env_skill(&sid, "toml");
+	assert_eq!(
+		get_env_skills(&sid),
+		vec!["rust".to_string(), "toml".to_string()]
+	);
+
+	clear_env_skills(&sid);
+	assert!(get_env_skills(&sid).is_empty());
+}
+
+// ---- job manager ----
+
+#[tokio::test]
+async fn job_manager_initializes_resolves_and_clears_per_session() {
+	let sid = unique("jobs");
+	// No task-local session id on this bare test task.
+	assert!(get_job_manager_for_session().is_none());
+
+	init_job_manager_for_session(&sid);
+	let inside = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
+	assert!(
+		inside.is_some(),
+		"manager must resolve inside the session scope"
+	);
+
+	clear_job_manager_for_session(&sid);
+	let after = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
+	assert!(after.is_none(), "clear must remove the manager");
+}
+
+// ---- schedule notify ----
+
+#[tokio::test]
+async fn notify_schedule_change_wakes_a_registered_waiter() {
+	let sid = unique("schednotify");
+	let notify = get_schedule_notify(&sid);
+
+	let waiter = notify.notified();
+	tokio::pin!(waiter);
+	waiter.as_mut().enable();
+
+	notify_schedule_change(&sid);
+	tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+		.await
+		.expect("waiter must be woken by notify_schedule_change");
+}
+
+// ---- init_session_services ----
+
+#[tokio::test]
+#[serial_test::serial]
+async fn init_session_services_runs_the_full_init_sequence_under_scope() {
+	let sid = unique("services");
+	with_session_id(sid.clone(), async {
+		init_session_services("developer:general");
+	})
+	.await;
+	// The sequence is registry/task-local init; the observable contract is
+	// that it completes without panicking and cleanup stays symmetric.
+	cleanup_session(&sid);
+}

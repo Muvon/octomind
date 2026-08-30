@@ -25,6 +25,7 @@ use crate::session::chat::test_support::{
 	tool_call_response, tool_calls_response, ENV_LOCK,
 };
 use crate::session::output::SilentSink;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 async fn run_turn(session: &mut ChatSession, config: &Config) -> anyhow::Result<()> {
 	let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -66,6 +67,195 @@ async fn test_simple_completion_turn() {
 	assert!(session.session.info.total_cost > 0.0);
 	assert_eq!(session.session.info.turn_timing.completed, 1);
 	assert!(session.turn_started_at.is_none());
+}
+/// Like the shared `spawn_stub`, but records every request body it receives,
+/// so tests can assert on what actually crossed the wire — not just on the
+/// conversation state after the fact. Returns the chat-completions URL plus
+/// the shared capture buffer.
+async fn spawn_recording_stub(
+	responses: Vec<serde_json::Value>,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind recording stub listener");
+	let addr = listener.local_addr().expect("recording stub addr");
+	let queue = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+		responses,
+	)));
+	let requests: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+		std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+	tokio::spawn({
+		let requests = requests.clone();
+		async move {
+			while let Ok((mut sock, _)) = listener.accept().await {
+				let queue = queue.clone();
+				let requests = requests.clone();
+				tokio::spawn(async move {
+					// Read headers + Content-Length body of the POST request.
+					let mut buf = Vec::new();
+					let mut tmp = [0u8; 8192];
+					let header_end = loop {
+						let n = sock.read(&mut tmp).await.unwrap_or(0);
+						if n == 0 {
+							return;
+						}
+						buf.extend_from_slice(&tmp[..n]);
+						if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+							break pos + 4;
+						}
+					};
+					let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+					let content_length: usize = headers
+						.lines()
+						.find_map(|l| l.strip_prefix("content-length:"))
+						.and_then(|v| v.trim().parse().ok())
+						.unwrap_or(0);
+					while buf.len() < header_end + content_length {
+						let n = sock.read(&mut tmp).await.unwrap_or(0);
+						if n == 0 {
+							break;
+						}
+						buf.extend_from_slice(&tmp[..n]);
+					}
+
+					// Capture the wire payload before answering, so the buffer is
+					// populated by the time the caller has seen the response.
+					requests
+						.lock()
+						.expect("recording stub requests")
+						.push(String::from_utf8_lossy(&buf[header_end..]).to_string());
+
+					let body = queue
+						.lock()
+						.expect("recording stub queue")
+						.pop_front()
+						.unwrap_or_else(|| final_response("SCRIPT EXHAUSTED"))
+						.to_string();
+					let response = format!(
+						"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+						body.len(),
+						body
+					);
+					let _ = sock.write_all(response.as_bytes()).await;
+					let _ = sock.shutdown().await;
+				});
+			}
+		}
+	});
+
+	(format!("http://{}/v1/chat/completions", addr), requests)
+}
+
+/// A queued supervisor steer note is consumed at the safe pre-request point
+/// and lands as a system-managed user-role message BEFORE the provider
+/// request is built — so the one request the stub serves already contains
+/// it, ahead of the assistant reply.
+#[tokio::test]
+async fn steer_note_injected_as_system_managed_user_message() {
+	let _guard = ENV_LOCK.lock().await;
+	let (url, requests) = spawn_recording_stub(vec![final_response("steer acknowledged")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	let mut session = fake_session("do the task");
+	session.steer_pending =
+		Some("<pay-attention>change approach: use the indexed lookup</pay-attention>".to_string());
+
+	run_turn(&mut session, &config)
+		.await
+		.expect("steered turn succeeds");
+
+	// The queued note was consumed, not left pending for a later turn
+	assert!(session.steer_pending.is_none());
+
+	let messages = &session.session.messages;
+	let steer_pos = messages
+		.iter()
+		.position(|m| m.role == "user" && m.content.contains("use the indexed lookup"))
+		.expect("steer note injected as a user-role message");
+	assert!(crate::session::is_system_managed_user_content(
+		&messages[steer_pos].content
+	));
+	// Injected before the request: it precedes the stub-served assistant
+	// reply in the same conversation that was sent to the provider.
+	let assistant_pos = messages
+		.iter()
+		.position(|m| m.role == "assistant")
+		.expect("assistant reply recorded");
+	assert!(
+		steer_pos < assistant_pos,
+		"steer note must precede the API request, got roles: {:?}",
+		messages.iter().map(|m| m.role.as_str()).collect::<Vec<_>>()
+	);
+	assert!(messages[assistant_pos]
+		.content
+		.contains("steer acknowledged"));
+
+	// The wire proves it: the request the stub actually served already
+	// carried the note as a user-role message in its payload.
+	let captured = requests.lock().expect("captured requests");
+	assert_eq!(captured.len(), 1, "exactly one provider request expected");
+	let payload: serde_json::Value =
+		serde_json::from_str(&captured[0]).expect("request body is JSON");
+	let carried = payload["messages"]
+		.as_array()
+		.expect("request carries a messages array")
+		.iter()
+		.any(|m| {
+			m["role"] == "user"
+				&& m["content"]
+					.as_str()
+					.is_some_and(|c| c.contains("use the indexed lookup"))
+		});
+	assert!(
+		carried,
+		"steer note must be inside the request payload: {}",
+		captured[0]
+	);
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// Interactive-mode pre-request spending gates: the session threshold is
+/// disabled (its check short-circuits to Ok(true) without prompting) and
+/// the request threshold is exceeded, so the turn must end cleanly BEFORE
+/// any provider call — the scripted stub is never hit and nothing is
+/// recorded or injected.
+#[tokio::test]
+async fn request_spending_threshold_stops_turn_before_api_call() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![final_response("must never be requested")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	// Session-level threshold disabled: its branch returns Ok(true), so the
+	// request-level gate below is the one that fires.
+	config.max_session_spending_threshold = 0.0;
+	config.max_request_spending_threshold = 0.0001;
+
+	let mut session = fake_session("spend past the cap");
+	session.session.info.total_cost = 1.0;
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	execute_api_call_and_process_response(
+		&mut session,
+		&config,
+		"assistant",
+		rx,
+		crate::session::output::OutputMode::Interactive,
+		SilentSink,
+	)
+	.await
+	.expect("threshold stop is a clean turn end");
+
+	// The gate fired before the request: zero API calls (the stub queue is
+	// untouched) and the conversation is exactly the original user message.
+	assert_eq!(session.session.info.total_api_calls, 0);
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(session.session.messages[0].role, "user");
+	assert!(session.turn_answers.is_empty());
+
+	std::env::remove_var("OLLAMA_API_URL");
 }
 
 #[tokio::test]

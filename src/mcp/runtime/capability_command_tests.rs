@@ -952,3 +952,210 @@ fn test_list_active_names_is_sorted() {
 
 	clear_seeded_caps(&["captest-names-a", "captest-names-b", "captest-names-c"]);
 }
+#[tokio::test]
+#[serial]
+async fn test_capability_disable_requires_name() {
+	let config = test_config();
+
+	let result =
+		execute_capability_command(&cap_call(serde_json::json!({"action": "disable"})), &config)
+			.await
+			.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(text_of(&result).contains("name"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_capability_enable_static_without_filter_reports_all_tools() {
+	let sb = CapSandbox::new("staticall");
+	sb.cap(
+		"captest-staticall",
+		"triggers = [\"use the staticall cap\"]\n",
+		// No [roles.mcp] allowed_tools: the static branch gets no bare tool
+		// names, so the summary must say "all tools" instead of "none".
+		"[[mcp.servers]]\nname = \"captest-staticall-srv\"\ntype = \"builtin\"\ntimeout_seconds = 30\ntools = []\n",
+	);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let mut config = test_config();
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::builtin(
+			"captest-staticall-srv",
+			30,
+			vec![],
+		));
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "enable", "name": "captest-staticall"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "enable failed: {}", text_of(&result));
+	let msg = text_of(&result);
+	assert!(
+		msg.contains("Activated 1 server(s): captest-staticall-srv"),
+		"got: {msg}"
+	);
+	assert!(msg.contains("all tools the server exposes"), "got: {msg}");
+	assert!(is_active("captest-staticall"));
+
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "disable", "name": "captest-staticall"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "disable failed: {}", text_of(&result));
+	assert!(!is_active("captest-staticall"));
+
+	crate::mcp::runtime::dynamic::clear_all();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_auto_activate_gates_before_matching() {
+	let config = test_config();
+
+	// System-managed content is never a user intent.
+	let activated = auto_activate_capabilities_for_intent(
+		"<instructions>internal steering</instructions>",
+		&config,
+	)
+	.await;
+	assert!(activated.is_empty());
+
+	// Too little signal to score.
+	let activated = auto_activate_capabilities_for_intent("ok", &config).await;
+	assert!(activated.is_empty());
+
+	// No inactive candidates at all: the only installed cap is already active.
+	{
+		let sb = CapSandbox::new("autone");
+		sb.cap(
+			"captest-solo",
+			"triggers = [\"use the solo cap\"]\n",
+			"[[mcp.servers]]\nname = \"captest-solo-srv\"\ntype = \"builtin\"\ntimeout_seconds = 30\ntools = []\n",
+		);
+		reset_registry();
+		seed_cap("captest-solo", "captest-solo-srv", &[], 0);
+		let activated =
+			auto_activate_capabilities_for_intent("please use the solo cap right now", &config)
+				.await;
+		assert!(activated.is_empty());
+		reset_registry();
+	}
+
+	// Env-gated caps are filtered out of the inactive set before matching,
+	// leaving no candidates — deterministic without any embedding model.
+	{
+		let sb = CapSandbox::new("autogate");
+		// Only the env-gated cap: after the env filter the inactive set is
+		// empty, so the function returns before any trigger/embedding work.
+		sb.cap(
+			"captest-envgate",
+			"triggers = [\"use the env cap\"]\n",
+			"[[mcp.servers]]\nname = \"captest-env-srv\"\ntype = \"stdio\"\ncommand = \"captest-no-such-binary\"\nargs = []\ntimeout_seconds = 5\ntools = []\nenv = { API_KEY = \"{{ENV:CAPTEST_MISSING_KEY}}\" }\n",
+		);
+		reset_registry();
+		let activated =
+			auto_activate_capabilities_for_intent("use the env cap right now please", &config)
+				.await;
+		assert!(activated.is_empty());
+		assert!(!is_active("captest-envgate"));
+		reset_registry();
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn test_load_env_capabilities_success_and_idempotent() {
+	let sb = CapSandbox::new("envok");
+	install_fixture_caps(&sb);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let config = test_config();
+	let _env = EnvGuard::new(&["OCTOMIND_CAPABILITIES"]);
+
+	// A deps-only cap activates for real: Starting + Completed(true).
+	std::env::set_var("OCTOMIND_CAPABILITIES", "captest-deps-ok");
+	let events = std::sync::Mutex::new(Vec::new());
+	let cb = |e: EnvCapabilityProgress| {
+		events.lock().unwrap().push(e);
+	};
+	load_env_capabilities(&config, Some(&cb)).await;
+	assert!(is_active("captest-deps-ok"));
+
+	// Already-active caps short-circuit to Completed(true) without re-enabling.
+	load_env_capabilities(&config, Some(&cb)).await;
+	assert!(is_active("captest-deps-ok"));
+
+	let events = events.into_inner().unwrap();
+	let starts = events
+		.iter()
+		.filter(|e| matches!(e, EnvCapabilityProgress::Starting { .. }))
+		.count();
+	let completions: Vec<(String, bool)> = events
+		.into_iter()
+		.filter_map(|e| match e {
+			EnvCapabilityProgress::Completed {
+				capability,
+				success,
+			} => Some((capability, success)),
+			_ => None,
+		})
+		.collect();
+	assert_eq!(starts, 2, "one Starting per run");
+	assert_eq!(completions.len(), 2, "{completions:?}");
+	assert!(completions
+		.iter()
+		.all(|(name, ok)| name == "captest-deps-ok" && *ok));
+
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_activate_capability_inline_branches() {
+	let sb = CapSandbox::new("inline");
+	install_fixture_caps(&sb);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let config = test_config();
+
+	// Already active: idempotent empty success.
+	seed_cap("captest-static", "captest-static-srv", &["tool_alpha"], 0);
+	let activated = activate_capability_inline("captest-static", &config)
+		.await
+		.expect("already-active is Ok");
+	assert!(activated.is_empty());
+
+	// Env gate: hard error naming the capability.
+	let err = activate_capability_inline("captest-envgate", &config)
+		.await
+		.expect_err("env gate must bail");
+	assert!(err.to_string().contains("requires env vars"));
+
+	// Empty cap: neither servers nor deps.
+	let err = activate_capability_inline("captest-empty", &config)
+		.await
+		.expect_err("empty cap must bail");
+	assert!(err.to_string().contains("no [[mcp.servers]] and no [deps]"));
+
+	// Deps-only cap: activation is the install, no servers come back.
+	let activated = activate_capability_inline("captest-deps-ok", &config)
+		.await
+		.expect("deps-only activates");
+	assert!(activated.is_empty());
+	assert!(is_active("captest-deps-ok"));
+
+	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+}

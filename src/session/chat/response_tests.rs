@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use super::*;
+use crate::session::chat::test_support::{
+	fake_provider_config, fake_session, final_response, spawn_stub, tool_call_response, ENV_LOCK,
+};
 use serde_json::json;
 
 #[test]
@@ -348,4 +351,410 @@ async fn test_get_tool_server_name_async_unknown_tool() {
 		get_tool_server_name_async("zzz_no_such_tool", &config).await,
 		"unknown"
 	);
+}
+
+/// The tool loop gate requires at least one configured MCP server; the
+/// template has none, so tests that must enter the loop push a builtin one.
+fn config_with_core_server(mut config: Config) -> Config {
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::Builtin {
+			name: "core".to_string(),
+			timeout_seconds: 300,
+			tools: vec![],
+			auto_bind: None,
+		});
+	config
+}
+
+fn recording_sink() -> RecordingSink {
+	RecordingSink(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+}
+
+#[cfg(unix)]
+fn make_executable(path: &std::path::Path) {
+	use std::os::unix::fs::PermissionsExt;
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+		.expect("chmod +x fixture");
+}
+
+/// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
+fn write_local_tool(workdir: &std::path::Path, name: &str, body: &str) {
+	let dir = workdir.join(".agents/tools");
+	std::fs::create_dir_all(&dir).expect("create tools dir");
+	let path = dir.join(name);
+	std::fs::write(&path, body).expect("write tool script");
+	make_executable(&path);
+}
+
+#[tokio::test]
+async fn test_process_response_final_answer_emits_thinking_assistant_and_cost() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.add_user_message("hello").expect("add user message");
+	let config = template_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let sink = recording_sink();
+
+	let params = ResponseProcessingParams {
+		content: "final answer".to_string(),
+		exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+		tool_calls: None,
+		thinking: Some(ThinkingBlock::new("pondering")),
+		finish_reason: Some("stop".to_string()),
+		response_id: Some("resp_1".to_string()),
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink: sink.clone(),
+		mode: OutputMode::Jsonl,
+	};
+
+	process_response(params)
+		.await
+		.expect("final answer processing");
+
+	let messages = sink.0.lock().expect("sink lock");
+	assert_eq!(messages.len(), 3, "{messages:?}");
+	assert!(matches!(&messages[0], ServerMessage::Thinking(t) if t.content == "pondering"));
+	assert!(matches!(&messages[1], ServerMessage::Assistant(a) if a.content == "final answer"));
+	assert!(matches!(messages[2], ServerMessage::Cost(_)));
+	drop(messages);
+
+	assert_eq!(session.last_response, "final answer");
+	assert_eq!(session.turn_answers, vec!["final answer".to_string()]);
+	let last = session.session.messages.last().expect("assistant recorded");
+	assert_eq!(last.role, "assistant");
+	assert_eq!(last.content, "final answer");
+	assert_eq!(last.id.as_deref(), Some("resp_1"));
+}
+
+#[tokio::test]
+async fn test_process_response_terminal_mode_warns_when_last_message_is_not_user() {
+	// Empty session + terminal mode: the edge-case warning prints, then the
+	// final answer is still recorded normally.
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	let config = template_config();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let sink = recording_sink();
+
+	let params = ResponseProcessingParams {
+		content: "answer".to_string(),
+		exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+		tool_calls: None,
+		thinking: None,
+		finish_reason: Some("stop".to_string()),
+		response_id: None,
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink,
+		mode: OutputMode::NonInteractive,
+	};
+
+	process_response(params)
+		.await
+		.expect("processing continues past the warning");
+
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(session.session.messages[0].role, "assistant");
+	assert_eq!(session.session.messages[0].content, "answer");
+}
+
+#[tokio::test]
+async fn test_process_response_cancelled_at_start_returns_cancelled_error() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	let config = template_config();
+	let (tx, rx) = tokio::sync::watch::channel(false);
+	tx.send(true).expect("pre-fire cancellation");
+	let sink = recording_sink();
+
+	let params = ResponseProcessingParams {
+		content: "answer".to_string(),
+		exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+		tool_calls: None,
+		thinking: None,
+		finish_reason: None,
+		response_id: None,
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink,
+		mode: OutputMode::Jsonl,
+	};
+
+	let err = process_response(params)
+		.await
+		.expect_err("cancelled at entry must error");
+	assert!(crate::session::cancellation::is_cancelled(&err));
+	assert!(session.session.messages.is_empty());
+}
+
+#[tokio::test]
+async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![final_response("All done")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = config_with_core_server(fake_provider_config());
+	let mut session = fake_session("run the thing");
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let sink = recording_sink();
+
+	let exchange = ProviderExchange::new(
+		json!({}),
+		json!({"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "zzz_missing_tool", "arguments": "{}"}}]}),
+		None,
+		"test",
+	);
+	let params = ResponseProcessingParams {
+		content: String::new(),
+		exchange,
+		tool_calls: Some(vec![crate::mcp::McpToolCall {
+			tool_name: "zzz_missing_tool".to_string(),
+			parameters: json!({}),
+			tool_id: "call_1".to_string(),
+		}]),
+		thinking: Some(ThinkingBlock::new("planning the call")),
+		finish_reason: Some("tool_calls".to_string()),
+		response_id: Some("resp_1".to_string()),
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink: sink.clone(),
+		mode: OutputMode::Jsonl,
+	};
+
+	process_response(params)
+		.await
+		.expect("tool round processing");
+
+	let messages = sink.0.lock().expect("sink lock");
+	assert!(messages.iter().any(
+		|m| matches!(m, ServerMessage::ToolUse(u) if u.tool == "zzz_missing_tool"
+					&& u.tool_id == "call_1")
+	));
+	assert!(messages
+		.iter()
+		.any(|m| matches!(m, ServerMessage::ToolResult(r) if r.tool_id == "call_1" && !r.success)));
+	assert!(messages
+		.iter()
+		.any(|m| matches!(m, ServerMessage::Assistant(a) if a.content == "All done")));
+	assert!(matches!(messages.last(), Some(ServerMessage::Cost(_))));
+	// Thinking is emitted once before execution; the final emit is suppressed
+	// because the same block was already delivered.
+	assert_eq!(
+		messages
+			.iter()
+			.filter(|m| matches!(m, ServerMessage::Thinking(_)))
+			.count(),
+		1
+	);
+	drop(messages);
+
+	let roles: Vec<&str> = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.role.as_str())
+		.collect();
+	assert_eq!(roles, vec!["user", "assistant", "tool", "assistant"]);
+	assert_eq!(session.session.messages[3].content, "All done");
+}
+
+#[tokio::test]
+async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	// Three identical tool rounds: round 1 comes from params, rounds 2-3 from
+	// the stub; the loop detector fires on round 3 and the steer note is
+	// injected before the final follow-up.
+	let url = spawn_stub(vec![
+		tool_call_response("loopdump", json!({})),
+		tool_call_response("loopdump", json!({})),
+		final_response("done"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		"loopdump",
+		"#!/bin/sh\n# @description Print a fixed line.\nprintf 'identical output\\n'\n",
+	);
+
+	let mut config = config_with_core_server(fake_provider_config());
+	config.supervisor.enabled = true;
+	// The planner would issue its own scripted-queue LLM calls; no plan signal
+	// is emitted here, so disabling keeps the stub queue in sync.
+	config.supervisor.plan.enabled = false;
+
+	let session_id = "resp-steer-loop-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = fake_session("keep dumping");
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let sink = recording_sink();
+
+		let params = ResponseProcessingParams {
+			content: String::new(),
+			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+			tool_calls: Some(vec![crate::mcp::McpToolCall {
+				tool_name: "loopdump".to_string(),
+				parameters: json!({}),
+				tool_id: "c1".to_string(),
+			}]),
+			thinking: None,
+			finish_reason: Some("tool_calls".to_string()),
+			response_id: None,
+			chat_session: &mut session,
+			config: &config,
+			role: "assistant",
+			operation_cancelled: rx,
+			sink,
+			mode: OutputMode::Jsonl,
+		};
+
+		process_response(params)
+			.await
+			.expect("loop turn completes under the supervisor");
+
+		let steered = session.session.messages.iter().any(|m| {
+			m.role == "user"
+				&& m.content
+					.contains("identical to one already in your context")
+		});
+		assert!(
+			steered,
+			"steer note missing: {:?}",
+			session
+				.session
+				.messages
+				.iter()
+				.map(|m| (&m.role, &m.content))
+				.collect::<Vec<_>>()
+		);
+		assert!(session.steer_pending.is_none());
+		assert_eq!(session.steer_attempt, 0);
+		assert!(matches!(
+			session.steer_last_signal,
+			crate::supervisor::detect::DetectorSignal::Loop
+		));
+		assert_eq!(session.last_response, "done");
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn test_process_response_cancelled_mid_execution_skips_assistant_message() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	// The tool touches a marker file first, giving the test a deterministic
+	// sync point: cancellation fires only once execution has really started.
+	write_local_tool(
+		tmp.path(),
+		"slowtool",
+		"#!/bin/sh\n# @description Signal start then sleep.\ntouch \"$OCTOMIND_WORKDIR/slowtool-started\"\nsleep 5\necho done\n",
+	);
+
+	let config = config_with_core_server(fake_provider_config());
+	let session_id = "resp-cancel-mid-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = fake_session("run the slow tool");
+		let (tx, rx) = tokio::sync::watch::channel(false);
+		let sink = recording_sink();
+
+		let marker = tmp.path().join("slowtool-started");
+		tokio::spawn(async move {
+			let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+			while !marker.exists() && std::time::Instant::now() < deadline {
+				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+			}
+			let _ = tx.send(true);
+		});
+
+		let params = ResponseProcessingParams {
+			content: String::new(),
+			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+			tool_calls: Some(vec![crate::mcp::McpToolCall {
+				tool_name: "slowtool".to_string(),
+				parameters: json!({}),
+				tool_id: "c1".to_string(),
+			}]),
+			thinking: None,
+			finish_reason: Some("tool_calls".to_string()),
+			response_id: None,
+			chat_session: &mut session,
+			config: &config,
+			role: "assistant",
+			operation_cancelled: rx,
+			sink,
+			mode: OutputMode::NonInteractive,
+		};
+
+		process_response(params)
+			.await
+			.expect("cancelled mid-execution returns Ok");
+
+		// Tools never completed: no assistant message was added
+		assert_eq!(session.session.messages.len(), 1);
+		assert_eq!(session.session.messages[0].role, "user");
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn test_process_response_request_spending_stop_ends_turn_without_final_answer() {
+	let mut config = config_with_core_server(fake_provider_config());
+	config.max_request_spending_threshold = 0.0001;
+
+	let mut session = fake_session("spend it");
+	session.session.info.total_cost = 1.0;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let sink = recording_sink();
+
+	let params = ResponseProcessingParams {
+		content: String::new(),
+		exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+		tool_calls: Some(vec![crate::mcp::McpToolCall {
+			tool_name: "zzz_missing_tool".to_string(),
+			parameters: json!({}),
+			tool_id: "c1".to_string(),
+		}]),
+		thinking: None,
+		finish_reason: Some("tool_calls".to_string()),
+		response_id: None,
+		chat_session: &mut session,
+		config: &config,
+		role: "assistant",
+		operation_cancelled: rx,
+		sink,
+		mode: OutputMode::Jsonl,
+	};
+
+	process_response(params)
+		.await
+		.expect("spending stop is not an error");
+
+	// The tool round ran, but the follow-up was refused: no final answer
+	let roles: Vec<&str> = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.role.as_str())
+		.collect();
+	assert_eq!(roles, vec!["user", "assistant", "tool"]);
+	assert!(session.turn_answers.is_empty());
 }

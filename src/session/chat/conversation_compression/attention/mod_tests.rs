@@ -1736,3 +1736,187 @@ fn repeated_compaction_keeps_visible_prior_block_recall_coordinates() {
 	assert!(recall.contains("7"));
 	assert!(recall.contains("9"));
 }
+
+// ---------------------------------------------------------------------------
+// Controller entry points and render/telemetry surfaces not exercised by the
+// validation-focused tests above.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn build_rejects_invalid_drain_ranges() {
+	let session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "stabilise the deploy pipeline"),
+	]);
+	assert!(build(&session, 2, 1, 2.0, false, false).await.is_err());
+	assert!(build(&session, 0, 5, 2.0, false, false).await.is_err());
+}
+
+#[tokio::test]
+async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "stabilise the deploy pipeline"),
+		message("assistant", "investigating flakiness"),
+		message("tool", "test output"),
+	]);
+	session.session.info.name = "build-lanes-unit".to_string();
+	let pact = build(&session, 1, 3, 2.0, true, false)
+		.await
+		.expect("pact context builds");
+	assert!(pact.packets.iter().any(|p| p.lane == Lane::KeepExact));
+	let (pinned_band, recall_band) = pact.render_live_bands(None);
+	assert!(pinned_band.contains("stabilise the deploy pipeline"));
+	assert!(recall_band.contains("<recall_index>"));
+}
+
+#[test]
+fn render_live_bands_disabled_returns_pinned_only() {
+	let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::KeepExact));
+	pact.enabled = false;
+	let (pinned, recall) = pact.render_live_bands(None);
+	assert!(pinned.contains("task: continue the task"));
+	assert!(recall.is_empty());
+}
+
+#[test]
+fn ground_self_report_requires_handoff_and_grounds_candidates() {
+	let mut session =
+		ChatSession::for_tests(vec![message("user", "stabilise the deploy pipeline now")]);
+	session.last_self_report_handoff = Some(crate::supervisor::detect::SelfReportHandoff {
+		focus: "stabilise the deploy pipeline now".to_string(),
+		next: String::new(),
+		carry: Vec::new(),
+	});
+	let packets = build_packets("ground", &session.session.messages);
+	let hints = ground_self_report(&session, &session.session.messages, &packets);
+	assert_eq!(hints.len(), 1);
+	assert_eq!(hints[0].kind, "focus");
+	assert!(!hints[0].refs.is_empty());
+
+	// Without a handoff there is nothing to ground.
+	session.last_self_report_handoff = None;
+	assert!(ground_self_report(&session, &session.session.messages, &packets).is_empty());
+}
+
+#[tokio::test]
+async fn verify_governance_rejects_mutated_transcript() {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "stabilise the deploy pipeline"),
+		message("assistant", "working"),
+	]);
+	session.session.info.name = "gov-unit".to_string();
+	let pact = build(&session, 1, 2, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	assert!(pact.verify_governance(&session).is_ok());
+	session.session.messages[0].content.push_str(" mutated");
+	assert!(pact.verify_governance(&session).is_err());
+}
+
+#[test]
+fn write_degraded_telemetry_records_fallback_without_archive() {
+	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
+	let report = ValidationReport {
+		attribution_valid: false,
+		fallback_reason: Some("archive unavailable".to_string()),
+		valid_units: 0,
+		referenced_blocks: 0,
+		governance_hash: "hash".to_string(),
+	};
+	let summary = CompressionSummary::default();
+	pact.write_degraded_telemetry(
+		"degraded-unit",
+		"c:degraded-check",
+		&report,
+		&summary,
+		42,
+		Some("archive unavailable"),
+	)
+	.expect("degraded telemetry writes");
+	let path = crate::directories::get_sessions_dir()
+		.expect("sessions dir")
+		.join("archive")
+		.join("degraded-unit")
+		.join("c:degraded-check.pact.json");
+	let body = std::fs::read_to_string(&path).expect("telemetry file");
+	assert!(body.contains("\"fallback_reason\": \"archive unavailable\""));
+	let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn render_pinned_lines_covers_sources_and_every_policy_variant() {
+	let pinned = PinnedState {
+		task: PinnedItem {
+			text: "ship the release".to_string(),
+			source: Some("b:task".to_string()),
+		},
+		constraints: vec![PinnedItem {
+			text: "no force pushes".to_string(),
+			source: None,
+		}],
+		verification_policy: crate::supervisor::VerificationPolicy::Forbidden,
+		governance_hash: "abc".to_string(),
+	};
+	let lines = render_pinned_lines(&pinned);
+	assert!(lines.contains("task (source: b:task): ship the release"));
+	assert!(lines.contains("constraint: no force pushes"));
+	assert!(lines.contains("verification_policy: forbidden"));
+	assert!(lines.contains("governance_hash: abc"));
+
+	let allowed = PinnedState {
+		verification_policy: crate::supervisor::VerificationPolicy::Allowed,
+		..pinned.clone()
+	};
+	assert!(render_pinned_lines(&allowed).contains("verification_policy: allowed"));
+
+	let unspecified = PinnedState {
+		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
+		..pinned.clone()
+	};
+	assert!(!render_pinned_lines(&unspecified).contains("verification_policy:"));
+}
+
+#[test]
+fn summarization_closure_walks_dependencies_and_survives_cycles() {
+	let mut a = packet("b:a", Provenance::ToolObserved, Lane::Summarize);
+	let mut b = packet("b:b", Provenance::ToolObserved, Lane::Summarize);
+	let mut c = packet("b:c", Provenance::ToolObserved, Lane::Summarize);
+	b.depends_on = vec!["b:a".to_string()];
+	c.depends_on = vec!["b:b".to_string()];
+	a.depends_on = vec!["b:c".to_string()]; // cycle a → c → b → a
+	let packets = vec![a, b, c];
+	assert_eq!(summarization_closure(2, &packets), vec![0, 1, 2]);
+	assert_eq!(summarization_closure(0, &packets), vec![0, 1, 2]);
+}
+
+#[tokio::test]
+async fn rank_candidates_short_circuits_without_query_or_rivals() {
+	let packets = vec![
+		packet("b:a", Provenance::ToolObserved, Lane::Summarize),
+		packet("b:b", Provenance::ToolObserved, Lane::Summarize),
+	];
+	let mut single = vec![1usize];
+	rank_candidates(&mut single, &packets, &[], "", &HashSet::new()).await;
+	assert_eq!(single, vec![1]);
+	// Blank query short-circuits to structural ordering (newest first).
+	let mut rivals = vec![1usize, 0];
+	rank_candidates(&mut rivals, &packets, &[], "   ", &HashSet::new()).await;
+	assert_eq!(rivals, vec![1, 0]);
+}
+
+#[test]
+fn prompt_view_renders_descriptor_lines_and_grounded_hints() {
+	let mut archive_packet = packet("b:arch", Provenance::ToolObserved, Lane::ArchiveReference);
+	archive_packet.descriptor = "prior observation".to_string();
+	let mut pact = pact_with(archive_packet);
+	pact.grounded_hints = vec![GroundedHint {
+		kind: "focus",
+		refs: vec!["b:x".to_string()],
+	}];
+	let view = pact.prompt_view();
+	assert!(view.contains("descriptor: prior observation"));
+	assert!(view.contains("<grounded_self_report>"));
+	assert!(view.contains("focus: b:x"));
+}

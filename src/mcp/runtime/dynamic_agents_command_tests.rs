@@ -172,3 +172,76 @@ async fn test_agent_lifecycle_and_in_process_execution() {
 
 	clear_all();
 }
+#[tokio::test]
+#[serial]
+async fn test_agent_list_empty_message() {
+	clear_all();
+
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({"action": "list"})))
+		.await
+		.expect("dispatch");
+	assert!(!is_err(&result), "got: {}", text_of(&result));
+	assert!(
+		text_of(&result).contains("No dynamic agents"),
+		"got: {}",
+		text_of(&result)
+	);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_agent_add_rejects_unknown_server_ref() {
+	clear_all();
+
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({
+		"action": "add",
+		"name": "__dynagent_badref",
+		"system": "You are a test.",
+		"server_refs": ["__dynagent_no_such_srv"]
+	})))
+	.await
+	.expect("dispatch");
+	assert!(is_err(&result));
+	assert!(
+		text_of(&result).contains("'__dynagent_no_such_srv' not found"),
+		"got: {}",
+		text_of(&result)
+	);
+	assert!(text_of(&result).contains("Available servers"));
+	assert!(!is_dynamic("__dynagent_badref"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_agent_add_infers_server_refs_from_allowed_tools() {
+	clear_all();
+
+	// The template config's `core` builtin server is made visible via the
+	// global tool map — the inference path resolves allowed_tools entries
+	// through get_tool_server_name.
+	let config: crate::config::Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({
+		"action": "add",
+		"name": "__dynagent_infer",
+		"system": "You are a test.",
+		"allowed_tools": ["plan"]
+	})))
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "add failed: {}", text_of(&result));
+
+	let agents = list_agents();
+	let added = agents
+		.iter()
+		.find(|(a, _)| a.name == "__dynagent_infer")
+		.expect("agent registered");
+	assert_eq!(added.0.server_refs, vec!["core".to_string()]);
+
+	clear_all();
+}

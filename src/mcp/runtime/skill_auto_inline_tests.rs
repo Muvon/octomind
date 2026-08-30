@@ -503,3 +503,111 @@ fn init_pool_with_fresh_data_dir_yields_empty_pool_and_clears_retries() {
 	get_pool().write().unwrap().clear();
 	get_retry_tracker().write().unwrap().clear();
 }
+#[test]
+#[serial]
+fn clear_pool_for_session_drops_only_that_session() {
+	let a = "__skillauto_pool_a".to_string();
+	let b = "__skillauto_pool_b".to_string();
+	{
+		let mut pool = get_pool().write().unwrap();
+		pool.insert(
+			a.clone(),
+			SkillPool {
+				entries: Vec::new(),
+			},
+		);
+		pool.insert(
+			b.clone(),
+			SkillPool {
+				entries: Vec::new(),
+			},
+		);
+	}
+
+	clear_pool_for_session(&a);
+	let pool = get_pool().read().unwrap();
+	assert!(!pool.contains_key(&a), "cleared session must be gone");
+	assert!(pool.contains_key(&b), "other session must survive");
+	drop(pool);
+	get_pool().write().unwrap().clear();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+async fn validators_report_failure_then_cap_after_max_retries() {
+	let _guard = DataDirGuard::new();
+	let sid = "__skillauto_fail_valid".to_string();
+
+	// A tap skill whose validate script always fails with a marker on stderr.
+	let tap = crate::directories::get_octomind_data_dir()
+		.expect("data dir")
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap");
+	let skill_dir = tap.join("skills").join("skillauto-failing");
+	std::fs::create_dir_all(&skill_dir).expect("skill dir");
+	write_script(&skill_dir, "#!/bin/sh\necho SKILLAUTO-BROKEN >&2\nexit 1\n");
+
+	// The template disables auto_validation — flip it on for this session.
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	config.skills.auto_validation = true;
+	config.skills.validation_timeout = 10;
+	crate::session::context::set_session_config(&sid, &config);
+	crate::session::context::add_active_skill(&sid, "skillauto-failing");
+	get_retry_tracker().write().unwrap().clear();
+
+	let failures = crate::session::context::with_session_id(sid.clone(), async {
+		run_validators("assistant output", std::path::Path::new("/tmp")).await
+	})
+	.await;
+	assert_eq!(failures.len(), 1, "{failures:?}");
+	assert!(failures[0].0 == "skillauto-failing");
+	assert!(
+		failures[0].1.contains("SKILLAUTO-BROKEN"),
+		"{}",
+		failures[0].1
+	);
+	assert_eq!(
+		get_retry_tracker()
+			.read()
+			.unwrap()
+			.get("skillauto-failing")
+			.copied(),
+		Some(1)
+	);
+
+	// Second failure increments the retry counter again.
+	let failures = crate::session::context::with_session_id(sid.clone(), async {
+		run_validators("assistant output", std::path::Path::new("/tmp")).await
+	})
+	.await;
+	assert_eq!(failures.len(), 1, "still failing below the cap");
+	assert_eq!(
+		get_retry_tracker()
+			.read()
+			.unwrap()
+			.get("skillauto-failing")
+			.copied(),
+		Some(2)
+	);
+
+	// At the cap the validator is skipped entirely: no failure reported.
+	get_retry_tracker()
+		.write()
+		.unwrap()
+		.insert("skillauto-failing".to_string(), config.skills.max_retries);
+	let failures = crate::session::context::with_session_id(sid.clone(), async {
+		run_validators("assistant output", std::path::Path::new("/tmp")).await
+	})
+	.await;
+	assert!(
+		failures.is_empty(),
+		"capped validator must be skipped: {failures:?}"
+	);
+
+	get_retry_tracker().write().unwrap().clear();
+	crate::session::context::cleanup_session(&sid);
+}

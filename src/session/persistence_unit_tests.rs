@@ -874,3 +874,20 @@ fn resume_role_falls_back_to_summary_role() {
 	write_named_session("role-empty", &[summary_json_line(&empty, 1)]);
 	assert_eq!(resume_role("role-empty"), None);
 }
+
+// ---- summary_log_entry ----
+
+#[test]
+fn summary_log_entry_snapshots_type_timestamp_and_session_info() {
+	let info = test_session_info("snapshot");
+	let entry = summary_log_entry(&info);
+
+	assert_eq!(entry["type"], "SUMMARY");
+	assert_eq!(entry["session_info"]["name"], "snapshot");
+	assert_eq!(entry["session_info"]["model"], "test/model");
+	assert_eq!(entry["session_info"]["created_at"], 1_700_000_000u64);
+	assert!(
+		entry["timestamp"].as_u64().is_some(),
+		"timestamp must serialize as seconds"
+	);
+}

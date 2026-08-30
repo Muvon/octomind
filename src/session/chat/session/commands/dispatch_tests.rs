@@ -369,6 +369,10 @@ async fn info_throughput_counts_reasoning_tokens() {
 	session.session.info.output_tokens = 406;
 	session.session.info.reasoning_tokens = 8_900;
 	session.session.info.total_api_time_ms = 63_400;
+	session.session.info.total_api_calls = 2;
+	session.session.info.turn_timing.completed = 2;
+	session.session.info.turn_timing.total_time_ms = 90_000;
+	session.session.info.turn_timing.last_time_ms = 40_000;
 	let mut config = test_config();
 	let result = dispatch(&mut session, &mut config, "/info")
 		.await
@@ -376,8 +380,16 @@ async fn info_throughput_counts_reasoning_tokens() {
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected rendered info output");
 	};
+	let json = output.to_json();
+	assert_eq!(json["timing"]["model_time_ms"], 63_400);
+	assert_eq!(json["timing"]["avg_request_time_ms"], 31_700);
+	assert_eq!(json["timing"]["completed_turns"], 2);
+	assert_eq!(json["timing"]["avg_turn_time_ms"], 45_000);
+
 	let CommandOutput::Info {
-		tokens_per_second, ..
+		tokens_per_second,
+		timing,
+		..
 	} = *output
 	else {
 		panic!("expected info output variant");
@@ -387,4 +399,5 @@ async fn info_throughput_counts_reasoning_tokens() {
 		(tokens_per_second - 146.8).abs() < 0.1,
 		"{tokens_per_second}"
 	);
+	assert_eq!(timing.last_turn_time_ms, 40_000);
 }

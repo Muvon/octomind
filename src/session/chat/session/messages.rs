@@ -303,6 +303,7 @@ impl ChatSession {
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
 		self.session.messages.push(message);
+		self.begin_turn_timing();
 		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime
 		// pack only after persistence succeeds, preserving the atomic-add contract.
 		self.clear_active_memory_pack();
@@ -400,6 +401,7 @@ impl ChatSession {
 	/// this message does not own the latest human task and cannot complete it.
 	pub fn add_system_managed_turn_message(&mut self, content: &str) -> Result<()> {
 		self.add_system_managed_user_message(content)?;
+		self.abandon_turn_timing();
 		self.completion_gate_eligible = false;
 		Ok(())
 	}
@@ -639,5 +641,89 @@ mod tests {
 		assert!(session.check_request_spending_threshold(&config).unwrap());
 		session.start_request_spending_tracking();
 		assert_eq!(session.request_spending_checkpoint, 2.5);
+	}
+
+	#[test]
+	spending_thresholds_stop_execution_only_when_exceeded() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		let mut config = crate::session::chat::test_support::fake_provider_config();
+
+		// Disabled thresholds never gate
+		config.max_session_spending_threshold = 0.0;
+		config.max_request_spending_threshold = 0.0;
+		assert!(session.check_spending_threshold(&config).unwrap());
+		assert!(session.check_request_spending_threshold(&config).unwrap());
+
+		// Under threshold → continue
+		config.max_session_spending_threshold = 1.0;
+		session.session.info.total_cost = 0.5;
+		assert!(session.check_spending_threshold(&config).unwrap());
+
+		// Over threshold with non-interactive stdin → auto-decline
+		session.session.info.total_cost = 2.0;
+		assert!(!session.check_spending_threshold(&config).unwrap());
+
+		// Request-level threshold stops the request
+		config.max_request_spending_threshold = 0.5;
+		session.start_request_spending_tracking();
+		session.session.info.total_cost += 1.0;
+		assert!(!session.check_request_spending_threshold(&config).unwrap());
+	}
+
+	#[test]
+	user_message_resets_turn_state_and_cache_flag() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.cache_next_user_message = true;
+		session.add_user_message("hello").unwrap();
+		assert_eq!(session.session.messages.len(), 1);
+		assert_eq!(session.session.messages[0].role, "user");
+		// ollama:fake-model does not support caching → flag reset, no marker applied
+		assert!(!session.cache_next_user_message);
+		assert!(session.completion_gate_eligible);
+	}
+
+	#[test]
+	system_managed_turn_message_is_wrapped_and_not_turn_owned() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.completion_gate_eligible = true;
+		session
+			.add_system_managed_turn_message("background event")
+			.unwrap();
+		let message = session.session.messages.last().unwrap();
+		assert_eq!(message.role, "user");
+		assert!(message.content.contains("background event"));
+		assert!(!session.completion_gate_eligible);
+	}
+
+	#[test]
+	assistant_message_tracks_usage_and_cost_from_exchange() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		let config = crate::session::chat::test_support::fake_provider_config();
+		let usage = crate::session::TokenUsage {
+			input_tokens: 100,
+			cache_read_tokens: 20,
+			cache_write_tokens: 10,
+			output_tokens: 50,
+			reasoning_tokens: 5,
+			total_tokens: 185,
+			cost: Some(0.5),
+			request_time_ms: Some(250),
+		};
+		let exchange = crate::session::ProviderExchange::new(
+			serde_json::json!({}),
+			serde_json::json!({"usage": {"cost": 0.25}}),
+			Some(usage),
+			"test",
+		);
+		session
+			.add_assistant_message("answer", Some(exchange), &config, "assistant")
+			.unwrap();
+		assert_eq!(session.session.messages.last().unwrap().role, "assistant");
+		assert_eq!(session.last_response, "answer");
+		assert_eq!(session.session.info.total_api_calls, 1);
+		// Normalized usage.cost wins over the raw response cost
+		assert!((session.session.info.total_cost - 0.5).abs() < 1e-9);
+		assert_eq!(session.session.info.total_api_time_ms, 250);
+		assert_eq!(session.turn_answers, vec!["answer".to_string()]);
 	}
 }

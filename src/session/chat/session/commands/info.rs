@@ -15,7 +15,7 @@
 // Info command handler
 
 use super::super::core::ChatSession;
-use super::{CommandOutput, CommandResult};
+use super::{CommandOutput, CommandResult, InfoTiming};
 use crate::config::Config;
 use anyhow::Result;
 
@@ -34,6 +34,19 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			/ (info.total_api_time_ms as f64 / 1000.0)
 	} else {
 		0.0
+	};
+	let timing = InfoTiming {
+		model_time_ms: info.total_api_time_ms,
+		requests: info.total_api_calls,
+		avg_request_time_ms: if info.total_api_calls > 0 {
+			info.total_api_time_ms / info.total_api_calls as u64
+		} else {
+			0
+		},
+		completed_turns: info.turn_timing.completed,
+		total_turn_time_ms: info.turn_timing.total_time_ms,
+		avg_turn_time_ms: info.turn_timing.average_time_ms(),
+		last_turn_time_ms: info.turn_timing.last_time_ms,
 	};
 
 	let total_compressions = info.compression_stats.total_compressions();
@@ -119,6 +132,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			total_cost: info.total_cost,
 			cache_savings,
 			tokens_per_second,
+			timing,
 			avg_tokens_per_compression,
 			avg_tokens_per_tool,
 			avg_tokens_per_response,

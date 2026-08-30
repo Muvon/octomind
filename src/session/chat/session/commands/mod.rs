@@ -59,6 +59,17 @@ use anyhow::Result;
 use colored::Colorize;
 use serde::Serialize;
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InfoTiming {
+	pub model_time_ms: u64,
+	pub requests: usize,
+	pub avg_request_time_ms: u64,
+	pub completed_turns: u64,
+	pub total_turn_time_ms: u64,
+	pub avg_turn_time_ms: u64,
+	pub last_turn_time_ms: u64,
+}
+
 // Strongly-typed command outputs
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "command_type", rename_all = "snake_case")]
@@ -82,6 +93,7 @@ pub enum CommandOutput {
 		total_cost: f64,
 		cache_savings: f64,
 		tokens_per_second: f64,
+		timing: InfoTiming,
 		avg_tokens_per_compression: f64,
 		avg_tokens_per_tool: f64,
 		avg_tokens_per_response: f64,

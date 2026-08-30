@@ -64,6 +64,8 @@ async fn test_simple_completion_turn() {
 	assert!(session.session.info.total_api_calls >= 1);
 	assert!(session.session.info.output_tokens >= 10);
 	assert!(session.session.info.total_cost > 0.0);
+	assert_eq!(session.session.info.turn_timing.completed, 1);
+	assert!(session.turn_started_at.is_none());
 }
 
 #[tokio::test]

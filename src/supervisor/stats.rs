@@ -279,6 +279,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"memory_archived": s.memory_archived,
 		"input_tokens": s.input_tokens,
 		"output_tokens": s.output_tokens,
+		"api_time_ms": s.api_time_ms,
 		"tokens_per_second": if s.api_time_ms > 0 {
 			(s.output_tokens + s.reasoning_tokens) as f64
 				/ (s.api_time_ms as f64 / 1000.0)

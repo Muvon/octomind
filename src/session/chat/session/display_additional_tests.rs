@@ -102,6 +102,9 @@ fn session_info_json_sums_time_tokens_and_reports_tool_calls() {
 		info.total_api_time_ms = 1_500;
 		info.total_tool_time_ms = 2_500;
 		info.total_layer_time_ms = 500;
+		info.turn_timing.completed = 2;
+		info.turn_timing.total_time_ms = 8_000;
+		info.turn_timing.last_time_ms = 3_000;
 		info.tool_calls = 9;
 	}
 	let json = session.get_session_info_json();
@@ -111,6 +114,9 @@ fn session_info_json_sums_time_tokens_and_reports_tool_calls() {
 	assert_eq!(json["time"]["api_ms"].as_u64(), Some(1_500));
 	assert_eq!(json["time"]["tool_ms"].as_u64(), Some(2_500));
 	assert_eq!(json["time"]["processing_ms"].as_u64(), Some(500));
+	assert_eq!(json["timing"]["completed_turns"].as_u64(), Some(2));
+	assert_eq!(json["timing"]["avg_turn_time_ms"].as_u64(), Some(4_000));
+	assert_eq!(json["timing"]["last_turn_time_ms"].as_u64(), Some(3_000));
 	assert_eq!(json["tool_calls"].as_u64(), Some(9));
 	assert_eq!(json["messages"].as_u64(), Some(0));
 }
@@ -170,10 +176,14 @@ fn session_info_string_includes_time_and_tool_calls() {
 	session.session.info.total_api_time_ms = 1_500;
 	session.session.info.total_tool_time_ms = 2_500;
 	session.session.info.total_layer_time_ms = 500;
+	session.session.info.turn_timing.completed = 2;
+	session.session.info.turn_timing.total_time_ms = 8_000;
+	session.session.info.turn_timing.last_time_ms = 3_000;
 	session.session.info.tool_calls = 9;
 	let text = session.get_session_info_string();
 	assert!(text.contains("Total time: "), "text: {text}");
 	assert!(text.contains("(API: "), "text: {text}");
+	assert!(text.contains("Turns: 2 completed"), "text: {text}");
 	assert!(text.contains("Tool calls: 9"), "text: {text}");
 }
 

@@ -163,6 +163,9 @@ pub(crate) fn generate_session_name() -> String {
 pub struct ChatSession {
 	pub session: Session,
 	pub last_response: String,
+	/// Monotonic start of the active genuine user turn. Abandoned/cancelled
+	/// turns are replaced by the next genuine turn and never enter averages.
+	pub(crate) turn_started_at: Option<std::time::Instant>,
 	/// The turn's deliverable as first-class state: every final assistant
 	/// message (content, no tool calls) since the latest genuine user turn,
 	/// oldest first. The verify-gate judges these as ONE deliverable. State,
@@ -371,6 +374,7 @@ impl ChatSession {
 			total_api_time_ms: 0,
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
+			turn_timing: crate::session::TurnTimingStats::default(),
 			compression_stats: CompressionStats::default(),
 			anchor: crate::session::anchor::Anchor::default(),
 			total_api_calls: 0,
@@ -402,6 +406,7 @@ impl ChatSession {
 		Self {
 			session,
 			last_response: String::new(),
+			turn_started_at: None,
 			turn_answers: Vec::new(),
 			model: model_name,
 			role: params.role.to_string(),
@@ -633,6 +638,7 @@ impl ChatSession {
 					let mut chat_session = ChatSession {
 						session,
 						last_response: String::new(),
+						turn_started_at: None,
 						turn_answers: Vec::new(),
 						model: restored_model,               // Use restored model from session
 						role: params.role.to_string(),       // Add role from params
@@ -1405,6 +1411,24 @@ impl ChatSession {
 	pub fn invalidate_tool_cache(&mut self) {
 		self.cached_tools = None;
 	}
+
+	pub(crate) fn begin_turn_timing(&mut self) {
+		self.turn_started_at = Some(std::time::Instant::now());
+	}
+
+	pub(crate) fn finish_turn_timing(&mut self) {
+		if !self.completion_gate_eligible {
+			self.turn_started_at = None;
+			return;
+		}
+		if let Some(started_at) = self.turn_started_at.take() {
+			self.session.info.turn_timing.record(started_at.elapsed());
+		}
+	}
+
+	pub(crate) fn abandon_turn_timing(&mut self) {
+		self.turn_started_at = None;
+	}
 }
 
 #[cfg(test)]
@@ -1425,6 +1449,7 @@ impl ChatSession {
 				session_file: None,
 			},
 			last_response: String::new(),
+			turn_started_at: None,
 			turn_answers: Vec::new(),
 			model: "anthropic/claude-3-5-sonnet".to_string(),
 			role: "core".to_string(),

@@ -22,6 +22,7 @@
 
 use super::CommandOutput;
 use crate::config::Config;
+use crate::session::chat::formatting::format_duration;
 use crate::session::chat::tool_display::{
 	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
 	block_row_text, block_section, block_section_with, key_width,
@@ -375,6 +376,7 @@ pub fn display_info(output: &CommandOutput) {
 		tokens_reasoning,
 		total_cost,
 		tokens_per_second,
+		timing,
 		avg_tokens_per_compression,
 		avg_tokens_per_tool,
 		avg_tokens_per_response,
@@ -457,45 +459,98 @@ pub fn display_info(output: &CommandOutput) {
 			block_row("cost", &format!("${:.5}", total_cost), kw_sess);
 		}
 		if *tokens_per_second > 0.0 {
+			let model_time = if timing.model_time_ms > 0 {
+				format!(
+					" {} {} model time",
+					dot,
+					format_duration(timing.model_time_ms)
+				)
+			} else {
+				String::new()
+			};
 			block_row(
 				"throughput",
-				&format!("{:.1} tok/s", tokens_per_second),
+				&format!("{:.1} tok/s{}", tokens_per_second, model_time),
 				kw_sess,
 			);
+		}
+
+		// ── timing ─────────────────────────────────────────────────────
+		if timing.requests > 0 || timing.completed_turns > 0 {
+			block_section("timing");
+			let kw = key_width(["requests", "turns", "avg turn"]);
+			if timing.requests > 0 {
+				block_row(
+					"requests",
+					&format!(
+						"{} {} {} avg",
+						timing.requests,
+						dot,
+						format_duration(timing.avg_request_time_ms)
+					),
+					kw,
+				);
+			}
+			if timing.completed_turns > 0 {
+				block_row(
+					"turns",
+					&format!(
+						"{} completed {} {} active",
+						timing.completed_turns,
+						dot,
+						format_duration(timing.total_turn_time_ms)
+					),
+					kw,
+				);
+				block_row(
+					"avg turn",
+					&format!(
+						"{} {} {} last",
+						format_duration(timing.avg_turn_time_ms),
+						dot,
+						format_duration(timing.last_turn_time_ms)
+					),
+					kw,
+				);
+			}
 		}
 
 		// ── averages ───────────────────────────────────────────────────
 		let mut avg_rows: Vec<(&str, String)> = Vec::new();
 		if *avg_tokens_per_compression > 0.0 {
 			avg_rows.push((
-				"per compression",
-				format_number(*avg_tokens_per_compression as u64)
-					.bright_white()
-					.to_string(),
+				"saved / compression",
+				format!(
+					"{} tok",
+					format_number(*avg_tokens_per_compression as u64).bright_white()
+				),
 			));
 		}
 		if *avg_tokens_per_tool > 0.0 {
 			avg_rows.push((
-				"per tool",
-				format_number(*avg_tokens_per_tool as u64)
-					.bright_white()
-					.to_string(),
+				"output / tool",
+				format!(
+					"{} tok",
+					format_number(*avg_tokens_per_tool as u64).bright_white()
+				),
 			));
 		}
 		if *avg_tokens_per_response > 0.0 {
 			avg_rows.push((
-				"per response",
-				format_number(*avg_tokens_per_response as u64)
-					.bright_white()
-					.to_string(),
+				"output / response",
+				format!(
+					"{} tok",
+					format_number(*avg_tokens_per_response as u64).bright_white()
+				),
 			));
 		}
 		if *avg_input_tokens > 0.0 {
 			avg_rows.push((
-				"per request",
-				format_number(*avg_input_tokens as u64)
-					.bright_white()
-					.to_string(),
+				"input / request",
+				format!(
+					"{} tok",
+					format_number(*avg_input_tokens as u64).bright_white()
+				),
 			));
 		}
 		if !avg_rows.is_empty() {
@@ -585,7 +640,16 @@ pub fn display_info(output: &CommandOutput) {
 				// Reasoning tokens are generated in the same request window.
 				let tps = (stats.output_tokens + stats.reasoning_tokens) as f64
 					/ (stats.api_time_ms as f64 / 1000.0);
-				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
+				block_row(
+					"throughput",
+					&format!(
+						"{:.1} tok/s {} {} model time",
+						tps,
+						dot,
+						format_duration(stats.api_time_ms)
+					),
+					kw,
+				);
 			}
 			if stats.cost > 0.0 {
 				block_row(
@@ -692,6 +756,7 @@ pub fn display_info(output: &CommandOutput) {
 			let memory_archived = get_u64("memory_archived");
 			let sup_in = get_u64("input_tokens");
 			let sup_out = get_u64("output_tokens");
+			let sup_time_ms = get_u64("api_time_ms");
 			let sup_tps = get_f64("tokens_per_second");
 			let sup_cost = get_f64("cost");
 			let gate_runs = get_u64("gate_runs");
@@ -881,7 +946,16 @@ pub fn display_info(output: &CommandOutput) {
 				);
 			}
 			if sup_tps > 0.0 {
-				block_row("throughput", &format!("{:.1} tok/s", sup_tps), kw_sv);
+				let model_time = if sup_time_ms > 0 {
+					format!(" {} {} model time", dot, format_duration(sup_time_ms))
+				} else {
+					String::new()
+				};
+				block_row(
+					"throughput",
+					&format!("{:.1} tok/s{}", sup_tps, model_time),
+					kw_sv,
+				);
 			}
 			if sup_cost > 0.0 {
 				block_row(

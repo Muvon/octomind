@@ -694,6 +694,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::notify(
 					"unverified state changes remain — repair budget exhausted",
 				);
+				chat_session.finish_turn_timing();
 				return Ok(());
 			}
 			if !already_nudged {
@@ -816,6 +817,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 							"completion evidence passed, but plan finalization failed: {error}"
 						));
 						reinforce_recalled(chat_session, -0.05).await;
+						chat_session.finish_turn_timing();
 						return Ok(());
 					}
 				}
@@ -858,6 +860,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						gaps.len()
 					);
 					reinforce_recalled(chat_session, -0.15).await;
+					chat_session.finish_turn_timing();
 					return Ok(());
 				}
 				let note = crate::supervisor::gate::format_advisory(&gaps);
@@ -996,6 +999,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// reported use for retention, but applies no correctness credit. Gate paths
 	// already consumed the references above, so this is a no-op for them.
 	reinforce_recalled(chat_session, 0.0).await;
+	chat_session.finish_turn_timing();
 
 	Ok(())
 }

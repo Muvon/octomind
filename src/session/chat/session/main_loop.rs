@@ -164,7 +164,11 @@ async fn print_command_output(
 	session: &mut ChatSession,
 	config: &Config,
 ) {
-	output.display_cli(session, config).await;
+	if config.output_mode() == OutputMode::Jsonl {
+		println!("{}", output.to_json());
+	} else {
+		output.display_cli(session, config).await;
+	}
 }
 
 /// Start webhook listeners for all activated hooks.

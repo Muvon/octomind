@@ -410,6 +410,19 @@ impl ChatSession {
 				"tool_ms": self.session.info.total_tool_time_ms,
 				"processing_ms": self.session.info.total_layer_time_ms
 			},
+			"timing": {
+				"model_time_ms": self.session.info.total_api_time_ms,
+				"requests": self.session.info.total_api_calls,
+				"avg_request_time_ms": if self.session.info.total_api_calls > 0 {
+					self.session.info.total_api_time_ms / self.session.info.total_api_calls as u64
+				} else {
+					0
+				},
+				"completed_turns": self.session.info.turn_timing.completed,
+				"total_turn_time_ms": self.session.info.turn_timing.total_time_ms,
+				"avg_turn_time_ms": self.session.info.turn_timing.average_time_ms(),
+				"last_turn_time_ms": self.session.info.turn_timing.last_time_ms
+			},
 			"messages": self.session.messages.len(),
 			"tool_calls": self.session.info.tool_calls,
 			"compression": {
@@ -485,6 +498,15 @@ impl ChatSession {
 				format_duration(self.session.info.total_api_time_ms),
 				format_duration(self.session.info.total_tool_time_ms),
 				format_duration(self.session.info.total_layer_time_ms)
+			));
+		}
+		if self.session.info.turn_timing.completed > 0 {
+			output.push_str(&format!(
+				"Turns: {} completed, {} active, {} average, {} last\n",
+				self.session.info.turn_timing.completed,
+				format_duration(self.session.info.turn_timing.total_time_ms),
+				format_duration(self.session.info.turn_timing.average_time_ms()),
+				format_duration(self.session.info.turn_timing.last_time_ms)
 			));
 		}
 

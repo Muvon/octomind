@@ -313,6 +313,30 @@ impl LearningSessionStats {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TurnTimingStats {
+	pub completed: u64,
+	pub total_time_ms: u64,
+	pub last_time_ms: u64,
+}
+
+impl TurnTimingStats {
+	pub fn record(&mut self, elapsed: std::time::Duration) {
+		let elapsed_ms = elapsed.as_millis().min(u64::MAX as u128) as u64;
+		self.completed = self.completed.saturating_add(1);
+		self.total_time_ms = self.total_time_ms.saturating_add(elapsed_ms);
+		self.last_time_ms = elapsed_ms;
+	}
+
+	pub fn average_time_ms(&self) -> u64 {
+		if self.completed == 0 {
+			0
+		} else {
+			self.total_time_ms / self.completed
+		}
+	}
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionInfo {
 	pub name: String,
 	pub created_at: u64,
@@ -336,6 +360,10 @@ pub struct SessionInfo {
 	pub total_tool_time_ms: u64, // Total time spent executing tools
 	#[serde(default)]
 	pub total_layer_time_ms: u64, // Total time spent in layer processing
+	/// User-perceived latency for completed genuine user turns. The runtime
+	/// timer is monotonic and process-local; only completed aggregates persist.
+	#[serde(default)]
+	pub turn_timing: TurnTimingStats,
 	// Compression tracking
 	#[serde(default)]
 	pub compression_stats: CompressionStats,
@@ -524,6 +552,7 @@ impl Session {
 				total_api_time_ms: 0,
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
+				turn_timing: TurnTimingStats::default(),
 				compression_stats: CompressionStats::default(),
 				anchor: crate::session::anchor::Anchor::default(),
 				total_api_calls: 0,
@@ -711,6 +740,18 @@ mod tests {
 	use serde_json::json;
 
 	#[test]
+	fn turn_timing_records_completed_turns_and_average() {
+		let mut timing = TurnTimingStats::default();
+		timing.record(std::time::Duration::from_millis(1_500));
+		timing.record(std::time::Duration::from_millis(500));
+
+		assert_eq!(timing.completed, 2);
+		assert_eq!(timing.total_time_ms, 2_000);
+		assert_eq!(timing.average_time_ms(), 1_000);
+		assert_eq!(timing.last_time_ms, 500);
+	}
+
+	#[test]
 	fn learning_stats_persist_and_default_for_old_sessions() {
 		let old: SessionInfo = serde_json::from_value(json!({
 			"name": "old",
@@ -727,6 +768,7 @@ mod tests {
 		}))
 		.unwrap();
 		assert_eq!(old.learning_stats.packs, 0);
+		assert_eq!(old.turn_timing.completed, 0);
 
 		let mut current = SessionInfo::default();
 		current.learning_stats.record_pack(4, 700);

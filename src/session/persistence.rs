@@ -720,6 +720,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		total_api_time_ms: 0,
 		total_tool_time_ms: 0,
 		total_layer_time_ms: 0,
+		turn_timing: crate::session::TurnTimingStats::default(),
 		compression_stats: CompressionStats::default(),
 		anchor: crate::session::anchor::Anchor::default(),
 		total_api_calls: 0,

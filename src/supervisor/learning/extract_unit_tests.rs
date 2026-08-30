@@ -394,10 +394,23 @@ fn orientation_rejects_missing_invalid_or_untrusted_evidence() {
 fn orientation_rejects_evidence_hidden_by_transcript_budget() {
 	let messages = (0..400)
 		.map(|index| {
-			msg(
-				"tool",
-				&format!("tool evidence {index} {}", "x".repeat(1_000)),
-			)
+			// High-entropy fixture, deliberately: cl100k collapses repeated
+			// characters ("x".repeat(1000) → a handful of tokens), which kept the
+			// 400-message transcript UNDER TRANSCRIPT_MAX_TOKENS (32k) and made
+			// the omission below impossible. Deterministic pseudo-random hex
+			// (LCG over u64, no rand) tokenizes at ~2-3 chars/token, so the
+			// ~500 rendered chars per message × 400 messages ≈ 80k tokens —
+			// comfortably past the cap. Do not "simplify" back to repeated
+			// characters; the test would silently stop covering the budget path.
+			let mut state = (index as u64).wrapping_mul(0x9E3779B97F4A7C15);
+			let mut block = String::with_capacity(512);
+			for _ in 0..32 {
+				state = state
+					.wrapping_mul(0x9E3779B97F4A7C15)
+					.wrapping_add(0xBF58476D1CE4E5B9);
+				block.push_str(&format!("{state:016x}"));
+			}
+			msg("tool", &format!("tool evidence {index} {block}"))
 		})
 		.collect::<Vec<_>>();
 	let transcript = build_transcript(&messages);

@@ -100,3 +100,232 @@ async fn test_rich_results_bypass_truncation() {
 		.expect("passthrough never fails");
 	assert!(processed[0].extract_content().contains(&big[..100]));
 }
+
+fn template_config() -> Config {
+	toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template")
+}
+
+fn message(role: &str, content: &str) -> crate::session::Message {
+	crate::session::Message {
+		role: role.to_string(),
+		content: content.to_string(),
+		..Default::default()
+	}
+}
+
+#[test]
+fn test_context_accessors_main_session_and_layer() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut processor = ToolProcessor::new();
+	let mut context = ToolExecutionContext::MainSession {
+		chat_session: &mut session,
+		tool_processor: &mut processor,
+		tool_round_intent: "",
+	};
+
+	assert_eq!(context.session_name(), "test");
+	assert!(context.execution_context().is_none());
+	assert!(context.is_tool_allowed("anything"));
+	assert!(context.error_tracker().is_some());
+
+	let mut layer = ToolExecutionContext::Layer {
+		session_name: "layer-sess".to_string(),
+		layer_name: "reviewer".to_string(),
+	};
+	assert_eq!(layer.session_name(), "layer-sess");
+	assert_eq!(layer.execution_context().as_deref(), Some("reviewer"));
+	assert!(layer.is_tool_allowed("anything"));
+	assert!(layer.error_tracker().is_none());
+}
+
+#[test]
+fn test_increment_tool_calls_counts_main_session_only() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	assert_eq!(session.session.info.tool_calls, 0);
+	let mut processor = ToolProcessor::new();
+	let mut context = ToolExecutionContext::MainSession {
+		chat_session: &mut session,
+		tool_processor: &mut processor,
+		tool_round_intent: "",
+	};
+
+	context.increment_tool_calls("view");
+	context.increment_tool_calls("shell");
+	if let ToolExecutionContext::MainSession { chat_session, .. } = &context {
+		assert_eq!(chat_session.session.info.tool_calls, 2);
+	} else {
+		panic!("expected MainSession context");
+	}
+
+	// Layer context has no session — the call is a telemetry-only no-op
+	let mut layer = ToolExecutionContext::Layer {
+		session_name: "s".to_string(),
+		layer_name: "l".to_string(),
+	};
+	layer.increment_tool_calls("view");
+}
+
+#[tokio::test]
+async fn test_execute_tools_in_context_empty_batch_returns_empty() {
+	let config = template_config();
+	let mut context = ToolExecutionContext::Layer {
+		session_name: "layer-sess".to_string(),
+		layer_name: "reviewer".to_string(),
+	};
+
+	let (results, total_ms) =
+		execute_tools_in_context(Vec::new(), &mut context, &config, None, OutputMode::Jsonl)
+			.await
+			.expect("empty batch");
+	assert!(results.is_empty());
+	assert_eq!(total_ms, 0);
+}
+
+#[tokio::test]
+async fn test_execute_tools_in_context_unknown_tool_layer_error_result() {
+	let config = template_config();
+	let mut context = ToolExecutionContext::Layer {
+		session_name: "layer-sess".to_string(),
+		layer_name: "reviewer".to_string(),
+	};
+
+	let calls = vec![
+		crate::mcp::McpToolCall {
+			tool_name: "definitely_missing_tool_xyz".to_string(),
+			parameters: serde_json::json!({"q": 1}),
+			tool_id: "tid1".to_string(),
+		},
+		crate::mcp::McpToolCall {
+			tool_name: "also_missing_tool_abc".to_string(),
+			parameters: serde_json::json!({}),
+			tool_id: "tid2".to_string(),
+		},
+	];
+
+	let (results, _total_ms) =
+		execute_tools_in_context(calls, &mut context, &config, None, OutputMode::Jsonl)
+			.await
+			.expect("unknown tools produce error results, not Err");
+
+	// Parallel batch preserves order and identity
+	assert_eq!(results.len(), 2);
+	assert_eq!(results[0].tool_name, "definitely_missing_tool_xyz");
+	assert_eq!(results[0].tool_id, "tid1");
+	assert_eq!(results[1].tool_name, "also_missing_tool_abc");
+	assert_eq!(results[1].tool_id, "tid2");
+	for result in &results {
+		assert!(result.is_error());
+		assert!(result.extract_content().contains("not found"));
+	}
+}
+
+#[tokio::test]
+async fn test_execute_tools_in_context_error_tracker_attempts_and_loop() {
+	let config = template_config();
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut processor = ToolProcessor::new();
+	let mut context = ToolExecutionContext::MainSession {
+		chat_session: &mut session,
+		tool_processor: &mut processor,
+		tool_round_intent: "",
+	};
+
+	for attempt in 1..=3 {
+		let call = crate::mcp::McpToolCall {
+			tool_name: "missing_tool_abc".to_string(),
+			parameters: serde_json::json!({"attempt": attempt}),
+			tool_id: format!("id{attempt}"),
+		};
+		let (results, _) =
+			execute_tools_in_context(vec![call], &mut context, &config, None, OutputMode::Jsonl)
+				.await
+				.expect("error results, not Err");
+		assert_eq!(results.len(), 1);
+		let content = results[0].extract_content();
+		assert!(results[0].is_error(), "{content}");
+		if attempt < 3 {
+			assert!(
+				content.contains(&format!("attempt {attempt}/3")),
+				"{content}"
+			);
+		} else {
+			assert!(content.contains("LOOP DETECTED"), "{content}");
+		}
+	}
+}
+
+#[test]
+fn test_parent_task_context_goal_and_request() {
+	let mut session = ChatSession::for_tests(vec![message("user", "fix the login bug")]);
+	session.session.info.anchor.intent = "Ship the refactor".to_string();
+
+	let task = parent_task_context(&session);
+	assert!(task.contains("Goal: Ship the refactor"), "{task}");
+	assert!(
+		task.contains("Current request: fix the login bug"),
+		"{task}"
+	);
+
+	// No anchor and no real user turn: neither segment appears
+	let bare = ChatSession::for_tests(Vec::new());
+	let empty = parent_task_context(&bare);
+	assert!(!empty.contains("Goal:"), "{empty}");
+	assert!(!empty.contains("Current request:"), "{empty}");
+}
+
+#[test]
+fn test_parent_agent_context_filters_trusted_messages() {
+	let messages = vec![
+		message("system", "  sys prompt  "),
+		message("user", "<instructions>\nbe careful\n</instructions>"),
+		message("user", "do the thing"),
+		message("assistant", "working on it"),
+		message("user", "<skill name=\"rust\">\ntips\n</skill>"),
+		message("user", "   "),
+	];
+	let session = ChatSession::for_tests(messages);
+
+	// System + <instructions> survive; plain user turns, assistant text,
+	// inactive skill injections and blank content are excluded. No session is
+	// active in this test, so every skill counts as inactive.
+	assert_eq!(
+		parent_agent_context(&session),
+		"sys prompt\n\n<instructions>\nbe careful\n</instructions>"
+	);
+}
+
+#[tokio::test]
+async fn test_execute_tap_capability_inline_missing_prompt() {
+	let config = template_config();
+	let mut session = ChatSession::for_tests(Vec::new());
+	let call = crate::mcp::McpToolCall {
+		tool_name: "tap".to_string(),
+		parameters: serde_json::json!({"action": "capability"}),
+		tool_id: "t1".to_string(),
+	};
+
+	let (result, _elapsed_ms) = execute_tap_capability_inline(&call, &mut session, &config).await;
+	assert!(result.is_error());
+	assert!(result
+		.extract_content()
+		.contains("Missing required parameter 'prompt'"));
+}
+
+#[tokio::test]
+async fn test_handle_large_tool_results_short_content_untouched() {
+	let config = template_config();
+	let results = vec![
+		crate::mcp::McpToolResult::success("t".to_string(), "i".to_string(), "small".to_string()),
+		crate::mcp::McpToolResult::error("t2".to_string(), "i2".to_string(), "bad".to_string()),
+	];
+
+	let processed = handle_large_tool_results(results, &config, OutputMode::NonInteractive)
+		.await
+		.expect("truncation never fails");
+
+	assert_eq!(processed[0].extract_content(), "small");
+	assert!(!processed[0].is_error());
+	assert_eq!(processed[1].extract_content(), "bad");
+	assert!(processed[1].is_error());
+}

@@ -204,35 +204,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		let mut stats = StepStats::default();
 		let mut lines = reader.lines();
 		while let Ok(Some(line)) = lines.next_line().await {
-			let trimmed = line.trim();
-			if trimmed.is_empty() {
-				continue;
-			}
-			if let Ok(msg) = serde_json::from_str::<ServerMessage>(trimmed) {
-				match &msg {
-					ServerMessage::Assistant(p) => {
-						if !stats.output.is_empty() {
-							stats.output.push('\n');
-						}
-						stats.output.push_str(&p.content);
-					}
-					ServerMessage::Cost(c) => {
-						stats.cost = c.session_cost;
-						stats.input_tokens = c.input_tokens;
-						stats.output_tokens = c.output_tokens;
-						stats.total_tokens = c.session_tokens;
-						stats.cache_read_tokens = c.cache_read_tokens;
-						stats.cache_write_tokens = c.cache_write_tokens;
-						stats.reasoning_tokens = c.reasoning_tokens;
-					}
-					ServerMessage::ToolUse(_) => {
-						stats.tool_count += 1;
-					}
-					ServerMessage::ToolResult(p) if !p.success => {
-						stats.tool_failed += 1;
-					}
-					_ => {}
-				}
+			if let Some(msg) = fold_stream_line(&line, &mut stats) {
 				if let Some(sp) = &spinner {
 					if let Some(line) = render_event_oneline(&msg) {
 						let agg = fmt_aggregate(
@@ -296,6 +268,43 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 			stderr_tail: truncate_tail(&stderr_text, STDERR_TAIL_CHARS),
 		},
 	}
+}
+
+/// Parse one JSONL stream line and fold it into the running step stats.
+/// Returns the parsed event so the caller can render it; blank and
+/// unparseable lines are skipped silently (the subprocess's stdout contract
+/// is best-effort JSONL).
+fn fold_stream_line(line: &str, stats: &mut StepStats) -> Option<ServerMessage> {
+	let trimmed = line.trim();
+	if trimmed.is_empty() {
+		return None;
+	}
+	let msg = serde_json::from_str::<ServerMessage>(trimmed).ok()?;
+	match &msg {
+		ServerMessage::Assistant(p) => {
+			if !stats.output.is_empty() {
+				stats.output.push('\n');
+			}
+			stats.output.push_str(&p.content);
+		}
+		ServerMessage::Cost(c) => {
+			stats.cost = c.session_cost;
+			stats.input_tokens = c.input_tokens;
+			stats.output_tokens = c.output_tokens;
+			stats.total_tokens = c.session_tokens;
+			stats.cache_read_tokens = c.cache_read_tokens;
+			stats.cache_write_tokens = c.cache_write_tokens;
+			stats.reasoning_tokens = c.reasoning_tokens;
+		}
+		ServerMessage::ToolUse(_) => {
+			stats.tool_count += 1;
+		}
+		ServerMessage::ToolResult(p) if !p.success => {
+			stats.tool_failed += 1;
+		}
+		_ => {}
+	}
+	Some(msg)
 }
 
 /// Workflow-level aggregate footer for the spinner: total elapsed time,
@@ -657,5 +666,244 @@ mod tests {
 
 		assert!(compact_params(&json!("not an object")).is_empty());
 		assert!(compact_params(&json!(null)).is_empty());
+	}
+
+	// ── JSONL stream folding ───────────────────────────────────────────────
+
+	fn fold_lines(lines: &[&str]) -> StepStats {
+		let mut stats = StepStats::default();
+		for line in lines {
+			fold_stream_line(line, &mut stats);
+		}
+		stats
+	}
+
+	#[test]
+	fn fold_stream_line_accumulates_assistant_output_with_newlines() {
+		let stats = fold_lines(&[
+			r#"{"type":"assistant","content":"part one","session_id":"s"}"#,
+			"   ",
+			r#"{"type":"assistant","content":"part two","session_id":"s"}"#,
+		]);
+		assert_eq!(stats.output, "part one\npart two");
+	}
+
+	#[test]
+	fn fold_stream_line_snapshots_cumulative_cost_fields() {
+		let stats = fold_lines(&[
+			r#"{"type":"cost","session_tokens":100,"session_cost":0.5,"input_tokens":60,"output_tokens":40,"cache_read_tokens":7,"cache_write_tokens":3,"reasoning_tokens":11,"session_id":"s"}"#,
+			r#"{"type":"cost","session_tokens":250,"session_cost":1.25,"input_tokens":150,"output_tokens":100,"cache_read_tokens":9,"cache_write_tokens":5,"reasoning_tokens":13,"session_id":"s"}"#,
+		]);
+		assert_eq!(stats.total_tokens, 250);
+		assert!((stats.cost - 1.25).abs() < f64::EPSILON);
+		assert_eq!(stats.input_tokens, 150);
+		assert_eq!(stats.output_tokens, 100);
+		assert_eq!(stats.cache_read_tokens, 9);
+		assert_eq!(stats.cache_write_tokens, 5);
+		assert_eq!(stats.reasoning_tokens, 13);
+	}
+
+	#[test]
+	fn fold_stream_line_counts_tool_uses_and_only_failed_results() {
+		let stats = fold_lines(&[
+			r#"{"type":"tool_use","tool":"read","tool_id":"t1","server":"core","params":{},"session_id":"s"}"#,
+			r#"{"type":"tool_use","tool":"write","tool_id":"t2","server":"core","params":{},"session_id":"s"}"#,
+			r#"{"type":"tool_result","tool":"read","tool_id":"t1","server":"core","content":"ok","success":true,"session_id":"s"}"#,
+			r#"{"type":"tool_result","tool":"write","tool_id":"t2","server":"core","content":"boom","success":false,"session_id":"s"}"#,
+		]);
+		assert_eq!(stats.tool_count, 2);
+		assert_eq!(stats.tool_failed, 1);
+	}
+
+	#[test]
+	fn fold_stream_line_skips_blank_and_malformed_lines() {
+		let mut stats = StepStats::default();
+		assert!(fold_stream_line("", &mut stats).is_none());
+		assert!(fold_stream_line("not json at all", &mut stats).is_none());
+		assert!(fold_stream_line("{\"type\":\"status\",\"message\":\"hi\"}", &mut stats).is_some());
+		assert_eq!(stats.output, "");
+		assert_eq!(stats.tool_count, 0);
+	}
+
+	#[test]
+	fn fold_stream_line_ignores_non_stat_events() {
+		let stats = fold_lines(&[
+			r#"{"type":"thinking","content":"hmm","session_id":"s"}"#,
+			r#"{"type":"status","message":"working"}"#,
+			r#"{"type":"error","message":"boom"}"#,
+		]);
+		assert_eq!(stats.output, "");
+		assert_eq!(stats.cost, 0.0);
+		assert_eq!(stats.tool_count, 0);
+		assert_eq!(stats.tool_failed, 0);
+	}
+
+	// ── event rendering ───────────────────────────────────────────────────
+
+	#[test]
+	fn render_event_oneline_covers_live_variants_and_skips_quiet_ones() {
+		let tool_use: ServerMessage = serde_json::from_str(
+			r#"{"type":"tool_use","tool":"read","tool_id":"t1","server":"core","params":{"path":"src/main.rs"},"session_id":"s"}"#,
+		)
+		.unwrap();
+		let line = render_event_oneline(&tool_use).expect("tool use renders");
+		assert!(line.contains("read"));
+		assert!(line.contains("core"));
+		assert!(line.contains("src/main.rs"));
+
+		let bare: ServerMessage = serde_json::from_str(
+			r#"{"type":"tool_use","tool":"list","tool_id":"t1","server":"core","params":{},"session_id":"s"}"#,
+		)
+		.unwrap();
+		assert!(
+			render_event_oneline(&bare).is_some(),
+			"param-less tool use still renders"
+		);
+
+		let skill: ServerMessage = serde_json::from_str(
+			r#"{"type":"skill","action":"activate","name":"rust","session_id":"s"}"#,
+		)
+		.unwrap();
+		assert!(render_event_oneline(&skill)
+			.expect("skill renders")
+			.contains("rust"));
+
+		let status: ServerMessage =
+			serde_json::from_str(r#"{"type":"status","message":"compiling crate\nmore detail"}"#)
+				.unwrap();
+		assert!(render_event_oneline(&status)
+			.expect("status renders")
+			.contains("compiling crate"));
+
+		let blank_status: ServerMessage =
+			serde_json::from_str(r#"{"type":"status","message":"   "}"#).unwrap();
+		assert!(render_event_oneline(&blank_status).is_none());
+
+		let notification: ServerMessage = serde_json::from_str(
+			r#"{"type":"mcp_notification","server":"db","method":"notifications/progress","params":{}}"#,
+		)
+		.unwrap();
+		assert!(render_event_oneline(&notification)
+			.expect("notification renders")
+			.contains("db"));
+
+		let error: ServerMessage =
+			serde_json::from_str(r#"{"type":"error","message":"gateway 502"}"#).unwrap();
+		assert!(render_event_oneline(&error)
+			.expect("error renders")
+			.contains("gateway 502"));
+
+		// Quiet events never touch the spinner.
+		let assistant: ServerMessage =
+			serde_json::from_str(r#"{"type":"assistant","content":"hi","session_id":"s"}"#)
+				.unwrap();
+		assert!(render_event_oneline(&assistant).is_none());
+		let cost: ServerMessage = serde_json::from_str(
+			r#"{"type":"cost","session_tokens":1,"session_cost":0.0,"input_tokens":1,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"s"}"#,
+		)
+		.unwrap();
+		assert!(render_event_oneline(&cost).is_none());
+	}
+
+	#[test]
+	fn fmt_aggregate_shows_time_cost_and_tools() {
+		let agg = fmt_aggregate(Duration::from_secs(5), 0.25, 3);
+		assert!(agg.contains("5s"));
+		assert!(agg.contains("0.2500"));
+		assert!(agg.contains('3'));
+	}
+
+	#[test]
+	fn render_event_prints_every_live_variant_without_panic() {
+		// Smoke: the railed renderer must handle every variant; quiet ones are
+		// silently skipped, live ones print under the prefix.
+		let events = [
+			r#"{"type":"tool_use","tool":"read","tool_id":"t1","server":"core","params":{"path":"x"},"session_id":"s"}"#,
+			r#"{"type":"skill","action":"use","name":"rust","session_id":"s"}"#,
+			r#"{"type":"status","message":"working"}"#,
+			r#"{"type":"mcp_notification","server":"db","method":"notifications/message","params":{}}"#,
+			r#"{"type":"error","message":"boom"}"#,
+			r#"{"type":"assistant","content":"quiet","session_id":"s"}"#,
+		];
+		for raw in events {
+			let msg: ServerMessage = serde_json::from_str(raw).unwrap();
+			render_event("  │ ", &msg);
+		}
+	}
+
+	// ── subprocess lifecycle ──────────────────────────────────────────────
+
+	#[tokio::test]
+	async fn run_step_classifies_nonzero_exit_from_test_binary() {
+		let args = RunStepArgs {
+			role: "assistant".to_string(),
+			prompt: "do the thing".to_string(),
+			session_name: None,
+			model: None,
+			workdir: None,
+			skills: None,
+			capabilities: None,
+			timeout_secs: 0,
+			event_prefix: None,
+			spinner: None,
+			wf_start: Instant::now(),
+			prior_cost: 0.0,
+			prior_tools: 0,
+		};
+		// current_exe() under `cargo test` is the test binary itself; the
+		// libtest harness rejects `--format jsonl` and exits non-zero without
+		// touching the network or any real model.
+		let outcome = run_step(args).await;
+		let RunOutcome::NonZero {
+			stats,
+			code,
+			stderr_tail,
+		} = outcome
+		else {
+			panic!("expected NonZero, got {outcome:?}");
+		};
+		assert!(
+			code.is_some_and(|c| c != 0),
+			"libtest arg error must exit non-zero"
+		);
+		assert!(
+			!stderr_tail.is_empty(),
+			"diagnostic stderr must be captured"
+		);
+		assert!(stats.output.is_empty(), "no assistant events can arrive");
+		assert_eq!(stats.tool_count, 0);
+	}
+
+	#[tokio::test]
+	async fn run_step_with_full_args_and_timeout_wrapper_classifies_nonzero() {
+		let workdir = tempfile::tempdir().expect("temp workdir");
+		let args = RunStepArgs {
+			role: "assistant".to_string(),
+			prompt: "do the thing".to_string(),
+			session_name: Some("wf-proc-test".to_string()),
+			model: Some("ollama:fake-model".to_string()),
+			workdir: Some(workdir.path().to_path_buf()),
+			skills: Some(Vec::new()),
+			capabilities: Some(vec!["cap-a".to_string()]),
+			timeout_secs: 30,
+			event_prefix: Some("  │ ".to_string()),
+			spinner: None,
+			wf_start: Instant::now(),
+			prior_cost: 0.0,
+			prior_tools: 0,
+		};
+		let outcome = run_step(args).await;
+		assert!(
+			matches!(outcome, RunOutcome::NonZero { .. }),
+			"libtest arg error must classify as NonZero"
+		);
+	}
+
+	#[tokio::test]
+	async fn send_done_is_best_effort_and_returns_ok() {
+		let dir = tempfile::tempdir().expect("temp workdir");
+		send_done("__no_such_session", Some(dir.path()))
+			.await
+			.expect("best-effort /done always returns Ok");
 	}
 }

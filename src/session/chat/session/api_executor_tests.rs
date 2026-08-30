@@ -577,3 +577,422 @@ async fn test_supervised_turn_survives_scripted_control_plane() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+// ── Supervisor gate / plan / learning paths ──────────────────────────────────
+// All against the same scripted stub: the agent call and every supervisor
+// side-call (verifier, planner, keyword extraction) hit the queue in order.
+
+/// `fake_provider_config` plus the supervisor control plane wired to the
+/// stub: gate on, learning off, compression decision model stubbed so no
+/// side-call can reach a real provider.
+fn supervised_config() -> Config {
+	let mut config = fake_provider_config();
+	config.supervisor.enabled = true;
+	config.supervisor.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.enabled = true;
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.learning.enabled = false;
+	config.compression.decision.model = "ollama:fake-model".to_string();
+	config
+}
+
+fn sup_tag(state: &str) -> String {
+	format!(
+		"\n<sup>{{\"state\":\"{state}\",\"focus\":\"unit test focus\",\"next\":null,\"carry\":[],\"plan\":null,\"memories\":[]}}</sup>"
+	)
+}
+
+fn done_response(text: &str) -> serde_json::Value {
+	final_response(&format!("{text}{}", sup_tag("done")))
+}
+
+fn progressing_response(text: &str) -> serde_json::Value {
+	final_response(&format!("{text}{}", sup_tag("progressing")))
+}
+
+/// The four clean-shape declarations the verifier parser expects alongside a
+/// verdict (see gate.rs's own parser tests).
+const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>"#;
+
+fn verifier_pass() -> serde_json::Value {
+	final_response(&format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>"))
+}
+
+fn verifier_gap() -> serde_json::Value {
+	final_response(&format!(
+		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
+	))
+}
+
+/// A `progressing` final message with no pending background work is a promise,
+/// not a result: the pre-gate nudges the turn back to work until the free
+/// budget (MAX_ITERATIONS) is spent, then lets the turn end.
+#[tokio::test]
+async fn test_unfinished_progressing_handback_is_continued_until_budget() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-unfinished-handback".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			progressing_response("Still working on it."),
+			progressing_response("Still working, pass two."),
+			progressing_response("Third pass."),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("finish the report");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("turn completes after nudges");
+
+		assert_eq!(
+			session.nudge_iterations,
+			crate::supervisor::gate::MAX_ITERATIONS
+		);
+		assert_eq!(session.session.info.total_api_calls, 3);
+		let continuations = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| m.content.contains("octomind:pre_gate_unfinished_handback"))
+			.count();
+		assert_eq!(continuations, 2, "one CONTINUE note per nudge");
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// A `done` claim the verifier accepts: gate state resets, the trajectory is
+/// labelled verified, and exactly one agent exchange was billed.
+#[tokio::test]
+async fn test_verify_gate_pass_accepts_claim_and_clears_gate_state() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-gate-pass".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			done_response("Everything is finished and verified."),
+			verifier_pass(),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("ship the feature");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("gated turn passes");
+
+		assert!(!session.gate_failed);
+		assert!(matches!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Verified
+		));
+		assert_eq!(session.gate_iterations, 0);
+		assert_eq!(session.nudge_iterations, 0);
+		// The verifier call is an out-of-band supervisor side-call: only the
+		// agent exchange lands in the session's own bookkeeping.
+		assert_eq!(session.session.info.total_api_calls, 1);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// A `done` claim the verifier rejects with a charged gap: the advisory lands
+/// in the conversation, the turn re-runs once, and the gap is retained.
+#[tokio::test]
+async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-gate-gaps".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			done_response("Trust me, it is complete."),
+			verifier_gap(),
+			// Refutation pass (if the verifier asks for one) sees no refutation.
+			final_response("no finding was refuted"),
+			// The re-run answers without a completion claim, ending the turn.
+			final_response("The gap is closed now: counter verified."),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("verify the counter");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("gaps re-run completes");
+
+		assert_eq!(session.gate_iterations, 1);
+		assert_eq!(session.last_gate_gaps.len(), 1);
+		assert!(
+			!session.gate_failed,
+			"re-run without a new claim ends the turn cleanly"
+		);
+		let advisory = session
+			.session
+			.messages
+			.iter()
+			.find(|m| m.content.contains("verification pass found gaps"))
+			.expect("gap advisory injected");
+		assert!(advisory.content.contains("the counter is unverified"));
+		assert_eq!(session.session.info.total_api_calls, 2);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// A verifier response with no parseable verdict is Indeterminate: completion
+/// is NOT accepted, the failure is recorded, and the bounded re-entry advisory
+/// asks for a checkable restatement.
+#[tokio::test]
+async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-gate-indeterminate".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		// Two garbage bodies: the parser may retry once before giving up; both
+		// are interchangeable so the stub order does not matter.
+		let url = spawn_stub(vec![
+			done_response("Done, no evidence needed."),
+			final_response("certainly! here is no protocol at all"),
+			final_response("still no protocol"),
+			final_response("Second pass with a proper answer."),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("close the task");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("indeterminate re-entry completes");
+
+		assert!(
+			session.gate_failed,
+			"unreadable verdict must not pass silently"
+		);
+		assert!(matches!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Failed
+		));
+		assert_eq!(session.gate_iterations, 1);
+		session
+			.session
+			.messages
+			.iter()
+			.find(|m| {
+				m.content
+					.contains("independent verification pass could not be completed")
+			})
+			.expect("unverified re-entry advisory injected");
+		assert_eq!(session.session.info.total_api_calls, 2);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// The deterministic mutation pre-gate: a `done` claim right after an
+/// unverified state change is nudged once; a second identical claim exhausts
+/// the shared budget and fails the gate without any verifier call.
+#[tokio::test]
+async fn test_pregate_unverified_mutation_nudges_once_then_exhausts_budget() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-pregate-mutation".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			done_response("Shipped the change."),
+			done_response("Really shipped it this time."),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("change the config");
+		session.completion_gate_eligible = true;
+		// Arm the detector the same way detect_tests does: a recorded agent
+		// round changed the tree (fp 10 -> 11) and nothing verified it since,
+		// so the live fingerprint can never match the verified baseline.
+		session.detectors.note_round_verification(
+			Some(10),
+			Some(11),
+			false,
+			false,
+			true,
+			false,
+			true,
+		);
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("turn ends after budget exhaustion");
+
+		assert!(session.gate_failed);
+		assert!(matches!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Failed
+		));
+		assert_eq!(
+			session.nudge_iterations,
+			crate::supervisor::gate::MAX_ITERATIONS
+		);
+		let nudges = session
+			.session
+			.messages
+			.iter()
+			.filter(|m| m.content.contains(PREGATE_MARKER))
+			.count();
+		assert_eq!(nudges, 1, "second pass must not duplicate the nudge note");
+		assert_eq!(session.session.info.total_api_calls, 2);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// Gate disabled: a `done` claim with a `phase_complete` plan signal drives
+/// the full external-plan lifecycle inside one turn — pre-request reconcile
+/// creates the plan, the post-response reconcile advances it, and the
+/// no-gate completion block retires it.
+#[tokio::test]
+async fn test_plan_lifecycle_without_gate_reconciles_and_retires_plan() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-plan-retire".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			// Pre-request reconcile: Request signal -> create a two-phase plan.
+			final_response(
+				"{\"decision\":\"create\",\"title\":\"Ship the widget\",\"tasks\":[{\"title\":\"build it\",\"done_when\":\"it compiles\"},{\"title\":\"test it\",\"done_when\":\"tests pass\"}]}",
+			),
+			// Agent turn: claims done AND emits a phase_complete plan signal.
+			final_response(
+				"Widget shipped.\n<sup>{\"state\":\"done\",\"focus\":\"shipped\",\"next\":null,\"carry\":[],\"plan\":\"phase_complete\",\"memories\":[]}</sup>",
+			),
+			// Post-response reconcile: phase_complete -> advance the first phase.
+			final_response("{\"decision\":\"advance\",\"summary\":\"widget built\"}"),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = supervised_config();
+		config.supervisor.gate.enabled = false;
+		config.supervisor.plan.enabled = true;
+		config.supervisor.plan.model = "ollama:fake-model".to_string();
+
+		let mut session = fake_session("build the widget end to end");
+		session.completion_gate_eligible = true;
+		session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Request);
+		session.plan_evaluated = false;
+		session.planner_failed = false;
+		// Admission-time task resolution: the turn owns whatever plan it is
+		// about to create (plan_at_turn_start stays empty).
+		session.gate_task = Some(
+			crate::supervisor::resolve::ResolvedTask::self_contained("build the widget end to end"),
+		);
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("plan-supervised turn");
+
+		assert!(
+			!crate::mcp::core::plan::has_active_plan(),
+			"done without gate must retire the plan"
+		);
+		assert!(session.pending_plan_signal.is_none(), "signal consumed");
+		assert_eq!(session.session.info.total_api_calls, 1);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// Learning enabled: the first call of a session materializes the runtime-only
+/// active memory pack. A stored GLOBAL lesson lands in the pack unconditionally
+/// (global tier has no relevance gating), so the assertion does not depend on
+/// the keyword-extraction side-call's output. `recalled_refs` is consumed by
+/// `reinforce_recalled` when the turn completes — the durable trace is the
+/// learning_stats pack counters.
+#[serial_test::serial]
+#[tokio::test]
+async fn test_learning_injection_builds_active_memory_pack() {
+	let _guard = ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+
+	let backend = crate::supervisor::learning::backend::FileBackend;
+	backend
+		.store(&crate::supervisor::learning::Lesson {
+			content: "Prefer interactive rebase before pushing to shared branches.".to_string(),
+			title: "rebase policy".to_string(),
+			scope: "global".to_string(),
+			created: chrono::Utc::now().to_rfc3339(),
+			..Default::default()
+		})
+		.await
+		.unwrap();
+
+	let sid = "api-exec-learning-pack".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		// Identical bodies: the keyword-extraction side call and the agent call
+		// interleave in no guaranteed order, so every consumer must see the
+		// same valid completion.
+		let url = spawn_stub(vec![final_response("rebase\npolicy"); 3]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = supervised_config();
+		config.supervisor.learning.enabled = true;
+		config.supervisor.learning.model = "ollama:fake-model".to_string();
+
+		let mut session = fake_session("push my branch safely");
+		run_turn(&mut session, &config)
+			.await
+			.expect("turn with recall");
+
+		assert!(
+			session.learning_injected,
+			"first call must mark learning injected"
+		);
+		assert!(
+			session.active_memory_pack.is_some(),
+			"global lesson must land in the pack"
+		);
+		assert!(session.session.info.learning_stats.packs >= 1);
+		assert!(session.session.info.learning_stats.items >= 1);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+
+	match previous {
+		Some(value) => std::env::set_var("OCTOMIND_DATA_DIR", value),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+}

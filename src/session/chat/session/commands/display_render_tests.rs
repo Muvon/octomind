@@ -700,3 +700,463 @@ fn test_render_schedule_and_monitor_list_arms() {
 			"message": "mon-1 running: watching the build log"}),
 	});
 }
+
+#[test]
+fn test_render_learning_show_and_evolution_arms() {
+	// Show: full metadata, related links, evidence provenance
+	display_learning(&CommandOutput::Learning {
+		data: json!({
+			"subcommand": "show",
+			"index": 3,
+			"memory_type": "experience",
+			"title": "coverage workflow",
+			"content": "line one\nline two",
+			"outcome": "verified",
+			"confidence": "high",
+			"scope": "project",
+			"path": "lessons/testing.md",
+			"related": ["L1", "L2"],
+			"evidence": ["session://abc/message/4"]
+		}),
+	});
+	// Show: bare record without optional metadata
+	display_learning(&CommandOutput::Learning {
+		data: json!({"subcommand": "show", "index": 1, "content": "only content"}),
+	});
+	// Evolution list: populated and empty
+	display_learning(&CommandOutput::Learning {
+		data: json!({
+			"subcommand": "evolution_list",
+			"project": "octomind",
+			"domain": "testing",
+			"records": [
+				{"id": "evo-1", "name": "run-tests-on-box", "kind": "skill", "state": "trial"},
+				{"id": "evo-2", "name": "verify-before-done", "kind": "rule", "state": "shadow"}
+			]
+		}),
+	});
+	display_learning(&CommandOutput::Learning {
+		data: json!({"subcommand": "evolution_list", "records": []}),
+	});
+	// Evolution show: with and without the native artifact
+	display_learning(&CommandOutput::Learning {
+		data: json!({
+			"subcommand": "evolution_show",
+			"record": {"name": "run-tests-on-box", "state": "trial"},
+			"native_artifact": "# SKILL.md\nRun tests on the box."
+		}),
+	});
+	display_learning(&CommandOutput::Learning {
+		data: json!({"subcommand": "evolution_show", "record": {"name": "bare", "state": "shadow"}}),
+	});
+	// Evolution action outcomes
+	for action in ["approve", "reject", "rollback"] {
+		display_learning(&CommandOutput::Learning {
+			data: json!({
+				"subcommand": "evolution_action",
+				"action": action,
+				"record": {"name": "run-tests-on-box", "state": "trial"}
+			}),
+		});
+	}
+}
+
+#[test]
+fn test_render_mcp_info_string_tools_and_empty() {
+	// String tool lists (configured, not discovered) and an empty-tools server
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "info".to_string(),
+		data: json!({
+			"subcommand": "info",
+			"servers": [
+				{"name": "configured", "health": "healthy", "connection_type": "stdio",
+				 "tools": ["alpha", "beta"]},
+				{"name": "bare", "health": "healthy", "connection_type": "http", "tools": []}
+			]
+		}),
+	});
+	// Empty-config message arm
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "info".to_string(),
+		data: json!({"subcommand": "info", "servers": [], "message": "No MCP servers configured"}),
+	});
+}
+
+#[test]
+fn test_render_mcp_full_schema_edge_cases() {
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "full".to_string(),
+		data: json!({
+			"subcommand": "full",
+			"servers": [
+				{"name": "cov", "health": "healthy", "connection_type": "builtin",
+				 "tools": ["t1", "t2", "t3"]},
+				{"name": "empty", "health": "healthy", "connection_type": "builtin", "tools": []}
+			],
+			"tools": {
+				"cov": [
+					// Enum + default + required parameter rendering
+					{"name": "t1", "description": "",
+					 "parameters": {"type": "object",
+						"properties": {"mode": {"type": "string", "enum": ["fast", "slow"],
+							"default": "fast", "description": "How to run"}},
+						"required": ["mode"]}},
+					// Non-object schema falls back to raw display
+					{"name": "t2", "description": "Non-object schema",
+					 "parameters": {"type": "string"}},
+					// Plain object schema, no enum/default
+					{"name": "t3", "description": "Plain",
+					 "parameters": {"type": "object", "properties": {"n": {"type": "number"}}}}
+				],
+				"empty": []
+			}
+		}),
+	});
+}
+
+#[test]
+fn test_render_mcp_health_zero_extras() {
+	// A server row with only name+health: no restart counters, never checked
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "health".to_string(),
+		data: json!({
+			"subcommand": "health",
+			"monitor_running": true,
+			"servers": [
+				{"name": "z", "health": "running", "last_checked_secs_ago": null}
+			]
+		}),
+	});
+}
+
+#[test]
+fn test_render_skill_pattern_and_mid_page() {
+	display_skill(&CommandOutput::Skill {
+		data: json!({
+			"subcommand": "list",
+			"total": 40,
+			"active_count": 1,
+			"page": 2,
+			"total_pages": 3,
+			"pattern": "cov*",
+			"skills": [
+				{"name": "coverage", "description": "Measures coverage", "active": true,
+				 "scripts": ["activate", "validate"]},
+				{"name": "cov-report", "description": "", "active": false}
+			]
+		}),
+	});
+}
+
+#[test]
+fn test_render_list_mid_page_nav_and_plain_text() {
+	let config = test_config();
+	display_list(
+		&CommandOutput::List {
+			sessions: vec![json!({
+				"name": "mid-page",
+				"title": "a session on page two",
+				"created": "2026-08-19 11:00",
+				"model": "ollama:fake-model",
+				"tokens": 500,
+				"cost": 0.5,
+				"is_current": false
+			})],
+			total_sessions: 40,
+			page: 2,
+			total_pages: 3,
+			plain_text: None,
+		},
+		&config,
+	);
+	// plain_text overrides the table rendering entirely
+	display_list(
+		&CommandOutput::List {
+			sessions: Vec::new(),
+			total_sessions: 1,
+			page: 1,
+			total_pages: 1,
+			plain_text: Some("just-a-session-name".to_string()),
+		},
+		&config,
+	);
+}
+
+#[test]
+fn test_render_agents_status_and_minimal_detail() {
+	// Finished rows carry a status; running rows may lack usage entirely
+	display_agents(&CommandOutput::Agents {
+		running: vec![json!({
+			"id": "r-min",
+			"role": "researcher",
+			"elapsed_secs": 3
+		})],
+		finished: vec![json!({
+			"id": "f-cancel",
+			"role": "developer",
+			"status": "cancelled",
+			"ago_secs": 45
+		})],
+		detail: None,
+		total: 2,
+	});
+	// Minimal detail card: no model/tokens/cost/last_action → placeholder text
+	display_agents(&CommandOutput::Agents {
+		running: Vec::new(),
+		finished: Vec::new(),
+		detail: Some(json!({
+			"id": "d-min",
+			"role": "developer",
+			"status": "running",
+			"elapsed_secs": 7
+		})),
+		total: 1,
+	});
+}
+
+#[test]
+fn test_render_loglevel_direct_arms() {
+	// changed + old → from/to/note rows
+	display_loglevel(&CommandOutput::Loglevel {
+		old_level: Some("info".to_string()),
+		new_level: Some("debug".to_string()),
+		current_level: None,
+		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+		changed: true,
+	});
+	// changed but no new level → bare "changed" close
+	display_loglevel(&CommandOutput::Loglevel {
+		old_level: None,
+		new_level: None,
+		current_level: None,
+		available_levels: Vec::new(),
+		changed: true,
+	});
+	// unchanged + current → current/available rows
+	display_loglevel(&CommandOutput::Loglevel {
+		old_level: None,
+		new_level: None,
+		current_level: Some("debug".to_string()),
+		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+		changed: false,
+	});
+	// unchanged + no current → fallback arm
+	display_loglevel(&CommandOutput::Loglevel {
+		old_level: None,
+		new_level: None,
+		current_level: None,
+		available_levels: Vec::new(),
+		changed: false,
+	});
+}
+
+#[test]
+fn test_render_help_with_custom_commands() {
+	use crate::session::layers::layer_trait::{InputMode, LayerConfig, OutputMode, OutputRole};
+
+	let mut config = test_config();
+	config.commands = Some(vec![LayerConfig {
+		name: "estimate".to_string(),
+		description: "estimate a task".to_string(),
+		command: "task-estimator".to_string(),
+		workdir: ".".to_string(),
+		input_mode: InputMode::Last,
+		output_mode: OutputMode::None,
+		output_role: OutputRole::Assistant,
+	}]);
+	display_help(
+		&CommandOutput::Help {
+			commands: Vec::new(),
+		},
+		&config,
+	);
+
+	// No custom commands configured → builtin listing only
+	let config = test_config();
+	display_help(
+		&CommandOutput::Help {
+			commands: Vec::new(),
+		},
+		&config,
+	);
+}
+
+#[test]
+fn test_render_report_sparse_rows() {
+	let config = test_config();
+	// Rows missing optional cells must fall back to placeholders, not panic
+	display_report(
+		&CommandOutput::Report {
+			entries: vec![
+				json!({"user_request": "sparse row"}),
+				json!({"user_request": "only cost", "cost": "$0.10"}),
+			],
+			totals: json!({"cost": "$0.10"}),
+		},
+		&config,
+	);
+}
+
+#[test]
+fn test_render_info_partial_sections() {
+	// Some sections present, others absent; failed learning outcome
+	display_info(&CommandOutput::Info {
+		session_name: "partial".to_string(),
+		model: "ollama:fake-model".to_string(),
+		role: "assistant".to_string(),
+		tokens_input: 10,
+		tokens_output: 5,
+		tokens_used: 15,
+		tokens_cached: 0,
+		tokens_cache_write: 0,
+		tokens_reasoning: 0,
+		total_cost: 0.01,
+		cache_savings: 0.0,
+		tokens_per_second: 0.0,
+		avg_tokens_per_compression: 0.0,
+		avg_tokens_per_tool: 0.0,
+		avg_tokens_per_response: 0.0,
+		avg_input_tokens: 0.0,
+		compression_stats: Some(crate::session::CompressionStats::default()),
+		cache_markers_system: 0,
+		cache_markers_tool: 0,
+		cache_markers_content: 0,
+		cache_non_cached_tokens: 0,
+		agents_stats: Some(json!({
+			"total": 1, "running": 0, "done": 1, "failed": 0,
+			"tokens_input": 10, "tokens_output": 2, "tokens_cached": 0, "total_cost": 0.01
+		})),
+		supervisor_stats: None,
+		learning_stats: json!({
+			"packs": 1, "items": 2, "tokens": 300,
+			"used": 1, "credit_positive": 0, "credit_negative": 1,
+			"used_without_verdict": 0, "active_items": 1,
+			"active_tokens": 120, "active_used_ids": [],
+			"outcome": "failed", "extracted": true
+		}),
+	});
+}
+
+#[test]
+fn test_render_mcp_dump_variants() {
+	// Populated dump: numbered sections with pretty JSON bodies
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "dump".to_string(),
+		data: json!({"subcommand": "dump", "tools": [
+			{"name": "shell", "description": "Run a command",
+			 "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
+		]}),
+	});
+	// Empty tool list
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "dump".to_string(),
+		data: json!({"subcommand": "dump", "tools": []}),
+	});
+	// tools key missing entirely
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "dump".to_string(),
+		data: json!({"subcommand": "dump"}),
+	});
+}
+
+#[test]
+fn test_render_mcp_invalid_validate_empty_and_bare_list() {
+	// Explicit invalid-subcommand payload → subcommand menu
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "bogus".to_string(),
+		data: json!({"subcommand": "invalid"}),
+	});
+	// validate with no tools → early empty close
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "validate".to_string(),
+		data: json!({"subcommand": "validate", "all_valid": true, "tools": []}),
+	});
+	// list without a servers key at all
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "list".to_string(),
+		data: json!({"subcommand": "list"}),
+	});
+}
+
+#[test]
+fn test_render_mcp_info_empty_tools_map_and_health_stopped() {
+	// tools present but an empty map → "No tools available." section
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "info".to_string(),
+		data: json!({"subcommand": "info", "servers": [], "tools": {}}),
+	});
+	// Monitor stopped, no error, no servers → zero-count close
+	display_mcp(&CommandOutput::Mcp {
+		mcp_command: "health".to_string(),
+		data: json!({"subcommand": "health", "monitor_running": false}),
+	});
+}
+
+#[test]
+fn test_render_learning_list_rich_rows_and_nav() {
+	display_learning(&CommandOutput::Learning {
+		data: json!({
+			"subcommand": "list",
+			"role": "assistant",
+			"project": "octomind",
+			"total": 30,
+			"page": 2,
+			"total_pages": 3,
+			"pattern": "cov*",
+			"lessons": [
+				{
+				"index": 4,
+				"memory_type": "experience",
+				"title": "an experience title long enough to exceed the eighty character display ceiling for the source line so it must be truncated",
+				"content": "backing content",
+				"importance": 0.5,
+				"confidence": "medium",
+				"scope": "project",
+				"tags": ["coverage", "ci"],
+				"created": "2026-08-20T08:15:30Z",
+				"outcome": "verified",
+				"related": ["L1", "L2"],
+				"evidence": ["session://x/message/9"]
+				},
+				{"index": 5, "content": "plain lesson", "importance": 0.1}
+			]
+		}),
+	});
+	// Unknown learning subcommand renders nothing
+	display_learning(&CommandOutput::Learning {
+		data: json!({"subcommand": "bogus"}),
+	});
+}
+
+#[test]
+fn test_render_image_video_usage_and_clipboard() {
+	// clipboard path renders the friendly label instead of a path
+	display_image(&CommandOutput::Image {
+		image_attached: true,
+		path: Some("clipboard".to_string()),
+		error: None,
+	});
+	// not attached, no error → usage/examples arm
+	display_image(&CommandOutput::Image {
+		image_attached: false,
+		path: None,
+		error: None,
+	});
+	display_video(&CommandOutput::Video {
+		video_attached: false,
+		path: None,
+		error: None,
+	});
+}
+
+#[test]
+fn test_gb_bar_zero_limit_is_unlimited() {
+	assert!(!gb_bar(1.0, 0.0).is_empty());
+}
+
+#[test]
+fn test_render_schedule_generic_error_close() {
+	display_schedule(&CommandOutput::Schedule {
+		data: json!({"subcommand": "remove", "is_error": true, "message": "no such entry"}),
+	});
+}

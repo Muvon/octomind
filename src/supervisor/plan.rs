@@ -759,4 +759,183 @@ mod tests {
 		assert!(rendered.contains("&amp;"));
 		assert!(rendered.chars().count() <= 600);
 	}
+
+	#[test]
+	fn into_decision_maps_every_flat_decision() {
+		let parse = |raw: &str| {
+			serde_json::from_str::<PlanResponse>(raw)
+				.unwrap()
+				.into_decision()
+		};
+		assert!(matches!(
+			parse(r#"{"decision":"no_plan","reason":"too small"}"#),
+			Some(PlanDecision::NoPlan { reason }) if reason == "too small"
+		));
+		assert!(matches!(
+			parse(r#"{"decision":"advance","summary":"phase one delivered"}"#),
+			Some(PlanDecision::Advance { summary }) if summary == "phase one delivered"
+		));
+		assert!(matches!(
+			parse(r#"{"decision":"hold","reason":"outcome not evidenced"}"#),
+			Some(PlanDecision::Hold { reason }) if reason == "outcome not evidenced"
+		));
+		assert!(matches!(
+			parse(
+				r#"{"decision":"revise","reason":"route changed","tasks":[{"title":"t","done_when":"d"}]}"#
+			),
+			Some(PlanDecision::Revise { tasks, .. }) if tasks.len() == 1
+		));
+		// Missing optional fields default instead of failing the narrowing
+		assert!(matches!(
+			parse(r#"{"decision":"create"}"#),
+			Some(PlanDecision::Create { title, tasks }) if title.is_empty() && tasks.is_empty()
+		));
+	}
+
+	#[test]
+	fn schema_enum_and_required_fields_track_each_signal() {
+		assert_eq!(
+			build_plan_schema(PlanSignal::Request)["properties"]["decision"]["enum"],
+			serde_json::json!(["create", "no_plan"])
+		);
+		assert_eq!(
+			build_plan_schema(PlanSignal::Reassess)["properties"]["decision"]["enum"],
+			serde_json::json!(["revise", "hold"])
+		);
+		for signal in [
+			PlanSignal::Request,
+			PlanSignal::PhaseComplete,
+			PlanSignal::Reassess,
+		] {
+			let schema = build_plan_schema(signal);
+			assert_eq!(
+				schema["required"],
+				serde_json::json!(["decision", "title", "summary", "reason", "tasks"])
+			);
+			assert_eq!(
+				schema["properties"]["tasks"]["maxItems"],
+				serde_json::json!(6)
+			);
+		}
+	}
+
+	#[test]
+	fn truncate_edges_passes_short_text_through() {
+		assert_eq!(truncate_edges_to_tokens("small text", 1_000), "small text");
+	}
+
+	#[test]
+	fn truncate_edges_zero_budget_returns_empty() {
+		assert_eq!(truncate_edges_to_tokens("anything at all", 0), "");
+	}
+
+	#[test]
+	fn truncate_edges_tiny_budget_cannot_afford_marker() {
+		let text = "a somewhat longer piece of text that will not fit";
+		let out = truncate_edges_to_tokens(text, 2);
+		assert!(!out.contains("middle truncated"));
+		assert!(crate::session::estimate_tokens(&out) <= 2);
+	}
+
+	#[test]
+	fn truncate_edges_preserves_both_edges_under_budget() {
+		let text = format!("HEAD {} TAIL", "filler ".repeat(400));
+		let out = truncate_edges_to_tokens(&text, 60);
+		assert!(out.contains("HEAD"));
+		assert!(out.contains("TAIL"));
+		assert!(out.contains("middle truncated"));
+		assert!(crate::session::estimate_tokens(&out) <= 60);
+	}
+
+	#[test]
+	fn phase_trajectory_empty_inputs_return_empty() {
+		assert_eq!(render_phase_trajectory(&[], 0, 100), "");
+		let assistant = Message {
+			role: "assistant".to_string(),
+			content: "content".to_string(),
+			..Default::default()
+		};
+		assert_eq!(render_phase_trajectory(&[assistant], 0, 0), "");
+	}
+
+	#[test]
+	fn phase_trajectory_without_qualifying_records_is_empty() {
+		let user = Message {
+			role: "user".to_string(),
+			content: "a question".to_string(),
+			..Default::default()
+		};
+		let blank = Message {
+			role: "assistant".to_string(),
+			content: "   ".to_string(),
+			..Default::default()
+		};
+		assert_eq!(render_phase_trajectory(&[user, blank], 0, 100), "");
+	}
+
+	#[test]
+	fn phase_trajectory_labels_unnamed_tools_as_unknown() {
+		let tool = Message {
+			role: "tool".to_string(),
+			name: None,
+			content: "observed".to_string(),
+			..Default::default()
+		};
+		let rendered = render_phase_trajectory(&[tool], 0, 100);
+		assert!(rendered.contains("[tool name=unknown]"));
+	}
+
+	#[test]
+	fn phase_trajectory_start_index_past_the_end_is_clamped() {
+		let assistant = Message {
+			role: "assistant".to_string(),
+			content: "still included".to_string(),
+			..Default::default()
+		};
+		// min(len) clamping empties the slice — a phase starting past the last
+		// message has no trajectory yet; it does not include everything.
+		assert_eq!(render_phase_trajectory(&[assistant.clone()], 9, 100), "");
+		// starting at the last message still renders it
+		assert!(render_phase_trajectory(&[assistant], 0, 100).contains("still included"));
+	}
+
+	#[test]
+	fn phase_trajectory_tight_budget_keeps_newest_record() {
+		let old = Message {
+			role: "assistant".to_string(),
+			content: format!("old {}", "x".repeat(400)),
+			..Default::default()
+		};
+		let new = Message {
+			role: "tool".to_string(),
+			name: Some("probe".to_string()),
+			content: "fresh observation".to_string(),
+			..Default::default()
+		};
+		let rendered = render_phase_trajectory(&[old, new], 0, 30);
+		assert!(rendered.contains("fresh observation"));
+		assert!(crate::session::estimate_tokens(&rendered) <= 30);
+	}
+
+	#[test]
+	fn concise_text_collapses_whitespace_and_defaults_when_empty() {
+		assert_eq!(concise_text("  \n\t  "), "no reason provided");
+		assert_eq!(
+			concise_text("  many   spaces\nand\ttabs  "),
+			"many spaces and tabs"
+		);
+		assert!(concise_text(&"word ".repeat(200)).chars().count() <= 500);
+	}
+
+	#[test]
+	fn plan_signal_wire_format_is_snake_case() {
+		assert_eq!(
+			serde_json::to_string(&PlanSignal::PhaseComplete).unwrap(),
+			"\"phase_complete\""
+		);
+		assert_eq!(
+			serde_json::from_str::<PlanSignal>("\"reassess\"").unwrap(),
+			PlanSignal::Reassess
+		);
+	}
 }

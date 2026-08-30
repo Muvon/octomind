@@ -17,8 +17,13 @@ use super::*;
 type CC<'a> = CommandCompleter<'a>;
 
 fn test_config() -> crate::config::Config {
-	toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template")
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml"))
+			.expect("parse default config template");
+	// /run completion merges the role config; without a role_map that merge
+	// hits the load-time invariant panic.
+	config.build_role_map();
+	config
 }
 
 #[test]
@@ -228,4 +233,254 @@ fn test_hint() {
 		completer.hint("/loglevel"),
 		Some(" [none|info|debug]".to_string())
 	);
+}
+
+#[test]
+fn test_complete_image_file_completion() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::create_dir(base.join("subdir")).expect("mkdir");
+	std::fs::write(base.join("pic.png"), b"x").expect("write image");
+	std::fs::write(base.join("notes.txt"), b"x").expect("write text");
+
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Directory listing: dirs first, images only, replacement starts after "/image "
+	let line = format!("/image {}/", base.display());
+	let (start, candidates) = completer.complete(&line, line.len());
+	assert_eq!(start, 7);
+	assert_eq!(candidates.len(), 2);
+	assert!(candidates[0].replacement.ends_with("subdir/"));
+	assert!(candidates[1].replacement.ends_with("pic.png"));
+
+	// Case-insensitive prefix filter inserts a (partial) candidate when the
+	// common prefix extends the typed part
+	let line = format!("/image {}/PI", base.display());
+	let (_, candidates) = completer.complete(&line, line.len());
+	assert_eq!(candidates.len(), 2);
+	assert!(candidates[0].replacement.ends_with("pic.png"));
+	assert!(candidates[0].display.contains("(partial)"));
+}
+
+#[test]
+fn test_complete_image_empty_part_lists_cwd() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Empty file part lists the current directory; repo root always has dirs
+	let (start, candidates) = completer.complete("/image ", 7);
+	assert_eq!(start, 7);
+	assert!(!candidates.is_empty());
+	assert!(candidates[0].replacement.ends_with('/'));
+}
+
+#[test]
+fn test_complete_prompt_template_completion() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Prefix filter narrows to one template; display carries the description
+	let (start, candidates) = completer.complete("/prompt re", 10);
+	assert_eq!(start, 8);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "review");
+	assert!(candidates[0].display.starts_with("review - "));
+
+	// Empty part lists every configured template
+	let (_, candidates) = completer.complete("/prompt ", 8);
+	assert!(candidates.iter().any(|c| c.replacement == "review"));
+	assert!(candidates.iter().any(|c| c.replacement == "debug"));
+
+	// Non-matching prefix yields nothing
+	let (_, candidates) = completer.complete("/prompt zzz", 11);
+	assert!(candidates.is_empty());
+}
+
+#[test]
+fn test_complete_run_no_configured_commands() {
+	let mut config = test_config();
+	// The template ships one [[commands]] entry (`reduce`); this test is
+	// about the EMPTY commands case, so drop it.
+	config.commands = None;
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Default template has no [[commands]] — completion is empty but positioned
+	let (start, candidates) = completer.complete("/run ", 5);
+	assert_eq!(start, 5);
+	assert!(candidates.is_empty());
+
+	let (_, candidates) = completer.complete("/run x", 6);
+	assert!(candidates.is_empty());
+}
+
+#[test]
+fn test_complete_context_filters() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/context ", 9);
+	assert_eq!(start, 9);
+	assert_eq!(candidates.len(), 5);
+
+	let (_, candidates) = completer.complete("/context a", 10);
+	assert_eq!(candidates.len(), 2);
+	assert_eq!(candidates[0].replacement, "all");
+	assert_eq!(candidates[1].replacement, "assistant");
+
+	let (_, candidates) = completer.complete("/context large", 14);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "large");
+}
+
+#[test]
+fn test_complete_cache_subcommands() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/cache ", 7);
+	assert_eq!(start, 7);
+	assert_eq!(candidates.len(), 3);
+
+	let (_, candidates) = completer.complete("/cache st", 9);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "stats");
+
+	let (_, candidates) = completer.complete("/cache c", 8);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "clear");
+}
+
+#[test]
+fn test_complete_role_names() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/role a", 7);
+	assert_eq!(start, 6);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "assistant");
+
+	// Empty part lists every configured role, in config order
+	let (_, candidates) = completer.complete("/role ", 6);
+	assert_eq!(candidates.len(), config.roles.len());
+	assert!(candidates.iter().any(|c| c.replacement == "assistant"));
+}
+
+#[test]
+fn test_complete_skill_no_match_is_empty() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Whatever skills are installed, an unmatchable prefix yields nothing
+	let (start, candidates) = completer.complete("/skill zzz_no_such_skill", 24);
+	assert_eq!(start, 7);
+	assert!(candidates.is_empty());
+}
+
+#[test]
+fn test_complete_command_prefix_filtering() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Bare "/" lists every command
+	let (start, candidates) = completer.complete("/", 1);
+	assert_eq!(start, 0);
+	assert_eq!(candidates.len(), crate::session::chat::COMMANDS.len());
+
+	// Prefix filter narrows to exact matches
+	let (_, candidates) = completer.complete("/don", 4);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "/done");
+
+	let (_, candidates) = completer.complete("/zzz", 4);
+	assert!(candidates.is_empty());
+}
+
+#[test]
+fn test_hint_extended() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Exact-name hints
+	assert_eq!(
+		completer.hint("/prompt"),
+		Some(" <template_name>".to_string())
+	);
+	assert_eq!(completer.hint("/run"), Some(" <command_name>".to_string()));
+	assert_eq!(
+		completer.hint("/context"),
+		Some(" [all|assistant|user|tool|large]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/cache"),
+		Some(" [stats|clear|threshold]".to_string())
+	);
+	assert_eq!(completer.hint("/role"), Some(" <role_name>".to_string()));
+	assert_eq!(completer.hint("/model"), Some(" <model_name>".to_string()));
+
+	// NOTE: the "Start typing …" hints for "/image ", "/prompt ", "/run ",
+	// "/context ", "/mcp ", "/cache ", "/loglevel ", "/role ", "/model " are
+	// dead code: each guard requires `line.len() > prefix_len` while the arg
+	// is only empty when `line.len() == prefix_len`. Current behavior: None.
+	assert_eq!(completer.hint("/image "), None);
+	assert_eq!(completer.hint("/prompt "), None);
+	assert_eq!(completer.hint("/run "), None);
+	assert_eq!(completer.hint("/context "), None);
+	assert_eq!(completer.hint("/mcp "), None);
+	assert_eq!(completer.hint("/cache "), None);
+	assert_eq!(completer.hint("/loglevel "), None);
+	assert_eq!(completer.hint("/model "), None);
+
+	// Non-empty arg falls through to the completer
+	assert_eq!(completer.hint("/image x"), None);
+	assert_eq!(completer.hint("/mcp li"), None);
+	assert_eq!(completer.hint("/loglevel d"), None);
+	assert_eq!(completer.hint("/role x"), None);
+	assert_eq!(completer.hint("/model x"), None);
+
+	// Prefix completion of a unique command
+	assert_eq!(completer.hint("/hel"), Some("p".to_string()));
+	// Exact command match yields the empty remainder
+	assert_eq!(completer.hint("/help"), Some(String::new()));
+	// No command starts with this
+	assert_eq!(completer.hint("/zzz"), None);
+}
+
+#[test]
+fn test_hint_role_lists_configured_roles() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Current behavior of the (dead) empty-arg branch is None; the role list
+	// itself is reachable only via a non-empty arg returning None, so assert
+	// the roles source the completer would use directly.
+	let roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
+	assert!(roles.contains(&"assistant".to_string()));
+	assert_eq!(completer.hint("/role "), None);
+}
+
+#[test]
+fn test_complete_file_path_edge_cases() {
+	// Missing directory under ~ expands and fails to list — empty, no panic
+	assert!(CC::complete_file_path("~/definitely_missing_dir_xyz/").is_empty());
+
+	// Empty part lists the cwd (repo root during tests) — dirs sort first
+	let cwd_listing = CC::complete_file_path("");
+	assert!(!cwd_listing.is_empty());
+	assert!(cwd_listing[0].replacement.ends_with('/'));
+
+	// Absolute tempdir path: entries keep the absolute form (nothing stripped —
+	// the tempdir is not under the process cwd)
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::create_dir(base.join("subdir")).expect("mkdir");
+	std::fs::write(base.join("pic.png"), b"x").expect("write image");
+	let listing = CC::complete_file_path(&format!("{}/", base.display()));
+	assert_eq!(listing.len(), 2);
+	assert!(listing[0]
+		.replacement
+		.starts_with(base.display().to_string().as_str()));
+	assert!(listing[0].replacement.ends_with("subdir/"));
+	assert!(listing[1].replacement.ends_with("pic.png"));
 }

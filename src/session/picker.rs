@@ -252,3 +252,7 @@ fn run_picker_loop(entries: Vec<PickerEntry>) -> Result<Option<String>> {
 	terminal::disable_raw_mode()?;
 	result
 }
+
+#[cfg(test)]
+#[path = "picker_tests.rs"]
+mod tests;

@@ -177,3 +177,7 @@ pub async fn handle_run(
 		))),
 	}
 }
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

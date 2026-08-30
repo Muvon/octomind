@@ -217,3 +217,269 @@ async fn test_load_env_skills_injects_and_is_idempotent() {
 	.await;
 	crate::session::context::cleanup_session(&sid);
 }
+
+/// Multi-skill fixture: three project skills with distinct metadata so list
+/// pagination, markers, and the compatibility line are all observable. The
+/// pattern filter scopes assertions to exactly these three regardless of what
+/// taps exist on the machine.
+fn multi_skill_workdir(session_id: &str) -> tempfile::TempDir {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path().join(".agents/skills");
+	for (name, extra, body) in [
+		("skilltest-page-a", "", "Alpha paging instructions"),
+		(
+			"skilltest-page-b",
+			"\ncompatibility: developer",
+			"Beta paging instructions",
+		),
+		(
+			"skilltest-page-c",
+			"\nallowed-tools: no_such_tool_xyz",
+			"Gamma paging instructions",
+		),
+	] {
+		let dir = base.join(name);
+		std::fs::create_dir_all(&dir).expect("skill dir");
+		std::fs::write(
+			dir.join("SKILL.md"),
+			format!(
+				"---\nname: {name}\ndescription: Paging test skill {name}{extra}\n---\n\n{body}\n"
+			),
+		)
+		.expect("write SKILL.md");
+	}
+	crate::session::context::set_session_workdir(&session_id.to_string(), tmp.path().to_path_buf());
+	tmp
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_list_pagination_and_markers() {
+	let sid = "__skilltest_paging".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let _tmp = multi_skill_workdir(&sid);
+
+		// Page 1 of 2: totals, page hint with the next offset.
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "list", "pattern": "skilltest-page", "limit": 2}),
+		))
+		.await
+		.expect("dispatch");
+		let msg = text_of(&result);
+		assert!(
+			msg.contains("Found 3 skill(s) matching pattern:"),
+			"got: {msg}"
+		);
+		assert!(
+			msg.contains("Showing 1-2 of 3. Use offset=2 to see more."),
+			"got: {msg}"
+		);
+
+		// Page 2: last skill, no further-pages hint.
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "list", "pattern": "skilltest-page", "offset": 2, "limit": 2}),
+		))
+		.await
+		.expect("dispatch");
+		let msg = text_of(&result);
+		// find_all_skills() yields readdir order (unspecified on ext4), so
+		// page 2 must show exactly the one remaining skill — whichever it is.
+		assert_eq!(msg.matches("**skilltest-page-").count(), 1, "got: {msg}");
+		assert!(!msg.contains("Use offset="), "got: {msg}");
+
+		// Active marker reflects the session's active-skill set.
+		crate::session::context::add_active_skill(&sid, "skilltest-page-a");
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "list", "pattern": "skilltest-page"}),
+		))
+		.await
+		.expect("dispatch");
+		let msg = text_of(&result);
+		assert!(
+			msg.contains("**skilltest-page-a** ✓ [active]"),
+			"got: {msg}"
+		);
+		crate::session::context::remove_active_skill(&sid, "skilltest-page-a");
+
+		// Compat marker: allowed-tools entry absent from the tool map.
+		assert!(
+			msg.contains("**skilltest-page-c** ⚠️ [missing tools: no_such_tool_xyz]"),
+			"got: {msg}"
+		);
+		// Compatibility line comes from frontmatter.
+		assert!(msg.contains("Compatibility: developer"), "got: {msg}");
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_silent_round_trip() {
+	let sid = "__skilltest_silent".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let _tmp = skill_workdir(&sid);
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use_silent", "name": SKILL_NAME}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "use_silent failed: {}", text_of(&result));
+		assert!(text_of(&result).contains("now active"));
+		assert!(crate::session::context::has_active_skill(&sid, SKILL_NAME));
+
+		// Silent mode stashes the wrapped body for the caller to inject.
+		let content = take_silent_skill_content().expect("silent content stored");
+		assert!(
+			content.contains(&format!("<skill name=\"{SKILL_NAME}\"")),
+			"got: {content}"
+		);
+		assert!(content.contains(INSTRUCTIONS_MARKER), "got: {content}");
+		assert!(content.contains("</skill>"), "got: {content}");
+		// Taking is destructive — a second take returns None.
+		assert!(take_silent_skill_content().is_none());
+
+		// Second silent use reports already-active without re-injecting.
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use_silent", "name": SKILL_NAME}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(text_of(&result).contains("already active"));
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "forget", "name": SKILL_NAME}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_forget_validation_and_offload() {
+	let sid = "__skilltest_offload".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let _tmp = skill_workdir(&sid);
+
+		// name validation arms for use and forget.
+		for action in ["use", "forget"] {
+			for params in [
+				serde_json::json!({"action": action, "name": 42}),
+				serde_json::json!({"action": action, "name": "   "}),
+				serde_json::json!({"action": action}),
+			] {
+				let result = execute_skill_tool(&skill_call(params))
+					.await
+					.expect("dispatch");
+				assert!(
+					is_err(&result),
+					"{action} must reject: {}",
+					text_of(&result)
+				);
+				assert!(
+					text_of(&result).contains("name"),
+					"{action} validation: {}",
+					text_of(&result)
+				);
+			}
+		}
+
+		// forget of a non-active skill is a structured error.
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "forget", "name": "__skilltest_inactive"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(is_err(&result));
+		assert!(text_of(&result).contains("not currently active"));
+
+		// Offload path: a skill that "loaded" a server forgets → refcount hits
+		// zero → server disabled + removed, and the message names it.
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use", "name": SKILL_NAME}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "use failed: {}", text_of(&result));
+		crate::session::context::set_skill_capability_servers(
+			&sid,
+			SKILL_NAME,
+			vec!["__skilltest_offload_srv".to_string()],
+		);
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "forget", "name": SKILL_NAME}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
+		assert!(
+			text_of(&result).contains("offloaded servers: __skilltest_offload_srv"),
+			"got: {}",
+			text_of(&result)
+		);
+		assert!(!crate::session::context::has_active_skill(&sid, SKILL_NAME));
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_unknown_capability_warns_but_activates() {
+	let sid = "__skilltest_capwarn".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		let skill_dir = tmp.path().join(".agents/skills").join("skilltest-caps");
+		std::fs::create_dir_all(&skill_dir).expect("skill dir");
+		std::fs::write(
+			skill_dir.join("SKILL.md"),
+			"---\nname: skilltest-caps\ndescription: Capability warning fixture\ncapabilities: __skilltest_nocap\n---\n\nBody\n",
+		)
+		.expect("write SKILL.md");
+		crate::session::context::set_session_workdir(&sid.to_string(), tmp.path().to_path_buf());
+
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": "use", "name": "skilltest-caps"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "use must still succeed: {}", text_of(&result));
+		assert!(
+			text_of(&result).contains("⚠️ Capability '__skilltest_nocap' not found"),
+			"got: {}",
+			text_of(&result)
+		);
+		assert!(crate::session::context::has_active_skill(&sid, "skilltest-caps"));
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial]
+async fn test_skill_use_and_forget_require_active_session() {
+	// Outside any with_session_id scope both actions refuse with a clear error.
+	for action in ["use", "forget"] {
+		let result = execute_skill_tool(&skill_call(
+			serde_json::json!({"action": action, "name": "any-skill"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(
+			is_err(&result),
+			"{action} outside session must error: {}",
+			text_of(&result)
+		);
+		assert!(
+			text_of(&result).contains("requires an active session"),
+			"{action}: {}",
+			text_of(&result)
+		);
+	}
+}

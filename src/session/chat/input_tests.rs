@@ -62,3 +62,64 @@ fn test_rendered_rows() {
 	// Empty lines still occupy a row
 	assert_eq!(rendered_rows("", "▍ 〉", "    ", "a\n\nb", 80), 3);
 }
+
+#[test]
+fn test_strip_ansi_boundaries() {
+	// Lone ESC is swallowed
+	assert_eq!(strip_ansi("\x1b"), "");
+	// Multibyte content passes through untouched
+	assert_eq!(strip_ansi("日本語"), "日本語");
+	assert_eq!(strip_ansi("日本語\x1b[0m"), "日本語");
+	// Long interleaved input never panics or drops plain runs
+	let mixed = "plain \x1b[31mred\x1b[0m ".repeat(200);
+	assert_eq!(strip_ansi(&mixed), "plain red ".repeat(200));
+	// ESC followed by digits-only sequence keeps swallowing until a letter
+	assert_eq!(strip_ansi("a\x1b[2Kb"), "ab");
+}
+
+#[test]
+fn test_display_cols_multibyte() {
+	assert_eq!(display_cols("日本語"), 3);
+	assert_eq!(display_cols("héllo"), 5);
+	assert_eq!(display_cols("\x1b[94m日本語\x1b[0m"), 3);
+}
+
+#[tokio::test]
+async fn test_calculate_current_context_tokens_grows_with_messages() {
+	let config = toml::from_str::<crate::config::Config>(include_str!(
+		"../../../config-templates/default.toml"
+	))
+	.expect("parse default config template");
+
+	let empty = calculate_current_context_tokens(&[], &config, "assistant").await;
+	let messages = vec![crate::session::Message {
+		role: "user".to_string(),
+		content: "please review the authentication module end to end".to_string(),
+		..Default::default()
+	}];
+	let one = calculate_current_context_tokens(&messages, &config, "assistant").await;
+
+	assert!(one > empty, "one={one} empty={empty}");
+}
+
+#[test]
+fn test_display_shortcuts_help_smoke() {
+	// Pure display function: the value is exercising every println path.
+	display_shortcuts_help();
+}
+
+#[test]
+fn test_highlight_submitted_input_bails_safely() {
+	// Empty input: immediate no-op
+	highlight_submitted_input("", "▍ 〉", "    ", "");
+	// Non-empty input: without a TTY, terminal::size() fails and the function
+	// returns before emitting anything — must not panic either way.
+	highlight_submitted_input("", "▍ 〉", "    ", "hello world");
+	highlight_submitted_input("", "▍ 〉", "    ", "multi\nline\ninput");
+}
+
+#[test]
+fn test_add_completion_menu_keybindings_smoke() {
+	let mut keybindings = Keybindings::new();
+	add_completion_menu_keybindings(&mut keybindings);
+}

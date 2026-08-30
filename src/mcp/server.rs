@@ -386,3 +386,7 @@ pub fn get_server_status_report(
 ) -> std::collections::HashMap<String, (process::ServerHealth, process::ServerRestartInfo)> {
 	process::get_server_status_report()
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

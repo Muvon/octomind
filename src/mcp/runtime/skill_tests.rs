@@ -663,4 +663,145 @@ mod tests {
 		let result = build_resource_catalog(dir.path());
 		assert!(result.starts_with("\n\n## Skill Resources\n\n"));
 	}
+
+	// ---------------------------------------------------------------------------
+	// ActivateCheck::matches — filesystem, env, and regex checks
+	// ---------------------------------------------------------------------------
+
+	struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+	impl EnvGuard {
+		fn new(keys: &[&'static str]) -> Self {
+			Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
+		}
+	}
+
+	impl Drop for EnvGuard {
+		fn drop(&mut self) {
+			for (key, saved) in &self.0 {
+				match saved {
+					Some(v) => std::env::set_var(key, v),
+					None => std::env::remove_var(key),
+				}
+			}
+		}
+	}
+
+	use crate::mcp::runtime::skill::{universal_skill_dirs, ActivateCheck};
+
+	#[test]
+	fn test_activate_check_grep_matches() {
+		let dir = tempfile::tempdir().unwrap();
+		fs::write(dir.path().join("main.rs"), "fn main() { println_body() }").unwrap();
+		fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+
+		let check = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: None,
+		};
+		assert!(check.matches("", dir.path(), "", None));
+
+		// Path filter narrows the search to matching file names.
+		let check = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: Some("*.rs".to_string()),
+		};
+		assert!(check.matches("", dir.path(), "", None));
+		let check = ActivateCheck::Grep {
+			pattern: "fn main".to_string(),
+			path: Some("*.toml".to_string()),
+		};
+		assert!(!check.matches("", dir.path(), "", None));
+
+		// No hit anywhere.
+		let check = ActivateCheck::Grep {
+			pattern: "no_such_symbol_xyz".to_string(),
+			path: None,
+		};
+		assert!(!check.matches("", dir.path(), "", None));
+
+		// Invalid regex falls back to literal substring search (no panic). The
+		// literal must also be absent from the fixture files, otherwise the
+		// fallback match finds it.
+		let check = ActivateCheck::Grep {
+			pattern: "no_such_literal_(".to_string(),
+			path: None,
+		};
+		assert!(!check.matches("", dir.path(), "", None));
+	}
+
+	#[test]
+	#[serial_test::serial]
+	fn test_activate_check_env_matches() {
+		let _env = EnvGuard::new(&["SKILLTEST_ENV_VAR"]);
+
+		let check = ActivateCheck::Env {
+			var: "SKILLTEST_ENV_VAR".to_string(),
+			value: None,
+		};
+		std::env::remove_var("SKILLTEST_ENV_VAR");
+		assert!(!check.matches("", std::path::Path::new("."), "", None));
+
+		std::env::set_var("SKILLTEST_ENV_VAR", "");
+		assert!(
+			!check.matches("", std::path::Path::new("."), "", None),
+			"empty value must not match"
+		);
+
+		std::env::set_var("SKILLTEST_ENV_VAR", "hello");
+		assert!(check.matches("", std::path::Path::new("."), "", None));
+
+		// Value-pinned variant: equality, not presence.
+		let check = ActivateCheck::Env {
+			var: "SKILLTEST_ENV_VAR".to_string(),
+			value: Some("hello".to_string()),
+		};
+		assert!(check.matches("", std::path::Path::new("."), "", None));
+		let check = ActivateCheck::Env {
+			var: "SKILLTEST_ENV_VAR".to_string(),
+			value: Some("other".to_string()),
+		};
+		assert!(!check.matches("", std::path::Path::new("."), "", None));
+	}
+
+	#[test]
+	fn test_activate_check_match_regex() {
+		let check = ActivateCheck::Match(r"\bdeploy\b".to_string());
+		assert!(check.matches("please deploy now", std::path::Path::new("."), "", None));
+		assert!(!check.matches("deployment soon", std::path::Path::new("."), "", None));
+
+		// Invalid regex evaluates to false, never panics.
+		let check = ActivateCheck::Match("[invalid".to_string());
+		assert!(!check.matches("anything", std::path::Path::new("."), "", None));
+	}
+
+	#[test]
+	fn test_activate_check_file_glob() {
+		let dir = tempfile::tempdir().unwrap();
+		fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+
+		let check = ActivateCheck::File("*.toml".to_string());
+		assert!(check.matches("", dir.path(), "", None));
+		let check = ActivateCheck::File("*.md".to_string());
+		assert!(!check.matches("", dir.path(), "", None));
+	}
+
+	#[test]
+	fn test_universal_skill_dirs_project_only() {
+		let with_project = tempfile::tempdir().unwrap();
+		fs::create_dir_all(with_project.path().join(".agents/skills")).unwrap();
+		let dirs = universal_skill_dirs(with_project.path());
+		assert!(dirs.contains(&with_project.path().join(".agents/skills")));
+
+		let without_project = tempfile::tempdir().unwrap();
+		let dirs = universal_skill_dirs(without_project.path());
+		// The global dir may or may not exist on this machine; when it doesn't,
+		// a project without .agents/skills yields no dirs at all.
+		let global = dirs::home_dir()
+			.map(|h| h.join(".config").join("agents").join("skills"))
+			.unwrap_or_else(|| std::path::PathBuf::from("/dev/null"));
+		if !global.is_dir() {
+			assert!(dirs.is_empty());
+		}
+	}
 }

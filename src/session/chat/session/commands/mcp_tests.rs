@@ -239,3 +239,209 @@ async fn test_dump_totals_match_tool_list() {
 	assert_eq!(tools.len() as u64, total, "dump count mismatch: {data}");
 	assert!(total > 0, "dump enumerated nothing: {data}");
 }
+
+/// A stdio server whose binary cannot exist — health checks must classify it
+/// without ever spawning a process.
+fn stdio_server(name: &str) -> crate::config::McpServerConfig {
+	crate::config::McpServerConfig::Stdin {
+		name: name.to_string(),
+		command: "/nonexistent/cov-mcp-server".to_string(),
+		args: Vec::new(),
+		timeout_seconds: 30,
+		tools: Vec::new(),
+		env: Default::default(),
+		cwd: None,
+		auto_bind: None,
+	}
+}
+
+/// Template config whose server registry holds ONLY the given servers, with
+/// the assistant role's server_refs pointed at exactly those names — the
+/// role's refs (not the raw registry) decide what the merged config exposes.
+fn config_with_only_servers(servers: Vec<crate::config::McpServerConfig>) -> Config {
+	let mut config = template_config();
+	let names: Vec<String> = servers.iter().map(|s| s.name().to_string()).collect();
+	config.mcp.servers = servers;
+	if let Some(role) = config.role_map.get_mut("assistant") {
+		role.mcp.server_refs = names;
+		// Non-empty allowed_tools silently DROPS servers that match no
+		// pattern (config/mcp.rs get_enabled_servers) — clear it so the
+		// fixture servers are not filtered out of the merged config.
+		role.mcp.allowed_tools = Vec::new();
+	}
+	config
+}
+
+fn server_entry<'a>(data: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+	data["servers"]
+		.as_array()
+		.expect("servers array")
+		.iter()
+		.find(|s| s["name"] == name)
+		.unwrap_or_else(|| panic!("server {name} missing: {data}"))
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_info_marks_unstarted_stdio_server_dead() {
+	let config = config_with_only_servers(vec![stdio_server("cov-stdio-dead")]);
+	let (_, data) = run(&config, &["info"]).await;
+
+	let entry = server_entry(&data, "cov-stdio-dead");
+	assert_eq!(entry["health"], "dead", "unstarted stdio server: {entry}");
+	assert_eq!(entry["connection_type"], "stdin");
+
+	// The on-demand probe writes restart-info side effects; undo them.
+	crate::mcp::process::SERVER_RESTART_INFO
+		.write()
+		.unwrap()
+		.remove("cov-stdio-dead");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_health_reports_dead_and_failed_states() {
+	use crate::mcp::process::{ServerHealth, ServerRestartInfo, SERVER_RESTART_INFO};
+
+	let config = config_with_only_servers(vec![
+		stdio_server("cov-health-dead"),
+		stdio_server("cov-health-failed"),
+	]);
+
+	// Seed the global restart registry:
+	// - "dead": a recent restart attempt puts it inside the 30s cooldown, so
+	//   the health check records Dead without trying to spawn the binary.
+	// - "failed": terminal state — the check must leave it untouched.
+	{
+		let mut guard = SERVER_RESTART_INFO.write().unwrap();
+		guard.insert(
+			"cov-health-dead".to_string(),
+			ServerRestartInfo {
+				last_restart_time: Some(std::time::SystemTime::now()),
+				..Default::default()
+			},
+		);
+		guard.insert(
+			"cov-health-failed".to_string(),
+			ServerRestartInfo {
+				health_status: ServerHealth::Failed,
+				restart_count: 5,
+				consecutive_failures: 3,
+				..Default::default()
+			},
+		);
+	}
+
+	let (_, data) = run(&config, &["health"]).await;
+	assert!(data["monitor_running"].is_boolean(), "{data}");
+
+	let dead = server_entry(&data, "cov-health-dead");
+	assert_eq!(dead["health"], "dead");
+	assert_eq!(dead["restart_count"], 0);
+	assert!(
+		dead["last_checked_secs_ago"].is_u64(),
+		"probe must stamp last_checked: {dead}"
+	);
+
+	let failed = server_entry(&data, "cov-health-failed");
+	assert_eq!(failed["health"], "failed");
+	assert_eq!(failed["restart_count"], 5);
+	assert_eq!(failed["consecutive_failures"], 3);
+
+	let mut guard = SERVER_RESTART_INFO.write().unwrap();
+	guard.remove("cov-health-dead");
+	guard.remove("cov-health-failed");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn test_dynamic_servers_appear_in_info_and_full() {
+	let session_id = format!("mcp-cmd-dyn-{}", std::process::id());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		// /mcp info lists a dynamic server's CONFIG-declared tools (not the
+		// enabled function list), so register the server carrying its tool.
+		let mut dyn_server = stdio_server("cov-dyn-server");
+		if let crate::config::McpServerConfig::Stdin { tools, .. } = &mut dyn_server {
+			*tools = vec!["cov_dyn_tool".to_string()];
+		}
+		crate::session::context::register_dynamic_server_for_session(&session_id, dyn_server);
+		crate::session::context::enable_dynamic_server_for_session(
+			&session_id,
+			"cov-dyn-server",
+			vec![crate::mcp::McpFunction {
+				name: "cov_dyn_tool".to_string(),
+				description: "Coverage dynamic tool".to_string(),
+				parameters: serde_json::json!({"type": "object"}),
+			}],
+		);
+
+		let config = template_config();
+		let (_, info) = run(&config, &["info"]).await;
+		let entry = server_entry(&info, "cov-dyn-server");
+		assert_eq!(entry["connection_type"], "dynamic");
+		assert_eq!(entry["health"], "running");
+		assert_eq!(entry["tools"], serde_json::json!(["cov_dyn_tool"]));
+		assert!(
+			info["total_tools"].as_u64().unwrap_or_default() >= 1,
+			"dynamic tool not enumerated: {info}"
+		);
+
+		let (_, full) = run(&config, &["full"]).await;
+		let entry = server_entry(&full, "cov-dyn-server");
+		assert_eq!(entry["connection_type"], "dynamic");
+		assert_eq!(entry["tools"], serde_json::json!(["cov_dyn_tool"]));
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn test_local_tools_surface_as_local_server() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let session_id = format!("mcp-cmd-local-{}", std::process::id());
+	let workdir = std::env::temp_dir().join(format!("octomind-mcp-local-{}", std::process::id()));
+	let _ = std::fs::remove_dir_all(&workdir);
+	let tools_dir = workdir.join(".agents").join("tools");
+	std::fs::create_dir_all(&tools_dir).expect("create tools dir");
+	let script = tools_dir.join("cov-local-tool");
+	std::fs::write(
+		&script,
+		"#!/bin/sh\n# @description Coverage local tool\n# @param input The input text\nexit 0\n",
+	)
+	.expect("write local tool");
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+		.expect("make tool executable");
+
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(workdir.clone());
+		// The tool map picks up `.agents/tools/*` at init time from the
+		// session workdir; /mcp groups tools by that map.
+		// initialize_tool_map skips rebuilds when the config hash is
+		// unchanged; a uniquely-named dummy server forces the rebuild so
+		// local-tool discovery re-runs against THIS session's workdir.
+		let dummy = format!("cov-local-force-{}", std::process::id());
+		let mut config = template_config();
+		config
+			.mcp
+			.servers
+			.push(crate::config::McpServerConfig::builtin(&dummy, 30, vec![]));
+		if let Some(role) = config.role_map.get_mut("assistant") {
+			role.mcp.server_refs.push(dummy);
+			role.mcp.allowed_tools = Vec::new();
+		}
+		init_tool_map(&config).await;
+
+		let (_, data) = run(&config, &["info"]).await;
+		let entry = server_entry(&data, "local");
+		assert_eq!(entry["connection_type"], "builtin");
+		assert_eq!(entry["health"], "running");
+		assert_eq!(entry["tools"], serde_json::json!(["cov-local-tool"]));
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}

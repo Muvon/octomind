@@ -245,3 +245,7 @@ pub struct PlanConfig {
 #[cfg(test)]
 #[path = "plan_e2e_tests.rs"]
 mod plan_e2e_tests;
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod mod_tests;

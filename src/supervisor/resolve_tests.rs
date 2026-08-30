@@ -400,3 +400,203 @@ async fn resolve_empty_request_short_circuits_without_a_model() {
 		crate::supervisor::VerificationPolicyUpdate::Unchanged
 	);
 }
+
+// ---------------------------------------------------------------------------
+// parse_resolution: malformed JSON falls back to the literal request.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolution_with_unterminated_or_invalid_json_stays_ambiguous() {
+	let ctx = context("do the second part");
+	let unterminated = r#"{"scope":"follow_up","resolved_request":"do ""#;
+	assert_eq!(
+		parse_resolution(&ctx, unterminated).scope,
+		ResolutionScope::Ambiguous
+	);
+	let invalid = "{not valid json}";
+	assert_eq!(parse_resolution(&ctx, invalid).scope, ResolutionScope::Ambiguous);
+}
+
+#[test]
+fn policy_update_unchanged_never_requires_evidence() {
+	let mut verdict = ClassifierVerdict {
+		context_dependent: false,
+		forbids_verification: false,
+		verification_policy_update: crate::supervisor::VerificationPolicyUpdate::Unchanged,
+		verification_policy_evidence: "fabricated quote that appears nowhere".to_string(),
+		answer_only: false,
+		conditions: Vec::new(),
+		operational_constraints: Vec::new(),
+	};
+	let ctx = context("a plain request");
+	verdict.validate_policy_update(&ctx);
+	assert_eq!(
+		verdict.verification_policy_update,
+		crate::supervisor::VerificationPolicyUpdate::Unchanged,
+		"an unchanged policy never inspects evidence"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// resolve(): the full classifier → resolver round trip against the fake
+// provider. Every failure mode must fall back to a usable literal request.
+// ---------------------------------------------------------------------------
+
+fn resolve_context(request: &str) -> TaskContext {
+	TaskContext {
+		current_request: request.to_string(),
+		recent_history: "USER]: earlier: use the staging endpoint".to_string(),
+		session_context: String::new(),
+		active_plan: String::new(),
+		role_context: String::new(),
+		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
+		recent_user_policy_context: Vec::new(),
+	}
+}
+
+fn resolve_config() -> crate::config::Config {
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config
+}
+
+const SELF_CONTAINED: &str = r#"{"scope":"self_contained","forbids_verification":true,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":["the staging endpoint is used"],"operational_constraints":[]}"#;
+
+#[tokio::test]
+async fn a_self_contained_classification_returns_with_the_full_verdict() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![final_response(SELF_CONTAINED)]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
+	assert!(resolved.forbids_verification, "the classifier verdict is carried");
+	assert_eq!(
+		resolved.evidence_conditions,
+		vec!["the staging endpoint is used".to_string()]
+	);
+}
+
+#[tokio::test]
+async fn a_context_dependent_turn_resolves_through_the_follow_up_model() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let classifier = r#"{"scope":"context_dependent","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":["the staging endpoint is used"],"operational_constraints":[]}"#;
+	let follow_up = r#"{"scope":"follow_up","resolved_request":"Use the staging endpoint for the load test","evidence":[{"source":"recent_history","excerpt":"use the staging endpoint"}],"plan_relevant":false}"#;
+	let url = spawn_stub(vec![
+		final_response(classifier),
+		final_response(follow_up),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("and run it again"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::FollowUp);
+	assert_eq!(resolved.resolved_request, "Use the staging endpoint for the load test");
+	assert_eq!(
+		resolved.evidence_conditions,
+		vec!["the staging endpoint is used".to_string()],
+		"the checklist compiled from the literal turn survives the rewrite"
+	);
+}
+
+#[tokio::test]
+async fn an_unusable_classifier_answer_gets_one_doubled_budget_retry() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response("certainly! no json here"),
+		final_response(SELF_CONTAINED),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
+	assert!(resolved.forbids_verification, "the retried verdict is applied");
+}
+
+#[tokio::test]
+async fn a_failed_classifier_retry_fails_open_to_the_literal_request() {
+	use crate::session::chat::test_support::{
+		final_response, spawn_stub_with_status, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub_with_status(vec![
+		(200, final_response("no json at all")),
+		(500, serde_json::json!({"error": "classifier down"})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
+	assert_eq!(resolved.resolved_request, "use the staging endpoint");
+	assert!(!resolved.forbids_verification, "the fallback verdict is neutral");
+}
+
+#[tokio::test]
+async fn a_failed_classifier_call_uses_the_literal_request() {
+	use crate::session::chat::test_support::{spawn_stub_with_status, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub_with_status(vec![(
+		500,
+		serde_json::json!({"error": "classifier down"}),
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
+	assert_eq!(resolved.resolved_request, "use the staging endpoint");
+}
+
+#[tokio::test]
+async fn a_failed_follow_up_resolver_preserves_ambiguity() {
+	use crate::session::chat::test_support::{
+		final_response, spawn_stub_with_status, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let classifier = r#"{"scope":"context_dependent","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#;
+	let url = spawn_stub_with_status(vec![
+		(200, final_response(classifier)),
+		(500, serde_json::json!({"error": "resolver down"})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("and run it again"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::Ambiguous);
+	assert_eq!(resolved.resolved_request, "and run it again");
+}
+
+#[tokio::test]
+async fn a_still_unusable_retry_fails_open() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response("first garbage"),
+		final_response("second garbage"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
+	assert_eq!(resolved.resolved_request, "use the staging endpoint");
+}

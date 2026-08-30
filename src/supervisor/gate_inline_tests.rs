@@ -478,3 +478,194 @@ fn verifier_guidance_is_domain_agnostic() {
 	assert!(advisory.contains("delivered output"));
 	assert!(!advisory.contains("the file and line, the passing test"));
 }
+
+// ---------------------------------------------------------------------------
+// Ground truth against real git state. The diff/status helpers spawn git in
+// the process cwd, so repository-shaped tests point GIT_DIR/GIT_WORK_TREE at
+// a throwaway repo (serial, env restored) instead of mutating this checkout.
+// ---------------------------------------------------------------------------
+
+fn run_git(args: &[&str]) {
+	let out = std::process::Command::new("git").args(args).output()
+		.expect("git is available on the test host");
+	assert!(
+		out.status.success(),
+		"git {:?} failed: {}",
+		args,
+		String::from_utf8_lossy(&out.stderr)
+	);
+}
+
+/// One committed-then-modified file, so `git diff HEAD` has real content.
+fn temp_repo_with_dirty_file() -> tempfile::TempDir {
+	let tmp = tempfile::tempdir().expect("tempdir for the scratch repo");
+	let repo = tmp.path().join("repo");
+	std::fs::create_dir_all(&repo).expect("create repo dir");
+	run_git(&["init", repo.to_str().expect("utf8 repo path")]);
+	std::env::set_var("GIT_DIR", repo.join(".git"));
+	std::env::set_var("GIT_WORK_TREE", &repo);
+	std::fs::write(repo.join("tracked.txt"), "original line\n").expect("seed file");
+	run_git(&["add", "tracked.txt"]);
+	run_git(&[
+		"-c",
+		"user.email=gate@test",
+		"-c",
+		"user.name=gate",
+		"commit",
+		"-m",
+		"seed",
+	]);
+	std::fs::write(repo.join("tracked.txt"), "original line\nchanged this task\n").expect("dirty the file");
+	tmp
+}
+
+fn clear_repo_env(git_dir: Option<std::ffi::OsString>, work_tree: Option<std::ffi::OsString>) {
+	match git_dir {
+		Some(v) => std::env::set_var("GIT_DIR", v),
+		None => std::env::remove_var("GIT_DIR"),
+	}
+	match work_tree {
+		Some(v) => std::env::set_var("GIT_WORK_TREE", v),
+		None => std::env::remove_var("GIT_WORK_TREE"),
+	}
+}
+
+#[test]
+#[serial_test::serial]
+fn ground_truth_leads_with_the_working_tree_diff() {
+	let old_dir = std::env::var_os("GIT_DIR");
+	let old_tree = std::env::var_os("GIT_WORK_TREE");
+	let _repo = temp_repo_with_dirty_file();
+
+	let truth = render_ground_truth(
+		&["tracked.txt".to_string()],
+		&[("cargo test", "test result: ok")],
+	);
+
+	clear_repo_env(old_dir, old_tree);
+	assert!(
+		truth.contains("Working-tree diff of files changed this task (vs HEAD):"),
+		"a dirty tracked file must surface its diff"
+	);
+	assert!(truth.contains("changed this task"));
+	assert!(truth.contains("Recent commands run"));
+	assert!(truth.contains("test result: ok"));
+}
+
+#[test]
+#[serial_test::serial]
+fn git_diff_fair_shares_the_budget_across_files() {
+	let old_dir = std::env::var_os("GIT_DIR");
+	let old_tree = std::env::var_os("GIT_WORK_TREE");
+	let tmp = tempfile::tempdir().expect("tempdir for the scratch repo");
+	let repo = tmp.path().join("repo");
+	std::fs::create_dir_all(&repo).expect("create repo dir");
+	run_git(&["init", repo.to_str().expect("utf8 repo path")]);
+	std::env::set_var("GIT_DIR", repo.join(".git"));
+	std::env::set_var("GIT_WORK_TREE", &repo);
+	for name in ["big_a.txt", "big_b.txt", "big_c.txt"] {
+		std::fs::write(repo.join(name), "seed\n").expect("seed file");
+	}
+	run_git(&["add", "."]);
+	run_git(&[
+		"-c",
+		"user.email=gate@test",
+		"-c",
+		"user.name=gate",
+		"commit",
+		"-m",
+		"seed",
+	]);
+	// Three files whose combined diff is far over GT_DIFF_MAX: a single global
+	// head-cut would drop the later files entirely.
+	let payload: String = "changed payload line\n".repeat(600);
+	for name in ["big_a.txt", "big_b.txt", "big_c.txt"] {
+		std::fs::write(repo.join(name), &payload).expect("dirty the file");
+	}
+
+	let diff = git_diff(&[
+		"big_a.txt".to_string(),
+		"big_b.txt".to_string(),
+		"big_c.txt".to_string(),
+	]);
+
+	clear_repo_env(old_dir, old_tree);
+	for name in ["big_a.txt", "big_b.txt", "big_c.txt"] {
+		assert!(diff.contains(name), "every changed file stays visible: {name}");
+	}
+	assert!(
+		diff.contains("(diff of big_a.txt truncated to fit)"),
+		"an over-budget file is truncated with an explicit marker"
+	);
+	assert!(diff.len() <= GT_DIFF_MAX + 512, "the cap holds: {}", diff.len());
+}
+
+#[test]
+#[serial_test::serial]
+fn git_status_caps_entries_and_names_the_overflow() {
+	let old_dir = std::env::var_os("GIT_DIR");
+	let old_tree = std::env::var_os("GIT_WORK_TREE");
+	let tmp = tempfile::tempdir().expect("tempdir for the scratch repo");
+	let repo = tmp.path().join("repo");
+	std::fs::create_dir_all(&repo).expect("create repo dir");
+	run_git(&["init", repo.to_str().expect("utf8 repo path")]);
+	std::env::set_var("GIT_DIR", repo.join(".git"));
+	std::env::set_var("GIT_WORK_TREE", &repo);
+	for n in 0..45u32 {
+		std::fs::write(repo.join(format!("untracked_{n}.txt")), "x").expect("untracked file");
+	}
+
+	let status = git_status();
+
+	clear_repo_env(old_dir, old_tree);
+	let lines = status.lines().count();
+	assert_eq!(lines, GT_STATUS_MAX_LINES + 1, "40 entries plus the overflow note");
+	assert!(
+		status.contains("(+5 more entries)"),
+		"the overflow must be counted, not silently dropped: {status}"
+	);
+}
+
+#[test]
+#[serial_test::serial]
+fn git_helpers_degrade_to_empty_when_git_cannot_run() {
+	let old_path = std::env::var_os("PATH");
+	std::env::set_var("PATH", "");
+	assert_eq!(git_status(), "", "no git binary means no status evidence");
+	assert_eq!(
+		git_diff(&["whatever.txt".to_string()]),
+		"",
+		"no git binary means no diff evidence"
+	);
+	match old_path {
+		Some(v) => std::env::set_var("PATH", v),
+		None => std::env::remove_var("PATH"),
+	}
+}
+
+/// An untracked-but-present path (gitignored scratch under target/) is not in
+/// any diff, so ground truth attaches its head directly — and a head that
+/// alone exceeds the total budget is truncated with an explicit marker.
+#[test]
+fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
+	let name = format!("target/gate-gt-head-{}.txt", std::process::id());
+	let line: String = "0123456789".repeat(30); // 300 chars; 80 lines ≈ 24k > GT_TOTAL_MAX
+	let body: String = std::iter::repeat_with(|| line.clone())
+		.take(120)
+		.collect::<Vec<_>>()
+		.join("\n");
+	std::fs::write(&name, &body).expect("write scratch head file");
+
+	let truth = render_ground_truth(&[name.clone()], &[]);
+
+	let _ = std::fs::remove_file(&name);
+	assert!(
+		truth.contains(&format!("Current content of {name} (new or untracked")),
+		"an existing path outside the diff gets its head attached"
+	);
+	assert!(
+		truth.contains("(ground truth truncated)"),
+		"a head that alone exceeds the total budget is cut with a marker"
+	);
+	assert!(truth.len() <= GT_TOTAL_MAX + 64, "the total cap holds: {}", truth.len());
+}

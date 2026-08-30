@@ -60,3 +60,63 @@ fn fingerprint_is_none_outside_a_git_repo() {
 	std::env::set_current_dir(&original).unwrap();
 	assert_eq!(outside, None, "git status must fail outside a repo");
 }
+
+// ---------------------------------------------------------------------------
+// fingerprint(): degradation and the metadata-mixing path.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial_test::serial]
+fn fingerprint_is_none_when_git_cannot_spawn() {
+	let old_path = std::env::var_os("PATH");
+	std::env::set_var("PATH", "");
+	assert_eq!(fingerprint(), None, "no git binary means no fingerprint");
+	match old_path {
+		Some(v) => std::env::set_var("PATH", v),
+		None => std::env::remove_var("PATH"),
+	}
+}
+
+#[test]
+#[serial_test::serial]
+fn fingerprint_is_none_when_git_status_fails() {
+	let old_dir = std::env::var_os("GIT_DIR");
+	let old_tree = std::env::var_os("GIT_WORK_TREE");
+	std::env::set_var("GIT_DIR", "/definitely/not/a/repo");
+	std::env::remove_var("GIT_WORK_TREE");
+	assert_eq!(
+		fingerprint(),
+		None,
+		"a failing git status means no fingerprint, not a stale one"
+	);
+	match old_dir {
+		Some(v) => std::env::set_var("GIT_DIR", v),
+		None => std::env::remove_var("GIT_DIR"),
+	}
+	match old_tree {
+		Some(v) => std::env::set_var("GIT_WORK_TREE", v),
+		None => std::env::remove_var("GIT_WORK_TREE"),
+	}
+}
+
+/// An untracked scratch file at the repo root (not gitignored target/) appears in `git status -uall` of
+/// this checkout and exists relative to the process cwd, so its size and
+/// mtime are mixed into the hash — and changing it changes the fingerprint.
+#[test]
+#[serial_test::serial]
+fn fingerprint_mixes_file_metadata_and_tracks_changes() {
+	let name = format!("workdir-fp-{}.txt", std::process::id());
+	std::fs::write(&name, "first content").expect("write scratch file");
+	let first = fingerprint();
+	let _ = std::fs::remove_file(&name);
+	assert!(first.is_some(), "a readable status yields a fingerprint");
+
+	std::fs::write(&name, "much longer second content that changes the size").expect("rewrite");
+	let second = fingerprint();
+	let _ = std::fs::remove_file(&name);
+	assert!(second.is_some());
+	assert_ne!(
+		first, second,
+		"a size/mtime change must move the fingerprint"
+	);
+}

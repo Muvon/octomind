@@ -297,3 +297,65 @@ fn plan_signal_wire_format_is_snake_case() {
 		PlanSignal::Reassess
 	);
 }
+
+// ---------------------------------------------------------------------------
+// truncate_edges_to_tokens: the hard budget holds even when independently
+// encoded head/marker/tail fragments merge into more tokens than the parts.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn truncate_edges_hard_budget_holds_when_fragments_merge() {
+	let text: String = (1..=200)
+		.map(|i| format!("edge line {i} with enough words to cost tokens"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	for max_tokens in 12..60 {
+		let out = truncate_edges_to_tokens(&text, max_tokens);
+		assert!(
+			crate::session::estimate_tokens(&out) <= max_tokens,
+			"budget {max_tokens} exceeded: {}",
+			crate::session::estimate_tokens(&out)
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// request_context: a follow-up rewrite is surfaced as the working request.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn request_context_reports_a_divergent_follow_up_rewrite() {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		crate::session::Message {
+			role: "user".to_string(),
+			content: "and do the second part".to_string(),
+			..Default::default()
+		},
+	]);
+	let mut task = crate::supervisor::resolve::ResolvedTask::self_contained("and do the second part");
+	task.scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
+	task.resolved_request = "Deploy the staging service and run its checks".to_string();
+	session.gate_task = Some(task);
+
+	let ctx = request_context(&session, "and do the second part");
+	assert_eq!(
+		ctx["working_request"],
+		serde_json::json!(Some("Deploy the staging service and run its checks")),
+		"a rewrite that differs from the literal turn is surfaced"
+	);
+	assert_eq!(ctx["resolution"], serde_json::json!("follow_up"));
+
+	// A self-contained turn reports no working request.
+	let mut plain =
+		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
+			role: "user".to_string(),
+			content: "list the files".to_string(),
+			..Default::default()
+		}]);
+	plain.gate_task = Some(crate::supervisor::resolve::ResolvedTask::self_contained(
+		"list the files",
+	));
+	let ctx = request_context(&plain, "list the files");
+	assert_eq!(ctx["working_request"], serde_json::Value::Null);
+	assert_eq!(ctx["resolution"], serde_json::json!("self_contained"));
+}

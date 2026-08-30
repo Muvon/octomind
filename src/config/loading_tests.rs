@@ -258,3 +258,249 @@ fn load_honors_the_octomind_config_path_env_override() {
 	let config = loaded.expect("load via env override");
 	assert_eq!(config.model, "env-override");
 }
+
+// ---------------------------------------------------------------------------
+// merge_toml_values: an override table may introduce keys the base lacks.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deep_merge_introduces_keys_the_base_table_lacks() {
+	let base: toml::Value = toml::from_str("[a]\nx = 1\n").expect("base");
+	let over: toml::Value = toml::from_str("[a]\ny = 2\n").expect("override");
+	let merged = merge_toml_values(&base, &over);
+	assert_eq!(merged["a"]["x"], toml::Value::Integer(1));
+	assert_eq!(merged["a"]["y"], toml::Value::Integer(2));
+}
+
+#[test]
+fn duplicate_server_names_across_files_keep_the_last_definition() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_file(tmp.path(), "config.toml", &template_toml());
+	// zz- sorts after config.toml, so this definition is the later one.
+	write_file(
+		tmp.path(),
+		"zz-override.toml",
+		"[[mcp.servers]]\nname = \"core\"\ntype = \"builtin\"\ntools = []\ntimeout_seconds = 99\n",
+	);
+	let config = Config::load_from_path(tmp.path()).expect("duplicate-name files still load");
+	let cores: Vec<_> = config
+		.mcp
+		.servers
+		.iter()
+		.filter(|s| s.name() == "core")
+		.collect();
+	assert_eq!(cores.len(), 1, "same-name servers dedup to one entry");
+	assert_eq!(
+		cores[0].timeout_seconds(),
+		99,
+		"the later file's definition wins"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Config::load(): first-run bootstrap and env override, serial because they
+// mutate OCTOMIND_CONFIG_PATH.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial_test::serial]
+fn load_injects_the_default_template_when_the_directory_is_missing() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = tmp.path().join("fresh/nested/config.toml");
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
+	let config = Config::load();
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+
+	let config = config.expect("missing directory bootstraps a default config");
+	assert!(!config.model.is_empty());
+	assert!(
+		path.exists(),
+		"the bootstrap writes the template for the next run"
+	);
+}
+
+#[test]
+#[serial_test::serial]
+fn load_injects_the_default_template_in_an_empty_directory() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = tmp.path().join("config.toml");
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
+	let config = Config::load();
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+
+	let config = config.expect("empty directory bootstraps a default config");
+	assert!(!config.model.is_empty());
+	assert!(path.exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn load_uses_sibling_toml_files_when_config_toml_is_absent() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let customized = template_toml().replace("max_tokens = 32768", "max_tokens = 1234");
+	assert!(
+		customized.contains("max_tokens = 1234"),
+		"the template anchor was replaced"
+	);
+	write_file(tmp.path(), "other.toml", &customized);
+	let path = tmp.path().join("config.toml");
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
+	let config = Config::load();
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+
+	let config =
+		config.expect("sibling toml files are merged when config.toml is absent");
+	assert_eq!(config.max_tokens, 1234);
+}
+
+#[test]
+#[serial_test::serial]
+fn load_honors_a_relative_single_component_config_path() {
+	// A bare filename has parent "" — it must resolve to the current
+	// directory, not be treated as a missing directory and overwritten.
+	let name = format!("loadtest-{}.toml", std::process::id());
+	std::fs::write(&name, template_toml()).expect("write relative config");
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &name);
+	let config = Config::load();
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+	let _ = std::fs::remove_file(&name);
+
+	let config = config.expect("relative path loads from the current directory");
+	assert!(!config.model.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Setters: save / update_and_save / update_specific_field.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn save_writes_to_the_stored_path_and_creates_parents() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let mut config = Config::load_from_path(&{
+		let p = tmp.path().join("config.toml");
+		std::fs::write(&p, template_toml()).expect("write template");
+		p
+	})
+	.expect("load template");
+	let out = tmp.path().join("made/up/dir/config.toml");
+	config.config_path = Some(out.clone());
+	config.save().expect("save creates parents and writes");
+	assert!(out.exists());
+}
+
+#[test]
+fn update_and_save_persists_the_mutation() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = tmp.path().join("config.toml");
+	std::fs::write(&path, template_toml()).expect("write template");
+	let mut config = Config::load_from_path(&path).expect("load");
+	config
+		.update_and_save(|c| c.supervisor.enabled = true)
+		.expect("update and save");
+	let on_disk = std::fs::read_to_string(&path).expect("read back");
+	assert!(
+		on_disk.contains("enabled = true"),
+		"the mutation reached the file"
+	);
+	assert!(config.supervisor.enabled, "the in-memory copy is updated too");
+}
+
+#[test]
+fn update_specific_field_fails_strictly_without_a_config_file() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let mut config = Config::load_from_path(&{
+		let p = tmp.path().join("config.toml");
+		std::fs::write(&p, template_toml()).expect("write template");
+		p
+	})
+	.expect("load");
+	config.config_path = Some(tmp.path().join("absent.toml"));
+	let error = config
+		.update_specific_field(|c| c.supervisor.enabled = true)
+		.expect_err("strict mode refuses a missing file");
+	assert!(error.to_string().contains("No configuration file found"));
+}
+
+// ---------------------------------------------------------------------------
+// merge_agent_toml: additive servers/roles, override elsewhere.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn merge_agent_toml_adds_servers_and_roles_and_overrides_scalars() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base_path = tmp.path().join("config.toml");
+	std::fs::write(&base_path, template_toml()).expect("write template");
+	let base = Config::load_from_path(&base_path).expect("load base");
+	let base_model = base.model.clone();
+	let base_server_count = base.mcp.servers.len();
+	let base_role_count = base.roles.len();
+
+	let agent_toml = r#"
+model = "agent-override-model"
+
+[[mcp.servers]]
+name = "agent-extra-server"
+type = "builtin"
+tools = []
+timeout_seconds = 30
+
+[[roles]]
+name = "agent-extra-role"
+model = "ollama:agent"
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+system = "agent extra role system prompt"
+welcome = "agent extra role welcome"
+"#;
+	let merged = merge_agent_toml(&base, agent_toml).expect("merge agent manifest");
+
+	assert_eq!(merged.model, "agent-override-model", "scalars override");
+	assert_eq!(
+		merged.mcp.servers.len(),
+		base_server_count + 1,
+		"servers concatenate"
+	);
+	assert!(
+		merged.mcp.servers.iter().any(|s| s.name() == "agent-extra-server"),
+		"the agent's server is present"
+	);
+	assert_eq!(merged.roles.len(), base_role_count + 1, "roles concatenate");
+	assert!(
+		merged.roles.iter().any(|r| r.name == "agent-extra-role"),
+		"the agent's role is present"
+	);
+	assert_eq!(base.model, base_model, "the base config is not mutated");
+}
+
+#[test]
+fn merge_agent_toml_skips_servers_and_roles_the_base_already_has() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base_path = tmp.path().join("config.toml");
+	std::fs::write(&base_path, template_toml()).expect("write template");
+	let base = Config::load_from_path(&base_path).expect("load base");
+	let existing_server = base.mcp.servers[0].name().to_string();
+	let existing_role = base.roles[0].name.clone();
+	let servers = base.mcp.servers.len();
+	let roles = base.roles.len();
+
+	let agent_toml = format!(
+		r#"
+[[mcp.servers]]
+name = "{existing_server}"
+type = "builtin"
+tools = []
+
+[[roles]]
+name = "{existing_role}"
+model = "ollama:dup"
+"#
+	);
+	let merged = merge_agent_toml(&base, &agent_toml).expect("merge");
+	assert_eq!(
+		merged.mcp.servers.len(),
+		servers,
+		"a same-named server is not duplicated"
+	);
+	assert_eq!(merged.roles.len(), roles, "a same-named role is not duplicated");
+}

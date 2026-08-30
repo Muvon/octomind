@@ -1266,3 +1266,570 @@ fn purpose_for_maps_every_call_kind_to_its_routing_purpose() {
 		ModelPurpose::SupervisorRecall
 	);
 }
+
+// ---------------------------------------------------------------------------
+// run_extraction branch coverage against the scripted provider.
+// ---------------------------------------------------------------------------
+
+fn big_tool_messages() -> Vec<crate::session::Message> {
+	vec![
+		message("user", "never silently switch the resolved model"),
+		message(
+			"tool",
+			&format!(
+				"provider error: invalid continuation id c_123. {}",
+				"diagnostic evidence confirms the continuation belongs to the resolved provider. "
+					.repeat(300)
+			),
+		),
+	]
+}
+
+fn learning_config() -> crate::config::Config {
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.learning.evolution.enabled = false;
+	config
+}
+
+fn experience_tag(body: &str) -> String {
+	format!(
+		r#"<experience title="Provider continuation recovery" confidence="high" tags="provider" evidence="M1,M2">
+{body}
+</experience>"#
+	)
+}
+
+#[tokio::test]
+async fn a_failed_experience_call_never_costs_the_short_memory_path() {
+	use crate::session::chat::test_support::{
+		final_response, spawn_stub_with_status, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__experience_fail_role";
+	let project = "__experience_fail_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let url = spawn_stub_with_status(vec![
+		(200, final_response("<decision>NONE</decision>")),
+		(500, serde_json::json!({"error": "experience model down"})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&big_tool_messages(),
+		&learning_config(),
+		role,
+		project,
+		"experience-fail-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("extraction survives the experience failure");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(stored, 0, "nothing is stored from a failed experience call");
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	assert!(memories.is_empty());
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_same_source_near_duplicate_experience_is_skipped() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__experience_dup_role";
+	let project = "__experience_dup_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+	let config = learning_config();
+	let messages = big_tool_messages();
+
+	// First run stores the experience.
+	let url = spawn_stub(vec![
+		final_response("<decision>NONE</decision>"),
+		final_response(&experience_tag(&experience_body())),
+		final_response(r#"{"supported":true}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let first = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"dup-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("first extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(first, 1);
+
+	// Second run: same session source, >75% word overlap, not byte-identical.
+	let near = experience_body().replace("Apply this when", "Use this when");
+	let url = spawn_stub(vec![
+		final_response("<decision>NONE</decision>"),
+		final_response(&experience_tag(&near)),
+		final_response(r#"{"supported":true}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let second = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"dup-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("second extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(second, 0, "a near-duplicate from the same source is skipped");
+
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	assert_eq!(memories.len(), 1, "the original experience is the only copy");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__experience_reject_role";
+	let project = "__experience_reject_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let url = spawn_stub(vec![
+		final_response("<decision>NONE</decision>"),
+		final_response(&experience_tag(&experience_body())),
+		final_response(r#"{"supported":false,"issues":["citation M9 does not exist"]}"#),
+		// The one bounded repair comes back unusable.
+		final_response("I could not produce a repaired experience."),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&big_tool_messages(),
+		&learning_config(),
+		role,
+		project,
+		"experience-reject-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(stored, 0, "ungrounded work must fail closed after one repair");
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	assert!(memories.is_empty());
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_experience_with_no_verifier_answer_is_rejected() {
+	use crate::session::chat::test_support::{
+		final_response, spawn_stub_with_status, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__experience_noverify_role";
+	let project = "__experience_noverify_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let url = spawn_stub_with_status(vec![
+		(200, final_response("<decision>NONE</decision>")),
+		(200, final_response(&experience_tag(&experience_body()))),
+		(500, serde_json::json!({"error": "verifier down"})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&big_tool_messages(),
+		&learning_config(),
+		role,
+		project,
+		"experience-noverify-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(stored, 0, "no verifier verdict means no experience record");
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_orientation_stored_alongside_experience_links_to_it() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__orientation_link_role";
+	let project = "__orientation_link_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let response = "<decision>NONE</decision>\n<orientation confidence=\"high\" tags=\"provider\" evidence=\"M1\">The subject requires stable provider identity across resumed requests</orientation>";
+	let url = spawn_stub(vec![
+		final_response(response),
+		final_response(&experience_tag(&experience_body())),
+		final_response(r#"{"supported":true}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&big_tool_messages(),
+		&learning_config(),
+		role,
+		project,
+		"orientation-link-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(stored, 2);
+
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	let experience = memories
+		.iter()
+		.find(|m| m.memory_type == "experience")
+		.expect("experience stored");
+	let orientation = memories
+		.iter()
+		.find(|m| m.memory_type == "orientation")
+		.expect("orientation stored");
+	assert!(
+		orientation.related.contains(&experience.file_id()),
+		"the orientation cites the experience it was extracted with"
+	);
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_identical_orientation_is_not_stored_twice() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__orientation_dup_role";
+	let project = "__orientation_dup_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+	let config = learning_config();
+	let response = "<decision>NONE</decision>\n<orientation confidence=\"high\" evidence=\"M1\">The subject requires stable provider identity</orientation>";
+
+	for _ in 0..2 {
+		let url = spawn_stub(vec![final_response(response)]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		run_extraction(
+			&vec![message("user", "keep the provider identity stable")],
+			&config,
+			role,
+			project,
+			"orientation-dup-session",
+			crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		)
+		.await
+		.expect("extraction succeeds");
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	let orientations = memories
+		.iter()
+		.filter(|m| m.memory_type == "orientation")
+		.count();
+	assert_eq!(orientations, 1, "byte-identical orientation is skipped");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_refining_orientation_replaces_the_one_it_overlaps() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__orientation_refine_role";
+	let project = "__orientation_refine_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+	let config = learning_config();
+	let messages = vec![message("user", "keep the provider identity stable")];
+
+	let first = "<decision>NONE</decision>\n<orientation confidence=\"medium\" evidence=\"M1\">The subject requires stable provider identity across resumed requests</orientation>";
+	let refined = "<decision>NONE</decision>\n<orientation confidence=\"high\" evidence=\"M1\">The subject requires stable provider identity across resumed requests and forbids silent model fallback</orientation>";
+
+	let url = spawn_stub(vec![final_response(first)]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"orientation-refine-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("first extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	let url = spawn_stub(vec![final_response(refined)]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"orientation-refine-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("second extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	let orientations: Vec<&Lesson> = memories
+		.iter()
+		.filter(|m| m.memory_type == "orientation")
+		.collect();
+	assert_eq!(orientations.len(), 1, "the overlapping original is deleted");
+	assert!(orientations[0].content.contains("forbids silent model fallback"));
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__learn_empty_role";
+	let project = "__learn_empty_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	let url = spawn_stub(vec![final_response("<decision>LEARN</decision>")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&vec![message("user", "just a plain turn")],
+		&learning_config(),
+		role,
+		project,
+		"learn-empty-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(stored, 0, "LEARN with no lesson tags stores nothing");
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_learned_lesson_cites_a_stored_experience_and_duplicates_are_skipped() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__learn_link_role";
+	let project = "__learn_link_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+	let config = learning_config();
+	let messages = big_tool_messages();
+
+	// Run 1 call order: main extraction (lesson), experience extraction,
+	// experience grounding verdict, lesson verification.
+	let run1_answer = r#"<decision>LEARN</decision>
+<lesson confidence="high" tags="provider" evidence="never silently switch the resolved model">Never silently switch the resolved provider model on retry</lesson>"#;
+	let url = spawn_stub(vec![
+		final_response(run1_answer),
+		final_response(&experience_tag(&experience_body())),
+		final_response(r#"{"supported":true,"issues":[]}"#),
+		final_response(r#"{"unsupported":[]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let first = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"learn-link-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("first extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(first, 2);
+
+	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
+	let experience = memories
+		.iter()
+		.find(|m| m.memory_type == "experience")
+		.expect("experience stored");
+	let learned = memories
+		.iter()
+		.find(|m| m.memory_type == "learning")
+		.expect("lesson stored");
+	assert!(
+		learned.related.contains(&experience.file_id()),
+		"a lesson extracted with an experience cites it"
+	);
+
+	// Run 2: the identical lesson again (value gate closed: no tool turn).
+	let learn_only = r#"<decision>LEARN</decision>
+<lesson confidence="high" tags="provider" evidence="never silently switch the resolved model">Never silently switch the resolved provider model on retry</lesson>"#;
+	let url = spawn_stub(vec![
+		final_response(learn_only),
+		final_response(r#"{"unsupported":[]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let second = run_extraction(
+		&vec![message("user", "never silently switch the resolved model")],
+		&config,
+		role,
+		project,
+		"learn-link-session",
+		crate::supervisor::learning::TrajectoryOutcome::Verified,
+	)
+	.await
+	.expect("second extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(second, 0, "a byte-identical lesson is skipped");
+
+	let after = FileBackend.retrieve_all(role, project).await.unwrap();
+	assert_eq!(after.len(), 2, "no duplicate records were added");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn verify_lessons_rejects_everything_when_the_verifier_is_down() {
+	use crate::session::chat::test_support::{
+		spawn_stub_with_status, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let response = r#"<decision>LEARN</decision>
+<lesson confidence="high" evidence="quote from the user">A real user rule worth keeping</lesson>"#;
+	let candidates = parse_lessons_with_evidence(response, "r", "p", "s", 0);
+	assert_eq!(candidates.len(), 1);
+
+	let url = spawn_stub_with_status(vec![(
+		500,
+		serde_json::json!({"error": "verifier down"}),
+	)])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let verdicts = verify_lessons(&learning_config(), &candidates, "transcript").await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(verdicts, vec![false], "no verifier answer means no lesson");
+}
+
+#[tokio::test]
+async fn verify_lessons_rejects_everything_on_an_unusable_answer() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let response = r#"<decision>LEARN</decision>
+<lesson confidence="high" evidence="quote from the user">A real user rule worth keeping</lesson>"#;
+	let candidates = parse_lessons_with_evidence(response, "r", "p", "s", 0);
+
+	let url = spawn_stub(vec![final_response("certainly not json")]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let verdicts = verify_lessons(&learning_config(), &candidates, "transcript").await;
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(verdicts, vec![false], "an unusable answer fails closed");
+}
+
+#[tokio::test]
+async fn detached_extraction_reports_zero_without_learning_enabled() {
+	use crate::supervisor::learning::backend::FileBackend;
+	let _data = TestDataDir::new();
+	let mut config = learning_config();
+	config.supervisor.learning.enabled = false;
+	let handle = extract_lessons_detached(
+		vec![message("user", "hello")],
+		config,
+		"role".to_string(),
+		"project".to_string(),
+		"session".to_string(),
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	);
+	handle.await.expect("detached task joins");
+	let stored = FileBackend
+		.retrieve_all("role", "project")
+		.await
+		.expect("store readable");
+	assert!(
+		stored.is_empty(),
+		"disabled learning must persist nothing"
+	);
+}
+
+#[tokio::test]
+async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
+	let mut config = learning_config();
+	config.supervisor.learning.enabled = false;
+	assert!(
+		spawn_lesson_extraction_snapshot(
+			vec![message("user", "hello")],
+			&config,
+			"role".to_string(),
+			None,
+			"session".to_string(),
+			crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		)
+		.is_none(),
+		"disabled learning must not spawn work"
+	);
+
+	// An unresolvable model fails fast inside the detached task — the spawn
+	// boundary itself must still return a handle.
+	let mut config = learning_config();
+	config.supervisor.learning.enabled = true;
+	config.supervisor.learning.model = "nope:no-such-provider".to_string();
+	let handle = spawn_lesson_extraction_snapshot(
+		vec![message("user", "hello")],
+		&config,
+		"role".to_string(),
+		None,
+		"session".to_string(),
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.expect("enabled learning spawns");
+	let _ = handle.await;
+}
+
+#[tokio::test]
+async fn before_exit_extraction_gates_on_the_enabled_flag_and_spawns_a_child() {
+	let mut config = learning_config();
+	config.supervisor.learning.enabled = false;
+	let session = crate::session::chat::session::ChatSession::for_tests(vec![
+		message("user", "hello"),
+	]);
+	// Disabled: returns without touching the filesystem.
+	extract_lessons_before_exit(&session, &config, "role".to_string(), None);
+
+	config.supervisor.learning.enabled = true;
+	let session_name = session.session.info.name.clone();
+	let pid = std::process::id();
+	extract_lessons_before_exit(&session, &config, "role".to_string(), None);
+	// The child is the test binary itself (harmless: unknown subcommand → exit).
+	// Clean the snapshot the parent wrote for it.
+	let snapshot = std::env::temp_dir().join(format!(
+		"octomind-distill-{session_name}-{pid}.json"
+	));
+	let _ = std::fs::remove_file(&snapshot);
+}

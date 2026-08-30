@@ -658,3 +658,142 @@ fn response_parse_rejects_reversed_braces_unterminated_fences_and_bad_json() {
 	);
 	assert!(parse_response("{not json}").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Adaptive round observation with the mechanic switched off.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn observe_and_relax_return_the_configured_baseline_when_adaptive_is_off() {
+	let fixed = config(false, 5_000, "ollama:m");
+	assert_eq!(observe_adaptive_round(&fixed, 10_000, 9_000), 5_000);
+	assert_eq!(relax_adaptive_threshold(&fixed), 5_000);
+}
+
+// ---------------------------------------------------------------------------
+// build_numbered_view: sampling edges.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn diagnostics_on_the_first_and_last_lines_survive_a_sampled_view() {
+	let mut lines: Vec<String> = (1..=300).map(|i| format!("plain filler line {i}")).collect();
+	lines[0] = "error: boom at startup".to_string();
+	lines[299] = "error: deprecation at the end".to_string();
+	let content = lines.join("\n");
+
+	let view = build_numbered_view(&content, 250, "");
+
+	assert!(view.partial, "300 lines under a 250-token budget must sample");
+	assert!(
+		view.body.contains("error: boom at startup"),
+		"a diagnostic on line 1 is queued with its context window"
+	);
+	assert!(
+		view.body.contains("error: deprecation at the end"),
+		"a diagnostic on the last line is queued with its context window"
+	);
+	assert!(
+		view.body.contains("plain filler line 298"),
+		"the diagnostic carries its context window"
+	);
+}
+
+#[test]
+fn a_view_over_budget_drops_lines_until_the_rendered_body_fits() {
+	let content = (1..=120)
+		.map(|i| format!("filler line {i} of the oversized result"))
+		.collect::<Vec<_>>()
+		.join("\n");
+
+	let view = build_numbered_view(&content, 60, "");
+
+	assert!(view.partial);
+	assert!(
+		estimate_tokens(&view.body) <= 60,
+		"the rendered body itself must respect the budget: {}",
+		estimate_tokens(&view.body)
+	);
+	assert!(
+		view.visible_ranges.len() < 120,
+		"lines were dropped to fit, not merely clipped mid-record"
+	);
+}
+
+#[test]
+fn a_huge_single_line_shrinks_its_preview_until_the_record_fits() {
+	let line: String = "x".repeat(400);
+	let view = build_numbered_view(&line, 8, "");
+
+	assert!(!view.partial, "one line of one is still the whole result");
+	assert!(
+		view.body.starts_with('1'),
+		"the record keeps its original line number"
+	);
+	assert!(
+		view.body.chars().count() < line.chars().count(),
+		"the preview is clipped rather than the record dropped"
+	);
+	assert!(
+		view.body.contains("line preview clipped"),
+		"the record is clipped in place, never dropped: {}",
+		view.body
+	);
+}
+
+// ---------------------------------------------------------------------------
+// render_numbered_selection: gap markers at both ends.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn selection_markers_name_every_omitted_span_at_both_edges() {
+	let lines: Vec<&str> = vec!["one", "two", "three", "four", "five", "six"];
+
+	let leading = render_numbered_selection(&lines, &[5], 6, 64);
+	assert!(
+		leading.starts_with("[… original lines 1-5 not shown in this view …]"),
+		"a selection starting mid-result announces the head it dropped: {leading}"
+	);
+	assert!(leading.contains("6| six"));
+
+	let trailing = render_numbered_selection(&lines, &[0], 6, 64);
+	assert!(trailing.contains("1| one"));
+	assert!(
+		trailing.ends_with("[… original lines 2-6 not shown in this view …]"),
+		"a selection ending early announces the tail it dropped: {trailing}"
+	);
+
+	let middle = render_numbered_selection(&lines, &[1, 4], 6, 64);
+	assert!(middle.contains("[… original lines 3-4 not shown in this view …]"));
+}
+
+// ---------------------------------------------------------------------------
+// truncate_preserving_edges: the tail-shrink loop.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn edge_truncation_shrinks_the_tail_until_the_combined_view_fits() {
+	let text: String = (1..=120)
+		.map(|i| format!("token-heavy line {i} with padding words"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	assert!(estimate_tokens(&text) > 60);
+
+	for max_tokens in 14..=40 {
+		let out = truncate_preserving_edges(&text, max_tokens);
+		assert!(
+			out.contains("[… middle omitted for condenser budget …]"),
+			"both ends are kept behind one explicit marker at budget {max_tokens}"
+		);
+		assert!(
+			estimate_tokens(&out) <= max_tokens,
+			"budget {max_tokens} exceeded: {}",
+			estimate_tokens(&out)
+		);
+		assert!(out.starts_with("token"), "the head survives at budget {max_tokens}");
+	}
+	// At a budget where the tail allowance spans whole lines the final line
+	// survives; at tiny budgets the tail shrinks to a couple of tokens and
+	// cannot be expected to carry it.
+	let roomy = truncate_preserving_edges(&text, 40);
+	assert!(roomy.contains("line 120"), "the tail survives: {roomy}");
+}

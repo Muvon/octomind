@@ -90,3 +90,22 @@ async fn sessions_are_isolated_and_clearable() {
 	})
 	.await;
 }
+
+// ---------------------------------------------------------------------------
+// Handback tally lifecycle.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn clearing_the_handback_tally_removes_the_session_entry() {
+	let sid = "delegate-clear-session".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		note_handback(true);
+		note_handback(false);
+		assert_eq!(take_handback(), (2, 1), "tallies accumulate per session");
+		assert_eq!(take_handback(), (0, 0), "taking drains the tally");
+	})
+	.await;
+	// Outside the session scope nothing is tallied.
+	assert_eq!(take_handback(), (0, 0));
+	clear_handback_for_session(&sid);
+}

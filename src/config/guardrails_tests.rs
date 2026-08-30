@@ -276,3 +276,242 @@ fn role_filter_matches_any_listed_entry() {
 	assert!(role_matches(&filter, "assistant"));
 	assert!(!role_matches(&filter, "developer:general"));
 }
+
+// ---------------------------------------------------------------------------
+// Raw `has` field: the list form.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn has_accepts_a_list_of_capabilities() {
+	let g = Guardrails::parse(
+		r#"
+			[[guard]]
+			match = "shell"
+			has = ["network", "filesystem"]
+			message = "needs both"
+			"#,
+	)
+	.unwrap();
+	assert_eq!(g.guards.len(), 1);
+	assert_eq!(g.guards[0].has, vec!["network", "filesystem"]);
+}
+
+// ---------------------------------------------------------------------------
+// load_from_workdir: present, absent, and unparseable files.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn load_from_workdir_reads_a_valid_file() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	std::fs::create_dir_all(tmp.path().join(".agents")).expect("agents dir");
+	std::fs::write(
+		tmp.path().join(".agents").join("guardrails.toml"),
+		r#"
+			[[guard]]
+			match = "shell"
+			message = "no shell"
+			"#,
+	)
+	.expect("write guardrails");
+	let g = Guardrails::load_from_workdir(tmp.path());
+	assert_eq!(g.guards.len(), 1, "the file is parsed and compiled");
+}
+
+#[test]
+fn load_from_workdir_without_a_file_is_default() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let g = Guardrails::load_from_workdir(tmp.path());
+	assert!(g.guards.is_empty());
+	assert!(g.pipes.is_empty());
+}
+
+#[test]
+fn load_from_workdir_degrades_to_default_on_a_bad_file() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	std::fs::create_dir_all(tmp.path().join(".agents")).expect("agents dir");
+	std::fs::write(
+		tmp.path().join(".agents").join("guardrails.toml"),
+		"this = [not : valid",
+	)
+	.expect("write broken guardrails");
+	let g = Guardrails::load_from_workdir(tmp.path());
+	assert!(g.guards.is_empty(), "a broken file never blocks startup");
+}
+
+// ---------------------------------------------------------------------------
+// parse(): loud rejection of malformed declarations.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_pipe_without_a_name_is_rejected() {
+	let err = Guardrails::parse("[[pipe]]\ncommand = \"a.sh\"\n").unwrap_err();
+	assert!(err.to_string().contains("missing field `name`"), "{err}");
+}
+
+#[test]
+fn a_pipe_without_a_command_is_rejected() {
+	let err = Guardrails::parse("[[pipe]]\nname = \"x\"\n").unwrap_err();
+	assert!(err.to_string().contains("missing field `command`"), "{err}");
+}
+
+#[test]
+fn a_pipe_with_an_invalid_match_regex_is_rejected() {
+	let err = Guardrails::parse(
+		"[[pipe]]\nname = \"x\"\ncommand = \"a.sh\"\nmatch = \"([unclosed\"\n",
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("invalid match regex"), "{err}");
+}
+
+#[test]
+fn a_guard_when_entry_without_a_sign_is_rejected() {
+	let err = Guardrails::parse(
+		r#"
+			[[guard]]
+			match = "shell"
+			when = ["shell"]
+			message = "no"
+			"#,
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("must start with `+` or `-`"), "{err}");
+}
+
+#[test]
+fn a_hook_with_match_result_and_script_compiles() {
+	let g = Guardrails::parse(
+		r#"
+			[[hook]]
+			match = "shell"
+			result = "error"
+			on = "success"
+			script = "report.sh"
+			"#,
+	)
+	.unwrap();
+	assert_eq!(g.hooks.len(), 1);
+	assert!(g.hooks[0].trigger.is_some());
+	assert!(g.hooks[0].result_regex.is_some());
+}
+
+#[test]
+fn a_hook_with_an_invalid_result_regex_is_rejected() {
+	let err = Guardrails::parse(
+		"[[hook]]\nresult = \"([bad\"\nscript = \"a.sh\"\n",
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("invalid result regex"), "{err}");
+}
+
+#[test]
+fn a_hook_without_a_script_is_rejected() {
+	let err = Guardrails::parse("[[hook]]\nmatch = \"shell\"\n").unwrap_err();
+	assert!(err.to_string().contains("missing field `script`"), "{err}");
+}
+
+#[test]
+fn a_hook_with_an_invalid_match_target_is_rejected() {
+	let err = Guardrails::parse(
+		"[[hook]]\nmatch = \"shell([bad\"\nscript = \"a.sh\"\n",
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("invalid match"), "{err}");
+}
+
+#[test]
+fn a_validator_without_a_name_is_rejected() {
+	let err = Guardrails::parse("[[validator]]\nscript = \"a.sh\"\n").unwrap_err();
+	assert!(err.to_string().contains("missing field `name`"), "{err}");
+}
+
+#[test]
+fn a_validator_without_a_script_is_rejected() {
+	let err = Guardrails::parse("[[validator]]\nname = \"v\"\n").unwrap_err();
+	assert!(err.to_string().contains("missing field `script`"), "{err}");
+}
+
+#[test]
+fn a_validator_with_an_invalid_match_regex_is_rejected() {
+	let err = Guardrails::parse(
+		"[[validator]]\nname = \"v\"\nscript = \"a.sh\"\nmatch = \"([bad\"\n",
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("invalid match regex"), "{err}");
+}
+
+#[test]
+fn validator_when_entries_accept_both_signs_and_reject_none() {
+	let g = Guardrails::parse(
+		r#"
+			[[validator]]
+			name = "v"
+			script = "a.sh"
+			when = ["+shell", "-network"]
+			"#,
+	)
+	.unwrap();
+	assert_eq!(g.validators.len(), 1);
+
+	let err = Guardrails::parse(
+		r#"
+			[[validator]]
+			name = "v"
+			script = "a.sh"
+			when = ["shell"]
+			"#,
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("must start with `+` or `-`"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// parse_target / split_arg / target_matches edges.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_target_rejects_empty_and_malformed_forms() {
+	assert!(parse_target("").is_err());
+	assert!(parse_target("   ").is_err());
+	let unclosed = parse_target("shell(rm").unwrap_err();
+	assert!(unclosed.to_string().contains("missing closing"), "{unclosed}");
+	let no_capability = parse_target("(rm)").unwrap_err();
+	assert!(no_capability.to_string().contains("empty capability"), "{no_capability}");
+	let bad_regex = parse_target("shell([bad)").unwrap_err();
+	assert!(bad_regex.to_string().contains("invalid regex"), "{bad_regex}");
+}
+
+#[test]
+fn split_arg_treats_a_non_word_head_as_part_of_the_regex() {
+	// "a-b=x" is not arg=regex (head has a dash) — the whole inner string
+	// stays the regex.
+	let t = parse_target("shell(a-b=x)").unwrap();
+	assert!(t.arg_name.is_none());
+	assert!(t.regex.as_ref().unwrap().as_str().contains("a-b=x"));
+}
+
+#[test]
+fn target_matches_without_a_capability_never_fires() {
+	let t = parse_target("shell").unwrap();
+	assert!(!target_matches(&t, None, &json!({})));
+}
+
+#[test]
+fn an_arg_target_on_a_missing_param_matches_only_an_empty_haystack() {
+	let t = parse_target("shell(command=^$)").unwrap();
+	let params = json!({ "other": "value" });
+	assert!(
+		target_matches(&t, Some("shell"), &params),
+		"a missing arg is an empty haystack, so ^$ matches"
+	);
+	let t2 = parse_target("shell(command=never-empty)").unwrap();
+	assert!(!target_matches(&t2, Some("shell"), &params));
+}
+
+#[test]
+fn a_whole_params_target_matches_the_serialized_object() {
+	let t = parse_target("shell(secret\\.env)").unwrap();
+	let params = json!({ "paths": ["a.rs", "secret.env"] });
+	assert!(target_matches(&t, Some("shell"), &params));
+	let clean = json!({ "paths": ["a.rs"] });
+	assert!(!target_matches(&t, Some("shell"), &clean));
+}

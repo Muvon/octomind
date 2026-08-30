@@ -356,3 +356,85 @@ async fn send_done_is_best_effort_and_returns_ok() {
 		.await
 		.expect("best-effort /done always returns Ok");
 }
+
+#[tokio::test]
+async fn run_step_forwards_skills_and_classifies_nonzero() {
+	let args = RunStepArgs {
+		role: "assistant".to_string(),
+		prompt: "do the thing".to_string(),
+		session_name: None,
+		model: None,
+		workdir: None,
+		skills: Some(vec!["rust".to_string()]),
+		capabilities: None,
+		timeout_secs: 0,
+		event_prefix: None,
+		spinner: None,
+		wf_start: Instant::now(),
+		prior_cost: 0.0,
+		prior_tools: 0,
+	};
+	let outcome = run_step(args).await;
+	assert!(
+		matches!(outcome, RunOutcome::NonZero { .. }),
+		"forwarding OCTOMIND_SKILLS must not change the classification"
+	);
+}
+
+#[tokio::test]
+async fn run_step_missing_workdir_classifies_spawn_error() {
+	let args = RunStepArgs {
+		role: "assistant".to_string(),
+		prompt: "do the thing".to_string(),
+		session_name: None,
+		model: None,
+		workdir: Some(std::path::PathBuf::from("/definitely/not/a/dir-12345")),
+		skills: None,
+		capabilities: None,
+		timeout_secs: 0,
+		event_prefix: None,
+		spinner: None,
+		wf_start: Instant::now(),
+		prior_cost: 0.0,
+		prior_tools: 0,
+	};
+	let outcome = run_step(args).await;
+	let RunOutcome::SpawnError { source, .. } = outcome else {
+		panic!("expected SpawnError, got {outcome:?}");
+	};
+	assert!(
+		source.to_string().contains("spawn failed"),
+		"got: {source}"
+	);
+}
+
+#[tokio::test]
+async fn run_step_clears_spinner_on_failure() {
+	let args = RunStepArgs {
+		role: "assistant".to_string(),
+		prompt: "do the thing".to_string(),
+		session_name: None,
+		model: None,
+		workdir: None,
+		skills: None,
+		capabilities: None,
+		timeout_secs: 0,
+		event_prefix: None,
+		spinner: Some(ProgressBar::new_spinner()),
+		wf_start: Instant::now(),
+		prior_cost: 0.0,
+		prior_tools: 0,
+	};
+	let outcome = run_step(args).await;
+	assert!(
+		matches!(outcome, RunOutcome::NonZero { .. }),
+		"the spinner is cleared on failure and the outcome still classifies"
+	);
+}
+
+#[tokio::test]
+async fn send_done_without_workdir_is_best_effort_ok() {
+	send_done("wf-no-workdir", None)
+		.await
+		.expect("best-effort /done without a workdir returns Ok");
+}

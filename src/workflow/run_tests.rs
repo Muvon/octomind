@@ -623,3 +623,634 @@ fn display_helpers_write_without_panicking() {
 	print_response("", false, "");
 	print_response("plain text", false, "");
 }
+
+// ---- Executor: exec paths ----
+// Under `cargo test` the spawned step subprocess is the test binary itself,
+// which rejects `--format jsonl` and exits non-zero — every successful-outcome
+// arm is therefore a hard ceiling here; these tests drive the failure paths.
+
+fn executor_for(wf_name: &str, graph_mode: bool) -> Executor {
+	Executor::new(
+		wf_name.to_string(),
+		&template_config(),
+		false,
+		None,
+		graph_mode,
+		HashSet::new(),
+	)
+}
+
+#[tokio::test]
+async fn exec_sequential_retries_tag_attempts_and_fail_loudly() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "flaky"
+		role = "developer:general"
+		prompt = "do {{input}}"
+		retries = 1
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("both attempts must fail");
+	let msg = err.to_string();
+	assert!(msg.contains("step 'flaky' failed after 2 attempts"), "got: {msg}");
+}
+
+#[tokio::test]
+async fn exec_sequential_continue_creates_and_reuses_session_id() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "cont"
+		role = "developer:general"
+		prompt = "refine {{input}}"
+		session = "continue"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("c", false);
+	ex.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("subprocess fails on first use");
+	let id = ex.session_ids.get("cont").cloned().expect("session id created");
+	assert!(id.starts_with("wf-c-cont-"), "got: {id}");
+
+	ex.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("subprocess fails on reuse too");
+	assert_eq!(
+		ex.session_ids.get("cont"),
+		Some(&id),
+		"a Continue session keeps its id, never regenerates it"
+	);
+}
+
+#[tokio::test]
+async fn exec_sequential_continue_reuse_sends_done_and_feeds_prior_output() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "cont"
+		role = "developer:general"
+		prompt = "refine {{input}}"
+		session = "continue"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("c", false);
+	// Pre-stage a used Continue session: the executor must send best-effort
+	// /done to the old session and nudge with the prior step's output
+	// instead of re-sending the full templated prompt.
+	ex.session_ids
+		.insert("cont".to_string(), "wf-c-cont-fixed".to_string());
+	ex.used_continue.insert("cont".to_string(), true);
+	ex.last_step = Some("prev".to_string());
+	ex.outputs
+		.insert("prev".to_string(), "prior verdict".to_string());
+
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("subprocess still fails");
+	assert!(err.to_string().contains("step 'cont' failed"), "got: {err}");
+	assert_eq!(
+		ex.session_ids.get("cont"),
+		Some(&"wf-c-cont-fixed".to_string()),
+		"the existing session id is kept"
+	);
+}
+
+#[tokio::test]
+async fn exec_sequential_interactive_mode_runs_with_spinner() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "solo"
+		role = "developer:general"
+		prompt = "do {{input}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.interactive = true;
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("step fails under the spinner too");
+	assert!(err.to_string().contains("step 'solo' failed"), "got: {err}");
+}
+
+#[tokio::test]
+async fn exec_sequential_spawn_error_names_the_cause() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let dir = tempfile::tempdir().expect("temp dir");
+	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000))
+		.expect("chmod 000");
+	struct Restore(std::path::PathBuf);
+	impl Drop for Restore {
+		fn drop(&mut self) {
+			use std::os::unix::fs::PermissionsExt;
+			let _ = std::fs::set_permissions(
+				&self.0,
+				std::fs::Permissions::from_mode(0o755),
+			);
+		}
+	}
+	let _restore = Restore(dir.path().to_path_buf());
+
+	let wf: WorkflowDef = toml::from_str(&format!(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "locked"
+		role = "developer:general"
+		prompt = "do {{{{input}}}}"
+		workdir = "{}"
+		"#,
+		dir.path().display()
+	))
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	// The dir exists (resolve_workdir accepts it) but the child cannot chdir
+	// into it — spawn itself must fail with a named cause.
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("spawn must fail in an inaccessible dir");
+	assert!(err.to_string().contains("spawn error"), "got: {err}");
+}
+
+#[tokio::test]
+async fn exec_parallel_dynamic_source_missing_fails_clearly() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "fan"
+		parallel = true
+		source = "ghost"
+		match = "(.+)"
+		  [[steps.run]]
+		  name = "worker"
+		  role = "developer:general"
+		  prompt = "{{fan}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[0] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("missing source output must fail");
+	assert!(
+		err.to_string().contains("unavailable on the current route"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_parallel_dynamic_invalid_regex_fails_at_run_time() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "fan"
+		parallel = true
+		source = "gen"
+		match = "(unclosed"
+		  [[steps.run]]
+		  name = "worker"
+		  role = "developer:general"
+		  prompt = "{{fan}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[0] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.outputs.insert("gen".to_string(), "zzz".to_string());
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("invalid regex must fail at run time");
+	assert!(
+		err.to_string().contains("invalid match regex"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_parallel_dynamic_zero_items_fails() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "fan"
+		parallel = true
+		source = "gen"
+		match = "<task>(.*?)</task>"
+		  [[steps.run]]
+		  name = "worker"
+		  role = "developer:general"
+		  prompt = "{{fan}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[0] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.outputs
+		.insert("gen".to_string(), "no markers here".to_string());
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("zero matches must fail");
+	assert!(err.to_string().contains("found 0 items"), "got: {err}");
+}
+
+#[tokio::test]
+async fn exec_parallel_dynamic_replicas_fail_and_block_aborts() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "gen"
+		role = "developer:general"
+		prompt = "list {{input}}"
+		[[steps]]
+		name = "fan"
+		parallel = true
+		source = "gen"
+		match = "(?s)<task>(.*?)</task>"
+		  [[steps.run]]
+		  name = "worker"
+		  role = "developer:general"
+		  prompt = "work on {{fan}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[1] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.outputs.insert(
+		"gen".to_string(),
+		"<task>alpha</task>\n<task>beta</task>".to_string(),
+	);
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("both replicas fail → block aborts");
+	assert!(
+		err.to_string().contains("only 0/2 replicas succeeded"),
+		"got: {err}"
+	);
+	// During fan-out the block's own name is the per-item variable — the
+	// last matched item stays bound even though the block then aborted.
+	assert_eq!(ex.outputs.get("fan"), Some(&"beta".to_string()));
+}
+
+#[tokio::test]
+async fn exec_parallel_static_spawn_errors_throttled_abort() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let dir = tempfile::tempdir().expect("temp dir");
+	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000))
+		.expect("chmod 000");
+	struct Restore(std::path::PathBuf);
+	impl Drop for Restore {
+		fn drop(&mut self) {
+			use std::os::unix::fs::PermissionsExt;
+			let _ = std::fs::set_permissions(
+				&self.0,
+				std::fs::Permissions::from_mode(0o755),
+			);
+		}
+	}
+	let _restore = Restore(dir.path().to_path_buf());
+
+	let wf: WorkflowDef = toml::from_str(&format!(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "duo"
+		parallel = true
+		max_parallel = 1
+		  [[steps.run]]
+		  name = "a"
+		  role = "developer:general"
+		  prompt = "pa"
+		  workdir = "{}"
+		  [[steps.run]]
+		  name = "b"
+		  role = "developer:general"
+		  prompt = "pb"
+		  workdir = "{}"
+		"#,
+		dir.path().display(),
+		dir.path().display()
+	))
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[0] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("both throttled replicas fail to spawn");
+	assert!(
+		err.to_string().contains("only 0/2 replicas succeeded"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_parallel_static_count_expansion_reports_total() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "sweep"
+		parallel = true
+		  [[steps.run]]
+		  name = "a"
+		  role = "developer:general"
+		  prompt = "pa"
+		  count = 2
+		  [[steps.run]]
+		  name = "b"
+		  role = "developer:general"
+		  prompt = "pb"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Parallel(p) = &wf.steps[0] else {
+		panic!("expected a parallel step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_parallel(p, "DO")
+		.await
+		.expect_err("all three expanded replicas fail");
+	assert!(
+		err.to_string().contains("only 0/3 replicas succeeded"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_conditional_without_prior_output_fails() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = ["yes"]
+		[steps.condition]
+		contains = "go"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "p"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect_err("no prior output to test must fail");
+	assert!(
+		err.to_string().contains("no prior step output to test"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_conditional_unknown_target_fails() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = ["yes"]
+		[steps.condition]
+		contains = "go"
+		output = "ghost"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "p"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect_err("a target that never ran must fail");
+	assert!(
+		err.to_string().contains("condition target 'ghost' has no output"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_conditional_matched_branch_runs_and_fails() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = ["yes"]
+		on_no_match = ["nope"]
+		[steps.condition]
+		contains = "PASS"
+		output = "prev"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "ship it"
+		[[steps.run]]
+		name = "nope"
+		role = "developer:general"
+		prompt = "fix it"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	ex.outputs
+		.insert("prev".to_string(), "PASS GO".to_string());
+	let err = ex
+		.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect_err("the chosen branch's subprocess fails");
+	assert!(
+		err.to_string().contains("step 'yes' failed after 1 attempts"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+async fn exec_conditional_empty_branches_store_empty_outputs() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = []
+		on_no_match = []
+		[steps.condition]
+		contains = "go"
+		output = "prev"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "p"
+		[[steps.run]]
+		name = "nope"
+		role = "developer:general"
+		prompt = "q"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", true);
+	ex.outputs
+		.insert("prev".to_string(), "go right ahead".to_string());
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("a conditional with no branches is trivially Ok");
+	// Skipped branch outputs resolve to empty entries, the gate itself
+	// stores the (empty) selected output, and graph mode advances to it.
+	assert_eq!(ex.outputs.get("yes"), Some(&String::new()));
+	assert_eq!(ex.outputs.get("nope"), Some(&String::new()));
+	assert_eq!(ex.outputs.get("gate"), Some(&String::new()));
+	assert_eq!(ex.last_step, Some("gate".to_string()));
+}
+
+#[test]
+fn condition_matches_treats_invalid_regex_as_no_match() {
+	let bad = Condition {
+		output: None,
+		contains: None,
+		matches: Some("(unclosed".to_string()),
+	};
+	assert!(
+		!condition_matches(&bad, "anything"),
+		"an invalid regex must simply never match, not panic"
+	);
+}
+
+#[test]
+fn print_response_renders_markdown_content() {
+	// Markdown-looking output goes through the themed MarkdownRenderer;
+	// the contract is completing without panic, matching the display-helper
+	// smoke test above.
+	print_response(
+		"# Plan\n\n- item one\n- item two\n\n```rust\nfn main() {}\n```",
+		true,
+		"default",
+	);
+}
+
+#[test]
+fn workflow_output_names_includes_conditional_branches() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = ["yes"]
+		on_no_match = ["nope"]
+		[steps.condition]
+		contains = "go"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "p"
+		[[steps.run]]
+		name = "nope"
+		role = "developer:general"
+		prompt = "q"
+		"#,
+	)
+	.expect("workflow parses");
+	let names = workflow_output_names(&wf);
+	for expected in ["gate", "yes", "nope"] {
+		assert!(names.contains(expected), "missing {expected} in {names:?}");
+	}
+	assert_eq!(names.len(), 3);
+}
+
+#[tokio::test]
+async fn execute_graph_aborts_when_first_node_fails() {
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "g"
+		entry = "start"
+		max_transitions = 3
+		[[steps]]
+		name = "start"
+		role = "developer:general"
+		prompt = "begin {{input}}"
+		[[steps]]
+		name = "fin"
+		role = "developer:general"
+		prompt = "end {{start}}"
+		[[edges]]
+		from = "start"
+		to = "fin"
+		when = { contains = "go" }
+		[[edges]]
+		from = "start"
+		to = "$end"
+		[[edges]]
+		from = "fin"
+		to = "$end"
+		"#,
+	)
+	.expect("workflow parses");
+	let err = execute(&wf, "DO", &template_config(), None)
+		.await
+		.expect_err("the entry node's subprocess fails");
+	assert!(
+		err.to_string().contains("step 'start' failed after 1 attempts"),
+		"got: {err}"
+	);
+}

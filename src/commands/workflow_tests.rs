@@ -553,3 +553,107 @@ async fn listing_enumerates_tap_workflows_first_tap_wins() {
 		.await
 		.expect("non-empty listing prints and returns Ok");
 }
+
+// ── execute: tap workflows (sandboxed data dir) ──────────────────────────
+
+/// A minimal valid workflow as a tap would ship it.
+const TAP_WF: &str = r#"
+name = "alpha"
+description = "from a tap"
+max_cost = 0.5
+
+[[steps]]
+name = "only"
+role = "developer:general"
+prompt = "do {{input}}"
+"#;
+
+/// Install a user tap (`acme/lib`) shipping one workflow, plus the built-in
+/// default tap directory so tap loading never reaches for git.
+fn install_tap_workflow(dir: &std::path::Path, body: &str) {
+	std::fs::write(dir.join("taps.toml"), "[[taps]]\nname = \"acme/lib\"\n")
+		.expect("write taps.toml");
+	let workflows = dir
+		.join("taps")
+		.join("acme")
+		.join("octomind-lib")
+		.join("workflows");
+	std::fs::create_dir_all(&workflows).expect("tap workflows dir");
+	std::fs::write(workflows.join("alpha.toml"), body).expect("tap workflow");
+	let default_tap = dir.join("taps").join("muvon").join("octomind-tap");
+	std::fs::create_dir_all(default_tap.join("workflows")).expect("default tap dir");
+}
+
+#[tokio::test]
+#[serial]
+async fn tap_workflow_dry_run_checks_public_roles_and_prints_plan() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("tap-dry");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	install_tap_workflow(&dir, TAP_WF.trim());
+
+	// The workflow's role is public: the tap ships a matching agent file.
+	let agents = dir
+		.join("taps")
+		.join("acme")
+		.join("octomind-lib")
+		.join("agents")
+		.join("developer");
+	std::fs::create_dir_all(&agents).expect("tap agents dir");
+	std::fs::write(agents.join("general.toml"), "# agent\n").expect("tap agent");
+
+	execute(&wf_args(Some("alpha"), true), &template_config())
+		.await
+		.expect("tap dry run validates public roles and prints the plan");
+}
+
+#[tokio::test]
+#[serial]
+async fn tap_workflow_with_non_public_role_errors() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("tap-role");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	install_tap_workflow(&dir, TAP_WF.trim());
+
+	// No agents shipped → the workflow's role is not a public tap role.
+	let err = execute(&wf_args(Some("alpha"), true), &template_config())
+		.await
+		.expect_err("a non-public role must fail");
+	assert!(
+		err.to_string().contains("is not a public tap role"),
+		"got: {err}"
+	);
+}
+
+#[tokio::test]
+#[serial]
+async fn local_workflow_requires_input_via_stdin() {
+	use std::os::fd::AsRawFd;
+
+	let dir = tempdir().expect("temp dir");
+	let file = dir.path().join("seq.toml");
+	std::fs::write(&file, SEQUENTIAL_WF.trim()).expect("write workflow");
+
+	// Point stdin at /dev/null so the read is deterministically empty even
+	// under the test harness's own stdin. fd 0 is process-global → serial.
+	let saved = unsafe { libc::dup(libc::STDIN_FILENO) };
+	assert!(saved >= 0, "dup stdin for restore");
+	let null = std::fs::File::open("/dev/null").expect("/dev/null");
+	unsafe {
+		libc::dup2(null.as_raw_fd(), libc::STDIN_FILENO);
+	}
+	let result = execute(
+		&wf_args(Some(file.to_str().expect("utf8 path")), false),
+		&template_config(),
+	)
+	.await;
+	unsafe {
+		libc::dup2(saved, libc::STDIN_FILENO);
+		libc::close(saved);
+	}
+	let err = result.expect_err("empty stdin must be rejected");
+	assert!(
+		err.to_string().contains("requires input via stdin"),
+		"got: {err}"
+	);
+}

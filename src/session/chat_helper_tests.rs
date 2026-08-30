@@ -419,18 +419,39 @@ fn test_hint_extended() {
 	assert_eq!(completer.hint("/role"), Some(" <role_name>".to_string()));
 	assert_eq!(completer.hint("/model"), Some(" <model_name>".to_string()));
 
-	// NOTE: the "Start typing …" hints for "/image ", "/prompt ", "/run ",
-	// "/context ", "/mcp ", "/cache ", "/loglevel ", "/role ", "/model " are
-	// dead code: each guard requires `line.len() > prefix_len` while the arg
-	// is only empty when `line.len() == prefix_len`. Current behavior: None.
-	assert_eq!(completer.hint("/image "), None);
-	assert_eq!(completer.hint("/prompt "), None);
-	assert_eq!(completer.hint("/run "), None);
-	assert_eq!(completer.hint("/context "), None);
-	assert_eq!(completer.hint("/mcp "), None);
-	assert_eq!(completer.hint("/cache "), None);
-	assert_eq!(completer.hint("/loglevel "), None);
-	assert_eq!(completer.hint("/model "), None);
+	// Empty-arg hints (guard is >= so the empty branch is reachable)
+	assert_eq!(
+		completer.hint("/image "),
+		Some("Start typing image file path...".to_string())
+	);
+	assert_eq!(
+		completer.hint("/prompt "),
+		Some("Start typing prompt template name...".to_string())
+	);
+	assert_eq!(
+		completer.hint("/run "),
+		Some("Start typing command name...".to_string())
+	);
+	assert_eq!(
+		completer.hint("/context "),
+		Some("all|assistant|user|tool|large".to_string())
+	);
+	assert_eq!(
+		completer.hint("/mcp "),
+		Some("list|info|full|health|dump|validate".to_string())
+	);
+	assert_eq!(
+		completer.hint("/cache "),
+		Some("stats|clear|threshold".to_string())
+	);
+	assert_eq!(
+		completer.hint("/loglevel "),
+		Some("none|info|debug".to_string())
+	);
+	assert_eq!(
+		completer.hint("/model "),
+		Some("Start typing model name...".to_string())
+	);
 
 	// Non-empty arg falls through to the completer
 	assert_eq!(completer.hint("/image x"), None);
@@ -452,12 +473,10 @@ fn test_hint_role_lists_configured_roles() {
 	let config = test_config();
 	let completer = CommandCompleter::new(&config, "developer");
 
-	// Current behavior of the (dead) empty-arg branch is None; the role list
-	// itself is reachable only via a non-empty arg returning None, so assert
-	// the roles source the completer would use directly.
+	// Empty arg lists the configured roles joined by "|"
 	let roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
 	assert!(roles.contains(&"assistant".to_string()));
-	assert_eq!(completer.hint("/role "), None);
+	assert_eq!(completer.hint("/role "), Some(roles.join("|")));
 }
 
 #[test]

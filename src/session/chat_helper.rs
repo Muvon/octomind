@@ -700,7 +700,7 @@ impl<'a> CommandCompleter<'a> {
 			return Some(" <model_name>".to_string());
 		}
 
-		if line.starts_with("/image ") && line.len() > 7 {
+		if line.starts_with("/image ") && line.len() >= 7 {
 			let file_part = &line[7..]; // "/image ".len() = 7
 			if file_part.is_empty() {
 				return Some("Start typing image file path...".to_string());
@@ -708,7 +708,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let filename completer handle this
 		}
 
-		if line.starts_with("/prompt ") && line.len() > 8 {
+		if line.starts_with("/prompt ") && line.len() >= 8 {
 			let template_part = &line[8..]; // "/prompt ".len() = 8
 			if template_part.is_empty() {
 				return Some("Start typing prompt template name...".to_string());
@@ -716,7 +716,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let template completer handle this
 		}
 
-		if line.starts_with("/run ") && line.len() > 5 {
+		if line.starts_with("/run ") && line.len() >= 5 {
 			let command_part = &line[5..]; // "/run ".len() = 5
 			if command_part.is_empty() {
 				return Some("Start typing command name...".to_string());
@@ -724,7 +724,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let command completer handle this
 		}
 
-		if line.starts_with("/context ") && line.len() > 9 {
+		if line.starts_with("/context ") && line.len() >= 9 {
 			let filter_part = &line[9..]; // "/context ".len() = 9
 			if filter_part.is_empty() {
 				return Some("all|assistant|user|tool|large".to_string());
@@ -732,7 +732,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/mcp ") && line.len() > 5 {
+		if line.starts_with("/mcp ") && line.len() >= 5 {
 			let subcommand_part = &line[5..]; // "/mcp ".len() = 5
 			if subcommand_part.is_empty() {
 				return Some("list|info|full|health|dump|validate".to_string());
@@ -740,7 +740,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/cache ") && line.len() > 7 {
+		if line.starts_with("/cache ") && line.len() >= 7 {
 			let subcommand_part = &line[7..]; // "/cache ".len() = 7
 			if subcommand_part.is_empty() {
 				return Some("stats|clear|threshold".to_string());
@@ -748,7 +748,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/loglevel ") && line.len() > 10 {
+		if line.starts_with("/loglevel ") && line.len() >= 10 {
 			let level_part = &line[10..]; // "/loglevel ".len() = 10
 			if level_part.is_empty() {
 				return Some("none|info|debug".to_string());
@@ -756,7 +756,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/role ") && line.len() > 6 {
+		if line.starts_with("/role ") && line.len() >= 6 {
 			let role_part = &line[6..]; // "/role ".len() = 6
 			if role_part.is_empty() {
 				let roles = self.get_available_roles();
@@ -768,7 +768,7 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/model ") && line.len() > 7 {
+		if line.starts_with("/model ") && line.len() >= 7 {
 			let model_part = &line[7..]; // "/model ".len() = 7
 			if model_part.is_empty() {
 				return Some("Start typing model name...".to_string());

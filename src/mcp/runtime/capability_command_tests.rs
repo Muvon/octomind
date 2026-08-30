@@ -629,15 +629,16 @@ async fn test_capability_disable_shared_server_refcounting() {
 
 #[tokio::test]
 #[serial]
-async fn test_capability_disable_unknown_server_drops_cap_despite_comment() {
-	// The error branch's comment says it re-inserts the cap so the user can
-	// retry, but the code returns without re-inserting (the registry entry was
-	// already removed under the write lock). This test pins CURRENT behavior —
-	// flagged as a comment/code mismatch in the coverage report.
+async fn test_capability_disable_failure_reinserts_cap_for_retry() {
+	// A mid-plan disable failure must re-insert the original cap state so
+	// the user can retry; partially stripped servers are restored by
+	// retrying enable (enable re-applies overlay + tools).
 	let config = test_config();
+	crate::mcp::runtime::dynamic::clear_all();
 	reset_registry();
 	seed_cap("captest-ghost", "captest-ghost-srv", &["tool_g"], 1);
 
+	// The cap's server is not registered → the plan fails mid-loop.
 	let result = execute_capability_command(
 		&cap_call(serde_json::json!({"action": "disable", "name": "captest-ghost"})),
 		&config,
@@ -647,11 +648,33 @@ async fn test_capability_disable_unknown_server_drops_cap_despite_comment() {
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("Failed to disable server 'captest-ghost-srv'"));
 	assert!(
-		!is_active("captest-ghost"),
-		"current behavior: cap is dropped on failed disable"
+		is_active("captest-ghost"),
+		"failed disable must keep the cap active for retry"
 	);
 
+	// Register the server so the retry takes the success path end-to-end.
+	crate::mcp::runtime::dynamic::register_server(crate::config::McpServerConfig::builtin(
+		"captest-ghost-srv",
+		30,
+		vec![],
+	))
+	.expect("register ghost server");
+
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "disable", "name": "captest-ghost"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(
+		!is_err(&result),
+		"retry disable failed: {}",
+		text_of(&result)
+	);
+	assert!(!is_active("captest-ghost"));
+
 	clear_seeded_caps(&["captest-ghost"]);
+	crate::mcp::runtime::dynamic::clear_all();
 }
 
 #[tokio::test]

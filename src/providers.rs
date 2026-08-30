@@ -513,11 +513,15 @@ fn convert_to_generic_tool_calls(
 				serde_json::from_str::<serde_json::Value>(args_str)?
 			};
 
+			// Root-level meta, preserved exactly like the unified-format
+			// branch above; absent or non-object meta stays None.
+			let meta = call.get("meta").and_then(|m| m.as_object()).cloned();
+
 			generic_calls.push(octolib::llm::GenericToolCall {
 				id: id.to_string(),
 				name: name.to_string(),
 				arguments,
-				meta: None, // Preserve meta from session if present
+				meta,
 			});
 		}
 		return Ok(generic_calls);
@@ -653,6 +657,38 @@ mod tests {
 		assert_eq!(calls[0].id, "call_1");
 		assert_eq!(calls[0].name, "read");
 		assert_eq!(calls[0].arguments, serde_json::json!({"path": "/x"}));
+	}
+
+	#[test]
+	fn test_openai_format_preserves_root_meta_when_present() {
+		// WITH meta at the tool-call root → preserved verbatim, like the
+		// unified branch
+		let with_meta = serde_json::json!([
+			{
+				"id": "call_1",
+				"type": "function",
+				"function": {"name": "read", "arguments": "{}"},
+				"meta": {"origin": "session"}
+			}
+		]);
+		let calls = convert_to_generic_tool_calls(&with_meta)
+			.expect("OpenAI format with meta must convert");
+		assert_eq!(calls.len(), 1);
+		let expected_meta: serde_json::Map<String, serde_json::Value> =
+			serde_json::from_value(with_meta[0]["meta"].clone()).unwrap();
+		assert_eq!(calls[0].meta, Some(expected_meta));
+
+		// WITHOUT meta → None
+		let without_meta = serde_json::json!([
+			{
+				"id": "call_2",
+				"type": "function",
+				"function": {"name": "read", "arguments": "{}"}
+			}
+		]);
+		let calls = convert_to_generic_tool_calls(&without_meta)
+			.expect("OpenAI format without meta must convert");
+		assert!(calls[0].meta.is_none());
 	}
 
 	#[test]

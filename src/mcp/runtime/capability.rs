@@ -693,22 +693,26 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 	// the server AND the server is not in the role's static config. The
 	// static-config check stops `disable` from tearing down servers the
 	// role still relies on (the LRU eviction path uses the same rule).
-	let plan: Option<Vec<DisablePlanEntry>> = {
+	let plan: Option<(CapState, Vec<DisablePlanEntry>)> = {
 		let mut reg = registry().write().unwrap();
 		reg.remove(&name).map(|state| {
-			state
+			// Build the plan from a clone so the original state can be
+			// re-inserted verbatim if any disable step fails mid-loop.
+			let entries = state
 				.server_tools
+				.clone()
 				.into_iter()
 				.map(|(srv, tools)| {
 					let static_owned = config.mcp.servers.iter().any(|s| s.name() == srv);
 					let kill = !static_owned && server_refcount(&reg, &srv, &name) == 0;
 					(srv, tools, kill)
 				})
-				.collect()
+				.collect();
+			(state, entries)
 		})
 	};
 
-	let plan = match plan {
+	let (original_state, plan) = match plan {
 		Some(p) => p,
 		None => {
 			// Race: someone else evicted between is_active check and the
@@ -739,7 +743,13 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 			crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
 		{
 			// Re-insert the cap so the user can retry. Fail closed — partial
-			// disable is worse than reporting the error.
+			// disable is worse than reporting the error. Partially stripped
+			// servers are restored by the user retrying enable (enable
+			// re-applies overlay + tools).
+			registry()
+				.write()
+				.unwrap()
+				.insert(name.clone(), original_state);
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),

@@ -46,6 +46,7 @@ use hyper_util::rt::TokioIo;
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tokio::task::AbortHandle;
+use uuid::Uuid;
 
 use crate::session::context::SessionId;
 use crate::{log_debug, log_error, log_info};
@@ -112,24 +113,21 @@ pub fn clear_for_session(session_id: &SessionId) {
 }
 
 fn random_token() -> String {
-	use std::time::{SystemTime, UNIX_EPOCH};
 	const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-	// 24 chars from a 62-char alphabet ≈ 142 bits of entropy. Plenty for a
-	// localhost-only short-lived bridge.
-	let mut seed = SystemTime::now()
-		.duration_since(UNIX_EPOCH)
-		.map(|d| d.as_nanos() as u64)
-		.unwrap_or(0)
-		^ std::process::id() as u64;
+	// UUIDv4 is backed by the OS CSPRNG. Skip its version/variant bytes and
+	// reject the top eight byte values so the base-62 mapping stays uniform.
 	let mut out = String::with_capacity(24);
-	for _ in 0..24 {
-		// xorshift64* — fast inline PRNG, not cryptographic but the listener is
-		// loopback-only and the token is single-use.
-		seed ^= seed << 13;
-		seed ^= seed >> 7;
-		seed ^= seed << 17;
-		let idx = (seed as usize) % ALPHABET.len();
-		out.push(ALPHABET[idx] as char);
+	while out.len() < 24 {
+		let id = Uuid::new_v4();
+		for (index, &byte) in id.as_bytes().iter().enumerate() {
+			if matches!(index, 6 | 8) || byte >= 248 {
+				continue;
+			}
+			out.push(ALPHABET[(byte % 62) as usize] as char);
+			if out.len() == 24 {
+				break;
+			}
+		}
 	}
 	out
 }

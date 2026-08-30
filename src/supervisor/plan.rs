@@ -894,7 +894,10 @@ mod tests {
 		};
 		// min(len) clamping empties the slice — a phase starting past the last
 		// message has no trajectory yet; it does not include everything.
-		assert_eq!(render_phase_trajectory(&[assistant.clone()], 9, 100), "");
+		assert_eq!(
+			render_phase_trajectory(std::slice::from_ref(&assistant), 9, 100),
+			""
+		);
 		// starting at the last message still renders it
 		assert!(render_phase_trajectory(&[assistant], 0, 100).contains("still included"));
 	}

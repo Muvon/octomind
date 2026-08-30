@@ -346,7 +346,7 @@ async fn restarting_supersedes_the_previous_bridge() {
 	let (status, _, _) = http_request("GET", second.port, "/health", None).await;
 	assert_eq!(status, 200, "replacement bridge must serve");
 	assert!(
-		registry().lock().len() >= 1,
+		!registry().lock().is_empty(),
 		"registry must hold the replacement"
 	);
 

@@ -485,7 +485,7 @@ mod tests {
 		write_file(&dir, "f1.rs", "content");
 
 		let pattern = format!("{dir}/f1.rs");
-		let result = expand_glob_patterns_filtered(&[pattern.clone()], Some(&dir))
+		let result = expand_glob_patterns_filtered(std::slice::from_ref(&pattern), Some(&dir))
 			.expect("expansion must succeed");
 		assert_eq!(result, vec![pattern], "direct file path must pass through");
 	}
@@ -511,7 +511,7 @@ mod tests {
 		write_file(&dir, "note.txt", "");
 		write_file(&dir, "sub/f2.rs", "");
 
-		let all = expand_glob_patterns_filtered(&[dir.clone()], Some(&dir))
+		let all = expand_glob_patterns_filtered(std::slice::from_ref(&dir), Some(&dir))
 			.expect("expansion must succeed");
 		assert_eq!(all.len(), 3, "dir pattern must add every file: {all:?}");
 

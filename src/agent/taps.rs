@@ -347,7 +347,7 @@ pub fn add_tap(arg: &str) -> Result<()> {
 		}
 		// Remove stale symlink/dir if it already exists at the target path
 		if tap_dir.exists() || tap_dir.symlink_metadata().is_ok() {
-			fs::remove_file(&tap_dir).context(format!(
+			remove_local_tap_link(&tap_dir).context(format!(
 				"Failed to remove existing tap path: {}",
 				tap_dir.display()
 			))?;
@@ -411,7 +411,7 @@ pub fn remove_tap(name: &str) -> Result<()> {
 		if tap.local_path.is_some() {
 			if let Ok(tap_dir) = tap.local_dir() {
 				if tap_dir.symlink_metadata().is_ok() {
-					let _ = fs::remove_file(&tap_dir);
+					let _ = remove_local_tap_link(&tap_dir);
 				}
 			}
 		}
@@ -419,6 +419,20 @@ pub fn remove_tap(name: &str) -> Result<()> {
 
 	write_taps_file(&file)?;
 	Ok(())
+}
+
+/// Remove the directory symlink used for a local tap without touching its
+/// target. Windows requires `remove_dir` for directory symlinks; Unix treats
+/// the same link as a file-system entry removed with `remove_file`.
+fn remove_local_tap_link(path: &std::path::Path) -> std::io::Result<()> {
+	#[cfg(windows)]
+	{
+		fs::remove_dir(path)
+	}
+	#[cfg(not(windows))]
+	{
+		fs::remove_file(path)
+	}
 }
 
 /// Clone a Git repository. Stderr is captured and included in the error on failure.

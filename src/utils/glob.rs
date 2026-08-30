@@ -193,17 +193,10 @@ pub fn expand_glob_patterns_filtered(
 					}
 				} else if path_obj.is_dir() {
 					// It's a directory, add all files from it recursively
-					// Normalize the directory path for matching
-					let normalized_dir = pattern.trim_end_matches('/').trim_end_matches('\\');
 					for file_path in &all_files {
-						// Check if file is under this directory
-						let file_path_normalized =
-							file_path.strip_prefix("./").unwrap_or(file_path);
-						if file_path_normalized.starts_with(&format!("{}/", normalized_dir))
-							|| file_path_normalized.starts_with(&format!("{}\\", normalized_dir))
-							|| file_path_normalized == normalized_dir
-								&& !is_dotfile_or_in_dot_directory(file_path)
-						{
+						// Path-aware containment handles both Windows separators and
+						// mixed-separator input without prefix collisions.
+						if Path::new(file_path).starts_with(path_obj) {
 							expanded_paths.push(file_path.clone());
 							pattern_matches += 1;
 						}
@@ -220,8 +213,8 @@ pub fn expand_glob_patterns_filtered(
 	}
 
 	// Deduplicate files in case multiple patterns match the same file
-	expanded_paths.sort();
-	expanded_paths.dedup();
+	expanded_paths.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
+	expanded_paths.dedup_by(|a, b| Path::new(a) == Path::new(b));
 
 	crate::log_debug!(
 		"Total expanded files after deduplication: {}",
@@ -331,7 +324,13 @@ mod tests {
 	fn file_names(paths: &[String]) -> Vec<String> {
 		paths
 			.iter()
-			.map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+			.map(|p| {
+				std::path::Path::new(p)
+					.file_name()
+					.and_then(|name| name.to_str())
+					.unwrap_or(p)
+					.to_string()
+			})
 			.collect()
 	}
 

@@ -272,7 +272,9 @@ fn test_complete_image_empty_part_lists_cwd() {
 	let (start, candidates) = completer.complete("/image ", 7);
 	assert_eq!(start, 7);
 	assert!(!candidates.is_empty());
-	assert!(candidates[0].replacement.ends_with('/'));
+	assert!(candidates[0]
+		.replacement
+		.ends_with(std::path::MAIN_SEPARATOR));
 }
 
 #[test]

@@ -500,7 +500,10 @@ async fn replace_on_a_full_success_view_writes_the_factual_notice() {
 		assert!(out.starts_with(CONDENSE_NOTICE_TAG));
 		assert!(out.contains("6-line"));
 		assert!(out.contains("`shell`"));
-		assert!(out.contains('/'), "the spill path is named for recovery");
+		assert!(
+			out.contains("octomind-spill"),
+			"the spill path is named for recovery"
+		);
 		assert!(out.contains("not merely to recover omitted text"));
 	})
 	.await;

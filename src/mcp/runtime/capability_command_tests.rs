@@ -236,8 +236,8 @@ impl CapSandbox {
 		std::fs::write(
 			dir.join("taps.toml"),
 			format!(
-				"[[taps]]\nname = \"captest/tap\"\nlocal_path = \"{}\"\n",
-				tap_root.display()
+				"[[taps]]\nname = \"captest/tap\"\nlocal_path = {}\n",
+				toml::Value::String(tap_root.to_string_lossy().into_owned())
 			),
 		)
 		.expect("write taps.toml");

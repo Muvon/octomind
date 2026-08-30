@@ -80,6 +80,7 @@ fn discover_finds_executable_tool_with_parsed_header() {
 }
 
 #[test]
+#[cfg(unix)]
 fn discover_skips_files_without_the_executable_bit() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let dir = tmp.path().join(TOOLS_DIR);
@@ -155,6 +156,7 @@ fn get_all_functions_and_is_local_tool_follow_the_thread_workdir() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg(unix)]
 async fn execute_returns_stdout_as_success_content() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_tool(
@@ -173,6 +175,7 @@ async fn execute_returns_stdout_as_success_content() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn execute_passes_params_via_env_and_stdin() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_tool(
@@ -197,6 +200,7 @@ async fn execute_passes_params_via_env_and_stdin() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn execute_appends_stderr_with_a_marker_on_success() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_tool(
@@ -217,6 +221,7 @@ async fn execute_appends_stderr_with_a_marker_on_success() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn execute_reports_nonzero_exit_as_an_error_result() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_tool(

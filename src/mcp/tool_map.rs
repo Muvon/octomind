@@ -109,15 +109,33 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 /// If the tool map is not initialized, this function returns `None` and the
 /// caller should fall back to the original `build_tool_server_map()` logic.
 pub fn get_server_for_tool(tool_name: &str) -> Option<McpServerConfig> {
-	let tool_map_state = TOOL_MAP.get()?;
-	let state = tool_map_state.read().unwrap();
+	let mapped = TOOL_MAP.get().and_then(|tool_map_state| {
+		let state = tool_map_state.read().unwrap();
+		if !state.initialized {
+			return None;
+		}
+		state.tool_to_server.get(tool_name).cloned()
+	});
 
-	if !state.initialized {
-		crate::log_debug!("Tool map not initialized, falling back to original logic");
-		return None;
+	if let Some(server) = mapped {
+		if server.name() != crate::mcp::core::local_tool::SERVER_NAME {
+			return Some(server);
+		}
+
+		// Local tools are workdir-scoped, while TOOL_MAP is process-global.
+		// Reject a stale mapping installed by another session or test.
+		return crate::mcp::core::local_tool::is_local_tool(tool_name).then_some(server);
 	}
 
-	state.tool_to_server.get(tool_name).cloned()
+	// Another session can rebuild the global map after this session discovered
+	// its project-local tools. Recover the current workdir's live tool without
+	// allowing it to shadow any configured/dynamic mapping above.
+	crate::mcp::core::local_tool::is_local_tool(tool_name).then(|| McpServerConfig::Builtin {
+		name: crate::mcp::core::local_tool::SERVER_NAME.to_string(),
+		timeout_seconds: 300,
+		tools: vec![tool_name.to_string()],
+		auto_bind: None,
+	})
 }
 
 /// Get the server name for a specific tool (for display purposes)

@@ -513,4 +513,35 @@ mod tests {
 		};
 		VideoProcessor::show_preview(&attachment).unwrap();
 	}
+
+	#[test]
+	fn oversized_file_is_rejected_before_reading() {
+		let tmp = tempfile::tempdir().unwrap();
+		let big = tmp.path().join("big.mp4");
+		std::fs::write(&big, vec![0u8; 100 * 1024 * 1024 + 1]).unwrap();
+		let err = VideoProcessor::load_from_path(&big).unwrap_err();
+		assert!(err.to_string().contains("too large"));
+	}
+
+	#[test]
+	fn junk_video_file_loads_and_previews_without_ffprobe() {
+		// ffprobe/ffmpeg may be absent: dimensions/duration degrade to None and
+		// the frame preview is skipped — loading itself must still succeed.
+		let tmp = tempfile::tempdir().unwrap();
+		let clip = tmp.path().join("clip.mp4");
+		std::fs::write(&clip, b"not really a video").unwrap();
+		let attachment = VideoProcessor::load_from_path(&clip).unwrap();
+		assert_eq!(attachment.media_type, "video/mp4");
+		assert_eq!(attachment.size_bytes, Some(16));
+		VideoProcessor::show_preview(&attachment).unwrap();
+	}
+
+	#[test]
+	fn predicate_edge_cases() {
+		assert!(!VideoProcessor::is_supported_video(std::path::Path::new(
+			"noext"
+		)));
+		assert!(!VideoProcessor::is_supported_video_by_name("noext"));
+		assert!(VideoProcessor::guess_media_type_from_url("no-dot").is_none());
+	}
 }

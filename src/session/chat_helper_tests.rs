@@ -152,6 +152,16 @@ fn test_fuzzy_match_and_at_dispatch() {
 	assert_eq!(start, 5);
 	assert_eq!(candidates.len(), 1);
 	assert_eq!(candidates[0].replacement, "@src/main.rs");
+
+	// Cache-miss path: clear the cache and re-run — `rg --files` in the
+	// process cwd (the crate root during tests) repopulates it from disk.
+	*FILE_CACHE.lock().expect("file cache lock") = None;
+	let disk = CC::fuzzy_match_files("main", 10);
+	assert!(
+		!disk.is_empty(),
+		"rg must list src/main.rs from the crate root"
+	);
+	assert!(disk.iter().all(|p| p.replacement.starts_with('@')));
 }
 
 #[test]
@@ -504,4 +514,98 @@ fn test_complete_file_path_edge_cases() {
 		.starts_with(base.display().to_string().as_str()));
 	assert!(listing[0].replacement.ends_with("subdir/"));
 	assert!(listing[1].replacement.ends_with("pic.png"));
+}
+
+#[test]
+fn test_complete_at_path_relative_dot_query() {
+	// "." is a path query with no directory part — resolves against the cwd
+	assert!(!CC::complete_at_path(".").is_empty());
+}
+
+#[test]
+fn test_complete_file_path_tilde_relative_and_inside_cwd() {
+	let home = dirs::home_dir().expect("home dir");
+	let home_str = home.to_string_lossy().to_string();
+
+	// "~/" with a trailing slash lists home contents as absolute paths
+	// (the tilde rewrite only applies to non-slash input below)
+	let home_listing = CC::complete_file_path("~/");
+	assert!(!home_listing.is_empty());
+	assert!(
+		home_listing
+			.iter()
+			.all(|c| c.replacement.starts_with(&home_str)),
+		"entries must stay under home: {:?}",
+		home_listing
+			.iter()
+			.map(|c| &c.replacement)
+			.collect::<Vec<_>>()
+	);
+
+	// "~/name" without a slash converts the match back to tilde notation
+	let probe = home.join("octomind_complete_probe");
+	std::fs::create_dir_all(&probe).expect("mkdir probe");
+	let matches = CC::complete_file_path("~/octomind_complete_probe");
+	assert!(
+		matches
+			.iter()
+			.any(|c| c.replacement == "~/octomind_complete_probe/"),
+		"{matches:?}"
+	);
+	std::fs::remove_dir(&probe).expect("cleanup probe");
+
+	// Relative single-segment path: empty parent resolves to the cwd
+	let rel = CC::complete_file_path("sr");
+	assert!(!rel.is_empty());
+	assert!(rel[0].replacement.starts_with("sr"));
+
+	// Absolute path INSIDE the cwd (no trailing slash) is rewritten relative to it
+	let cwd = std::env::current_dir().expect("cwd");
+	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()));
+	assert!(!inside.is_empty());
+	assert!(
+		inside.iter().all(|c| !c.replacement.starts_with('/')),
+		"{inside:?}"
+	);
+}
+
+/// Cursor positioned inside the "/cmd " prefix: the argument part is
+/// treated as empty and the full candidate list is returned.
+#[test]
+fn test_complete_with_cursor_inside_prefix_lists_all() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (_, candidates) = completer.complete("/mcp ", 0);
+	assert_eq!(candidates.len(), 6);
+	let (_, candidates) = completer.complete("/context ", 0);
+	assert_eq!(candidates.len(), 5);
+	let (_, candidates) = completer.complete("/cache ", 0);
+	assert_eq!(candidates.len(), 3);
+	let (_, candidates) = completer.complete("/loglevel ", 0);
+	assert_eq!(candidates.len(), 3);
+	let (_, candidates) = completer.complete("/role ", 0);
+	assert_eq!(candidates.len(), config.roles.len());
+	let (_, candidates) = completer.complete("/prompt ", 0);
+	assert!(candidates.iter().any(|c| c.replacement == "review"));
+	let (start, candidates) = completer.complete("/image ", 0);
+	assert_eq!(start, 7);
+	assert!(!candidates.is_empty());
+	// /run and /skill arg extraction must not panic regardless of config
+	let _ = completer.complete("/run ", 0);
+	let _ = completer.complete("/skill ", 0);
+}
+
+#[test]
+fn test_complete_bare_slash_inserts_partial_candidate() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Empty command part: every command matches and their common prefix
+	// ("/") is strictly longer than the typed nothing — a (partial) candidate
+	// is inserted first.
+	let (start, candidates) = completer.complete("/", 0);
+	assert_eq!(start, 0);
+	assert!(candidates[0].display.contains("(partial)"));
+	assert_eq!(candidates[0].replacement, "/");
 }

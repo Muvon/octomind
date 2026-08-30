@@ -644,7 +644,7 @@ mod tests {
 	}
 
 	#[test]
-	spending_thresholds_stop_execution_only_when_exceeded() {
+	fn spending_thresholds_stop_execution_only_when_exceeded() {
 		let mut session = ChatSession::for_tests(Vec::new());
 		let mut config = crate::session::chat::test_support::fake_provider_config();
 
@@ -671,7 +671,7 @@ mod tests {
 	}
 
 	#[test]
-	user_message_resets_turn_state_and_cache_flag() {
+	fn user_message_resets_turn_state_and_cache_flag() {
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.cache_next_user_message = true;
 		session.add_user_message("hello").unwrap();
@@ -683,7 +683,7 @@ mod tests {
 	}
 
 	#[test]
-	system_managed_turn_message_is_wrapped_and_not_turn_owned() {
+	fn system_managed_turn_message_is_wrapped_and_not_turn_owned() {
 		let mut session = ChatSession::for_tests(Vec::new());
 		session.completion_gate_eligible = true;
 		session
@@ -696,7 +696,7 @@ mod tests {
 	}
 
 	#[test]
-	assistant_message_tracks_usage_and_cost_from_exchange() {
+	fn assistant_message_tracks_usage_and_cost_from_exchange() {
 		let mut session = ChatSession::for_tests(Vec::new());
 		let config = crate::session::chat::test_support::fake_provider_config();
 		let usage = crate::session::TokenUsage {

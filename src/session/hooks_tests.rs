@@ -145,3 +145,122 @@ async fn test_blocked_and_hookless_calls_push_nothing() {
 	.await;
 	crate::session::context::cleanup_session(&sid);
 }
+
+fn validator_workdir(extra: &str) -> tempfile::TempDir {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	std::fs::create_dir_all(tmp.path().join(".agents")).expect(".agents");
+	std::fs::write(
+		tmp.path().join(".agents/guardrails.toml"),
+		format!(
+			"[[validator]]\nname = \"tests-ran\"\n{extra}script = \"validators/check.{SCRIPT_EXT}\"\n"
+		),
+	)
+	.expect("write guardrails.toml");
+	write_script(
+		tmp.path(),
+		&format!("validators/check.{SCRIPT_EXT}"),
+		"RUN cargo test",
+	);
+	tmp
+}
+
+async fn run_validators_in(sid: &str, tmp: &tempfile::TempDir, role: &str, text: &str) {
+	crate::session::context::set_session_workdir(sid, tmp.path().to_path_buf());
+	crate::session::guardrails::init_for_session();
+	crate::session::inbox::init_inbox_for_session();
+	crate::session::hooks::run_turn_validators(sid, role, text).await;
+}
+
+#[tokio::test]
+async fn test_turn_validator_injects_wrapped_output_into_inbox() {
+	let sid = "__hooks_validator_fire".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = validator_workdir("");
+		run_validators_in(&sid, &tmp, "developer", "shipped the feature").await;
+
+		let msg = crate::session::inbox::try_pop_inbox_message()
+			.expect("validator must inject its stdout");
+		assert!(msg.content.contains("<validation validator=\"tests-ran\">"));
+		assert!(msg.content.contains("RUN cargo test"));
+		assert!(msg.content.ends_with("</validation>"));
+
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+async fn test_validator_skips_on_match_or_role_miss() {
+	// match regex that does not hit the assistant text
+	let sid = "__hooks_validator_match".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = validator_workdir("match = \"deploy\"\n");
+		run_validators_in(&sid, &tmp, "developer", "refactored tests only").await;
+		assert!(
+			crate::session::inbox::try_pop_inbox_message().is_none(),
+			"validator fired although the match regex missed"
+		);
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+
+	// role filter excludes the running role
+	let sid = "__hooks_validator_role".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = validator_workdir("roles = [\"reviewer\"]\n");
+		run_validators_in(&sid, &tmp, "developer", "shipped").await;
+		assert!(
+			crate::session::inbox::try_pop_inbox_message().is_none(),
+			"validator fired for a role it excludes"
+		);
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
+async fn test_validator_silent_on_success_exit_and_missing_script() {
+	// Script exits 0: stdout must NOT be injected
+	let sid = "__hooks_validator_ok".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(tmp.path().join(".agents")).expect(".agents");
+		std::fs::create_dir_all(tmp.path().join("validators")).expect("validators");
+		std::fs::write(
+			tmp.path().join(".agents/guardrails.toml"),
+			format!("[[validator]]\nname = \"ok\"\nscript = \"validators/ok.{SCRIPT_EXT}\"\n"),
+		)
+		.expect("write guardrails.toml");
+		let ok = tmp.path().join(format!("validators/ok.{SCRIPT_EXT}"));
+		std::fs::write(&ok, "#!/bin/sh\necho \"must not appear\"\nexit 0\n").expect("write");
+		{
+			use std::os::unix::fs::PermissionsExt;
+			std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+		}
+		run_validators_in(&sid, &tmp, "developer", "text").await;
+		assert!(crate::session::inbox::try_pop_inbox_message().is_none());
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+
+	// Script path does not exist: spawn fails, nothing injected, no panic
+	let sid = "__hooks_validator_missing".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = tempfile::tempdir().expect("tempdir");
+		std::fs::create_dir_all(tmp.path().join(".agents")).expect(".agents");
+		std::fs::write(
+			tmp.path().join(".agents/guardrails.toml"),
+			"[[validator]]\nname = \"gone\"\nscript = \"validators/absent.sh\"\n",
+		)
+		.expect("write guardrails.toml");
+		run_validators_in(&sid, &tmp, "developer", "text").await;
+		assert!(crate::session::inbox::try_pop_inbox_message().is_none());
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}

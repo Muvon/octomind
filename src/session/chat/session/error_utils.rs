@@ -355,4 +355,107 @@ mod tests {
 			"сетевая ошибка 日本語"
 		);
 	}
+
+	#[test]
+	fn rate_limit_info_renders_every_provider_shape() {
+		let exchange_with_headers =
+			|provider: &str, headers: Option<std::collections::HashMap<String, String>>| {
+				let mut exchange = crate::session::ProviderExchange::new(
+					serde_json::json!({}),
+					serde_json::json!({}),
+					None,
+					provider,
+				);
+				exchange.rate_limit_headers = headers;
+				exchange
+			};
+
+		let mut anthropic = std::collections::HashMap::new();
+		anthropic.insert("tokens_remaining".to_string(), "1000".to_string());
+		anthropic.insert("tokens_limit".to_string(), "2000".to_string());
+		anthropic.insert("input_tokens_remaining".to_string(), "900".to_string());
+		anthropic.insert("input_tokens_limit".to_string(), "1000".to_string());
+		anthropic.insert("output_tokens_remaining".to_string(), "500".to_string());
+		anthropic.insert("output_tokens_limit".to_string(), "600".to_string());
+		display_rate_limit_info(&exchange_with_headers("anthropic", Some(anthropic)));
+
+		// Partial anthropic headers: only the tokens pair is present
+		let mut partial = std::collections::HashMap::new();
+		partial.insert("tokens_remaining".to_string(), "1".to_string());
+		partial.insert("tokens_limit".to_string(), "2".to_string());
+		display_rate_limit_info(&exchange_with_headers("anthropic", Some(partial)));
+
+		let mut openai = std::collections::HashMap::new();
+		openai.insert("requests_remaining".to_string(), "58".to_string());
+		openai.insert("requests_limit".to_string(), "60".to_string());
+		openai.insert("tokens_remaining".to_string(), "1000".to_string());
+		openai.insert("tokens_limit".to_string(), "2000".to_string());
+		openai.insert("request_reset".to_string(), "1h".to_string());
+		display_rate_limit_info(&exchange_with_headers("openai", Some(openai)));
+
+		let mut generic = std::collections::HashMap::new();
+		generic.insert("x-rpm".to_string(), "30".to_string());
+		display_rate_limit_info(&exchange_with_headers("groq", Some(generic)));
+
+		// No headers at all: early return
+		display_rate_limit_info(&exchange_with_headers("test", None));
+	}
+
+	#[test]
+	fn api_error_removes_failed_user_message_and_prints_provider_help() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.add_user_message("doomed request").unwrap();
+		assert_eq!(session.session.messages.len(), 1);
+
+		handle_api_error(
+			&mut session,
+			0,
+			"anthropic/claude-sonnet-4",
+			&err("boom"),
+			OutputMode::NonInteractive,
+		);
+		assert!(session.session.messages.is_empty());
+
+		// OctoHub plan-restriction hint, unknown-provider fallback, and the
+		// suppressed-output early return.
+		let mut session = ChatSession::for_tests(Vec::new());
+		handle_api_error(
+			&mut session,
+			0,
+			"octohub:big-model",
+			&err("OctoHub API error 403: model 'big-model' is not permitted for this API key"),
+			OutputMode::NonInteractive,
+		);
+		handle_api_error(
+			&mut session,
+			0,
+			"weird:model",
+			&err("socket hang up"),
+			OutputMode::NonInteractive,
+		);
+		handle_api_error(
+			&mut session,
+			0,
+			"openai:gpt-x",
+			&err("timeout"),
+			OutputMode::Jsonl,
+		);
+	}
+
+	#[test]
+	fn followup_error_prints_without_touching_history() {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.add_user_message("q").unwrap();
+		handle_followup_api_error(
+			"openai:gpt-x",
+			&err("connection timeout"),
+			OutputMode::NonInteractive,
+		);
+		handle_followup_api_error(
+			"openai:gpt-x",
+			&err("connection timeout"),
+			OutputMode::Jsonl,
+		);
+		assert_eq!(session.session.messages.len(), 1);
+	}
 }

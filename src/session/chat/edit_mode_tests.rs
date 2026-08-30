@@ -235,3 +235,111 @@ fn test_format_size() {
 	assert_eq!(format_size(1536 * 1024), "1.5 MB");
 	assert_eq!(format_size(0), "0 KB");
 }
+
+fn image_attachment(
+	dims: Option<(u32, u32)>,
+	size: Option<u64>,
+) -> crate::session::image::ImageAttachment {
+	crate::session::image::ImageAttachment {
+		data: crate::session::image::ImageData::Base64("x".to_string()),
+		media_type: "image/png".to_string(),
+		source_type: crate::session::image::SourceType::Clipboard,
+		dimensions: dims,
+		size_bytes: size,
+	}
+}
+
+fn video_attachment_file() -> crate::session::video::VideoAttachment {
+	crate::session::video::VideoAttachment {
+		data: crate::session::video::VideoData::Base64("x".to_string()),
+		media_type: "video/mp4".to_string(),
+		source_type: crate::session::video::SourceType::File(std::path::PathBuf::from(
+			"/tmp/clip.mp4",
+		)),
+		dimensions: Some((1920, 1080)),
+		size_bytes: Some(1536 * 1024),
+		duration_secs: None,
+	}
+}
+
+#[test]
+fn test_attachment_labels_render_dims_and_size() {
+	assert_eq!(
+		format_image_label(&image_attachment(Some((4, 4)), Some(512 * 1024))),
+		"📎 Image attached (4×4, 512 KB) — keep typing"
+	);
+	assert_eq!(
+		format_image_label(&image_attachment(None, None)),
+		"📎 Image attached (?×?) — keep typing"
+	);
+
+	assert_eq!(
+		format_video_label(&video_attachment_file()),
+		"🎬 Video attached clip.mp4 (1920×1080, 1.5 MB) — keep typing"
+	);
+
+	// No dimensions → media type fallback; URL source has no filename
+	let url_video = crate::session::video::VideoAttachment {
+		data: crate::session::video::VideoData::Url("https://x/clip.mp4".to_string()),
+		media_type: "video/webm".to_string(),
+		source_type: crate::session::video::SourceType::Url,
+		dimensions: None,
+		size_bytes: None,
+		duration_secs: None,
+	};
+	assert_eq!(
+		format_video_label(&url_video),
+		"🎬 Video attached (video/webm) — keep typing"
+	);
+}
+
+#[test]
+fn test_attach_and_notify_queues_blob_and_prints_label() {
+	let (h, state, ..) = mk();
+	h.attach_and_notify(PendingClipboardItem::Video(video_attachment_file()));
+	let state = state.lock().expect("line state");
+	assert_eq!(state.pending_clipboard.len(), 1);
+	assert!(matches!(
+		state.pending_clipboard[0],
+		PendingClipboardItem::Video(_)
+	));
+}
+
+#[test]
+fn test_ctrl_alt_word_commands() {
+	let (mut h, ..) = mk();
+	let ctrl_alt = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+
+	assert_eq!(
+		h.parse_event(key(KeyCode::Backspace, ctrl_alt)),
+		ReedlineEvent::Edit(vec![EditCommand::BackspaceWord])
+	);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('d'), ctrl_alt)),
+		ReedlineEvent::Edit(vec![EditCommand::CutWordRight])
+	);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('b'), ctrl_alt)),
+		ReedlineEvent::Edit(vec![EditCommand::MoveWordLeft { select: false }])
+	);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('f'), ctrl_alt)),
+		ReedlineEvent::Edit(vec![EditCommand::MoveWordRight { select: false }])
+	);
+}
+
+#[test]
+fn test_ctrl_v_without_clipboard_blob_falls_through() {
+	// Headless: no image/video on the clipboard → default paste handling.
+	// (On a desktop with a clipboard image this attaches instead — either way
+	// the keystroke must never submit.)
+	let (mut h, ..) = mk();
+	let event = h.parse_event(key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+	assert_ne!(event, ReedlineEvent::Submit);
+}
+
+#[test]
+fn test_edit_mode_reports_emacs() {
+	let (h, ..) = mk();
+	assert!(matches!(h.edit_mode(), reedline::PromptEditMode::Emacs));
+}

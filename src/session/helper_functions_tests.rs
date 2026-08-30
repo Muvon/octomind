@@ -117,3 +117,112 @@ async fn test_get_all_placeholders_exposes_core_keys() {
 		assert!(map.contains_key(key), "missing placeholder {key}");
 	}
 }
+
+#[tokio::test]
+async fn test_process_placeholders_system_and_binaries() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let processed = process_placeholders_async("sys={{SYSTEM}} bin={{BINARIES}}", tmp.path()).await;
+	assert!(!processed.contains("{{SYSTEM}}"), "processed: {processed}");
+	assert!(
+		!processed.contains("{{BINARIES}}"),
+		"processed: {processed}"
+	);
+	assert!(processed.contains("==== SYSTEM INFORMATION ===="));
+	assert!(processed.contains("==== END SYSTEM INFORMATION ===="));
+	assert!(processed.contains("**Shell**"));
+}
+
+/// Real git repo: every project placeholder resolves to its populated section.
+#[tokio::test]
+async fn test_git_placeholders_in_real_repo() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::write(base.join("README.md"), "# Test Project\nhello readme").expect("write readme");
+	std::fs::create_dir(base.join("src")).expect("mkdir");
+	std::fs::write(base.join("src/main.rs"), "fn main() {}").expect("write src");
+	// init + add is enough: status/ls-files work without a commit identity
+	std::process::Command::new("git")
+		.args(["init", "-q"])
+		.current_dir(base)
+		.output()
+		.expect("git init");
+	std::process::Command::new("git")
+		.args(["add", "-A"])
+		.current_dir(base)
+		.output()
+		.expect("git add");
+
+	let processed = process_placeholders_async(
+		"s={{GIT_STATUS}} t={{GIT_TREE}} r={{README}} c={{CONTEXT}}",
+		base,
+	)
+	.await;
+	assert!(
+		processed.contains("==== GIT STATUS ===="),
+		"processed: {processed}"
+	);
+	assert!(
+		processed.contains("==== FILE TREE ===="),
+		"processed: {processed}"
+	);
+	assert!(processed.contains("src/main.rs"), "processed: {processed}");
+	assert!(
+		processed.contains("==== README ===="),
+		"processed: {processed}"
+	);
+	assert!(processed.contains("hello readme"), "processed: {processed}");
+	assert!(
+		processed.contains("==== PROJECT CONTEXT ===="),
+		"processed: {processed}"
+	);
+}
+
+#[tokio::test]
+async fn test_get_all_placeholders_in_git_repo() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::write(base.join("README.md"), "# Repo\nreadme body").expect("write readme");
+	std::process::Command::new("git")
+		.args(["init", "-q"])
+		.current_dir(base)
+		.output()
+		.expect("git init");
+	std::process::Command::new("git")
+		.args(["add", "-A"])
+		.current_dir(base)
+		.output()
+		.expect("git add");
+
+	let map = get_all_placeholders(base).await;
+	assert!(map.contains_key("{{HOME}}"));
+	let status = &map["{{GIT_STATUS}}"];
+	assert!(status.contains("==== GIT STATUS ===="), "status: {status}");
+	assert!(map["{{GIT_TREE}}"].contains("README.md"));
+	assert!(map["{{README}}"].contains("readme body"));
+	assert!(map["{{CONTEXT}}"].contains("==== PROJECT CONTEXT ===="));
+}
+
+#[tokio::test]
+async fn test_get_command_version_outcomes() {
+	// A real tool reports its version; an unknown binary falls through every
+	// probe to "missing".
+	let git_version = get_command_version("git").await;
+	assert_ne!(git_version, "missing");
+	assert!(!git_version.is_empty());
+	assert_eq!(
+		get_command_version("definitely_missing_tool_xyz").await,
+		"missing"
+	);
+}
+
+#[tokio::test]
+async fn test_gather_system_info_shape() {
+	let info = gather_system_info().await;
+	assert!(!info.date_with_timezone.is_empty());
+	assert!(!info.shell_info.is_empty());
+	assert!(!info.os_info.is_empty());
+	assert!(info.os_info.contains("os:"));
+	assert!(!info.binaries.is_empty());
+	// One line per probed binary, present or missing
+	assert!(info.binaries.lines().any(|l| l.starts_with("git:")));
+}

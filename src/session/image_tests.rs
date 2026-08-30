@@ -142,3 +142,239 @@ fn test_unknown_proxy_model_remains_permissive_for_video() {
 		.ensure_model_supports_video()
 		.expect("unknown proxy model must remain permissive for video");
 }
+
+// --- URL loading against a local HTTP server ---
+
+async fn serve_image(status: &str, content_type: &str, path: &str, body: Vec<u8>) -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind");
+	let addr = listener.local_addr().expect("addr");
+	tokio::spawn(async move {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+		let (mut socket, _) = listener.accept().await.expect("accept");
+		let mut buf = [0u8; 2048];
+		let _ = socket.read(&mut buf).await;
+		let header = format!(
+			"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+			body.len()
+		);
+		socket
+			.write_all(header.as_bytes())
+			.await
+			.expect("write head");
+		socket.write_all(&body).await.expect("write body");
+	});
+	format!("http://{addr}{path}")
+}
+
+fn png_bytes() -> Vec<u8> {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = write_test_image(tmp.path(), "payload.png");
+	std::fs::read(path).expect("read png")
+}
+
+#[tokio::test]
+async fn test_load_from_url_success() {
+	let url = serve_image("200 OK", "image/png", "/pic.png", png_bytes()).await;
+	let attachment = ImageProcessor::load_from_url(&url)
+		.await
+		.expect("load from url");
+	assert_eq!(attachment.media_type, "image/png");
+	assert_eq!(attachment.source_type, SourceType::Url);
+	assert_eq!(attachment.dimensions, Some((4, 4)));
+	assert!(matches!(attachment.data, ImageData::Base64(_)));
+}
+
+#[tokio::test]
+async fn test_load_from_url_rejections() {
+	// Invalid URL
+	let err = ImageProcessor::load_from_url("not a url")
+		.await
+		.expect_err("invalid url");
+	assert!(err.to_string().contains("Invalid URL"));
+
+	// Filename does not look like an image
+	let url = serve_image("200 OK", "image/png", "/file.txt", png_bytes()).await;
+	let err = ImageProcessor::load_from_url(&url)
+		.await
+		.expect_err("non-image name");
+	assert!(err.to_string().contains("does not appear to point"));
+
+	// HTTP error status
+	let url = serve_image("404 Not Found", "image/png", "/pic.png", Vec::new()).await;
+	let err = ImageProcessor::load_from_url(&url)
+		.await
+		.expect_err("http error");
+	assert!(err.to_string().contains("HTTP 404"));
+
+	// Non-image content type
+	let url = serve_image("200 OK", "text/plain", "/pic.png", b"hello".to_vec()).await;
+	let err = ImageProcessor::load_from_url(&url)
+		.await
+		.expect_err("wrong content type");
+	assert!(err.to_string().contains("does not return an image"));
+
+	// Oversized download (checked before decoding)
+	let url = serve_image(
+		"200 OK",
+		"image/png",
+		"/pic.png",
+		vec![0u8; 6 * 1024 * 1024],
+	)
+	.await;
+	let err = ImageProcessor::load_from_url(&url)
+		.await
+		.expect_err("too large");
+	assert!(err.to_string().contains("too large"));
+}
+
+#[test]
+fn test_oversized_file_rejected_before_decode() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let big = tmp.path().join("big.png");
+	std::fs::write(&big, vec![0u8; 5 * 1024 * 1024 + 1]).expect("write big");
+	let err = ImageProcessor::load_from_path(&big).expect_err("must reject >5MB");
+	assert!(err.to_string().contains("too large"));
+}
+
+#[test]
+fn test_resize_if_needed_shrinks_oversized_dimensions() {
+	let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(2000, 100, |_, _| {
+		image::Rgb([1, 2, 3])
+	}));
+	let resized = ImageProcessor::resize_if_needed(img);
+	assert!(resized.width() <= ImageProcessor::MAX_WIDTH);
+	assert!(resized.height() <= ImageProcessor::MAX_HEIGHT);
+	assert_eq!(resized.height(), 100);
+}
+
+#[test]
+fn test_format_to_media_type_rejects_unsupported() {
+	assert!(ImageProcessor::format_to_media_type(ImageFormat::Bmp).is_err());
+	assert!(ImageProcessor::media_type_to_format("image/bmp").is_err());
+	assert!(ImageProcessor::media_type_to_format("image/gif").is_ok());
+}
+
+#[test]
+fn test_convert_clipboard_image_encodes_png() {
+	// 2x2 RGBA clipboard buffer
+	let rgba: Vec<u8> = vec![
+		255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+	];
+	let img_data = arboard::ImageData::new(&rgba, 2, 2).to_owned();
+	let attachment = ImageProcessor::convert_clipboard_image(img_data).expect("convert");
+	assert_eq!(attachment.media_type, "image/png");
+	assert_eq!(attachment.source_type, SourceType::Clipboard);
+	assert_eq!(attachment.dimensions, Some((2, 2)));
+	assert!(matches!(attachment.data, ImageData::Base64(_)));
+}
+
+#[test]
+fn test_load_from_clipboard_without_image_is_not_an_error() {
+	// Headless environments cannot open the clipboard (Err); graphical ones
+	// with an empty clipboard yield Ok(None). Both are acceptable.
+	let result = ImageProcessor::load_from_clipboard();
+	assert!(result.is_err() || result.as_ref().unwrap().is_none());
+}
+
+#[test]
+fn test_show_preview_prints_metadata_without_failing() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let png = write_test_image(tmp.path(), "preview.png");
+	let attachment = ImageProcessor::load_from_path(&png).expect("load");
+	ImageProcessor::show_preview(&attachment).expect("preview must not fail");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_render_inline_escape_selects_protocol_by_terminal() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let png = write_test_image(tmp.path(), "inline.png");
+	let attachment = ImageProcessor::load_from_path(&png).expect("load");
+
+	// No inline-graphics terminal → None
+	std::env::remove_var("KITTY_WINDOW_ID");
+	std::env::remove_var("TERM");
+	std::env::remove_var("TERM_PROGRAM");
+	assert!(ImageProcessor::render_inline_escape(&attachment).is_none());
+
+	// Kitty graphics via TERM_PROGRAM=ghostty
+	std::env::set_var("TERM_PROGRAM", "ghostty");
+	let (escape, rows) = ImageProcessor::render_inline_escape(&attachment).expect("kitty");
+	assert!(escape.starts_with("\x1b_Ga=T,f=100,q=2,c=40,r="));
+	assert!(escape.contains("m=0;"));
+	assert!((1..=30).contains(&rows));
+
+	// iTerm2 OSC 1337 via TERM_PROGRAM=vscode
+	std::env::set_var("TERM_PROGRAM", "vscode");
+	let (escape, rows) = ImageProcessor::render_inline_escape(&attachment).expect("iterm2");
+	assert!(escape.starts_with("\x1b]1337;File=inline=1;width=40;height="));
+	assert!(escape.ends_with("\x07"));
+	assert!((1..=30).contains(&rows));
+
+	// Kitty via TERM containing "kitty"
+	std::env::remove_var("TERM_PROGRAM");
+	std::env::set_var("TERM", "xterm-kitty");
+	let (escape, _) = ImageProcessor::render_inline_escape(&attachment).expect("kitty via TERM");
+	assert!(escape.starts_with("\x1b_G"));
+
+	std::env::remove_var("TERM");
+}
+
+#[test]
+fn test_build_kitty_escape_splits_long_payloads_into_chunks() {
+	let escape = ImageProcessor::build_kitty_escape(&"A".repeat(5000), 40, 10);
+	// 5000 bytes → two escapes: the first carries metadata + m=1, the last m=0
+	assert_eq!(escape.matches("\x1b_G").count(), 2);
+	assert!(escape.contains("m=1;"));
+	assert!(escape.contains("m=0;"));
+}
+
+#[test]
+fn test_shrink_for_preview_resizes_large_images_only() {
+	let small_b64 = {
+		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(100, 50, |_, _| {
+			image::Rgb([9, 9, 9])
+		}));
+		let mut buf = Vec::new();
+		img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+			.expect("encode");
+		base64::engine::general_purpose::STANDARD.encode(&buf)
+	};
+	let shrunk = ImageProcessor::shrink_for_preview(&small_b64).expect("shrink small");
+	assert!(!shrunk.is_empty());
+
+	let big_b64 = {
+		let img = DynamicImage::ImageRgb8(image::RgbImage::from_fn(400, 400, |_, _| {
+			image::Rgb([7, 7, 7])
+		}));
+		let mut buf = Vec::new();
+		img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+			.expect("encode");
+		base64::engine::general_purpose::STANDARD.encode(&buf)
+	};
+	let shrunk = ImageProcessor::shrink_for_preview(&big_b64).expect("shrink big");
+	let bytes = base64::engine::general_purpose::STANDARD
+		.decode(shrunk)
+		.expect("valid b64");
+	let img = image::load_from_memory(&bytes).expect("valid image");
+	assert!(img.width() <= 320 && img.height() <= 320);
+}
+
+#[test]
+fn test_support_predicates_edge_cases() {
+	// Non-UTF-8 extension, missing extension, extensionless names
+	assert!(!ImageProcessor::is_supported_image(std::path::Path::new(
+		"/tmp/pic.\u{FF}"
+	)));
+	assert!(!ImageProcessor::is_supported_image(std::path::Path::new(
+		"/tmp/README"
+	)));
+	assert!(!ImageProcessor::is_supported_image_by_name("noext"));
+	assert!(ImageProcessor::guess_media_type_from_url("no-dot").is_none());
+	assert_eq!(
+		ImageProcessor::guess_media_type_from_url("https://x/a.PNG"),
+		Some("image/png".to_string())
+	);
+}

@@ -98,9 +98,8 @@ pub async fn handle_role(
 	// INPUT/ENV placeholders, runs dep scripts, and returns a merged config
 	// that contains the new [[roles]] entry. For plain roles this is a no-op
 	// clone of the current config.
-	let resolve_input: Option<&str> = if is_tap_tag { Some(new_role_arg) } else { None };
 	let (resolved_config, resolved_role) =
-		match resolver::resolve_config_and_role(resolve_input, config, None).await {
+		match resolver::resolve_config_and_role(Some(new_role_arg), config, None).await {
 			Ok(v) => v,
 			Err(e) => {
 				return Ok(CommandResult::HandledWithOutput(Box::new(
@@ -112,14 +111,7 @@ pub async fn handle_role(
 			}
 		};
 
-	// For the plain-role path, resolver returns the tag string from config.default
-	// as the role — ignore it and use the user's explicit arg. For tap path, it
-	// returns the injected role name (identical to the tag).
-	let target_role: String = if is_tap_tag {
-		resolved_role
-	} else {
-		new_role_arg.to_string()
-	};
+	let target_role = resolved_role;
 
 	// Commit the merged config into the live session config BEFORE reinit so
 	// that downstream code (MCP init, system-prompt build, thread-local config)

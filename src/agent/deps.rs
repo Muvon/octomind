@@ -116,8 +116,13 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 
 	crate::log_debug!("running dep script: {}", entry);
 
-	let output = std::process::Command::new("bash")
-		.arg(&script_path)
+	let mut command = std::process::Command::new("bash");
+	#[cfg(windows)]
+	command.arg(script_path.to_string_lossy().replace('\\', "/"));
+	#[cfg(not(windows))]
+	command.arg(&script_path);
+
+	let output = command
 		.stdin(Stdio::null()) // never inherit parent stdin (piped prompt)
 		.stdout(Stdio::null()) // stdout reserved for Octomind
 		.stderr(Stdio::piped()) // capture stderr for error reporting

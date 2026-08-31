@@ -297,7 +297,7 @@ Entry points: `should_check_compression` gates whether a check runs (returns a p
 1. Token monitor checks pressure levels (`should_check_compression`)
 2. Exponential cooldown prevents loops
 3. Cache-aware economics calculates net benefit
-4. Decision model (cheap AI, separate from the main model: `[compression.decision] model`, default `openai:gpt-5-mini`) decides whether to compress
+4. The resolved `[compression.model]` profile (or `[model]` when omitted) decides whether to compress
 5. Range selected by anchor (latest `<instructions>` user message, else first user message); messages after the anchor up to the end are drained and replaced (`find_compression_range`, `range.rs`)
 6. A typed summary (`CompressionSummary`, `schema.rs`) replaces the drained content
 7. Knowledge entries retained across compressions

@@ -73,8 +73,10 @@ Example role definition (in config or from taps) that the `analysis` layer above
 ```toml
 [[roles]]
 name = "analysis"
-model = "openrouter:openai/gpt-4.1-mini"
 system = "You are a code and systems analyst..."
+
+[roles.model]
+name = "openrouter:openai/gpt-4.1-mini"
 temperature = 0.3
 
 [roles.mcp]

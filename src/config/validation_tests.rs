@@ -139,9 +139,9 @@ fn role_checks_cover_every_role_not_just_the_first() {
 	let mut config = template_config();
 	config.roles = vec![
 		role_with("fine", 1.0, 1.0, 100),
-		role_with("broken", 1.0, 1.0, 0),
+		role_with("broken", 1.0, 1.0, 1001),
 	];
-	let error = config.validate_required_fields().unwrap_err().to_string();
+	let error = config.validate_model_profiles().unwrap_err().to_string();
 	assert!(error.contains("broken"), "got: {error}");
 	assert!(error.contains("top_k"), "got: {error}");
 }

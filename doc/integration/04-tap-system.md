@@ -106,12 +106,11 @@ Set a preferred model for specific tap agents in your config:
 
 ```toml
 # In config.toml
-[taps]
-"developer:general" = "ollama:glm-5"
+[taps."developer:general".model]
+name = "ollama:glm-5"
 ```
 
-This overrides the model for `octomind run developer:general` while leaving other agents unchanged.
-**Priority (highest wins):** CLI `--model` > the agent's manifest/role `model` > root `config.model`. The session model is resolved in `src/session/chat/session/core.rs` as `CLI --model ?? role.model ?? config.model`; a `[taps]` entry for this tag overrides the `config.model` tier (`src/agent/resolver.rs`), so it applies only when neither `--model` nor the agent's manifest role declares its own `model`.
+This overlays the main profile for `octomind run developer:general` while leaving other agents unchanged. Explicit runtime fields win, then the manifest role profile, then the tap profile, then `[model]`; every unspecified field inherits.
 
 ## Agent Manifests
 
@@ -125,6 +124,8 @@ Agent manifests are TOML files in `agents/<category>/<variant>.toml`. The header
 
 [[roles]]
 system = "You are an expert software developer..."
+
+[roles.model]
 temperature = 0.3
 
 [roles.mcp]

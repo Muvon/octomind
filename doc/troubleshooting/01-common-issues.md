@@ -91,11 +91,11 @@ Common issues:
 - Out-of-range field values. The validator enforces:
   - role `temperature` between `0.0` and `2.0`
   - role `top_p` between `0.0` and `1.0`
-  - role `top_k` between `1` and `1000`
+  - every model profile's `top_k` between `0` and `1000` (`0` disables it)
   - `max_session_tokens_threshold` at most `2,000,000` (`0` disables)
   - `cache_keepalive_max_idle_seconds` at most `86400` (24h; `0` = unbounded)
   - each MCP/webhook hook `timeout` between `1` and `3600` seconds
-  - `compression.decision.model` must resolve to a configured provider
+  - every resolved model profile's `name` must resolve to a configured provider
 
 ### Config Not Loading
 

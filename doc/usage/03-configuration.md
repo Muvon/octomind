@@ -57,34 +57,36 @@ Two separate mechanisms decide the effective configuration: how the **files** me
 **Model selection (precedence chain).** The model is the one field with a real precedence order:
 
 ```
-CLI --model  >  role.model  >  config.model (root)
+runtime override  >  role model profile  >  tap model profile  >  [model]
 ```
 
-A plain `[[roles]]` entry's `model` is honored directly — `octomind run <role>` uses it over the root `config.model` (CLI `--model` still wins). For a tap agent (`category:variant`), a `[taps]` entry for that tag overrides the `config.model` tier, so it applies only when neither `--model` nor the agent's own role sets a model. See [Tap Model Overrides](#tap-model-overrides). (Resolution happens in `src/session/chat/session/core.rs`: `CLI --model ?? role.model ?? config.model`.)
+Every override is partial: it may set only `name`, any tuning fields, the complete profile, or nothing. Missing fields inherit from the preceding profile. Existing scalar workflow/tap spellings remain accepted as name-only compatibility shorthands.
 
 ## Core Settings
 
 ```toml
 # Config version (do not modify)
-version = 1
+version = 12
 
 # Logging: "none", "info", "debug"
 log_level = "info"
 
-# Default model (provider:model format)
-model = "openrouter:anthropic/claude-sonnet-4"
-
 # Default tag when no TAG passed to `octomind run`
 default = "assistant:concierge"
 
-# Global max tokens
-max_tokens = 16384
-
-# Reasoning effort hint for thinking-capable models (ignored by others)
-reasoning_effort = "medium"  # low | medium | high | xhigh | max
-
 # Sandbox mode: restrict writes to working directory
 sandbox = false
+
+[model]
+name = "openrouter:anthropic/claude-sonnet-4"
+max_tokens = 32768
+reasoning_effort = "medium"
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 ```
 
 The default tag `assistant:concierge` is a **tap agent** (`category:variant`) provided by the built-in default tap `muvon/tap`, not the local `[[roles]]` `assistant` definition.
@@ -201,11 +203,13 @@ Define roles in `[[roles]]` sections:
 ```toml
 [[roles]]
 name = "assistant"
+system = "You are a helpful assistant. Working directory: {{CWD}}"
+welcome = "Hello! Working in {{CWD}}"
+
+[roles.model]
 temperature = 0.3
 top_p = 0.7
 top_k = 20
-system = "You are a helpful assistant. Working directory: {{CWD}}"
-welcome = "Hello! Working in {{CWD}}"
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -247,17 +251,20 @@ Each key is a capability name and the value is the provider to use. It resolves 
 ## Tap Model Overrides
 
 ```toml
-[taps]
-"developer:general" = "ollama:glm-5"
-"octomind:assistant" = "openai:gpt-4o"
+[taps."developer:general".model]
+name = "ollama:glm-5"
+
+[taps."octomind:assistant".model]
+name = "openai:gpt-4o"
 ```
 
 **Model resolution priority:**
-1. CLI `--model` flag
-2. The active role's `model` field (a plain `[[roles]]` entry, or a tap agent's manifest role)
-3. Global `model` in config — which a `[taps]` entry overrides for a tap agent's tag
+1. Explicit runtime profile fields, including CLI flags
+2. The active role's `[roles.model]` profile
+3. The tap tag's model profile
+4. The required main `[model]` profile
 
-A plain `[[roles]]` entry's `model` is honored directly. The `[taps]` override only applies to tap agents (tags with `:` like `developer:general`) and acts at the `config.model` tier — it takes effect when the agent's own role does not set a model.
+Resolution is field-by-field. For example, a role can override only reasoning effort while retaining a tap-selected model name and main retry settings.
 
 ## Template Variables
 

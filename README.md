@@ -459,7 +459,7 @@ cargo build --release
 octomind login
 ```
 
-Device-code sign-in (like `gh auth login`). This mints an octohub gateway key locally — the default config already routes every request through it (`[model] name = "octohub:auto"`), so you're done. Learn more: [octomind.run/cloud](https://octomind.run/cloud).
+Device-code sign-in (like `gh auth login`). This mints an octohub gateway key locally — the default config already sets `name = "octohub:auto"` under `[model]`, so you're done. Learn more: [octomind.run/cloud](https://octomind.run/cloud).
 
 **Option B — bring your own keys.** Octomind is fully open source and works standalone with any provider:
 
@@ -473,7 +473,7 @@ export ANTHROPIC_API_KEY="your_key"
 export DEEPSEEK_API_KEY="your_key"
 ```
 
-Add to `~/.bashrc` or `~/.zshrc` for persistence. Not signed in is a normal state, not an error — then set `[model] name = "openrouter:..."` (or any provider) in your config.
+Add to `~/.bashrc` or `~/.zshrc` for persistence. Not signed in is a normal state, not an error — then set `name = "openrouter:..."` (or any provider) under `[model]` in your config.
 
 ### Verify
 

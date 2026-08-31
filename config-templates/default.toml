@@ -125,13 +125,11 @@ request_timeout_seconds = 300
 [capabilities]
 
 # Tap model overrides for specific agents
-# Each key is a tap agent tag (e.g., "developer:general"), value is the model to use
-# This allows setting a preferred model for specific tap agents.
-# Priority: CLI --model > taps override > role.model > config.model
+# Each tap tag may own an optional partial model profile.
+# Priority: runtime override > role model > tap model > main [model]
 # Example:
-# [taps]
-# "developer:general" = "ollama:glm-5"
-# "octomind:assistant" = "openai:gpt-4o"
+# [taps."developer:general".model]
+# name = "ollama:glm-5"
 # Leave empty to use default model for all tap agents
 [taps]
 

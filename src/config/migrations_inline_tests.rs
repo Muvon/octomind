@@ -80,10 +80,10 @@ fn v0_config_gets_stamped_and_upgraded() {
 		Some(true)
 	);
 	assert_eq!(
-		migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
+		migrated["supervisor"]["model"]["max_tokens"].as_integer(),
 		Some(8192)
 	);
-	assert!(migrated["supervisor"]["plan"]["model"].as_str().is_some());
+	assert!(migrated["supervisor"]["model"]["name"].as_str().is_some());
 	assert!(migrated["supervisor"].get("delegate").is_none());
 	assert!(migrated["supervisor"].get("detectors").is_none());
 }
@@ -280,22 +280,14 @@ trajectory_max_tokens = 3072
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	assert_eq!(
-		migrated["supervisor"]["gate"]["verifier_model"].as_str(),
-		Some("openai:custom-verifier")
-	);
-	assert_eq!(
-		migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
-		Some(8192)
-	);
+	assert!(migrated["supervisor"]["gate"]
+		.get("verifier_model")
+		.is_none());
 	assert_eq!(
 		migrated["supervisor"]["plan"]["enabled"].as_bool(),
 		Some(false)
 	);
-	assert_eq!(
-		migrated["supervisor"]["plan"]["model"].as_str(),
-		Some("openai:custom-planner")
-	);
+	assert!(migrated["supervisor"]["plan"].get("model").is_none());
 	// Hardcoded budgets and auto-adoption knobs are shed by v7.
 	assert!(migrated["supervisor"]["gate"]
 		.get("max_iterations")
@@ -369,9 +361,9 @@ ignore_cost = true
 	assert_eq!(migration.from_version, 7);
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	let decision = migrated["compression"]["decision"].as_table().unwrap();
-	assert!(!decision.contains_key("ignore_cost"));
-	assert_eq!(decision["max_tokens"].as_integer(), Some(16000));
+	let model = migrated["compression"]["model"].as_table().unwrap();
+	assert!(!model.contains_key("ignore_cost"));
+	assert_eq!(model["max_tokens"].as_integer(), Some(16000));
 	assert_eq!(
 		migrated["compression"]["threshold"].as_integer(),
 		Some(70000)
@@ -397,7 +389,7 @@ model = "anthropic:custom"
 	let condense = &migrated["supervisor"]["condense"];
 	assert_eq!(condense["adaptive"].as_bool(), Some(false));
 	assert_eq!(condense["tokens_threshold"].as_integer(), Some(4321));
-	assert_eq!(condense["model"].as_str(), Some("anthropic:custom"));
+	assert!(condense.get("model").is_none());
 }
 
 #[test]
@@ -424,7 +416,7 @@ tool = "remember"
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	let learning = migrated["supervisor"]["learning"].as_table().unwrap();
 	assert_eq!(learning["enabled"].as_bool(), Some(true));
-	assert_eq!(learning["model"].as_str(), Some("alibaba:qwen3.8-flash"));
+	assert!(learning.get("model").is_none());
 	for removed in ["backend", "store", "retrieve"] {
 		assert!(!learning.contains_key(removed));
 	}
@@ -448,15 +440,12 @@ model = "openai:gpt-5-mini"
 		migrated["supervisor"]["learning"]["evolution"]["enabled"].as_bool(),
 		Some(false)
 	);
-	assert_eq!(
-		migrated["supervisor"]["learning"]["model"].as_str(),
-		Some("openai:gpt-5-mini")
-	);
+	assert!(migrated["supervisor"]["learning"].get("model").is_none());
 }
 
 #[test]
 fn future_version_is_rejected_rather_than_downgraded() {
-	let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 11", "version = 99", 1);
+	let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 12", "version = 99", 1);
 	let error = plan()
 		.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 		.expect_err("a newer config must not be rewritten");
@@ -696,8 +685,8 @@ fn add_v5_supervisor_fields_merges_gate_and_plan_into_a_partial_supervisor() {
 
 	let supervisor = roundtrip(&document)["supervisor"].clone();
 	assert_eq!(supervisor["enabled"].as_bool(), Some(false));
-	assert_eq!(supervisor["gate"]["max_tokens"].as_integer(), Some(8192));
-	assert!(supervisor["plan"]["model"].as_str().is_some());
+	assert_eq!(supervisor["gate"]["enabled"].as_bool(), Some(true));
+	assert_eq!(supervisor["plan"]["enabled"].as_bool(), Some(true));
 }
 
 #[test]
@@ -714,7 +703,7 @@ fn add_v5_supervisor_fields_never_overwrites_custom_gate_values() {
 		gate["verifier_model"].as_str(),
 		Some("openai:custom-verifier")
 	);
-	assert_eq!(gate["max_tokens"].as_integer(), Some(8192));
+	assert!(gate.get("max_tokens").is_none());
 }
 
 #[test]

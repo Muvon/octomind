@@ -98,6 +98,74 @@ fn an_explicit_version_zero_follows_the_same_chain_as_a_missing_stamp() {
 }
 
 #[test]
+fn v11_model_settings_migrate_to_three_nested_ownership_profiles() {
+	let old = r#"version = 11
+model = "openai:main"
+max_tokens = 32000
+temperature = 0.4
+top_p = 0.8
+top_k = 40
+max_retries = 2
+retry_timeout = 7
+request_timeout_seconds = 90
+reasoning_effort = "high"
+
+[[roles]]
+name = "worker"
+model = "anthropic:worker"
+temperature = 0.2
+top_p = 0.9
+top_k = 10
+system = "work"
+welcome = ""
+
+[supervisor]
+enabled = true
+model = "google:supervisor"
+[supervisor.learning]
+enabled = true
+model = "openai:old-learning"
+[supervisor.learning.evolution]
+enabled = false
+[supervisor.gate]
+enabled = true
+verifier_model = "openai:old-verifier"
+max_tokens = 1234
+[supervisor.plan]
+enabled = true
+model = "openai:old-plan"
+[supervisor.condense]
+enabled = true
+adaptive = false
+tokens_threshold = 5000
+model = "openai:old-condense"
+
+[compression]
+threshold = 70000
+knowledge_retention = 25
+analysis_findings_max_tokens = 6000
+[compression.decision]
+model = "openai:compression"
+max_tokens = 16000
+temperature = 0.3
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
+"#;
+	let migrated = parse(&migrate_once(old));
+	assert_eq!(migrated["model"]["name"].as_str(), Some("openai:main"));
+	assert_eq!(migrated["model"]["reasoning_effort"].as_str(), Some("high"));
+	assert_eq!(migrated["roles"][0]["model"]["name"].as_str(), Some("anthropic:worker"));
+	assert_eq!(migrated["supervisor"]["model"]["name"].as_str(), Some("google:supervisor"));
+	assert_eq!(migrated["compression"]["model"]["name"].as_str(), Some("openai:compression"));
+	assert!(migrated["supervisor"]["learning"].get("model").is_none());
+	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
+	assert!(migrated["supervisor"]["plan"].get("model").is_none());
+	assert!(migrated["supervisor"]["condense"].get("model").is_none());
+}
+
+#[test]
 fn an_empty_document_migrates_to_the_template_supervisor_defaults() {
 	let migrated = parse(&migrate_once(""));
 	assert_eq!(
@@ -105,7 +173,7 @@ fn an_empty_document_migrates_to_the_template_supervisor_defaults() {
 		Some(i64::from(CURRENT_CONFIG_VERSION))
 	);
 	assert_eq!(
-		migrated["supervisor"]["gate"]["max_tokens"].as_integer(),
+		migrated["supervisor"]["model"]["max_tokens"].as_integer(),
 		Some(8192)
 	);
 }

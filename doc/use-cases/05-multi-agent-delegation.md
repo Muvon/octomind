@@ -18,16 +18,13 @@ Octomind offers three ways to delegate, in increasing flexibility:
 
 ### Step 1: Define Agent Roles
 
-A role's `system`, `welcome`, `temperature`, `top_p`, and `top_k` are all **required** — there are no implicit defaults, so omitting any of them makes the config fail to load. Set `welcome = ""` for sub-agent roles you never start interactively.
+A role's `system` and `welcome` remain explicit role behavior. Its `[roles.model]` block is optional: omitted model fields inherit from the required main `[model]` profile. Set `welcome = ""` for sub-agent roles you never start interactively.
 
 ```toml
 # Roles for each agent (in config.toml)
 
 [[roles]]
 name = "context_gatherer"
-temperature = 0.2
-top_p = 0.7
-top_k = 20
 welcome = ""
 system = """
 You are a codebase researcher. Your job is to:
@@ -40,15 +37,17 @@ Use tools to search and read code. Be thorough but focused.
 {{CWD}}
 """
 
+[roles.model]
+temperature = 0.2
+top_p = 0.7
+top_k = 20
+
 [roles.mcp]
 server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view", "filesystem:workdir"]
 
 [[roles]]
 name = "code_reviewer"
-temperature = 0.1
-top_p = 0.7
-top_k = 20
 welcome = ""
 system = """
 You are a senior code reviewer. Analyze code for:
@@ -60,6 +59,11 @@ You are a senior code reviewer. Analyze code for:
 Be specific: file, line, issue, suggestion.
 {{CWD}}
 """
+
+[roles.model]
+temperature = 0.1
+top_p = 0.7
+top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -212,22 +216,24 @@ Main AI:
 
 ## Agent Configuration Tips
 
-The snippets below show only the field being changed — a real `[[roles]]` entry must still include the required `system`, `welcome`, `temperature`, `top_p`, and `top_k` fields shown in [Step 1](#step-1-define-agent-roles).
+The snippets below show only the field being changed. A role's model block is optional and inherits every omitted field from `[model]`; the role still needs its normal identity and prompt fields shown in [Step 1](#step-1-define-agent-roles).
 
 **Cheap models for simple agents:**
 ```toml
 [[roles]]
 name = "context_gatherer"
-model = "openrouter:google/gemini-2.5-flash-preview"  # Fast, cheap, large context
-# ... plus the required system / welcome / temperature / top_p / top_k fields
+[roles.model]
+name = "openrouter:google/gemini-2.5-flash-preview"  # Fast, cheap, large context
+# ... plus the role's system / welcome fields
 ```
 
 **Powerful models for complex analysis:**
 ```toml
 [[roles]]
 name = "code_reviewer"
-model = "anthropic:claude-sonnet-4"  # Best reasoning
-# ... plus the required system / welcome / temperature / top_p / top_k fields
+[roles.model]
+name = "anthropic:claude-sonnet-4"  # Best reasoning
+# ... plus the role's system / welcome fields
 ```
 
 **Tool restrictions for safety:**

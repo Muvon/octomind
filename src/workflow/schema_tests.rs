@@ -342,3 +342,47 @@ fn edge_deserializes_with_and_without_condition() {
 	assert_eq!(when.matches.as_deref(), Some("ok|passed"));
 	assert_eq!(when.contains, None);
 }
+
+#[test]
+fn workflow_model_accepts_legacy_name_only_and_full_nested_profile() {
+	let legacy: WorkflowDef = toml::from_str(
+		r#"
+		name = "legacy"
+		[[steps]]
+		name = "run"
+		role = "developer"
+		prompt = "go"
+		model = "google:gemini-3-pro"
+		"#,
+	)
+	.unwrap();
+	let Step::Sequential(legacy_step) = &legacy.steps[0] else {
+		panic!("expected sequential step");
+	};
+	assert_eq!(
+		legacy_step.model.model.as_deref(),
+		Some("google:gemini-3-pro")
+	);
+
+	let nested: WorkflowDef = toml::from_str(
+		r#"
+		name = "nested"
+		[[steps]]
+		name = "run"
+		role = "developer"
+		prompt = "go"
+		[steps.model]
+		name = "openai:gpt-5"
+		reasoning_effort = "high"
+		max_retries = 4
+		"#,
+	)
+	.unwrap();
+	let Step::Sequential(nested_step) = &nested.steps[0] else {
+		panic!("expected sequential step");
+	};
+	let model = &nested_step.model;
+	assert_eq!(model.model.as_deref(), Some("openai:gpt-5"));
+	assert_eq!(model.reasoning_effort, Some(crate::config::ReasoningEffortConfig::High));
+	assert_eq!(model.max_retries, Some(4));
+}

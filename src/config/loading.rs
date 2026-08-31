@@ -18,6 +18,89 @@ use std::path::Path;
 
 use super::Config;
 
+const MODEL_PROFILE_FIELDS: [&str; 8] = [
+	"reasoning_effort",
+	"max_tokens",
+	"temperature",
+	"top_p",
+	"top_k",
+	"max_retries",
+	"retry_timeout",
+	"request_timeout_seconds",
+];
+
+/// Accept the pre-v12 scalar/flat spelling at versionless merge boundaries.
+/// The canonical serialized form is always a nested `model` table.
+fn normalize_model_owner(table: &mut toml::map::Map<String, toml::Value>) {
+	let mut profile = match table.remove("model") {
+		Some(toml::Value::Table(profile)) => profile,
+		Some(toml::Value::String(model)) => {
+			let mut profile = toml::map::Map::new();
+			profile.insert("name".to_string(), toml::Value::String(model));
+			profile
+		}
+		Some(other) => {
+			table.insert("model".to_string(), other);
+			return;
+		}
+		None => toml::map::Map::new(),
+	};
+	for key in MODEL_PROFILE_FIELDS {
+		if let Some(value) = table.remove(key) {
+			profile.insert(key.to_string(), value);
+		}
+	}
+	if !profile.is_empty() {
+		table.insert("model".to_string(), toml::Value::Table(profile));
+	}
+}
+
+fn normalize_model_profile_syntax(value: &mut toml::Value) {
+	let Some(root) = value.as_table_mut() else {
+		return;
+	};
+	normalize_model_owner(root);
+	if let Some(roles) = root.get_mut("roles").and_then(toml::Value::as_array_mut) {
+		for role in roles {
+			if let Some(role) = role.as_table_mut() {
+				normalize_model_owner(role);
+			}
+		}
+	}
+	if let Some(supervisor) = root
+		.get_mut("supervisor")
+		.and_then(toml::Value::as_table_mut)
+	{
+		normalize_model_owner(supervisor);
+		if let Some(learning) = supervisor
+			.get_mut("learning")
+			.and_then(toml::Value::as_table_mut)
+		{
+			learning.remove("model");
+			for key in MODEL_PROFILE_FIELDS {
+				learning.remove(key);
+			}
+		}
+	}
+	if let Some(compression) = root
+		.get_mut("compression")
+		.and_then(toml::Value::as_table_mut)
+	{
+		if !compression.contains_key("model") {
+			if let Some(decision) = compression.remove("decision") {
+				compression.insert("model".to_string(), decision);
+			}
+		}
+		if let Some(model) = compression.get_mut("model") {
+			if let Some(profile) = model.as_table_mut() {
+				if let Some(name) = profile.remove("model") {
+					profile.insert("name".to_string(), name);
+				}
+			}
+		}
+	}
+}
+
 /// Merge multiple TOML values into one - later values override/add to earlier ones
 /// Arrays of tables are concatenated (e.g. [[mcp.servers]]), tables merge deeply, scalars override
 fn merge_toml_values(base: &toml::Value, override_: &toml::Value) -> toml::Value {
@@ -131,8 +214,9 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 		let content = fs::read_to_string(file)
 			.context(format!("Failed to read TOML file: {}", file.display()))?;
 
-		let value: toml::Value = toml::from_str(&content)
+		let mut value: toml::Value = toml::from_str(&content)
 			.context(format!("Failed to parse TOML file: {}", file.display()))?;
+		normalize_model_profile_syntax(&mut value);
 
 		merged = Some(if let Some(base) = merged {
 			merge_toml_values(&base, &value)
@@ -350,8 +434,12 @@ impl Config {
 			// Load single file
 			let config_str = fs::read_to_string(path)
 				.context(format!("Failed to read config from {}", path.display()))?;
-			let mut config: Config =
+			let mut value: toml::Value =
 				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			normalize_model_profile_syntax(&mut value);
+			let mut config: Config = value
+				.try_into()
+				.context("Failed to parse TOML configuration")?;
 
 			config.config_path = Some(path.to_path_buf());
 			config.initialize_config();
@@ -509,8 +597,9 @@ impl Config {
 /// **concatenates** `mcp.servers` and `roles` arrays so the agent's additions
 /// stack on top of the user's base config. All other keys use override semantics.
 pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
-	let agent_value: toml::Value =
+	let mut agent_value: toml::Value =
 		toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
+	normalize_model_profile_syntax(&mut agent_value);
 
 	// Serialize base config to toml::Value so we can manipulate it
 	let base_str = toml::to_string(base).context("Failed to serialize base config")?;

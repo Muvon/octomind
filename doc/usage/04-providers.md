@@ -56,9 +56,11 @@ export OPENROUTER_API_KEY="your_key"
 ```
 
 ```toml
-model = "openrouter:anthropic/claude-sonnet-4"
-model = "openrouter:openai/gpt-4o"
-model = "openrouter:google/gemini-2.5-flash-preview"
+[model]
+# Choose one:
+name = "openrouter:anthropic/claude-sonnet-4"
+# name = "openrouter:openai/gpt-4o"
+# name = "openrouter:google/gemini-2.5-flash-preview"
 ```
 
 Get a key at [openrouter.ai](https://openrouter.ai/).
@@ -74,8 +76,9 @@ export OPENAI_API_KEY="your_key"
 ```
 
 ```toml
-model = "openai:gpt-4o"
-model = "openai:gpt-4o-mini"
+[model]
+name = "openai:gpt-4o"
+# name = "openai:gpt-4o-mini"
 ```
 
 ### Anthropic
@@ -87,8 +90,9 @@ export ANTHROPIC_API_KEY="your_key"
 ```
 
 ```toml
-model = "anthropic:claude-sonnet-4"
-model = "anthropic:claude-haiku-4-5"
+[model]
+name = "anthropic:claude-sonnet-4"
+# name = "anthropic:claude-haiku-4-5"
 ```
 
 ### Google (Vertex AI)
@@ -106,7 +110,8 @@ export GOOGLE_CLOUD_LOCATION="us-central1"
 ```
 
 ```toml
-model = "google:gemini-2.5-flash-preview"
+[model]
+name = "google:gemini-2.5-flash-preview"
 ```
 
 octolib reads `GOOGLE_CREDENTIAL_FILE` first, then falls back to `GOOGLE_APPLICATION_CREDENTIALS`. Requires a Google Cloud project with the Vertex AI API enabled.
@@ -121,7 +126,8 @@ export AWS_BEDROCK_REGION="us-east-1"   # optional, defaults to us-east-1
 ```
 
 ```toml
-model = "amazon:anthropic.claude-v2"
+[model]
+name = "amazon:anthropic.claude-v2"
 ```
 
 These are **not** standard AWS access keys (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` will not authenticate). Create a Bedrock API key in the AWS console under **IAM → Security credentials → Create service-specific credential → Amazon Bedrock**.
@@ -136,7 +142,8 @@ export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 ```
 
 ```toml
-model = "cloudflare:@cf/meta/llama-3.1-8b-instruct"
+[model]
+name = "cloudflare:@cf/meta/llama-3.1-8b-instruct"
 ```
 
 octolib's Cloudflare provider reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
@@ -150,7 +157,8 @@ export DEEPSEEK_API_KEY="your_key"
 ```
 
 ```toml
-model = "deepseek:deepseek-chat"
+[model]
+name = "deepseek:deepseek-chat"
 ```
 
 ### Other providers

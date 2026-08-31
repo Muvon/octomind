@@ -1,8 +1,8 @@
 # Migration Guide
 
-> **Read this first:** every structural change in this guide is **manual**. `octomind config --upgrade` only bumps the config schema version field (the current schema is version `1`, and the only migration is `v0 → v1`); it does **not** reshape legacy `[role_name]`, `[[layers]]`, `[mcp]`, or filesystem sections for you. See [Automatic Upgrade](#automatic-upgrade) for exactly what it touches.
+> **Read this first:** the current schema is version `12`. `octomind config --upgrade` performs the declared version-by-version migrations, including the v12 nested model-profile migration, and writes a backup before replacement. Very old pre-version structural formats may still need the manual changes documented below.
 
-## Provider Format
+## Model Profile and Provider Format
 
 **Old format:**
 ```toml
@@ -11,10 +11,19 @@ model = "anthropic/claude-sonnet-4"
 
 **Current format:**
 ```toml
-model = "openrouter:anthropic/claude-sonnet-4"
+[model]
+name = "openrouter:anthropic/claude-sonnet-4"
+reasoning_effort = "medium"
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 ```
 
-All models require `provider:model` format. The provider prefix tells Octomind which API to use. The canonical default model is `openrouter:anthropic/claude-sonnet-4` (OpenRouter is the recommended one-key-many-models entry point).
+All model names require `provider:model` format. `[model]` is the required complete baseline. Optional `[roles.model]`, `[supervisor.model]`, `[compression.model]`, tap, workflow-step, and dynamic-agent profiles may override any subset; omitted fields inherit from main.
 
 When migrating a bare model name, pick the provider prefix that matches where you actually call the model. Common prefixes: `openrouter`, `openai`, `anthropic`, `google` (Vertex), `amazon` (Bedrock), `cloudflare`, `deepseek`, `ollama`, `local`, and the special `cli` meta-provider for locally CLI-backed models. There are 20 network providers plus `cli` in total — see [doc/usage/04-providers.md](../usage/04-providers.md) for the full list and which prefix to choose.
 
@@ -62,7 +71,9 @@ server_refs = ["core"]
 ```toml
 [[roles]]
 name = "developer"
-model = "openrouter:anthropic/claude-sonnet-4"
+
+[roles.model]
+name = "openrouter:anthropic/claude-sonnet-4"
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -73,7 +84,7 @@ Key changes:
 - Roles use `[[roles]]` array format (not `[role_name]` sections); every role is a top-level `[[roles]]` entry with a `name` field
 - `enabled` field removed (roles are always available if defined)
 - `enable_layers` removed (legacy in-session workflow system is gone — use external `octomind workflow` instead)
-- Per-role `max_tokens` removed — if a legacy role config carries `max_tokens`, drop it
+- Every role model setting now lives in `[roles.model]`; `max_tokens`, reasoning, sampling, retries, and timeouts are all valid partial overrides
 - Tool permissions use `allowed_tools` patterns
 - `runtime` builtin server is new — see [Runtime Namespace Move](#runtime-namespace-move) below
 

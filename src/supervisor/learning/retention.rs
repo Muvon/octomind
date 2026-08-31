@@ -310,13 +310,8 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let proposed = super::extract::call_supervisor_json(
 		config,
-		&config.supervisor.learning.model,
 		super::extract::SupervisorPrompt::new(CONSOLIDATE_PROMPT.to_string(), payload.to_string()),
 		crate::supervisor::stats::CallKind::Distill,
-		super::extract::SupervisorSampling {
-			temperature: 0.1,
-			max_tokens: 2400,
-		},
 		schema,
 		rx,
 	)
@@ -358,16 +353,11 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 	let (_tx, verify_rx) = tokio::sync::watch::channel(false);
 	let verified = super::extract::call_supervisor_json(
 		config,
-		&config.supervisor.gate.verifier_model,
 		super::extract::SupervisorPrompt::new(
 			VERIFY_PROMPT.to_string(),
 			verify_payload.to_string(),
 		),
 		crate::supervisor::stats::CallKind::Distill,
-		super::extract::SupervisorSampling {
-			temperature: 0.0,
-			max_tokens: 600,
-		},
 		verify_schema,
 		verify_rx,
 	)

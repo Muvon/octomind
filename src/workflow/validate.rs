@@ -358,11 +358,8 @@ fn structural_check(step: &Step) -> Result<()> {
 }
 
 fn validate_fields(s: &Sequential) -> Result<()> {
-	if let Some(m) = &s.model {
-		if m.trim().is_empty() {
-			bail!("step '{}': model must not be empty when specified", s.name);
-		}
-	}
+	s.model
+		.validate_explicit(&format!("step '{}'.model", s.name))?;
 	if let Some(w) = &s.workdir {
 		if w.trim().is_empty() {
 			bail!(

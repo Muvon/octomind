@@ -22,7 +22,7 @@
 
 use crate::config::Config;
 use crate::session::Message;
-use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
+use crate::supervisor::learning::extract::SupervisorPrompt;
 use serde::Deserialize;
 use tokio::sync::watch;
 
@@ -364,22 +364,13 @@ pub async fn resolve(
 	if raw.trim().is_empty() {
 		return ResolvedTask::self_contained(raw);
 	}
-	let model = config.supervisor.gate.verifier_model.clone();
 	let classification = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
-		&model,
 		SupervisorPrompt::new(
 			CLASSIFIER_PROMPT.to_string(),
 			context.render_classification_payload(),
 		),
 		crate::supervisor::stats::CallKind::Resolve,
-		SupervisorSampling {
-			temperature: 0.0,
-			// Room for the conditions checklist on top of the scalar verdicts
-			// (a reasoning verifier model may also spend budget before the JSON);
-			// a truncated reply loses the checklist, so the budget stays generous.
-			max_tokens: 6144,
-		},
 		operation_rx.clone(),
 	)
 	.await;
@@ -408,13 +399,8 @@ pub async fn resolve(
 						);
 					match crate::supervisor::learning::extract::call_supervisor_llm(
 						config,
-						&model,
 						SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), retry_payload),
 						crate::supervisor::stats::CallKind::Resolve,
-						SupervisorSampling {
-							temperature: 0.0,
-							max_tokens: 12288,
-						},
 						operation_rx.clone(),
 					)
 					.await
@@ -464,16 +450,11 @@ pub async fn resolve(
 
 	let response = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
-		&model,
 		SupervisorPrompt::new(
 			FOLLOWUP_PROMPT.to_string(),
 			context.render_resolution_payload(),
 		),
 		crate::supervisor::stats::CallKind::Resolve,
-		SupervisorSampling {
-			temperature: 0.0,
-			max_tokens: 512,
-		},
 		operation_rx,
 	)
 	.await;

@@ -385,10 +385,8 @@ pub async fn condense_round(
 		.map(|candidate| sizes[candidate.result_index] as u64)
 		.sum();
 
-	let model = config.supervisor.condense.model.clone();
 	let response = match crate::supervisor::learning::extract::call_learning_llm(
 		config,
-		&model,
 		SYSTEM_PROMPT.to_string(),
 		user,
 		crate::supervisor::stats::CallKind::Condense,

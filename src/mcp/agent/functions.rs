@@ -486,10 +486,7 @@ fn build_agent_config(
 		merged.mcp.allowed_tools.clear();
 	}
 
-	// Apply model override if specified
-	if let Some(ref model) = agent.model {
-		merged.model = model.clone();
-	}
+	merged.model_profile = agent.model.resolve(&merged.model_profile);
 
 	merged
 }
@@ -517,12 +514,9 @@ fn run_dynamic_agent_in_process(
 			anyhow::bail!(crate::session::cancellation::Cancelled);
 		}
 
-		let effective_model = agent
-			.model
-			.clone()
-			.unwrap_or_else(|| agent_config.model.clone());
+		let profile = agent.model.resolve(&agent_config.model_profile);
 
-		let should_cache = crate::session::model_supports_caching(&effective_model);
+		let should_cache = crate::session::model_supports_caching(&profile.model);
 
 		// Build messages: system prompt + user task
 		let now = std::time::SystemTime::now()
@@ -548,17 +542,9 @@ fn run_dynamic_agent_in_process(
 		];
 
 		// Initial API call
-		let validation_params = ChatCompletionWithValidationParams::new(
-			&messages,
-			&effective_model,
-			agent.temperature.unwrap_or(0.7),
-			agent.top_p.unwrap_or(0.9),
-			agent.top_k.unwrap_or(0),
-			agent_config.get_effective_max_tokens(),
-			agent_config,
-		)
-		.with_max_retries(agent_config.max_retries)
-		.with_cancellation_token(operation_cancelled.clone());
+		let validation_params =
+			ChatCompletionWithValidationParams::from_profile(&messages, &profile, agent_config)
+				.with_cancellation_token(operation_cancelled.clone());
 
 		let response = crate::session::chat_completion_with_validation(validation_params).await?;
 
@@ -661,16 +647,11 @@ fn run_dynamic_agent_in_process(
 				}
 
 				// Follow-up API call with tool results
-				let follow_up_params = ChatCompletionWithValidationParams::new(
+				let follow_up_params = ChatCompletionWithValidationParams::from_profile(
 					&conv_messages,
-					&effective_model,
-					agent.temperature.unwrap_or(0.7),
-					agent.top_p.unwrap_or(0.9),
-					agent.top_k.unwrap_or(0),
-					agent_config.get_effective_max_tokens(),
+					&profile,
 					agent_config,
 				)
-				.with_max_retries(agent_config.max_retries)
 				.with_cancellation_token(operation_cancelled.clone());
 
 				match crate::session::chat_completion_with_validation(follow_up_params).await {

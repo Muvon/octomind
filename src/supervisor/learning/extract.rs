@@ -187,13 +187,13 @@ pub async fn run_extraction(
 		"\n\n# Runtime trajectory outcome\nThe external outcome is `{}`. Short user-backed lessons remain quote-driven; orientation must not describe failed or unknown work as verified success.\n",
 		outcome.as_str()
 	));
-	let response = call_extraction_llm(config, &learning.model, system, transcript.clone()).await?;
+	let response = call_extraction_llm(config, system, transcript.clone()).await?;
 	let experience_response = if should_extract_experience(messages, &transcript, outcome) {
 		let system = format!(
 			"{EXPERIENCE_SECTION}\n\n# Existing short memories\n{existing_text}\n\n# Runtime trajectory outcome\nThe external verify-gate outcome is `{}`. Preserve this label exactly; never infer a stronger result from transcript prose.",
 			outcome.as_str()
 		);
-		match call_extraction_llm(config, &learning.model, system, transcript.clone()).await {
+		match call_extraction_llm(config, system, transcript.clone()).await {
 			Ok(response) => response,
 			Err(error) => {
 				crate::log_debug!("Experience extraction unavailable: {}", error);
@@ -859,7 +859,6 @@ async fn verify_lessons(config: &Config, lessons: &[Candidate], transcript: &str
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let resp = match call_learning_llm(
 		config,
-		&config.supervisor.gate.verifier_model,
 		VERIFY_LESSONS_PROMPT.to_string(),
 		user,
 		crate::supervisor::stats::CallKind::Distill,
@@ -1215,7 +1214,6 @@ async fn experience_verifier_response(
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	call_learning_llm(
 		config,
-		&config.supervisor.gate.verifier_model,
 		VERIFY_EXPERIENCE_PROMPT.to_string(),
 		user,
 		crate::supervisor::stats::CallKind::Distill,
@@ -1291,7 +1289,6 @@ async fn repair_experience_response(
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	call_learning_llm(
 		config,
-		&config.supervisor.learning.model,
 		REPAIR_EXPERIENCE_PROMPT.to_string(),
 		user,
 		crate::supervisor::stats::CallKind::Distill,
@@ -1586,82 +1583,47 @@ fn spawn_distill_process(
 /// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.
 async fn call_extraction_llm(
 	config: &Config,
-	model: &str,
 	system_content: String,
 	user_content: String,
 ) -> Result<String> {
-	let now = crate::utils::time::now_secs();
-	let messages = vec![
-		crate::session::Message {
-			role: "system".to_string(),
-			content: system_content,
-			timestamp: now,
-			cached: false,
-			cache_ttl: None,
-			tool_call_id: None,
-			name: None,
-			tool_calls: None,
-			images: None,
-			videos: None,
-			thinking: None,
-			id: None,
-		},
-		crate::session::Message {
-			role: "user".to_string(),
-			content: user_content,
-			timestamp: now,
-			cached: false,
-			cache_ttl: None,
-			tool_call_id: None,
-			name: None,
-			tool_calls: None,
-			images: None,
-			videos: None,
-			thinking: None,
-			id: None,
-		},
-	];
-
-	let params = crate::session::ChatCompletionWithValidationParams::new(
-		&messages, model, 0.3, 1.0, 0, 4096, config,
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	call_learning_llm(
+		config,
+		system_content,
+		user_content,
+		crate::supervisor::stats::CallKind::Distill,
+		rx,
 	)
-	.with_max_retries(1)
-	.with_purpose(crate::providers::ModelPurpose::SupervisorDistill)
-	.without_tools();
-
-	let response = crate::session::chat_completion_with_validation(params).await?;
-	if let Some(usage) = &response.exchange.usage {
-		crate::supervisor::stats::record_call(
-			crate::supervisor::stats::CallKind::Distill,
-			usage.input_tokens,
-			usage.output_tokens,
-			usage.reasoning_tokens,
-			usage.request_time_ms.unwrap_or(0),
-			usage.cost.unwrap_or(0.0),
-		);
-	}
-	Ok(response.content)
+	.await
 }
 
-/// Call the learning LLM (cheap model) for extraction or retrieval prep.
-/// Each supervisor mechanic reports its own routing purpose, so the hub (and
-/// the panel) can redefine any one of them without touching the others.
+/// The routing purpose follows the same boundary as the resolved profile.
 fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::ModelPurpose {
 	use crate::providers::ModelPurpose;
 	use crate::supervisor::stats::CallKind;
 	match kind {
-		CallKind::Gate => ModelPurpose::SupervisorGate,
-		CallKind::Resolve => ModelPurpose::SupervisorGate,
-		CallKind::Plan => ModelPurpose::SupervisorGate,
-		CallKind::Condense => ModelPurpose::SupervisorCondense,
-		CallKind::Distill => ModelPurpose::SupervisorDistill,
-		CallKind::Recall => ModelPurpose::SupervisorRecall,
+		CallKind::Gate | CallKind::Resolve | CallKind::Plan | CallKind::Condense => {
+			ModelPurpose::Supervisor
+		}
+		CallKind::Distill | CallKind::Recall => ModelPurpose::Supervisor,
+	}
+}
+
+fn profile_for(
+	config: &Config,
+	kind: crate::supervisor::stats::CallKind,
+) -> crate::config::ModelProfile {
+	use crate::supervisor::stats::CallKind;
+	match kind {
+		CallKind::Gate | CallKind::Resolve | CallKind::Plan | CallKind::Condense => {
+			config.get_supervisor_model_profile()
+		}
+		CallKind::Distill | CallKind::Recall => config.get_supervisor_model_profile(),
 	}
 }
 
 pub(crate) async fn call_learning_llm(
 	config: &Config,
-	model: &str,
 	system_content: String,
 	user_content: String,
 	kind: crate::supervisor::stats::CallKind,
@@ -1669,23 +1631,11 @@ pub(crate) async fn call_learning_llm(
 ) -> Result<String> {
 	call_supervisor_llm(
 		config,
-		model,
 		SupervisorPrompt::new(system_content, user_content),
 		kind,
-		SupervisorSampling {
-			temperature: 0.3,
-			max_tokens: 4096,
-		},
 		operation_rx,
 	)
 	.await
-}
-
-/// Sampling/output limits for supervisor-model calls.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SupervisorSampling {
-	pub temperature: f32,
-	pub max_tokens: u32,
 }
 
 /// The two-message prompt sent by every supervisor mechanic.
@@ -1701,19 +1651,15 @@ impl SupervisorPrompt {
 	}
 }
 
-/// Shared supervisor-model transport with mechanic-specific sampling/output
-/// limits. Most generative mechanics use [`call_learning_llm`]; narrow
-/// classifiers such as task resolution can request deterministic short output.
+/// Shared internal-model transport. The call kind selects exactly one resolved
+/// supervisor or learning profile; mechanics cannot override individual fields.
 pub(crate) async fn call_supervisor_llm(
 	config: &Config,
-	model: &str,
 	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
-	sampling: SupervisorSampling,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<String> {
-	let response =
-		call_supervisor_model(config, model, prompt, kind, sampling, None, operation_rx).await?;
+	let response = call_supervisor_model(config, prompt, kind, None, operation_rx).await?;
 	Ok(response.content)
 }
 
@@ -1725,22 +1671,19 @@ pub(crate) async fn call_supervisor_llm(
 /// parser.
 pub(crate) async fn call_supervisor_json(
 	config: &Config,
-	model: &str,
 	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
-	sampling: SupervisorSampling,
 	schema: serde_json::Value,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<serde_json::Value> {
+	let profile = profile_for(config, kind);
 	let (provider, actual_model) =
-		crate::providers::ProviderFactory::get_provider_for_model(model)?;
+		crate::providers::ProviderFactory::get_provider_for_model(&profile.model)?;
 	let enforced = provider.enforces_response_schema(&actual_model);
 	let response = call_supervisor_model(
 		config,
-		model,
 		prompt,
 		kind,
-		sampling,
 		enforced.then_some(schema),
 		operation_rx,
 	)
@@ -1750,16 +1693,17 @@ pub(crate) async fn call_supervisor_json(
 	}
 	crate::session::chat::conversation_compression::extract_json_lenient(&response.content)
 		.ok_or_else(|| {
-			anyhow::anyhow!("model '{model}' returned no JSON object (schema enforced: {enforced})")
+			anyhow::anyhow!(
+				"model '{}' returned no JSON object (schema enforced: {enforced})",
+				profile.model
+			)
 		})
 }
 
 async fn call_supervisor_model(
 	config: &Config,
-	model: &str,
 	prompt: SupervisorPrompt,
 	kind: crate::supervisor::stats::CallKind,
-	sampling: SupervisorSampling,
 	schema: Option<serde_json::Value>,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<crate::providers::ProviderResponse> {
@@ -1795,16 +1739,10 @@ async fn call_supervisor_model(
 		},
 	];
 
-	let mut params = crate::session::ChatCompletionWithValidationParams::new(
-		&messages,
-		model,
-		sampling.temperature,
-		1.0, // top_p
-		0,   // top_k (0 = default)
-		sampling.max_tokens,
-		config,
+	let profile = profile_for(config, kind);
+	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(
+		&messages, &profile, config,
 	)
-	.with_max_retries(1)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx)
 	.with_purpose(purpose_for(kind))

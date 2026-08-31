@@ -82,6 +82,11 @@ pub async fn setup_and_initialize_session(
 	let model = args.model.clone();
 	let max_tokens = args.max_tokens;
 	let temperature = args.temperature;
+	let top_p = args.top_p;
+	let top_k = args.top_k;
+	let reasoning_effort = args.reasoning_effort;
+	let retry_timeout = args.retry_timeout;
+	let request_timeout_seconds = args.request_timeout_seconds;
 	let role = if args.role.is_empty() {
 		"core".to_string()
 	} else {
@@ -110,20 +115,15 @@ pub async fn setup_and_initialize_session(
 		));
 	}
 
-	// Get role config for defaults
-	let (role_config, _, _, _, _) = config.get_role_config(&role);
-
 	// Validate provider credentials before starting — fail fast with a clear error
-	// Priority: CLI --model > role.model > config.model
-	let effective_model = model
-		.as_deref()
-		.or(role_config.model.as_deref())
-		.unwrap_or(&config.model);
+	// Priority: runtime model > role model profile > main model profile.
+	let role_profile = config.get_model_profile_for_role(&role);
+	let effective_model = model.clone().unwrap_or_else(|| role_profile.model.clone());
 
 	// Fail fast: --schema enforcement needs a model that supports structured output.
 	// Checked before the spinner starts so the error surfaces cleanly.
 	if args.schema.is_some() {
-		crate::session::ensure_structured_output_support(effective_model)?;
+		crate::session::ensure_structured_output_support(&effective_model)?;
 	}
 
 	// Print startup banner before the spinner so the icon stays visible above the
@@ -137,7 +137,7 @@ pub async fn setup_and_initialize_session(
 			format!("{}", display_random_tip().bright_yellow()),
 			format!("{}", "? for shortcuts • /help for commands".bright_black()),
 		];
-		crate::branding::print_startup_banner(&role, effective_model, &cwd, &extra);
+		crate::branding::print_startup_banner(&role, &effective_model, &cwd, &extra);
 	}
 
 	// Show loading spinner in interactive mode
@@ -209,22 +209,18 @@ pub async fn setup_and_initialize_session(
 	if resume_recent {
 		session_params = session_params.with_resume_recent(true);
 	}
-	if let Some(model) = model.clone() {
-		session_params = session_params.with_model(model);
-	}
-
-	// Use CLI temperature if provided, otherwise use role config temperature
-	let effective_temperature = temperature.unwrap_or(role_config.temperature);
-	session_params = session_params.with_temperature(effective_temperature);
-
-	// Use CLI max_tokens if provided, otherwise use config default
-	let effective_max_tokens =
-		max_tokens.unwrap_or_else(|| config_for_role.get_effective_max_tokens());
-	session_params = session_params.with_max_tokens(effective_max_tokens);
-
-	// Use CLI max_retries if provided, otherwise use root config max_retries
-	let effective_max_retries = max_retries.unwrap_or(config_for_role.max_retries);
-	session_params = session_params.with_max_retries(effective_max_retries);
+	session_params =
+		session_params.with_model_profile_override(crate::config::ModelProfileOverride {
+			model: model.clone(),
+			reasoning_effort,
+			max_tokens,
+			temperature,
+			top_p,
+			top_k,
+			max_retries,
+			retry_timeout,
+			request_timeout_seconds,
+		});
 
 	// Set output mode for CLI output suppression in JSONL mode
 	let output_mode_for_check = output_mode.clone();

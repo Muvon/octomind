@@ -14,24 +14,39 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::mcp::RoleMcpConfig;
+use super::{mcp::RoleMcpConfig, ModelProfileOverride};
 
 // Role configuration - contains all behavior settings but NOT API keys
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RoleConfig {
-	// Optional model override — if set, replaces the global model when this role is active
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub model: Option<String>,
+	// Complete model-profile override. Every omitted field inherits main.
+	#[serde(default)]
+	pub model: ModelProfileOverride,
+	// Versionless tap manifests may still use the historical flat sampling
+	// fields. They are accepted as input and folded into `model`; new config is
+	// always written with `[roles.model]`.
+	#[serde(default, skip_serializing)]
+	pub temperature: Option<f32>,
+	#[serde(default, skip_serializing)]
+	pub top_p: Option<f32>,
+	#[serde(default, skip_serializing)]
+	pub top_k: Option<u32>,
 	// Custom system prompt (REQUIRED - defined in config template)
 	pub system: String,
 	// Custom welcome message with variable support
 	pub welcome: String,
-	// Temperature for AI responses (0.0 to 1.0) - STRICT: must be in config
-	pub temperature: f32,
-	// Top_p for AI responses (0.0 to 1.0) - nucleus sampling
-	pub top_p: f32,
-	// Top_k for AI responses (1 to infinity) - limits token choices
-	pub top_k: u32,
+}
+
+impl RoleConfig {
+	pub fn model_override(&self) -> ModelProfileOverride {
+		ModelProfileOverride {
+			temperature: self.temperature,
+			top_p: self.top_p,
+			top_k: self.top_k,
+			..Default::default()
+		}
+		.overlay(&self.model)
+	}
 }
 
 // REMOVED: Default implementations - all config must be explicit

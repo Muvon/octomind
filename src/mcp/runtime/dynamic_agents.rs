@@ -43,14 +43,9 @@ pub struct DynamicAgentConfig {
 	/// Optional welcome message
 	#[serde(default)]
 	pub welcome: String,
-	/// Optional model override (e.g., "openai:gpt-4")
-	pub model: Option<String>,
-	/// Optional temperature override
-	pub temperature: Option<f32>,
-	/// Optional top_p override
-	pub top_p: Option<f32>,
-	/// Optional top_k override
-	pub top_k: Option<u32>,
+	/// Complete model-profile override; omitted fields inherit main.
+	#[serde(default)]
+	pub model: crate::config::ModelProfileOverride,
 	/// MCP server references (names of dynamic MCP servers)
 	#[serde(default)]
 	pub server_refs: Vec<String>,
@@ -416,20 +411,20 @@ pub fn get_agent_tool_function() -> McpFunction {
 					"description": "Optional welcome message"
 				},
 				"model": {
-					"type": "string",
-					"description": "Optional model override (e.g., 'openai:gpt-4')"
-				},
-				"temperature": {
-					"type": "number",
-					"description": "Optional temperature override"
-				},
-				"top_p": {
-					"type": "number",
-					"description": "Optional top_p override"
-				},
-				"top_k": {
-					"type": "integer",
-					"description": "Optional top_k override"
+					"type": "object",
+					"description": "Optional complete model-profile override; omitted fields inherit main",
+					"properties": {
+						"name": { "type": "string" },
+						"reasoning_effort": { "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"] },
+						"max_tokens": { "type": "integer", "minimum": 0 },
+						"temperature": { "type": "number", "minimum": 0.0, "maximum": 2.0 },
+						"top_p": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+						"top_k": { "type": "integer", "minimum": 0, "maximum": 1000 },
+						"max_retries": { "type": "integer", "minimum": 0 },
+						"retry_timeout": { "type": "integer", "minimum": 0 },
+						"request_timeout_seconds": { "type": "integer", "minimum": 0 }
+					},
+					"additionalProperties": false
 				},
 				"server_refs": {
 					"type": "array",
@@ -568,25 +563,28 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		.unwrap_or("")
 		.to_string();
 
-	let model = params
-		.get("model")
-		.and_then(|v| v.as_str())
-		.map(String::from);
-
-	let temperature = params
-		.get("temperature")
-		.and_then(|v| v.as_f64())
-		.map(|t| t as f32);
-
-	let top_p = params
-		.get("top_p")
-		.and_then(|v| v.as_f64())
-		.map(|t| t as f32);
-
-	let top_k = params
-		.get("top_k")
-		.and_then(|v| v.as_u64())
-		.map(|t| t as u32);
+	let model = match params.get("model") {
+		Some(value) => {
+			match serde_json::from_value::<crate::config::ModelProfileOverride>(value.clone()) {
+				Ok(profile) => profile,
+				Err(error) => {
+					return Ok(McpToolResult::error(
+						call.tool_name.clone(),
+						call.tool_id.clone(),
+						format!("Invalid model profile: {error}"),
+					));
+				}
+			}
+		}
+		None => crate::config::ModelProfileOverride::default(),
+	};
+	if let Err(error) = model.validate_explicit("agent.model") {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			error.to_string(),
+		));
+	}
 
 	let mut server_refs: Vec<String> = params
 		.get("server_refs")
@@ -673,9 +671,6 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		system,
 		welcome,
 		model,
-		temperature,
-		top_p,
-		top_k,
 		server_refs,
 		allowed_tools,
 		workdir,

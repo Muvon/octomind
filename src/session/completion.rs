@@ -39,6 +39,10 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	pub max_tokens: u32,
 	/// Maximum retry attempts on failure
 	pub max_retries: u32,
+	/// Base timeout for exponential retry backoff, in seconds.
+	pub retry_timeout: u64,
+	/// Hard timeout for one provider request, in seconds. Zero means unlimited.
+	pub request_timeout_seconds: u64,
 	/// Configuration object
 	pub config: &'a Config,
 	/// When true, validate against the *full* context window (system prompt +
@@ -80,6 +84,8 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			top_k,
 			max_tokens,
 			max_retries: 0,
+			retry_timeout: config.retry_timeout,
+			request_timeout_seconds: config.request_timeout_seconds,
 			config,
 			full_context_tokens: false,
 			cancellation_token: None,
@@ -90,9 +96,45 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 		}
 	}
 
+	/// Construct a request from one fully resolved model profile.
+	pub fn from_profile(
+		messages: &'a [Message],
+		profile: &'a crate::config::ModelProfile,
+		config: &'a Config,
+	) -> Self {
+		Self {
+			messages,
+			model: &profile.model,
+			temperature: profile.temperature,
+			top_p: profile.top_p,
+			top_k: profile.top_k,
+			max_tokens: profile.max_tokens,
+			max_retries: profile.max_retries,
+			retry_timeout: profile.retry_timeout,
+			request_timeout_seconds: profile.request_timeout_seconds,
+			config,
+			full_context_tokens: false,
+			cancellation_token: None,
+			schema: None,
+			reasoning_effort: Some(profile.reasoning_effort),
+			tools: true,
+			purpose: crate::providers::ModelPurpose::default(),
+		}
+	}
+
 	/// Set maximum retry attempts
 	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
 		self.max_retries = max_retries;
+		self
+	}
+
+	pub fn with_retry_timeout(mut self, retry_timeout: u64) -> Self {
+		self.retry_timeout = retry_timeout;
+		self
+	}
+
+	pub fn with_request_timeout_seconds(mut self, request_timeout_seconds: u64) -> Self {
+		self.request_timeout_seconds = request_timeout_seconds;
 		self
 	}
 
@@ -242,6 +284,11 @@ pub async fn chat_completion_with_validation(
 		params.config,
 	)
 	.with_max_retries(params.max_retries)
+	.with_retry_timeout(std::time::Duration::from_secs(params.retry_timeout))
+	.with_request_timeout(match params.request_timeout_seconds {
+		0 => None,
+		n => Some(std::time::Duration::from_secs(n)),
+	})
 	.with_purpose(params.purpose);
 
 	if !params.tools {

@@ -181,8 +181,8 @@ pub fn role_context(messages: &[crate::session::Message]) -> String {
 pub struct SupervisorConfig {
 	/// Master switch for the whole control plane.
 	pub enabled: bool,
-	/// Shared cheap model for supervisor mechanics (e.g. the verify-gate).
-	pub model: String,
+	/// One shared profile for gate, resolve, plan, and condense.
+	pub model: crate::config::ModelProfileOverride,
 	/// Cross-session learning mechanic (distill + recall + orientation).
 	pub learning: learning::LearningConfig,
 	/// Verify-gate on self-reported completion.
@@ -213,33 +213,27 @@ pub struct CondenseConfig {
 	/// above this are condensed. `0` disables. Keep well below
 	/// `mcp_response_tokens_threshold`.
 	pub tokens_threshold: usize,
-	/// Model that does the narrowing (cheap + fast recommended).
-	pub model: String,
 }
 
 /// Verify-gate configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateConfig {
 	pub enabled: bool,
-	/// Model the gate verifies WITH (`provider:model`). Deliberately separate
-	/// from the generator: a same-family verifier inherits the same blind spots
-	/// and rubber-stamps them, so the strongest signal comes from a *different*
-	/// family. Required — no silent fallback to the generator model.
-	pub verifier_model: String,
-	/// Max tokens for the verifier exchange, like every model block: the
-	/// call's output budget (a reasoning verifier thinks before its verdict —
-	/// an overflow returns an explicit indeterminate outcome) and the token
-	/// cap on the assembled turn deliverable it is shown (newest answer always
-	/// kept, oldest parts drop first). Size it to the verifier_model.
-	pub max_tokens: u32,
 }
 
 /// External plan-manager configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanConfig {
 	pub enabled: bool,
-	/// Model that decides whether to create, advance, hold, or revise a plan.
-	pub model: String,
+}
+
+impl SupervisorConfig {
+	pub fn resolved_model_profile(
+		&self,
+		main: &crate::config::ModelProfile,
+	) -> crate::config::ModelProfile {
+		self.model.resolve(main)
+	}
 }
 
 #[cfg(test)]

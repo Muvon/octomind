@@ -128,8 +128,8 @@ pub async fn synthesize(
 	if memories.is_empty() {
 		return Ok(None);
 	}
-	ensure_schema_enforcement(&config.supervisor.learning.model)?;
-	ensure_schema_enforcement(&config.supervisor.gate.verifier_model)?;
+	let learning_profile = config.get_learning_model_profile();
+	ensure_schema_enforcement(&learning_profile.model)?;
 
 	let existing = super::registry::list_records().unwrap_or_default();
 	let source_json = memories
@@ -182,13 +182,8 @@ pub async fn synthesize(
 	let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 	let value = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
-		&config.supervisor.learning.model,
 		crate::supervisor::learning::extract::SupervisorPrompt::new(system, user),
 		crate::supervisor::stats::CallKind::Distill,
-		crate::supervisor::learning::extract::SupervisorSampling {
-			temperature: 0.1,
-			max_tokens: 4096,
-		},
 		proposal_schema(),
 		cancel_rx,
 	)
@@ -264,16 +259,11 @@ pub async fn synthesize(
 	let (_verify_tx, verify_rx) = tokio::sync::watch::channel(false);
 	let verdict_value = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
-		&config.supervisor.gate.verifier_model,
 		crate::supervisor::learning::extract::SupervisorPrompt::new(
 			verifier_prompt(),
 			serde_json::to_string_pretty(&verifier_payload)?,
 		),
-		crate::supervisor::stats::CallKind::Gate,
-		crate::supervisor::learning::extract::SupervisorSampling {
-			temperature: 0.0,
-			max_tokens: 2048,
-		},
+		crate::supervisor::stats::CallKind::Distill,
 		verdict_schema(),
 		verify_rx,
 	)
@@ -311,8 +301,8 @@ pub async fn synthesize(
 		artifact_version: 1,
 		parent_version: superseded.first().cloned(),
 		superseded_ids: superseded.clone(),
-		generator_model: config.supervisor.learning.model.clone(),
-		verifier_model: config.supervisor.gate.verifier_model.clone(),
+		generator_model: learning_profile.model.clone(),
+		verifier_model: learning_profile.model,
 		artifact_path,
 		script_path: script.as_ref().map(|script| script.file_name.clone()),
 		shadow_matches: 0,

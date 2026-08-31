@@ -98,9 +98,168 @@ fn plan() -> MigrationPlan {
 				to: 11,
 				apply: add_v11_learning_evolution,
 			},
+			VersionMigration {
+				from: 11,
+				to: 12,
+				apply: unify_v12_model_profiles,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// v12 nests one validated model profile under each actual model owner. Main is
+/// the baseline; roles inherit it, supervisor (including learning) has one
+/// shared override, and compression remains a separate override.
+fn unify_v12_model_profiles(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	const PROFILE_FIELDS: [&str; 8] = [
+		"reasoning_effort",
+		"max_tokens",
+		"temperature",
+		"top_p",
+		"top_k",
+		"max_retries",
+		"retry_timeout",
+		"request_timeout_seconds",
+	];
+
+	let template_main = required_table(
+		template.as_table(),
+		"model",
+		"embedded default configuration",
+	)?;
+	let mut main = toml_edit::Table::new();
+	if let Some(value) = document.as_table_mut().remove("model") {
+		main.insert("name", value);
+	}
+	for key in PROFILE_FIELDS {
+		if let Some(value) = document.as_table_mut().remove(key) {
+			main.insert(key, value);
+		}
+	}
+	document
+		.as_table_mut()
+		.insert("model", toml_edit::Item::Table(main));
+	let main = document
+		.as_table_mut()
+		.get_mut("model")
+		.and_then(|item| item.as_table_mut())
+		.expect("model table inserted above");
+	for key in ["name"].into_iter().chain(PROFILE_FIELDS.into_iter()) {
+		merge_missing(main, template_main, key)?;
+	}
+
+	if let Some(roles) = document
+		.as_table_mut()
+		.get_mut("roles")
+		.and_then(|item| item.as_array_of_tables_mut())
+	{
+		for role in roles.iter_mut() {
+			let mut profile = toml_edit::Table::new();
+			if let Some(value) = role.remove("model") {
+				profile.insert("name", value);
+			}
+			for key in ["temperature", "top_p", "top_k"] {
+				if let Some(value) = role.remove(key) {
+					profile.insert(key, value);
+				}
+			}
+			role.insert("model", toml_edit::Item::Table(profile));
+		}
+	}
+
+	let template_supervisor = required_table(
+		template.as_table(),
+		"supervisor",
+		"embedded default configuration",
+	)?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user configuration",
+	)?;
+	let mut supervisor_profile = toml_edit::Table::new();
+	if let Some(value) = supervisor.remove("model") {
+		supervisor_profile.insert("name", value);
+	}
+	let template_supervisor_profile = required_table(
+		template_supervisor,
+		"model",
+		"embedded default supervisor configuration",
+	)?;
+	for key in PROFILE_FIELDS {
+		if let Some(value) = supervisor.remove(key) {
+			supervisor_profile.insert(key, value);
+		}
+		merge_missing(&mut supervisor_profile, template_supervisor_profile, key)?;
+	}
+	merge_missing(&mut supervisor_profile, template_supervisor_profile, "name")?;
+	supervisor.insert("model", toml_edit::Item::Table(supervisor_profile));
+
+	if let Some(learning) = supervisor
+		.get_mut("learning")
+		.and_then(|item| item.as_table_mut())
+	{
+		learning.remove("model");
+		for key in PROFILE_FIELDS {
+			learning.remove(key);
+		}
+	}
+
+	if let Some(gate) = supervisor
+		.get_mut("gate")
+		.and_then(|item| item.as_table_mut())
+	{
+		gate.remove("verifier_model");
+		gate.remove("max_tokens");
+	}
+	if let Some(plan) = supervisor
+		.get_mut("plan")
+		.and_then(|item| item.as_table_mut())
+	{
+		plan.remove("model");
+	}
+	if let Some(condense) = supervisor
+		.get_mut("condense")
+		.and_then(|item| item.as_table_mut())
+	{
+		condense.remove("model");
+	}
+
+	let template_compression = required_table(
+		template.as_table(),
+		"compression",
+		"embedded default configuration",
+	)?;
+	let template_model = required_table(
+		template_compression,
+		"model",
+		"embedded default compression configuration",
+	)?;
+	let compression = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"compression",
+		"user configuration",
+	)?;
+	let mut compression_profile = compression
+		.remove("decision")
+		.and_then(|item| item.into_table().ok())
+		.unwrap_or_default();
+	if let Some(value) = compression_profile.remove("model") {
+		compression_profile.insert("name", value);
+	}
+	for key in PROFILE_FIELDS {
+		merge_missing(&mut compression_profile, template_model, key)?;
+	}
+	merge_missing(&mut compression_profile, template_model, "name")?;
+	compression.insert("model", toml_edit::Item::Table(compression_profile));
+
+	Ok(())
 }
 
 /// v11 adds the opt-in grounded behavior-evolution stage beneath learning.

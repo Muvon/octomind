@@ -48,6 +48,31 @@ pub struct RunArgs {
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 
+	/// Override reasoning effort for this session.
+	#[arg(long, value_name = "EFFORT")]
+	pub reasoning_effort: Option<octomind::config::ReasoningEffortConfig>,
+
+	#[arg(long)]
+	pub max_tokens: Option<u32>,
+
+	#[arg(long)]
+	pub temperature: Option<f32>,
+
+	#[arg(long)]
+	pub top_p: Option<f32>,
+
+	#[arg(long)]
+	pub top_k: Option<u32>,
+
+	#[arg(long)]
+	pub max_retries: Option<u32>,
+
+	#[arg(long)]
+	pub retry_timeout: Option<u64>,
+
+	#[arg(long)]
+	pub request_timeout_seconds: Option<u64>,
+
 	/// Keep the session alive indefinitely, waiting for messages injected via `octomind inject`.
 	/// Implies non-interactive mode (requires --format).
 	#[arg(long)]
@@ -134,6 +159,14 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 			.or(picker_resume),
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
+		reasoning_effort: args.reasoning_effort,
+		max_tokens: args.max_tokens,
+		temperature: args.temperature,
+		top_p: args.top_p,
+		top_k: args.top_k,
+		max_retries: args.max_retries,
+		retry_timeout: args.retry_timeout,
+		request_timeout_seconds: args.request_timeout_seconds,
 		daemon: args.daemon,
 		hooks: args.hooks.clone(),
 		schema,

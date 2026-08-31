@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 11
+version = 12
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -20,17 +20,10 @@ version = 11
 # • debug: Show detailed debugging information
 log_level = "info"
 
-# Default model for all operations (provider:model format)
-# Examples: "openrouter:anthropic/claude-3.5-sonnet", "openai:gpt-4o", "deepseek:deepseek-chat"
-model = "octohub:auto"
-
 # Default tag used when no TAG is passed to `octomind run` (and acp/server).
 # Can be a role name (e.g. "developer") or a tap agent (e.g. "octomind:assistant").
 # The built-in tap muvon/octomind-tap ships ready-to-use agents like octomind:assistant.
 default = "assistant:concierge"
-
-# Default max_tokens for all operations
-max_tokens = 32768
 
 # Sandbox mode: restrict all filesystem writes to the current working directory
 # When enabled, the process and all child processes (shell, MCP servers) cannot
@@ -76,23 +69,6 @@ cache_keepalive_enabled = false
 # ends (only sensible in daemon mode under explicit cost monitoring).
 cache_keepalive_max_idle_seconds = 1800
 
-# Maximum number of retries for API calls (can be overridden by --max-retries CLI flag)
-max_retries = 1
-
-# Base timeout for exponential backoff retry logic (config-only, no CLI override)
-retry_timeout = 30
-
-# Per-request HTTP timeout in seconds — hard limit on how long a single
-# HTTP call to the LLM provider may take before being aborted.
-# 0 = no timeout (LLM responses can take minutes for long generations).
-# Applied at the reqwest RequestBuilder level; retry/backoff still applies on timeout.
-request_timeout_seconds = 300
-
-# Reasoning effort hint for thinking-capable models.
-# Valid values: "low", "medium", "high", "xhigh", "max".
-# Each provider maps this to its native knob (effort string, budget tokens, etc.).
-# Models without thinking support silently ignore this.
-reasoning_effort = "medium"
 # ═══════════════════════════════════════════════════════════════════════════════
 # USER INTERFACE
 # Configure how Octomind displays information
@@ -122,6 +98,25 @@ max_request_spending_threshold = 0.0
 # Disable to require manual `capability(action="enable")` calls only.
 # ═══════════════════════════════════════════════════════════════════════
 auto_capabilities = true
+
+# Complete baseline model profile. Every role, tap, workflow step, dynamic
+# agent, and internal model profile inherits fields it does not override.
+[model]
+# Provider-qualified model identifier.
+name = "octohub:auto"
+# Reasoning effort hint for thinking-capable models.
+# Valid values: "low", "medium", "high", "xhigh", "max".
+reasoning_effort = "medium"
+# Maximum output tokens (0 = provider default/unlimited where supported).
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+# Retry count and exponential-backoff base delay.
+max_retries = 1
+retry_timeout = 30
+# Hard timeout for one provider request. 0 = no timeout.
+request_timeout_seconds = 300
 
 # Capability provider overrides for tap agents
 # Each key is a capability name, value is the provider to use instead of "default"
@@ -170,14 +165,22 @@ auto_capabilities = true
 # Example: override the developer role with your own system prompt
 [[roles]]
 name = "assistant"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
 """
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+
+[roles.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
@@ -186,10 +189,6 @@ allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agen
 # Task refiner role - lightweight query refinement
 [[roles]]
 name = "task_refiner"
-model = "octohub:auto"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are a simple query processor for the Octomind system. Your ONLY job is basic query refinement and initial file guessing.
 
@@ -220,6 +219,17 @@ CRITICAL: RESPOND WITHOUT ANY QUESTIONS IN THE WAY YOU JUST GET USER REQUEST AND
 """
 welcome = ""
 
+[roles.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
+
 [roles.mcp]
 server_refs = []
 allowed_tools = []
@@ -227,10 +237,6 @@ allowed_tools = []
 # Task researcher role - context gathering with tool access
 [[roles]]
 name = "task_researcher"
-model = "octohub:auto"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are a research assistant and information gatherer for development tasks. Think of yourself as a junior developer doing reconnaissance work.
 
@@ -274,6 +280,17 @@ IMPORTANT:
 {{CONTEXT}}"""
 welcome = ""
 
+[roles.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
+
 [roles.mcp]
 server_refs = ["filesystem"]
 allowed_tools = ["view"]
@@ -281,10 +298,6 @@ allowed_tools = ["view"]
 # Reduce role - session history compression
 [[roles]]
 name = "reduce"
-model = "octohub:auto"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """You are a Session History Reducer for Octomind. Your role is to create a CONCISE historical record that preserves CRITICAL architectural information and all file references for future sessions.
 
 **CRITICAL PRESERVATION STRATEGY:**
@@ -347,6 +360,17 @@ This architectural history will be essential for future development sessions.
 
 {{CONTEXT}}"""
 welcome = ""
+
+[roles.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 32768
+temperature = 0.3
+top_p = 0.7
+top_k = 20
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = []
@@ -646,20 +670,22 @@ enabled = true
 verify_hash = true
 
 # NOTE: scalar compression keys must remain before the nested attention and
-# decision tables. A scalar placed after a nested table header is parsed as a
+# model tables. A scalar placed after a nested table header is parsed as a
 # field of that table and silently ignored.
 
 # Decision model configuration for compression decisions and summary generation
 # Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
 # Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
-[compression.decision]
-model = "octohub:auto"
+[compression.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
 max_tokens = 16000  # Enough for decision + summary
 temperature = 0.3  # Lower temperature for consistent decisions
 top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
+request_timeout_seconds = 300
 
 # ═══════════════════════════════════════════════════════════════════════
 # SUPERVISOR - out-of-band control plane: learning, orientation, detectors, gate
@@ -672,14 +698,22 @@ retry_timeout = 30
 [supervisor]
 # Master switch for the whole control plane
 enabled = true
-# Shared cheap model for supervisor mechanics (a mechanic may override)
-model = "octohub:auto"
+
+# One shared profile for gate, resolve, plan, condense, and learning.
+[supervisor.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 8192
+temperature = 0.0
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 
 [supervisor.learning]
 # Enable the learning system (lessons + orientation memory, distill + recall)
 enabled = true
-# Model for extraction and retrieval LLM calls (cheap model recommended)
-model = "octohub:auto"
 
 [supervisor.learning.evolution]
 # Compile grounded memories into scoped skills and guardrail candidates.
@@ -692,23 +726,12 @@ enabled = false
 # (loop / no-progress) are fixed constants.
 [supervisor.gate]
 enabled = true
-# Model the gate verifies WITH. RECOMMENDED: a DIFFERENT family than your agent
-# model -- a same-family verifier inherits the same blind spots and rubber-stamps
-# them; cross-family catches far more (e.g. openai:gpt-5-mini, google:gemini-2.5-flash).
-# Defaults to the cheap supervisor model so it works out of the box; change it.
-verifier_model = "octohub:auto"
-# Max tokens for the verifier exchange: the call's output budget (a reasoning
-# verifier thinks before its verdict) and the token cap on the assembled turn
-# deliverable it is shown (newest answer always kept, older passes drop first).
-max_tokens = 8192
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one
 # structured decision from the request, specialist context, plan, and evidence.
 [supervisor.plan]
 enabled = true
-# Keep this cheap and fast: each signal is exactly one request/response.
-model = "octohub:auto"
 
 # Condense: task-aware narrowing of oversized tool outputs. A result whose own
 # output exceeds tokens_threshold becomes a candidate; results under it are kept
@@ -729,5 +752,3 @@ adaptive = false
 # Keep well below mcp_response_tokens_threshold: that cap is the ceiling applied
 # first, this is the smart narrowing applied to what survives it.
 tokens_threshold = 5000
-# Model that does the narrowing (cheap + fast recommended).
-model = "octohub:auto"

@@ -37,54 +37,31 @@ impl Config {
 		// STRICT: Validate required fields are not empty
 		self.validate_required_fields()?;
 
-		// Optional mechanics are validated only when reachable.
-		self.validate_supervisor_plan()?;
-
-		// Compression model: must resolve to a known provider, but EITHER
-		// structured-output support (JSON path) OR no support (XML path)
-		// is acceptable — `prepare_decision` dispatches on the
-		// provider's capability at call time.
-		self.validate_compression_model()?;
+		self.validate_model_profiles()?;
 
 		Ok(())
 	}
 
-	fn validate_supervisor_plan(&self) -> Result<()> {
-		if !self.supervisor.enabled || !self.supervisor.plan.enabled {
-			return Ok(());
+	fn validate_model_profiles(&self) -> Result<()> {
+		self.model_profile.validate("main")?;
+		for role in &self.roles {
+			role.config
+				.model_override()
+				.resolve(&self.model_profile)
+				.validate(&format!("roles.{}", role.name))?;
 		}
-		let plan = &self.supervisor.plan;
-		if plan.model.trim().is_empty() {
-			return Err(anyhow!(
-				"supervisor.plan.model cannot be empty while the external planner is enabled"
-			));
+		for (tag, tap) in &self.taps {
+			tap.model
+				.resolve(&self.model_profile)
+				.validate(&format!("taps.{tag}"))?;
 		}
-		Ok(())
-	}
-
-	/// Verify the configured compression model resolves to a known
-	/// provider. The runtime picks JSON or XML wire mode from the
-	/// provider's `supports_structured_output(model)` capability, so
-	/// either capability is acceptable — we only fail when the model
-	/// string itself is missing or unresolvable.
-	///
-	/// Skipped when compression is effectively disabled (threshold = 0)
-	/// — there is no compression call to validate against.
-	fn validate_compression_model(&self) -> Result<()> {
-		if self.compression.threshold == 0 {
-			return Ok(());
+		if self.supervisor.enabled {
+			self.get_supervisor_model_profile().validate("supervisor")?;
 		}
-
-		let model = &self.compression.decision.model;
-		if model.is_empty() {
-			return Err(anyhow!(
-				"compression.decision.model is empty — set it to a model resolvable by a configured provider (e.g. anthropic:claude-sonnet-4-6, openai:gpt-4.1)"
-			));
+		if self.compression.threshold != 0 {
+			self.get_compression_model_profile()
+				.validate("compression.model")?;
 		}
-
-		crate::providers::ProviderFactory::get_provider_for_model(model)
-			.map_err(|e| anyhow!("compression.decision.model '{}' is invalid: {}", model, e))?;
-
 		Ok(())
 	}
 
@@ -136,42 +113,8 @@ impl Config {
 
 	/// Validate that all required fields are present and not empty
 	fn validate_required_fields(&self) -> Result<()> {
-		if self.model.is_empty() {
-			return Err(anyhow!("Model field cannot be empty"));
-		}
-
 		if self.markdown_theme.is_empty() {
 			return Err(anyhow!("Markdown theme field cannot be empty"));
-		}
-
-		// Validate role configurations
-		for role in &self.roles {
-			// Validate temperature
-			if role.config.temperature < 0.0 || role.config.temperature > 2.0 {
-				return Err(anyhow!(
-					"Role '{}' temperature must be between 0.0 and 2.0, got: {}",
-					role.name,
-					role.config.temperature
-				));
-			}
-
-			// Validate top_p
-			if role.config.top_p < 0.0 || role.config.top_p > 1.0 {
-				return Err(anyhow!(
-					"Role '{}' top_p must be between 0.0 and 1.0, got: {}",
-					role.name,
-					role.config.top_p
-				));
-			}
-
-			// Validate top_k
-			if role.config.top_k < 1 || role.config.top_k > 1000 {
-				return Err(anyhow!(
-					"Role '{}' top_k must be between 1 and 1000, got: {}",
-					role.name,
-					role.config.top_k
-				));
-			}
 		}
 
 		Ok(())

@@ -47,7 +47,8 @@ fn normalize_model_owner(table: &mut toml::map::Map<String, toml::Value>) {
 	};
 	for key in MODEL_PROFILE_FIELDS {
 		if let Some(value) = table.remove(key) {
-			profile.insert(key.to_string(), value);
+			// The nested v12 spelling is authoritative; flat keys only fill gaps.
+			profile.entry(key.to_string()).or_insert(value);
 		}
 	}
 	if !profile.is_empty() {

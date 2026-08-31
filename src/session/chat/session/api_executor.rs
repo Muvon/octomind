@@ -80,7 +80,7 @@ const ANSWER_PART_SEPARATOR: &str = "\n\n--- (continued after supervisor feedbac
 /// throws away the actual deliverable and fails a correct turn for "not
 /// delivering" what an earlier part of the same turn already delivered.
 ///
-/// `max_tokens` is the gate's configured budget (`supervisor.gate.max_tokens`).
+/// `max_tokens` is the supervisor profile's output budget (`supervisor.model.max_tokens`).
 fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 	// Fill the budget newest-first (an amendment is the most recent state), then
 	// restore chronological order so "later parts amend earlier ones" holds.

@@ -120,30 +120,47 @@ impl<'de> Deserialize<'de> for ModelProfileOverride {
 	where
 		D: serde::Deserializer<'de>,
 	{
-		#[derive(Deserialize)]
-		#[serde(untagged)]
-		enum Repr {
-			LegacyModel(String),
-			Fields(ModelProfileOverrideFields),
+		// A hand-written visitor instead of an untagged enum: a bad value inside
+		// the table surfaces the real field-level serde error, not an opaque
+		// "data did not match any variant".
+		struct OverrideVisitor;
+
+		impl<'de> serde::de::Visitor<'de> for OverrideVisitor {
+			type Value = ModelProfileOverride;
+
+			fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+				formatter.write_str("a model name string or a model profile table")
+			}
+
+			fn visit_str<E: serde::de::Error>(self, model: &str) -> Result<Self::Value, E> {
+				Ok(ModelProfileOverride {
+					model: Some(model.to_string()),
+					..Default::default()
+				})
+			}
+
+			fn visit_map<A: serde::de::MapAccess<'de>>(
+				self,
+				map: A,
+			) -> Result<Self::Value, A::Error> {
+				let fields = ModelProfileOverrideFields::deserialize(
+					serde::de::value::MapAccessDeserializer::new(map),
+				)?;
+				Ok(ModelProfileOverride {
+					model: fields.model,
+					reasoning_effort: fields.reasoning_effort,
+					max_tokens: fields.max_tokens,
+					temperature: fields.temperature,
+					top_p: fields.top_p,
+					top_k: fields.top_k,
+					max_retries: fields.max_retries,
+					retry_timeout: fields.retry_timeout,
+					request_timeout_seconds: fields.request_timeout_seconds,
+				})
+			}
 		}
 
-		Ok(match Repr::deserialize(deserializer)? {
-			Repr::LegacyModel(model) => Self {
-				model: Some(model),
-				..Default::default()
-			},
-			Repr::Fields(fields) => Self {
-				model: fields.model,
-				reasoning_effort: fields.reasoning_effort,
-				max_tokens: fields.max_tokens,
-				temperature: fields.temperature,
-				top_p: fields.top_p,
-				top_k: fields.top_k,
-				max_retries: fields.max_retries,
-				retry_timeout: fields.retry_timeout,
-				request_timeout_seconds: fields.request_timeout_seconds,
-			},
-		})
+		deserializer.deserialize_any(OverrideVisitor)
 	}
 }
 

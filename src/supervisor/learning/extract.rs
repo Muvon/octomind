@@ -1597,31 +1597,6 @@ async fn call_extraction_llm(
 	.await
 }
 
-/// The routing purpose follows the same boundary as the resolved profile.
-fn purpose_for(kind: crate::supervisor::stats::CallKind) -> crate::providers::ModelPurpose {
-	use crate::providers::ModelPurpose;
-	use crate::supervisor::stats::CallKind;
-	match kind {
-		CallKind::Gate | CallKind::Resolve | CallKind::Plan | CallKind::Condense => {
-			ModelPurpose::Supervisor
-		}
-		CallKind::Distill | CallKind::Recall => ModelPurpose::Supervisor,
-	}
-}
-
-fn profile_for(
-	config: &Config,
-	kind: crate::supervisor::stats::CallKind,
-) -> crate::config::ModelProfile {
-	use crate::supervisor::stats::CallKind;
-	match kind {
-		CallKind::Gate | CallKind::Resolve | CallKind::Plan | CallKind::Condense => {
-			config.get_supervisor_model_profile()
-		}
-		CallKind::Distill | CallKind::Recall => config.get_supervisor_model_profile(),
-	}
-}
-
 pub(crate) async fn call_learning_llm(
 	config: &Config,
 	system_content: String,
@@ -1651,8 +1626,8 @@ impl SupervisorPrompt {
 	}
 }
 
-/// Shared internal-model transport. The call kind selects exactly one resolved
-/// supervisor or learning profile; mechanics cannot override individual fields.
+/// Shared internal-model transport. Every mechanic runs on the one resolved
+/// supervisor profile; mechanics cannot override individual fields.
 pub(crate) async fn call_supervisor_llm(
 	config: &Config,
 	prompt: SupervisorPrompt,
@@ -1676,7 +1651,7 @@ pub(crate) async fn call_supervisor_json(
 	schema: serde_json::Value,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<serde_json::Value> {
-	let profile = profile_for(config, kind);
+	let profile = config.get_supervisor_model_profile();
 	let (provider, actual_model) =
 		crate::providers::ProviderFactory::get_provider_for_model(&profile.model)?;
 	let enforced = provider.enforces_response_schema(&actual_model);
@@ -1739,13 +1714,13 @@ async fn call_supervisor_model(
 		},
 	];
 
-	let profile = profile_for(config, kind);
+	let profile = config.get_supervisor_model_profile();
 	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(
 		&messages, &profile, config,
 	)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx)
-	.with_purpose(purpose_for(kind))
+	.with_purpose(crate::providers::ModelPurpose::Supervisor)
 	.without_tools();
 	if let Some(schema) = schema {
 		params = params.with_schema(schema);

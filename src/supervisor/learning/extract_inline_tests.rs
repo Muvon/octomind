@@ -1241,22 +1241,6 @@ async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 		.is_empty());
 }
 
-#[test]
-fn purpose_for_maps_every_call_kind_to_its_routing_purpose() {
-	use crate::providers::ModelPurpose;
-	use crate::supervisor::stats::CallKind;
-	for kind in [
-		CallKind::Gate,
-		CallKind::Resolve,
-		CallKind::Plan,
-		CallKind::Condense,
-		CallKind::Distill,
-		CallKind::Recall,
-	] {
-		assert_eq!(purpose_for(kind), ModelPurpose::Supervisor);
-	}
-}
-
 // ---------------------------------------------------------------------------
 // run_extraction branch coverage against the scripted provider.
 // ---------------------------------------------------------------------------

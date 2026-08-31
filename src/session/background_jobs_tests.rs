@@ -41,3 +41,41 @@ fn test_active_count() {
 	});
 	assert_eq!(mgr.active_count(), 1);
 }
+
+#[tokio::test]
+async fn active_jobs_expose_identity_task_source_and_workdir() {
+	let mgr = BackgroundJobManager::new(2);
+	mgr.try_acquire().expect("slot");
+	let (_hold_tx, hold_rx) = tokio::sync::oneshot::channel::<()>();
+	let handle = tokio::spawn(async move {
+		let _ = hold_rx.await;
+	});
+	mgr.register_job(JobHandle {
+		id: "agent-abcd1234".to_string(),
+		agent_name: "reviewer".to_string(),
+		source: "dynamic".to_string(),
+		task: "review the current patch".to_string(),
+		workdir: "/tmp/project".to_string(),
+		started_at: std::time::SystemTime::now(),
+		cancel_tx: tokio::sync::watch::channel(false).0,
+		task_handle: handle,
+	});
+
+	let jobs = mgr.active_jobs();
+	assert_eq!(jobs.len(), 1);
+	assert_eq!(jobs[0].id, "agent-abcd1234");
+	assert_eq!(jobs[0].agent_name, "reviewer");
+	assert_eq!(jobs[0].source, "dynamic");
+	assert_eq!(jobs[0].task, "review the current patch");
+	assert_eq!(jobs[0].workdir, "/tmp/project");
+
+	mgr.release_registered(
+		"agent-abcd1234",
+		CompletedJob {
+			agent_name: "reviewer".to_string(),
+			output: "done".to_string(),
+		},
+	);
+	assert!(mgr.active_jobs().is_empty());
+	assert_eq!(mgr.active_count(), 0);
+}

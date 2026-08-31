@@ -19,6 +19,13 @@
 
 use super::*;
 
+#[test]
+fn status_is_the_only_activity_slash_command() {
+	assert!(crate::session::chat::COMMANDS.contains(&"/status"));
+	assert!(!crate::session::chat::COMMANDS.contains(&"/agents"));
+	assert!(!crate::session::chat::COMMANDS.contains(&"/monitor"));
+}
+
 fn test_config() -> Config {
 	let mut config: Config =
 		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
@@ -185,7 +192,7 @@ async fn test_display_commands_run_without_panicking() {
 		"/context tool",
 		"/context large",
 		"/clear",
-		"/agents",
+		"/status",
 		"/plan",
 		"/list",
 		"/model",

@@ -63,14 +63,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(SKILL_COMMAND, "List skills or toggle by name"),
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
 			(
-				MONITOR_COMMAND,
-				"Show MCP background jobs and command monitors",
+				STATUS_COMMAND,
+				"Show active agents, MCP jobs, and command monitors",
 			),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
-			(
-				AGENTS_COMMAND,
-				"Show offloaded agents; /agents <id> for detail",
-			),
 			(REPORT_COMMAND, "Generate detailed usage report"),
 			(SHARE_COMMAND, "Upload session and print shareable URL"),
 			(
@@ -2312,98 +2308,190 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 }
 
 // ---------------------------------------------------------------------------
-// /monitor display
+// /status display
 // ---------------------------------------------------------------------------
 
-pub(super) fn display_monitor(output: &CommandOutput) {
-	if let CommandOutput::Monitor { data } = output {
-		let subcommand = data
-			.get("subcommand")
-			.and_then(|v| v.as_str())
-			.unwrap_or("");
+pub(super) fn display_status(output: &CommandOutput) {
+	let CommandOutput::Status { data } = output else {
+		return;
+	};
+	match data.get("view").and_then(|value| value.as_str()) {
+		Some("agents") => display_agent_status(data),
+		Some("jobs") => display_status_jobs(data),
+		Some("monitors") => display_status_monitors(data),
+		Some("overview") => display_status_overview(data),
+		_ => {
+			let message = data
+				.get("message")
+				.and_then(|value| value.as_str())
+				.unwrap_or("status is unavailable");
+			block_open("/status", None);
+			block_close_err("/status", message);
+			println!();
+		}
+	}
+}
 
-		match subcommand {
-			"error" => {
-				block_open("/monitor", None);
-				let msg = data
-					.get("message")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown error");
-				block_close_err("/monitor", msg);
-				println!();
-			}
-			"list" => {
-				let is_error = data
-					.get("is_error")
-					.and_then(|v| v.as_bool())
-					.unwrap_or(false);
-				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
-				let job_count = data.get("job_count").and_then(|v| v.as_u64()).unwrap_or(0);
-				let monitor_count = data
-					.get("monitor_count")
-					.and_then(|v| v.as_u64())
-					.unwrap_or_else(|| {
-						msg.lines().filter(|line| line.starts_with("[mon-")).count() as u64
-					});
-				let total = job_count + monitor_count;
-				if is_error {
-					block_open("/monitor", None);
-					for line in msg.lines() {
-						block_row_text(line);
-					}
-					block_close_err("/monitor", "failed");
-					println!();
-				} else if total == 0 {
-					block_open("/monitor", Some("no background activity"));
-					block_line("MCP resource-backed jobs appear here while they are running;");
-					block_line("command monitors appear here until stopped or the session ends.");
-					block_blank();
-					block_section("manage");
-					let mg: &[(&str, &str)] = &[
-						("/monitor", "list all background activity"),
-						("ask the agent", "start a monitor or stop one by id"),
-					];
-					let mg_w = mg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
-					for (cmd, desc) in mg {
-						block_row(cmd, &desc.dimmed().to_string(), mg_w);
-					}
-					block_close_ok("/monitor", Some("0 active"));
-					println!();
-				} else {
-					block_open("/monitor", Some("background activity"));
-					for line in msg.lines() {
-						block_row_text(line);
-					}
-					block_blank();
-					if job_count > 0 {
-						block_line(
-							&"MCP jobs report completion automatically; current output is a bounded snapshot."
-								.dimmed()
-								.to_string(),
-						);
-					}
-					if monitor_count > 0 {
-						block_line(
-							&"Stop a monitor by asking the agent; monitors also end with the session."
-								.dimmed()
-								.to_string(),
-						);
-					}
-					block_close_ok("/monitor", Some(&format!("{} active", total)));
-					println!();
+fn display_status_overview(data: &serde_json::Value) {
+	use crate::utils::time::format_duration_short;
+	let active = data
+		.get("active")
+		.and_then(|value| value.as_u64())
+		.unwrap_or(0);
+	let agents = data.get("agents").and_then(|value| value.as_array());
+	let jobs = data.get("jobs").and_then(|value| value.as_array());
+	let monitors = data.get("monitors").and_then(|value| value.as_array());
+	block_open("/status", Some(&format!("{} active", active)));
+	if active == 0 {
+		block_line(
+			&"No active agents, MCP jobs, or command monitors."
+				.dimmed()
+				.to_string(),
+		);
+	} else {
+		if let Some(agents) = agents.filter(|items| !items.is_empty()) {
+			block_section("agents");
+			for agent in agents {
+				let role = status_str(agent, "role", "agent");
+				let id = status_str(agent, "id", "?");
+				let elapsed = status_u64(agent, "elapsed_secs");
+				let cost = agent.get("cost").and_then(|value| value.as_f64());
+				let cost = cost
+					.map(|value| format!(" · ${value:.4}"))
+					.unwrap_or_default();
+				block_row_text(&format!(
+					"{} {} · {}{}",
+					agent_status_icon("running"),
+					role.bright_white(),
+					format_duration_short(elapsed).dimmed(),
+					cost.bright_green(),
+				));
+				block_row_text(&format!("  {}", id.dimmed()));
+				if let Some(last) = agent.get("last_action").and_then(|value| value.as_str()) {
+					block_row_text(&format!("  ↳ {}", last.bright_yellow()));
 				}
 			}
-			_ => {
-				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
-				block_open("/monitor", None);
-				for line in msg.lines() {
-					block_row_text(line);
-				}
-				block_close_ok("/monitor", None);
-				println!();
+		}
+		if let Some(jobs) = jobs.filter(|items| !items.is_empty()) {
+			block_section("mcp jobs");
+			for job in jobs {
+				block_row_text(&format!(
+					"{} · {} · {}",
+					status_str(job, "server", "mcp").bright_white(),
+					status_str(job, "state", "running"),
+					format_duration_short(status_u64(job, "elapsed_secs")).dimmed(),
+				));
+				block_row_text(&format!("  {}", status_str(job, "label", "job")));
+			}
+		}
+		if let Some(monitors) = monitors.filter(|items| !items.is_empty()) {
+			block_section("monitors");
+			for monitor in monitors {
+				block_row_text(&format!(
+					"{} · {}",
+					status_str(monitor, "description", "monitor").bright_white(),
+					format_duration_short(status_u64(monitor, "elapsed_secs")).dimmed(),
+				));
+				block_row_text(&format!("  {}", status_str(monitor, "command", "")));
 			}
 		}
 	}
+	block_blank();
+	block_line(
+		&"Full views: /status agents · /status monitors · /status jobs"
+			.dimmed()
+			.to_string(),
+	);
+	block_close_ok("/status", Some(&format!("{} active", active)));
+	println!();
+}
+
+fn display_status_jobs(data: &serde_json::Value) {
+	use crate::utils::time::format_duration_short;
+	let jobs = data
+		.get("jobs")
+		.and_then(|value| value.as_array())
+		.map(Vec::as_slice)
+		.unwrap_or(&[]);
+	block_open("/status jobs", Some(&format!("{} active", jobs.len())));
+	if jobs.is_empty() {
+		block_line(&"No active MCP resource-backed jobs.".dimmed().to_string());
+	}
+	for job in jobs {
+		block_section_with(
+			status_str(job, "server", "mcp"),
+			&format_duration_short(status_u64(job, "elapsed_secs")),
+		);
+		let kw = key_width(["resource", "task", "state"]);
+		block_row("resource", status_str(job, "uri", "?"), kw);
+		block_row("task", status_str(job, "label", "job"), kw);
+		block_row("state", status_str(job, "state", "running"), kw);
+		if let Some(status) = job.get("resource_status").and_then(|value| value.as_str()) {
+			block_section("current output");
+			for line in status.lines() {
+				block_row_text(line);
+			}
+		}
+	}
+	block_close_ok("/status jobs", Some(&format!("{} active", jobs.len())));
+	println!();
+}
+
+fn display_status_monitors(data: &serde_json::Value) {
+	use crate::utils::time::format_duration_short;
+	let monitors = data
+		.get("monitors")
+		.and_then(|value| value.as_array())
+		.map(Vec::as_slice)
+		.unwrap_or(&[]);
+	block_open(
+		"/status monitors",
+		Some(&format!("{} active", monitors.len())),
+	);
+	if monitors.is_empty() {
+		block_line(&"No active command monitors.".dimmed().to_string());
+	}
+	for monitor in monitors {
+		block_section_with(
+			status_str(monitor, "description", "monitor"),
+			&format_duration_short(status_u64(monitor, "elapsed_secs")),
+		);
+		let kw = key_width(["id", "command", "workdir", "delivery", "lifetime"]);
+		block_row("id", status_str(monitor, "id", "?"), kw);
+		block_row("command", status_str(monitor, "command", ""), kw);
+		block_row("workdir", status_str(monitor, "workdir", ""), kw);
+		block_row(
+			"delivery",
+			&format!(
+				"every {}s · max {} bytes",
+				status_u64(monitor, "flush_interval_secs"),
+				status_u64(monitor, "max_batch_bytes")
+			),
+			kw,
+		);
+		let lifetime = monitor
+			.get("timeout_ms")
+			.and_then(|value| value.as_u64())
+			.map(|value| format!("{}ms", value))
+			.unwrap_or_else(|| "persistent".to_string());
+		block_row("lifetime", &lifetime, kw);
+	}
+	block_close_ok(
+		"/status monitors",
+		Some(&format!("{} active", monitors.len())),
+	);
+	println!();
+}
+
+fn status_str<'a>(value: &'a serde_json::Value, key: &str, default: &'a str) -> &'a str {
+	value
+		.get(key)
+		.and_then(|item| item.as_str())
+		.unwrap_or(default)
+}
+
+fn status_u64(value: &serde_json::Value, key: &str) -> u64 {
+	value.get(key).and_then(|item| item.as_u64()).unwrap_or(0)
 }
 
 pub(super) fn display_skill(output: &CommandOutput) {
@@ -3186,28 +3274,36 @@ fn fmt_tokens(n: u64) -> String {
 	}
 }
 
-pub fn display_agents(output: &CommandOutput) {
+fn display_agent_status(data: &serde_json::Value) {
 	use crate::utils::time::{format_ago, format_duration_short};
+	let running = data
+		.get("running")
+		.and_then(|value| value.as_array())
+		.map(Vec::as_slice)
+		.unwrap_or(&[]);
+	let finished = data
+		.get("finished")
+		.and_then(|value| value.as_array())
+		.map(Vec::as_slice)
+		.unwrap_or(&[]);
+	let detail = data.get("detail").filter(|value| !value.is_null());
+	let total = data
+		.get("total")
+		.and_then(|value| value.as_u64())
+		.unwrap_or(0);
 
-	let CommandOutput::Agents {
-		running,
-		finished,
-		detail,
-		total,
-	} = output
-	else {
-		return;
-	};
-
-	// Detail card: /agents <id>
+	// Detail card: /status agents <id>
 	if let Some(d) = detail {
 		let get_str = |k: &str| d.get(k).and_then(|v| v.as_str());
 		let id = get_str("id").unwrap_or("agent");
 		let status = get_str("status").unwrap_or("unknown");
-		block_open("/agents", Some(id));
+		block_open("/status agents", Some(id));
 		let kw = key_width([
-			"role", "status", "workdir", "model", "tokens", "cost", "last",
+			"source", "role", "status", "workdir", "model", "tokens", "cost", "pricing", "last",
 		]);
+		if let Some(source) = get_str("source") {
+			block_row("source", &source.dimmed().to_string(), kw);
+		}
 		block_row(
 			"role",
 			&get_str("role").unwrap_or("?").bright_white().to_string(),
@@ -3251,23 +3347,25 @@ pub fn display_agents(output: &CommandOutput) {
 				&format!("${:.4}", cost).bright_green().to_string(),
 				kw,
 			);
+		} else if let Some(pricing) = get_str("pricing_status") {
+			block_row("pricing", &pricing.dimmed().to_string(), kw);
 		}
 		match get_str("last_action") {
 			Some(la) => block_row("last", &la.bright_yellow().to_string(), kw),
 			None => block_row("last", &"(no activity yet)".dimmed().to_string(), kw),
 		}
-		block_close_ok("/agents", Some(status));
+		block_close_ok("/status agents", Some(status));
 		println!();
 		return;
 	}
 
 	// List view
-	let subtitle = format!("{} running · {} done", running.len(), finished.len());
-	block_open("/agents", Some(&subtitle));
+	let subtitle = format!("{} running · {} recent", running.len(), finished.len());
+	block_open("/status agents", Some(&subtitle));
 
 	if running.is_empty() && finished.is_empty() {
 		block_line(&"No agents offloaded in this session.".dimmed().to_string());
-		block_close_ok("/agents", Some("0 agents"));
+		block_close_ok("/status agents", Some("0 agents"));
 		println!();
 		return;
 	}
@@ -3299,6 +3397,11 @@ pub fn display_agents(output: &CommandOutput) {
 					"out".dimmed(),
 					cost_str.bright_yellow(),
 				));
+			}
+			if cost.is_none() {
+				if let Some(pricing) = a.get("pricing_status").and_then(|v| v.as_str()) {
+					block_row_text(&format!("  {}", pricing.dimmed()));
+				}
 			}
 			if let Some(la) = a.get("last_action").and_then(|v| v.as_str()) {
 				block_row_text(&format!("  ↳ {}", la.bright_yellow()));
@@ -3347,7 +3450,7 @@ pub fn display_agents(output: &CommandOutput) {
 		}
 	}
 
-	block_close_ok("/agents", Some(&format!("{} total", total)));
+	block_close_ok("/status agents", Some(&format!("{} total", total)));
 	println!();
 }
 

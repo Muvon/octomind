@@ -62,6 +62,7 @@ Run the test suite and fix any failures
 |---------|-------------|
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
+| `/status [agents\|monitors\|jobs]` | Current agents and background activity |
 | `/image <path>` | Attach image for AI analysis |
 | `/done` | Finalize the current task: compress context, run learning extraction, and produce a summary |
 | `/clear` | Clear the terminal screen |

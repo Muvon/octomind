@@ -163,6 +163,7 @@ After a session is created the agent sends an `AvailableCommandsUpdate` listing 
 | `skill` | `[name\|pattern\|page]` | List, filter, or toggle skills |
 | `effort` | `[low\|medium\|high\|xhigh\|max]` | View or change reasoning effort level |
 | `schedule` | `[list\|add\|remove\|edit] [<id>] [when=...] [message=...] [every=...]` | Schedule a message to be injected at a future time |
+| `status` | `[agents [id]\|monitors\|jobs]` | Show process-local activity for the current session |
 | `exit` | — | Exit the session |
 
 Slash commands are sent as ordinary `session/prompt` text per the ACP spec. The agent intercepts any prompt beginning with `/` *before* the AI pipeline, runs it via the session command handler, and streams the result back as an `agent_message_chunk`. `/done` (optionally with trailing instructions, e.g. `/done now write tests`) is intercepted first: it compresses the conversation, reports a status chunk, and — if trailing instructions are present — falls through to process them as a normal prompt.

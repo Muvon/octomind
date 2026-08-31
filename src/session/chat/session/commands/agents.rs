@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `/agents` command — human-facing panel over the tap-run registry.
+//! Agent-status adapter for the unified `/status` command.
 //!
 //! Read-only view of the agents this session offloaded via the `tap` core tool
 //! (the same registry in `crate::session::tap_runs`). `tap` is the MCP tool the
-//! *model* drives; `/agents` is the *user's* window into what those runs are
-//! doing right now.
+//! *model* drives; `/status` is the user's window into what those runs are
+//! doing right now. Async `agent_*` jobs are merged into the same read model.
 //!
-//! - `/agents`        — list running runs (with live last-action) on top, then
+//! - `/status agents` — list running runs (with live last-action) on top, then
 //!   recently finished/failed/cancelled below.
-//! - `/agents <id>`   — summary card for one run: role, status, elapsed,
+//! - `/status agents <id>` — summary card for one run: role, status, elapsed,
 //!   workdir, tokens/cost, last action.
 //!
 //! Live signal comes from the run's on-disk session file (`<id>.jsonl.zst`),
@@ -37,7 +37,6 @@ use anyhow::Result;
 use serde_json::json;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
-use super::{CommandOutput, CommandResult};
 use crate::session::tap_runs::{self, TapJobStatus, TapLiveState};
 use crate::session::{Message, SessionInfo};
 
@@ -50,57 +49,64 @@ struct AgentSnapshot {
 	last_action: Option<String>,
 }
 
-pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
-	// Detail mode: `/agents <id>`
+pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
+	// Detail mode: `/status agents <id>`
 	if let Some(raw) = params.first() {
 		let id = raw.trim();
-		let info = match tap_runs::find_job(id) {
-			Some(i) => i,
-			None => {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Error {
-						error: format!("No agent with id '{id}' in this session."),
-						context: None,
-					},
-				)));
-			}
-		};
-		let snap = read_agent_snapshot(id);
-		// For a running job the live stream (pushed per tool call / API call)
-		// is fresher than the disk snapshot; once finished the snapshot is
-		// authoritative.
-		let live = if info.status == TapJobStatus::Running {
-			info.live.clone()
-		} else {
-			TapLiveState::default()
-		};
-		let detail = json!({
-			"id": info.id,
-			"role": info.role,
-			"status": info.status.as_str(),
-			"workdir": info.workdir,
-			"elapsed_secs": elapsed_secs(info.started_at),
-			"last_action": live.last_action.or(snap.last_action),
-			"model": snap.info.as_ref().map(|i| i.model.clone()),
-			"tokens_input": live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
-			"tokens_output": live.usage.map(|u| u.output_tokens).or_else(|| snap.info.as_ref().map(|i| i.output_tokens)),
-			"tokens_cached": live.usage.map(|u| u.cache_read_tokens).or_else(|| snap.info.as_ref().map(|i| i.cache_read_tokens)),
-			"cost": live.usage.map(|u| u.cost).or_else(|| snap.info.as_ref().map(|i| i.total_cost)),
-			"tool_calls": snap.info.as_ref().map(|i| i.tool_calls),
-		});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Agents {
-				running: vec![],
-				finished: vec![],
-				detail: Some(detail),
-				total: 1,
-			},
-		)));
+		if let Some(info) = tap_runs::find_job(id) {
+			let snap = read_agent_snapshot(id);
+			// For a running job the live stream (pushed per tool call / API call)
+			// is fresher than the disk snapshot; once finished the snapshot is
+			// authoritative.
+			let live = if info.status == TapJobStatus::Running {
+				info.live.clone()
+			} else {
+				TapLiveState::default()
+			};
+			let detail = json!({
+				"id": info.id,
+				"source": "tap",
+				"role": info.role,
+				"status": info.status.as_str(),
+				"workdir": info.workdir,
+				"elapsed_secs": elapsed_secs(info.started_at),
+				"last_action": live.last_action.or(snap.last_action),
+				"model": snap.info.as_ref().map(|i| i.model.clone()),
+				"tokens_input": live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
+				"tokens_output": live.usage.map(|u| u.output_tokens).or_else(|| snap.info.as_ref().map(|i| i.output_tokens)),
+				"tokens_cached": live.usage.map(|u| u.cache_read_tokens).or_else(|| snap.info.as_ref().map(|i| i.cache_read_tokens)),
+				"cost": live.usage.map(|u| u.cost).or_else(|| snap.info.as_ref().map(|i| i.total_cost)),
+				"tool_calls": snap.info.as_ref().map(|i| i.tool_calls),
+			});
+			return Ok(json!({
+				"view": "agents",
+				"running": [],
+				"finished": [],
+				"detail": detail,
+				"total": 1,
+			}));
+		}
+
+		if let Some(job) = async_agent_jobs().into_iter().find(|job| job.id == id) {
+			return Ok(json!({
+				"view": "agents",
+				"running": [],
+				"finished": [],
+				"detail": async_agent_json(&job),
+				"total": 1,
+			}));
+		}
+
+		return Ok(json!({
+			"view": "error",
+			"message": format!("No agent with id '{id}' in this session."),
+		}));
 	}
 
 	// List mode: running on top (with live last-action), finished below.
 	let jobs = tap_runs::list_jobs();
-	let total = jobs.len();
+	let async_jobs = async_agent_jobs();
+	let total = jobs.len() + async_jobs.len();
 	let mut running = Vec::new();
 	let mut finished = Vec::new();
 	for j in &jobs {
@@ -112,10 +118,12 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 			let live = &j.live;
 			running.push(json!({
 				"id": j.id,
+				"source": "tap",
 				"role": j.role,
 				"status": j.status.as_str(),
 				"workdir": j.workdir,
 				"elapsed_secs": elapsed_secs(j.started_at),
+				"started_unix": system_time_secs(j.started_at),
 				"last_action": live.last_action.clone().or(snap.last_action),
 				"model": snap.info.as_ref().map(|i| i.model.clone()),
 				"tokens_input": live.usage.map(|u| u.input_tokens).or_else(|| snap.info.as_ref().map(|i| i.input_tokens)),
@@ -127,6 +135,7 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 			let snap = read_agent_snapshot(&j.id);
 			finished.push(json!({
 				"id": j.id,
+				"source": "tap",
 				"role": j.role,
 				"status": j.status.as_str(),
 				"workdir": j.workdir,
@@ -139,20 +148,91 @@ pub fn handle_agents(params: &[&str]) -> Result<CommandResult> {
 			}));
 		}
 	}
+	for job in &async_jobs {
+		running.push(async_agent_json(job));
+	}
+	running.sort_by_key(|item| {
+		std::cmp::Reverse(
+			item.get("started_unix")
+				.and_then(|value| value.as_u64())
+				.unwrap_or(0),
+		)
+	});
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Agents {
-			running,
-			finished,
-			detail: None,
-			total,
-		},
-	)))
+	Ok(json!({
+		"view": "agents",
+		"running": running,
+		"finished": finished,
+		"detail": null,
+		"total": total,
+	}))
+}
+
+pub fn active_agents_status() -> Vec<serde_json::Value> {
+	let mut active = Vec::new();
+	for job in tap_runs::list_jobs()
+		.into_iter()
+		.filter(|job| job.status == TapJobStatus::Running)
+	{
+		let snap = read_agent_snapshot(&job.id);
+		active.push(json!({
+			"id": job.id,
+			"source": "tap",
+			"role": job.role,
+			"status": "running",
+			"elapsed_secs": elapsed_secs(job.started_at),
+			"started_unix": system_time_secs(job.started_at),
+			"last_action": job.live.last_action.or(snap.last_action),
+			"cost": job.live.usage.map(|usage| usage.cost).or_else(|| snap.info.as_ref().map(|info| info.total_cost)),
+		}));
+	}
+	for job in async_agent_jobs() {
+		active.push(async_agent_json(&job));
+	}
+	active.sort_by_key(|item| {
+		std::cmp::Reverse(
+			item.get("started_unix")
+				.and_then(|value| value.as_u64())
+				.unwrap_or(0),
+		)
+	});
+	active
+}
+
+fn async_agent_jobs() -> Vec<crate::session::AsyncAgentJobInfo> {
+	crate::mcp::agent::functions::get_job_manager()
+		.map(|manager| manager.active_jobs())
+		.unwrap_or_default()
+}
+
+fn async_agent_json(job: &crate::session::AsyncAgentJobInfo) -> serde_json::Value {
+	json!({
+		"id": job.id,
+		"source": job.source,
+		"role": job.agent_name,
+		"status": "running",
+		"workdir": job.workdir,
+		"elapsed_secs": elapsed_secs(job.started_at),
+		"started_unix": system_time_secs(job.started_at),
+		"last_action": job.task,
+		"model": null,
+		"tokens_input": null,
+		"tokens_output": null,
+		"tokens_cached": null,
+		"cost": null,
+		"pricing_status": "not tracked for async agent jobs",
+	})
 }
 
 /// Seconds since `started`, saturating at 0.
 fn elapsed_secs(started: SystemTime) -> u64 {
 	started.elapsed().map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn system_time_secs(time: SystemTime) -> u64 {
+	time.duration_since(SystemTime::UNIX_EPOCH)
+		.map(|duration| duration.as_secs())
+		.unwrap_or(0)
 }
 
 /// Seconds since the run's session file was last written (its finish time, near

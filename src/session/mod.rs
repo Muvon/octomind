@@ -53,7 +53,7 @@ pub mod webhook_listener; // HTTP webhook listener for hook-to-inbox injection
 pub use crate::providers::{
 	AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage,
 };
-pub use background_jobs::{BackgroundJobManager, CompletedJob};
+pub use background_jobs::{AsyncAgentJobInfo, BackgroundJobManager, CompletedJob};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerResult};

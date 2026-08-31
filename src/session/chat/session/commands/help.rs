@@ -28,6 +28,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(CLEAR_COMMAND.to_string());
 	commands.push(LIST_COMMAND.to_string());
 	commands.push(NEW_COMMAND.to_string());
+	commands.push(RENAME_COMMAND.to_string());
 	commands.push(INFO_COMMAND.to_string());
 	commands.push(DONE_COMMAND.to_string());
 
@@ -45,10 +46,13 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	commands.push(PLAN_COMMAND.to_string());
 	commands.push(SKILL_COMMAND.to_string());
 	commands.push(SCHEDULE_COMMAND.to_string());
-	commands.push(MONITOR_COMMAND.to_string());
-	commands.push(AGENTS_COMMAND.to_string());
+	commands.push(STATUS_COMMAND.to_string());
+	commands.push(LEARNING_COMMAND.to_string());
 	commands.push(REPORT_COMMAND.to_string());
+	commands.push(SHARE_COMMAND.to_string());
+	commands.push(ANALYZE_COMMAND.to_string());
 	commands.push(USAGE_COMMAND.to_string());
+	commands.push(LOGIN_COMMAND.to_string());
 	commands.push(format!("{} | {}", EXIT_COMMAND, QUIT_COMMAND));
 
 	// Add custom commands from config

@@ -16,17 +16,17 @@ use super::*;
 
 fn output_data(result: CommandResult) -> serde_json::Value {
 	let CommandResult::HandledWithOutput(output) = result else {
-		panic!("expected monitor output");
+		panic!("expected status output");
 	};
-	let CommandOutput::Monitor { data } = *output else {
-		panic!("expected monitor variant");
+	let CommandOutput::Status { data } = *output else {
+		panic!("expected status variant");
 	};
 	data
 }
 
 #[tokio::test]
-async fn monitor_lists_pending_mcp_jobs_even_without_command_monitors() {
-	let session_id = format!("monitor-command-jobs-{}", uuid::Uuid::new_v4());
+async fn status_lists_pending_mcp_jobs_without_scheme_assumptions() {
+	let session_id = format!("status-command-jobs-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::shell_jobs::register_for_session(
 			&session_id,
@@ -35,20 +35,13 @@ async fn monitor_lists_pending_mcp_jobs_even_without_command_monitors() {
 			"ssh dev 'cargo test --lib'",
 		);
 
-		let data = output_data(handle_monitor().await.expect("monitor command"));
-		assert_eq!(data["subcommand"], "list");
-		assert_eq!(data["job_count"], 1);
-		assert_eq!(data["monitor_count"], 0);
+		let data = output_data(handle_status(&[]).await.expect("status command"));
+		assert_eq!(data["view"], "overview");
+		assert_eq!(data["active"], 1);
 		assert_eq!(data["jobs"][0]["server"], "octofs-test");
 		assert_eq!(data["jobs"][0]["uri"], "octofs://jobs/1234-7");
-		let message = data["message"].as_str().expect("rendered message");
-		assert!(message.contains("MCP background jobs:"), "{message}");
-		assert!(message.contains("MCP server: octofs-test"), "{message}");
-		assert!(message.contains("ssh dev 'cargo test --lib'"), "{message}");
-		assert!(
-			message.contains("MCP connection 'octofs-test' is not active"),
-			"{message}"
-		);
+		assert_eq!(data["jobs"][0]["label"], "ssh dev 'cargo test --lib'");
+		assert!(data["monitors"].as_array().unwrap().is_empty());
 
 		crate::session::shell_jobs::clear_for_session(&session_id);
 	})
@@ -56,21 +49,23 @@ async fn monitor_lists_pending_mcp_jobs_even_without_command_monitors() {
 }
 
 #[tokio::test]
-async fn monitor_empty_state_covers_both_activity_kinds() {
-	let session_id = format!("monitor-command-empty-{}", uuid::Uuid::new_v4());
+async fn status_empty_state_covers_all_activity_kinds() {
+	let session_id = format!("status-command-empty-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id, async {
-		let data = output_data(handle_monitor().await.expect("monitor command"));
-		assert_eq!(data["job_count"], 0);
-		assert_eq!(data["monitor_count"], 0);
-		assert_eq!(data["message"], "No background activity.");
+		let data = output_data(handle_status(&[]).await.expect("status command"));
+		assert_eq!(data["view"], "overview");
+		assert_eq!(data["active"], 0);
+		assert!(data["agents"].as_array().unwrap().is_empty());
+		assert!(data["jobs"].as_array().unwrap().is_empty());
+		assert!(data["monitors"].as_array().unwrap().is_empty());
 	})
 	.await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn monitor_combines_mcp_jobs_with_command_monitors() {
-	let session_id = format!("monitor-command-combined-{}", uuid::Uuid::new_v4());
+async fn status_combines_mcp_jobs_with_command_monitors() {
+	let session_id = format!("status-command-combined-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::inbox::init_inbox_for_session();
 		crate::mcp::orchestration::monitor::init_for_session();
@@ -95,16 +90,39 @@ async fn monitor_combines_mcp_jobs_with_command_monitors() {
 			"background analysis",
 		);
 
-		let data = output_data(handle_monitor().await.expect("monitor command"));
-		assert_eq!(data["job_count"], 1);
-		assert_eq!(data["monitor_count"], 1);
-		let message = data["message"].as_str().expect("rendered message");
-		assert!(message.contains("MCP background jobs:"), "{message}");
-		assert!(message.contains("Running monitors:"), "{message}");
-		assert!(message.contains("watch changes"), "{message}");
+		let overview = output_data(handle_status(&[]).await.expect("status command"));
+		assert_eq!(overview["active"], 2);
+		assert_eq!(overview["jobs"].as_array().unwrap().len(), 1);
+		assert_eq!(overview["monitors"].as_array().unwrap().len(), 1);
+
+		let monitors = output_data(handle_status(&["monitors"]).await.expect("monitor status"));
+		assert_eq!(monitors["view"], "monitors");
+		assert_eq!(monitors["monitors"][0]["description"], "watch changes");
+
+		let jobs = output_data(handle_status(&["jobs"]).await.expect("job status"));
+		assert_eq!(jobs["view"], "jobs");
+		assert_eq!(jobs["jobs"][0]["server"], "generic-mcp");
+		assert!(jobs["jobs"][0]["resource_status"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("is not active"));
 
 		crate::session::shell_jobs::clear_for_session(&session_id);
 		crate::mcp::orchestration::monitor::clear_for_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+async fn status_rejects_unknown_filters() {
+	let session_id = format!("status-command-error-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id, async {
+		let data = output_data(handle_status(&["unknown"]).await.expect("status command"));
+		assert_eq!(data["view"], "error");
+		assert!(data["message"]
+			.as_str()
+			.unwrap()
+			.contains("Unknown status filter"));
 	})
 	.await;
 }

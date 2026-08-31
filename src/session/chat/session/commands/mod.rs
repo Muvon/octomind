@@ -33,7 +33,6 @@ mod login;
 mod loglevel;
 mod mcp;
 mod model;
-mod monitor;
 mod new;
 mod plan;
 mod prompt;
@@ -44,6 +43,7 @@ mod run;
 mod schedule;
 mod share;
 mod skill;
+mod status;
 mod usage;
 pub use usage::UsageWindow;
 mod utils;
@@ -206,7 +206,7 @@ pub enum CommandOutput {
 	Schedule {
 		data: serde_json::Value,
 	},
-	Monitor {
+	Status {
 		data: serde_json::Value,
 	},
 	Learning {
@@ -241,16 +241,6 @@ pub enum CommandOutput {
 		url: String,
 		port: u16,
 		token: String,
-	},
-	Agents {
-		/// Currently-running runs, newest first (each with live `last_action`).
-		running: Vec<serde_json::Value>,
-		/// Recently finished/failed/cancelled runs, newest first.
-		finished: Vec<serde_json::Value>,
-		/// Single-run summary card when `/agents <id>` was requested.
-		detail: Option<serde_json::Value>,
-		/// Total runs tracked for this session (running + finished).
-		total: usize,
 	},
 	/// Result of `/rename`: the new display title (None = cleared).
 	Rename {
@@ -328,13 +318,12 @@ impl CommandOutput {
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
-			Self::Monitor { .. } => display::display_monitor(self),
+			Self::Status { .. } => display::display_status(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
 			Self::Usage { .. } => display::display_usage(self),
 			Self::Login { .. } => display::display_login(self),
 			Self::Analyze { .. } => display::display_analyze(self),
-			Self::Agents { .. } => display::display_agents(self),
 			Self::Rename {
 				session_name,
 				title,
@@ -436,11 +425,10 @@ pub async fn process_command(
 		PLAN_COMMAND => plan::handle_plan(session).await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
-		MONITOR_COMMAND => monitor::handle_monitor().await,
+		STATUS_COMMAND => status::handle_status(params).await,
 		LEARNING_COMMAND => learning::handle_learning(session, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,
 		ANALYZE_COMMAND => analyze::handle_analyze(session).await,
-		AGENTS_COMMAND => agents::handle_agents(params),
 		USAGE_COMMAND => usage::handle_usage().await,
 		LOGIN_COMMAND => login::handle_login().await,
 		RENAME_COMMAND => rename::handle_rename(session, params),

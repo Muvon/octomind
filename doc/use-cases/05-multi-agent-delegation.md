@@ -139,6 +139,10 @@ agent_code_reviewer(task="Scan for OWASP Top 10 vulnerabilities", async=true)
 # "[Async agent 'code_reviewer' completed]"
 ```
 
+Use `/status` for a concise view of every active agent alongside MCP jobs and
+command monitors. `/status agents` expands the agent view with recent tap-run
+history, live actions, model usage, and cost where the runtime provides it.
+
 ### Tap Roles (no config needed)
 
 If a tap registry already provides a specialist role for the sub-task, use the `tap` core tool instead of defining your own `[[agents]]`:

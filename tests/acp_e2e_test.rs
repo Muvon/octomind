@@ -314,7 +314,7 @@ async fn test_acp_initialize_new_session_prompt() {
 	for (command, args) in [
 		("/info", serde_json::json!([])),
 		("/context", serde_json::json!(["all"])),
-		("/agents", serde_json::json!([])),
+		("/status", serde_json::json!([])),
 		("/learning", serde_json::json!([])),
 		("/plan", serde_json::json!([])),
 		("/mcp", serde_json::json!(["list"])),

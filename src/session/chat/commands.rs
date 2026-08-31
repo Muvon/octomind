@@ -39,16 +39,15 @@ pub const PLAN_COMMAND: &str = "/plan";
 pub const SKILL_COMMAND: &str = "/skill";
 pub const EFFORT_COMMAND: &str = "/effort";
 pub const SCHEDULE_COMMAND: &str = "/schedule";
-pub const MONITOR_COMMAND: &str = "/monitor";
+pub const STATUS_COMMAND: &str = "/status";
 pub const LEARNING_COMMAND: &str = "/learning";
 pub const SHARE_COMMAND: &str = "/share";
 pub const ANALYZE_COMMAND: &str = "/analyze";
-pub const AGENTS_COMMAND: &str = "/agents";
 pub const USAGE_COMMAND: &str = "/usage";
 pub const LOGIN_COMMAND: &str = "/login";
 pub const RENAME_COMMAND: &str = "/rename";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 32] = [
+pub const COMMANDS: [&str; 31] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
@@ -73,11 +72,10 @@ pub const COMMANDS: [&str; 32] = [
 	SKILL_COMMAND,
 	EFFORT_COMMAND,
 	SCHEDULE_COMMAND,
-	MONITOR_COMMAND,
+	STATUS_COMMAND,
 	LEARNING_COMMAND,
 	SHARE_COMMAND,
 	ANALYZE_COMMAND,
-	AGENTS_COMMAND,
 	USAGE_COMMAND,
 	LOGIN_COMMAND,
 	RENAME_COMMAND,

@@ -18,6 +18,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 use tokio::sync::watch;
 
 /// Outcome of a completed async agent run.
@@ -31,10 +32,27 @@ pub struct CompletedJob {
 /// Handle for a spawned async job that can be cancelled.
 #[derive(Debug)]
 pub struct JobHandle {
+	pub id: String,
+	pub agent_name: String,
+	pub source: String,
+	pub task: String,
+	pub workdir: String,
+	pub started_at: SystemTime,
 	/// Cancellation sender - sending true signals the job to abort.
 	pub cancel_tx: watch::Sender<bool>,
 	/// Task handle for awaiting completion.
 	pub task_handle: tokio::task::JoinHandle<()>,
+}
+
+/// Read-only metadata for an active asynchronous `agent_*` invocation.
+#[derive(Debug, Clone)]
+pub struct AsyncAgentJobInfo {
+	pub id: String,
+	pub agent_name: String,
+	pub source: String,
+	pub task: String,
+	pub workdir: String,
+	pub started_at: SystemTime,
 }
 
 /// Tracks active job count and pushes completions directly into the session inbox.
@@ -68,6 +86,18 @@ impl BackgroundJobManager {
 	/// Call when an async job finishes (success or failure).
 	/// Pushes the result directly into the session inbox.
 	pub fn release(&self, job: CompletedJob) {
+		self.publish_completion(job);
+		self.active.fetch_sub(1, Ordering::SeqCst);
+	}
+
+	/// Complete a registered job and remove its visible running metadata.
+	pub fn release_registered(&self, id: &str, job: CompletedJob) {
+		self.publish_completion(job);
+		self.jobs.lock().unwrap().retain(|handle| handle.id != id);
+		self.active.fetch_sub(1, Ordering::SeqCst);
+	}
+
+	fn publish_completion(&self, job: CompletedJob) {
 		let content = if job.output.starts_with("ERROR: ") {
 			format!(
 				"[Async agent '{}' failed]\n\n{}",
@@ -86,9 +116,6 @@ impl BackgroundJobManager {
 			},
 			content,
 		});
-		// Publish the completion before clearing the final active count. An idle
-		// observer therefore always sees either active work or its queued result.
-		self.active.fetch_sub(1, Ordering::SeqCst);
 	}
 
 	/// Register a spawned job handle for later cancellation.
@@ -105,6 +132,27 @@ impl BackgroundJobManager {
 
 	pub fn active_count(&self) -> usize {
 		self.active.load(Ordering::SeqCst)
+	}
+
+	/// Snapshot active async-agent metadata, newest first.
+	pub fn active_jobs(&self) -> Vec<AsyncAgentJobInfo> {
+		let mut jobs: Vec<AsyncAgentJobInfo> = self
+			.jobs
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|handle| !handle.task_handle.is_finished())
+			.map(|handle| AsyncAgentJobInfo {
+				id: handle.id.clone(),
+				agent_name: handle.agent_name.clone(),
+				source: handle.source.clone(),
+				task: handle.task.clone(),
+				workdir: handle.workdir.clone(),
+				started_at: handle.started_at,
+			})
+			.collect();
+		jobs.sort_by_key(|job| std::cmp::Reverse(job.started_at));
+		jobs
 	}
 
 	/// Wait for all async jobs to complete.

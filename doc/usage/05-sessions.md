@@ -78,7 +78,7 @@ Commands typed at the session prompt control the session without sending a messa
 
 **Session lifecycle:** `/help` (alias `/?`), `/exit` (alias `/quit`), `/clear`, `/list`, `/new`
 
-**Monitoring:** `/info`, `/report`, `/context`, `/loglevel`
+**Monitoring:** `/status`, `/info`, `/report`, `/context`, `/loglevel`
 
 **Model & behavior:** `/model`, `/role`, `/effort`, `/prompt`
 
@@ -87,6 +87,11 @@ Commands typed at the session prompt control the session without sending a messa
 **Media:** `/image`, `/video`, `/copy`
 
 **MCP, tools & capabilities:** `/mcp`, `/run`, `/plan`, `/skill`, `/schedule`
+
+`/status` is the only activity dashboard: the default view is concise and
+active-only across agents, MCP background jobs, and command monitors. Use
+`/status agents`, `/status monitors`, or `/status jobs` for the full category
+view. Status is scoped to the current process and session.
 
 **Learning & sharing:** `/learning`, `/share`, `/analyze`
 

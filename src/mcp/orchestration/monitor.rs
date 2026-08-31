@@ -59,15 +59,15 @@ struct MonitorJob {
 }
 
 #[derive(Debug, Clone)]
-struct MonitorInfo {
-	id: String,
-	description: String,
-	command: String,
-	workdir: String,
-	flush_interval_secs: u64,
-	max_batch_bytes: usize,
-	timeout_ms: Option<u64>,
-	started_at: SystemTime,
+pub(crate) struct MonitorInfo {
+	pub id: String,
+	pub description: String,
+	pub command: String,
+	pub workdir: String,
+	pub flush_interval_secs: u64,
+	pub max_batch_bytes: usize,
+	pub timeout_ms: Option<u64>,
+	pub started_at: SystemTime,
 }
 
 impl From<&MonitorJob> for MonitorInfo {
@@ -356,6 +356,13 @@ pub fn render_running_monitors(session_id: &SessionId) -> Option<String> {
 /// Number of command monitors currently owned by a session.
 pub fn running_monitor_count(session_id: &SessionId) -> usize {
 	list_for_session(session_id).len()
+}
+
+/// Structured read-only snapshot used by `/status`.
+pub(crate) fn status_for_session(session_id: &SessionId) -> Vec<MonitorInfo> {
+	let mut monitors = list_for_session(session_id);
+	monitors.sort_by(|a, b| a.id.cmp(&b.id));
+	monitors
 }
 
 fn handle_stop(call: &McpToolCall) -> McpToolResult {

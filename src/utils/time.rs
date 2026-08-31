@@ -25,7 +25,7 @@ pub fn now_secs() -> u64 {
 }
 
 /// Compact elapsed-duration label: `"0m48s"`, `"3m12s"`, `"1h05m"`, `"2d03h"`.
-/// Used by the `/agents` panel to show how long a run has been going.
+/// Used by `/status agents` to show how long a run has been going.
 pub fn format_duration_short(secs: u64) -> String {
 	let days = secs / 86_400;
 	let hours = (secs % 86_400) / 3_600;
@@ -41,7 +41,7 @@ pub fn format_duration_short(secs: u64) -> String {
 }
 
 /// Relative "time since" label: `"just now"`, `"45s ago"`, `"2m ago"`, `"3h ago"`, `"5d ago"`.
-/// Used by the `/agents` panel for finished runs.
+/// Used by `/status agents` for finished runs.
 pub fn format_ago(secs_ago: u64) -> String {
 	if secs_ago < 5 {
 		"just now".to_string()

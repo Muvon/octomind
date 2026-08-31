@@ -522,6 +522,7 @@ Exact field list: [Telemetry](doc/reference/04-environment-variables.md#telemetr
 |---|---|
 | `/help` | Show all commands |
 | `/info` | Token usage and costs |
+| `/status [agents\|monitors\|jobs]` | Current agents and background activity |
 | `/model <provider:model>` | Switch model mid-session |
 | `/effort <level>` | Set reasoning effort (low/medium/high/xhigh/max) |
 | `/role <name>` | Switch role mid-session |

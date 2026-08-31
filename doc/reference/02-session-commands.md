@@ -1,6 +1,6 @@
 # Session Commands Reference
 
-All interactive session commands. Type the command at the prompt. There are 25 distinct commands; the autocomplete list also includes the aliases `/quit` (= `/exit`) and `/?` (a non-functional help alias — see [`/help`](#help)). To discover commands at runtime, type `/help`, which lists the built-ins plus any custom `/run` commands defined in your config.
+All interactive session commands. Type the command at the prompt. There are 29 distinct commands; the autocomplete list also includes the aliases `/quit` (= `/exit`) and `/?` (a non-functional help alias — see [`/help`](#help)). To discover commands at runtime, type `/help`, which lists the built-ins plus any custom `/run` commands defined in your config.
 
 ## Command Summary
 
@@ -11,8 +11,12 @@ All interactive session commands. Type the command at the prompt. There are 25 d
 | `/clear` | Clear the terminal screen |
 | `/list [PAGE]` | List saved sessions |
 | `/new [TITLE]` | Start a fresh session with unified naming (optional title) |
+| `/rename [TITLE]` | Set or clear the current session title |
 | `/info` | Show session statistics (tokens, cost, cache, compression) |
+| `/status [agents [ID]\|monitors\|jobs]` | Show current process activity for this session |
 | `/report` | Detailed per-request usage report |
+| `/usage` | Show Octomind account usage, quotas, and balance |
+| `/login` | Sign in to an Octomind account |
 | `/share` | Upload the session log and print a permanent share URL |
 | `/analyze` | Open the session in the web viewer locally, without uploading |
 | `/copy` | Copy the last assistant response to the clipboard |
@@ -55,6 +59,30 @@ This command does **not** display current session info — use [`/info`](#info) 
 Clear the terminal screen.
 
 ## Information & Monitoring
+
+### `/status [agents [ID]|monitors|jobs]`
+
+The single process-activity surface for the current session. The old `/agents`
+and `/monitor` commands have been removed.
+
+| Usage | Description |
+|-------|-------------|
+| `/status` | Concise active-only view across agents, MCP background jobs, and command monitors |
+| `/status agents` | Full agent view: running work plus recent completed, failed, and cancelled tap runs; preserves model, token, cache, and cost data when available |
+| `/status agents <id>` | Detailed card for one tap or async `agent_*` run |
+| `/status monitors` | Full configuration and elapsed time for active command monitors |
+| `/status jobs` | Full live status and bounded output for active MCP resource-backed jobs |
+
+`agents` merges tap specialists with asynchronous `agent_*` calls. Tap runs
+carry live or persisted pricing; async `agent_*` pricing is explicitly shown as
+not tracked rather than guessed. `jobs` is generic across MCP servers: a tool
+must return a standard `ResourceLink`; Octomind retains the originating server
+and treats the URI as opaque. The full jobs view performs one bounded
+`resources/read` call per active resource. Completion remains event-driven via
+`resources/updated` and is injected automatically.
+
+All status state is process-local and session-scoped. A resumed process cannot
+reattach to work owned by the prior process.
 
 ### `/info`
 Display comprehensive session statistics:

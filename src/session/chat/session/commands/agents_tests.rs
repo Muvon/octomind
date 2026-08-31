@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for the `/agents` command handler over an empty tap-run registry:
+//! Tests for the agent adapter behind `/status agents`:
 //! the list view, the unknown-id detail error, and the stats aggregation
 //! used by `/info`.
 
@@ -26,30 +26,19 @@ use tokio::sync::watch;
 fn test_agents_list_view() {
 	// Registry contents depend on what other tests in this process ran —
 	// only the output shape is stable: a list view with no detail card.
-	let result = handle_agents(&[]).expect("dispatch");
-	match result {
-		CommandResult::HandledWithOutput(output) => match *output {
-			CommandOutput::Agents { detail, .. } => {
-				assert!(detail.is_none());
-			}
-			other => panic!("expected Agents output, got {other:?}"),
-		},
-		other => panic!("expected HandledWithOutput, got {other:?}"),
-	}
+	let data = build_agents_status(&[]).expect("status");
+	assert_eq!(data["view"], "agents");
+	assert!(data["detail"].is_null());
 }
 
 #[test]
 fn test_agents_unknown_id_is_an_error() {
-	let result = handle_agents(&["no-such-agent-id"]).expect("dispatch");
-	match result {
-		CommandResult::HandledWithOutput(output) => match *output {
-			CommandOutput::Error { error, .. } => {
-				assert!(error.contains("no-such-agent-id"), "{error}");
-			}
-			other => panic!("expected Error output, got {other:?}"),
-		},
-		other => panic!("expected HandledWithOutput, got {other:?}"),
-	}
+	let data = build_agents_status(&["no-such-agent-id"]).expect("status");
+	assert_eq!(data["view"], "error");
+	assert!(data["message"]
+		.as_str()
+		.unwrap_or_default()
+		.contains("no-such-agent-id"));
 }
 
 #[test]
@@ -109,33 +98,18 @@ async fn list_detail_and_stats_cover_every_job_status() {
 			TapLiveState::default(),
 		));
 
-		let CommandResult::HandledWithOutput(output) = handle_agents(&[]).unwrap() else {
-			panic!("expected agents output");
-		};
-		let CommandOutput::Agents {
-			running,
-			finished,
-			total,
-			..
-		} = *output
-		else {
-			panic!("expected agents list");
-		};
-		assert_eq!(total, 4);
+		let data = build_agents_status(&[]).unwrap();
+		let running = data["running"].as_array().expect("running");
+		let finished = data["finished"].as_array().expect("finished");
+		assert_eq!(data["total"], 4);
 		assert_eq!(running.len(), 1);
 		assert_eq!(finished.len(), 3);
 		assert_eq!(running[0]["last_action"], "shell cargo test");
 		assert_eq!(running[0]["tokens_input"], 100);
 
-		let CommandResult::HandledWithOutput(output) = handle_agents(&["running-agent"]).unwrap()
-		else {
-			panic!("expected detail output");
-		};
-		let CommandOutput::Agents { detail, total, .. } = *output else {
-			panic!("expected detail card");
-		};
-		let detail = detail.expect("detail");
-		assert_eq!(total, 1);
+		let data = build_agents_status(&["running-agent"]).unwrap();
+		let detail = &data["detail"];
+		assert_eq!(data["total"], 1);
 		assert_eq!(detail["status"], "running");
 		assert_eq!(detail["tokens_cached"], 50);
 		assert_eq!(detail["cost"], 0.25);
@@ -378,16 +352,9 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 		));
 
 		// Detail: finished job → snapshot is authoritative.
-		let CommandResult::HandledWithOutput(output) =
-			handle_agents(&["cov-agents-detail"]).unwrap()
-		else {
-			panic!("expected detail output");
-		};
-		let CommandOutput::Agents { detail, total, .. } = *output else {
-			panic!("expected detail card");
-		};
-		let detail = detail.expect("detail");
-		assert_eq!(total, 1);
+		let data = build_agents_status(&["cov-agents-detail"]).unwrap();
+		let detail = &data["detail"];
+		assert_eq!(data["total"], 1);
 		assert_eq!(detail["status"], "done");
 		assert_eq!(detail["model"], "cov-model");
 		assert_eq!(detail["tokens_input"], 11);
@@ -398,12 +365,8 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 		assert_eq!(detail["last_action"], "Final answer");
 
 		// List: the finished row carries ago_secs from the file's mtime.
-		let CommandResult::HandledWithOutput(output) = handle_agents(&[]).unwrap() else {
-			panic!("expected list output");
-		};
-		let CommandOutput::Agents { finished, .. } = *output else {
-			panic!("expected list");
-		};
+		let data = build_agents_status(&[]).unwrap();
+		let finished = data["finished"].as_array().expect("finished");
 		let row = finished
 			.iter()
 			.find(|r| r["id"] == "cov-agents-detail")

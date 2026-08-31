@@ -94,8 +94,9 @@ async fn test_agent_tool_validation_arms() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn get_max_concurrent_jobs_is_at_least_four() {
-	assert!(get_max_concurrent_jobs() >= 4);
+fn get_max_concurrent_jobs_is_positive() {
+	// Returns available_parallelism(), which is 3 on macos-latest CI runners.
+	assert!(get_max_concurrent_jobs() >= 1);
 }
 
 #[tokio::test]

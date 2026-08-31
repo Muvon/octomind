@@ -476,8 +476,6 @@ fn load_taps_pulls_existing_github_tap_dirs_silently() {
 #[serial]
 #[cfg(unix)]
 fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
-	use std::os::unix::ffi::OsStringExt;
-
 	let _guard = DataDirGuard::new();
 	let default_tap = create_default_tap();
 
@@ -503,15 +501,21 @@ fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
 	fs::write(locked_category.join("var.toml"), "x").expect("write sealed agent");
 	chmod(&locked_category, 0o000);
 
-	let non_utf8_category = agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
-	fs::create_dir_all(&non_utf8_category).expect("create non-utf8 category");
-	fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
+	// Linux only: APFS rejects non-UTF-8 names with EILSEQ.
+	#[cfg(target_os = "linux")]
+	{
+		use std::os::unix::ffi::OsStringExt;
+		let non_utf8_category =
+			agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
+		fs::create_dir_all(&non_utf8_category).expect("create non-utf8 category");
+		fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
 
-	fs::create_dir_all(agents.join("cat2")).expect("create cat2");
-	let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![
-		0xfe, b'.', b't', b'o', b'm', b'l',
-	]));
-	fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
+		fs::create_dir_all(agents.join("cat2")).expect("create cat2");
+		let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![
+			0xfe, b'.', b't', b'o', b'm', b'l',
+		]));
+		fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
+	}
 
 	let tags = list_agent_tags().expect("tag discovery succeeds");
 	assert_eq!(

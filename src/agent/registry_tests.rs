@@ -759,8 +759,6 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 #[serial]
 #[cfg(unix)]
 fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
-	use std::os::unix::ffi::OsStringExt;
-
 	let _guard = DataDirGuard::new();
 	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
 	let default_tap = default_tap_dir();
@@ -784,11 +782,16 @@ fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
 	chmod(&locked_workflows, 0o000);
 	install_taps_file(&data_dir, &[("probe/locked", Some(&user_tap))]);
 
-	// Non-UTF-8 file stem and an unreadable workflow file in the default tap.
-	let non_utf8 = workflows.join(std::ffi::OsString::from_vec(vec![
-		0xff, 0xfe, b'.', b't', b'o', b'm', b'l',
-	]));
-	std::fs::write(&non_utf8, "description = \"x\"\n").expect("write non-utf8 workflow");
+	// Non-UTF-8 file stem (Linux only: APFS rejects non-UTF-8 names with
+	// EILSEQ) and an unreadable workflow file in the default tap.
+	#[cfg(target_os = "linux")]
+	{
+		use std::os::unix::ffi::OsStringExt;
+		let non_utf8 = workflows.join(std::ffi::OsString::from_vec(vec![
+			0xff, 0xfe, b'.', b't', b'o', b'm', b'l',
+		]));
+		std::fs::write(&non_utf8, "description = \"x\"\n").expect("write non-utf8 workflow");
+	}
 	let unreadable = workflows.join("unreadable.toml");
 	std::fs::write(&unreadable, "description = \"x\"\n").expect("write unreadable workflow");
 	chmod(&unreadable, 0o000);

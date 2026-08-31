@@ -154,7 +154,7 @@ for line in sys.stdin:
 "#;
 
 const FAKE_HTTP_SERVER: &str = r#"
-import json, os
+import json, os, socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODE = os.environ.get("FAKE_MODE", "modern")
@@ -249,7 +249,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._send_empty(200)
 
-server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+class Server(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind calls getfqdn(), whose reverse-DNS lookup
+        # stalls for >10s on macOS CI runners; bind without it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+server = Server(("127.0.0.1", 0), Handler)
 print("PORT={}".format(server.server_address[1]), flush=True)
 server.serve_forever()
 "#;
@@ -273,7 +280,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 	let port = {
 		let mut stdout = child.stdout.take().expect("piped stdout");
 		let mut line = String::new();
-		tokio::time::timeout(Duration::from_secs(10), async {
+		tokio::time::timeout(Duration::from_secs(30), async {
 			use tokio::io::AsyncBufReadExt;
 			let mut reader = tokio::io::BufReader::new(&mut stdout);
 			reader
@@ -282,7 +289,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 				.expect("fake server must print its port");
 		})
 		.await
-		.expect("fake http server startup within 10s");
+		.expect("fake http server startup within 30s");
 		line.trim()
 			.strip_prefix("PORT=")
 			.and_then(|p| p.parse::<u16>().ok())

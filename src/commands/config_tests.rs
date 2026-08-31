@@ -135,7 +135,10 @@ fn test_validate_invalid_config_returns_error() {
 	let mut a = args();
 	a.validate = true;
 	let err = execute(&a, config).expect_err("empty model must fail validation");
-	assert!(err.to_string().contains("Model field cannot be empty"));
+	assert!(
+		err.to_string().contains("main.name cannot be empty"),
+		"got: {err}"
+	);
 }
 
 // ── early-error branches (each returns before any save) ─────────────────────

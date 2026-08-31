@@ -153,7 +153,7 @@ fn unify_v12_model_profiles(
 		.get_mut("model")
 		.and_then(|item| item.as_table_mut())
 		.expect("model table inserted above");
-	for key in ["name"].into_iter().chain(PROFILE_FIELDS.into_iter()) {
+	for key in ["name"].into_iter().chain(PROFILE_FIELDS) {
 		merge_missing(main, template_main, key)?;
 	}
 

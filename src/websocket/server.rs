@@ -749,13 +749,14 @@ async fn handle_session_message(
 }
 
 /// Look up an existing session: memory first, then disk. Never auto-create.
-/// Returns the session or a ServerMessage error suitable for sending to the client.
+/// Returns the session or an error message for the client (callers wrap it in
+/// `ServerMessage::error` — keeping the Err variant small).
 async fn lookup_session(
 	session_id: &str,
 	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
 	config: &Config,
 	role: &str,
-) -> std::result::Result<ChatSession, ServerMessage> {
+) -> std::result::Result<ChatSession, String> {
 	let existing = sessions.lock().await.remove(session_id);
 	if let Some(session) = existing {
 		log_debug!("Resumed session from memory: {}", session_id);
@@ -771,18 +772,15 @@ async fn lookup_session(
 				setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false)
 					.await
 			{
-				return Err(ServerMessage::error(format!(
-					"Failed to setup session {}: {}",
-					session_id, e
-				)));
+				return Err(format!("Failed to setup session {}: {}", session_id, e));
 			}
 			log_info!("Session loaded from disk: {}", session_id);
 			Ok(session)
 		}
-		Err(_) => Err(ServerMessage::error(format!(
+		Err(_) => Err(format!(
 			"Session not found: {}. Send a \"session\" message first to create or resume a session.",
 			session_id
-		))),
+		)),
 	}
 }
 
@@ -819,7 +817,7 @@ async fn handle_command_message(
 	let mut chat_session = match lookup_session(session_id, sessions, config, role).await {
 		Ok(s) => s,
 		Err(error) => {
-			send_message(ws_sender, &error).await?;
+			send_message(ws_sender, &ServerMessage::error(error)).await?;
 			return Ok(());
 		}
 	};
@@ -1132,7 +1130,7 @@ async fn handle_user_message(
 	let mut chat_session = match lookup_session(session_id, sessions, config, role).await {
 		Ok(s) => s,
 		Err(error) => {
-			send_message(ws_sender, &error).await?;
+			send_message(ws_sender, &ServerMessage::error(error)).await?;
 			return Ok(());
 		}
 	};

@@ -188,7 +188,7 @@ impl Lesson {
 }
 
 /// Learning configuration — added to the main Config struct.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LearningConfig {
 	/// Enable the learning system.
 	#[serde(default)]
@@ -203,15 +203,6 @@ pub const MIN_MESSAGES_FOR_INTERMEDIATE: usize = 3;
 
 /// Soft time-decay: scoped entries unused for this many days lose confidence.
 pub const DECAY_DAYS: u64 = 90;
-
-impl Default for LearningConfig {
-	fn default() -> Self {
-		Self {
-			enabled: false,
-			evolution: evolution::EvolutionConfig::default(),
-		}
-	}
-}
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

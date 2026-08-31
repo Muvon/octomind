@@ -164,14 +164,10 @@ async fn lookup_session_never_auto_creates_a_missing_session() {
 		.await
 		.err()
 		.expect("a session that exists nowhere must be an error");
-	match error {
-		ServerMessage::Error(payload) => {
-			assert!(payload
-				.message
-				.contains("Session not found: no-such-session-zzz"));
-		}
-		other => panic!("expected an error frame, got {other:?}"),
-	}
+	assert!(
+		error.contains("Session not found: no-such-session-zzz"),
+		"{error}"
+	);
 	assert!(
 		sessions.lock().await.is_empty(),
 		"nothing may be auto-created"

@@ -218,8 +218,8 @@ fn load_disk_cache() -> Result<usize> {
 			continue;
 		}
 		let mut vec = Vec::with_capacity(dim);
-		for chunk in buf.chunks_exact(4) {
-			vec.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+		for chunk in buf.as_chunks::<4>().0 {
+			vec.push(f32::from_le_bytes(*chunk));
 		}
 		c.insert(key, vec);
 		loaded += 1;

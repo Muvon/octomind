@@ -136,7 +136,7 @@ impl<'a> ChatCompletionParams<'a> {
 			top_k,
 			max_tokens,
 			max_retries: config.max_retries,
-			retry_timeout: std::time::Duration::from_secs(config.retry_timeout as u64),
+			retry_timeout: std::time::Duration::from_secs(config.retry_timeout),
 			request_timeout: match config.request_timeout_seconds {
 				0 => None,
 				n => Some(std::time::Duration::from_secs(n)),

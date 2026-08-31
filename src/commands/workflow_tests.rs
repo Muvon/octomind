@@ -625,6 +625,9 @@ async fn tap_workflow_with_non_public_role_errors() {
 	);
 }
 
+// fd redirection via libc is Unix-only; the stdin-required logic itself is
+// platform-independent and covered by this path.
+#[cfg(unix)]
 #[tokio::test]
 #[serial]
 async fn local_workflow_requires_input_via_stdin() {

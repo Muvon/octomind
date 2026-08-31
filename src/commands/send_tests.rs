@@ -18,19 +18,24 @@
 
 use super::*;
 use clap::Parser;
+#[cfg(unix)]
 use serial_test::serial;
 
+#[cfg(unix)]
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
 
 /// Snapshot env vars and restore them on drop.
+#[cfg(unix)]
 struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
 
+#[cfg(unix)]
 impl EnvGuard {
 	fn new(keys: &[&'static str]) -> Self {
 		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
 	}
 }
 
+#[cfg(unix)]
 impl Drop for EnvGuard {
 	fn drop(&mut self) {
 		for (key, saved) in &self.0 {

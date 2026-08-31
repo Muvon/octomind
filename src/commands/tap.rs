@@ -13,19 +13,24 @@
 // limitations under the License.
 
 use anyhow::Result;
-use clap::Args;
-use octomind::agent::taps;
+use clap::{Args, Subcommand};
+use octomind::agent::{tap_scaffold, taps};
 use octomind::session::chat::{
 	block_close_ok, block_line, block_open, block_row, block_section, key_width,
 };
 
 #[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct TapArgs {
+	#[command(subcommand)]
+	pub command: Option<TapCommand>,
+
 	/// Tap to add in `user/repo` format. Omit to list all active taps.
 	///
 	/// Examples:
 	///   octomind tap myorg/repo           # clones https://github.com/myorg/octomind-repo
 	///   octomind tap myorg/repo ./local   # uses local directory
+	///   octomind tap init myorg/repo      # scaffold a new tap in ./octomind-repo
 	#[arg(value_name = "TAP")]
 	pub tap: Option<String>,
 
@@ -34,8 +39,60 @@ pub struct TapArgs {
 	pub local_path: Option<String>,
 }
 
+#[derive(Subcommand, Debug)]
+pub enum TapCommand {
+	/// Create a new tap from the default tap's scaffold: render it, validate
+	/// it, git-init it, and register it as a local tap ready for `octomind run`.
+	Init(TapInitArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct TapInitArgs {
+	/// New tap id in `user/repo` format.
+	#[arg(value_name = "TAP")]
+	pub tap: String,
+
+	/// Starter agent tag as `domain:spec`. Domain defaults to the repo name,
+	/// spec to the scaffold's default.
+	#[arg(long, value_name = "DOMAIN:SPEC")]
+	pub agent: Option<String>,
+
+	/// Destination directory (defaults to ./octomind-<repo>).
+	#[arg(long, value_name = "DIR")]
+	pub dir: Option<std::path::PathBuf>,
+}
+
 pub fn execute(args: &TapArgs) -> Result<()> {
 	use colored::Colorize;
+
+	if let Some(TapCommand::Init(init)) = &args.command {
+		let outcome =
+			tap_scaffold::init_tap(&init.tap, init.agent.as_deref(), init.dir.as_deref())?;
+		block_open("tap", Some("init"));
+		let kw = key_width(["name", "dir", "agent", "next"]);
+		block_row("name", &outcome.tap_id.bright_green().to_string(), kw);
+		block_row(
+			"dir",
+			&outcome
+				.dest
+				.display()
+				.to_string()
+				.bright_white()
+				.to_string(),
+			kw,
+		);
+		block_row("agent", &outcome.agent_tag.bright_white().to_string(), kw);
+		block_row(
+			"next",
+			&format!("octomind run {}", outcome.agent_tag)
+				.bright_cyan()
+				.to_string(),
+			kw,
+		);
+		block_close_ok("tap", Some(&outcome.tap_id));
+		println!();
+		return Ok(());
+	}
 
 	match &args.tap {
 		Some(tap_arg) => {

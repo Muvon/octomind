@@ -75,6 +75,34 @@ fn tap_args_parse_optional_positionals() {
 }
 
 #[test]
+fn tap_args_parse_init_subcommand() {
+	let cli = Cli::try_parse_from([
+		"octomind",
+		"init",
+		"acme/team",
+		"--agent",
+		"legal:contracts",
+		"--dir",
+		"./somewhere",
+	])
+	.expect("init subcommand parses");
+	match cli.args.command {
+		Some(TapCommand::Init(ref init)) => {
+			assert_eq!(init.tap, "acme/team");
+			assert_eq!(init.agent.as_deref(), Some("legal:contracts"));
+			assert_eq!(
+				init.dir.as_deref(),
+				Some(std::path::Path::new("./somewhere"))
+			);
+		}
+		ref other => panic!("expected init subcommand, got {other:?}"),
+	}
+
+	// Subcommand and positional tap args are mutually exclusive.
+	assert!(Cli::try_parse_from(["octomind", "init"]).is_err());
+}
+
+#[test]
 #[serial]
 fn execute_lists_taps_when_none_is_given() {
 	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
@@ -82,6 +110,7 @@ fn execute_lists_taps_when_none_is_given() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	execute(&TapArgs {
+		command: None,
 		tap: None,
 		local_path: None,
 	})
@@ -98,6 +127,7 @@ fn execute_adds_a_local_tap_and_symlinks_it() {
 	let local_str = local.path().to_string_lossy().to_string();
 
 	execute(&TapArgs {
+		command: None,
 		tap: Some("testorg/probe".to_string()),
 		local_path: Some(local_str.clone()),
 	})
@@ -127,6 +157,7 @@ fn execute_lists_an_added_tap_with_its_local_suffix() {
 	let local = tempfile::tempdir().expect("local tap dir");
 
 	execute(&TapArgs {
+		command: None,
 		tap: Some("testorg/probe".to_string()),
 		local_path: Some(local.path().to_string_lossy().to_string()),
 	})
@@ -134,6 +165,7 @@ fn execute_lists_an_added_tap_with_its_local_suffix() {
 
 	// Non-empty listing path: user section rows plus the built-in row.
 	execute(&TapArgs {
+		command: None,
 		tap: None,
 		local_path: None,
 	})
@@ -148,6 +180,7 @@ fn execute_rejects_the_builtin_default_tap() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let err = execute(&TapArgs {
+		command: None,
 		tap: Some(taps::DEFAULT_TAP.to_string()),
 		local_path: None,
 	})
@@ -163,6 +196,7 @@ fn execute_rejects_malformed_and_duplicate_taps() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let err = execute(&TapArgs {
+		command: None,
 		tap: Some("plain".to_string()),
 		local_path: None,
 	})
@@ -172,12 +206,14 @@ fn execute_rejects_malformed_and_duplicate_taps() {
 
 	let local = tempfile::tempdir().expect("local tap dir");
 	execute(&TapArgs {
+		command: None,
 		tap: Some("testorg/probe".to_string()),
 		local_path: Some(local.path().to_string_lossy().to_string()),
 	})
 	.expect("first add succeeds");
 
 	let err = execute(&TapArgs {
+		command: None,
 		tap: Some("testorg/probe".to_string()),
 		local_path: Some(local.path().to_string_lossy().to_string()),
 	})

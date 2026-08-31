@@ -725,6 +725,19 @@ fn run_dynamic_agent_in_process(
 /// the parent folds into its own round (see [`crate::supervisor::delegate`]).
 /// Layers pass `false`: they post-process the parent's answer rather than doing
 /// delegated work, so their verdict says nothing about the parent's tree.
+/// Write one newline-terminated JSON-RPC request to the ACP child. A broken
+/// pipe means the child already exited — not fatal here: the read side
+/// consumes whatever the child emitted before dying and reports the
+/// definitive outcome (its buffered response, or "Subprocess closed before
+/// response" on EOF). Surfacing the raw EPIPE instead would race the child's
+/// exit against our write.
+async fn write_acp_request(stdin: &mut tokio::process::ChildStdin, msg: Value) -> Result<()> {
+	match stdin.write_all(format!("{}\n", msg).as_bytes()).await {
+		Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.into()),
+		_ => Ok(()),
+	}
+}
+
 pub async fn run_acp_command(
 	program: &str,
 	args: &[&str],
@@ -777,23 +790,19 @@ pub async fn run_acp_command(
 		.ok_or_else(|| anyhow::anyhow!("No stdout"))?;
 	let mut lines = BufReader::new(stdout).lines();
 
-	// Helper: serialize a JSON-RPC message to a newline-terminated string.
-	let msg_line = |msg: Value| format!("{}\n", msg);
-
 	// 1. initialize
-	stdin
-		.as_mut()
-		.expect("child stdin is open during initialize")
-		.write_all(
-			msg_line(json!({
-				"jsonrpc": "2.0",
-				"id": 1,
-				"method": "initialize",
-				"params": acp_initialize_params()
-			}))
-			.as_bytes(),
-		)
-		.await?;
+	write_acp_request(
+		stdin
+			.as_mut()
+			.expect("child stdin is open during initialize"),
+		json!({
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": acp_initialize_params()
+		}),
+	)
+	.await?;
 	if let Err(error) =
 		wait_for_response(&mut lines, 1, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await
 	{
@@ -802,19 +811,18 @@ pub async fn run_acp_command(
 	}
 
 	// 2. session/new
-	stdin
-		.as_mut()
-		.expect("child stdin is open during session creation")
-		.write_all(
-			msg_line(json!({
-				"jsonrpc": "2.0",
-				"id": 2,
-				"method": "session/new",
-				"params": acp_new_session_params(workdir)
-			}))
-			.as_bytes(),
-		)
-		.await?;
+	write_acp_request(
+		stdin
+			.as_mut()
+			.expect("child stdin is open during session creation"),
+		json!({
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "session/new",
+			"params": acp_new_session_params(workdir)
+		}),
+	)
+	.await?;
 
 	let session_resp =
 		match wait_for_response(&mut lines, 2, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
@@ -836,19 +844,16 @@ pub async fn run_acp_command(
 
 	// 3. session/prompt — collect the initial response, then close stdin and
 	// keep consuming updates until the ACP child has drained finite background work.
-	stdin
-		.as_mut()
-		.expect("child stdin is open during prompt")
-		.write_all(
-			msg_line(json!({
-				"jsonrpc": "2.0",
-				"id": 3,
-				"method": "session/prompt",
-				"params": acp_prompt_params(&session_id, task)
-			}))
-			.as_bytes(),
-		)
-		.await?;
+	write_acp_request(
+		stdin.as_mut().expect("child stdin is open during prompt"),
+		json!({
+			"jsonrpc": "2.0",
+			"id": 3,
+			"method": "session/prompt",
+			"params": acp_prompt_params(&session_id, task)
+		}),
+	)
+	.await?;
 
 	let mut output = String::new();
 	// Captured prompt-response error: if the subprocess returns

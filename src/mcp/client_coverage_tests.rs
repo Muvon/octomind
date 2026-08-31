@@ -1110,6 +1110,32 @@ fn result_with_resource_link(uri: &str) -> CallToolResult {
 	CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(uri, uri))])
 }
 
+#[tokio::test]
+async fn read_resource_text_uses_the_owning_server_without_uri_assumptions() {
+	let name = unique_server("resource-read");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, |request| match request {
+		ClientRequest::ReadResourceRequest(_) => Some(ServerResult::ReadResourceResult(
+			ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+				uri: "custommcp://background/42".to_string(),
+				mime_type: Some("text/plain".to_string()),
+				text: "status: running\ncurrent output".to_string(),
+				meta: None,
+			}]),
+		)),
+		_ => None,
+	});
+
+	let text = read_resource_text(&name, "custommcp://background/42")
+		.await
+		.expect("generic resource read");
+	assert_eq!(text, "status: running\ncurrent output");
+
+	responder.abort();
+	disconnect(&name);
+}
+
 /// Early returns: no links in the result, and links without a session scope.
 #[serial]
 #[tokio::test]
@@ -1167,7 +1193,7 @@ async fn watch_resource_links_continues_when_listen_fails() {
 	crate::session::context::with_session_id(
 		format!("cov-watch-fail-{}", uuid::Uuid::new_v4()),
 		async {
-			crate::session::shell_jobs::note_watched_from_result(&linked);
+			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
 			// Answer the listen request with an unrelated result type → the
 			// client treats the stream as misbehaving and returns Err.
 			let responder =
@@ -1201,7 +1227,7 @@ async fn watch_resource_links_cancels_unacknowledged_subscription() {
 	crate::session::context::with_session_id(
 		format!("cov-watch-unack-{}", uuid::Uuid::new_v4()),
 		async {
-			crate::session::shell_jobs::note_watched_from_result(&linked);
+			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
 
 			let mut outgoing = peer.outgoing;
 			let incoming = peer.incoming;
@@ -1302,7 +1328,7 @@ async fn watch_resource_links_delivers_update_and_completes() {
 	crate::session::context::with_session_id(
 		format!("cov-watch-full-{}", uuid::Uuid::new_v4()),
 		async {
-			crate::session::shell_jobs::note_watched_from_result(&linked);
+			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
 			let mut events = crate::session::shell_jobs::subscribe_events();
 
 			let mut outgoing = peer.outgoing;

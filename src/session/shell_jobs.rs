@@ -33,11 +33,28 @@
 use rmcp::model::{CallToolResult, ContentBlock};
 use std::collections::HashMap;
 use std::sync::RwLock;
+use std::time::SystemTime;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct WatchedResource {
+	server_name: String,
 	label: String,
 	delivering: bool,
+	started_at: SystemTime,
+}
+
+/// Point-in-time metadata for one MCP resource-backed background job.
+///
+/// The resource itself remains the authority for live status/output; this
+/// local record supplies ownership and elapsed time even if `resources/read`
+/// is temporarily unavailable.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingResource {
+	pub server_name: String,
+	pub uri: String,
+	pub label: String,
+	pub delivering: bool,
+	pub started_at: SystemTime,
 }
 
 // session id -> resources advertised but not yet delivered into the inbox.
@@ -96,7 +113,7 @@ pub fn resource_links_in(result: &CallToolResult) -> Vec<(String, String)> {
 
 /// Register every resource link a tool result advertised, resolving the session
 /// from the task-local context. No-op outside a session or when there are none.
-pub fn note_watched_from_result(result: &CallToolResult) {
+pub fn note_watched_from_result(server_name: &str, result: &CallToolResult) {
 	let links = resource_links_in(result);
 	if links.is_empty() {
 		return;
@@ -105,11 +122,11 @@ pub fn note_watched_from_result(result: &CallToolResult) {
 		return;
 	};
 	for (uri, label) in links {
-		register_for_session(&session_id, &uri, &label);
+		register_for_session(&session_id, server_name, &uri, &label);
 	}
 }
 
-pub fn register_for_session(session_id: &str, uri: &str, label: &str) {
+pub fn register_for_session(session_id: &str, server_name: &str, uri: &str, label: &str) {
 	let mut guard = WATCHED.write().unwrap();
 	guard
 		.get_or_insert_with(HashMap::new)
@@ -118,8 +135,10 @@ pub fn register_for_session(session_id: &str, uri: &str, label: &str) {
 		.insert(
 			uri.to_string(),
 			WatchedResource {
+				server_name: server_name.to_string(),
 				label: label.to_string(),
 				delivering: false,
+				started_at: SystemTime::now(),
 			},
 		);
 }
@@ -213,6 +232,27 @@ pub fn pending_labels() -> Vec<String> {
 		.collect();
 	labels.sort();
 	labels
+}
+
+/// Snapshot outstanding resource-backed jobs for a session without holding
+/// the registry lock while callers perform MCP `resources/read` requests.
+pub(crate) fn pending_resources_for_session(session_id: &str) -> Vec<PendingResource> {
+	let guard = WATCHED.read().unwrap();
+	let Some(jobs) = guard.as_ref().and_then(|registry| registry.get(session_id)) else {
+		return Vec::new();
+	};
+	let mut resources: Vec<PendingResource> = jobs
+		.iter()
+		.map(|(uri, resource)| PendingResource {
+			server_name: resource.server_name.clone(),
+			uri: uri.clone(),
+			label: resource.label.clone(),
+			delivering: resource.delivering,
+			started_at: resource.started_at,
+		})
+		.collect();
+	resources.sort_by(|a, b| a.uri.cmp(&b.uri));
+	resources
 }
 
 pub fn clear_for_session(session_id: &str) {

@@ -353,6 +353,11 @@ pub fn render_running_monitors(session_id: &SessionId) -> Option<String> {
 	Some(format!("Running monitors:\n{lines}"))
 }
 
+/// Number of command monitors currently owned by a session.
+pub fn running_monitor_count(session_id: &SessionId) -> usize {
+	list_for_session(session_id).len()
+}
+
 fn handle_stop(call: &McpToolCall) -> McpToolResult {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return tool_error(

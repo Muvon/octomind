@@ -707,7 +707,8 @@ fn test_render_schedule_and_monitor_list_arms() {
 	});
 	display_monitor(&CommandOutput::Monitor {
 		data: json!({"subcommand": "list", "is_error": false,
-			"message": "mon-1 running: watching the build log"}),
+			"message": "Running monitors:\n[mon-1] watching the build log — running 2s",
+			"monitor_count": 1, "job_count": 0}),
 	});
 }
 

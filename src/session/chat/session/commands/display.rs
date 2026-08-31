@@ -62,6 +62,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(PLAN_COMMAND, "Display current plan"),
 			(SKILL_COMMAND, "List skills or toggle by name"),
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
+			(
+				MONITOR_COMMAND,
+				"Show MCP background jobs and command monitors",
+			),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
 			(
 				AGENTS_COMMAND,
@@ -2334,6 +2338,14 @@ pub(super) fn display_monitor(output: &CommandOutput) {
 					.and_then(|v| v.as_bool())
 					.unwrap_or(false);
 				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+				let job_count = data.get("job_count").and_then(|v| v.as_u64()).unwrap_or(0);
+				let monitor_count = data
+					.get("monitor_count")
+					.and_then(|v| v.as_u64())
+					.unwrap_or_else(|| {
+						msg.lines().filter(|line| line.starts_with("[mon-")).count() as u64
+					});
+				let total = job_count + monitor_count;
 				if is_error {
 					block_open("/monitor", None);
 					for line in msg.lines() {
@@ -2341,38 +2353,43 @@ pub(super) fn display_monitor(output: &CommandOutput) {
 					}
 					block_close_err("/monitor", "failed");
 					println!();
-				} else if msg.contains("No running monitors") {
-					// Empty state — monitors are agent-started, so explain where
-					// they come from instead of showing a bare dead end.
-					block_open("/monitor", Some("no running monitors"));
-					block_line("Monitors are long-running watch commands the agent starts");
-					block_line("with the `monitor` tool; their output is injected as it arrives.");
+				} else if total == 0 {
+					block_open("/monitor", Some("no background activity"));
+					block_line("MCP resource-backed jobs appear here while they are running;");
+					block_line("command monitors appear here until stopped or the session ends.");
 					block_blank();
 					block_section("manage");
 					let mg: &[(&str, &str)] = &[
-						("/monitor", "list running monitors"),
+						("/monitor", "list all background activity"),
 						("ask the agent", "start a monitor or stop one by id"),
 					];
 					let mg_w = mg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
 					for (cmd, desc) in mg {
 						block_row(cmd, &desc.dimmed().to_string(), mg_w);
 					}
-					block_close_ok("/monitor", Some("0 running"));
+					block_close_ok("/monitor", Some("0 active"));
 					println!();
 				} else {
-					// Entries look like "[id] desc — running Ns" — one per monitor.
-					let count = msg.lines().filter(|l| l.starts_with('[')).count();
-					block_open("/monitor", None);
+					block_open("/monitor", Some("background activity"));
 					for line in msg.lines() {
 						block_row_text(line);
 					}
 					block_blank();
-					block_line(
-						&"Stop: ask the agent to run monitor stop <id>  ·  monitors end with the session"
-							.dimmed()
-							.to_string(),
-					);
-					block_close_ok("/monitor", Some(&format!("{} running", count)));
+					if job_count > 0 {
+						block_line(
+							&"MCP jobs report completion automatically; current output is a bounded snapshot."
+								.dimmed()
+								.to_string(),
+						);
+					}
+					if monitor_count > 0 {
+						block_line(
+							&"Stop a monitor by asking the agent; monitors also end with the session."
+								.dimmed()
+								.to_string(),
+						);
+					}
+					block_close_ok("/monitor", Some(&format!("{} active", total)));
 					println!();
 				}
 			}

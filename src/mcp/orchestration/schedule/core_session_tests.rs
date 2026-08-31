@@ -120,6 +120,7 @@ async fn test_is_session_idle_walks_every_busy_source() {
 		// Pending watched shell job keeps the session busy.
 		crate::session::shell_jobs::register_for_session(
 			"sched-idle-probe",
+			"test-mcp",
 			"file:///tmp/sched-idle-job",
 			"job",
 		);

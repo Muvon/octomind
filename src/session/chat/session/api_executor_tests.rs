@@ -277,6 +277,7 @@ async fn pending_async_work_allows_progressing_handback() {
 		crate::session::context::init_session_services("assistant");
 		crate::session::shell_jobs::register_for_session(
 			&session_id,
+			"test-mcp",
 			"job://test",
 			"cargo test --lib",
 		);

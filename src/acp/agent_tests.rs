@@ -118,6 +118,7 @@ async fn graceful_shutdown_waits_for_pending_work_in_every_session() {
 	}
 	crate::session::shell_jobs::register_for_session(
 		&busy_session,
+		"test-mcp",
 		"job://coverage",
 		"cargo test --workspace",
 	);

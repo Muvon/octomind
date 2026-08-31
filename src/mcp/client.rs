@@ -371,6 +371,29 @@ pub fn get(server_name: &str) -> Option<Arc<McpService>> {
 	CLIENTS.read().unwrap().get(server_name).cloned()
 }
 
+/// Read all text contents for one resource from an already-connected MCP
+/// server. URI schemes are intentionally opaque: ownership comes from the
+/// server that returned the `ResourceLink`, not from parsing the URI.
+pub async fn read_resource_text(server_name: &str, uri: &str) -> Result<String> {
+	let service = get(server_name)
+		.filter(|service| !service.is_closed())
+		.ok_or_else(|| anyhow!("MCP connection '{server_name}' is not active"))?;
+	let result = service
+		.peer()
+		.read_resource(rmcp::model::ReadResourceRequestParams::new(uri.to_string()))
+		.await
+		.map_err(|error| anyhow!("resources/read failed for '{uri}': {error}"))?;
+	Ok(result
+		.contents
+		.into_iter()
+		.filter_map(|content| match content {
+			rmcp::model::ResourceContents::TextResourceContents { text, .. } => Some(text),
+			_ => None,
+		})
+		.collect::<Vec<_>>()
+		.join("\n"))
+}
+
 /// True when a connection exists and its service loop is still running.
 pub fn is_connected(server_name: &str) -> bool {
 	get(server_name).map(|s| !s.is_closed()).unwrap_or(false)
@@ -1215,7 +1238,7 @@ pub async fn call_tool(
 				// batch's later result-processing closes the race where a fast
 				// job completes before its link is registered and the completion
 				// is dropped.
-				crate::session::shell_jobs::note_watched_from_result(&result);
+				crate::session::shell_jobs::note_watched_from_result(server.name(), &result);
 				// Upgrade delivery to a subscriptions/listen stream where the
 				// server supports it (2026-07-28). Established before the result
 				// is returned so the stream is active before the job can exit.

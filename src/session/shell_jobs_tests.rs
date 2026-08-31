@@ -58,9 +58,15 @@ fn watch_complete_pending_and_labels_roundtrip() {
 
 	let a = "octofs://jobs/a-1";
 	let b = "octofs://jobs/a-2";
-	register_for_session(sid, a, "shell: make reldebug");
-	register_for_session(sid, b, "shell: run tests");
+	register_for_session(sid, "octofs", a, "shell: make reldebug");
+	register_for_session(sid, "octofs", b, "shell: run tests");
 	assert!(has_pending_for_session(sid));
+	let pending = pending_resources_for_session(sid);
+	assert_eq!(pending.len(), 2);
+	assert!(pending.iter().all(|job| job.server_name == "octofs"));
+	assert!(pending.iter().all(|job| !job.delivering));
+	assert_eq!(pending[0].uri, a);
+	assert_eq!(pending[1].uri, b);
 	assert!(is_watched_for_session(sid, a));
 	assert!(!is_watched_for_session(sid, "octofs://jobs/never"));
 	assert!(begin_delivery_for_session(sid, a));
@@ -144,7 +150,7 @@ fn assert_no_event_for(
 async fn completing_a_watched_resource_publishes_an_event() {
 	let sid = "shell-jobs-events-complete-session";
 	clear_for_session(sid);
-	register_for_session(sid, "octofs://jobs/ev-1", "shell: build");
+	register_for_session(sid, "octofs", "octofs://jobs/ev-1", "shell: build");
 	let mut events = subscribe_events();
 
 	assert!(complete_for_session(sid, "octofs://jobs/ev-1"));
@@ -166,7 +172,7 @@ async fn completing_a_watched_resource_publishes_an_event() {
 async fn clearing_a_session_publishes_one_cleared_event() {
 	let sid = "shell-jobs-events-clear-session";
 	clear_for_session(sid);
-	register_for_session(sid, "octofs://jobs/ev-2", "shell: test");
+	register_for_session(sid, "octofs", "octofs://jobs/ev-2", "shell: test");
 	let mut events = subscribe_events();
 
 	clear_for_session(sid);

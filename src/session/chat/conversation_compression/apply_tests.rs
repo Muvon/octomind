@@ -634,6 +634,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 	let session_id = "apply-jobs-unit".to_string();
 	crate::session::shell_jobs::register_for_session(
 		&session_id,
+		"test-mcp",
 		"file:///tmp/watched",
 		"watch the build",
 	);

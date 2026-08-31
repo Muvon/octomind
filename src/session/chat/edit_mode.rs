@@ -106,6 +106,14 @@ impl EmacsWithShortcutHelp {
 /// silently drop the actual video. Falls back to the clipboard image otherwise.
 /// Returns `None` if nothing usable is on the clipboard.
 fn try_capture_clipboard() -> Option<PendingClipboardItem> {
+	// Tests only exercise the no-blob fall-through. The real probe spawns
+	// `osascript` and opens NSPasteboard on macOS — off the main thread and
+	// concurrent with env-mutating tests that's a SIGSEGV (pasteboard/objc off
+	// the main thread; posix_spawn racing setenv over `environ`).
+	if cfg!(test) {
+		return None;
+	}
+
 	if let Some(video) = try_capture_clipboard_video() {
 		return Some(PendingClipboardItem::Video(video));
 	}

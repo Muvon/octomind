@@ -10,9 +10,7 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 |-------|------|---------|-------------|
 | `version` | u32 | `1` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
-| `model` | string | `"openrouter:anthropic/claude-sonnet-4"` | Default model in `provider:model` format |
 | `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run`. See note below. |
-| `max_tokens` | u32 | `16384` | Global max tokens for all operations |
 | `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
@@ -20,16 +18,28 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
+## `[model]`
+
+The complete main model profile and inheritance baseline. Every model override uses the same fields; omitted override fields inherit from this table.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | `"octohub:auto"` | Provider-qualified model identifier |
+| `reasoning_effort` | enum | `"medium"` | `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` |
+| `max_tokens` | u32 | `32768` | Maximum output tokens; `0` uses provider behavior |
+| `temperature` | f32 | `0.3` | Sampling temperature, 0.0-2.0 |
+| `top_p` | f32 | `0.7` | Nucleus sampling, 0.0-1.0 |
+| `top_k` | u32 | `20` | Top-k limit, 0-1000; `0` disables it |
+| `max_retries` | u32 | `1` | Provider retry attempts |
+| `retry_timeout` | u64 | `30` | Exponential-backoff base in seconds |
+| `request_timeout_seconds` | u64 | `300` | Hard timeout for one provider request; `0` is unlimited |
+
 ## Performance & Limits
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mcp_response_tokens_threshold` | usize | `20000` | Hard limit on MCP response tokens. Responses truncated when exceeded. `0` = unlimited. |
 | `max_session_tokens_threshold` | usize | `200000` | Max tokens per session before truncation. Also acts as the **hard compression ceiling** and the denominator for context-pressure hints (see `[compression]`). `0` = disabled. Validation fails if `> 2,000,000`. |
-| `max_retries` | u32 | `1` | Retry attempts for API calls. |
-| `retry_timeout` | u32 | `30` | Base timeout in seconds for exponential backoff. |
-| `request_timeout_seconds` | u32 | `300` | Per-request HTTP timeout in seconds. Hard limit on LLM provider API calls. `0` = no timeout. |
-| `reasoning_effort` | enum | `"medium"` | Thinking model effort: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Non-thinking models ignore it. Mirrored at runtime by the `/effort <level>` session command. |
 | `cache_keepalive_enabled` | bool | `false` | Keep prompt cache warm with periodic pings while the session idles. Provider-aware: currently **only Anthropic** is pinged, and the ping interval comes from the provider's cache TTL (1h), not from this config. |
 | `cache_keepalive_max_idle_seconds` | u64 | `1800` | Stop pinging this many seconds after last user activity. `0` = ping until session ends. Validation fails if `> 86400` (24h). |
 ## User Interface
@@ -54,20 +64,23 @@ Empty by default. Each key maps to a provider TOML file within the tap's `capabi
 
 ## `[taps]`
 
-Map of tap agent tag to model override. Set a preferred model for specific tap agents.
+Map of tap agent tag to a partial model profile. Every omitted field inherits from `[model]`.
 
 ```toml
-[taps]
-"developer:general" = "ollama:glm-5"
-"octomind:assistant" = "openai:gpt-4o"
+[taps."developer:general".model]
+name = "ollama:glm-5"
+
+[taps."octomind:assistant".model]
+name = "openai:gpt-4o"
+reasoning_effort = "high"
 ```
 
-**Priority (highest wins):** CLI `--model` > the active role's `model` > root `config.model` (resolved in `src/session/chat/session/core.rs`). For a tap agent, a `[taps]` entry overrides the `config.model` tier:
+**Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap profile > `[model]`.
 1. `--model` CLI flag (if provided)
 2. The `model` the agent's role/manifest declares (for `developer:general`, the manifest's role model)
-3. Global `model` in config — which a `[taps]` entry for `"developer:general"` replaces when set
+3. Main `[model]` profile — overlaid by the matching tap profile when present
 
-`[taps]` only applies to tap agents (tags with `:`); it acts at the `config.model` tier, so it takes effect only when neither `--model` nor the agent's role sets a model. Plain role names use their `[[roles]]` `model` if set, otherwise `config.model`.
+`[taps]` only applies to tap agents (tags with `:`). Plain roles resolve `[roles.model]` directly against `[model]`.
 
 ## `[[roles]]`
 
@@ -76,12 +89,12 @@ Define custom roles that override or extend tap-provided agents.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Role identifier (e.g., `"developer"`, `"assistant"`) |
-| `model` | string | no | Model override for this role (`provider:model` format) |
 | `system` | string | no | System prompt. Supports template variables. |
 | `welcome` | string | no | Welcome message shown on session start. Supports template variables. |
-| `temperature` | f64 | no | Sampling temperature (0.0-2.0) |
-| `top_p` | f64 | no | Nucleus sampling (0.0-1.0) |
-| `top_k` | u32 | no | Top-k token limit (1-1000) |
+
+### `[roles.model]`
+
+Optional partial model profile for the role. It accepts every field from `[model]`; unspecified fields inherit from main.
 
 ### `[roles.mcp]`
 
@@ -95,14 +108,15 @@ MCP configuration for the role.
 ```toml
 [[roles]]
 name = "assistant"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
 """
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
+
+[roles.model]
+name = "openai:gpt-5"
+reasoning_effort = "high"
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -294,19 +308,21 @@ Automatic context compression system.
 | `threshold` | usize | `70000` | Single compression trigger in absolute tokens; `0` disables compression |
 
 > **Depth is computed, not configured.** Once context exceeds `threshold`, how deep each compression goes is derived per cycle from the measured session growth rate and the context ceiling — the lower of `max_session_tokens_threshold` (see Performance & Limits) and the session model's usable window. The derived ratio always lands in [2.0, 16.0].
-### `[compression.decision]`
+### `[compression.model]`
 
 Model used for compression decisions and summary generation.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | string | `"openai:gpt-5-mini"` | Fast, cheap model recommended |
+| `name` | string | `"octohub:auto"` | Fast, cheap model recommended |
+| `reasoning_effort` | enum | `"medium"` | Thinking effort override |
 | `max_tokens` | u32 | `16000` | Max tokens for decision + summary |
 | `temperature` | f64 | `0.3` | Lower = more consistent decisions |
 | `top_p` | f64 | `1.0` | Nucleus sampling |
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
 | `max_retries` | u32 | `1` | Retry attempts |
 | `retry_timeout` | u64 | `30` | Retry backoff base (seconds) |
+| `request_timeout_seconds` | u64 | `300` | Hard timeout for one request; `0` is unlimited |
 
 ```toml
 [compression]
@@ -314,14 +330,16 @@ knowledge_retention = 25
 analysis_findings_max_tokens = 6000
 threshold = 70000
 
-[compression.decision]
-model = "openai:gpt-5-mini"
+[compression.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
 max_tokens = 16000
 temperature = 0.3
 top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
+request_timeout_seconds = 300
 ```
 
 ## `[supervisor]`
@@ -333,7 +351,9 @@ Deterministic detectors (loop / no-progress / failed-check recovery), goal recit
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch for the whole control plane |
-| `model` | string | `"octohub:auto"` | Shared cheap model for supervisor mechanics (a mechanic may override) |
+### `[supervisor.model]`
+
+Optional partial profile shared by every supervisor mechanic: gate, resolve, plan, condense, extraction, recall, retention, verification, and evolution. It accepts every field from `[model]`; omitted fields inherit main. Omitting the entire block uses `[model]` unchanged.
 
 ### `[supervisor.learning]`
 
@@ -342,14 +362,13 @@ Cross-session adaptive learning. Extracts lessons and orientation memory (durabl
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the learning system (lessons + orientation) |
-| `model` | string | `"octohub:auto"` | Model for extraction and retrieval LLM calls |
 
 ### `[supervisor.learning.evolution]`
 
 Optional grounded behavior evolution. When enabled, newly stored quote-backed
 rules and verified experiences may produce scoped native skill or guardrail
-candidates. Synthesis uses `supervisor.learning.model`; independent admission
-uses `supervisor.gate.verifier_model`. Both must enforce structured output.
+candidates. Synthesis and admission both use the single `[supervisor.model]`
+profile, which must support structured output.
 Thresholds and trial limits are fixed internal constants.
 
 | Field | Type | Default | Description |
@@ -363,8 +382,6 @@ Verify-gate on self-reported completion. Free deterministic pre-gates run first 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
-| `verifier_model` | string | supervisor `model` | Model the gate verifies with. Recommended: a **different family** than the agent model — a same-family verifier inherits the same blind spots |
-| `max_tokens` | u32 | `8192` | Maximum verifier output tokens; also bounds the assembled turn deliverable supplied to it |
 
 ### `[supervisor.plan]`
 
@@ -373,7 +390,6 @@ Adaptive external plan manager. The specialist has no plan mutation tool; a spar
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable adaptive external planning |
-| `model` | string | `octohub:auto` | Model used for the single structured plan decision |
 
 ### `[supervisor.condense]`
 
@@ -383,33 +399,37 @@ Task-aware narrowing of oversized plain-text tool outputs. A result whose own ou
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable condensation |
 | `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens of that single result); `0` = off. Keep well below `mcp_response_tokens_threshold` |
-| `model` | string | `anthropic:claude-haiku-4-5` | Model that does the narrowing (cheap + fast recommended) |
 
 ```toml
 [supervisor]
 enabled = true
-model = "octohub:auto"
+
+[supervisor.model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 8192
+temperature = 0.0
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 
 [supervisor.learning]
 enabled = true
-model = "octohub:auto"
 
 [supervisor.learning.evolution]
 enabled = false
 
 [supervisor.gate]
 enabled = true
-verifier_model = "octohub:auto"
-max_tokens = 8192
 
 [supervisor.plan]
 enabled = true
-model = "octohub:auto"
 
 [supervisor.condense]
 enabled = true
 tokens_threshold = 5000
-model = "anthropic:claude-haiku-4-5"
 ```
 
 ## `[registry]`

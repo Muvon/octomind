@@ -172,6 +172,7 @@ pub struct CompressionConfig {
 	pub threshold: usize,
 	/// Decision model configuration for compression decisions and summary generation
 	/// Use a fast, cheap model like Haiku for cost savings (10x cheaper than Sonnet)
+	#[serde(default)]
 	pub model: CompressionDecisionConfig,
 	/// Maximum number of critical knowledge entries to retain across compressions.
 	/// Each compression may extract a short knowledge snippet; only the last N are kept.

@@ -209,21 +209,23 @@ The DSL is richer than competitor lifecycle hooks: capability+arg-regex+history+
 Pick the right model for each step. A cheap one for routine research, a frontier one for review — per-role, per-step, mid-session swap. Real-time cost tracking and hard spending caps come for free.
 
 ```toml
-# Per-role model selection — pay Opus only where it's worth it
-[[roles]]
-name = "researcher"
-model = "openrouter:google/gemini-2.5-flash"   # cheap broad context
-
-[[roles]]
-name = "reviewer"
-model = "anthropic:claude-opus-4-7"            # precision where it counts
-
 # Hard spending limits — enforced, not advisory
 max_request_spending_threshold = 0.50    # USD per request
 max_session_spending_threshold = 5.00    # USD per session
+
+# Per-role model selection — pay Opus only where it's worth it
+[[roles]]
+name = "researcher"
+[roles.model]
+name = "openrouter:google/gemini-2.5-flash"   # cheap broad context
+
+[[roles]]
+name = "reviewer"
+[roles.model]
+name = "anthropic:claude-opus-4-7"            # precision where it counts
 ```
 
-- Per-role and per-layer model selection across many providers — OpenRouter, OpenAI, Anthropic, Google, DeepSeek, Amazon Bedrock, Cloudflare, and more — via [octolib](https://github.com/muvon/octolib). Different roles can run on different vendors; new providers added there become available in Octomind automatically. See [Providers & Models](doc/usage/04-providers.md) for the current list and supported models.
+- Per-role and per-workflow-step model selection across many providers — OpenRouter, OpenAI, Anthropic, Google, DeepSeek, Amazon Bedrock, Cloudflare, and more — via [octolib](https://github.com/muvon/octolib). Different roles can run on different vendors; new providers added there become available in Octomind automatically. See [Providers & Models](doc/usage/04-providers.md) for the current list and supported models.
 - Mid-session model swap with `/model anthropic:claude-haiku-4-5`. Mix providers across roles — cheap model for research, best model for execution. Cost tracked separately per provider.
 - Real-time cost tracking per request and per session.
 - Cache-aware token accounting (`cache_read_tokens`, `cache_write_tokens` separated from input/output).
@@ -392,18 +394,19 @@ Drop executable shebang scripts into `<workdir>/.agents/tools/` and they're auto
 For most users, taps are enough. For teams and power users, the configuration system is deep — **all TOML, no code**.
 
 ```toml
+# Sandbox — lock all writes to current directory
+sandbox = true
+
 # Per-role: independent model, temperature, MCP servers, tools, system prompt
 [[roles]]
 name = "senior-reviewer"
-model = "anthropic:claude-opus-4-7"
+[roles.model]
+name = "anthropic:claude-opus-4-7"
 temperature = 0.2
 [roles.mcp]
 server_refs = ["filesystem", "github"]
 # view/ast_grep are octofs (filesystem) tools; create_pr comes from the github MCP server
 allowed_tools = ["view", "ast_grep", "create_pr"]
-
-# Sandbox — lock all writes to current directory
-sandbox = true
 ```
 
 ```bash
@@ -456,7 +459,7 @@ cargo build --release
 octomind login
 ```
 
-Device-code sign-in (like `gh auth login`). This mints an octohub gateway key locally — the default config already routes every request through it (`model = "octohub:auto"`), so you're done. Learn more: [octomind.run/cloud](https://octomind.run/cloud).
+Device-code sign-in (like `gh auth login`). This mints an octohub gateway key locally — the default config already routes every request through it (`[model] name = "octohub:auto"`), so you're done. Learn more: [octomind.run/cloud](https://octomind.run/cloud).
 
 **Option B — bring your own keys.** Octomind is fully open source and works standalone with any provider:
 
@@ -470,7 +473,7 @@ export ANTHROPIC_API_KEY="your_key"
 export DEEPSEEK_API_KEY="your_key"
 ```
 
-Add to `~/.bashrc` or `~/.zshrc` for persistence. Not signed in is a normal state, not an error — then set `model = "openrouter:..."` (or any provider) in your config.
+Add to `~/.bashrc` or `~/.zshrc` for persistence. Not signed in is a normal state, not an error — then set `[model] name = "openrouter:..."` (or any provider) in your config.
 
 ### Verify
 

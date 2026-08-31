@@ -42,7 +42,7 @@ async fn acp_stdio_child_fixture() {
 		return;
 	};
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	let result = run(config, "assistant".to_string(), Default::default()).await;
 	result.expect("acp run completes cleanly on stdin EOF");
 }

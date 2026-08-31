@@ -167,8 +167,8 @@ async fn extraction_stores_verified_long_lived_experience_end_to_end() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	let messages = vec![
 		message("user", "never silently switch the resolved model"),
 		message(
@@ -234,8 +234,8 @@ async fn rejected_experience_gets_one_grounded_repair_then_stores() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	let messages = vec![
 		message("user", &"preserve provider identity ".repeat(20)),
 		message("tool", &"provider continuation evidence ".repeat(30)),
@@ -286,8 +286,8 @@ async fn failed_trajectory_is_retained_only_as_failed_experience() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	let messages = vec![
 		message(
 			"user",
@@ -443,14 +443,9 @@ async fn live_curated_trajectory_produces_grounded_experience() {
 	let system = format!(
 			"{EXPERIENCE_SECTION}\n\n# Existing short memories\n(none)\n\n# Runtime trajectory outcome\nThe external verify-gate outcome is `verified`. Preserve this label exactly; never infer a stronger result from transcript prose."
 		);
-	let response = call_extraction_llm(
-		&config,
-		&config.supervisor.learning.model,
-		system,
-		transcript.clone(),
-	)
-	.await
-	.expect("dedicated experience learner responds");
+	let response = call_extraction_llm(&config, system, transcript.clone())
+		.await
+		.expect("dedicated experience learner responds");
 	println!("RAW EXPERIENCE RESPONSE:\n{response}");
 	let experience = parse_experience_tag(
 		&response,
@@ -987,8 +982,8 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.evolution.enabled = false;
 
 	// No tool turn: the experience value gate stays closed, so exactly one
@@ -1054,8 +1049,8 @@ async fn learn_path_rejects_fabricated_evidence_entirely() {
 	let url = spawn_stub(vec![final_response(response)]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 	let messages = vec![message("user", "an unrelated real user turn")];
 	let stored = run_extraction(
@@ -1100,8 +1095,8 @@ async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 	let messages = vec![message("user", "verbatim user quote survives the gate")];
 	let stored = run_extraction(
@@ -1158,8 +1153,8 @@ async fn duplicate_experience_trajectory_is_skipped() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 	let messages = vec![
 		message("user", "never silently switch the resolved model"),
@@ -1250,21 +1245,16 @@ async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 fn purpose_for_maps_every_call_kind_to_its_routing_purpose() {
 	use crate::providers::ModelPurpose;
 	use crate::supervisor::stats::CallKind;
-	assert_eq!(purpose_for(CallKind::Gate), ModelPurpose::SupervisorGate);
-	assert_eq!(purpose_for(CallKind::Resolve), ModelPurpose::SupervisorGate);
-	assert_eq!(purpose_for(CallKind::Plan), ModelPurpose::SupervisorGate);
-	assert_eq!(
-		purpose_for(CallKind::Condense),
-		ModelPurpose::SupervisorCondense
-	);
-	assert_eq!(
-		purpose_for(CallKind::Distill),
-		ModelPurpose::SupervisorDistill
-	);
-	assert_eq!(
-		purpose_for(CallKind::Recall),
-		ModelPurpose::SupervisorRecall
-	);
+	for kind in [
+		CallKind::Gate,
+		CallKind::Resolve,
+		CallKind::Plan,
+		CallKind::Condense,
+		CallKind::Distill,
+		CallKind::Recall,
+	] {
+		assert_eq!(purpose_for(kind), ModelPurpose::Supervisor);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,8 +1277,8 @@ fn big_tool_messages() -> Vec<crate::session::Message> {
 
 fn learning_config() -> crate::config::Config {
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.evolution.enabled = false;
 	config
 }
@@ -1807,7 +1797,7 @@ async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
 	// boundary itself must still return a handle.
 	let mut config = learning_config();
 	config.supervisor.learning.enabled = true;
-	config.supervisor.learning.model = "nope:no-such-provider".to_string();
+	config.supervisor.model.model = Some("nope:no-such-provider".to_string());
 	let handle = spawn_lesson_extraction_snapshot(
 		vec![message("user", "hello")],
 		&config,

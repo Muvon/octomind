@@ -23,29 +23,28 @@ fn adaptive_config(enabled: bool) -> crate::supervisor::CondenseConfig {
 		enabled: true,
 		adaptive: enabled,
 		tokens_threshold: 5_000,
-		model: "test:model".to_string(),
 	}
 }
 
 #[test]
 fn adaptive_threshold_starts_neutral_and_moves_with_realized_savings() {
-	let mut strong = AdaptiveThresholdState::new(5_000, "test:model");
+	let mut strong = AdaptiveThresholdState::new(5_000);
 	assert_eq!(strong.threshold(), 5_000);
 	strong.observe(10_000, 10_000);
 	assert!(strong.threshold() < 5_000);
 
-	let mut weak = AdaptiveThresholdState::new(5_000, "test:model");
+	let mut weak = AdaptiveThresholdState::new(5_000);
 	weak.observe(10_000, 0);
 	assert!(weak.threshold() > 5_000);
 
-	let mut neutral = AdaptiveThresholdState::new(5_000, "test:model");
+	let mut neutral = AdaptiveThresholdState::new(5_000);
 	neutral.observe(10_000, 5_000);
 	assert_eq!(neutral.threshold(), 5_000);
 }
 
 #[test]
 fn adaptive_threshold_cannot_escape_half_to_double_baseline() {
-	let mut state = AdaptiveThresholdState::new(5_000, "test:model");
+	let mut state = AdaptiveThresholdState::new(5_000);
 	for _ in 0..1_000 {
 		state.observe(10_000, 10_000);
 	}
@@ -59,7 +58,7 @@ fn adaptive_threshold_cannot_escape_half_to_double_baseline() {
 
 #[test]
 fn skipped_baseline_candidates_relax_a_raised_threshold_for_reprobe() {
-	let mut state = AdaptiveThresholdState::new(5_000, "test:model");
+	let mut state = AdaptiveThresholdState::new(5_000);
 	state.observe(10_000, 0);
 	let raised = state.threshold();
 	assert!(raised > 5_000);
@@ -401,7 +400,6 @@ async fn live_condense_eval() {
 		let (_tx, rx) = tokio::sync::watch::channel(false);
 		let response = crate::supervisor::learning::extract::call_learning_llm(
 			&config,
-			&config.supervisor.condense.model.clone(),
 			SYSTEM_PROMPT.to_string(),
 			user,
 			crate::supervisor::stats::CallKind::Condense,

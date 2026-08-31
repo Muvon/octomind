@@ -320,10 +320,7 @@ fn dyn_agent(name: &str) -> crate::mcp::runtime::dynamic_agents::DynamicAgentCon
 		description: "test agent".to_string(),
 		system: "you are a test".to_string(),
 		welcome: String::new(),
-		model: None,
-		temperature: None,
-		top_p: None,
-		top_k: None,
+		model: Default::default(),
 		server_refs: Vec::new(),
 		allowed_tools: Vec::new(),
 		workdir: ".".to_string(),
@@ -417,7 +414,7 @@ fn build_agent_config_resolves_refs_filters_tools_and_overrides_model() {
 	let mut agent = dyn_agent("withrefs");
 	agent.server_refs = vec!["alpha".to_string()];
 	agent.allowed_tools = vec!["alpha:tool_a".to_string()];
-	agent.model = Some("openai:gpt-4o".to_string());
+	agent.model.model = Some("openai:gpt-4o".to_string());
 	let merged = build_agent_config(&agent, &base);
 	let names: Vec<&str> = merged.mcp.servers.iter().map(|s| s.name()).collect();
 	assert_eq!(

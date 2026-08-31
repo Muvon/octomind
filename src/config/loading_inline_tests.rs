@@ -95,7 +95,7 @@ fn test_role_parsing() {
 	// Test get_role_config for custom role
 	let (role_config, mcp_config, _, _, _) = config.get_role_config("tester");
 	// Verify role config structure is valid
-	assert_eq!(role_config.temperature, 0.7);
+	assert_eq!(role_config.model_override().temperature, Some(0.7));
 	assert_eq!(mcp_config.server_refs, vec!["test_server", "clt"]);
 
 	// Test get_merged_config_for_mode for custom role
@@ -427,7 +427,7 @@ fn test_max_tokens_inheritance() {
 	let (role_config, _, _, _, _) = config.get_role_config("tester");
 	// This test verifies the refactoring where max_tokens was moved from RoleConfig to system-wide
 	// We verify role config is valid by checking its temperature field
-	assert_eq!(role_config.temperature, 0.7);
+	assert_eq!(role_config.model_override().temperature, Some(0.7));
 	// Verify developer role exists in config
 	assert!(config.role_map.contains_key("developer"));
 }

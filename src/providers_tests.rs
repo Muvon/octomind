@@ -22,19 +22,7 @@ fn test_model_purpose_contract_strings() {
 	assert_eq!(MODEL_PURPOSE_HEADER, "X-Model-Purpose");
 	assert_eq!(ModelPurpose::Main.as_str(), "main");
 	assert_eq!(ModelPurpose::Compression.as_str(), "compression");
-	// Supervisor purposes share the `supervisor-` prefix ON PURPOSE: octohub
-	// resolves hierarchically on `-`, so one `supervisor` map row covers all
-	// of these until a specific one is pinned.
-	assert_eq!(ModelPurpose::SupervisorGate.as_str(), "supervisor-gate");
-	assert_eq!(
-		ModelPurpose::SupervisorCondense.as_str(),
-		"supervisor-condense"
-	);
-	assert_eq!(
-		ModelPurpose::SupervisorDistill.as_str(),
-		"supervisor-distill"
-	);
-	assert_eq!(ModelPurpose::SupervisorRecall.as_str(), "supervisor-recall");
+	assert_eq!(ModelPurpose::Supervisor.as_str(), "supervisor");
 	// Untagged calls are MAIN traffic — session turns must never silently
 	// become something a cheaper purpose route would catch.
 	assert_eq!(ModelPurpose::default(), ModelPurpose::Main);

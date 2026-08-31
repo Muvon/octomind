@@ -712,7 +712,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// earlier part of the same turn.
 		let result = current_turn_answer(
 			&chat_session.turn_answers,
-			config.supervisor.gate.max_tokens as usize,
+			config.get_supervisor_model_profile().max_tokens as usize,
 		);
 		let result = if result.is_empty() {
 			chat_session.last_response.clone()

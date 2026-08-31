@@ -94,13 +94,13 @@ fn validate_layers_empty_description_fails() {
 }
 
 #[test]
-fn enabled_external_planner_requires_a_model() {
+fn enabled_supervisor_requires_a_model() {
 	let mut config = template_config();
-	config.supervisor.plan.model.clear();
-	assert!(config.validate_supervisor_plan().is_err());
+	config.supervisor.model.model = Some(String::new());
+	assert!(config.validate_model_profiles().is_err());
 
-	config.supervisor.plan.enabled = false;
-	assert!(config.validate_supervisor_plan().is_ok());
+	config.supervisor.enabled = false;
+	assert!(config.validate_model_profiles().is_ok());
 }
 use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
 
@@ -117,12 +117,17 @@ fn role_with(name: &str, temperature: f32, top_p: f32, top_k: u32) -> Role {
 	Role {
 		name: name.to_string(),
 		config: RoleConfig {
-			model: None,
+			model: crate::config::ModelProfileOverride {
+				temperature: Some(temperature),
+				top_p: Some(top_p),
+				top_k: Some(top_k),
+				..Default::default()
+			},
 			system: "system prompt".to_string(),
 			welcome: "welcome".to_string(),
-			temperature,
-			top_p,
-			top_k,
+			temperature: None,
+			top_p: None,
+			top_k: None,
 		},
 		mcp: Default::default(),
 	}
@@ -343,42 +348,42 @@ fn mcp_validation_accepts_boundary_timeouts_and_every_server_kind() {
 fn compression_model_check_skips_when_compression_is_disabled() {
 	let mut config = template_config();
 	config.compression.threshold = 0;
-	config.compression.decision.model.clear();
+	config.compression.model.model = Some(String::new());
 	config
-		.validate_compression_model()
+		.validate_model_profiles()
 		.expect("threshold 0 means there is no compression call to validate");
 }
 
 #[test]
 fn compression_model_check_requires_a_resolvable_model() {
 	let mut config = template_config();
-	let shipped = config.compression.decision.model.clone();
-	config.compression.decision.model.clear();
-	let error = config.validate_compression_model().unwrap_err().to_string();
+	let shipped = config.get_compression_model_profile().model;
+	config.compression.model.model = Some(String::new());
+	let error = config.validate_model_profiles().unwrap_err().to_string();
 	assert!(
-		error.contains("compression.decision.model is empty"),
+		error.contains("compression.model.name cannot be empty"),
 		"got: {error}"
 	);
 
-	config.compression.decision.model = "not-a-provider:model".to_string();
-	let error = config.validate_compression_model().unwrap_err().to_string();
+	config.compression.model.model = Some("not-a-provider:model".to_string());
+	let error = config.validate_model_profiles().unwrap_err().to_string();
 	assert!(
-		error.contains("compression.decision.model 'not-a-provider:model' is invalid"),
+		error.contains("compression.model.name 'not-a-provider:model' is invalid"),
 		"got: {error}"
 	);
 
-	config.compression.decision.model = shipped;
+	config.compression.model.model = Some(shipped);
 	config
-		.validate_compression_model()
+		.validate_model_profiles()
 		.expect("the shipped decision model must resolve");
 }
 
 #[test]
-fn supervisor_plan_model_is_not_required_when_the_supervisor_is_off() {
+fn supervisor_model_is_not_required_when_the_supervisor_is_off() {
 	let mut config = template_config();
-	config.supervisor.plan.model.clear();
+	config.supervisor.model.model = Some(String::new());
 	config.supervisor.enabled = false;
 	config
-		.validate_supervisor_plan()
+		.validate_model_profiles()
 		.expect("a disabled supervisor never runs the planner");
 }

@@ -182,6 +182,7 @@ pub struct SupervisorConfig {
 	/// Master switch for the whole control plane.
 	pub enabled: bool,
 	/// One shared profile for gate, resolve, plan, and condense.
+	#[serde(default)]
 	pub model: crate::config::ModelProfileOverride,
 	/// Cross-session learning mechanic (distill + recall + orientation).
 	pub learning: learning::LearningConfig,

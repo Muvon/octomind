@@ -779,8 +779,8 @@ mod verify_round_trip {
 
 	fn gate_config() -> Config {
 		let mut config = fake_provider_config();
-		config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
-		config.supervisor.model = "ollama:fake-model".to_string();
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 		config
 	}
 
@@ -839,7 +839,7 @@ mod verify_round_trip {
 	async fn an_unresolvable_verifier_model_is_an_explicit_indeterminate() {
 		let (_tx, rx) = rx();
 		let mut config = gate_config();
-		config.supervisor.gate.verifier_model = "nope:nope".to_string();
+		config.supervisor.model.model = Some("nope:nope".to_string());
 		let verdict = verify(&config, input(&[], &[]), rx).await;
 		assert!(
 			matches!(verdict, GateVerdict::Indeterminate(_)),

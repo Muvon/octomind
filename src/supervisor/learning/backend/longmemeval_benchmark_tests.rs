@@ -142,8 +142,7 @@ async fn rewrite(
 	let started = Instant::now();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let result =
-		crate::supervisor::learning::inject::prepare_retrieval_query(config, query, model, rx)
-			.await;
+		crate::supervisor::learning::inject::prepare_retrieval_query(config, query, rx).await;
 	stats.latency_ms += started.elapsed().as_millis();
 	stats.calls += 1;
 	match result {
@@ -298,9 +297,10 @@ async fn compact_longmemeval_oracle_retrieval() {
 		}
 	}
 	let lessons: Vec<Lesson> = sessions.into_values().collect();
-	let config = crate::config::Config::load().expect("real config loads");
+	let mut config = crate::config::Config::load().expect("real config loads");
 	let model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.supervisor.learning.model.clone());
+		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	config.supervisor.model.model = Some(model.clone());
 	let cache_path = PathBuf::from("target/learning-benchmark/longmemeval-rewrite-cache.json");
 	let mut cache = load_cache(&cache_path);
 	let mut rewrite_stats = RewriteStats::default();

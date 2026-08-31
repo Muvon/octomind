@@ -746,10 +746,10 @@ async fn test_supervised_turn_survives_scripted_control_plane() {
 
 	let mut config = fake_provider_config();
 	config.supervisor.enabled = true;
-	config.supervisor.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.enabled = false;
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = fake_session("do the supervised thing and finish");
 	run_turn(&mut session, &config)
@@ -781,11 +781,11 @@ async fn test_supervised_turn_survives_scripted_control_plane() {
 fn supervised_config() -> Config {
 	let mut config = fake_provider_config();
 	config.supervisor.enabled = true;
-	config.supervisor.model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.gate.enabled = true;
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.enabled = false;
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config
 }
 
@@ -1094,7 +1094,7 @@ async fn test_plan_lifecycle_without_gate_reconciles_and_retires_plan() {
 		let mut config = supervised_config();
 		config.supervisor.gate.enabled = false;
 		config.supervisor.plan.enabled = true;
-		config.supervisor.plan.model = "ollama:fake-model".to_string();
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 		let mut session = fake_session("build the widget end to end");
 		session.completion_gate_eligible = true;
@@ -1161,7 +1161,7 @@ async fn test_learning_injection_builds_active_memory_pack() {
 
 		let mut config = supervised_config();
 		config.supervisor.learning.enabled = true;
-		config.supervisor.learning.model = "ollama:fake-model".to_string();
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 		let mut session = fake_session("push my branch safely");
 		run_turn(&mut session, &config)

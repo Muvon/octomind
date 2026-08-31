@@ -532,8 +532,8 @@ impl Drop for StubEnv {
 /// the scripted stub, so `/done` never reaches a real provider.
 fn ws_fake_config() -> Config {
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
-	config.compression.decision.max_retries = 0;
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+	config.compression.model.max_retries = Some(0);
 	config.supervisor.learning.enabled = false;
 	config
 }

@@ -120,7 +120,7 @@ fn sequential_applies_serde_defaults() {
 	assert_eq!(step.timeout, 0);
 	assert_eq!(step.retries, 0);
 	assert_eq!(step.count, None);
-	assert_eq!(step.model, None);
+	assert_eq!(step.model, Default::default());
 	assert_eq!(step.workdir, None);
 }
 

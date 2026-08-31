@@ -28,14 +28,16 @@ knowledge_retention = 10
 # growth rate and the context ceiling.
 threshold = 70000
 
-[compression.decision]
-model = "openai:gpt-5-mini"
+[compression.model]
+name = "openai:gpt-5-mini"
+reasoning_effort = "medium"
 max_tokens = 16000
 temperature = 0.3
 top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
+request_timeout_seconds = 300
 ```
 
 See [Configuration Reference](../reference/03-config-reference.md#compression) for all fields.
@@ -256,5 +258,5 @@ Net benefit: negative --> SKIP (would cost money)
 - Increase `threshold` values (e.g., 75,000 instead of 50,000)
 
 **Compression not saving money:**
-- Use a cheaper `[compression.decision]` model
+- Use a cheaper `[compression.model]` profile
 - Increase thresholds to compress less frequently

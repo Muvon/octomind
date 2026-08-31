@@ -166,22 +166,20 @@ struct Candidate {
 #[derive(Debug, Clone)]
 struct AdaptiveThresholdState {
 	baseline: usize,
-	model: String,
 	savings_ewma: f64,
 }
 
 impl AdaptiveThresholdState {
-	fn new(baseline: usize, model: &str) -> Self {
+	fn new(baseline: usize) -> Self {
 		Self {
 			baseline,
-			model: model.to_string(),
 			// Neutral prior: the first round uses exactly the configured baseline.
 			savings_ewma: ADAPTIVE_TARGET_SAVINGS,
 		}
 	}
 
 	fn matches(&self, cfg: &crate::supervisor::CondenseConfig) -> bool {
-		self.baseline == cfg.tokens_threshold && self.model == cfg.model
+		self.baseline == cfg.tokens_threshold
 	}
 
 	fn multiplier(&self) -> f64 {
@@ -229,9 +227,9 @@ fn adaptive_threshold(cfg: &crate::supervisor::CondenseConfig) -> usize {
 	let mut registry = adaptive_registry().lock().unwrap();
 	let state = registry
 		.entry(session_id)
-		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold));
 	if !state.matches(cfg) {
-		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold);
 	}
 	state.threshold()
 }
@@ -250,9 +248,9 @@ fn observe_adaptive_round(
 	let mut registry = adaptive_registry().lock().unwrap();
 	let state = registry
 		.entry(session_id)
-		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold));
 	if !state.matches(cfg) {
-		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold);
 	}
 	state.observe(attempted_tokens, saved_tokens);
 	state.threshold()
@@ -268,9 +266,9 @@ fn relax_adaptive_threshold(cfg: &crate::supervisor::CondenseConfig) -> usize {
 	let mut registry = adaptive_registry().lock().unwrap();
 	let state = registry
 		.entry(session_id)
-		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model));
+		.or_insert_with(|| AdaptiveThresholdState::new(cfg.tokens_threshold));
 	if !state.matches(cfg) {
-		*state = AdaptiveThresholdState::new(cfg.tokens_threshold, &cfg.model);
+		*state = AdaptiveThresholdState::new(cfg.tokens_threshold);
 	}
 	state.relax_toward_baseline();
 	state.threshold()

@@ -34,12 +34,17 @@ fn make_role(name: &str, server_refs: Vec<String>, allowed_tools: Vec<String>) -
 	Role {
 		name: name.to_string(),
 		config: RoleConfig {
-			model: None,
+			model: crate::config::ModelProfileOverride {
+				temperature: Some(0.3),
+				top_p: Some(0.7),
+				top_k: Some(20),
+				..Default::default()
+			},
 			system: format!("system prompt for {name}"),
 			welcome: format!("welcome for {name}"),
-			temperature: 0.3,
-			top_p: 0.7,
-			top_k: 20,
+			temperature: None,
+			top_p: None,
+			top_k: None,
 		},
 		mcp: RoleMcpConfig::with_server_refs_and_tools(server_refs, allowed_tools),
 	}

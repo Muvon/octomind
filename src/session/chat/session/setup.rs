@@ -156,7 +156,7 @@ pub async fn setup_and_initialize_session(
 		None
 	};
 
-	if let Err(e) = validate_provider_credentials(effective_model) {
+	if let Err(e) = validate_provider_credentials(&effective_model) {
 		if let Some(sp) = spinner {
 			sp.finish_and_clear();
 			print!("\x1B[2K\r");

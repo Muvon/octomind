@@ -46,13 +46,12 @@ fn close(a: f64, b: f64) -> bool {
 fn config(
 	adaptive: bool,
 	tokens_threshold: usize,
-	model: &str,
+	_model: &str,
 ) -> crate::supervisor::CondenseConfig {
 	crate::supervisor::CondenseConfig {
 		enabled: true,
 		adaptive,
 		tokens_threshold,
-		model: model.to_string(),
 	}
 }
 
@@ -62,25 +61,23 @@ fn config(
 
 #[test]
 fn new_state_carries_neutral_prior() {
-	let state = AdaptiveThresholdState::new(5_000, "test:model");
+	let state = AdaptiveThresholdState::new(5_000);
 	assert_eq!(state.baseline, 5_000);
-	assert_eq!(state.model, "test:model");
 	assert!(close(state.savings_ewma, ADAPTIVE_TARGET_SAVINGS));
 	assert!(close(state.multiplier(), 1.0));
 	assert_eq!(state.threshold(), 5_000);
 }
 
 #[test]
-fn matches_requires_same_baseline_and_model() {
-	let state = AdaptiveThresholdState::new(5_000, "m");
+fn matches_requires_same_baseline() {
+	let state = AdaptiveThresholdState::new(5_000);
 	assert!(state.matches(&config(true, 5_000, "m")));
 	assert!(!state.matches(&config(true, 8_000, "m")));
-	assert!(!state.matches(&config(true, 5_000, "other")));
 }
 
 #[test]
 fn multiplier_maps_savings_log_linearly_and_clamps() {
-	let mut state = AdaptiveThresholdState::new(1_000, "m");
+	let mut state = AdaptiveThresholdState::new(1_000);
 	for (savings, expected) in [(0.5, 1.0), (0.0, 2.0), (1.0, 0.5)] {
 		state.savings_ewma = savings;
 		assert!(close(state.multiplier(), expected), "q={savings}");
@@ -95,13 +92,13 @@ fn multiplier_maps_savings_log_linearly_and_clamps() {
 
 #[test]
 fn threshold_rounds_and_clamps_odd_baselines() {
-	let mut state = AdaptiveThresholdState::new(5, "m");
+	let mut state = AdaptiveThresholdState::new(5);
 	state.savings_ewma = 1.0; // 5 * 0.5 = 2.5 → rounds to 3, floor is div_ceil(5,2)=3
 	assert_eq!(state.threshold(), 3);
 	state.savings_ewma = 0.0; // 5 * 2 = 10
 	assert_eq!(state.threshold(), 10);
 
-	let mut one = AdaptiveThresholdState::new(1, "m");
+	let mut one = AdaptiveThresholdState::new(1);
 	one.savings_ewma = 1.0; // 0.5 → rounds to 1, clamped to [1, 2]
 	assert_eq!(one.threshold(), 1);
 	one.savings_ewma = 0.0;
@@ -110,33 +107,33 @@ fn threshold_rounds_and_clamps_odd_baselines() {
 
 #[test]
 fn observe_ignores_zero_attempted_and_clamps_saved_to_attempted() {
-	let mut state = AdaptiveThresholdState::new(5_000, "m");
+	let mut state = AdaptiveThresholdState::new(5_000);
 	state.observe(0, 9_999);
 	assert!(close(state.savings_ewma, ADAPTIVE_TARGET_SAVINGS));
 
 	state.observe(1_000, 1_000);
 	assert!(close(state.savings_ewma, 0.625)); // 0.5 + 0.25 * (1.0 - 0.5)
 
-	let mut clamped = AdaptiveThresholdState::new(5_000, "m");
+	let mut clamped = AdaptiveThresholdState::new(5_000);
 	clamped.observe(100, 100_000); // saved > attempted is nonsense, not 100%+ savings
-	let mut honest = AdaptiveThresholdState::new(5_000, "m");
+	let mut honest = AdaptiveThresholdState::new(5_000);
 	honest.observe(100, 100);
 	assert!(close(clamped.savings_ewma, honest.savings_ewma));
 }
 
 #[test]
 fn relax_moves_toward_neutral_from_both_sides_and_holds_at_neutral() {
-	let mut high = AdaptiveThresholdState::new(5_000, "m");
+	let mut high = AdaptiveThresholdState::new(5_000);
 	high.savings_ewma = 1.0;
 	high.relax_toward_baseline();
 	assert!(close(high.savings_ewma, 0.95)); // 1.0 + 0.1 * (0.5 - 1.0)
 
-	let mut low = AdaptiveThresholdState::new(5_000, "m");
+	let mut low = AdaptiveThresholdState::new(5_000);
 	low.savings_ewma = 0.0;
 	low.relax_toward_baseline();
 	assert!(close(low.savings_ewma, 0.05));
 
-	let mut neutral = AdaptiveThresholdState::new(5_000, "m");
+	let mut neutral = AdaptiveThresholdState::new(5_000);
 	neutral.relax_toward_baseline();
 	assert!(close(neutral.savings_ewma, ADAPTIVE_TARGET_SAVINGS));
 }

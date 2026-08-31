@@ -41,12 +41,18 @@ fn sample_role() -> Role {
 	Role {
 		name: "developer".to_string(),
 		config: RoleConfig {
-			model: Some("claude-sonnet-4".to_string()),
+			model: crate::config::ModelProfileOverride {
+				model: Some("claude-sonnet-4".to_string()),
+				temperature: Some(0.7),
+				top_p: Some(0.95),
+				top_k: Some(40),
+				..Default::default()
+			},
 			system: "You are a developer.".to_string(),
 			welcome: "Welcome!".to_string(),
-			temperature: 0.7,
-			top_p: 0.95,
-			top_k: 40,
+			temperature: None,
+			top_p: None,
+			top_k: None,
 		},
 		mcp: RoleMcpConfig::with_server_refs_and_tools(
 			vec!["core".to_string()],
@@ -62,14 +68,14 @@ fn role_serde_json_round_trip() {
 	let deserialized: Role = serde_json::from_str(&json).expect("failed to deserialize Role");
 	assert_eq!(deserialized.name, "developer");
 	assert_eq!(
-		deserialized.config.model,
+		deserialized.config.model.model,
 		Some("claude-sonnet-4".to_string())
 	);
 	assert_eq!(deserialized.config.system, "You are a developer.");
 	assert_eq!(deserialized.config.welcome, "Welcome!");
-	assert_eq!(deserialized.config.temperature, 0.7);
-	assert_eq!(deserialized.config.top_p, 0.95);
-	assert_eq!(deserialized.config.top_k, 40);
+	assert_eq!(deserialized.config.model.temperature, Some(0.7));
+	assert_eq!(deserialized.config.model.top_p, Some(0.95));
+	assert_eq!(deserialized.config.model.top_k, Some(40));
 	assert_eq!(deserialized.mcp.server_refs, vec!["core".to_string()]);
 	assert_eq!(deserialized.mcp.allowed_tools, vec!["plan".to_string()]);
 }
@@ -81,7 +87,7 @@ fn role_config_flattens_into_role_json() {
 	assert_eq!(json["name"], "developer");
 	assert_eq!(json["system"], "You are a developer.");
 	assert_eq!(json["welcome"], "Welcome!");
-	let temperature = json["temperature"]
+	let temperature = json["model"]["temperature"]
 		.as_f64()
 		.expect("temperature not a number");
 	assert!(

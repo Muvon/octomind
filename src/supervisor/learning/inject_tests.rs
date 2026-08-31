@@ -165,7 +165,7 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 	let proj = "__inject_test_proj_first";
 	cleanup(proj);
 	let mut config = fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	let backend = FileBackend;
 	backend
 		.store(&lesson(

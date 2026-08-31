@@ -215,7 +215,7 @@ fn print_step(idx: usize, step: &Step, depth: usize) {
 				"session: {:?}  timeout: {}s  retries: {}",
 				s.session, s.timeout, s.retries
 			);
-			if let Some(m) = &s.model {
+			if let Some(m) = &s.model.model {
 				meta = format!("model: {m}  {meta}");
 			}
 			if let Some(w) = &s.workdir {
@@ -302,7 +302,7 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 		t = s.timeout,
 		r = s.retries,
 	);
-	if let Some(m) = &s.model {
+	if let Some(m) = &s.model.model {
 		meta = format!("model={m}  {meta}");
 	}
 	if let Some(w) = &s.workdir {

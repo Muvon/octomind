@@ -37,8 +37,9 @@ fn lesson_defaults_apply_through_serde_too() {
 }
 
 #[test]
-fn learning_config_defaults_to_disabled_with_the_recommended_model() {
+fn learning_config_defaults_to_disabled_without_owning_a_model() {
 	let config = LearningConfig::default();
 	assert!(!config.enabled);
-	assert_eq!(config.model, "anthropic:claude-haiku-4-5-20251001");
+	let value = toml::Value::try_from(config).expect("learning config serializes");
+	assert!(value.get("model").is_none());
 }

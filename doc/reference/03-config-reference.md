@@ -20,7 +20,7 @@ All values shown match `config-templates/default.toml`. Fields marked **(require
 
 ## `[model]`
 
-The complete main model profile and inheritance baseline. Every model override uses the same fields; omitted override fields inherit from this table.
+The complete main model profile and inheritance baseline. Persistent role, supervisor, and compression profiles use the same fields; name-only tap/workflow overrides retain the inherited parameters.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -64,15 +64,12 @@ Empty by default. Each key maps to a provider TOML file within the tap's `capabi
 
 ## `[taps]`
 
-Map of tap agent tag to a partial model profile. Every omitted field inherits from `[model]`.
+Strict map of tap agent tag to model name. It changes only `name`; all other parameters come from the main profile before any independent role override.
 
 ```toml
-[taps."developer:general".model]
-name = "ollama:glm-5"
-
-[taps."octomind:assistant".model]
-name = "openai:gpt-4o"
-reasoning_effort = "high"
+[taps]
+"developer:general" = "ollama:glm-5"
+"octomind:assistant" = "openai:gpt-4o"
 ```
 
 **Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap profile > `[model]`.

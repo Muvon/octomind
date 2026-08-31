@@ -82,11 +82,6 @@ pub async fn setup_and_initialize_session(
 	let model = args.model.clone();
 	let max_tokens = args.max_tokens;
 	let temperature = args.temperature;
-	let top_p = args.top_p;
-	let top_k = args.top_k;
-	let reasoning_effort = args.reasoning_effort;
-	let retry_timeout = args.retry_timeout;
-	let request_timeout_seconds = args.request_timeout_seconds;
 	let role = if args.role.is_empty() {
 		"core".to_string()
 	} else {
@@ -209,18 +204,18 @@ pub async fn setup_and_initialize_session(
 	if resume_recent {
 		session_params = session_params.with_resume_recent(true);
 	}
-	session_params =
-		session_params.with_model_profile_override(crate::config::ModelProfileOverride {
-			model: model.clone(),
-			reasoning_effort,
-			max_tokens,
-			temperature,
-			top_p,
-			top_k,
-			max_retries,
-			retry_timeout,
-			request_timeout_seconds,
-		});
+	if let Some(model) = model.clone() {
+		session_params = session_params.with_model(model);
+	}
+	if let Some(temperature) = temperature {
+		session_params = session_params.with_temperature(temperature);
+	}
+	if let Some(max_tokens) = max_tokens {
+		session_params = session_params.with_max_tokens(max_tokens);
+	}
+	if let Some(max_retries) = max_retries {
+		session_params = session_params.with_max_retries(max_retries);
+	}
 
 	// Set output mode for CLI output suppression in JSONL mode
 	let output_mode_for_check = output_mode.clone();

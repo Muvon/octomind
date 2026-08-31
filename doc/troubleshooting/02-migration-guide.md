@@ -23,7 +23,7 @@ retry_timeout = 30
 request_timeout_seconds = 300
 ```
 
-All model names require `provider:model` format. `[model]` is the required complete baseline. Optional `[roles.model]`, `[supervisor.model]`, `[compression.model]`, tap, workflow-step, and dynamic-agent profiles may override any subset; omitted fields inherit from main.
+All model names require `provider:model` format. `[model]` is the required complete baseline. Optional `[roles.model]`, `[supervisor.model]`, and `[compression.model]` profiles may override any subset; omitted fields inherit from main. Tap and workflow mappings remain name-only.
 
 When migrating a bare model name, pick the provider prefix that matches where you actually call the model. Common prefixes: `openrouter`, `openai`, `anthropic`, `google` (Vertex), `amazon` (Bedrock), `cloudflare`, `deepseek`, `ollama`, `local`, and the special `cli` meta-provider for locally CLI-backed models. There are 20 network providers plus `cli` in total — see [doc/usage/04-providers.md](../usage/04-providers.md) for the full list and which prefix to choose.
 

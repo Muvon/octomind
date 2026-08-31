@@ -271,16 +271,6 @@ impl ReasoningEffortConfig {
 	}
 }
 
-impl std::str::FromStr for ReasoningEffortConfig {
-	type Err = String;
-
-	fn from_str(value: &str) -> Result<Self, Self::Err> {
-		Self::parse(value).ok_or_else(|| {
-			format!("invalid reasoning effort '{value}'; use low, medium, high, xhigh, or max")
-		})
-	}
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PromptConfig {
 	/// Name of the prompt (used with /prompt command)
@@ -398,8 +388,7 @@ pub struct Config {
 	// Example: taps = { "developer:general" = "ollama:glm-5" }
 	// When running `octomind run developer:general`, uses ollama:glm-5 instead of default.
 	#[serde(default)]
-	#[serde(deserialize_with = "model::deserialize_profile_map")]
-	pub taps: HashMap<String, ModelOverrideConfig>,
+	pub taps: HashMap<String, String>,
 
 	// Enable automatic capability activation on each user message (semantic match against triggers).
 	// When disabled, capabilities must be activated manually via the `capability` tool.
@@ -594,15 +583,21 @@ impl Config {
 	}
 
 	/// Get the model for the specified role
-	pub fn get_model(&self, _role: &str) -> String {
-		// All roles now use the system-wide model
-		self.get_effective_model()
+	pub fn get_model(&self, role: &str) -> String {
+		if self.has_role(role) {
+			self.get_model_profile_for_role(role).model
+		} else {
+			self.get_effective_model()
+		}
 	}
 
 	/// Get the max_tokens for the specified role
-	pub fn get_max_tokens(&self, _role: &str) -> u32 {
-		// All roles now use the system-wide max_tokens
-		self.get_effective_max_tokens()
+	pub fn get_max_tokens(&self, role: &str) -> u32 {
+		if self.has_role(role) {
+			self.get_model_profile_for_role(role).max_tokens
+		} else {
+			self.get_effective_max_tokens()
+		}
 	}
 
 	/// Check whether a role is defined in the config.

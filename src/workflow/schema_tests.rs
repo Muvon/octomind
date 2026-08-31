@@ -120,7 +120,7 @@ fn sequential_applies_serde_defaults() {
 	assert_eq!(step.timeout, 0);
 	assert_eq!(step.retries, 0);
 	assert_eq!(step.count, None);
-	assert_eq!(step.model, Default::default());
+	assert_eq!(step.model, None);
 	assert_eq!(step.workdir, None);
 }
 
@@ -344,8 +344,8 @@ fn edge_deserializes_with_and_without_condition() {
 }
 
 #[test]
-fn workflow_model_accepts_legacy_name_only_and_full_nested_profile() {
-	let legacy: WorkflowDef = toml::from_str(
+fn workflow_model_remains_a_scalar_name_override() {
+	let workflow: WorkflowDef = toml::from_str(
 		r#"
 		name = "legacy"
 		[[steps]]
@@ -356,33 +356,8 @@ fn workflow_model_accepts_legacy_name_only_and_full_nested_profile() {
 		"#,
 	)
 	.unwrap();
-	let Step::Sequential(legacy_step) = &legacy.steps[0] else {
+	let Step::Sequential(step) = &workflow.steps[0] else {
 		panic!("expected sequential step");
 	};
-	assert_eq!(
-		legacy_step.model.model.as_deref(),
-		Some("google:gemini-3-pro")
-	);
-
-	let nested: WorkflowDef = toml::from_str(
-		r#"
-		name = "nested"
-		[[steps]]
-		name = "run"
-		role = "developer"
-		prompt = "go"
-		[steps.model]
-		name = "openai:gpt-5"
-		reasoning_effort = "high"
-		max_retries = 4
-		"#,
-	)
-	.unwrap();
-	let Step::Sequential(nested_step) = &nested.steps[0] else {
-		panic!("expected sequential step");
-	};
-	let model = &nested_step.model;
-	assert_eq!(model.model.as_deref(), Some("openai:gpt-5"));
-	assert_eq!(model.reasoning_effort, Some(crate::config::ReasoningEffortConfig::High));
-	assert_eq!(model.max_retries, Some(4));
+	assert_eq!(step.model.as_deref(), Some("google:gemini-3-pro"));
 }

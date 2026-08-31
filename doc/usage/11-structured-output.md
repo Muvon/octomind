@@ -106,7 +106,7 @@ echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --sc
 - The file must contain a JSON Schema object; it is loaded and validated before session init. A ready-to-use example ships at [`config-templates/todos.schema.json`](../../config-templates/todos.schema.json).
 - `--schema` exists only on `octomind run` — the WebSocket and ACP session-init messages do not accept a schema.
 
-The same mechanism is also used **internally** by the conversation-compression decision call: when compression runs, it checks the *decision model's* provider via `supports_structured_output()`; if true, it sends a generated compression schema in strict mode to get a reliable decision/summary, otherwise it falls back to an XML-style prompt. This is invisible to your session output and uses the separate compression decision model, not your main model. (Default decision model: `openai:gpt-5-mini` — see [Context Compression](08-compression.md).)
+The same mechanism is also used **internally** by conversation compression: it checks the resolved `[compression.model]` provider via `supports_structured_output()`; if true, it sends a generated compression schema in strict mode, otherwise it falls back to an XML-style prompt. Omitting `[compression.model]` inherits the main profile. See [Context Compression](08-compression.md).
 
 ## Summary
 

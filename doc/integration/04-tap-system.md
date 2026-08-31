@@ -106,11 +106,11 @@ Set a preferred model for specific tap agents in your config:
 
 ```toml
 # In config.toml
-[taps."developer:general".model]
-name = "ollama:glm-5"
+[taps]
+"developer:general" = "ollama:glm-5"
 ```
 
-This overlays the main profile for `octomind run developer:general` while leaving other agents unchanged. Explicit runtime fields win, then the manifest role profile, then the tap profile, then `[model]`; every unspecified field inherits.
+This replaces only the main model name for `octomind run developer:general`; every other parameter stays from `[model]`. Explicit runtime fields win, then the manifest role profile, then the tap name mapping, then `[model]`.
 
 ## Agent Manifests
 

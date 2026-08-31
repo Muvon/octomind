@@ -155,7 +155,7 @@ budgets per scope and memory type. The soft watermark is 80% of the hard bound:
 
 Maintenance runs after detached extraction, never in the user-response hot
 path. Crossing the hard watermark selects at most one similar
-orientation/experience pair as a *candidate* and asks the learning model for a
+orientation/experience pair as a *candidate* and asks the supervisor model for a
 shorter consolidation. Similarity only chooses what to review; it never proves
 equivalence. A separate verifier must confirm that the replacement adds no
 claim, hides no contradiction, preserves applicability/outcome boundaries, and

@@ -156,11 +156,22 @@ retry_timeout = 30
 	let migrated = parse(&migrate_once(old));
 	assert_eq!(migrated["model"]["name"].as_str(), Some("openai:main"));
 	assert_eq!(migrated["model"]["reasoning_effort"].as_str(), Some("high"));
-	assert_eq!(migrated["roles"][0]["model"]["name"].as_str(), Some("anthropic:worker"));
-	assert_eq!(migrated["supervisor"]["model"]["name"].as_str(), Some("google:supervisor"));
-	assert_eq!(migrated["compression"]["model"]["name"].as_str(), Some("openai:compression"));
+	assert_eq!(
+		migrated["roles"][0]["model"]["name"].as_str(),
+		Some("anthropic:worker")
+	);
+	assert_eq!(
+		migrated["supervisor"]["model"]["name"].as_str(),
+		Some("google:supervisor")
+	);
+	assert_eq!(
+		migrated["compression"]["model"]["name"].as_str(),
+		Some("openai:compression")
+	);
 	assert!(migrated["supervisor"]["learning"].get("model").is_none());
-	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
+	assert!(migrated["supervisor"]["gate"]
+		.get("verifier_model")
+		.is_none());
 	assert!(migrated["supervisor"]["plan"].get("model").is_none());
 	assert!(migrated["supervisor"]["condense"].get("model").is_none());
 }

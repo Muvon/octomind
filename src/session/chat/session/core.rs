@@ -40,15 +40,10 @@ pub struct SessionInitParams<'a> {
 	pub model: Option<String>,
 	/// Optional temperature override
 	pub temperature: Option<f32>,
-	pub top_p: Option<f32>,
-	pub top_k: Option<u32>,
-	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 	/// Optional max tokens override
 	pub max_tokens: Option<u32>,
 	/// Optional max retries override
 	pub max_retries: Option<u32>,
-	pub retry_timeout: Option<u64>,
-	pub request_timeout_seconds: Option<u64>,
 	/// Output mode: plain or jsonl (for CLI suppression)
 	/// Output mode: plain or jsonl (for CLI suppression)
 	pub output_mode: Option<String>,
@@ -72,13 +67,8 @@ impl<'a> SessionInitParams<'a> {
 			resume_recent: false,
 			model: None,
 			temperature: None,
-			top_p: None,
-			top_k: None,
-			reasoning_effort: None,
 			max_tokens: None,
 			max_retries: None,
-			retry_timeout: None,
-			request_timeout_seconds: None,
 			output_mode: None,
 			config,
 			role,
@@ -120,22 +110,6 @@ impl<'a> SessionInitParams<'a> {
 	/// Set temperature override
 	pub fn with_temperature(mut self, temperature: f32) -> Self {
 		self.temperature = Some(temperature);
-		self
-	}
-
-	pub fn with_model_profile_override(
-		mut self,
-		profile: crate::config::ModelProfileOverride,
-	) -> Self {
-		self.model = profile.model;
-		self.reasoning_effort = profile.reasoning_effort;
-		self.max_tokens = profile.max_tokens;
-		self.temperature = profile.temperature;
-		self.top_p = profile.top_p;
-		self.top_k = profile.top_k;
-		self.max_retries = profile.max_retries;
-		self.retry_timeout = profile.retry_timeout;
-		self.request_timeout_seconds = profile.request_timeout_seconds;
 		self
 	}
 
@@ -514,14 +488,10 @@ impl ChatSession {
 
 		let runtime_profile = crate::config::ModelProfileOverride {
 			model: params.model.clone(),
-			reasoning_effort: params.reasoning_effort,
 			temperature: params.temperature,
-			top_p: params.top_p,
-			top_k: params.top_k,
 			max_tokens: params.max_tokens,
 			max_retries: params.max_retries,
-			retry_timeout: params.retry_timeout,
-			request_timeout_seconds: params.request_timeout_seconds,
+			..Default::default()
 		};
 		let effective_profile =
 			runtime_profile.resolve(&params.config.get_model_profile_for_role(params.role));

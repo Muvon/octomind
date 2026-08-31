@@ -248,7 +248,7 @@ When several places specify a model, Octomind resolves which one actually runs i
 
 1. Explicit runtime override — for example `octomind run -m provider:model`
 2. The active role profile, with an optional workflow name-only override
-3. A matching tap model profile
+3. A matching scalar `[taps]` model-name mapping
 4. The required main `[model]` baseline
 
 > Every override may specify only `name`, only tuning fields, the complete profile, or nothing. Missing fields inherit from the preceding profile.

@@ -85,7 +85,7 @@ pub struct RunStepArgs {
 	pub role: String,
 	pub prompt: String,
 	pub session_name: Option<String>,
-	/// Optional model-name override forwarded as `--model` to the subprocess.
+	/// Optional model override forwarded as `--model` to the subprocess.
 	pub model: Option<String>,
 	/// Absolute working directory for the subprocess. None = inherit cwd.
 	pub workdir: Option<PathBuf>,

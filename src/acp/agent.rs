@@ -75,7 +75,7 @@ pub struct OctomindAgent {
 	pending_resume: RefCell<Option<String>>,
 	/// Whether the next `new_session` should resume the most recent session (consumed once).
 	pending_resume_recent: RefCell<bool>,
-	/// Model-name override applied to every session (new and loaded).
+	/// Model override applied to every session (new and loaded).
 	model: Option<String>,
 	/// Webhook hooks activated for every session (new and loaded).
 	hooks: Vec<String>,

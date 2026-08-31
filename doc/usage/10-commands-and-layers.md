@@ -176,7 +176,7 @@ Create agents at runtime using the `agent` MCP tool. Unlike config `[[agents]]` 
 
 `add` registers an agent but does **not** enable it — call `enable` to make `agent_<name>` available for execution. Actions: `add`, `enable`, `disable`, `remove`, `list`.
 
-The `add` action requires `name`, `system`, and `description`, and accepts these optional fields: `model`, `temperature`, `top_p`, `top_k`, `welcome`, `server_refs`, `allowed_tools`, and `workdir` (default `"."`). Without `server_refs` the agent runs with MCP disabled; if `allowed_tools` is given without `server_refs`, the matching servers are inferred automatically.
+The `add` action requires `name`, `system`, and `description`, and accepts the existing optional fields: `model`, `temperature`, `top_p`, `top_k`, `welcome`, `server_refs`, `allowed_tools`, and `workdir` (default `"."`). Without `server_refs` the agent runs with MCP disabled; if `allowed_tools` is given without `server_refs`, the matching servers are inferred automatically.
 
 See [MCP Tools Reference](07-mcp-tools.md#agent----dynamic-agent-management).
 

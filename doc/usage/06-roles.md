@@ -8,7 +8,7 @@ Every session runs with a role. The role determines:
 - **System prompt** -- instructions for the AI
 - **MCP server access** -- which tool servers are available
 - **Tool permissions** -- which specific tools can be used
-- **Model parameters** -- `temperature`, `top_p`, `top_k` (and an optional `model` override)
+- **Model profile** -- optional `[roles.model]` overrides inherited from `[model]`
 
 > **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its bare name (e.g. `assistant`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by a `category:variant` **tag** (e.g. `developer:general`). Any tag containing `:` is resolved through the registry, fetching the manifest and merging it on top of your config. See [Tap System](../integration/04-tap-system.md) for details.
 
@@ -59,19 +59,17 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 
 ### Role Fields
 
-> **Every field except `model` is mandatory.** `system`, `welcome`, `temperature`, `top_p`, and `top_k` have no defaults — a `[[roles]]` entry missing any of them fails to parse with a deserialization error. Only `model` is optional.
+`name`, `system`, and `welcome` define the role. `[roles.model]` is optional; every field inside it inherits from `[model]` when omitted.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Role identifier |
-| `model` | string | no | Model override (`provider:model` format) — only field that may be omitted |
 | `system` | string | yes | System prompt (supports [template variables](../reference/04-environment-variables.md#template-variables)) |
 | `welcome` | string | yes | Welcome message on session start |
-| `temperature` | f32 | yes | Sampling temperature (0.0-2.0) |
-| `top_p` | f32 | yes | Nucleus sampling (0.0-1.0) |
-| `top_k` | u32 | yes | Top-k token limit (1-1000) |
 
-**Validation ranges (enforced at config load).** Values outside these bounds abort loading with an error like `Role '<name>' temperature must be between 0.0 and 2.0`:
+`[roles.model]` accepts every field from the main `[model]` table: `name`, `reasoning_effort`, `max_tokens`, `temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, and `request_timeout_seconds`.
+
+**Validation ranges (enforced after inheritance).** Values outside these bounds abort loading with an error naming the profile:
 - `temperature` — `0.0` to `2.0`
 - `top_p` — `0.0` to `1.0`
 - `top_k` — `0` to `1000` (`0` disables it)

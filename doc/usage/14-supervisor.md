@@ -72,7 +72,7 @@ If independent-family supervision matters, set `[supervisor.model].name` to a di
 
 ## Adaptive external planning
 
-Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal alongside normal work. A separate planner model makes one structured create/no-plan decision from the current request, specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
+Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal alongside normal work. A separate supervisor call makes one structured create/no-plan decision from the current request, specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
 
 The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses; the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion gate owns final plan clearance.
 

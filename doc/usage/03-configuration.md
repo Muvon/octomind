@@ -129,7 +129,7 @@ Cache keepalive only applies to providers whose API supports refresh-on-read (to
 - `max_session_tokens_threshold` <= 2,000,000
 - `cache_keepalive_max_idle_seconds` <= 86400 (24h), or 0 for unbounded
 - MCP server and webhook hook timeouts must be > 0 and <= 3600 seconds
-- `model` and `markdown_theme` must be non-empty; role `temperature` 0.0-2.0, `top_p` 0.0-1.0, `top_k` 1-1000
+- every resolved model profile needs a non-empty, provider-qualified `name`; `temperature` 0.0-2.0, `top_p` 0.0-1.0, `top_k` 0-1000
 
 ## User Interface
 
@@ -251,20 +251,18 @@ Each key is a capability name and the value is the provider to use. It resolves 
 ## Tap Model Overrides
 
 ```toml
-[taps."developer:general".model]
-name = "ollama:glm-5"
-
-[taps."octomind:assistant".model]
-name = "openai:gpt-4o"
+[taps]
+"developer:general" = "ollama:glm-5"
+"octomind:assistant" = "openai:gpt-4o"
 ```
 
 **Model resolution priority:**
 1. Explicit runtime profile fields, including CLI flags
 2. The active role's `[roles.model]` profile
-3. The tap tag's model profile
+3. The tap tag's model-name mapping
 4. The required main `[model]` profile
 
-Resolution is field-by-field. For example, a role can override only reasoning effort while retaining a tap-selected model name and main retry settings.
+The tap mapping changes only the model name and always retains main parameters. A role profile is a separate later overlay and may independently replace any fields.
 
 ## Template Variables
 

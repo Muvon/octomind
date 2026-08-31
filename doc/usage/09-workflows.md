@@ -55,8 +55,7 @@ Write a tight implementation spec.
 session = "fresh"               # "fresh" (default) | "continue"
 timeout = 0                     # seconds; 0 = no timeout (default)
 retries = 0                     # extra attempts on failure (default 0)
-# [steps.model]                           # optional partial profile override
-# name = "anthropic:claude-sonnet-4-6"
+# model = "anthropic:claude-sonnet-4-6"  # optional name-only override
 # skills = ["skill-a", "skill-b"]        # optional: force-load these skills (OCTOMIND_SKILLS)
 # capabilities = ["cron", "docker"]      # optional: force-load these capabilities (OCTOMIND_CAPABILITIES)
 

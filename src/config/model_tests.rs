@@ -70,16 +70,11 @@ fn later_override_wins_field_by_field() {
 
 #[test]
 fn optional_owner_blocks_inherit_the_complete_main_profile() {
-	let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("default template parses");
-	value["supervisor"]
-		.as_table_mut()
-		.unwrap()
-		.remove("model");
-	value["compression"]
-		.as_table_mut()
-		.unwrap()
-		.remove("model");
+	let mut value: toml::Value =
+		toml::from_str(include_str!("../../config-templates/default.toml"))
+			.expect("default template parses");
+	value["supervisor"].as_table_mut().unwrap().remove("model");
+	value["compression"].as_table_mut().unwrap().remove("model");
 	value["roles"].as_array_mut().unwrap()[0]
 		.as_table_mut()
 		.unwrap()
@@ -89,7 +84,10 @@ fn optional_owner_blocks_inherit_the_complete_main_profile() {
 	config.build_role_map();
 	assert_eq!(config.get_supervisor_model_profile(), config.model_profile);
 	assert_eq!(config.get_compression_model_profile(), config.model_profile);
-	assert_eq!(config.get_model_profile_for_role("assistant"), config.model_profile);
+	assert_eq!(
+		config.get_model_profile_for_role("assistant"),
+		config.model_profile
+	);
 }
 
 #[test]

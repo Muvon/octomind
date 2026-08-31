@@ -195,7 +195,7 @@ name = "octohub:auto"
 name = "octohub:auto"   # the hub routes this to its `compression` choice
 ```
 
-One model string everywhere; the hub decides what each purpose actually runs — and can retune it without you touching config. Providers other than OctoHub ignore the header, and a hub without `[auto]` treats `auto` as an unknown model.
+The same `octohub:auto` name can be used by the main, supervisor, and compression profiles while the hub selects the real model for each purpose. Providers other than OctoHub ignore the header, and a hub without `[auto]` treats `auto` as an unknown model.
 
 ### Local CLI-backed models (`cli`)
 
@@ -247,7 +247,7 @@ The compression profile is configured separately under `[compression.model]`; om
 When several places specify a model, Octomind resolves which one actually runs in this priority order:
 
 1. Explicit runtime override — for example `octomind run -m provider:model`
-2. The active role or workflow-step model profile
+2. The active role profile, with an optional workflow name-only override
 3. A matching tap model profile
 4. The required main `[model]` baseline
 

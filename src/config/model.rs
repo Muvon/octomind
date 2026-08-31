@@ -14,14 +14,11 @@
 
 //! One model configuration contract for every model-bearing boundary.
 //!
-//! The root configuration owns a complete [`ModelProfile`]. Roles, taps,
-//! workflows, dynamic agents, and internal control-plane mechanics expose the
-//! same fields through [`ModelProfileOverride`]. An override is resolved once
-//! against the main profile before a provider request is built.
+//! The root configuration owns a complete [`ModelProfile`]. Persistent role,
+//! supervisor, and compression configuration expose the same fields through
+//! [`ModelProfileOverride`]. Tap and workflow mappings remain name-only.
 
 use serde::{Deserialize, Serialize};
-
-use std::collections::HashMap;
 
 use super::ReasoningEffortConfig;
 use anyhow::{anyhow, Result};
@@ -150,13 +147,6 @@ impl<'de> Deserialize<'de> for ModelProfileOverride {
 	}
 }
 
-/// A configuration owner containing an optional model-profile override.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ModelOverrideConfig {
-	#[serde(default)]
-	pub model: ModelProfileOverride,
-}
-
 impl ModelProfileOverride {
 	/// Resolve this override against a complete baseline.
 	pub fn resolve(&self, base: &ModelProfile) -> ModelProfile {
@@ -202,6 +192,10 @@ impl ModelProfileOverride {
 		{
 			return Err(anyhow!("{label}.name cannot be empty"));
 		}
+		if let Some(model) = &self.model {
+			crate::providers::ProviderFactory::get_provider_for_model(model)
+				.map_err(|error| anyhow!("{label}.name '{model}' is invalid: {error}"))?;
+		}
 		if self
 			.temperature
 			.is_some_and(|temperature| !(0.0..=2.0).contains(&temperature))
@@ -219,39 +213,6 @@ impl ModelProfileOverride {
 		}
 		Ok(())
 	}
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ProfileMapValue {
-	LegacyModel(String),
-	Config(ModelOverrideConfig),
-}
-
-/// Deserialize profile maps while accepting the historical
-/// `taps = { tag = "provider:model" }` shorthand.
-pub fn deserialize_profile_map<'de, D>(
-	deserializer: D,
-) -> Result<HashMap<String, ModelOverrideConfig>, D::Error>
-where
-	D: serde::Deserializer<'de>,
-{
-	let values = HashMap::<String, ProfileMapValue>::deserialize(deserializer)?;
-	Ok(values
-		.into_iter()
-		.map(|(name, value)| {
-			let config = match value {
-				ProfileMapValue::LegacyModel(model) => ModelOverrideConfig {
-					model: ModelProfileOverride {
-						model: Some(model),
-						..Default::default()
-					},
-				},
-				ProfileMapValue::Config(config) => config,
-			};
-			(name, config)
-		})
-		.collect())
 }
 
 #[cfg(test)]

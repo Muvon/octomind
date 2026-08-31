@@ -50,10 +50,10 @@ impl Config {
 				.resolve(&self.model_profile)
 				.validate(&format!("roles.{}", role.name))?;
 		}
-		for (tag, tap) in &self.taps {
-			tap.model
-				.resolve(&self.model_profile)
-				.validate(&format!("taps.{tag}"))?;
+		for (tag, model) in &self.taps {
+			let mut profile = self.model_profile.clone();
+			profile.model = model.clone();
+			profile.validate(&format!("taps.{tag}"))?;
 		}
 		if self.supervisor.enabled {
 			self.get_supervisor_model_profile().validate("supervisor")?;

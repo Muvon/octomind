@@ -24,7 +24,7 @@ Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio
 
 ### Adaptive external planning
 
-There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate planner model updates runtime-owned state from bounded trajectory and evidence. Use `/plan` to inspect the current checklist.
+There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate supervisor call updates runtime-owned state from bounded trajectory and evidence. Use `/plan` to inspect the current checklist.
 
 ### `tap` -- Run Specialist Roles from Taps
 
@@ -100,8 +100,8 @@ Manage in-process AI agents at runtime. Each registered agent becomes a tool pre
 - `description` (string): MCP tool description
 - `system` (string): System prompt (required for add)
 - `welcome` (string): Optional welcome message
-- `model` (string): Model override
-- `temperature`, `top_p`, `top_k`: Sampling parameters
+- `model` (string): Optional model-name override
+- `temperature`, `top_p`, `top_k`: Existing optional sampling overrides
 - `server_refs` (array): MCP server references — validated at add-time against config-defined and dynamic servers. When left empty, the needed servers are auto-derived from the `allowed_tools` patterns.
 - `allowed_tools` (array): Tool filter (supports wildcards)
 - `workdir` (string): Working directory (default: `"."`)

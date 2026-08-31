@@ -25,11 +25,6 @@ pub struct GenericSessionArgs {
 	pub model: Option<String>,
 	pub max_tokens: Option<u32>,
 	pub temperature: Option<f32>,
-	pub top_p: Option<f32>,
-	pub top_k: Option<u32>,
-	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
-	pub retry_timeout: Option<u64>,
-	pub request_timeout_seconds: Option<u64>,
 	pub role: String,
 	/// The caller named the role explicitly (a CLI tag), rather than inheriting
 	/// it from a resumed session or the config default. An explicit role is a

@@ -152,7 +152,7 @@ The argument is either:
 - a **plain role name** defined in your config's `[[roles]]` (validated up front; an unknown name is rejected with `Invalid role`), or
 - a **tap agent tag** in `domain:spec` form (e.g. `developer:general`), which resolves the manifest, INPUT/ENV placeholders, and dependency scripts.
 
-On success the session is saved; on failure the previous role/model/temperature are reverted.
+On success the session is saved; on failure the previous role and complete resolved model profile are restored.
 
 ```
 /role assistant

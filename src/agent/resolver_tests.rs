@@ -172,15 +172,9 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 	);
 
 	let mut config = base_config();
-	config.taps.insert(
-		"ztest:zz".to_string(),
-		crate::config::ModelOverrideConfig {
-			model: crate::config::ModelProfileOverride {
-				model: Some("openai:gpt-4o".to_string()),
-				..Default::default()
-			},
-		},
-	);
+	config
+		.taps
+		.insert("ztest:zz".to_string(), "openai:gpt-4o".to_string());
 
 	let (merged, role) = resolve_config_and_role(Some("ztest:zz"), &config, None)
 		.await
@@ -189,6 +183,20 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 	assert_eq!(
 		merged.model, "openai:gpt-4o",
 		"[taps] model override must win for this tag"
+	);
+	assert_eq!(
+		merged.model_profile.temperature,
+		config.model_profile.temperature
+	);
+	assert_eq!(merged.model_profile.top_p, config.model_profile.top_p);
+	assert_eq!(merged.model_profile.top_k, config.model_profile.top_k);
+	assert_eq!(
+		merged.model_profile.max_tokens,
+		config.model_profile.max_tokens
+	);
+	assert_eq!(
+		merged.model_profile.max_retries,
+		config.model_profile.max_retries
 	);
 }
 

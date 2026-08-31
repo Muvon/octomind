@@ -58,7 +58,10 @@ fn probe_dynamic_agent() -> crate::mcp::runtime::dynamic_agents::DynamicAgentCon
 		description: "Probe agent for tests".to_string(),
 		system: "You are a probe agent.".to_string(),
 		welcome: String::new(),
-		model: Default::default(),
+		model: None,
+		temperature: None,
+		top_p: None,
+		top_k: None,
 		server_refs: Vec::new(),
 		allowed_tools: Vec::new(),
 		workdir: ".".to_string(),
@@ -86,10 +89,7 @@ async fn next_inbox_message() -> crate::session::inbox::InboxMessage {
 #[serial]
 fn build_agent_config_clears_mcp_without_server_refs_and_applies_model() {
 	let agent = crate::mcp::runtime::dynamic_agents::DynamicAgentConfig {
-		model: crate::config::ModelProfileOverride {
-			model: Some("openai:gpt-4o".to_string()),
-			..Default::default()
-		},
+		model: Some("openai:gpt-4o".to_string()),
 		..probe_dynamic_agent()
 	};
 	let base = runtime_test_config();

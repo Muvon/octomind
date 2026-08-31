@@ -205,7 +205,7 @@ pub fn load_taps() -> Result<Vec<Tap>> {
 }
 
 /// Ensure the default tap is cloned and updated (seamless first-time setup).
-fn ensure_default_tap() -> Result<()> {
+pub fn ensure_default_tap() -> Result<()> {
 	let default_tap = Tap {
 		name: DEFAULT_TAP.to_string(),
 		local_path: None,

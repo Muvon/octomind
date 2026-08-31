@@ -193,6 +193,7 @@ src/
   agent/
     mod.rs                   # Agent module
     taps.rs                  # Tap management (clone, symlink, list)
+    tap_scaffold.rs          # `tap init` — render new user tap from default-tap scaffold
     registry.rs              # Agent discovery across taps, parse_capability_toml
     deps.rs                  # Dependency resolution
     inputs.rs                # Input/env variable resolution ({{INPUT:KEY}}, {{ENV:KEY}})

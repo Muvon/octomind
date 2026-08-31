@@ -16,7 +16,7 @@ A subcommand is **required** — running bare `octomind` prints a usage error. T
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
-| `tap` | Add a registry tap (agent source) or list active taps. |
+| `tap` | Add a registry tap (agent source), list active taps, or scaffold a new tap with `tap init`. |
 | `untap` | Remove a previously added tap. |
 | `vars` | Show placeholder variables and their resolved values. |
 | `send` | Inject a message into a running named session. |
@@ -159,6 +159,30 @@ octomind tap myorg/my-tap
 # Add local tap (symlink)
 octomind tap myorg/my-tap /path/to/local/tap
 ```
+
+## `octomind tap init <TAP>`
+
+Create a new tap repository from the default tap's scaffold (`scaffolds/tap/` in [muvon/octomind-tap](https://github.com/muvon/octomind-tap)). Renders the template, validates it, runs `git init`, and registers the directory as a local tap — the starter agent is runnable immediately.
+
+| Argument | Description |
+|----------|-------------|
+| `TAP` | New tap identifier (`user/repo` format). |
+| `--agent DOMAIN:SPEC` | Starter agent tag. Domain defaults to the repo name, spec to the scaffold default (`assistant`). |
+| `--dir DIR` | Destination directory. Defaults to `./octomind-<repo>`. |
+
+**Examples:**
+```bash
+# Scaffold ./octomind-team, validate, git init, register as local tap
+octomind tap init acme/team
+
+# Then run the starter agent
+octomind run team:assistant
+
+# Custom starter agent and destination
+octomind tap init acme/team --agent legal:contracts --dir ~/work/acme-tap
+```
+
+The destination must be missing or an empty directory. Rendering fails if any scaffold token remains unresolved or the generated repository fails its own `scripts/check.sh` validation.
 
 ## `octomind untap <TAP>`
 

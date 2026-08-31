@@ -344,6 +344,7 @@ Most agent harnesses pre-load every available tool into context. Octomind starts
 ### Add your own taps
 
 ```bash
+octomind tap init yourteam/tap            # scaffold a new tap in ./octomind-tap, ready to run
 octomind tap yourteam/tap                 # clones github.com/yourteam/octomind-tap
 octomind tap yourteam/internal ~/path     # local tap for private agents
 

@@ -52,6 +52,27 @@ octomind tap myorg/my-agents /path/to/local/tap
 octomind untap myorg/my-agents
 ```
 
+### Create a New Tap
+
+```bash
+octomind tap init myorg/my-agents
+```
+
+Bootstraps a ready-to-use tap from the default tap's scaffold (`scaffolds/tap/` in [muvon/octomind-tap](https://github.com/muvon/octomind-tap) — the single source of truth for the generated layout). In one command it:
+
+1. Renders the scaffold into `./octomind-my-agents/` (override with `--dir`), substituting `__TOKEN__` placeholders in file paths and contents. Rendering fails if any token remains unresolved, and refuses a non-empty destination.
+2. Runs the generated repository's own validation (`bash scripts/check.sh`).
+3. Initializes a Git repository.
+4. Registers the directory as a local tap.
+
+The scaffold includes one starter agent — `<repo>:assistant` by default, customizable with `--agent domain:spec` — so this works immediately:
+
+```bash
+octomind run my-agents:assistant
+```
+
+To publish, create the GitHub repository (`gh repo create myorg/octomind-my-agents --private --source=. --push`); others then install it with `octomind tap myorg/my-agents`.
+
 ### Built-in Tap
 
 The default tap `muvon/tap` is always present as the **last-priority fallback**. It is auto-cloned on first use, and it cannot be added (`tap muvon/tap` is rejected) or removed (`untap muvon/tap` is rejected).

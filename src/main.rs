@@ -55,6 +55,7 @@ enum Commands {
 
 	/// Add a registry tap (agent source URL).
 	/// Omit URL to list all active taps.
+	/// Use `tap init user/repo` to scaffold a new tap repository.
 	Tap(commands::TapArgs),
 
 	/// Remove a previously added registry tap.

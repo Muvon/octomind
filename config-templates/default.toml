@@ -161,6 +161,8 @@ request_timeout_seconds = 300
 #   octomind run octomind:developer
 #
 # Define a custom role below only when you need project-specific behaviour.
+# Roles inherit the complete [model] profile. Add [roles.model] only for fields
+# that genuinely differ; the whole block may be omitted.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Example: override the developer role with your own system prompt
@@ -171,17 +173,6 @@ You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
 """
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
-
-[roles.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
@@ -219,17 +210,6 @@ If you DO NOT UNDERSTAND or LACK INFORMATION → respond with the ORIGINAL task 
 CRITICAL: RESPOND WITHOUT ANY QUESTIONS IN THE WAY YOU JUST GET USER REQUEST AND PROPERLY REFINED IT AND RESPODED ONLY WITH REFINED TASK
 """
 welcome = ""
-
-[roles.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = []
@@ -280,17 +260,6 @@ IMPORTANT:
 
 {{CONTEXT}}"""
 welcome = ""
-
-[roles.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -361,17 +330,6 @@ This architectural history will be essential for future development sessions.
 
 {{CONTEXT}}"""
 welcome = ""
-
-[roles.model]
-name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 32768
-temperature = 0.3
-top_p = 0.7
-top_k = 20
-max_retries = 1
-retry_timeout = 30
-request_timeout_seconds = 300
 
 [roles.mcp]
 server_refs = []

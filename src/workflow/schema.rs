@@ -80,8 +80,7 @@ pub struct Sequential {
 	pub timeout: u64,
 	#[serde(default)]
 	pub retries: u32,
-	/// Optional model-name override forwarded as `--model`. Every other model
-	/// parameter comes from the selected role/main configuration.
+	/// Optional model override forwarded as `--model` to the subprocess.
 	#[serde(default)]
 	pub model: Option<String>,
 	/// Optional working directory for the subprocess. Relative paths

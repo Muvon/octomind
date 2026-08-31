@@ -72,10 +72,10 @@ Strict map of tap agent tag to model name. It changes only `name`; all other par
 "octomind:assistant" = "openai:gpt-4o"
 ```
 
-**Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap profile > `[model]`.
+**Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap name mapping > `[model]`.
 1. `--model` CLI flag (if provided)
 2. The `model` the agent's role/manifest declares (for `developer:general`, the manifest's role model)
-3. Main `[model]` profile — overlaid by the matching tap profile when present
+3. Main `[model]` profile — its `name` is replaced by the matching tap mapping when present
 
 `[taps]` only applies to tap agents (tags with `:`). Plain roles resolve `[roles.model]` directly against `[model]`.
 

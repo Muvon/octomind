@@ -57,7 +57,7 @@ Two separate mechanisms decide the effective configuration: how the **files** me
 **Model selection (precedence chain).** The model is the one field with a real precedence order:
 
 ```
-runtime override  >  role model profile  >  tap model profile  >  [model]
+runtime override  >  role model profile  >  tap name mapping  >  [model]
 ```
 
 Every override is partial: it may set only `name`, any tuning fields, the complete profile, or nothing. Missing fields inherit from the preceding profile. Existing scalar workflow/tap spellings remain accepted as name-only compatibility shorthands.

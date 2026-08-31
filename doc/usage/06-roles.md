@@ -77,7 +77,7 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 **Model resolution priority.** When more than one source sets a model, the effective model is chosen in this order (highest first):
 
 ```
-runtime override  >  role model profile  >  tap model profile  >  [model]
+runtime override  >  role model profile  >  tap name mapping  >  [model]
 ```
 
 A role's `[roles.model]` may override any subset of the complete profile. Missing fields inherit through the chain; omitting the block uses the inherited profile unchanged. For the full model-selection story see [Providers](04-providers.md).

@@ -34,7 +34,7 @@ The global config file lives at `~/.local/share/octomind/config/config.toml` on 
 - A **registry agent tag** in `category:variant` form (e.g. `developer:general`) — resolved through your installed [taps](../integration/04-tap-system.md).
 - Omitted — uses the default role from config.
 
-Model-profile priority, highest first: explicit runtime fields > role profile > tap profile > the required main `[model]`. Resolution is field-by-field.
+Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required main `[model]`.
 
 ## `octomind run [TAG]`
 

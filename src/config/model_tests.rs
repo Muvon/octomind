@@ -91,6 +91,29 @@ fn optional_owner_blocks_inherit_the_complete_main_profile() {
 }
 
 #[test]
+fn main_model_profile_is_required_and_complete() {
+	let mut value: toml::Value =
+		toml::from_str(include_str!("../../config-templates/default.toml"))
+			.expect("default template parses");
+	value.as_table_mut().unwrap().remove("model");
+	let parsed: Result<crate::config::Config, _> = value.try_into();
+	let error = parsed
+		.expect_err("main model table must be required")
+		.to_string();
+	assert!(error.contains("missing field `model`"), "got: {error}");
+
+	let mut value: toml::Value =
+		toml::from_str(include_str!("../../config-templates/default.toml"))
+			.expect("default template parses");
+	value["model"].as_table_mut().unwrap().remove("top_p");
+	let parsed: Result<crate::config::Config, _> = value.try_into();
+	let error = parsed
+		.expect_err("main model fields must be required")
+		.to_string();
+	assert!(error.contains("missing field `top_p`"), "got: {error}");
+}
+
+#[test]
 fn role_can_override_any_subset_of_the_main_profile() {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();

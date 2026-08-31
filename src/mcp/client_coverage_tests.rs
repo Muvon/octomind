@@ -27,9 +27,9 @@ use rmcp::model::{
 	CallToolResult, ClientRequest, ContentBlock, CreateTaskResult, DetailedTask,
 	ElicitRequestParams, GetTaskResult, InputRequest, InputRequests, InputRequiredResult,
 	JsonRpcMessage, Notification, ProgressNotificationParam, ReadResourceResult, Request,
-	RequestId, RequestParamsMeta, Resource, ResourceContents, ResourceUpdatedNotificationParam,
-	ServerNotification, ServerResult, SubscriptionFilter,
-	SubscriptionsAcknowledgedNotificationParams, Task, TaskPayload, TaskStatus,
+	RequestId, Resource, ResourceContents, ResourceUpdatedNotificationParam, ServerNotification,
+	ServerResult, SubscriptionFilter, SubscriptionsAcknowledgedNotificationParams, Task,
+	TaskPayload, TaskStatus,
 };
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use serial_test::serial;
@@ -577,6 +577,7 @@ async fn http_auth_token_currency_for_builtin_and_tokenless_http() {
 /// A registered service whose OS process is gone is disconnected and respawned
 /// from the config's real command.
 #[serial]
+#[cfg(unix)]
 #[tokio::test]
 async fn get_or_connect_replaces_stale_stdio_process() {
 	let name = unique_server("stale-stdio");

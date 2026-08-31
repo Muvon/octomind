@@ -1269,14 +1269,20 @@ async fn test_interactive_mode_request_threshold_decline_skips_api_call() {
 #[tokio::test]
 async fn test_schema_branch_completes_structured_turn() {
 	let _guard = ENV_LOCK.lock().await;
-	// The stub replies with a JSON-encoded string, which satisfies a
-	// {"type": "string"} schema through the validation path.
-	let url = spawn_stub(vec![final_response("\"structured hello\"")]).await;
+	// The stub replies with a JSON object satisfying the requested schema.
+	let url = spawn_stub(vec![final_response(r#"{"message":"structured hello"}"#)]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = fake_provider_config();
 	let mut session = fake_session("give me a string");
-	session.schema = Some(serde_json::json!({"type": "string"}));
+	session.model = "ollama:qwen2.5:72b".to_string();
+	session.session.info.model = session.model.clone();
+	session.schema = Some(serde_json::json!({
+		"type": "object",
+		"properties": {"message": {"type": "string"}},
+		"required": ["message"],
+		"additionalProperties": false
+	}));
 
 	run_turn(&mut session, &config)
 		.await

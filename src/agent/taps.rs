@@ -464,6 +464,9 @@ fn git_pull(dir: &PathBuf) -> Result<()> {
 	let output = std::process::Command::new("git")
 		.args(["pull"])
 		.current_dir(dir)
+		// Automatic tap refresh is best-effort and silent; it must never inherit
+		// stdin and stop the entire session on a credential prompt.
+		.env("GIT_TERMINAL_PROMPT", "0")
 		.stdout(Stdio::null())
 		.stderr(Stdio::null())
 		.output()

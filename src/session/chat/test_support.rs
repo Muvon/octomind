@@ -153,6 +153,9 @@ pub(crate) fn fake_provider_config() -> Config {
 	config.build_role_map();
 	config.model = "ollama:fake-model".to_string();
 	config.supervisor.enabled = false;
+	// Scripted queues describe exact call sequences. Tests that exercise retry
+	// behavior opt back in explicitly instead of consuming an unrelated entry.
+	config.max_retries = 0;
 	let mut merged = config.get_merged_config_for_role("assistant");
 	merged.model = "ollama:fake-model".to_string();
 	merged

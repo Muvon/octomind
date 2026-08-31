@@ -1543,7 +1543,7 @@ async fn an_identical_orientation_is_not_stored_twice() {
 		let url = spawn_stub(vec![final_response(response)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		run_extraction(
-			&vec![message("user", "keep the provider identity stable")],
+			&[message("user", "keep the provider identity stable")],
 			&config,
 			role,
 			project,
@@ -1632,7 +1632,7 @@ async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
 	let url = spawn_stub(vec![final_response("<decision>LEARN</decision>")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let stored = run_extraction(
-		&vec![message("user", "just a plain turn")],
+		&[message("user", "just a plain turn")],
 		&learning_config(),
 		role,
 		project,
@@ -1713,7 +1713,7 @@ async fn a_learned_lesson_cites_a_stored_experience_and_duplicates_are_skipped()
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let second = run_extraction(
-		&vec![message("user", "never silently switch the resolved model")],
+		&[message("user", "never silently switch the resolved model")],
 		&config,
 		role,
 		project,

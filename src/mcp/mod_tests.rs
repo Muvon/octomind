@@ -887,13 +887,15 @@ async fn initialize_servers_external_http_reports_success() {
 	.await
 	.expect("live server init must succeed");
 
-	let events = events.lock().unwrap();
-	let external = events
-		.iter()
-		.find(|(server, _, _)| server == NAME)
-		.expect("external server must report completion");
-	assert_eq!(external.1, true, "live server must initialize successfully");
-	assert_eq!(external.2, 2, "echo + extra_tool must be counted");
+	{
+		let events = events.lock().unwrap();
+		let external = events
+			.iter()
+			.find(|(server, _, _)| server == NAME)
+			.expect("external server must report completion");
+		assert!(external.1, "live server must initialize successfully");
+		assert_eq!(external.2, 2, "echo + extra_tool must be counted");
+	}
 
 	let _ = child.kill().await;
 	server::clear_function_cache_for_server(NAME);

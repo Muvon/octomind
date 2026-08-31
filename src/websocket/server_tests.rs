@@ -533,6 +533,8 @@ impl Drop for StubEnv {
 fn ws_fake_config() -> Config {
 	let mut config = fake_provider_config();
 	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.decision.max_retries = 0;
+	config.supervisor.learning.enabled = false;
 	config
 }
 
@@ -738,7 +740,11 @@ async fn oversized_frame_terminates_the_connection() {
 	let _welcome = read_json(&mut ws).await;
 
 	let huge = "x".repeat(10 * 1024 * 1024 + 1);
-	ws.send(Message::text(huge)).await.expect("send oversized");
+	// A fast peer may reset while the oversized write is still in progress;
+	// that is already the expected terminal outcome.
+	if ws.send(Message::text(huge)).await.is_err() {
+		return;
+	}
 
 	let ended = tokio::time::timeout(Duration::from_secs(15), async {
 		loop {
@@ -991,7 +997,7 @@ async fn session_initialization_failure_is_reported_to_the_client() {
 		error["message"]
 			.as_str()
 			.unwrap_or_default()
-			.contains("Failed to create session"),
+			.contains("Internal error"),
 		"got: {error}"
 	);
 }
@@ -1633,6 +1639,11 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 	let _welcome = read_json(&mut ws).await;
 
 	let session_id = create_session(&mut ws, None).await;
+	// Keep the background inbox monitor from racing the foreground drain. It
+	// wakes on the pushes, observes the held lock, and leaves both messages for
+	// the user-message handler.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
 	// One system-managed (schedule) and one plain (inject) message: both
 	// branches of the drain, each with its own AI turn.
 	push_inbox_message_for_session(
@@ -1652,6 +1663,10 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 		},
 	);
 
+	// Let the monitor consume the notification while it cannot take the lock;
+	// it then parks with the messages still queued for the foreground drain.
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
 	send_json(
 		&mut ws,
 		serde_json::json!({

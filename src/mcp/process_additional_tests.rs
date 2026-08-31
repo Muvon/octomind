@@ -603,6 +603,7 @@ async fn test_start_server_process_rejects_builtin_configs() {
 
 #[serial]
 #[test]
+#[cfg(unix)]
 fn test_is_server_running_dead_pgid_reports_dead() {
 	const NAME: &str = "proc-add-dead-pgid";
 	// A pid beyond the OS allocation range can never resolve: the liveness

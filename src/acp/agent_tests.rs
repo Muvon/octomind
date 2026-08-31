@@ -741,7 +741,7 @@ async fn spawn_slow_stub(delay_ms: u64) -> String {
 					let content_length = head
 						.split("content-length:")
 						.nth(1)
-						.and_then(|s| s.split(|c| c == '\r' || c == '\n').next())
+						.and_then(|s| s.split(['\r', '\n']).next())
 						.and_then(|s| s.trim().parse::<usize>().ok())
 						.unwrap_or(0);
 					let body_start = head_end + 4;
@@ -1526,7 +1526,7 @@ async fn run_actor_dispatches_session_lifecycle_commands() {
 	let (tx, rx) = mpsc::unbounded_channel();
 
 	let local = tokio::task::LocalSet::new();
-	local.spawn_local(run_actor(agent.clone(), rx));
+	let actor = local.spawn_local(run_actor(agent.clone(), rx));
 
 	tokio::time::timeout(
 		Duration::from_secs(20),
@@ -1588,12 +1588,13 @@ async fn run_actor_dispatches_session_lifecycle_commands() {
 
 			context::cleanup_session(&session_id);
 			drop(tx); // ends the actor loop
+
+			tokio::time::timeout(Duration::from_secs(5), actor)
+				.await
+				.expect("actor loop must stop after its sender is dropped")
+				.expect("actor task must complete cleanly");
 		}),
 	)
 	.await
 	.expect("actor commands must complete within the timeout");
-
-	tokio::time::timeout(Duration::from_secs(5), local)
-		.await
-		.expect("actor loop must stop after its sender is dropped");
 }

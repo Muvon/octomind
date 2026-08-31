@@ -33,6 +33,15 @@ fn message(role: &str, content: &str) -> crate::session::Message {
 	}
 }
 
+fn multimodal_session() -> ChatSession {
+	let mut session = ChatSession::for_tests(Vec::new());
+	// Unknown proxy models are intentionally permissive: the proxy may expose
+	// capabilities newer than the bundled reference table.
+	session.model = "openrouter:vendor/unknown-multimodal-model".to_string();
+	session.session.info.model = session.model.clone();
+	session
+}
+
 /// Sandbox `OCTOMIND_DATA_DIR` at a fresh tempdir for the guard's lifetime.
 /// Tests using it must stay `#[serial]` — env vars are process-global.
 struct DataDirGuard {
@@ -467,7 +476,7 @@ async fn test_attach_image_from_png_file_sets_pending_image() {
 	let png = dir.path().join("tiny.png");
 	std::fs::write(&png, tiny_png_bytes()).expect("write png");
 
-	let mut session = ChatSession::for_tests(Vec::new());
+	let mut session = multimodal_session();
 	session
 		.attach_image_from_path(png.to_str().unwrap())
 		.await
@@ -487,7 +496,7 @@ async fn test_attach_image_from_unsupported_file_errors() {
 	let txt = dir.path().join("not-an-image.txt");
 	std::fs::write(&txt, b"just text").expect("write txt");
 
-	let mut session = ChatSession::for_tests(Vec::new());
+	let mut session = multimodal_session();
 	let err = session
 		.attach_image_from_path(txt.to_str().unwrap())
 		.await
@@ -502,7 +511,7 @@ async fn test_attach_image_from_unsupported_file_errors() {
 #[tokio::test]
 async fn test_attach_image_from_url_downloads_and_sets_pending() {
 	let url = spawn_bytes_server("image/png", tiny_png_bytes()).await;
-	let mut session = ChatSession::for_tests(Vec::new());
+	let mut session = multimodal_session();
 	session
 		.attach_image_from_path(&format!("{url}/tiny.png"))
 		.await
@@ -521,7 +530,7 @@ async fn test_attach_video_from_file_and_url() {
 	let mp4 = dir.path().join("clip.mp4");
 	std::fs::write(&mp4, b"\x00\x00\x00\x18ftypmp42fake-bytes").expect("write mp4");
 
-	let mut session = ChatSession::for_tests(Vec::new());
+	let mut session = multimodal_session();
 	session
 		.attach_video_from_path(mp4.to_str().unwrap())
 		.await
@@ -652,7 +661,8 @@ async fn reinitialize_for_role_on_empty_session_adds_system_message() {
 	let config = test_config();
 
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.session.session_file = Some(tempfile::tempdir().unwrap().keep());
+	let session_dir = tempfile::tempdir().expect("session dir");
+	session.session.session_file = Some(session_dir.path().join("session.jsonl.zst"));
 
 	session
 		.reinitialize_for_role("core", &config)
@@ -673,9 +683,11 @@ async fn reinitialize_for_role_on_empty_session_adds_system_message() {
 fn seed_session_log(name: &str, lines: Vec<serde_json::Value>) {
 	let sessions_dir = crate::session::persistence::get_sessions_dir().unwrap();
 	std::fs::create_dir_all(&sessions_dir).unwrap();
-	let mut info = crate::session::SessionInfo::default();
-	info.name = name.to_string();
-	info.model = "anthropic/claude-3-5-sonnet".to_string();
+	let info = crate::session::SessionInfo {
+		name: name.to_string(),
+		model: "anthropic:claude-3-5-sonnet".to_string(),
+		..Default::default()
+	};
 
 	let mut all = vec![serde_json::json!({
 		"type": "SUMMARY",
@@ -705,7 +717,7 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 	seed_session_log(
 		"cov-resume-runtime",
 		vec![
-			serde_json::json!({"type": "COMMAND", "command": "/role core"}),
+			serde_json::json!({"type": "COMMAND", "command": "/role task_refiner"}),
 			serde_json::json!({"type": "COMMAND", "command": "/cache"}),
 			serde_json::json!({"type": "KNOWLEDGE_ENTRY", "content": "keep the widget minimal"}),
 			serde_json::to_value(&user_msg).unwrap(),
@@ -720,9 +732,9 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 		.expect("resume seeded session");
 
 	assert!(session.was_resumed);
-	// /role core was logged and the caller did not name a role explicitly
+	// /role task_refiner was logged and the caller did not name a role explicitly
 	assert_eq!(
-		session.role, "core",
+		session.role, "task_refiner",
 		"logged /role must win over the default"
 	);
 	assert_eq!(

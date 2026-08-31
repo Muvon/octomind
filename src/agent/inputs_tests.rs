@@ -190,10 +190,12 @@ async fn resolve_env_vars_without_placeholders_is_passthrough() {
 /// Replace fd 0 with `/dev/null` for the duration of a test so the blocking
 /// `prompt_user` stdin read returns EOF immediately and deterministically,
 /// whatever stdin the test harness inherited.
+#[cfg(unix)]
 struct StdinNullGuard {
 	saved_fd: i32,
 }
 
+#[cfg(unix)]
 impl StdinNullGuard {
 	#[cfg(unix)]
 	fn new() -> Self {
@@ -211,8 +213,8 @@ impl StdinNullGuard {
 	}
 }
 
+#[cfg(unix)]
 impl Drop for StdinNullGuard {
-	#[cfg(unix)]
 	fn drop(&mut self) {
 		unsafe {
 			assert!(libc::dup2(self.saved_fd, 0) == 0, "failed to restore stdin");

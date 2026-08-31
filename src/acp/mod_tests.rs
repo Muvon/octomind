@@ -51,7 +51,7 @@ async fn acp_stdio_child_fixture() {
 
 struct ChildAcp {
 	child: tokio::process::Child,
-	stdin: tokio::process::ChildStdin,
+	stdin: Option<tokio::process::ChildStdin>,
 	stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
 }
 
@@ -80,7 +80,7 @@ fn spawn_fixture(
 	let stdout = child.stdout.take().expect("child stdout");
 	ChildAcp {
 		child,
-		stdin,
+		stdin: Some(stdin),
 		stdout: tokio::io::BufReader::new(stdout),
 	}
 }
@@ -88,17 +88,20 @@ fn spawn_fixture(
 impl ChildAcp {
 	async fn send(&mut self, line: &str) {
 		use tokio::io::AsyncWriteExt;
-		self.stdin
+		let stdin = self.stdin.as_mut().expect("child stdin remains open");
+		stdin
 			.write_all(line.as_bytes())
 			.await
 			.expect("write request to child");
-		self.stdin.write_all(b"\n").await.expect("newline");
-		self.stdin.flush().await.expect("flush");
+		stdin.write_all(b"\n").await.expect("newline");
+		stdin.flush().await.expect("flush");
 	}
 
 	async fn close_stdin(&mut self) {
 		use tokio::io::AsyncWriteExt;
-		let _ = self.stdin.shutdown().await;
+		if let Some(mut stdin) = self.stdin.take() {
+			let _ = stdin.shutdown().await;
+		}
 	}
 
 	/// Reads stdout lines until a JSON-RPC frame arrives, skipping libtest

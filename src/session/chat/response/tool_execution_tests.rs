@@ -330,6 +330,7 @@ async fn test_handle_large_tool_results_short_content_untouched() {
 	assert!(processed[1].is_error());
 }
 
+#[cfg(unix)]
 fn make_executable(path: &std::path::Path) {
 	use std::os::unix::fs::PermissionsExt;
 	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
@@ -337,6 +338,7 @@ fn make_executable(path: &std::path::Path) {
 }
 
 /// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
+#[cfg(unix)]
 fn write_local_tool(workdir: &std::path::Path, name: &str, body: &str) {
 	let dir = workdir.join(".agents/tools");
 	std::fs::create_dir_all(&dir).expect("create tools dir");
@@ -423,6 +425,7 @@ async fn test_execute_tools_parallel_routes_single_tap_capability_inline() {
 /// the cancel branch ready, so the empty-return branch is deterministic.
 #[tokio::test]
 #[serial_test::serial]
+#[cfg(unix)]
 async fn test_execute_tools_in_context_cancelled_before_execution_returns_empty() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_local_tool(
@@ -469,6 +472,7 @@ async fn test_execute_tools_in_context_cancelled_before_execution_returns_empty(
 /// the dedup placeholder error. 600 chars is above MIN_DEDUP_CONTENT_LEN.
 #[tokio::test]
 #[serial_test::serial]
+#[cfg(unix)]
 async fn test_execute_tools_in_context_local_tool_success_then_duplicate_placeholder() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_local_tool(

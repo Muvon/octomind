@@ -48,6 +48,28 @@ impl Drop for DataDirGuard {
 	}
 }
 
+struct EnvVarGuard {
+	name: &'static str,
+	previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+	fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+		let previous = std::env::var_os(name);
+		std::env::set_var(name, value);
+		Self { name, previous }
+	}
+}
+
+impl Drop for EnvVarGuard {
+	fn drop(&mut self) {
+		match self.previous.take() {
+			Some(value) => std::env::set_var(self.name, value),
+			None => std::env::remove_var(self.name),
+		}
+	}
+}
+
 /// Pre-create the default tap directory so `ensure_default_tap` takes the
 /// already-cloned branch (git pull failure is silently ignored) and no network
 /// clone is attempted.
@@ -612,9 +634,16 @@ fn add_tap_local_errors_when_symlink_cannot_be_created() {
 fn add_tap_github_clone_failure_surfaces_git_error() {
 	let _guard = DataDirGuard::new();
 	create_default_tap();
+	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
+	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");
+	let _key = EnvVarGuard::set(
+		"GIT_CONFIG_KEY_0",
+		"url.file:///octomind-test-missing-root/.insteadOf",
+	);
+	let _value = EnvVarGuard::set("GIT_CONFIG_VALUE_0", "https://github.com/");
 
-	// The repo is guaranteed not to exist, so git clone fails whether the box
-	// is online (404) or offline (DNS) — the error must surface either way.
+	// Rewrite GitHub to a guaranteed-missing local root: this exercises the
+	// clone-error branch without network or an interactive credential prompt.
 	let err = add_tap("octomind-probe/nonexistent-tap-repo")
 		.expect_err("clone of a nonexistent repo must fail");
 	assert!(

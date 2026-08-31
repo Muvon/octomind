@@ -352,7 +352,7 @@ async fn run_script(script: &str) -> anyhow::Result<String> {
 	.await;
 	// Keep the sender alive through the await above; dropping it early would
 	// read as cancellation.
-	Ok(output?)
+	output
 }
 
 #[cfg(unix)]

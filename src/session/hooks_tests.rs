@@ -236,7 +236,12 @@ async fn test_validator_silent_on_success_exit_and_missing_script() {
 		)
 		.expect("write guardrails.toml");
 		let ok = tmp.path().join(format!("validators/ok.{SCRIPT_EXT}"));
-		std::fs::write(&ok, "#!/bin/sh\necho \"must not appear\"\nexit 0\n").expect("write");
+		#[cfg(unix)]
+		let body = "#!/bin/sh\necho \"must not appear\"\nexit 0\n";
+		#[cfg(windows)]
+		let body = "@echo off\r\necho must not appear\r\nexit /b 0\r\n";
+		std::fs::write(&ok, body).expect("write");
+		#[cfg(unix)]
 		{
 			use std::os::unix::fs::PermissionsExt;
 			std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).expect("chmod");

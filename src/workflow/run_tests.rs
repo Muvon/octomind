@@ -769,6 +769,7 @@ async fn exec_sequential_interactive_mode_runs_with_spinner() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn exec_sequential_spawn_error_names_the_cause() {
 	use std::os::unix::fs::PermissionsExt;
 
@@ -945,6 +946,7 @@ async fn exec_parallel_dynamic_replicas_fail_and_block_aborts() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn exec_parallel_static_spawn_errors_throttled_abort() {
 	use std::os::unix::fs::PermissionsExt;
 

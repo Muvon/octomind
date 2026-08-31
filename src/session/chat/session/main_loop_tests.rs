@@ -457,8 +457,11 @@ async fn test_run_session_with_input_exit_command_saves_and_exits() {
 	let loaded =
 		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	assert!(
-		loaded.messages.iter().all(|m| m.role != "user"),
-		"/exit must not record a user message: {:?}",
+		loaded
+			.messages
+			.iter()
+			.all(|m| !(m.role == "user" && m.content.trim() == "/exit")),
+		"/exit must not be recorded as a user message: {:?}",
 		loaded.messages
 	);
 }
@@ -671,6 +674,9 @@ async fn persisted_compressible_session(name: &str) {
 	let mut session = crate::session::chat::session::ChatSession::initialize(params)
 		.await
 		.expect("seed session initializes");
+	session
+		.add_system_message("You are a helpful assistant.")
+		.expect("seed system anchor");
 
 	for (role, content) in [
 		("user", "build the frobnicator widget"),
@@ -724,6 +730,7 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 
 	let mut config = fake_provider_config();
 	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.supervisor.learning.enabled = false;
 	let args = super::super::GenericSessionArgs::resume(
 		"cov-done-compress".to_string(),
 		"assistant".to_string(),

@@ -111,6 +111,7 @@ async fn start_health_monitor_with_external_server_runs_until_stopped() {
 	assert!(!is_health_monitor_running());
 }
 
+#[serial]
 #[test]
 fn stop_health_monitor_without_running_monitor_is_noop() {
 	stop_health_monitor();

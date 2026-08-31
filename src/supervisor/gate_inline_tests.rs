@@ -673,7 +673,7 @@ fn ground_truth_attaches_and_truncates_an_untracked_file_head() {
 		.join("\n");
 	std::fs::write(&name, &body).expect("write scratch head file");
 
-	let truth = render_ground_truth(&[name.clone()], &[]);
+	let truth = render_ground_truth(std::slice::from_ref(&name), &[]);
 
 	let _ = std::fs::remove_file(&name);
 	assert!(

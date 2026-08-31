@@ -380,6 +380,7 @@ fn make_executable(path: &std::path::Path) {
 }
 
 /// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
+#[cfg(unix)]
 fn write_local_tool(workdir: &std::path::Path, name: &str, body: &str) {
 	let dir = workdir.join(".agents/tools");
 	std::fs::create_dir_all(&dir).expect("create tools dir");
@@ -567,6 +568,7 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 	let _guard = ENV_LOCK.lock().await;
 	// Three identical tool rounds: round 1 comes from params, rounds 2-3 from
@@ -655,6 +657,7 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn test_process_response_cancelled_mid_execution_skips_assistant_message() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	// The tool touches a marker file first, giving the test a deterministic

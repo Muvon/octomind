@@ -33,6 +33,12 @@ pub struct EmacsWithShortcutHelp {
 	/// the typing buffer.
 	notifier: ExternalPrinter<String>,
 	meta_pending: bool,
+	/// Clipboard blob probe used by the Ctrl+V and bracketed-paste arms.
+	/// A seam: the real probe spawns `osascript` and opens NSPasteboard on
+	/// macOS, so tests stub it with `|| None` — off-main-thread pasteboard
+	/// access segfaults under the multithreaded test harness, and the result
+	/// would depend on whatever is on the host clipboard anyway.
+	clipboard_probe: fn() -> Option<PendingClipboardItem>,
 }
 
 impl EmacsWithShortcutHelp {
@@ -52,6 +58,7 @@ impl EmacsWithShortcutHelp {
 			line_state,
 			notifier,
 			meta_pending: false,
+			clipboard_probe: try_capture_clipboard,
 		}
 	}
 
@@ -106,14 +113,6 @@ impl EmacsWithShortcutHelp {
 /// silently drop the actual video. Falls back to the clipboard image otherwise.
 /// Returns `None` if nothing usable is on the clipboard.
 fn try_capture_clipboard() -> Option<PendingClipboardItem> {
-	// Tests only exercise the no-blob fall-through. The real probe spawns
-	// `osascript` and opens NSPasteboard on macOS — off the main thread and
-	// concurrent with env-mutating tests that's a SIGSEGV (pasteboard/objc off
-	// the main thread; posix_spawn racing setenv over `environ`).
-	if cfg!(test) {
-		return None;
-	}
-
 	if let Some(video) = try_capture_clipboard_video() {
 		return Some(PendingClipboardItem::Video(video));
 	}
@@ -255,7 +254,7 @@ impl EditMode for EmacsWithShortcutHelp {
 		// path) is present, attach it and swallow the textual paste (which is usually
 		// just a filename hint or empty).
 		if let Event::Paste(text) = &event {
-			if let Some(item) = try_capture_clipboard() {
+			if let Some(item) = (self.clipboard_probe)() {
 				self.attach_and_notify(item);
 				return ReedlineEvent::None;
 			}
@@ -376,7 +375,7 @@ impl EditMode for EmacsWithShortcutHelp {
 			// typing buffer. Falls through to default paste when the clipboard
 			// holds neither an image nor a video file path.
 			if code == KeyCode::Char('v') && modifiers == KeyModifiers::CONTROL {
-				if let Some(item) = try_capture_clipboard() {
+				if let Some(item) = (self.clipboard_probe)() {
 					self.attach_and_notify(item);
 					return ReedlineEvent::None;
 				}

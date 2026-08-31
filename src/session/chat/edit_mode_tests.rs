@@ -27,7 +27,7 @@ fn mk() -> (
 	let reverse = Arc::new(AtomicBool::new(false));
 	let hint = Arc::new(AtomicBool::new(false));
 	let line_state = Arc::new(Mutex::new(LineState::default()));
-	let helper = EmacsWithShortcutHelp::new(
+	let mut helper = EmacsWithShortcutHelp::new(
 		Emacs::new(reedline::default_emacs_keybindings()),
 		buffer_empty.clone(),
 		reverse.clone(),
@@ -35,6 +35,9 @@ fn mk() -> (
 		line_state.clone(),
 		ExternalPrinter::new(5),
 	);
+	// Stub the OS clipboard probe: tests assert the no-blob fall-through and
+	// must not depend on (or crash in) the host pasteboard.
+	helper.clipboard_probe = || None;
 	(helper, line_state, buffer_empty, reverse, hint)
 }
 
@@ -202,8 +205,6 @@ fn test_question_mark_shortcut_help() {
 	);
 }
 
-/// Runs on the headless dev box where no clipboard blob can intercept the
-/// paste probe, so the multiline-wrap branch is deterministic.
 #[test]
 fn test_paste_wrapping() {
 	let (mut h, ..) = mk();
@@ -330,9 +331,9 @@ fn test_ctrl_alt_word_commands() {
 
 #[test]
 fn test_ctrl_v_without_clipboard_blob_falls_through() {
-	// Headless: no image/video on the clipboard → default paste handling.
-	// (On a desktop with a clipboard image this attaches instead — either way
-	// the keystroke must never submit.)
+	// Probe stubbed to None (no image/video blob) → default paste handling.
+	// (With a blob this attaches instead — either way the keystroke must
+	// never submit.)
 	let (mut h, ..) = mk();
 	let event = h.parse_event(key(KeyCode::Char('v'), KeyModifiers::CONTROL));
 	assert_ne!(event, ReedlineEvent::Submit);

@@ -375,20 +375,14 @@ async fn make_follow_up_api_call(
 	config: &Config,
 	cancellation_token: tokio::sync::watch::Receiver<bool>,
 ) -> Result<crate::providers::ProviderResponse> {
-	let model = chat_session.model.clone();
-	let temperature = chat_session.temperature;
+	let profile = chat_session.model_profile(config);
 
 	// CRITICAL FIX: Pass cancellation token to ensure immediate cancellation
-	let validation_params = ChatCompletionWithValidationParams::new(
+	let validation_params = ChatCompletionWithValidationParams::from_profile(
 		&chat_session.session.messages,
-		&model,
-		temperature,
-		chat_session.top_p,
-		chat_session.top_k,
-		chat_session.max_tokens,
+		&profile,
 		config,
 	)
-	.with_max_retries(chat_session.max_retries)
 	.with_cancellation_token(cancellation_token);
 
 	// Carry the structured-output schema onto every follow-up turn too. Without

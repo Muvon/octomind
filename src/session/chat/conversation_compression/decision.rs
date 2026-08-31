@@ -211,7 +211,7 @@ pub(super) fn ceiling_reached(
 /// (such a session cannot make API calls anyway).
 pub(super) fn context_ceiling(session: &ChatSession, config: &crate::config::Config) -> usize {
 	let model_bound = crate::session::model_max_input_tokens(&session.model)
-		.map(|window| window.saturating_sub(config.max_tokens as usize));
+		.map(|window| window.saturating_sub(session.max_tokens as usize));
 	match (config.max_session_tokens_threshold, model_bound) {
 		(0, Some(bound)) => bound,
 		(0, None) => usize::MAX,

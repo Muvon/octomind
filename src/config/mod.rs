@@ -531,11 +531,7 @@ impl Config {
 	}
 
 	pub fn get_supervisor_model_profile(&self) -> ModelProfile {
-		self.supervisor.resolved_model_profile(&self.model_profile)
-	}
-
-	pub fn get_learning_model_profile(&self) -> ModelProfile {
-		self.get_supervisor_model_profile()
+		self.supervisor.model.resolve(&self.model_profile)
 	}
 
 	pub fn get_compression_model_profile(&self) -> ModelProfile {

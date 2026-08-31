@@ -172,7 +172,9 @@ fn unify_v12_model_profiles(
 					profile.insert(key, value);
 				}
 			}
-			role.insert("model", toml_edit::Item::Table(profile));
+			if !profile.is_empty() {
+				role.insert("model", toml_edit::Item::Table(profile));
+			}
 		}
 	}
 

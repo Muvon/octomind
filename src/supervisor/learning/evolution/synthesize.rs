@@ -128,7 +128,7 @@ pub async fn synthesize(
 	if memories.is_empty() {
 		return Ok(None);
 	}
-	let learning_profile = config.get_learning_model_profile();
+	let learning_profile = config.get_supervisor_model_profile();
 	ensure_schema_enforcement(&learning_profile.model)?;
 
 	let existing = super::registry::list_records().unwrap_or_default();

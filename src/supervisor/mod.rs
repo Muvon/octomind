@@ -228,15 +228,6 @@ pub struct PlanConfig {
 	pub enabled: bool,
 }
 
-impl SupervisorConfig {
-	pub fn resolved_model_profile(
-		&self,
-		main: &crate::config::ModelProfile,
-	) -> crate::config::ModelProfile {
-		self.model.resolve(main)
-	}
-}
-
 #[cfg(test)]
 #[path = "plan_e2e_tests.rs"]
 mod plan_e2e_tests;

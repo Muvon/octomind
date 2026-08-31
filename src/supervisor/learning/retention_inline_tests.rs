@@ -399,8 +399,8 @@ async fn orientation_overflow_consolidates_through_a_verified_model_merge() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", url);
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 	let report = maintain(&config, "developer", "project").await.unwrap();
 	assert_eq!(report.consolidated, 1);
@@ -449,8 +449,8 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", url);
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.supervisor.learning.model = "ollama:fake-model".to_string();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 	let report = maintain(&config, "developer", "project").await.unwrap();
 	assert_eq!(report.consolidated, 0);

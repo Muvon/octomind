@@ -376,8 +376,8 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
 	config.build_role_map();
 	config.supervisor.learning.evolution.enabled = true;
-	config.supervisor.learning.model = "openai:gpt-4.1".to_string();
-	config.supervisor.gate.verifier_model = "openai:gpt-4.1".to_string();
+	config.supervisor.model.model = Some("openai:gpt-4.1".to_string());
+	config.supervisor.model.model = Some("openai:gpt-4.1".to_string());
 	let messages = vec![crate::session::Message {
 		role: "user".to_string(),
 		content: "After schema changes run ./scripts/schema-check.".to_string(),

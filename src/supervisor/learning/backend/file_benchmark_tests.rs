@@ -518,9 +518,10 @@ async fn compact_learning_retrieval_frontier() {
 		split.as_str(),
 		"calibration" | "holdout" | "challenge" | "all"
 	));
-	let config = crate::config::Config::load().expect("real config loads");
+	let mut config = crate::config::Config::load().expect("real config loads");
 	let rewrite_model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.supervisor.learning.model.clone());
+		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	config.supervisor.model.model = Some(rewrite_model.clone());
 	let lessons = lessons();
 	let cases = cases(&split);
 
@@ -577,10 +578,7 @@ async fn compact_learning_retrieval_frontier() {
 			let started = Instant::now();
 			let (_tx, rx) = tokio::sync::watch::channel(false);
 			let result = crate::supervisor::learning::inject::prepare_retrieval_query(
-				&config,
-				case.query,
-				&rewrite_model,
-				rx,
+				&config, case.query, rx,
 			)
 			.await;
 			rewrite_ms += started.elapsed().as_millis();

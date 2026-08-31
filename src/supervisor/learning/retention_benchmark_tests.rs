@@ -131,9 +131,9 @@ async fn compact_consolidation_precision() {
 		.expect("load server credentials");
 	let mut config = crate::config::Config::load().expect("real config loads");
 	let model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.supervisor.learning.model.clone());
-	config.supervisor.learning.model = model.clone();
-	config.supervisor.gate.verifier_model = model.clone();
+		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	config.supervisor.model.model = Some(model.clone());
+	config.supervisor.model.model = Some(model.clone());
 
 	let mut results = Vec::new();
 	let mut false_accepts = 0usize;

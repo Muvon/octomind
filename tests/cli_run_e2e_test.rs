@@ -507,7 +507,7 @@ async fn test_run_with_supervisor_enabled_survives_garbage_verdicts() {
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
 		config.supervisor.enabled = true;
-		config.supervisor.model = "ollama:fake-model".to_string();
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 		config.telemetry = false;
 		config.auto_capabilities = false;
 		config.skills.auto_activation = false;
@@ -756,8 +756,7 @@ async fn test_distill_stores_lessons() {
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
 		config.supervisor.enabled = false;
-		config.supervisor.learning.model = "ollama:fake-model".to_string();
-		config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 		config.telemetry = false;
 		config.auto_capabilities = false;
 		config.skills.auto_activation = false;

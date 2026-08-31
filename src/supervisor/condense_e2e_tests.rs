@@ -40,7 +40,7 @@ fn condense_config() -> crate::config::Config {
 	config.supervisor.enabled = true;
 	config.supervisor.condense.enabled = true;
 	config.supervisor.condense.tokens_threshold = 10;
-	config.supervisor.condense.model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config
 }
 

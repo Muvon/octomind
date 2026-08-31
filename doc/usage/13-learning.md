@@ -22,7 +22,6 @@ Learning is one mechanic of the **supervisor** — the out-of-band control plane
 ```toml
 [supervisor.learning]
 enabled = true
-model = "anthropic:claude-haiku-4-5"
 
 [supervisor.learning.evolution]
 enabled = false
@@ -31,7 +30,8 @@ enabled = false
 | Field | Description | Default |
 |-------|-------------|---------|
 | `enabled` | Enable the learning system. | `true` |
-| `model` | Model for extraction and retrieval-prep LLM calls. Use a cheap model. | `anthropic:claude-haiku-4-5` |
+
+Learning does not own a separate model. Extraction, recall, verification, retention, and evolution all use `[supervisor.model]`, which itself inherits omitted fields from `[model]`.
 
 `[supervisor.learning.evolution]` has one field, `enabled` (default `false`).
 When enabled, the detached learner may compile one highest-value grounded memory

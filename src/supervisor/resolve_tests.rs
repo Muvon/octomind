@@ -459,7 +459,7 @@ fn resolve_context(request: &str) -> TaskContext {
 
 fn resolve_config() -> crate::config::Config {
 	let mut config = crate::session::chat::test_support::fake_provider_config();
-	config.supervisor.gate.verifier_model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config
 }
 

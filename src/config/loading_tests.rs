@@ -171,12 +171,12 @@ fn tables_deep_merge_across_files() {
 	write_file(
 		tmp.path(),
 		"decision.toml",
-		"[compression.decision]\nmax_tokens = 999\n",
+		"[compression.model]\nmax_tokens = 999\n",
 	);
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
-	assert_eq!(config.compression.decision.max_tokens, 999);
+	assert_eq!(config.get_compression_model_profile().max_tokens, 999);
 	assert!(
-		!config.compression.decision.model.is_empty(),
+		!config.get_compression_model_profile().model.is_empty(),
 		"sibling keys survive"
 	);
 	assert!(

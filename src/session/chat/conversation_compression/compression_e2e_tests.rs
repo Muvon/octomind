@@ -83,7 +83,7 @@ async fn test_done_compression_end_to_end() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = compressible_session();
 	let before = session.session.messages.len();
@@ -126,7 +126,7 @@ async fn test_unparseable_summary_errors_and_keeps_messages() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = compressible_session();
 	let before = session.session.messages.clone();
@@ -201,7 +201,7 @@ async fn verify_midturn_e2e_mid_task_automatic_compression_keeps_user_request() 
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	// Force the context ceiling so the Automatic trigger fires deterministically
 	// on a tiny session (current_tokens >= ceiling -> forced deepest compression).
 	config.max_session_tokens_threshold = 1;
@@ -265,7 +265,7 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.max_session_tokens_threshold = 1;
 
 	// Fresh-follow-up tail: [previous assistant answer, brand-new user request].
@@ -335,7 +335,7 @@ async fn verify_compaction_drops_provider_chain_ids() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.max_session_tokens_threshold = 1;
 
 	// Same mid-task shape as the wrapper test above: the trailing
@@ -465,7 +465,7 @@ async fn verify_turn_boundary_folds_on_crossing_the_line() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	// Between the user message and its first call: no history needed.
@@ -492,7 +492,7 @@ async fn verify_background_fold_discards_on_range_change() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
@@ -554,7 +554,7 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	// Two calls into a turn with no completed-turn history: two calls of
@@ -625,7 +625,7 @@ async fn verify_ceiling_margin_folds_inline_and_overrides_the_veto() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	// Mid-turn with a two-call horizon: below the margin this shape waits.
@@ -672,7 +672,7 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
@@ -752,7 +752,7 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = regime_session(&mut config).await;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;

@@ -27,7 +27,7 @@ fn plan_config() -> crate::config::Config {
 	let mut config = fake_provider_config();
 	config.supervisor.enabled = true;
 	config.supervisor.plan.enabled = true;
-	config.supervisor.plan.model = "ollama:fake-model".to_string();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config
 }
 

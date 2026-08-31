@@ -774,7 +774,7 @@ fn acp_fake_config() -> Config {
 	let mut config = template_config();
 	config.model = "ollama:fake-model".to_string();
 	config.supervisor.enabled = false;
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config
 }
 

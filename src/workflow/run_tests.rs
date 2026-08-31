@@ -49,7 +49,7 @@ fn seq(name: &str) -> Sequential {
 		session: SessionMode::Fresh,
 		timeout: 0,
 		retries: 0,
-		model: None,
+		model: Default::default(),
 		workdir: None,
 		count: None,
 		skills: None,
@@ -61,12 +61,12 @@ fn seq(name: &str) -> Sequential {
 fn expand_count_replicates_with_own_model() {
 	let mut s = seq("candidate");
 	s.count = Some(3);
-	s.model = Some("openai:gpt-5".into());
+	s.model.model = Some("openai:gpt-5".into());
 	let reps = expand_substep(&s);
 	assert_eq!(reps.len(), 3);
 	assert!(reps
 		.iter()
-		.all(|r| r.seq.model.as_deref() == Some("openai:gpt-5")));
+		.all(|r| r.seq.model.model.as_deref() == Some("openai:gpt-5")));
 	assert_eq!(reps[2].label, "candidate #3");
 }
 
@@ -75,7 +75,7 @@ fn expand_none_is_single_passthrough() {
 	let reps = expand_substep(&seq("solo"));
 	assert_eq!(reps.len(), 1);
 	assert_eq!(reps[0].label, "solo");
-	assert!(reps[0].seq.model.is_none());
+	assert_eq!(reps[0].seq.model, Default::default());
 }
 
 #[test]

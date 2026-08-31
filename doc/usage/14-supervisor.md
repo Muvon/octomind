@@ -122,26 +122,33 @@ The supervisor is configured under `[supervisor]`. It is **strict**: a missing `
 ```toml
 [supervisor]
 enabled = true
-model   = "octohub:auto"   # shared cheap model for supervisor mechanics
+
+[supervisor.model]          # optional; omitted fields inherit [model]
+name = "octohub:auto"
+reasoning_effort = "medium"
+max_tokens = 8192
+temperature = 0.0
+top_p = 1.0
+top_k = 0
+max_retries = 1
+retry_timeout = 30
+request_timeout_seconds = 300
 
 [supervisor.learning]      # lessons + orientation — see 13-learning.md
 enabled = true
-model   = "octohub:auto"
 
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true
-verifier_model = "openai:gpt-5-mini"     # recommended: a DIFFERENT family than the agent model
-max_tokens = 8192
 
 [supervisor.plan]          # adaptive external plan manager
 enabled = true
-model = "octohub:auto"
 
 [supervisor.condense]      # task-aware narrowing of oversized tool outputs
 enabled = true
 tokens_threshold = 5000
-model = "anthropic:claude-haiku-4-5"
 ```
+
+Gate, resolve, plan, condense, and every learning operation use the single supervisor profile. Omitting `[supervisor.model]` uses `[model]` unchanged.
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
 

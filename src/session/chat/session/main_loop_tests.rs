@@ -729,7 +729,7 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let mut config = fake_provider_config();
-	config.compression.decision.model = "ollama:fake-model".to_string();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.enabled = false;
 	let args = super::super::GenericSessionArgs::resume(
 		"cov-done-compress".to_string(),

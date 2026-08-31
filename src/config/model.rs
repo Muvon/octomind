@@ -46,7 +46,7 @@ impl ModelProfile {
 	/// exact validation path after inheritance has been applied.
 	pub fn validate(&self, label: &str) -> Result<()> {
 		if self.model.trim().is_empty() {
-			return Err(anyhow!("{label}.model cannot be empty"));
+			return Err(anyhow!("{label}.name cannot be empty"));
 		}
 		if !(0.0..=2.0).contains(&self.temperature) {
 			return Err(anyhow!(
@@ -67,7 +67,7 @@ impl ModelProfile {
 			));
 		}
 		crate::providers::ProviderFactory::get_provider_for_model(&self.model)
-			.map_err(|error| anyhow!("{label}.model '{}' is invalid: {error}", self.model))?;
+			.map_err(|error| anyhow!("{label}.name '{}' is invalid: {error}", self.model))?;
 		Ok(())
 	}
 }
@@ -200,7 +200,7 @@ impl ModelProfileOverride {
 			.as_ref()
 			.is_some_and(|model| model.trim().is_empty())
 		{
-			return Err(anyhow!("{label}.model cannot be empty"));
+			return Err(anyhow!("{label}.name cannot be empty"));
 		}
 		if self
 			.temperature

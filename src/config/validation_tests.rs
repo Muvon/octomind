@@ -50,12 +50,17 @@ fn role_with(name: &str, temperature: f32, top_p: f32, top_k: u32) -> Role {
 	Role {
 		name: name.to_string(),
 		config: RoleConfig {
-			model: None,
+			model: crate::config::ModelProfileOverride {
+				temperature: Some(temperature),
+				top_p: Some(top_p),
+				top_k: Some(top_k),
+				..Default::default()
+			},
 			system: "system prompt".to_string(),
 			welcome: "welcome".to_string(),
-			temperature,
-			top_p,
-			top_k,
+			temperature: None,
+			top_p: None,
+			top_k: None,
 		},
 		mcp: Default::default(),
 	}
@@ -101,10 +106,10 @@ fn full_validate_accepts_every_optional_section_at_once() {
 }
 
 #[test]
-fn whitespace_only_planner_model_is_rejected_like_an_empty_one() {
+fn whitespace_only_supervisor_model_is_rejected_like_an_empty_one() {
 	let mut config = template_config();
-	config.supervisor.plan.model = "   ".to_string();
-	let error = config.validate_supervisor_plan().unwrap_err().to_string();
+	config.supervisor.model.model = Some("   ".to_string());
+	let error = config.validate_model_profiles().unwrap_err().to_string();
 	assert!(error.contains("cannot be empty"), "got: {error}");
 }
 
@@ -160,7 +165,7 @@ fn zero_session_token_threshold_means_disabled_and_passes() {
 #[test]
 fn compression_model_errors_surface_through_full_validate() {
 	let mut config = template_config();
-	config.compression.decision.model = "not-a-provider:model".to_string();
+	config.compression.model.model = Some("not-a-provider:model".to_string());
 	let error = config.validate().unwrap_err().to_string();
-	assert!(error.contains("compression.decision.model"), "got: {error}");
+	assert!(error.contains("compression.model.name"), "got: {error}");
 }

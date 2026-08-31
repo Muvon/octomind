@@ -8,13 +8,11 @@ You pick a model with the `provider:model` format and supply that provider's API
 
 ## Model Format
 
-All models use `provider:model` format:
+All model names use `provider:model` format. The strict main profile is:
 
 ```toml
-model = "openrouter:anthropic/claude-sonnet-4"
-model = "openai:gpt-4o"
-model = "anthropic:claude-sonnet-4"
-model = "deepseek:deepseek-chat"
+[model]
+name = "openrouter:anthropic/claude-sonnet-4"
 ```
 
 ## API Keys Are Environment-Only
@@ -179,13 +177,14 @@ The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Eac
 
 ### OctoHub purpose routing (`octohub:auto`)
 
-When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request with where it came from via the `X-Model-Purpose` header — `main` (session turns), `compression`, or a supervisor mechanic (`supervisor-gate`, `supervisor-condense`, `supervisor-distill`, `supervisor-recall`) — and the hub picks the real model for each purpose from its config (or a per-owner override set through the hub's admin API). Purposes fall back hierarchically on `-`: one `supervisor` map entry covers every supervisor mechanic until a specific one is pinned.
+When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request via `X-Model-Purpose` as `main`, `supervisor`, or `compression`. Every supervisor mechanic—including learning—uses the same `supervisor` purpose, so proxy routing cannot reintroduce hidden per-mechanic model selection.
 
 ```toml
-model = "octohub:auto"
+[model]
+name = "octohub:auto"
 
-[compression.decision]
-model = "octohub:auto"   # the hub routes this to its `compression` choice
+[compression.model]
+name = "octohub:auto"   # the hub routes this to its `compression` choice
 ```
 
 One model string everywhere; the hub decides what each purpose actually runs — and can retune it without you touching config. Providers other than OctoHub ignore the header, and a hub without `[auto]` treats `auto` as an unknown model.
@@ -195,7 +194,8 @@ One model string everywhere; the hub decides what each purpose actually runs —
 The special `cli` meta-provider runs a **local command-line agent** instead of calling a network API. The model string is `cli:<backend>/<model>`, where `<backend>` is one of `codex`, `claude`, `cursor`, `gemini`, or a generic command.
 
 ```toml
-model = "cli:codex/gpt-5"
+[model]
+name = "cli:codex/gpt-5"
 ```
 
 Because the model runs through a local CLI, **no API key is required** — Octomind skips credential validation entirely for the `cli` provider. Behavior is tuned with backend-specific environment variables, for example for the codex backend:
@@ -228,30 +228,32 @@ OpenAI caching is automatic (server-side, no client cache markers) for most text
 |----------|-------------|-----|
 | Main development | `anthropic:claude-sonnet-4` | Best coding, caching support |
 | Fast queries / layers | `openai:gpt-4o-mini` | Fast, cheap |
-| Compression decisions | `openai:gpt-5-mini` | Current default for `[compression.decision].model` |
+| Compression decisions | `openai:gpt-5-mini` | Configure under `[compression.model]` |
 | Research / exploration | `openrouter:google/gemini-2.5-flash-preview` | Large context, fast |
 | Cost-effective | `deepseek:deepseek-chat` | Lowest cost |
 
-The compression-decision model is configured separately from your main model under `[compression.decision].model`. The shipped default is `openai:gpt-5-mini`; `anthropic:claude-haiku-4-5` is a fine cheaper alternative. See [doc/usage/08-compression.md](08-compression.md) for details.
+The compression profile is configured separately under `[compression.model]`; omitting it inherits `[model]`. See [doc/usage/08-compression.md](08-compression.md) for details.
 
 ## Model Resolution
 
 When several places specify a model, Octomind resolves which one actually runs in this priority order:
 
-1. CLI override — `octomind run -m provider:model`
-2. The `model` declared by the active role/agent definition (a plain `[[roles]]` entry, or a tap agent's manifest role)
-3. The root config `model` — which a `[taps]` entry replaces for a tap agent's tag
+1. Explicit runtime override — for example `octomind run -m provider:model`
+2. The active role or workflow-step model profile
+3. A matching tap model profile
+4. The required main `[model]` baseline
 
-> A plain `[[roles]]` entry's `model` is honored directly for `octomind run <role>` (CLI `--model` still wins). A `[taps]` override applies only to tap agents and acts at the `config.model` tier. See [Configuration](03-configuration.md).
+> Every override may specify only `name`, only tuning fields, the complete profile, or nothing. Missing fields inherit from the preceding profile.
 
 ## Request Tuning
 
 A few root-config knobs control how Octomind makes provider calls (defaults shown):
 
 ```toml
-request_timeout_seconds = 300   # per-request timeout
-max_retries = 1                 # retry attempts on transient failures
-retry_timeout = 30              # seconds between retries
+[model]
+request_timeout_seconds = 300
+max_retries = 1
+retry_timeout = 30
 ```
 
 The compression sub-pipeline has its own `max_retries`/`retry_timeout`; see [doc/reference/03-config-reference.md](../reference/03-config-reference.md).

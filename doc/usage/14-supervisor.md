@@ -68,7 +68,7 @@ Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are m
 - **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by a fixed re-entry budget. Exhaustion hard-stops instead of falling through to another judge.
 - **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed successful response gets one bounded format-only retry; substantive gaps do not.
 
-Set `verifier_model` to a **different model family** than your agent model — a same-family verifier inherits the same blind spots and rubber-stamps them.
+If independent-family supervision matters, set `[supervisor.model].name` to a different family from the main agent. That one choice applies consistently to verification and every other supervisor mechanic.
 
 ## Adaptive external planning
 

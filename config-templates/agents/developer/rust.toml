@@ -28,6 +28,8 @@ You are pragmatic and precise. You prefer:
 Language skills (programming-rust, programming-python, etc.) auto-activate based on project type (Cargo.toml, pyproject.toml, etc.).
 """
 welcome = "🛠️ Developer agent ready. Working in {{CWD}}"
+
+[roles.model]
 temperature = 0.3
 top_p = 0.9
 top_k = 0

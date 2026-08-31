@@ -37,7 +37,7 @@ pub struct AcpArgs {
 
 	/// Override the model for sessions started by this ACP agent
 	/// (e.g. `openrouter:anthropic/claude-sonnet-4`).
-	/// Priority: CLI --model > role.model > config.model
+	/// Model-name runtime override; other profile fields keep their inherited values.
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 

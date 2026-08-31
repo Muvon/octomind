@@ -145,10 +145,7 @@ fn validate_rejects_an_empty_model() {
 	let mut config = template_config();
 	config.model.clear();
 	let error = config.validate().unwrap_err().to_string();
-	assert!(
-		error.contains("Model field cannot be empty"),
-		"got: {error}"
-	);
+	assert!(error.contains("main.name cannot be empty"), "got: {error}");
 }
 
 #[test]
@@ -202,7 +199,7 @@ fn role_sampling_bounds_are_enforced_with_inclusive_boundaries() {
 		role_with("upper-edge", 2.0, 1.0, 1000),
 	];
 	config
-		.validate_required_fields()
+		.validate_model_profiles()
 		.expect("both edges are legal values");
 
 	let cases = [
@@ -210,12 +207,11 @@ fn role_sampling_bounds_are_enforced_with_inclusive_boundaries() {
 		("too-cold", -0.1, 1.0, 1000, "temperature"),
 		("too-wide", 1.0, 1.1, 1000, "top_p"),
 		("too-narrow", 1.0, -0.1, 1000, "top_p"),
-		("no-choices", 1.0, 1.0, 0, "top_k"),
 		("too-many", 1.0, 1.0, 1001, "top_k"),
 	];
 	for (name, temperature, top_p, top_k, knob) in cases {
 		config.roles = vec![role_with(name, temperature, top_p, top_k)];
-		let error = config.validate_required_fields().unwrap_err().to_string();
+		let error = config.validate_model_profiles().unwrap_err().to_string();
 		assert!(error.contains(name), "must name the role, got: {error}");
 		assert!(error.contains(knob), "must name {knob}, got: {error}");
 	}

@@ -40,7 +40,7 @@ Each ACP session also spawns a background inbox monitor. It processes scheduled 
 | `--name`, `-n` | Preferred session name for the next `new_session` request |
 | `--resume`, `-r` | Resume a specific session by name on the next `new_session` |
 | `--resume-recent` | Resume the most recent session for the current working directory |
-| `--model`, `-m` | Override the model for all sessions started by this agent (priority: `--model` > `role.model` > `config.model`; a `[taps]` entry overrides `config.model` for tap agents) |
+| `--model`, `-m` | Override the model name for sessions started by this agent (runtime > role > tap > main `[model]`) |
 | `--sandbox` | Restrict all filesystem writes to the current working directory |
 | `--hook` | Activate a webhook hook by name (defined in `[[hooks]]` config); repeatable |
 

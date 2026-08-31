@@ -41,14 +41,16 @@ Define roles in `[[roles]]` config sections (always `[[roles]]` — never `[role
 ```toml
 [[roles]]
 name = "assistant"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
 """
 welcome = "Hello! Working in {{CWD}} (Role: {{ROLE}})"
+
+[roles.model]
+temperature = 0.3
+top_p = 0.7
+top_k = 20
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -72,15 +74,15 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 **Validation ranges (enforced at config load).** Values outside these bounds abort loading with an error like `Role '<name>' temperature must be between 0.0 and 2.0`:
 - `temperature` — `0.0` to `2.0`
 - `top_p` — `0.0` to `1.0`
-- `top_k` — `1` to `1000`
+- `top_k` — `0` to `1000` (`0` disables it)
 
 **Model resolution priority.** When more than one source sets a model, the effective model is chosen in this order (highest first):
 
 ```
-CLI --model  >  role.model  >  config.model
+runtime override  >  role model profile  >  tap model profile  >  [model]
 ```
 
-A role's `model` (whether a plain `[[roles]]` entry or a tap agent's manifest role) is honored directly over the root `config.model`; CLI `--model` still wins. For a tap agent (`category:variant`), a `[taps]` override for that tag replaces the `config.model` tier. For the full model-selection story see [Providers](04-providers.md).
+A role's `[roles.model]` may override any subset of the complete profile. Missing fields inherit through the chain; omitting the block uses the inherited profile unchanged. For the full model-selection story see [Providers](04-providers.md).
 
 > **Multi-step AI workflows** are no longer bound to roles. Use the external `octomind workflow <file.toml>` CLI instead — see [Workflows](09-workflows.md).
 
@@ -151,15 +153,17 @@ allowed_tools = []  # No global restrictions (default)
 ```toml
 [[roles]]
 name = "developer"
-temperature = 0.3
-top_p = 0.7
-top_k = 20
 system = """
 You are an expert software developer.
 Working directory: {{CWD}}
 Git status: {{GIT_STATUS}}
 """
 welcome = "Developer role ready in {{CWD}}"
+
+[roles.model]
+temperature = 0.3
+top_p = 0.7
+top_k = 20
 
 [roles.mcp]
 server_refs = ["core", "runtime", "filesystem", "agent"]
@@ -171,11 +175,13 @@ allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
 ```toml
 [[roles]]
 name = "analyst"
+system = "You analyze code and provide insights. Do not modify files."
+welcome = "Analyst role ready (read-only)."
+
+[roles.model]
 temperature = 0.2
 top_p = 0.7
 top_k = 20
-system = "You analyze code and provide insights. Do not modify files."
-welcome = "Analyst role ready (read-only)."
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -187,12 +193,14 @@ allowed_tools = ["filesystem:view"]
 ```toml
 [[roles]]
 name = "docs"
-model = "openrouter:openai/gpt-4o"
+system = "You write clear documentation."
+welcome = "Docs role ready."
+
+[roles.model]
+name = "openrouter:openai/gpt-4o"
 temperature = 0.4
 top_p = 0.7
 top_k = 20
-system = "You write clear documentation."
-welcome = "Docs role ready."
 
 [roles.mcp]
 server_refs = ["filesystem"]

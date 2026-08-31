@@ -34,7 +34,7 @@ stderr (each step's response + per-step stats + totals)
 
 ### Workflow File
 
-Drop this at `dev.toml`. The `role` values here (`developer:general`, `developer:brief`) are **tap agents** from the built-in default tap `muvon/tap` (auto-cloned on first use), not local `[[roles]]` shipped in `default.toml` — they resolve out of the box, or swap in any role/tag you already have. The optional per-step `model = "provider:model"` field overrides that role's model for this step and is forwarded to the subprocess as `--model`.
+Drop this at `dev.toml`. The `role` values here (`developer:general`, `developer:brief`) are **tap agents** from the built-in default tap `muvon/tap` (auto-cloned on first use), not local `[[roles]]` shipped in `default.toml` — they resolve out of the box, or swap in any role/tag you already have. The optional per-step `model` profile overlays that role's resolved profile; omitted fields continue to inherit.
 
 ```toml
 name   = "dev"
@@ -43,7 +43,7 @@ name   = "dev"
 name    = "refine"
 role    = "developer:general"
 session = "fresh"
-model   = "openai:gpt-5-mini"   # cheap fast model for simple refinement
+model   = { name = "openai:gpt-5-mini" }   # cheap fast model for simple refinement
 prompt  = """
 Refine this request into a clear, actionable task. Guess which files might
 be relevant. If already clear, return unchanged. Respond ONLY with the
@@ -57,7 +57,7 @@ Request:
 name    = "research"
 role    = "developer:general"
 session = "fresh"
-model   = "openrouter:google/gemini-2.5-flash-preview"   # large-context model for code reading
+model   = { name = "openrouter:google/gemini-2.5-flash-preview" }   # large-context model for code reading
 timeout = 300                          # seconds; 0 = no timeout (default)
 prompt  = """
 Gather the key context for this task. Search relevant files, read
@@ -74,7 +74,7 @@ Task:
 name    = "execute"
 role    = "developer:general"
 session = "fresh"
-model   = "anthropic:claude-sonnet-4-6"   # powerful model for the actual fix
+model   = { name = "anthropic:claude-sonnet-4-6", reasoning_effort = "high" }
 retries = 1                                # one extra attempt on failure
 prompt  = """
 Implement the task using the gathered context.
@@ -190,12 +190,12 @@ Each step is a separate `octomind run` invocation, so you can match the model to
 
 **How to actually set a step's model**, in priority order (highest wins):
 
-1. **Per-step `model = "provider:model"` in the workflow file** — the simplest and most direct lever, shown in the [Workflow File](#workflow-file) example above. It is forwarded to the subprocess as `--model` and overrides everything else for that step.
+1. **Per-step `model = { name = "provider:model", ... }` profile** — the simplest and most direct lever, shown above. Every explicitly set field is forwarded to the subprocess.
 2. The model declared by the step's role/tap-agent definition (a plain `[[roles]]` entry, or a tap agent's manifest role).
-3. A `[taps]` override keyed by the agent tag — applies to tap agents (`category:variant`) and acts at the `config.model` tier. (See [Configuration](../usage/03-configuration.md) and [Roles](../usage/06-roles.md).)
-4. The global default `model` from config.
+3. A `[taps."tag".model]` override keyed by the agent tag.
+4. The required `[model]` baseline.
 
-> For workflow steps, prefer the per-step `model` field — it is forwarded as `--model` and always wins, for any role or tap agent.
+> The historical scalar `model = "provider:model"` remains accepted as a name-only shorthand, so existing workflow files do not break.
 
 ## Key Points
 

@@ -69,19 +69,19 @@ fn write_file(dir: &std::path::Path, name: &str, content: &str) {
 fn config_toml_is_the_base_even_when_other_files_sort_earlier() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(tmp.path(), "a-first.toml", "model = \"from-a\"\n");
+	write_file(tmp.path(), "a-first.toml", "model = \"ollama:from-a\"\n");
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
-	assert_eq!(config.model, "from-a");
+	assert_eq!(config.model, "ollama:from-a");
 }
 
 #[test]
 fn regular_files_merge_in_alphabetical_order() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(tmp.path(), "a.toml", "model = \"a\"\n");
-	write_file(tmp.path(), "z.toml", "model = \"z\"\n");
+	write_file(tmp.path(), "a.toml", "model = \"ollama:a\"\n");
+	write_file(tmp.path(), "z.toml", "model = \"ollama:z\"\n");
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
-	assert_eq!(config.model, "z");
+	assert_eq!(config.model, "ollama:z");
 }
 
 #[test]
@@ -90,10 +90,10 @@ fn mcp_extension_files_load_after_every_regular_file() {
 	// contract loads mcp-*.toml overrides last, so its field must win.
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(tmp.path(), "z.toml", "model = \"z\"\n");
-	write_file(tmp.path(), "mcp-a.toml", "model = \"mcp-a\"\n");
+	write_file(tmp.path(), "z.toml", "model = \"ollama:z\"\n");
+	write_file(tmp.path(), "mcp-a.toml", "model = \"ollama:mcp-a\"\n");
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
-	assert_eq!(config.model, "mcp-a");
+	assert_eq!(config.model, "ollama:mcp-a");
 }
 
 #[test]
@@ -251,12 +251,16 @@ fn update_specific_field_persists_changes_to_the_configured_path() {
 fn load_honors_the_octomind_config_path_env_override() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(tmp.path(), "override.toml", "model = \"env-override\"\n");
+	write_file(
+		tmp.path(),
+		"override.toml",
+		"model = \"ollama:env-override\"\n",
+	);
 	std::env::set_var("OCTOMIND_CONFIG_PATH", tmp.path().join("config.toml"));
 	let loaded = Config::load();
 	std::env::remove_var("OCTOMIND_CONFIG_PATH");
 	let config = loaded.expect("load via env override");
-	assert_eq!(config.model, "env-override");
+	assert_eq!(config.model, "ollama:env-override");
 }
 
 // ---------------------------------------------------------------------------

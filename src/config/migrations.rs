@@ -133,7 +133,12 @@ fn unify_v12_model_profiles(
 	)?;
 	let mut main = toml_edit::Table::new();
 	if let Some(value) = document.as_table_mut().remove("model") {
-		main.insert("name", value);
+		match value.into_table() {
+			Ok(table) => main = table,
+			Err(value) => {
+				main.insert("name", value);
+			}
+		}
 	}
 	for key in PROFILE_FIELDS {
 		if let Some(value) = document.as_table_mut().remove(key) {
@@ -184,7 +189,12 @@ fn unify_v12_model_profiles(
 	)?;
 	let mut supervisor_profile = toml_edit::Table::new();
 	if let Some(value) = supervisor.remove("model") {
-		supervisor_profile.insert("name", value);
+		match value.into_table() {
+			Ok(table) => supervisor_profile = table,
+			Err(value) => {
+				supervisor_profile.insert("name", value);
+			}
+		}
 	}
 	let template_supervisor_profile = required_table(
 		template_supervisor,

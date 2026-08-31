@@ -76,9 +76,13 @@ pub async fn resolve_config_and_role(
 			))?;
 
 		// Apply tap model override if configured
-		if let Some(tap_model) = config.taps.get(tag) {
-			merged.model = tap_model.clone();
-			crate::log_debug!("Applied tap model override: {} -> {}", tag, tap_model);
+		if let Some(tap) = config.taps.get(tag) {
+			merged.model_profile = tap.model.resolve(&merged.model_profile);
+			crate::log_debug!(
+				"Applied tap model profile override: {} -> {}",
+				tag,
+				merged.model_profile.model
+			);
 		}
 
 		Ok((merged, role))

@@ -135,7 +135,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	sink: S,
 ) -> Result<()> {
 	let model = chat_session.model.clone();
-	let temperature = chat_session.temperature;
 	let config_clone = config.clone();
 
 	// Calculate animation parameters
@@ -421,28 +420,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// Make API call. `session.messages` is borrowed directly — no clone — and
 	// the validation params hold that shared borrow only until they're consumed
 	// by `chat_completion_with_validation` below.
-	let max_retries = chat_session.max_retries;
 	let schema = chat_session.schema.clone();
-	let reasoning_effort = chat_session.reasoning_effort;
-	let validation_params = ChatCompletionWithValidationParams::new(
+	let model_profile = chat_session.model_profile(&config_clone);
+	let validation_params = ChatCompletionWithValidationParams::from_profile(
 		&chat_session.session.messages,
-		&model,
-		temperature,
-		chat_session.top_p,
-		chat_session.top_k,
-		chat_session.max_tokens,
+		&model_profile,
 		&config_clone,
 	)
-	.with_max_retries(max_retries)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx.clone());
 	let validation_params = if let Some(schema) = schema {
 		validation_params.with_schema(schema)
-	} else {
-		validation_params
-	};
-	let validation_params = if let Some(effort) = reasoning_effort {
-		validation_params.with_reasoning_effort(effort)
 	} else {
 		validation_params
 	};

@@ -23,13 +23,10 @@
 use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use crate::supervisor::escape_xml_text as xml_text;
-use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
+use crate::supervisor::learning::extract::SupervisorPrompt;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
-
-/// Output budget for the manager's single structured decision.
-const DECISION_MAX_TOKENS: u32 = 2048;
 
 /// Input budget for the bounded current-phase assistant/tool trajectory slice;
 /// the request, active plan, capabilities, and evidence are separate input.
@@ -527,13 +524,8 @@ pub async fn reconcile_after_actions(
 	let payload = render_specialist_context(chat_session, signal, TRAJECTORY_MAX_TOKENS);
 	let response = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
-		&config.supervisor.plan.model,
 		SupervisorPrompt::new(PLANNER_PROMPT.to_string(), payload),
 		crate::supervisor::stats::CallKind::Plan,
-		SupervisorSampling {
-			temperature: 0.0,
-			max_tokens: DECISION_MAX_TOKENS,
-		},
 		build_plan_schema(signal),
 		operation_rx,
 	)

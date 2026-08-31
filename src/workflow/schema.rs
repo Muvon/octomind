@@ -80,9 +80,10 @@ pub struct Sequential {
 	pub timeout: u64,
 	#[serde(default)]
 	pub retries: u32,
-	/// Optional model override forwarded as `--model` to the subprocess.
+	/// Complete model-profile override forwarded to the subprocess. Missing
+	/// fields inherit from the selected role and then main configuration.
 	#[serde(default)]
-	pub model: Option<String>,
+	pub model: crate::config::ModelProfileOverride,
 	/// Optional working directory for the subprocess. Relative paths
 	/// resolve against the orchestrator's cwd at execution time.
 	/// None = inherit the orchestrator's cwd.

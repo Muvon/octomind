@@ -61,7 +61,7 @@ pub(super) async fn run_decision_call(
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(CompressionSummary, Option<crate::providers::TokenUsage>)> {
 	let now = crate::utils::time::now_secs();
-	let decision_config = &config.compression.decision;
+	let decision_config = config.get_compression_model_profile();
 
 	// Cache the system prompt only if the compression model supports caching.
 	// The system content is stable across compression calls (only varies on
@@ -112,16 +112,11 @@ pub(super) async fn run_decision_call(
 		decision_config.temperature
 	);
 
-	let mut params = crate::session::ChatCompletionWithValidationParams::new(
+	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(
 		&messages,
-		&decision_config.model,
-		decision_config.temperature,
-		decision_config.top_p,
-		decision_config.top_k,
-		decision_config.max_tokens,
+		&decision_config,
 		config,
 	)
-	.with_max_retries(decision_config.max_retries)
 	.with_full_context_tokens(true)
 	.with_cancellation_token(operation_rx)
 	.with_purpose(crate::providers::ModelPurpose::Compression)
@@ -168,7 +163,8 @@ pub(super) fn prepare_decision(
 	force: bool,
 	target_ratio: f64,
 ) -> Result<PreparedDecision> {
-	let model = &config.compression.decision.model;
+	let profile = config.get_compression_model_profile();
+	let model = &profile.model;
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
 	let use_json = provider.enforces_response_schema(&actual_model);
 

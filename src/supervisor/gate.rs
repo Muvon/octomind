@@ -20,7 +20,7 @@
 
 use crate::config::Config;
 use crate::supervisor::escape_xml_text as xml_text;
-use crate::supervisor::learning::extract::{SupervisorPrompt, SupervisorSampling};
+use crate::supervisor::learning::extract::SupervisorPrompt;
 use std::collections::{HashSet, VecDeque};
 use tokio::sync::watch;
 
@@ -867,10 +867,7 @@ pub async fn verify(
 	}
 	let mut user = render_gate_input(&input);
 	crate::log_debug!("Verify-gate input:\n{}", user);
-	// Verify with a deliberately separate (ideally different-family) model — a
-	// same-family verifier shares the generator's blind spots and rubber-stamps
-	// them. Strict config guarantees this is set; no fallback to the generator.
-	let model = config.supervisor.gate.verifier_model.clone();
+	let model = config.get_supervisor_model_profile().model;
 	let conditions = input.evidence_conditions.len();
 	let encoding = Encoding::for_model(&model);
 	crate::log_debug!(
@@ -880,11 +877,9 @@ pub async fn verify(
 	);
 	let (raw, mut report) = match ask_verifier(
 		config,
-		&model,
 		encoding,
 		conditions,
 		user.clone(),
-		0.3,
 		operation_rx.clone(),
 	)
 	.await
@@ -905,11 +900,9 @@ pub async fn verify(
 		user.push_str(&render_readback(input.grounds, &wanted));
 		let (raw, answered) = match ask_verifier(
 			config,
-			&model,
 			encoding,
 			conditions,
 			user.clone(),
-			0.3,
 			operation_rx.clone(),
 		)
 		.await
@@ -944,11 +937,9 @@ pub async fn verify(
         );
 		match ask_verifier(
 			config,
-			&model,
 			encoding,
 			conditions,
 			retry_user,
-			0.0,
 			operation_rx.clone(),
 		)
 		.await
@@ -1042,28 +1033,17 @@ impl Encoding {
 /// violation is only diagnosable from what the model actually wrote.
 async fn ask_verifier(
 	config: &Config,
-	model: &str,
 	encoding: Encoding,
 	expected_conditions: usize,
 	user: String,
-	temperature: f32,
 	operation_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<(String, VerifierReport)> {
-	let sampling = SupervisorSampling {
-		temperature,
-		// A reasoning verifier spends output budget thinking before the
-		// verdict; a budget overflow becomes Indeterminate — give it real
-		// headroom so valid work is not blocked by truncated protocol.
-		max_tokens: config.supervisor.gate.max_tokens,
-	};
 	match encoding {
 		Encoding::Json => {
 			let value = crate::supervisor::learning::extract::call_supervisor_json(
 				config,
-				model,
 				SupervisorPrompt::new(format!("{GATE_PROMPT}\n{GATE_JSON_FORMAT}"), user),
 				crate::supervisor::stats::CallKind::Gate,
-				sampling,
 				build_gate_schema(expected_conditions),
 				operation_rx,
 			)
@@ -1074,10 +1054,8 @@ async fn ask_verifier(
 		Encoding::Text => {
 			let resp = crate::supervisor::learning::extract::call_supervisor_llm(
 				config,
-				model,
 				SupervisorPrompt::new(format!("{GATE_PROMPT}\n{GATE_TEXT_FORMAT}"), user),
 				crate::supervisor::stats::CallKind::Gate,
-				sampling,
 				operation_rx,
 			)
 			.await?;
@@ -1187,7 +1165,7 @@ async fn refute(
 	gaps: &[String],
 	operation_rx: watch::Receiver<bool>,
 ) -> (Vec<String>, Vec<String>) {
-	let model = config.supervisor.model.clone();
+	let model = config.get_supervisor_model_profile().model;
 	let encoding = Encoding::for_model(&model);
 	let mut user = String::from(evidence);
 	user.push_str("\n\n<charged_findings>\n");
@@ -1199,19 +1177,13 @@ async fn refute(
 		));
 	}
 	user.push_str("</charged_findings>");
-	let sampling = SupervisorSampling {
-		temperature: 0.0,
-		max_tokens: config.supervisor.gate.max_tokens,
-	};
 	let kind = crate::supervisor::stats::CallKind::Gate;
 	let refuted = match encoding {
 		Encoding::Json => {
 			match crate::supervisor::learning::extract::call_supervisor_json(
 				config,
-				&model,
 				SupervisorPrompt::new(format!("{REFUTE_PROMPT}\n{REFUTE_JSON_FORMAT}"), user),
 				kind,
-				sampling,
 				refute_schema(gaps.len()),
 				operation_rx,
 			)
@@ -1230,10 +1202,8 @@ async fn refute(
 		Encoding::Text => {
 			match crate::supervisor::learning::extract::call_supervisor_llm(
 				config,
-				&model,
 				SupervisorPrompt::new(format!("{REFUTE_PROMPT}\n{REFUTE_TEXT_FORMAT}"), user),
 				kind,
-				sampling,
 				operation_rx,
 			)
 			.await

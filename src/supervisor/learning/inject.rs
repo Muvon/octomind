@@ -99,7 +99,7 @@ pub async fn retrieve_and_format(
 	// An empty scope skips it too: there is nothing to rank, so the query model
 	// would only add latency to the user's first message.
 	let patterns = if first_call && backend.has_lessons(role, project).await {
-		prepare_retrieval_query(config, user_input, &learning.model, operation_rx)
+		prepare_retrieval_query(config, user_input, operation_rx)
 			.await
 			.unwrap_or_else(|e| {
 				crate::log_debug!("Learning retrieval prep failed: {}", e);
@@ -298,12 +298,10 @@ fn format_pack(selected: &[SelectedMemory]) -> String {
 pub(crate) async fn prepare_retrieval_query(
 	config: &Config,
 	user_input: &str,
-	model: &str,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Vec<String>> {
 	let response = super::extract::call_learning_llm(
 		config,
-		model,
 		FILE_RETRIEVAL_PROMPT.to_string(),
 		user_input.to_string(),
 		crate::supervisor::stats::CallKind::Recall,

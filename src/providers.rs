@@ -50,26 +50,17 @@ pub const MODEL_PURPOSE_HEADER: &str = "X-Model-Purpose";
 /// `X-Model-Purpose` header so octohub's virtual `auto` model can route each
 /// purpose to a different real model; providers that aren't octohub ignore it.
 ///
-/// This set is a CONTRACT with the control plane (the panel renders a model
-/// picker per purpose) — extend it deliberately, never rename values.
-/// Purposes are HIERARCHICAL on the octohub side, split on `-`: a map entry
-/// for `supervisor` covers every `supervisor-*` purpose until a specific one
-/// (e.g. `supervisor-gate`) is pinned. That's why each supervisor mechanic
-/// sends its own purpose — redefinable individually, one row covers the family.
+/// This set is a CONTRACT with the control plane. Internal mechanics sharing a
+/// profile also share one purpose, so a proxy cannot silently reintroduce
+/// per-mechanic model routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ModelPurpose {
 	/// The session's own conversation turns — also cache keepalive pings,
 	/// which must hit the same model they are keeping warm.
 	#[default]
 	Main,
-	/// Verify-gate completion checks.
-	SupervisorGate,
-	/// Tool-output condensation (task-aware narrowing).
-	SupervisorCondense,
-	/// End-of-trajectory lesson/orientation extraction.
-	SupervisorDistill,
-	/// Recall keyword/query preparation.
-	SupervisorRecall,
+	/// Gate, resolve, plan, and tool-output condensation.
+	Supervisor,
 	/// Conversation-compression decisions and summaries.
 	Compression,
 }
@@ -78,10 +69,7 @@ impl ModelPurpose {
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::Main => "main",
-			Self::SupervisorGate => "supervisor-gate",
-			Self::SupervisorCondense => "supervisor-condense",
-			Self::SupervisorDistill => "supervisor-distill",
-			Self::SupervisorRecall => "supervisor-recall",
+			Self::Supervisor => "supervisor",
 			Self::Compression => "compression",
 		}
 	}
@@ -109,6 +97,8 @@ pub struct ChatCompletionParams<'a> {
 	pub max_retries: u32,
 	/// Base timeout for exponential backoff retry logic
 	pub retry_timeout: std::time::Duration,
+	/// Hard timeout for one provider request. None means unlimited.
+	pub request_timeout: Option<std::time::Duration>,
 	/// Configuration object
 	pub config: &'a Config,
 	/// Cancellation token for request abortion
@@ -147,6 +137,10 @@ impl<'a> ChatCompletionParams<'a> {
 			max_tokens,
 			max_retries: config.max_retries,
 			retry_timeout: std::time::Duration::from_secs(config.retry_timeout as u64),
+			request_timeout: match config.request_timeout_seconds {
+				0 => None,
+				n => Some(std::time::Duration::from_secs(n)),
+			},
 			config,
 			cancellation_token: None,
 			schema: None,
@@ -159,6 +153,16 @@ impl<'a> ChatCompletionParams<'a> {
 	/// Set maximum retry attempts
 	pub fn with_max_retries(mut self, max_retries: u32) -> Self {
 		self.max_retries = max_retries;
+		self
+	}
+
+	pub fn with_retry_timeout(mut self, retry_timeout: std::time::Duration) -> Self {
+		self.retry_timeout = retry_timeout;
+		self
+	}
+
+	pub fn with_request_timeout(mut self, request_timeout: Option<std::time::Duration>) -> Self {
+		self.request_timeout = request_timeout;
 		self
 	}
 
@@ -246,10 +250,7 @@ impl<'a> ChatCompletionParams<'a> {
 		)
 		.with_max_retries(self.max_retries)
 		.with_retry_timeout(self.retry_timeout)
-		.with_request_timeout(match self.config.request_timeout_seconds {
-			0 => None,
-			n => Some(std::time::Duration::from_secs(n as u64)),
-		})
+		.with_request_timeout(self.request_timeout)
 		.with_long_cache(true)
 		.with_reasoning_effort(
 			self.reasoning_effort

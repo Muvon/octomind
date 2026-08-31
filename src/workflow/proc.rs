@@ -85,8 +85,8 @@ pub struct RunStepArgs {
 	pub role: String,
 	pub prompt: String,
 	pub session_name: Option<String>,
-	/// Optional model override forwarded as `--model` to the subprocess.
-	pub model: Option<String>,
+	/// Optional complete model-profile override forwarded to the subprocess.
+	pub model: crate::config::ModelProfileOverride,
 	/// Absolute working directory for the subprocess. None = inherit cwd.
 	pub workdir: Option<PathBuf>,
 	/// Forwarded as `OCTOMIND_SKILLS` env var (comma-joined). None = unset.
@@ -144,8 +144,32 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 	if let Some(name) = session_name.as_deref() {
 		cmd.arg("--name").arg(name);
 	}
-	if let Some(m) = &model {
+	if let Some(m) = &model.model {
 		cmd.arg("--model").arg(m);
+	}
+	if let Some(value) = model.reasoning_effort {
+		cmd.arg("--reasoning-effort").arg(value.as_str());
+	}
+	if let Some(value) = model.max_tokens {
+		cmd.arg("--max-tokens").arg(value.to_string());
+	}
+	if let Some(value) = model.temperature {
+		cmd.arg("--temperature").arg(value.to_string());
+	}
+	if let Some(value) = model.top_p {
+		cmd.arg("--top-p").arg(value.to_string());
+	}
+	if let Some(value) = model.top_k {
+		cmd.arg("--top-k").arg(value.to_string());
+	}
+	if let Some(value) = model.max_retries {
+		cmd.arg("--max-retries").arg(value.to_string());
+	}
+	if let Some(value) = model.retry_timeout {
+		cmd.arg("--retry-timeout").arg(value.to_string());
+	}
+	if let Some(value) = model.request_timeout_seconds {
+		cmd.arg("--request-timeout-seconds").arg(value.to_string());
 	}
 	if let Some(dir) = &workdir {
 		cmd.current_dir(dir);

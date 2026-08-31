@@ -69,14 +69,15 @@ impl FoldEconomics {
 
 	pub(super) fn resolve(session: &ChatSession, config: &crate::config::Config) -> Self {
 		let session_pricing = get_model_pricing(&session.model, config);
-		let folder_pricing = get_model_pricing(&config.compression.decision.model, config);
+		let compression_profile = config.get_compression_model_profile();
+		let folder_pricing = get_model_pricing(&compression_profile.model, config);
 		if session_pricing.is_none() || folder_pricing.is_none() {
 			crate::log_info!(
 				"Fold economics: no pricing for {} — using default ratios",
 				if session_pricing.is_none() {
 					&session.model
 				} else {
-					&config.compression.decision.model
+					&compression_profile.model
 				}
 			);
 		}

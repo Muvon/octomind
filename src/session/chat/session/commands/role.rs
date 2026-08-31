@@ -90,8 +90,7 @@ pub async fn handle_role(
 
 	// Snapshot for revert on failure
 	let old_role = session.role.clone();
-	let old_model = session.model.clone();
-	let old_temperature = session.temperature;
+	let old_profile = session.model_profile(config);
 	let old_config = config.clone();
 
 	// Resolve the target role. For tap tags this fetches the manifest, resolves
@@ -133,21 +132,17 @@ pub async fn handle_role(
 		resolved_config.get_merged_config_for_role(&target_role)
 	};
 
-	// Apply role-level settings (temperature, optional model override)
-	let (role_config, _, _, _, _) = config.get_role_config(&target_role);
+	// Apply the complete resolved role profile.
+	let role_profile = config.get_model_profile_for_role(&target_role);
 	session.role = target_role.clone();
-	session.temperature = role_config.temperature;
+	session.apply_model_profile(&role_profile);
 	crate::config::set_thread_role(&session.role);
-	if let Some(role_model) = &role_config.model {
-		session.model = role_model.clone();
-	}
 
 	// Reinitialize for the new role: restart MCP servers, rebuild system prompt.
 	if let Err(e) = session.reinitialize_for_role(&target_role, config).await {
 		// Revert everything
 		session.role = old_role.clone();
-		session.model = old_model;
-		session.temperature = old_temperature;
+		session.apply_model_profile(&old_profile);
 		crate::config::set_thread_role(&session.role);
 		*config = old_config;
 

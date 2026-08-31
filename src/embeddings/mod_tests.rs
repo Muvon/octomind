@@ -117,8 +117,10 @@ fn disk_cache_format_round_trip() {
 		assert_eq!(key, *expected_key);
 		r.read_exact(&mut buf_vec).unwrap();
 		let decoded: Vec<f32> = buf_vec
-			.chunks_exact(4)
-			.map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+			.as_chunks::<4>()
+			.0
+			.iter()
+			.map(|c| f32::from_le_bytes(*c))
 			.collect();
 		assert_eq!(decoded.len(), expected_vec.len());
 		for (a, b) in decoded.iter().zip(expected_vec.iter()) {

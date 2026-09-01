@@ -323,6 +323,71 @@ fn auto_threshold_prefers_the_latest_tool_message() {
 	assert!(!session.messages[0].cached);
 }
 
+#[test]
+fn auto_threshold_never_advances_behind_the_cached_frontier() {
+	// Post-compression layout produced by align_compression_cache_markers:
+	// anchor watermark (1h) + final marker, with the preserved skill and the
+	// summary deliberately uncached between them. The advance must be a no-op —
+	// marking a message behind the frontier would evict the anchor before its
+	// 1h cache entry is ever written to the provider.
+	let manager = CacheManager::new();
+	let config = test_config();
+	let mut session = test_session("anthropic/claude-sonnet-4-6");
+	session.messages = vec![
+		msg("system", "sys", true),
+		Message {
+			cache_ttl: Some("1h".into()),
+			..msg("assistant", "unchanged welcome anchor", true)
+		},
+		msg("user", "<skill name=\"rust\">rules</skill>", false),
+		msg("assistant", "compressed summary", false),
+		msg("user", "<continuation>resume</continuation>", true),
+	];
+
+	assert!(!manager
+		.check_and_apply_auto_cache_threshold(&mut session, &config, true, "developer")
+		.unwrap());
+	assert!(session.messages[1].cached, "anchor watermark must survive");
+	assert_eq!(session.messages[1].cache_ttl.as_deref(), Some("1h"));
+	assert!(
+		!session.messages[2].cached,
+		"skill behind the frontier must not become a boundary"
+	);
+}
+
+#[test]
+fn auto_threshold_eviction_clears_stale_ttl_when_marker_rolls_forward() {
+	let manager = CacheManager::new();
+	let config = test_config();
+	let mut session = test_session("anthropic/claude-sonnet-4-6");
+	session.messages = vec![
+		Message {
+			cache_ttl: Some("1h".into()),
+			..msg("assistant", "anchor", true)
+		},
+		msg("user", "final compacted state", true),
+		msg("assistant", "tool call", false),
+		msg("tool", "fresh result", false),
+	];
+
+	assert!(manager
+		.check_and_apply_auto_cache_threshold(&mut session, &config, true, "developer")
+		.unwrap());
+	assert!(
+		session.messages[3].cached,
+		"marker advances to the fresh tool result past the frontier"
+	);
+	assert!(!session.messages[0].cached, "oldest marker is evicted");
+	assert_eq!(
+		session.messages[0].cache_ttl, None,
+		"eviction must clear the stale TTL with the marker"
+	);
+	assert!(
+		session.messages[1].cached,
+		"previous frontier survives as marker #1"
+	);
+}
+
 // ── update_token_tracking / estimate_current_session_tokens ──────────────────
 
 #[test]
@@ -512,7 +577,10 @@ fn clear_content_markers_clears_content_roles_but_keeps_system() {
 	let mut session = test_session("anthropic/claude-sonnet-4-6");
 	session.messages = vec![
 		msg("system", "sys", true),
-		msg("user", "u", true),
+		Message {
+			cache_ttl: Some("1h".into()),
+			..msg("user", "u", true)
+		},
 		msg("assistant", "a", true),
 		Message {
 			tool_call_id: Some("call-1".into()),
@@ -528,6 +596,10 @@ fn clear_content_markers_clears_content_roles_but_keeps_system() {
 	);
 	assert!(session.messages[0].cached, "system marker must survive");
 	assert!(!session.messages[1].cached);
+	assert_eq!(
+		session.messages[1].cache_ttl, None,
+		"clearing a marker must also drop its TTL"
+	);
 	assert!(!session.messages[2].cached);
 	assert!(!session.messages[3].cached);
 }

@@ -131,17 +131,22 @@ impl CacheManager {
 			return Ok(false);
 		}
 
-		// Walk backwards to find the latest tool or user message that is NOT
-		// already cached. Skipping already-cached messages ensures the marker
-		// always advances to the freshest uncached boundary rather than
-		// returning a no-op when the previous turn's target is still marked.
-		let target_index = session
+		// Only advance forward: the marker may only move to a tool/user message
+		// PAST the current cached frontier (the last cached message of any role).
+		// Right after compression the frontier is the final message and the only
+		// uncached tool/user messages sit behind it (preserved skills, the
+		// continuation wrapper) — marking one of those would evict the anchor
+		// watermark before its 1h cache entry is ever written, and a breakpoint
+		// behind the frontier is a strict prefix of an existing one anyway.
+		let start = session
 			.messages
 			.iter()
-			.enumerate()
-			.rev()
-			.find(|(_, msg)| (msg.role == "tool" || msg.role == "user") && !msg.cached)
-			.map(|(i, _)| i);
+			.rposition(|msg| msg.cached)
+			.map_or(0, |i| i + 1);
+		let target_index = session.messages[start..]
+			.iter()
+			.rposition(|msg| msg.role == "tool" || msg.role == "user")
+			.map(|i| start + i);
 
 		if let Some(index) = target_index {
 			return match self.apply_cache_to_message(session, index, supports_caching) {
@@ -301,6 +306,7 @@ impl CacheManager {
 				// Don't clear system messages
 				if msg.role != "system" {
 					msg.cached = false;
+					msg.cache_ttl = None;
 					cleared += 1;
 				}
 			}
@@ -362,6 +368,10 @@ impl CacheManager {
 		if let Some(first_marker_index) = first_marker_to_remove {
 			if let Some(first_msg) = session.messages.get_mut(first_marker_index) {
 				first_msg.cached = false;
+				// A TTL left on an evicted marker would silently re-apply if the
+				// message is ever re-marked; the TTL belongs to the marker, not
+				// the message.
+				first_msg.cache_ttl = None;
 			}
 		}
 

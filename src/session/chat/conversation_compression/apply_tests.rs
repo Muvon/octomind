@@ -63,6 +63,42 @@ fn compression_markers_keep_anchor_and_end_after_skill_and_note_reinjection() {
 }
 
 #[test]
+fn auto_cache_advance_after_align_keeps_the_anchor_watermark() {
+	// The full post-compression sequence: align places [anchor(1h), final],
+	// then check_and_apply_auto_cache_threshold runs before the next API
+	// request (tool_result_processor / api_executor). The advance must be a
+	// no-op — historically it marked the uncached skill behind the frontier
+	// and evicted the anchor before its 1h entry was ever written.
+	let mut session = crate::session::Session::new(
+		"align-advance".to_string(),
+		"anthropic:claude-sonnet-4-6".to_string(),
+	);
+	session.messages = vec![
+		cache_message("system", "system", true),
+		cache_message("assistant", "unchanged welcome anchor", false),
+		cache_message("user", "<skill name=\"rust\">rules</skill>", false),
+		cache_message("assistant", "compressed summary", false),
+		cache_message("user", "<continuation>resume</continuation>", false),
+	];
+
+	align_compression_cache_markers(&mut session.messages, 1, 3, true);
+	assert_eq!(content_marker_indices(&session.messages), vec![1, 4]);
+
+	let config = default_config();
+	let advanced = crate::session::cache::CacheManager::new()
+		.check_and_apply_auto_cache_threshold(&mut session, &config, true, "developer")
+		.unwrap();
+
+	assert!(!advanced, "no boundary exists past the cached frontier");
+	assert_eq!(
+		content_marker_indices(&session.messages),
+		vec![1, 4],
+		"anchor watermark and final marker must survive the advance"
+	);
+	assert_eq!(session.messages[1].cache_ttl.as_deref(), Some("1h"));
+}
+
+#[test]
 fn compression_with_system_anchor_uses_both_content_marker_slots() {
 	let mut messages = vec![
 		cache_message("system", "system anchor", true),

@@ -958,6 +958,9 @@ mod tests {
 		);
 	}
 
+	// unix-only: on Windows dirs::home_dir() uses the Known Folder API and
+	// cannot be redirected via HOME/USERPROFILE.
+	#[cfg(unix)]
 	#[test]
 	#[serial_test::serial]
 	fn test_universal_skill_dirs_includes_global_home_dir() {

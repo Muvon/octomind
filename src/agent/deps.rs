@@ -116,6 +116,9 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 
 	crate::log_debug!("running dep script: {}", entry);
 
+	#[cfg(windows)]
+	let mut command = std::process::Command::new(bash_path());
+	#[cfg(not(windows))]
 	let mut command = std::process::Command::new("bash");
 	#[cfg(windows)]
 	command.arg(script_path.to_string_lossy().replace('\\', "/"));
@@ -145,6 +148,22 @@ fn run_dep_script(entry: &str, deps_root: &Path) -> Result<()> {
 	}
 
 	Ok(())
+}
+
+/// Locate bash on Windows. Plain "bash" on PATH often resolves to the WSL
+/// stub in System32, which exits 1 without a distro installed and can't run
+/// tap scripts — prefer Git Bash explicitly.
+#[cfg(windows)]
+pub(crate) fn bash_path() -> std::path::PathBuf {
+	for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+		if let Some(pf) = std::env::var_os(var) {
+			let candidate = Path::new(&pf).join("Git").join("bin").join("bash.exe");
+			if candidate.exists() {
+				return candidate;
+			}
+		}
+	}
+	std::path::PathBuf::from("bash")
 }
 
 #[cfg(test)]

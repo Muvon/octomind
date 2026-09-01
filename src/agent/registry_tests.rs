@@ -541,7 +541,11 @@ fn install_taps_file(data_dir: &Path, taps: &[(&str, Option<&Path>)]) {
 	for (name, local_path) in taps {
 		content.push_str(&format!("[[taps]]\nname = \"{name}\"\n"));
 		if let Some(path) = local_path {
-			content.push_str(&format!("local_path = \"{}\"\n", path.display()));
+			// toml::Value::String escapes Windows backslashes properly.
+			content.push_str(&format!(
+				"local_path = {}\n",
+				toml::Value::String(path.display().to_string())
+			));
 		}
 	}
 	std::fs::write(data_dir.join("taps.toml"), content).expect("write taps.toml");

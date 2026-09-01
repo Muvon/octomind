@@ -206,7 +206,9 @@ async fn connect_http_fails_fast_against_refused_loopback_endpoint() {
 	let name = unique_server("http-refused");
 	// Port 1 on loopback has no listener: connection refused, immediately.
 	// The static Authorization header keeps OAuth discovery out of the path.
-	let mut server = McpServerConfig::http(&name, "http://127.0.0.1:1/mcp", 2, Vec::new());
+	// 10s per-attempt timeout: Winsock retries refused connects (~1s each),
+	// so 2s trips the timeout on Windows before both attempts report.
+	let mut server = McpServerConfig::http(&name, "http://127.0.0.1:1/mcp", 10, Vec::new());
 	if let McpServerConfig::Http { headers, .. } = &mut server {
 		headers.insert("Authorization".to_string(), "Bearer static".to_string());
 	}
@@ -266,7 +268,8 @@ async fn get_or_connect_discards_closed_http_connection_and_reconnects() {
 		"cancelled service must read as closed"
 	);
 
-	let mut server = McpServerConfig::http(&name, "http://127.0.0.1:1/mcp", 2, Vec::new());
+	// 10s per-attempt timeout: see connect_http_fails_fast_against_refused_loopback_endpoint.
+	let mut server = McpServerConfig::http(&name, "http://127.0.0.1:1/mcp", 10, Vec::new());
 	if let McpServerConfig::Http { headers, .. } = &mut server {
 		headers.insert("Authorization".to_string(), "Bearer static".to_string());
 	}

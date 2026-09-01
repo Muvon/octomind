@@ -49,13 +49,43 @@ async fn spawn_health_stub(status: u16) -> String {
 		.expect("bind stub listener");
 	let addr = listener.local_addr().expect("stub local addr");
 	tokio::spawn(async move {
-		use tokio::io::AsyncWriteExt;
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
 		loop {
 			let Ok((mut sock, _)) = listener.accept().await else {
 				break;
 			};
+			// Drain the request before responding: on Windows, closing a socket
+			// with unread data sends RST and the client never sees the response.
+			let mut buf = Vec::new();
+			let mut tmp = [0u8; 8192];
+			let header_end = loop {
+				let n = sock.read(&mut tmp).await.unwrap_or(0);
+				if n == 0 {
+					break 0;
+				}
+				buf.extend_from_slice(&tmp[..n]);
+				if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+					break pos + 4;
+				}
+			};
+			if header_end > 0 {
+				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+				let content_length: usize = headers
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				while buf.len() < header_end + content_length {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						break;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+				}
+			}
 			let response = format!("HTTP/1.1 {status} Stub\r\nContent-Length: 0\r\n\r\n");
 			let _ = sock.write_all(response.as_bytes()).await;
+			let _ = sock.shutdown().await;
 		}
 	});
 	format!("http://{addr}")

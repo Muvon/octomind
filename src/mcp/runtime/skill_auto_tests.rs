@@ -950,7 +950,7 @@ async fn run_validators_end_to_end_reports_failures_and_skips_bad_skills() {
 		add_active_skill(&sid, "val-noexec");
 		add_active_skill(&sid, "val-noval");
 
-		let failures = run_validators("assistant output", Path::new("/tmp")).await;
+		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
 		assert_eq!(
 			failures,
 			vec![("val-fail".to_string(), "val-fail: broken\n".to_string())],
@@ -992,7 +992,7 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 			.write()
 			.expect("retry lock")
 			.insert("val-capped".to_string(), max);
-		let failures = run_validators("assistant output", Path::new("/tmp")).await;
+		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
 		assert!(
 			failures.is_empty(),
 			"capped validator must be skipped: {failures:?}"
@@ -1006,7 +1006,7 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	let data = crate::directories::get_octomind_data_dir().expect("data dir");
 	std::fs::write(data.join("taps.toml"), "not valid toml [[[").expect("broken taps.toml");
 	with_session_id(sid.clone(), async {
-		let failures = run_validators("assistant output", Path::new("/tmp")).await;
+		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
 		assert!(
 			failures.is_empty(),
 			"broken taps must degrade to no validators"
@@ -1048,7 +1048,7 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 
 	with_session_id(sid.clone(), async {
 		add_active_skill(&sid, "val-pass");
-		let failures = run_validators("assistant output", Path::new("/tmp")).await;
+		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
 		assert!(
 			failures.is_empty(),
 			"passing validator reports nothing: {failures:?}"

@@ -871,7 +871,17 @@ async fn run_validate_script(
 	workdir: &std::path::Path,
 	timeout: Duration,
 ) -> anyhow::Result<(i32, String)> {
-	let mut child = tokio::process::Command::new(script_path)
+	// On Windows shebang scripts can't be spawned directly — route through
+	// Git Bash (see crate::agent::deps::bash_path).
+	#[cfg(windows)]
+	let mut command = {
+		let mut c = tokio::process::Command::new(crate::agent::deps::bash_path());
+		c.arg(script_path.to_string_lossy().replace('\\', "/"));
+		c
+	};
+	#[cfg(not(windows))]
+	let mut command = tokio::process::Command::new(script_path);
+	let mut child = command
 		.arg("assistant")
 		.current_dir(workdir)
 		.stdin(Stdio::piped())

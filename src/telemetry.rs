@@ -564,7 +564,7 @@ fn install_source() -> &'static str {
 	let Ok(exe) = std::env::current_exe() else {
 		return "unknown";
 	};
-	let path = exe.to_string_lossy();
+	let path = exe.to_string_lossy().replace('\\', "/");
 	if path.contains("/Cellar/") || path.contains("/homebrew/") {
 		"brew"
 	} else if path.contains("/.cargo/") {

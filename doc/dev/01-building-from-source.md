@@ -1,5 +1,7 @@
 # Building from Source
 
+Build the Rust workspace and run the same checks the repository hooks and CI enforce.
+
 ## Prerequisites
 
 - **Rust** 1.95+ ([rustup.rs](https://rustup.rs))
@@ -133,7 +135,7 @@ and contribution guidelines.
 The `[profile.release]` section in `Cargo.toml`:
 - LTO enabled (link-time optimization)
 - Single codegen unit (`codegen-units = 1`)
-- `opt-level = "z"` (optimize for size)
+- `opt-level = "s"` (optimize for size while retaining vectorization)
 - `panic = "abort"` (smaller binary)
 - Symbol stripping (`strip = true`)
 - `overflow-checks = false` (disabled in release)

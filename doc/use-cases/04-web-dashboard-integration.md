@@ -1,10 +1,10 @@
-# Use Case: Web Dashboard with AI Assistant
+# Web Dashboard Integration
 
-Embed Octomind into a web application as a real-time AI coding assistant using the WebSocket server.
+Embed Octomind's AI agent runtime into a web application through its real-time WebSocket server.
 
 ## The Problem
 
-Your team wants an AI assistant accessible from a web dashboard -- no terminal required. Developers should be able to ask questions about the codebase, request code reviews, and get help directly from a browser.
+Your team wants an AI assistant accessible from a web dashboard — no terminal required. Developers should be able to ask questions about the codebase, request code reviews, and get help directly from a browser.
 
 ## Solution
 
@@ -16,16 +16,16 @@ Run the WebSocket server and connect from your web frontend.
 octomind server --host 127.0.0.1 --port 8080
 ```
 
-`--host` defaults to `127.0.0.1` and `--port` (short `-p`) defaults to `8080`, so a bare `octomind server` already binds to `ws://127.0.0.1:8080`. The optional `TAG` argument before the flags selects an agent (`role:tag`, e.g. `developer:general`) or a role name; omit it to use the default role from your config. The shipped config defines the roles `assistant`, `task_refiner`, `task_researcher`, and `reduce` -- if you pass a name that does not exist as a role and is not provided by a tap, the server falls back to the first configured role silently, so use a real role:
+`--host` defaults to `127.0.0.1` and `--port` (short `-p`) defaults to `8080`, so a bare `octomind server` binds to `ws://127.0.0.1:8080`. The optional `TAG` positional selects a tap agent such as `assistant:concierge` or `developer:general`; omit it to use the root `default`. A plain name resolves only when explicitly defined under local `[[roles]]`; unknown local roles and missing tap tags fail session initialization.
 
 ```bash
-octomind server assistant -p 8080
+octomind server assistant:concierge -p 8080
 ```
 
-Because the dashboard connects from a browser, you must allowlist the page's origin -- the server refuses any handshake carrying an unlisted `Origin` header:
+Because the dashboard connects from a browser, you must allowlist the page's origin — the server refuses any handshake carrying an unlisted `Origin` header:
 
 ```bash
-octomind server assistant -p 8080 --allow-origin http://localhost:3000
+octomind server assistant:concierge -p 8080 --allow-origin http://localhost:3000
 ```
 
 Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-websocket-server.md#browser-origins) for why this is not optional.
@@ -33,100 +33,70 @@ Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-w
 For production, bind to `0.0.0.0` behind a reverse proxy with TLS:
 
 ```bash
-octomind server assistant --host 0.0.0.0 --port 8080 --allow-origin https://dashboard.example.com
+octomind server assistant:concierge --host 0.0.0.0 --port 8080 --allow-origin https://dashboard.example.com
 ```
 
-> The server performs no authentication, authorization, TLS, or origin checking itself. Any client that can reach the socket can drive a session. Always put it behind a reverse proxy that handles TLS and auth (see Step 3), and never bind `0.0.0.0` on an untrusted network.
+> The server enforces the exact browser-origin allowlist, but it does not provide user authentication, authorization, or TLS. Any permitted client that can reach the socket can drive sessions under the process's shared credentials. Put non-local deployments behind a reverse proxy that supplies TLS and authentication.
 
 ### Step 2: Connect from JavaScript
 
 ```typescript
-class OctomindClient {
-  private ws: WebSocket;
-  private sessionId: string;
-  private handlers: {
-    onMessage: (content: string) => void;
-    onToolUse: (tool: string, params: any) => void;
-    onCost: (cost: number) => void;
-    onError: (error: string) => void;
-  };
+function askOctomind(url: string, question: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const requestedSession = 'dev-session';
+    let activeSession = '';
+    let promptSent = false;
+    const parts: string[] = [];
 
-  constructor(url: string, sessionId: string, handlers: typeof this.handlers) {
-    this.sessionId = sessionId;
-    this.handlers = handlers;
-    this.ws = new WebSocket(url);
-
-    this.ws.onopen = () => {
-      // Initialize session
-      this.ws.send(JSON.stringify({
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
         type: 'session',
-        session_id: this.sessionId
+        request_id: 'create-dev-session',
+        session_id: requestedSession,
       }));
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
-      switch (msg.type) {
-        case 'status':
-          // The server replies to `session` with a status carrying the
-          // ACTUAL session_id ("Session created: <id>" / "Session resumed: <id>").
-          // When you omit session_id the server auto-names the session, so
-          // always capture the returned id and use it for subsequent messages.
-          if (msg.session_id) this.sessionId = msg.session_id;
-          break;
-        case 'assistant':
-          this.handlers.onMessage(msg.content);
-          break;
-        case 'tool_use':
-          this.handlers.onToolUse(msg.tool, msg.params);
-          break;
-        case 'cost':
-          // `cost` is emitted once after each completed AI turn — the
-          // canonical end-of-turn signal.
-          this.handlers.onCost(msg.session_cost);
-          break;
-        case 'ack':
-          // Optional immediate receipt signal. Use request_id if you need
-          // per-input correlation.
-          break;
-        case 'error':
-          this.handlers.onError(msg.message);
-          break;
+
+      // Ignore the connection welcome and the immediate session ack. Send the
+      // prompt only after session creation/resume returns the actual ID.
+      if (msg.type === 'status' && msg.session_id && !promptSent) {
+        activeSession = msg.session_id;
+        promptSent = true;
+        ws.send(JSON.stringify({
+          type: 'message',
+          request_id: 'question-1',
+          session_id: activeSession,
+          content: question,
+        }));
+      } else if (msg.type === 'assistant' && msg.session_id === activeSession) {
+        parts.push(msg.content);
+      } else if (msg.type === 'tool_use' && msg.session_id === activeSession) {
+        console.log('tool:', msg.tool, msg.params);
+      } else if (msg.type === 'cost' && msg.session_id === activeSession) {
+        ws.close();
+        resolve(parts.join(''));
+      } else if (msg.type === 'error') {
+        ws.close();
+        reject(new Error(msg.message));
       }
     };
-  }
 
-  send(message: string) {
-    this.ws.send(JSON.stringify({
-      type: 'message',
-      session_id: this.sessionId,
-      content: message
-    }));
-  }
-
-  command(cmd: string) {
-    // `command` is the bare command name WITHOUT the leading slash —
-    // the server prepends '/'. Sending '/info' would become '//info'.
-    // Unknown commands come back as an `error` payload.
-    this.ws.send(JSON.stringify({
-      type: 'command',
-      session_id: this.sessionId,
-      command: cmd
-    }));
-  }
+    ws.onerror = () => reject(new Error('WebSocket connection failed'));
+  });
 }
 
-// Usage
-const ai = new OctomindClient('ws://localhost:8080', 'dev-session', {
-  onMessage: (content) => appendToChat(content),
-  onToolUse: (tool, params) => showToolActivity(tool),
-  onCost: (cost) => updateCostDisplay(cost),
-  onError: (error) => showError(error),
-});
-
-ai.send('Explain how authentication works in this project');
-ai.command('info');  // Get session stats (note: bare name, no leading slash)
+askOctomind('ws://127.0.0.1:8080', 'Explain how authentication works')
+  .then(appendToChat)
+  .catch(showError);
 ```
+
+For command frames, use the bare command name without `/`, for example
+`{"type":"command","session_id":"dev-session","command":"info"}`. Wait for
+the preceding AI turn's `cost` frame before sending it, because overlapping work
+for one session is rejected rather than queued.
 
 ### Step 3: Production Setup with nginx
 
@@ -138,6 +108,9 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/ai.yourcompany.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/ai.yourcompany.com/privkey.pem;
+
+    auth_basic "Octomind";
+    auth_basic_user_file /etc/nginx/octomind.htpasswd;
 
     # WebSocket proxy
     location /ws {
@@ -172,9 +145,19 @@ async def ask_octomind(question: str) -> str:
             'session_id': 'api-session'
         }))
 
+        # Wait for the create/resume status. The connection welcome and ack do
+        # not establish the session for subsequent application messages.
+        while True:
+            msg = json.loads(await ws.recv())
+            if msg['type'] == 'error':
+                raise RuntimeError(msg['message'])
+            if msg['type'] == 'status' and msg.get('session_id'):
+                session_id = msg['session_id']
+                break
+
         await ws.send(json.dumps({
             'type': 'message',
-            'session_id': 'api-session',
+            'session_id': session_id,
             'content': question
         }))
 
@@ -210,15 +193,16 @@ answer = asyncio.run(ask_octomind("What does the login function do?"))
 | Server -> Client | `cost` | Token usage and cost; emitted once after each completed AI turn (use it as the end-of-turn signal) |
 | Server -> Client | `status` | Free-form status text in `message` (e.g. the connection welcome, `Session created: <id>` / `Session resumed: <id>`, command-executed notices, `Session ended`, `Conversation compressed`). Command completion statuses carry `data`; AI turns still end with `cost`. May carry an optional `session_id`. |
 | Server -> Client | `error` | Error text in `message`, with optional `request_id` when the failed input provided one |
-| Server -> Client | `mcp_notification` | Notification forwarded from an MCP server (`server`, `method`, `params`) |
+| Server -> Client | `mcp_notification` | Notification forwarded from an MCP server (`server`, `method`, `params`, optional `tool_id`) |
 | Server -> Client | `skill` | Skill lifecycle event (`action` = activate/use/forget, `name`, optional `trigger`) |
+| Server -> Client | `evolution` | Grounded behavior lifecycle event (`action`, `id`, `name`, `kind`, `state`, `scope`) |
 | Server -> Client | `injected` | Non-user input being added to the conversation (`source_kind` = schedule/background_agent/tap_run/skill/skill_validator/inject/webhook/guardrail_hook/guardrail_validator, `source_label`, `content`); emitted just before the AI responds so the UI can show what triggered it |
 
 > For the authoritative, exhaustive wire-format spec (every field and JSON example) see [doc/integration/01-websocket-server.md](../integration/01-websocket-server.md). When the two docs differ, that reference and the source win.
 
 ## Multi-Session Support
 
-Each `session_id` is independent. Multiple users can have concurrent sessions:
+Each `session_id` is independent. Multiple sessions under the same process identity can run concurrently:
 
 ```typescript
 const alice = new OctomindClient(url, 'alice-session', handlers);
@@ -229,15 +213,15 @@ bob.send('Help me write tests for the API');
 // Both sessions run independently
 ```
 
-Concurrency is across **different** `session_id`s. Requests to the **same** `session_id` are serialized by a per-session lock: if you send a second `message` or `command` while that session is still processing, the server replies immediately with an `error` payload (`Session '<id>' is busy processing another request. Please wait.`) -- it does not queue the request. A dashboard sending overlapping input to one session must wait for the turn's `cost` message (or handle the busy error) before sending again.
+Concurrency is across **different** `session_id`s. Requests to the **same** `session_id` are serialized by a per-session lock: if you send a second `message` or `command` while that session is still processing, the server replies immediately with an `error` payload (`Session '<id>' is busy processing another request. Please wait.`) — it does not queue the request. A dashboard sending overlapping input to one session must wait for the turn's `cost` message (or handle the busy error) before sending again.
 
 ## Key Points
 
-- The WebSocket server provides the same capabilities as the CLI
-- Sessions are stateful -- context persists across messages
+- WebSocket sessions reuse the session and tool pipeline, with the protocol-specific command and lifecycle behavior documented above
+- Sessions are stateful — context persists across messages
 - Tool execution (file reading, shell commands) is streamed in real-time
-- A `cost` message is emitted once after each completed AI turn -- use it as the end-of-turn signal, not the free-form `status` text
+- A `cost` message is emitted once after each completed AI turn — use it as the end-of-turn signal, not the free-form `status` text
 - Every valid JSON input gets an immediate `ack`; use optional client `request_id` values if the UI needs correlation
 - User `message` `content` is capped at 10 MB, and the WebSocket frame/message size limit is also 10 MB; larger input returns a validation error
-- The server has no built-in authentication, authorization, or TLS -- use a reverse proxy with TLS for production and never expose the server directly to the internet
+- The server checks browser origins but has no built-in authentication, authorization, or TLS; use an authenticated TLS reverse proxy for non-local deployments
 - Cost tracking is per-session via `cost` messages

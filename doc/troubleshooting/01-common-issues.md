@@ -1,5 +1,7 @@
 # Common Issues
 
+Use these checks to diagnose installation, authentication, configuration, MCP, session, sandbox, and transport failures.
+
 ## Installation
 
 ### Binary Not Found
@@ -24,10 +26,23 @@ chmod +x /usr/local/bin/octomind
 ### Wrong Architecture
 
 Download the correct binary for your platform. Use `uname -m` to check:
-- `x86_64` / `amd64` -- Intel/AMD
-- `arm64` / `aarch64` -- Apple Silicon / ARM
+- `x86_64` / `amd64` — Intel/AMD
+- `arm64` / `aarch64` — Apple Silicon / ARM
 
 ## API Keys
+
+### Default OctoHub Sign-In
+
+The shipped main, supervisor, and compression model profiles all default to
+`octohub:auto`. Authenticate them with the device flow:
+
+```bash
+octomind login
+```
+
+The successful login stores the minted model-gateway credential as
+`OCTOHUB_API_KEY` in Octomind's user-scope `.env`. Use `octomind login --force`
+to replace an existing sign-in.
 
 ### Key Not Found
 
@@ -46,10 +61,10 @@ export ANTHROPIC_API_KEY="your_key"    # anthropic
 export DEEPSEEK_API_KEY="your_key"     # deepseek
 ```
 
-A few providers use non-standard variables:
-- Google (Vertex): `GOOGLE_APPLICATION_CREDENTIALS` (path to a service-account JSON)
-- Amazon (Bedrock): `AWS_BEARER_TOKEN_BEDROCK` (a Bedrock service-specific API key — **not** standard AWS access keys / SigV4 credentials); set `AWS_BEDROCK_REGION` for non-`us-east-1` models
-- Cloudflare (Workers AI): `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
+A few configured providers use non-`*_API_KEY` variables:
+- Google: `GOOGLE_APPLICATION_CREDENTIALS`
+- Amazon: `AWS_ACCESS_KEY_ID`
+- Cloudflare: `CLOUDFLARE_API_TOKEN`
 
 For the full per-provider list see [Environment Variables](../reference/04-environment-variables.md).
 The `cli:` meta-provider (e.g. local CLI-backed models) needs no API key.
@@ -67,14 +82,14 @@ octomind config --show
 Setting a model without a provider prefix is rejected, for example:
 
 ```
-model must be in provider:model format (e.g., openrouter:anthropic/claude-3.5-sonnet)
+model must be in provider:model format
 ```
 
 Always use `provider:model` format:
 ```
-openrouter:anthropic/claude-sonnet-4    # correct
-anthropic/claude-sonnet-4               # wrong
-claude-sonnet-4                         # wrong
+openrouter:anthropic/claude-sonnet-4-6  # correct explicit provider:model
+anthropic/claude-sonnet-4-6             # wrong — slash is not the provider delimiter
+claude-sonnet-4-6                       # wrong — missing provider prefix
 ```
 
 ## Configuration
@@ -127,8 +142,8 @@ octomind config --upgrade
 ### Tool Not Found
 
 A tool is only available if its MCP server is configured *and* the active role
-references that server. The shipped config declares three built-in servers
-(`core`, `runtime`, `agent`); the `filesystem` server (the `octofs` companion)
+references that server. The shipped config declares four built-in servers
+(`core`, `orchestration`, `runtime`, `agent`); the `filesystem` server (the `octofs` companion)
 is provided by the default tap, not by a hand-written block. To confirm what is
 loaded, run `/mcp list` in a session.
 
@@ -142,17 +157,21 @@ type = "stdio"
 command = "octocode"
 args = ["mcp", "--path=."]
 timeout_seconds = 240
+tools = []
 
-# Reference it from an existing role (assistant ships in default.toml)
+# Reference it from a complete custom role
 [[roles]]
-name = "assistant"
+name = "octocode-reviewer"
+system = "Use the configured tools to inspect and review this project."
+welcome = ""
 [roles.mcp]
-server_refs = ["core", "runtime", "filesystem", "agent", "octocode"]
-allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*", "octocode:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent", "octocode"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*", "octocode:*"]
 ```
 
-`server_refs` controls which servers the role can see; `allowed_tools` then
-filters individual tools. A server must appear in both to be usable.
+`server_refs` controls which servers the role can see. An empty
+`allowed_tools` list is unrestricted; when the list is non-empty, it must also
+grant each desired tool or a matching server wildcard.
 
 ### Server Not Responding
 
@@ -179,9 +198,9 @@ which octocode
 ### Tool Permission Denied
 
 Check `allowed_tools` in your role config. Patterns:
-- `"core:*"` -- all tools from the `core` server
-- `"filesystem:view"` -- one specific tool
-- `[]` -- empty list means no filtering (every tool from the referenced servers is allowed)
+- `"core:*"` — all tools from the `core` server
+- `"filesystem:view"` — one specific tool
+- `[]` — empty list means no filtering (every tool from the referenced servers is allowed)
 
 ## Taps and Agents
 
@@ -196,8 +215,8 @@ octomind tap            # list active taps (no URL = list mode)
 The built-in default tap (`muvon/tap`) is always present as the last fallback,
 so `developer:general` resolves out of the box. Add or remove taps with:
 ```bash
-octomind tap <org>/<repo>     # add a tap (clones github.com/<org>/<repo>)
-octomind untap <name>         # remove a tap
+octomind tap myorg/my-agents     # clones github.com/myorg/octomind-my-agents
+octomind untap myorg/my-agents   # remove a tap
 ```
 
 ### Manifest Placeholder Prompts
@@ -239,31 +258,9 @@ Reduce context:
 /done               # Force compression and start a fresh task boundary
 /run reduce         # Built-in command: compress session history (ships in default.toml)
 ```
-Automatic compression also runs in the background once token thresholds are reached — see [Compression Guide](../usage/08-compression.md).
+Automatic compression is checked at API-call and tool-result boundaries when its trigger is eligible — see [Compression Guide](../usage/08-compression.md).
 
 Enable automatic compression in config. See [Compression](../usage/08-compression.md).
-
-### Spending Limit Hit
-
-When the cost since the last checkpoint crosses
-`max_session_spending_threshold`, Octomind warns and (interactively) prompts to
-continue. You may see output similar to:
-
-```
-⚠️  SPENDING THRESHOLD REACHED ⚠️
-Threshold: $5.00000
-Do you want to continue? (y/N):
-```
-
-Declining prints `✗ Session cancelled by user due to spending threshold.`. In
-non-interactive mode the run auto-declines and stops with `Spending threshold
-reached but automatically declining in non-interactive mode. Stopping execution.`
-
-Adjust or disable:
-```toml
-max_session_spending_threshold = 10.0   # Raise the limit
-max_session_spending_threshold = 0.0    # Disable the check (<= 0.0 disables)
-```
 
 ### Cannot Send to a Running Session
 
@@ -277,9 +274,8 @@ no running session named 'NAME' (socket not found ...)
 
 the target session is not running, or you used the wrong name. The target must
 be a session started with `octomind run --daemon` (or a named interactive
-session). Note that `--daemon` implies non-interactive mode and therefore needs
-`--format` — a plain `octomind run --daemon` with no `--format` will not behave
-as a message-receiving daemon:
+session). The daemon loop is non-interactive: from a terminal, select it with
+`--format`; with piped stdin, `--format` is optional:
 ```bash
 octomind run --daemon --format jsonl -n my-daemon
 ```
@@ -287,10 +283,11 @@ octomind run --daemon --format jsonl -n my-daemon
 ## Platform-Specific
 
 The sandbox (`--sandbox` flag or `sandbox` in config) applies to the `run`,
-`server`, and `acp` commands only. It restricts filesystem writes to the current
-working directory (plus `~/.local/share` for MCP state) — credential directories
-such as `~/.ssh` and `~/.aws` are always write-protected. There is a
-platform difference in read behavior:
+`server`, and `acp` commands only. Linux permits writes to the current working
+directory and `~/.local/share`; macOS additionally permits the device and
+platform temp paths named in `src/sandbox/macos.rs`. Credential directories
+such as `~/.ssh` and `~/.aws` are write-protected. There is a platform
+difference in read behavior:
 - **macOS** (Seatbelt): also *blocks reads* of credential dirs (`~/.ssh`,
   `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, `~/.config/op`).
 - **Linux** (Landlock): the whole filesystem stays *readable*; only writes are
@@ -317,6 +314,8 @@ The data root is `%LOCALAPPDATA%\octomind` (falls back to
 `%USERPROFILE%\AppData\Local\octomind` when `LOCALAPPDATA` is unset). The config
 file therefore lives at `%LOCALAPPDATA%\octomind\config\config.toml`. Ensure
 backslashes in paths are escaped in TOML strings (or use forward slashes).
+The OS-level sandbox is not implemented on Windows; requesting it logs a warning
+and continues without write restrictions.
 
 ## Debug Mode
 
@@ -339,7 +338,7 @@ Log locations:
 
 ## See Also
 
-- [Environment Variables](../reference/04-environment-variables.md) -- full per-provider API-key list
-- [MCP Tools](../usage/07-mcp-tools.md) -- configuring MCP servers and tools
-- [Local Tools](../usage/17-local-tools.md) -- the built-in filesystem (octofs) tools
-- [Compression](../usage/08-compression.md) -- how automatic context compression works
+- [Environment Variables](../reference/04-environment-variables.md) — full per-provider API-key list
+- [MCP Tools](../usage/07-mcp-tools.md) — configuring MCP servers and tools
+- [Local Tools](../usage/17-local-tools.md) — the built-in filesystem (octofs) tools
+- [Compression](../usage/08-compression.md) — how automatic context compression works

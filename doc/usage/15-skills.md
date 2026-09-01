@@ -1,20 +1,22 @@
 # Skills
 
-Skills are reusable instruction packs that inject domain knowledge into AI sessions on demand. They follow the [AgentSkills specification](https://agentskills.io/specification) and are distributed via taps.
+Skills are reusable instruction packs discovered from taps, universal directories, plugins, and lower-priority generated behavior.
 
 ## How Skills Work
 
 A skill is a directory containing a `SKILL.md` file (frontmatter metadata + instruction body). When activated, the skill's full content is injected into the session context, giving the AI domain-specific knowledge.
 
-> New to taps? Skills are most commonly distributed via taps. See [Tap System](../integration/04-tap-system.md) for how to add one (`octomind tap <org/repo>`) before any tap skill becomes available.
+> New to taps? Skills are most commonly distributed via taps. See [Tap System](../integration/04-tap-system.md) for how to add one (`octomind tap myorg/my-skills`) before any tap skill becomes available.
 
 ### Skill Locations
 
-Octomind discovers skills from three locations, scanned in this order (**first-wins** deduplication by skill `name` — tap skills shadow universal ones with the same name):
+Octomind discovers skills in this order, with **first-wins** deduplication by frontmatter `name`:
 
 1. **Taps** (highest priority) — `<tap>/skills/<name>/SKILL.md`
 2. **Project universal dir** — `<workdir>/.agents/skills/<name>/SKILL.md`
 3. **Global universal dir** — `~/.config/agents/skills/<name>/SKILL.md`
+4. **Agent plugins** — skills below discovered plugin roots (`plugins/<plugin>/skills/<name>/SKILL.md`)
+5. **Generated evolution skills** — active machine-local artifacts, always lowest authority
 
 The two universal directories follow the open `npx skills` ecosystem layout, so a skill pack dropped into either path works without a tap.
 
@@ -147,7 +149,7 @@ domains: developer devops
 
 ## Environment Variable: OCTOMIND_SKILLS
 
-Preload skills at session start. Comma-delimited skill names:
+Preload skills at session start. Values are comma-delimited exact skill names:
 
 ```bash
 export OCTOMIND_SKILLS=programming-rust,git-workflow
@@ -158,6 +160,7 @@ octomind run developer:general
 - Declarative rules are not evaluated for env-loaded skills
 - Each name is validated against available skills across all locations (taps and the universal `.agents/skills` / `~/.config/agents/skills` dirs)
 - Unknown skill names are skipped with a warning
+- No alias, substring, glob, or semantic lookup is applied to `OCTOMIND_SKILLS`
 - Already-active skills are not re-injected
 
 ## Validate Script
@@ -228,13 +231,13 @@ When enabled, the user message is matched against every capability's `triggers` 
 
 ### OCTOMIND_CAPABILITIES (boot-time activation)
 
-Force-activate capabilities at session start (comma-delimited), bypassing semantic matching but still subject to domain gating:
+Force-activate capabilities at session start (comma-delimited exact installed names), bypassing semantic matching but still subject to domain and required-environment gating:
 
 ```bash
-OCTOMIND_CAPABILITIES=cron,docker octomind run -r developer:general
+OCTOMIND_CAPABILITIES=cron,docker octomind run developer:general
 ```
 
-This gives long-running or resumed sessions a deterministic tool surface. Capabilities that fail to load (or that aren't available in the current role's domain) are reported on stderr and skipped.
+This gives long-running or resumed sessions a deterministic tool surface. `OCTOMIND_CAPABILITIES` does not accept provider names, tool names, aliases, or fuzzy intent: every item must equal a capability name. Failures are reported and skipped.
 
 ## /skill Command
 

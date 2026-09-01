@@ -1,6 +1,8 @@
-# Commands, Layers, Agents, and Prompts
+# Commands and Layers
 
-Octomind provides four mechanisms for extending AI capabilities beyond the base session:
+Commands, layers, agents, and prompts extend sessions through ACP subprocesses, MCP tools, and reusable user-message templates.
+
+## Extension Types
 
 - **Layers** — orchestration stages invoked programmatically (`[[layers]]`).
 - **Commands** — the same thing as layers, but triggered interactively with `/run <name>` (`[[commands]]`).
@@ -65,7 +67,7 @@ How the layer's output affects the session:
 | `output_mode` | string | yes | `"none"`, `"append"`, `"replace"`, `"last"`, `"restart"` |
 | `output_role` | string | yes | `"assistant"` or `"user"` — role for output messages. No default; must be set explicitly. |
 
-The mode fields (`input_mode`, `output_mode`, `output_role`) all use custom deserializers with no serde default, so each one must appear in every layer/command/agent. This is why the example values always set `output_role` explicitly.
+The mode fields (`input_mode`, `output_mode`, `output_role`) all use custom deserializers with no serde default, so each one must appear in every layer or command. This is why the example values always set `output_role` explicitly.
 
 **Key Architecture**: Layers don't contain model/system/mcp config. Those live in `[[roles]]`. The `command` field references which role to spawn via ACP.
 
@@ -74,9 +76,10 @@ Example role definition (in config or from taps) that the `analysis` layer above
 [[roles]]
 name = "analysis"
 system = "You are a code and systems analyst..."
+welcome = ""
 
 [roles.model]
-name = "openrouter:openai/gpt-4.1-mini"
+name = "openai:gpt-5.6-luna"
 temperature = 0.3
 
 [roles.mcp]
@@ -104,7 +107,7 @@ output_role = "assistant"
 /run reduce       # Execute the reduce command
 ```
 
-`/run` always lists the global `[[commands]]` set — commands are not role-scoped, so the same list appears regardless of the active role.
+`/run` resolves commands through `Config::get_role_config`; current config merging supplies the global `[[commands]]` set to roles. The command executes with the current role name and that role's resolved config.
 
 ### Layers vs Commands
 
@@ -169,14 +172,14 @@ Max concurrent async jobs is fixed at the machine's CPU core count (fallback `4`
 
 Create agents at runtime using the `agent` MCP tool. Unlike config `[[agents]]` (which spawn an ACP subprocess), dynamic agents execute **in-process** using the session's own `ChatSession` infrastructure:
 
-```json
+```jsonl
 {"action": "add", "name": "reviewer", "description": "Code reviewer", "system": "You review code..."}
 {"action": "enable", "name": "reviewer"}
 ```
 
 `add` registers an agent but does **not** enable it — call `enable` to make `agent_<name>` available for execution. Actions: `add`, `enable`, `disable`, `remove`, `list`.
 
-The `add` action requires `name`, `system`, and `description`, and accepts the existing optional fields: `model`, `temperature`, `top_p`, `top_k`, `welcome`, `server_refs`, `allowed_tools`, and `workdir` (default `"."`). Without `server_refs` the agent runs with MCP disabled; if `allowed_tools` is given without `server_refs`, the matching servers are inferred automatically.
+The `add` action requires `name` and `system`; `description` defaults to an empty string. It also accepts `model`, `temperature`, `top_p`, `top_k`, `welcome`, `server_refs`, `allowed_tools`, and `workdir` (default `"."`). If `allowed_tools` is given without `server_refs`, matching servers are inferred from the current tool map; when both are empty, MCP remains disabled for that dynamic agent.
 
 See [MCP Tools Reference](07-mcp-tools.md#agent----dynamic-agent-management).
 

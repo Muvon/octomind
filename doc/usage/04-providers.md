@@ -1,335 +1,178 @@
 # AI Providers
 
-Octomind talks to language models through a unified interface implemented in [octolib](https://github.com/muvon/octolib). octolib wires **20 network providers plus a special `cli` meta-provider** (21 prefixes total), so you can switch models without changing how Octomind works. New providers are added in octolib and automatically become available here.
+Choose models as `provider:model` — the recommended OctoHub path needs no API keys, and every direct provider works through environment variables.
 
-You pick a model with the `provider:model` format and supply that provider's API key via an **environment variable** (or a `.env` file). That is all most setups need.
+## Recommended: OctoHub
 
-> Quick check: run `octomind config --show` at any time to see which provider keys Octomind has detected and where they came from (system environment vs `.env` file).
-
-## Model Format
-
-All model names use `provider:model` format. The strict main profile is:
-
-```toml
-[model]
-name = "openrouter:anthropic/claude-sonnet-4"
-```
-
-## API Keys Are Environment-Only
-
-API keys can **only** be provided through environment variables (or a `.env` file in the current working directory). You cannot put keys in the config file — that was removed for security, and `octomind config --api-key ...` is always rejected with a message telling you to `export <PROVIDER>_API_KEY=...` instead.
-
-The general pattern is `<PROVIDER>_API_KEY`, with an optional `<PROVIDER>_API_URL` to override the base URL. See the per-provider sections below and [doc/reference/04-environment-variables.md](../reference/04-environment-variables.md) for the complete list.
-
-### Using a `.env` file
-
-Instead of `export`-ing variables, you can drop a `.env` file in your working directory:
+OctoHub is the default provider in the shipped configuration. The shortest setup is:
 
 ```bash
-# .env
-OPENROUTER_API_KEY=your_key
-ANTHROPIC_API_KEY=your_key
+octomind login
+octomind
 ```
 
-Octomind loads `.env` on startup and it **overrides** the process environment. An **empty** value is treated as "not set", so a blank `KEY=` line will not satisfy a required key. `octomind config --show` reports whether each detected key came from the system environment or from `.env`.
+`octomind login` starts a device-authorization flow, displays a short code, and opens a browser approval page. After approval, Octomind stores the returned `OCTOHUB_API_KEY` in the user-scope `.env` and keeps the account session in `auth.json`. You do not need API keys or accounts with individual model providers, and free models are included.
 
-In addition to the project-local `.env`, Octomind also loads a **user-scope** `.env` from the shared config directory (the same directory holding your `config.toml` and other `*.toml` files). This lets you set keys once for all projects. Load order, later wins:
-
-1. System environment variables (base)
-2. User-scope `<config_dir>/.env` (shared across projects)
-3. Project-local `./.env` (overrides user-scope)
-
-A key set in the project `.env` therefore wins over the user-scope `.env`, which wins over the system environment.
-
-## Supported Providers
-
-The most common providers are documented in detail below. The full set of provider prefixes octolib recognizes is:
-
-`openrouter`, `openai`, `anthropic`, `google`, `amazon`, `cloudflare`, `deepseek`, `cerebras`, `groq`, `together`, `fireworks`, `nvidia`, `minimax`, `moonshot` (alias `kimi`), `zai`, `byteplus`, `alibaba`, `featherless`, `octohub`, `ollama`, `local` — plus the special `cli` meta-provider for local CLI-backed models.
-
-### OpenRouter (recommended)
-
-Access many providers through a single API key. Best for flexibility and model switching.
+The default model is `octohub:auto`. To choose another model exposed by the gateway for one session, pass an explicit model override:
 
 ```bash
-export OPENROUTER_API_KEY="your_key"
+octomind run -m 'octohub:<model>'
 ```
 
-```toml
-[model]
-# Choose one:
-name = "openrouter:anthropic/claude-sonnet-4"
-# name = "openrouter:openai/gpt-4o"
-# name = "openrouter:google/gemini-2.5-flash-preview"
-```
+Replace `<model>` with the gateway model identifier. The OctoHub client accepts any non-empty model name; the gateway decides whether that model is available to the credential.
 
-Get a key at [openrouter.ai](https://openrouter.ai/).
-
-> When Octomind starts, it sets two OpenRouter attribution headers if they are not already defined: `OPENROUTER_APP_TITLE=Octomind` and `OPENROUTER_HTTP_REFERER=https://octomind.run`. These identify the app to OpenRouter for ranking/attribution; override them by exporting your own values.
-
-### OpenAI
-
-Direct access to GPT models.
+[OctoHub](https://github.com/Muvon/octohub) is open source and can be self-hosted. Point Octomind at another deployment with `OCTOHUB_API_URL`; set `OCTOHUB_API_KEY` as well when that deployment requires authentication:
 
 ```bash
-export OPENAI_API_KEY="your_key"
+export OCTOHUB_API_URL="https://your-octohub.example"
+export OCTOHUB_API_KEY="your_key"
+octomind run -m octohub:auto
 ```
 
-```toml
-[model]
-name = "openai:gpt-4o"
-# name = "openai:gpt-4o-mini"
-```
+### Purpose routing with `octohub:auto`
 
-### Anthropic
+When an OctoHub deployment configures its `[auto]` routing section, `octohub:auto` selects a real model from the request purpose. Octomind sends `X-Model-Purpose` on every model request, using exactly three values:
 
-Direct access to Claude models. Supports prompt caching for cost savings.
+| Purpose | Octomind profile |
+|---------|------------------|
+| `main` | `[model]` |
+| `supervisor` | `[supervisor.model]` |
+| `compression` | `[compression.model]` |
 
-```bash
-export ANTHROPIC_API_KEY="your_key"
-```
-
-```toml
-[model]
-name = "anthropic:claude-sonnet-4"
-# name = "anthropic:claude-haiku-4-5"
-```
-
-### Google (Vertex AI)
-
-Gemini models via Google Cloud.
-
-```bash
-# Preferred: point at a service-account JSON file
-export GOOGLE_CREDENTIAL_FILE="/path/to/service-account.json"
-# Standard Google fallback (also accepted)
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
-# Optional project / region overrides
-export GOOGLE_CLOUD_PROJECT_ID="your-project"
-export GOOGLE_CLOUD_LOCATION="us-central1"
-```
-
-```toml
-[model]
-name = "google:gemini-2.5-flash-preview"
-```
-
-octolib reads `GOOGLE_CREDENTIAL_FILE` first, then falls back to `GOOGLE_APPLICATION_CREDENTIALS`. Requires a Google Cloud project with the Vertex AI API enabled.
-
-### Amazon (Bedrock)
-
-AWS-hosted models. Bedrock uses a **service-specific API key**, not your regular AWS access keys.
-
-```bash
-export AWS_BEARER_TOKEN_BEDROCK="your-bedrock-api-key"
-export AWS_BEDROCK_REGION="us-east-1"   # optional, defaults to us-east-1
-```
-
-```toml
-[model]
-name = "amazon:anthropic.claude-v2"
-```
-
-These are **not** standard AWS access keys (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` will not authenticate). Create a Bedrock API key in the AWS console under **IAM → Security credentials → Create service-specific credential → Amazon Bedrock**.
-
-### Cloudflare (Workers AI)
-
-Edge inference with low latency.
-
-```bash
-export CLOUDFLARE_API_TOKEN="your_token"
-export CLOUDFLARE_ACCOUNT_ID="your_account_id"
-```
-
-```toml
-[model]
-name = "cloudflare:@cf/meta/llama-3.1-8b-instruct"
-```
-
-octolib's Cloudflare provider reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-
-### DeepSeek
-
-Cost-effective models with context caching.
-
-```bash
-export DEEPSEEK_API_KEY="your_key"
-```
-
-```toml
-[model]
-name = "deepseek:deepseek-chat"
-```
-
-### Other providers
-
-The following providers also work via the same `<PROVIDER>_API_KEY` pattern. Each accepts an optional `<PROVIDER>_API_URL` base-URL override unless noted.
-
-| Provider | Format | Env var(s) |
-|----------|--------|------------|
-| Cerebras | `cerebras:model` | `CEREBRAS_API_KEY` |
-| Together | `together:model` | `TOGETHER_API_KEY` |
-| Fireworks | `fireworks:model` | `FIREWORKS_API_KEY` |
-| NVIDIA | `nvidia:model` | `NVIDIA_API_KEY` |
-| MiniMax | `minimax:model` | `MINIMAX_API_KEY` |
-| Moonshot (Kimi) | `moonshot:model` / `kimi:model` | `MOONSHOT_API_KEY` |
-| Z.AI | `zai:model` | `ZAI_API_KEY` |
-| BytePlus | `byteplus:model` | `BYTEPLUS_API_KEY` |
-| Alibaba (Model Studio) | `alibaba:model` | `ALIBABA_API_KEY`, `ALIBABA_API_URL` (optional) |
-| Featherless | `featherless:model` | `FEATHERLESS_API_KEY` |
-| OctoHub | `octohub:model` | `OCTOHUB_API_KEY` |
-| Ollama (local) | `ollama:model` | `OLLAMA_API_KEY` (optional; defaults to local endpoint) |
-| Local / custom | `local:model` | `LOCAL_API_KEY`, `LOCAL_API_URL` |
-
-`moonshot` and `kimi` are aliases for the same provider.
-
-### OctoHub purpose routing (`octohub:auto`)
-
-When your [OctoHub](https://github.com/Muvon/octohub) deployment configures an `[auto]` section, the model `octohub:auto` routes **by purpose** instead of naming a model. Octomind tags every request via `X-Model-Purpose` as `main`, `supervisor`, or `compression`. Every supervisor mechanic—including learning—uses the same `supervisor` purpose, so proxy routing cannot reintroduce hidden per-mechanic model selection.
+The shipped configuration uses `octohub:auto` for all three:
 
 ```toml
 [model]
 name = "octohub:auto"
 
+[supervisor.model]
+name = "octohub:auto"
+
 [compression.model]
-name = "octohub:auto"   # the hub routes this to its `compression` choice
+name = "octohub:auto"
 ```
 
-The same `octohub:auto` name can be used by the main, supervisor, and compression profiles while the hub selects the real model for each purpose. Providers other than OctoHub ignore the header, and a hub without `[auto]` treats `auto` as an unknown model.
+All supervisor mechanics, including learning, share the `supervisor` purpose. Providers other than OctoHub ignore the purpose header. An OctoHub deployment without `[auto]` routing treats `auto` as an unknown model.
 
-### Local CLI-backed models (`cli`)
+## Bring Your Own Keys
 
-The special `cli` meta-provider runs a **local command-line agent** instead of calling a network API. The model string is `cli:<backend>/<model>`, where `<backend>` is one of `codex`, `claude`, `cursor`, `gemini`, or a generic command.
+You can skip `octomind login`, export credentials for a direct provider, and select a matching model:
+
+```bash
+export OPENROUTER_API_KEY="your_key"
+octomind run -m 'openrouter:<model>'
+```
+
+Replace `<model>` with an identifier accepted by the selected provider. To make the selection persistent, edit the main profile:
 
 ```toml
 [model]
-name = "cli:codex/gpt-5"
+name = "openai:gpt-5.6-sol"
+# name = "anthropic:claude-sonnet-4-6"
+# name = "openrouter:moonshotai/kimi-k3"
+# name = "deepseek:deepseek-chat"
+# name = "ollama:glm-5.3"
 ```
 
-Because the model runs through a local CLI, **no API key is required** — Octomind skips credential validation entirely for the `cli` provider. Behavior is tuned with backend-specific environment variables, for example for the codex backend:
+### Credential storage
+
+Provider credentials are environment-only. Configuration-file API-key fields are rejected, including `octomind config --api-key ...`.
+
+Octomind loads credentials from three sources, with later sources overriding earlier ones:
+
+1. Process environment
+2. User-scope `<config_dir>/.env`
+3. Project-local `./.env`
+
+An empty or whitespace-only value is treated as unset. A project `.env` can therefore select different credentials from the user-scope file, but credentials should not be committed to the repository.
+
+### Supported direct providers
+
+The table reflects the provider prefixes accepted by the pinned `octolib` dependency. Endpoint variables are optional overrides unless the row says otherwise.
+
+| Provider | Prefix | Credential and routing variables | Endpoint override |
+|----------|--------|----------------------------------|-------------------|
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_API_URL` |
+| OpenAI | `openai` | `OPENAI_API_KEY` | `OPENAI_API_URL` |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_API_URL` |
+| Google Vertex AI | `google-vertex` | `GOOGLE_VERTEX_CREDENTIAL_FILE` or `GOOGLE_APPLICATION_CREDENTIALS`; optional `GOOGLE_VERTEX_PROJECT_ID`, `GOOGLE_VERTEX_LOCATION` | `GOOGLE_VERTEX_API_URL` |
+| Google AI Studio | `google-studio` | `GOOGLE_STUDIO_API_KEY` | `GOOGLE_STUDIO_API_URL` |
+| Amazon Bedrock | `amazon` | `AWS_BEARER_TOKEN_BEDROCK`; optional `AWS_BEDROCK_REGION` | `AWS_BEDROCK_API_URL` |
+| Cloudflare Workers AI | `cloudflare` | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `CLOUDFLARE_API_URL` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | — |
+| Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `CEREBRAS_API_URL` |
+| Groq | `groq` | `GROQ_API_KEY` | `GROQ_API_URL` |
+| Together | `together` | `TOGETHER_API_KEY` | — |
+| Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `FIREWORKS_API_URL` |
+| NVIDIA | `nvidia` | `NVIDIA_API_KEY` | `NVIDIA_API_URL` |
+| MiniMax | `minimax` | `MINIMAX_API_KEY` | `MINIMAX_API_URL` |
+| Moonshot / Kimi | `moonshot` or `kimi` | `MOONSHOT_API_KEY` | — |
+| Z.AI | `zai` | `ZAI_API_KEY` | `ZAI_API_URL` |
+| BytePlus | `byteplus` | `BYTEPLUS_API_KEY` | `BYTEPLUS_API_URL` |
+| Alibaba Model Studio | `alibaba` | `ALIBABA_API_KEY` | `ALIBABA_API_URL` |
+| Featherless | `featherless` | `FEATHERLESS_API_KEY` | `FEATHERLESS_API_URL` |
+| Hetzner | `hetzner` | `HETZNER_API_KEY` | `HETZNER_API_URL` |
+| OpenCode Zen | `opencode-zen` | `OPENCODE_API_KEY` | `OPENCODE_ZEN_API_URL` |
+| OpenCode Go | `opencode-go` | `OPENCODE_API_KEY` | `OPENCODE_GO_API_URL` |
+| xAI | `xai` | `XAI_API_KEY` | `XAI_API_URL` |
+| OctoHub | `octohub` | `OCTOHUB_API_KEY` when required | `OCTOHUB_API_URL` |
+| Ollama | `ollama` | `OLLAMA_API_KEY` is optional | `OLLAMA_API_URL` |
+| Local OpenAI-compatible endpoint | `local` | `LOCAL_API_KEY` is optional | `LOCAL_API_URL` |
+
+The historical `google:` prefix is not accepted by the current provider factory; use `google-vertex:` or `google-studio:`. The `kimi:` prefix is an alias for `moonshot:` and uses `MOONSHOT_API_KEY`.
+
+OpenRouter attribution defaults are set at startup only when absent: `OPENROUTER_APP_TITLE=Octomind` and `OPENROUTER_HTTP_REFERER=https://octomind.run`. Export either variable to override it.
+
+## Local CLI-Backed Models
+
+The special `cli` meta-provider executes a local agent CLI and skips provider credential validation. Its format is `cli:<backend>/<model>`:
+
+```toml
+[model]
+name = "cli:codex/<model>"
+```
+
+Known backends are `codex`, `claude`, `cursor`, and `gemini`; any other backend name uses the generic CLI adapter. The executable defaults to the backend name, except Cursor defaults to `cursor-agent`. Configure a backend with `CLI_<BACKEND>_COMMAND`, `CLI_<BACKEND>_EXTRA_ARGS`, `CLI_<BACKEND>_MODEL_FLAG`, and `CLI_<BACKEND>_PROMPT_FLAG`.
+
+The Codex backend also accepts these compatibility variables:
 
 ```bash
-export CODEX_COMMAND="codex"            # path/name of the CLI binary
+export CODEX_COMMAND="codex"
 export CODEX_REASONING_EFFORT="medium"  # low | medium | high
 export CODEX_SKIP_GIT_CHECK="false"
 ```
 
-## Provider Comparison
+## Switch Models
 
-Capability flags below come directly from octolib's provider implementations. "Caching" means the provider reports prompt-cache support; "Structured Output" means it advertises structured/JSON output.
+Override only the current invocation:
 
-| Provider | Format | Caching | Vision | Structured Output |
-|----------|--------|---------|--------|-------------------|
-| OpenRouter | `openrouter:provider/model` | Model-dependent | Model-dependent | Model-dependent (defaults to Yes for unknown models) |
-| OpenAI | `openai:model` | Yes (automatic, model-dependent) | Yes (GPT-4o+) | Yes |
-| Anthropic | `anthropic:model` | Yes (all Claude models) | Yes (Claude 3 and Claude 4) | Model-dependent (via octolib reference capabilities) |
-| Google | `google:model` | Yes (Gemini 2.5+/3) | Yes (Gemini) | Yes |
-| Amazon | `amazon:model` | Model-dependent | Yes (Claude models) | Model-dependent |
-| Cloudflare | `cloudflare:model` | No | Limited | Yes |
-| DeepSeek | `deepseek:model` | Yes | No | Yes |
-
-OpenAI caching is automatic (server-side, no client cache markers) for most text models; the pro-tier and audio variants (`gpt-5-pro`, `gpt-5.2-pro`, `gpt-audio`) are excluded.
-
-## Model Selection Strategy
-
-| Use Case | Recommended | Why |
-|----------|-------------|-----|
-| Main development | `anthropic:claude-sonnet-4` | Best coding, caching support |
-| Fast queries / layers | `openai:gpt-4o-mini` | Fast, cheap |
-| Compression decisions | `openai:gpt-5-mini` | Configure under `[compression.model]` |
-| Research / exploration | `openrouter:google/gemini-2.5-flash-preview` | Large context, fast |
-| Cost-effective | `deepseek:deepseek-chat` | Lowest cost |
-
-The compression profile is configured separately under `[compression.model]`; omitting it inherits `[model]`. See [doc/usage/08-compression.md](08-compression.md) for details.
-
-## Model Resolution
-
-When several places specify a model, Octomind resolves which one actually runs in this priority order:
-
-1. Explicit runtime override — for example `octomind run -m provider:model`
-2. The active role profile, with an optional workflow name-only override
-3. A matching scalar `[taps]` model-name mapping
-4. The required main `[model]` baseline
-
-> Every override may specify only `name`, only tuning fields, the complete profile, or nothing. Missing fields inherit from the preceding profile.
-
-## Request Tuning
-
-A few root-config knobs control how Octomind makes provider calls (defaults shown):
-
-```toml
-[model]
-request_timeout_seconds = 300
-max_retries = 1
-retry_timeout = 30
-```
-
-The compression sub-pipeline has its own `max_retries`/`retry_timeout`; see [doc/reference/03-config-reference.md](../reference/03-config-reference.md).
-
-## Prompt Caching
-
-Providers that support caching can reduce cost by reusing repeated context (system prompt, tool definitions, prior turns):
-
-- **Anthropic**: caching for all Claude models. The system prompt and tool definitions are marked with the 1h cache TTL; cache writes cost ~1.25x and reads ~0.1x of normal input tokens.
-- **OpenAI / Google / DeepSeek**: automatic, server-side caching that the client cannot control (no TTL or cache markers are sent).
-- **OpenRouter**: depends on the underlying model (Anthropic models routed via OpenRouter use the same 1h cache markers).
-
-For Anthropic, no configuration is required — caching is always on. The 1h TTL only takes effect for Anthropic (and Anthropic-routed OpenRouter); other providers' caching is server-side regardless of client settings.
-
-### Idle cache keepalive (Anthropic-only, opt-in)
-
-For long-running or idle sessions, Octomind can ping the provider to keep an idle prompt cache warm so the next message still hits the cache:
-
-```toml
-cache_keepalive_enabled = false          # opt-in; default off
-cache_keepalive_max_idle_seconds = 1800  # stop pinging after this many idle seconds (cap 86400)
-```
-
-This is **Anthropic-only**. The ping interval is provider-driven (about 54 minutes for the 1h cache TTL), not configurable here. Keepalive pings consume tokens, and their cost is folded into the session cost.
-
-## Cost Tracking
-
-Every request tracks token usage and cost:
-
-```
-/info     # Session overview
-/report   # Detailed per-request breakdown
-```
-
-Set spending limits:
-```toml
-max_session_spending_threshold = 5.0   # USD per session
-max_request_spending_threshold = 1.0   # USD per request
-```
-
-## Switching Models
-
-Change model mid-session:
-
-```
-/model openai:gpt-4o
-/model anthropic:claude-sonnet-4
-```
-
-Or override at startup:
 ```bash
-octomind run -m anthropic:claude-sonnet-4
+octomind run -m 'anthropic:claude-sonnet-4-6'
 ```
 
-## Troubleshooting
+Change the active session:
 
-**"Invalid model format"**: Must be `provider:model`. Example: `openrouter:anthropic/claude-sonnet-4`.
+```text
+/model openai:gpt-5.6-sol
+/model anthropic:claude-sonnet-4-6
+/model octohub:auto
+```
 
-**"API key not found"** / credentials missing: API keys come only from environment variables or `.env` — they cannot be set in the config file (`octomind config --api-key` is rejected). Set the provider's `<PROVIDER>_API_KEY` and run `octomind config --show` to confirm Octomind detects it. Remember `cli:` models need no key.
+Or edit `[model].name` for the persistent default. Role, supervisor, and compression profiles can override the main profile as described in [Configuration](03-configuration.md#model-profiles-and-purposes).
 
-**"Provider does not support structured output for model ..."**: Most providers support structured output — OpenAI, Google, DeepSeek, and Cloudflare always do; OpenRouter and Anthropic depend on the specific model (resolved via octolib reference capabilities). If you hit this error, switch to a model octolib recognizes as structured-output capable.
+## Diagnose Provider Setup
 
-**Amazon Bedrock auth failures**: Bedrock needs `AWS_BEARER_TOKEN_BEDROCK` (a service-specific Bedrock API key), not `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. Set `AWS_BEDROCK_REGION` if your models are outside `us-east-1`.
+Run `octomind config --show` to inspect the current model and the credential rows it exposes. It reports Octomind sign-in separately from manually exported OctoHub credentials.
 
-**Google Vertex AI issues**: Ensure `GOOGLE_CREDENTIAL_FILE` (or `GOOGLE_APPLICATION_CREDENTIALS`) points to a valid service-account JSON file and the Vertex AI API is enabled for your project.
+Common failures:
+
+- `Invalid model format`: include both parts of `provider:model`.
+- `Unknown provider`: use a prefix from the table above.
+- Missing credentials: set the variables for the selected prefix or run `octomind login` for the default OctoHub path.
+- OctoHub authentication rejected: run `octomind login` again to replace the machine's stored gateway credential.
 
 ## See Also
 
-- [doc/usage/03-configuration.md](03-configuration.md) — config file structure and roles
-- [doc/reference/04-environment-variables.md](../reference/04-environment-variables.md) — complete environment-variable reference
-- [doc/usage/08-compression.md](08-compression.md) — compression and the compression-decision model
+- [Configuration](03-configuration.md) — model profiles and precedence
+- [Environment Variables](../reference/04-environment-variables.md) — broader runtime-variable reference
+- [Compression](08-compression.md) — compression profile behavior

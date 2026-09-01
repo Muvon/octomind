@@ -1,15 +1,19 @@
 # Structured Output
 
-Octomind can emit its session activity as machine-readable JSON instead of human-formatted terminal text. This is what you use for automation, CI/CD pipelines, and any program that needs to parse what the agent did.
+Structured output provides typed JSONL activity streams and optional JSON Schema enforcement for `octomind run` responses.
+
+## Two Structured Surfaces
 
 > **Heads up:** "structured output" covers two different features here. To make the model's *answer* conform to a JSON Schema, pass `--schema <file>` to `octomind run` — see [Schema Enforcement](#schema-enforcement---schema) below. Independent of that, the session's *activity* is available as a structured **event stream** (`--format jsonl` and the WebSocket/ACP servers), described next. Note the WebSocket and ACP protocols do not accept a schema — `--schema` exists only on `octomind run`.
 
 ## The Automation Surface: `--format jsonl`
 
-The `run` command takes a `--format` flag. It accepts exactly two values:
+The `run` command takes a `--format` string. The runtime implements two output modes:
 
 - `plain` — human-formatted terminal output (the default).
 - `jsonl` — one JSON object per line (JSON Lines) on stdout.
+
+Clap does not constrain the string to an enum, but any value other than `jsonl` resolves to the plain output path; use only the two documented values.
 
 Setting `--format jsonl` switches Octomind into non-interactive mode: it reads the prompt from **stdin** and streams the session as JSONL.
 
@@ -17,15 +21,15 @@ Setting `--format jsonl` switches Octomind into non-interactive mode: it reads t
 echo "Summarize recent changes" | octomind run --format jsonl
 ```
 
-Omitting the tag uses the default agent. You can also target a real default role, for example:
+Omitting the tag uses the default tap agent. You can also select it explicitly:
 
 ```bash
-echo "Summarize recent changes" | octomind run assistant --format jsonl
+echo "Summarize recent changes" | octomind run assistant:concierge --format jsonl
 ```
 
 Notes:
 
-- `--format` only exists on the `run` subcommand. The `server` and `acp` subcommands stream structured output by their own protocols (see below); they have no `--format` flag.
+- Among session-serving subcommands, `--format` belongs to `run`; `server` and `acp` use their protocols instead. The separate `workflow` command also accepts `--format`, where only `jsonl` produces stdout events.
 - When `--format` is set, input always comes from stdin — there is no interactive prompt.
 - The default tag is `assistant:concierge` (a tap agent from the built-in default tap `muvon/tap`); the stock config also ships the local roles `assistant`, `task_refiner`, `task_researcher`, and `reduce`. (See [CLI Reference](../reference/01-cli-reference.md) for the full flag set and [Roles](06-roles.md) for tags.)
 
@@ -42,18 +46,21 @@ Each line is a single JSON object with a `"type"` field that tells you which kin
 | `cost` | Token/cost accounting | `session_tokens`, `session_cost`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `reasoning_tokens`, `session_id` |
 | `status` | Non-critical status/info (also carries command results in `data`) | `message`, `session_id?`, `data?` |
 | `error` | Error message | `message` |
-| `mcp_notification` | Notification forwarded from an MCP server | `server`, `method`, `params` |
+| `mcp_notification` | Notification forwarded from an MCP server | `server`, `method`, `params`, `tool_id?` |
 | `skill` | Skill lifecycle event (`activate` / `use` / `forget`) | `action`, `name`, `trigger?`, `session_id` |
-| `injected` | A non-user message injected into the loop (schedule, background agent, skill, webhook, …) | `source_kind`, `source_label`, `content`, `session_id` |
+| `evolution` | Generated behavior lifecycle event | `action`, `id`, `name`, `kind`, `state`, `scope`, `session_id` |
+| `injected` | A non-user message injected into the loop (schedule, monitor, background agent/job, tap run, skill, webhook, guardrail, …) | `source_kind`, `source_label`, `content`, `session_id` |
+
+The WebSocket transport additionally sends `ack` for a valid client frame, including request correlation and session identifiers. A piped `run --format jsonl` has no incoming WebSocket frame to acknowledge.
 
 Example of a few lines from a `jsonl` run (one object per physical line):
 
-```json
+```jsonl
 {"type":"status","message":"Session created: my-session","session_id":"my-session"}
 {"type":"tool_use","tool":"view","tool_id":"call_abc","server":"filesystem","params":{"path":"src/"},"session_id":"my-session"}
 {"type":"tool_result","tool":"view","tool_id":"call_abc","server":"filesystem","content":"src/main.rs\nsrc/lib.rs","success":true,"session_id":"my-session"}
 {"type":"assistant","content":"Recent changes refactored the session loop...","session_id":"my-session"}
-{"type":"cost","session_tokens":1234,"session_cost":0.0025,"input_tokens":1000,"output_tokens":200,"cache_read_tokens":30,"cache_write_tokens":4,"reasoning_tokens":0,"session_id":"my-session"}
+{"type":"cost","session_tokens":1234,"session_cost":0.0,"input_tokens":1000,"output_tokens":200,"cache_read_tokens":30,"cache_write_tokens":4,"reasoning_tokens":0,"session_id":"my-session"}
 ```
 
 To get just the final answer text, filter for `assistant` lines, e.g. with `jq`:
@@ -67,14 +74,14 @@ echo "Summarize recent changes" | octomind run --format jsonl \
 
 If you want a live, bidirectional stream instead of a one-shot pipe, use one of the server modes:
 
-- **WebSocket server** (`octomind server`) — emits the same `ServerMessage` event stream over a WebSocket. See [WebSocket Server](../integration/01-websocket-server.md) for the message protocol. Note that the session-init message (`session`) only carries an optional `session_id`; it does **not** accept a schema.
-- **ACP protocol** (`octomind acp`) — the Agent Client Protocol integration for editors/clients. See [ACP Protocol](../integration/02-acp-protocol.md).
+- **WebSocket server** (`octomind server`) — emits the same `ServerMessage` family over a WebSocket. Its session-init message carries an optional `session_id` and no schema.
+- **ACP protocol** (`octomind acp`) — maps assistant/tool/status activity into ACP `SessionUpdate` messages and exposes command results through `octomind/command`; it does not use the JSONL wire shape.
 
-Both stream the structured events listed above; neither accepts a schema on session creation.
+Neither server transport accepts a JSON Schema on session creation.
 
 ## Provider Compatibility (Structured Output Capability)
 
-Whether a provider *can* be asked for native structured output is exposed by each provider's `supports_structured_output(model)`. This capability gates the `--schema` flag on `octomind run` (see [Schema Enforcement](#schema-enforcement---schema)) and the internal compression decision call. For reference, against the active `octolib 0.21.6`:
+Whether a provider *can* be asked for native structured output is exposed by each provider's `supports_structured_output(model)`. This capability gates the `--schema` flag on `octomind run` and the compression model call. The checkout depends on `octolib` ≥ 0.34.8:
 
 | Provider | `supports_structured_output` |
 |----------|------------------------------|
@@ -89,7 +96,7 @@ Whether a provider *can* be asked for native structured output is exposed by eac
 When a schema is requested from a provider that returns `false` for the given model, Octomind fails fast:
 
 ```
-Provider 'anthropic' does not support structured output for model '<model-without-reference-capabilities>'. Remove the schema parameter or use a compatible provider.
+Model '<provider:model>' (provider '<provider>') does not support structured output — a JSON schema cannot be enforced. Use a structured-output-capable model.
 ```
 
 ## Schema Enforcement (`--schema`)
@@ -106,10 +113,10 @@ echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --sc
 - The file must contain a JSON Schema object; it is loaded and validated before session init. A ready-to-use example ships at [`config-templates/todos.schema.json`](../../config-templates/todos.schema.json).
 - `--schema` exists only on `octomind run` — the WebSocket and ACP session-init messages do not accept a schema.
 
-The same mechanism is also used **internally** by conversation compression: it checks the resolved `[compression.model]` provider via `supports_structured_output()`; if true, it sends a generated compression schema in strict mode, otherwise it falls back to an XML-style prompt. Omitting `[compression.model]` inherits the main profile. See [Context Compression](08-compression.md).
+Conversation compression also checks structured-output capability for its generated schema. This remains the compression model purpose: Octomind has exactly three persistent profiles—main `[model]`, shared `[supervisor.model]`, and `[compression.model]`.
 
 ## Summary
 
-- For machine-readable output, use `--format jsonl` on `octomind run` (or the WebSocket/ACP servers for live streaming).
-- The JSONL/WebSocket/ACP streams emit typed `ServerMessage` events (`assistant`, `tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `injected`, `thinking`).
+- For machine-readable output, use `--format jsonl` on `octomind run`, WebSocket `ServerMessage` frames, or ACP's native updates.
+- JSONL and WebSocket use typed events including `assistant`, `thinking`, `tool_use`, `tool_result`, `cost`, `status`, `error`, `mcp_notification`, `skill`, `evolution`, and `injected`; WebSocket also acknowledges client frames with `ack`.
 - To enforce a JSON Schema on the assistant's answer, pass `--schema <file>` to `octomind run` (structured-output-capable models only). The compression decision call uses the same mechanism internally.

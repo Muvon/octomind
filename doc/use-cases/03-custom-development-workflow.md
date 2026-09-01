@@ -1,4 +1,4 @@
-# Use Case: Custom Development Workflow
+# Custom Development Workflow
 
 Build a multi-stage AI pipeline that refines, researches, and validates a task before another agent executes the fix.
 
@@ -20,13 +20,13 @@ Use the external `octomind workflow <file.toml>` CLI to chain multiple independe
 echo "fix the login bug" | octomind workflow dev.toml
     |
     v
-[refine]        Clarify the request, guess relevant files (cheap fast model)
+[refine]        Clarify the request and identify likely files
     |
     v
-[research]      Read code, search patterns, gather context (large-context model)
+[research]      Read code, search patterns, gather context
     |
     v
-[execute]       Produce the fix with full understanding (powerful model)
+[execute]       Produce the fix with full understanding
     |
     v
 stderr (each step's response + per-step stats + totals)
@@ -43,7 +43,6 @@ name   = "dev"
 name    = "refine"
 role    = "developer:general"
 session = "fresh"
-model   = "openai:gpt-5-mini"   # cheap fast model for simple refinement
 prompt  = """
 Refine this request into a clear, actionable task. Guess which files might
 be relevant. If already clear, return unchanged. Respond ONLY with the
@@ -57,7 +56,6 @@ Request:
 name    = "research"
 role    = "developer:general"
 session = "fresh"
-model   = "openrouter:google/gemini-2.5-flash-preview"   # large-context model for code reading
 timeout = 300                          # seconds; 0 = no timeout (default)
 prompt  = """
 Gather the key context for this task. Search relevant files, read
@@ -74,7 +72,7 @@ Task:
 name    = "execute"
 role    = "developer:general"
 session = "fresh"
-model   = "anthropic:claude-sonnet-4-6"   # powerful model for the actual fix
+model   = "anthropic:claude-sonnet-4-6"     # powerful model for the actual fix
 retries = 1                                # one extra attempt on failure
 prompt  = """
 Implement the task using the gathered context.
@@ -104,7 +102,7 @@ A step **fails** when its `octomind run` subprocess exits non-zero, produces no 
 echo "fix the login bug" | octomind workflow dev.toml
 ```
 
-Each step's assistant message is rendered to **stderr** as it completes (with markdown rendering when enabled), alongside per-step timing, cost, and tokens. A plain run produces **no stdout** (pass `--format jsonl` for a machine-readable result on stdout) — see [Key Points](#key-points). A run looks like this (color stripped):
+Each step's assistant message is rendered to **stderr** as it completes (with markdown rendering when enabled), alongside per-step timing, cost, and tokens. A plain run produces **no stdout** (pass `--format jsonl` for a machine-readable result on stdout) — see [Key Points](#key-points). An abridged run looks like this with color and the cost column omitted:
 
 ```
 workflow · dev
@@ -177,18 +175,17 @@ prompt  = "Implement: {{refine}}\n\nContext:\n{{research}}"
 
 Continue-sessions are **ephemeral to a single `octomind workflow` invocation** — their generated session names (`wf-<workflow>-<step>-<uuid>`) are never reused across runs. For the full reference on this behavior, see [Workflows → Session modes](../usage/09-workflows.md#session-modes).
 
-## Cost Optimization
+## Model Purpose and Overrides
 
-Each step is a separate `octomind run` invocation, so you can match the model to the job — cheap models for simple steps, a powerful model only where it matters:
+Octomind has exactly three model purposes: **main**, **supervisor**, and
+**compression**. Workflow steps are ordinary `octomind run` subprocesses, so a
+step's optional `model` changes only the main-purpose model for that subprocess;
+it does not create a fourth purpose. The shipped default uses OctoHub through
+`octomind login`, with `octohub:auto` for all three purposes; the workflow above
+intentionally demonstrates a concrete main-purpose override instead.
 
-| Step | Job | Suggested model |
-|------|-----|-----------------|
-| refine | Simple text refinement | `openai:gpt-5-mini` |
-| research | Code reading, large context | `openrouter:google/gemini-2.5-flash-preview` |
-| tester | Yes/no judge decision | small judge model, e.g. `openai:gpt-5-mini` |
-| execute | Complex reasoning + code generation | `anthropic:claude-sonnet-4-6` |
-
-**How to actually set a step's model**, in priority order (highest wins):
+The main-purpose model name for a workflow step is selected in this priority
+order (highest wins):
 
 1. **Per-step `model = "provider:model"`** — the simplest and most direct lever, shown above. It overrides only the name and preserves all resolved parameters.
 2. The model declared by the step's role/tap-agent definition (a plain `[[roles]]` entry, or a tap agent's manifest role).

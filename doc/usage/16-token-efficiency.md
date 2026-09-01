@@ -1,6 +1,8 @@
-# Token Efficiency: Capabilities, Auto-Activation, and LRU Eviction
+# Token Efficiency
 
-Octomind keeps the model's tool surface small on purpose. Every exposed tool eats prompt tokens on every turn, and a wide tool zoo encourages the LLM to pick wrong tools. This document describes the runtime mechanisms that make that work:
+Token efficiency keeps tool schemas focused by activating tap capabilities on demand and evicting least-recently-used runtime bundles.
+
+## Mechanisms
 
 - The **`capability`** tool — discover and activate domain bundles on demand.
 - **Deterministic auto-activation** — flip the right capability on without burning an LLM turn.
@@ -20,7 +22,7 @@ Capabilities split the difference. A capability is a directory in a tap — `<ta
 Each capability is two kinds of file:
 
 - **`config.toml`** — capability-level metadata, shared across every provider. Holds the **required** `triggers = [...]` array (the phrases that drive auto-activation and `discover`) and an **optional** `domains = [...]` array (which roles may load it). If `config.toml` is missing or has no `triggers`, the capability fails to resolve.
-- **`<provider>.toml`** — provider-specific MCP wiring: `[[mcp.servers]]` / `server_refs`, `allowed_tools`, and `[deps]`. The provider name comes from the `[capabilities]` config map (`<name> = "<provider>"`), defaulting to `default` (so `codesearch.toml` unless you set `codesearch = "octocode"`).
+- **`<provider>.toml`** — provider-specific MCP wiring: `[[mcp.servers]]`, `server_refs`, `allowed_tools`, and `[deps]`. The provider name comes from the `[capabilities]` config map (`<name> = "<provider>"`) and defaults to the literal `default`, so the fallback file is `default.toml`.
 
 Triggers — central to everything below — live in `config.toml`, never in the `<provider>.toml`.
 
@@ -35,7 +37,7 @@ A built-in `runtime` MCP tool. The `runtime` server hosts `mcp`, `agent`, `skill
 | `enable` | Register and connect a capability's MCP servers. Tools become available next turn. |
 | `disable` | Disconnect a capability's servers and remove its tools. |
 
-```json
+```jsonl
 {"action": "list"}
 {"action": "discover", "intent": "I need to query a Postgres database"}
 {"action": "enable", "name": "database-postgres"}
@@ -119,7 +121,7 @@ It is a silent no-op when:
 | `AUTO_ACTIVATE_MARGIN` | `0.08` | Required gap between top-1 and top-2. Prevents flipping a near-tied competitor on. |
 | `AUTO_ACTIVATE_TOP_K` | `3` | Number of triggers averaged per capability. Mean-of-top-K smooths a single noisy trigger while still rewarding cap-author-aligned triggers. |
 
-These are compile-time constants in `src/mcp/core/capability.rs`. The values are picked so that capability fixtures pass ≥85% top-1 accuracy on positive cases and ≥80% abstain rate on negatives — see `capability_routing_fixtures_match_expected_caps` in the same file.
+These are compile-time constants in `src/mcp/runtime/capability.rs`; routing fixtures live in `src/mcp/runtime/capability_inline_tests.rs`.
 
 ### Why Margin Matters
 
@@ -164,11 +166,11 @@ The decision is per-(capability, server) pair, computed atomically under a singl
 
 ### What "Recently Used" Means
 
-Real tool usage, not activation order:
+Tool dispatch after activation, not activation order:
 
-- Every successful tool execution checks if the tool came from a dynamic-server-backed capability.
+- Every execution whose outer dispatcher result is `Ok(McpToolResult)` checks whether the tool came from a dynamic-server-backed capability.
 - If yes, the owning capability's `last_used` is bumped to `Instant::now()`.
-- Failed tool calls do **not** refresh the timestamp — a flapping server stays evictable.
+- A tool-level error is itself an `Ok(McpToolResult { is_error: true, ... })`, so it still refreshes recency. Only an outer routing/execution `Err` skips the touch.
 
 ```rust
 // src/mcp/mod.rs (tool dispatch path, simplified)
@@ -186,7 +188,7 @@ The touch is one HashMap scan over at most `MAX_ACTIVE_CAPS` active caps (4) —
 ### Eviction Algorithm
 
 ```rust
-// src/mcp/core/capability.rs
+// src/mcp/runtime/capability.rs
 fn evict_lru_if_full(config: &Config) {
     if active_count() < MAX_ACTIVE_CAPS { return; }     // 1. soft cap check
 
@@ -282,16 +284,16 @@ on capability(action="enable", name=X):
 ## Operational Notes
 
 - **Logs.** Auto-activation logs at `info` (`· capability auto-activated: 'X' (score 0.NN) — servers: [...]`). Eviction logs at `info` (`capability LRU evicted: 'X' (N server-tool-group(s) processed)`). Embedding model warmup and silent skips (including the intent-too-short and domain skips) log at `debug`.
-- **Discovering what's installed.** `capability(action="list")` shows everything available in the current domain with active markers. `capability(action="discover", intent="...")` ranks in-domain caps by trigger similarity, drops scores at or below the 0.2 noise floor, and returns up to 5. `discover` is embedding-only — there is no keyword fallback, so it errors if the embedding model is still downloading. (The capability tool's own JSON schema description still says discover "falls back to keyword match"; that fallback no longer exists in the code.)
+- **Discovering what's installed.** `capability(action="list")` shows everything available in the current domain with active markers. `capability(action="discover", intent="...")` ranks in-domain caps by trigger similarity, drops scores at or below the 0.2 noise floor, and returns up to 5. `discover` is embedding-only — there is no keyword fallback, so it errors if the embedding model is still downloading. (The capability tool's own JSON schema description still claims discover "falls back to keyword match"; that fallback no longer exists in the code.)
 - **Skills can pull capabilities.** A skill with `capabilities: programming-rust git` resolves and activates those capabilities on `skill use`. They go through the same registry and LRU bookkeeping.
-- **Force-loading at boot.** `OCTOMIND_CAPABILITIES=cap1,cap2 octomind run -r developer` force-activates the listed capabilities at session start — *before* the agent's first turn — bypassing both the embedding auto-activator and the `capability` tool. Activation still passes through the domain gate and the LRU; already-active caps are no-ops, and any failures are logged and skipped (never aborting the session). Useful for CI / non-interactive runs that need a deterministic tool surface.
+- **Force-loading at boot.** `OCTOMIND_CAPABILITIES=cap1,cap2 octomind run developer:general` force-activates the listed capabilities at session start. Each comma-delimited item must exactly equal an installed capability name; there is no fuzzy, tool-name, or provider-name resolution. Activation still passes through environment/domain checks and the LRU; failures are logged and skipped.
 - **Master toggle.** `auto_capabilities = true` (the default in `default.toml`) controls the whole auto-activation path; set it `false` to require explicit `enable` calls only.
-- **`MAX_ACTIVE_CAPS = 4`** is a compile-time constant in `src/mcp/core/capability.rs`. The value balances two pressures: (1) tool-overload research (Microsoft, AWS, Boundary, Chroma) shows sharp accuracy degradation past ~20-25 total tools exposed to the model — with ~15-20 baseline tools plus ~4-5 tools per cap, four active caps keeps total surface in the safe zone; (2) real task concurrency rarely needs more than 2-3 capabilities at once, so 4 leaves headroom for cross-domain work without churning.
+- **`MAX_ACTIVE_CAPS = 4`** is a compile-time constant in `src/mcp/runtime/capability.rs`. It bounds runtime-activated capabilities; the exact number of exposed tools still depends on each live server schema.
 - **Re-activation on next match.** Evicted capabilities can be re-activated immediately if the next user message or `enable` call demands them. Eviction only releases servers; trigger embeddings stay cached.
 
 ## Token-Cost Intuition
 
-Per turn, the prompt carries the JSON schema for every active tool. With ~10 tools per medium-sized MCP server and ~200 tokens of schema each, a single large server adds ~2k tokens to *every* request and *every* response. Multiply by the rest of the conversation and an extra always-on server is a multi-cent-per-turn overhead even on cheap models.
+Per turn, the prompt carries the JSON schema for every active tool. The exact token load depends on the live schemas, so inspect `/mcp full` rather than assuming a fixed per-tool size.
 
 Octomind's design point: the model gets exactly the tools it needs, when it needs them, automatically — without paying for an LLM-routing turn or a bloated default prompt.
 
@@ -299,15 +301,15 @@ Octomind's design point: the model gets exactly the tools it needs, when it need
 
 | Concern | File |
 |---------|------|
-| Active registry, eviction, scoring, auto-activation | `src/mcp/core/capability.rs` |
+| Active registry, eviction, scoring, auto-activation | `src/mcp/runtime/capability.rs` |
 | Touch hook in tool dispatch | `src/mcp/mod.rs` (around the `try_execute_tool_call` site) |
 | Auto-activation call site | `src/session/chat/session/api_prep.rs` → `prepare_for_api_call` |
-| Server enable / disable / unregister | `src/mcp/core/dynamic.rs` |
+| Server enable / disable / unregister | `src/mcp/runtime/dynamic.rs` |
 | Static-server filter extension | `src/config/runtime_overlay.rs` → `set_capability_extras` |
-| Domain gate | `src/agent/registry.rs` → `cap_available_in_domain`; `src/mcp/core/capability.rs` → `filter_caps_by_domain` |
+| Domain gate | `src/agent/registry.rs` → `cap_available_in_domain`; `src/mcp/runtime/capability.rs` → `filter_caps_by_domain` |
 | Embedding model | `src/embeddings/` (`muvon/octomind-embed`, fine-tuned BGE-small via candle) |
 | Capability TOML parsing (`config.toml` + `<provider>.toml`) | `src/agent/registry.rs` → `read_capability_config`, `parse_capability_toml`, `list_all_capabilities` |
-| Master toggle / intent gate | `src/session/chat/session/api_prep.rs`; `src/mcp/core/skill_auto.rs` → `MIN_INTENT_NON_WS_CHARS` |
+| Master toggle / intent gate | `src/session/chat/session/api_prep.rs`; `src/mcp/runtime/skill_auto.rs` → `MIN_INTENT_NON_WS_CHARS` |
 | Tap layout (capabilities directory) | `doc/integration/04-tap-system.md` |
 
 ## See Also

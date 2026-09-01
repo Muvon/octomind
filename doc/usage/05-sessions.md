@@ -1,6 +1,6 @@
 # Sessions
 
-All interaction with Octomind happens through sessions. A session is a conversation with context, tool access, and cost tracking.
+Sessions persist conversations, tools, runtime settings, and usage across interactive, piped, daemon, ACP, and WebSocket work.
 
 ## Starting Sessions
 
@@ -8,20 +8,20 @@ All interaction with Octomind happens through sessions. A session is a conversat
 # Default tag (assistant:concierge)
 octomind run
 
-# A built-in role from your config (assistant, task_refiner, task_researcher, reduce)
-octomind run assistant
-
 # A tap agent from the registry, addressed as category:variant
 octomind run developer:general
+
+# An explicit local [[roles]] entry from the shipped config
+octomind run assistant
 
 # Named session
 octomind run --name feature-auth
 
-# Model override
-octomind run -m anthropic:claude-sonnet-4
+# Main-purpose model override
+octomind run -m anthropic:claude-sonnet-4-6
 ```
 
-With no argument, `octomind run` uses the configured default tag, which is `assistant:concierge` out of the box. Bare role names like `assistant` refer to the built-in roles shipped in the default config; `category:variant` names like `developer:general` are **tap agents** installed from a registry (see [Roles](06-roles.md) and the tap registry). If you run a tap agent without installing its tap first, Octomind will not find it.
+With no argument, `octomind run` uses the configured default tag, `assistant:concierge`. Bare names such as `assistant` refer to roles in the shipped config; `category:variant` names such as `developer:general` are tap agents resolved from the registry.
 
 ## Resuming Sessions
 
@@ -76,7 +76,9 @@ See [Daemon and Hooks](../integration/03-daemon-and-hooks.md) for webhook integr
 
 Commands typed at the session prompt control the session without sending a message to the model. The grouped list below covers the full command surface; see the [Session Commands Reference](../reference/02-session-commands.md) for every flag and subcommand.
 
-**Session lifecycle:** `/help` (alias `/?`), `/exit` (alias `/quit`), `/clear`, `/list`, `/new`
+**Session lifecycle:** `/help`, `/exit` (alias `/quit`), `/clear`, `/list`, `/new`, `/rename`
+
+`/?` is registered for completion but is not dispatched as help; use `/help`.
 
 **Monitoring:** `/status`, `/info`, `/report`, `/context`, `/loglevel`
 
@@ -93,7 +95,7 @@ active-only across agents, MCP background jobs, and command monitors. Use
 `/status agents`, `/status monitors`, or `/status jobs` for the full category
 view. Status is scoped to the current process and session.
 
-**Learning & sharing:** `/learning`, `/share`, `/analyze`
+**Account, learning & sharing:** `/usage`, `/login`, `/learning`, `/share`, `/analyze`
 
 `/share` uploads the current session log and opens a receipt URL; `/analyze` instead starts a localhost bridge and opens the octomind.run viewer pointed at your machine, so the log never leaves it.
 
@@ -115,11 +117,9 @@ Shows:
 - Cache marker stats (system / tool / content markers, non-cached tokens)
 - Compression statistics (when any compression has happened)
 
-Set spending limits in config:
-```toml
-max_session_spending_threshold = 5.0   # USD per session
-max_request_spending_threshold = 1.0   # USD per request
-```
+Configure `max_session_spending_threshold` and `max_request_spending_threshold`
+when you need session- or request-level spending stops; see the
+[Configuration Reference](../reference/03-config-reference.md#user-interface).
 
 ### Adjusting model and behavior mid-session
 
@@ -171,7 +171,7 @@ Automatic compression also runs as sessions grow. See [Compression](08-compressi
 
 ## Project Instructions
 
-Octomind auto-loads `AGENTS.md` from the project root as a user message at session start, following the [AGENTS.md standard](https://agents.md). The file is loaded whenever it exists — no configuration needed.
+Octomind auto-loads `AGENTS.md` from the session working directory as a user message at session start. `AGENTS.md` is the only project-instruction filename recognized by this loader; `INSTRUCTIONS.md` and `CONSTRAINTS.md` are not consulted. An empty `AGENTS.md` is ignored.
 
 ## Session Storage
 

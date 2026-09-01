@@ -1,98 +1,106 @@
 # Installation
 
-## Prerequisites
+Install Octomind and authorize the recommended OctoHub gateway, or configure your own provider credentials.
 
-- A terminal (macOS Terminal, Linux shell, Windows PowerShell)
-- An API key from at least one supported provider (see [Providers](04-providers.md))
+## Recommended Setup
 
-## Quick Installation
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
-```
-
-This detects your OS and architecture, downloads the latest release, and installs to `~/.local/bin/` (override with `OCTOMIND_INSTALL_DIR`). If `~/.local/bin` is not on your `PATH`, the script prints a warning and tells you to add it:
+### 1. Install the binary
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://octomind.run/install.sh | bash
 ```
 
-Add that line to your shell profile (`~/.bashrc`, `~/.zshrc`, `~/.profile`, etc.) so it persists.
+The installer detects the current OS and architecture, downloads the matching GitHub release, and installs `octomind` in `~/.local/bin` by default. If that directory is not on `PATH`, the script prints the exact export to add to your shell profile.
 
-## Manual Installation
-
-Download the archive for your platform from [GitHub Releases](https://github.com/muvon/octomind/releases). Assets are versioned and named by Rust target triple (replace `<version>` with the release you want, e.g. `0.29.0`):
-
-| Platform | Asset |
-|----------|-------|
-| Linux x86_64 | `octomind-<version>-x86_64-unknown-linux-musl.tar.gz` |
-| Linux ARM64 | `octomind-<version>-aarch64-unknown-linux-musl.tar.gz` |
-| macOS Intel | `octomind-<version>-x86_64-apple-darwin.tar.gz` |
-| macOS Apple Silicon | `octomind-<version>-aarch64-apple-darwin.tar.gz` |
-| Windows x86_64 | `octomind-<version>-x86_64-pc-windows-msvc.zip` |
-| Windows ARM64 | `octomind-<version>-aarch64-pc-windows-msvc.zip` |
-
-The `.tar.gz`/`.zip` archive contains a single `octomind` binary (`octomind.exe` on Windows). Extract it, then move it onto your `PATH`:
+### 2. Sign in
 
 ```bash
-# Example: macOS Apple Silicon
-tar xzf octomind-0.29.0-aarch64-apple-darwin.tar.gz
-chmod +x octomind
-mv octomind ~/.local/bin/octomind        # or: sudo mv octomind /usr/local/bin/octomind
+octomind login
 ```
 
-```powershell
-# Example: Windows x86_64 (PowerShell)
-Expand-Archive octomind-0.29.0-x86_64-pc-windows-msvc.zip -DestinationPath .
-# Then move octomind.exe to a directory on your PATH
+The command displays an approval code, opens the approval page in your browser, and waits for confirmation. If the browser cannot open, it prints the URL instead. The completed login stores the OctoHub gateway credential in Octomind's user-scope `.env`, so you do not need to create API keys or accounts with individual model providers. Free models are included.
+
+### 3. Start Octomind
+
+```bash
+octomind
 ```
 
-## Package Managers
+Running `octomind` without a subcommand starts the same interactive session as `octomind run`. The default configuration uses `octohub:auto` for its main, supervisor, and compression model purposes.
 
-### Cargo (Rust)
+## Installer Requirements and Targets
+
+The install script requires `curl`; Windows archive extraction also requires `unzip`. It supports these release targets:
+
+| Platform | Target |
+|----------|--------|
+| Linux x86_64 | `x86_64-unknown-linux-musl` |
+| Linux ARM64 | `aarch64-unknown-linux-musl` |
+| macOS Intel | `x86_64-apple-darwin` |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` |
+| Windows ARM64 | `aarch64-pc-windows-msvc` |
+
+Set `OCTOMIND_INSTALL_DIR` to choose another destination:
+
+```bash
+export OCTOMIND_INSTALL_DIR=/opt/bin
+curl -fsSL https://octomind.run/install.sh | bash
+```
+
+## Bring Your Own API Key
+
+Signing in is optional. To use a provider directly, export its credential and override the model at startup:
+
+```bash
+export OPENROUTER_API_KEY="your_key"
+octomind run -m 'openrouter:<model>'
+```
+
+Replace `<model>` with a model identifier accepted by that provider. To make it permanent, change `[model].name` in `config.toml`. See [AI Providers](04-providers.md#bring-your-own-keys) for every supported prefix and credential variable.
+
+## Other Installation Methods
+
+### GitHub release archive
+
+Download the archive for your target from [GitHub Releases](https://github.com/muvon/octomind/releases). Release assets use this naming scheme:
+
+```text
+octomind-<version>-<target>.tar.gz
+octomind-<version>-<target>.zip
+```
+
+Unix archives contain `octomind`; Windows archives contain `octomind.exe`. Extract the binary and move it to a directory on `PATH`.
+
+### Cargo
 
 ```bash
 cargo install octomind
 ```
 
-This builds from source and requires the Rust toolchain (Rust 1.95+). It is the path for Rust users; the recommended install for everyone else is the install script or the GitHub release archives above. See [Building from Source](../dev/01-building-from-source.md) for development setup.
+This builds Octomind from source and requires Rust 1.95 or newer. See [Building from Source](../dev/01-building-from-source.md) for the repository development setup.
 
-## API Key Setup
+## Automated Installation
 
-API keys are read **only** from environment variables (or a `.env` file in your project directory). There is no config field for them — `octomind config --api-key provider:key` is intentionally rejected and points you to the corresponding env var instead.
+The installer accepts these environment variables:
 
-Set at least one provider API key. Common providers:
+| Variable | Purpose |
+|----------|---------|
+| `GITHUB_TOKEN` | Authenticate GitHub API requests |
+| `GH_TOKEN` | Alternative GitHub token variable |
+| `OCTOMIND_INSTALL_DIR` | Override the destination directory |
+| `OCTOMIND_VERSION` | Install a specific release version |
 
-```bash
-# OpenRouter (recommended -- one key, access to many models)
-export OPENROUTER_API_KEY="your_key"
-
-# Or use a specific provider
-export OPENAI_API_KEY="your_key"
-export ANTHROPIC_API_KEY="your_key"
-export DEEPSEEK_API_KEY="your_key"
-```
-
-Some providers use differently named credentials rather than `<PROVIDER>_API_KEY`:
+Flags passed to the piped script override the corresponding environment values:
 
 ```bash
-# Google Vertex AI -- path to a service-account JSON file
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
-
-# Amazon Bedrock
-export AWS_BEARER_TOKEN_BEDROCK="your_token"
-
-# Cloudflare Workers AI
-export CLOUDFLARE_API_TOKEN="your_token"
+curl -fsSL https://octomind.run/install.sh | \
+  bash -s -- --version <version> --target aarch64-apple-darwin --install-dir /opt/bin
 ```
-
-Add the relevant exports to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for persistence, or put them in a `.env` file in your project directory.
-
-See [Environment Variables](../reference/04-environment-variables.md) for the complete list of supported providers and variables.
 
 ## Shell Completions
 
-Generate completions for your shell:
+Generate a completion script for a supported shell:
 
 ```bash
 # Bash
@@ -111,51 +119,18 @@ octomind completion powershell > octomind.ps1
 octomind completion elvish > ~/.config/elvish/lib/octomind.elv
 ```
 
-For Zsh, ensure `~/.zfunc` is in your `fpath`:
-```bash
-echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
-echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
+For Zsh, add `~/.zfunc` to `fpath` and initialize completion in your shell configuration:
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
 ```
 
-> Note: `bash`, `zsh`, and `fish` completions include dynamic agent/role TAG completion for `octomind run` (driven by `octomind complete run` at runtime). `powershell` and `elvish` completions are static — they complete subcommands and flags but not agent/role tags.
-
-## CI/CD Installation
-
-The install script supports environment variables for automated environments where GitHub API rate limits may apply:
-
-| Variable | Description |
-|----------|-------------|
-| `GITHUB_TOKEN` or `GH_TOKEN` | Authenticate GitHub API requests to avoid rate limits |
-| `OCTOMIND_INSTALL_DIR` | Override installation directory (default: `~/.local/bin/`) |
-| `OCTOMIND_VERSION` | Install a specific version instead of latest |
-
-`GH_TOKEN` is accepted as an alternative to `GITHUB_TOKEN`.
+## Verify the Installation
 
 ```bash
-# CI example
-GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-  OCTOMIND_VERSION="0.29.0" \
-  curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
-```
-
-The script also accepts flags when piped, which override the environment variables (`--target` is useful for cross-platform installs):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | \
-  bash -s -- --version 0.29.0 --target aarch64-apple-darwin --install-dir /opt/bin
-```
-
-## Verification
-
-```bash
-# Check installation
 octomind --version
-
-# Generate default config
-octomind config
-
-# Start your first session
-octomind run
+octomind config --show
 ```
 
-Configuration is stored at `~/.local/share/octomind/config/config.toml` on macOS and Linux (on Windows: `%LOCALAPPDATA%\octomind\config\config.toml`). See [Configuration](03-configuration.md) for details.
+Continue with the [Quickstart](02-quickstart.md), or inspect the generated settings in [Configuration](03-configuration.md).

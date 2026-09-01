@@ -1,6 +1,8 @@
 # Guardrails
 
-Per-project policy for tool use and input preprocessing, defined in `.agents/guardrails.toml`. Four section types cover four phases of the session lifecycle:
+Guardrails define project-local input transforms, tool denials, result hooks, and end-of-turn validators in `.agents/guardrails.toml`.
+
+## Overview
 
 | Section | Phase | What it does | Side effect |
 |---|---|---|---|
@@ -29,7 +31,7 @@ capability(regex)                # regex matched against full args JSON
 capability(arg_name=regex)       # regex matched against a specific arg
 ```
 
-- **capability** = the MCP capability name as declared in tap manifests (e.g. `shell`, `filesystem-read`, `filesystem-write`). See [How a tool call resolves to a capability](#how-a-tool-call-resolves-to-a-capability) below. Tools that aren't part of any capability never match.
+- **capability** = the exact MCP capability name resolved from tap manifests or the runtime overlay (e.g. `shell`, `filesystem-read`, `filesystem-write`). Matching is equality, not a prefix or fuzzy check: a tool name or MCP server name works only if it is also the resolved capability's exact name. Tools with no owning capability never match.
 - **regex on full args JSON** = the call's params object serialized to JSON, then matched. Use for any-arg patterns.
 - **arg-targeted** = regex matched against just that arg's value. String args matched directly (no quotes); arrays/objects/numbers matched against their JSON form. Example: `paths=secret` matches `paths=["a","b/secret.env"]` because the haystack becomes `["a","b/secret.env"]`.
 
@@ -61,7 +63,7 @@ when = [
 - `+target` = at least one matching call exists in the relevant history window.
 - `-target` = no matching call exists in the relevant history window.
 
-All `when` items are AND'd. Cross-section: history is the **session call log**, accumulated as tool calls succeed; blocked calls don't enter the log.
+All `when` items are AND'd. History is the session call log of allowed calls, recorded before execution; blocked calls do not enter it, while a later tool error does not erase an allowed call.
 
 ## `[[pipe]]` — pre-model input transform
 
@@ -349,7 +351,7 @@ No filters → fires every turn end.
 
 ## How history works (call log)
 
-The session maintains a single ordered call log: `Vec<(capability, params)>`. Every **successful** tool call is appended. Blocked calls (denied by a `[[guard]]`) are **not** recorded — they didn't happen, so they shouldn't satisfy history conditions on retry.
+The session maintains a single ordered call log: `Vec<(capability, params)>`. Every **allowed** tool call is appended before execution, so a call remains in history even if the external tool later returns an error. Blocked calls are not recorded because they never execute.
 
 - `[[guard]]` `when` reads the entire log (session-wide history).
 - `[[validator]]` `when` reads `log[cursor..]` where the cursor is per-validator.

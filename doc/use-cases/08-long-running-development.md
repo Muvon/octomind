@@ -1,14 +1,14 @@
-# Use Case: Long-Running Development with Session Resume
+# Long-Running Development
 
 Use named sessions and resume to work on complex tasks across multiple sittings without losing context.
 
 ## The Problem
 
-Large refactoring, feature development, or investigation tasks don't fit in a single sitting. When you start a new session, the AI has no memory of yesterday's work -- you re-explain context, re-read files, and repeat decisions. Wasted time and tokens.
+Large refactoring, feature development, or investigation tasks don't fit in a single sitting. When you start a new session, the AI has no memory of yesterday's work — you re-explain context, re-read files, and repeat decisions. Wasted time and tokens.
 
 ## Solution
 
-Named sessions persist full conversation history to disk. Resume exactly where you left off.
+Named sessions persist their reconstructable conversation state to disk so a later process can resume the same task boundary.
 
 ### Day 1: Start the Task
 
@@ -32,7 +32,7 @@ AI: [reads files, analyzes architecture, proposes plan]
 AI: [designs interfaces, creates types, documents API]
 ```
 
-End of day -- just close the terminal or `/exit`. Session is auto-saved.
+End of day — just close the terminal or `/exit`. Session is auto-saved.
 
 ### Day 2: Resume with Full Context
 
@@ -50,7 +50,7 @@ AI: "Resuming from the design phase. I see we agreed on:
   Let me start implementing..."
 ```
 
-The AI has the complete conversation history -- all decisions, file reads, code changes, and reasoning from day 1.
+The active conversation state is reconstructed from the session log, including any compression checkpoints and retained knowledge.
 
 ### Day 3: Quick Resume
 
@@ -62,7 +62,7 @@ octomind run --resume-recent
 
 This matches saved sessions whose name contains the current working directory's
 basename and resumes the most recently modified one. Run it from the same project
-directory you started in -- a session begun in a different directory (different
+directory you started in — a session begun in a different directory (different
 basename) will not be matched, even if it is newer.
 
 Or list all sessions:
@@ -73,7 +73,7 @@ octomind run
 ```
 /list
 # Lists saved sessions with their metadata (date, name, message/token counts).
-# Paginated 15 per page -- use "/list 2" for the next page.
+# Paginated 15 per page — use "/list 2" for the next page.
 ```
 
 ### Managing Context Over Long Sessions
@@ -113,6 +113,11 @@ window. Once the context reaches it, compression is forced unconditionally --
 bypassing the cooldown and cost guards that govern ordinary compressions. Set
 `max_session_tokens_threshold = 0` to rely on the model window alone. See
 [Context Compression](../usage/08-compression.md) for the full mechanics.
+
+Model terminology is limited to three purposes: **main**, **supervisor**, and
+**compression**. The shipped default uses OctoHub via `octomind login`, with
+`octohub:auto` for each purpose; `[compression.model]` is the optional override
+for compression calls.
 
 **Why a second `/done` may report nothing to compress.** `/done` *forces* compression,
 which bypasses the automatic cooldown and resets its counters — so the cooldown is not
@@ -181,8 +186,9 @@ current conversation. See [Adaptive Learning](../usage/13-learning.md) for detai
 ### Session Persistence Details
 
 Sessions are stored as append-only `.jsonl.zst` files (zstd-compressed JSON lines) in
-`~/.local/share/octomind/sessions/`. Resuming replays the log -- including `SUMMARY`,
-`KNOWLEDGE_ENTRY`, and `COMMAND` entries -- to rebuild the exact context.
+`~/.local/share/octomind/sessions/`. Resuming replays the log — including `SUMMARY`,
+`COMPRESSION_POINT`, `RESTORATION_POINT`, `KNOWLEDGE_ENTRY`, `COMMAND`, plan snapshots,
+and schedule snapshots — to rebuild the current session state.
 
 What's saved and restored:
 
@@ -192,6 +198,7 @@ What's saved and restored:
 | Token counts | Input, output, cached, reasoning tokens |
 | Cost tracking | Per-request and cumulative costs |
 | Compression knowledge | Critical decisions and constraints survive compression |
+| Schedules | The latest `SCHEDULE_SNAPSHOT` is restored for the resumed session |
 | Model info | Which model was used |
 | Media attachments | Images and videos attached during session |
 
@@ -200,7 +207,6 @@ Critical knowledge survives **both** compression and resume: it is replayed from
 are intact across sittings.
 
 What's NOT persisted:
-- Active schedules (in-memory only)
 - Running background jobs
 - Dynamic MCP servers added at runtime (use `persist` to save them)
 - Workflow execution state (but compressed summaries are preserved)
@@ -218,21 +224,14 @@ octomind run --name "investigate-memory-leak"
 ```
 /done
 
-# Or steer the summary toward what matters next
+# Or compress, then immediately process a follow-up request
 /done focus on the API layer and the migration plan
 ```
 `/done` force-compresses the current context (bypassing automatic thresholds and the
-cooldown) and, when learning is enabled, extracts lessons in the background -- producing
-a compact checkpoint before the next phase. A bare `/done` compresses with default
-behavior; `/done <instructions>` passes guidance for the compression summary so you can
-emphasize what the next phase will need.
-
-**Set spending limits for safety:**
-```toml
-max_session_spending_threshold = 10.0   # USD per session
-```
-
-Long sessions can accumulate significant costs. Monitor with `/info`.
+cooldown) and, when learning is enabled, extracts lessons in the background — producing
+a compact checkpoint before the next phase. A bare `/done` stops there;
+`/done <text>` runs the same compression first and then treats `<text>` as the
+next user message. It does not steer the compression summary.
 
 **Enable compression for multi-day sessions:**
 ```toml
@@ -243,33 +242,20 @@ threshold = 60000
 
 This keeps context manageable while preserving critical decisions.
 
-**Keep the prompt cache warm across idle gaps (Anthropic only):**
-```toml
-cache_keepalive_enabled = true          # default: false
-cache_keepalive_max_idle_seconds = 1800 # stop pinging after 30 min idle (cap: 86400)
-```
-When you step away mid-session, the prompt cache normally expires before you return, so
-the next turn pays full price. With keepalive enabled, Octomind sends minimal idle pings
-to keep the cache warm, then stops after `cache_keepalive_max_idle_seconds` so an
-abandoned session does not bill forever. The ping interval is provider-driven and this
-applies only to providers whose API supports refresh-on-read -- today that is Anthropic.
-Ping costs are folded into the session cost. See
-[Providers & Caching](../usage/04-providers.md) for the provider-facing details.
-
 ## Key Points
 
 - `--name` creates or resumes a named session
 - `--resume NAME` explicitly resumes an existing session
 - `--resume-recent` finds the most recent session for the current project
 - Full conversation history is persisted in `~/.local/share/octomind/sessions/`
-- The AI picks up exactly where you left off -- all context, decisions, and findings intact
+- The AI picks up exactly where you left off — all context, decisions, and findings intact
 - Use `/done` or automatic compression to manage growing context (same engine, different triggers)
 - Combine with agents for parallel subtask delegation
-- Session persistence works across CLI, daemon, and WebSocket/ACP modes -- a session started in one mode is resumable by the same name in another
+- Session persistence works across CLI, daemon, and WebSocket/ACP modes — a session started in one mode is resumable by the same name in another
 
 ## See Also
 
-- [Sessions](../usage/05-sessions.md) -- full session lifecycle, naming, and resume
-- [Context Compression](../usage/08-compression.md) -- pressure levels, ratios, and the decision model
-- [Adaptive Learning](../usage/13-learning.md) -- how knowledge is carried across separate sessions
-- [Providers & Caching](../usage/04-providers.md) -- prompt caching and cache keepalive
+- [Sessions](../usage/05-sessions.md) — full session lifecycle, naming, and resume
+- [Context Compression](../usage/08-compression.md) — thresholds, adaptive depth, and the compression model
+- [Adaptive Learning](../usage/13-learning.md) — how knowledge is carried across separate sessions
+- [Providers](../usage/04-providers.md) — OctoHub, provider credentials, and model selection

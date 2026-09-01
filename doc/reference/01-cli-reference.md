@@ -1,18 +1,19 @@
 # CLI Reference
 
-Complete reference for all `octomind` CLI commands and flags.
+Reference for every public `octomind` CLI command, flag, transport mode, tap entry point, and runtime workflow.
 
 ## Synopsis
 
 ```bash
-octomind <COMMAND> [OPTIONS]
+octomind [COMMAND] [OPTIONS]
 ```
 
-A subcommand is **required** — running bare `octomind` prints a usage error. There is no default action.
+The subcommand is optional. Bare `octomind` behaves as `octomind run` with the configured default tag.
 
 | Command | Purpose |
 |---------|---------|
 | `run` | Start an interactive or non-interactive AI session (the main command). |
+| `login` | Sign in to an Octomind account and store the minted OctoHub key. |
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
@@ -20,7 +21,7 @@ A subcommand is **required** — running bare `octomind` prints a usage error. T
 | `untap` | Remove a previously added tap. |
 | `vars` | Show placeholder variables and their resolved values. |
 | `send` | Inject a message into a running named session. |
-| `workflow` | Run a multi-step workflow defined in a TOML file. See [Workflows](../usage/09-workflows.md). |
+| `workflow` | List tap workflows or run one by name/local TOML file. See [Workflows](../usage/09-workflows.md). |
 | `completion` | Generate shell completion scripts. |
 
 The global config file lives at `~/.local/share/octomind/config/config.toml` on macOS and Linux
@@ -30,9 +31,9 @@ The global config file lives at `~/.local/share/octomind/config/config.toml` on 
 
 `run`, `server`, and `acp` take an optional `TAG`:
 
-- A **role name** (e.g. `developer`) — matched against `[[roles]]` in your config.
+- A **role name** (e.g. `assistant`) — matched against `[[roles]]` in your config.
 - A **registry agent tag** in `category:variant` form (e.g. `developer:general`) — resolved through your installed [taps](../integration/04-tap-system.md).
-- Omitted — uses the default role from config.
+- Omitted — uses the `default` tag from config.
 
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required main `[model]`.
 
@@ -42,13 +43,13 @@ Start an interactive or non-interactive AI session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `TAG` | | Role name (e.g. `developer`) or registry agent tag `category:variant` (e.g. `developer:general`). Uses the default role from config if omitted. |
+| `TAG` | | Role name (e.g. `assistant`) or registry agent tag `category:variant` (e.g. `developer:general`). Uses the default tag if omitted. |
 | `--name` | `-n` | Named session identifier |
-| `--resume` | `-r` | Resume a specific session by name |
+| `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
-| `--format` | | Output format: `plain` or `jsonl`. Unset by default — see note below. |
+| `--format` | | Output mode: use `plain` or `jsonl`. Unset by default; non-`jsonl` strings take the plain path. |
 | `--model` | `-m` | Override model (`provider:model` format) |
-| `--daemon` | | Keep the session alive for injected messages. Implies non-interactive mode — pair with `--format` (e.g. `--format jsonl`) and deliver messages with `octomind send`. |
+| `--daemon` | | Keep the session alive for injected messages. Pair with `--format jsonl` for headless use; TTY use remains interactive-capable. |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
 | `--hook` | | Activate webhook hook(s) by name (defined in `[[hooks]]` config). Repeatable. See [Daemon & Hooks](../integration/03-daemon-and-hooks.md). |
 | `--schema` | | Path to a JSON Schema **object** file. Constrains the model's output to match it (structured output). The resolved model must support structured output, or the run fails fast. See note below. |
@@ -57,31 +58,28 @@ Start an interactive or non-interactive AI session.
 session runs **interactively**. If `--format` is given (`plain` or `jsonl`) **or** stdin is piped, the session
 runs **non-interactively**, reading the input from stdin. Internally, an unset format resolves to `plain`.
 
-**Daemon mode:** `--daemon` is non-interactive and effectively requires `--format` — when a daemon is launched
-attached to a terminal, the piped input is forced empty. While the session is alive, inject further messages with
-[`octomind send --name <name>`](#octomind-send). See [Daemon & Hooks](../integration/03-daemon-and-hooks.md).
+**Daemon mode:** `--daemon` keeps the session alive after a turn. Pair it with `--format jsonl` for a headless event stream. When attached to a TTY without `--format`, startup uses an empty initial input and the terminal stays interactive. Inject further messages with [`octomind send --name <name>`](#octomind-send).
 
 **Structured output (`--schema`):** pass a path to a JSON Schema **object** file to constrain the model's output.
 The schema applies to every assistant reply for the session's lifetime — across multi-turn sessions, resumes, and
-daemon mode — while tool calls still flow normally underneath (only the final text is constrained). If the
-resolved model lacks structured-output support (e.g. Anthropic models), the run fails fast with a clear error; use
-an OpenAI-family or other structured-output-capable model. The schema is a runtime override — like `--model`, it
+daemon mode — while tool calls still flow normally underneath. If the resolved model reports no structured-output
+support, the run fails before the provider request. The schema is a runtime override — like `--model`, it
 is not persisted, so pass it again when resuming. Most useful with `--format jsonl`. A ready-to-use example ships
 at [`config-templates/todos.schema.json`](../../config-templates/todos.schema.json).
 
 **Examples:**
 ```bash
-# Interactive session with default role
+# Interactive session with the default tap agent
 octomind run
 
-# Interactive with specific role
-octomind run developer
+# Explicit default tap agent
+octomind run assistant:concierge
 
 # Registry agent (category:variant)
 octomind run developer:general
 
 # Non-interactive: pipe message via stdin
-echo "Explain the auth module" | octomind run developer --format plain
+echo "Explain the auth module" | octomind run assistant:concierge --format plain
 
 # Named session
 octomind run --name feature-auth
@@ -93,8 +91,8 @@ octomind run --resume-recent
 # Daemon mode with webhook
 octomind run --name ci-watcher --daemon --format jsonl --hook github-push
 
-# Model override
-octomind run -m anthropic:claude-sonnet-4
+# Main-purpose model override
+octomind run -m anthropic:claude-sonnet-4-6
 
 # Structured output — constrain replies to a JSON Schema (structured-output models only)
 echo "List the top 3 TODOs" | octomind run developer:general --format jsonl --schema todos.schema.json
@@ -110,12 +108,27 @@ Start a WebSocket server for remote AI sessions.
 | `--host` | | Bind address (default: `127.0.0.1`) |
 | `--port` | `-p` | Port (default: `8080`) |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
+| `--allow-origin ORIGIN` | | Permit a browser `Origin` header; repeatable. Unlisted origins are rejected, while native clients without `Origin` do not need an entry. |
 
 **Examples:**
 ```bash
 octomind server
 octomind server --host 0.0.0.0 --port 9090
-octomind server developer --sandbox
+octomind server developer:general --sandbox
+```
+
+## `octomind login`
+
+Sign in through the browser-confirmed device flow and store the minted OctoHub key in Octomind's environment file.
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Sign in again even when the current machine already has an account session. |
+| `--no-browser` | Print the confirmation URL instead of attempting to open it. |
+
+```bash
+octomind login
+octomind login --force --no-browser
 ```
 
 ## `octomind acp [TAG]`
@@ -130,13 +143,13 @@ Run as Agent Client Protocol agent over stdio (for editor integration).
 | `--resume-recent` | | Resume the most recent session |
 | `--model` | `-m` | Override model (`provider:model` format) |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
-| `--hook` | | Activate webhook hook(s) by name. Repeatable. |
+| `--hook` | | Parsed into ACP options, but ACP does not currently start webhook listeners. |
 
 **Examples:**
 ```bash
-octomind acp developer
-octomind acp context_gatherer --sandbox
-octomind acp developer:general -m openai:gpt-4o
+octomind acp
+octomind acp developer:general --sandbox
+octomind acp assistant:concierge -m openai:gpt-5.6-luna
 ```
 
 ## `octomind tap [TAP] [PATH]`
@@ -248,7 +261,7 @@ Create, validate, display, or upgrade configuration. With no flags, see the exam
 | `--log-level <none\|info\|debug>` | Set the log level (case-insensitive); any other value errors. |
 | `--mcp-providers <a,b,c>` | **Replace** the MCP server list: clears all configured servers, then adds each named one as a `builtin` server (timeout 30s). |
 | `--mcp-server <name,key=value,...>` | Add or update one MCP server. See [format](#--mcp-server-format) below. |
-| `--system` | Set a custom system prompt, or pass `default` to reset to the built-in prompt. |
+| `--system` | Write/reset the legacy root `system` field. Current session prompts come from `[[roles]].system`, so prefer editing the role instead. |
 | `--markdown-enable` | Enable or disable markdown rendering. |
 | `--markdown-theme` | Set the markdown theme (must be one of the themes from `--list-themes`). |
 
@@ -266,7 +279,7 @@ runtime — API keys can never be stored in the config file for security reasons
 variable instead, e.g. `export OPENROUTER_API_KEY=...`. See the [Config Reference](03-config-reference.md) for the
 full list of provider environment variables.
 
-#### `--mcp-server` format
+### `--mcp-server` format
 
 `--mcp-server name,key=value,...` — the first comma-separated token is the server name; the rest are `key=value`
 pairs:
@@ -303,17 +316,17 @@ octomind config --validate
 octomind config --list-themes
 ```
 
-## `octomind workflow <FILE>`
+## `octomind workflow [NAME|FILE]`
 
 Run a multi-step workflow defined in a TOML file.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `FILE` | | Path to workflow TOML file (required) |
+| `NAME|FILE` | | Tap workflow name or local TOML path. Omit to list available tap workflows. |
 | `--dry-run` | | Validate and print the execution plan without running any steps |
 | `--format <FORMAT>` | | `jsonl` streams one `assistant` event per step + a final aggregated `cost` event to stdout |
 
-Reads input from stdin. Per-step assistant responses, progress, cost, and token stats are written to **stderr**.
+Running a workflow reads input from stdin; listing workflows and `--dry-run` do not. Public tap workflows may reference only public tap roles; local files are not subject to that restriction. Per-step assistant responses, progress, cost, and token stats are written to **stderr**.
 By default **stdout** receives output only for `--dry-run` (the execution plan). With `--format jsonl`, stdout
 streams one `{"type":"assistant","content":...,"step":"<name>","session_id":""}` line **as each step completes**
 (the final result is simply the last one) followed by one `{"type":"cost",...}` line with aggregated
@@ -342,15 +355,11 @@ Generate shell completion scripts.
 | Fish | `octomind completion fish > ~/.config/fish/completions/octomind.fish` |
 | PowerShell | `octomind completion powershell > octomind.ps1` |
 
-Dynamic agent-tag completion for `octomind run <TAB>` is injected only into the **bash**, **zsh**, and **fish**
-scripts (they call an internal `octomind complete` helper at completion time). PowerShell and Elvish scripts are
-emitted as-is and provide static completion only.
+Dynamic agent-tag completion for `octomind run <TAB>` and tap-workflow completion for `octomind workflow <TAB>` are injected only into the **bash**, **zsh**, and **fish** scripts through the hidden `complete` helper. PowerShell and Elvish remain static.
 
 ## Sandbox
 
-When enabled, the sandbox restricts all filesystem writes to the current working directory (Landlock on Linux,
-Seatbelt on macOS). It is active if **either** the config `sandbox` setting **or** the `--sandbox` flag is set, and
-it applies only to `run`, `server`, and `acp` — all other subcommands ignore both.
+When enabled, the sandbox restricts writes with Landlock on Linux or Seatbelt on macOS while retaining the state/temp exceptions defined by each backend. It is active if **either** the config `sandbox` setting **or** the `--sandbox` flag is set, and it applies only to `run`, `server`, and `acp` — all other subcommands ignore both. Other platforms log that the sandbox is unsupported.
 
 ## Global Flags
 

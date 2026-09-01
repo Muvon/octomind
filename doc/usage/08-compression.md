@@ -1,6 +1,6 @@
 # Context Compression
 
-Octomind automatically manages conversation context size through intelligent compression. This is the single reference for the compression system.
+Context compression keeps long-running sessions within model limits while preserving active work, critical knowledge, and lossless archives.
 
 ## Overview
 
@@ -21,7 +21,8 @@ Two related safety nets sit on top of the adaptive engine:
 max_session_tokens_threshold = 200000
 
 [compression]
-knowledge_retention = 10
+knowledge_retention = 25
+analysis_findings_max_tokens = 6000
 
 # The single compression trigger, in absolute tokens (0 = compression disabled).
 # Depth is NOT configured — it is computed per cycle from the measured session
@@ -29,7 +30,7 @@ knowledge_retention = 10
 threshold = 70000
 
 [compression.model]
-name = "openai:gpt-5-mini"
+name = "openai:gpt-5.6-luna"
 reasoning_effort = "medium"
 max_tokens = 16000
 temperature = 0.3
@@ -51,11 +52,11 @@ Compression becomes eligible when the full context (messages + system prompt + t
 **Computed depth.** How deep each compression goes is not configured. The controller picks the post-compression token target directly from measured session dynamics:
 
 ```
-target_after = ceiling − runway × growth
+target_after = fire_line − runway × growth
 ```
 
-- `growth` — measured output tokens per API call since the last compression checkpoint (lifetime average before the first compression)
-- `runway` — predicted remaining calls: the symmetry estimate (work remaining ≈ work done) corrected by the self-tuning accuracy of the previous prediction
+- `growth` — measured full-context growth per API call since the last compression checkpoint, including tool results and runtime injections; before the first fold it uses lifetime full-context growth with output growth as a floor
+- `runway` — the autonomous per-turn ladder, `5 × 2^consecutive_compressions`
 
 The target is clamped between the deepest and gentlest achievable sizes (derived ratio always lands in **[2.0, 16.0]**) and must fall at least 5 turns of growth below the fire line — a compression that would re-fire immediately is refused (cooldown instead). The effect: a hot session (high growth, long predicted runway) compresses deep and buys a long quiet stretch; a winding-down session compresses gently and preserves fidelity. Compressing to a stable watermark also keeps the post-compression prefix size consistent, which is what keeps the prompt cache effective across cycles.
 
@@ -63,22 +64,13 @@ The target is clamped between the deepest and gentlest achievable sizes (derived
 
 ### The Hard Ceiling
 
-The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). Compression is **forced unconditionally** one runway margin early — when the full-context token count plus 5 calls of measured growth reaches the ceiling (the margin applies once at least 5 calls have been measured since the last fold; before that only the bare ceiling counts) — so the next few rounds cannot overshoot the window. A forced fold bypasses the amortization gate, the failure cooldown, and the AI's veto (the decision model cannot decline), runs inline (never in the background), and uses the deepest allowed ratio (**16.0x**). If the fold call itself fails inside the margin, the error surfaces on the request instead of being retried round after round.
+The context ceiling is the lower of `max_session_tokens_threshold` (root config, default `200000`) and the session model's physical window minus the reserved completion budget (`max_tokens`). Compression is **forced unconditionally** one runway margin early — when the full-context token count plus 5 calls of measured growth reaches the ceiling (the margin applies once at least 5 calls have been measured since the last fold; before that only the bare ceiling counts) — so the next few rounds cannot overshoot the window. A forced fold bypasses the amortization gate, the failure cooldown, and the compression model's veto, runs inline, and uses the deepest allowed ratio (**16.0x**). If the fold call itself fails inside the margin, the error surfaces on the request instead of being retried round after round.
 
-### Exponential Cooldown
+### Adaptive Fire Line and Runway
 
-To prevent compression loops during tool-heavy operations, each consecutive compression (without a user message between them) doubles the token growth required before the next compression is allowed. The required growth is `min(0.10 × 2ⁿ, 1.0)`, where `n` is the number of compressions already performed:
+Within one autonomous turn, every successful compression increments `consecutive_compressions`. The soft fire line follows `threshold × 2^k` (capped below the hard ceiling), while the desired quiet runway follows `5 × 2^k` API calls: 5, 10, 20, 40, and so on. A genuine new user turn resets `k`; forced `/done` also resets it after the fold.
 
-| After this many compressions | Required Growth Before Re-compression |
-|------------------------------|---------------------------------------|
-| 1st | 20% |
-| 2nd | 40% |
-| 3rd | 80% |
-| 4th+ | 100% (capped — context must double) |
-
-The watermark check is inactive until the first compression sets `context_tokens_after_last_compression > 0`. The cooldown resets when escalation stops (a check that finds nothing to compress) and on forced `/done` compression.
-
-Two escape hatches set the **same** watermark (`context_tokens_after_last_compression = current_tokens`) to suppress re-analysis until context grows again — they are not a separate cooldown mechanism: (1) the chosen compression range is empty (`start_idx >= end_idx`), and (2) the depth controller finds no feasible target — even the deepest fold could not land usefully below the fire line. Both run before the cost analysis.
+The line never falls below the configured threshold or below the last post-compression watermark plus five calls of measured growth. If the range is empty or even a `16.0x` fold cannot land usefully below the line, the source returns without a paid compression call. A failed, cancelled, or discarded background fold separately sets `fold_cooldown_until_call` for one runway; the hard ceiling bypasses that cooldown.
 
 ### Amortization Gate
 
@@ -98,10 +90,10 @@ fold iff expected_calls ≥ runway
 - `median_calls_per_turn` comes from the last 16 completed genuine turns (`turn_call_counts`); `turns_seen` is the Lindy horizon — a session that has run N turns is expected to run about N more.
 - `runway` is the autonomous ladder (5, 10, 20 … per consecutive in-turn fold), so each further fold in one turn needs a longer predicted horizon.
 - The fire line itself is a geometric per-turn ladder: the k-th consecutive in-turn fold (or paid decline) doubles it — `threshold × 2^k`, capped one safety margin under the ceiling — so a single long turn gets 70k → 140k → cap of room instead of re-folding at the same mark. A genuine user turn resets the level.
-- The price terms are **ratios relative to one uncached agent input token** (`FoldEconomics`), from provider pricing when available. Missing pricing falls back to conservative defaults (cache read 0.1, folder input 1.0, folder output 3.0, cache write 1.25) with an info log — never a silent skip.
-- `sent` is the part of the drained range the fold prompt actually sends (recent bodies whole, older ones trimmed), `summary` the decision model's output budget.
+- The amortization calculation uses provider accounting when available and conservative internal fallback weights otherwise.
+- `sent` is the part of the drained range the fold prompt actually sends (recent bodies whole, older ones trimmed), and `summary` is the compression model's output budget.
 
-Net effect: a session that crosses the line on its last call does not fold; a long tool loop folds once it has shown it will keep going; on a cheap-cache model with an expensive folder the mid-turn fold waits for a longer horizon, on an expensive or uncached model it fires early.
+Net effect: a session that crosses the line on its last call does not fold, while a long tool loop folds only after its measured horizon can amortize the rewrite.
 
 ### Background Folds
 
@@ -109,7 +101,7 @@ An automatic fold outside the ceiling margin does not block the agent. The promp
 
 - **Turn end**: a finished fold is applied before the session is saved — replace only, never auto-continue. A fold still running stays parked and is collected at the next round; turn end never waits on it.
 - **Ceiling margin**: a pending fold is awaited, and its result applied without the veto; with no fold pending the trigger runs inline and forced (see [The Hard Ceiling](#the-hard-ceiling)).
-- **Failure cooldown**: a fold that fails, is cancelled, or is discarded holds unforced attempts for one runway of calls (5, 10, 20… on the ladder) instead of retrying on the next round. A slow or broken decision model therefore costs one attempt per runway, never one per call — the measured failure mode was a turn that spent ten minutes per round on a fold that died on its request timeout every time.
+- **Failure cooldown**: a fold that fails, is cancelled, or is discarded holds unforced attempts for one runway of calls (5, 10, 20… on the ladder) instead of retrying on the next round. A slow or broken compression model therefore gets one attempt per runway, never one per call.
 
 ### Forced vs Automatic Compression
 
@@ -122,7 +114,7 @@ The `/done` command triggers **forced compression**, which behaves differently f
 | Feasibility check ("won't drop below threshold") | Bypassed | Enforced |
 | AI veto | Forced — AI cannot decline | AI may decline |
 | Min. conversation messages | 3 | 5 |
-| Compression ratio | First level's `target_ratio` (default 2.0), no adaptive scaling | Adaptive, clamped [1.5, 4.0] |
+| Compression ratio | Fixed gentlest ratio, `2.0x` | Computed from session growth and runway, clamped to `2.0x`–`16.0x`; hard-ceiling folds use `16.0x` |
 | Cooldown counters after | Reset to 0 | `consecutive_compressions` incremented |
 | Purpose | Session boundary — clean slate | Mid-session cost optimization |
 
@@ -140,32 +132,25 @@ Skills injected into context are handled differently depending on the compressio
 
 **Why `/done` is different:** It marks a task boundary. The next task starts from a clean compressed state and activates or injects only the skills it actually needs.
 
-**Why `skill(forget)` doesn't force compression:** Immediate compression would be expensive and unnecessary. The forgotten skill's content naturally disappears at the next automatic compression since it's no longer in the active list.
+**Why `skill(forget)` doesn't force compression:** Immediate compression is unnecessary. The forgotten skill's content naturally disappears at the next automatic compression since it's no longer in the active list.
 
 ### Context Preservation
 
-Range selection is purely structural — there is no semantic grouping, importance weighting, discourse-flow analysis, or "last N turns kept verbatim" carve-out. The engine:
+Range selection is structural. The kept anchor is the last immutable-preamble message immediately before the first task-stating message; system, welcome, and `<instructions>` scaffolding stay outside the drain, while old user tasks, earlier summaries, and earlier continuation wrappers can fold into the new summary.
 
-1. Picks an **anchor**: the latest `<instructions>` user message, or (if none) the first user message. The anchor is kept.
-2. **Drains everything** between the anchor and the end of the conversation (`anchor_idx + 1` through the last message).
-3. Re-inserts, in order: preserved active-skill messages, the AI-generated summary, then a synthetic `<continuation>` wrapper.
+Automatic compression preserves the live exchange byte-for-byte. When a fresh user request is newest, it keeps the preceding assistant response plus that request and any intervening control messages. Mid-task, it keeps the latest assistant step and its following tool traffic. `/done` is the deliberate exception and may fold the whole task boundary.
 
-The only recent context that survives is therefore carried by the **summary** and the **continuation wrapper** — not by uncompressed turns:
-
-- **Summary** — an AI-generated entry that begins with a `## USER TASKS` list of up to the **last 4 older user requests** (raw, not AI-rephrased, so intent is never lost), followed by the narrative sections. The current active plan (if any) is appended so the model needn't spend a turn recovering it.
-- **`<continuation>` wrapper** — a synthetic user message carrying the most recent real user intent inside a `<task>` tag. It signals an in-progress task (preventing "fresh start" hallucinations) and is tagged so the next compression cycle's USER TASKS list skips it.
-
-(For minimum-message gating, automatic compression needs at least 5 conversational messages after the anchor; forced `/done` lowers this to 3.)
+The drained range is replaced by preserved active-skill messages, the generated summary, and—when needed—a continuation envelope carrying the exact previous assistant response and user request. The summary retains older user tasks and the active plan. Automatic compression requires at least five conversational messages in the candidate range; forced `/done` requires three.
 
 ### Lossless Archive and Recall
 
 Compression is not one-way. Every drained message is archived verbatim to a per-session JSONL file, and (when the PACT attention/governance machinery is on — governance is on by default) each drain also writes a sidecar index of content-addressed **block IDs** (`b:<hex>`). The compressed summary's `<folded_state>` units cite those IDs, and an `<archive>` pointer in the summary names the file.
 
-The **`recall` tool** closes the loop: the model passes up to 2 cited block IDs per call and gets the exact original messages back (digest-verified). Recalled content arrives as a normal tool result — appended at the tail, never rewriting history — so the prompt cache stays intact, and it folds back into the next compression cycle automatically once it stops being referenced. The response is capped by the global `mcp_response_tokens_threshold` truncation like any other tool output. Sessions without a block index fall back to reading the archive file directly.
+The **`recall` tool** closes the loop: the model passes up to 2 cited block IDs per call and gets the exact original messages back. Recalled content arrives as a normal tool result—appended at the tail, never rewriting history—and is subject to the global `mcp_response_tokens_threshold`. If the session has no block registry yet, or an ID is unknown, the tool returns an error instead of guessing or scanning an uncited archive.
 
 ### Knowledge Retention
 
-Each compression may extract critical knowledge (decisions, constraints, preferences). New entries are appended and the list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention`, default: 10) — the oldest are dropped when the limit is exceeded. The retained entries are injected into every subsequent compression so the AI never loses essential context.
+Each compression may extract critical knowledge (decisions, constraints, preferences). New entries are appended and the list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention`, default: 25) — the oldest are dropped when the limit is exceeded. Separately, `analysis_findings_max_tokens` (default `6000`) bounds retained findings by relevance, recency, and diversity; `0` disables that findings channel.
 
 **Intermediate learning.** When `supervisor.learning.enabled = true` and the conversation has at least 3 user messages, each automatic compaction also fires a fire-and-forget lesson-extraction pass. This is asynchronous and never blocks compression. See [Learning](13-learning.md).
 
@@ -183,15 +168,9 @@ cache_keepalive_max_idle_seconds = 1800  # stop pinging 30 min after last activi
 - Pings only fire when the snapshot actually has a cached message (otherwise there is nothing to keep warm).
 - Each ping costs cache-read tokens; those costs are folded back into the session cost.
 
-## Decision Model
+## Compression Model
 
-Use a fast, cheap model for compression decisions to minimize overhead. Relative cost ranking (the dollar figures are rough illustrative estimates, not measured guarantees):
-
-| Model | Relative Cost | Recommendation |
-|-------|---------------|----------------|
-| `openai:gpt-5-mini` | cheapest | Default (fast, cheap) |
-| `anthropic:claude-haiku-4-5` | ~$0.0003 per decision | Alternative |
-| `anthropic:claude-sonnet-4` | ~$0.003 per decision (~10x Haiku) | More capable, more expensive |
+Octomind has exactly three persistent model purposes: main `[model]`, shared `[supervisor.model]`, and `[compression.model]`. The compression profile performs both the compression decision and summary generation; it is not a fourth model purpose. The shipped profile uses `octohub:auto`, and omitted override fields inherit from `[model]`.
 
 ## Monitoring
 
@@ -214,7 +193,7 @@ There is no per-compression before/after breakdown and no cost-saved figure in t
 
 ## Examples
 
-These illustrate the net-benefit logic with the default pressure levels. Numbers are rounded for clarity; the real engine uses provider-reported pricing and the estimation model described above.
+These illustrate the net-benefit logic with rounded token counts. The real engine uses the measured session state and provider accounting available at runtime.
 
 ### Profitable Compression
 
@@ -224,7 +203,7 @@ Estimated remaining turns: ~8 (many calls still ahead)
 
 Without compression: each future call re-reads ~125k cached tokens
 With compression:    one-time cache rewrite + future calls re-read ~31k
-Net benefit: positive --> COMPRESS
+Net benefit: positive → COMPRESS
 ```
 
 ### Skipped Compression
@@ -233,17 +212,17 @@ Net benefit: positive --> COMPRESS
 Session: 62,000 tokens | Threshold 60,000 fired (adaptive ~2.0x)
 Estimated remaining turns: 5 (floor — session winding down)
 
-The cache-rewrite cost now plus a few cheap remaining calls
+The cache rewrite plus only a few remaining calls
 outweighs the savings on those calls.
-Net benefit: negative --> SKIP (would cost money)
+Net benefit: negative → SKIP (would cost money)
 ```
 
 ## Best Practices
 
 1. **Monitor effectiveness** with `/info` to verify compression saves money
-2. **Use a cheap decision model** -- `openai:gpt-5-mini` is the default; `anthropic:claude-haiku-4-5` is a good alternative
+2. **Keep the compression profile explicit** when it should differ from the main profile; the shipped default is `octohub:auto`
 3. **Start conservative** with default thresholds, adjust based on workflow
-4. **Disable for short sessions** (`threshold = 0`) if sessions rarely reach the trigger (90k by default)
+4. **Disable for short sessions** (`threshold = 0`) if sessions rarely reach the trigger (`70000` by default)
 5. **Raise `threshold`** if compression triggers too frequently
 
 ## Troubleshooting
@@ -254,9 +233,8 @@ Net benefit: negative --> SKIP (would cost money)
 - Use `/info` to see the current token count vs. your thresholds.
 
 **Compression too aggressive:**
-- Lower `target_ratio` values (e.g., 2.0 instead of 4.0)
-- Increase `threshold` values (e.g., 75,000 instead of 50,000)
+- Increase `compression.threshold`; compression depth is computed and has no `target_ratio` config key.
 
-**Compression not saving money:**
-- Use a cheaper `[compression.model]` profile
+**Compression not reducing repeated context:**
+- Revisit the `[compression.model]` profile if it produces poor summaries
 - Increase thresholds to compress less frequently

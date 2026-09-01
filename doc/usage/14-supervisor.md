@@ -1,8 +1,6 @@
 # Supervisor
 
-The **supervisor** is an out-of-band control plane that runs *beside* the agent loop — never in your transcript. It watches each turn, keeps the agent on task, verifies completion, and carries knowledge across sessions. Learning is just one of its mechanics.
-
-It exists to make the loop **more precise**: fewer side-tracks, fewer "looks done but isn't" finishes, and no re-discovering what a past session already figured out.
+The supervisor is an out-of-band control plane for progress detection, planning, completion checks, condensation, and grounded learning.
 
 ## The closed loop
 
@@ -13,14 +11,14 @@ every turn, FREE:
         │  conflict / `done` → ↓
   verify-gate (model, rare)  → labels the run pass/fail
         │
-  distill (on pass)  → lessons + orientation written to memory
+  distill (`/done`, exit, compaction) → grounded records with outcome labels
         │
   recall (next turn/session)  → inject lessons + orientation
         │
   steer  → advisory re-anchor when the agent loops or stalls
 ```
 
-The **verify-gate is the reward signal**: it labels a run pass/fail, so the supervisor only learns from work it has evidence was correct. Supervisor context is always explicit, never a silent rewrite. All mid-trajectory feedback is advisory — the supervisor steers, it never blocks the agent's route.
+The verify-gate supplies outcome credit, but extraction is not limited to passed runs: quote-backed user rules may be retained independently, and experience records preserve `verified`, `failed`, or `unknown` rather than upgrading uncertain work. Supervisor context is explicit and mid-trajectory steering remains advisory.
 
 ## Self-report
 
@@ -82,7 +80,7 @@ When a detector fires (loop, recovery, or no-progress that the self-report doesn
 
 ## Condense
 
-When a tool result's own output exceeds `[supervisor.condense] tokens_threshold`, it becomes a condense candidate. Results under the threshold are passed through exactly as returned and are never shown to the condenser. One cheap-model call per round decides, for the candidates only, what the agent actually needs to see for the current task:
+When a tool result's own output exceeds `[supervisor.condense] tokens_threshold`, it becomes a condense candidate. Results under the threshold are passed through exactly as returned and are never shown to the condenser. One shared supervisor-model call per round decides, for the candidates only, what the agent actually needs to see for the current task:
 
 - **All relevant** → kept in full, byte-for-byte.
 - **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**; the kept lines are reconstructed verbatim from the original — the model never retypes content, so nothing can be mis-copied.
@@ -103,7 +101,7 @@ The supervisor keeps two kinds of cross-session memory in one backend, both unde
 
 The rule for what to store: *cache what is expensive to re-derive, never what one search recovers.* A symbol's location is cheap (grep finds it); an architectural decision is not.
 
-**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict: entries that were in context when a run **passes** get reinforced (importance up); entries present when a run **fails after retries** are decayed (importance down) and dropped once they fall below a floor. A distill-time pass additionally prunes entries that have gone both stale and weak. So memory is validated by *outcome*, not by assertion — useful knowledge strengthens, misleading or unused knowledge fades out.
+**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict only for Active Memory Pack IDs that the specialist reports as materially used. Exposure alone is neutral. Used items receive positive or negative outcome credit, while retention may cold-archive weak/stale items without deleting their source record.
 
 **Verified lessons.** Extraction is quote-first: every lesson must carry a verbatim user quote as evidence. At distill time, one batched verifier pass re-checks each candidate lesson's evidence against the transcript and drops any lesson whose quote is unsupported — a lesson the model invented or stretched never reaches storage.
 
@@ -145,10 +143,13 @@ enabled = true
 
 [supervisor.condense]      # task-aware narrowing of oversized tool outputs
 enabled = true
+adaptive = false
 tokens_threshold = 5000
 ```
 
 Gate, resolve, plan, condense, and every learning operation use the single supervisor profile. Omitting `[supervisor.model]` uses `[model]` unchanged.
+
+`[supervisor.condense].adaptive` defaults to `false`. When enabled, the process-local runtime multiplier learns from realized savings while remaining between `0.5x` and `2.0x` of `tokens_threshold`; the configured value remains the baseline.
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
 
@@ -166,8 +167,8 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 | Detectors (loop / no-progress / recovery) | Every turn | Free | None (automatic) |
 | Free pre-gates (mutation→check, plan complete) | On self-reported `done` | Free | `[supervisor.gate]` |
 | Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
-| Condense | On oversized tool results | Model (cheap) | `[supervisor.condense]` |
+| Condense | On oversized tool results | Model call | `[supervisor.condense]` |
 | Steer | On loop / no-progress / recovery | Free | None (automatic) |
 | Recite | Every turn on compacted sessions | Free | None (automatic) |
-| Distill (learn) + lesson verification | End of a verified run | Model (cheap) | `[supervisor.learning]` |
+| Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
 | Recall | Session start + per turn | Embedding | `[supervisor.learning]` |

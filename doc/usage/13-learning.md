@@ -1,6 +1,6 @@
 # Cross-Session Learning
 
-Octomind can extract and reuse short lessons and grounded long-lived experiences across sessions, so corrections, architectural discoveries, outcomes, and failed approaches do not need to be rediscovered.
+Cross-session learning stores and recalls grounded lessons, orientation, and experience through the shared supervisor model purpose.
 
 ## Overview
 
@@ -41,7 +41,7 @@ behavior never overwrites authored skills or `.agents/guardrails.toml`.
 
 Intermediate-learning cadence (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
-> **Strict config, template-provided values.** The supervisor config is strict: the `[supervisor]` section and its `[supervisor.learning]` table are **required** — removing them is a hard parse error, not a silent fall-back. Within `[supervisor.learning]`, an *omitted field* still takes the code default (e.g. `enabled` → `false` (learning OFF), `model` → the dated build `anthropic:claude-haiku-4-5-20251001`). Learning is on out of the box only because the shipped template sets `enabled = true` explicitly. See [Supervisor](14-supervisor.md) for the sibling mechanics.
+> **Strict config, template-provided values.** `[supervisor]` and its nested `learning`, `gate`, `plan`, and `condense` tables are required by deserialization. `LearningConfig::default()` has `enabled = false`, while the shipped template explicitly enables it. There is no `[supervisor.learning.model]`; all learning calls inherit `[supervisor.model]`, whose omitted fields inherit main `[model]`.
 
 ### Orientation memory
 
@@ -272,9 +272,9 @@ The list (and therefore delete indexing) covers the current scoped lessons follo
 
 ## Relationship to Memory
 
-Learning is **separate from memory** (octobrain, CLAUDE.md, etc.):
+Learning is **separate from external memory MCP tools**:
 
-- **Memory** is broad context storage — code patterns, architecture, project state, references.
+- **External memory tools** may provide broad context storage — code patterns, architecture, project state, references.
 - **Learning** is narrow and structured — actionable facts scored by confidence, extracted from outcomes, with deduplication.
 
 Both can coexist. Supervisor learning is always file-backed and owns its

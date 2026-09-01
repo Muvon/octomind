@@ -1,6 +1,6 @@
-# Use Case: Scheduled Tasks and Timed Automation
+# Scheduled Tasks
 
-Use the built-in `schedule` tool to have the AI perform actions at specific times during a session -- reminders, periodic checks, timed workflows.
+Use the built-in `schedule` tool to have the AI perform actions at specific times during a session — reminders, periodic checks, timed workflows.
 
 ## The Problem
 
@@ -8,13 +8,13 @@ During long development sessions, you need the AI to do things at specific times
 
 ## Solution
 
-The `schedule` MCP tool lets the AI (or you) schedule messages that fire at specific times -- or the next time the session is idle -- and get processed automatically.
+The `schedule` MCP tool lets the AI (or you) schedule messages that fire at specific times — or the next time the session is idle — and get processed automatically.
 
 Only `message` is required when adding an entry. Both `when` and `every` are optional: if you omit both, the entry defaults to `when="idle"` (a one-shot that fires the next time the session is idle).
 
 ### Basic: Fire on Next Idle (default)
 
-The simplest schedule has no time at all -- it fires as soon as the session goes idle (no running taps, no background jobs):
+The simplest schedule has no time at all — it fires as soon as the session goes idle (no running taps, no background jobs):
 
 ```
 > When you're done with the current work, summarize everything we did today
@@ -57,14 +57,14 @@ If the time has already passed today, it fires tomorrow.
 ```
 > On March 30th at 10am, remind me to deploy the release
 
-AI calls: schedule(command="add", when="2026-03-30 10:00",
+AI calls: schedule(command="add", when="2030-03-30 10:00",
           message="Time to deploy the release. Run the deployment checklist.",
           description="Release deployment")
 ```
 
 ### Idle Scheduling
 
-Instead of a clock time, you can fire a message the next time the session becomes **idle** -- meaning there are no running tap-runs and no running background agent jobs. This is useful for "do this once the current work settles" tasks.
+Instead of a clock time, you can fire a message the next time the session becomes **idle** — meaning there are no running tap-runs and no running background agent jobs. This is useful for "do this once the current work settles" tasks.
 
 ```
 > Once you're idle, run the linter and report any issues
@@ -187,9 +187,9 @@ The AI schedules recurring checks within the session, each check can schedule th
 | Time today | `9am` | Bare hour, 12-hour form (minutes/seconds default to 0) |
 | Time today | `15:30` | 24-hour format (tomorrow if past) |
 | Time today | `3:30pm` | 12-hour format (tomorrow if past) |
-| Absolute | `2026-03-30 15:30` | Exact date and time |
+| Absolute | `2030-03-30 15:30` | Exact date and time |
 
-Relative durations accept only **h** (hours), **m** (minutes), and **s** (seconds), in any combination (`90s`, `10m`, `1h30m`, `2h 30m 10s`). There is no day or week unit -- `1d` is invalid.
+Relative durations accept only **h** (hours), **m** (minutes), and **s** (seconds), in any combination (`90s`, `10m`, `1h30m`, `2h 30m 10s`). There is no day or week unit — `1d` is invalid.
 
 The `every` field for repeating entries uses the same `h`/`m`/`s` duration grammar (e.g. `every="10m"`, `every="1h30m"`); it fires first at `when`, then repeats at that interval. `every="idle"` repeats on each idle instead.
 
@@ -201,7 +201,7 @@ The `every` field for repeating entries uses the same `h`/`m`/`s` duration gramm
 
 ## Key Points
 
-- `schedule` is a built-in MCP tool -- the AI uses it naturally in conversation
+- `schedule` is a built-in MCP tool on the `orchestration` server — the AI uses it naturally in conversation
 - The same operations are exposed as the `/schedule` slash command for direct control
 - Only `message` is required for `add`; omit both `when` and `every` to default to `when="idle"`
 - Messages fire automatically and the AI processes them like any user message

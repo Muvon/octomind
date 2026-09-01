@@ -1,6 +1,6 @@
 # ACP Protocol
 
-The Agent Client Protocol (ACP) enables Octomind to run as a sub-agent over stdio, communicating via JSON-RPC. This is used for editor integration and agent-to-agent delegation.
+ACP lets Octomind run as a JSON-RPC sub-agent over stdio for editor integration and agent-to-agent delegation.
 
 ## Overview
 
@@ -26,7 +26,7 @@ octomind acp [TAG] [OPTIONS]
 | `--resume-recent` | Resume the most recent session for the CWD on `new_session` |
 | `--model`, `-m` | Override the model for all sessions |
 | `--sandbox` | Restrict filesystem writes to CWD |
-| `--hook` | Activate a webhook hook by name (repeatable) |
+| `--hook` | Parsed and carried into ACP session options, but the ACP path does not currently start webhook listeners |
 
 The agent reads JSON-RPC messages from stdin and writes responses to stdout. Stdout and stderr are reserved for the protocol, so all diagnostics go to files in `~/.local/share/octomind/logs/`:
 
@@ -72,7 +72,7 @@ A minimal session looks like this on the wire (one JSON object per line, newline
     "mcpCapabilities":{"http":true},
     "promptCapabilities":{"image":true,"embeddedContext":true},
     "_meta":{"octomind.dev":{"commands":true}}},
-  "agentInfo":{"name":"octomind","version":"0.29.0"}}}
+  "agentInfo":{"name":"octomind","version":"<crate-version>"}}}
 
 // host → agent
 {"jsonrpc":"2.0","id":2,"method":"session/new",
@@ -103,7 +103,7 @@ The standard ACP `UsageUpdate` variant is not used. Instead, token and cost usag
    "update":{"sessionUpdate":"session_info_update"},
    "_meta":{"octomind.usage":{
      "session_tokens": 12000,
-     "session_cost": 0.0123,
+     "session_cost": 0.0,
      "input_tokens": 9000,
      "output_tokens": 3000,
      "cache_read_tokens": 0,
@@ -112,7 +112,7 @@ The standard ACP `UsageUpdate` variant is not used. Instead, token and cost usag
    }}}}
 ```
 
-`_meta` is the spec-blessed extensibility channel, so this works on any ACP 0.10.x client that forwards `_meta` through unchanged.
+Clients that preserve ACP `_meta` can read this extension; clients that discard `_meta` still receive the normal session updates but not this usage payload.
 
 ## Agent Capabilities
 
@@ -133,7 +133,7 @@ Both calls run the session in `websocket` output mode, merge any client-injected
 - **`session/new`** creates a fresh session and, on the **first** call, consumes the one-shot CLI overrides `--name` / `--resume` / `--resume-recent`. After that first call those overrides revert to defaults; subsequent `session/new` calls ignore them.
 - **`session/load`** always resumes the specific session id supplied by the client, read from disk. It does not touch the one-shot overrides.
 
-The `--model` and `--hook` flags, by contrast, apply to **every** session created or loaded for the agent's lifetime.
+The `--model` value applies to **every** session created or loaded for the agent's lifetime. Although clap accepts repeatable `--hook` values and ACP stores them in each session's arguments, ACP does not call the `run`-mode listener bootstrap, so those values do not start webhook listeners.
 
 ### Advertised slash commands
 
@@ -144,15 +144,15 @@ After a session is created the agent sends an `AvailableCommandsUpdate` listing 
 | `help` | — | Show available commands |
 | `role` | `<role_name>` | View or change current role |
 | `model` | `<provider:model>` | View or change current AI model |
-| `done` | — | Force-compress the conversation context; if learning is enabled, extract lessons in the background (no memory write, no auto-commit) |
+| `done` | — | Force-compress the conversation context and, when learning is enabled, start lesson extraction in the background |
 | `info` | — | Display token and cost breakdown for this session |
 | `clear` | — | Clear the screen |
 | `copy` | — | Copy last response to clipboard |
 | `context` | `[all\|assistant\|user\|tool\|large]` | Display session context |
 | `list` | `[page]` | List all available sessions |
-| `session` | `[session_name]` | Switch to or create a session |
+| `session` | `[session_name]` | Advertised for client compatibility, but not implemented by the session command dispatcher |
 | `run` | `<command_name>` | Execute a command layer |
-| `workflow` | `<workflow_name> [input]` | **Legacy / no-op** — still advertised over ACP, but `/workflow` was removed; run workflows via the `octomind workflow <file.toml>` CLI instead |
+| `workflow` | `<workflow_name> [input]` | Advertised for client compatibility, but not implemented; run workflows via `octomind workflow <name-or-file>` instead |
 | `mcp` | `[info\|list\|full\|health\|dump\|validate]` | MCP server management |
 | `plan` | — | Display the current supervisor-owned plan |
 | `prompt` | `[template_name]` | Manage prompt templates |
@@ -161,9 +161,11 @@ After a session is created the agent sends an `AvailableCommandsUpdate` listing 
 | `loglevel` | `[none\|info\|debug]` | Set logging level |
 | `report` | — | Generate detailed usage report for this session |
 | `skill` | `[name\|pattern\|page]` | List, filter, or toggle skills |
-| `effort` | `[low\|medium\|high\|xhigh\|max]` | View or change reasoning effort level |
+| `effort` | `[low\|medium\|high]` | View or change reasoning effort level |
 | `schedule` | `[list\|add\|remove\|edit] [<id>] [when=...] [message=...] [every=...]` | Schedule a message to be injected at a future time |
-| `status` | `[agents [id]\|monitors\|jobs]` | Show process-local activity for the current session |
+| `agents` | `[session]` | Show running and offloaded agents in this session |
+| `usage` | — | Show spend and quotas for the signed-in Octomind account |
+| `login` | — | Start the Octomind account sign-in flow |
 | `exit` | — | Exit the session |
 
 Slash commands are sent as ordinary `session/prompt` text per the ACP spec. The agent intercepts any prompt beginning with `/` *before* the AI pipeline, runs it via the session command handler, and streams the result back as an `agent_message_chunk`. `/done` (optionally with trailing instructions, e.g. `/done now write tests`) is intercepted first: it compresses the conversation, reports a status chunk, and — if trailing instructions are present — falls through to process them as a normal prompt.
@@ -184,7 +186,7 @@ If the prompt has no text, image, or video content, the agent immediately return
 
 Editors (Neovim, Zed, JetBrains) use ACP to embed Octomind as an AI assistant. See [Editor Integration](../usage/12-editor-integration.md).
 
-> Compatibility note: usage and extension data are delivered through ACP `_meta`, so any ACP 0.10.x client that forwards `_meta` through unchanged will see them; clients that strip `_meta` still work but won't surface cost/usage.
+> Compatibility note: usage and extension data are delivered through ACP `_meta`. Clients that forward `_meta` see them; clients that strip `_meta` still work but do not surface those fields.
 
 ### Agent Delegation
 
@@ -212,7 +214,7 @@ The `command` field in `[[agents]]` can point to any ACP-compatible binary, not 
 
 ## Background Inbox Monitor
 
-ACP sessions automatically spawn a background task that monitors the session's schedules and inbox for incoming messages from schedules, webhooks, injections, and background agents. When a message arrives:
+ACP sessions automatically spawn a background task that monitors schedules and the session inbox for internally enqueued messages such as scheduled work, background agents, tap runs, skills, monitors, detached jobs, and guardrail feedback. ACP does not start the `octomind send` or webhook listeners used by `octomind run`. When a message arrives:
 
 1. The monitor acquires the session (via a per-session exclusion lock, so it never races with a concurrent user prompt).
 2. Surfaces the injected message to the client as a `UserMessageChunk` prefixed with its source label, e.g. `[Scheduled] run the test suite`.
@@ -226,32 +228,26 @@ The monitor is event-driven, not polling: each loop it flushes due/idle schedule
 
 ## Session context passed to downstream MCP servers
 
-This is **not** part of the ACP handshake with the host. It is the payload Octomind sends *downstream* to the stdio MCP servers it spawns: when Octomind initializes a stdio MCP server, the MCP `initialize` request (MCP `protocolVersion` `2025-03-26`) carries the current session context under `params.capabilities.experimental.session`:
+This is **not** part of the ACP handshake with the host. It is client information Octomind sends downstream to MCP servers. The client prefers MCP `2026-07-28` and automatically falls back to legacy `2025-03-26`; modern requests carry the client information per request, while the legacy lifecycle carries it in `initialize`. In both cases, `capabilities.experimental.session` has this shape:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "clientInfo": { "name": "octomind", "version": "0.29.0" },
-    "protocolVersion": "2025-03-26",
-    "capabilities": {
-      "experimental": {
-        "session": {
-          "role": "developer",
-          "spec": "...",
-          "project": "my-project",
-          "session_id": "abc123...",
-          "workdir": "/path/to/project"
-        }
+  "capabilities": {
+    "experimental": {
+      "session": {
+        "role": "developer",
+        "spec": "...",
+        "project": "my-project",
+        "session_id": "abc123...",
+        "workdir": "/path/to/project",
+        "git": true
       }
     }
   }
 }
 ```
 
-This lets MCP servers identify and track specific sessions, enabling session-scoped state and per-session behavior. The full object is `role` (the role domain), `spec`, `project`, `session_id`, and `workdir`.
+The full object is `role` (the role domain), `spec`, `project`, `session_id`, `workdir`, and `git` (whether the workdir is inside a Git repository).
 
 ## Extension Commands
 

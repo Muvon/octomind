@@ -1,4 +1,6 @@
-# Environment Variables Reference
+# Environment Variables
+
+Reference for OctoHub login, provider credentials, runtime paths, telemetry, scripts, templates, and platform environment variables.
 
 ## API Keys
 
@@ -10,7 +12,7 @@ Provider authentication is delegated to the underlying LLM layer (octolib). The 
 
 | Variable | Provider | Description |
 |----------|----------|-------------|
-| `OPENROUTER_API_KEY` | OpenRouter | OpenRouter API key ([openrouter.ai](https://openrouter.ai/)). Recommended one-key-many-models entry point. |
+| `OPENROUTER_API_KEY` | OpenRouter | OpenRouter API key ([openrouter.ai](https://openrouter.ai/)) for explicitly selected `openrouter:` models |
 | `OPENAI_API_KEY` | OpenAI | OpenAI API key ([platform.openai.com](https://platform.openai.com/)) |
 | `ANTHROPIC_API_KEY` | Anthropic | Anthropic API key ([console.anthropic.com](https://console.anthropic.com/)) |
 | `DEEPSEEK_API_KEY` | DeepSeek | DeepSeek API key ([platform.deepseek.com](https://platform.deepseek.com/)) |
@@ -72,9 +74,11 @@ Octomind also loads `.env` files from the current directory (see [.env File Supp
 |----------|-------------|
 | `OCTOMIND_DATA_DIR` | Override the directory holding **all** octomind state — config, sessions, logs, cache, learning. Default: `~/.local/share/octomind` (Linux/macOS) or `%LOCALAPPDATA%\octomind` (Windows). Redirecting `HOME` does not work on Windows, so this is the portable way to run octomind against a throwaway state directory. |
 | `OCTOMIND_CONFIG_PATH` | Override the config **file** path used at load. The value is the path to the primary config TOML; its parent directory becomes the config directory for multi-file merge (all `*.toml` files there are merged). Default file: `~/.local/share/octomind/config/config.toml` (Linux/macOS) or `%LOCALAPPDATA%\octomind\config\config.toml` (Windows). |
-| `OCTOMIND_SKILLS` | Comma-delimited skill names to preload at session start (e.g., `programming-rust,git-workflow`). Skills are activated permanently without evaluating declarative rules. |
-| `OCTOMIND_CAPABILITIES` | Comma-delimited capability names to force-enable at session start (e.g., `cron,docker`). Bypasses the auto-activation embedding pipeline; capabilities are loaded deterministically regardless of intent matching. Already-active entries are no-ops. |
-| `OCTOMIND_MEDIA_ROOT` | Directory the WebSocket server resolves message attachment IDs against (`<root>/<id>`). Default: `/home/octo/.octomind/media`. See [WebSocket Server](../integration/01-websocket-server.md). |
+| `OCTOMIND_SKILLS` | Comma-delimited **exact skill names** to preload at session start. No aliases, globs, or semantic lookup; unknown names fail individually. |
+| `OCTOMIND_CAPABILITIES` | Comma-delimited **exact installed capability names** to force-enable at session start. No provider/tool aliases or fuzzy matching; domain and required-environment gates still apply. |
+| `OCTOMIND_API_URL` | Override the account/device-login API base URL, primarily for self-hosted or local development. |
+| `OCTOMIND_PANEL_URL` | Override the browser panel origin used to turn account verification URLs into user-facing links. |
+| `OCTOMIND_MEDIA_ROOT` | Directory the WebSocket server searches for exactly one attachment file whose name starts with `<id>.`. Default: `/home/octo/.octomind/media`. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `OCTOMIND_SHARE_URL` | Base URL of the web viewer used by `/share` (upload endpoint) and `/analyze` (viewer link). Defaults to `https://octomind.run`. Override only when pointing at a self-hosted instance or a local dev server. |
 | `OCTOMIND_TELEMETRY` | Set to `0`/`false`/`off`/`no` to disable anonymous usage telemetry for this run, or to any other value to force it on regardless of the config. Unset = follow `telemetry` in the config (default on). See [Telemetry](#telemetry). |
 | `DO_NOT_TRACK` | The cross-tool opt-out standard ([consoledonottrack.com](https://consoledonottrack.com)). Any value other than empty/`0`/`false` disables telemetry, and is honoured **before** `OCTOMIND_TELEMETRY` and the config. |
@@ -125,7 +129,7 @@ Variables used by `install.sh` for automated/CI environments.
 
 | Variable | Description |
 |----------|-------------|
-| `GITHUB_TOKEN` | GitHub API token to avoid rate limits during installation |
+| `GITHUB_TOKEN` | GitHub API token for authenticated installation requests |
 | `GH_TOKEN` | Alternative token variable (GitHub CLI convention) |
 | `OCTOMIND_INSTALL_DIR` | Override installation directory (default: `~/.local/bin/`) |
 | `OCTOMIND_VERSION` | Install a specific version instead of latest |
@@ -158,8 +162,8 @@ These placeholders are resolved by the role prompt processor when a role's `syst
 | `{{GIT_STATUS}}` | Git repository status (branch, changes) |
 | `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Contents of `README.md` in project root |
-| `{{CONTEXT}}` | Session context (for layer system prompts) |
-| `{{SYSTEM}}` | Parent system prompt (for layer system prompts) |
+| `{{CONTEXT}}` | Project context bundle (README, Git status, tracked tree) |
+| `{{SYSTEM}}` | Current system information (shell, OS, working directory, binaries) |
 
 ### Shown only by `octomind vars`
 
@@ -176,12 +180,38 @@ Available to hook scripts when processing incoming webhooks.
 | Variable | Description |
 |----------|-------------|
 | `HOOK_NAME` | Name of the hook that triggered |
-| `HOOK_METHOD` | HTTP method (GET, POST, etc.) |
+| `HOOK_METHOD` | HTTP method, always `POST` because other methods are rejected before the script runs |
 | `HOOK_PATH` | Request path |
 | `HOOK_QUERY` | Query string |
 | `HOOK_CONTENT_TYPE` | Content-Type header value |
 | `HOOK_SESSION` | Session name the hook is attached to |
 | `HOOK_HEADER_*` | Each HTTP header as `HOOK_HEADER_<NAME>` (uppercased, hyphens to underscores) |
+
+## Local Tool and Guardrail Script Variables
+
+These are child-process contracts set by Octomind, not startup configuration:
+
+| Variable | Script surface |
+|----------|----------------|
+| `OCTOMIND_TOOL_NAME` | Project-local tool name |
+| `OCTOMIND_PARAM_<NAME>` | One local-tool parameter, with the parameter name uppercased; complex values are JSON strings |
+| `OCTOMIND_WORKDIR` | Local tools, pipes, hooks, validators, and monitors; current session workdir |
+| `OCTOMIND_ROLE` | Guardrail pipes and validators; current role |
+| `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT` | Guardrail `[[pipe]]` identity and per-session counters |
+| `OCTOMIND_CAPABILITY`, `OCTOMIND_TOOL`, `OCTOMIND_SUCCESS` | Guardrail `[[hook]]` call metadata; success is `1` or `0` |
+| `OCTOMIND_VALIDATOR` | Guardrail `[[validator]]` name |
+| `OCTOMIND_MONITOR_ID` | Built-in monitor command identifier |
+
+## Runtime and Platform Variables
+
+| Variable | Effect |
+|----------|--------|
+| `XDG_RUNTIME_DIR` | On Unix, places session sockets/PID files under `$XDG_RUNTIME_DIR/octomind`; otherwise Octomind uses a per-user system temporary directory. |
+| `HF_HUB_CACHE` | Adds an explicit Hugging Face hub cache root when locating the local embedding model. |
+| `HF_HOME` | Adds `$HF_HOME/hub` as an embedding-model cache root. |
+| `KITTY_WINDOW_ID` | Signals Kitty graphics support for inline image display. |
+| `TERM` | A value containing `kitty` also selects the Kitty inline-image protocol. |
+| `TERM_PROGRAM` | `ghostty`/`WezTerm` select Kitty graphics; `iTerm.app`/`Tabby`/`vscode` select the iTerm2 image protocol. |
 
 ## .env File Support
 
@@ -189,8 +219,7 @@ Octomind automatically loads `.env` files at startup, as an alternative to expor
 
 ```bash
 # .env
-OPENROUTER_API_KEY=sk-or-v1-...
-ANTHROPIC_API_KEY=sk-ant-...
+OCTOHUB_API_KEY=your-octohub-key
 ```
 
 Two `.env` locations are loaded, in precedence order (later wins):

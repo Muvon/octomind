@@ -1,16 +1,16 @@
-# Use Case: Custom Hooks -- Build Any Integration in Any Language
+# Custom Hooks
 
-Hooks are HTTP listeners backed by scripts you write in any language. You have full control: parse any payload, filter events, transform data, and inject precisely crafted messages into a running AI agent session.
-
-> **`[[hooks]]` vs `[[hook]]` -- two different systems.** This doc covers **HTTP webhook hooks** (`[[hooks]]`, plural, in the main config): an external POST request runs your script, and on **exit 0 with non-empty stdout** the output is injected into the session. That is unrelated to the guardrail `[[hook]]` (singular, in `.agents/guardrails.toml`), which runs after a tool result and has the **inverted** rule -- a **non-zero exit** injects its stdout. If you want post-tool-result policy hooks, see [Guardrails](../usage/18-guardrails.md). This page is only about the webhook listeners.
+Use script-backed HTTP listeners to transform external events into precise messages for a persistent Octomind runtime session.
 
 ## The Problem
 
-Every team has unique infrastructure -- internal APIs, custom CI systems, proprietary monitoring, Slack bots, Jira workflows. Pre-built integrations never fit. You need to wire arbitrary external events into an AI agent that understands your specific context.
+Every team has unique infrastructure — internal APIs, custom CI systems, proprietary monitoring, Slack bots, Jira workflows. Pre-built integrations never fit. You need to wire arbitrary external events into an AI agent that understands your specific context.
 
 ## Solution
 
-A hook is: HTTP endpoint + your script + AI session. That's it. The script is the glue -- write it in Bash, Python, Ruby, Go, Node, Rust, whatever runs on your machine.
+A hook is: HTTP endpoint + your script + AI session. That's it. The script is the glue — write it in Bash, Python, Ruby, Go, Node, Rust, whatever runs on your machine.
+
+> **`[[hooks]]` vs `[[hook]]` — two different systems.** This doc covers **HTTP webhook hooks** (`[[hooks]]`, plural, in the main config): an external POST request runs your script, and on **exit 0 with non-empty stdout** the output is injected into the session. That is unrelated to the guardrail `[[hook]]` (singular, in `.agents/guardrails.toml`), which runs after a tool result and has the **inverted** rule — a **non-zero exit** injects its stdout. If you want post-tool-result policy hooks, see [Guardrails](../usage/18-guardrails.md). This page is only about the webhook listeners.
 
 ### How Hooks Work
 
@@ -35,17 +35,17 @@ AI Agent Session (processes message with full tool access)
 
 You control everything between the HTTP request and what the AI sees.
 
-**The listener accepts POST only.** A GET, PUT, or any other method returns `405 Method Not Allowed` and your script is never run. There is no response body you can shape -- the hook is one-way (POST in, status code out), so it cannot answer challenge/verification requests (e.g. Slack's `url_verification`). Handle those at a proxy in front of Octomind.
+**The listener accepts POST only.** A GET, PUT, or any other method returns `405 Method Not Allowed` and your script is never run. There is no response body you can shape — the hook is one-way (POST in, status code out), so it cannot answer challenge/verification requests (e.g. Slack's `url_verification`). Handle those at a proxy in front of Octomind.
 
 **HTTP status codes returned to the caller:**
 
 | Situation | Status | Injected? |
 |---|---|---|
-| Non-POST method | `405 Method Not Allowed` | no -- script not run |
+| Non-POST method | `405 Method Not Allowed` | no — script not run |
 | Body could not be read | `400 Bad Request` | no |
 | Script exit 0, non-empty stdout | `200 OK` (body `ok`) | yes |
-| Script exit 0, empty/whitespace-only stdout | `204 No Content` | no -- skipped |
-| Script non-zero exit / failed to spawn / IO error | `500 Internal Server Error` | no -- stderr logged at error level |
+| Script exit 0, empty/whitespace-only stdout | `204 No Content` | no — skipped |
+| Script non-zero exit / failed to spawn / IO error | `500 Internal Server Error` | no — stderr logged at error level |
 | Script ran longer than `timeout` | `504 Gateway Timeout` | no |
 
 ### Configuration
@@ -61,16 +61,16 @@ timeout = 30  # seconds (1-3600)
 Two things are validated at session start, before any listener binds:
 
 - **`bind` must be unique** across all `[[hooks]]`. Reusing the same address in two hooks fails with a `duplicate bind address` error.
-- **`script` must be an existing, regular, executable file.** On Unix the execute bit is required -- run `chmod +x /opt/hooks/my-hook.py`. A missing, non-file, or non-executable script aborts startup.
+- **`script` must be an existing, regular, executable file.** On Unix the execute bit is required — run `chmod +x /opt/hooks/my-hook.py`. A missing, non-file, or non-executable script aborts startup.
 
-Activate the hook when starting the agent. `--hook` is repeatable and is accepted by both `octomind run` and `octomind acp`:
+Activate the hook on `octomind run`; `--hook` is repeatable. The ACP CLI parses the same flag but its session path does not start webhook listeners, so use `run` for this integration:
 ```bash
 octomind run --name my-agent --daemon --format jsonl --hook my-hook
 ```
 
 ### Daemon mode is required for hook-driven agents
 
-Hook listeners start for **any** session (interactive or daemon) and stop when the session ends. The catch: a normal non-interactive run drains its inbox and then exits as soon as there is nothing left to wait for. The only way to keep the session alive between webhook requests is `--daemon`, which holds the session open so injected messages keep arriving and being processed. Without `--daemon` the run handles its first turn and exits, dropping the listeners -- any webhook that arrives afterward is silently lost. **Treat `--daemon` as mandatory for an always-on, hook-driven agent.**
+Hook listeners start for both interactive and non-interactive `octomind run` sessions and stop when the session ends. A normal non-interactive run exits once it has no scheduled entries or background work left. Use `--daemon` to keep it alive between webhook requests; after the process exits, the listener is gone and new HTTP connections fail rather than reaching a session. **Treat `--daemon` as mandatory for an always-on, hook-driven agent.**
 
 One subtlety when running detached (systemd, `nohup`, Docker without a TTY): with a controlling terminal, a daemon may start with empty input and idle waiting for hooks. With **no** TTY and no piped stdin, the run instead fails immediately with `No input provided via stdin`. So pipe an initial message in:
 
@@ -92,6 +92,8 @@ Downstream consumers can match `"type":"injected"` with `"source_kind":"webhook"
 ## Examples in Different Languages
 
 ### Python: Jira Issue Tracker
+
+Save this executable as `/opt/hooks/jira.py`.
 
 ```python
 #!/usr/bin/env python3
@@ -127,12 +129,14 @@ elif event == "jira:issue_updated":
         key = payload["issue"]["key"]
         print(f"Issue {key} moved to In Review. Please review the associated code changes.")
     else:
-        sys.exit(1)  # Ignore other updates
+        sys.exit(0)  # Ignore other updates (empty stdout -> HTTP 204)
 else:
-    sys.exit(1)  # Ignore unknown events
+    sys.exit(0)  # Ignore unknown events (empty stdout -> HTTP 204)
 ```
 
 ### Node.js: Slack Bot
+
+Save this executable as `/opt/hooks/slack.js`.
 
 ```javascript
 #!/usr/bin/env node
@@ -142,12 +146,12 @@ const payload = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
 // response body. The hook is one-way (POST in, status code out) and POST-only,
 // so it can't answer these — terminate Slack's verification at a proxy instead.
 if (payload.type === 'url_verification') {
-  process.exit(1);
+  process.exit(0);
 }
 
 // Only react to app mentions
 if (payload.event?.type !== 'app_mention') {
-  process.exit(1);
+  process.exit(0);
 }
 
 const user = payload.event.user;
@@ -163,6 +167,8 @@ Respond concisely. Format for Slack (no markdown headers, use *bold* and \`code\
 
 ### Bash: Simple Git Post-Receive
 
+Save this executable as `/opt/hooks/github-push.sh` for the multi-hook configuration below.
+
 ```bash
 #!/bin/bash
 # Minimal hook: extract essentials, let the AI figure out the rest
@@ -173,7 +179,7 @@ branch=$(echo "$payload" | jq -r '.ref' | sed 's|refs/heads/||')
 # Only care about main and develop
 case "$branch" in
   main|develop) ;;
-  *) exit 1 ;;
+  *) exit 0 ;;
 esac
 
 commits=$(echo "$payload" | jq -r '.commits[] | "- \(.message) (\(.author.name))"')
@@ -190,6 +196,8 @@ Review these changes for issues."
 
 ### Ruby: Custom Monitoring Alert
 
+Save this executable as `/opt/hooks/alerts.rb`.
+
 ```ruby
 #!/usr/bin/env ruby
 require 'json'
@@ -201,7 +209,7 @@ message = payload['message']
 metrics = payload['metrics'] || {}
 
 # Only alert on warning and critical
-exit 1 unless %w[warning critical].include?(severity)
+exit 0 unless %w[warning critical].include?(severity)
 
 puts <<~MSG
   #{severity.upcase} alert from #{service}: #{message}
@@ -294,7 +302,7 @@ Run a single agent that reacts to multiple event sources:
 [[hooks]]
 name = "github"
 bind = "0.0.0.0:9001"
-script = "/opt/hooks/github.py"
+script = "/opt/hooks/github-push.sh"
 timeout = 30
 
 [[hooks]]
@@ -324,14 +332,16 @@ octomind run --name ops-agent --daemon --format jsonl \
   --hook slack
 ```
 
-One AI agent, four event sources, each with its own script in its own language. Each hook binds a distinct port (the `bind` addresses must be unique). The AI maintains context across all events -- it knows about the GitHub push when the monitoring alert fires 5 minutes later.
+One AI agent, four event sources, each with its own script in its own language. Each hook binds a distinct port (the `bind` addresses must be unique). The AI maintains context across all events — it knows about the GitHub push when the monitoring alert fires 5 minutes later.
 
 ### Testing your hook
 
 Send a POST to the bind address and watch the session's JSONL stream for the injected turn:
 
 ```bash
-curl -X POST http://localhost:9001/ -d '{"ref":"refs/heads/main"}'
+curl -X POST http://localhost:9001/ \
+  -H 'Content-Type: application/json' \
+  -d '{"ref":"refs/heads/main","commits":[{"message":"smoke test","author":{"name":"CI"},"modified":["README.md"]}]}'
 ```
 
 A `200` with body `ok` means the script injected a message; a `204` means it exited 0 with empty stdout (filtered out); a `500` means the script exited non-zero (check the logs for its stderr). In the agent's `--format jsonl` output you should see a matching `{"type":"injected","source_kind":"webhook",...}` line.
@@ -341,8 +351,8 @@ A `200` with body `ok` means the script injected a message; a `204` means it exi
 ### Filter Early
 
 ```bash
-# Exit non-zero to ignore events cheaply
-[ "$HOOK_HEADER_X_GITHUB_EVENT" = "push" ] || exit 1
+# Exit zero with no output to ignore events cleanly (HTTP 204)
+[ "$HOOK_HEADER_X_GITHUB_EVENT" = "push" ] || exit 0
 ```
 
 ### Validate Signatures
@@ -385,12 +395,12 @@ Max timeout is 3600 seconds (1 hour).
 
 ## Key Points
 
-- Scripts can be written in **any language** -- Bash, Python, Node, Ruby, Go, Rust, anything executable (`chmod +x` required)
+- Scripts can be written in **any language** — Bash, Python, Node, Ruby, Go, Rust, anything executable (`chmod +x` required)
 - You have **full control**: parse payloads, filter events, validate signatures, transform data
 - **POST only**: other methods get `405` and the script never runs; the hook is one-way (status code out, no shapeable response body)
 - **stdout + exit code decide injection**: exit 0 with non-empty stdout injects (`200`); exit 0 with empty stdout is skipped (`204`); non-zero exit is not injected and its stderr is logged at error level (`500`)
 - **Rich environment**: HTTP method, path, headers, session name all available as env vars
 - **Multiple hooks** on distinct (unique) bind addresses feed into one agent session
-- The AI maintains **cross-event context** -- it connects the dots between GitHub pushes, Jira tickets, and monitoring alerts
-- **`--daemon` is required** for persistent, always-on agents -- without it the session exits after its first turn and stops listening
+- The AI maintains **cross-event context** — it connects the dots between GitHub pushes, Jira tickets, and monitoring alerts
+- **`--daemon` is required** for persistent, always-on agents — without it the session exits after its first turn and stops listening
 - Not the same as the guardrail `[[hook]]` (singular) in [Guardrails](../usage/18-guardrails.md), which has the inverted exit rule (non-zero exit injects)

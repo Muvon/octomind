@@ -1,6 +1,6 @@
-# Use Case: AI Self-Configuring MCP Servers at Runtime
+# Dynamic MCP Servers
 
-Let the AI discover what tools it needs and connect new MCP servers on the fly -- no config changes, no restarts.
+Let the AI discover what tools it needs and connect new MCP servers on the fly — no config changes, no restarts.
 
 ## The Problem
 
@@ -43,6 +43,7 @@ AI:
      -> Configured servers:
 
           core [builtin] ✓ active → (all tools)
+          orchestration [builtin] ✓ active → (all tools)
           runtime [builtin] ✓ active → (all tools)
           agent [builtin] ✓ active → (all tools)
 
@@ -70,7 +71,7 @@ AI:
      mcp(action="disable", name="db")  # Clean up sensitive connection
 ```
 
-The `list` action groups servers under a `Configured servers:` header (those declared in config — by default `core`, `runtime`, and `agent`) and a separate `Dynamic servers:` header for anything added at runtime. Each line shows `name [type] status → tools`, a 💾 marker if the server is persisted, and `(all tools)` when no tool filter is set. The default configuration declares only the three builtin servers; a `filesystem` server appears only if a tap or your own config adds one.
+The `list` action groups servers under a `Configured servers:` header (those declared in config — by default `core`, `orchestration`, `runtime`, and `agent`) and a separate `Dynamic servers:` header for anything added at runtime. Each line shows `name [type] status → tools`, a 💾 marker if the server is persisted, and `(all tools)` when no tool filter is set. A `filesystem` server appears only when resolved tap or user configuration adds one.
 
 ### Persisting Dynamic Servers
 
@@ -197,5 +198,4 @@ It is important not to confuse two things that look similar:
 - Tool filtering prevents exposing unnecessary capabilities, and a filter can be applied at `add` time or refined at `enable` time
 - Dynamic agents follow the same add/enable/disable/remove pattern, are callable as `agent_<name>`, and validate their `server_refs` at add time
 - The `mcp` tool (AI-driven, mutating) and the `/mcp` command (human-driven, read-only) are distinct surfaces with non-overlapping actions
-- This is unique to Octomind -- most AI tools require static tool configuration
 - The AI can assess a project and self-configure its toolkit

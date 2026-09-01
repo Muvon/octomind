@@ -1,6 +1,8 @@
 # Workflows
 
-`octomind workflow <file.toml>` is an external orchestrator that chains multiple `octomind run` invocations into a multi-step process. Workflows run in declaration order by default or use explicit graph edges when `entry` is set. Each step is an independent subprocess; outputs flow between steps by name; per-step responses, progress, costs, and totals are written to **stderr** for a human to watch (stdout stays empty unless you pass `--format jsonl`).
+Workflows orchestrate multi-step `octomind run` pipelines — sequential, parallel, loop, conditional, or graph-routed — from local TOML or installed taps.
+
+## Output Contract
 
 > **By default a real run writes nothing to stdout** — the human view is on stderr, and stdout carries only the `--dry-run` plan. For a machine-readable result, pass **`--format jsonl`**: each step emits an `assistant` JSON line to stdout as it completes (the last is the final result), followed by an aggregated `cost` line (see [Machine-readable output](#machine-readable-output---format-jsonl)). Without that flag, a shell pipeline reading the workflow's stdout gets nothing — use `--format jsonl`, read stderr, or have the final step write a file itself.
 
@@ -9,7 +11,7 @@
 ## Concept
 
 ```
-stdin ─► octomind workflow file.toml
+stdin ─► octomind workflow NAME|file.toml
                     │
                     ├── step "spec"      → octomind run (subprocess)
                     ├── step "developer" → octomind run (subprocess)  ─┐
@@ -27,11 +29,17 @@ A workflow file is a portable TOML document — no edits to `default.toml` or an
 ```bash
 echo "build a JSON-to-CSV CLI in Rust" | octomind workflow myflow.toml
 
+# Run a public workflow fetched by name from installed taps
+echo "research this topic" | octomind workflow research
+
+# List public tap workflows
+octomind workflow
+
 # Validate + print execution plan without spawning anything
 octomind workflow myflow.toml --dry-run
 ```
 
-- The file is read, TOML-parsed, and fully validated **before** anything else — including before stdin is touched. `--dry-run` therefore never reads stdin.
+- The selected local file or fetched tap workflow is TOML-parsed and validated before stdin is read. `--dry-run` therefore never reads stdin. Tap workflows are additionally restricted to public tap roles; local files are not.
 - stdin is required for a real run (not for `--dry-run`). Both a terminal stdin (nothing piped) and an empty piped stdin (empty after trimming) fail with the same error: `workflow requires input via stdin`.
 - stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress lines, per-step stats, warnings, and the final total — the human view. **stdout is empty by default**; pass `--format jsonl` for a machine-readable result on stdout (per-step `assistant` + final `cost` events — see [Machine-readable output](#machine-readable-output---format-jsonl)), or `--dry-run` to print the plan.
 
@@ -40,7 +48,6 @@ octomind workflow myflow.toml --dry-run
 ```toml
 name        = "my-workflow"
 description = "Optional human description"
-max_cost    = 5.00              # optional USD cap for the whole run (abort if exceeded)
 
 # ── Sequential step (the default) ─────────────────────────────────────
 [[steps]]
@@ -55,9 +62,9 @@ Write a tight implementation spec.
 session = "fresh"               # "fresh" (default) | "continue"
 timeout = 0                     # seconds; 0 = no timeout (default)
 retries = 0                     # extra attempts on failure (default 0)
-# model = "anthropic:claude-sonnet-4-6"  # optional name-only override
+# model = "anthropic:claude-sonnet-4-6"   # optional main-purpose name override
 # skills = ["skill-a", "skill-b"]        # optional: force-load these skills (OCTOMIND_SKILLS)
-# capabilities = ["cron", "docker"]      # optional: force-load these capabilities (OCTOMIND_CAPABILITIES)
+# capabilities = ["cron", "docker"]      # exact capability names, forwarded through OCTOMIND_CAPABILITIES
 
 # ── Parallel block — sub-steps run concurrently ───────────────────────
 [[steps]]
@@ -230,9 +237,9 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 | `session` | `"fresh"` | Session reuse policy (see [Session modes](#session-modes)) |
 | `timeout` | `0` | Seconds before the subprocess is killed; 0 = no timeout |
 | `retries` | `0` | Extra attempts on non-zero exit or empty output |
-| `model` | _(role default)_ | Override the model for this step; use `provider:model` format (e.g. `anthropic:claude-sonnet-4-6`). Forwarded as `--model` to the subprocess. Must not be empty when specified. |
+| `model` | _(role default)_ | Override the main-purpose model for this step; use `provider:model` format (e.g. `anthropic:claude-sonnet-4-6`). Forwarded as `--model` to the subprocess. Must not be empty when specified. |
 | `skills` | _(none)_ | List of skill names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_SKILLS` (comma-joined) — same env-loading mechanism an interactive session uses. |
-| `capabilities` | _(none)_ | List of capability names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_CAPABILITIES` (comma-joined) — same env-loading mechanism an interactive session uses. |
+| `capabilities` | _(none)_ | Exact installed capability names to force-load before the first turn. Forwarded as `OCTOMIND_CAPABILITIES` (comma-joined); no aliases or fuzzy matching are applied. |
 
 ### Parallel (`parallel = true`)
 Sub-steps run concurrently via `tokio::join_all`. The next top-level step starts only after every sub-step completes. Sub-steps cannot reference each other; only outer scope.
@@ -355,15 +362,11 @@ Each step owns its own session ID. In a loop, `developer` and `tester` accumulat
 
 Each step is a separate `octomind run` subprocess with its **own** session, so any per-request / per-session spending cap from your config resets on every step. A loop that runs 2 steps for 10 iterations can therefore spend up to ~20× a per-session cap. `max_cost` adds a single hard ceiling for the **entire** workflow:
 
-```toml
-name     = "gan"
-max_cost = 2.50    # USD; abort the workflow once total spend exceeds this
-```
+Set the optional positive `max_cost` field according to your own workflow policy; this reference does not prescribe a numeric amount.
 
 - Optional top-level field. Omit it for no cap (default).
 - Must be a positive number — validated pre-flight (`--dry-run` shows it in the plan).
-- The check runs **after each step's cost is added to the running total**, so it stops spend *before the next step* — including between loop iterations and after a parallel block. The step that crossed the line still completes; the workflow then exits non-zero with:
-  `workflow cost budget exceeded: spent $<x> exceeds max_cost $<cap> (stopped after step '<name>')`.
+- The check runs **after each step's cost is added to the running total**, so it stops spend *before the next step* — including between loop iterations and after a parallel block. The step that crossed the line still completes; the workflow then exits non-zero with an error naming the exceeded budget and final completed step.
 - This is the workflow-level analogue of the per-session spending thresholds (see [Cost as a Control Plane](../../README.md#cost-as-a-control-plane)).
 
 ## Retries and timeouts
@@ -380,29 +383,29 @@ All progress goes to **stderr**. The exact rendering depends on whether stderr i
 - **Interactive (stderr is a TTY):** each step opens a `╭ <name>` box and, while it runs, a live spinner shows the latest stream event plus a dimmed running aggregate (elapsed · cost · ⚒tools). When the step finishes the spinner clears and the box closes with `╰ ✓ <name>  …stats`.
 - **Piped / redirected:** no spinner — each JSONL event is streamed as one line under a `│ ` rail. The events surfaced are `ToolUse` (`▸ tool · server` plus params), `Skill`, `Status`, `McpNotification`, and `Error`. Assistant text, thinking, and cost events are not rendered as rail lines; failed tool calls are surfaced separately via the `⚒N ✗F` count in the per-step and total stats.
 
-A complete run looks like this (color stripped):
+An abridged run looks like this with color and the accounting column omitted:
 
 ```
 workflow · my-workflow
 
 ╭ spec
 │ ▸ shell · octofs
-╰ ✓ spec  2.1s  · $0.0042  · 1240 tok  · ⚒3
+╰ ✓ spec  2.1s  · 1240 tok  · ⚒3
 
 ╭ developer  [1/3] refine
-╰ ✓ developer  8.4s  · $0.0156  · 3208 tok  · ⚒12
+╰ ✓ developer  8.4s  · 3208 tok  · ⚒12
 
 ╭ tester  [1/3] refine
-╰ ✓ tester  3.2s  · $0.0078  · 1450 tok  · ⚒2
+╰ ✓ tester  3.2s  · 1450 tok  · ⚒2
 · loop 'refine' exit at iteration 1
 
 ╭ evaluator
-╰ ✓ evaluator  1.8s  · $0.0029  · 890 tok  · ⚒0
+╰ ✓ evaluator  1.8s  · 890 tok  · ⚒0
 
-total · 15.5s  · $0.0305  · 6788 tok  · ⚒17
+total · 15.5s  · 6788 tok  · ⚒17
 ```
 
-- The header is `workflow · <name>` and the footer is `total · <dur>  · $<cost>  · <tok> tok  · ⚒<tools>`.
+- The header is `workflow · <name>`; the actual footer includes duration, aggregate accounting, tokens, and tool counts.
 - Inside a loop, the box title carries a `[i/max] <loop-name>` suffix.
 - A failed attempt closes with `╰ ✗ <name>  <reason>` instead of `╰ ✓ …`.
 - The `⚒N` glyph is the tool-call count; on failures it becomes `⚒N ✗F` (F = failed tool calls).
@@ -426,7 +429,7 @@ stdout then carries newline-delimited JSON:
 
 Per-step progress still goes to stderr in both modes. Only `jsonl` produces stdout output; any other `--format` value (or omitting it) leaves stdout empty.
 
-## --dry-run
+## `--dry-run`
 
 `octomind workflow file.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to **stdout**. (That plan is the only stdout a *default* run produces; `--format jsonl` additionally streams per-step `assistant` + `cost` events — see above.) It spawns no `octomind run` processes and never reads stdin (validation runs before the stdin step, and `--dry-run` returns immediately after). Use it to sanity-check a workflow before paying for tokens.
 
@@ -558,7 +561,7 @@ echo "JSON-to-CSV CLI in Rust" | octomind workflow config-templates/workflow-fan
 3. **Always set `max_iterations`** on loops to bound spend.
 4. **Set `timeout`** when a step might hang on an external dependency.
 5. **`--dry-run` before every change** to catch unresolved variables and typos.
-6. **Pick cheap models for utility steps** (briefs, classifiers) by setting `model` on individual steps in the workflow file; reserve expensive models for the main work.
+6. **Choose step models deliberately** by setting `model` only where a workflow step should override its resolved role.
 7. **Watch the totals.** Stats are right there on stderr — if a workflow runs hot, the per-step breakdown shows exactly where.
 8. **Keep graph nodes top-level.** Compose existing parallel, loop, and conditional blocks with edges instead of deeply nesting syntax.
 
@@ -568,6 +571,5 @@ Intentionally not supported (use shell composition or call `octomind run` direct
 
 - `--var key=value` CLI variable injection (stdin is the only input)
 - Workflow definitions inside `default.toml` (external file only)
-- Named workflow lookup by short name (explicit path only)
 - Cross-invocation session persistence for `continue` sessions
 - Step artifacts written to disk

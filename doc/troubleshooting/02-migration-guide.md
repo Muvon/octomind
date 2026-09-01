@@ -1,18 +1,18 @@
 # Migration Guide
 
-> **Read this first:** the current schema is version `12`. `octomind config --upgrade` performs the declared version-by-version migrations, including the v12 nested model-profile migration, and writes a backup before replacement. Very old pre-version structural formats may still need the manual changes documented below.
+Migrate legacy Octomind configurations to schema version `12` with the automatic upgrade chain and the documented manual changes.
 
 ## Model Profile and Provider Format
 
 **Old format:**
 ```toml
-model = "anthropic/claude-sonnet-4"
+model = "legacy-model-without-provider"
 ```
 
 **Current format:**
 ```toml
 [model]
-name = "openrouter:anthropic/claude-sonnet-4"
+name = "openrouter:anthropic/claude-sonnet-4-6"
 reasoning_effort = "medium"
 max_tokens = 32768
 temperature = 0.3
@@ -23,13 +23,13 @@ retry_timeout = 30
 request_timeout_seconds = 300
 ```
 
-All model names require `provider:model` format. `[model]` is the required complete baseline. Optional `[roles.model]`, `[supervisor.model]`, and `[compression.model]` profiles may override any subset; omitted fields inherit from main. Tap and workflow mappings remain name-only.
+All model names require `provider:model` format. There are exactly three model purposes: main, supervisor, and compression. `[model]` is the required complete main-purpose baseline; `[roles.model]` is a partial override of that same main purpose. Optional `[supervisor.model]` and `[compression.model]` profiles own the other two purposes and inherit omitted fields from `[model]`. Tap and workflow mappings remain name-only.
 
-When migrating a bare model name, pick the provider prefix that matches where you actually call the model. Common prefixes: `openrouter`, `openai`, `anthropic`, `google` (Vertex), `amazon` (Bedrock), `cloudflare`, `deepseek`, `ollama`, `local`, and the special `cli` meta-provider for locally CLI-backed models. There are 20 network providers plus `cli` in total — see [doc/usage/04-providers.md](../usage/04-providers.md) for the full list and which prefix to choose.
+The shipped main, supervisor, and compression profiles use `octohub:auto`, authenticated through `octomind login`. Migration does not require replacing an intentional model choice with that default: pick the configured prefix that matches where the model is served — e.g. `openai:gpt-5.6-sol`, `anthropic:claude-sonnet-4-6`, `openrouter:moonshotai/kimi-k3`, or `ollama:glm-5.3` — and see [Providers](../usage/04-providers.md) for the full prefix and credential table.
 
 ### API keys are environment-only
 
-API keys are **no longer** read from config. If your legacy config has `[providers]`, `[openrouter]`, or similar blocks carrying an `api_key`, **delete them** — keys come from environment variables only (for example `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). `octomind config --api-key` is always rejected; set the environment variable instead. See [doc/usage/04-providers.md](../usage/04-providers.md) for the per-provider variable names.
+API keys are **no longer** read from config. If your legacy config has `[providers]`, `[openrouter]`, or similar blocks carrying an `api_key`, remove them. `octomind login` stores the OctoHub credential as `OCTOHUB_API_KEY`; alternate providers read their own environment variables. `octomind config --api-key` reports that config-file keys are unsupported and makes no change.
 
 ## MCP Configuration
 
@@ -59,7 +59,7 @@ Each server is now an explicit entry in `[[mcp.servers]]` with type, timeout, an
 **Old format:**
 ```toml
 [developer]
-model = "openrouter:anthropic/claude-sonnet-4"
+model = "legacy-model-without-provider"
 enable_layers = true
 
 [developer.mcp]
@@ -71,13 +71,15 @@ server_refs = ["core"]
 ```toml
 [[roles]]
 name = "developer"
+system = "You are the project developer. Work in {{CWD}}."
+welcome = ""
 
 [roles.model]
-name = "openrouter:anthropic/claude-sonnet-4"
+name = "openrouter:anthropic/claude-sonnet-4-6"
 
 [roles.mcp]
-server_refs = ["core", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 Key changes:
@@ -90,7 +92,7 @@ Key changes:
 
 The default tag used when no `TAG` is passed to `octomind run` (or `acp`/`server`) is `assistant:concierge` (the `default` field in the root config). It can be a role name (e.g. `developer`) or a tap agent (e.g. `octomind:assistant`).
 
-## Layer Configuration
+## Command and Layer Configuration
 
 > The old-format fields below (`builtin`, `enabled`, `enable_tools`) belong to the pre-v1 in-session layer system. If your config still has them, it predates the current schema and needs the manual reshaping shown here.
 
@@ -103,9 +105,9 @@ enabled = true
 enable_tools = true
 ```
 
-**Current format:**
+**Current `/run` command format:**
 ```toml
-[[layers]]
+[[commands]]
 name = "reduce"
 description = "Compress session history for cost optimization during ongoing work"
 command = "octomind acp reduce"
@@ -114,13 +116,13 @@ output_mode = "replace"
 output_role = "assistant"
 ```
 
-The example above is the `reduce` command that ships in the default config (declared as a `[[commands]]` entry — layers and commands share the same fields). The layer's `name` is arbitrary; the `command` is what references an actual role via `octomind acp <role>`.
+The example above is the `reduce` command in the default config. `[[layers]]` and `[[commands]]` deserialize to the same `LayerConfig` fields, but `/run <name>` looks up `[[commands]]`; put user-invoked command layers there. The `command` selects the ACP process and role.
 
 Key changes:
 - `builtin`, `enabled`, `enable_tools`, `model`, `max_tokens` fields removed
 - `description` and `command` are required
 - Model/system/MCP config lives in the `[[roles]]` entry that `command` references
-- Layer is active when referenced by a `/run` command
+- `/run <name>` executes the matching `[[commands]]` entry
 
 ## In-Session Workflows Removed
 
@@ -144,7 +146,7 @@ The config directory merges **all** `*.toml` files it contains, not just `config
 octomind config --upgrade
 ```
 
-This upgrades the config to the current schema version (`5`) through the registered migration chain and creates a backup before the atomic replacement. Versioned migrations add or transform the fields they explicitly own while preserving user values; unrelated historical layout changes described below may still require manual edits.
+This upgrades the config to the current schema version (`12`) through the registered migration chain and creates a backup before the atomic replacement. Versioned migrations add, transform, or remove the fields they explicitly own while preserving unrelated user values; historical structural changes outside that chain may still require manual edits.
 
 ## Runtime Namespace Move
 
@@ -161,17 +163,17 @@ The `core` builtin server was split into two: high-level tools stay in `core`, l
 | `monitor` *(new)* | -- | **`orchestration`** |
 | `capability` | `core` | **`runtime`** |
 
-If your config or tap manifest has `server_refs = ["core", ...]` and the role calls any of `mcp`, `agent`, `skill`, `schedule`, or `capability`, add `"runtime"` to the list:
+If your config or tap manifest has only `server_refs = ["core", ...]`, add `runtime` for `mcp`, `agent`, `skill`, or `capability`, and add `orchestration` for `tap`, `schedule`, or `monitor`:
 
 ```diff
  [roles.mcp]
 -server_refs = ["core", "filesystem", "agent"]
 -allowed_tools = ["core:*", "filesystem:*", "agent:*"]
-+server_refs = ["core", "runtime", "filesystem", "agent"]
-+allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
++server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
++allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
-The `runtime` server is registered automatically in the default config:
+The `runtime` and `orchestration` servers are registered in the default config:
 
 ```toml
 [[mcp.servers]]
@@ -179,26 +181,32 @@ name = "runtime"
 type = "builtin"
 timeout_seconds = 30
 tools = []
+
+[[mcp.servers]]
+name = "orchestration"
+type = "builtin"
+timeout_seconds = 30
+tools = []
 ```
 
-If you have a hand-rolled config without it, add the block.
+If you have a hand-rolled config without either server, add the corresponding block.
 
-Roles that don't call `mcp`/`agent`/`skill`/`schedule`/`capability` (most roles) don't need `"runtime"` at all — drop it from `server_refs` to keep the tool surface tighter.
+Roles that do not use runtime-management tools do not need `runtime`; roles that do not use tap/schedule/monitor do not need `orchestration`.
 
-> **`agent` appears in two places.** The `runtime` server hosts the `agent` **management** tool (shown in the table above). A separate `agent` **builtin** server (a third builtin in the default config, alongside `core` and `runtime`) hosts the dynamically generated `agent_<name>` **execution** tools. If you use dynamic agents, keep both `"runtime"` and `"agent"` in `server_refs`.
+> **`agent` appears in two places.** The `runtime` server hosts the `agent` management tool. A separate `agent` builtin server (one of the four defaults) hosts generated `agent_<name>` execution tools. Dynamic-agent roles need both `runtime` and `agent`.
 
 ## Filesystem Is Now External
 
-`filesystem` is no longer a builtin server. It is provided as an external `octofs` stdio server — **but you do not declare it yourself**. The built-in default tap (`muvon/tap`) and the runtime overlay supply it. Your local `config.toml` only declares three builtin servers (`core`, `runtime`, `agent`); it does **not** contain a `filesystem`/`octofs` entry, and the default roles simply reference it:
+`filesystem` is no longer a builtin server. Resolved tap configuration can provide it as an external `octofs` stdio server. The default config declares four builtin servers (`core`, `orchestration`, `runtime`, `agent`) and no `filesystem` entry; tap roles may reference and supply it:
 
 ```toml
 [roles.mcp]
-server_refs = ["core", "runtime", "filesystem", "agent"]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
 ```
 
-> **Do not paste an octofs stdio block.** Because the tap/overlay already provides `filesystem`, hand-rolling a `[[mcp.servers]]` block for it is unnecessary and can cause conflicts. Only add one if you intentionally self-host `octofs`.
+> Do not add a second `filesystem` server when the selected tap agent already supplies one. Add an explicit stdio block only when you intentionally own that server configuration.
 
-If you have a hand-rolled config that declares `filesystem` as `type = "builtin"`, **remove that block** — the tap/overlay supplies the server; just keep `"filesystem"` in your roles' `server_refs`. This is a manual edit: `octomind config --upgrade` will **not** do it for you.
+If you have a hand-rolled config that declares `filesystem` as `type = "builtin"`, **remove that block** and let the selected tap agent supply the external server, or replace it with an intentional stdio configuration. This is a manual edit: `octomind config --upgrade` does not perform it.
 
 ## MCP Server Type
 
@@ -211,9 +219,9 @@ The server type for local process-based MCP servers is `"stdio"`, not `"stdin"`.
 ## Session Commands
 
 **Removed:**
-- `/save` -- Session persistence is automatic on exit
+- `/save` — Session persistence is automatic on exit
 
 **Added:**
-- `/skill` -- Manage skills (list, use, forget)
+- `/skill` — Manage skills (list, use, forget)
 
 Use `/help` to see current command list.

@@ -1,6 +1,6 @@
 # WebSocket Server
 
-Octomind provides a WebSocket server for remote AI sessions, enabling programmatic access from web clients, bots, and automation tools.
+Octomind's WebSocket server exposes remote AI sessions to web clients, bots, and automation tools.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ octomind server [TAG] [OPTIONS]
 
 ## Browser origins
 
-WebSocket upgrades are covered by neither CORS nor the same-origin policy. Without an origin check, **any** page the operator visits -- including a third-party iframe -- can open a socket to a loopback-bound server and drive the agent with the full configured toolset, reading every response frame back. Binding to `127.0.0.1` is not a boundary against this.
+WebSocket upgrades are covered by neither CORS nor the same-origin policy. Without an origin check, **any** page the operator visits — including a third-party iframe — can open a socket to a loopback-bound server and drive the agent with the full configured toolset, reading every response frame back. Binding to `127.0.0.1` is not a boundary against this.
 
 The server therefore refuses any handshake that carries an `Origin` header not listed in `--allow-origin`, with `HTTP 403` before the welcome frame:
 
@@ -38,13 +38,13 @@ The server therefore refuses any handshake that carries an `Origin` header not l
 octomind server --allow-origin http://localhost:3000 --allow-origin https://dashboard.example.com
 ```
 
-Origins are matched exactly, as sent by the browser (scheme, host, and port; no trailing slash). Native clients -- `websocat`, the Python and Node examples below, anything that is not a browser -- send no `Origin` header and connect without configuration.
+Origins are matched exactly, as sent by the browser (scheme, host, and port; no trailing slash). Native clients — `websocat`, the Python and Node examples below, anything that is not a browser — send no `Origin` header and connect without configuration.
 
 ## Single principal per process
 
-The server has no notion of a user. One process serves one identity: config, MCP server processes, and OAuth tokens are process-global and shared by every session, so all tool calls from every session go out with the same credentials. `session_id` is a name, not a capability -- any connection may resume any session.
+The server has no notion of a user. One process serves one identity: config, MCP server processes, and OAuth tokens are process-global and shared by every session, so all tool calls from every session go out with the same credentials. `session_id` is a name, not a capability — any connection may resume any session.
 
-To serve multiple users, run one process per user, each with its own `HOME`. The data directory derives from it, which gives each process a separate OAuth keystore, session store, and config.
+To serve multiple users, run one process per user and give each process a separate `OCTOMIND_DATA_DIR`. That isolates its config, OAuth state, sessions, logs, and caches on every supported platform.
 
 ## Protocol
 
@@ -52,7 +52,7 @@ Communication uses JSON messages over WebSocket.
 
 ### Client to Server
 
-**Message** -- send user input:
+**Message** — send user input:
 ```json
 {
   "type": "message",
@@ -62,7 +62,7 @@ Communication uses JSON messages over WebSocket.
 }
 ```
 
-**Command message** -- execute session command:
+**Command message** — execute session command:
 ```json
 {
   "type": "command",
@@ -75,7 +75,7 @@ Communication uses JSON messages over WebSocket.
 
 `request_id` is optional on every client frame. When present, the server echoes it in the immediate `ack` frame and in validation errors, so clients can correlate accepted/rejected inputs without relying only on ordering.
 
-**Message with attachments** -- media uploaded out-of-band and referenced by opaque ID:
+**Message with attachments** — media uploaded out-of-band and referenced by opaque ID:
 ```json
 {
   "type": "message",
@@ -165,6 +165,8 @@ Responses to a single `message` arrive as a **stream** of frames: zero or more `
 }
 ```
 
+`step` is an optional assistant field used by external workflow JSONL output; ordinary WebSocket session responses omit it.
+
 **Thinking content** (extended thinking models):
 ```json
 {
@@ -204,7 +206,7 @@ Responses to a single `message` arrive as a **stream** of frames: zero or more `
 {
   "type": "cost",
   "session_tokens": 15000,
-  "session_cost": 0.045,
+  "session_cost": 0.0,
   "input_tokens": 5000,
   "output_tokens": 1000,
   "cache_read_tokens": 3000,
@@ -243,9 +245,12 @@ Both `session_id` and `data` are optional. The connection-time welcome status om
   "type": "mcp_notification",
   "server": "filesystem",
   "method": "notifications/tools/list_changed",
-  "params": {}
+  "params": {},
+  "tool_id": "call_123"
 }
 ```
+
+`tool_id` is optional and appears when an MCP progress token can be associated with a tool call.
 
 **Skill lifecycle:**
 ```json
@@ -275,7 +280,7 @@ Both `session_id` and `data` are optional. The connection-time welcome status om
 Evolution is a dedicated event rather than a `status` with `data`, because
 existing clients treat data-bearing statuses as command completion.
 
-**Injected message** -- a message added to the session by something other than the user, emitted just before the AI processes it:
+**Injected message** — a message added to the session by something other than the user, emitted just before the AI processes it:
 ```json
 {
   "type": "injected",
@@ -286,7 +291,7 @@ existing clients treat data-bearing statuses as command completion.
 }
 ```
 
-`source_kind` is one of: `schedule`, `background_agent`, `tap_run`, `skill`, `skill_validator`, `inject`, `webhook`, `guardrail_hook`, `guardrail_validator`.
+`source_kind` is one of: `schedule`, `monitor`, `background_agent`, `background_job`, `tap_run`, `skill`, `skill_validator`, `inject`, `webhook`, `guardrail_hook`, `guardrail_validator`.
 
 After a session is established, the server runs a background monitor that watches the session inbox (schedules, background agents, webhooks). These can fire **asynchronously without any user prompt**, producing `injected` frames followed by the normal `thinking`/`tool_use`/`tool_result`/`assistant`/`cost` stream. Clients should handle server frames arriving at any time, not only in direct response to a `message`.
 
@@ -296,25 +301,32 @@ After a session is established, the server runs a background monitor that watche
 
 ```typescript
 const ws = new WebSocket('ws://127.0.0.1:8080');
+let sessionId = '';
+let promptSent = false;
 
 ws.onopen = () => {
-  // Create session
   ws.send(JSON.stringify({
     type: 'session',
+    request_id: 'create-1',
     session_id: 'my-session'
-  }));
-
-  // Send message
-  ws.send(JSON.stringify({
-    type: 'message',
-    session_id: 'my-session',
-    content: 'Explain the auth module'
   }));
 };
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   switch (msg.type) {
+    case 'status':
+      if (msg.session_id && !promptSent) {
+        sessionId = msg.session_id;
+        promptSent = true;
+        ws.send(JSON.stringify({
+          type: 'message',
+          request_id: 'message-1',
+          session_id: sessionId,
+          content: 'Explain the auth module'
+        }));
+      }
+      break;
     case 'assistant':
       console.log('AI:', msg.content);
       break;
@@ -322,7 +334,7 @@ ws.onmessage = (event) => {
       console.log('Tool:', msg.tool, msg.params);
       break;
     case 'cost':
-      console.log(`Cost: $${msg.session_cost}`);
+      console.log('Turn complete; session tokens:', msg.session_tokens);
       break;
     case 'error':
       console.error('Error:', msg.message);
@@ -346,10 +358,18 @@ async def main():
             'session_id': 'my-session'
         }))
 
+        while True:
+            msg = json.loads(await ws.recv())
+            if msg['type'] == 'error':
+                raise RuntimeError(msg['message'])
+            if msg['type'] == 'status' and msg.get('session_id'):
+                session_id = msg['session_id']
+                break
+
         # Send message
         await ws.send(json.dumps({
             'type': 'message',
-            'session_id': 'my-session',
+            'session_id': session_id,
             'content': 'Explain the auth module'
         }))
 
@@ -358,15 +378,17 @@ async def main():
             msg = json.loads(message)
             if msg['type'] == 'assistant':
                 print(f"AI: {msg['content']}")
+            elif msg['type'] == 'cost':
+                break
             elif msg['type'] == 'error':
-                print(f"Error: {msg['message']}")
+                raise RuntimeError(msg['message'])
 
 asyncio.run(main())
 ```
 
 ## Validation
 
-- `session_id` (when provided) must be a non-empty string
+- `message.session_id` and `command.session_id` must be non-empty strings; `session.session_id` is optional and is passed to session setup when present
 - `content` must be non-empty unless the message carries at least one attachment
 - `request_id` is optional, but when provided must be non-empty and no more than 256 bytes
 - Message `content` is limited to 10MB
@@ -380,7 +402,7 @@ A malformed JSON frame returns `{"type":"error","message":"Invalid JSON: ..."}` 
 
 Separate from content validation, the transport layer enforces:
 
-- **Max frame size: 10MB.** Frames larger than this are rejected by the WebSocket layer.
+- **Max frame and message size: 10MB.** Larger frames/messages are rejected by the WebSocket layer.
 - **Unmasked frames are rejected.** Per spec, client frames must be masked; standard clients do this automatically.
 - **Ping/Pong:** the server replies to client `Ping` frames with `Pong` to keep the connection alive.
 
@@ -390,7 +412,6 @@ The server binds to `127.0.0.1` by default (localhost only). For production:
 
 - Use a reverse proxy (nginx, Caddy) with TLS
 - Add authentication at the proxy layer
-- Rate limit connections
 - Never expose directly to the internet without auth
 
 ```nginx

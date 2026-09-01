@@ -1,6 +1,6 @@
-# Use Case: Event-Driven Agent with Webhooks
+# Event-Driven Webhooks
 
-Run Octomind as a persistent daemon that reacts to external events -- GitHub pushes, Slack messages, monitoring alerts.
+Run Octomind as a persistent daemon that reacts to external events — GitHub pushes, Slack messages, monitoring alerts.
 
 ## The Problem
 
@@ -32,7 +32,7 @@ AI processes event, takes action
 ```
 
 The **inbox** is the daemon's queue of pending events. When a hook script exits 0 with
-non-empty output, that stdout is added to the session as the **next user message** -- the
+non-empty output, that stdout is added to the session as the **next user message** — the
 AI responds to it on its next turn, just as if you had typed it interactively. The daemon
 drains this inbox continuously, so events are processed one turn at a time.
 
@@ -40,12 +40,13 @@ drains this inbox continuously, so events are processed one turn at a time.
 
 The contract is simple and decided by the script's **exit code**:
 
-- **Exit 0 with non-empty stdout** -- the trimmed stdout is injected as the next user message (listener responds `200 ok`).
-- **Exit 0 with empty stdout** -- nothing is injected; the listener responds `204 No Content`.
-- **Non-zero exit** -- nothing is injected; the listener responds `500` and logs the script's stderr at error level.
+- **Exit 0 with non-empty stdout** — the trimmed stdout is injected as the next user message (listener responds `200 ok`).
+- **Exit 0 with empty stdout** — nothing is injected; the listener responds `204 No Content`.
+- **Non-zero exit** — nothing is injected; the listener responds `500` and logs the script's stderr at error level.
 
-So `exit 1` is how you tell Octomind "this event isn't interesting, drop it" -- the
-webhook sender will see an HTTP 500, which may trigger its retry or alerting.
+For a deliberately ignored event, exit `0` without printing anything so the
+sender receives `204`. Reserve a non-zero exit for actual script failures, which
+return `500` and may trigger the sender's retry or alerting policy.
 
 ```bash
 #!/bin/bash
@@ -60,7 +61,7 @@ commits=$(echo "$payload" | jq -r '.commits | length')
 
 # Only react to main branch
 if [ "$branch" != "main" ]; then
-  exit 1  # Non-zero = nothing injected (sender gets HTTP 500)
+  exit 0  # Empty stdout = nothing injected (sender gets HTTP 204)
 fi
 
 # Files changed
@@ -106,7 +107,7 @@ octomind run --name code-monitor --daemon --format jsonl --hook github-push
 ```
 
 `--daemon` keeps the process running indefinitely, draining its inbox and waiting for the
-next event. It must run **non-interactively** -- a session decides interactivity from
+next event. It must run **non-interactively** — a session decides interactivity from
 `stdin` being a terminal and `--format` being unset, so use `--format jsonl` (recommended:
 output is machine-parseable) or pipe stdin. `--name` is required so external tools can
 reach the session via `octomind send`.
@@ -161,7 +162,7 @@ echo "Summarize what happened in the last hour" | octomind send --name ops-agent
 
 `octomind send` connects to the running session over a per-session Unix socket
 (`<run_dir>/<name>.sock`) or, on Windows, a named pipe (`\\.\pipe\octomind-<name>`). It
-only works **while a daemon/session with that name is live** -- if no such session is
+only works **while a daemon/session with that name is live** — if no such session is
 running, it fails with `no running session named '<name>'`. The message must be non-empty,
 and `send` reads back `ok` on success or an error string. (You can pass the message as an
 argument instead of piping it via stdin.)
@@ -169,11 +170,10 @@ argument instead of piping it via stdin.)
 ### Reacting to Background Work
 
 There is a third event source besides webhooks and manual `send`: **completed background
-agents**. When a delegated async agent (an `agent_<name>` job spawned with `async = true`,
-or a background tap run) finishes, its result is pushed into the same inbox the daemon
-drains, prefixed with `[Async agent 'NAME' completed]` or `[Async agent 'NAME' failed]`.
-The daemon processes these identically to webhook and `send` messages, so a long-running
-agent can fire off work and react to its own results asynchronously.
+agents**. When a delegated `agent_<name>` job spawned with `async = true` finishes,
+its result is pushed into the same inbox with an `[Async agent 'NAME' completed]`
+or `[Async agent 'NAME' failed]` prefix. TAP runs use their own `TapRun` source and
+tap-run label. The daemon processes both like webhook and `send` messages.
 
 ## Hook Script Environment
 
@@ -189,7 +189,7 @@ Your script receives rich context via environment variables:
 | `HOOK_SESSION` | `code-monitor` |
 | `HOOK_HEADER_X_GITHUB_EVENT` | `push` |
 
-The listener serves all paths -- it only requires the method to be `POST` -- so `HOOK_PATH`
+The listener serves all paths — it only requires the method to be `POST` — so `HOOK_PATH`
 reflects whatever URL the sender used. Every request header is also exposed as
 `HOOK_HEADER_<NAME>` (uppercased, dashes replaced with underscores).
 
@@ -208,7 +208,7 @@ case "$event" in
     echo "PR $(echo "$payload" | jq -r '.action'): $(echo "$payload" | jq -r '.pull_request.title')"
     ;;
   *)
-    exit 1  # Unknown event: nothing injected (sender gets HTTP 500)
+    exit 0  # Unknown event: empty stdout, nothing injected (HTTP 204)
     ;;
 esac
 ```
@@ -227,7 +227,7 @@ The listener returns a status code the webhook sender can use for retry and heal
 | `504` | Script exceeded its `timeout` |
 
 A non-zero script exit returns `500` to the sender (body `Script error (exit N)`) and logs
-the script's stderr at error level -- so a 500 you see in your webhook provider usually
+the script's stderr at error level — so a 500 you see in your webhook provider usually
 means the hook script failed or deliberately bailed, not that Octomind is down.
 
 ## Key Points
@@ -240,7 +240,7 @@ means the hook script failed or deliberately bailed, not that Octomind is down.
 - Hook script contract: exit 0 + non-empty stdout = inject (HTTP 200); exit 0 + empty
   stdout = nothing injected (HTTP 204); non-zero exit = nothing injected (HTTP 500).
 - Injected text becomes a literal user message; the AI answers it on its next turn.
-- `octomind send --name X` injects a message manually -- but only while a session named `X`
+- `octomind send --name X` injects a message manually — but only while a session named `X`
   is actually running.
 - JSONL output is parseable by downstream tools.
-- The AI has full tool access -- it can read the actual files, not just the webhook payload.
+- The AI has full tool access — it can read the actual files, not just the webhook payload.

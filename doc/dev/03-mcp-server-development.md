@@ -2,8 +2,6 @@
 
 Guide for adding new built-in MCP servers to Octomind.
 
-> Terminology: the codebase defines a tool with the `McpFunction` struct (a `name`, `description`, and a JSON-Schema `parameters` value), and calls the runtime invocation an `McpToolCall` that returns an `McpToolResult`. "Function" = the static definition, "tool" = the thing the model calls. This guide uses both deliberately.
-
 ## When to Add a New Server
 
 Add a built-in server when you need:
@@ -12,6 +10,8 @@ Add a built-in server when you need:
 - Tools that require access to the MCP coordinator
 
 For external tools, prefer configuring a `stdio` or `http` server in config.
+
+> Terminology: the codebase defines a tool with the `McpFunction` struct (a `name`, `description`, and JSON-Schema `parameters`), and calls the runtime invocation an `McpToolCall` that returns an `McpToolResult`. "Function" is the static definition; "tool" is the callable runtime surface.
 
 > Smallest reference to copy: read `src/mcp/core/functions.rs`, `src/mcp/core/recall.rs`, and how the `core` server is wired into `src/mcp/mod.rs`. Planning is supervisor-internal and is not a tool-definition example.
 
@@ -42,6 +42,8 @@ src/mcp/
   your_server/
     mod.rs        # Function definitions + execute fn
 ```
+
+Start every new Rust file with the repository's Apache 2.0 header.
 
 ### 2. Implement `get_all_functions()`
 
@@ -153,8 +155,11 @@ pub async fn execute_tool(call: &McpToolCall, config: &Config) -> Result<McpTool
                 "Result text".to_string(),
             ))
         }
-        // Unexpected internal/routing failure: Err is fine — route_builtin_tool wraps it.
-        other => Err(anyhow::anyhow!("Unknown tool: {}", other)),
+        other => Ok(McpToolResult::error(
+            call.tool_name.clone(),
+            call.tool_id.clone(),
+            format!("Unknown tool: {}", other),
+        )),
     }
 }
 ```
@@ -169,7 +174,7 @@ Existing references for the exact signatures:
 This is non-obvious and worth stating up front:
 
 - **Soft / user-facing failures** (missing param, bad input, tool-level rejection): return `Ok(McpToolResult::error(name, tool_id, msg))`. The model sees the error text and can retry.
-- **Hard / internal failures** (unexpected routing/internal errors): return `Err(anyhow!...)`. `route_builtin_tool` catches it and wraps it into an error result for you (it never propagates a panic to the wire).
+- **Unexpected handler failures** should also be converted to `Ok(McpToolResult::error(...))` at the handler boundary. `route_builtin_tool` defensively wraps a returned `Err`, but a tool implementation should not rely on that fallback for normal failures.
 
 ### 5. Add Config Registration
 
@@ -202,7 +207,7 @@ All tools must follow the MCP protocol:
 - Return `McpToolResult::error(...)` instead of panicking.
 - Validate all parameters with clear error messages.
 - Handle missing/empty/wrong-type parameters gracefully.
-- Long-running tools may accept `cancellation_token: Option<tokio::sync::watch::Receiver<bool>>` (as the `agent` server does). Otherwise cancellation is enforced centrally by `try_execute_tool_call`, which races your future against the cancel signal via `tokio::select!`. `execute_plan` / `execute_tap_command` take no token.
+- Long-running tools may accept `cancellation_token: Option<tokio::sync::watch::Receiver<bool>>` (as the `agent` server does). Otherwise cancellation is enforced centrally by `try_execute_tool_call`, which races your future against the cancel signal via `tokio::select!`. `execute_recall` and `execute_tap_command` take no token.
 - The wire response shape is `{content: [{type: "text", text: "..."}], isError: bool}`, but you never build it by hand. Return `McpToolResult::success(name, tool_id, text)` or `McpToolResult::error(name, tool_id, msg)`; the content-array + `isError` serialization (wrapping `rmcp::model::CallToolResult`) is handled for you.
 
 ### Returning metadata alongside text
@@ -211,37 +216,36 @@ To attach structured metadata to a successful result, use `McpToolResult::succes
 
 ## Testing
 
-Build a real `McpToolCall` and pass it (plus a `&Config`) to your execute function. `is_error()` is a method, not a field:
+Build a real `McpToolCall` and pass it (plus a `&Config`) to your execute function. Keep test bodies in a sibling file, matching the repository convention. The production module only declares it:
 
 ```rust
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mcp::McpToolCall;
+#[path = "your_server_tests.rs"]
+mod tests;
+```
 
-    #[tokio::test]
-    async fn test_your_tool() {
-        let config = crate::config::Config::load().unwrap();
-        let call = McpToolCall {
-            tool_name: "your_tool".to_string(),
-            parameters: serde_json::json!({"param1": "test"}),
-            tool_id: "test-id".to_string(),
-        };
-        let result = execute_tool(&call, &config).await.unwrap();
-        assert!(!result.is_error());
-    }
+In `your_server_tests.rs`, prepend the same license header, construct the config from the embedded template, and remember that `is_error()` is a method:
 
-    #[tokio::test]
-    async fn test_missing_params() {
-        let config = crate::config::Config::load().unwrap();
-        let call = McpToolCall {
-            tool_name: "your_tool".to_string(),
-            parameters: serde_json::json!({}),
-            tool_id: "test-id".to_string(),
-        };
-        let result = execute_tool(&call, &config).await.unwrap();
-        assert!(result.is_error());
-    }
+```rust
+use super::*;
+use crate::mcp::McpToolCall;
+
+fn test_config() -> crate::config::Config {
+    let mut config: crate::config::Config =
+        toml::from_str(include_str!("../../../config-templates/default.toml")).unwrap();
+    config.build_role_map();
+    config
+}
+
+#[tokio::test]
+async fn missing_param_is_a_tool_error() {
+    let call = McpToolCall {
+        tool_name: "your_tool".to_string(),
+        parameters: serde_json::json!({}),
+        tool_id: "test-id".to_string(),
+    };
+    let result = execute_tool(&call, &test_config()).await.unwrap();
+    assert!(result.is_error());
 }
 ```
 
@@ -260,7 +264,7 @@ When a server's function list depends on config, implement `get_all_functions(co
 
 ### Function Caching
 
-Stateless built-in function lists are memoized through `get_filtered_server_functions(...)`, which caches per `server_type` + allowed-tools key in `INTERNAL_FUNCTION_CACHE` (`src/mcp/mod.rs`). Use it for servers whose tool list never changes (like `core`/`runtime`). Config-dependent servers (like `agent`) skip the cache and call `get_all_functions(config)` each time. `clear_function_cache()` empties the cache — call it in tests or when the tools configuration changes.
+Stateless built-in function lists are memoized through `get_filtered_server_functions(...)`, which caches per `server_type` + allowed-tools key in `INTERNAL_FUNCTION_CACHE` (`src/mcp/mod.rs`). The current `runtime` and `orchestration` lists use this cache. Config-dependent servers (`core` and `agent`) skip it and call `get_all_functions(config)` each time. `clear_function_cache()` empties the cache for tests or configuration changes.
 
 ### Async Operations with Timeout
 
@@ -281,7 +285,7 @@ If you add dynamic or runtime-registered tools (e.g. `agent_*` tools or dynamic 
 
 ### Server Stderr Capture
 
-For stdio servers, the last ~50 lines of each server's stderr are drained into a private `SERVER_STDERR` map (`Arc<RwLock<HashMap<String, StderrBuffer>>>` in `src/mcp/process.rs`) by background reader threads, and surfaced in init-failure diagnostics and health checks. There is **no** public `get_server_stderr` accessor.
+For stdio servers, stderr lines are drained into a private `SERVER_STDERR` map (`Arc<RwLock<HashMap<String, StderrBuffer>>>` in `src/mcp/process.rs`) by background reader tasks and surfaced in initialization diagnostics. There is no public `get_server_stderr` accessor.
 
 ### Initialization Progress
 

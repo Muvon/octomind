@@ -2,6 +2,8 @@
 
 Run Octomind as a persistent background session that reacts to external events.
 
+## Transport Scope
+
 > **`octomind send` and `--hook` webhooks are `run`-only.** The message-injection listener (the Unix socket / named pipe that `octomind send` connects to) and any activated `--hook` webhook listeners are started **only** on the `octomind run` path — both interactive `octomind run` and non-interactive `octomind run --format ...` (`init_session_runtime`, `src/session/chat/session/main_loop.rs`). The WebSocket `octomind server` and `octomind acp` drive their sessions over their own client transports and do **not** bind an inject socket or webhook listener — `octomind send` cannot reach them, and `acp`'s `--hook` flag, while accepted, starts nothing. Daemon mode (`--daemon`) is special only because it keeps the loop alive *after* the first turn so injected messages still have somewhere to land.
 
 ## Daemon Mode
@@ -16,10 +18,10 @@ octomind run --name ci-watcher --daemon --format jsonl
 |------|---------|
 | `--name` | Optional. Without it the session gets an auto-generated name. Provide a stable name if you want to inject messages with `octomind send`. |
 | `--daemon` | Keep the session alive after the first turn, waiting for injected messages. |
-| `--format <plain\|jsonl>` | Run non-interactively. Required for `--daemon` (see below). `jsonl` is recommended for programmatic consumers; `plain` also works. |
+| `--format <plain\|jsonl>` | Select non-interactive output when stdin is a terminal. `jsonl` is recommended for programmatic consumers; `plain` also works. |
 | `--hook <NAME>` | Activate a configured webhook listener. Repeatable. |
 
-`--daemon` requires **non-interactive mode**, not `jsonl` specifically. A session is non-interactive when you pass any `--format` value *or* when stdin is piped rather than a TTY (`is_interactive_session = format.is_none() && stdin.is_terminal()`). Passing `--daemon` from an interactive terminal without `--format` will not enter daemon mode.
+`--daemon` takes effect in the non-interactive loop. A session is non-interactive when you pass any `--format` value or when stdin is not a TTY (`is_interactive_session = format.is_none() && stdin.is_terminal()`). From a terminal, therefore, pass `--format plain` or `--format jsonl`; with piped stdin, `--format` is optional.
 
 ### Other long-lived background sessions
 
@@ -106,8 +108,8 @@ When a POST arrives:
 | **stderr** | Error info (logged on non-zero exit) |
 
 **Exit codes:**
-- `0` -- success. stdout is **trimmed** (leading/trailing whitespace stripped) and injected as a user message. If stdout is **empty after trimming, nothing is injected** and the listener returns `204` — even on exit 0.
-- Non-zero -- failure. stderr is logged and the listener returns `500`.
+- `0` — success. stdout is **trimmed** (leading/trailing whitespace stripped) and injected as a user message. If stdout is **empty after trimming, nothing is injected** and the listener returns `204` — even on exit 0.
+- Non-zero — failure. stderr is logged and the listener returns `500`.
 
 #### HTTP response contract
 
@@ -162,15 +164,17 @@ echo "New push to $repo ($branch) by $pusher: $commits commit(s). Please review 
 All injected messages flow through a unified inbox system. Each session has its own isolated queue with async notification support.
 
 **Message sources:**
-- **Schedule** -- scheduled messages from the `schedule` tool
-- **BackgroundAgent** -- completed async agent jobs
-- **TapRun** -- completed tap run (specialist agent) jobs
-- **Skill** -- skill activations requiring content injection
-- **SkillValidator** -- skill validation results
-- **Inject** -- external injection via `octomind send`
-- **Webhook** -- HTTP webhook requests
-- **GuardrailHook** -- output from a guardrail post-result `[[hook]]` script (see [Guardrails](../usage/18-guardrails.md))
-- **GuardValidator** -- output from a guardrail end-of-turn `[[validator]]` (see [Guardrails](../usage/18-guardrails.md))
+- **Schedule** — scheduled messages from the `schedule` tool
+- **Monitor** — bounded output batches from the `monitor` tool
+- **BackgroundAgent** — completed async agent jobs
+- **BackgroundJob** — completed detached shell jobs
+- **TapRun** — completed tap run (specialist agent) jobs
+- **Skill** — skill activations requiring content injection
+- **SkillValidator** — skill validation results
+- **Inject** — external injection via `octomind send`
+- **Webhook** — HTTP webhook requests
+- **GuardrailHook** — output from a guardrail post-result `[[hook]]` script (see [Guardrails](../usage/18-guardrails.md))
+- **GuardValidator** — output from a guardrail end-of-turn `[[validator]]` (see [Guardrails](../usage/18-guardrails.md))
 
 Messages are drained in **FIFO arrival order** — the queue is a per-session `VecDeque` and the loop pops from the front. The source kind only sets the display label and icon shown next to the injected turn; it does **not** affect ordering or priority. A message is processed in the order it arrived, regardless of which source produced it.
 
@@ -212,4 +216,4 @@ octomind run --name reviewer --daemon --format jsonl --hook github-pr
 
 ## Further Reading
 
-See [Custom Hooks](../use-cases/09-custom-hooks.md) for comprehensive hook development guide with examples in Python, Node.js, Bash, Ruby, and Go -- including signature validation, event filtering, and multi-hook architecture patterns.
+See [Custom Hooks](../use-cases/09-custom-hooks.md) for comprehensive hook development guide with examples in Python, Node.js, Bash, Ruby, and Go — including signature validation, event filtering, and multi-hook architecture patterns.

@@ -1,123 +1,112 @@
 # Quickstart
 
-Get from zero to a productive AI session in 5 minutes.
+Start an interactive Octomind session through OctoHub, then learn the commands you need day-to-day.
 
-## 1. Install
+## Start in Three Commands
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
+# Install
+curl -fsSL https://octomind.run/install.sh | bash
+
+# Authorize the CLI in your browser; no provider API keys are needed
+octomind login
+
+# Start an interactive session in the current directory
+octomind
 ```
 
-## 2. Set API Key
+The first command installs the binary. Login stores an OctoHub gateway credential in Octomind's user configuration directory. The final command is equivalent to `octomind run`: it creates the default configuration if none exists, resolves the default `assistant:concierge` tap agent, and uses the shipped `octohub:auto` model profile.
+
+The first use of a tap agent fetches its manifest and dependencies, so it requires network access. Once the prompt appears, ask Octomind to inspect, explain, change, or verify the project in the directory where you started it.
+
+## Bring Your Own Key Instead
+
+Login is optional. Export a provider credential and select that provider's model explicitly:
 
 ```bash
 export OPENROUTER_API_KEY="your_key"
+octomind run -m 'openrouter:<model>'
 ```
 
-Get a key at [openrouter.ai](https://openrouter.ai/). OpenRouter gives you access to many AI providers through a single key.
+Replace `<model>` with a model identifier accepted by the provider. See [AI Providers](04-providers.md#bring-your-own-keys) for the full provider and environment-variable table.
 
-## 3. Generate Config
+## Try a First Task
+
+Enter a request at the session prompt:
+
+```text
+Explain how this project is structured and identify the best starting point for a new contributor.
+```
+
+Octomind can use the tools allowed by the active role. The shipped default agent can inspect the project, execute commands, edit files, and delegate work.
+
+## Essential Session Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/help` | Show the commands available to the active role |
+| `/info` | Show session, token, and cost details |
+| `/status [agents\|monitors\|jobs]` | Show background activity |
+| `/model <provider:model>` | Change the session model |
+| `/image <path>` | Attach an image to the next message |
+| `/done` | Finalize the current task with memorization and summarization |
+| `/clear` | Clear the terminal |
+| `/copy` | Copy the last response |
+| `/exit` | Exit the session; `Ctrl+D` also exits interactive input |
+
+Use `/help` as the authority for the commands exposed in the current session.
+
+## Choose a Role or Tap Agent
+
+The optional positional argument to `octomind run` is a tag:
+
+- A plain name such as `assistant` selects a local `[[roles]]` entry.
+- A `category:variant` tag such as `developer:general` resolves an agent from the configured taps.
 
 ```bash
-octomind config
-```
+# Configured default tag
+octomind
 
-Creates `~/.local/share/octomind/config/config.toml` with sensible defaults.
-
-## 4. Start a Session
-
-```bash
-octomind run
-```
-
-You're now in an interactive AI session with full tool access. The AI can read files, edit code, run commands, and manage your project.
-
-With no tag, `octomind run` uses the configured default tag `assistant:concierge` -- a tap agent from the built-in default tap `muvon/tap` -- on the default model `openrouter:anthropic/claude-sonnet-4`. The first run clones that tap (a one-time `git` fetch over the network), so the very first session needs connectivity.
-
-## What You Can Do
-
-**Ask questions about your code:**
-```
-How does the authentication system work?
-```
-
-**Make changes:**
-```
-Add error handling to the login function
-```
-
-**Run commands:**
-```
-Run the test suite and fix any failures
-```
-
-**Attach images for analysis:**
-```
-/image screenshot.png
-```
-
-## Essential Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all commands |
-| `/info` | Token usage and costs |
-| `/status [agents\|monitors\|jobs]` | Current agents and background activity |
-| `/image <path>` | Attach image for AI analysis |
-| `/done` | Finalize the current task: compress context, run learning extraction, and produce a summary |
-| `/clear` | Clear the terminal screen |
-| `/copy` | Copy the last response to the clipboard |
-| `/exit` | Exit session (or press `Ctrl+D`) |
-
-`/done` is the most useful command for a productive first session: when you finish a task, it summarizes what happened and compresses the context so the next task starts clean.
-
-## Session Modes
-
-The tag you pass to `octomind run` can be one of two things:
-
-- **A plain name** (e.g. `assistant`) -- a local role defined in your `config.toml`. Resolved offline, no network access.
-- **A `category:variant` tag** (e.g. `developer:general`) -- a tap agent fetched from the registry. The first use clones the tap over the network.
-
-```bash
-# Default: interactive with the assistant:concierge tap agent
-octomind run
-
-# Built-in local "assistant" role (full tool access -- reads, edits, runs commands)
+# Explicit local role
 octomind run assistant
 
-# Named session (resume later)
-octomind run --name my-feature
-
-# Resume a session
-octomind run --resume my-feature
-
-# Tap agent (fetches a specialized config from the registry)
+# Registry agent
 octomind run developer:general
 ```
 
-The built-in `assistant` role is NOT chat-only -- it ships with full MCP tool access (core, runtime, filesystem, agent). If you want a chat-only experience, use the tap agent `octomind:assistant` instead (see [Roles](06-roles.md)). For more on tap agents and the registry, see the [Tap System](../integration/04-tap-system.md).
+See [Roles](06-roles.md) for role configuration and the [Tap System](../integration/04-tap-system.md) for registry resolution.
 
-## Non-Interactive Mode
-
-`--format` is available only on `octomind run`. Passing any `--format` value forces non-interactive mode: the prompt is read from stdin and the result is printed to stdout. The only accepted values are `plain` and `jsonl`.
-
-Pipe a message via stdin and get a plain-text response:
+## Name and Resume Sessions
 
 ```bash
-echo "Explain the auth module" | octomind run developer:general --format plain
+# Create a named session, or resume it when it already exists
+octomind run --name my-feature
+
+# Resume a named session
+octomind run --resume my-feature
+
+# Open the interactive recent-session picker
+octomind run --resume
+
+# Resume the most recent session for this working directory
+octomind run --resume-recent
 ```
 
-Structured line-delimited JSON output for pipelines:
+## Run Non-Interactively
+
+`--format` switches `octomind run` to stdin-driven operation. The accepted formats are `plain` and `jsonl`:
 
 ```bash
-echo "List TODO items" | octomind run developer:general --format jsonl
-```
+echo "Explain the authentication module" | \
+  octomind run developer:general --format plain
 
-> Use a resolvable tag here. A bare `developer` is treated as a local role name; since the default config has no such role, it logs `Unknown role` and silently falls back to another role -- so always use the tap form `developer:general` (or a real local role like `assistant`).
+echo "List TODO items" | \
+  octomind run developer:general --format jsonl
+```
 
 ## Next Steps
 
-- [Configuration](03-configuration.md) -- customize settings
-- [Providers](04-providers.md) -- set up AI providers
-- [Sessions](05-sessions.md) -- session management
-- [MCP Tools](07-mcp-tools.md) -- available tools
+- [Configuration](03-configuration.md) — customize models, roles, tools, and limits
+- [AI Providers](04-providers.md) — choose OctoHub or configure provider credentials
+- [Sessions](05-sessions.md) — manage interactive and persistent sessions
+- [MCP Tools](07-mcp-tools.md) — understand the tool surface

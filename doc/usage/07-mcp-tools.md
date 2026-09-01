@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Octomind uses the Model Context Protocol (MCP) to provide AI models with external tools. This is the single reference for all built-in tools.
+MCP unifies Octomind's built-in controls, tap capabilities, external servers, and project-local tools through one runtime surface.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Octomind ships four builtin MCP servers (`core`, `orchestration`, `runtime`, `ag
 
 | Server | Type | Description |
 |--------|------|-------------|
-| `core` | builtin | Session-memory retrieval (`recall`, when attention is enabled) |
+| `core` | builtin | Session-memory retrieval (`recall` when attention or governance is enabled; governance defaults on) |
 | `orchestration` | builtin | Delegation (`tap`), scheduled messages (`schedule`), and event streams (`monitor`) |
 | `runtime` | builtin | Harness reconfiguration: register MCP servers, manage dynamic agents, load skills, capability |
 | `agent` | builtin | Delegates tasks to configured ACP sub-agents (each `[[agents]]` entry exposes an `agent_<name>` tool) |
@@ -26,16 +26,22 @@ Additional servers can be added via `[[mcp.servers]]` config as `http` or `stdio
 
 There is no model-callable `plan` MCP tool. Focused tasks execute directly. When work has meaningful dependent phases or context-loss risk, the specialist emits a hidden plan signal with a real work response and a separate supervisor call updates runtime-owned state from bounded trajectory and evidence. Use `/plan` to inspect the current checklist.
 
-### `tap` -- Run Specialist Roles from Taps
+### `recall` — Retrieve Archived Compression Blocks
+
+`recall` is advertised only when compression attention or its governance layer is enabled. It accepts `ids`, an array of one or two `b:<hex>` block IDs cited by compressed `<folded_state>` units, verifies them against the current session's sidecar registry, and returns the original archived messages verbatim. Unknown IDs and sessions without an archive return errors; larger recalls require another call.
+
+## Orchestration Server Tools
+
+### `tap` — Run Specialist Roles from Taps
 
 Delegate work to a specialist role installed via a tap (e.g. `developer:general`, `lawyer:us`, `security:owasp`). Each role brings its own system prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, stop a run, or browse the catalog.
 
 **Parameters:**
-- `action` (string, required): `"run"`, `"list"`, `"stop"`, `"discover"`
+- `action` (string, required): `"run"`, `"list"`, `"stop"`, `"discover"`, `"capability"`
 - `role` (string): Role tag in `category:variant` form. Required for `run` when `session` is not given.
-- `prompt` (string): User message to send. Required for `run`.
+- `prompt` (string): User message for `run`, or capability intent for `capability`. Required for those actions.
 - `session` (string): Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop`. For `run`, supply this to resume an existing run instead of starting a new one.
-- `workdir` (string): Working directory the role operates in. Optional -- defaults to the parent session's current cwd.
+- `workdir` (string): Working directory the role operates in. Optional — defaults to the parent session's current cwd.
 - `intent` (string): Free-text intent for `discover`.
 
 | Action | Description |
@@ -44,8 +50,9 @@ Delegate work to a specialist role installed via a tap (e.g. `developer:general`
 | `list` | Show every run in this session: id, role, workdir, status (`running` / `done` / `failed` / `cancelled`), start time. |
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
 | `discover` | Semantic match free-text intent against installed roles' titles/descriptions. Requires the local embedding model (errors if not ready). Returns roles scoring above 0.2 cosine, top 5. |
+| `capability` | Run the prompt through the same skill/capability auto-activation path used for user messages. |
 
-```json
+```jsonl
 {"action": "discover", "intent": "review a Singapore employment contract"}
 {"action": "run", "role": "lawyer:sg", "prompt": "What are the notice period rules for termination?"}
 {"action": "run", "role": "security:owasp", "prompt": "Audit this auth module"}
@@ -56,13 +63,15 @@ Delegate work to a specialist role installed via a tap (e.g. `developer:general`
 
 **Lifecycle.** Tap-runs live for the duration of the parent session. When the parent session exits, all in-flight runs are cancelled. The on-disk role manifest is unaffected.
 
-**Non-interactive.** Tap-runs run in non-interactive mode, so `{{INPUT:KEY}}` / `{{ENV:KEY}}` placeholders that would normally prompt stdin instead return a structured error. Pre-populate inputs once via `octomind run <role>` (interactive), then tap-run picks up the stored values.
+**Non-interactive.** Tap-runs run in non-interactive mode, so `{{INPUT:KEY}}` / `{{ENV:KEY}}` placeholders that would normally prompt stdin instead return a structured error. Pre-populate inputs once via an interactive `octomind run developer:general`, then tap-run picks up the stored values.
 
-## Runtime Server Tools
+The other orchestration tools are [`schedule`](#schedule----scheduled-message-injection) and `monitor`. `monitor` runs an event-stream command, bounds and coalesces output injections, and is inspected through `/status monitors`.
+
+## Runtime and Orchestration Tool Details
 
 Low-level tools for reconfiguring the harness mid-session. Most agents won't need these — they're for tasks like adding a one-off MCP server, prototyping a dynamic agent, or activating a skill.
 
-### `mcp` -- Dynamic MCP Server Management
+### `mcp` — Dynamic MCP Server Management
 
 Manage MCP servers at runtime without editing config.
 
@@ -88,7 +97,7 @@ Manage MCP servers at runtime without editing config.
 - `timeout_seconds` (number): Per-operation timeout; tool-call progress resets this idle deadline (default: 30)
 - `tools` (array): Tool filter (empty = all, supports wildcards like `"github_*"`). Also accepted by `enable` for a per-enable filter.
 
-### `agent` -- Dynamic Agent Management
+### `agent` — Dynamic Agent Management
 
 Manage in-process AI agents at runtime. Each registered agent becomes a tool prefixed with `agent_`. Distinct from the `agent` server (which exposes config-defined ACP sub-agents) and from `tap run` (which launches tap-distributed roles).
 
@@ -106,7 +115,7 @@ Manage in-process AI agents at runtime. Each registered agent becomes a tool pre
 - `allowed_tools` (array): Tool filter (supports wildcards)
 - `workdir` (string): Working directory (default: `"."`)
 
-### `skill` -- Skill Management from Taps
+### `skill` — Skill Management from Taps
 
 Manage skills (reusable instruction packs) from taps.
 
@@ -118,15 +127,15 @@ Manage skills (reusable instruction packs) from taps.
 - `limit` (integer): Max results (default: 20)
 
 **Workflow:**
-1. `skill(action="list")` -- discover available skills
-2. `skill(action="use", name="skill-name")` -- activate (injects instructions into context)
-3. `skill(action="forget", name="skill-name")` -- deactivate (removes from active skills, content cleaned up at next automatic compression)
+1. `skill(action="list")` — discover available skills
+2. `skill(action="use", name="skill-name")` — activate (injects instructions into context)
+3. `skill(action="forget", name="skill-name")` — deactivate (removes from active skills, content cleaned up at next automatic compression)
 
 **Skill resources:** Skills can include `scripts/`, `references/`, and `assets/` subdirectories. When activated, a resource catalog with absolute paths is provided.
 
 > **Internal note:** the dispatcher also accepts a `use_silent` action used for silent / auto-activation (env-loaded skills, `/skill` activation). It is not part of the JSON schema enum — the user/AI-facing actions are only `list`, `use`, and `forget`.
 
-### `schedule` -- Scheduled Message Injection
+### `schedule` — Scheduled Message Injection
 
 Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for direct user control.
 
@@ -141,7 +150,7 @@ Schedule messages for future injection into the session — fire at a specific t
 - `"now"` (fires immediately on the next scheduler tick)
 - Relative: `"in 5m"`, `"in 2h"`, `"in 1h30m"`, `"in 90s"`
 - Time today: `"15:30"`, `"3:30pm"`, `"9am"` (past times fire tomorrow)
-- Exact: `"2026-03-22 15:30"`
+- Exact: `"2030-03-22 15:30"`
 
 **`every` format** (omit for one-shot):
 - `"idle"` — fires on every idle transition (pairs with `when="idle"` or omitted)
@@ -157,7 +166,11 @@ Schedule messages for future injection into the session — fire at a specific t
 
 One-shot entries fire once and are removed; repeating entries (`every` set) re-schedule automatically after each firing. Idle entries fire only when the response loop is idle AND no tap-runs or background-agent jobs are running, so messages cannot interrupt in-flight work. Jobs cancelled on session exit.
 
-### `capability` -- Discover and Activate Domain Bundles
+### `monitor` — Long-Lived Event Streams
+
+The orchestration `monitor` tool has `start`, `list`, and `stop` actions. `start` requires an inline `command` and optionally accepts `description`, `working_directory`, `flush_interval_seconds`, `max_batch_bytes`, `timeout_ms`, and `persistent`. The command runs once through `sh -c`; stdout is delivered to the session inbox in bounded coalesced batches, stderr is diagnostic, and unexpected exit is injected once. Monitors are session-owned, are never auto-restarted, and stop on explicit `stop` or session cleanup.
+
+### `capability` — Discover and Activate Domain Bundles
 
 Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-defined groups of MCP servers and tool filters distributed via taps (`<tap>/capabilities/<name>/<provider>.toml`).
 
@@ -173,7 +186,7 @@ Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-de
 | `enable` | Register and connect a capability's MCP servers (domain-gated — see below) |
 | `disable` | Disconnect a capability's tools (refcount-aware — see below) |
 
-```json
+```jsonl
 {"action": "list"}
 {"action": "discover", "intent": "I need to query a Postgres database"}
 {"action": "enable", "name": "database-postgres"}
@@ -188,7 +201,7 @@ Activate MCP server bundles ("capabilities") on demand. Capabilities are TOML-de
 
 **Auto-activation.** Capabilities also auto-activate before each API call when the user's message strongly matches a capability's hand-authored triggers (semantic match via local embedding, no LLM in the loop). Activation uses a similarity threshold of 0.45 with a 0.08 abstain-on-tie margin and considers the top 3 trigger scores; the active set is bounded by an LRU eviction policy (soft cap of 4). See [Token Efficiency](16-token-efficiency.md#deterministic-auto-activation) for the full algorithm.
 
-**Boot-time forcing.** Set `OCTOMIND_CAPABILITIES=cap1,cap2` to force-enable specific capabilities at startup — useful for non-interactive runs that need a deterministic tool surface (e.g. `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`). Forced capabilities are still domain-gated.
+**Boot-time forcing.** Set `OCTOMIND_CAPABILITIES=cap1,cap2` to force-enable specific capabilities at startup. Every comma-delimited value must be the exact installed capability directory/name; this path does not perform semantic discovery, alias expansion, or fuzzy matching. Forced capabilities are still domain- and environment-gated.
 
 ## Filesystem Server Tools (octofs)
 
@@ -197,13 +210,15 @@ These tools are provided by the external `octofs` MCP server (command `octofs mc
 1. The `octofs` binary on your `PATH`.
 2. The built-in default tap [`muvon/tap`](../integration/04-tap-system.md) present (auto-cloned on first use), which ships the `filesystem-read` / `filesystem-write` capabilities that declare the `octofs` server.
 
-A role references these tools through its `server_refs` / capabilities under the `filesystem` capability name (the default `assistant` role does this) — there is no hardcoded `[[mcp.servers]]` entry named `filesystem`. Without the tap and binary, these tools will not be present.
+A role or tap agent references these tools through its `server_refs` / capabilities under the `filesystem` server name — there is no hardcoded `[[mcp.servers]]` entry named `filesystem`. Without the tap and binary, these tools will not be present.
 
-### `view` -- Read Files and Directories
+The octofs server provides six tools: `view`, `workdir`, `text_editor`, `batch_edit`, `extract_lines`, and `shell`. The parameter schemas are advertised by the external octofs process, so `/mcp full` is authoritative for the installed version.
+
+### `view` — Read Files and Directories
 
 Read files, view directories, and search file content.
 
-```json
+```jsonl
 {"path": "src/main.rs"}
 {"path": "src/main.rs", "lines": [10, 20]}
 {"path": "src/", "pattern": "TODO"}
@@ -216,7 +231,7 @@ Read files, view directories, and search file content.
 - `pattern` (string): Search pattern within file/directory
 - `content` (string): Content search query
 
-### `text_editor` -- File Editing
+### `text_editor` — File Editing
 
 Comprehensive file manipulation with multiple commands.
 
@@ -232,7 +247,7 @@ Comprehensive file manipulation with multiple commands.
 | `view` | `path`, `view_range` (optional) | View file or range |
 | `view_many` | `paths` (array) | View multiple files |
 
-```json
+```jsonl
 {"command": "create", "path": "src/new.rs", "file_text": "pub fn hello() {}"}
 {"command": "str_replace", "path": "src/main.rs", "old_str": "fn old()", "new_str": "fn new()"}
 {"command": "insert", "path": "src/main.rs", "insert_line": 5, "new_str": "// Comment"}
@@ -240,7 +255,7 @@ Comprehensive file manipulation with multiple commands.
 {"command": "undo_edit", "path": "src/main.rs"}
 ```
 
-### `batch_edit` -- Atomic Multi-Line Editing
+### `batch_edit` — Atomic Multi-Line Editing
 
 Multiple insert/replace operations on a single file atomically. All operations reference original line numbers (before any changes).
 
@@ -263,7 +278,7 @@ Multiple insert/replace operations on a single file atomically. All operations r
 
 Returns a standard diff showing changes.
 
-### `extract_lines` -- Extract and Move Code
+### `extract_lines` — Extract and Move Code
 
 Extract lines from a source file and append to a target file without modifying the source.
 
@@ -273,26 +288,24 @@ Extract lines from a source file and append to a target file without modifying t
 - `append_path` (string): Target file (auto-created if needed)
 - `append_line` (integer): Insert position (0=beginning, -1=end, N=after line N)
 
-```json
+```jsonl
 {"from_path": "src/utils.rs", "from_range": [10, 25], "append_path": "src/extracted.rs", "append_line": -1}
 ```
 
-### `shell` -- Shell Command Execution
+### `shell` — Shell Command Execution
 
 Execute shell commands with output capture.
 
 **Parameters:**
 - `command` (string, required): Shell command
-- `background` (boolean, default: false): Run in background, return PID
 
 ```json
 {"command": "cargo test"}
-{"command": "python -m http.server 8000", "background": true}
 ```
 
-Background mode returns PID. Use `{"command": "kill <pid>"}` to terminate.
+Octomind does not define a `background` boolean for this companion tool. Current octofs long-running work is surfaced through MCP resource links and appears under `/status jobs`; do not rely on the removed PID-style examples.
 
-### `workdir` -- Working Directory Management
+### `workdir` — Working Directory Management
 
 Get or set the working directory for file and shell operations.
 
@@ -300,7 +313,7 @@ Get or set the working directory for file and shell operations.
 - `path` (string): Set new working directory (absolute or relative)
 - `reset` (boolean): Reset to original project directory
 
-```json
+```jsonl
 {}
 {"path": "/path/to/directory"}
 {"reset": true}
@@ -320,12 +333,12 @@ Each agent configured in `[[agents]]` becomes a separate tool: `agent_<name>`.
 
 **Async:** Returns immediately. Result appears as a user message when done. Use for tasks taking 30+ seconds when you can continue other work.
 
-```json
+```jsonl
 {"task": "Analyze the authentication system architecture"}
 {"task": "Review this function for performance", "async": true}
 ```
 
-Max concurrent async jobs is configurable. Jobs cancelled on session exit.
+Max concurrent async jobs equals the detected CPU count, with a fallback of 4 when detection fails. Jobs are cancelled on session exit.
 
 ## External MCP Servers
 
@@ -364,7 +377,9 @@ For tool calls, `timeout_seconds` is an idle deadline rather than a total runtim
 name = "my_server"
 type = "http"
 url = "http://localhost:3000/mcp"
-auto_bind = ["developer", "assistant"]
+timeout_seconds = 30
+tools = []
+auto_bind = ["developer:general", "assistant:concierge"]
 ```
 
 ### Tool Filtering
@@ -377,8 +392,7 @@ type = "http"
 url = "https://api.github.com/mcp"
 tools = ["github_create_issue", "github_list_repos"]
 
-# Wildcard filtering
-tools = ["github_*"]
+# Alternative wildcard filter: tools = ["github_*"]
 ```
 
 ### Override Files (mcp-*.toml)
@@ -402,18 +416,21 @@ On next startup, this file is loaded after all other config files, so it:
 name = "github"
 type = "http"
 url = "https://api.github.com/mcp"
-auto_bind = ["developer"]
+timeout_seconds = 30
+tools = []
+auto_bind = ["developer:general"]
 ```
 
-This server will automatically be available for the `developer` role on next startup.
+This server will automatically be available for the `developer:general` tap agent on next startup.
 
 ## Health Monitoring
 
 MCP servers are monitored automatically:
 - Health checks every 120 seconds for external servers (HTTP + stdio)
 - Builtin servers are always considered healthy
-- A failed server auto-restarts up to 3 times, waiting 30 seconds between restart attempts
-- The failed-state flag is cleared after a 5-minute cooldown, allowing the server to be retried again (distinct from the 30-second between-attempt wait)
+- Only restartable local processes auto-restart: stdio servers and HTTP entries that have a launch command. Remote HTTP endpoints are checked but cannot be restarted by Octomind.
+- Three consecutive restart failures mark a server failed; attempts are separated by a 30-second cooldown
+- A terminal `Failed` state is left alone by the monitor; it is not automatically probed or restarted again
 - Use `/mcp health` to force a health check
 
 ## Design Notes: Builtin Server Boundaries
@@ -422,7 +439,7 @@ The builtin split provides clear ownership while keeping each role's tool schema
 
 **The taxonomy.** `runtime` changes the available harness and tool surface. `orchestration` delegates or schedules work. `core` holds small session-native primitives such as conditional `recall`. Planning is external supervisor state rather than a tool category.
 
-**The token cost.** Every always-on tool is schema text the model stares at every turn, even when irrelevant. Splitting `runtime` out lets a typical role (`lawyer:sg`, `doctor:blood`, `developer:general`) drop those three tools from its surface entirely — they're never reached for during normal work, and exposing them just adds noise.
+**The token cost.** Every always-on tool is schema text the model receives every turn, even when irrelevant. Splitting `runtime` out lets roles omit its four control tools (`mcp`, `agent`, `skill`, `capability`) when they are not needed.
 
 **Where new tools go.** Harness or tool-surface mutation belongs in `runtime`; delegation, schedules, and monitors belong in `orchestration`; small universally session-native primitives belong in `core`. Domain work is usually a [capability](#capability----discover-and-activate-domain-bundles) activated on demand rather than a built-in.
 

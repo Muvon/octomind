@@ -1,20 +1,18 @@
 # Configuration Reference
 
-Complete field-by-field reference for `~/.local/share/octomind/config/config.toml`.
-
-All values shown match `config-templates/default.toml`. Fields marked **(required)** have no fallback default.
+Field reference for Octomind's versioned TOML configuration, including defaults, required sections, and the three model purposes.
 
 ## Root-Level Settings
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `version` | u32 | `1` | Config version. Do not modify. Used for automatic upgrades. |
+| `version` | u32 | `12` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
-| `default` | string | `"assistant:concierge"` | Default tag when no TAG passed to `octomind run`. See note below. |
-| `sandbox` | bool | `false` | Restrict filesystem writes to working directory. Also available as `--sandbox` CLI flag. |
+| `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
+| `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
 | `telemetry` | bool | `true` | Anonymous usage telemetry. Overridden per-run by `OCTOMIND_TELEMETRY`, and by `DO_NOT_TRACK=1` before either. See [Telemetry](04-environment-variables.md#telemetry) for the exact field list. |
 | `auto_capabilities` | bool | `true` | Enable automatic capability activation on user messages. Disable to require manual `capability(action="enable")` calls. |
-| `system` | string (optional) | _none_ | Legacy global system-prompt override. When set, it applies as a fallback system prompt for roles that define none. Shown commented-out in `default.toml`; prefer per-role `system` instead. |
+| `system` | string (optional) | _none_ | Legacy serialized field retained for config compatibility. Session prompts come from required `[[roles]].system`; do not use this as a role-prompt override. |
 
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
@@ -48,8 +46,8 @@ The complete main model profile and inheritance baseline. Persistent role, super
 |-------|------|---------|-------------|
 | `enable_markdown_rendering` | bool | `true` | Pretty-print AI responses with markdown rendering. |
 | `markdown_theme` | string | `"default"` | Theme: `"default"`, `"dark"`, `"light"`, `"ocean"`, `"solarized"`, `"monokai"` |
-| `max_session_spending_threshold` | f64 | `0.0` | USD limit per session. Prompts before continuing when exceeded. `0.0` = no limit. |
-| `max_request_spending_threshold` | f64 | `0.0` | USD limit per request. Stops execution when exceeded. `0.0` = no limit. |
+| `max_session_spending_threshold` | f64 | `0.0` | Session spending limit. Prompts before continuing when exceeded. `0.0` = no limit. |
+| `max_request_spending_threshold` | f64 | `0.0` | Request spending limit. Stops execution when exceeded. `0.0` = no limit. |
 
 ## `[capabilities]`
 
@@ -68,8 +66,8 @@ Strict map of tap agent tag to model name. It changes only `name`; all other par
 
 ```toml
 [taps]
-"developer:general" = "ollama:glm-5"
-"octomind:assistant" = "openai:gpt-4o"
+"developer:general" = "ollama:glm-5.3"
+"assistant:concierge" = "openai:gpt-5.6-luna"
 ```
 
 **Priority (highest wins):** explicit runtime override > the active role's `[roles.model]` > the tap name mapping > `[model]`.
@@ -86,8 +84,8 @@ Define custom roles that override or extend tap-provided agents.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Role identifier (e.g., `"developer"`, `"assistant"`) |
-| `system` | string | no | System prompt. Supports template variables. |
-| `welcome` | string | no | Welcome message shown on session start. Supports template variables. |
+| `system` | string | yes | System prompt. Supports template variables. |
+| `welcome` | string | yes | Welcome message shown on session start. Supports template variables; use `""` for no banner. |
 
 ### `[roles.model]`
 
@@ -112,12 +110,12 @@ Working directory: {{CWD}}
 welcome = "Hello! Ready to code. Working in {{CWD}} (Role: {{ROLE}})"
 
 [roles.model]
-name = "openai:gpt-5"
+name = "openai:gpt-5.6-sol"
 reasoning_effort = "high"
 
 [roles.mcp]
-server_refs = ["core", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
 ## `[mcp]`
@@ -136,12 +134,12 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 
 | Server | Tools | Description |
 |--------|-------|-------------|
-| `core` | `recall` (when attention is enabled) | Session-memory retrieval; planning is supervisor-internal |
+| `core` | `recall` (when attention or governance is enabled) | Session-memory retrieval; governance defaults on and planning is supervisor-internal |
 | `orchestration` | `tap`, `schedule`, `monitor` | Delegation, scheduled messages, and event-stream monitoring |
 | `runtime` | `mcp`, `agent`, `skill`, `capability` | Harness and tool-surface reconfiguration |
 | `agent` | `agent_<name>` per `[[agents]]` entry | ACP sub-agent dispatch |
 
-> **`filesystem` is not declared here.** Default roles reference a `filesystem` server in their `server_refs`, but it is **not** a builtin and is **not** defined in this config file's `[[mcp.servers]]`. It is an external `stdio` server backed by `octofs`, provided by the built-in tap. Its tools are `view`, `text_editor`, `batch_edit`, `extract_lines`, `shell`, and `workdir`. See [MCP Tools](../usage/07-mcp-tools.md) for the full surface.
+> **`filesystem` is not declared here.** It is an external `stdio` server backed by octofs and provided through tap capabilities. The octofs server provides six tools: `view`, `workdir`, `text_editor`, `batch_edit`, `extract_lines`, and `shell`. `/mcp full` shows the installed server's authoritative schemas.
 
 #### Common Fields
 
@@ -150,7 +148,7 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 | `name` | string | yes | Unique server identifier |
 | `type` | string | yes | `"builtin"`, `"http"`, or `"stdio"` |
 | `timeout_seconds` | u64 | yes | Per-operation timeout; tool-call progress resets this idle deadline (template: 30) |
-| `tools` | string[] | no | Tool filter. Empty = all tools. Supports wildcards: `"github_*"` |
+| `tools` | string[] | yes | Tool filter. Empty = all tools. Supports wildcards such as `"github_*"`. |
 | `auto_bind` | string[] | no | Role names to auto-include this server for |
 
 #### HTTP-Specific Fields
@@ -167,7 +165,9 @@ MCP server definitions. Three types supported: `builtin`, `http`, `stdio`.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | yes | Executable to run |
-| `args` | string[] | no | Command arguments |
+| `args` | string[] | yes | Command arguments; use `[]` when none |
+| `env` | map | no | Child environment entries; values support `{{ENV:KEY}}` placeholders |
+| `cwd` | string | no | Child working directory; omitted inherits Octomind's working directory (plugins may set their root) |
 
 
 ## `[[hooks]]`
@@ -258,7 +258,7 @@ Reusable prompt templates accessible via `/prompt <name>`.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Prompt identifier |
-| `description` | string | yes | Shown in `/prompt` list |
+| `description` | string | no | Optional text shown in `/prompt` list |
 | `prompt` | string | yes | Prompt text injected into session |
 
 ```toml
@@ -305,13 +305,28 @@ Automatic context compression system.
 | `threshold` | usize | `70000` | Single compression trigger in absolute tokens; `0` disables compression |
 
 > **Depth is computed, not configured.** Once context exceeds `threshold`, how deep each compression goes is derived per cycle from the measured session growth rate and the context ceiling — the lower of `max_session_tokens_threshold` (see Performance & Limits) and the session model's usable window. The derived ratio always lands in [2.0, 16.0].
+
+### `[compression.attention]`
+
+Optional PACT-style provenance and archive governance around compression.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable provenance-labelled causal evidence selection and rendering |
+| `validator` | bool | `true` | Reject optional compactions whose folded units have invalid attribution |
+| `telemetry` | bool | `true` | Persist a content-free compression decision record beside the lossless archive |
+
+`[compression.attention.governance]` defaults to `enabled = true` and `verify_hash = true`, preserving runtime-owned pins/frontier and checking governance hashes before a compaction is committed.
+
+Keep scalar `[compression]` keys before nested `[compression.attention]` and `[compression.model]` headers; TOML assigns later scalars to the most recent nested table.
+
 ### `[compression.model]`
 
 Model used for compression decisions and summary generation.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | `"octohub:auto"` | Fast, cheap model recommended |
+| `name` | string | `"octohub:auto"` | Compression model name |
 | `reasoning_effort` | enum | `"medium"` | Thinking effort override |
 | `max_tokens` | u32 | `16000` | Max tokens for decision + summary |
 | `temperature` | f64 | `0.3` | Lower = more consistent decisions |
@@ -390,11 +405,12 @@ Adaptive external plan manager. The specialist has no plan mutation tool; a spar
 
 ### `[supervisor.condense]`
 
-Task-aware narrowing of oversized plain-text tool outputs. A result whose own output exceeds `tokens_threshold` becomes a candidate; smaller results in the same round are passed through untouched and never shown to the condenser. One cheap-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim (never rewritten), and irrelevant results get deterministic notices rather than model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation, so the condenser narrows only what the agent would actually have received.
+Task-aware narrowing of oversized plain-text tool outputs. A result whose own output exceeds `tokens_threshold` becomes a candidate; smaller results in the same round are passed through untouched and never shown to the condenser. One shared supervisor-model call per round selects, by original line ranges over a bounded query/diagnostic-aware view, what the current task needs; kept lines are reconstructed verbatim, and irrelevant results get deterministic notices rather than model-authored summaries. Full originals are spilled to session files first when the active role can read them back. The `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable condensation |
+| `adaptive` | bool | `false` | Adapt a process-local multiplier from realized savings, bounded to `0.5x`–`2.0x` of the configured baseline |
 | `tokens_threshold` | usize | `5000` | Per-result trigger (estimated tokens of that single result); `0` = off. Keep well below `mcp_response_tokens_threshold` |
 
 ```toml
@@ -426,12 +442,13 @@ enabled = true
 
 [supervisor.condense]
 enabled = true
+adaptive = false
 tokens_threshold = 5000
 ```
 
 ## `[registry]`
 
-Controls caching of agent manifests fetched from taps. Registry sources themselves are managed with `octomind tap <url> [path]` / `octomind untap <name>`.
+Controls caching of agent manifests fetched from taps. Registry sources themselves are managed with `octomind tap <user/repo> [path]` and `octomind untap <user/repo>`.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -453,7 +470,7 @@ Project-level guardrails are configured in `.agents/guardrails.toml` in the work
 | Table | Purpose |
 |-------|---------|
 | `[[guard]]` | Pre-call deny rule — blocks a tool call before it runs. |
-| `[[hook]]` | Post-result script run after a tool call (`on = "success"` or `"failure"`). |
+| `[[hook]]` | Post-result script run after a tool call (`on = "success"`, `"error"`, or `"any"`). |
 | `[[validator]]` | End-of-turn script run on the new call-log slice (cursor-based), with optional role filter. Runs regardless of `[skills].auto_validation`. |
 | `[[pipe]]` | Pre-model input transform (detailed below). |
 
@@ -516,7 +533,7 @@ These variables are substituted in role `system` and `welcome` fields at prompt-
 | `{{GIT_STATUS}}` | Git repository status |
 | `{{GIT_TREE}}` | Project file tree |
 | `{{README}}` | Contents of README.md in project root |
-| `{{CONTEXT}}` | Session context (for layers) |
-| `{{SYSTEM}}` | Parent system prompt (for layers) |
+| `{{CONTEXT}}` | Project context bundle (README, Git status, tracked tree) |
+| `{{SYSTEM}}` | Current system information (shell, OS, working directory, binaries) |
 
 > **`{{HOME}}` is not substituted here.** It is only resolved by the `octomind vars` command listing, not in `system`/`welcome` prompts. Using `{{HOME}}` in a role prompt leaves the literal text in place — use an absolute path or `{{CWD}}` instead.

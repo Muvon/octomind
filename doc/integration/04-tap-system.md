@@ -24,9 +24,13 @@ capabilities/
     config.toml          # REQUIRED: triggers = [...] (drives auto-activation); optional domains = [...]
     default.toml         # Provider wiring (deps / server_refs / allowed_tools / mcp.servers)
     octocode.toml        # Alternate provider, selected via [capabilities] override
+workflows/
+  review.toml            # Public external workflow definition
+plugins/
+  plugin-name/           # Agent Plugin package discovered from the tap
 ```
 
-> Two distinct files are involved when you work with taps: the **on-disk tap repo** (the tree above — `agents/`, `deps/`, `skills/`, `capabilities/`) and **your `config.toml`** (where `[taps]`, `[capabilities]`, and `[registry]` live). Each TOML snippet below notes which file it belongs to.
+> Two distinct files are involved when you work with taps: the **on-disk tap repo** (the tree above — `agents/`, `deps/`, `skills/`, `capabilities/`, `workflows/`, and `plugins/`) and **your `config.toml`** (where `[taps]`, `[capabilities]`, and `[registry]` live). Each TOML snippet below notes which file it belongs to.
 
 ## Managing Taps
 
@@ -106,11 +110,11 @@ When you specify a tag containing `:`, Octomind runs the full resolution pipelin
 
 If a manifest needs a credential it cannot find, this is where you will see an `Enter value for …` prompt (step 3) — not at startup.
 
-### From within a session — the `tap` core tool
+### From within a session — the `tap` orchestration tool
 
-Inside a running session you can launch a tap role as a subagent via the `tap` core tool. Same role catalog, but invoked from the LLM mid-conversation rather than a CLI command:
+Inside a running session you can launch a tap role as a subagent via the `tap` tool from the `orchestration` builtin server. It uses the same role catalog, but the model invokes it mid-conversation rather than through a CLI subcommand:
 
-```json
+```jsonl
 {"action": "discover", "intent": "review a legal contract"}
 {"action": "run", "role": "lawyer:sg", "prompt": "What are the notice period rules?"}
 {"action": "list"}
@@ -128,7 +132,7 @@ Set a preferred model for specific tap agents in your config:
 ```toml
 # In config.toml
 [taps]
-"developer:general" = "ollama:glm-5"
+"developer:general" = "ollama:glm-5.3"
 ```
 
 This replaces only the main model name for `octomind run developer:general`; every other parameter stays from `[model]`. Explicit runtime fields win, then the manifest role profile, then the tap name mapping, then `[model]`.
@@ -145,6 +149,7 @@ Agent manifests are TOML files in `agents/<category>/<variant>.toml`. The header
 
 [[roles]]
 system = "You are an expert software developer..."
+welcome = ""
 
 [roles.model]
 temperature = 0.3
@@ -209,11 +214,20 @@ Tap manifests may embed three placeholder forms, resolved during the [resolution
 # In an agent manifest (in the tap repo)
 [[roles]]
 system = "Project root: {{CWD}}. Use the API at https://api.example.com."
+welcome = ""
 
-[[roles.mcp.servers]]
+[roles.mcp]
+server_refs = ["example"]
+allowed_tools = ["example:*"]
+
+[[mcp.servers]]
 name = "example"
+type = "stdio"
+command = "example-mcp"
 # Token prompted once and stored; API base read from env / .env
 args = ["--token", "{{INPUT:EXAMPLE_TOKEN}}", "--url", "{{ENV:EXAMPLE_API_URL}}"]
+timeout_seconds = 30
+tools = []
 ```
 
 ## Dependencies (`[deps]`)

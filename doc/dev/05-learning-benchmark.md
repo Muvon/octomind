@@ -1,7 +1,8 @@
-# Learning Accuracy-Efficiency Benchmark
+# Learning Benchmark
 
-This compact benchmark is an architecture detector, not a replacement for the
-full LongMemEval leaderboard. It has two layers:
+This benchmark compares learning retrieval and consolidation against compact contracts; it detects architecture changes, not full LongMemEval performance.
+
+## Benchmark Layers
 
 1. `octomind-memory-contract-v1`: 52 curated cases covering exact,
    paraphrased, noisy, indirect, correction-vs-stale, and unrelated queries.
@@ -13,12 +14,16 @@ full LongMemEval leaderboard. It has two layers:
 
 Both compare dense retrieval, equal RRF, fixed sparse weighting, and the current
 adaptive production hybrid. Query rewrites are cached under
-`target/learning-benchmark/`, so only the first run spends model tokens.
+`target/learning-benchmark/`, so later runs can reuse validated rewrites.
 
 ## Server commands
 
 The synced server exports provider credentials from its interactive global
-environment, so use `zsh -ic`. Never print credential values.
+environment, so use `zsh -ic`. Authenticate with `octomind login`; when
+`LEARNING_BENCH_MODEL` is omitted, the harness uses the supervisor-purpose
+profile, whose default is `octohub:auto`. The reproduction commands below set
+the recorded `alibaba:qwen3.8-flash` override explicitly. Never print credential
+values.
 
 ```bash
 ssh dev 'zsh -ic '\''
@@ -94,8 +99,11 @@ make it pass.
 
 ## Reference result — 2026-08-28
 
-Model: `alibaba:qwen3.8-flash`. These figures establish the compact benchmark
-frontier only; they are not a full LongMemEval score or a universal SOTA claim.
+Historical override used for this recorded run: `alibaba:qwen3.8-flash`. These
+figures establish the compact benchmark frontier only; they are not a full
+LongMemEval score or a universal SOTA claim. Omit `LEARNING_BENCH_MODEL` to use
+the shipped supervisor-purpose default, `octohub:auto`; set it when reproducing
+or comparing an explicit override.
 
 | Retrieval mode | Internal top-1 | Internal R@5 | Abstain | Stale@1 | Public top-1 | Public R@5 |
 |---|---:|---:|---:|---:|---:|---:|
@@ -120,8 +128,6 @@ A fresh 12-query challenge run measured the first-session retrieval cost:
   (`3.19 s/query`);
 - local embedding ranking: 1.12 seconds total (`94 ms/query`);
 - rewrite failures: zero;
-- provider-reported monetary cost: unavailable (`0.0` in the response), so it
-  must not be described as free.
 
 Dense-only retrieval is therefore the latency baseline. Adaptive hybrid is on
 the measured accuracy-latency frontier: it costs one rewrite on the first
@@ -129,5 +135,5 @@ session retrieval, improves internal top-1 and recall, removes stale winners,
 and subsequent user turns remain embedding-only.
 
 On the public 52-session pool, cached semantic scoring took 15.7 seconds for 30
-queries (`523 ms/query`). This is the long heterogeneous-memory cost; ordinary
-short lesson stores remain substantially cheaper.
+queries (`523 ms/query`). This measures the longer heterogeneous-memory pool;
+ordinary short lesson stores have a different workload shape.

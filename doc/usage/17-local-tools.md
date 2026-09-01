@@ -1,8 +1,6 @@
 # Local Tools
 
-Drop a shebang script into `<workdir>/.agents/tools/<name>` and it becomes an MCP tool — auto-discovered, role-agnostic, no config required. The script's leading comment block declares the schema; octomind converts it to a JSON-Schema tool definition the model can call.
-
-This is the lightweight cousin of [Skills](15-skills.md). Skills inject **instructions**; local tools expose **executable actions**. Use local tools when the project itself wants to bolt on an action ("publish to staging", "check this lint rule", "fetch our internal status board") without touching the role config or shipping a full MCP server.
+Local tools turn executable scripts in `<workdir>/.agents/tools/` into hot-reloaded, role-agnostic MCP actions.
 
 ## Quickstart
 
@@ -159,7 +157,7 @@ process.stdin.on('end', () => {
 
 ## Discovery & Lifecycle
 
-- **When**: every turn. Discovery is a `read_dir` of `<workdir>/.agents/tools/` plus a header parse per file. Cheap, no caching needed.
+- **When**: whenever Octomind rebuilds the available function list, and again when routing/executing a local tool. Discovery is a `read_dir` plus header parsing; there is no cache.
 - **Where**: the **session's current working directory**. If the workdir tool changes the directory mid-session, the next turn's tool list reflects the new location.
 - **Always-on**: appended to every role's tool list automatically. There is no `[mcp.servers]` entry to add and no `allowed_tools` filter — local tools are role-agnostic by design (matches the `OCTOMIND_SKILLS` shape, but driven by file presence rather than env).
 - **Lowest priority on collision**: if a local tool's name matches a config-defined or dynamic tool, the config/dynamic tool wins. You can't accidentally hijack `shell` by naming a script `shell`.
@@ -176,13 +174,13 @@ process.stdin.on('end', () => {
 | Tool times out | Hard 5-minute (300s) cap — not configurable for local tools | Make the script faster or split into multiple calls |
 | Param values look wrong | Forgot `*` and the script assumed required | Add `*` to the name in the header |
 
-To see why specific files were skipped during discovery, raise the log level to debug — set config `log_level = "debug"`, use the `/loglevel debug` session command, pass `--log-level debug` on the CLI, or set `RUST_LOG`. The debug logs show non-executable files, header parse failures, and malformed or unknown tags.
+To see why specific files were skipped during discovery, raise the log level with config `log_level = "debug"`, the `/loglevel debug` session command, or `RUST_LOG`. There is no global `octomind --log-level` flag; `--log-level` belongs to `octomind config` and persists the setting.
 
 ## Security Notes
 
 Local tools are **arbitrary code on disk** — by definition they run with the same privileges as octomind. The intent is "the project author wrote these scripts and committed them to the repo." Treat `.agents/tools/` like `package.json` `scripts:` or a `Makefile`: trust the source.
 
-If you check out a third-party project that ships local tools, audit them before running an octomind session there. The same auto-discovery that makes the feature pleasant also means malicious files run on first use.
+If you check out a third-party project that ships local tools, audit them before allowing the model to call them. Discovery only advertises schemas; a selected tool script then runs with Octomind's process privileges.
 
 ## Comparison
 

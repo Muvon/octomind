@@ -1,10 +1,10 @@
-# Use Case: Multi-Agent Task Delegation
+# Multi-Agent Task Delegation
 
 Split complex tasks across specialized AI agents that work independently and report back to a coordinator.
 
 ## The Problem
 
-A single AI call struggles with large tasks: "Refactor the authentication system." It tries to do everything at once, loses context, and produces incomplete results. You want specialized agents -- one gathers context, one reviews code, one plans architecture -- working in parallel.
+A single AI call struggles with large tasks: "Refactor the authentication system." It tries to do everything at once, loses context, and produces incomplete results. You want specialized agents — one gathers context, one reviews code, one plans architecture — working in parallel.
 
 ## Solution
 
@@ -70,7 +70,7 @@ server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view"]
 ```
 
-> **Note:** `filesystem` is **not** a built-in server. The default config declares only `core`, `runtime`, and `agent` as MCP servers — the `filesystem` tools (`view`, `text_editor`, `shell`, …) are supplied by the default tap (`muvon/tap`). With MCP disabled or that tap not installed, `server_refs = ["filesystem"]` resolves to nothing. See [Tap System](../integration/04-tap-system.md) and [MCP Tools](../usage/07-mcp-tools.md) for how filesystem tools become available.
+> **Note:** `filesystem` is **not** a built-in server. The default config declares `core`, `orchestration`, `runtime`, and `agent`; the `filesystem` tools (`view`, `text_editor`, `shell`, …) come from resolved tap configuration. If no resolved server has that name, `server_refs = ["filesystem"]` contributes no tools. See [Tap System](../integration/04-tap-system.md) and [MCP Tools](../usage/07-mcp-tools.md).
 
 ### Step 2: Configure Agents
 
@@ -99,10 +99,10 @@ Start the orchestrating session with your default role and delegate:
 ```bash
 octomind run            # uses the configured default tag (assistant:concierge)
 # or name an orchestrator role explicitly:
-octomind run assistant
+octomind run assistant:concierge
 ```
 
-> `developer` is not a built-in role — it only resolves through the default tap's `developer` category. Use `assistant` (the shipped default) or any orchestrator role you defined, as long as it has access to the `agent` tools.
+> `assistant:concierge` is the shipped default orchestrator. Use it or an orchestrator role explicitly defined under local `[[roles]]`, as long as it has access to the `agent` tools.
 
 The main AI can now use these agents as tools (illustrative transcript):
 
@@ -149,9 +149,9 @@ history, live actions, model usage, and cost where the runtime provides it.
 
 ### Tap Roles (no config needed)
 
-If a tap registry already provides a specialist role for the sub-task, use the `tap` core tool instead of defining your own `[[agents]]`:
+If a tap registry already provides a specialist role for the sub-task, use the `tap` tool from the `orchestration` builtin server instead of defining your own `[[agents]]`:
 
-```json
+```jsonc
 // Discover, then delegate — no config edits, no subprocess setup.
 {"action": "discover", "intent": "review code for OWASP Top 10 issues"}
 {"action": "run", "role": "security:owasp", "prompt": "Audit src/auth/ for OWASP issues"}
@@ -173,7 +173,7 @@ Use `[[agents]]` (this page) when the role doesn't exist in any tap or you need 
 
 Create agents on the fly during a session using the `agent` tool from the `runtime` server (`tap` delegation lives on the separate `orchestration` server):
 
-```json
+```jsonc
 // AI creates a specialized agent at runtime
 {"action": "add", "name": "test_writer",
  "description": "Writes unit tests for given code",
@@ -193,20 +193,20 @@ If you omit `server_refs` but list `allowed_tools`, the servers are inferred aut
 The following is an illustrative walkthrough of how the orchestrator chains the agents — not literal commands to type:
 
 ```
-User: "Add rate limiting to the API endpoints"
+User: "Add request tracing to the API endpoints"
 
 Main AI:
   1. Calls agent_context_gatherer:
-     "Find all API endpoint handlers, middleware patterns, and existing rate limiting code"
+     "Find all API endpoint handlers, middleware patterns, and existing tracing code"
      -> Returns: file list, handler signatures, middleware chain pattern
 
   2. Calls agent_code_reviewer:
-     "Review the current API middleware for potential issues with adding rate limiting"
+     "Review the current API middleware for potential issues with adding request tracing"
      -> Returns: thread-safety concerns, shared state patterns, test coverage gaps
 
   3. Synthesizes findings:
      "Based on the context and review, here's the implementation plan:
-      - Add RateLimiter middleware in src/middleware/rate_limit.rs
+      - Add RequestTrace middleware in src/middleware/request_trace.rs
       - Use existing SharedState pattern from src/middleware/mod.rs
       - Add per-endpoint config in src/config/api.rs
       - Fix thread-safety issue in connection pool (flagged by reviewer)"
@@ -216,45 +216,41 @@ Main AI:
 
 ## Agent Configuration Tips
 
-The snippets below show only the field being changed. A role's model block is optional and inherits every omitted field from `[model]`; the role still needs its normal identity and prompt fields shown in [Step 1](#step-1-define-agent-roles).
+The complete role examples in [Step 1](#step-1-define-agent-roles) show the required identity and prompt fields. A role's model block is optional and inherits every omitted field from `[model]`.
 
-**Cheap models for simple agents:**
+When a specialist genuinely needs a different main-purpose model, set a
+concrete override rather than restating the default. For example:
+
 ```toml
-[[roles]]
-name = "context_gatherer"
+# Inside the context_gatherer role
 [roles.model]
-name = "openrouter:google/gemini-2.5-flash-preview"  # Fast, cheap, large context
-# ... plus the role's system / welcome fields
+name = "openai:gpt-5.6-luna"
+temperature = 0.2
 ```
 
-**Powerful models for complex analysis:**
+For a separate review specialist:
+
 ```toml
-[[roles]]
-name = "code_reviewer"
+# Inside the code_reviewer role
 [roles.model]
-name = "anthropic:claude-sonnet-4"  # Best reasoning
-# ... plus the role's system / welcome fields
+name = "anthropic:claude-sonnet-4-6"
+temperature = 0.1
 ```
 
-**Tool restrictions for safety:**
-```toml
-# Read-only agent (can't modify files)
-[roles.mcp]
-server_refs = ["filesystem"]
-allowed_tools = ["filesystem:view", "filesystem:workdir"]
-
-# Full-access agent (can edit and run commands)
-[roles.mcp]
-server_refs = ["core", "filesystem"]
-allowed_tools = ["core:*", "filesystem:*"]
-```
+Octomind has exactly three model purposes: main, supervisor, and compression.
+Agent role overrides belong to the main purpose; they do not introduce another
+purpose. The shipped default for all three is `octohub:auto` after
+`octomind login`. Omit `name` from `[roles.model]` to inherit the main profile's
+model name, as the runnable roles in Step 1 do. To make an agent read-only, grant
+only read tools in its `[roles.mcp].allowed_tools`; to permit edits or commands,
+add those exact tool names or a deliberate server wildcard.
 
 ## Key Points
 
-- Each agent runs as an isolated subprocess via ACP protocol
-- Agents have their own role, tools, and model -- fully independent
+- Config-defined `[[agents]]` run as ACP subprocesses; runtime-created dynamic agents run in-process
+- Each agent has its own resolved role, tool filter, and main-purpose model profile
 - `async: true` runs agents in parallel (results arrive via inbox)
 - Dynamic agents can be created at runtime for ad-hoc tasks
 - Max concurrent async jobs = number of CPU cores (defaults to 4 only if the core count cannot be detected)
 - The main session orchestrates; agents do focused work
-- Use cheap models for simple agents, powerful models where reasoning matters
+- The default model is `octohub:auto`; role model overrides affect the main purpose only

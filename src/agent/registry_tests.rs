@@ -405,8 +405,9 @@ fn list_all_capabilities_lists_installed_sorted() {
 #[test]
 fn resolve_capabilities_passthrough_when_none_declared() {
 	let raw = "[[roles]]\nname = \"x\"\n";
-	let out =
+	let (out, deps) =
 		resolve_capabilities(raw, Path::new("/nonexistent-tap"), &HashMap::new()).expect("resolve");
+	assert!(deps.is_empty());
 	assert_eq!(out, raw);
 }
 
@@ -431,7 +432,7 @@ fn resolve_capabilities_merges_and_strips_capabilities() {
 	);
 
 	let raw = "capabilities = [\"dep-cap\"]\n\n[[roles]]\nname = \"devtool:helper\"\n\n[roles.mcp]\nserver_refs = [\"existing\"]\nallowed_tools = []\n\n[[mcp.servers]]\nname = \"agent-srv\"\n\n[deps]\nrequire = [\"cargo\"]\n";
-	let out = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
+	let (out, _deps) = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
 	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
 
 	assert!(
@@ -481,7 +482,7 @@ fn resolve_capabilities_dedupes_servers_by_name() {
 	);
 
 	let raw = "capabilities = [\"dep-cap\"]\n\n[[mcp.servers]]\nname = \"agent-srv\"\n";
-	let out = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
+	let (out, _deps) = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
 	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
 	let servers = value["mcp"]["servers"].as_array().expect("servers");
 	assert_eq!(
@@ -489,6 +490,39 @@ fn resolve_capabilities_dedupes_servers_by_name() {
 		1,
 		"same-name capability server not duplicated"
 	);
+}
+
+#[test]
+fn resolve_capabilities_rejects_unknown_tap_prefix() {
+	let err = resolve_capabilities(
+		"capabilities = [\"acme/thing\"]\n",
+		Path::new("/nonexistent"),
+		&HashMap::new(),
+	)
+	.expect_err("must fail");
+	assert!(err.to_string().contains("No connected tap for prefix"));
+}
+
+#[test]
+fn resolve_capabilities_pairs_each_dep_with_its_own_tap() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_file(
+		&tmp.path()
+			.join("capabilities")
+			.join("dep-cap")
+			.join("default.toml"),
+		"[deps]\nrequire = [\"kubectl\"]\n",
+	);
+
+	let raw = "capabilities = [\"dep-cap\"]\n\n[deps]\nrequire = [\"cargo\"]\n";
+	let (_out, deps) = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
+
+	// Both roots are this tap here, but each dep carries its own — that is what
+	// lets a capability reached through `octomind/` point somewhere else.
+	assert_eq!(deps.len(), 2);
+	assert_eq!(deps[0].0, "cargo");
+	assert_eq!(deps[1].0, "kubectl");
+	assert!(deps.iter().all(|(_, root)| root == tmp.path()));
 }
 
 #[test]

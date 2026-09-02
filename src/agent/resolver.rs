@@ -49,14 +49,23 @@ pub async fn resolve_config_and_role(
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
 		// Resolve capabilities before input/env/dep resolution
-		let resolved_toml =
+		let (resolved_toml, dep_entries) =
 			registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
 				.context("Failed to resolve agent capabilities")?;
 		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
 		let resolved_toml = inputs::resolve_inputs(&resolved_toml).await?;
 		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
-		// Run dep scripts before MCP init — idempotent, exit 0 if already installed
-		deps::resolve_deps(&resolved_toml, &tap_root, status_cb).await?;
+		// Run dep scripts before MCP init — idempotent, exit 0 if already installed.
+		// Grouped by owning tap: a capability reached through the `octomind/`
+		// prefix keeps its dep scripts in the baseline tap, not the agent's.
+		let mut deps_by_root: std::collections::HashMap<std::path::PathBuf, Vec<String>> =
+			std::collections::HashMap::new();
+		for (entry, root) in dep_entries {
+			deps_by_root.entry(root).or_default().push(entry);
+		}
+		for (root, entries) in deps_by_root {
+			deps::run_dep_entries(&entries, &root, status_cb).await?;
+		}
 		// Always inject the tag as the role name — manifests never need to declare it.
 		let tagged_toml = inject_role_name(&resolved_toml, tag)
 			.context("Failed to inject role name into agent manifest")?;

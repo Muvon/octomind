@@ -718,11 +718,115 @@ pub fn list_all_capabilities(
 	Ok(resolved)
 }
 
+/// Prefix that points a capability reference at the built-in baseline tap.
+/// Named for the tap's own identity, not the org that hosts it — the tap is
+/// `octomind`, regardless of which GitHub account `DEFAULT_TAP` lives under.
+pub const BASELINE_TAP_PREFIX: &str = "octomind";
+
+/// Locate a capability reference: `(provider file, owning tap root)`.
+///
+/// - `memory-read` — searched across taps, agent's own first, then tap order,
+///   first hit wins. Same rule `fetch_manifest` uses for agent tags, so a tap
+///   can pull in capabilities it doesn't ship itself.
+/// - `octomind/memory-read` — pinned to the baseline tap, no search.
+/// - `acme/memory-read` — pinned to the connected tap named `acme/<repo>`. Taps
+///   are addressed by their org segment; if an org has several, the first wins.
+///
+/// Pinning exists because search means a third-party tap shipping its own
+/// `core` would otherwise shadow the baseline for someone else's agent.
+///
+/// The owning root is returned alongside the file, not just the file, because
+/// the capability's `[deps] require` scripts live in *its* tap — resolving them
+/// against the agent's tap is how a cross-tap capability breaks at dep time.
+fn capability_source(
+	cap_ref: &str,
+	agent_tap_root: &Path,
+	overrides: &HashMap<String, String>,
+) -> Result<(PathBuf, PathBuf)> {
+	// Overrides are keyed by bare capability name — a provider swap applies to
+	// the capability, not to the tap it was reached through.
+	let provider_file = |name: &str| {
+		format!(
+			"{}.toml",
+			overrides.get(name).map(|s| s.as_str()).unwrap_or("default")
+		)
+	};
+	let candidate = |root: &Path, name: &str| {
+		root.join("capabilities")
+			.join(name)
+			.join(provider_file(name))
+	};
+
+	let Some((prefix, name)) = cap_ref.split_once('/') else {
+		// Unprefixed: agent's own tap first so a tap always wins for its own
+		// agents, then every other connected tap in order.
+		let own = candidate(agent_tap_root, cap_ref);
+		if own.exists() {
+			return Ok((own, agent_tap_root.to_path_buf()));
+		}
+		let taps = crate::agent::taps::get_taps()
+			.context("Failed to load taps for capability resolution")?;
+		for tap in &taps {
+			let Ok(root) = tap.local_dir() else { continue };
+			let path = candidate(&root, cap_ref);
+			if path.exists() {
+				return Ok((path, root));
+			}
+		}
+		anyhow::bail!(
+			"Capability file not found: {} (looked in {} and {} connected tap(s))",
+			cap_ref,
+			own.display(),
+			taps.len()
+		);
+	};
+
+	if name.is_empty() {
+		anyhow::bail!("Capability reference '{cap_ref}' has an empty name after '{prefix}/'");
+	}
+
+	let root = if prefix == BASELINE_TAP_PREFIX {
+		crate::agent::taps::Tap {
+			name: crate::agent::taps::DEFAULT_TAP.to_string(),
+			local_path: None,
+		}
+		.local_dir()
+		.context("Failed to locate the baseline tap")?
+	} else {
+		let taps = crate::agent::taps::get_taps()
+			.context("Failed to load taps for capability resolution")?;
+		taps.iter()
+			.find(|tap| tap.name.split('/').next() == Some(prefix))
+			.map(|tap| tap.local_dir())
+			.transpose()?
+			.ok_or_else(|| {
+				anyhow::anyhow!(
+					"No connected tap for prefix '{prefix}/' in '{cap_ref}' — \
+					 use a bare name to search every tap, '{BASELINE_TAP_PREFIX}/' for the \
+					 baseline tap, or add the tap with `octomind tap {prefix}/<repo>`"
+				)
+			})?
+	};
+
+	let path = candidate(&root, name);
+	if !path.exists() {
+		anyhow::bail!(
+			"Capability file not found: {} (pinned to {}, looked in {})",
+			cap_ref,
+			prefix,
+			path.display()
+		);
+	}
+	Ok((path, root))
+}
+
 /// Resolve `capabilities = [...]` declared in an agent manifest.
 ///
-/// For each capability name, loads `<tap_root>/capabilities/<name>/<provider>.toml`
-/// where `<provider>` comes from the user's `[capabilities]` config overrides,
-/// falling back to `"default"` when not overridden.
+/// Each entry is either `<name>` (this agent's tap) or `octomind/<name>` (the
+/// baseline tap) — see `capability_source`. The file loaded is
+/// `<owning tap>/capabilities/<name>/<provider>.toml`, where `<provider>`
+/// comes from the user's `[capabilities]` config overrides, falling back to
+/// `"default"` when not overridden.
 ///
 /// Merges into the agent TOML:
 /// - `[deps] require` → union
@@ -731,13 +835,30 @@ pub fn list_all_capabilities(
 /// - `[[mcp.servers]]` blocks → append (deduplicated by name)
 ///
 /// Strips the `capabilities = [...]` line from the output.
+///
+/// Returns the rewritten TOML plus every dep entry paired with the tap root it
+/// must run against. Callers must use those pairs rather than re-parsing
+/// `[deps] require` from the output, which no longer records where each dep
+/// came from.
 pub fn resolve_capabilities(
 	raw_toml: &str,
 	tap_root: &Path,
 	overrides: &HashMap<String, String>,
-) -> Result<String> {
+) -> Result<(String, Vec<(String, PathBuf)>)> {
 	let mut value: toml::Value =
 		toml::from_str(raw_toml).context("Failed to parse agent manifest TOML")?;
+
+	// Deps declared by the agent itself always belong to the agent's own tap.
+	let own_deps: Vec<(String, PathBuf)> = value
+		.get("deps")
+		.and_then(|d| d.get("require"))
+		.and_then(|r| r.as_array())
+		.map(|arr| {
+			arr.iter()
+				.filter_map(|v| v.as_str().map(|s| (s.to_string(), tap_root.to_path_buf())))
+				.collect()
+		})
+		.unwrap_or_default();
 
 	// Extract and remove capabilities list
 	let cap_names: Vec<String> = match value.get("capabilities") {
@@ -745,14 +866,14 @@ pub fn resolve_capabilities(
 			.iter()
 			.filter_map(|v| v.as_str().map(String::from))
 			.collect(),
-		_ => return Ok(raw_toml.to_string()), // No capabilities declared — pass through
+		_ => return Ok((raw_toml.to_string(), own_deps)), // No capabilities declared — pass through
 	};
 	if let toml::Value::Table(t) = &mut value {
 		t.remove("capabilities");
 	}
 
 	// Collect merged values from all capability files
-	let mut all_deps: Vec<String> = Vec::new();
+	let mut all_deps: Vec<(String, PathBuf)> = own_deps;
 	let mut all_server_refs: Vec<String> = Vec::new();
 	let mut all_allowed_tools: Vec<String> = Vec::new();
 	let mut all_mcp_servers: Vec<toml::Value> = Vec::new();
@@ -771,23 +892,8 @@ pub fn resolve_capabilities(
 		}
 	}
 
-	for cap_name in &cap_names {
-		let provider = overrides
-			.get(cap_name)
-			.map(|s| s.as_str())
-			.unwrap_or("default");
-		let cap_path = tap_root
-			.join("capabilities")
-			.join(cap_name)
-			.join(format!("{provider}.toml"));
-
-		if !cap_path.exists() {
-			anyhow::bail!(
-				"Capability file not found: {} (looked in {})",
-				cap_name,
-				cap_path.display()
-			);
-		}
+	for cap_ref in &cap_names {
+		let (cap_path, cap_root) = capability_source(cap_ref, tap_root, overrides)?;
 
 		let cap_str = fs::read_to_string(&cap_path)
 			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;
@@ -802,8 +908,8 @@ pub fn resolve_capabilities(
 		{
 			for d in deps {
 				if let Some(s) = d.as_str() {
-					if !all_deps.contains(&s.to_string()) {
-						all_deps.push(s.to_string());
+					if !all_deps.iter().any(|(name, _)| name == s) {
+						all_deps.push((s.to_string(), cap_root.clone()));
 					}
 				}
 			}
@@ -856,25 +962,11 @@ pub fn resolve_capabilities(
 		}
 	}
 
-	// Merge deps into agent value
+	// Merge deps into agent value. `all_deps` is already seeded with the
+	// agent's own deps, so this is the full set — the per-dep tap root is
+	// dropped here and returned separately.
 	if !all_deps.is_empty() {
-		let existing_deps: Vec<String> = value
-			.get("deps")
-			.and_then(|d| d.get("require"))
-			.and_then(|r| r.as_array())
-			.map(|arr| {
-				arr.iter()
-					.filter_map(|v| v.as_str().map(String::from))
-					.collect()
-			})
-			.unwrap_or_default();
-
-		let mut merged = existing_deps;
-		for d in all_deps {
-			if !merged.contains(&d) {
-				merged.push(d);
-			}
-		}
+		let merged: Vec<String> = all_deps.iter().map(|(name, _)| name.clone()).collect();
 
 		let deps_table = value
 			.as_table_mut()
@@ -924,8 +1016,9 @@ pub fn resolve_capabilities(
 		}
 	}
 
-	toml::to_string(&value)
-		.context("Failed to re-serialize agent manifest after capability resolution")
+	let rendered = toml::to_string(&value)
+		.context("Failed to re-serialize agent manifest after capability resolution")?;
+	Ok((rendered, all_deps))
 }
 
 /// Merge a list of strings into an existing TOML array field, deduplicating.

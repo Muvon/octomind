@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.49.0] - 2026-09-02
+
+### 📋 Release Summary
+
+Capabilities are now resolved across taps, with improved handling of tap-scoped capabilities (999204cc, c7fa918e). Several fixes improve recall context preservation, cache frontier and TTL behavior, and Windows test and script reliability (b17c9f6b, beb629f8, c0925e33), while runtime documentation has been aligned (a1455833).
+
+
+### 🚨 Breaking Changes
+
+⚠️ **Important**: This release contains breaking changes that may require code updates.
+
+- **agent**: resolve capabilities across taps `999204cc`
+
+### 🔧 Improvements & Optimizations
+
+- **agent**: resolve tap-scoped capabilities `c7fa918e`
+
+### 🐛 Bug Fixes & Stability
+
+- **compression**: preserve recall context `b17c9f6b`
+- **cache**: preserve frontier and clear stale TTLs `beb629f8`
+- **windows**: improve test and script reliability `c0925e33`
+
+### 📚 Documentation & Examples
+
+- align runtime documentation `a1455833`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.48.0] - 2026-08-31
 
 ### 📋 Release Summary

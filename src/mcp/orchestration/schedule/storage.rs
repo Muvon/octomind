@@ -392,13 +392,15 @@ fn parse_time_of_day(s: &str) -> Result<DateTime<Local>> {
 
 /// Parse time strings: `"15:30"`, `"15:30:00"`, `"3:30pm"`, `"9am"`.
 fn parse_naive_time(s: &str) -> Result<NaiveTime> {
-	// Strip am/pm suffix.
-	let (s, pm) = if let Some(stripped) = s.strip_suffix("pm") {
-		(stripped, true)
+	// Strip am/pm suffix. Bare input is 24-hour time — the 12am/12pm special
+	// cases must only apply when a meridiem was actually written, or "12:43"
+	// silently becomes 00:43.
+	let (s, meridiem) = if let Some(stripped) = s.strip_suffix("pm") {
+		(stripped, Some(true))
 	} else if let Some(stripped) = s.strip_suffix("am") {
-		(stripped, false)
+		(stripped, Some(false))
 	} else {
-		(s, false)
+		(s, None)
 	};
 
 	let parts: Vec<&str> = s.split(':').collect();
@@ -409,11 +411,11 @@ fn parse_naive_time(s: &str) -> Result<NaiveTime> {
 	let minute: u32 = parts.get(1).unwrap_or(&"0").parse()?;
 	let second: u32 = parts.get(2).unwrap_or(&"0").parse()?;
 
-	if pm && hour != 12 {
-		hour += 12;
-	} else if !pm && hour == 12 {
+	match meridiem {
+		Some(true) if hour != 12 => hour += 12,
 		// 12am = midnight
-		hour = 0;
+		Some(false) if hour == 12 => hour = 0,
+		_ => {}
 	}
 
 	NaiveTime::from_hms_opt(hour, minute, second)

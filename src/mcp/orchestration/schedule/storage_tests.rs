@@ -343,6 +343,12 @@ fn parse_when_accepts_am_pm_seconds_and_midnight_forms() {
 		(with_secs.hour(), with_secs.minute(), with_secs.second()),
 		(15, 30, 45)
 	);
+
+	// Bare 24-hour input in the 12:xx hour must stay noon — the 12am rule
+	// applies only when a meridiem was written (regression: "12:43" → 00:43).
+	let noonish = parse_when("12:43").unwrap();
+	assert_eq!((noonish.hour(), noonish.minute()), (12, 43));
+	assert_eq!(parse_when("12pm").unwrap().hour(), 12, "12pm is noon");
 }
 
 #[test]

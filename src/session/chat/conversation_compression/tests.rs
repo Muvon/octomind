@@ -2757,6 +2757,7 @@ fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldCo
 		last_user_message: None,
 		previous_assistant_response: None,
 		preserved_skills: Vec::new(),
+		recalled_context: Vec::new(),
 		pact: None,
 		preserve_recent_user_bridge: false,
 		started: std::time::Instant::now(),

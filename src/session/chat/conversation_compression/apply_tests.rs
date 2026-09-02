@@ -280,6 +280,189 @@ fn plain_message(role: &str, content: &str) -> crate::session::Message {
 	}
 }
 
+fn recall_result(content: &str) -> crate::session::Message {
+	crate::session::Message {
+		role: "tool".to_string(),
+		content: content.to_string(),
+		name: Some(crate::mcp::core::recall::RECALL_TOOL_NAME.to_string()),
+		tool_call_id: Some("call-recall".to_string()),
+		..Default::default()
+	}
+}
+
+#[test]
+fn recall_grace_window_keeps_only_fresh_recalls_in_order() {
+	let messages = vec![
+		plain_message("system", "system"),
+		plain_message("assistant", "s1"),
+		recall_result("block-old"), // 4 assistant steps follow → stale
+		plain_message("assistant", "s2"),
+		recall_result("block-fresh"), // exactly 3 steps follow → pinned
+		plain_message("assistant", "s3"),
+		recall_result("block-newest"), // 2 steps follow → pinned
+		plain_message("assistant", "s4"),
+		plain_message("assistant", "s5"),
+	];
+
+	let pinned = collect_recent_recall_context(&messages, 1, 8);
+	assert_eq!(pinned, vec!["block-fresh", "block-newest"]);
+}
+
+#[test]
+fn recall_grace_window_ages_drained_recalls_by_the_preserved_tail() {
+	let messages = vec![
+		plain_message("system", "system"),
+		plain_message("assistant", "s1"),
+		recall_result("block-old"), // s2 + 3 tail steps → stale
+		plain_message("assistant", "s2"),
+		recall_result("block-fresh"), // 3 tail steps → pinned
+		plain_message("assistant", "s3"),
+		plain_message("assistant", "s4"),
+		plain_message("assistant", "s5"),
+	];
+
+	// Drain range ends before the live tail; tail steps still count as age.
+	let pinned = collect_recent_recall_context(&messages, 1, 4);
+	assert_eq!(pinned, vec!["block-fresh"]);
+}
+
+#[test]
+fn recall_grace_window_dedupes_repeated_recalls() {
+	let messages = vec![
+		plain_message("system", "system"),
+		recall_result("same block"),
+		plain_message("assistant", "s1"),
+		recall_result("same block"),
+		plain_message("assistant", "s2"),
+	];
+
+	let pinned = collect_recent_recall_context(&messages, 1, 4);
+	assert_eq!(pinned, vec!["same block"]);
+}
+
+/// Grow a distinct-word body until the live tokenizer prices it at or above
+/// `target_tokens` — keeps the budget assertions independent of BPE specifics.
+fn entry_with_tokens(prefix: &str, target_tokens: usize) -> String {
+	let mut body = String::from(prefix);
+	let mut i = 0usize;
+	while crate::session::estimate_tokens(&body) < target_tokens {
+		for _ in 0..200 {
+			body.push_str(&format!(" w{i}"));
+			i += 1;
+		}
+	}
+	body
+}
+
+#[test]
+fn recall_grace_window_budget_prefers_newest_and_drops_whole_entries() {
+	// Newest-first admission: the newest ~5k-token entry fits the 8k budget,
+	// the older ~5k entry exceeds the remainder and is dropped whole, and an
+	// entry alone over the full budget is never admitted.
+	let oversized = entry_with_tokens("Z", 9_000);
+	let big_a = entry_with_tokens("A", 5_000);
+	let big_b = entry_with_tokens("B", 5_000);
+	let messages = vec![
+		plain_message("system", "system"),
+		recall_result(&oversized),
+		recall_result(&big_a),
+		recall_result(&big_b),
+		plain_message("assistant", "s1"),
+	];
+
+	let pinned = collect_recent_recall_context(&messages, 1, 4);
+	assert_eq!(pinned.len(), 1, "only the newest entry fits the budget");
+	assert!(pinned[0].starts_with('B'));
+}
+
+#[test]
+fn recall_grace_window_ignores_other_tools_and_invalid_ranges() {
+	let mut shell = recall_result("shell output");
+	shell.name = Some("shell".to_string());
+	let mut unnamed = recall_result("anonymous");
+	unnamed.name = None;
+	let messages = vec![
+		plain_message("system", "system"),
+		shell,
+		unnamed,
+		recall_result("   "),
+		plain_message("assistant", "s1"),
+	];
+
+	assert!(collect_recent_recall_context(&messages, 1, 4).is_empty());
+	assert!(
+		collect_recent_recall_context(&messages, 1, 99).is_empty(),
+		"out-of-bounds range must be a no-op"
+	);
+	assert!(
+		collect_recent_recall_context(&messages, 4, 1).is_empty(),
+		"inverted range must be a no-op"
+	);
+}
+
+#[tokio::test]
+async fn apply_compression_pins_recalled_context_into_the_summary() {
+	let config = default_config();
+	let mut session = drained_session("apply-recall-unit");
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "finish parser tests".to_string(),
+		..Default::default()
+	};
+	apply_compression(
+		&mut session,
+		0,
+		4,
+		&summary,
+		500,
+		600,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		vec!["archived block b:1a2b verbatim".to_string()],
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply compression with recalled context");
+
+	let summary_message = &session.session.messages[1];
+	assert!(summary_message.content.contains("<recalled_context>"));
+	assert!(summary_message
+		.content
+		.contains("archived block b:1a2b verbatim"));
+
+	// Empty pin set injects no section at all.
+	let mut plain = drained_session("apply-recall-empty-unit");
+	apply_compression(
+		&mut plain,
+		0,
+		4,
+		&summary,
+		500,
+		600,
+		Vec::new(),
+		None,
+		None,
+		Vec::new(),
+		Vec::new(),
+		&config,
+		None,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("apply compression without recalled context");
+	assert!(!plain.session.messages[1]
+		.content
+		.contains("<recalled_context>"));
+}
+
 fn drained_session(name: &str) -> ChatSession {
 	let mut session = ChatSession::for_tests(vec![
 		plain_message("system", "system prompt"),
@@ -340,6 +523,7 @@ async fn apply_compression_validates_clamps_and_budget_drops_file_contexts() {
 		vec!["fix the parser".to_string()],
 		None,
 		None,
+		Vec::new(),
 		Vec::new(),
 		&config,
 		None,
@@ -403,6 +587,7 @@ async fn apply_compression_pact_live_renders_pact_entry_and_skips_legacy_folds()
 		None,
 		None,
 		Vec::new(),
+		Vec::new(),
 		&config,
 		Some(&pact),
 		None,
@@ -454,6 +639,7 @@ async fn apply_compression_reinserts_preserved_skills_between_anchor_and_summary
 		None,
 		None,
 		vec![skill],
+		Vec::new(),
 		&config,
 		None,
 		None,
@@ -502,6 +688,7 @@ async fn apply_compression_seeds_intent_from_anchor_request_or_free_form_fallbac
 		None,
 		None,
 		Vec::new(),
+		Vec::new(),
 		&config,
 		None,
 		None,
@@ -532,6 +719,7 @@ async fn apply_compression_seeds_intent_from_anchor_request_or_free_form_fallbac
 		None,
 		None,
 		Vec::new(),
+		Vec::new(),
 		&config,
 		None,
 		None,
@@ -559,6 +747,7 @@ async fn apply_compression_seeds_intent_from_anchor_request_or_free_form_fallbac
 		Vec::new(),
 		None,
 		None,
+		Vec::new(),
 		Vec::new(),
 		&config,
 		None,
@@ -596,6 +785,7 @@ async fn apply_compression_reports_growth_when_summary_outweighs_drain() {
 		None,
 		None,
 		Vec::new(),
+		Vec::new(),
 		&config,
 		None,
 		None,
@@ -627,6 +817,7 @@ async fn apply_compression_with_tail_bridge_keeps_exchange_without_wrapper() {
 		Vec::new(),
 		None,
 		None,
+		Vec::new(),
 		Vec::new(),
 		&config,
 		None,
@@ -707,6 +898,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 			Vec::new(),
 			None,
 			None,
+			Vec::new(),
 			Vec::new(),
 			&config,
 			None,

@@ -43,6 +43,18 @@ const MAX_FILE_CONTEXT_TOKENS: usize = 8_000;
 /// requested range.
 const MAX_FILE_CONTEXT_ENTRY_LINES: usize = 400;
 
+/// Recall grace window: a `recall` tool result stays pinned live across
+/// compression for this many further model steps (assistant messages). A
+/// recall is the strongest relevance signal there is — the model explicitly
+/// asked for that block for the CURRENT step; folding it away forces a paid
+/// re-recall or a guess (arXiv 2608.00902: compaction decisions made before
+/// the query is known are the ones that hurt). After the window the pin
+/// expires — the archive copy stays addressable as usual.
+const RECALL_GRACE_STEPS: usize = 3;
+/// Ceiling on re-injected recall payloads, mirroring MAX_FILE_CONTEXT_TOKENS:
+/// the injection must always be small next to what compression drains.
+const MAX_RECALL_CONTEXT_TOKENS: usize = 8_000;
+
 /// `Message::name` carried by every compression summary inserted into the
 /// conversation — this module's conversation summaries and the task summaries
 /// from `mcp/core/plan/compression.rs` alike. Structural, so detection never
@@ -306,6 +318,7 @@ pub(super) async fn apply_compression(
 	last_user_message: Option<crate::session::Message>,
 	previous_assistant_response: Option<String>,
 	preserved_skills: Vec<crate::session::Message>,
+	recalled_context: Vec<String>,
 	config: &crate::config::Config,
 	pact: Option<&super::attention::PactContext>,
 	pact_validation: Option<&super::attention::ValidationReport>,
@@ -554,6 +567,24 @@ pub(super) async fn apply_compression(
 			compressed_entry, state
 		),
 		None => compressed_entry,
+	};
+
+	// Recall grace window: archive blocks the model explicitly retrieved within
+	// the last few steps are still load-bearing for the current step — folding
+	// them away forces a paid re-recall or a guess. Re-injected verbatim,
+	// budget-capped in collect_recent_recall_context. Absence → no section.
+	let compressed_entry = if recalled_context.is_empty() {
+		compressed_entry
+	} else {
+		crate::log_debug!(
+			"Compression: pinned {} recently recalled block(s) through the fold",
+			recalled_context.len()
+		);
+		format!(
+			"{}\n\nRecently recalled archive content (you retrieved this within the last few steps — it is still current for the active task; do NOT call recall again for it):\n<recalled_context>\n{}\n</recalled_context>",
+			compressed_entry,
+			recalled_context.join("\n---\n")
+		)
 	};
 
 	// COMPRESS-ALL: Drain everything from start_idx+1 to end_idx
@@ -840,6 +871,63 @@ pub(super) async fn apply_compression(
 	);
 
 	Ok(())
+}
+
+/// Collect the bodies of `recall` tool results inside the drain range that are
+/// still within the grace window, newest first by admission, returned in
+/// chronological order. Deduped on content (the model re-recalls the same
+/// block); whole entries are dropped when over the token budget, never
+/// truncated — walking newest→oldest makes the freshest recalls win the
+/// budget. Age is counted in assistant messages over the WHOLE transcript so
+/// the preserved live tail ages drained recalls honestly.
+pub(super) fn collect_recent_recall_context(
+	messages: &[crate::session::Message],
+	range_start: usize,
+	range_end: usize,
+) -> Vec<String> {
+	if range_start > range_end || range_end >= messages.len() {
+		return Vec::new();
+	}
+
+	let mut steps_after = messages[range_end + 1..]
+		.iter()
+		.filter(|message| message.role == "assistant")
+		.count();
+	let mut budget = MAX_RECALL_CONTEXT_TOKENS;
+	let mut collected: Vec<String> = Vec::new();
+
+	for message in messages[range_start..=range_end].iter().rev() {
+		if message.role == "assistant" {
+			steps_after += 1;
+			if steps_after > RECALL_GRACE_STEPS {
+				break; // everything earlier is older still
+			}
+			continue;
+		}
+		if message.role != "tool"
+			|| message.name.as_deref() != Some(crate::mcp::core::recall::RECALL_TOOL_NAME)
+		{
+			continue;
+		}
+		let body = message.content.trim();
+		if body.is_empty() || collected.iter().any(|entry| entry == body) {
+			continue;
+		}
+		let cost = crate::session::estimate_tokens(body);
+		if cost > budget {
+			crate::log_debug!(
+				"Compression: dropped recalled block from grace window — {} tokens over remaining budget {}",
+				cost,
+				budget
+			);
+			continue;
+		}
+		budget -= cost;
+		collected.push(body.to_string());
+	}
+
+	collected.reverse();
+	collected
 }
 
 /// Collect active skill messages from a compression drain range so they can be

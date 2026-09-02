@@ -45,7 +45,7 @@ mod schema;
 // Shared with the supervisor: recovery of JSON from a text body when the
 // provider does not enforce a response schema.
 pub(crate) use ai::extract_json_lenient;
-use apply::{apply_compression, collect_preserved_skills};
+use apply::{apply_compression, collect_preserved_skills, collect_recent_recall_context};
 use decision::{
 	adaptive_fire_line, at_turn_boundary, autonomous_runway, ceiling_reached, compression_depth,
 	context_ceiling, expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
@@ -292,6 +292,7 @@ struct FoldContext {
 	last_user_message: Option<crate::session::Message>,
 	previous_assistant_response: Option<String>,
 	preserved_skills: Vec<crate::session::Message>,
+	recalled_context: Vec<String>,
 	pact: Option<attention::PactContext>,
 	preserve_recent_user_bridge: bool,
 	started: std::time::Instant,
@@ -496,6 +497,7 @@ async fn finish_fold(
 		ctx.last_user_message,
 		ctx.previous_assistant_response,
 		ctx.preserved_skills,
+		ctx.recalled_context,
 		config,
 		ctx.pact.as_ref(),
 		pact_validation.as_ref(),
@@ -700,6 +702,15 @@ pub async fn check_and_compress_conversation(
 		&skill_names_to_preserve,
 	);
 
+	// Recall grace window rides the same task-continuity gate as skills: an
+	// automatic fold continues the task, so freshly recalled blocks stay live;
+	// `/done` is a task boundary and pins nothing.
+	let recalled_context = if preserves_active_skills(trigger) {
+		collect_recent_recall_context(&session.session.messages, start_idx + 1, end_idx)
+	} else {
+		Vec::new()
+	};
+
 	// COMPRESS-ALL: Extract user messages BEFORE compression.
 	//
 	// Two paths feed user intent into the post-compression session:
@@ -872,6 +883,7 @@ pub async fn check_and_compress_conversation(
 		last_user_message,
 		previous_assistant_response,
 		preserved_skills,
+		recalled_context,
 		pact,
 		preserve_recent_user_bridge,
 		started: pact_started,

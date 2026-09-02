@@ -523,148 +523,128 @@ fn read_capability_config(cap_dir: &Path, cap_name: &str) -> Result<(Vec<String>
 
 /// Parse a capability and return its resolved components.
 ///
-/// Reads two files from the first tap that has them:
+/// `cap_ref` takes the same forms as `capabilities = [...]` in an agent
+/// manifest — bare name, `octomind/<name>` or `<org>/<name>` — resolved by
+/// `capability_source`. Reads two files from the owning tap:
 /// - `<tap>/capabilities/<name>/config.toml` — `triggers` (required)
 /// - `<tap>/capabilities/<name>/<provider>.toml` — provider wiring
 ///
-/// `<provider>` is taken from `config.capabilities` overrides, defaulting
-/// to `"default"`. Used at runtime when a skill declares `capabilities: [...]`
-/// or when `auto_activate_capabilities` flips a capability on.
+/// `<provider>` is taken from `config.capabilities` overrides (keyed by bare
+/// name), defaulting to `"default"`. Used at runtime when a skill declares
+/// `capabilities: [...]`, by `capability enable`, or when
+/// `auto_activate_capabilities` flips a capability on. The returned `name`
+/// is always the bare name.
 pub fn parse_capability_toml(
-	cap_name: &str,
+	cap_ref: &str,
 	overrides: &HashMap<String, String>,
 ) -> Result<ResolvedCapability> {
-	let taps =
-		crate::agent::taps::get_taps().context("Failed to load taps for capability resolution")?;
+	let (provider_path, tap_root) = capability_source(cap_ref, None, overrides)?;
+	let cap_name = capability_bare_name(cap_ref);
+	let cap_dir = provider_path
+		.parent()
+		.expect("provider file lives inside its capability directory");
 
-	let provider = overrides
-		.get(cap_name)
-		.map(|s| s.as_str())
-		.unwrap_or("default");
+	let (triggers, domains) = read_capability_config(cap_dir, cap_name)?;
 
-	for tap in &taps {
-		let tap_root = match tap.local_dir() {
-			Ok(d) => d,
-			Err(_) => continue,
-		};
-		let cap_dir = tap_root.join("capabilities").join(cap_name);
-		let provider_path = cap_dir.join(format!("{provider}.toml"));
+	let cap_str = fs::read_to_string(&provider_path)
+		.with_context(|| format!("Failed to read provider file: {}", provider_path.display()))?;
+	let cap: toml::Value = toml::from_str(&cap_str)
+		.with_context(|| format!("Failed to parse provider file: {}", provider_path.display()))?;
 
-		// Both files must exist for this tap to provide the capability.
-		if !cap_dir.is_dir() || !provider_path.exists() {
-			continue;
-		}
+	let mut resolved = ResolvedCapability {
+		name: cap_name.to_string(),
+		triggers,
+		domains,
+		deps: Vec::new(),
+		server_refs: Vec::new(),
+		allowed_tools: Vec::new(),
+		mcp_servers: Vec::new(),
+		required_env_keys: Vec::new(),
+		tap_root,
+	};
 
-		let (triggers, domains) = read_capability_config(&cap_dir, cap_name)?;
-
-		let cap_str = fs::read_to_string(&provider_path).with_context(|| {
-			format!("Failed to read provider file: {}", provider_path.display())
-		})?;
-		let cap: toml::Value = toml::from_str(&cap_str).with_context(|| {
-			format!("Failed to parse provider file: {}", provider_path.display())
-		})?;
-
-		let mut resolved = ResolvedCapability {
-			name: cap_name.to_string(),
-			triggers,
-			domains,
-			deps: Vec::new(),
-			server_refs: Vec::new(),
-			allowed_tools: Vec::new(),
-			mcp_servers: Vec::new(),
-			required_env_keys: Vec::new(),
-			tap_root: tap_root.clone(),
-		};
-
-		// [deps] require
-		if let Some(deps) = cap
-			.get("deps")
-			.and_then(|d| d.get("require"))
-			.and_then(|r| r.as_array())
-		{
-			resolved.deps = deps
-				.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect();
-		}
-
-		// [roles.mcp] server_refs
-		if let Some(refs) = cap
-			.get("roles")
-			.and_then(|r| r.get("mcp"))
-			.and_then(|m| m.get("server_refs"))
-			.and_then(|s| s.as_array())
-		{
-			resolved.server_refs = refs
-				.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect();
-		}
-
-		// [roles.mcp] allowed_tools
-		if let Some(tools) = cap
-			.get("roles")
-			.and_then(|r| r.get("mcp"))
-			.and_then(|m| m.get("allowed_tools"))
-			.and_then(|a| a.as_array())
-		{
-			resolved.allowed_tools = tools
-				.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect();
-		}
-
-		// [[mcp.servers]] blocks — deserialize into McpServerConfig
-		if let Some(servers) = cap
-			.get("mcp")
-			.and_then(|m| m.get("servers"))
-			.and_then(|s| s.as_array())
-		{
-			for server_val in servers {
-				let server_str = toml::to_string(server_val).unwrap_or_default();
-				match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
-					Ok(server_config) => {
-						// Collect {{ENV:KEY}} placeholders from the server's env
-						// and HTTP headers — these gate activation when unset.
-						if let Some(env) = server_config.env() {
-							for value in env.values() {
-								for key in crate::agent::inputs::extract_env_keys(value) {
-									if !resolved.required_env_keys.contains(&key) {
-										resolved.required_env_keys.push(key);
-									}
-								}
-							}
-						}
-						if let Some(headers) = server_config.headers() {
-							for value in headers.values() {
-								for key in crate::agent::inputs::extract_env_keys(value) {
-									if !resolved.required_env_keys.contains(&key) {
-										resolved.required_env_keys.push(key);
-									}
-								}
-							}
-						}
-						resolved.mcp_servers.push(server_config);
-					}
-					// Don't silently drop — a malformed block means the capability
-					// activates without the server it needs. Surface it.
-					Err(e) => crate::log_error!(
-						"Capability '{}': skipping malformed [[mcp.servers]] block: {}",
-						cap_name,
-						e
-					),
-				}
-			}
-		}
-
-		return Ok(resolved);
+	// [deps] require
+	if let Some(deps) = cap
+		.get("deps")
+		.and_then(|d| d.get("require"))
+		.and_then(|r| r.as_array())
+	{
+		resolved.deps = deps
+			.iter()
+			.filter_map(|v| v.as_str().map(String::from))
+			.collect();
 	}
 
-	anyhow::bail!(
-		"Capability '{}' not found (provider: '{}') in any tap",
-		cap_name,
-		provider
-	)
+	// [roles.mcp] server_refs
+	if let Some(refs) = cap
+		.get("roles")
+		.and_then(|r| r.get("mcp"))
+		.and_then(|m| m.get("server_refs"))
+		.and_then(|s| s.as_array())
+	{
+		resolved.server_refs = refs
+			.iter()
+			.filter_map(|v| v.as_str().map(String::from))
+			.collect();
+	}
+
+	// [roles.mcp] allowed_tools
+	if let Some(tools) = cap
+		.get("roles")
+		.and_then(|r| r.get("mcp"))
+		.and_then(|m| m.get("allowed_tools"))
+		.and_then(|a| a.as_array())
+	{
+		resolved.allowed_tools = tools
+			.iter()
+			.filter_map(|v| v.as_str().map(String::from))
+			.collect();
+	}
+
+	// [[mcp.servers]] blocks — deserialize into McpServerConfig
+	if let Some(servers) = cap
+		.get("mcp")
+		.and_then(|m| m.get("servers"))
+		.and_then(|s| s.as_array())
+	{
+		for server_val in servers {
+			let server_str = toml::to_string(server_val).unwrap_or_default();
+			match toml::from_str::<crate::config::McpServerConfig>(&server_str) {
+				Ok(server_config) => {
+					// Collect {{ENV:KEY}} placeholders from the server's env
+					// and HTTP headers — these gate activation when unset.
+					if let Some(env) = server_config.env() {
+						for value in env.values() {
+							for key in crate::agent::inputs::extract_env_keys(value) {
+								if !resolved.required_env_keys.contains(&key) {
+									resolved.required_env_keys.push(key);
+								}
+							}
+						}
+					}
+					if let Some(headers) = server_config.headers() {
+						for value in headers.values() {
+							for key in crate::agent::inputs::extract_env_keys(value) {
+								if !resolved.required_env_keys.contains(&key) {
+									resolved.required_env_keys.push(key);
+								}
+							}
+						}
+					}
+					resolved.mcp_servers.push(server_config);
+				}
+				// Don't silently drop — a malformed block means the capability
+				// activates without the server it needs. Surface it.
+				Err(e) => crate::log_error!(
+					"Capability '{}': skipping malformed [[mcp.servers]] block: {}",
+					cap_name,
+					e
+				),
+			}
+		}
+	}
+
+	Ok(resolved)
 }
 
 /// Enumerate every capability installed across all configured taps.
@@ -723,11 +703,19 @@ pub fn list_all_capabilities(
 /// `octomind`, regardless of which GitHub account `DEFAULT_TAP` lives under.
 pub const BASELINE_TAP_PREFIX: &str = "octomind";
 
+/// The bare capability name behind a reference: `octomind/memory-read` and
+/// `memory-read` both name the capability `memory-read`. Provider overrides
+/// and the runtime active-capability registry are keyed by it.
+pub fn capability_bare_name(cap_ref: &str) -> &str {
+	cap_ref.split_once('/').map_or(cap_ref, |(_, name)| name)
+}
+
 /// Locate a capability reference: `(provider file, owning tap root)`.
 ///
-/// - `memory-read` — searched across taps, agent's own first, then tap order,
-///   first hit wins. Same rule `fetch_manifest` uses for agent tags, so a tap
-///   can pull in capabilities it doesn't ship itself.
+/// - `memory-read` — searched across taps in order, first hit wins; when
+///   expanding an agent manifest (`agent_tap_root`) its own tap goes first.
+///   Same rule `fetch_manifest` uses for agent tags, so a tap can pull in
+///   capabilities it doesn't ship itself.
 /// - `octomind/memory-read` — pinned to the baseline tap, no search.
 /// - `acme/memory-read` — pinned to the connected tap named `acme/<repo>`. Taps
 ///   are addressed by their org segment; if an org has several, the first wins.
@@ -735,12 +723,16 @@ pub const BASELINE_TAP_PREFIX: &str = "octomind";
 /// Pinning exists because search means a third-party tap shipping its own
 /// `core` would otherwise shadow the baseline for someone else's agent.
 ///
+/// Shared by manifest expansion (`resolve_capabilities`) and runtime
+/// activation (`parse_capability_toml`) so every entry point that names a
+/// capability accepts the same three forms.
+///
 /// The owning root is returned alongside the file, not just the file, because
 /// the capability's `[deps] require` scripts live in *its* tap — resolving them
 /// against the agent's tap is how a cross-tap capability breaks at dep time.
 fn capability_source(
 	cap_ref: &str,
-	agent_tap_root: &Path,
+	agent_tap_root: Option<&Path>,
 	overrides: &HashMap<String, String>,
 ) -> Result<(PathBuf, PathBuf)> {
 	// Overrides are keyed by bare capability name — a provider swap applies to
@@ -759,10 +751,12 @@ fn capability_source(
 
 	let Some((prefix, name)) = cap_ref.split_once('/') else {
 		// Unprefixed: agent's own tap first so a tap always wins for its own
-		// agents, then every other connected tap in order.
-		let own = candidate(agent_tap_root, cap_ref);
-		if own.exists() {
-			return Ok((own, agent_tap_root.to_path_buf()));
+		// agents, then every connected tap in order.
+		if let Some(own_root) = agent_tap_root {
+			let own = candidate(own_root, cap_ref);
+			if own.exists() {
+				return Ok((own, own_root.to_path_buf()));
+			}
 		}
 		let taps = crate::agent::taps::get_taps()
 			.context("Failed to load taps for capability resolution")?;
@@ -774,10 +768,11 @@ fn capability_source(
 			}
 		}
 		anyhow::bail!(
-			"Capability file not found: {} (looked in {} and {} connected tap(s))",
+			"Capability file not found: {} (searched {} connected tap(s) for capabilities/{}/{})",
 			cap_ref,
-			own.display(),
-			taps.len()
+			taps.len(),
+			cap_ref,
+			provider_file(cap_ref)
 		);
 	};
 
@@ -893,7 +888,7 @@ pub fn resolve_capabilities(
 	}
 
 	for cap_ref in &cap_names {
-		let (cap_path, cap_root) = capability_source(cap_ref, tap_root, overrides)?;
+		let (cap_path, cap_root) = capability_source(cap_ref, Some(tap_root), overrides)?;
 
 		let cap_str = fs::read_to_string(&cap_path)
 			.with_context(|| format!("Failed to read capability file: {}", cap_path.display()))?;

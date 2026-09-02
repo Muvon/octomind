@@ -262,7 +262,7 @@ Workflow: call list or discover to find the right capability, then enable to act
 				},
 				"name": {
 					"type": "string",
-					"description": "Capability name (required for enable and disable)"
+					"description": "Capability name (required for enable and disable). Bare name searches every tap; octomind/<name> pins the baseline tap, <org>/<name> a connected tap."
 				},
 				"intent": {
 					"type": "string",
@@ -423,7 +423,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		}
 	};
 
-	if is_active(&name) {
+	if is_active(crate::agent::registry::capability_bare_name(&name)) {
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -505,7 +505,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 				format!("Failed to install deps for capability '{name}': {e:#}"),
 			));
 		}
-		mark_active(&name, Vec::new());
+		mark_active(&resolved.name, Vec::new());
 		return Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -632,9 +632,9 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 	// Publish overlay entries so the next config merge picks up this
 	// capability's contributions to static servers' filters.
-	crate::config::runtime_overlay::set_capability_extras(&name, overlay_per_server);
+	crate::config::runtime_overlay::set_capability_extras(&resolved.name, overlay_per_server);
 
-	mark_active(&name, activated_server_tools);
+	mark_active(&resolved.name, activated_server_tools);
 
 	// Don't mislead the LLM with "Tools available: none" when no filter
 	// was applied — that path means "expose all server tools", and an
@@ -666,7 +666,9 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let name = match call.parameters.get("name").and_then(|v| v.as_str()) {
-		Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+		Some(n) if !n.trim().is_empty() => {
+			crate::agent::registry::capability_bare_name(n.trim()).to_string()
+		}
 		_ => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
@@ -1254,7 +1256,7 @@ pub(crate) fn check_env_readiness(required: &[String]) -> Result<(), Vec<String>
 
 /// or surface. Idempotent: returns `Ok(empty)` when already active.
 async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<String>> {
-	if is_active(name) {
+	if is_active(crate::agent::registry::capability_bare_name(name)) {
 		return Ok(Vec::new());
 	}
 	let resolved = crate::agent::registry::parse_capability_toml(name, &config.capabilities)?;
@@ -1280,7 +1282,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		crate::agent::deps::run_dep_entries(&resolved.deps, &resolved.tap_root, None)
 			.await
 			.with_context(|| format!("dep install failed for capability '{name}'"))?;
-		mark_active(name, Vec::new());
+		mark_active(&resolved.name, Vec::new());
 		return Ok(Vec::new());
 	}
 	// Make room before activating — drops the LRU active capability if
@@ -1329,8 +1331,8 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		activated_servers.push(server_name);
 	}
 
-	crate::config::runtime_overlay::set_capability_extras(name, overlay_per_server);
-	mark_active(name, activated_server_tools);
+	crate::config::runtime_overlay::set_capability_extras(&resolved.name, overlay_per_server);
+	mark_active(&resolved.name, activated_server_tools);
 	Ok(activated_servers)
 }
 

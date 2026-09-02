@@ -102,7 +102,7 @@ octomind run developer:general
 
 When you specify a tag containing `:`, Octomind runs the full resolution pipeline:
 1. **Fetch** the matching agent manifest from taps (first-wins; cached locally — see [Manifest Caching](#manifest-caching))
-2. **Expand capabilities** — any `capabilities = [...]` declared in the manifest are resolved and merged in
+2. **Expand capabilities** — any `capabilities = [...]` declared in the manifest are resolved and merged in (see [Referencing Capabilities](#referencing-capabilities))
 3. **Resolve placeholders** — `{{INPUT:KEY}}` (prompt once, cached) and `{{ENV:KEY}}` (env var, with `.env` fallback) are substituted (see [Manifest Placeholders](#manifest-placeholders))
 4. **Run dependency scripts** — any `[deps] require = [...]` scripts run before MCP init (see [Dependencies](#dependencies-deps))
 5. **Inject the tag** as the role name (`category:variant` becomes the role's `name`)
@@ -262,6 +262,16 @@ capabilities/
   - `triggers = [...]` — **required and non-empty**. Short phrases a user might write that activate the capability; they drive the deterministic auto-activation (semantic) routing layer. A capability with no `triggers` is rejected at load.
   - `domains = [...]` — optional. **Empty means universal** (available to every role). When non-empty, it hard-gates the capability to roles whose domain part matches (`developer:general` → `"developer"`). The gate applies everywhere — auto-activation, `capability list`/`discover`/`enable`, and `OCTOMIND_CAPABILITIES` — with no bypass.
 - **`<provider>.toml`** carries the provider-specific wiring: `[deps]`, `[roles.mcp]` `server_refs`/`allowed_tools`, and `[[mcp.servers]]`.
+
+### Referencing Capabilities
+
+Every place that names a capability — `capabilities = [...]` in an agent manifest, `capabilities: [...]` in skill frontmatter, `capability(action="enable", name=…)`, and `OCTOMIND_CAPABILITIES` — accepts the same three forms:
+
+- `codesearch` — searched across taps in order, first hit wins (an agent manifest tries its own tap first).
+- `octomind/codesearch` — pinned to the built-in baseline tap.
+- `acme/codesearch` — pinned to the connected tap whose name starts with `acme/`.
+
+Pinning matters when a third-party tap ships a capability under the same name as a baseline one: a bare reference resolves to whichever tap is listed first. A pinned capability's `[deps]` scripts run against its own tap, not the referencing agent's. Provider overrides (below) and the active-capability registry are keyed by the bare name, so `octomind/codesearch` and `codesearch` are the same capability once loaded.
 
 ### Provider Overrides
 

@@ -58,10 +58,14 @@ pub async fn resolve_config_and_role(
 		// Run dep scripts before MCP init — idempotent, exit 0 if already installed.
 		// Grouped by owning tap: a capability reached through the `octomind/`
 		// prefix keeps its dep scripts in the baseline tap, not the agent's.
-		let mut deps_by_root: std::collections::HashMap<std::path::PathBuf, Vec<String>> =
-			std::collections::HashMap::new();
+		// Groups keep declaration order (agent's own deps first) so installs
+		// run deterministically.
+		let mut deps_by_root: Vec<(std::path::PathBuf, Vec<String>)> = Vec::new();
 		for (entry, root) in dep_entries {
-			deps_by_root.entry(root).or_default().push(entry);
+			match deps_by_root.iter_mut().find(|(r, _)| *r == root) {
+				Some((_, entries)) => entries.push(entry),
+				None => deps_by_root.push((root, vec![entry])),
+			}
 		}
 		for (root, entries) in deps_by_root {
 			deps::run_dep_entries(&entries, &root, status_cb).await?;

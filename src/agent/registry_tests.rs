@@ -384,6 +384,42 @@ fn parse_capability_toml_provider_override_selects_file() {
 
 #[test]
 #[serial]
+fn parse_capability_toml_resolves_bare_baseline_and_org_prefixed_refs() {
+	let _guard = DataDirGuard::new();
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	let baseline = default_tap_dir();
+	let acme = user_tap_dir(&data_dir, "acme/tools");
+	install_taps_file(&data_dir, &[("acme/tools", Some(&acme))]);
+	for (root, trigger) in [(&baseline, "baseline search"), (&acme, "acme search")] {
+		let cap_dir = root.join("capabilities").join("codesearch");
+		write_file(
+			&cap_dir.join("config.toml"),
+			&format!("triggers = [\"{trigger}\"]\n"),
+		);
+		write_file(&cap_dir.join("default.toml"), "[deps]\n");
+	}
+
+	// Bare: user taps come before the baseline, so acme wins the search.
+	let bare = parse_capability_toml("codesearch", &HashMap::new()).expect("bare resolves");
+	assert_eq!(bare.tap_root, acme);
+	let pinned = parse_capability_toml("octomind/codesearch", &HashMap::new())
+		.expect("baseline prefix resolves");
+	assert_eq!(pinned.tap_root, baseline);
+	assert_eq!(pinned.triggers, vec!["baseline search".to_string()]);
+	let org =
+		parse_capability_toml("acme/codesearch", &HashMap::new()).expect("org prefix resolves");
+	assert_eq!(org.tap_root, acme);
+	assert_eq!(
+		org.name, "codesearch",
+		"resolved name is always the bare name"
+	);
+
+	let err = parse_capability_toml("ghost/codesearch", &HashMap::new()).expect_err("unknown org");
+	assert!(err.to_string().contains("No connected tap for prefix"));
+}
+
+#[test]
+#[serial]
 fn list_all_capabilities_lists_installed_sorted() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();

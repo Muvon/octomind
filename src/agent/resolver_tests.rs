@@ -71,7 +71,7 @@ impl Drop for ResolverDataDir {
 }
 
 /// Create the default tap tree with one agent manifest and a passing dep
-/// script, so `fetch_manifest`/`resolve_deps` work fully offline.
+/// script, so `fetch_manifest`/`run_dep_entries` work fully offline.
 fn install_default_tap_agent(data_dir: &std::path::Path, manifest: &str) {
 	let agents_dir = data_dir
 		.join("taps")

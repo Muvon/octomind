@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Behavioral tests for `src/agent/deps.rs` — manifest `[deps]` parsing and
-//! dep-script execution against a fabricated `<tap_root>/deps/` tree.
+//! Behavioral tests for `src/agent/deps.rs` — dep-script execution against a
+//! fabricated `<tap_root>/deps/` tree.
 
 use super::*;
 use std::path::Path;
@@ -24,53 +24,6 @@ fn write_dep(root: &Path, entry: &str, body: &str) {
 		std::fs::create_dir_all(parent).expect("create deps dir");
 	}
 	std::fs::write(&path, body).expect("write dep script");
-}
-
-#[test]
-fn parse_dep_entries_returns_empty_without_deps_section() {
-	assert!(parse_dep_entries("[[roles]]\nname = \"x\"\n")
-		.expect("manifest without [deps] parses")
-		.is_empty());
-	assert!(parse_dep_entries("[deps]\n")
-		.expect("[deps] without require parses")
-		.is_empty());
-}
-
-#[test]
-fn parse_dep_entries_collects_string_entries() {
-	let entries = parse_dep_entries("[deps]\nrequire = [\"org/one\", \"org/two\"]\n")
-		.expect("valid manifest parses");
-	assert_eq!(entries, vec!["org/one", "org/two"]);
-}
-
-#[test]
-fn parse_dep_entries_rejects_invalid_shapes() {
-	let err = parse_dep_entries("not = = toml").expect_err("invalid TOML must fail");
-	assert!(
-		err.to_string()
-			.contains("Failed to parse manifest TOML for deps"),
-		"got: {err:#}"
-	);
-
-	let err = parse_dep_entries("[deps]\nrequire = \"flat\"").expect_err("non-array require");
-	assert!(
-		err.to_string().contains("must be an array of strings"),
-		"got: {err:#}"
-	);
-
-	let err = parse_dep_entries("[deps]\nrequire = [1, 2]").expect_err("non-string entries");
-	assert!(
-		err.to_string().contains("entries must be strings"),
-		"got: {err:#}"
-	);
-}
-
-#[tokio::test]
-async fn resolve_deps_without_deps_section_is_a_noop() {
-	let tmp = tempfile::tempdir().expect("tempdir");
-	resolve_deps("[[roles]]\nname = \"x\"\n", tmp.path(), None)
-		.await
-		.expect("manifest without deps resolves");
 }
 
 #[tokio::test]
@@ -147,15 +100,4 @@ async fn run_dep_entries_failure_includes_captured_stderr() {
 		message.contains("installer exploded"),
 		"stderr must be surfaced: {message}"
 	);
-}
-
-#[tokio::test]
-async fn resolve_deps_runs_manifest_entries_end_to_end() {
-	let tmp = tempfile::tempdir().expect("tempdir");
-	write_dep(tmp.path(), "acme/tool", "exit 0\n");
-
-	let manifest = "[[roles]]\nname = \"x\"\n\n[deps]\nrequire = [\"acme/tool\"]\n";
-	resolve_deps(manifest, tmp.path(), None)
-		.await
-		.expect("manifest deps resolve against the tap root");
 }

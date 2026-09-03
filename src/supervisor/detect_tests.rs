@@ -460,6 +460,10 @@ fn write_capable_runner_still_verifies_on_read_only_commands() {
 	// declares readOnlyHint=false). Answering from that capability classified
 	// every build/test/validator run as a mutation — and those runs are the only
 	// thing that can clear the pre-gate, so nothing ever could.
+	//
+	// The fixture name carries an intent word ("Write") on purpose: a runner's
+	// identity says no more about the concrete call than its annotation does,
+	// and judging the call by either one reopens the same hole.
 	let runner = "detectTestsWriteCapableRunner";
 	register_tool_read_only_hint(runner, Some(false));
 	register_tool_command_shape(runner, true);

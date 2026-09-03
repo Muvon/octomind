@@ -370,7 +370,10 @@ fn normalize_path(path: &str) -> String {
 ///    concrete command.
 pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 	if executes_free_form_command(tool) {
-		return has_explicit_mutation_intent(tool, parameters);
+		// The command only. A runner's NAME describes the tool the same way its
+		// `readOnlyHint` does — `deploy_shell` running `ls` changes nothing — so
+		// neither can answer for the concrete call.
+		return command_intent_is_mutation(parameters);
 	}
 	if let Some(read_only) = tool_read_only_hint(tool) {
 		return !read_only;
@@ -383,9 +386,12 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 /// tool may be capable of writes while the concrete call is only gathering
 /// evidence, and classifying that read as a mutation would be a false positive.
 fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
-	if contains_mutation_intent(tool) {
-		return true;
-	}
+	contains_mutation_intent(tool) || command_intent_is_mutation(parameters)
+}
+
+/// Mutation intent carried by the call's own operation parameters, with the
+/// tool's identity left out of it.
+fn command_intent_is_mutation(parameters: &serde_json::Value) -> bool {
 	["command", "action", "operation"]
 		.iter()
 		.filter_map(|key| parameters.get(key).and_then(|value| value.as_str()))

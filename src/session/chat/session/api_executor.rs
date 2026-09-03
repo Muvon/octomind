@@ -572,22 +572,27 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
 	if config.supervisor.gate.enabled {
 		crate::log_debug!(
-			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={}",
+			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={} pending_async={}",
 			chat_session.last_self_report,
 			chat_session.gate_iterations,
 			crate::supervisor::gate::MAX_ITERATIONS,
 			chat_session.nudge_iterations,
 			chat_session
 				.detectors
-				.needs_verification(crate::supervisor::workdir::fingerprint())
+				.needs_verification(crate::supervisor::workdir::fingerprint()),
+			crate::session::has_pending_async_work()
 		);
 	}
 	// An explicit `done` self-report claims completion — and so does ending the
 	// turn with no status at all after having changed state: a token the model
 	// forgot must not become an unverified exit (observed: sessions ending with
 	// self_report=None skipped the whole gate). Pure answers (no mutations)
-	// stay ungated, in every mode alike.
+	// stay ungated, in every mode alike. A session-owned background job (or an
+	// unread inbox result) means the turn is a wait, not a completion claim: the
+	// inbox monitor resumes the agent when the result lands, and the gate judges
+	// that later turn instead of accusing this one of delivering a status line.
 	if config.supervisor.gate.enabled
+		&& !crate::session::has_pending_async_work()
 		&& claims_user_task_completion(
 			chat_session.completion_gate_eligible,
 			chat_session.last_self_report,

@@ -386,6 +386,8 @@ async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 	);
 
 	drop(service);
+	disconnect(&name);
+	super::super::process::cleanup_server_process(&name).ok();
 }
 
 // ---------------------------------------------------------------------------

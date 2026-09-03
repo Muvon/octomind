@@ -76,6 +76,15 @@ const HEADER_MAX_LINES: usize = 80;
 /// Default tool execution timeout if not overridden.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
+/// Spawn retries for `ETXTBSY`, and the pause between them. The kernel refuses
+/// to exec a file that any process still holds open for writing: a tool script
+/// written moments ago is exec-ready here, but a fork anywhere else in this
+/// process briefly inherits every open write descriptor until its own exec
+/// completes, and an exec landing inside that window fails. The window is
+/// sub-millisecond and clears on its own.
+const SPAWN_BUSY_RETRIES: u32 = 5;
+const SPAWN_BUSY_BACKOFF_MS: u64 = 20;
+
 #[derive(Debug, Clone)]
 pub struct LocalToolMeta {
 	pub name: String,
@@ -193,9 +202,30 @@ pub async fn execute(call: &McpToolCall) -> Result<McpToolResult> {
 	// otherwise a runaway tool process is orphaned and keeps running.
 	cmd.kill_on_drop(true);
 
-	let mut child = cmd
-		.spawn()
-		.map_err(|e| anyhow::anyhow!("spawn '{}' failed: {}", tool.path.display(), e))?;
+	let mut child = {
+		let mut attempt = 0;
+		loop {
+			match cmd.spawn() {
+				Ok(child) => break child,
+				Err(e)
+					if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+						&& attempt < SPAWN_BUSY_RETRIES =>
+				{
+					attempt += 1;
+					crate::log_debug!("local_tool: '{}' busy, spawn retry {}", tool.name, attempt);
+					tokio::time::sleep(std::time::Duration::from_millis(SPAWN_BUSY_BACKOFF_MS))
+						.await;
+				}
+				Err(e) => {
+					return Err(anyhow::anyhow!(
+						"spawn '{}' failed: {}",
+						tool.path.display(),
+						e
+					))
+				}
+			}
+		}
+	};
 
 	if let Some(mut stdin) = child.stdin.take() {
 		use tokio::io::AsyncWriteExt;

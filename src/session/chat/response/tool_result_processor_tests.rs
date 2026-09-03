@@ -444,3 +444,72 @@ async fn test_process_tool_results_follow_up_error_propagates() {
 		"provider failure must propagate to the caller"
 	);
 }
+
+#[tokio::test]
+async fn test_process_tool_results_delivers_background_results_mid_turn() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::final_response("acked"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let session_id = "tool-result-inbox-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::BackgroundJob {
+				id: "80551-17".to_string(),
+			},
+			content: "<background_job>exit 0</background_job>".to_string(),
+		});
+		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+			source: crate::session::inbox::InboxSource::Inject,
+			content: "a new user request".to_string(),
+		});
+
+		let config = crate::session::chat::test_support::fake_provider_config();
+		let mut session = crate::session::chat::test_support::fake_session("do the work");
+		let results = vec![crate::mcp::McpToolResult::success(
+			"shell".to_string(),
+			"i1".to_string(),
+			"tool body".to_string(),
+		)];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+
+		let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx)
+			.await
+			.expect("follow-up round trip");
+		assert!(outcome.is_some());
+
+		let tool_index = session
+			.session
+			.messages
+			.iter()
+			.position(|m| m.role == "tool")
+			.expect("tool result recorded");
+		let job_index = session
+			.session
+			.messages
+			.iter()
+			.position(|m| m.role == "user" && m.content.contains("exit 0"))
+			.expect("job result delivered inside the turn");
+		assert!(
+			job_index > tool_index,
+			"the result lands after this round's tool output, never between the call and its result"
+		);
+
+		// A human-shaped injection is not delivered mid-turn — it owns its own turn.
+		assert!(!session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("a new user request")));
+		let queued =
+			crate::session::inbox::try_pop_inbox_message().expect("user injection still queued");
+		assert_eq!(queued.content, "a new user request");
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}

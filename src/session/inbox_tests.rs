@@ -148,3 +148,10 @@ async fn test_drain_batches_results_and_stops_at_a_user_message() {
 	})
 	.await;
 }
+
+#[test]
+fn test_drain_outside_a_session_context_is_empty() {
+	// Producers can run before a session exists; draining must not panic there.
+	assert!(drain_inbox_batch().is_empty());
+	assert!(try_pop_system_managed_message().is_none());
+}

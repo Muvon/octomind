@@ -194,3 +194,66 @@ fn assistant_message_tracks_usage_and_cost_from_exchange() {
 	assert_eq!(session.session.info.total_api_time_ms, 250);
 	assert_eq!(session.turn_answers, vec!["answer".to_string()]);
 }
+
+#[test]
+fn inbox_batch_takes_turn_semantics_once_from_its_head() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.completion_gate_eligible = true;
+	session.gate_deferred = true;
+	let batch = vec![
+		InboxMessage {
+			source: InboxSource::BackgroundJob {
+				id: "job-a".to_string(),
+			},
+			content: "job a finished".to_string(),
+		},
+		InboxMessage {
+			source: InboxSource::BackgroundJob {
+				id: "job-b".to_string(),
+			},
+			content: "job b failed".to_string(),
+		},
+	];
+
+	session.add_inbox_batch(&batch).unwrap();
+
+	assert_eq!(session.session.messages.len(), 2);
+	assert!(session.session.messages[0]
+		.content
+		.contains("job a finished"));
+	assert!(session.session.messages[1].content.contains("job b failed"));
+	// The head claims the deferred turn; the tail rides along without blanking it
+	// (a second add_system_managed_turn_message would — see the deferred-turn test).
+	assert!(session.completion_gate_eligible);
+	assert!(!session.gate_deferred);
+}
+
+#[test]
+fn inbox_batch_headed_by_a_user_message_owns_the_turn() {
+	use crate::session::inbox::{InboxMessage, InboxSource};
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.completion_gate_eligible = false;
+	let batch = vec![InboxMessage {
+		source: InboxSource::Inject,
+		content: "a new request".to_string(),
+	}];
+
+	session.add_inbox_batch(&batch).unwrap();
+
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(session.session.messages[0].role, "user");
+	assert_eq!(session.session.messages[0].content, "a new request");
+	assert!(session.completion_gate_eligible);
+}
+
+#[test]
+fn empty_inbox_batch_changes_nothing() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.completion_gate_eligible = false;
+	session.add_inbox_batch(&[]).unwrap();
+	assert!(session.session.messages.is_empty());
+	assert!(!session.completion_gate_eligible);
+}

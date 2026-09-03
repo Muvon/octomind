@@ -662,6 +662,74 @@ async fn test_run_session_with_input_due_schedule_drives_second_turn() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
+#[tokio::test]
+async fn test_run_session_with_input_batches_two_due_schedules_into_one_turn() {
+	let _guard = ENV_LOCK.lock().await;
+	let _data = DataDirGuard::new();
+
+	// Turn 1 registers TWO entries firing immediately. Both flush to the inbox
+	// and answer in a single turn, so only three scripted responses are needed —
+	// a fan-out would ask the stub for a fourth and fail the run.
+	let url = spawn_stub(vec![
+		crate::session::chat::test_support::tool_calls_response(&[
+			(
+				"call_1",
+				"schedule",
+				serde_json::json!({
+					"command": "add",
+					"message": "first reminder",
+					"when": "now",
+				}),
+			),
+			(
+				"call_2",
+				"schedule",
+				serde_json::json!({
+					"command": "add",
+					"message": "second reminder",
+					"when": "now",
+				}),
+			),
+		]),
+		crate::session::chat::test_support::final_response("reminders stored"),
+		crate::session::chat::test_support::final_response("handled both reminders"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let config = fake_provider_config();
+	run_interactive_session_with_input(&session_args(), &config, "set two reminders")
+		.await
+		.expect("schedule round trip completes");
+
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
+	let first = contents
+		.iter()
+		.position(|c| c.contains("first reminder"))
+		.expect("first entry delivered");
+	let second = contents
+		.iter()
+		.position(|c| c.contains("second reminder"))
+		.expect("second entry delivered");
+	assert!(
+		loaded.messages[first..=second]
+			.iter()
+			.all(|m| m.role == "user"),
+		"both due entries must land in one turn, with no model round between them: {contents:?}"
+	);
+	assert!(
+		contents
+			.iter()
+			.any(|c| c.contains("handled both reminders")),
+		"the batched delivery must reach the model: {contents:?}"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
 // ---------------------------------------------------------------------------
 // run_interactive_session_with_input: resume + /done compression
 // ---------------------------------------------------------------------------

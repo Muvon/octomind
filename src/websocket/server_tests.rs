@@ -1622,7 +1622,7 @@ async fn command_save_failure_is_reported_for_memory_only_sessions() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
+async fn pre_user_inbox_drain_batches_results_and_keeps_user_injections_separate() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![
 		final_response("INBOX-TURN"),
@@ -1640,8 +1640,8 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 	// the user-message handler.
 	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
 	let guard = lock.lock().await;
-	// One system-managed (schedule) and one plain (inject) message: both
-	// branches of the drain, each with its own AI turn.
+	// Two system-managed messages (schedule, finished job) answer in ONE turn;
+	// the plain inject behind them carries its own task and gets its own turn.
 	push_inbox_message_for_session(
 		&session_id,
 		InboxMessage {
@@ -1649,6 +1649,15 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 				id: "sched-1".to_string(),
 			},
 			content: "scheduled reminder".to_string(),
+		},
+	);
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::BackgroundJob {
+				id: "job-1".to_string(),
+			},
+			content: "job finished".to_string(),
 		},
 	);
 	push_inbox_message_for_session(
@@ -1682,9 +1691,10 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 				injected += 1;
 				assert!(
 					frame["session_id"] == session_id
-						&& (frame["content"].as_str().unwrap_or_default() == "scheduled reminder"
-							|| frame["content"].as_str().unwrap_or_default()
-								== "injected before the user turn"),
+						&& matches!(
+							frame["content"].as_str().unwrap_or_default(),
+							"scheduled reminder" | "job finished" | "injected before the user turn"
+						),
 					"got: {frame}"
 				);
 			}
@@ -1700,10 +1710,10 @@ async fn pre_user_inbox_messages_get_their_own_turn_before_the_user_message() {
 			_ => {}
 		}
 	}
-	assert_eq!(injected, 2, "both inbox messages must be announced");
+	assert_eq!(injected, 3, "every inbox message must be announced");
 	assert_eq!(
 		inbox_assistants, 2,
-		"each inbox message gets its own AI turn"
+		"the two results answer in one turn, the user injection in its own"
 	);
 	assert!(main_assistant, "the user message turn must also run");
 

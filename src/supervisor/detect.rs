@@ -264,7 +264,7 @@ pub fn strip_self_report(text: &str) -> String {
 /// the runtime actually knows, not from hard-coded program names: the call must
 /// carry a string `command` parameter (the execution signature — shells,
 /// runners, remote executors and domain-specific validators all take one), the
-/// tool itself must not declare mutation intent, and it must not belong to one
+/// call itself must not declare mutation intent, and it must not belong to one
 /// of octomind's own builtin control-plane servers (authoritative: resolved via
 /// the same registry the dispatcher routes with — `plan` takes a `command`
 /// parameter too, but the runtime knows it executes nothing). Whether the
@@ -275,13 +275,18 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 	let Some(cmd) = parameters.get("command").and_then(|v| v.as_str()) else {
 		return false;
 	};
-	// A tool whose NAME declares mutation intent is never a verification
-	// candidate, whatever its parameter shape: editor tools also take a string
-	// `command` (octofs text_editor's command="str_replace" selects an edit
-	// operation, it executes nothing) — without this guard an edit round
-	// classified itself as its own verifier.
-	if is_mutation_call(tool, parameters) {
-		crate::log_debug!("verifier-shape: {} rejected: mutation tool", tool);
+	// A call whose OWN intent is mutation is never a verification candidate,
+	// whatever its parameter shape: editor tools also take a string `command`
+	// (octofs text_editor's command="str_replace" selects an edit operation, it
+	// executes nothing) — without this guard an edit round classified itself as
+	// its own verifier. Concrete call intent, NOT [`is_mutation_call`]: that one
+	// answers on the tool-level MCP `readOnlyHint` first, and every command
+	// runner honestly annotates itself write-capable (octofs `shell` declares
+	// `read_only_hint = false`). Judging candidacy by capability disqualified
+	// every shell command — including the build/test/validator runs that are the
+	// only thing that CAN verify — so no check ever cleared the pre-gate.
+	if has_explicit_mutation_intent(tool, parameters) {
+		crate::log_debug!("verifier-shape: {} rejected: mutation intent", tool);
 		return false;
 	}
 	// Reject empty command strings: they execute nothing and cannot validate
@@ -364,7 +369,9 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 /// tool-level `readOnly=false` capability hint: a generic shell/browser/API
 /// tool may be capable of writes while the concrete call is only gathering
 /// evidence, and classifying that read as a mutation would be a false positive.
-fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
+/// This is the signal for "did this call CHANGE anything"; `is_mutation_call` is
+/// the conservative "could it" used for evidence accounting.
+pub fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
 	if contains_mutation_intent(tool) {
 		return true;
 	}

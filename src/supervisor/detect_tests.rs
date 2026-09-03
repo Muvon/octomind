@@ -453,3 +453,38 @@ fn call_set_hash_is_sensitive_to_tool_and_params() {
 		call_set_hash(&[mk("view", json!({"path": "x"}))])
 	);
 }
+
+#[test]
+fn write_capable_runner_still_verifies_on_read_only_commands() {
+	// Every honest command runner annotates itself write-capable (octofs `shell`
+	// declares readOnlyHint=false). Verifier candidacy must follow the concrete
+	// command's intent, or the build/test/validator runs that are the only thing
+	// able to clear the pre-gate are all disqualified.
+	register_tool_read_only_hint("detectTestsWriteCapableRunner", Some(false));
+	assert!(is_mutation_call(
+		"detectTestsWriteCapableRunner",
+		&json!({})
+	));
+	assert!(
+		is_verifier_shaped(
+			"detectTestsWriteCapableRunner",
+			&json!({"command": "bash scripts/lint.sh"})
+		),
+		"a write-capable runner executing a check is a verifier candidate"
+	);
+	assert!(
+		verifier_key(
+			"detectTestsWriteCapableRunner",
+			&json!({"command": "bash scripts/lint.sh"})
+		)
+		.is_some(),
+		"recovery tracking needs an identity for the same check"
+	);
+	assert!(
+		!is_verifier_shaped(
+			"detectTestsWriteCapableRunner",
+			&json!({"command": "git push origin master"})
+		),
+		"the command's own mutation intent still disqualifies it"
+	);
+}

@@ -736,7 +736,17 @@ pub async fn process_response<S: OutputSink>(
 						// pure reads cannot, so fingerprint drift across it is external.
 						round_write_capable |= is_mutation || verifier_shaped;
 						if !is_error {
-							round_mutation |= is_mutation;
+							// Tree-change fallback signal for rounds with no fingerprint
+							// (not a git repo): "did this call change anything", judged on
+							// the call's own intent. `is_mutation` answers "could it" — a
+							// write-capable command runner marks its every check a mutation,
+							// which outside a repo made a check round look like an edit and
+							// left the pre-gate armed with no way to clear it.
+							let mutated = crate::supervisor::detect::has_explicit_mutation_intent(
+								&call.tool_name,
+								&call.parameters,
+							);
+							round_mutation |= mutated;
 							if is_mutation {
 								params
 									.chat_session

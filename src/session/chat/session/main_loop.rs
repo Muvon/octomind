@@ -392,7 +392,16 @@ pub async fn run_interactive_session(
 
 			for msg in last_messages.iter().rev() {
 				if msg.role == "assistant" {
-					println!("{}", msg.content.bright_green());
+					let visible =
+						crate::session::chat::assistant_output::strip_system_tags(&msg.content);
+					if !visible.is_empty() {
+						crate::session::chat::assistant_output::print_assistant_response(
+							&visible,
+							&config_for_role,
+							&role,
+							&None,
+						);
+					}
 				} else if msg.role == "tool" {
 					log_debug!(msg.content);
 				} else if msg.role == "user" {

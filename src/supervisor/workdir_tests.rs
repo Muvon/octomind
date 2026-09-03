@@ -49,16 +49,72 @@ fn fingerprint_moves_when_the_tree_changes_and_back() {
 	);
 }
 
+/// Version control is one way to observe a filesystem, not a precondition for
+/// having one: a documents folder, a data directory or any other tree an agent
+/// works in must be just as observable as a checkout.
 #[test]
 #[serial_test::serial]
-fn fingerprint_is_none_outside_a_git_repo() {
+fn fingerprint_observes_a_tree_that_is_not_a_checkout() {
 	let original = std::env::current_dir().unwrap();
 	let tmp = tempfile::tempdir().unwrap();
 	std::env::set_current_dir(tmp.path()).unwrap();
-	let outside = fingerprint();
+	std::fs::write(tmp.path().join("notes.md"), "first").unwrap();
+	let first = fingerprint();
+	let stable = fingerprint();
+	std::fs::write(tmp.path().join("notes.md"), "second, and longer").unwrap();
+	let changed = fingerprint();
 	// Restore before asserting so a failure cannot leak the cwd swap.
 	std::env::set_current_dir(&original).unwrap();
-	assert_eq!(outside, None, "git status must fail outside a repo");
+
+	assert!(first.is_some(), "a plain directory is still observable");
+	assert_eq!(first, stable, "an unchanged tree must hash identically");
+	assert_ne!(
+		first, changed,
+		"an edit outside version control must move the fingerprint"
+	);
+}
+
+/// The tree that gets measured is the session's anchor. Nothing in the runtime
+/// chdir()s when a session moves, so measuring the process cwd watched the
+/// wrong tree for every session not rooted where the binary started.
+#[test]
+#[serial_test::serial]
+fn fingerprint_follows_the_session_anchor_not_the_process_cwd() {
+	let cwd_before = std::env::current_dir().unwrap();
+	let tmp = tempfile::tempdir().unwrap();
+	std::fs::write(tmp.path().join("report.txt"), "one").unwrap();
+	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+	let first = fingerprint();
+	std::fs::write(tmp.path().join("report.txt"), "one, rather longer").unwrap();
+	let second = fingerprint();
+
+	assert_eq!(
+		std::env::current_dir().unwrap(),
+		cwd_before,
+		"the process never moved; only the session did"
+	);
+	assert!(first.is_some());
+	assert_ne!(
+		first, second,
+		"an edit in the session's own tree must be observed"
+	);
+}
+
+/// A tree too large to measure reports "unknown", never a partial hash — a
+/// hash of the half we walked would read as "unchanged" for the half we did not.
+#[test]
+fn the_walk_reports_unknown_rather_than_measure_part_of_a_tree() {
+	let tmp = tempfile::tempdir().unwrap();
+	for i in 0..3 {
+		std::fs::write(tmp.path().join(format!("f{i}")), "x").unwrap();
+	}
+	assert!(walk_fingerprint(tmp.path(), 8).is_some());
+	assert_eq!(
+		walk_fingerprint(tmp.path(), 2),
+		None,
+		"past the cap the answer is unknown, not clean"
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -67,28 +123,42 @@ fn fingerprint_is_none_outside_a_git_repo() {
 
 #[test]
 #[serial_test::serial]
-fn fingerprint_is_none_when_git_cannot_spawn() {
+fn a_missing_git_binary_does_not_blind_the_runtime() {
+	let original = std::env::current_dir().unwrap();
+	let tmp = tempfile::tempdir().unwrap();
+	std::fs::write(tmp.path().join("data.csv"), "a,b").unwrap();
+	std::env::set_current_dir(tmp.path()).unwrap();
 	let old_path = std::env::var_os("PATH");
 	std::env::set_var("PATH", "");
-	assert_eq!(fingerprint(), None, "no git binary means no fingerprint");
+
+	let without_git = fingerprint();
+
 	match old_path {
 		Some(v) => std::env::set_var("PATH", v),
 		None => std::env::remove_var("PATH"),
 	}
+	std::env::set_current_dir(&original).unwrap();
+	assert!(
+		without_git.is_some(),
+		"an unspawnable git leaves the filesystem itself observable"
+	);
 }
 
 #[test]
 #[serial_test::serial]
-fn fingerprint_is_none_when_git_status_fails() {
+fn a_failing_git_status_degrades_to_the_walk_not_to_a_stale_value() {
+	let original = std::env::current_dir().unwrap();
+	let tmp = tempfile::tempdir().unwrap();
+	std::env::set_current_dir(tmp.path()).unwrap();
 	let old_dir = std::env::var_os("GIT_DIR");
 	let old_tree = std::env::var_os("GIT_WORK_TREE");
 	std::env::set_var("GIT_DIR", "/definitely/not/a/repo");
 	std::env::remove_var("GIT_WORK_TREE");
-	assert_eq!(
-		fingerprint(),
-		None,
-		"a failing git status means no fingerprint, not a stale one"
-	);
+
+	let broken = fingerprint();
+	std::fs::write(tmp.path().join("added.txt"), "x").unwrap();
+	let after_edit = fingerprint();
+
 	match old_dir {
 		Some(v) => std::env::set_var("GIT_DIR", v),
 		None => std::env::remove_var("GIT_DIR"),
@@ -97,10 +167,19 @@ fn fingerprint_is_none_when_git_status_fails() {
 		Some(v) => std::env::set_var("GIT_WORK_TREE", v),
 		None => std::env::remove_var("GIT_WORK_TREE"),
 	}
+	std::env::set_current_dir(&original).unwrap();
+	assert!(
+		broken.is_some(),
+		"a broken git falls back, it does not blind"
+	);
+	assert_ne!(
+		broken, after_edit,
+		"the fallback must track the tree, not cache a value"
+	);
 }
 
 /// An untracked scratch file at the repo root (not gitignored target/) appears in `git status -uall` of
-/// this checkout and exists relative to the process cwd, so its size and
+/// this checkout and resolves against the measured anchor, so its size and
 /// mtime are mixed into the hash — and changing it changes the fingerprint.
 #[test]
 #[serial_test::serial]

@@ -251,6 +251,11 @@ pub struct ChatSession {
 	/// Supervisor repair notes preserve the existing value so a legitimate gate
 	/// re-entry still verifies the original user turn.
 	pub completion_gate_eligible: bool,
+	/// Set when an eligible turn ends with session-owned work still in flight
+	/// (a detached shell job, a tap run, a background agent). The inbox delivery
+	/// that resumes the agent continues the same task, so it inherits
+	/// eligibility instead of being treated as a control-plane event.
+	pub gate_deferred: bool,
 	/// Supervisor: re-entry counter for the FREE deterministic checks (pre-gate,
 	/// plan, coverage, evidence). Deliberately separate from `gate_iterations`:
 	/// a zero-cost nudge that the agent then satisfies must not spend the paid
@@ -419,6 +424,7 @@ impl ChatSession {
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
 			completion_gate_eligible: true,
+			gate_deferred: false,
 			nudge_iterations: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),
@@ -634,6 +640,7 @@ impl ChatSession {
 						detectors: crate::supervisor::detect::Detectors::default(),
 						gate_iterations: 0,
 						completion_gate_eligible: true,
+						gate_deferred: false,
 						nudge_iterations: 0,
 						gate_failed: false,
 						last_gate_gaps: Vec::new(),
@@ -1460,6 +1467,7 @@ impl ChatSession {
 			detectors: crate::supervisor::detect::Detectors::default(),
 			gate_iterations: 0,
 			completion_gate_eligible: true,
+			gate_deferred: false,
 			nudge_iterations: 0,
 			gate_failed: false,
 			last_gate_gaps: Vec::new(),

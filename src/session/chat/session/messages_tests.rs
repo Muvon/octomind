@@ -145,6 +145,25 @@ fn system_managed_turn_message_is_wrapped_and_not_turn_owned() {
 }
 
 #[test]
+fn deferred_turn_hands_eligibility_to_the_resuming_delivery_once() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.completion_gate_eligible = true;
+	session.gate_deferred = true;
+	session
+		.add_system_managed_turn_message("job result")
+		.unwrap();
+	assert!(session.completion_gate_eligible);
+	assert!(!session.gate_deferred);
+	session
+		.add_system_managed_turn_message("schedule fired")
+		.unwrap();
+	assert!(!session.completion_gate_eligible);
+	session.gate_deferred = true;
+	session.add_user_message("new request").unwrap();
+	assert!(!session.gate_deferred);
+}
+
+#[test]
 fn assistant_message_tracks_usage_and_cost_from_exchange() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let config = crate::session::chat::test_support::fake_provider_config();

@@ -570,6 +570,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 
 	// Supervisor verify-gate: on self-reported completion, verify before accepting.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
+	let pending_async = crate::session::has_pending_async_work();
 	if config.supervisor.gate.enabled {
 		crate::log_debug!(
 			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={} pending_async={}",
@@ -580,7 +581,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint()),
-			crate::session::has_pending_async_work()
+			pending_async
 		);
 	}
 	// An explicit `done` self-report claims completion — and so does ending the
@@ -591,8 +592,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// unread inbox result) means the turn is a wait, not a completion claim: the
 	// inbox monitor resumes the agent when the result lands, and the gate judges
 	// that later turn instead of accusing this one of delivering a status line.
+	chat_session.gate_deferred = chat_session.completion_gate_eligible && pending_async;
 	if config.supervisor.gate.enabled
-		&& !crate::session::has_pending_async_work()
+		&& !pending_async
 		&& claims_user_task_completion(
 			chat_session.completion_gate_eligible,
 			chat_session.last_self_report,

@@ -320,6 +320,7 @@ impl ChatSession {
 		// This response is owned by a genuine user turn, so a `done` report may
 		// be verified against the task that was just added.
 		self.completion_gate_eligible = true;
+		self.gate_deferred = false;
 		self.steer_attempt = 0;
 		self.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 		self.last_steered_calls = None;
@@ -402,7 +403,9 @@ impl ChatSession {
 	pub fn add_system_managed_turn_message(&mut self, content: &str) -> Result<()> {
 		self.add_system_managed_user_message(content)?;
 		self.abandon_turn_timing();
-		self.completion_gate_eligible = false;
+		// A turn that ended with session-owned work in flight hands its open task
+		// to the delivery that resumes it; every other control-plane turn owns none.
+		self.completion_gate_eligible = std::mem::take(&mut self.gate_deferred);
 		Ok(())
 	}
 

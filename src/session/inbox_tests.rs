@@ -78,3 +78,35 @@ async fn test_inbox_message_display_metadata() {
 
 	display_injected_input(&msg);
 }
+
+#[tokio::test]
+async fn test_mid_turn_pop_takes_results_and_leaves_user_injections() {
+	// The tool loop delivers results a running turn may be waiting on, but a
+	// human-shaped injection carries a new task and must start its own turn.
+	crate::session::context::with_session_id("inbox-test-mid-turn".to_string(), async {
+		init_inbox_for_session();
+		push_inbox_message(InboxMessage {
+			source: InboxSource::Inject,
+			content: "user says something new".to_string(),
+		});
+		push_inbox_message(InboxMessage {
+			source: InboxSource::BackgroundJob {
+				id: "80551-17".to_string(),
+			},
+			content: "<background_job>exited with code 0</background_job>".to_string(),
+		});
+
+		let job = try_pop_system_managed_message().expect("job result delivered mid-turn");
+		assert!(job.content.contains("exited with code 0"));
+		assert!(
+			try_pop_system_managed_message().is_none(),
+			"a user injection is not delivered mid-turn"
+		);
+
+		let queued = try_pop_inbox_message().expect("user injection still queued");
+		assert_eq!(queued.content, "user says something new");
+
+		clear_inbox_for_session(&crate::session::context::expect_session_id());
+	})
+	.await;
+}

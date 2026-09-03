@@ -274,6 +274,33 @@ pub async fn process_tool_results(
 		crate::log_debug!("Supervisor steer injected (tool loop)");
 	}
 
+	// Deliver everything that landed in the inbox WHILE this turn was running — a
+	// finished background job, a monitor batch, a tap reply. The inbox was drained
+	// only between turns, so a result that arrived mid-loop stayed invisible until
+	// the model happened to stop; waiting for it was therefore something the model
+	// had to arrange itself, and one that polls instead of yielding pays a
+	// full-context request per poll. Delivered here, after this round's tool
+	// results and before the next call, the result reaches the model on the very
+	// next round. Human-shaped injections stay queued for the turn boundary, where
+	// they get real user-turn semantics.
+	while let Some(msg) = crate::session::inbox::try_pop_system_managed_message() {
+		crate::log_debug!("Inbox delivered mid-turn from {:?}", msg.source);
+		if crate::logging::tracing_setup::is_structured_output_mode() {
+			let injected = crate::websocket::ServerMessage::Injected(
+				crate::websocket::protocol::InjectedPayload {
+					source_kind: msg.source.display_kind().to_string(),
+					source_label: msg.source.display_label(),
+					content: msg.content.clone(),
+					session_id: chat_session.session.info.name.clone(),
+				},
+			);
+			crate::mcp::process::send_notification_message(injected);
+		} else {
+			crate::session::inbox::display_injected_input(&msg);
+		}
+		chat_session.add_system_managed_user_message(&msg.content)?;
+	}
+
 	// Make follow-up API call
 	let follow_up_result =
 		make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;

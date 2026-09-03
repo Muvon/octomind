@@ -348,6 +348,22 @@ pub fn try_pop_inbox_message() -> Option<InboxMessage> {
 	queue.messages.pop_front()
 }
 
+/// Pop the next pending *system-managed* message for the current session — a
+/// result the running turn may be waiting on (a finished background job, a
+/// monitor batch, a tap reply). Human-shaped injections are left queued: they
+/// carry a new task and must start their own turn at the loop boundary.
+pub fn try_pop_system_managed_message() -> Option<InboxMessage> {
+	let session_id = crate::session::context::current_session_id()?;
+	let mut guard = INBOX.write().unwrap();
+	let registry = guard.as_mut()?;
+	let queue = registry.get_mut(&session_id)?;
+	let idx = queue
+		.messages
+		.iter()
+		.position(|msg| msg.source.is_system_managed())?;
+	queue.messages.remove(idx)
+}
+
 /// Returns `true` if there is at least one message waiting for the current session.
 pub fn has_inbox_messages() -> bool {
 	let session_id = match crate::session::context::current_session_id() {

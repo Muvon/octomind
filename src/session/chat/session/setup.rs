@@ -73,7 +73,7 @@ pub async fn setup_and_initialize_session(
 	bool,
 	Option<indicatif::ProgressBar>,
 )> {
-	use indicatif::{ProgressBar, ProgressStyle};
+	use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 	// Read session parameters directly off the args struct.
 	let name = args.name.clone();
@@ -95,9 +95,8 @@ pub async fn setup_and_initialize_session(
 		"plain".to_string()
 	};
 	// ACP/WebSocket/JSONL are structured transports even when somebody launches
-	// them from a terminal. Never create a spinner there: besides corrupting the
-	// wire stream, its synchronous suspend path uses `block_in_place`, which
-	// panics inside ACP's LocalSet.
+	// them from a terminal. Never create a spinner there: it would corrupt the
+	// wire stream.
 	let is_interactive = output_mode == "plain" && std::io::stdin().is_terminal();
 
 	// Validate role exists before doing anything — give a clean error instead of a panic
@@ -228,13 +227,14 @@ pub async fn setup_and_initialize_session(
 	}
 
 	let mut chat_session = if let Some(ref sp) = spinner {
-		let result = sp.suspend(|| {
-			// ChatSession::initialize is async but suspend takes sync fn
-			// We need to block briefly — this is during startup, acceptable
-			tokio::task::block_in_place(|| {
-				tokio::runtime::Handle::current().block_on(ChatSession::initialize(session_params))
-			})
-		});
+		// `initialize` prints, so the bar must not draw over it. `suspend()` takes a
+		// sync closure and bridging an async call through it costs a `block_in_place`,
+		// which panics on any current-thread runtime — ACP's LocalSet and every
+		// `#[tokio::test]` that starts a session on a TTY. Hiding the bar for the
+		// duration keeps the output clean and blocks nothing.
+		sp.set_draw_target(ProgressDrawTarget::hidden());
+		let result = ChatSession::initialize(session_params).await;
+		sp.set_draw_target(ProgressDrawTarget::stderr());
 		result?
 	} else {
 		ChatSession::initialize(session_params).await?

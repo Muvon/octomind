@@ -1814,24 +1814,32 @@ pub async fn run_interactive_session_with_input(
 		// as long as nothing is in flight.
 		crate::mcp::orchestration::flush_idle_to_inbox();
 
-		// Process all messages currently in the inbox.
-		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
-			log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
+		// Process everything currently in the inbox. Each drain takes the batch the
+		// model can answer in one turn, so results that piled up while it worked cost
+		// one call between them, not one turn each.
+		loop {
+			let batch = crate::session::inbox::drain_inbox_batch();
+			if batch.is_empty() {
+				break;
+			}
+			for inbox_msg in &batch {
+				log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
 
-			// Tell structured consumers (JSONL) what's about to drive the AI, so a
-			// scheduled / agent / skill turn is distinguishable from a user turn.
-			// Plain non-interactive mode stays silent — adding a header line would
-			// corrupt downstream parsers that just want raw AI text.
-			if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-				let injected =
-					crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
-						source_kind: inbox_msg.source.display_kind().to_string(),
-						source_label: inbox_msg.source.display_label(),
-						content: inbox_msg.content.clone(),
-						session_id: chat_session.session.info.name.clone(),
-					});
-				if let Ok(json) = serde_json::to_string(&injected) {
-					println!("{}", json);
+				// Tell structured consumers (JSONL) what's about to drive the AI, so a
+				// scheduled / agent / skill turn is distinguishable from a user turn.
+				// Plain non-interactive mode stays silent — adding a header line would
+				// corrupt downstream parsers that just want raw AI text.
+				if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+					let injected =
+						crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+							source_kind: inbox_msg.source.display_kind().to_string(),
+							source_label: inbox_msg.source.display_label(),
+							content: inbox_msg.content.clone(),
+							session_id: chat_session.session.info.name.clone(),
+						});
+					if let Ok(json) = serde_json::to_string(&injected) {
+						println!("{}", json);
+					}
 				}
 			}
 
@@ -1846,11 +1854,7 @@ pub async fn run_interactive_session_with_input(
 			)
 			.await;
 
-			if inbox_msg.source.is_system_managed() {
-				chat_session.add_system_managed_turn_message(&inbox_msg.content)?;
-			} else {
-				chat_session.add_user_message(&inbox_msg.content)?;
-			}
+			chat_session.add_inbox_batch(&batch)?;
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
 			let is_jsonl = current_config.runtime_output_mode.as_deref() == Some("jsonl");

@@ -409,6 +409,24 @@ impl ChatSession {
 		Ok(())
 	}
 
+	/// Append a drained inbox batch as ONE externally-triggered turn: the head
+	/// carries the turn semantics, the rest ride along so the model answers
+	/// everything that was ready in a single call instead of one turn each.
+	pub fn add_inbox_batch(&mut self, batch: &[crate::session::inbox::InboxMessage]) -> Result<()> {
+		let Some((head, rest)) = batch.split_first() else {
+			return Ok(());
+		};
+		if head.source.is_system_managed() {
+			self.add_system_managed_turn_message(&head.content)?;
+		} else {
+			self.add_user_message(&head.content)?;
+		}
+		for msg in rest {
+			self.add_system_managed_user_message(&msg.content)?;
+		}
+		Ok(())
+	}
+
 	// Add a tool message
 	pub fn add_tool_message(
 		&mut self,

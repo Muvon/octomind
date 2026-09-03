@@ -433,25 +433,29 @@ impl OctomindAgent {
 							if !sessions.borrow().contains_key(&session_id) {
 								break;
 							}
-							let inbox_msg = match crate::session::inbox::try_pop_inbox_message() {
-								Some(msg) => msg,
-								None => break,
-							};
+							let batch = crate::session::inbox::drain_inbox_batch();
+							if batch.is_empty() {
+								break;
+							}
 
-							log_debug!(
-								"ACP monitor: processing inbox message from {:?} for {}",
-								inbox_msg.source,
-								session_id
-							);
+							for inbox_msg in &batch {
+								log_debug!(
+									"ACP monitor: processing inbox message from {:?} for {}",
+									inbox_msg.source,
+									session_id
+								);
+							}
 
 							// Take session for exclusive access.
 							let entry = sessions.borrow_mut().remove(&session_id);
 							let (mut chat_session, session_cwd) = match entry {
 								Some(s) => s,
 								None => {
-									// Session truly gone (cleanup_session). Preserve the message
+									// Session truly gone (cleanup_session). Preserve the batch
 									// only if its inbox still exists.
-									crate::session::inbox::push_inbox_message(inbox_msg);
+									for inbox_msg in batch {
+										crate::session::inbox::push_inbox_message(inbox_msg);
+									}
 									break;
 								}
 							};
@@ -471,29 +475,27 @@ impl OctomindAgent {
 							// the injected message in the conversation, prefixed with its source.
 							let conn_client = conn.borrow().as_ref().cloned();
 							if let Some(c) = conn_client {
-								let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-								let text = format!(
-									"[{}] {}",
-									inbox_msg.source.display_label(),
-									inbox_msg.content
-								);
-								let update =
-									SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
-								let notif = SessionNotification::new(sid_arc, update);
-								if let Err(e) = c.send_notification(notif) {
-									log_error!(
-								"ACP monitor: failed to send injected-message notification: {}",
-								e
-							);
+								for inbox_msg in &batch {
+									let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+									let text = format!(
+										"[{}] {}",
+										inbox_msg.source.display_label(),
+										inbox_msg.content
+									);
+									let update = SessionUpdate::UserMessageChunk(
+										ContentChunk::new(text.into()),
+									);
+									let notif = SessionNotification::new(sid_arc, update);
+									if let Err(e) = c.send_notification(notif) {
+										log_error!(
+											"ACP monitor: failed to send injected-message notification: {}",
+											e
+										);
+									}
 								}
 							}
 
-							let add_result = if inbox_msg.source.is_system_managed() {
-								chat_session.add_system_managed_turn_message(&inbox_msg.content)
-							} else {
-								chat_session.add_user_message(&inbox_msg.content)
-							};
-							if let Err(e) = add_result {
+							if let Err(e) = chat_session.add_inbox_batch(&batch) {
 								log_error!("ACP monitor: failed to add inbox message: {}", e);
 								sessions
 									.borrow_mut()
@@ -1016,34 +1018,38 @@ impl OctomindAgent {
 			// before this user prompt (background agents, scheduled entries, skills).
 			{
 				crate::mcp::orchestration::flush_due_to_inbox();
-				while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
-					log_debug!(
-						"ACP pre-user: processing inbox message from {:?}",
-						inbox_msg.source
-					);
-					// Surface the injected message to the client as a user-side chunk so
-					// the user sees what triggered the AI's upcoming response.
-					let conn_client = self.conn.borrow().as_ref().cloned();
-					if let Some(c) = conn_client {
-						let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
-						let text = format!(
-							"[{}] {}",
-							inbox_msg.source.display_label(),
-							inbox_msg.content
+				loop {
+					let batch = crate::session::inbox::drain_inbox_batch();
+					if batch.is_empty() {
+						break;
+					}
+					for inbox_msg in &batch {
+						log_debug!(
+							"ACP pre-user: processing inbox message from {:?}",
+							inbox_msg.source
 						);
-						let update =
-							SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
-						let notif = SessionNotification::new(sid_arc, update);
-						if let Err(e) = c.send_notification(notif) {
-							log_error!("ACP: failed to send injected-message notification: {}", e);
+						// Surface the injected message to the client as a user-side chunk so
+						// the user sees what triggered the AI's upcoming response.
+						let conn_client = self.conn.borrow().as_ref().cloned();
+						if let Some(c) = conn_client {
+							let sid_arc: std::sync::Arc<str> = session_id.as_str().into();
+							let text = format!(
+								"[{}] {}",
+								inbox_msg.source.display_label(),
+								inbox_msg.content
+							);
+							let update =
+								SessionUpdate::UserMessageChunk(ContentChunk::new(text.into()));
+							let notif = SessionNotification::new(sid_arc, update);
+							if let Err(e) = c.send_notification(notif) {
+								log_error!(
+									"ACP: failed to send injected-message notification: {}",
+									e
+								);
+							}
 						}
 					}
-					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_turn_message(&inbox_msg.content)
-					} else {
-						chat_session.add_user_message(&inbox_msg.content)
-					};
-					if let Err(e) = add_result {
+					if let Err(e) = chat_session.add_inbox_batch(&batch) {
 						log_error!("ACP: failed to add inbox message: {}", e);
 						continue;
 					}

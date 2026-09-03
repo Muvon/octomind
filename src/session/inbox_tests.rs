@@ -110,3 +110,41 @@ async fn test_mid_turn_pop_takes_results_and_leaves_user_injections() {
 	})
 	.await;
 }
+
+#[tokio::test]
+async fn test_drain_batches_results_and_stops_at_a_user_message() {
+	crate::session::context::with_session_id("inbox-test-batch".to_string(), async {
+		init_inbox_for_session();
+		push_inbox_message(schedule_msg("schedule fired"));
+		push_inbox_message(InboxMessage {
+			source: InboxSource::BackgroundJob {
+				id: "80551-17".to_string(),
+			},
+			content: "job done".to_string(),
+		});
+		push_inbox_message(InboxMessage {
+			source: InboxSource::Inject,
+			content: "a new task".to_string(),
+		});
+		push_inbox_message(schedule_msg("fired after the user message"));
+
+		// Everything the model can answer in one turn, up to the user message.
+		let batch = drain_inbox_batch();
+		assert_eq!(batch.len(), 2);
+		assert_eq!(batch[0].content, "schedule fired");
+		assert_eq!(batch[1].content, "job done");
+
+		// A human-shaped message heads its own batch and takes nothing with it.
+		let user_batch = drain_inbox_batch();
+		assert_eq!(user_batch.len(), 1);
+		assert_eq!(user_batch[0].content, "a new task");
+
+		let tail = drain_inbox_batch();
+		assert_eq!(tail.len(), 1);
+		assert_eq!(tail[0].content, "fired after the user message");
+		assert!(drain_inbox_batch().is_empty());
+
+		clear_inbox_for_session(&crate::session::context::expect_session_id());
+	})
+	.await;
+}

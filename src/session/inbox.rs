@@ -364,6 +364,40 @@ pub fn try_pop_system_managed_message() -> Option<InboxMessage> {
 	queue.messages.remove(idx)
 }
 
+/// Take every message the session can answer in ONE turn: the head plus the run
+/// of system-managed messages behind it. A human-shaped message ends the batch —
+/// it carries its own task and owns its own turn — so it either heads a batch
+/// alone or waits for the next drain. Order is preserved.
+pub fn drain_inbox_batch() -> Vec<InboxMessage> {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return Vec::new();
+	};
+	let mut guard = INBOX.write().unwrap();
+	let Some(queue) = guard
+		.as_mut()
+		.and_then(|registry| registry.get_mut(&session_id))
+	else {
+		return Vec::new();
+	};
+	let Some(head) = queue.messages.pop_front() else {
+		return Vec::new();
+	};
+	let head_is_system_managed = head.source.is_system_managed();
+	let mut batch = vec![head];
+	if head_is_system_managed {
+		while queue
+			.messages
+			.front()
+			.is_some_and(|msg| msg.source.is_system_managed())
+		{
+			if let Some(msg) = queue.messages.pop_front() {
+				batch.push(msg);
+			}
+		}
+	}
+	batch
+}
+
 /// Returns `true` if there is at least one message waiting for the current session.
 pub fn has_inbox_messages() -> bool {
 	let session_id = match crate::session::context::current_session_id() {

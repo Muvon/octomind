@@ -455,23 +455,27 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						Err(_) => return false,
 					};
 
-					let inbox_msg = match crate::session::inbox::try_pop_inbox_message() {
-						Some(msg) => msg,
-						None => break,
-					};
+					let batch = crate::session::inbox::drain_inbox_batch();
+					if batch.is_empty() {
+						break;
+					}
 
-					log_debug!(
-						"WS monitor: processing inbox message from {:?} for {}",
-						inbox_msg.source,
-						session_id
-					);
+					for inbox_msg in &batch {
+						log_debug!(
+							"WS monitor: processing inbox message from {:?} for {}",
+							inbox_msg.source,
+							session_id
+						);
+					}
 
 					// Take session for exclusive access (lock guarantees no client race).
 					let mut chat_session = match ctx.sessions.lock().await.remove(&session_id) {
 						Some(s) => s,
 						None => {
-							// Session genuinely gone (cleanup). Put message back and stop.
-							crate::session::inbox::push_inbox_message(inbox_msg);
+							// Session genuinely gone (cleanup). Put the batch back and stop.
+							for inbox_msg in batch {
+								crate::session::inbox::push_inbox_message(inbox_msg);
+							}
 							drop(guard);
 							return false;
 						}
@@ -483,21 +487,18 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 
 					// Notify the client what's about to drive the AI, before we kick off
 					// the API call. Mirrors `display_injected_input` in CLI mode.
-					let _ = ctx.bg_tx.send(ServerMessage::Injected(
-						crate::websocket::protocol::InjectedPayload {
-							source_kind: inbox_msg.source.display_kind().to_string(),
-							source_label: inbox_msg.source.display_label(),
-							content: inbox_msg.content.clone(),
-							session_id: session_id.clone(),
-						},
-					));
+					for inbox_msg in &batch {
+						let _ = ctx.bg_tx.send(ServerMessage::Injected(
+							crate::websocket::protocol::InjectedPayload {
+								source_kind: inbox_msg.source.display_kind().to_string(),
+								source_label: inbox_msg.source.display_label(),
+								content: inbox_msg.content.clone(),
+								session_id: session_id.clone(),
+							},
+						));
+					}
 
-					let add_result = if inbox_msg.source.is_system_managed() {
-						chat_session.add_system_managed_turn_message(&inbox_msg.content)
-					} else {
-						chat_session.add_user_message(&inbox_msg.content)
-					};
-					if let Err(e) = add_result {
+					if let Err(e) = chat_session.add_inbox_batch(&batch) {
 						log_error!("WS monitor: failed to add inbox message: {}", e);
 						ctx.sessions
 							.lock()
@@ -1171,42 +1172,36 @@ async fn handle_user_message(
 		// Flush due schedule entries first.
 		crate::mcp::orchestration::flush_due_to_inbox();
 		crate::mcp::orchestration::flush_idle_to_inbox();
-		while let Some(inbox_msg) = crate::session::inbox::try_pop_inbox_message() {
-			log_debug!(
-				"WebSocket pre-user: processing inbox message from {:?}",
-				inbox_msg.source
-			);
-			// Tell the client what's being injected before the AI responds to it.
-			send_message(
-				ws_sender,
-				&ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
-					source_kind: inbox_msg.source.display_kind().to_string(),
-					source_label: inbox_msg.source.display_label(),
-					content: inbox_msg.content.clone(),
-					session_id: session_id.clone(),
-				}),
-			)
-			.await?;
-			if inbox_msg.source.is_system_managed() {
-				if let Err(e) = chat_session.add_system_managed_turn_message(&inbox_msg.content) {
-					log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
-					send_message(
-						ws_sender,
-						&ServerMessage::error(format!("Error processing injected message: {}", e)),
-					)
-					.await?;
-					continue;
-				}
-			} else {
-				if let Err(e) = chat_session.add_user_message(&inbox_msg.content) {
-					log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
-					send_message(
-						ws_sender,
-						&ServerMessage::error(format!("Error processing injected message: {}", e)),
-					)
-					.await?;
-					continue;
-				}
+		loop {
+			let batch = crate::session::inbox::drain_inbox_batch();
+			if batch.is_empty() {
+				break;
+			}
+			for inbox_msg in &batch {
+				log_debug!(
+					"WebSocket pre-user: processing inbox message from {:?}",
+					inbox_msg.source
+				);
+				// Tell the client what's being injected before the AI responds to it.
+				send_message(
+					ws_sender,
+					&ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+						source_kind: inbox_msg.source.display_kind().to_string(),
+						source_label: inbox_msg.source.display_label(),
+						content: inbox_msg.content.clone(),
+						session_id: session_id.clone(),
+					}),
+				)
+				.await?;
+			}
+			if let Err(e) = chat_session.add_inbox_batch(&batch) {
+				log_error!("WebSocket pre-user: failed to add inbox message: {}", e);
+				send_message(
+					ws_sender,
+					&ServerMessage::error(format!("Error processing injected message: {}", e)),
+				)
+				.await?;
+				continue;
 			}
 			let op_rx = cancellation.new_operation();
 			// Per-request spending boundary (see handle_user_message).

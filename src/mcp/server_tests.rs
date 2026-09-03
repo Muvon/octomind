@@ -785,3 +785,40 @@ async fn test_perform_health_check_reports_connected_http_running() {
 	crate::mcp::client::disconnect(NAME);
 	clear_health(NAME);
 }
+
+#[test]
+fn tools_to_functions_registers_command_shape_from_schema() {
+	// The wiring the supervisor's mutation classification depends on: a runner
+	// that honestly annotates itself write-capable must still be recognised as
+	// executing free-form commands, or its checks are all filed as mutations.
+	let runner: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+		"name": "serverTestsRunner",
+		"annotations": {"readOnlyHint": false},
+		"inputSchema": {
+			"type": "object",
+			"properties": {"command": {"type": "string"}},
+			"required": ["command"]
+		}
+	}))
+	.expect("deserialize rmcp Tool");
+	let editor: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+		"name": "serverTestsEditor",
+		"annotations": {"readOnlyHint": false},
+		"inputSchema": {
+			"type": "object",
+			"properties": {"command": {"enum": ["create", "str_replace"]}},
+			"required": ["command"]
+		}
+	}))
+	.expect("deserialize rmcp Tool");
+	tools_to_functions(&[runner, editor]);
+
+	use crate::supervisor::detect::is_mutation_call;
+	let check = serde_json::json!({"command": "cargo test --all"});
+	assert!(!is_mutation_call("serverTestsRunner", &check));
+	assert!(is_mutation_call(
+		"serverTestsRunner",
+		&serde_json::json!({"command": "cargo publish"})
+	));
+	assert!(is_mutation_call("serverTestsEditor", &check));
+}

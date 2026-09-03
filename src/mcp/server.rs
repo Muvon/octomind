@@ -47,16 +47,24 @@ pub fn tools_to_functions(tools: &[rmcp::model::Tool]) -> Vec<McpFunction> {
 		.iter()
 		.map(|tool| {
 			let name = tool.name.as_ref().to_string();
+			let parameters = tool.schema_as_json_value();
 			crate::supervisor::detect::register_tool_read_only_hint(
 				&name,
 				tool.annotations
 					.as_ref()
 					.and_then(|annotations| annotations.read_only_hint),
 			);
+			// Whether this tool's `command` executes or selects — the schema
+			// distinction that separates a runner's check from an editor's edit,
+			// both of which arrive as a string under the same parameter name.
+			crate::supervisor::detect::register_tool_command_shape(
+				&name,
+				crate::supervisor::detect::command_param_is_free_form(&parameters),
+			);
 			McpFunction {
 				name,
 				description: tool.description.as_deref().unwrap_or("").to_string(),
-				parameters: tool.schema_as_json_value(),
+				parameters,
 			}
 		})
 		.collect()

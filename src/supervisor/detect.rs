@@ -275,18 +275,14 @@ pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
 	let Some(cmd) = parameters.get("command").and_then(|v| v.as_str()) else {
 		return false;
 	};
-	// A call whose OWN intent is mutation is never a verification candidate,
-	// whatever its parameter shape: editor tools also take a string `command`
-	// (octofs text_editor's command="str_replace" selects an edit operation, it
-	// executes nothing) — without this guard an edit round classified itself as
-	// its own verifier. Concrete call intent, NOT [`is_mutation_call`]: that one
-	// answers on the tool-level MCP `readOnlyHint` first, and every command
-	// runner honestly annotates itself write-capable (octofs `shell` declares
-	// `read_only_hint = false`). Judging candidacy by capability disqualified
-	// every shell command — including the build/test/validator runs that are the
-	// only thing that CAN verify — so no check ever cleared the pre-gate.
-	if has_explicit_mutation_intent(tool, parameters) {
-		crate::log_debug!("verifier-shape: {} rejected: mutation intent", tool);
+	// A mutating call is never a verification candidate, whatever its parameter
+	// shape: editor tools also take a string `command` (octofs text_editor's
+	// command="str_replace" selects an edit operation, it executes nothing) —
+	// without this guard an edit round classified itself as its own verifier.
+	// [`is_mutation_call`] separates the two structurally (operation selector vs
+	// command runner) rather than by the words in the command; see there.
+	if is_mutation_call(tool, parameters) {
+		crate::log_debug!("verifier-shape: {} rejected: mutation call", tool);
 		return false;
 	}
 	// Reject empty command strings: they execute nothing and cannot validate
@@ -355,10 +351,27 @@ fn normalize_path(path: &str) -> String {
 		.unwrap_or_else(|_| path.trim().trim_start_matches("./").to_string())
 }
 
-/// Classify one concrete call. MCP annotations supply the generic cross-domain
-/// signal when present; command/action parameters cover multi-operation tools
-/// such as editors; normalized intent tokens are the compatibility fallback.
+/// Classify one concrete call. Three signals, strongest first, each answering
+/// what it actually knows:
+///
+/// 1. The tool's own SCHEMA says whether the call selects a fixed operation or
+///    executes a free-form command ([`register_tool_command_shape`]). A command
+///    runner is write-CAPABLE by construction — `octofs shell` and every other
+///    honest runner annotates `readOnlyHint: false` — so its tool-level hint
+///    carries no information about the concrete call, and answering from it
+///    classified every build, test and validator run as a mutation. Those runs
+///    are the only thing that can verify a change, so nothing could ever clear
+///    the pre-gate. What the runner's command actually did to the tree is then
+///    observed, not guessed: see [`Detectors::note_round_verification`].
+/// 2. Otherwise the MCP `readOnlyHint` annotation, which for a single-purpose
+///    tool (an editor, a reader) describes the call as well as the tool.
+/// 3. Otherwise normalized intent tokens — the compatibility fallback for tools
+///    that ship no annotation, and the only signal available for a runner's
+///    concrete command.
 pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
+	if executes_free_form_command(tool) {
+		return has_explicit_mutation_intent(tool, parameters);
+	}
 	if let Some(read_only) = tool_read_only_hint(tool) {
 		return !read_only;
 	}
@@ -369,9 +382,7 @@ pub fn is_mutation_call(tool: &str, parameters: &serde_json::Value) -> bool {
 /// tool-level `readOnly=false` capability hint: a generic shell/browser/API
 /// tool may be capable of writes while the concrete call is only gathering
 /// evidence, and classifying that read as a mutation would be a false positive.
-/// This is the signal for "did this call CHANGE anything"; `is_mutation_call` is
-/// the conservative "could it" used for evidence accounting.
-pub fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
+fn has_explicit_mutation_intent(tool: &str, parameters: &serde_json::Value) -> bool {
 	if contains_mutation_intent(tool) {
 		return true;
 	}
@@ -427,6 +438,71 @@ pub fn register_tool_read_only_hint(tool: &str, read_only: Option<bool>) {
 
 fn tool_read_only_hint(tool: &str) -> Option<bool> {
 	tool_read_only_hints().read().ok()?.get(tool).copied()
+}
+
+fn tool_command_shapes() -> &'static std::sync::RwLock<std::collections::HashMap<String, bool>> {
+	static SHAPES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, bool>>> =
+		std::sync::OnceLock::new();
+	SHAPES.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Register what a tool's `command` parameter IS, read off the tool's own JSON
+/// schema when its inventory arrives (see [`command_param_is_free_form`]).
+/// `true` = it executes a free-form command (a runner: shells, remote
+/// executors, domain validators); `false` = it selects one of a fixed set of
+/// operations (an editor's `command: "str_replace"`). The distinction is
+/// structural — no tool names, no program names, no keyword lists — and it is
+/// what lets the runtime tell a build/test run apart from an edit when both
+/// arrive as a string under the same parameter name.
+pub fn register_tool_command_shape(tool: &str, free_form: bool) {
+	if let Ok(mut shapes) = tool_command_shapes().write() {
+		shapes.insert(tool.to_string(), free_form);
+	}
+}
+
+/// Does this tool execute a free-form command? `false` when unregistered: a
+/// tool whose schema the runtime never saw keeps the annotation-first
+/// classification it had before.
+fn executes_free_form_command(tool: &str) -> bool {
+	tool_command_shapes()
+		.read()
+		.ok()
+		.and_then(|shapes| shapes.get(tool).copied())
+		.unwrap_or(false)
+}
+
+/// Is the `command` property of this tool's input schema a free-form string —
+/// a command to execute — rather than a fixed operation vocabulary? Schema
+/// facts only: a plain string type with no `enum`/`const` constraint and no
+/// `$ref` to a named variant type. `anyOf`/`oneOf` branches are searched too,
+/// so a runner that accepts either a string or an argv array still counts.
+/// Absent or unreadable `command` → `false`; the caller then falls back to the
+/// tool's annotation.
+pub fn command_param_is_free_form(schema: &serde_json::Value) -> bool {
+	let Some(param) = schema.get("properties").and_then(|p| p.get("command")) else {
+		return false;
+	};
+	fn unconstrained_string(node: &serde_json::Value) -> bool {
+		if node.get("enum").is_some() || node.get("const").is_some() || node.get("$ref").is_some() {
+			return false;
+		}
+		match node.get("type") {
+			Some(serde_json::Value::String(t)) => t == "string",
+			// Nullable/union declarations render the type as a list.
+			Some(serde_json::Value::Array(types)) => {
+				types.iter().any(|t| t.as_str() == Some("string"))
+			}
+			_ => false,
+		}
+	}
+	if unconstrained_string(param) {
+		return true;
+	}
+	["anyOf", "oneOf"]
+		.iter()
+		.filter_map(|key| param.get(key).and_then(|v| v.as_array()))
+		.flatten()
+		.any(unconstrained_string)
 }
 
 const SEEN_CAP: usize = 128;

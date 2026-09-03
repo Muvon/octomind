@@ -457,34 +457,63 @@ fn call_set_hash_is_sensitive_to_tool_and_params() {
 #[test]
 fn write_capable_runner_still_verifies_on_read_only_commands() {
 	// Every honest command runner annotates itself write-capable (octofs `shell`
-	// declares readOnlyHint=false). Verifier candidacy must follow the concrete
-	// command's intent, or the build/test/validator runs that are the only thing
-	// able to clear the pre-gate are all disqualified.
-	register_tool_read_only_hint("detectTestsWriteCapableRunner", Some(false));
-	assert!(is_mutation_call(
-		"detectTestsWriteCapableRunner",
-		&json!({})
-	));
+	// declares readOnlyHint=false). Answering from that capability classified
+	// every build/test/validator run as a mutation — and those runs are the only
+	// thing that can clear the pre-gate, so nothing ever could.
+	let runner = "detectTestsWriteCapableRunner";
+	register_tool_read_only_hint(runner, Some(false));
+	register_tool_command_shape(runner, true);
+	let check = json!({"command": "bash scripts/lint.sh"});
 	assert!(
-		is_verifier_shaped(
-			"detectTestsWriteCapableRunner",
-			&json!({"command": "bash scripts/lint.sh"})
-		),
+		!is_mutation_call(runner, &check),
+		"a runner's read-only command is not a mutation, whatever the tool can do"
+	);
+	assert!(
+		is_verifier_shaped(runner, &check),
 		"a write-capable runner executing a check is a verifier candidate"
 	);
 	assert!(
-		verifier_key(
-			"detectTestsWriteCapableRunner",
-			&json!({"command": "bash scripts/lint.sh"})
-		)
-		.is_some(),
+		verifier_key(runner, &check).is_some(),
 		"recovery tracking needs an identity for the same check"
 	);
 	assert!(
-		!is_verifier_shaped(
-			"detectTestsWriteCapableRunner",
-			&json!({"command": "git push origin master"})
-		),
-		"the command's own mutation intent still disqualifies it"
+		is_mutation_call(runner, &json!({"command": "git push origin master"})),
+		"the command's own intent is the only signal a runner leaves behind"
 	);
+}
+
+#[test]
+fn operation_selector_is_never_a_verifier_whatever_the_operation_is_called() {
+	// An editor's `command` names one of a fixed set of operations; it executes
+	// nothing. Keyword lists miss the ones nobody thought to list ("overwrite"),
+	// so the schema decides: a constrained vocabulary is never a command run.
+	let editor = "detectTestsOperationSelector";
+	register_tool_read_only_hint(editor, Some(false));
+	register_tool_command_shape(editor, false);
+	for op in ["str_replace", "overwrite", "truncate"] {
+		let call = json!({ "command": op, "path": "a.rs" });
+		assert!(is_mutation_call(editor, &call), "{op} edits");
+		assert!(!is_verifier_shaped(editor, &call), "{op} executes nothing");
+	}
+}
+
+#[test]
+fn command_param_free_form_reads_the_schema_not_the_name() {
+	let free_form = json!({"properties": {"command": {"type": "string"}}});
+	assert!(command_param_is_free_form(&free_form));
+	let nullable = json!({"properties": {"command": {"type": ["string", "null"]}}});
+	assert!(command_param_is_free_form(&nullable));
+	let argv_or_string = json!({
+		"properties": {"command": {"anyOf": [{"type": "string"}, {"type": "array"}]}}
+	});
+	assert!(command_param_is_free_form(&argv_or_string));
+	let vocabulary = json!({
+		"properties": {"command": {"type": "string", "enum": ["create", "str_replace"]}}
+	});
+	assert!(!command_param_is_free_form(&vocabulary));
+	// schemars renders a named enum type as a reference, not an inline list.
+	let referenced = json!({"properties": {"command": {"$ref": "#/$defs/TextEditorCommand"}}});
+	assert!(!command_param_is_free_form(&referenced));
+	assert!(!command_param_is_free_form(&json!({"properties": {}})));
+	assert!(!command_param_is_free_form(&json!({})));
 }

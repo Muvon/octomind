@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ master, main, develop ]
 
+# A new push supersedes whatever is still running for the same branch or PR —
+# there is no point burning runners on a commit nobody is looking at any more.
+# Grouping by workflow + ref keeps master, each branch and each PR independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

@@ -91,12 +91,19 @@ get_latest_version() {
         auth_header="-H \"Authorization: token $GH_TOKEN\""
     fi
 
-    # Try /releases/latest first (single object, no list parsing)
+    # Resolve the tag from the github.com redirect first — no API, no rate limit
     local version
-    version=$(eval curl -s $auth_header "https://api.github.com/repos/$REPO/releases/latest" | \
-        grep '"tag_name":' | \
-        head -1 | \
-        sed -E 's/.*"([^"]+)".*/\1/')
+    version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+        "https://github.com/$REPO/releases/latest" 2>/dev/null | \
+        sed -E 's#.*/tag/##')
+
+    # Fallback to API /releases/latest (subject to 60 req/h unauthenticated limit)
+    if [ -z "$version" ] || [ "$version" = "latest" ]; then
+        version=$(eval curl -s $auth_header "https://api.github.com/repos/$REPO/releases/latest" | \
+            grep '"tag_name":' | \
+            head -1 | \
+            sed -E 's/.*"([^"]+)".*/\1/')
+    fi
 
     # Fallback to full releases list (catches prereleases)
     if [ -z "$version" ]; then

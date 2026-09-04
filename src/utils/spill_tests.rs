@@ -40,6 +40,7 @@ fn test_read_text_files() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_spill_write_read_clear_in_session() {
 	crate::session::context::with_session_id("spill-test-session".to_string(), async {
 		let path = write_spill("shell", "spilled full output body").expect("spill writes");
@@ -66,6 +67,7 @@ async fn test_spill_write_read_clear_in_session() {
 /// location, not by absence from the temp dir — a sandboxed `OCTOMIND_DATA_DIR`
 /// may legitimately point there.)
 #[tokio::test]
+#[serial_test::serial]
 async fn test_spill_lives_with_the_session_not_in_temp() {
 	crate::session::context::with_session_id("spill-durability-session".to_string(), async {
 		let path = write_spill("view", "full body that must survive a resume").expect("spill");

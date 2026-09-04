@@ -2793,6 +2793,44 @@ async fn should_check_compression_skips_when_range_is_empty() {
 	assert_eq!(ratio, MIN_COMPRESSION_RATIO);
 }
 
+/// The free tier: an oversized tool body over the fire line is cut to the
+/// response cap first; when that alone brings the context back under the line
+/// there is no paid fold at all.
+#[tokio::test]
+async fn should_check_compression_trims_oversized_tool_results_before_paying_for_a_fold() {
+	let mut config = fold_config();
+	config.mcp_response_tokens_threshold = 500;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+		fold_message("user", "next"),
+		fold_message("assistant", "more work"),
+	]);
+	session.model = "notaprovider:no-such-model".to_string();
+	// A measured pace: with one call the growth rate reads as the whole context
+	// and the fire line's runway floor sits far above the configured threshold.
+	session.session.info.total_api_calls = 100;
+	let baseline = session.get_full_context_tokens(&config).await;
+	config.compression.threshold = baseline + 1000;
+	config.max_session_tokens_threshold = baseline + 100_000;
+
+	let mut oversized = fold_message("tool", &"payload ".repeat(4000));
+	oversized.name = Some("view".to_string());
+	session.session.messages.push(oversized);
+	assert!(session.get_full_context_tokens(&config).await > config.compression.threshold);
+
+	let (should, _) = super::should_check_compression(&mut session, &config).await;
+	assert!(
+		!should,
+		"the free cut must satisfy the line without a paid fold"
+	);
+	assert!(session.get_full_context_tokens(&config).await < config.compression.threshold);
+	assert!(session.session.messages[5]
+		.content
+		.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
+}
+
 /// A tool result that entered the context oversized (a session written before
 /// the ingest cap bound it) sits in the live exchange, which the preserving fold
 /// never drains — so every later turn re-sent it and the session could do
@@ -2991,8 +3029,10 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 	assert_eq!(session.session.messages.len(), 3);
 }
 
+/// A paid decline frees nothing, so it must not climb the fire-line ladder;
+/// it holds the next unforced attempt for one runway instead.
 #[tokio::test]
-async fn finish_fold_veto_counts_as_a_paid_decline() {
+async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
 	let config = fold_config();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "system"),
@@ -3000,6 +3040,7 @@ async fn finish_fold_veto_counts_as_a_paid_decline() {
 		fold_message("assistant", "work"),
 	]);
 	session.session.info.consecutive_compressions = 1;
+	session.session.info.total_api_calls = 10;
 	let fingerprint = super::fold_fingerprint(&session.session.messages, 0, 2);
 	let summary = CompressionSummary {
 		should_compress: false,
@@ -3017,7 +3058,9 @@ async fn finish_fold_veto_counts_as_a_paid_decline() {
 	.await
 	.expect("finish veto");
 	assert!(!applied);
-	assert_eq!(session.session.info.consecutive_compressions, 2);
+	assert_eq!(session.session.info.consecutive_compressions, 1);
+	let runway = super::decision::autonomous_runway(1) as usize;
+	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
 	assert_eq!(session.session.messages.len(), 3);
 }
 

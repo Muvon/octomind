@@ -71,7 +71,7 @@ use anyhow::Result;
 pub async fn should_check_compression(session: &mut ChatSession, config: &Config) -> (bool, f64) {
 	// UNIFIED TOKEN CALCULATION - Use the single source of truth
 	// This ensures consistency with display and all other systems
-	let current_tokens = session.get_full_context_tokens(config).await;
+	let mut current_tokens = session.get_full_context_tokens(config).await;
 
 	if config.compression.threshold == 0 {
 		log_debug!("Compression disabled (compression.threshold = 0)");
@@ -97,10 +97,10 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		return (true, MAX_COMPRESSION_RATIO);
 	}
 
-	// ADAPTIVE FIRE LINE: geometric per-turn ladder. Each in-turn fold (or
-	// paid decline) doubles the line — threshold, 2x, 4x… capped under the
-	// ceiling — so a single long turn earns growing room; a genuine user turn
-	// resets it. The runway still paces the amortization gate and fold depth.
+	// ADAPTIVE FIRE LINE: geometric per-turn ladder. Each in-turn fold doubles
+	// the line — threshold, 2x, 4x… capped under the ceiling — so a single long
+	// turn earns growing room; a genuine user turn resets it. The runway still
+	// paces the amortization gate and fold depth.
 	let runway = autonomous_runway(session.session.info.consecutive_compressions);
 	let fire_line = adaptive_fire_line(
 		config.compression.threshold,
@@ -118,6 +118,26 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 			ceiling
 		);
 		return (false, MIN_COMPRESSION_RATIO);
+	}
+
+	// FREE TIER FIRST: before pricing a paid fold, cut oversized tool bodies to
+	// the response cap — the same rule ingest applies, full body spilled to disk
+	// and still readable. Deterministic and free; when it alone drops the context
+	// back under the line there is no summarize call and no cache invalidation.
+	let trimmed = trim_oversized_tool_results(session, config.mcp_response_tokens_threshold);
+	if trimmed > 0 {
+		let after = session.get_full_context_tokens(config).await;
+		log_info!(
+			"Cut {} oversized tool result(s) to the {}-token cap before folding: {} -> {} tokens",
+			trimmed,
+			config.mcp_response_tokens_threshold,
+			current_tokens,
+			after
+		);
+		current_tokens = after;
+		if current_tokens < fire_line {
+			return (false, MIN_COMPRESSION_RATIO);
+		}
 	}
 
 	log_debug!(
@@ -444,9 +464,12 @@ async fn finish_fold(
 	}
 	let should_compress = ai::evaluate_decision(&summary, force, ctx.pact.is_some());
 
+	// A paid decline is not a fold: it frees nothing, so it must not climb the
+	// fire-line ladder (that donated window headroom to a non-event and pushed
+	// the next fold toward the forced ceiling path). Hold for one runway instead.
 	if !should_compress {
 		log_debug!("AI decided compression not beneficial at this point");
-		session.session.info.consecutive_compressions += 1;
+		note_fold_failure(session);
 		return Ok(false);
 	}
 
@@ -483,7 +506,7 @@ async fn finish_fold(
 						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
 						error
 					);
-					session.session.info.consecutive_compressions += 1;
+					note_fold_failure(session);
 					return Ok(false);
 				}
 			}

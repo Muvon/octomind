@@ -361,3 +361,7 @@ mod pacing_tests;
 #[cfg(test)]
 #[path = "decision_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "policy_replay_tests.rs"]
+mod policy_replay_tests;

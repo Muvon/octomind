@@ -220,17 +220,62 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	}
 }
 
+/// Cut every stored tool result back to the configured response cap; returns
+/// how many were cut. Deterministic and free — the same rule the ingest path
+/// applies, enforced on what is actually about to be SENT.
+///
+/// A tool result that entered the context oversized (a session written before
+/// the ingest cap bound it, or any path that bypassed it) is otherwise
+/// unreachable: it lands in the live exchange, which the preserving fold never
+/// drains, so every later turn re-sends it and the session can do nothing but
+/// fail at the ceiling forever. The full body goes to a spill file first, so it
+/// stays available to read — it just stops riding in every request.
+fn trim_oversized_tool_results(session: &mut ChatSession, cap: usize) -> usize {
+	if cap == 0 {
+		return 0;
+	}
+	let mut trimmed = 0;
+	for message in &mut session.session.messages {
+		if message.role != "tool" {
+			continue;
+		}
+		let tool = message.name.as_deref().unwrap_or_default();
+		let (cut, was_truncated) =
+			crate::utils::truncation::truncate_mcp_response_global(&message.content, cap, tool);
+		if was_truncated {
+			message.content = cut;
+			trimmed += 1;
+		}
+	}
+	trimmed
+}
+
 /// Refuse an API call only when the fully materialized context remains above
-/// its usable bound after compression. This is the escape hatch for an
-/// infeasible fold (for example, an enormous protected current turn): retrying
-/// compression would destroy fresh summaries, while sending the request would
-/// violate the model window.
+/// its usable bound after compression AND after every stored tool result has
+/// been cut to its cap. This is the escape hatch for an infeasible fold (for
+/// example, an enormous protected current turn): retrying compression would
+/// destroy fresh summaries, while sending the request would violate the model
+/// window.
 pub async fn ensure_context_within_ceiling(
 	session: &mut ChatSession,
 	config: &Config,
 ) -> Result<()> {
-	let current_tokens = session.get_full_context_tokens(config).await;
 	let ceiling = context_ceiling(session, config);
+	let mut current_tokens = session.get_full_context_tokens(config).await;
+	if current_tokens > ceiling {
+		let trimmed = trim_oversized_tool_results(session, config.mcp_response_tokens_threshold);
+		if trimmed > 0 {
+			let after = session.get_full_context_tokens(config).await;
+			log_info!(
+				"Cut {} oversized tool result(s) to the {}-token response cap: {} -> {} tokens",
+				trimmed,
+				config.mcp_response_tokens_threshold,
+				current_tokens,
+				after
+			);
+			current_tokens = after;
+		}
+	}
 	if current_tokens > ceiling {
 		return Err(anyhow::anyhow!(
 			"context remains above the usable ceiling after compression ({} > {} tokens); shorten the current request or increase the configured/model context limit",

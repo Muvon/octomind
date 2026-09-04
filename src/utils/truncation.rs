@@ -259,11 +259,26 @@ pub fn truncation_hint(tool_name: &str) -> &'static str {
 	}
 }
 
+/// Tokens held back from `max_tokens` to pay for the notice, so a truncated
+/// result FITS its budget. This is what makes truncation idempotent: the second
+/// pass sees content already inside the cap and returns it untouched.
+///
+/// It replaces asking the CONTENT whether it had been truncated
+/// (`content.contains(TRUNCATION_NOTICE_TAG)`) — a question any payload could
+/// answer "yes" to by merely quoting a notice, and payloads do quote them:
+/// session transcripts and spill files store earlier notices verbatim. One
+/// `view` of a session file therefore switched off its own 6k cap and admitted
+/// 142k tokens as a single tool message, which no compression could drain (it
+/// sits in the protected live exchange) and no request could carry — the turn
+/// had nowhere to go but the ceiling error.
+const NOTICE_TOKEN_RESERVE: usize = 400;
+
 /// Truncate an MCP tool response to fit within `max_tokens`.
 ///
 /// Truncation is NOT an error — the call succeeded and returned usable data, so
-/// the result stays a success. We keep the FIRST `max_tokens` tokens and append
-/// a prominent, actionable notice (recency: it sits right before the model's
+/// the result stays a success. We keep the first tokens that fit once the
+/// notice is paid for (see `NOTICE_TOKEN_RESERVE`) and append that
+/// prominent, actionable notice (recency: it sits right before the model's
 /// next turn). The notice states what was cut, the tool-specific way to get the
 /// rest, and that re-running with identical arguments returns the SAME output —
 /// the single biggest driver of truncation retry loops.
@@ -278,21 +293,17 @@ pub fn truncate_mcp_response_global(
 		return (content.to_string(), false);
 	}
 
-	// Idempotency guard: every executed result already flows through the single
-	// truncation choke point (`handle_large_tool_results`). Content carrying our
-	// tag was truncated there; re-truncating would chop the notice and report
-	// wrong token counts, so leave it untouched.
-	if content.contains(TRUNCATION_NOTICE_TAG) {
-		return (content.to_string(), false);
-	}
-
 	let token_count = estimate_tokens(content);
 	if token_count <= max_tokens {
 		return (content.to_string(), false);
 	}
 
-	let truncated = crate::session::truncate_to_tokens(content, max_tokens);
-	let omitted = token_count.saturating_sub(max_tokens);
+	// The notice is paid for out of the budget, not added on top of it, so the
+	// returned content lands inside `max_tokens` and the check above makes a
+	// second pass over it a no-op. That is the whole idempotency mechanism.
+	let shown = max_tokens.saturating_sub(NOTICE_TOKEN_RESERVE).max(1);
+	let truncated = crate::session::truncate_to_tokens(content, shown);
+	let omitted = token_count.saturating_sub(shown);
 	let hint = truncation_hint(tool_name);
 
 	// Lossless path: spill the full body to a session file and hand back a path
@@ -301,11 +312,11 @@ pub fn truncate_mcp_response_global(
 	// the write fails — both still carry the tag + tool-specific narrowing hint.
 	let notice = match crate::utils::spill::write_spill(tool_name, content) {
 		Some(path) => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). Identical arguments return this same truncated output, so re-running wastes a turn. The full output was saved here:\n  {path}\nTo get the rest, read the span you need from that file (a line range or a single symbol), or run a search tool against it to jump to the exact pattern. To return less at the source next time, {hint}.",
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{shown} of ~{token_count} tokens (~{omitted} cut from the end). Identical arguments return this same truncated output, so re-running wastes a turn. The full output was saved here:\n  {path}\nTo get the rest, read the span you need from that file (a line range or a single symbol), or run a search tool against it to jump to the exact pattern. To return less at the source next time, {hint}.",
 			path = path.display(),
 		),
 		None => format!(
-			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{max_tokens} of ~{token_count} tokens (~{omitted} cut from the end). The cut tail is not in this result, and identical arguments return this same truncated output, so re-running wastes a turn. To get the rest, re-issue a narrower call that returns less — {hint}. If what you need is in the shown portion above, read or search it there instead of re-fetching."
+			"\n\n──────────\n{TRUNCATION_NOTICE_TAG}: showing only the first ~{shown} of ~{token_count} tokens (~{omitted} cut from the end). The cut tail is not in this result, and identical arguments return this same truncated output, so re-running wastes a turn. To get the rest, re-issue a narrower call that returns less — {hint}. If what you need is in the shown portion above, read or search it there instead of re-fetching."
 		),
 	};
 

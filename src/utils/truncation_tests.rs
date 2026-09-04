@@ -45,14 +45,35 @@ fn test_mcp_truncation_over_limit() {
 
 #[test]
 fn test_mcp_truncation_is_idempotent() {
-	// A result already truncated upstream carries the tag; re-truncating must
-	// leave it byte-for-byte intact (no double notice, no count corruption).
-	let content = "x ".repeat(1000);
-	let (once, t1) = truncate_mcp_response_global(&content, 50, "shell");
+	// The notice is paid for out of the budget, so a truncated result fits the
+	// cap it was truncated to — which is what makes a second pass return it
+	// byte-for-byte (no double notice, no count corruption).
+	let content = "x ".repeat(20_000);
+	let (once, t1) = truncate_mcp_response_global(&content, 1000, "shell");
 	assert!(t1);
-	let (twice, t2) = truncate_mcp_response_global(&once, 50, "shell");
+	assert!(
+		crate::session::estimate_tokens(&once) <= 1000,
+		"a truncated result must fit the budget it was truncated to"
+	);
+	let (twice, t2) = truncate_mcp_response_global(&once, 1000, "shell");
 	assert!(!t2);
 	assert_eq!(once, twice);
+}
+
+/// A payload that merely QUOTES a truncation notice — a session transcript, a
+/// spill file, this repository — must still be capped. Asking the CONTENT
+/// whether it had already been truncated let one `view` of a session file carry
+/// 142k tokens past a 6k cap, into a live exchange compression may not drain.
+#[test]
+fn test_mcp_truncation_applies_to_content_that_quotes_a_notice() {
+	let quoted = format!("{TRUNCATION_NOTICE_TAG}: showing only the first ~6000 of ~25245 tokens");
+	let content = format!("{quoted}\n{}", "payload line\n".repeat(5000));
+	let (result, was_truncated) = truncate_mcp_response_global(&content, 1000, "view");
+	assert!(was_truncated, "a quoted notice must not switch the cap off");
+	assert!(
+		crate::session::estimate_tokens(&result) <= 1000,
+		"the cap binds whatever the payload happens to contain"
+	);
 }
 
 #[test]
@@ -345,10 +366,10 @@ fn test_mcp_truncation_exact_token_boundary() {
 	let (at_limit, t1) = truncate_mcp_response_global(&content, tokens, "view");
 	assert_eq!(at_limit, content);
 	assert!(!t1);
-	// One token under budget: truncated, notice reports both counts
+	// Over budget: truncated, and the notice reports the true original size
 	let (over, t2) = truncate_mcp_response_global(&content, tokens - 1, "view");
 	assert!(t2);
-	assert!(over.contains(&format!("~{} of ~{} tokens", tokens - 1, tokens)));
+	assert!(over.contains(&format!("of ~{tokens} tokens")));
 }
 
 #[test]

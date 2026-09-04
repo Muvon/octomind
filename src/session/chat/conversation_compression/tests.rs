@@ -2793,6 +2793,74 @@ async fn should_check_compression_skips_when_range_is_empty() {
 	assert_eq!(ratio, MIN_COMPRESSION_RATIO);
 }
 
+/// A tool result that entered the context oversized (a session written before
+/// the ingest cap bound it) sits in the live exchange, which the preserving fold
+/// never drains — so every later turn re-sent it and the session could do
+/// nothing but fail at the ceiling forever. Cutting it to the response cap is
+/// deterministic and free, and the full body is already spilled to disk.
+#[tokio::test]
+async fn ensure_context_within_ceiling_cuts_oversized_tool_results_instead_of_failing() {
+	let mut config = fold_config();
+	config.mcp_response_tokens_threshold = 500;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "task"),
+	]);
+	session.model = "notaprovider:no-such-model".to_string();
+	// Measured, not assumed: the tool inventory also counts toward the context.
+	let baseline = session.get_full_context_tokens(&config).await;
+	config.max_session_tokens_threshold = baseline + 1000;
+
+	let mut oversized = fold_message("tool", &"payload ".repeat(4000));
+	oversized.name = Some("view".to_string());
+	session.session.messages.push(oversized);
+	assert!(
+		session.get_full_context_tokens(&config).await > config.max_session_tokens_threshold,
+		"the oversized result must put the context over the ceiling"
+	);
+
+	super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.expect("an oversized tool result is cut, not fatal");
+
+	assert!(
+		session.get_full_context_tokens(&config).await <= config.max_session_tokens_threshold,
+		"cutting the result must bring the context back inside the ceiling"
+	);
+	let cut = &session.session.messages[2];
+	assert!(
+		crate::session::estimate_tokens(&cut.content) <= 500,
+		"the stored result must respect the same cap the ingest path applies"
+	);
+	assert!(cut
+		.content
+		.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
+}
+
+/// The cap is the only thing that gets to shrink a stored result: with
+/// truncation disabled, an oversized context still fails loudly rather than
+/// silently dropping the user's data.
+#[tokio::test]
+async fn ensure_context_within_ceiling_still_fails_when_truncation_is_disabled() {
+	let mut config = fold_config();
+	config.mcp_response_tokens_threshold = 0;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "task"),
+	]);
+	session.model = "notaprovider:no-such-model".to_string();
+	let baseline = session.get_full_context_tokens(&config).await;
+	config.max_session_tokens_threshold = baseline + 1000;
+
+	let mut oversized = fold_message("tool", &"payload ".repeat(4000));
+	oversized.name = Some("view".to_string());
+	session.session.messages.push(oversized);
+
+	assert!(super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.is_err());
+}
+
 #[tokio::test]
 async fn ensure_context_within_ceiling_rejects_oversized_context() {
 	let mut config = fold_config();

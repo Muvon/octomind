@@ -786,7 +786,20 @@ pub async fn run_interactive_session(
 								Err(e) if crate::session::cancellation::is_cancelled(&e) => {
 									continue;
 								}
-								Err(e) => return Err(e),
+								Err(e) => {
+									// Same as the initial call, minus the rollback: the
+									// tool results already in history stay valid, so
+									// report without truncating and keep the retry
+									// buffer armed.
+									let model_for_error = chat_session.model.clone();
+									handle_followup_api_error(
+										&model_for_error,
+										&e,
+										OutputMode::Interactive,
+									);
+									last_failed_followup = true;
+									continue;
+								}
 							}
 
 							let retry_result = tokio::select! {
@@ -1246,7 +1259,29 @@ pub async fn run_interactive_session(
 			{
 				Ok(()) => {}
 				Err(e) if crate::session::cancellation::is_cancelled(&e) => continue,
-				Err(e) => return Err(e),
+				Err(e) => {
+					// A preparation failure — compression, the context ceiling, a
+					// layer — is one turn's failure, exactly like a provider error:
+					// report it, roll the turn back, hand the prompt back. Ending
+					// the whole interactive session over a request that never left
+					// the machine loses every other thing the session was holding.
+					let model_for_error = chat_session.model.clone();
+					handle_api_error(
+						&mut chat_session,
+						user_message_index,
+						&model_for_error,
+						&e,
+						OutputMode::Interactive,
+					);
+					println!(
+						"{}",
+						"💡 Press Ctrl+G with empty input to retry the last failed request."
+							.dimmed()
+					);
+					last_failed_input = Some(original_input_for_retry);
+					*current_operation.lock().unwrap() = None;
+					continue;
+				}
 			}
 
 			// Capture message count BEFORE API call to detect if assistant message gets added

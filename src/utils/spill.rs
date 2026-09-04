@@ -31,12 +31,22 @@ use crate::session::context::current_session_id;
 
 /// Root spill directory for the current session, or `None` when there is no
 /// session context (CLI/test paths never spill — they fall back to lossy
-/// truncation, keeping those paths IO-free). Lives under the OS temp dir:
-/// spills are transient by nature (a within-session read-through), so we let
-/// the OS reclaim them and best-effort clear on fresh-session start.
+/// truncation, keeping those paths IO-free).
+///
+/// Durable, next to the session's own file — NOT the OS temp dir. The path is
+/// handed to the model inside a truncation notice, and that notice lives in the
+/// message history for as long as the session does: a resumed session, or one
+/// picked up after a reboot, must still be able to read what the notice points
+/// at. A temp-dir spill died with the run that wrote it and left every older
+/// notice pointing at nothing.
 fn session_spill_dir() -> Option<PathBuf> {
 	let session_id = current_session_id()?;
-	Some(std::env::temp_dir().join("octomind-spill").join(session_id))
+	Some(
+		crate::directories::get_sessions_dir()
+			.ok()?
+			.join("spill")
+			.join(session_id),
+	)
 }
 
 /// Write the full `content` to a session-scoped spill file and return its path,
@@ -70,8 +80,9 @@ pub fn write_spill(tool_name: &str, content: &str) -> Option<PathBuf> {
 	}
 }
 
-/// Remove the current session's spill directory. Called from the same
-/// session-end/reset point as the dedup cache clear.
+/// Remove the current session's spill directory. Called when a session starts
+/// FRESH (empty message list), which is the only moment a spill is certainly
+/// unreachable: no notice in any surviving history can still refer to it.
 pub fn clear_current_session() {
 	if let Some(dir) = session_spill_dir() {
 		let _ = std::fs::remove_dir_all(dir);

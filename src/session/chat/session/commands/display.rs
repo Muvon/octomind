@@ -3102,7 +3102,6 @@ pub fn display_usage(output: &CommandOutput) {
 		signed_in,
 		account,
 		windows,
-		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -3145,20 +3144,6 @@ pub fn display_usage(output: &CommandOutput) {
 		}
 		block_row(&w.label, &bar, kw);
 	}
-	// The allowance is 1x the plan price (spec/pricing-v2.md §3), so this line is
-	// what keeps the number above from reading as mean: the fast models never
-	// touch it. Printing the ids beats saying "some models" — the user has to
-	// know WHICH to switch to when the allowance runs dry.
-	if !always_free_models.is_empty() {
-		block_row(
-			"free",
-			&format!("{} — never counted", always_free_models.join(", "))
-				.dimmed()
-				.to_string(),
-			kw,
-		);
-	}
-
 	block_section("resources");
 	let kw = key_width(["balance", "storage", "network"]);
 	block_row(

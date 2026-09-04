@@ -74,7 +74,6 @@ fn usage_json() -> serde_json::Value {
 		// pricing-v2 sends ONE window; the legacy trio rides along so this
 		// fixture also proves the pre-v2 fallback still deserializes.
 		"window": {"label": "billing period", "spent_usd": 3.0, "reserved_usd": 0.5, "allowance_usd": 20.0, "resets_at": "m"},
-		"always_free_models": ["glm-5.3-flash"],
 		"month": {"spent_usd": 3.0, "cap_usd": 100.0, "resets_at": "m"},
 		"balance_usd": 9.0,
 		"storage_gb": 1.0,
@@ -538,7 +537,6 @@ async fn whoami_and_usage_read_the_signed_in_account() {
 	assert_eq!(w.label.as_deref(), Some("billing period"));
 	assert_eq!(w.reserved_usd, Some(0.5));
 	assert_eq!(w.allowance_usd, 20.0);
-	assert_eq!(u.always_free_models, vec!["glm-5.3-flash".to_string()]);
 	assert_eq!(u.network.included_gb, 1.0);
 }
 

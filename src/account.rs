@@ -249,10 +249,6 @@ pub struct Usage {
 	/// an older control plane. Read as a fallback, never preferred.
 	#[serde(default)]
 	pub month: Option<Window>,
-	/// Models that never draw down the allowance, on any plan. Printing these is
-	/// what stops a 1x allowance reading as mean (pricing-v2 §9.2).
-	#[serde(default)]
-	pub always_free_models: Vec<String>,
 	pub balance_usd: f64,
 	pub storage_gb: f64,
 	pub storage_quota_gb: f64,

@@ -32,7 +32,6 @@ pub async fn handle_usage() -> Result<CommandResult> {
 					signed_in: false,
 					account: None,
 					windows: vec![],
-					always_free_models: vec![],
 					balance_usd: 0.0,
 					storage_gb: 0.0,
 					storage_quota_gb: 0.0,
@@ -75,7 +74,6 @@ pub async fn handle_usage() -> Result<CommandResult> {
 				.or(usage.month.as_ref())
 				.map(|w| vec![window(w.label.as_deref().unwrap_or("this period"), w)])
 				.unwrap_or_default(),
-			always_free_models: usage.always_free_models.clone(),
 			balance_usd: usage.balance_usd,
 			storage_gb: usage.storage_gb,
 			storage_quota_gb: usage.storage_quota_gb,

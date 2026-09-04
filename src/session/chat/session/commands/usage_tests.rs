@@ -79,7 +79,6 @@ fn usage_json() -> serde_json::Value {
 			"allowance_usd": 20.0,
 			"resets_at": "m"
 		},
-		"always_free_models": ["glm-5.3-flash", "gemma-4-31b"],
 		"balance_usd": 9.0,
 		"storage_gb": 1.0,
 		"storage_quota_gb": 2.0,
@@ -172,7 +171,6 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 		signed_in,
 		account,
 		windows,
-		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -187,10 +185,6 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 	assert!(
 		windows.is_empty(),
 		"nothing to report when signed out: {windows:?}"
-	);
-	assert!(
-		always_free_models.is_empty(),
-		"signed out has no roster to show"
 	);
 	assert_eq!(balance_usd, 0.0);
 	assert_eq!(storage_gb, 0.0);
@@ -223,7 +217,6 @@ async fn signed_in_state_maps_the_window_and_the_account_label() {
 		signed_in,
 		account,
 		windows,
-		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -243,11 +236,6 @@ async fn signed_in_state_maps_the_window_and_the_account_label() {
 	assert_eq!(windows[0].allowance_usd, 20.0);
 	assert_eq!(windows[0].resets_at, "m");
 	assert_eq!(windows[0].reserved_usd, Some(0.5));
-	assert_eq!(
-		always_free_models,
-		vec!["glm-5.3-flash".to_string(), "gemma-4-31b".to_string()],
-		"the free roster must reach the renderer — it is what keeps a 1x allowance from reading as mean"
-	);
 	assert_eq!(balance_usd, 9.0);
 	assert_eq!(storage_gb, 1.0);
 	assert_eq!(storage_quota_gb, 2.0);
@@ -275,12 +263,7 @@ async fn pre_v2_server_still_renders_via_the_month_window() {
 	.expect("save session");
 
 	let output = usage_output(handle_usage().await.expect("handler runs"));
-	let CommandOutput::Usage {
-		windows,
-		always_free_models,
-		..
-	} = *output
-	else {
+	let CommandOutput::Usage { windows, .. } = *output else {
 		panic!("expected Usage output");
 	};
 	// Falls back to `month`, and `cap_usd` deserializes into allowance_usd.
@@ -294,10 +277,6 @@ async fn pre_v2_server_still_renders_via_the_month_window() {
 	assert_eq!(
 		windows[0].allowance_usd, 100.0,
 		"cap_usd alias did not apply"
-	);
-	assert!(
-		always_free_models.is_empty(),
-		"a pre-v2 server sends no roster, and that must not panic"
 	);
 }
 

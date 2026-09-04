@@ -237,3 +237,50 @@ fn generate_from_log_ignores_injected_user_turns_and_relogged_messages() {
 	assert_eq!(report.entries[0].tool_calls, 1);
 	assert_eq!(report.totals.total_requests, 1);
 }
+
+#[test]
+fn truncate_request_flattens_indented_multiline_input() {
+	let pasted = "        new file:   tests/integration.rs\n        modified:  src/lib.rs";
+	assert_eq!(
+		SessionReport::truncate_request(pasted, 30),
+		"new file: tests/integration..."
+	);
+	assert_eq!(
+		SessionReport::truncate_request("  spaced\n\nout  ", 30),
+		"spaced out"
+	);
+}
+
+#[test]
+fn generate_from_log_attributes_cost_per_request_via_stats_checkpoints() {
+	let dir = tempfile::tempdir().expect("temp dir");
+	let path = dir.path().join("report.jsonl.zst");
+	let entries = [
+		serde_json::json!({"role":"user","content":"first","timestamp":100}),
+		serde_json::json!({"role":"assistant","content":"a","timestamp":101}),
+		// Checkpoint written just before the next genuine user turn.
+		serde_json::json!({
+			"type":"STATS","timestamp":109,"total_cost":2.0,
+			"total_api_time_ms":400,"total_tool_time_ms":100
+		}),
+		serde_json::json!({"role":"user","content":"second","timestamp":110}),
+		serde_json::json!({"role":"assistant","content":"b","timestamp":111}),
+		// Checkpoint written by `/report` itself, closing the in-flight request.
+		serde_json::json!({
+			"type":"STATS","timestamp":119,"total_cost":5.0,
+			"total_api_time_ms":700,"total_tool_time_ms":250
+		}),
+	];
+	for entry in entries {
+		crate::session::append_to_session_file(&path, &entry.to_string())
+			.expect("append report frame");
+	}
+
+	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
+	assert_eq!(report.entries.len(), 2);
+	assert_eq!(report.entries[0].cost, "2.00000");
+	assert_eq!(report.entries[0].ai_time, format_duration(400));
+	assert_eq!(report.entries[1].cost, "3.00000");
+	assert_eq!(report.entries[1].ai_time, format_duration(300));
+	assert_eq!(report.entries[1].processing_time, format_duration(150));
+}

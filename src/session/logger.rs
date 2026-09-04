@@ -152,6 +152,34 @@ pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> R
 	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
+/// Append a running-totals checkpoint at a request boundary.
+///
+/// `/report` attributes cost and time to a request by differencing the totals
+/// on either side of it. The `SUMMARY` snapshot only lands on `save()`, which
+/// is far coarser than one per request — without these checkpoints most rows
+/// report `0.00000` and the whole session's spend piles onto whichever request
+/// happened to precede a save. `STATS` is merged monotonically on resume
+/// (see `parse_session_file`), so an extra checkpoint is never lossy.
+pub fn log_stats_checkpoint(
+	session_file: &std::path::Path,
+	info: &crate::session::SessionInfo,
+) -> Result<()> {
+	let entry = serde_json::json!({
+		"type": "STATS",
+		"timestamp": get_timestamp(),
+		"total_cost": info.total_cost,
+		"input_tokens": info.input_tokens,
+		"output_tokens": info.output_tokens,
+		"cache_read_tokens": info.cache_read_tokens,
+		"cache_write_tokens": info.cache_write_tokens,
+		"tool_calls": info.tool_calls,
+		"total_api_time_ms": info.total_api_time_ms,
+		"total_tool_time_ms": info.total_tool_time_ms,
+		"total_layer_time_ms": info.total_layer_time_ms,
+	});
+	append_to_session_file(&session_file.to_path_buf(), &serde_json::to_string(&entry)?)
+}
+
 fn get_timestamp() -> u64 {
 	SystemTime::now()
 		.duration_since(UNIX_EPOCH)

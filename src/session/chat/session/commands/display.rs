@@ -1813,7 +1813,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 
 	// Column widths — chosen to fit ~92 chars including the rail prefix.
 	const W_NUM: usize = 3;
-	const W_REQUEST: usize = 42;
+	const W_REQUEST: usize = crate::session::report::REQUEST_CELL_WIDTH;
 	const W_COST: usize = 9;
 	const W_TOOLS: usize = 5;
 	const W_TASK: usize = 6;

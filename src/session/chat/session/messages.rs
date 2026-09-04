@@ -299,6 +299,14 @@ impl ChatSession {
 		// purely in-memory and do not need to be reflected in the persisted JSON
 		// line, since cache state is derived per-request from the session struct).
 		if let Some(session_file) = &self.session.session_file {
+			// Close the previous request's cost/time window before the new one
+			// opens, so `/report` can difference the two. Best-effort: a failed
+			// checkpoint costs a report row's numbers, never the message.
+			if let Err(error) =
+				crate::session::logger::log_stats_checkpoint(session_file, &self.session.info)
+			{
+				log_debug!("Stats checkpoint before user message failed: {}", error);
+			}
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}

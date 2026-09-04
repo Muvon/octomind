@@ -22,6 +22,13 @@ use anyhow::Result;
 pub fn handle_report(session: &ChatSession, _config: &Config) -> Result<CommandResult> {
 	// Generate and display session usage report
 	if let Some(ref session_file) = session.session.session_file {
+		// Close the in-flight request's window so the last row shows its real
+		// cost instead of 0 — the report reads the log, not live state.
+		if let Err(error) =
+			crate::session::logger::log_stats_checkpoint(session_file, &session.session.info)
+		{
+			crate::log_debug!("Stats checkpoint before report failed: {}", error);
+		}
 		let session_file_str = session_file.to_string_lossy();
 		match crate::session::report::SessionReport::generate_from_log(&session_file_str) {
 			Ok(report) => {

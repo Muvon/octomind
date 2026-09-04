@@ -199,3 +199,126 @@ fn fingerprint_mixes_file_metadata_and_tracks_changes() {
 		"a size/mtime change must move the fingerprint"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// git_fingerprint(): only the tree's own content may move the hash.
+// ---------------------------------------------------------------------------
+
+fn git_in(root: &std::path::Path, args: &[&str]) {
+	let out = std::process::Command::new("git")
+		.arg("-C")
+		.arg(root)
+		.args(args)
+		.output()
+		.expect("git spawns");
+	assert!(
+		out.status.success(),
+		"git {:?}: {}",
+		args,
+		String::from_utf8_lossy(&out.stderr).trim()
+	);
+}
+
+/// Move a file's mtime forward without touching a byte of it.
+fn bump_mtime(path: &std::path::Path) {
+	let modified =
+		std::fs::metadata(path).unwrap().modified().unwrap() + std::time::Duration::from_secs(60);
+	std::fs::File::options()
+		.write(true)
+		.open(path)
+		.unwrap()
+		.set_times(std::fs::FileTimes::new().set_modified(modified))
+		.expect("set mtime");
+}
+
+/// A repo the test owns outright: staging and rewriting inside the real
+/// checkout would move the user's index.
+fn temp_repo() -> tempfile::TempDir {
+	let tmp = tempfile::tempdir().unwrap();
+	git_in(tmp.path(), &["init"]);
+	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+	tmp
+}
+
+/// Staging changes how git FILES a path, not what the tree holds under it.
+/// Hashing the porcelain status letters made `git add` read as a mutation, so a
+/// turn that staged its work after a passing check was sent back as unverified.
+#[test]
+#[serial_test::serial]
+fn staging_a_file_does_not_move_the_fingerprint() {
+	let tmp = temp_repo();
+	let file = tmp.path().join("note.md");
+	std::fs::write(&file, "content").unwrap();
+
+	let untracked = fingerprint().expect("temp repo fingerprint");
+	git_in(tmp.path(), &["add", "note.md"]);
+	let staged = fingerprint().expect("temp repo fingerprint");
+	std::fs::write(&file, "content, and then some").unwrap();
+	let edited = fingerprint().expect("temp repo fingerprint");
+
+	assert_eq!(untracked, staged, "`git add` changes no byte of the tree");
+	assert_ne!(staged, edited, "an edit after staging is still observed");
+}
+
+/// A tool that rewrites a file with the bytes already in it changed nothing.
+/// Folding mtime made that no-op read as a mutation.
+#[test]
+#[serial_test::serial]
+fn an_identical_rewrite_does_not_move_the_fingerprint() {
+	let tmp = temp_repo();
+	let file = tmp.path().join("note.md");
+	std::fs::write(&file, "same bytes").unwrap();
+
+	let first = fingerprint().expect("temp repo fingerprint");
+	std::fs::write(&file, "same bytes").unwrap();
+	bump_mtime(&file);
+	let rewritten = fingerprint().expect("temp repo fingerprint");
+
+	assert_eq!(first, rewritten, "identical bytes are the same tree");
+}
+
+/// Above the per-file cap the bytes are not read, so the path falls back to
+/// metadata: still moves on a real edit, at the price of moving on an identical
+/// rewrite too. The cheap direction to be wrong in.
+#[test]
+#[serial_test::serial]
+fn a_file_above_the_content_cap_folds_by_metadata() {
+	let tmp = temp_repo();
+	let file = tmp.path().join("big.bin");
+	std::fs::write(&file, vec![7u8; CONTENT_BYTE_CAP as usize + 1]).unwrap();
+
+	let first = fingerprint().expect("temp repo fingerprint");
+	bump_mtime(&file);
+	let touched = fingerprint().expect("temp repo fingerprint");
+
+	assert_ne!(first, touched, "an unread path is tracked by its mtime");
+}
+
+/// Deleting a tracked file is a change to the tree, whatever git's index says
+/// about it — the path leaves the walk, and the hash must move with it.
+#[test]
+#[serial_test::serial]
+fn a_deletion_moves_the_fingerprint() {
+	let tmp = temp_repo();
+	let file = tmp.path().join("note.md");
+	std::fs::write(&file, "content").unwrap();
+	git_in(tmp.path(), &["add", "note.md"]);
+	git_in(
+		tmp.path(),
+		&[
+			"-c",
+			"user.email=t@example.com",
+			"-c",
+			"user.name=t",
+			"commit",
+			"-m",
+			"seed",
+		],
+	);
+
+	let clean = fingerprint().expect("temp repo fingerprint");
+	std::fs::remove_file(&file).unwrap();
+	let deleted = fingerprint().expect("temp repo fingerprint");
+
+	assert_ne!(clean, deleted, "a removed file is a changed tree");
+}

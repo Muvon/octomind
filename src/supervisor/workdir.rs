@@ -36,19 +36,41 @@ const WALK_ENTRY_CAP: usize = 4096;
 /// runtime chdir()s when a session moves, so a session rooted anywhere else was
 /// having a different tree measured than the one it was editing.
 ///
-/// Two measurements, strongest first. Under version control, `git status
-/// --porcelain -uall` folded with (size, mtime) of every dirty path, so
-/// re-modifying an already-dirty file still moves the hash even though its
-/// status line does not. Everywhere else — a docs folder, a data directory, any
-/// working tree that is not a checkout — a bounded walk of the same anchor.
-/// Version control is one way to observe a filesystem, not a precondition for
-/// having one.
+/// Two measurements, strongest first. Under version control, the CONTENT of
+/// every path `git status --porcelain -uall` reports dirty. Everywhere else — a
+/// docs folder, a data directory, any working tree that is not a checkout — a
+/// bounded walk of the same anchor. Version control is one way to observe a
+/// filesystem, not a precondition for having one.
 pub fn fingerprint() -> Option<u64> {
 	let root = crate::mcp::workdir::get_thread_original_working_directory();
 	git_fingerprint(&root).or_else(|| walk_fingerprint(&root, WALK_ENTRY_CAP))
 }
 
-/// Cost: one git spawn plus a stat per dirty file.
+/// Per-file ceiling on content hashing. Above it a dirty path folds by (size,
+/// mtime) instead: re-reading it on every tool round costs more than the
+/// staging noise that reading removes.
+const CONTENT_BYTE_CAP: u64 = 1 << 20;
+
+/// Total bytes one measurement will read across the whole dirty set. A tree
+/// dirty in bulk degrades to metadata rather than re-reading it per round.
+const CONTENT_BUDGET: u64 = 16 << 20;
+
+/// Dirty paths one measurement will open. Bytes alone do not bound the cost of
+/// a tree dirty in tens of thousands of small files (an untracked dependency
+/// directory); the opens do.
+const CONTENT_FILE_CAP: usize = 512;
+
+/// What the tree CONTAINS, never how git currently files it. Two things are
+/// deliberately not hashed: the porcelain status letters, and the mtime of any
+/// path whose bytes were read. Staging a file (`?? path` becomes `A  path`) and
+/// rewriting one with the bytes already in it both leave the tree exactly as it
+/// was, yet both moved the old text+mtime hash — which armed the mutation
+/// pre-gate against turns whose verification had already passed. A fingerprint
+/// that moves without the tree moving is a false accusation, so it may only
+/// move on evidence: different paths, or different bytes under them.
+///
+/// Cost: one git spawn, a stat per dirty path, and at most `CONTENT_FILE_CAP`
+/// reads totalling `CONTENT_BUDGET` bytes.
 fn git_fingerprint(root: &Path) -> Option<u64> {
 	let out = match std::process::Command::new("git")
 		.arg("-C")
@@ -72,18 +94,40 @@ fn git_fingerprint(root: &Path) -> Option<u64> {
 	}
 	let text = String::from_utf8_lossy(&out.stdout);
 	let mut h = std::collections::hash_map::DefaultHasher::new();
-	text.hash(&mut h);
+	let mut budget = CONTENT_BUDGET;
+	let mut reads = 0usize;
 	for line in text.lines() {
 		// porcelain v1: `XY <path>`; renames render as `XY old -> new`.
 		let path = line.get(3..).unwrap_or("");
 		let path = path.rsplit(" -> ").next().unwrap_or(path).trim_matches('"');
+		// The path is the identity of the change: a deleted one contributes it
+		// and nothing else, and a path git merely re-filed contributes the same
+		// as it did before.
+		path.hash(&mut h);
 		// Porcelain paths are relative to the repository root, which `-C` made
 		// the working directory of git alone — this process may be anywhere.
-		if let Ok(md) = std::fs::metadata(root.join(path)) {
-			md.len().hash(&mut h);
-			if let Ok(mt) = md.modified() {
-				mt.hash(&mut h);
+		let full = root.join(path);
+		let Ok(md) = std::fs::metadata(&full) else {
+			continue;
+		};
+		md.len().hash(&mut h);
+		let readable = md.is_file()
+			&& md.len() <= CONTENT_BYTE_CAP
+			&& budget >= md.len()
+			&& reads < CONTENT_FILE_CAP;
+		if readable {
+			if let Ok(bytes) = std::fs::read(&full) {
+				budget = budget.saturating_sub(bytes.len() as u64);
+				reads += 1;
+				bytes.hash(&mut h);
+				continue;
 			}
+		}
+		// Unread: too large, over one of the budgets, unreadable, or not a file
+		// at all (a dirty submodule). mtime still moves on a real edit, at the
+		// price of also moving on an identical rewrite of that path.
+		if let Ok(mt) = md.modified() {
+			mt.hash(&mut h);
 		}
 	}
 	Some(h.finish())

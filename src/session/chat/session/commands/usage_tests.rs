@@ -69,7 +69,28 @@ fn account_json() -> serde_json::Value {
 	serde_json::json!({"email": "dev@example.com", "plan": "pro"})
 }
 
+/// The pricing-v2 shape: ONE window that carries its own label.
 fn usage_json() -> serde_json::Value {
+	serde_json::json!({
+		"window": {
+			"label": "billing period",
+			"spent_usd": 3.0,
+			"reserved_usd": 0.5,
+			"allowance_usd": 20.0,
+			"resets_at": "m"
+		},
+		"always_free_models": ["glm-5.3-flash", "gemma-4-31b"],
+		"balance_usd": 9.0,
+		"storage_gb": 1.0,
+		"storage_quota_gb": 2.0,
+		"network": {"used_gb": 0.5, "included_gb": 1.0}
+	})
+}
+
+/// The PRE-v2 shape. The CLI ships ahead of the control plane, so `/usage` must
+/// still render against an API that has not been upgraded — three windows, and
+/// `cap_usd` where v2 sends `allowance_usd`.
+fn legacy_usage_json() -> serde_json::Value {
 	serde_json::json!({
 		"window_4h": {"spent_usd": 1.0, "cap_usd": 10.0, "resets_at": "soon"},
 		"week": {"spent_usd": 2.0, "reserved_usd": 0.5, "cap_usd": 50.0, "resets_at": "w"},
@@ -151,6 +172,7 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 		signed_in,
 		account,
 		windows,
+		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -166,6 +188,10 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 		windows.is_empty(),
 		"nothing to report when signed out: {windows:?}"
 	);
+	assert!(
+		always_free_models.is_empty(),
+		"signed out has no roster to show"
+	);
 	assert_eq!(balance_usd, 0.0);
 	assert_eq!(storage_gb, 0.0);
 	assert_eq!(storage_quota_gb, 0.0);
@@ -175,7 +201,7 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 
 #[tokio::test]
 #[serial]
-async fn signed_in_state_maps_every_window_and_the_account_label() {
+async fn signed_in_state_maps_the_window_and_the_account_label() {
 	let _lock = ENV_LOCK.lock().await;
 	let _env = EnvGuard::new(&[DATA_DIR_KEY, account::API_URL_ENV, account::HUB_KEY_ENV]);
 	let dir = sandbox("signed-in");
@@ -197,6 +223,7 @@ async fn signed_in_state_maps_every_window_and_the_account_label() {
 		signed_in,
 		account,
 		windows,
+		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -208,29 +235,70 @@ async fn signed_in_state_maps_every_window_and_the_account_label() {
 	};
 	assert!(signed_in, "a stored session means signed in");
 	assert_eq!(account.as_deref(), Some("dev@example.com (pro)"));
-	assert_eq!(windows.len(), 3, "4h + week + month windows: {windows:?}");
-	assert_eq!(windows[0].label, "4 hours");
-	assert_eq!(windows[0].spent_usd, 1.0);
-	assert_eq!(windows[0].cap_usd, 10.0);
-	assert_eq!(windows[0].resets_at, "soon");
-	assert_eq!(windows[1].label, "week");
-	assert_eq!(windows[1].spent_usd, 2.0);
+	// ONE window, and its label comes from the SERVER — the client must never
+	// have to know whether this account bills on a period or a 7-day free slice.
+	assert_eq!(windows.len(), 1, "exactly one window: {windows:?}");
+	assert_eq!(windows[0].label, "billing period");
+	assert_eq!(windows[0].spent_usd, 3.0);
+	assert_eq!(windows[0].allowance_usd, 20.0);
+	assert_eq!(windows[0].resets_at, "m");
+	assert_eq!(windows[0].reserved_usd, Some(0.5));
 	assert_eq!(
-		windows[1].reserved_usd,
-		Some(0.5),
-		"week carries the reservation"
-	);
-	assert_eq!(windows[2].label, "month");
-	assert_eq!(windows[2].spent_usd, 3.0);
-	assert_eq!(
-		windows[2].reserved_usd, None,
-		"month fixture has no reservation"
+		always_free_models,
+		vec!["glm-5.3-flash".to_string(), "gemma-4-31b".to_string()],
+		"the free roster must reach the renderer — it is what keeps a 1x allowance from reading as mean"
 	);
 	assert_eq!(balance_usd, 9.0);
 	assert_eq!(storage_gb, 1.0);
 	assert_eq!(storage_quota_gb, 2.0);
 	assert_eq!(network_used_gb, 0.5);
 	assert_eq!(network_included_gb, 1.0);
+}
+
+/// The CLI ships ahead of the control plane, so a machine on a new binary
+/// talking to an un-upgraded API must still print usage rather than erroring.
+#[tokio::test]
+#[serial]
+async fn pre_v2_server_still_renders_via_the_month_window() {
+	let _lock = ENV_LOCK.lock().await;
+	let _env = EnvGuard::new(&[DATA_DIR_KEY, account::API_URL_ENV, account::HUB_KEY_ENV]);
+	let dir = sandbox("legacy");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	std::env::remove_var(account::HUB_KEY_ENV);
+	let url = spawn_api(vec![env_ok(legacy_usage_json()), env_ok(account_json())]).await;
+	std::env::set_var(account::API_URL_ENV, &url);
+	account::save_session(&account::Session {
+		jwt: "j1".into(),
+		refresh_token: "r1".into(),
+		api_url: url.clone(),
+	})
+	.expect("save session");
+
+	let output = usage_output(handle_usage().await.expect("handler runs"));
+	let CommandOutput::Usage {
+		windows,
+		always_free_models,
+		..
+	} = *output
+	else {
+		panic!("expected Usage output");
+	};
+	// Falls back to `month`, and `cap_usd` deserializes into allowance_usd.
+	assert_eq!(
+		windows.len(),
+		1,
+		"legacy payload must collapse to one window"
+	);
+	assert_eq!(windows[0].label, "this period", "no server label to use");
+	assert_eq!(windows[0].spent_usd, 3.0);
+	assert_eq!(
+		windows[0].allowance_usd, 100.0,
+		"cap_usd alias did not apply"
+	);
+	assert!(
+		always_free_models.is_empty(),
+		"a pre-v2 server sends no roster, and that must not panic"
+	);
 }
 
 #[tokio::test]

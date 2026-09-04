@@ -71,8 +71,10 @@ fn account_json() -> serde_json::Value {
 
 fn usage_json() -> serde_json::Value {
 	serde_json::json!({
-		"window_4h": {"spent_usd": 1.0, "cap_usd": 10.0, "resets_at": "soon"},
-		"week": {"spent_usd": 2.0, "reserved_usd": 0.5, "cap_usd": 50.0, "resets_at": "w"},
+		// pricing-v2 sends ONE window; the legacy trio rides along so this
+		// fixture also proves the pre-v2 fallback still deserializes.
+		"window": {"label": "billing period", "spent_usd": 3.0, "reserved_usd": 0.5, "allowance_usd": 20.0, "resets_at": "m"},
+		"always_free_models": ["glm-5.3-flash"],
 		"month": {"spent_usd": 3.0, "cap_usd": 100.0, "resets_at": "m"},
 		"balance_usd": 9.0,
 		"storage_gb": 1.0,
@@ -532,11 +534,11 @@ async fn whoami_and_usage_read_the_signed_in_account() {
 
 	let u = usage().await.expect("usage").expect("usage payload");
 	assert_eq!(u.balance_usd, 9.0);
-	assert_eq!(
-		u.window_4h.reserved_usd, None,
-		"absent reservation defaults to None"
-	);
-	assert_eq!(u.week.reserved_usd, Some(0.5));
+	let w = u.window.as_ref().expect("v2 payload carries one window");
+	assert_eq!(w.label.as_deref(), Some("billing period"));
+	assert_eq!(w.reserved_usd, Some(0.5));
+	assert_eq!(w.allowance_usd, 20.0);
+	assert_eq!(u.always_free_models, vec!["glm-5.3-flash".to_string()]);
 	assert_eq!(u.network.included_gb, 1.0);
 }
 
@@ -560,7 +562,12 @@ async fn hub_usage_serves_a_bare_hub_key() {
 		.expect("hub key identifies the account");
 	assert_eq!(who.plan, "pro");
 	let u = usage().await.expect("usage").expect("hub usage payload");
-	assert_eq!(u.month.cap_usd, 100.0);
+	// `cap_usd` is the pre-v2 spelling and must still land on allowance_usd —
+	// the CLI ships ahead of the control plane.
+	assert_eq!(
+		u.month.as_ref().expect("legacy month window").allowance_usd,
+		100.0
+	);
 }
 
 #[tokio::test]

@@ -3102,6 +3102,7 @@ pub fn display_usage(output: &CommandOutput) {
 		signed_in,
 		account,
 		windows,
+		always_free_models,
 		balance_usd,
 		storage_gb,
 		storage_quota_gb,
@@ -3138,11 +3139,24 @@ pub fn display_usage(output: &CommandOutput) {
 	for w in windows {
 		// Machines pre-claim their future burn from the caps — show the committed
 		// part next to real spend so the free headroom reads honestly.
-		let mut bar = money_bar(w.spent_usd, w.cap_usd);
+		let mut bar = money_bar(w.spent_usd, w.allowance_usd);
 		if let Some(r) = w.reserved_usd.filter(|r| *r > 0.0) {
 			bar.push_str(&format!(" +${r:.2} reserved").dimmed().to_string());
 		}
 		block_row(&w.label, &bar, kw);
+	}
+	// The allowance is 1x the plan price (spec/pricing-v2.md §3), so this line is
+	// what keeps the number above from reading as mean: the fast models never
+	// touch it. Printing the ids beats saying "some models" — the user has to
+	// know WHICH to switch to when the allowance runs dry.
+	if !always_free_models.is_empty() {
+		block_row(
+			"free",
+			&format!("{} — never counted", always_free_models.join(", "))
+				.dimmed()
+				.to_string(),
+			kw,
+		);
 	}
 
 	block_section("resources");
@@ -3159,14 +3173,18 @@ pub fn display_usage(output: &CommandOutput) {
 		kw,
 	);
 
-	// Summarise with the tightest window — that's the one that will bite first.
-	// Committed (spent + reserved) is what actually bounds new work.
+	// Summarise on committed (spent + reserved) — what actually bounds new work.
+	// Still a max over the list rather than windows[0]: one window today, but a
+	// pre-v2 server sends several and the summary must not silently pick one.
 	let peak = windows
 		.iter()
-		.filter(|w| w.cap_usd > 0.0)
-		.map(|w| (w.spent_usd + w.reserved_usd.unwrap_or(0.0)) / w.cap_usd)
+		.filter(|w| w.allowance_usd > 0.0)
+		.map(|w| (w.spent_usd + w.reserved_usd.unwrap_or(0.0)) / w.allowance_usd)
 		.fold(0.0_f64, f64::max);
-	block_close_ok("/usage", Some(&format!("{:.0}% of cap", peak * 100.0)));
+	block_close_ok(
+		"/usage",
+		Some(&format!("{:.0}% of allowance", peak * 100.0)),
+	);
 	println!();
 }
 

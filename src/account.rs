@@ -214,12 +214,22 @@ pub struct Account {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Window {
+	/// "billing period" on paid, "7 days" on free — the server carries the only
+	/// per-plan difference so the client never branches on the plan
+	/// (spec/pricing-v2.md §1.1). Absent on pre-v2 servers.
+	#[serde(default)]
+	pub label: Option<String>,
 	pub spent_usd: f64,
-	/// Pre-claimed by cloud machines' future burn until this window's reset
-	/// (spec/plan-slots.md). Absent on servers that predate reservations.
+	/// Pre-claimed by cloud machines' future burn over a bounded horizon
+	/// (Burn::RESERVE_HORIZON_HOURS). Absent on servers that predate reservations.
 	#[serde(default)]
 	pub reserved_usd: Option<f64>,
-	pub cap_usd: f64,
+	/// The plan's allowance for this window. `cap_usd` is the pre-v2 spelling;
+	/// accepting both keeps `/usage` working against an API that has not been
+	/// upgraded yet, which matters because the CLI ships ahead of the control
+	/// plane.
+	#[serde(alias = "cap_usd")]
+	pub allowance_usd: f64,
 	pub resets_at: String,
 }
 
@@ -231,9 +241,18 @@ pub struct Network {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Usage {
-	pub window_4h: Window,
-	pub week: Window,
-	pub month: Window,
+	/// ONE window since pricing-v2. Optional so a pre-v2 server (which sends
+	/// window_4h/week/month) still deserializes instead of failing the command.
+	#[serde(default)]
+	pub window: Option<Window>,
+	/// Pre-v2 shape, kept only so `/usage` degrades instead of erroring against
+	/// an older control plane. Read as a fallback, never preferred.
+	#[serde(default)]
+	pub month: Option<Window>,
+	/// Models that never draw down the allowance, on any plan. Printing these is
+	/// what stops a 1x allowance reading as mean (pricing-v2 §9.2).
+	#[serde(default)]
+	pub always_free_models: Vec<String>,
 	pub balance_usd: f64,
 	pub storage_gb: f64,
 	pub storage_quota_gb: f64,

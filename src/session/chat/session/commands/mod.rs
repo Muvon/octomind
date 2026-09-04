@@ -222,6 +222,9 @@ pub enum CommandOutput {
 		signed_in: bool,
 		account: Option<String>,
 		windows: Vec<UsageWindow>,
+		/// Models that never draw down the allowance, on any plan. Shown next to
+		/// spend so a 1x allowance does not read as mean (spec/pricing-v2.md §9.2).
+		always_free_models: Vec<String>,
 		balance_usd: f64,
 		storage_gb: f64,
 		storage_quota_gb: f64,

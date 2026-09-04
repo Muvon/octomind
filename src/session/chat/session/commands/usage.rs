@@ -32,6 +32,7 @@ pub async fn handle_usage() -> Result<CommandResult> {
 					signed_in: false,
 					account: None,
 					windows: vec![],
+					always_free_models: vec![],
 					balance_usd: 0.0,
 					storage_gb: 0.0,
 					storage_quota_gb: 0.0,
@@ -63,11 +64,18 @@ pub async fn handle_usage() -> Result<CommandResult> {
 		CommandOutput::Usage {
 			signed_in: true,
 			account,
-			windows: vec![
-				window("4 hours", &usage.window_4h),
-				window("week", &usage.week),
-				window("month", &usage.month),
-			],
+			// ONE window (spec/pricing-v2.md §1.1) — its label comes from the
+			// server, so the CLI never has to know whether this account is on a
+			// billing period or a free 7-day slice. `month` is the pre-v2 shape,
+			// read only so /usage still works against an un-upgraded control
+			// plane; the CLI ships ahead of the API routinely.
+			windows: usage
+				.window
+				.as_ref()
+				.or(usage.month.as_ref())
+				.map(|w| vec![window(w.label.as_deref().unwrap_or("this period"), w)])
+				.unwrap_or_default(),
+			always_free_models: usage.always_free_models.clone(),
 			balance_usd: usage.balance_usd,
 			storage_gb: usage.storage_gb,
 			storage_quota_gb: usage.storage_quota_gb,
@@ -82,7 +90,7 @@ fn window(label: &str, w: &account::Window) -> UsageWindow {
 		label: label.to_string(),
 		spent_usd: w.spent_usd,
 		reserved_usd: w.reserved_usd,
-		cap_usd: w.cap_usd,
+		allowance_usd: w.allowance_usd,
 		resets_at: w.resets_at.clone(),
 	}
 }
@@ -93,7 +101,7 @@ pub struct UsageWindow {
 	pub spent_usd: f64,
 	/// Committed by running machines until the reset — None on older servers.
 	pub reserved_usd: Option<f64>,
-	pub cap_usd: f64,
+	pub allowance_usd: f64,
 	pub resets_at: String,
 }
 

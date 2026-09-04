@@ -224,22 +224,14 @@ fn test_render_usage_signed_in_and_out() {
 	display_usage(&CommandOutput::Usage {
 		signed_in: true,
 		account: Some("dev@example.com".to_string()),
-		windows: vec![
-			UsageWindow {
-				label: "5h".to_string(),
-				spent_usd: 2.5,
-				reserved_usd: Some(0.75),
-				cap_usd: 10.0,
-				resets_at: "2026-08-18T12:00:00Z".to_string(),
-			},
-			UsageWindow {
-				label: "week".to_string(),
-				spent_usd: 40.0,
-				reserved_usd: None,
-				cap_usd: 50.0,
-				resets_at: "2026-08-24T00:00:00Z".to_string(),
-			},
-		],
+		windows: vec![UsageWindow {
+			label: "billing period".to_string(),
+			spent_usd: 16.0,
+			reserved_usd: Some(0.75),
+			allowance_usd: 20.0,
+			resets_at: "2026-08-24T00:00:00Z".to_string(),
+		}],
+		always_free_models: vec!["glm-5.3-flash".to_string(), "gemma-4-31b".to_string()],
 		balance_usd: 12.34,
 		storage_gb: 1.5,
 		storage_quota_gb: 10.0,
@@ -250,6 +242,7 @@ fn test_render_usage_signed_in_and_out() {
 		signed_in: false,
 		account: None,
 		windows: Vec::new(),
+		always_free_models: Vec::new(),
 		balance_usd: 0.0,
 		storage_gb: 0.0,
 		storage_quota_gb: 0.0,

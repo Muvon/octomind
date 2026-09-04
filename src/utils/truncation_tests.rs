@@ -60,6 +60,43 @@ fn test_mcp_truncation_is_idempotent() {
 	assert_eq!(once, twice);
 }
 
+/// A cap below the notice's own size cannot produce a result that fits it, so
+/// the budget arithmetic alone cannot make a second pass a no-op. The tail
+/// fallback must: double-truncating stacked a second notice on the first and
+/// cut a dedup placeholder down to "[d".
+#[test]
+fn test_mcp_truncation_is_idempotent_under_a_cap_smaller_than_the_notice() {
+	let content = "x ".repeat(20_000);
+	let (once, t1) = truncate_mcp_response_global(&content, 50, "shell");
+	assert!(t1);
+	let (twice, t2) = truncate_mcp_response_global(&once, 50, "shell");
+	assert!(!t2);
+	assert_eq!(once, twice, "a second pass must not stack a second notice");
+	assert_eq!(
+		once.matches(TRUNCATION_NOTICE_TAG).count(),
+		1,
+		"exactly one notice"
+	);
+}
+
+/// Reserving a fixed 400 tokens out of a 50-token budget left one token of
+/// content — enough to turn our own dedup placeholder into "[d". The reserve
+/// never takes more than half.
+#[test]
+fn test_mcp_truncation_keeps_content_under_a_small_cap() {
+	let placeholder = "[duplicate tool call — `skill`: identical args returned the same truncated output already in your context — re-running yields no more. To reach the cut-off part, narrow the request: target a specific subset, add a filter, or ask for fewer items.]";
+	assert!(
+		crate::session::estimate_tokens(placeholder) > 20,
+		"test premise: the payload must exceed the cap"
+	);
+	let (result, was_truncated) = truncate_mcp_response_global(placeholder, 20, "skill");
+	assert!(was_truncated);
+	assert!(
+		result.contains("duplicate tool call"),
+		"the cap must leave usable content, got: {result}"
+	);
+}
+
 /// A payload that merely QUOTES a truncation notice — a session transcript, a
 /// spill file, this repository — must still be capped. Asking the CONTENT
 /// whether it had already been truncated let one `view` of a session file carry

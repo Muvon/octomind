@@ -187,11 +187,9 @@ async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 	.await;
 	std::env::remove_var("OLLAMA_API_URL");
 	reset_tool_map().await;
-	let _ = std::fs::remove_dir_all(
-		std::env::temp_dir()
-			.join("octomind-spill")
-			.join("__condense_e2e_full"),
-	);
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("spill").join("__condense_e2e_full"));
+	}
 
 	plain = results.remove(0);
 	let condensed = plain.extract_content();
@@ -277,11 +275,9 @@ async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	.await;
 	std::env::remove_var("OLLAMA_API_URL");
 	reset_tool_map().await;
-	let _ = std::fs::remove_dir_all(
-		std::env::temp_dir()
-			.join("octomind-spill")
-			.join("__condense_e2e_missing"),
-	);
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("spill").join("__condense_e2e_missing"));
+	}
 
 	assert_eq!(
 		results[0].extract_content(),

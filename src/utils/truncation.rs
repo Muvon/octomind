@@ -273,6 +273,24 @@ pub fn truncation_hint(tool_name: &str) -> &'static str {
 /// had nowhere to go but the ceiling error.
 const NOTICE_TOKEN_RESERVE: usize = 400;
 
+/// How far back from the end to look for a notice we wrote. Comfortably over
+/// the longest notice (~620 bytes with a spill path), and nowhere near enough
+/// to see a quotation buried in a large body.
+const NOTICE_TAIL_SCAN_BYTES: usize = 4096;
+
+/// Does this content END with a notice we wrote? Only consulted when the cap is
+/// too small to hold a notice, where the budget arithmetic cannot make
+/// truncation idempotent on its own. Scoped to the tail because the tail is the
+/// only place a notice of ours can be: scanning the whole body is exactly what
+/// let a payload that merely QUOTES a notice switch its own cap off.
+fn tail_carries_notice(content: &str) -> bool {
+	let from = floor_char_boundary(
+		content,
+		content.len().saturating_sub(NOTICE_TAIL_SCAN_BYTES),
+	);
+	content[from..].contains(TRUNCATION_NOTICE_TAG)
+}
+
 /// Truncate an MCP tool response to fit within `max_tokens`.
 ///
 /// Truncation is NOT an error — the call succeeded and returned usable data, so
@@ -293,6 +311,13 @@ pub fn truncate_mcp_response_global(
 		return (content.to_string(), false);
 	}
 
+	// A budget below the notice's own size cannot contain a truncated result, so
+	// the arithmetic below cannot make a second pass a no-op. Only there do we
+	// fall back to recognizing our own notice.
+	if max_tokens <= NOTICE_TOKEN_RESERVE && tail_carries_notice(content) {
+		return (content.to_string(), false);
+	}
+
 	let token_count = estimate_tokens(content);
 	if token_count <= max_tokens {
 		return (content.to_string(), false);
@@ -301,7 +326,13 @@ pub fn truncate_mcp_response_global(
 	// The notice is paid for out of the budget, not added on top of it, so the
 	// returned content lands inside `max_tokens` and the check above makes a
 	// second pass over it a no-op. That is the whole idempotency mechanism.
-	let shown = max_tokens.saturating_sub(NOTICE_TOKEN_RESERVE).max(1);
+	//
+	// Never more than half the budget, though: a cap smaller than the notice
+	// would otherwise return one token of content and a paragraph of apology —
+	// and small caps are real (tests, tight budgets), which is where a fixed
+	// reserve cut a dedup placeholder down to "[d".
+	let reserve = NOTICE_TOKEN_RESERVE.min(max_tokens / 2);
+	let shown = max_tokens.saturating_sub(reserve).max(1);
 	let truncated = crate::session::truncate_to_tokens(content, shown);
 	let omitted = token_count.saturating_sub(shown);
 	let hint = truncation_hint(tool_name);

@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.50.0] - 2026-09-04
+
+### 📋 Release Summary
+
+This release introduces breaking changes to usage pricing and allowance handling (e58f9613). It adds mid-turn system message delivery and session-tree fingerprinting (2154ce2d, 342a830e). Several fixes improve request accounting, session and context handling, truncation, file persistence, supervisor checks, reporting, and local MCP tool retries (a54a6a73, f415f35e, dce8c905, 7a802b96, 6841f5a1, 02cedff7, e69c3bfd, 6bd668e3, 2fe9b675, 175cdf2a, ca9d7d28, 4e420aca, c1d12a0c, 57670ac1, ca126931).
+
+
+### 🚨 Breaking Changes
+
+⚠️ **Important**: This release contains breaking changes that may require code updates.
+
+- **usage**: support pricing v2 allowances `e58f9613`
+
+### ✨ New Features & Enhancements
+
+- **session**: deliver system messages mid-turn `2154ce2d`
+- **workdir**: fingerprint session trees `342a830e`
+
+### 🔧 Improvements & Optimizations
+
+- **workflows**: cancel superseded workflow runs `51603100`
+- **session**: batch inbox processing `2d266b11`
+- **mcp**: clean up stdio server after round trip `892d277e`
+
+### 🐛 Bug Fixes & Stability
+
+- **report**: correct request accounting `a54a6a73`
+- **session**: ignore injected and duplicate turns `f415f35e`
+- **truncation**: preserve idempotence under small caps `dce8c905`
+- **spill**: persist files with session data `7a802b96`
+- **context**: preserve truncation and retry limits `6841f5a1`
+- **supervisor**: hash dirty file contents `02cedff7`
+- **session**: avoid blocking during session init `e69c3bfd`
+- **inbox**: batch results per assistant turn `6bd668e3`
+- **chat**: filter system tags from history output `2fe9b675`
+- **supervisor**: use command intent for runners `175cdf2a`
+- **mcp**: retry busy local tool spawns `ca9d7d28`
+- **supervisor**: classify calls by schema `4e420aca`
+- **supervisor**: use call intent for checks `c1d12a0c`
+- **session**: preserve deferred gate state `57670ac1`
+- **session**: defer completion gate for async work `ca126931`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.49.0] - 2026-09-02
 
 ### 📋 Release Summary

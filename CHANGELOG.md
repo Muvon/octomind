@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.50.1] - 2026-09-04
+
+### 📋 Release Summary
+
+Improved usage reporting by removing redundant reporting for always-free models (fbbd338f).
+
+
+### 🔧 Improvements & Optimizations
+
+- **usage**: remove always-free model reporting `fbbd338f`
+
 ## [0.50.0] - 2026-09-04
 
 ### 📋 Release Summary

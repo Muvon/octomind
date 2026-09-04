@@ -44,9 +44,8 @@ rustflags = []
 [registry]
 default = "crates-io"
 
-[registry.crates-io]
+[registries.crates-io]
 protocol = "sparse"
-
 # Net configuration for better performance
 [net]
 retry = 2

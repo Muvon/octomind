@@ -89,6 +89,13 @@ impl SessionReport {
 			}
 		}
 
+		// Compression snapshots re-append the surviving messages to the log
+		// (see `log_compression_point`), so the same turn appears once per fold.
+		// A re-logged message keeps its role, timestamp and content — dedupe on
+		// those, or requests and their tool calls are counted many times over.
+		let mut seen_messages: std::collections::HashSet<(&str, u64, &str)> =
+			std::collections::HashSet::new();
+
 		// Process entries and track cost/time
 		for log_entry in all_entries.iter() {
 			// User messages are persisted as `Message` structs with `role:"user"` (no
@@ -96,14 +103,37 @@ impl SessionReport {
 			// them up alongside `{"type":"COMMAND",…}` entries. Without this, /report
 			// only ever shows slash commands and skips real chat turns.
 			let role = log_entry.get("role").and_then(|r| r.as_str()).unwrap_or("");
+			let content = log_entry
+				.get("content")
+				.and_then(|c| c.as_str())
+				.unwrap_or("");
 			let log_type = log_entry
 				.get("type")
 				.and_then(|t| t.as_str())
-				.unwrap_or_else(|| if role == "user" { "USER" } else { "" });
+				.unwrap_or_else(|| {
+					// Only a genuine user turn opens a new row. Skills, `<system-note>`,
+					// supervisor steers and continuation wrappers are injected with
+					// `role:"user"` too; counting them fills the table with generated
+					// requests and splits the real one's cost across dozens of rows.
+					if role == "user"
+						&& !content.trim().is_empty()
+						&& !crate::session::is_system_managed_user_content(content)
+					{
+						"USER"
+					} else {
+						""
+					}
+				});
 			let entry_timestamp = log_entry
 				.get("timestamp")
 				.and_then(|t| t.as_u64())
 				.unwrap_or(0);
+
+			// Markers (SUMMARY, COMMAND, …) may legitimately repeat; only messages
+			// are re-appended verbatim by compression snapshots.
+			if !role.is_empty() && !seen_messages.insert((role, entry_timestamp, content)) {
+				continue;
+			}
 
 			match log_type {
 				"STATS" => {

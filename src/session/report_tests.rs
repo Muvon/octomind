@@ -202,3 +202,38 @@ fn generate_from_log_rejects_missing_or_invalid_zstd_files() {
 	std::fs::write(&invalid, b"not zstd").unwrap();
 	assert!(SessionReport::generate_from_log(invalid.to_str().unwrap()).is_err());
 }
+
+#[test]
+fn generate_from_log_ignores_injected_user_turns_and_relogged_messages() {
+	let dir = tempfile::tempdir().expect("temp dir");
+	let path = dir.path().join("report.jsonl.zst");
+	let real_turn = serde_json::json!({"role":"user","content":"fix the parser","timestamp":100});
+	let assistant = serde_json::json!({
+		"role":"assistant",
+		"content":"on it",
+		"timestamp":101,
+		"tool_calls":[{"name":"shell"}]
+	});
+	let entries = [
+		serde_json::json!({"role":"user","content":"<skill name=\"git\">body</skill>","timestamp":90}),
+		real_turn.clone(),
+		assistant.clone(),
+		serde_json::json!({"role":"user","content":"<pay-attention>steer</pay-attention>","timestamp":102}),
+		serde_json::json!({"role":"user","content":"<system-note>job done</system-note>","timestamp":103}),
+		serde_json::json!({"role":"user","content":"<continuation>resume</continuation>","timestamp":104}),
+		serde_json::json!({"type":"COMPRESSION_POINT","timestamp":105}),
+		// Compression re-appends the surviving messages verbatim.
+		real_turn,
+		assistant,
+	];
+	for entry in entries {
+		crate::session::append_to_session_file(&path, &entry.to_string())
+			.expect("append report frame");
+	}
+
+	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
+	assert_eq!(report.entries.len(), 1);
+	assert_eq!(report.entries[0].user_request, "fix the parser");
+	assert_eq!(report.entries[0].tool_calls, 1);
+	assert_eq!(report.totals.total_requests, 1);
+}

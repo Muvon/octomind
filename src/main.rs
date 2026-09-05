@@ -92,6 +92,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+	// Identify this app in every upstream LLM request (some providers reject
+	// anonymous clients); must run before the first request builds the client.
+	octolib::set_user_agent(concat!("Octomind/", env!("CARGO_PKG_VERSION")));
+
 	// Initialize environment tracker before loading .env
 	let _tracker = octomind::config::get_env_tracker();
 

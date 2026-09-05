@@ -96,7 +96,7 @@ Each step is labelled with who acts — **(host)** = the editor/parent client, *
   environment/config.
 
 4. **(host → agent)** Session creation: `session/new` starts a fresh session; `session/load` resumes a specific session
-  id from disk. See [Session Creation](#session-creation-new_session-vs-load_session) for the behavioral difference.
+  id from disk. See [session creation details](02-acp-protocol.md) for the behavioral difference.
 
 5. **(host ↔ agent)** Message exchange: host sends `session/prompt`; agent streams responses as `session/update`
   notifications.

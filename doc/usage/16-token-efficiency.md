@@ -67,7 +67,7 @@ For an installed `octofs` executable on PATH, `project-tools/capabilities/projec
 ```toml
 [roles.mcp]
 server_refs = ["project-files"]
-allowed_tools = ["project-files:view", "project-files:list_files"]
+allowed_tools = ["project-files:view"]
 
 [[mcp.servers]]
 name = "project-files"

@@ -155,7 +155,7 @@ when = [
 All `when` items are AND'd. History is the session call log of allowed calls, recorded before execution; blocked calls
 do not enter it, while a later tool error does not erase an allowed call.
 
-## `[[pipe]]` — pre-model input transform
+## `pipe` guardrail: Pre-model Input Transform
 
 Runs a matching script on the raw user input **before the model sees it**. The script receives the user message on
 stdin; its stdout replaces the message sent to the model. Non-zero exit is a hard stop — the message is not sent to the

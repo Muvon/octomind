@@ -5,6 +5,12 @@ injection, supported prompt content, and troubleshooting.
 
 ## Get Started
 
+| Editor | How it launches ACP agents | Section |
+|--------|----------------------------|---------|
+| Neovim | Plugin-configured subprocess | [Neovim](#neovim) |
+| Zed | Native external ACP agent | [Zed](#zed) |
+| JetBrains IDEs | AI Assistant external ACP agent | [JetBrains IDEs](#jetbrains-ides) |
+
 Octomind runs as an ACP agent over stdio using JSON-RPC:
 
 ```bash
@@ -68,6 +74,77 @@ sessions created or loaded for the lifetime of the ACP process. Start the proces
 
 Editor plugin configuration formats are not implemented in this repository. In your client's external-agent setup, use
 the executable and argument list above; the protocol examples below define the Octomind side of the connection.
+
+## Neovim
+
+> The editor-side snippets below are illustrative. Plugin configuration shapes change over time; confirm against each plugin's current docs.
+
+### CodeCompanion.nvim
+
+CodeCompanion does not ship a built-in `octomind` adapter, so you configure Octomind as a custom ACP adapter. Adjust to match the version of CodeCompanion you have installed.
+
+```lua
+require("codecompanion").setup({
+  adapters = {
+    octomind = function()
+      return require("codecompanion.adapters").extend("octomind", {
+        command = "octomind",
+        args = { "acp", "assistant" },
+      })
+    end,
+  },
+  strategies = {
+    chat = { adapter = "octomind" },
+    inline = { adapter = "octomind" },
+  },
+})
+```
+
+To select a tap agent instead of the explicit local `[[roles]]` entry, replace `assistant` with a tag such as
+`developer:general`; `{ "acp" }` uses the `assistant:concierge` tap default.
+
+### avante.nvim
+
+```lua
+require("avante").setup({
+  provider = "octomind",
+  vendors = {
+    octomind = {
+      command = "octomind",
+      args = { "acp", "assistant" },
+    },
+  },
+})
+```
+
+## Zed
+
+Zed has native ACP support and configures external ACP agents under `agent_servers` with a `command` and `args`. Add to your Zed `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Octomind": {
+      "command": "octomind",
+      "args": ["acp", "assistant"]
+    }
+  }
+}
+```
+
+Replace `assistant` with a tap tag such as `developer:general`, or drop the second argument to use the configured default.
+See Zed's external-agent configuration docs for the authoritative schema.
+
+## JetBrains IDEs
+
+Supported via the AI Assistant plugin. Configure an external ACP agent:
+
+1. Open **Settings > Tools > AI Assistant**
+2. Add external agent
+3. Set command: `octomind acp assistant` (replace `assistant` with a tap tag such as `developer:general`, or omit it for
+   the configured default)
+
+See the JetBrains AI Assistant external-agent documentation for the authoritative schema.
 
 ## Create and Resume Sessions
 

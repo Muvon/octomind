@@ -181,7 +181,7 @@ The ID shown illustrates the format; it must be replaced with a block ID cited i
 
 ## Orchestration Server Tools
 
-### `tap` — Run Specialist Roles from Taps
+### `tap` tool: Run Specialist Roles from Taps
 
 Delegate work to a specialist role installed via a tap (e.g. `developer:general`). Each role brings its own system
 prompt, model preferences, and MCP tool kit. Use `tap` to hand off a focused task, monitor what's running, stop a run,
@@ -228,10 +228,10 @@ environment variables before delegation:
 octomind run developer:general
 ```
 
-The other orchestration tools are [`schedule`](#schedule--scheduled-message-injection) and `monitor`. `monitor` runs an
+The other orchestration tools are [`schedule`](#schedule-tool-scheduled-message-injection) and `monitor`. `monitor` runs an
 event-stream command, bounds and coalesces output injections, and is inspected through `/status monitors`.
 
-### `schedule` — Scheduled Message Injection
+### `schedule` tool: Scheduled Message Injection
 
 Schedule messages for future injection into the session — fire at a specific time, or the next time the session becomes
 idle. Also exposed as the [`/schedule`](../reference/02-session-commands.md#schedule-subcommand-args) slash command for
@@ -360,7 +360,7 @@ For a local HTTP MCP server already listening at this endpoint, call `mcp` in se
 {"action": "remove", "name": "local_api"}
 ```
 
-### `agent` — Dynamic Agent Management
+### `agent` tool: Dynamic Agent Management
 
 Manage in-process AI agents at runtime. Each registered agent becomes a tool prefixed with `agent_`. Distinct from the
 `agent` server (which exposes config-defined ACP sub-agents) and from `tap run` (which launches tap-distributed roles).

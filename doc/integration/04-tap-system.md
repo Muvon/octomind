@@ -480,7 +480,7 @@ Each `run` returns a run id of the form `tap-<role-with-dashes>-<6hex>` (e.g. `t
 `discover` matches your `intent` semantically against each agent's title + description (cosine score must exceed `0.2`,
 top 5 returned) and requires the local embedding model to be ready, erroring if it is not. Runs always execute in the
 background; the reply lands as a user message in the next turn. See [MCP Tools —
-`tap`](../usage/07-mcp-tools.md#tap--run-specialist-roles-from-taps) for the full schema.
+`tap`](../usage/07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps) for the full schema.
 
 ## Common questions
 

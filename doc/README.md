@@ -110,6 +110,19 @@ runs.
 | [Scheduled Tasks](use-cases/07-scheduled-tasks.md) | Timed messages and recurring work |
 | [Long-Running Development](use-cases/08-long-running-development.md) | Named sessions and resume workflows |
 | [Custom Hooks](use-cases/09-custom-hooks.md) | Script-backed webhook integration |
+| [Safe Agent: Sandbox & Guardrails](use-cases/10-safe-agent-sandbox-and-guardrails.md) | Block destructive commands and verify the agent’s work |
+| [Predictable AI Spend](use-cases/11-keep-ai-spend-predictable.md) | Spending checkpoints, per-role models, and usage reports |
+| [Make “Done” Mean Done](use-cases/12-make-done-mean-done.md) | Supervisor gate, plan checks, and a test validator |
+| [Project Conventions via Skills](use-cases/13-teach-project-conventions-with-skills.md) | Auto-activating skills and convention validators |
+| [Learn from Past Sessions](use-cases/14-learn-from-past-sessions.md) | Carry corrections into the next session |
+| [Project Scripts as Tools](use-cases/15-expose-project-scripts-as-tools.md) | Let the agent run your checks through local tools |
+| [Build & Share a Specialist](use-cases/16-build-and-share-a-specialist-agent.md) | Create, publish, and install a tap agent |
+| [Understand a Codebase](use-cases/17-understand-an-unfamiliar-codebase.md) | Source-backed onboarding to an unfamiliar repo |
+| [Private Code, Local Models](use-cases/18-private-code-with-local-models.md) | Route private roles to Ollama, others to the cloud |
+| [Second Opinion via Fan-out](use-cases/19-compare-models-with-parallel-fanout.md) | Parallel branches and a judge step |
+| [Research with Dynamic Fan-out](use-cases/20-research-a-topic-with-dynamic-fanout.md) | Planner-driven parallel investigations |
+| [Implement–Review–Fix Loop](use-cases/21-implement-review-fix-loop.md) | Bounded graph workflow until review passes |
+| [Release Notes from Git History](use-cases/22-release-notes-from-git-history.md) | Plain drafts and schema-validated release data |
 
 ## Development Guide
 

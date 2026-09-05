@@ -229,7 +229,7 @@ configurable. Starting a job past that limit does not queue — the call returns
 ### Dynamic Agents
 
 Use the runtime `agent` tool for temporary agents that execute in-process. See [Dynamic agent setup and
-invocation](07-mcp-tools.md#agent--dynamic-agent-management) for the complete example and parameter reference.
+invocation](07-mcp-tools.md#agent-tool-dynamic-agent-management) for the complete example and parameter reference.
 
 ## Prompt Templates
 

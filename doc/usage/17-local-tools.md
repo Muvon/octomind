@@ -92,8 +92,8 @@ Unknown tags are ignored with a debug log so the format can grow without breakin
   output. The `*` must be attached directly to the name: `*target`, not `* target`.
 - **Optional** — no prefix. This is the default.
 - **TYPE** — one of `string`, `number`, `integer`, `boolean`, `array`, `object`. Common aliases (`str`→string,
-  `int`→integer, `num`/`float`→number, `bool`→boolean, `list`→array, `obj`/`map`→object) are normalized. Unknown types
-  fall back to `string`.
+  `int`→integer, `num`/`float`→number, `bool`→boolean, `list`→array, `obj`/`map`→object) are normalized. An omitted or
+  unknown type falls back to `string`.
 - **DESCRIPTION** — everything after the type, joined with single spaces. Shown in the tool's parameter docs.
 
 A bare `*` with no name (e.g. `@param * string ...`), or an empty `@param` line, is silently skipped (logged at debug).
@@ -249,8 +249,8 @@ child is killed on drop; descendant process-tree cleanup is not guaranteed. Keep
 accepting large JSON payloads.
 
 To see why specific files were skipped during discovery, raise the log level with config `log_level = "debug"`, the
-`/loglevel debug` session command, or tracing configuration. There is no global `octomind --log-level` flag;
-`--log-level` belongs to `octomind config` and persists the setting.
+`/loglevel debug` session command, or tracing configuration. `--log-level` belongs to `octomind config` and persists
+the setting.
 
 ```text
 /loglevel debug

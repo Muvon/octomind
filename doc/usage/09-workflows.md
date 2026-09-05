@@ -24,7 +24,7 @@ printf '%s\n' 'The deployment succeeded. Two checks remain.' | octomind workflow
 Real runs show progress and responses on stderr. For structured stdout, use `--format jsonl`; without it, stdout is
 empty. `--dry-run` prints a plan without reading stdin or spawning steps.
 
-For input preprocessing inside a session, see [Guardrails](18-guardrails.md#pipe--pre-model-input-transform).
+For input preprocessing inside a session, see [Guardrails](18-guardrails.md#pipe-guardrail-pre-model-input-transform).
 
 ## Concept
 
@@ -66,7 +66,7 @@ octomind workflow myflow.toml --dry-run
 - stderr receives each step's assistant message (rendered as markdown when `enable_markdown_rendering` is on), progress
   lines, per-step stats, warnings, and the final total — the human view. **stdout is empty by default**; pass `--format
   jsonl` for a machine-readable result on stdout (per-step `assistant` + final `cost` events — see [Machine-readable
-  output](#machine-readable-output---format-jsonl)), or `--dry-run` to print the plan.
+  output](#machine-readable-output-jsonl-format)), or `--dry-run` to print the plan.
 
 ## File format
 
@@ -230,7 +230,7 @@ Every step prompt is resolved in **three passes**; the last two reuse the chat h
 |--------------------|------------------------------------------------------------------------|
 | `{{input}}`        | The raw stdin content (trimmed)                                        |
 | `{{step_name}}`    | The full text output of a previously completed step (by name)          |
-| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-parallel--true)). In a **dynamic parallel block** (with `match`), the block's name is the per-item loop variable inside the template and becomes the joined block output after fan-out completes (see [Dynamic fan-out](#dynamic-fan-out-match)). |
+| `{{parallel_step}}`| A parallel **block's** name → every sub-step's output joined; an expanded sub-step's name → all its replica outputs joined (see [Parallel](#parallel-mode-true-enables-concurrency)). In a **dynamic parallel block** (with `match`), the block's name is the per-item loop variable inside the template and becomes the joined block output after fan-out completes (see [Dynamic fan-out](#dynamic-fan-out-match)). |
 
 An unknown `{{var}}` is left **untouched** in this pass so the next pass can claim it as a built-in.
 
@@ -291,7 +291,7 @@ Optional fields on any sequential step (including sub-steps inside parallel/loop
 | `skills` | _(inherited environment)_ | List of skill names to force-load in the subprocess before its first turn. Forwarded as `OCTOMIND_SKILLS` (comma-joined) — same env-loading mechanism an interactive session uses. |
 | `capabilities` | _(inherited environment)_ | Exact installed capability names to force-load before the first turn. Forwarded as `OCTOMIND_CAPABILITIES` (comma-joined); no aliases or fuzzy matching are applied. |
 
-### Parallel (`parallel = true`)
+### `parallel` mode: true enables concurrency
 
 Sub-steps run concurrently and are joined before the block completes. The next top-level step starts only after every
 sub-step completes. Sub-steps cannot reference each other; only outer scope.
@@ -633,7 +633,7 @@ counts across every step.
 
 > **Continue-session steps report per-invocation deltas.** A `session = "continue"` step's subprocess reports *cumulative* session cost/tokens every time it resumes (each loop iteration or retry). The orchestrator subtracts the per-step running baseline so the per-step line, the footer total, and `max_cost` avoid re-counting previously reported session spend — without this, an N-iteration refine loop would over-count cost ~N× (compounding). Fresh and parallel steps are a new session each invocation and are reported as-is.
 
-## Machine-readable output (`--format jsonl`)
+## Machine-readable output: JSONL format
 
 A plain run writes nothing to stdout — it is meant to be watched on stderr. To consume a workflow's result
 programmatically, pass `--format jsonl`:

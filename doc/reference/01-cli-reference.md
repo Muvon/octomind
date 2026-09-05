@@ -78,7 +78,7 @@ Loading happens before command dispatch and may create or migrate config even wi
 | `--model MODEL` | Set root-level model (`provider:model` format). |
 | `--log-level <none\|info\|debug>` | Set the log level (case-insensitive); any other value errors. |
 | `--mcp-providers <a,b,c>` | **Replace** the MCP server list: clears all configured servers, then adds each named one as a `builtin` server (timeout 30s). |
-| `--mcp-server <name,key=value,...>` | Add or update one MCP server. See [format](#--mcp-server-format) below. |
+| `--mcp-server <name,key=value,...>` | Add or update one MCP server. See [the `--mcp-server` format details](01-cli-reference.md) below. |
 | `--system TEXT` | Write/reset the legacy root `system` field. Current session prompts come from `[[roles]].system`, so prefer editing the role instead. |
 | `--markdown-enable BOOL` | Enable or disable markdown rendering. |
 | `--markdown-theme THEME` | Set the markdown theme (must be one of the themes from `--list-themes`). |

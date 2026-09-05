@@ -127,8 +127,8 @@ report and injected notes still use tokens in normal agent requests.
 The first two derive from one primitive — **information novelty**: did the action add new information? A mutation
 (edit/write) always advances state; a read/search advances only when its result is one not seen recently.
 
-- **Loop** — the same result-set repeats for 3 tool rounds. Round identity uses result hashes, independent of call
-  order. No extra model call is needed.
+- **Loop** — the same result-set repeats for 3 tool rounds. Round identity hashes tool names and results, independent
+  of call order. No extra model call is needed.
 - **No-progress** — 5 tool rounds with **zero novelty** — churn, not genuine work.
 - **Recovery** — command-shaped checks keep failing and no later success from the *same* check discharges them;
   unrelated fresh reads cannot hide the unresolved failure.
@@ -248,11 +248,10 @@ tokens.
 
 ## Delegation
 
-The MCP `tap` action `run` and `agent_*` tools spawn a **context-isolated** child that sees only the prompt string — no
-transcript, no prior tool output. Handoff quality is owned at prompt time: the spawn tools' own descriptions state that
-the child starts with zero context and must receive the goal, the established facts, constraints, and the expected
-deliverable. The child reports its measured completion outcome to the parent through ACP metadata; missing, failed, or
-cancelled handbacks count as unverified.
+The MCP `tap` action `run` and `agent_*` tools spawn a **context-isolated** child. Its prompt must supply the goal,
+established facts, constraints, and expected deliverable; the parent transcript and prior tool output are not inherited
+automatically. The child reports its measured completion outcome through ACP metadata; missing, failed, or cancelled
+handbacks count as unverified.
 
 For a delegation handoff, include the concrete context and deliverable in the prompt:
 

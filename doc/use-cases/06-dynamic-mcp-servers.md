@@ -1,201 +1,276 @@
 # Dynamic MCP Servers
 
-Let the AI discover what tools it needs and connect new MCP servers on the fly — no config changes, no restarts.
+Use the built-in `mcp` tool to connect and manage tool servers during a live session. This guide is for users who need
+additional tools mid-task and want to decide which connections to keep for future sessions.
 
-## The Problem
+## Get Started
 
-You don't always know upfront which tools a session will need. A developer asks "help me with the GitHub issues" but the GitHub MCP server isn't configured. Or the AI realizes mid-task it needs a database tool. Traditionally, you'd stop, edit config, restart. Octomind lets the AI handle this itself.
+The `mcp` tool lives in the `runtime` builtin MCP server. Your role must include that server and allow `runtime:mcp` or
+`runtime:*`; the template's `assistant` role allows `runtime:*`.
 
-## Solution
-
-The built-in `mcp` tool lets the AI add, enable, disable, remove, and persist MCP servers during a live session. This tool lives in the `runtime` builtin MCP server, so it is only available when the AI's role grants access to `runtime` (the default `assistant` role does — `server_refs` includes `runtime` with `runtime:*` allowed). A custom role that drops `runtime` cannot self-configure.
-
-> The conversational snippets below are simplified illustrations of an agent's reasoning and the resulting tool calls. Real tool result strings differ in wording (for example, `enable` returns `Server '<name>' enabled with N tools: ...`).
-
-### How It Works
-
-The AI can manage its own tool ecosystem at runtime:
-
-```
-User: "Check the open GitHub issues for this repo"
-
-AI (thinking): "I don't have GitHub tools. Let me add the GitHub MCP server."
-
-AI calls: mcp(action="add", name="github", server_type="http",
-          url="https://api.github.com/mcp")
-
-AI calls: mcp(action="enable", name="github")
-
-AI: "Connected to GitHub MCP server. Found 12 open issues..."
+```bash
+octomind run assistant
 ```
 
-No config changes. No restart. The AI recognized a gap and filled it.
+Ask the AI to inspect its servers before adding one:
 
-> The `url` above is an illustrative endpoint, not a real GitHub API. Substitute the actual MCP server URL you want to connect to.
-
-### Example: Full Dynamic Tool Discovery
-
-```
-User: "I need to analyze our database schema and cross-reference with GitHub issues"
-
-AI:
-  1. mcp(action="list")
-     -> Configured servers:
-
-          core [builtin] ✓ active → (all tools)
-          orchestration [builtin] ✓ active → (all tools)
-          runtime [builtin] ✓ active → (all tools)
-          agent [builtin] ✓ active → (all tools)
-
-        (no GitHub, no DB tools yet)
-
-  2. mcp(action="add", name="github", server_type="http",
-         url="https://api.github.com/mcp")
-     -> "Server 'github' registered"
-
-  3. mcp(action="enable", name="github")
-     -> "Server 'github' enabled with 12 tools:
-         github_list_issues, github_search_code, ..."
-
-  4. mcp(action="add", name="db", server_type="stdio",
-         command="mcp-postgres", args=["--connection", "postgresql://..."])
-     -> "Server 'db' registered"
-
-  5. mcp(action="enable", name="db")
-     -> "Server 'db' enabled with 3 tools:
-         query, list_tables, describe_table"
-
-  6. Now uses both servers to cross-reference issues with schema
-
-  7. When done:
-     mcp(action="disable", name="db")  # Clean up sensitive connection
+```text
+List your MCP servers and tell me which are enabled.
 ```
 
-The `list` action groups servers under a `Configured servers:` header (those declared in config — by default `core`, `orchestration`, `runtime`, and `agent`) and a separate `Dynamic servers:` header for anything added at runtime. Each line shows `name [type] status → tools`, a 💾 marker if the server is persisted, and `(all tools)` when no tool filter is set. A `filesystem` server appears only when resolved tap or user configuration adds one.
+The AI calls `mcp` with this JSON argument object. The JSON examples below are tool arguments, not shell or slash
+commands.
 
-### Persisting Dynamic Servers
-
-If a dynamically added server proves useful, persist it to config:
-
-```
-AI calls: mcp(action="persist", name="github")
--> Saved to ~/.local/share/octomind/config/mcp-github.toml
+```json
+{
+  "action": "list"
+}
 ```
 
-Whether the persisted server auto-loads next session depends on its state at persist time:
+The result separates `Configured servers:` from `Dynamic servers:`. Configured rows include a server type and an
+`active` label; dynamic rows show enabled/disabled state. Both include the stored tool filter and persistence marker.
+The configured `active` label is not a live health probe; use `/mcp health` to diagnose connections. Actual inventories
+depend on your role, taps, and configuration.
 
-- **Enabled when persisted** -> `auto_bind` is set to the current role, so it loads automatically in future sessions for that role.
-- **Disabled when persisted** -> the config is still written, but `auto_bind` is cleared (the tool reports "Auto-bind cleared (server disabled)"), so it won't auto-load until you enable and persist it again.
+## Connect a Server
 
-Remove persisted config:
-```
-AI calls: mcp(action="unpersist", name="github")
--> Removed from config directory
-```
+`add` registers a server without connecting; `enable` connects, discovers its tools, and exposes them to the AI. Dynamic
+registrations belong to the current session.
 
 ### Stdio Servers (Local Tools)
 
-The AI can spin up local tool servers too:
+With `octocode` installed and available on the Octomind process's PATH, ask:
 
-```
-AI calls: mcp(action="add", name="octocode", server_type="stdio",
-          command="octocode", args=["mcp", "--path=."], timeout_seconds=240)
-
-AI calls: mcp(action="enable", name="octocode")
--> "Server 'octocode' enabled with 3 tools:
-    semantic_search, view_signatures, graphrag"
+```text
+Add a stdio MCP server named octocode using command octocode, args ["mcp", "--path=."],
+and timeout_seconds 240. Then enable it and report the tool names returned by the server.
 ```
 
-`timeout_seconds` is optional and defaults to **30**. For tool calls it is an idle deadline that resets on MCP progress. Raise it only when a server cannot report progress or return a task for bounded long-running work.
+The corresponding `mcp` calls are:
+
+```json
+{
+  "action": "add",
+  "name": "octocode",
+  "server_type": "stdio",
+  "command": "octocode",
+  "args": [
+    "mcp",
+    "--path=."
+  ],
+  "timeout_seconds": 240
+}
+```
+
+```json
+{
+  "action": "enable",
+  "name": "octocode"
+}
+```
+
+This uses the Octocode launch arguments shown in the default config template. Do not assume a fixed number or set of
+tools: use the names returned by `enable` or inspect `/mcp list`.
+
+`timeout_seconds` is optional and defaults to **30**. For tool calls it is an idle deadline that resets on MCP progress.
+Raise it only when a server cannot report progress or return a task for bounded long-running work.
+
+### HTTP Servers
+
+For an MCP server you already run at `http://localhost:3000/mcp`, use these arguments. Replace the URL with your
+server's actual MCP endpoint; a regular REST API URL is not sufficient.
+
+```json
+{
+  "action": "add",
+  "name": "my_http_server",
+  "server_type": "http",
+  "url": "http://localhost:3000/mcp"
+}
+```
+
+```json
+{
+  "action": "enable",
+  "name": "my_http_server"
+}
+```
+
+The dynamic tool does not accept `headers`, `env`, or `cwd`. If the server needs custom values for those fields, define
+it in TOML instead. For example, place this in a config-directory `.toml` file and restart with the matching role.
+Supply `MY_MCP_TOKEN` in the environment before starting Octomind.
+
+```toml
+[[mcp.servers]]
+name = "my_http_server"
+type = "http"
+url = "http://localhost:3000/mcp"
+headers = { Authorization = "Bearer {{ENV:MY_MCP_TOKEN}}" }
+timeout_seconds = 30
+tools = []
+auto_bind = ["assistant"]
+```
+
+`auto_bind` matches the full role name exactly: `developer` does not match `developer:general`. See [Configuration
+Reference](../reference/03-config-reference.md) for static server configuration.
 
 ### Tool Filtering
 
-Only expose specific tools from a server:
+Pass the desired filter to `enable`, using actual names from the server's inventory. For example, if the server reports
+`semantic_search`, this exposes only that tool:
 
-```
-AI calls: mcp(action="add", name="github", server_type="http",
-          url="https://api.github.com/mcp",
-          tools=["github_list_issues", "github_create_issue"])
-```
-
-Or use wildcards:
-```
-tools=["github_*"]
-```
-
-The `enable` action also accepts a `tools` filter, applied when the server actually connects. It overrides whatever filter was registered at `add` time, so you can register a server broadly and narrow its exposed tools later:
-
-```
-AI calls: mcp(action="enable", name="github", tools=["github_list_issues"])
+```json
+{
+  "action": "enable",
+  "name": "octocode",
+  "tools": [
+    "semantic_search"
+  ]
+}
 ```
 
-### Dynamic Agents Too
+A trailing `*` matches a name prefix; `tools: []` exposes the full inventory:
 
-The same pattern works for agents. The AI can create specialized agents at runtime:
-
-```
-AI calls: agent(action="add", name="db_expert",
-           description="Analyzes database schemas and queries",
-           system="You are a database expert...",
-           server_refs=["filesystem", "db"],
-           allowed_tools=["filesystem:view", "db:*"])
-
-AI calls: agent(action="enable", name="db_expert")
-
-AI calls: agent_db_expert(task="Analyze the schema for N+1 query risks")
+```json
+{
+  "action": "enable",
+  "name": "octocode",
+  "tools": [
+    "semantic_*"
+  ]
+}
 ```
 
-Once enabled, the agent becomes callable as a tool named `agent_<name>` (here `agent_db_expert`). A few details worth knowing:
-
-- **`server_refs` is validated at add time.** Any name you list explicitly must already exist as a configured server or a dynamic server you have added; an unknown reference fails the call with `Server '<name>' not found. Available servers: ...`. (In the example, `filesystem` must be available — for instance provided by a tap — and `db` must have been added first.)
-- **`server_refs` can be inferred.** If you omit `server_refs` but provide `allowed_tools`, Octomind auto-populates `server_refs` from the server prefixes in the tool names (so `allowed_tools=["db:*"]` implies `server_refs=["db"]`).
-
-## Practical Scenario: Self-Assembling Toolkit
-
-Prompt the AI to assess what it needs:
-
-```
-User: "You have access to the filesystem. Before you start working on this project,
-       check what tools would be useful and set them up."
-
-AI:
-  1. Reads project files: package.json, Cargo.toml, docker-compose.yml
-  2. Discovers: Rust project with PostgreSQL, uses GitHub for issues
-  3. Sets up:
-     - octocode (code search)
-     - postgres MCP (database)
-     - github MCP (issues/PRs)
-  4. Reports: "I've connected 3 additional tool servers. Ready to work."
+```json
+{
+  "action": "enable",
+  "name": "octocode",
+  "tools": []
+}
 ```
 
-## MCP Management Commands
+The current dynamic connection path applies the filter supplied to `enable`. A `tools` value supplied to `add` is stored
+in the server configuration but is not applied by dynamic `enable` on its own. Also, an `enable` filter is not written
+back into that stored configuration: `persist` saves the registered configuration, not the temporary filter. For a
+persistent restriction, include `tools` when you first register the server, and pass the same filter to `enable`. For
+example, use this `add` in place of the unrestricted one above:
 
-| Action | Description |
-|--------|-------------|
-| `list` | Show all servers with status |
-| `add` | Register new server (doesn't connect; `timeout_seconds` defaults to 30) |
-| `enable` | Connect and activate tools (optional `tools` filter applied at connect time) |
-| `disable` | Deactivate (keep config) |
-| `remove` | Unregister a dynamically added server (does not remove config-defined servers) |
-| `persist` | Save to config dir; auto-binds to the current role only if enabled |
-| `unpersist` | Remove from saved config |
+```json
+{
+  "action": "add",
+  "name": "octocode",
+  "server_type": "stdio",
+  "command": "octocode",
+  "args": [
+    "mcp",
+    "--path=."
+  ],
+  "timeout_seconds": 240,
+  "tools": [
+    "semantic_search"
+  ]
+}
+```
 
-### AI tool vs human command — two separate surfaces
+Verify the next session's inventory after persisting.
 
-It is important not to confuse two things that look similar:
+## Persist or Disconnect a Server
 
-- **The `mcp` tool (AI-driven).** This is what the AI calls to *mutate* its tool ecosystem: `add`, `enable`, `disable`, `remove`, `persist`, `unpersist`, and `list`. Everything in this document is about this tool.
-- **The `/mcp` interactive command (human-driven, read-only).** When *you* type `/mcp` in a session, it only inspects state. Its subcommands are `info` (default), `list`, `full`, `health`, `dump`, and `validate`. There is no `/mcp add`, `/mcp enable`, `/mcp remove`, or `/mcp persist` — typing those returns an unknown-subcommand error. Runtime server mutation is exclusively the AI's job via the `mcp` tool.
+If a server proves useful, persist it:
 
-## Key Points
+```json
+{
+  "action": "persist",
+  "name": "octocode"
+}
+```
 
-- The `mcp` tool lives in the `runtime` builtin server; the AI's role must grant `runtime` access (the default `assistant` role does) for self-configuration to be possible
-- The AI can add/remove MCP servers without human intervention
-- Supports both HTTP (remote) and stdio (local process) servers
-- `timeout_seconds` is optional and defaults to 30; tool-call progress resets this idle deadline
-- `persist` saves a dynamic server to the config dir; it auto-binds to the current role only when the server is enabled at persist time (disabled servers persist with `auto_bind` cleared)
-- `remove` only unregisters dynamic (runtime-added) servers — it cannot delete servers defined in config
-- Tool filtering prevents exposing unnecessary capabilities, and a filter can be applied at `add` time or refined at `enable` time
-- Dynamic agents follow the same add/enable/disable/remove pattern, are callable as `agent_<name>`, and validate their `server_refs` at add time
-- The `mcp` tool (AI-driven, mutating) and the `/mcp` command (human-driven, read-only) are distinct surfaces with non-overlapping actions
-- The AI can assess a project and self-configure its toolkit
+This writes `mcp-octocode.toml` in Octomind's config directory. It also works for config-loaded servers.
+
+| State at persist time | Saved `auto_bind` |
+|---|---|
+| Enabled, with a current role | The exact current role name |
+| Disabled | Cleared; explicit role `server_refs` can still select the server |
+
+The config directory is `~/.local/share/octomind/config` on macOS/Linux and `%LOCALAPPDATA%/octomind/config` on Windows.
+If `OCTOMIND_DATA_DIR` is set, it is `$OCTOMIND_DATA_DIR/config`. `persist` always writes there, even when
+`OCTOMIND_CONFIG_PATH` makes startup load a different directory. Use the normal data directory when testing persistence:
+
+
+```bash
+OCTOMIND_DATA_DIR="$PWD/.octomind-data" octomind run assistant
+```
+
+Persisted `mcp-*.toml` files load after regular config files and override same-named servers. Disabling a server only
+affects the live tool surface; it does not rewrite saved configuration:
+
+```json
+{
+  "action": "disable",
+  "name": "octocode"
+}
+```
+
+To stop using the server and remove the saved override, call these separately:
+
+```json
+{
+  "action": "unpersist",
+  "name": "octocode"
+}
+```
+
+```json
+{
+  "action": "remove",
+  "name": "octocode"
+}
+```
+
+`unpersist` deletes only `mcp-octocode.toml`; it does not disconnect the live server or remove declarations from other
+config files. `remove` unregisters a dynamic entry and cleans up its process, but does not delete saved TOML.
+
+## Common Questions
+
+**Why can't I type `/mcp add`?** The `mcp` tool manages servers. The human `/mcp` command inspects them and supports
+only `info` (the default), `list`, `full`, `health`, `dump`, and `validate`:
+
+```text
+/mcp
+/mcp list
+/mcp full
+/mcp health
+/mcp dump
+/mcp validate
+```
+
+**Why did enabling fail or expose no tools?** Check the executable and arguments for stdio, or the real MCP endpoint and
+authentication for HTTP. Use `/mcp health` and `/mcp full`, and compare filter strings with the returned tool names. If
+`mcp` itself is missing, check the role's `server_refs` and `allowed_tools` for `runtime` access.
+
+**Why did the server return next session?** `disable` and `remove` do not change saved config. Remove the persisted
+override with `unpersist`, and check for other declarations or explicit role references.
+
+## MCP Management Reference
+
+| Action | Arguments beyond `action` | Effect |
+|---|---|---|
+| `list` | None | Show configured and dynamic servers with status |
+| `add` | `name`, `server_type`; `command` for stdio, `url` for HTTP | Register without connecting; optional `args`, `tools`, `timeout_seconds` |
+| `enable` | `name`, optional `tools` | Connect and activate discovered tools with the supplied filter |
+| `disable` | `name` | Deactivate tools while keeping the registration |
+| `remove` | `name` | Remove a dynamic registration; does not edit config files |
+| `persist` | `name` | Save registered config, setting or clearing `auto_bind` |
+| `unpersist` | `name` | Delete the corresponding `mcp-<name>.toml` override |
+
+Dynamic agents have their own `agent` management tool; see [Multi-Agent Delegation](05-multi-agent-delegation.md) for
+agent setup and execution.
+
+Implementation: [runtime server management](../../src/mcp/runtime/dynamic.rs), [tool inventory and
+filtering](../../src/mcp/server.rs), and [role/server selection](../../src/config/mcp.rs).
+
+## See also
+
+- [Configuration Reference](../reference/03-config-reference.md)
+- [Session Commands](../reference/02-session-commands.md)
+- [Multi-Agent Delegation](05-multi-agent-delegation.md)

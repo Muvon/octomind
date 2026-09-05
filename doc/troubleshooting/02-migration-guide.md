@@ -1,15 +1,75 @@
 # Migration Guide
 
-Migrate legacy Octomind configurations to schema version `12` with the automatic upgrade chain and the documented manual changes.
+Use this guide when upgrading an existing Octomind installation or porting a hand-written config.
+It covers schema `12`, changes to model and tool configuration, and recovery when an upgrade cannot load.
+
+## Back Up and Upgrade
+
+Config loading can upgrade the selected file before any command handler runs, including `config --show` and
+`config --validate`. Back up the whole config directory first so sibling files are included.
+On Linux/macOS, with the standard config location:
+
+```bash
+migration_config_dir="${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/config"
+cp -R "$migration_config_dir" "${migration_config_dir}.before-upgrade"
+octomind config --upgrade
+octomind config --validate
+```
+
+Choose an unused backup destination if `.before-upgrade` already exists. The registered migration chain upgrades
+older files to schema `12`; a missing version is treated as `0`. It creates a backup before replacing the selected
+file atomically and prints the backup path. It only transforms fields owned by its migration steps: an upgraded
+version stamp does not prove that a historical config has every currently required field.
+
+Do not edit `version` to force or skip a migration. Already-current files are not repaired by `--upgrade`.
+
+### Config File Location
+
+| Setting | What it selects |
+|---|---|
+| Default on Linux/macOS | `~/.local/share/octomind/config/config.toml` |
+| Default on Windows | Local AppData `octomind\config\config.toml` |
+| `OCTOMIND_DATA_DIR` | Data root for config, sessions, credentials, logs, and other persistent state |
+| `OCTOMIND_CONFIG_PATH` | Config file to load/auto-upgrade; its parent supplies sibling TOML files |
+
+There is no search of older config locations. To migrate a file already stored elsewhere, set its full path.
+For example, if your old file is `~/.config/octomind/config.toml`:
+
+```bash
+cp -R "$HOME/.config/octomind" "$HOME/.config/octomind.before-upgrade"
+OCTOMIND_CONFIG_PATH="$HOME/.config/octomind/config.toml" octomind config --validate
+```
+
+That startup auto-upgrades the selected file before validating the merged configuration. The explicit
+`config --upgrade` handler targets `<data-root>/config/config.toml`, even when `OCTOMIND_CONFIG_PATH` selects
+another file; use the validation command above for a custom path. The user-scope `.env` remains under
+`<data-root>/config/`.
+
+### Splitting a Monolithic Config
+
+The loader merges `config.toml` first, other `*.toml` files alphabetically, and `mcp-*.toml` files alphabetically
+last. Tables merge recursively; same-named entries in arrays such as `[[roles]]` and `[[mcp.servers]]` are replaced
+by the last entry as a whole. Scalar arrays such as `server_refs` are replaced.
+
+Keep backups outside that directory or with a non-`.toml` suffix. Move complete server entries to a sibling
+`mcp-servers.toml`, for example:
+
+```toml
+[[mcp.servers]]
+name = "runtime"
+type = "builtin"
+timeout_seconds = 30
+tools = []
+```
+
+This replaces any earlier `runtime` entry. The versioned upgrade chain runs on the selected config file, not every
+sibling file; review overlays for old keys, duplicate roles, and server types too.
 
 ## Model Profile and Provider Format
 
-**Old format:**
-```toml
-model = "legacy-model-without-provider"
-```
+Version `12` moves the old root model string and flat generation settings into `[model]`.
+This complete example keeps an explicit provider/model choice:
 
-**Current format:**
 ```toml
 [model]
 name = "openrouter:anthropic/claude-sonnet-4-6"
@@ -23,24 +83,103 @@ retry_timeout = 30
 request_timeout_seconds = 300
 ```
 
-All model names require `provider:model` format. There are exactly three model purposes: main, supervisor, and compression. `[model]` is the required complete main-purpose baseline; `[roles.model]` is a partial override of that same main purpose. Optional `[supervisor.model]` and `[compression.model]` profiles own the other two purposes and inherit omitted fields from `[model]`. Tap and workflow mappings remain name-only.
+All model names require `provider:model` format. There are exactly three request purposes:
 
-The shipped main, supervisor, and compression profiles use `octohub:auto`, authenticated through `octomind login`. Migration does not require replacing an intentional model choice with that default: pick the configured prefix that matches where the model is served — e.g. `openai:gpt-5.6-sol`, `anthropic:claude-sonnet-4-6`, `openrouter:moonshotai/kimi-k3`, or `ollama:glm-5.3` — and see [Providers](../usage/04-providers.md) for the full prefix and credential table.
+| Profile | Purpose and inheritance |
+|---|---|
+| `[model]` | Required complete main baseline |
+| `[roles.model]` | Partial override for that role's main requests; omitted fields inherit main |
+| `[supervisor.model]` | Shared supervisor profile, including learning; omitted fields inherit main |
+| `[compression.model]` | Compression decisions and summaries; omitted fields inherit main |
+
+The version `12` migration renames `[compression.decision]` to `[compression.model]` and its `model` key to `name`.
+Separate learning/gate/plan/condense model settings are removed in favor of `[supervisor.model]`.
+The migrated supervisor and compression blocks fill missing parameters from the template; review these explicit
+values if you intended them to track main-profile changes.
+
+To share main settings while overriding just these model names, replace the existing owner blocks with:
+
+```toml
+[supervisor.model]
+name = "octohub:auto"
+
+[compression.model]
+name = "octohub:auto"
+```
+
+Tap mappings and workflow step `model` fields remain strings, not profile tables. A config tap override looks like:
+
+```toml
+[taps]
+"developer:general" = "octohub:auto"
+```
+
+The shipped main, supervisor, and compression profiles use `octohub:auto`. Migration does not require replacing
+an intentional model choice with that default. Authenticate the default with:
+
+```bash
+octomind login
+```
+
+See [Providers](../usage/04-providers.md) for provider-specific credentials.
 
 ### API keys are environment-only
 
-API keys are **no longer** read from config. If your legacy config has `[providers]`, `[openrouter]`, or similar blocks carrying an `api_key`, remove them. `octomind login` stores the OctoHub credential as `OCTOHUB_API_KEY`; alternate providers read their own environment variables. `octomind config --api-key` reports that config-file keys are unsupported and makes no change.
+Provider credentials are read from the environment. Remove legacy provider blocks carrying an `api_key` after
+moving credentials to your environment. `octomind login` stores `OCTOHUB_API_KEY` in the user-scope `.env`;
+`config --api-key` only reports that config-file keys are unsupported. For an alternate provider, substitute your
+provider-issued key:
+
+```bash
+export OPENROUTER_API_KEY="your-provider-issued-key"
+```
+
+Project `.env` values override user-scope `.env` values, which override the process environment. See
+[Common Issues](01-common-issues.md#key-not-found) if an old key keeps winning.
+
+## Role Configuration
+
+Replace legacy named-role tables with a complete `[[roles]]` entry. For a local role using the builtin servers:
+
+```toml
+[[roles]]
+name = "developer"
+system = "You are the project developer. Work in {{CWD}}."
+welcome = ""
+
+[roles.model]
+name = "openrouter:anthropic/claude-sonnet-4-6"
+
+[roles.mcp]
+server_refs = ["core", "orchestration", "runtime", "agent"]
+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "agent:*"]
+```
+
+| Legacy setting | Current action |
+|---|---|
+| Named tables such as `[developer]` | Use `[[roles]]` with `name`, `system`, and `welcome` |
+| Role `enabled` | Remove it; defined roles are selectable |
+| Role `enable_layers` or `workflow` | Remove it; use the external workflow CLI for multi-step orchestration |
+| Flat role model/sampling settings | Put overrides in `[roles.model]` |
+| MCP `enabled` | Select servers with `[roles.mcp].server_refs` and grant tools with `allowed_tools` |
+
+Start the local role above with:
+
+```bash
+octomind run developer
+```
+
+The root `default` is `assistant:concierge` in the template and applies when `run`, `acp`, or `server` receives no tag.
+To make your newly defined local role the default, set this before any table header:
+
+```toml
+default = "developer"
+```
 
 ## MCP Configuration
 
-**Old format:**
-```toml
-[mcp]
-enabled = true
-providers = ["core"]
-```
+Use explicit server entries instead of legacy `[mcp].enabled` or `providers` lists:
 
-**Current format:**
 ```toml
 [mcp]
 allowed_tools = []
@@ -52,128 +191,22 @@ timeout_seconds = 30
 tools = []
 ```
 
-Each server is now an explicit entry in `[[mcp.servers]]` with type, timeout, and tool filtering.
+Each server has its own type, timeout, and tool list. Select static servers through `server_refs` or an exact
+`auto_bind` match. An empty role `allowed_tools` means no allowlist filtering; a non-empty list needs matching grants.
 
-## Role Configuration
+### Runtime Namespace Move
 
-**Old format:**
-```toml
-[developer]
-model = "legacy-model-without-provider"
-enable_layers = true
+The current builtin surface is split across four servers:
 
-[developer.mcp]
-enabled = true
-server_refs = ["core"]
-```
+| Server | Current tools |
+|---|---|
+| `core` | `recall`, advertised when compression attention or its governance is enabled |
+| `runtime` | `mcp`, `agent`, `skill`, `capability` |
+| `orchestration` | `tap`, `schedule`, `monitor` |
+| `agent` | Generated `agent_<name>` execution tools |
 
-**Current format:**
-```toml
-[[roles]]
-name = "developer"
-system = "You are the project developer. Work in {{CWD}}."
-welcome = ""
-
-[roles.model]
-name = "openrouter:anthropic/claude-sonnet-4-6"
-
-[roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
-```
-
-Key changes:
-- Roles use `[[roles]]` array format (not `[role_name]` sections); every role is a top-level `[[roles]]` entry with a `name` field
-- `enabled` field removed (roles are always available if defined)
-- `enable_layers` removed (legacy in-session workflow system is gone — use external `octomind workflow` instead)
-- Every role model setting now lives in `[roles.model]`; `max_tokens`, reasoning, sampling, retries, and timeouts are all valid partial overrides
-- Tool permissions use `allowed_tools` patterns
-- `runtime` builtin server is new — see [Runtime Namespace Move](#runtime-namespace-move) below
-
-The default tag used when no `TAG` is passed to `octomind run` (or `acp`/`server`) is `assistant:concierge` (the `default` field in the root config). It can be a role name (e.g. `developer`) or a tap agent (e.g. `octomind:assistant`).
-
-## Command and Layer Configuration
-
-> The old-format fields below (`builtin`, `enabled`, `enable_tools`) belong to the pre-v1 in-session layer system. If your config still has them, it predates the current schema and needs the manual reshaping shown here.
-
-**Old format:**
-```toml
-[[layers]]
-name = "task_refiner"
-builtin = true
-enabled = true
-enable_tools = true
-```
-
-**Current `/run` command format:**
-```toml
-[[commands]]
-name = "reduce"
-description = "Compress session history for cost optimization during ongoing work"
-command = "octomind acp reduce"
-input_mode = "all"
-output_mode = "replace"
-output_role = "assistant"
-```
-
-The example above is the `reduce` command in the default config. `[[layers]]` and `[[commands]]` deserialize to the same `LayerConfig` fields, but `/run <name>` looks up `[[commands]]`; put user-invoked command layers there. The `command` selects the ACP process and role.
-
-Key changes:
-- `builtin`, `enabled`, `enable_tools`, `model`, `max_tokens` fields removed
-- `description` and `command` are required
-- Model/system/MCP config lives in the `[[roles]]` entry that `command` references
-- `/run <name>` executes the matching `[[commands]]` entry
-
-## In-Session Workflows Removed
-
-The `[[workflows]]` config section and the `/workflow` session command have been removed. Multi-step AI orchestration is now an external CLI: `octomind workflow <file.toml>`.
-
-If you previously had `workflow = "..."` on a role, drop the field. To port an existing in-session workflow, rewrite it as an external workflow TOML — see [doc/usage/09-workflows.md](../usage/09-workflows.md).
-
-## Config File Location
-
-**Current location (the only path the code reads):** `~/.local/share/octomind/config/config.toml` (macOS and Linux; `%LOCALAPPDATA%\octomind\config\config.toml` on Windows).
-
-Override: `OCTOMIND_CONFIG_PATH` environment variable. There are no other legacy fallback paths — if your config lives somewhere else from an older install, move it here or point `OCTOMIND_CONFIG_PATH` at it.
-
-### Splitting a monolithic config
-
-The config directory merges **all** `*.toml` files it contains, not just `config.toml`. Files named `mcp-*.toml` are loaded **last** as overrides. This is handy when migrating a large config: you can split MCP server definitions into a separate `mcp-servers.toml` (loaded after, so it wins on conflicts) instead of keeping everything in one file.
-
-## Automatic Upgrade
-
-```bash
-octomind config --upgrade
-```
-
-This upgrades the config to the current schema version (`12`) through the registered migration chain and creates a backup before the atomic replacement. Versioned migrations add, transform, or remove the fields they explicitly own while preserving unrelated user values; historical structural changes outside that chain may still require manual edits.
-
-## Runtime Namespace Move
-
-The `core` builtin server was split into two: high-level tools stay in `core`, low-level harness-control tools moved to a new `runtime` server.
-
-| Tool | Old server | New server |
-|------|------------|------------|
-| `plan` | `core` | removed from tool surface; supervisor-internal |
-| `tap` *(new)* | -- | **`orchestration`** |
-| `mcp` | `core` | **`runtime`** |
-| `agent` | `core` | **`runtime`** |
-| `skill` | `core` | **`runtime`** |
-| `schedule` | `core` | **`orchestration`** |
-| `monitor` *(new)* | -- | **`orchestration`** |
-| `capability` | `core` | **`runtime`** |
-
-If your config or tap manifest has only `server_refs = ["core", ...]`, add `runtime` for `mcp`, `agent`, `skill`, or `capability`, and add `orchestration` for `tap`, `schedule`, or `monitor`:
-
-```diff
- [roles.mcp]
--server_refs = ["core", "filesystem", "agent"]
--allowed_tools = ["core:*", "filesystem:*", "agent:*"]
-+server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-+allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
-```
-
-The `runtime` and `orchestration` servers are registered in the default config:
+`plan` is supervisor-internal and is not an MCP tool. `/plan` displays its state.
+Add missing server blocks to a hand-written config; these are already in the template:
 
 ```toml
 [[mcp.servers]]
@@ -187,41 +220,218 @@ name = "orchestration"
 type = "builtin"
 timeout_seconds = 30
 tools = []
+
+[[mcp.servers]]
+name = "agent"
+type = "builtin"
+timeout_seconds = 30
+tools = []
 ```
 
-If you have a hand-rolled config without either server, add the corresponding block.
+The local-role example above grants these servers. Remove references and grants for servers you do not need.
+The `runtime` server's `agent` management tool and the separate `agent` execution server serve different purposes;
+include both when managing and calling agents. Confirm the tools in a new session:
 
-Roles that do not use runtime-management tools do not need `runtime`; roles that do not use tap/schedule/monitor do not need `orchestration`.
+```text
+/mcp list
+/plan
+```
 
-> **`agent` appears in two places.** The `runtime` server hosts the `agent` management tool. A separate `agent` builtin server (one of the four defaults) hosts generated `agent_<name>` execution tools. Dynamic-agent roles need both `runtime` and `agent`.
+### Filesystem Is External; Process Servers Use `stdio`
 
-## Filesystem Is Now External
+`filesystem` is not a builtin. The default config has no server entry for it; tap/capability configuration can
+supply an external server. A role's `server_refs` alone does not create that server.
 
-`filesystem` is no longer a builtin server. Resolved tap configuration can provide it as an external `octofs` stdio server. The default config declares four builtin servers (`core`, `orchestration`, `runtime`, `agent`) and no `filesystem` entry; tap roles may reference and supply it:
+If your config declares `filesystem` as `type = "builtin"`, remove that block when your selected tap supplies the
+server. If you own the server configuration and have `octofs` installed, replace it with:
 
 ```toml
-[roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "octofs"
+args = ["mcp"]
+timeout_seconds = 30
+tools = []
+auto_bind = ["developer:general"]
 ```
 
-> Do not add a second `filesystem` server when the selected tap agent already supplies one. Add an explicit stdio block only when you intentionally own that server configuration.
+Use the exact role name in `auto_bind`; for the local role above, change it to `["developer"]`.
+The auto-bind matcher does not treat `developer` as a prefix of `developer:general`.
+Auto-bound servers also receive a wildcard grant when the role's allowlist is non-empty.
 
-If you have a hand-rolled config that declares `filesystem` as `type = "builtin"`, **remove that block** and let the selected tap agent supply the external server, or replace it with an intentional stdio configuration. This is a manual edit: `octomind config --upgrade` does not perform it.
+The TOML server type is `"stdio"`, never `"stdin"`. The upgrade chain does not rewrite server types or replace
+builtin filesystem declarations. See [Common Issues](01-common-issues.md#tool-not-found) for static role wiring.
 
-## MCP Server Type
+## Command and Layer Configuration
 
-**Old (incorrect in some docs):** `type = "stdin"`
+Put user-invoked command layers in `[[commands]]`. This is the shipped `reduce` entry; replace a stale entry
+rather than appending another with the same name:
 
-**Correct:** `type = "stdio"`
+```toml
+[[commands]]
+name = "reduce"
+description = "Compress session history for cost optimization during ongoing work"
+command = "octomind acp reduce"
+input_mode = "all"
+output_mode = "replace"
+output_role = "assistant"
+```
 
-The server type for local process-based MCP servers is `"stdio"`, not `"stdin"`.
+`[[layers]]` and `[[commands]]` deserialize to the same `LayerConfig`, but `/run` only looks up `[[commands]]`.
+The `command` selects an ACP process and role; model, system prompt, and MCP settings belong to that role.
+The template includes the `reduce` role used above.
 
-## Session Commands
+| Field | Requirement |
+|---|---|
+| `name`, `description`, `command` | Required strings |
+| `input_mode`, `output_mode`, `output_role` | Required; here, all history is replaced with assistant output |
+| `workdir` | Optional; defaults to `"."` |
 
-**Removed:**
-- `/save` — Session persistence is automatic on exit
+Remove layer-only legacy `builtin`, `enabled`, `enable_tools`, `model`, and `max_tokens` fields. Run the command
+inside a session with:
 
-**Added:**
-- `/skill` — Manage skills (list, use, forget)
+```text
+/run reduce
+```
 
-Use `/help` to see current command list.
+### In-Session Workflows Removed
+
+`[[workflows]]` in the main config and role `workflow` fields are not the current workflow schema.
+`/workflow` is unsupported by shared session dispatch. Port the workflow to a standalone file using
+[Workflows](../usage/09-workflows.md). Once you have saved that file as `workflow.toml` in your project:
+
+```bash
+octomind workflow workflow.toml --dry-run
+printf '%s\n' 'Review the project and summarize the findings.' | octomind workflow workflow.toml --format jsonl
+```
+
+`--dry-run` validates the definition and prints a plan without executing steps. Execution requires non-empty stdin;
+`--format jsonl` exposes step results and aggregate cost on stdout. Keep workflow files outside the config directory,
+where every `.toml` would otherwise be treated as configuration.
+
+## CLI and Session Commands
+
+`octomind run` takes an optional tag, not a message argument. To port a one-shot invocation, pipe the prompt:
+
+```bash
+printf '%s\n' 'Explain this project.' | octomind run --format plain
+```
+
+| Surface | Current behavior |
+|---|---|
+| `/save` | Unsupported; sessions save automatically, including on normal CLI exit |
+| `/skill` | Lists skills; a number selects a page, `*` filters, an exact name toggles activation |
+| `/plan` | Read-only supervisor plan display |
+| `/done` | Forces compression at an explicit task boundary |
+| `/help` | Shows the session command list |
+
+For discovery and inspection:
+
+```text
+/help
+/skill
+/skill 2
+/skill *review*
+/plan
+```
+
+To toggle a skill, replace `NAME` with an exact name returned by `/skill`:
+
+```text
+/skill NAME
+```
+
+See [Session Commands](../reference/02-session-commands.md) for the complete command surface.
+
+## Common Upgrade Questions
+
+### Why Does Validation Fail Before `--upgrade` Runs?
+
+The CLI loads and validates config before dispatching the command. Invalid TOML or an incompatible sibling file can
+stop it there. Fix the file named in the error, compare required fields with
+[the template](../../config-templates/default.toml), then retry:
+
+```bash
+octomind config --validate
+```
+
+A file already stamped `12` is not migrated again. Do not lower its version to repair missing fields; restore the
+missing fields from the template in their proper tables. In particular, put scalar compression keys before nested
+`[compression.attention]` or `[compression.model]` headers.
+
+### Why Did a Role or Server Lose Settings?
+
+A later same-named array entry replaces the whole earlier entry. Inspect all sibling `.toml` files, especially
+`mcp-*.toml`, and keep the complete winning role/server entry. Then inspect the loaded configuration and a new session:
+
+```bash
+octomind config --show
+octomind run
+```
+
+```text
+/mcp full
+```
+
+### How Do I Recover the Previous Config?
+
+Use the directory copy made before upgrading. On Linux/macOS, after stopping sessions that might save configuration,
+move the upgraded directory aside and copy the backup into place (choose an unused `.after-upgrade` destination):
+
+```bash
+migration_config_dir="${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/config"
+mv "$migration_config_dir" "${migration_config_dir}.after-upgrade"
+cp -R "${migration_config_dir}.before-upgrade" "$migration_config_dir"
+```
+
+For a custom location, use the directory you backed up instead. Starting the current binary against the restored
+older config upgrades it again. A config newer than the binary's supported schema is rejected; use a compatible
+binary or its matching backup instead of changing the version number.
+
+## Compression and Supervisor Migration Reference
+
+These are transformations implemented by the registered chain; there is no need to apply them by hand to a
+supported older primary config:
+
+| Target version | Transformation |
+|---|---|
+| `3` | Adds `compression.analysis_findings_max_tokens` and attention configuration when missing |
+| `4` | Replaces `compression.pressure_levels` with `threshold` |
+| `5` | Adds missing supervisor gate and plan settings |
+| `6` | Removes obsolete compression hint settings |
+| `7` | Removes obsolete supervisor judges, delegate gate, detector knobs, and gate/plan budget settings |
+| `8` | Removes `compression.decision.ignore_cost` |
+| `9` | Adds `supervisor.condense.adaptive` (template default `false`) |
+| `10` | Removes learning `backend`, `store`, and `retrieve`; supervisor learning uses files |
+| `11` | Adds `supervisor.learning.evolution.enabled` (template default `false`) |
+| `12` | Nests model profiles and removes separate supervisor-subsystem model settings |
+
+Version `4` preserves an existing threshold; otherwise it takes the lowest old pressure-level threshold, or the
+template value when no old threshold exists.
+
+The shipped compression trigger is `70000` tokens. To restore the current compression and optional supervisor
+settings, update these keys in their existing tables; these are fragments, not a complete config:
+
+```toml
+[compression]
+threshold = 70000
+
+[supervisor.condense]
+adaptive = false
+
+[supervisor.learning.evolution]
+enabled = false
+```
+
+Supervisor learning records live under `<data-root>/learning/`; external memory MCP tools are not alternate
+supervisor learning stores. See [Learning](../usage/13-learning.md) and [Supervisor](../usage/14-supervisor.md)
+for their operating behavior.
+
+## See also
+
+- [Common Issues](01-common-issues.md) — credential, MCP, session, and transport troubleshooting
+- [Configuration](../usage/03-configuration.md) — config layout and merging
+- [Config Reference](../reference/03-config-reference.md) — current fields and defaults
+- [MCP Tools](../usage/07-mcp-tools.md) — configuring servers and tool access
+- [Workflows](../usage/09-workflows.md) — standalone workflow definitions

@@ -1,121 +1,30 @@
 # Supervisor
 
-The supervisor is an out-of-band control plane for progress detection, planning, completion checks, condensation, and grounded learning.
+The supervisor checks progress and completion, manages plans, and narrows large tool results around your session. Use
+this guide to configure it and understand its notices, retries, and verification limits.
 
-## The closed loop
+## Get started
 
-```
-every turn, FREE:
-  self-report  ⊕  detectors (counters)      <- two free signals, fused
-        │  agree → act with no model
-        │  conflict / `done` → ↓
-  verify-gate (model, rare)  → labels the run pass/fail
-        │
-  distill (`/done`, exit, compaction) → grounded records with outcome labels
-        │
-  recall (next turn/session)  → inject lessons + orientation
-        │
-  steer  → advisory re-anchor when the agent loops or stalls
+The shipped configuration enables the supervisor. Start a session and inspect its plan and local statistics:
+
+```bash
+octomind run developer:general
 ```
 
-The verify-gate supplies outcome credit, but extraction is not limited to passed runs: quote-backed user rules may be retained independently, and experience records preserve `verified`, `failed`, or `unknown` rather than upgrading uncertain work. Supervisor context is explicit and mid-trajectory steering remains advisory.
-
-## Self-report
-
-The agent ends every turn with a compact structured handoff:
-
-```
-<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum resume-critical fact or opaque reference"]}</sup>
+```text
+Inspect the API routing and explain which files own authentication. Do not edit files or run tests.
+/plan
+/info
 ```
 
-`STATE` is one of `exploring`, `progressing`, `blocked`, `need_input`, `done`. The token is **parsed by the supervisor and stripped before display** — you never see it. `focus`, `next`, and `carry` form a low-cost handoff to conversation compression. The compressor treats it as an attention hint, grounds it against the transcript, and may promote supported durable protocol into critical knowledge. It is never evidence by itself, and credential values are forbidden; only opaque credential pointers may be carried. Legacy one-word and `STATE · reason` reports remain accepted when resuming older sessions.
-
-| State | Effect |
-|-------|--------|
-| `done` | Arms the verify-gate |
-| `need_input` | Treated as a question — passed to you, **never** gated (no false-positive verification) |
-| `blocked` | Triggers a steer note |
-| `exploring` / `progressing` | Fused with the counters below |
-
-## Detectors
-
-Deterministic, free, every turn — they cost nothing and decide *when* (rarely) to spend a model call. Thresholds are fixed constants, not knobs: they are good defaults nobody should tune per-project.
-
-The first two derive from one primitive — **information novelty**: did the action add new information? A mutation (edit/write) always advances state; a read/search advances only when its result is one not seen recently.
-
-- **Loop** — the same *result* repeats 3 times in a row. Keyed on the result, so reworded calls that return the same thing are caught too. Unambiguous; no model needed.
-- **No-progress** — 5 actions with **zero novelty** — churn, not genuine work.
-- **Recovery** — command-shaped checks keep failing and no later success from the *same* check discharges them; unrelated fresh reads cannot hide the unresolved failure.
-
-The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports `progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate; no-progress while `exploring` waits; loop, recovery, or no-progress otherwise, steers. Agreement needs no model at all.
-
-## Verify-gate
-
-When the agent self-reports `done` and `[supervisor.gate] enabled = true`, the claim is checked before completion is accepted — free deterministic pre-gates first, an independent model pass only if those pass:
-
-**Free pre-gates (no model call):**
-
-- **Mutation → check** — state was changed but no successful command execution ran since the change. Tool-agnostic: any non-mutation command that succeeds on an unchanged tree counts as a check, so it works for any domain (build/test/lint, booking confirmations, health checks).
-- **Plan complete** — more than the final plan phase remains open. The final phase is judged with the complete result and committed only after `PASS`.
-
-Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are monitored during execution. A broken assumption emits `reassess`; the external planner revises or holds the unfinished route before completion.
-
-**Model pass (rare):** an independent verifier checks the result against your request:
-
-- **Pass** → the run is labelled verified; distill is allowed to learn from it.
-- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by a fixed re-entry budget. Exhaustion hard-stops instead of falling through to another judge.
-- **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed successful response gets one bounded format-only retry; substantive gaps do not.
-
-If independent-family supervision matters, set `[supervisor.model].name` to a different family from the main agent. That one choice applies consistently to verification and every other supervisor mechanic.
-
-## Adaptive external planning
-
-Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal alongside normal work. A separate supervisor call makes one structured create/no-plan decision from the current request, specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
-
-The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses; the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion gate owns final plan clearance.
-
-## Steer
-
-When a detector fires (loop, recovery, or no-progress that the self-report doesn't excuse), the supervisor queues an advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report `blocked`"* — injected at the next request's safe point. It nudges; it never forces. Re-emission follows a parameter-free doubling backoff when the agent provably ignores the note (a byte-identical call-set), so an ignored steer stays cheap without going silent.
-
-## Condense
-
-When a tool result's own output exceeds `[supervisor.condense] tokens_threshold`, it becomes a condense candidate. Results under the threshold are passed through exactly as returned and are never shown to the condenser. One shared supervisor-model call per round decides, for the candidates only, what the agent actually needs to see for the current task:
-
-- **All relevant** → kept in full, byte-for-byte.
-- **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**; the kept lines are reconstructed verbatim from the original — the model never retypes content, so nothing can be mis-copied.
-- **Irrelevant** → replaced with a deterministic system notice. The condenser cannot write a factual summary that could hallucinate tool output.
-
-It is recoverable: condensation runs only for plain-text results when the active role has a local file-reading tool, the full original is spilled to a session file first, and every condensed result carries the path so the agent can read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation, so the condenser only ever sees — and only ever selects line ranges over — the body the agent would actually have received. Structured/non-text MCP payloads fail open instead of being flattened and corrupted. Any condenser or response-contract error leaves results untouched. Main session only (layers/agents are not condensed).
-
-Relevance is conditioned on three separate signals: trusted standing context (system prompt, project instructions, and currently active skills), the live goal/request/plan, and the assistant text explaining why the current tool batch was issued. Tool data is serialized as JSON, treated as untrusted reference data, and cannot create instructions for the condenser.
-
-The numbered-view budget is fixed **per round**, shared across that round's candidates. A large result is represented by task/argument matches, diagnostics with context, head and tail lines, and stratified middle samples, all carrying their original line numbers. A partial view can be extracted but never discarded wholesale; selected ranges must fall entirely inside visible spans. The response is atomic: missing, duplicate, unknown, malformed, or unsafe entries keep every original. Error/diagnostic lines are also retained deterministically even if the model overlooks them.
-
-## Memory: lessons + orientation
-
-The supervisor keeps two kinds of cross-session memory in one backend, both under `[supervisor.learning]`:
-
-- **Lessons** — procedural *do / avoid* rules, extracted from your corrections. The deep dive lives in **[Cross-Session Learning](13-learning.md)**.
-- **Orientation** — durable, descriptive understanding of the subject (architecture, decisions, constraints) that was expensive to discover and would otherwise be re-explored. Stored under `memory_type = "orientation"` and recalled as **working assumptions to verify**, never as truth.
-
-The rule for what to store: *cache what is expensive to re-derive, never what one search recovers.* A symbol's location is cheap (grep finds it); an architectural decision is not.
-
-**Self-correcting (the closed loop).** Recall is wired back to the verify-gate's verdict only for Active Memory Pack IDs that the specialist reports as materially used. Exposure alone is neutral. Used items receive positive or negative outcome credit, while retention may cold-archive weak/stale items without deleting their source record.
-
-**Verified lessons.** Extraction is quote-first: every lesson must carry a verbatim user quote as evidence. At distill time, one batched verifier pass re-checks each candidate lesson's evidence against the transcript and drops any lesson whose quote is unsupported — a lesson the model invented or stretched never reaches storage.
-
-## Recite
-
-On long (already-compacted) sessions, the live goal — anchor intent plus next steps — is re-injected at the context tail each turn, so it stays in the high-attention recency window instead of buried in the mid-transcript summary. Short sessions (no compaction yet, empty anchor) pay nothing. Always on; no configuration.
-
-## Delegation
-
-`tap run` / `agent_*` spawn a **context-isolated** child that sees only the prompt string — no transcript, no prior tool output. Handoff quality is owned at prompt time: the spawn tools' own descriptions state that the child starts with zero context and must receive the goal, the established facts, constraints, and the expected deliverable. The child itself is the ground truth for whether the handoff worked — it reports its own end-of-turn verified/unverified verdict back to the parent, which folds it into detector and gate state.
+`/plan` displays the supervisor-owned plan and retained critical knowledge; routine work may have no plan. `/info`
+includes supervisor activity and model usage. You do not type the hidden status protocol yourself.
 
 ## Configuration
 
-The supervisor is configured under `[supervisor]`. It is **strict**: a missing `[supervisor]` section — or any required key within it — is a hard parse error. We own the schema, so we fail loudly instead of degrading to silent defaults. Detectors, recitation, and the free pre-gates are always on with fixed thresholds — behavior, not knobs.
+Edit these sections in your existing configuration. The shipped values below enable supervision; model-profile fields
+are optional overrides. Required mechanic tables must remain present even when disabled. Detectors and recitation run
+when the supervisor is enabled; completion pre-gates also require the gate to be enabled.
 
 ```toml
 [supervisor]
@@ -132,8 +41,11 @@ max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
 
-[supervisor.learning]      # lessons + orientation — see 13-learning.md
+[supervisor.learning]      # see 13-learning.md
 enabled = true
+
+[supervisor.learning.evolution]
+enabled = false
 
 [supervisor.gate]          # verify on self-reported `done`
 enabled = true
@@ -147,28 +59,274 @@ adaptive = false
 tokens_threshold = 5000
 ```
 
-Gate, resolve, plan, condense, and every learning operation use the single supervisor profile. Omitting `[supervisor.model]` uses `[model]` unchanged.
+Gate, resolve, plan, condense, and every learning operation use the single supervisor profile. Omitting
+`[supervisor.model]` uses `[model]` unchanged.
 
-`[supervisor.condense].adaptive` defaults to `false`. When enabled, the process-local runtime multiplier learns from realized savings while remaining between `0.5x` and `2.0x` of `tokens_threshold`; the configured value remains the baseline.
+`[supervisor.condense].adaptive` defaults to `false`. When enabled, the process-local runtime multiplier learns from
+realized savings while remaining between `0.5x` and `2.0x` of `tokens_threshold`; the configured value remains the
+baseline.
+
+To enable the adaptive condenser, edit its existing section:
+
+```toml
+[supervisor.condense]
+enabled = true
+adaptive = true
+tokens_threshold = 5000
+```
 
 Every field is documented in [`[supervisor]` — Config Reference](../reference/03-config-reference.md#supervisor).
 
+## The closed loop
+
+```text
+each assistant/tool round, no extra model call for detection:
+  self-report  ⊕  detectors (counters)      <- status tokens plus deterministic counters
+        │  agree → act with no model
+        │  completion claim → ↓
+  verify-gate (model, rare)  → labels the run pass/fail
+        │
+  distill (`/done`, exit, compaction) → grounded records with outcome labels
+        │
+  recall (next turn/session)  → build the bounded Active Memory Pack
+        │
+  steer  → advisory re-anchor when the agent loops or stalls
+```
+
+The verify-gate supplies outcome credit, but extraction is not limited to passed runs: quote-backed user rules may be
+retained independently, and experience records preserve `verified`, `failed`, or `unknown` rather than upgrading
+uncertain work. Supervisor context is explicit and mid-trajectory steering remains advisory.
+
+## Self-report
+
+When supervision is enabled, the agent is instructed to end each response with a compact structured handoff:
+
+```text
+<sup>{"state":"progressing","focus":"inspect authentication routing","next":"read the route handlers","carry":[],"plan":null,"memories":[],"behaviors":[]}</sup>
+```
+
+`state` is one of `exploring`, `progressing`, `blocked`, `need_input`, `done`. The token is **parsed by the supervisor
+and stripped before display** — you never see it. `focus`, `next`, and `carry` form a low-cost handoff to conversation
+compression. The compressor treats it as an attention hint, grounds it against the transcript, and may promote supported
+durable protocol into critical knowledge. It is never evidence by itself, and credential values are forbidden; only
+opaque credential pointers may be carried. Legacy one-word and `STATE · reason` reports remain accepted when resuming
+older sessions.
+
+| State | Effect |
+|-------|--------|
+| `done` | Arms the verify-gate |
+| `need_input` | Treated as a question — passed to you, **never** gated (no false-positive verification) |
+| `blocked` | Legitimate handback; detector signals may still cause steering |
+| `exploring` / `progressing` | Fused with the counters below |
+
+## Detectors
+
+Detectors run in-process after tool rounds without another model call. Their thresholds are fixed constants. The status
+report and injected notes still use tokens in normal agent requests.
+
+The first two derive from one primitive — **information novelty**: did the action add new information? A mutation
+(edit/write) always advances state; a read/search advances only when its result is one not seen recently.
+
+- **Loop** — the same result-set repeats for 3 tool rounds. Round identity uses result hashes, independent of call
+  order. No extra model call is needed.
+- **No-progress** — 5 tool rounds with **zero novelty** — churn, not genuine work.
+- **Recovery** — command-shaped checks keep failing and no later success from the *same* check discharges them;
+  unrelated fresh reads cannot hide the unresolved failure.
+
+The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports
+`progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate;
+no-progress while `exploring` waits; loop, recovery, or no-progress otherwise, steers. Agreement needs no model at all.
+
+## Verify-gate
+
+For an eligible user-task completion with supervision and the gate enabled, the claim is checked before completion is
+accepted — deterministic checks first, a model verification pass after those checks allow it:
+
+**Free pre-gates (no model call):**
+
+- **Mutation → check** — changed state lacks a successful check. A successful command-shaped check on unchanged state,
+  read-back of an agent-mutated artifact, or a verified child handback can clear the detector. Read-back proves artifact
+  content, not runtime behavior; the verifier receives that distinction.
+- **Unfinished handback** — non-interactive/background execution can nudge an `exploring` or `progressing` response that
+  ends without action, within a fixed retry budget.
+
+The gate also catches a missing self-report after mutations; `need_input` and `blocked` remain legitimate handbacks.
+Pending session-owned background work defers completion. Answer-only tasks, configured skill validators, and explicit
+user/instruction prohibitions suppress the automatic run-a-check pre-gate.
+
+For example, a standing verification prohibition persists until you explicitly change it:
+
+```text
+Make the requested documentation edits. Do not run tests; I will test myself.
+Now you may run the relevant tests for those edits.
+```
+
+Plan outcomes are judged against evidence, not whether every status box is already checked. A `PASS` can close all
+remaining bookkeeping items for the applicable plan. With the completion gate disabled, an eligible completion
+self-report can finalize it instead.
+
+Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are monitored during execution. A broken
+assumption emits `reassess`; the external planner revises or holds the unfinished route before completion.
+
+**Model pass (rare):** an independent verifier checks the result against your request:
+
+- **Pass** → the trajectory is labelled verified; only materially used memories receive positive outcome credit.
+- **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by a fixed re-entry budget.
+  Exhaustion ends the turn unverified. Unchanged gaps after new evidence can also stop retries early.
+- **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed
+  successful response gets one bounded format-only retry; substantive gaps do not.
+
+The verifier can request one bounded read-back of recorded tool evidence. Blocking findings receive a separate
+refutation pass before causing rework. These passes use the shared supervisor profile; a separate call does not
+guarantee a different model family. Change `[supervisor.model]` in the configuration example to choose the profile.
+
+## Adaptive external planning
+
+Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful
+dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal
+alongside normal work. A separate supervisor call makes one structured create/no-plan decision from the current request,
+specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
+
+The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses;
+the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion
+gate owns final plan clearance.
+
+## Steer
+
+When a detector fires (loop, recovery, or no-progress that the self-report doesn't excuse), the supervisor queues an
+advisory **re-anchor** note — *"you've repeated this without new results; try a different approach, or report
+`blocked`"* — injected at the next request's safe point. It nudges; it never forces. Re-emission follows a
+parameter-free doubling backoff when the agent repeats the same call-set after a note, so an ignored steer stays cheap
+without going silent.
+
+## Condense
+
+When a plain-text tool result exceeds `[supervisor.condense] tokens_threshold` (with a 512-token minimum floor), it
+becomes a condense candidate. Results under the threshold are passed through exactly as returned and are never shown to
+the condenser. One shared supervisor-model call per round decides, for the candidates only, what the agent actually
+needs to see for the current task:
+
+- **All relevant** → kept in full, byte-for-byte.
+- **Partly relevant** → only the needed lines. The condenser sees a line-numbered copy and answers with **line ranges**;
+  the kept lines are reconstructed verbatim from the original — the model never retypes content, so retained text is
+  reconstructed from the source lines.
+- **Irrelevant** → replaced with a deterministic system notice. The condenser cannot write a factual summary that could
+  hallucinate tool output.
+
+It is recoverable: condensation runs only for plain-text results when the active role has a local file-reading tool, the
+body being narrowed is spilled to a temporary file first, and every condensed result carries the path so the agent can
+read any cut span on demand. The hard `mcp_response_tokens_threshold` prefix-cut is applied **before** condensation, so
+the condenser only ever sees — and only ever selects line ranges over — the body the agent would actually have received.
+Structured/non-text MCP payloads fail open instead of being flattened and corrupted. A failed call or unparseable
+response leaves the round untouched; unusable individual entries preserve only their own result. This runs in the
+main-session tool path, not the layer execution path; a child Octomind session has its own loop.
+
+Relevance is conditioned on three separate signals: trusted standing context (system prompt, project instructions, and
+currently active skills), the live goal/request/plan, and the assistant text explaining why the current tool batch was
+issued. Tool data is serialized as JSON, treated as untrusted reference data, and cannot create instructions for the
+condenser.
+
+Numbered views share a nominal **32,000-token round budget**, allocated by result size with a 256-token per-result
+floor; at most 32 candidates enter a request. The floor can push the sum above the nominal view budget. A large result
+is represented by task/argument matches, diagnostics with context, head and tail lines, and stratified middle samples,
+all carrying their original line numbers. A partial view can be extracted but never discarded wholesale; selected ranges
+are clipped to visible spans. Missing, duplicate, unknown, malformed, or unsafe entries leave the affected result
+unchanged while valid siblings can still be condensed. Error/diagnostic lines are also retained deterministically even
+if the model overlooks them.
+
+## Cross-session memory
+
+Learning stores quote-backed rules, grounded orientation, and longer experience records in the file backend. See
+[Cross-Session Learning](13-learning.md) for configuration, commands, retrieval budgets, and retention.
+
+## Recite
+
+With supervision enabled, the runtime re-injects the current goal and live plan near the request tail. Plans, explicit
+prohibitions, and verification policy can be recited before the first compaction. An archived goal is recited only when
+its task signature still matches the live request. No separate model call is needed, but the note consumes context
+tokens.
+
+## Delegation
+
+The MCP `tap` action `run` and `agent_*` tools spawn a **context-isolated** child that sees only the prompt string — no
+transcript, no prior tool output. Handoff quality is owned at prompt time: the spawn tools' own descriptions state that
+the child starts with zero context and must receive the goal, the established facts, constraints, and the expected
+deliverable. The child reports its measured completion outcome to the parent through ACP metadata; missing, failed, or
+cancelled handbacks count as unverified.
+
+For a delegation handoff, include the concrete context and deliverable in the prompt:
+
+```text
+Inspect src/main.rs and src/commands/run.rs. Identify the run flags and stdin behavior. Do not edit files or run
+builds. Return each finding with its source path and line number, and state that this was source inspection only.
+```
+
 ## Invariants
 
-1. **Free signals gate the model.** Counters and the self-report run every turn at zero cost; model checks are sparse — completion, a detector conflict, an oversized tool round.
-2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. A wrong supervisor degrades gracefully instead of corrupting the run. No mid-trajectory judge ever blocks a tool call.
-3. **Out-of-band.** Status tokens are stripped from display; supervisor deliberation never reaches your transcript.
+1. **Free signals gate the model.** Counters and the self-report run every turn without a separate model call; model
+  calls serve completion, task resolution, planning, or an oversized tool round.
+2. **Advisory, never silent rewrite.** Every injection is a note the agent can reason about. Steering is advisory;
+  completion verification can leave a turn unverified. No mid-trajectory judge ever blocks a tool call.
+3. **Out-of-band.** Status tokens are stripped from display; raw status protocol is removed from stored/displayed
+  assistant text; runtime notes and debug diagnostics are separate.
 
-## Mechanics at a glance
+## Common questions
+
+**Why did completion run again?** A missing check or a verifier finding can trigger a bounded retry. Read the supervisor
+notice for the remaining gap. A failed verifier call is an unverified completion, not proof your work is wrong. Inspect
+details with:
+
+```text
+/loglevel debug
+/info
+/plan
+/loglevel info
+```
+
+**Why was nothing condensed?** Results below the effective threshold, rich MCP payloads, missing spill-reader tools, and
+selections with no token savings stay unchanged. `tokens_threshold = 0` disables condensation.
+
+**How do I turn supervision and memory off?** Set both switches in the existing config; recall and extraction check
+`supervisor.learning.enabled` separately:
+
+```toml
+[supervisor]
+enabled = false
+
+[supervisor.learning]
+enabled = false
+```
+
+Supervisor `/info` counters are process-local and not persisted or anonymous telemetry. Concurrent daemon sessions can
+mix those counters. In-process supervisor costs feed session spending; detached exit learning runs separately.
+
+## Mechanics reference
 
 | Mechanic | When | Cost | Config |
 |----------|------|------|--------|
-| Self-report | Every turn | Free | None (automatic) |
+| Self-report | Each assistant response | Output tokens | None (automatic) |
 | Detectors (loop / no-progress / recovery) | Every turn | Free | None (automatic) |
-| Free pre-gates (mutation→check, plan complete) | On self-reported `done` | Free | `[supervisor.gate]` |
-| Verify-gate | On self-reported `done`, pre-gates passed | Model (rare) | `[supervisor.gate]` |
+| Deterministic completion checks | Completion or unfinished handback | No separate model call | `[supervisor.gate]` |
+| Verify-gate | Eligible completion after deterministic checks | Model (rare) | `[supervisor.gate]` |
 | Condense | On oversized tool results | Model call | `[supervisor.condense]` |
-| Steer | On loop / no-progress / recovery | Free | None (automatic) |
-| Recite | Every turn on compacted sessions | Free | None (automatic) |
+| Steer | On loop / no-progress / recovery | Context tokens | None (automatic) |
+| Recite | Live goal, plan, constraints, or policy available | Context tokens | None (automatic) |
 | Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
-| Recall | Session start + per turn | Embedding | `[supervisor.learning]` |
+| Recall | First and subsequent genuine requests | First-query model prep, retrieval, pack tokens | `[supervisor.learning]` |
+
+## Source reference
+
+| Surface | Source |
+|---------|--------|
+| Defaults and configuration | [config-templates/default.toml](../../config-templates/default.toml), [src/supervisor/mod.rs](../../src/supervisor/mod.rs) |
+| Status and detectors | [src/supervisor/detect.rs](../../src/supervisor/detect.rs), [src/session/chat/response.rs](../../src/session/chat/response.rs) |
+| Completion and plan state | [src/supervisor/gate.rs](../../src/supervisor/gate.rs), [src/session/chat/session/api_executor.rs](../../src/session/chat/session/api_executor.rs), [src/supervisor/plan.rs](../../src/supervisor/plan.rs) |
+| Condensation and recitation | [src/supervisor/condense.rs](../../src/supervisor/condense.rs), [src/supervisor/recite.rs](../../src/supervisor/recite.rs) |
+| Delegation and accounting | [src/supervisor/delegate.rs](../../src/supervisor/delegate.rs), [src/supervisor/stats.rs](../../src/supervisor/stats.rs), [src/session/external_spend.rs](../../src/session/external_spend.rs) |
+
+## See also
+
+- [Cross-session learning](13-learning.md)
+- [Token efficiency](16-token-efficiency.md)
+- [Skills](15-skills.md)
+- [Configuration reference](../reference/03-config-reference.md)

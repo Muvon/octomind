@@ -1,18 +1,16 @@
 # Event-Driven Webhooks
 
-Run Octomind as a persistent daemon that reacts to external events — GitHub pushes, Slack messages, monitoring alerts.
+Use this guide to connect external HTTP events to a persistent Octomind session. It covers webhook scripts, daemon
+startup, manual messages, and delivery troubleshooting.
 
-## The Problem
+## Get started
 
-You want an AI agent that monitors events and acts autonomously: reviewing pushed code, responding to incidents, or summarizing deployments. Polling is wasteful; you need event-driven reactions.
-
-## Solution
-
-Combine daemon mode with webhook hooks.
+The shell examples require Bash, `jq`, and an installed, authenticated Octomind. Start in the checkout the agent should
+inspect; receiving a webhook does not fetch or update that checkout.
 
 ### Architecture
 
-```
+```text
 GitHub/Slack/PagerDuty
     |
     | HTTP POST
@@ -21,7 +19,7 @@ Webhook Hook (HTTP listener on port 9876)
     |
     | stdin: raw HTTP body
     v
-Hook Script (process-event.sh)
+Hook Script (github-push.sh)
     |
     | stdout: message for AI (only on exit 0)
     v
@@ -31,26 +29,32 @@ Daemon Session Inbox
 AI processes event, takes action
 ```
 
-The **inbox** is the daemon's queue of pending events. When a hook script exits 0 with
-non-empty output, that stdout is added to the session as the **next user message** — the
-AI responds to it on its next turn, just as if you had typed it interactively. The daemon
-drains this inbox continuously, so events are processed one turn at a time.
+The **inbox** is the daemon's queue of pending events. When a hook script exits 0 with non-empty output, that stdout is
+added to the session as the **next user message** — the AI responds to it on its next turn, just as if you had typed it
+interactively. The daemon processes each external event as a separate user turn when it reaches the head of the queue.
 
-### Step 1: Write a Hook Script
+## Write a hook script
+
+Create `hooks/github-push.sh` in the checkout with the contents below:
+
+```bash
+mkdir -p hooks
+```
 
 The contract is simple and decided by the script's **exit code**:
 
-- **Exit 0 with non-empty stdout** — the trimmed stdout is injected as the next user message (listener responds `200 ok`).
+- **Exit 0 with non-empty stdout** — the trimmed stdout is injected as the next user message (listener responds `200
+  ok`).
 - **Exit 0 with empty stdout** — nothing is injected; the listener responds `204 No Content`.
 - **Non-zero exit** — nothing is injected; the listener responds `500` and logs the script's stderr at error level.
 
-For a deliberately ignored event, exit `0` without printing anything so the
-sender receives `204`. Reserve a non-zero exit for actual script failures, which
-return `500` and may trigger the sender's retry or alerting policy.
+For a deliberately ignored event, exit `0` without printing anything so the sender receives `204`. Reserve a non-zero
+exit for actual script failures, which return `500` and may trigger the sender's retry or alerting policy.
 
 ```bash
 #!/bin/bash
-# /opt/hooks/github-push.sh
+# ./hooks/github-push.sh
+set -euo pipefail
 
 payload=$(cat)
 
@@ -65,7 +69,7 @@ if [ "$branch" != "main" ]; then
 fi
 
 # Files changed
-files=$(echo "$payload" | jq -r '.commits[].modified[]' | sort -u | head -20)
+files=$(echo "$payload" | jq -r '.commits[].modified[]' | sort -u | sed -n '1,20p')
 
 cat <<EOF
 Push to $repo/$branch by $pusher ($commits commits).
@@ -81,75 +85,78 @@ EOF
 ```
 
 Make it executable:
+
 ```bash
-chmod +x /opt/hooks/github-push.sh
+chmod +x ./hooks/github-push.sh
 ```
 
-### Step 2: Configure the Hook
+## Configure the hook
+
+Add this block to a `.toml` file in Octomind's config directory: `$OCTOMIND_DATA_DIR/config` when overridden, otherwise
+`~/.local/share/octomind/config` on Linux/macOS or `%LOCALAPPDATA%/octomind/config` on Windows. Relative script paths
+resolve from the process working directory.
 
 ```toml
 [[hooks]]
 name = "github-push"
-bind = "0.0.0.0:9876"
-script = "/opt/hooks/github-push.sh"
+bind = "127.0.0.1:9876"
+script = "./hooks/github-push.sh"
 timeout = 30
 ```
 
-Each hook needs a **unique `name`** and a **unique `bind` address**. `bind` must be a
-valid `host:port` socket address, `script` must be non-empty, and `timeout` must be
-between 1 and 3600 seconds (default 30). Octomind validates these at startup and refuses
-to launch if any rule is violated.
+Each hook needs a **unique `name`** and a **unique `bind` address**. `bind` must be a numeric IP and port (for example,
+`127.0.0.1:9876`), `script` must be non-empty, and `timeout` must be between 1 and 3600 seconds (default 30). Octomind
+validates these at startup and refuses to launch if any rule is violated. An activated script must exist, be a file, and
+be executable on Unix.
 
-### Step 3: Start the Daemon
+## Start the daemon
 
 ```bash
-octomind run --name code-monitor --daemon --format jsonl --hook github-push
+printf 'Wait for events and review the local checkout when requested.\n' \
+  | octomind run developer:general --name code-monitor --daemon --format jsonl --hook github-push
 ```
 
-`--daemon` keeps the process running indefinitely, draining its inbox and waiting for the
-next event. It must run **non-interactively** — a session decides interactivity from
-`stdin` being a terminal and `--format` being unset, so use `--format jsonl` (recommended:
-output is machine-parseable) or pipe stdin. `--name` is required so external tools can
-reach the session via `octomind send`.
+`--daemon` keeps a non-interactive session waiting for inbox work. Use `--format jsonl` for machine-readable output.
+With terminal stdin you can omit the initial prompt; with non-terminal stdin (including `/dev/null`), startup requires a
+non-empty prompt, as above. `--name` is optional, but gives senders a predictable session name; reusing it resumes
+existing history.
 
-### Step 4: Point GitHub Webhook
+## Deliver an event
 
-In your GitHub repo settings:
-- Webhook URL: `http://your-server:9876/`
-- Content type: `application/json`
-- Events: "Push"
+Send this local fixture from another terminal. A `200` response acknowledges queueing, not completion of the AI review:
 
-Now every push to `main` triggers an AI review.
+```bash
+curl -i http://127.0.0.1:9876/ \
+  -H 'Content-Type: application/json' -H 'X-GitHub-Event: push' \
+  --data '{
+    "repository":{"full_name":"example/project"}, "ref":"refs/heads/main",
+    "pusher":{"name":"ci"}, "commits":[{"modified":["src/main.rs"]}]
+  }'
+```
+
+The listener implements plain HTTP POST handling; it does not verify webhook signatures or provide TLS. For an external
+sender, put authentication and TLS in your ingress proxy and forward verified requests to this loopback listener. The
+script receives request headers if you implement sender verification there.
 
 ### Multiple Hooks
 
-Monitor different event sources simultaneously:
+You can activate multiple configured hooks by repeating `--hook`. For example, add a second listener using the same
+script (keep the `github-push` block above once):
 
 ```toml
 [[hooks]]
-name = "github-push"
-bind = "0.0.0.0:9876"
-script = "/opt/hooks/github-push.sh"
-timeout = 30
-
-[[hooks]]
-name = "slack-mention"
-bind = "0.0.0.0:9877"
-script = "/opt/hooks/slack-mention.sh"
+name = "github-push-secondary"
+bind = "127.0.0.1:9877"
+script = "./hooks/github-push.sh"
 timeout = 15
-
-[[hooks]]
-name = "pagerduty-alert"
-bind = "0.0.0.0:9878"
-script = "/opt/hooks/pagerduty-alert.sh"
-timeout = 30
 ```
 
+Stop the first daemon before starting this replacement, because both activate the listener on port 9876:
+
 ```bash
-octomind run --name ops-agent --daemon --format jsonl \
-  --hook github-push \
-  --hook slack-mention \
-  --hook pagerduty-alert
+printf 'Wait for push events.\n' \
+  | octomind run developer:general --name code-monitor --daemon --format jsonl \
+      --hook github-push --hook github-push-secondary
 ```
 
 ### Injecting Messages Manually
@@ -157,23 +164,40 @@ octomind run --name ops-agent --daemon --format jsonl \
 Besides webhooks, you can inject messages directly:
 
 ```bash
-echo "Summarize what happened in the last hour" | octomind send --name ops-agent
+echo "Summarize what happened in the last hour" | octomind send --name code-monitor
 ```
 
-`octomind send` connects to the running session over a per-session Unix socket
-(`<run_dir>/<name>.sock`) or, on Windows, a named pipe (`\\.\pipe\octomind-<name>`). It
-only works **while a daemon/session with that name is live** — if no such session is
-running, it fails with `no running session named '<name>'`. The message must be non-empty,
-and `send` reads back `ok` on success or an error string. (You can pass the message as an
-argument instead of piping it via stdin.)
+`octomind send` connects to the running session over a per-session Unix socket (`<run_dir>/<stem>.sock`, with long names
+shortened and hashed) or, on Windows, a named pipe (`\\.\pipe\octomind-<name>`). It only works **while a daemon/session
+with that name is live** — if no such session is running, it fails with `no running session named '<name>'`. The message
+must be non-empty, and `send` reads back `ok` on success or an error string. (You can pass the message as an argument
+instead of piping it via stdin.) The CLI prints a send receipt, not the AI response:
+
+```bash
+octomind send --name code-monitor 'Summarize the events received so far.'
+```
+
+On Unix, `run_dir` is `$XDG_RUNTIME_DIR/octomind` when set, otherwise the system temp directory plus `octomind-<uid>`.
+It is host-local and is not beneath `OCTOMIND_DATA_DIR`.
 
 ### Reacting to Background Work
 
-There is a third event source besides webhooks and manual `send`: **completed background
-agents**. When a delegated `agent_<name>` job spawned with `async = true` finishes,
-its result is pushed into the same inbox with an `[Async agent 'NAME' completed]`
-or `[Async agent 'NAME' failed]` prefix. TAP runs use their own `TapRun` source and
-tap-run label. The daemon processes both like webhook and `send` messages.
+Background agent and tap results also arrive through the inbox; see [multi-agent
+delegation](05-multi-agent-delegation.md). They are system-managed continuations and may be batched together. Webhooks
+and `send` carry separate user turns. JSONL emits an `injected` event with `source_kind`, `source_label`, `content`, and
+`session_id` for each inbox message.
+
+## Common questions
+
+- **Why does startup say no input was provided?** Use the piped startup prompt above when stdin is not a terminal.
+- **Why does the hook fail before listening?** Check that the selected hook exists, the script is executable, and its
+  port is free. Only hooks named by `--hook` are activated.
+- **Why did HTTP 200 arrive before a review?** It acknowledges the script output entering the in-memory inbox. It is not
+  a durable delivery receipt or an AI completion signal; pending inbox messages do not survive process exit.
+- **Why did a turn fail while the daemon stayed up?** The daemon logs API response failures and continues listening;
+  one-shot runs return those errors. Setup or preparation errors can still terminate the daemon.
+- **Where are the changed files?** The agent can use its configured tools on the local checkout. The sample webhook only
+  supplies metadata and does not synchronize source files.
 
 ## Hook Script Environment
 
@@ -189,9 +213,9 @@ Your script receives rich context via environment variables:
 | `HOOK_SESSION` | `code-monitor` |
 | `HOOK_HEADER_X_GITHUB_EVENT` | `push` |
 
-The listener serves all paths — it only requires the method to be `POST` — so `HOOK_PATH`
-reflects whatever URL the sender used. Every request header is also exposed as
-`HOOK_HEADER_<NAME>` (uppercased, dashes replaced with underscores).
+The listener serves all paths — it only requires the method to be `POST` — so `HOOK_PATH` reflects whatever URL the
+sender used. Every request header with a text-decodable value is also exposed as `HOOK_HEADER_<NAME>` (uppercased,
+dashes replaced with underscores).
 
 Use these to route different event types in a single script:
 
@@ -226,21 +250,12 @@ The listener returns a status code the webhook sender can use for retry and heal
 | `500` | Script exited non-zero, or failed to spawn / had an IO error |
 | `504` | Script exceeded its `timeout` |
 
-A non-zero script exit returns `500` to the sender (body `Script error (exit N)`) and logs
-the script's stderr at error level — so a 500 you see in your webhook provider usually
-means the hook script failed or deliberately bailed, not that Octomind is down.
+A non-zero script exit returns `500` to the sender (body `Script error (exit N)`) and logs the script's stderr at error
+level — so a 500 you see in your webhook provider usually means the hook script failed or deliberately bailed, not that
+Octomind is down.
 
-## Key Points
+## See also
 
-- `--daemon` keeps the session alive between events, draining its inbox; it must run
-  non-interactively (use `--format jsonl` or pipe stdin).
-- The daemon is resilient: if a turn hits an API error, it logs it and keeps listening
-  rather than exiting (unlike a one-shot non-interactive run, which exits non-zero).
-- `--hook` activates webhook listeners (multiple allowed); each needs a unique name and bind.
-- Hook script contract: exit 0 + non-empty stdout = inject (HTTP 200); exit 0 + empty
-  stdout = nothing injected (HTTP 204); non-zero exit = nothing injected (HTTP 500).
-- Injected text becomes a literal user message; the AI answers it on its next turn.
-- `octomind send --name X` injects a message manually — but only while a session named `X`
-  is actually running.
-- JSONL output is parseable by downstream tools.
-- The AI has full tool access — it can read the actual files, not just the webhook payload.
+- [CLI reference](../reference/01-cli-reference.md)
+- [Custom hooks](09-custom-hooks.md)
+- [Multi-agent delegation](05-multi-agent-delegation.md)

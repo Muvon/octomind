@@ -1,104 +1,50 @@
 # Web Dashboard Integration
 
-Embed Octomind's AI agent runtime into a web application through its real-time WebSocket server.
+Use this guide to connect a browser dashboard to Octomind's WebSocket server. It covers session setup, request
+completion, media references, and deployment boundaries for frontend developers.
 
-## The Problem
+## Start the server
 
-Your team wants an AI assistant accessible from a web dashboard — no terminal required. Developers should be able to ask questions about the codebase, request code reviews, and get help directly from a browser.
-
-## Solution
-
-Run the WebSocket server and connect from your web frontend.
-
-### Step 1: Start the Server
+Run from the checkout the assistant should work on, with provider credentials configured.
 
 ```bash
 octomind server --host 127.0.0.1 --port 8080
 ```
 
-`--host` defaults to `127.0.0.1` and `--port` (short `-p`) defaults to `8080`, so a bare `octomind server` binds to `ws://127.0.0.1:8080`. The optional `TAG` positional selects a tap agent such as `assistant:concierge` or `developer:general`; omit it to use the root `default`. A plain name resolves only when explicitly defined under local `[[roles]]`; unknown local roles and missing tap tags fail session initialization.
+`--host` defaults to `127.0.0.1` and `--port` (short `-p`) defaults to `8080`, so a bare `octomind server` binds to
+`ws://127.0.0.1:8080`. The optional `TAG` positional selects a tap agent such as `assistant:concierge` or
+`developer:general`; omit it to use the root `default`. A plain name resolves only when explicitly defined under local
+`[[roles]]`; unknown local roles and missing tap tags fail resolution or session initialization.
 
 ```bash
 octomind server assistant:concierge -p 8080
 ```
 
-Because the dashboard connects from a browser, you must allowlist the page's origin — the server refuses any handshake carrying an unlisted `Origin` header:
+Because the dashboard connects from a browser, you must allowlist the page's origin — the server refuses any handshake
+carrying an unlisted `Origin` header:
 
 ```bash
 octomind server assistant:concierge -p 8080 --allow-origin http://localhost:3000
 ```
 
-Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-websocket-server.md#browser-origins) for why this is not optional.
+Pass `--allow-origin` once per origin. See [Browser origins](../integration/01-websocket-server.md#browser-origins) for
+why this is not optional.
 
-For production, bind to `0.0.0.0` behind a reverse proxy with TLS:
+For a same-host production proxy serving `https://ai.yourcompany.com`, keep the backend on loopback:
 
 ```bash
-octomind server assistant:concierge --host 0.0.0.0 --port 8080 --allow-origin https://dashboard.example.com
+octomind server assistant:concierge --host 127.0.0.1 --port 8080 --allow-origin https://ai.yourcompany.com
 ```
 
-> The server enforces the exact browser-origin allowlist, but it does not provide user authentication, authorization, or TLS. Any permitted client that can reach the socket can drive sessions under the process's shared credentials. Put non-local deployments behind a reverse proxy that supplies TLS and authentication.
+> The server enforces the exact browser-origin allowlist, but it does not provide user authentication, authorization, or
+> TLS. Any permitted client that can reach the socket can drive sessions under the process's shared credentials. Put
+> non-local deployments behind a reverse proxy that supplies TLS and authentication.
 
-### Step 2: Connect from JavaScript
+## Configure a production proxy
 
-```typescript
-function askOctomind(url: string, question: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const requestedSession = 'dev-session';
-    let activeSession = '';
-    let promptSent = false;
-    const parts: string[] = [];
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        type: 'session',
-        request_id: 'create-dev-session',
-        session_id: requestedSession,
-      }));
-    };
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-
-      // Ignore the connection welcome and the immediate session ack. Send the
-      // prompt only after session creation/resume returns the actual ID.
-      if (msg.type === 'status' && msg.session_id && !promptSent) {
-        activeSession = msg.session_id;
-        promptSent = true;
-        ws.send(JSON.stringify({
-          type: 'message',
-          request_id: 'question-1',
-          session_id: activeSession,
-          content: question,
-        }));
-      } else if (msg.type === 'assistant' && msg.session_id === activeSession) {
-        parts.push(msg.content);
-      } else if (msg.type === 'tool_use' && msg.session_id === activeSession) {
-        console.log('tool:', msg.tool, msg.params);
-      } else if (msg.type === 'cost' && msg.session_id === activeSession) {
-        ws.close();
-        resolve(parts.join(''));
-      } else if (msg.type === 'error') {
-        ws.close();
-        reject(new Error(msg.message));
-      }
-    };
-
-    ws.onerror = () => reject(new Error('WebSocket connection failed'));
-  });
-}
-
-askOctomind('ws://127.0.0.1:8080', 'Explain how authentication works')
-  .then(appendToChat)
-  .catch(showError);
-```
-
-For command frames, use the bare command name without `/`, for example
-`{"type":"command","session_id":"dev-session","command":"info"}`. Wait for
-the preceding AI turn's `cost` frame before sending it, because overlapping work
-for one session is rejected rather than queued.
-
-### Step 3: Production Setup with nginx
+This nginx example assumes your certificate, password file, and frontend build already exist at the shown paths. Replace
+the domain and paths with your deployment values. Serve the page from the same origin allowed above; the browser
+connects to `wss://ai.yourcompany.com/ws`.
 
 ```nginx
 # /etc/nginx/sites-available/octomind
@@ -131,97 +77,175 @@ server {
 }
 ```
 
-### Python Client
+## Connect from JavaScript
 
-```python
-import asyncio
-import json
-import websockets
+Run this in a page served from the allowed origin. Each call creates a fresh session unless you pass a saved name. It
+handles one foreground request per connection; keep a long-lived event consumer for sessions that schedule or delegate
+background work. Closing a socket is not a protocol cancellation request.
 
-async def ask_octomind(question: str) -> str:
-    async with websockets.connect('ws://127.0.0.1:8080') as ws:
-        await ws.send(json.dumps({
-            'type': 'session',
-            'session_id': 'api-session'
-        }))
+```javascript
+function askOctomind(url, question, requestedSession) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    let activeSession = '';
+    let promptSent = false;
+    let settled = false;
+    const parts = [];
+    const timer = setTimeout(() => finish(new Error('Timed out waiting for the server')), 600000);
 
-        # Wait for the create/resume status. The connection welcome and ack do
-        # not establish the session for subsequent application messages.
-        while True:
-            msg = json.loads(await ws.recv())
-            if msg['type'] == 'error':
-                raise RuntimeError(msg['message'])
-            if msg['type'] == 'status' and msg.get('session_id'):
-                session_id = msg['session_id']
-                break
+    function finish(error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ws.close();
+      if (error) reject(error);
+      else resolve({ sessionId: activeSession, answer: parts.join('\n') });
+    }
 
-        await ws.send(json.dumps({
-            'type': 'message',
-            'session_id': session_id,
-            'content': question
-        }))
+    ws.onopen = () => ws.send(JSON.stringify({
+      type: 'session', request_id: 'session-1', session_id: requestedSession,
+    }));
 
-        response_parts = []
-        async for message in ws:
-            msg = json.loads(message)
-            if msg['type'] == 'assistant':
-                response_parts.append(msg['content'])
-            elif msg['type'] == 'cost':
-                # `cost` is emitted once after each completed AI turn — the
-                # canonical end-of-turn marker. `status` text is free-form and
-                # never reliably signals completion, so don't parse it for that.
-                break
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'error') {
+          finish(new Error(msg.message));
+          return;
+        }
+        // The welcome has no session_id; ack is receipt, not completed setup.
+        if (msg.type === 'status' && msg.session_id && !msg.data && !promptSent) {
+          activeSession = msg.session_id;
+          promptSent = true;
+          ws.send(JSON.stringify({
+            type: 'message', request_id: 'question-1',
+            session_id: activeSession, content: question,
+          }));
+        } else if (msg.session_id === activeSession) {
+          if (msg.type === 'assistant') parts.push(msg.content);
+          if (msg.type === 'tool_use') console.log('tool:', msg.tool, msg.params);
+          if (msg.type === 'injected') console.log('inbox:', msg.source_label, msg.content);
+          if (msg.type === 'cost' && promptSent) finish();
+        }
+      } catch (error) {
+        finish(error);
+      }
+    };
+    ws.onerror = () => finish(new Error('WebSocket connection failed'));
+    ws.onclose = () => finish(new Error('Connection closed before completion'));
+  });
+}
 
-        return ''.join(response_parts)
-
-# Usage
-answer = asyncio.run(ask_octomind("What does the login function do?"))
+askOctomind('ws://127.0.0.1:8080', 'Explain how authentication works')
+  .then(console.log)
+  .catch(console.error);
 ```
+
+## Execute session commands
+
+On an established connection, send a bare command name without `/`. For a session established as `dev-session`:
+
+```json
+{"type":"command","request_id":"info-1","session_id":"dev-session","command":"info","args":[]}
+```
+
+Wait for a `status` carrying `data` to complete a command such as `info`; commands do not generally emit `cost`. A
+normal successful foreground message ends with `cost`; on failure handle `error` without waiting for cost. `request_id`
+appears on acknowledgements and some errors, but not on assistant, cost, or command-status events. Track one outstanding
+operation per connection and do not assume every error has a correlation ID.
+
+## Send media references
+
+A `session` acknowledgement advertises `message_attachments_v1`. Upload media through your own backend before sending
+one atomic `message` containing text and attachment references; this server has no upload endpoint. The media root is
+`OCTOMIND_MEDIA_ROOT` (default `/home/octo/.octomind/media`), independent of `OCTOMIND_DATA_DIR`.
+
+For a local image fixture, use an existing `screenshot.png` (at most 5 MiB). Stop the earlier server and restart it with
+the same media root:
+
+```bash
+mkdir -p "$HOME/.octomind-media"
+cp screenshot.png "$HOME/.octomind-media/ABCDEFGHIJKLMNOPQRSTUVWX.png"
+wc -c < screenshot.png
+OCTOMIND_MEDIA_ROOT="$HOME/.octomind-media" \
+  octomind server --allow-origin http://localhost:3000
+```
+
+After establishing `dev-session`, send this frame, replacing `size` with the file's byte count:
+
+```json
+{
+  "type": "message",
+  "request_id": "image-1",
+  "session_id": "dev-session",
+  "content": "Explain this screenshot.",
+  "attachments": [{
+    "id": "ABCDEFGHIJKLMNOPQRSTUVWX",
+    "kind": "image",
+    "media_type": "image/png",
+    "name": "screenshot.png",
+    "size": 1024
+  }]
+}
+```
+
+The ID must be exactly 24 ASCII letters/digits and match exactly one regular, non-symlink file named `ID.extension`. The
+model must support vision for images or video for videos. Audio references are checked for readability but are not
+forwarded to the model. See the [attachment contract](../integration/01-websocket-server.md#client-to-server) for full
+payload details.
+
+## Operate multiple sessions
+
+Use separate connections for concurrent foreground work; the connection loop awaits each request before reading the
+next. The helper above opens one connection per call and omits the session name to get distinct sessions:
+
+```javascript
+Promise.all([
+  askOctomind('ws://127.0.0.1:8080', 'Review the auth module'),
+  askOctomind('ws://127.0.0.1:8080', 'Suggest tests for the API'),
+]).then(console.log).catch(console.error);
+```
+
+Across connections, a message or command that finds its session locked returns a busy error. Wait for completion before
+another operation on the same session. Disconnecting does not delete session history; pass a returned `sessionId` as the
+helper's third argument to resume it. Session IDs are not user authorization boundaries: all clients share the server
+process's credentials, filesystem access, and configured tools.
+
+## Common questions
+
+- **Why does the browser handshake return 403?** Allow the page's exact origin, including its scheme and port. Native
+  clients without an `Origin` header bypass this check; an allowlist does not authenticate them.
+- **Why did an ack arrive before a failure?** Ack means a parsed, validated input was received, not that its session
+  exists, it acquired a lock, or execution succeeded. Invalid JSON or semantic validation errors get no ack.
+- **Why is a reply incomplete?** Handle `error`, early socket close, and a client timeout. Assistant events contain
+  response blocks, not guaranteed token deltas. Keep consuming events for sessions with background producers.
+- **Why did a large payload disconnect?** Both frame/message limits and content validation use 10 MiB. The serialized
+  envelope counts toward the transport limit; oversized frames can close the connection without an application error.
 
 ## Protocol Messages
 
 | Direction | Type | Purpose |
 |-----------|------|---------|
 | Client -> Server | `session` | Create or resume a session (no AI call). With no `session_id` the server creates an auto-named session; with a `session_id` it resumes that session if it exists on disk, otherwise creates one with that name. |
-| Client -> Server | `message` | Send user input (field `content`, max 10 MB) |
+| Client -> Server | `message` | Send user input (field `content`, max 10 MiB; optional `attachments`) |
 | Client -> Server | `command` | Execute a session command (field `command`, bare name without the leading `/`; optional `args` array) |
-| Server -> Client | `ack` | Immediate receipt acknowledgement for each valid JSON text input (`message_type`, optional `request_id`, optional `session_id`, `status = "received"`). Malformed/invalid input returns `error` instead. |
+| Server -> Client | `ack` | Receipt acknowledgement when a parsed, validated client input is read (`message_type`, optional `request_id`, optional `session_id`, `status = "received"`; session acks also advertise `capabilities`). Malformed/invalid input returns `error` instead. |
 | Server -> Client | `assistant` | AI response text (`content`) |
 | Server -> Client | `thinking` | Extended thinking (`content`, if the model supports it) |
 | Server -> Client | `tool_use` | Tool being called (`tool`, `tool_id`, `server`, `params`) |
 | Server -> Client | `tool_result` | Tool execution result (`tool`, `tool_id`, `server`, `content`, `success`) |
-| Server -> Client | `cost` | Token usage and cost; emitted once after each completed AI turn (use it as the end-of-turn signal) |
-| Server -> Client | `status` | Free-form status text in `message` (e.g. the connection welcome, `Session created: <id>` / `Session resumed: <id>`, command-executed notices, `Session ended`, `Conversation compressed`). Command completion statuses carry `data`; AI turns still end with `cost`. May carry an optional `session_id`. |
-| Server -> Client | `error` | Error text in `message`, with optional `request_id` when the failed input provided one |
+| Server -> Client | `cost` | Cumulative session usage/cost; completes a successful foreground message, also emitted by background processing |
+| Server -> Client | `status` | Free-form status text in `message` (e.g. the connection welcome, `Session created: <id>` / `Session resumed: <id>`, command-executed notices, `Session ended`, `Conversation compressed`). Command completion statuses carry `data`; successful foreground messages end with `cost`. May carry an optional `session_id`. |
+| Server -> Client | `error` | Error text in `message`, with `request_id` on some failure paths; it is not guaranteed |
 | Server -> Client | `mcp_notification` | Notification forwarded from an MCP server (`server`, `method`, `params`, optional `tool_id`) |
 | Server -> Client | `skill` | Skill lifecycle event (`action` = activate/use/forget, `name`, optional `trigger`) |
 | Server -> Client | `evolution` | Grounded behavior lifecycle event (`action`, `id`, `name`, `kind`, `state`, `scope`) |
-| Server -> Client | `injected` | Non-user input being added to the conversation (`source_kind` = schedule/background_agent/tap_run/skill/skill_validator/inject/webhook/guardrail_hook/guardrail_validator, `source_label`, `content`); emitted just before the AI responds so the UI can show what triggered it |
+| Server -> Client | `injected` | Inbox input being added to the conversation (`source_kind` = schedule/monitor/background_agent/background_job/tap_run/skill/skill_validator/inject/webhook/guardrail_hook/guardrail_validator, `source_label`, `content`); emitted just before the AI responds so the UI can show what triggered it |
 
-> For the authoritative, exhaustive wire-format spec (every field and JSON example) see [doc/integration/01-websocket-server.md](../integration/01-websocket-server.md). When the two docs differ, that reference and the source win.
+For exhaustive fields, see the [WebSocket reference](../integration/01-websocket-server.md).
 
-## Multi-Session Support
+## See also
 
-Each `session_id` is independent. Multiple sessions under the same process identity can run concurrently:
-
-```typescript
-const alice = new OctomindClient(url, 'alice-session', handlers);
-const bob = new OctomindClient(url, 'bob-session', handlers);
-
-alice.send('Review the auth module');
-bob.send('Help me write tests for the API');
-// Both sessions run independently
-```
-
-Concurrency is across **different** `session_id`s. Requests to the **same** `session_id` are serialized by a per-session lock: if you send a second `message` or `command` while that session is still processing, the server replies immediately with an `error` payload (`Session '<id>' is busy processing another request. Please wait.`) — it does not queue the request. A dashboard sending overlapping input to one session must wait for the turn's `cost` message (or handle the busy error) before sending again.
-
-## Key Points
-
-- WebSocket sessions reuse the session and tool pipeline, with the protocol-specific command and lifecycle behavior documented above
-- Sessions are stateful — context persists across messages
-- Tool execution (file reading, shell commands) is streamed in real-time
-- A `cost` message is emitted once after each completed AI turn — use it as the end-of-turn signal, not the free-form `status` text
-- Every valid JSON input gets an immediate `ack`; use optional client `request_id` values if the UI needs correlation
-- User `message` `content` is capped at 10 MB, and the WebSocket frame/message size limit is also 10 MB; larger input returns a validation error
-- The server checks browser origins but has no built-in authentication, authorization, or TLS; use an authenticated TLS reverse proxy for non-local deployments
-- Cost tracking is per-session via `cost` messages
+- [WebSocket server reference](../integration/01-websocket-server.md)
+- [Session commands](../reference/02-session-commands.md)
+- [Event-driven webhooks](02-event-driven-agent.md)

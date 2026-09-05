@@ -1,31 +1,41 @@
 # Common Issues
 
-Use these checks to diagnose installation, authentication, configuration, MCP, session, sandbox, and transport failures.
+Use these checks when installation, authentication, configuration, MCP tools, or sessions fail.
+This guide also covers sandbox restrictions and ACP/WebSocket startup problems.
 
 ## Installation
 
 ### Binary Not Found
 
-```
+```text
 octomind: command not found
 ```
 
 Ensure the binary is on your PATH:
+
 ```bash
-which octomind
-# If not found, add to PATH or move binary:
-sudo mv octomind /usr/local/bin/
+command -v octomind
+# If you installed the binary in ~/.local/bin:
+export PATH="$HOME/.local/bin:$PATH"
+octomind --version
 ```
 
 ### Permission Denied
 
+For a downloaded binary in `~/.local/bin`, make it executable:
+
 ```bash
-chmod +x /usr/local/bin/octomind
+chmod +x "$HOME/.local/bin/octomind"
 ```
 
 ### Wrong Architecture
 
-Download the correct binary for your platform. Use `uname -m` to check:
+Download the correct binary for your platform. On Linux/macOS, check the architecture:
+
+```bash
+uname -m
+```
+
 - `x86_64` / `amd64` — Intel/AMD
 - `arm64` / `aarch64` — Apple Silicon / ARM
 
@@ -42,37 +52,40 @@ octomind login
 
 The successful login stores the minted model-gateway credential as
 `OCTOHUB_API_KEY` in Octomind's user-scope `.env`. Use `octomind login --force`
-to replace an existing sign-in.
+to replace an existing sign-in. On a machine without a browser, print the confirmation URL:
+
+```bash
+octomind login --force --no-browser
+```
 
 ### Key Not Found
 
-If a provider has no credentials, the run fails before the first request. You may
-see an error similar to (the exact wording comes from the provider layer):
+For a provider authentication error, check the variables named in the shipped configuration:
 
-```
-missing API key for provider 'openrouter'
-```
+| Provider | Credential variable |
+|---|---|
+| OctoHub | `OCTOHUB_API_KEY` (written by `octomind login`) |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| Google | `GOOGLE_APPLICATION_CREDENTIALS` (credentials JSON path) |
+| Amazon | `AWS_ACCESS_KEY_ID` |
+| Cloudflare | `CLOUDFLARE_API_TOKEN` |
 
-Set the matching environment variable. The general pattern is `<PROVIDER>_API_KEY`:
+For example, substitute your provider-issued key:
+
 ```bash
-export OPENROUTER_API_KEY="your_key"   # openrouter
-export OPENAI_API_KEY="your_key"       # openai
-export ANTHROPIC_API_KEY="your_key"    # anthropic
-export DEEPSEEK_API_KEY="your_key"     # deepseek
+export OPENROUTER_API_KEY="your-provider-issued-key"
 ```
 
-A few configured providers use non-`*_API_KEY` variables:
-- Google: `GOOGLE_APPLICATION_CREDENTIALS`
-- Amazon: `AWS_ACCESS_KEY_ID`
-- Cloudflare: `CLOUDFLARE_API_TOKEN`
-
-For the full per-provider list see [Environment Variables](../reference/04-environment-variables.md).
-The `cli:` meta-provider (e.g. local CLI-backed models) needs no API key.
-
-Add to your shell profile for persistence, or use a `.env` file in your project
-(it is loaded from the current directory and overrides the process environment).
+See [Environment Variables](../reference/04-environment-variables.md) for provider-specific setup.
+The load order is process environment → `<data-root>/config/.env` → launch-directory `.env`; later values win.
+`OCTOMIND_CONFIG_PATH` does not relocate the user-scope `.env`. If a fresh login still appears ineffective,
+check whether the project `.env` overrides `OCTOHUB_API_KEY`.
 
 Check current config:
+
 ```bash
 octomind config --show
 ```
@@ -81,16 +94,18 @@ octomind config --show
 
 Setting a model without a provider prefix is rejected, for example:
 
-```
+```text
 model must be in provider:model format
 ```
 
-Always use `provider:model` format:
+Use a provider-qualified name when setting the model:
+
+```bash
+octomind config --model octohub:auto
 ```
-openrouter:anthropic/claude-sonnet-4-6  # correct explicit provider:model
-anthropic/claude-sonnet-4-6             # wrong — slash is not the provider delimiter
-claude-sonnet-4-6                       # wrong — missing provider prefix
-```
+
+For the current TOML profile shape and inheritance rules, see
+[Model Profile and Provider Format](02-migration-guide.md#model-profile-and-provider-format).
 
 ## Configuration
 
@@ -100,54 +115,64 @@ claude-sonnet-4-6                       # wrong — missing provider prefix
 octomind config --validate
 ```
 
-Common issues:
-- Missing required fields (check against `config-templates/default.toml`)
-- Invalid TOML syntax (check brackets, quotes, commas)
-- Out-of-range field values. The validator enforces:
-  - role `temperature` between `0.0` and `2.0`
-  - role `top_p` between `0.0` and `1.0`
-  - every model profile's `top_k` between `0` and `1000` (`0` disables it)
-  - `max_session_tokens_threshold` at most `2,000,000` (`0` disables)
-  - `cache_keepalive_max_idle_seconds` at most `86400` (24h; `0` = unbounded)
-  - each MCP/webhook hook `timeout` between `1` and `3600` seconds
-  - every resolved model profile's `name` must resolve to a configured provider
+Common causes are missing required fields, invalid TOML, or out-of-range values. Compare your file with
+[the default template](../../config-templates/default.toml). Validation includes:
+
+| Field | Accepted values |
+|---|---|
+| Every resolved model profile's `temperature` | `0.0`–`2.0` |
+| Every resolved model profile's `top_p` | `0.0`–`1.0` |
+| Every resolved model profile's `top_k` | `0`–`1000`; `0` disables it |
+| Every resolved model profile's `name` | A name accepted by the provider factory |
+| `max_session_tokens_threshold` | At most `2000000`; `0` disables the configured limit |
+| `cache_keepalive_max_idle_seconds` | At most `86400`; `0` is unbounded |
+| MCP server `timeout_seconds` | `1`–`3600` seconds |
+| Webhook `timeout` | `1`–`3600` seconds |
 
 ### Config Not Loading
 
-Verify config location:
+Inspect the loaded settings:
+
 ```bash
 octomind config --show
 ```
 
-Default: `~/.local/share/octomind/config/config.toml`
+On Linux/macOS the default is `~/.local/share/octomind/config/config.toml`.
+See [Paths and logs](#paths-and-logs) for Windows and data-root overrides.
+The path heading in `config --show` always shows the data-root default; it does not confirm a custom
+`OCTOMIND_CONFIG_PATH`. To verify a custom selection, set the path explicitly when validating it as shown below.
 
 Octomind merges `config.toml` with every other `*.toml` file in the same
-directory (`mcp-*.toml` files are applied last as overrides), so a stray `.toml`
-left in that directory can change what gets loaded.
+directory: `config.toml` first, other files alphabetically, then `mcp-*.toml` overrides alphabetically.
+A stray `.toml` backup can therefore change the loaded settings. Same-named array entries such as roles and
+servers are replaced by the last entry, not merged field by field.
 
 Override the config file path (this is a full path to a `.toml` file, not a
 directory — its parent directory is then used to merge sibling `*.toml` files):
+
 ```bash
-export OCTOMIND_CONFIG_PATH="/custom/path/config.toml"
+OCTOMIND_CONFIG_PATH="$HOME/.local/share/octomind/config/config.toml" octomind config --validate
 ```
 
-If the config was written by an older Octomind version, migrate it to the
-current schema:
-```bash
-octomind config --upgrade
-```
+Older configs are upgraded during startup before validation. For backups, manual upgrades, and recovery when loading
+fails, follow the [Migration Guide](02-migration-guide.md).
 
 ## MCP Tools
 
 ### Tool Not Found
 
-A tool is only available if its MCP server is configured *and* the active role
-references that server. The shipped config declares four built-in servers
-(`core`, `orchestration`, `runtime`, `agent`); the `filesystem` server (the `octofs` companion)
-is provided by the default tap, not by a hand-written block. To confirm what is
-loaded, run `/mcp list` in a session.
+Select static servers through `server_refs` or an exact `auto_bind` match.
+Interactive CLI sessions also receive `schedule` and `monitor`; that implicit grant does not add `tap`.
+Runtime MCP tools and capabilities can add tools during a session. The shipped config declares four built-in
+servers: `core`, `orchestration`, `runtime`, and `agent`. `filesystem` is an external companion server, not a builtin;
+a role reference alone does not configure it. Check the resolved tool surface:
 
-To wire up your own stdio server and grant a role access:
+```text
+/mcp list
+/mcp full
+```
+
+With `octocode` installed, add this server and custom role to a sibling `reviewer.toml` in your config directory:
 
 ```toml
 # Define the server (this stdio example is from default.toml)
@@ -165,42 +190,67 @@ name = "octocode-reviewer"
 system = "Use the configured tools to inspect and review this project."
 welcome = ""
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent", "octocode"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*", "octocode:*"]
+server_refs = ["octocode"]
+allowed_tools = ["octocode:*"]
 ```
 
-`server_refs` controls which servers the role can see. An empty
+Start the custom role:
+
+```bash
+octomind run octocode-reviewer
+```
+
+Alternatively, add `auto_bind = ["developer:general"]` inside the server block to attach it to that exact role tag.
+`"developer"` does not match `"developer:general"`. Auto-bound servers receive a server wildcard when the role's
+allowlist is non-empty.
+
+`server_refs` controls which static servers the role can see. An empty
 `allowed_tools` list is unrestricted; when the list is non-empty, it must also
 grant each desired tool or a matching server wildcard.
 
 ### Server Not Responding
 
-Inspect the MCP layer. `/mcp` accepts these subcommands:
-`info` (the default), `list`, `full`, `health`, `dump`, and `validate`.
+Inspect the MCP layer:
 
-```
-/mcp health     # connection status per server
-/mcp list       # confirm the server's tools are registered
-/mcp validate   # check tool parameter schemas
+| Command | Use |
+|---|---|
+| `/mcp` or `/mcp info` | Server overview |
+| `/mcp list` | Tool names |
+| `/mcp full` | Tool details and schemas |
+| `/mcp health` | Server health checks |
+| `/mcp dump` | Tool definitions for inspection |
+| `/mcp validate` | Tool parameter-schema validation |
+
+```text
+/mcp health
+/mcp list
+/mcp validate
 ```
 
-Turn on detailed logging to see startup/handshake errors:
-```
-/loglevel debug
-```
+For startup/handshake errors, enable [debug logging](#debug-mode) before restarting the session.
 
 For stdio servers, verify the command is on PATH (substitute your server's
 binary):
+
 ```bash
 which octocode
 ```
 
 ### Tool Permission Denied
 
-Check `allowed_tools` in your role config. Patterns:
-- `"core:*"` — all tools from the `core` server
-- `"filesystem:view"` — one specific tool
-- `[]` — empty list means no filtering (every tool from the referenced servers is allowed)
+Check `allowed_tools` in your role config:
+
+| Pattern | Meaning |
+|---|---|
+| `"core:*"` | All available tools from `core` |
+| `"filesystem:view"` | Only `view` from the configured `filesystem` server |
+| `[]` | No allowlist filtering of selected servers |
+
+Use the custom-role example above to grant `octocode:*`. To inspect which schemas actually reached the session:
+
+```text
+/mcp full
+```
 
 ## Taps and Agents
 
@@ -209,11 +259,14 @@ Check `allowed_tools` in your role config. Patterns:
 Tap agents are addressed as `category:variant` (for example `developer:general`).
 If a tag is not found, list the taps that are active and confirm the category
 and variant exist:
+
 ```bash
 octomind tap            # list active taps (no URL = list mode)
 ```
 The built-in default tap (`muvon/tap`) is always present as the last fallback,
-so `developer:general` resolves out of the box. Add or remove taps with:
+but resolving a tag still requires its manifest and dependencies to be available.
+For a repository you own, substitute its real owner and tap name:
+
 ```bash
 octomind tap myorg/my-agents     # clones github.com/myorg/octomind-my-agents
 octomind untap myorg/my-agents   # remove a tap
@@ -222,81 +275,168 @@ octomind untap myorg/my-agents   # remove a tap
 ### Manifest Placeholder Prompts
 
 The first time you run a tap agent, its manifest may prompt for `{{INPUT:KEY}}`
-values. Answers are persisted to `~/.local/share/octomind/inputs.toml` and reused.
-`{{ENV:KEY}}` placeholders read from the environment (with `.env` fallback), and
-`{{CWD}}` is the runtime working directory.
+values. Answers are persisted to `<data-root>/inputs.toml` and reused.
+`{{ENV:KEY}}` reads the environment; if unset, it prompts and saves the answer to the launch-directory `.env`.
+An explicitly empty environment value is accepted. `{{CWD}}` is the runtime working directory.
+
+If a delegated run reports missing input, run that role interactively once to supply its manifest values:
+
+```bash
+octomind run developer:general
+```
+
+Use the exact tag from the error if it names a different role.
 
 ## Sessions
 
 ### Session Not Resuming
 
-Sessions are stored in `~/.local/share/octomind/sessions/`. Check:
-```
+Sessions are stored in `<data-root>/sessions/`. From an interactive session, check:
+
+```text
 /list
 ```
 
 Resume by name:
+
 ```bash
 octomind run --resume my-session
 ```
 
 If you do not remember the name, resume the most recent session for the current
 working directory:
+
 ```bash
 octomind run --resume-recent
 ```
 
+Bare `--resume` opens a session picker in a terminal; piped runs require a session name.
+Without an explicit role tag, resume restores the saved role:
+
+```bash
+octomind run --resume
+```
+
+### Piped Input Fails
+
+`run` takes an optional role/tag, not a message argument. Pipe the prompt; `--format` accepts `plain` or `jsonl`:
+
+```bash
+printf '%s\n' 'Explain the project structure.' | octomind run --format plain
+```
+
+An empty pipe fails with `No input provided via stdin`. With terminal stdin, `--format` requires piped input
+unless you also use `--daemon`.
+
 ### High Token Usage
 
 Monitor with:
-```
+
+```text
 /info
 ```
 
-Reduce context:
-```
-/done               # Force compression and start a fresh task boundary
-/run reduce         # Built-in command: compress session history (ships in default.toml)
-```
-Automatic compression is checked at API-call and tool-result boundaries when its trigger is eligible — see [Compression Guide](../usage/08-compression.md).
+Use `/done` to force compression across a task boundary. The shipped `/run reduce` command is an alternative
+that replaces session history with its ACP role's output:
 
-Enable automatic compression in config. See [Compression](../usage/08-compression.md).
+```text
+/done
+```
+
+```text
+/run reduce
+```
+
+Automatic compression is already enabled in the template. To restore its shipped trigger, set this key in the
+existing `[compression]` table, before nested tables such as `[compression.model]`:
+
+```toml
+[compression]
+threshold = 70000
+```
+
+`0` disables automatic compression; `/done` still bypasses its threshold/cooldown guards. Automatic checks run at
+API-call and tool-result boundaries; eligibility does not guarantee an immediate fold. See
+[Compression](../usage/08-compression.md) for the full behavior.
 
 ### Cannot Send to a Running Session
 
-`octomind send -n NAME "message"` talks to a session over a Unix domain socket
-(`$XDG_RUNTIME_DIR/octomind/<name>.sock`, or `<system tmp>/octomind-<uid>/<name>.sock`
-when that variable is unset; a named pipe `\\.\pipe\octomind-<name>` on Windows). If you get an error like:
+`send` requires a live session, not merely a saved session file. Start a named daemon from a terminal:
 
-```
-no running session named 'NAME' (socket not found ...)
-```
-
-the target session is not running, or you used the wrong name. The target must
-be a session started with `octomind run --daemon` (or a named interactive
-session). The daemon loop is non-interactive: from a terminal, select it with
-`--format`; with piped stdin, `--format` is optional:
 ```bash
 octomind run --daemon --format jsonl -n my-daemon
 ```
 
-## Platform-Specific
+Then, in another terminal on the same host:
 
-The sandbox (`--sandbox` flag or `sandbox` in config) applies to the `run`,
-`server`, and `acp` commands only. Linux permits writes to the current working
-directory and `~/.local/share`; macOS additionally permits the device and
-platform temp paths named in `src/sandbox/macos.rs`. Credential directories
-such as `~/.ssh` and `~/.aws` are write-protected. There is a platform
-difference in read behavior:
-- **macOS** (Seatbelt): also *blocks reads* of credential dirs (`~/.ssh`,
-  `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, `~/.config/op`).
-- **Linux** (Landlock): the whole filesystem stays *readable*; only writes are
-  denied. True read isolation is not possible with Landlock v1-v3, so credential
-  dirs are write-protected but not read-protected.
+```bash
+octomind send -n my-daemon "Summarize your current status."
+```
+
+`--daemon` alone stays interactive when stdin is a terminal. With piped stdin, `--format` is optional but the
+initial prompt must be non-empty:
+
+```bash
+printf '%s\n' 'Wait for my next request.' | octomind run --daemon --format jsonl -n my-daemon
+```
+
+Interactive CLI sessions also start a message listener. If the socket is missing or connection fails, check the
+session name, that the process is still running, and that both terminals use the same runtime directory.
+On Unix, sockets live under `$XDG_RUNTIME_DIR/octomind` (if non-empty) or `<system tmp>/octomind-<uid>`.
+Long session names are shortened and hashed to fit the socket path limit; use `send` rather than constructing a path.
+Windows uses `\\.\pipe\octomind-<name>`.
+
+## Transports
+
+### Browser WebSocket Connection Returns 403
+
+A handshake with an `Origin` header must match an allowed origin exactly. Native clients without that header
+are exempt. For a browser app served at `http://localhost:3000`:
+
+```bash
+octomind server --host 127.0.0.1 --port 8080 --allow-origin http://localhost:3000
+```
+
+Repeat `--allow-origin` for additional origins. See [WebSocket Server](../integration/01-websocket-server.md)
+for the client protocol.
+
+### ACP Does Not Show an Interactive Prompt
+
+ACP serves a client protocol over stdio; start an interactive CLI session with `run` instead. For an ACP client,
+configure this executable invocation:
+
+```bash
+octomind acp
+```
+
+If the client fails to initialize, enable debug logging before launching it and inspect the ACP log files below.
+See [ACP Protocol](../integration/02-acp-protocol.md) for protocol messages.
+
+## Platform and Sandbox Troubleshooting
+
+The sandbox (`--sandbox` or root `sandbox = true`) applies to `run`, `server`, and `acp`:
+
+```bash
+octomind run --sandbox
+```
+
+Run from the project directory you intend to modify.
+
+| Platform | Filesystem policy |
+|---|---|
+| Linux (Landlock) | Reads remain unrestricted; writes are granted to cwd and existing `~/.local/share`. |
+| macOS (Seatbelt) | Writes: cwd, `~/.local/share`, `/dev`, `/tmp`, `/private/tmp`, `/private/var/folders`. |
+| Windows | Sandbox requests log a warning and continue without OS write restrictions. |
+
+macOS also denies reads of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/gcloud`, `~/.azure`, and
+`~/.config/op`. On Linux these paths are only write-protected when outside the granted directories; launching
+from your home directory grants writes throughout that directory. A custom `OCTOMIND_DATA_DIR` outside the
+allowed paths does not automatically receive a write grant.
 
 ### Linux: Sandbox Not Working
 
 Landlock requires kernel 5.13+:
+
 ```bash
 uname -r  # Check kernel version
 ```
@@ -306,39 +446,66 @@ of failing.
 ### macOS: Sandbox Permissions
 
 Seatbelt may block certain operations (including reads of the credential dirs
-listed above). Check Console.app for sandbox violations.
+listed above). Check the configured file path and move writable project output beneath cwd.
+The sandbox invocation above reproduces the same restrictions for child MCP processes.
 
 ### Windows: Path Issues
 
-The data root is `%LOCALAPPDATA%\octomind` (falls back to
-`%USERPROFILE%\AppData\Local\octomind` when `LOCALAPPDATA` is unset). The config
-file therefore lives at `%LOCALAPPDATA%\octomind\config\config.toml`. Ensure
-backslashes in paths are escaped in TOML strings (or use forward slashes).
-The OS-level sandbox is not implemented on Windows; requesting it logs a warning
-and continues without write restrictions.
+The default data root comes from Windows Local AppData, with a fallback to
+`%USERPROFILE%\AppData\Local\octomind`. Ensure backslashes in TOML paths are escaped, or use literal strings.
+For example, within an existing stdio MCP server block:
+
+```toml
+command = 'C:\Tools\octocode.exe'
+```
 
 ## Debug Mode
 
 Enable detailed logging:
 
-```
+```text
 /loglevel debug
 ```
 
-Or in config:
+For startup diagnostics, set the root field in your existing config before restarting the CLI, ACP client, or server:
+
 ```toml
 log_level = "debug"
 ```
 
-Log locations:
-- CLI: printed to terminal
-- WebSocket: `~/.local/share/octomind/logs/websocket-debug.log`
-- ACP: `~/.local/share/octomind/logs/acp-debug.log`
-- ACP errors: `~/.local/share/octomind/logs/acp-errors.jsonl`
+### Paths and logs
 
-## See Also
+`<data-root>` is `~/.local/share/octomind` on Linux/macOS and the Windows Local AppData `octomind` directory
+on Windows. `OCTOMIND_DATA_DIR` overrides this root. Runtime sockets remain in the host runtime/temp directory.
+
+| State | Location |
+|---|---|
+| Config | `<data-root>/config/config.toml`; `OCTOMIND_CONFIG_PATH` selects another file and its sibling directory |
+| Shared credentials | `<data-root>/config/.env` |
+| Sessions | `<data-root>/sessions/` |
+| Manifest inputs | `<data-root>/inputs.toml` |
+| CLI logs | Terminal output |
+| WebSocket logs | `<data-root>/logs/websocket-debug.log` |
+| ACP logs | `<data-root>/logs/acp-debug.log` |
+| ACP errors | `<data-root>/logs/acp-errors.jsonl` |
+
+For a separate data root, set it before launching Octomind:
+
+```bash
+export OCTOMIND_DATA_DIR="$HOME/octomind-state"
+octomind config --show
+```
+
+Read ACP logs on Linux/macOS with:
+
+```bash
+tail -n 100 "${OCTOMIND_DATA_DIR:-$HOME/.local/share/octomind}/logs/acp-debug.log"
+```
+
+## See also
 
 - [Environment Variables](../reference/04-environment-variables.md) — full per-provider API-key list
 - [MCP Tools](../usage/07-mcp-tools.md) — configuring MCP servers and tools
-- [Local Tools](../usage/17-local-tools.md) — the built-in filesystem (octofs) tools
+- [Local Tools](../usage/17-local-tools.md) — executable project tools from `.agents/tools/`
 - [Compression](../usage/08-compression.md) — how automatic context compression works
+- [Migration Guide](02-migration-guide.md) — upgrades, backups, and recovery

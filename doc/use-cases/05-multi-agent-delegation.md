@@ -1,24 +1,54 @@
 # Multi-Agent Task Delegation
 
-Split complex tasks across specialized AI agents that work independently and report back to a coordinator.
+Use this guide to delegate development tasks to local, tap-provided, or runtime-created specialists. It covers working
+role/tool configuration, asynchronous results, and troubleshooting for the coordinating session.
 
-## The Problem
+## Choose a delegation mechanism
 
-A single AI call struggles with large tasks: "Refactor the authentication system." It tries to do everything at once, loses context, and produces incomplete results. You want specialized agents — one gathers context, one reviews code, one plans architecture — working in parallel.
+| Mechanism | Tool/server | Execution | Use it for |
+|-----------|-------------|-----------|------------|
+| Static `[[agents]]` | `agent_<name>` / `agent` | ACP subprocess; synchronous by default, optional `async: true` | Stable local specialists |
+| Tap role | `tap` / `orchestration` | Background ACP run; resumable by returned session ID | Installed specialists found by intent |
+| Dynamic agent | `agent` / `runtime`, then `agent_<name>` | In-process; synchronous by default, optional `async: true` | Temporary specialists created during a session |
 
-## Solution
+New specialists receive their task text, not the parent's conversation. Include the goal, known facts, exact paths,
+constraints, and expected result in each delegation.
 
-Configure multiple agents, each with its own role and tools. The main session delegates to them and synthesizes results.
+## Configure the filesystem server
 
-Octomind offers three ways to delegate, in increasing flexibility:
+The roles below require an installed `octofs` filesystem server, with both `octofs` and `octomind` on the subprocess
+PATH. Check availability and authenticate before continuing:
 
-1. **Static `[[agents]]`** — pre-defined local sub-agents exposed as `agent_<name>` tools. Best when you have stable, project-specific specialists. (Steps 1–3 below.)
-2. **The `tap` tool** — run a community-maintained specialist role from a tap registry with no config edits. Best when someone already built the role you need. (See [Tap Roles](#tap-roles-no-config-needed).)
-3. **The dynamic `agent` tool** — let the orchestrator create sub-agents on the fly during a session. Best for ad-hoc, one-off tasks. (See [Dynamic Agents](#dynamic-agents).)
+```bash
+command -v octofs
+command -v octomind
+octomind login
+```
 
-### Step 1: Define Agent Roles
+Add this server and the following roles/agents to a TOML file in Octomind's config directory. On Linux/macOS the default
+directory is `~/.local/share/octomind/config`; on Windows it is `%LOCALAPPDATA%/octomind/config`. `OCTOMIND_DATA_DIR`
+overrides the data root, with config beneath its `config` subdirectory. Keep one entry per name within a file; update an
+existing entry when one is already present.
 
-A role's `system` and `welcome` remain explicit role behavior. Its `[roles.model]` block is optional: omitted model fields inherit from the required main `[model]` profile. Set `welcome = ""` for sub-agent roles you never start interactively.
+```toml
+[[mcp.servers]]
+name = "filesystem"
+type = "stdio"
+command = "octofs"
+args = ["mcp"]
+timeout_seconds = 30
+tools = []
+```
+
+`filesystem` is a configured name, not a builtin. The shipped builtins are `core`, `orchestration`, `runtime`, and
+`agent`. A missing server reference does not provision a filesystem server. The `octofs mcp` subprocess defaults to its
+current working directory.
+
+## Define specialist roles
+
+A role's `system` and `welcome` remain explicit role behavior. Its `[roles.model]` block is optional: omitted model
+fields inherit from the required main `[model]` profile. Set `welcome = ""` for sub-agent roles you never start
+interactively.
 
 ```toml
 # Roles for each agent (in config.toml)
@@ -39,8 +69,6 @@ Use tools to search and read code. Be thorough but focused.
 
 [roles.model]
 temperature = 0.2
-top_p = 0.7
-top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
@@ -62,17 +90,13 @@ Be specific: file, line, issue, suggestion.
 
 [roles.model]
 temperature = 0.1
-top_p = 0.7
-top_k = 20
 
 [roles.mcp]
 server_refs = ["filesystem"]
 allowed_tools = ["filesystem:view"]
 ```
 
-> **Note:** `filesystem` is **not** a built-in server. The default config declares `core`, `orchestration`, `runtime`, and `agent`; the `filesystem` tools (`view`, `text_editor`, `shell`, …) come from resolved tap configuration. If no resolved server has that name, `server_refs = ["filesystem"]` contributes no tools. See [Tap System](../integration/04-tap-system.md) and [MCP Tools](../usage/07-mcp-tools.md).
-
-### Step 2: Configure Agents
+## Wire agents to roles
 
 ```toml
 [[agents]]
@@ -88,25 +112,47 @@ command = "octomind acp code_reviewer"
 workdir = "."
 ```
 
-Each `[[agents]]` entry is exposed to the main session as a tool named `agent_<name>`. The positional argument in `command` (`octomind acp context_gatherer`) **is the role name** — the agent inherits its model, system prompt, temperature, and tools from the matching `[[roles]]` entry. Keep the agent name and the role name identical so the wiring is obvious.
+With the `agent` server granted to the coordinator, each `[[agents]]` entry is exposed to the main session as a tool
+named `agent_<name>`. The positional argument in `command` (`octomind acp context_gatherer`) **is the role name** — the
+agent inherits its model, system prompt, temperature, and tools from the matching `[[roles]]` entry. The names need not
+match, but keeping them identical makes the wiring obvious. `workdir` defaults to `"."` and resolves relative to the
+parent session working directory.
 
-Config agents run as ACP subprocesses with their stderr suppressed, so a child-side crash or misconfiguration surfaces only as an error or empty result returned from the `agent_<name>` call — not as console output.
+Config agents run as ACP subprocesses with their stderr suppressed, so a child-side crash or misconfiguration surfaces
+only as an error or empty result returned from the `agent_<name>` call — not as console output.
 
-### Step 3: Use in Session
+## Start a coordinator
 
-Start the orchestrating session with your default role and delegate:
+Define a local coordinator with explicit access to the delegation tools and filesystem server:
 
-```bash
-octomind run            # uses the configured default tag (assistant:concierge)
-# or name an orchestrator role explicitly:
-octomind run assistant:concierge
+```toml
+[[roles]]
+name = "coordinator"
+welcome = "Ready to delegate."
+system = "Coordinate focused specialists. Give each a self-contained task, verify their findings, and report results."
+
+[roles.mcp]
+server_refs = ["agent", "orchestration", "runtime", "filesystem"]
+allowed_tools = ["agent:*", "orchestration:tap", "runtime:agent", "filesystem:*"]
 ```
 
-> `assistant:concierge` is the shipped default orchestrator. Use it or an orchestrator role explicitly defined under local `[[roles]]`, as long as it has access to the `agent` tools.
+Start it and inspect its tools:
+
+```bash
+octomind run coordinator
+```
+
+```text
+/mcp info
+/mcp list
+```
+
+The shipped default tag remains `assistant:concierge`; this example selects the local role explicitly so the required
+tool grants are visible in the configuration.
 
 The main AI can now use these agents as tools (illustrative transcript):
 
-```
+```text
 > Refactor the authentication module to support OAuth2
 
 AI thinking: "This is complex. Let me gather context first."
@@ -125,11 +171,11 @@ AI thinking: "This is complex. Let me gather context first."
 # - Can produce a comprehensive refactoring plan
 ```
 
-### Parallel Execution with Async Agents
+### Run independent tasks asynchronously
 
 For large tasks, run agents in parallel (illustrative transcript):
 
-```
+```text
 > Analyze the entire codebase for the quarterly security audit
 
 AI:
@@ -143,83 +189,121 @@ agent_code_reviewer(task="Scan for OWASP Top 10 vulnerabilities", async=true)
 # "[Async agent 'code_reviewer' completed]"
 ```
 
-Use `/status` for a concise view of every active agent alongside MCP jobs and
-command monitors. `/status agents` expands the agent view with recent tap-run
-history, live actions, model usage, and cost where the runtime provides it.
+Use `/status` for a concise view of every active agent alongside MCP jobs and command monitors. `/status agents` expands
+the agent view with recent tap-run history, live actions, model usage, and cost where the runtime provides it:
 
-### Tap Roles (no config needed)
+```text
+/status
+/status agents
+```
 
-If a tap registry already provides a specialist role for the sub-task, use the `tap` tool from the `orchestration` builtin server instead of defining your own `[[agents]]`:
+The per-session async agent job limit uses `available_parallelism`, falling back to 4 if unavailable. Reaching the limit
+returns an error; split work into smaller batches. Results enter the inbox, and consecutive system-managed results can
+be processed together. Session exit cancels active agent jobs. Async execution provides no filesystem isolation: give
+concurrent writers distinct paths or separate working directories.
 
-```jsonc
-// Discover, then delegate — no config edits, no subprocess setup.
+## Delegate to tap roles
+
+If a tap registry already provides a specialist role for the sub-task, use the `tap` tool from the `orchestration`
+builtin server instead of defining your own `[[agents]]`:
+
+Ask the coordinator to call `tap` with these arguments:
+
+```json
 {"action": "discover", "intent": "review code for OWASP Top 10 issues"}
-{"action": "run", "role": "security:owasp", "prompt": "Audit src/auth/ for OWASP issues"}
 ```
 
-Tap roles share their own system prompt + model + tool kit. `run` returns the run id immediately and, when it finishes, the reply lands as a user message in the next turn labeled `[Tap-run '<id>' (<role>) completed]` (or `… failed]` on error) — distinct from the `[Async agent '...' completed]` label used by `agent_*` jobs. Resume with `{"action": "run", "session": "<id>", "prompt": "follow-up question"}`.
+Use an exact role returned by discovery. If `developer:general` is returned and fits the task, the next `tap` call is:
 
-A few runtime constraints worth knowing:
+```json
+{"action": "run", "role": "developer:general", "prompt": "Audit src/auth/ for security bugs. Do not edit files. Return file:line evidence and concrete failure scenarios."}
+```
 
-- `discover` (and `capability`) require the local embedding model to be initialized — if it failed to load or is not ready yet, the action returns an error instead of results.
-- `discover` returns at most the **top 5** matching roles, and only those with a cosine score above `0.2`. A vague intent may return nothing.
-- Resuming a tap-run that is still executing returns a **busy** error. Wait for it to finish, or stop it first with `{"action": "stop", "session": "<id>"}`.
+`run` starts in the background and returns its ID. On completion, the inbox receives a tap-run result labeled with the
+ID and role. It is a system-managed continuation, distinct from the `[Async agent 'NAME' completed]` label used by
+`agent_*`. Use these `tap` arguments to inspect, resume, or stop a run; replace `RUN_ID` with the returned ID:
 
-See [Tap System](../integration/04-tap-system.md) and [MCP Tools — `tap`](../usage/07-mcp-tools.md#tap----run-specialist-roles-from-taps).
+```json
+{"action": "list"}
+```
 
-Use `[[agents]]` (this page) when the role doesn't exist in any tap or you need a custom local-only agent. Use `tap` when a community-maintained role already covers the task.
+```json
+{"action": "run", "session": "RUN_ID", "prompt": "Recheck the highest-severity finding and report the evidence."}
+```
 
-### Dynamic Agents
+```json
+{"action": "stop", "session": "RUN_ID"}
+```
 
-Create agents on the fly during a session using the `agent` tool from the `runtime` server (`tap` delegation lives on the separate `orchestration` server):
+`list` lists runs in the current session, not the installed role catalog. Omitting `session` on a follow-up starts a
+fresh specialist. Resuming a still-running tap returns a busy error.
 
-```jsonc
-// AI creates a specialized agent at runtime
-{"action": "add", "name": "test_writer",
- "description": "Writes unit tests for given code",
- "system": "You write comprehensive unit tests. Focus on edge cases and error paths.",
- "server_refs": ["filesystem"],
- "allowed_tools": ["filesystem:view", "filesystem:text_editor"]}
+Discovery requires initialized embeddings and returns up to five matches with cosine score above 0.2. A vague intent may
+return none. The separate `tap` capability action attempts capability auto-activation and can return an empty activation
+list; it does not share discovery's explicit embedding error contract:
 
+```json
+{"action": "capability", "prompt": "I need to search the project's source code."}
+```
+
+## Create dynamic agents
+
+Create agents on the fly during a session using the `agent` tool from the `runtime` server (`tap` delegation lives on
+the separate `orchestration` server):
+
+Call `agent` with the following payloads in order. The filesystem server must already be registered:
+
+```json
+{
+  "action": "add",
+  "name": "test_writer",
+  "description": "Writes unit tests for given code",
+  "system": "Write focused unit tests for the supplied task. Report changed paths and validation results.",
+  "server_refs": ["filesystem"],
+  "allowed_tools": ["filesystem:view", "filesystem:text_editor"]
+}
+```
+
+```json
 {"action": "enable", "name": "test_writer"}
-
-// Now agent_test_writer is available as a tool
 ```
 
-If you omit `server_refs` but list `allowed_tools`, the servers are inferred automatically from the tool prefixes (e.g. `filesystem:view` implies `server_refs = ["filesystem"]`).
+Now call `agent_test_writer`, whose task arguments use the same schema as static agent tools:
 
-## Example: Full Development Pipeline
-
-The following is an illustrative walkthrough of how the orchestrator chains the agents — not literal commands to type:
-
-```
-User: "Add request tracing to the API endpoints"
-
-Main AI:
-  1. Calls agent_context_gatherer:
-     "Find all API endpoint handlers, middleware patterns, and existing tracing code"
-     -> Returns: file list, handler signatures, middleware chain pattern
-
-  2. Calls agent_code_reviewer:
-     "Review the current API middleware for potential issues with adding request tracing"
-     -> Returns: thread-safety concerns, shared state patterns, test coverage gaps
-
-  3. Synthesizes findings:
-     "Based on the context and review, here's the implementation plan:
-      - Add RequestTrace middleware in src/middleware/request_trace.rs
-      - Use existing SharedState pattern from src/middleware/mod.rs
-      - Add per-endpoint config in src/config/api.rs
-      - Fix thread-safety issue in connection pool (flagged by reviewer)"
-
-  4. Implements the changes with full context
+```json
+{"task": "Read src/auth/ and add tests for rejected credentials using the existing test conventions. Do not modify production code or run commands. Report the changed paths.", "async": true}
 ```
 
-## Agent Configuration Tips
+Adding alone does not enable an agent. Dynamic definitions live in session memory and are not written to config.
+Omitting `server_refs` permits inference from resolvable entries in `allowed_tools`; inference uses the tool map, so it
+does not create missing servers. Explicit references make dependencies easier to diagnose.
 
-The complete role examples in [Step 1](#step-1-define-agent-roles) show the required identity and prompt fields. A role's model block is optional and inherits every omitted field from `[model]`.
+For a fixed refine/research/execute sequence, see [custom development workflows](03-custom-development-workflow.md).
 
-When a specialist genuinely needs a different main-purpose model, set a
-concrete override rather than restating the default. For example:
+## Common questions
+
+- **Why is `agent_code_reviewer` missing?** Check `/mcp list`: the coordinator needs the `agent` server and
+  a matching tool grant. For a dynamic agent, call `enable` after `add`.
+- **Why can the specialist not read files?** Its role needs a real server definition plus matching tool names. Declaring
+  `server_refs = ["filesystem"]` alone does not install or start an undefined server.
+- **Why does an ACP child return an error without logs?** Child stderr is suppressed by the ACP runner. Start the same
+  role interactively to inspect its configuration and credentials:
+
+  ```bash
+  octomind run code_reviewer
+  ```
+
+- **Why did a read filter allow more tools than expected?** Auto-bound servers can add wildcard grants, and project
+  tools in `.agents/tools/` are always appended. Inspect the final tool surface; a role filter is not an OS sandbox.
+  `auto_bind` tags are exact matches: `developer` does not match `developer:general`.
+
+## Model override reference
+
+The complete role examples in [specialist roles](#define-specialist-roles) show the required identity and prompt fields.
+A role's model block is optional and inherits every omitted field from `[model]`.
+
+When a specialist needs a different main-purpose model, set a concrete override in its existing model block (do not add
+a duplicate table). These examples require the named provider credentials and model access. For example:
 
 ```toml
 # Inside the context_gatherer role
@@ -237,20 +321,16 @@ name = "anthropic:claude-sonnet-4-6"
 temperature = 0.1
 ```
 
-Octomind has exactly three model purposes: main, supervisor, and compression.
-Agent role overrides belong to the main purpose; they do not introduce another
-purpose. The shipped default for all three is `octohub:auto` after
-`octomind login`. Omit `name` from `[roles.model]` to inherit the main profile's
-model name, as the runnable roles in Step 1 do. To make an agent read-only, grant
-only read tools in its `[roles.mcp].allowed_tools`; to permit edits or commands,
-add those exact tool names or a deliberate server wildcard.
+Octomind has exactly three model purposes: main, supervisor, and compression. Agent role overrides belong to the main
+purpose; they do not introduce another purpose. The shipped default for all three is `octohub:auto` after `octomind
+login`. Omit `name` from `[roles.model]` to inherit the main profile's model name, as the specialist roles above do. The
+`filesystem:view` grant exposes the read tool from that server; the dynamic example adds `filesystem:text_editor` for
+edits. Verify the complete effective tool surface before relying on a restricted role.
 
-## Key Points
+## See also
 
-- Config-defined `[[agents]]` run as ACP subprocesses; runtime-created dynamic agents run in-process
-- Each agent has its own resolved role, tool filter, and main-purpose model profile
-- `async: true` runs agents in parallel (results arrive via inbox)
-- Dynamic agents can be created at runtime for ad-hoc tasks
-- Max concurrent async jobs = number of CPU cores (defaults to 4 only if the core count cannot be detected)
-- The main session orchestrates; agents do focused work
-- The default model is `octohub:auto`; role model overrides affect the main purpose only
+- [MCP tools](../usage/07-mcp-tools.md)
+- [Tap system](../integration/04-tap-system.md)
+- [Roles](../usage/06-roles.md)
+- [Custom development workflows](03-custom-development-workflow.md)
+- [Event-driven webhooks](02-event-driven-agent.md)

@@ -1,12 +1,11 @@
 # Octomind Documentation
 
-Octomind is an open-source, CLI-first AI agent runtime: one binary for coding sessions, scheduled automation, and multi-agent workflows with any model provider.
-
-MCP-native, with persistent sessions, configurable roles, embedded and event-driven agents, and an out-of-band supervisor. Built for autonomous work, not just chat.
+Use these guides to install, configure, and operate Octomind's CLI agent runtime, or to contribute to its Rust code.
+Start with a terminal session, then follow the guides for automation, integrations, and development.
 
 ## Start Here
 
-The recommended path needs no third-party provider account or manually managed API key:
+Install the binary and sign in to an Octomind account to use the shipped OctoHub model default:
 
 ```bash
 curl -fsSL https://octomind.run/install.sh | bash
@@ -14,12 +13,57 @@ octomind login
 octomind
 ```
 
-`octomind login` authorizes the CLI in your browser and configures the default OctoHub gateway. If you prefer to supply provider credentials yourself, see [AI Providers](usage/04-providers.md#bring-your-own-keys).
+`octomind login` asks you to confirm a code in the browser and CLI, then stores the hub key in the user-scope
+`config/.env` and account credentials in `config/auth.json`. It does not change your model selection. New configs use
+`assistant:concierge` as the default tag and `octohub:auto` as the model name. See
+[Installation](usage/01-installation.md) and [Quickstart](usage/02-quickstart.md) for the complete setup.
 
-1. [Installation](usage/01-installation.md) — install Octomind and choose an authentication path
-2. [Quickstart](usage/02-quickstart.md) — start a session and learn the essential commands
-3. [Configuration](usage/03-configuration.md) — understand files, model profiles, roles, and overrides
-4. [AI Providers](usage/04-providers.md) — use OctoHub or bring your own credentials
+## Configure
+
+Inspect and validate your configuration before adding roles or tools:
+
+```bash
+octomind config --show
+octomind config --validate
+```
+
+The default config is under `~/.local/share/octomind/config/` on Linux/macOS and `%LOCALAPPDATA%/octomind/config/` on
+Windows. `OCTOMIND_DATA_DIR` relocates Octomind state; for example:
+
+```bash
+OCTOMIND_DATA_DIR="$PWD/.octomind-data" octomind config --show
+```
+
+Use [Configuration](usage/03-configuration.md) for file merging and overrides, or [AI
+Providers](usage/04-providers.md#bring-your-own-keys) to supply provider credentials yourself.
+
+## Operate
+
+Create or resume a named interactive session:
+
+```bash
+octomind run --name project-review
+# After exiting, continue the same session:
+octomind run --resume project-review
+```
+
+Inside a session, discover commands and inspect active tools:
+
+```text
+/help
+/mcp
+/exit
+```
+
+For automation, pipe the prompt through stdin and choose `plain` or `jsonl` output:
+
+```bash
+printf '%s\n' 'Summarize the responsibilities of an MCP server in three sentences.' | octomind run --format plain
+```
+
+`run` takes a role/tag positional argument, not a message argument. See [Daemon &
+Hooks](integration/03-daemon-and-hooks.md) for persistent workers and [Workflows](usage/09-workflows.md) for multi-step
+runs.
 
 ## Usage Guide
 
@@ -53,15 +97,6 @@ octomind
 | [Daemon & Hooks](integration/03-daemon-and-hooks.md) | Long-running sessions and webhook listeners |
 | [Tap System](integration/04-tap-system.md) | Agent, skill, capability, and workflow registries |
 
-## Development Guide
-
-| Document | Description |
-|----------|-------------|
-| [Building from Source](dev/01-building-from-source.md) | Rust setup and development builds |
-| [Architecture](dev/02-architecture.md) | Source modules and internal flows |
-| [MCP Server Development](dev/03-mcp-server-development.md) | Building MCP servers for Octomind |
-| [Learning Benchmark](dev/05-learning-benchmark.md) | Retrieval and consolidation contract benchmark |
-
 ## Use Cases
 
 | Document | Description |
@@ -76,6 +111,34 @@ octomind
 | [Long-Running Development](use-cases/08-long-running-development.md) | Named sessions and resume workflows |
 | [Custom Hooks](use-cases/09-custom-hooks.md) | Script-backed webhook integration |
 
+## Development Guide
+
+| Document | Description |
+|----------|-------------|
+| [Building from Source](dev/01-building-from-source.md) | Rust setup and development builds |
+| [Architecture](dev/02-architecture.md) | Source modules and internal flows |
+| [MCP Server Development](dev/03-mcp-server-development.md) | Building MCP servers for Octomind |
+| [Learning Benchmark](dev/05-learning-benchmark.md) | Retrieval and consolidation contract benchmark |
+
+## Common Questions
+
+If the shell cannot find the binary after the default installation, add the installer directory to your current shell's
+path:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+octomind --version
+```
+
+If login cannot open a local browser, print the URL instead:
+
+```bash
+octomind login --no-browser
+```
+
+If a piped command hangs, ensure its producer closes stdin; Octomind reads the complete prompt before starting. For
+configuration and credential errors, start with `octomind config --validate` above and the guides below.
+
 ## Troubleshooting and Reference
 
 | Document | Description |
@@ -87,8 +150,11 @@ octomind
 | [Config Reference](reference/03-config-reference.md) | Configuration fields and defaults |
 | [Environment Variables](reference/04-environment-variables.md) | Credentials, overrides, and runtime variables |
 
-## Project Links
+## See also
 
+- [Architecture](dev/02-architecture.md)
+- [CLI Reference](reference/01-cli-reference.md)
+- [Common Issues](troubleshooting/01-common-issues.md)
 - [GitHub Repository](https://github.com/muvon/octomind)
 - [Issues](https://github.com/muvon/octomind/issues)
 - [Discussions](https://github.com/muvon/octomind/discussions)

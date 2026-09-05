@@ -1,46 +1,58 @@
 # Roles and Permissions
 
-Roles control what the AI can do in a session: which tools are available, what system prompt is used, and how the AI behaves.
+Configure roles to select system prompts, model settings, and tool grants. This guide is for users creating local roles
+or inspecting the effective permissions of a tap agent.
 
 ## How Roles Work
 
 Every session runs with a role. The role determines:
+
 - **System prompt** — instructions for the AI
 - **MCP server access** — which tool servers are available
 - **Tool permissions** — which specific tools can be used
 - **Model profile** — optional `[roles.model]` overrides inherited from `[model]`
 
-> **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its bare name (e.g. `assistant`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by a `category:variant` **tag** (e.g. `developer:general`). Any tag containing `:` is resolved through the registry, fetching the manifest and merging it on top of your config. See [Tap System](../integration/04-tap-system.md) for details.
+> **Role vs. tap agent.** A **role** is a plain `[[roles]]` entry in your config, addressed by its bare name (e.g.
+> `assistant`). A **tap agent** is a ready-made manifest published in a tap (a registry of agents), addressed by a
+> `category:variant` **tag** (e.g. `developer:general`). Any tag containing `:` is resolved through the registry,
+> fetching the manifest and merging it on top of your config. See [Tap System](../integration/04-tap-system.md) for
+> details.
 
 ## Shipped Config Roles vs. Tap Agents
 
-It helps to know what actually exists out of the box. The default config ships four plain roles, and the default tap (`muvon/tap`, which resolves to the GitHub repo `github.com/muvon/octomind-tap`) provides tap agents addressed by tag:
+It helps to know what actually exists out of the box. The default config ships four plain roles, and the default tap
+(`muvon/tap`, which resolves to the GitHub repo `github.com/muvon/octomind-tap`) provides tap agents addressed by tag:
 
 | Kind | Identifier | What it is |
 |------|------------|------------|
-| Config role | `assistant` | Full-tool config role (`core`, `orchestration`, `runtime`, `filesystem`, `agent`) |
-| Config role | `task_refiner` | Lightweight, tool-free query refinement |
-| Config role | `task_researcher` | Research helper with only the external `view` tool when its `filesystem` server resolves |
-| Config role | `reduce` | Tool-free summarization/reduction |
-| Tap agent | `assistant:concierge` | Default tag in the shipped config (chat-style concierge) |
-| Tap agent | `developer:general` | Full development agent from the `developer` tap category |
-| Tap agent | `assistant:*` | Chat-oriented variants (e.g. the chat-only `octomind:assistant`) |
+| Config role | `assistant` | References `core`, `orchestration`, `runtime`, `filesystem`, and `agent`; availability depends on registration |
+| Config role | `task_refiner` | Query refinement with no explicit server references |
+| Config role | `task_researcher` | Research helper explicitly granting `view` when `filesystem` resolves |
+| Config role | `reduce` | Summarization/reduction with no explicit server references |
+| Tap agent | `assistant:concierge` | Default tag; prompt and tools come from its resolved manifest |
+| Tap agent | `developer:general` | Example development tag; prompt and tools come from its resolved manifest |
 
 ```bash
 octomind run assistant:concierge   # Tap agent (default tag in shipped config)
-octomind run developer:general     # Full development tap agent
-octomind run assistant             # Plain config role with full tool access
+octomind run developer:general     # Development tap agent
+octomind run assistant             # Plain config role
 ```
 
-> The bare `assistant` config role is **not** chat-only — it has full tool access. The chat-only variant is the tap agent `octomind:assistant`.
+Tap variants are not wildcard selectors: pass an exact tag. After startup, inspect the tools actually exposed:
+
+```text
+/role
+/mcp list
+```
 
 ## Defining Custom Roles
 
-Define roles in `[[roles]]` config sections (always `[[roles]]` — never `[role_name]`). If a tap manifest's `[[roles]]` entry has the same `name` as a config role, the **config role wins** and the manifest role is skipped (see [Role Priority](#role-priority)).
+Add this complete role entry in `roles.toml` alongside the generated `config.toml`. Use `[[roles]]` with a `name`, not a
+table named after the role. Choose a unique plain name; see [Role Priority](#role-priority) for collisions.
 
 ```toml
 [[roles]]
-name = "assistant"
+name = "helper"
 system = """
 You are helpful and knowledgeable assistant.
 Working directory: {{CWD}}
@@ -53,98 +65,173 @@ top_p = 0.7
 top_k = 20
 
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
-allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
+server_refs = ["core"]
+allowed_tools = ["core:recall"]
+```
+
+```bash
+octomind config --validate
+octomind run helper
 ```
 
 ### Role Fields
 
-`name`, `system`, and `welcome` define the role. `[roles.model]` is optional; every field inside it inherits from `[model]` when omitted.
+`name`, `system`, and `welcome` define the role. `[roles.model]` is optional; every field inside it inherits from
+`[model]` when omitted.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Role identifier |
 | `system` | string | yes | System prompt (supports [template variables](../reference/04-environment-variables.md#template-variables)) |
 | `welcome` | string | yes | Welcome message on session start |
+| `model` | table | no | Partial model profile; omitted fields inherit from `[model]` |
+| `mcp` | table | no | If present, include both `server_refs` and `allowed_tools`; if absent, both start empty |
 
-`[roles.model]` accepts every field from the main `[model]` table: `name`, `reasoning_effort`, `max_tokens`, `temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, and `request_timeout_seconds`.
+`[roles.model]` accepts every field from the main `[model]` table: `name`, `reasoning_effort`, `max_tokens`,
+`temperature`, `top_p`, `top_k`, `max_retries`, `retry_timeout`, and `request_timeout_seconds`.
 
-**Validation ranges (enforced after inheritance).** Values outside these bounds abort loading with an error naming the profile:
+**Validation ranges (enforced after inheritance).** Values outside these bounds abort loading with an error naming the
+profile:
+
 - `temperature` — `0.0` to `2.0`
 - `top_p` — `0.0` to `1.0`
 - `top_k` — `0` to `1000` (`0` disables it)
 
-**Model resolution priority.** When more than one source sets a model, the effective model is chosen in this order (highest first):
+**Model resolution priority.** When more than one source sets a model, the effective model is chosen in this order
+(highest first):
 
-```
+```text
 runtime override  >  role model profile  >  tap name mapping  >  [model]
 ```
 
-A role's `[roles.model]` may override any subset of the complete profile. Missing fields inherit through the chain; omitting the block uses the inherited profile unchanged. For the full model-selection story see [Providers](04-providers.md).
+A role's `[roles.model]` may override any subset of the complete profile. Missing fields inherit through the chain;
+omitting the block uses the inherited profile unchanged. For the full model-selection story see
+[Providers](04-providers.md).
 
-> **Multi-step AI workflows** are no longer bound to roles. Use the external `octomind workflow <file.toml>` CLI instead — see [Workflows](09-workflows.md).
+For multi-step execution outside a session, see [Workflows](09-workflows.md).
 
 ## Tool Permissions
 
 ### Server References
 
-`server_refs` lists which MCP servers this role can access:
+`server_refs` lists explicit server grants. For example, replace the `helper` role's MCP table with:
 
 ```toml
 [roles.mcp]
-server_refs = ["core", "filesystem"]  # Only core and filesystem servers
+server_refs = ["core"]
+allowed_tools = ["core:recall"]
 ```
 
-> **Empty `server_refs = []` disables MCP for the role entirely** — it gets no tool servers at all. This is how the tool-free `task_refiner` and `reduce` roles run; `task_researcher` instead references `filesystem`. Internally `RoleMcpConfig::is_enabled()` returns `false` when `server_refs` is empty.
+Empty `server_refs` removes explicit grants, but exact-match `auto_bind` servers still join the role. Interactive CLI
+sessions also receive `schedule` and `monitor` from `orchestration`, even when the role has no server references. That
+interactive addition does not itself grant `tap`.
 
-A `server_refs` entry that names a server not present in the global registry is **silently dropped** (it only produces a debug log: `referenced by role but not found in global registry`). See the note on `filesystem` below.
+A `server_refs` entry that names a server not present in the global registry is **silently dropped** (it only produces a
+debug log: `referenced by role but not found in global registry`). See the note on `filesystem` below.
 
 ### Allowed Tools
 
-`allowed_tools` controls which tools within those servers are available:
+`allowed_tools` controls tools within explicitly referenced servers. This alternative table uses only servers declared
+in the default template:
 
 ```toml
 [roles.mcp]
-server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
+server_refs = ["core", "orchestration", "runtime", "agent"]
 allowed_tools = [
   "core:*",              # recall, when attention or governance is enabled
   "orchestration:*",     # tap, schedule, monitor
   "runtime:mcp",         # only mcp from runtime (schedule belongs to orchestration)
-  "filesystem:view",     # Only view from filesystem
-  "filesystem:shell",    # Only shell from filesystem
   "agent:*",             # All agent_<name> sub-agent tools on the agent server
 ]
 ```
 
-**Builtin (config-declared) servers** — these four are declared as `[[mcp.servers]]` in the default config:
-- `core` — session-memory `recall` when compression attention or governance is enabled; governance defaults on. Planning is supervisor-internal.
-- `orchestration` — `tap`, `schedule`, and `monitor`.
-- `runtime` — low-level harness control: `mcp` (register servers), `agent` (register dynamic agents), `skill` (load skills), and `capability`. Most roles don't need this.
-- `agent` — dispatches to `[[agents]]`-defined ACP sub-agents (`agent_<name>` per entry).
+See [Configuration](03-configuration.md#mcp-servers) for the four builtin servers and their tool groups.
 
-> **`filesystem` is not a built-in declared server.** The companion **octofs** server provides six tools: `view`, `workdir`, `text_editor`, `batch_edit`, `extract_lines`, and `shell`. The server is supplied by the tap/capability layer, not by a hardcoded `[[mcp.servers]]` entry. In a bare config with no capability supplying it, the reference is dropped and no filesystem tools appear. Use `/mcp list` or `/mcp full` to inspect the live server schema.
+`filesystem` is not declared in the default server registry. Supply it through your external MCP configuration or a tap
+capability before using the examples below. Tool names belong to that external server's schema; inspect them before
+choosing a filter:
+
+```text
+/mcp list
+/mcp full
+```
 
 **Pattern syntax:**
-- `"server:*"` — all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent` server)
+
+- `"server:*"` — all tools from a server (e.g. `agent:*` grants every `agent_<name>` execution tool on the `agent`
+  server)
 - `"server:prefix_*"` — prefix match within a server (e.g. `filesystem:text_*` matches `text_editor`)
 - `"server:tool_name"` — one specific tool
 - `"tool_name"` (no colon) — backward-compat form: matches that tool name across **all** referenced servers
-- Empty array `[]` — all tools from all referenced servers
+- Empty array `[]` — no role-level filter; each registered server's `tools` filter still applies
 
-> Some tap manifests use a bare-glob form like `agent_*` (no colon) instead of `agent:*`. Both work, via different matching mechanisms; prefer the `server:*` form for clarity and consistency.
+Bare prefixes such as `agent_*` also work; `agent:*` makes the intended server explicit. A nonempty role allowlist with
+no matching pattern drops an explicitly referenced server. A role filter replaces that server's `tools` filter, so
+`server:*` exposes all its tools even if the registry entry had a narrower filter.
 
-### Global Fallback
+### Effective Permissions
 
-If a role doesn't specify `allowed_tools`, the global `[mcp].allowed_tools` is used:
+There is no global allowlist fallback during role merging. When you include `[roles.mcp]`, specify both fields:
 
 ```toml
-[mcp]
-allowed_tools = []  # No global restrictions (default)
+[roles.mcp]
+server_refs = []
+allowed_tools = []
+```
+
+Tool grants are not an OS sandbox. Interactive `monitor` can execute commands; runtime tools and automatic capability
+activation can add tools. Project executables under `.agents/tools/` are also added independently of role allowlists
+when the session has MCP servers. Inspect `/mcp list` after activation or role changes.
+
+To disable automatic capability activation, edit this root key before all table headers:
+
+```toml
+auto_capabilities = false
+```
+
+This does not remove interactive session tools or project-local tools. See [MCP Tools](07-mcp-tools.md) for the runtime
+tool surface.
+
+## Auto-Bind Servers
+
+MCP servers can auto-attach to specific roles. For example, save this as `mcp-core.toml` in the config directory to
+replace the existing `core` server definition and bind it to the exact tap tag:
+
+```toml
+[[mcp.servers]]
+name = "core"
+type = "builtin"
+timeout_seconds = 30
+tools = []
+auto_bind = ["developer:general"]
+```
+
+`auto_bind` matches the role tag by **exact** string (`"developer"` ≠ `"developer:general"`).
+
+The bound server is automatically added to the role's `server_refs` even if not explicitly listed. There is a second,
+easy-to-miss half:
+
+- For newly added server references, if the role uses a **restricted** `allowed_tools` (a non-empty list), auto-bind
+  also appends `"<server>:*"` to `allowed_tools`, keeping downstream consumers consistent with the added server.
+- If `allowed_tools` is **empty** (unrestricted), no patch is needed — everything from the bound server is already
+  allowed.
+
+If an explicit reference was excluded by its role filter, auto-bind can add that server back. The server's own `tools`
+filter still applies to the auto-bound definition. Inspect the result:
+
+```bash
+octomind run developer:general
+```
+
+```text
+/mcp list
 ```
 
 ## Example Roles
 
-> These examples reference `filesystem`, which (as noted above) is provided by the tap/capability layer. They work when a tap or capability supplies the `filesystem` (octofs) server; in a bare standalone config the `filesystem` references are silently dropped.
+Add these entries to `roles.toml`. They assume you have registered a `filesystem` server exposing `view` and
+`text_editor`; use the [external server setup](03-configuration.md#mcp-servers) with that server name and your installed
+executable. They demonstrate server grants, not a complete sandbox.
 
 ### Full Developer Access
 
@@ -168,13 +255,13 @@ server_refs = ["core", "orchestration", "runtime", "filesystem", "agent"]
 allowed_tools = ["core:*", "orchestration:*", "runtime:*", "filesystem:*", "agent:*"]
 ```
 
-### Read-Only Analyst
+### Analyst with a View Grant
 
 ```toml
 [[roles]]
 name = "analyst"
 system = "You analyze code and provide insights. Do not modify files."
-welcome = "Analyst role ready (read-only)."
+welcome = "Analyst role ready."
 
 [roles.model]
 temperature = 0.2
@@ -206,62 +293,73 @@ allowed_tools = ["filesystem:view", "filesystem:text_editor"]
 ```
 
 
-## Using Roles
+## Use Custom Roles
 
-### Starting a Session
+After adding the examples and configuring the filesystem server, start each by its local name:
 
 ```bash
-# Use the default tag (config `default` field).
-# In the shipped config this is `assistant:concierge` — a TAP AGENT
-# resolved via the registry, not a plain [[roles]] entry.
-octomind run
-
-# Specify a plain config role by name
-octomind run assistant            # full-tool built-in role
-
-# Use a tap agent by category:variant tag
-octomind run developer:general    # full development tap agent
-octomind run assistant:concierge  # chat concierge tap agent
+octomind run developer
+octomind run analyst
+octomind run docs
 ```
 
-> There is no plain `developer` role in the default config. `developer` exists only as a tap **category** (variants include `general`, `doc`, `spec`, `readme`, …). Use the tag form `developer:general`; an unknown bare role fails session initialization.
+The `docs` example requires an OpenAI credential. There is no plain `developer` role in the shipped config; the example
+above creates it. Use `developer:general` to resolve a tap agent instead.
 
 ### Switching Roles Mid-Session
 
 These bare names refer explicitly to local `[[roles]]` entries from the examples above:
 
-```
+```text
+/role
 /role analyst
 /role assistant
 ```
+
+A successful `/role` switch rebuilds the system prompt, reinitializes MCP, applies the new role's resolved model
+profile, and saves the role to the session. It leaves the global config unchanged. The profile application can replace
+an earlier `/model` or `/effort` choice; reapply those commands after switching if needed.
 
 ### Role Priority
 
 Two distinct cases — don't conflate them:
 
-1. **Manifest vs. config name collision.** When a tap manifest contains a `[[roles]]` entry whose `name` duplicates a role already defined in your base config, the **base (config) role wins** and the manifest's same-named role is skipped (manifest merge dedups by name, base-wins).
-2. **A `category:variant` tag is always a tap agent.** A tag containing `:` (e.g. `developer:general`) is resolved directly through the registry and merged on top of your config — it never contends with a same-prefixed local role. There is no precedence "contest" for tags.
+1. **Manifest vs. config name collision.** When a tap manifest contains a `[[roles]]` entry whose `name` duplicates a
+  role already defined in your base config, the **base (config) role wins** and the manifest's same-named role is
+  skipped (manifest merge dedups by name, base-wins).
+2. **A `category:variant` tag always triggers tap resolution.** The resolver injects the full tag as the manifest's
+  first role name, then requires a newly added role. Defining a local role with that exact tag can prevent normal
+  resolution when the merge skips it. Use a unique plain name for a local customization; a local `developer`
+  does not collide with `developer:general`.
 
-> **Unknown plain role names are rejected.** User-supplied bare names are validated before session setup or `/role` switching, while a `category:variant` tag fails if its manifest cannot be resolved. Spell local role names exactly or prefer a verified tap tag.
+> **Unknown plain role names are rejected.** User-supplied bare names are validated before session setup or `/role`
+> switching, while a `category:variant` tag fails if its manifest cannot be resolved. Spell local role names exactly or
+> prefer a verified tap tag.
 
-## Auto-Bind Servers
+## Troubleshooting
 
-MCP servers can auto-attach to specific roles:
+**Why is a tool missing?** Check that its server is registered, referenced or auto-bound, and matched by the allowlist.
+Then inspect connection status and schemas:
 
-```toml
-[[mcp.servers]]
-name = "octocode"
-type = "stdio"
-command = "octocode"
-args = ["mcp", "--path=."]
-timeout_seconds = 30
-tools = []
-auto_bind = ["assistant"]  # Exact local [[roles]] name in this example
+```text
+/mcp health
+/mcp full
 ```
 
-`auto_bind` matches the role tag by **exact** string (`"developer"` ≠ `"developer:general"`).
+**Why are tools present with empty `server_refs`?** Check auto-bind, the interactive `schedule`/`monitor` addition,
+automatic capabilities, and project-local tools. Empty explicit grants do not describe the entire runtime.
 
-The bound server is automatically added to the role's `server_refs` even if not explicitly listed. There is a second, easy-to-miss half:
+**Why does a role edit remove old settings?** Multi-file config merging keeps the last whole same-named role entry.
+Repeat its required fields; tap merging instead preserves base entries. Validate after editing:
 
-- If the role uses a **restricted** `allowed_tools` (a non-empty list), auto-bind also appends `"<server>:*"` to `allowed_tools`, so the bound server's tools are actually permitted. Without this, an auto-bound server in a restricted role would have zero usable tools.
-- If `allowed_tools` is **empty** (unrestricted), no patch is needed — everything from the bound server is already allowed.
+```bash
+octomind config --validate
+```
+
+## See also
+
+- [Configuration](03-configuration.md)
+- [AI Providers](04-providers.md)
+- [Sessions](05-sessions.md)
+- [MCP Tools](07-mcp-tools.md)
+- [Tap System](../integration/04-tap-system.md)

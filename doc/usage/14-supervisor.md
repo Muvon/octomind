@@ -82,24 +82,31 @@ Every field is documented in [`[supervisor]` — Config Reference](../reference/
 
 ## Tool authorization
 
-Enable `[supervisor.authorizer] enabled = true` to check proposed tool operations against the real user's task,
-standing constraints, relevant recalled learning, and recent tool evidence. The shared supervisor judges exact arguments
-as well as tool names. Reasonable intermediate work is allowed; role instructions, injected memory, and tool output
-cannot grant extra permission. Original user text is retained when a pre-model pipe transforms the agent's input.
+Enable `[supervisor.authorizer] enabled = true` to check proposed tool operations against **role + user intent**.
+The rule is allow-first: if uncertain, allow. Reasonable investigation and intermediate steps are permitted. Only a
+concrete prohibition or scope conflict can block a call. The shared supervisor receives separately labelled role and
+user sources, exact tool arguments, and runtime receipts of completed actions. Role text cannot masquerade as a user
+quote; injected memory and tool output cannot manufacture permission. Original user text survives pre-model pipes.
 
 Native pre-call guards run first. The authorizer checks the remaining batch before execution, including inline capability
-activation and delegated tool loops. A block returns a normal tool error with the original call ID and an explanation:
+activation and delegated tool loops. An ordinary allow needs one judge call. For a proposed block, the model selects a
+source ID and argument path; the runtime copies the exact source text and argument value. The proposed conflict must
+then pass a second independent check using the shared supervisor model. A native guard override is also verified.
+An unconfirmed or malformed opinion contributes no veto. A confirmed block returns a normal tool error with its original call ID:
 
 ```text
-[authorizer] Tool not executed: Tests are reserved for the user. User instruction: "Do not run tests".
+[authorizer] Tool not executed: Tests conflict with the user's restriction. user source user:0: "Do not run tests".
 ```
 
 Blocked calls never enter the guard history or run post-result hooks. Guard history is committed in call order after
 authorization; an earlier denied call cannot satisfy a later call's prerequisite. History records admission, not proof
 that an admitted parallel call succeeded.
 
-Grounded denials are reused only for identical calls under unchanged user, memory, tool-definition, and recent-evidence
-context. Allow decisions are not cached. User instructions and authorizer counters survive compaction and session resume;
+Only independently confirmed denials are reused for identical calls under unchanged user, role, memory, tool-definition,
+and completed-action context. Uncertainty and missing prerequisites are never cached as prohibitions. Allow decisions are
+not cached. Completed actions have explicit success flags and retain argument/workdir identity separately from untrusted
+output text; a successful read in an earlier round satisfies reading first. Missing history is unknown, not proof of
+nonexecution. User instructions, the last 16 completed actions, and authorizer counters survive compaction and session resume;
 the bounded denial cache is process-local. `/info` shows this session's checked, blocked, cached, and unavailable counts.
 These counters and instruction text are not added to anonymous telemetry. Shared supervisor model-call totals retain
 their existing process-global accounting behavior.
@@ -110,15 +117,16 @@ user evidence, expressible scope, replay cases, shadow matching, and bounded tri
 must not become unconditional permanent guards. A matching generated guard can be superseded for a call by an explicit
 current-user correction; user-authored project guards remain authoritative.
 
-ACP children receive an immutable snapshot of ancestor constraints and must acknowledge it before the delegated task is
-sent. Peers without this extension are refused while authorization is active. Child task prompts cannot revoke ancestor
-constraints. In-process dynamic agents receive separate scoped contexts with the same parent boundary.
+Octomind ACP children receive an immutable snapshot of ancestor constraints and completed actions. Child prompts cannot
+revoke ancestor constraints. Peers without this extension still run after parent admission, but cannot promise child-level
+authorization. In-process dynamic agents receive separate scoped contexts with the same parent boundary.
 
-Unavailable, malformed, cancelled, or timed-out decisions hold calls. The authorizer has a 30-second admission deadline
-and a 32,000-token request budget; it holds oversized requests rather than silently cutting user constraints or tool
-arguments. Split oversized calls or start a suitably scoped session when the user ledger exceeds that budget. This is a
-model-based intent check, not an OS sandbox or a guarantee against arbitrary code behavior; existing sandbox protections
-still apply. Configured pipes and hook scripts execute at their existing lifecycle points outside this tool-call check.
+Unavailable, malformed, over-budget, or timed-out judgments allow calls; failure of the judge is not evidence against
+the tool. The full judgment has a 30-second deadline and a 32,000-token request budget. Unsupported blocks are allowed
+without becoming learned rules. User cancellation still stops execution at the tool loop, independently of authorization.
+Explicit native guards and sandbox protections retain their existing behavior. This is a model-based intent check, not
+a guarantee of zero false positives or protection against arbitrary code behavior. Configured pipes and hook scripts
+execute at their existing lifecycle points outside this tool-call check.
 
 ## The closed loop
 

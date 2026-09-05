@@ -686,8 +686,8 @@ enabled = false
 [supervisor.gate]
 enabled = true
 
-# Check proposed tool calls against user intent after native pre-call guards.
-# Uses the shared supervisor model. Unavailable decisions hold the tool call.
+# Check role + user intent after native pre-call guards. Allow when uncertain.
+# Uses the shared supervisor model; only independently confirmed conflicts block.
 # Permanent learned guards remain controlled by learning.evolution.enabled.
 [supervisor.authorizer]
 enabled = false

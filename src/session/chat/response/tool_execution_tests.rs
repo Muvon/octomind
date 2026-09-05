@@ -107,7 +107,7 @@ fn template_config() -> Config {
 }
 
 #[tokio::test]
-async fn authorizer_covers_inline_capability_calls_before_activation() {
+async fn authorizer_uncertainty_allows_inline_capability_calls() {
 	let mut config = template_config();
 	config.supervisor.authorizer.enabled = true;
 	let mut session = ChatSession::for_tests(Vec::new());
@@ -127,9 +127,15 @@ async fn authorizer_covers_inline_capability_calls_before_activation() {
 	)
 	.await
 	.unwrap();
-	assert!(results[0].is_error());
-	assert!(results[0].extract_content().contains("[authorizer]"));
-	assert!(crate::session::guardrails::get_call_log(&session.session.info.name).is_empty());
+	assert!(!results[0].is_error());
+	assert_eq!(
+		crate::session::guardrails::get_call_log(&session.session.info.name).len(),
+		1
+	);
+	assert_eq!(
+		session.session.info.authorization.completed_actions.len(),
+		1
+	);
 	crate::session::context::cleanup_session(&session.session.info.name);
 }
 
@@ -167,7 +173,7 @@ async fn authorizer_mixed_batch_executes_only_allowed_tool_and_skips_denied_hook
 		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 		crate::session::context::set_session_workdir(&id, tmp.path().to_path_buf());
 		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![final_response(r#"{"decisions":[{"id":"0","decision":"allow","reason":"Read requested data","user_source":"","user_quote":"","overridden_guards":[]},{"id":"1","decision":"block","reason":"Unrequested write","user_source":"u1","user_quote":"Do not modify files","overridden_guards":[]}]}"#)]).await;
+		let url = spawn_stub(vec![final_response(r#"{"decisions":[{"id":"0","decision":"allow","reason":"Read requested data"},{"id":"1","decision":"block","reason":"Unrequested write","conflict":"prohibition","source_id":"user:0","argument_path":"@tool","overridden_guards":[]}]}"#), final_response(r#"{"decisions":[{"id":"1","confirmed":true}]}"#)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let mut config = fake_provider_config();
 		config.supervisor.enabled = true;
@@ -189,6 +195,9 @@ async fn authorizer_mixed_batch_executes_only_allowed_tool_and_skips_denied_hook
 		assert!(!tmp.path().join("forbidden-marker").exists());
 		assert!(!tmp.path().join("hook-marker").exists());
 		assert_eq!(crate::session::guardrails::get_call_log(&id).len(),1);
+		assert_eq!(session.session.info.authorization.completed_actions.len(),1);
+		assert_eq!(session.session.info.authorization.completed_actions[0].tool,"allowed");
+		assert!(session.session.info.authorization.completed_actions[0].succeeded);
 		crate::session::context::cleanup_session(&id);
 		std::env::remove_var("OLLAMA_API_URL");
 	}).await;

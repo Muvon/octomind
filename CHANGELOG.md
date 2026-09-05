@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.50.2] - 2026-09-05
+
+### 📋 Release Summary
+
+Project documentation and agent workflow guidance were substantially reworked and clarified for end users (d8df8eee, a12510b8, 3a53d4c4). Existing behavior was improved with more stable compression decisions, rate-limit-free latest-version resolution during installation, reduced attention overhead, updated registry configuration, and more reliable session spill testing (d6399fc9, c202cf41, 01f179c0, 4c282871, 203c6ae1).
+
+
+### 🔧 Improvements & Optimizations
+
+- **attention**: reduce uncited reference unit tokens `01f179c0`
+- **cargo**: update crates.io registry configuration `4c282871`
+- **spill**: serialize session spill tests `203c6ae1`
+
+### 🐛 Bug Fixes & Stability
+
+- **compression**: stabilize fold decisions `d6399fc9`
+- **install**: resolve latest version without API rate limits `c202cf41`
+
+### 📚 Documentation & Examples
+
+- expand agent workflow guidance `d8df8eee`
+- rework project documentation `a12510b8`
+- **guide**: clarify project workflows `3a53d4c4`
+
 ## [0.50.1] - 2026-09-04
 
 ### 📋 Release Summary

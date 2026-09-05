@@ -1288,17 +1288,12 @@ async fn load_session_resumes_a_saved_session() {
 #[serial_test::serial]
 async fn cancel_during_a_prompt_returns_a_cancelled_stop_reason() {
 	let _data = TestDataDirGuard::new();
-	let guard = ENV_LOCK.lock().await;
+	// Reuse the same scoped environment owner as the other provider tests.
+	let environment = StubEnv {
+		_guard: ENV_LOCK.lock().await,
+	};
 	let url = spawn_slow_stub(400).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	drop(guard);
-	struct EnvRestore;
-	impl Drop for EnvRestore {
-		fn drop(&mut self) {
-			std::env::remove_var("OLLAMA_API_URL");
-		}
-	}
-	let _restore = EnvRestore;
 
 	let agent = acp_agent();
 	let cwd = std::env::current_dir().expect("cwd");
@@ -1339,6 +1334,7 @@ async fn cancel_during_a_prompt_returns_a_cancelled_stop_reason() {
 			context::cleanup_session(&session_id.to_string());
 		})
 		.await;
+	drop(environment);
 }
 
 #[tokio::test(flavor = "current_thread")]

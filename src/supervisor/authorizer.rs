@@ -684,9 +684,9 @@ pub async fn check_batch(
 			.await;
 			match confirmed {
 				Ok(ids) => {
-					for decision in &mut decisions {
+					for (decision, index) in decisions.iter_mut().zip(&pending) {
 						if decision.decision == "block" && !ids.contains(&decision.id) {
-							*decision = Decision::allow(decision.id.parse()?);
+							*decision = Decision::allow(*index);
 						} else if !ids.contains(&decision.id) {
 							decision.overridden_guards.clear();
 						}
@@ -694,9 +694,9 @@ pub async fn check_batch(
 				}
 				Err(error) => {
 					note_unavailable(id, proposed.len(), &error);
-					for decision in &mut decisions {
+					for (decision, index) in decisions.iter_mut().zip(&pending) {
 						if decision.decision == "block" {
-							*decision = Decision::allow(decision.id.parse()?);
+							*decision = Decision::allow(*index);
 						} else {
 							decision.overridden_guards.clear();
 						}
@@ -836,17 +836,19 @@ fn validate(
 				return decision;
 			}
 			decision.overridden_guards.clear();
-			let argument = calls
+			let Some(argument) = calls
 				.get(*index)
-				.and_then(|call| argument_value(&decision.argument_path, call));
+				.and_then(|call| argument_value(&decision.argument_path, call))
+			else {
+				return Decision::allow(*index);
+			};
 			let supported = decision.decision == "block"
 				&& matches!(decision.conflict.as_str(), "prohibition" | "scope")
 				&& !decision.reason.trim().is_empty()
 				&& decision.reason.len() <= 2000
-				&& source.is_some()
-				&& argument.is_some();
+				&& source.is_some();
 			if supported {
-				decision.argument_excerpt = argument.unwrap();
+				decision.argument_excerpt = argument;
 				decision
 			} else {
 				Decision::allow(*index)

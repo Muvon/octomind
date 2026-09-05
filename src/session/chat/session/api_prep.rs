@@ -93,15 +93,25 @@ pub async fn prepare_for_api_call(
 		if crate::session::cancellation::is_cancelled(&e) {
 			return Err(e);
 		}
+		// Inside the ceiling margin a failed compression is serious but not
+		// fatal: ensure_context_within_ceiling below trims oversized tool
+		// results without a model call, and errors itself if that still
+		// leaves the context over the ceiling. Returning here instead cost
+		// whole turns whenever the compression model returned one
+		// unparseable response.
 		if crate::session::chat::conversation_compression::within_ceiling_margin(
 			chat_session,
 			config,
 		)
 		.await
 		{
-			return Err(e.context("forced compression inside the context ceiling margin failed"));
+			crate::log_info!(
+				"Forced compression inside the context ceiling margin failed: {}. Falling back to deterministic trimming.",
+				e
+			);
+		} else {
+			crate::log_debug!("Compression failed before API call: {}.", e);
 		}
-		crate::log_debug!("Compression failed before API call: {}.", e);
 	}
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
 		chat_session,

@@ -31,6 +31,8 @@ pub async fn prepare_for_api_call(
 		return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 	}
 
+	crate::supervisor::authorizer::capture(chat_session, config);
+
 	// Resolve each genuine user turn before compression or agent work. The same
 	// cached resolution later serves planning and completion, so this is one
 	// semantic pass, not a second policy classifier. Doing it at turn admission
@@ -40,7 +42,9 @@ pub async fn prepare_for_api_call(
 	// user-owned policy.
 	if config.supervisor.enabled
 		&& chat_session.completion_gate_eligible
-		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled)
+		&& (config.supervisor.gate.enabled
+			|| config.supervisor.plan.enabled
+			|| config.supervisor.authorizer.enabled)
 		&& chat_session.gate_task.is_none()
 	{
 		let session_context = chat_session.session.info.anchor.to_xml();

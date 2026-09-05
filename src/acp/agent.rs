@@ -665,6 +665,21 @@ impl OctomindAgent {
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
+		let inherited_authorization = args
+			.meta
+			.as_ref()
+			.and_then(|meta| meta.get(crate::supervisor::authorizer::META_KEY))
+			.map(|value| {
+				serde_json::from_value::<crate::supervisor::authorizer::AuthorizationContext>(
+					value.clone(),
+				)
+			})
+			.transpose()
+			.map_err(|e| {
+				agent_client_protocol::Error::invalid_params()
+					.data(format!("invalid inherited authorization: {e}"))
+			})?;
+		let has_inherited_authorization = inherited_authorization.is_some();
 
 		// Build a per-session config snapshot with injected servers merged in.
 		// self.config is never mutated — injected servers are scoped to this session only.
@@ -693,6 +708,8 @@ impl OctomindAgent {
 
 		let session_id = chat_session.session.info.name.clone();
 		log_debug!("ACP: new_session created: {}", session_id);
+		chat_session.session.info.authorization.parent = inherited_authorization.map(Box::new);
+		crate::supervisor::authorizer::capture(&mut chat_session, &config_for_role);
 
 		// Initialize session-scoped inbox and job manager inside the session context
 		// so schedule/inbox storage is keyed to this session ID.
@@ -739,7 +756,14 @@ impl OctomindAgent {
 		// and processes messages automatically without waiting for user prompts.
 		self.spawn_inbox_monitor(session_id.clone());
 
-		Ok(NewSessionResponse::new(session_id))
+		let mut meta = Meta::new();
+		if has_inherited_authorization {
+			meta.insert(
+				crate::supervisor::authorizer::META_KEY.to_string(),
+				serde_json::Value::Bool(true),
+			);
+		}
+		Ok(NewSessionResponse::new(session_id).meta(meta))
 	}
 
 	async fn prompt(&self, args: PromptRequest) -> agent_client_protocol::Result<PromptResponse> {

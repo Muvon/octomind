@@ -37,6 +37,7 @@
 //! section or any missing key is a hard parse error — we own the schema, so we
 //! fail loudly instead of degrading to silent defaults.
 
+pub mod authorizer;
 pub mod condense;
 pub mod delegate;
 pub mod detect;
@@ -188,6 +189,8 @@ pub struct SupervisorConfig {
 	pub learning: learning::LearningConfig,
 	/// Verify-gate on self-reported completion.
 	pub gate: GateConfig,
+	/// Opt-in tool admission against the user's task and constraints.
+	pub authorizer: authorizer::AuthorizerConfig,
 	/// External, adaptive plan manager. The specialist sees plan state but cannot
 	/// mutate it directly.
 	pub plan: PlanConfig,

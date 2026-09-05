@@ -449,6 +449,20 @@ fn evidence_for_memories_prefers_cited_handles_and_falls_back_to_excerpt() {
 }
 
 #[test]
+fn authorizer_denials_are_never_real_tool_evidence_for_evolution() {
+	let mut denial = user_message("[authorizer] Tool not executed: do not test");
+	denial.role = "tool".into();
+	let messages = vec![user_message("I will test this change myself"), denial];
+	let excerpt = evidence_excerpt(&messages);
+	assert_eq!(excerpt.len(), 1);
+	assert_eq!(excerpt[0]["role"], "user");
+	let mut cited = memory("scoped");
+	cited.evidence = vec!["session://session/message/2".into()];
+	let selected = evidence_for_memories(&messages, &[&cited]);
+	assert!(selected.iter().all(|entry| entry["role"] != "tool"));
+}
+
+#[test]
 fn validate_native_rejects_secrets_shebangless_scripts_and_broken_native() {
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"no\"\n";
 	let error = validate_native(

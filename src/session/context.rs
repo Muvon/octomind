@@ -1104,12 +1104,14 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::supervisor::learning::evolution::clear_for_session(session_id);
 	crate::supervisor::delegate::clear_handback_for_session(session_id);
 	crate::supervisor::condense::clear_for_session(session_id);
+	crate::supervisor::authorizer::clear_for_session(session_id);
 	clear_schedule_notify(session_id);
 }
 
 /// Initialize all session-scoped services. Call once per session inside `with_session_id`.
 /// Centralizes the init sequence so entry points don't duplicate it.
 pub fn init_session_services(role: &str) {
+	crate::supervisor::authorizer::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();
 	crate::session::tap_runs::init_for_session();

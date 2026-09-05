@@ -43,6 +43,31 @@ fn template_document() -> toml_edit::DocumentMut {
 }
 
 #[test]
+fn v12_authorizer_migration_defaults_off_and_preserves_explicit_choice() {
+	for choice in [None, Some(true), Some(false)] {
+		let mut document = template_document();
+		document["version"] = toml_edit::value(12);
+		let supervisor = document["supervisor"].as_table_mut().unwrap();
+		if let Some(enabled) = choice {
+			supervisor["authorizer"]["enabled"] = toml_edit::value(enabled);
+		} else {
+			supervisor.remove("authorizer");
+		}
+		let migrated = migrate_once(&document.to_string());
+		let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+		assert_eq!(
+			config.supervisor.authorizer.enabled,
+			choice.unwrap_or(false)
+		);
+		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+		assert!(plan()
+			.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.is_none());
+	}
+}
+
+#[test]
 fn version_of_reports_the_embedded_template_as_current() {
 	assert_eq!(
 		plan().version_of(DEFAULT_CONFIG_TEMPLATE).unwrap(),

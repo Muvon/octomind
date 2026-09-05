@@ -56,6 +56,14 @@ fn transcript_evidence_classifies_roles() {
 	assert!(is_transcript_evidence(&msg("user", "fix the auth bug")));
 	assert!(is_transcript_evidence(&msg("assistant", "I'll fix it")));
 	assert!(is_transcript_evidence(&msg("tool", "{\"ok\":true}")));
+	assert!(!is_transcript_evidence(&msg(
+		"tool",
+		"[authorizer] Tool not executed"
+	)));
+	assert!(!is_transcript_evidence(&msg(
+		"tool",
+		"[guardrail] Tool denied"
+	)));
 	assert!(!is_transcript_evidence(&msg("system", "You are helpful")));
 }
 

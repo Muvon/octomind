@@ -511,6 +511,16 @@ fn run_dynamic_agent_in_process(
 		let task = task.as_str();
 		let agent_config = &agent_config;
 		use crate::session::{ChatCompletionWithValidationParams, Message};
+		let authorization_scope =
+			crate::supervisor::authorizer::DelegationScope::new(task, &agent.system);
+		if let Some(parent_id) = crate::session::context::current_session_id() {
+			if let Some(rules) = crate::session::guardrails::get_rules(&parent_id) {
+				crate::session::guardrails::merge_generated_for_session(
+					&authorization_scope.id,
+					rules.as_ref().clone(),
+				);
+			}
+		}
 
 		if *operation_cancelled.borrow() {
 			anyhow::bail!(crate::session::cancellation::Cancelled);
@@ -615,7 +625,7 @@ fn run_dynamic_agent_in_process(
 				let layer_tool_params =
 					crate::session::chat::response::tool_execution::LayerToolExecutionParams {
 						tool_calls: current_tool_calls,
-						session_name: format!("agent_{}", agent.name),
+						session_name: authorization_scope.id.clone(),
 						layer_name: format!("agent_{}", agent.name),
 						operation_cancelled: Some(operation_cancelled.clone()),
 						mode: output_mode,
@@ -625,8 +635,9 @@ fn run_dynamic_agent_in_process(
 					agent_config,
 					layer_tool_params,
 				)
-				.await?;
+						.await?;
 
+				authorization_scope.note_results(&tool_results);
 				if *operation_cancelled.borrow() {
 					anyhow::bail!(crate::session::cancellation::Cancelled);
 				}
@@ -832,6 +843,12 @@ pub async fn run_acp_command(
 				return Err(error);
 			}
 		};
+	if crate::supervisor::authorizer::inherited_context().is_some()
+		&& session_resp.pointer("/result/_meta/octomind.authorization") != Some(&Value::Bool(true))
+	{
+		terminate_acp_child(&mut child).await;
+		anyhow::bail!("[authorizer] Delegated agent did not acknowledge inherited authorization; task was not sent");
+	}
 	let Some(session_id) = session_resp
 		.get("result")
 		.and_then(|r| r.get("sessionId"))
@@ -1233,7 +1250,11 @@ fn acp_initialize_params() -> Value {
 }
 
 fn acp_new_session_params(workdir: &std::path::Path) -> Value {
-	json!({"cwd": workdir.to_string_lossy(), "mcpServers": []})
+	let mut params = json!({"cwd": workdir.to_string_lossy(), "mcpServers": []});
+	if let Some(context) = crate::supervisor::authorizer::inherited_context() {
+		params["_meta"] = json!({crate::supervisor::authorizer::META_KEY: context});
+	}
+	params
 }
 
 fn acp_prompt_params(session_id: &str, task: &str) -> Value {

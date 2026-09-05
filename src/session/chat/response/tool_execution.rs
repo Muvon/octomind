@@ -140,8 +140,28 @@ pub async fn execute_tools_parallel(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
+		crate::supervisor::authorizer::capture(chat_session, config);
+		let blocks = admit_tool_batch(
+			&chat_session.session.info.name,
+			config,
+			&current_tool_calls,
+			Some(operation_cancelled.clone()),
+		)
+		.await;
+		crate::supervisor::authorizer::sync(chat_session);
 		chat_session.session.info.tool_calls += 1;
 		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
+		if let Some(message) = blocks.into_iter().next().flatten() {
+			let call = &current_tool_calls[0];
+			return Ok((
+				vec![crate::mcp::McpToolResult::error(
+					call.tool_name.clone(),
+					call.tool_id.clone(),
+					message,
+				)],
+				0,
+			));
+		}
 		let (result, elapsed_ms) =
 			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
 		// Hard cap first: the condenser must only ever see (and select over) what
@@ -254,6 +274,71 @@ async fn execute_tap_capability_inline(
 }
 
 // Implementation that works with execution context
+/// Shared admission, including inline capability calls. Native prechecks are
+/// previewed before the model, then committed against the final allowed batch.
+async fn admit_tool_batch(
+	session_id: &str,
+	config: &Config,
+	calls: &[crate::mcp::McpToolCall],
+	cancellation: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Vec<Option<String>> {
+	let session_id = session_id.to_string();
+	let enabled = (config.supervisor.enabled && config.supervisor.authorizer.enabled)
+		|| crate::supervisor::authorizer::context_for_session(&session_id).is_some();
+	let messages = if enabled {
+		let preview = crate::session::guardrails::preview_batch(&session_id, config, calls);
+		let hard = preview.blocked;
+		let generated = preview.generated;
+		let indices = hard
+			.iter()
+			.enumerate()
+			.filter_map(|(i, m)| m.is_none().then_some(i))
+			.collect::<Vec<_>>();
+		let candidates = indices
+			.iter()
+			.map(|i| calls[*i].clone())
+			.collect::<Vec<_>>();
+		let guards = indices
+			.iter()
+			.map(|i| generated[*i].clone())
+			.collect::<Vec<_>>();
+		let (_tx, default_rx) = tokio::sync::watch::channel(false);
+		let decisions = crate::supervisor::authorizer::check_batch(
+			&session_id,
+			config,
+			&candidates,
+			&guards,
+			cancellation.unwrap_or(default_rx),
+		)
+		.await;
+		let mut admissions = hard
+			.into_iter()
+			.map(|message| crate::supervisor::authorizer::Admission {
+				message,
+				..Default::default()
+			})
+			.collect::<Vec<_>>();
+		for (index, decision) in indices.into_iter().zip(decisions) {
+			admissions[index] = decision;
+		}
+		crate::session::guardrails::check_batch_admitted(&session_id, config, calls, &admissions)
+	} else {
+		crate::session::guardrails::check_batch(&session_id, config, calls)
+	};
+	messages
+		.into_iter()
+		.map(|message| {
+			message.map(|message| {
+				if message.starts_with("[authorizer]") || message.starts_with("[guardrail]") {
+					message
+				} else {
+					format!("[guardrail] {message}")
+				}
+			})
+		})
+		.collect()
+}
+
 async fn execute_tools_with_context(
 	current_tool_calls: Vec<crate::mcp::McpToolCall>,
 	context: &mut ToolExecutionContext<'_>,
@@ -272,14 +357,19 @@ async fn execute_tools_with_context(
 	let session_id_for_guardrails = context.session_name().to_string();
 	// Messages are stored already prefixed with their source, so the spawn loop
 	// below emits them verbatim.
-	let block_messages: Vec<Option<String>> = crate::session::guardrails::check_batch(
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		crate::supervisor::authorizer::capture(chat_session, config);
+	}
+	let block_messages = admit_tool_batch(
 		&session_id_for_guardrails,
 		config,
 		&current_tool_calls,
+		operation_cancelled.clone(),
 	)
-	.into_iter()
-	.map(|m| m.map(|msg| format!("[guardrail] {msg}")))
-	.collect();
+	.await;
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		crate::supervisor::authorizer::sync(chat_session);
+	}
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter

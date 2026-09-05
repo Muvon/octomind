@@ -72,7 +72,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 12;
+pub const CURRENT_CONFIG_VERSION: u32 = 13;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (

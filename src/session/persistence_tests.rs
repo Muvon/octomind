@@ -149,6 +149,45 @@ fn write_session(lines: &[&str]) -> NamedTempFile {
 // ---- tests ----
 
 #[test]
+fn authorizer_user_evidence_and_parent_boundary_survive_actual_session_load() {
+	let mut info = SessionInfo {
+		name: "authorizer-resume".into(),
+		..Default::default()
+	};
+	info.authorization.initialized = true;
+	info.authorization
+		.users
+		.push(crate::supervisor::authorizer::UserInstruction {
+			id: "u1".into(),
+			text: "Inspect only; do not modify files".into(),
+			..Default::default()
+		});
+	info.authorization.parent = Some(Box::new(
+		crate::supervisor::authorizer::AuthorizationContext {
+			users: info.authorization.users.clone(),
+			..Default::default()
+		},
+	));
+	info.authorization.blocked = 3;
+	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info})
+		.to_string();
+	let user = serde_json::to_string(&Message {
+		role: "user".into(),
+		content: "continue".into(),
+		..Default::default()
+	})
+	.unwrap();
+	let file = write_session(&[&summary, &user]);
+	let restored = load_session(&file.path().to_path_buf()).unwrap();
+	assert_eq!(restored.info.authorization.blocked, 3);
+	assert_eq!(
+		restored.info.authorization.users[0].text,
+		"Inspect only; do not modify files"
+	);
+	assert!(restored.info.authorization.parent.is_some());
+}
+
+#[test]
 fn round_trip_without_compression_preserves_messages() {
 	let s = summary_line("round-trip", 1_700_000_000);
 	let m1 = serde_json::to_string(&msg("user", "hi")).unwrap();

@@ -445,7 +445,7 @@ model = "openai:gpt-5-mini"
 
 #[test]
 fn future_version_is_rejected_rather_than_downgraded() {
-	let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 12", "version = 99", 1);
+	let future = DEFAULT_CONFIG_TEMPLATE.replacen("version = 13", "version = 99", 1);
 	let error = plan()
 		.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 		.expect_err("a newer config must not be rewritten");

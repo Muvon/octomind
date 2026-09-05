@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 12
+version = 13
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -685,6 +685,12 @@ enabled = false
 # (loop / no-progress) are fixed constants.
 [supervisor.gate]
 enabled = true
+
+# Check proposed tool calls against user intent after native pre-call guards.
+# Uses the shared supervisor model. Unavailable decisions hold the tool call.
+# Permanent learned guards remain controlled by learning.evolution.enabled.
+[supervisor.authorizer]
+enabled = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

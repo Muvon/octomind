@@ -40,6 +40,8 @@ pub enum CallKind {
 	Distill,
 	/// Tool-output condensation (task-aware narrowing).
 	Condense,
+	/// Intent-based tool admission, using the shared supervisor profile.
+	Authorize,
 }
 
 #[derive(Default, Clone)]
@@ -51,6 +53,7 @@ struct Stats {
 	plan_calls: u64,
 	distill_calls: u64,
 	condense_calls: u64,
+	authorize_calls: u64,
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	memory_pack_items: u64,
@@ -118,6 +121,7 @@ pub fn record_call(
 			CallKind::Plan => s.plan_calls += 1,
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
+			CallKind::Authorize => s.authorize_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -269,6 +273,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"plan_calls": s.plan_calls,
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
+		"authorize_calls": s.authorize_calls,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,
 		"memory_pack_items": s.memory_pack_items,

@@ -412,6 +412,9 @@ pub struct SessionInfo {
 	/// compression.
 	#[serde(default)]
 	pub verification_policy: crate::supervisor::VerificationPolicy,
+	/// User evidence and local authorizer outcomes, preserved across compaction/resume.
+	#[serde(default)]
+	pub authorization: crate::supervisor::authorizer::AuthorizationState,
 	/// Verify-gate evidence ledger snapshot for the still-open turn. Synced on
 	/// every save and restored on resume, so the gate's ground truth survives a
 	/// process restart the same way the task request does — without it, resumed
@@ -568,6 +571,7 @@ impl Session {
 				consecutive_compressions: 0,
 				learning_stats: LearningSessionStats::default(),
 				verification_policy: crate::supervisor::VerificationPolicy::default(),
+				authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 				evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			},
 

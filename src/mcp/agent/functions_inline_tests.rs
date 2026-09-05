@@ -62,7 +62,7 @@ async fn run_fake_server(script: String, cancel_rx: watch::Receiver<bool>) -> Re
 }
 
 #[tokio::test]
-async fn authorizer_requires_child_acknowledgement_before_sending_task() {
+async fn authorizer_passes_context_without_vetoing_an_unacknowledged_peer() {
 	let sid = "authorizer-acp-parent".to_string();
 	crate::session::context::with_session_id(sid.clone(), async {
 		let mut config = crate::session::chat::test_support::fake_provider_config();
@@ -74,8 +74,8 @@ async fn authorizer_requires_child_acknowledgement_before_sending_task() {
 		let params = acp_new_session_params(std::path::Path::new("/tmp"));
 		assert_eq!(params["_meta"][crate::supervisor::authorizer::META_KEY]["users"][0]["text"], "Inspect only; never edit files");
 		let (_tx,rx) = watch::channel(false);
-		let error = run_fake_server(format!("{HANDSHAKE}{WAIT_STDIN_EOF}"), rx).await.unwrap_err();
-		assert!(error.to_string().contains("did not acknowledge"));
+		let result = run_fake_server(format!("{HANDSHAKE}\necho '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{\"stopReason\":\"end_turn\"}}}}'\n{WAIT_STDIN_EOF}"), rx).await.unwrap();
+		assert!(result.contains("hello"));
 		let acknowledged = HANDSHAKE.replace("\"sessionId\":\"s\"", "\"sessionId\":\"s\",\"_meta\":{\"octomind.authorization\":true}");
 		let (_tx,rx) = watch::channel(false);
 		let result = run_fake_server(format!("{acknowledged}\necho '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{\"stopReason\":\"end_turn\"}}}}'\n{WAIT_STDIN_EOF}"), rx).await.unwrap();

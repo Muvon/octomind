@@ -630,8 +630,9 @@ only if those pass.
 
 ### `[supervisor.authorizer]`
 
-Checks the exact proposed tool operations against user intent after native pre-call guards and before execution.
-Uses `[supervisor.model]`; unavailable decisions hold calls. Requires the supervisor master switch for root sessions.
+Checks exact proposed tool operations against role + user intent after native pre-call guards and before execution.
+Uses `[supervisor.model]`; uncertain or unavailable decisions allow calls. A block requires grounded source/argument
+evidence and independent confirmation by the same shared model. Requires the supervisor master switch for root sessions.
 Inherited delegation constraints remain enforced in child sessions. See [Tool authorization](../usage/14-supervisor.md#tool-authorization).
 
 | Field | Type | Default | Description |

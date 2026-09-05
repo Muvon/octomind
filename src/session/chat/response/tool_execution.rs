@@ -140,6 +140,9 @@ pub async fn execute_tools_parallel(
 	mode: OutputMode,
 ) -> Result<(Vec<crate::mcp::McpToolResult>, u64)> {
 	if current_tool_calls.len() == 1 && is_tap_capability_call(&current_tool_calls[0]) {
+		if *operation_cancelled.borrow() {
+			return Ok((Vec::new(), 0));
+		}
 		crate::supervisor::authorizer::capture(chat_session, config);
 		let blocks = admit_tool_batch(
 			&chat_session.session.info.name,
@@ -149,6 +152,9 @@ pub async fn execute_tools_parallel(
 		)
 		.await;
 		crate::supervisor::authorizer::sync(chat_session);
+		if *operation_cancelled.borrow() {
+			return Ok((Vec::new(), 0));
+		}
 		chat_session.session.info.tool_calls += 1;
 		crate::telemetry::record_tool(&current_tool_calls[0].tool_name);
 		if let Some(message) = blocks.into_iter().next().flatten() {
@@ -164,6 +170,12 @@ pub async fn execute_tools_parallel(
 		}
 		let (result, elapsed_ms) =
 			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
+		crate::supervisor::authorizer::record_completed(
+			&chat_session.session.info.name,
+			&current_tool_calls[0],
+			&result,
+		);
+		crate::supervisor::authorizer::sync(chat_session);
 		// Hard cap first: the condenser must only ever see (and select over) what
 		// the agent would actually receive.
 		let mut results = handle_large_tool_results(vec![result], config, mode).await?;
@@ -370,6 +382,9 @@ async fn execute_tools_with_context(
 	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
 		crate::supervisor::authorizer::sync(chat_session);
 	}
+	if operation_cancelled.as_ref().is_some_and(|rx| *rx.borrow()) {
+		return Ok((Vec::new(), 0));
+	}
 
 	for (index, tool_call) in current_tool_calls.clone().iter().enumerate() {
 		// Increment tool call counter
@@ -526,6 +541,18 @@ async fn execute_tools_with_context(
 		match task_result {
 			Ok(result) => match result {
 				Ok((res, tool_time_ms)) => {
+					if block_messages
+						.get(tool_index - 1)
+						.is_some_and(Option::is_none)
+					{
+						if let Some(call) = stored_tool_call.as_ref() {
+							crate::supervisor::authorizer::record_completed(
+								&session_id_for_guardrails,
+								call,
+								&res,
+							);
+						}
+					}
 					// Deduplication runs HERE, before display — so the terminal block,
 					// the sink emission (response.rs), and the AI's session message all
 					// show the SAME thing. Errors are never deduped. A successful
@@ -759,6 +786,9 @@ async fn execute_tools_with_context(
 	// truncation, so hook scripts see full untruncated output. Hooks for
 	// guardrail-blocked tools are skipped (synthetic results aren't real).
 	let blocked_flags: Vec<bool> = block_messages.iter().map(|m| m.is_some()).collect();
+	if let ToolExecutionContext::MainSession { chat_session, .. } = context {
+		crate::supervisor::authorizer::sync(chat_session);
+	}
 	crate::session::hooks::run_hooks(
 		&session_id_for_guardrails,
 		config,

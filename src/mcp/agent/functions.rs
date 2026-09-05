@@ -637,7 +637,6 @@ fn run_dynamic_agent_in_process(
 				)
 						.await?;
 
-				authorization_scope.note_results(&tool_results);
 				if *operation_cancelled.borrow() {
 					anyhow::bail!(crate::session::cancellation::Cancelled);
 				}
@@ -846,8 +845,7 @@ pub async fn run_acp_command(
 	if crate::supervisor::authorizer::inherited_context().is_some()
 		&& session_resp.pointer("/result/_meta/octomind.authorization") != Some(&Value::Bool(true))
 	{
-		terminate_acp_child(&mut child).await;
-		anyhow::bail!("[authorizer] Delegated agent did not acknowledge inherited authorization; task was not sent");
+		crate::log_debug!("Authorizer: delegated peer does not acknowledge inherited context; parent admission still applies, child enforcement unavailable");
 	}
 	let Some(session_id) = session_resp
 		.get("result")

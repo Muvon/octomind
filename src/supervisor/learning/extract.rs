@@ -681,6 +681,9 @@ fn build_transcript(messages: &[crate::session::Message]) -> String {
 }
 
 fn is_transcript_evidence(message: &crate::session::Message) -> bool {
+	if crate::supervisor::authorizer::is_synthetic_result(message) {
+		return false;
+	}
 	match message.role.as_str() {
 		"user" => crate::session::is_real_user_task_message(message),
 		"assistant" | "tool" => true,
@@ -1005,7 +1008,7 @@ fn parse_orientation_evidence(
 		let message = context.messages.get(number.checked_sub(1)?)?;
 		let eligible = match message.role.as_str() {
 			"user" => crate::session::is_real_user_task_message(message),
-			"tool" => true,
+			"tool" => !crate::supervisor::authorizer::is_synthetic_result(message),
 			_ => false,
 		};
 		if !eligible || !context.transcript.contains(&format!("[M{number} ")) {
@@ -1438,13 +1441,18 @@ pub fn extract_lessons_detached(
 	session_name: String,
 	outcome: super::TrajectoryOutcome,
 ) -> tokio::task::JoinHandle<()> {
-	tokio::spawn(async move {
-		match run_extraction(&messages, &config, &role, &project, &session_name, outcome).await {
-			Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
-			Ok(n) => crate::log_debug!("Learning detached: {} memory items extracted", n),
-			Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
-		}
-	})
+	let observations = crate::supervisor::authorizer::observations_for_session(&session_name);
+	let messages = crate::supervisor::authorizer::grounded_messages(&session_name, messages);
+	tokio::spawn(
+		crate::supervisor::authorizer::EXTRACTION_OBSERVATIONS.scope(observations, async move {
+			match run_extraction(&messages, &config, &role, &project, &session_name, outcome).await
+			{
+				Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
+				Ok(n) => crate::log_debug!("Learning detached: {} memory items extracted", n),
+				Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
+			}
+		}),
+	)
 }
 
 /// Spawn extraction from an already captured transcript. Compression callers

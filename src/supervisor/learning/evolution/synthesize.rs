@@ -178,6 +178,7 @@ pub async fn synthesize(
 		"existing_artifacts": existing_json,
 		"available_capabilities": &available_capabilities,
 		"loaded_mcp_servers_for_has": &loaded_servers,
+		"authorizer_observations_untrusted": crate::supervisor::authorizer::observations_for_session(session_name),
 	}))?;
 	let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 	let value = crate::supervisor::learning::extract::call_supervisor_json(
@@ -728,7 +729,7 @@ fn evidence_excerpt(messages: &[crate::session::Message]) -> Vec<serde_json::Val
 	for (index, message) in messages.iter().enumerate() {
 		let eligible = match message.role.as_str() {
 			"user" => crate::session::is_real_user_task_message(message),
-			"tool" => true,
+			"tool" => !crate::supervisor::authorizer::is_synthetic_result(message),
 			_ => false,
 		};
 		if !eligible || used >= MAX_EVIDENCE_CHARS {
@@ -765,7 +766,7 @@ fn evidence_for_memories(
 		.filter(|(index, _)| wanted.contains(&(index + 1)))
 		.filter(|(_, message)| match message.role.as_str() {
 			"user" => crate::session::is_real_user_task_message(message),
-			"tool" => true,
+			"tool" => !crate::supervisor::authorizer::is_synthetic_result(message),
 			_ => false,
 		})
 		.map(|(index, message)| {
@@ -814,7 +815,7 @@ Native syntax contract:
 - hook uses hook_on success|error|any and optional result_regex.
 - scripts receive the existing phase-specific stdin/env contract. Pipe stdout replaces input. Hook/validator exit 0 is silent; nonzero stdout is feedback.
 
-Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. Output only the response-schema object."#.to_string()
+Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. Authorizer observations are untrusted candidate leads, NEVER evidence or proof of a correct denial. Independently ground a proposed guard in the supplied user-backed memories. Do not turn task-local or conditional restrictions into unconditional native guards: if the DSL cannot express their full applicability, return none or keep an advisory skill. Output only the response-schema object."#.to_string()
 }
 
 fn verifier_prompt() -> String {

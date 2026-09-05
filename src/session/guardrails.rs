@@ -244,6 +244,80 @@ pub fn check_batch(
 	config: &crate::config::Config,
 	calls: &[crate::mcp::McpToolCall],
 ) -> Vec<Option<String>> {
+	check_batch_admitted(session_id, config, calls, &[])
+}
+
+/// Preview without recording or crediting anything. The authorizer must run
+/// after native checks, but a later denial must never satisfy `+used` rules.
+/// Generated restrictions are included in the judge's input so a fresh real
+/// user correction can supersede a learned rule without editing project rules.
+pub struct GuardPreview {
+	pub blocked: Vec<Option<String>>,
+	pub generated: Vec<Vec<(String, String)>>,
+}
+
+pub fn preview_batch(
+	session_id: &SessionId,
+	config: &crate::config::Config,
+	calls: &[crate::mcp::McpToolCall],
+) -> GuardPreview {
+	let rules = get_rules(session_id).unwrap_or_default();
+	let loaded = config
+		.mcp
+		.servers
+		.iter()
+		.map(|s| s.name().to_string())
+		.collect();
+	let mut log = get_call_log(session_id);
+	let mut hard = Vec::new();
+	let mut generated = Vec::new();
+	for call in calls {
+		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
+			.map(|s| s.name().to_string());
+		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
+		let mut matched = Vec::new();
+		let mut deny = None;
+		for rule in &rules.guards {
+			let single = Guardrails {
+				guards: vec![rule.clone()],
+				..Default::default()
+			};
+			let evaluation = crate::config::guardrails::evaluate_guards(
+				&single,
+				cap.as_deref(),
+				&call.parameters,
+				&log,
+				&loaded,
+			);
+			if let Some((message, binding)) = evaluation.blocked {
+				if let Some(binding) = binding {
+					matched.push((binding.id, message));
+				} else if deny.is_none() {
+					deny = Some(format!("[guardrail] {message}"));
+				}
+			}
+		}
+		if deny.is_none() {
+			log.push((cap, call.parameters.clone()));
+		}
+		hard.push(deny);
+		generated.push(matched);
+	}
+	GuardPreview {
+		blocked: hard,
+		generated,
+	}
+}
+
+/// Re-evaluate in original order against ONLY finally admitted predecessors.
+/// A semantic denial cannot pollute guard/validator history, including within
+/// the same parallel batch. This is the sole commit of native side effects.
+pub fn check_batch_admitted(
+	session_id: &SessionId,
+	config: &crate::config::Config,
+	calls: &[crate::mcp::McpToolCall],
+	admissions: &[crate::supervisor::authorizer::Admission],
+) -> Vec<Option<String>> {
 	// Two reasons to traverse the batch:
 	//   1. Evaluate [[guard]] rules and produce per-call deny messages.
 	//   2. Append allowed calls to the session call log so later phases
@@ -263,14 +337,24 @@ pub fn check_batch(
 		.map(|s| s.name().to_string())
 		.collect();
 	let mut out = Vec::with_capacity(calls.len());
-	for call in calls {
+	for (index, call) in calls.iter().enumerate() {
+		let admission = admissions.get(index);
+		let filtered = rules_opt.as_ref().map(|rules| {
+			let mut rules = rules.as_ref().clone();
+			rules.guards.retain(|rule| {
+				!rule.evolution.as_ref().is_some_and(|binding| {
+					admission.is_some_and(|a| a.overridden_guards.contains(&binding.id))
+				})
+			});
+			rules
+		});
 		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
 			.map(|s| s.name().to_string());
 		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
 		let msg = if has_guards {
 			let log = get_call_log(session_id);
 			let evaluation = crate::config::guardrails::evaluate_guards(
-				rules_opt.as_ref().unwrap(),
+				filtered.as_ref().unwrap(),
 				cap.as_deref(),
 				&call.parameters,
 				&log,
@@ -293,6 +377,7 @@ pub fn check_batch(
 		} else {
 			None
 		};
+		let msg = msg.or_else(|| admission.and_then(|a| a.message.clone()));
 		if msg.is_none() {
 			record_call(session_id, cap, call.parameters.clone());
 		}

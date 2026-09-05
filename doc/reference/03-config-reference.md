@@ -75,7 +75,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 12
+version = 13
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
@@ -583,7 +583,7 @@ internal thresholds. The `enabled` switches below control their respective model
 
 ### `[supervisor.model]`
 
-Optional partial profile shared by every supervisor mechanic: gate, resolve, plan, condense, extraction, recall,
+Optional partial profile shared by every supervisor mechanic: authorizer, gate, resolve, plan, condense, extraction, recall,
 retention, verification, and evolution. It accepts every field from `[model]`; omitted fields inherit main. Omitting the
 entire block uses `[model]` unchanged.
 
@@ -627,6 +627,16 @@ only if those pass.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable the verify-gate |
+
+### `[supervisor.authorizer]`
+
+Checks the exact proposed tool operations against user intent after native pre-call guards and before execution.
+Uses `[supervisor.model]`; unavailable decisions hold calls. Requires the supervisor master switch for root sessions.
+Inherited delegation constraints remain enforced in child sessions. See [Tool authorization](../usage/14-supervisor.md#tool-authorization).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable user-intent tool authorization |
 
 ### `[supervisor.plan]`
 
@@ -675,6 +685,9 @@ enabled = false
 
 [supervisor.gate]
 enabled = true
+
+[supervisor.authorizer]
+enabled = false
 
 [supervisor.plan]
 enabled = true

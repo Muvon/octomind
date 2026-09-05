@@ -32,9 +32,12 @@ pub async fn run_pipe_if_enabled(
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return Ok(input.to_string());
 	};
+	// Clear a transformed input abandoned by cancellation before the new pipe runs.
+	crate::supervisor::authorizer::note_pipe_input(&session_id, input, input);
 
 	match crate::session::pipe::run_pipe(&session_id, role, input, first_message_processed).await {
 		Ok(Some(transformed)) => {
+			crate::supervisor::authorizer::note_pipe_input(&session_id, input, &transformed);
 			log_info!(
 				"Pipe transformed input ({} → {} bytes)",
 				input.len(),

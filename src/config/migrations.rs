@@ -103,9 +103,29 @@ fn plan() -> MigrationPlan {
 				to: 12,
 				apply: unify_v12_model_profiles,
 			},
+			VersionMigration {
+				from: 12,
+				to: 13,
+				apply: add_v13_authorizer,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required opt-in authorizer without changing existing supervisor settings.
+fn add_v13_authorizer(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	merge_missing(supervisor, template_supervisor, "authorizer")
 }
 
 /// v12 nests one validated model profile under each actual model owner. Main is

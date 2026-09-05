@@ -373,6 +373,7 @@ mod adaptive_compression_tests {
 				consecutive_compressions: 0,
 				learning_stats: Default::default(),
 				verification_policy: Default::default(),
+				authorization: Default::default(),
 				evidence: Default::default(),
 			},
 			session_file: None,

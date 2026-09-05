@@ -742,6 +742,20 @@ pub fn display_info(output: &CommandOutput) {
 
 		// ── supervisor ─────────────────────────────────────────────────
 		if let Some(sstats) = supervisor_stats {
+			if let Some(authorizer) = sstats.get("authorizer") {
+				block_section_with("authorizer", "this session");
+				for key in ["checked", "blocked", "cached", "unavailable"] {
+					block_row(
+						key,
+						&authorizer
+							.get(key)
+							.and_then(|v| v.as_u64())
+							.unwrap_or(0)
+							.to_string(),
+						11,
+					);
+				}
+			}
 			let get_u64 = |k: &str| sstats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
 			let get_f64 = |k: &str| sstats.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
 			let calls = get_u64("calls");
@@ -750,6 +764,7 @@ pub fn display_info(output: &CommandOutput) {
 			let resolve_calls = get_u64("resolve_calls");
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
+			let authorize_calls = get_u64("authorize_calls");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
 			let memory_consolidations = get_u64("memory_consolidations");
@@ -920,6 +935,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if condense_calls > 0 {
 					parts.push(format!("{} condense", condense_calls));
+				}
+				if authorize_calls > 0 {
+					parts.push(format!("{} authorize", authorize_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

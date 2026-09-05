@@ -23,6 +23,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	// Pick up subagent/supervisor spend banked since the last API call so the
 	// session line is the real total, not just the main agent's share.
 	session.session.fold_external_spend();
+	crate::supervisor::authorizer::sync(session);
 	let info = &session.session.info;
 
 	let tokens_used = info.input_tokens + info.output_tokens;
@@ -118,6 +119,17 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		"extracted": session.learning_extracted,
 	});
 
+	let mut supervisor_stats = crate::supervisor::stats::snapshot();
+	if info.authorization.initialized || info.authorization.blocked > 0 {
+		let stats = supervisor_stats.get_or_insert_with(|| serde_json::json!({}));
+		stats["authorizer"] = serde_json::json!({
+			"enabled": (config.supervisor.enabled && config.supervisor.authorizer.enabled) || info.authorization.parent.is_some(),
+			"checked": info.authorization.checked,
+			"blocked": info.authorization.blocked,
+			"cached": info.authorization.cached,
+			"unavailable": info.authorization.unavailable,
+		});
+	}
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Info {
 			session_name: info.name.clone(),
@@ -143,7 +155,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			cache_markers_content: cache_stats.content_markers as u64,
 			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 			agents_stats: super::agents::get_agents_stats(),
-			supervisor_stats: crate::supervisor::stats::snapshot(),
+			supervisor_stats,
 			learning_stats,
 		},
 	)))

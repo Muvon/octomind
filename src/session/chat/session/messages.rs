@@ -73,6 +73,7 @@ impl ChatSession {
 
 	// Sync runtime state from ChatSession fields to session.info (for persistence)
 	fn sync_runtime_state(&mut self) {
+		crate::supervisor::authorizer::sync(self);
 		self.session.info.role = self.role.clone();
 		self.session.info.cache_next_user_message = self.cache_next_user_message;
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
@@ -310,6 +311,7 @@ impl ChatSession {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
+		crate::supervisor::authorizer::record_user_input(self, &message);
 		self.session.messages.push(message);
 		self.begin_turn_timing();
 		// A genuine turn gets a freshly retrieved pack. Clear the prior runtime

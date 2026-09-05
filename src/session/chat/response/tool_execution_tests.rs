@@ -106,6 +106,94 @@ fn template_config() -> Config {
 		.expect("parse default config template")
 }
 
+#[tokio::test]
+async fn authorizer_covers_inline_capability_calls_before_activation() {
+	let mut config = template_config();
+	config.supervisor.authorizer.enabled = true;
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.name = "authorizer-inline-test".into();
+	let mut processor = ToolProcessor::new();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let mut call = tap_call("capability");
+	call.parameters["prompt"] = serde_json::json!("activate shell");
+	let (results, _) = execute_tools_parallel(
+		vec![call],
+		"",
+		&mut session,
+		&config,
+		&mut processor,
+		rx,
+		OutputMode::Jsonl,
+	)
+	.await
+	.unwrap();
+	assert!(results[0].is_error());
+	assert!(results[0].extract_content().contains("[authorizer]"));
+	assert!(crate::session::guardrails::get_call_log(&session.session.info.name).is_empty());
+	crate::session::context::cleanup_session(&session.session.info.name);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+#[cfg(unix)]
+async fn authorizer_mixed_batch_executes_only_allowed_tool_and_skips_denied_hook() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let tmp = tempfile::tempdir().unwrap();
+	write_local_tool(
+		tmp.path(),
+		"allowed",
+		"#!/bin/sh\n# @description Read requested data.\necho permitted\n",
+	);
+	write_local_tool(
+		tmp.path(),
+		"denied",
+		"#!/bin/sh\n# @description Unrequested file write.\ntouch forbidden-marker\n",
+	);
+	write_local_tool(
+		tmp.path(),
+		"blocked-hook",
+		"#!/bin/sh\n# @description Test hook.\ntouch hook-marker\n",
+	);
+	std::fs::write(
+		tmp.path().join(".agents/guardrails.toml"),
+		"[[hook]]\nresult = 'authorizer'\nscript = '.agents/tools/blocked-hook'\n",
+	)
+	.unwrap();
+	let id = "authorizer-execution".to_string();
+	crate::session::context::with_session_id(id.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+		crate::session::context::set_session_workdir(&id, tmp.path().to_path_buf());
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![final_response(r#"{"decisions":[{"id":"0","decision":"allow","reason":"Read requested data","user_source":"","user_quote":"","overridden_guards":[]},{"id":"1","decision":"block","reason":"Unrequested write","user_source":"u1","user_quote":"Do not modify files","overridden_guards":[]}]}"#)]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let mut config = fake_provider_config();
+		config.supervisor.enabled = true;
+		config.supervisor.authorizer.enabled = true;
+		config.supervisor.condense.enabled = false;
+		config.supervisor.model.model = Some("ollama:fake-model".into());
+		let mut session = ChatSession::for_tests(vec![crate::session::Message {role:"user".into(),content:"Read data. Do not modify files".into(),id:Some("u1".into()),..Default::default()}]);
+		session.session.info.name = id.clone();
+		let mut processor = ToolProcessor::new();
+		let mut context = main_session_context(&mut session, &mut processor);
+		let calls = ["allowed", "denied"].iter().map(|name| crate::mcp::McpToolCall {tool_name:name.to_string(),tool_id:name.to_string(),parameters:serde_json::json!({})}).collect();
+		let (_tx,rx) = tokio::sync::watch::channel(false);
+		let (results, _) = execute_tools_in_context(calls, &mut context, &config, Some(rx), OutputMode::Jsonl).await.unwrap();
+		assert!(!results[0].is_error(), "{}",results[0].extract_content());
+		assert!(results[0].extract_content().contains("permitted"));
+		assert!(results[1].is_error());
+		assert_eq!(results[1].tool_id,"denied");
+		assert!(results[1].extract_content().contains("[authorizer]"));
+		assert!(!tmp.path().join("forbidden-marker").exists());
+		assert!(!tmp.path().join("hook-marker").exists());
+		assert_eq!(crate::session::guardrails::get_call_log(&id).len(),1);
+		crate::session::context::cleanup_session(&id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}).await;
+}
+
 fn message(role: &str, content: &str) -> crate::session::Message {
 	crate::session::Message {
 		role: role.to_string(),

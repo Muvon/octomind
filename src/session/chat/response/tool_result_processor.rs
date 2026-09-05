@@ -142,18 +142,26 @@ pub async fn process_tool_results(
 	)
 	.await
 	{
+		// See api_prep: ensure_context_within_ceiling below is the
+		// model-free fallback and reports its own error when the context
+		// still does not fit, so a failed compression call must not end the
+		// turn on its own.
 		if crate::session::chat::conversation_compression::within_ceiling_margin(
 			chat_session,
 			config,
 		)
 		.await
 		{
-			return Err(e.context("forced compression inside the context ceiling margin failed"));
+			log_info!(
+				"Forced compression inside the context ceiling margin failed during tool processing: {}. Falling back to deterministic trimming.",
+				e
+			);
+		} else {
+			log_debug!(
+				"Adaptive conversation compression failed during tool processing: {}.",
+				e
+			);
 		}
-		log_debug!(
-			"Adaptive conversation compression failed during tool processing: {}.",
-			e
-		);
 	}
 	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
 		chat_session,

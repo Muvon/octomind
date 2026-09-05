@@ -60,6 +60,7 @@ octomind
 | [Building from Source](dev/01-building-from-source.md) | Rust setup and development builds |
 | [Architecture](dev/02-architecture.md) | Source modules and internal flows |
 | [MCP Server Development](dev/03-mcp-server-development.md) | Building MCP servers for Octomind |
+| [Learning Benchmark](dev/05-learning-benchmark.md) | Retrieval and consolidation contract benchmark |
 
 ## Use Cases
 

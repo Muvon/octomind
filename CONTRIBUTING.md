@@ -32,17 +32,23 @@ git clone https://github.com/muvon/octomind
 cd octomind
 cargo build
 
-# Install pre-commit hooks (required)
+# Install pre-commit hooks (required, per clone)
 pip install pre-commit
-pre-commit install
+pre-commit install          # or: make pre-commit-install
 
-# Run checks manually
+# Run checks manually (same flags as the hooks and CI)
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo check --all-targets --all-features
+cargo test
+
+# One-shot: fmt + clippy + test
+make dev
 ```
 
 **Minimum Rust version:** 1.95 (enforced by `rust-version` in `Cargo.toml`).
+
+See [Building from Source](doc/dev/01-building-from-source.md) for prerequisites, Make targets, and cross-compilation.
 
 ---
 
@@ -105,15 +111,30 @@ Key files:
 
 | What | Where |
 |------|-------|
-| Tool routing | `src/mcp/mod.rs` → `try_execute_tool_call()` |
+| Tool routing | `src/mcp/mod.rs` → `try_execute_tool_call()` / `route_builtin_tool()` |
 | Tool map (name → server) | `src/mcp/tool_map.rs` |
-| Core tool definitions | `src/mcp/core/functions.rs` |
-| Runtime tool definitions | `src/mcp/runtime/mod.rs` |
+| Builtin `core` tools | `src/mcp/core/functions.rs` |
+| Builtin `orchestration` tools | `src/mcp/orchestration/mod.rs` |
+| Builtin `runtime` tools | `src/mcp/runtime/mod.rs` |
+| Builtin `agent_*` tools | `src/mcp/agent/functions.rs` |
 | Session main loop | `src/session/chat/session/main_loop.rs` |
 | Session commands | `src/session/chat/session/commands/` |
+| Session-scoped services | `src/session/context.rs` → `init_session_services()` |
 | Config types | `src/config/` |
 | Config defaults | `config-templates/default.toml` |
 | Directory constants | `src/directories.rs` |
+
+Builtin servers (each has its own match arm in `route_builtin_tool()` and `tool_map`):
+
+| Server | Tools |
+|--------|-------|
+| `core` | `recall` (conditional) |
+| `orchestration` | `tap`, `schedule`, `monitor` |
+| `runtime` | `mcp`, `agent`, `skill`, `capability` |
+| `agent` | generated `agent_<name>` delegation tools |
+| `local` | scripts auto-discovered from `<workdir>/.agents/tools/` |
+
+See [Architecture](doc/dev/02-architecture.md) for module-by-module detail.
 
 ### Config merge rules
 
@@ -129,15 +150,16 @@ Key files:
 
 ### New MCP Tool
 
-1. **Define** the tool schema in `src/mcp/core/functions.rs` → `get_all_functions()` (core) **or** `src/mcp/runtime/mod.rs` → `get_all_functions()` (runtime)
-2. **Implement** the handler in the same file/module
-3. **Route** in `src/mcp/mod.rs` → `route_builtin_tool()` — add a match arm under `"core"` or `"runtime"`
+1. **Define** the tool schema in the server's `get_all_functions()` — `src/mcp/core/functions.rs`, `src/mcp/orchestration/mod.rs`, or `src/mcp/runtime/mod.rs`
+2. **Implement** the handler in the same module
+3. **Route** in `src/mcp/mod.rs` → `route_builtin_tool()` — add a match arm under the server name
 4. **Register** in `src/mcp/tool_map.rs` — map the tool name to its server config
 
 Rules:
 - All failures return `Ok(McpToolResult::error(...))` — never `Err()`
 - Validate parameters explicitly; return a descriptive error for missing/wrong-type params
 - If a more specific tool exists for a use-case, append a hint (but only when that tool is actually enabled — see `src/mcp/hint_accumulator.rs`)
+- Dynamic tools use `register_dynamic_agent_tool()` / `register_dynamic_server_tools()` in `tool_map.rs`; tools registered by one session are rejected from another
 
 ```rust
 // ✅ parameter extraction pattern
@@ -159,9 +181,9 @@ match tool::execute(call).await {
 1. Create `src/session/chat/session/commands/<name>.rs` — implement the handler returning `CommandResult`
 2. Add `mod <name>;` in `commands/mod.rs` and a routing arm in `process_command()`
 3. If the command has a new result shape, add a `CommandOutput` variant to the enum in `commands/mod.rs`
-4. Add the constant to `src/session/chat/commands.rs` and the `COMMANDS` array
+4. Add the constant to `src/session/chat/commands.rs` and the `COMMANDS` array (it is a fixed-size array — bump the length)
 
-Note: `/done` is intercepted in `main_loop.rs` before reaching `process_command()`. The `DONE_COMMAND` arm in `process_command` is `unreachable!()` — do not add code there.
+Note: the CLI main loop and the ACP prompt path intercept `/done` before dispatch, but the ACP `octomind/command` ext-method and WebSocket command messages reach `process_command()` directly. The `DONE_COMMAND` arm there is real and transport-agnostic — keep it working.
 
 ### New Config Field
 
@@ -171,22 +193,22 @@ Note: `/done` is intercepted in `main_loop.rs` before reaching `process_command(
 
 ### New Session-Scoped State
 
-There are **five** session entry points that must all be updated together:
+There are **four** session entry points that must all be updated together:
 
 | Mode | Location |
 |------|----------|
 | Interactive / non-interactive CLI | `src/session/chat/session/main_loop.rs` → `init_session_runtime()` |
-| ACP `new_session` | `src/acp/agent.rs` ~line 568 |
-| ACP `initialize` | `src/acp/agent.rs` ~line 1166 |
-| WebSocket | `src/websocket/server.rs` ~line 625 |
+| ACP `new_session` | `src/acp/agent.rs` |
+| ACP `initialize` | `src/acp/agent.rs` |
+| WebSocket | `src/websocket/server.rs` |
 
-All session-scoped services are initialized through a single call:
+All session-scoped services are initialized through a single call inside the `with_session_id` context:
 
 ```rust
 crate::session::context::init_session_services(&role);
 ```
 
-Never call `init_inbox_for_session`, `init_job_manager`, or similar directly. If you add new session-scoped state, add it inside `init_session_services` and verify all five entry points call it.
+Never call `init_inbox_for_session`, `init_job_manager`, or similar directly. If you add new session-scoped state, add it inside `init_session_services` and verify every entry point still calls it (`rg init_session_services src`).
 
 ---
 
@@ -200,8 +222,9 @@ Never call `init_inbox_for_session`, `init_job_manager`, or similar directly. If
 
 ### Shared state
 
-- `Arc<Mutex<T>>` held across `.await` is a deadlock — use `tokio::sync::Mutex` or an actor with a channel
+- `std::sync::Mutex` held across `.await` is a deadlock — use `tokio::sync::Mutex` or an actor with a channel
 - Interior mutability (`RefCell`, `Mutex`) signals shared-state design — prefer ownership transfer or message passing
+- Session-keyed state lives in `src/session/context.rs` and is looked up via the task-local `SessionId` — never in process globals
 
 ### Abstractions
 
@@ -223,15 +246,16 @@ Never call `init_inbox_for_session`, `init_job_manager`, or similar directly. If
 
 ```rust
 // ✅ fail fast — surfaces the real problem
-let config = load_config().expect("failed to load config");
+let config = load_config().context("failed to load config")?;
 
 // ❌ hides real problems
 let config = load_config().unwrap_or_else(|_| default_config());
 ```
 
-- One error enum per crate boundary using `thiserror`; use `#[non_exhaustive]` from day one
-- Convert foreign errors at the boundary with `#[from]` — don't let `std::io::Error` leak through layers
-- Validate at real boundaries (user input, external APIs), not at internal seams you control
+- The crate uses `anyhow::Result` throughout; add `.context(...)` at the point where the caller loses the original meaning (file path, server name, session name)
+- `thiserror` enums only where callers must match on variants (`src/session/cancellation.rs`, `src/mcp/oauth/token_store.rs`) — don't introduce one for a single call site
+- Validate at real boundaries (user input, external APIs, MCP responses), not at internal seams you control
+- When we own the schema, required fields fail loudly — no silent fallbacks or graceful degradation
 - MCP tool execution: **always** `Ok(McpToolResult::error(...))`, never `Err()`
 
 ---
@@ -247,6 +271,8 @@ crate::log_error!("failure");  // always visible; ACP also writes JSONL sink
 ```
 
 - Use these macros exclusively — raw `println!` bypasses the spinner and wrong output path
+- Pass values as positional args (`log_debug!("x={}", x)`), not inline captures (`{x}`) — clippy runs with `-D warnings` and cannot see through the macro
+- No trailing comma after the last argument — the macros take `$($arg:expr),*`
 - Log **decisions and state transitions**, not mechanical step-by-step tracing
 - Do not add logging to investigate a bug you can fix directly
 
@@ -254,10 +280,19 @@ crate::log_error!("failure");  // always visible; ACP also writes JSONL sink
 
 ## Testing
 
-- Unit tests live in `#[cfg(test)] mod tests` next to the code they test
-- Integration tests in `tests/` exercise the public API as an external consumer
+- Unit test bodies live in sibling `<module>_tests.rs` files; the production file only declares the module:
+
+  ```rust
+  #[cfg(test)]
+  #[path = "feature_tests.rs"]
+  mod tests;
+  ```
+
+  Never add inline `#[cfg(test)] mod tests { ... }` bodies to production `.rs` files. Use a descriptive sibling name (`foo_inline_tests.rs`, `foo_coverage_tests.rs`) when one source file needs several test modules.
+- Integration tests in `tests/` exercise the binary and protocols end-to-end (ACP, WebSocket, PTY, MCP stub server); shell smoke tests live in `tests/smoke/`
+- In-crate tests that need a real LLM round trip use the fake-provider harness in `src/session/chat/test_support.rs`
 - Do not add tests speculatively — write them for real invariants
-- Do not run tests on behalf of contributors — they run `cargo test` themselves
+- `make coverage` runs `cargo-llvm-cov` with `_tests.rs` files excluded so percentages describe product code
 
 ---
 
@@ -270,10 +305,15 @@ The pre-commit hooks run automatically on `git commit`:
 | Format | `cargo fmt --all` |
 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` |
 | Compile | `cargo check --all-targets --all-features` |
-| Trailing whitespace | (general hook) |
-| File endings | (general hook) |
+| Trailing whitespace | `trailing-whitespace` |
+| File endings | `end-of-file-fixer` |
+| Merge conflicts | `check-merge-conflict` |
+| TOML / YAML syntax | `check-toml`, `check-yaml` |
+| Large files | `check-added-large-files` (max 1000 KB) |
 
-Install once with `pre-commit install`. All hooks must pass before a commit lands.
+Install once with `pre-commit install`. All hooks must pass before a commit lands. `make pre-commit` runs every hook over all files.
+
+CI (`.github/workflows/ci.yml`) runs the test suite across the toolchain matrix and publishes coverage; `dependencies.yml` runs `cargo audit`.
 
 ---
 
@@ -287,14 +327,17 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 [optional body]
 ```
 
-Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
+Types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `chore`, `build`, `style`
 
-Scopes match top-level modules: `mcp`, `session`, `config`, `acp`, `websocket`, `agent`, `learning`, `chat`, `schedule`, `sandbox`
+Scopes match top-level modules or subsystems: `mcp`, `session`, `supervisor`, `compression`, `config`, `acp`, `websocket`, `agent`, `learning`, `chat`, `commands`, `schedule`, `sandbox`, `deps`, `release`
+
+Append `!` after the scope for breaking changes (`refactor(config)!: ...`). `CHANGELOG.md` is generated at release time from these messages — the subject line is what users read.
 
 Examples:
 ```
 feat(mcp): add file_watch tool to core server
 fix(session): prevent race condition in spinner shutdown
+feat(usage)!: support pricing v2 allowances
 docs: add CONTRIBUTING.md
 refactor(config): consolidate merge logic into load()
 ```
@@ -306,16 +349,18 @@ refactor(config): consolidate merge logic into load()
 Before opening a pull request:
 
 - [ ] Apache 2.0 copyright header on every new `.rs` file
+- [ ] Unit test bodies in sibling `*_tests.rs` files, not production files
 - [ ] No `std::println!` / `std::eprintln!` — use crate macros
 - [ ] No `unwrap_or_else(|_| ...)` that swallows real errors
 - [ ] MCP tool failures return `Ok(McpToolResult::error(...))`, not `Err(...)`
 - [ ] New config fields added to `config-templates/default.toml` first, then the Rust type
-- [ ] Session-scoped state added to all five entry points (grep `init_session_services`)
+- [ ] Session-scoped state added inside `init_session_services`, every entry point still calls it
 - [ ] `mcp-*.toml` override behavior considered if adding config loading logic
 - [ ] `auto_bind` strings are exact-match — full role tag in both places
 - [ ] No hardcoded config values
 - [ ] `cargo fmt --all` clean
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean
+- [ ] `cargo test` passes
 - [ ] Every changed line traces directly to the request — no opportunistic cleanups
 
 ---
@@ -327,7 +372,8 @@ Before opening a pull request:
 | Return `Err()` from MCP tool execution | Callers expect `Ok(McpToolResult)` — always |
 | Use `std::println!` / `std::eprintln!` | Breaks the terminal spinner |
 | Use `unwrap_or_else(\|_\| default)` | Hides real failures silently |
-| Add session state to fewer than five entry points | Causes subtle mode-specific bugs |
+| Put test bodies inline in production files | Sibling `*_tests.rs` keeps product code readable and coverage honest |
+| Add session state outside `init_session_services` | Causes subtle mode-specific bugs across CLI / ACP / WebSocket |
 | Use `"stdin"` as MCP server type | Correct value is `"stdio"` |
 | Use `[role_name]` TOML sections for roles | Always `[[roles]]` with `name = "..."` |
 | Omit the copyright header | License compliance requirement |

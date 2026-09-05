@@ -82,14 +82,14 @@ try_execute_tool_call(call)                 [src/mcp/mod.rs]
 
 ### Session Lifecycle (CRITICAL INVARIANT)
 
-Five entry points all share the same initialization contract. When adding session-scoped state, ALL five must be updated:
+Four entry points all share the same initialization contract. When adding session-scoped state, ALL four must be updated:
 
 | Mode | Entry point |
 |------|-------------|
 | Interactive + non-interactive CLI | `src/session/chat/session/main_loop.rs` → `init_session_runtime()` |
-| ACP new_session | `src/acp/agent.rs` ~line 568 |
-| ACP initialize | `src/acp/agent.rs` ~line 1166 |
-| WebSocket | `src/websocket/server.rs` ~line 625 |
+| ACP new_session | `src/acp/agent.rs` (`rg init_session_services`) |
+| ACP initialize | `src/acp/agent.rs` |
+| WebSocket | `src/websocket/server.rs` |
 
 Required inside `with_session_id` context:
 ```rust
@@ -113,7 +113,7 @@ User input
   → response output
 ```
 
-`/done` is intercepted in `main_loop.rs` before reaching `process_command()` — the `DONE_COMMAND` branch in `process_command` is `unreachable!()`.
+`/done` is intercepted in `main_loop.rs` and the ACP prompt path, but the ACP `octomind/command` ext-method and WebSocket command messages reach `process_command()` directly — its `DONE_COMMAND` arm is real (`done::handle_done`), not `unreachable!()`.
 
 ## Code Patterns
 
@@ -287,7 +287,7 @@ Before any commit:
 - [ ] No `std::println!` / `std::eprintln!` — use crate macros
 - [ ] No `unwrap_or_else(|_| ...)` that swallows real errors
 - [ ] MCP tool failures return `Ok(McpToolResult::error(...))` not `Err(...)`
-- [ ] Session-scoped state added to all five entry points (grep `init_session_services`)
+- [ ] Session-scoped state added inside `init_session_services`; all four entry points still call it (grep `init_session_services`)
 - [ ] New config fields added to `config-templates/default.toml` first, then matching Rust type
 
 ## Gotchas
@@ -295,10 +295,10 @@ Before any commit:
 - **`mcp-*.toml` load order** — loads AFTER all base `*.toml` files regardless of sort order. `mcp-foo.toml` always wins over `mcp.toml` for same-named servers. This is the intended override mechanism.
 - **`auto_bind` is exact-match** — `"developer"` will NOT match role `"developer:general"`. Use the full tag in both places.
 - **`allowed_tools` non-empty silently filters** — any server not in the list has its tools dropped. `get_merged_config_for_role` auto-appends `"<server>:*"` for auto-bind servers, but watch for this when constructing configs manually.
-- **Five session entry points must stay in sync** — grep `init_session_services` before adding session-scoped state.
-- **`/done` bypasses `process_command`** — intercepted in `main_loop.rs`; the `DONE_COMMAND` arm in `process_command` is `unreachable!()`.
+- **Four session entry points must stay in sync** — grep `init_session_services` before adding session-scoped state.
+- **`/done` reaches `process_command` from ACP ext-method and WebSocket** — only the CLI main loop and ACP prompt path intercept it first; keep the `DONE_COMMAND` arm working.
 - **Log macros live in `src/config/mod.rs`**, not `src/lib.rs`. `lib.rs` only has the print macros.
-- **Builtin servers** — `core`: `plan`. `orchestration`: `tap`, `schedule` (orchestrator-tier). `runtime`: `mcp`, `agent`, `skill`, `capability` (tool-surface reconfiguration). `agent`: `agent_*`. Each is its own match arm in `route_builtin_tool()` and `tool_map`.
+- **Builtin servers** — `core`: conditional `recall` (plans are supervisor-internal). `orchestration`: `tap`, `schedule`, `monitor` (orchestrator-tier). `runtime`: `mcp`, `agent`, `skill`, `capability` (tool-surface reconfiguration). `agent`: `agent_*`. Each is its own match arm in `route_builtin_tool()` and `tool_map`.
 - **Dynamic tool session ownership** — tools registered by one session are rejected from another. Intentional isolation.
 - **Compression decision model** is separate from the main model — configured at `[compression.decision]` in config, not `model`.
 - **Supervisor stats are not anonymous telemetry** — `/info` and debug snapshots
@@ -310,7 +310,7 @@ Before any commit:
 - Return `Err()` from MCP tool execution — always `Ok(McpToolResult::error(...))`
 - Use `std::println!` / `std::eprintln!` anywhere in crate code — breaks the spinner
 - Use `unwrap_or_else(|_| default)` patterns that swallow real errors
-- Add session-scoped state to only some entry points — all five or none
+- Add session-scoped state to only some entry points — all four or none
 - Hardcode config values — all defaults belong in `config-templates/default.toml`
 - Use `"stdin"` as MCP server type — correct value is `"stdio"`
 - Use `[role_name]` TOML sections for roles — always `[[roles]]` with `name = "..."`

@@ -618,6 +618,11 @@ fn normalize_for_match(text: &str) -> String {
 /// silently dropped from the fold. At or above it, small packets render whole.
 const MIN_SUMMARIZE_RENDER_TOKENS: usize = 64;
 
+/// Text of the runtime-made reference unit that covers summarize packets the
+/// folder did not cite. Deliberately a fixed pointer, not the packets'
+/// descriptors: those already render per ID in `<recall_index>`.
+const UNCITED_EVIDENCE_TEXT: &str = "Evidence not folded; recall by ref via <recall_index>.";
+
 async fn allocate_lanes(
 	packets: &mut [EvidencePacket],
 	messages: &[Message],
@@ -1483,7 +1488,11 @@ impl PactContext {
 		});
 		// Coverage: every summarize-lane packet must be represented by a
 		// folded unit. Represent the ones the model skipped with reference
-		// units so their recall coordinates survive the drain.
+		// units so their recall coordinates survive the drain. The unit carries
+		// only its refs: the per-packet descriptor already renders verbatim in
+		// <recall_index>, and repeating it here was ~180 tokens of duplicated
+		// filler per unit that rode every request until the next fold (measured:
+		// 1.5k such units / 272k tokens across 288 archived sessions).
 		let referenced: HashSet<&str> = summary
 			.folded_units
 			.iter()
@@ -1500,19 +1509,8 @@ impl PactContext {
 			if summary.folded_units.len() >= 40 {
 				break;
 			}
-			let mut text = chunk
-				.iter()
-				.map(|packet| packet.descriptor.as_str())
-				.collect::<Vec<_>>()
-				.join("; ");
-			if text.trim().is_empty() {
-				text = "evidence retained for recall".into();
-			}
-			if text.chars().count() > 2_000 {
-				text = text.chars().take(2_000).collect();
-			}
 			summary.folded_units.push(FoldedUnit {
-				text,
+				text: UNCITED_EVIDENCE_TEXT.into(),
 				kind: "reference".into(),
 				status: "unknown".into(),
 				refs: chunk.iter().map(|packet| packet.id.clone()).collect(),

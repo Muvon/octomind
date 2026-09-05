@@ -624,6 +624,8 @@ fn repair_covers_uncited_summarize_packets_with_reference_units() {
 		summary.folded_units[0].refs,
 		vec!["b:selected-completed-state".to_string()]
 	);
+	// Refs only — the descriptor already lives in <recall_index>.
+	assert!(!summary.folded_units[0].text.contains("approximately"));
 	assert!(pact.validate_summary(&summary).is_ok());
 }
 

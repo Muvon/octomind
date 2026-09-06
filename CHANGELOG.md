@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.51.0] - 2026-09-06
+
+### 📋 Release Summary
+
+This release adds tool authorization for greater control over agent actions (c35ecc35). Existing authorization and chat behavior have been improved, including preserved call ordering, a fallback when compression fails, and clearer identification of LLM requests (9ba83aec, 92b9be72, 3c655753, b9fa66c3).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: add tool authorization `c35ecc35`
+
+### 🔧 Improvements & Optimizations
+
+- **auth**: rework authorization decisions `b9fa66c3`
+
+### 🐛 Bug Fixes & Stability
+
+- **client**: set user agent for LLM requests `3c655753`
+- **chat**: fall back to trimming after compression failure `92b9be72`
+- **authorizer**: preserve call indices `9ba83aec`
+
+### 🔄 Other Changes
+
+5 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.50.2] - 2026-09-05
 
 ### 📋 Release Summary

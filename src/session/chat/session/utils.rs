@@ -80,17 +80,23 @@ pub async fn get_initial_messages(
 	)
 	.await;
 
-	let welcome_msg = crate::session::Message {
-		role: "assistant".to_string(),
-		content: welcome_message,
-		timestamp: std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.unwrap_or_default()
-			.as_secs(),
-		cached: false,
-		..Default::default()
-	};
-	initial_messages.push(welcome_msg);
+	// An empty welcome means the role wants no greeting: there is nothing to say,
+	// so send nothing. Pushing it anyway put an assistant turn carrying no text,
+	// no tool call and no thinking at the head of every session, which a provider
+	// is entitled to reject as an empty message.
+	if !welcome_message.trim().is_empty() {
+		let welcome_msg = crate::session::Message {
+			role: "assistant".to_string(),
+			content: welcome_message,
+			timestamp: std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_secs(),
+			cached: false,
+			..Default::default()
+		};
+		initial_messages.push(welcome_msg);
+	}
 
 	// 2. Generate instructions message if AGENTS.md exists (user role)
 	let instructions_path = current_dir.join(AGENTS_FILE);

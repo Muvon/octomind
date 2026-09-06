@@ -3096,14 +3096,13 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.36.0"
+version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61474e4ce90c5bbe982f2d1b65d27401fd78bc5beffbbddba70e989cbabcd2ae"
+checksum = "11a5c4c57050406ec3500b79eeb538aea44701caf5fd7354f86a83b94c0e802b"
 dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
- "base64 0.22.1",
  "candle-core",
  "candle-nn",
  "candle-transformers",
@@ -6038,7 +6037,3 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
-
-[[patch.unused]]
-name = "octolib"
-version = "0.36.1"

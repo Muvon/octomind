@@ -32,8 +32,8 @@ opt-level = "s"         # Optimize for size while keeping vectorization ("z" dis
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-# octolib = { path = "../octolib", default-features = false, features = ["huggingface"] }
-octolib = { version = "0.36.0", default-features = false, features = ["huggingface"] }
+# octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface"] }
+octolib = { version = "0.36.1", default-features = false, features = ["llm", "embeddings", "huggingface"] }
 rmcp = { version = "3.1.4", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process

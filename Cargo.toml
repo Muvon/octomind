@@ -33,7 +33,7 @@ overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
 # octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface"] }
-octolib = { version = "0.36.1", default-features = false, features = ["llm", "embeddings", "huggingface"] }
+octolib = { version = "0.36.3", default-features = false, features = ["llm", "embeddings", "huggingface"] }
 rmcp = { version = "3.1.4", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process
@@ -53,7 +53,7 @@ tiktoken-rs = "0.12.0" # Token counter
 reqwest = { version = "0.13.4", features = ["json", "rustls", "gzip"], default-features = false }
 rustls-webpki = ">=0.103.12"
 flate2 = "1.1"
-zstd = "0.13"
+zstd = "0.14"
 anyhow = "1.0.104"
 serde_json = "1.0.151"
 clap = { version = "4.6.6", features = ["derive"] }
@@ -73,7 +73,7 @@ termimad = "0.35.2"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
 url = "2.5.8"
-dirs = "6.0.0"
+dirs = "7.0.0"
 glob = "0.3.4"
 ignore = "0.4.33"
 futures = "0.3.34"

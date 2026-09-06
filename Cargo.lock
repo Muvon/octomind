@@ -786,8 +786,8 @@ dependencies = [
  "compression-core",
  "flate2",
  "memchr",
- "zstd",
- "zstd-safe",
+ "zstd 0.13.3",
+ "zstd-safe 7.3.0",
 ]
 
 [[package]]
@@ -1246,6 +1246,15 @@ name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
 dependencies = [
  "dirs-sys",
 ]
@@ -2023,7 +2032,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "629d8f3bbeda9d148036d6b0de0a3ab947abd08ce90626327fc3547a49d59d97"
 dependencies = [
- "dirs",
+ "dirs 6.0.0",
  "futures",
  "indicatif 0.17.11",
  "libc",
@@ -3096,9 +3105,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.36.1"
+version = "0.36.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11a5c4c57050406ec3500b79eeb538aea44701caf5fd7354f86a83b94c0e802b"
+checksum = "7b486ad4f1d3f710015917c09363a48d8c458d0ad140424788188d909b1fed20"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3106,7 +3115,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
- "dirs",
+ "dirs 7.0.0",
  "fs4",
  "hex",
  "hf-hub",
@@ -3140,7 +3149,7 @@ dependencies = [
  "clap_complete",
  "colored",
  "crossterm",
- "dirs",
+ "dirs 7.0.0",
  "dotenvy",
  "flate2",
  "futures",
@@ -3190,7 +3199,7 @@ dependencies = [
  "uuid",
  "viuer",
  "which",
- "zstd",
+ "zstd 0.14.0",
 ]
 
 [[package]]
@@ -6001,7 +6010,16 @@ version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 7.3.0",
+]
+
+[[package]]
+name = "zstd"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf06bd8162af0734b344780deb55b42a2429ae430870d13fcc12f238e880fe6e"
+dependencies = [
+ "zstd-safe 8.0.0",
 ]
 
 [[package]]
@@ -6009,6 +6027,15 @@ name = "zstd-safe"
 version = "7.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae42c0555055784c70058d19ba8e275528e8a99a706684868ace5da4e716a4ab"
 dependencies = [
  "zstd-sys",
 ]

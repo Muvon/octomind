@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.51.1] - 2026-09-06
+
+### 📋 Release Summary
+
+This release improves session behavior by skipping empty welcome messages (87857a57). Dependencies were updated to incorporate the latest compression and directory-handling improvements (27340bd4).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: skip empty welcome messages `87857a57`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.51.0] - 2026-09-06
 
 ### 📋 Release Summary

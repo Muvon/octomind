@@ -1842,6 +1842,9 @@ pub async fn run_interactive_session_with_input(
 
 	// Keep the session alive while an asynchronous producer can still inject work.
 	// Schedules, monitors, and background agents all push to the inbox — drain it here.
+	// Resources already reconciled once, so a job that stays pending is nudged at
+	// most once per reconcile window rather than on every pass.
+	let mut nudged_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
 	loop {
 		// Flush any due schedule entries into the inbox first.
 		crate::mcp::orchestration::flush_due_to_inbox();
@@ -2018,6 +2021,13 @@ pub async fn run_interactive_session_with_input(
 		// can never hang the run forever. Armed only while background jobs are
 		// what is keeping the loop alive.
 		const BACKGROUND_JOB_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+		// The completion push is the fast path, but it is only a notification: the
+		// resource itself is the authority. A caller working to a deadline shorter
+		// than the backstop (a CI step, a benchmark case) would otherwise be killed
+		// mid-wait with nothing to show, so re-read the authority periodically and
+		// hand the model what it says. The job is left pending — this unblocks the
+		// turn without stealing the real completion path.
+		const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_secs(600);
 		tokio::select! {
 			_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 			_ = async {
@@ -2027,6 +2037,9 @@ pub async fn run_interactive_session_with_input(
 					std::future::pending::<()>().await;
 				}
 			} => {}
+			_ = tokio::time::sleep(BACKGROUND_JOB_RECONCILE), if has_background_jobs => {
+				reconcile_pending_background_jobs(&mut nudged_jobs).await;
+			}
 			_ = tokio::time::sleep(BACKGROUND_JOB_MAX_WAIT), if has_background_jobs => {
 				if let Some(session_id) = crate::session::context::current_session_id() {
 					crate::session::shell_jobs::clear_for_session(&session_id);
@@ -2054,6 +2067,62 @@ pub async fn run_interactive_session_with_input(
 	);
 	Ok(())
 	}).await
+}
+
+/// Re-read every still-pending background job from its resource — the authority
+/// for live status — and hand the model what it says.
+///
+/// A completion push can be lost (server restart, a resource that is never
+/// updated) and the model is told to end its turn and wait for one, so without
+/// this the turn waits until the safety backstop, which any caller with a
+/// shorter deadline never reaches. The job stays registered: this reports
+/// status, it does not complete the job, so the real completion path still
+/// delivers the output. Each job is reported once so a genuinely long build
+/// does not wake the model repeatedly.
+async fn reconcile_pending_background_jobs(nudged: &mut std::collections::HashSet<String>) {
+	const RESOURCE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	for job in crate::session::shell_jobs::pending_resources_for_session(&session_id) {
+		// A delivery already in flight will produce the real completion message.
+		if job.delivering || !nudged.insert(job.uri.clone()) {
+			continue;
+		}
+		let status = match tokio::time::timeout(
+			RESOURCE_READ_TIMEOUT,
+			crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
+		)
+		.await
+		{
+			Ok(Ok(text)) if !text.trim().is_empty() => text,
+			Ok(Ok(_)) => "the resource reports no status".to_string(),
+			Ok(Err(error)) => format!("reading the resource failed: {error}"),
+			Err(_) => "reading the resource timed out".to_string(),
+		};
+		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
+		crate::session::inbox::push_inbox_message_for_session(
+			&session_id,
+			crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::BackgroundJob {
+					id: job.uri.clone(),
+				},
+				content: format!(
+					"<background_job resource=\"{}\" state=\"status_check\" elapsed_secs=\"{elapsed}\">\n\
+					 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+					 {status}\n\
+					 </background_job>",
+					job.uri
+				),
+			},
+		);
+		log_debug!(
+			"background job {} had no completion signal after the reconcile window; \
+			 delivered a status snapshot",
+			job.uri
+		);
+	}
 }
 
 #[cfg(test)]

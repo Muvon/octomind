@@ -62,6 +62,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(PLAN_COMMAND, "Display current plan"),
 			(SKILL_COMMAND, "List skills or toggle by name"),
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
+			(WORKFLOW_COMMAND, "List tap workflows or run one"),
 			(
 				STATUS_COMMAND,
 				"Show active agents, MCP jobs, and command monitors",
@@ -2510,6 +2511,71 @@ fn status_str<'a>(value: &'a serde_json::Value, key: &str, default: &'a str) -> 
 
 fn status_u64(value: &serde_json::Value, key: &str) -> u64 {
 	value.get(key).and_then(|item| item.as_u64()).unwrap_or(0)
+}
+
+pub(super) fn display_workflow(output: &CommandOutput) {
+	let CommandOutput::Workflow { data } = output else {
+		return;
+	};
+	let subcommand = data
+		.get("subcommand")
+		.and_then(|v| v.as_str())
+		.unwrap_or("");
+	match subcommand {
+		"list" => {
+			let workflows = data
+				.get("workflows")
+				.and_then(|v| v.as_array())
+				.cloned()
+				.unwrap_or_default();
+			block_open("/workflow", Some("tap workflows"));
+			if workflows.is_empty() {
+				block_line(
+					&"No tap workflows installed. Add a tap with `octomind tap user/repo`."
+						.dimmed()
+						.to_string(),
+				);
+			} else {
+				let names: Vec<&str> = workflows
+					.iter()
+					.filter_map(|w| w.get("name").and_then(|v| v.as_str()))
+					.collect();
+				let kw = key_width(names.iter().copied());
+				for w in &workflows {
+					let name = w.get("name").and_then(|v| v.as_str()).unwrap_or("");
+					let desc = w.get("description").and_then(|v| v.as_str()).unwrap_or("");
+					block_row(name, &desc.dimmed().to_string(), kw);
+				}
+			}
+			block_close_ok("/workflow", Some(&format!("{} available", workflows.len())));
+			println!();
+		}
+		"run" => {
+			let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
+			block_open("/workflow", Some(name));
+			if let Some(text) = data.get("output").and_then(|v| v.as_str()) {
+				for line in text.lines() {
+					block_line(line);
+				}
+			}
+			let cost = data
+				.get("cost")
+				.and_then(|v| v.as_f64())
+				.map(|c| format!("${c:.4}"));
+			block_close_ok("/workflow", cost.as_deref());
+			println!();
+		}
+		"error" => {
+			block_open("/workflow", None);
+			let msg = data
+				.get("message")
+				.and_then(|v| v.as_str())
+				.unwrap_or("unknown error");
+			block_close_err("/workflow", msg);
+			println!();
+		}
+		_ => {}
+	}
 }
 
 pub(super) fn display_skill(output: &CommandOutput) {

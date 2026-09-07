@@ -48,6 +48,7 @@ mod usage;
 pub use usage::UsageWindow;
 mod utils;
 mod video;
+mod workflow;
 
 use super::super::commands::*;
 use super::core::ChatSession;
@@ -206,6 +207,9 @@ pub enum CommandOutput {
 	Schedule {
 		data: serde_json::Value,
 	},
+	Workflow {
+		data: serde_json::Value,
+	},
 	Status {
 		data: serde_json::Value,
 	},
@@ -318,6 +322,7 @@ impl CommandOutput {
 			Self::Report { .. } => display::display_report(self, config),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
+			Self::Workflow { .. } => display::display_workflow(self),
 			Self::Status { .. } => display::display_status(self),
 			Self::Learning { .. } => display::display_learning(self),
 			Self::Share { .. } => display::display_share(self),
@@ -425,6 +430,7 @@ pub async fn process_command(
 		PLAN_COMMAND => plan::handle_plan(session).await,
 		SKILL_COMMAND => skill::handle_skill(session, params).await,
 		SCHEDULE_COMMAND => schedule::handle_schedule(input, params).await,
+		WORKFLOW_COMMAND => workflow::handle_workflow(input, params).await,
 		STATUS_COMMAND => status::handle_status(params).await,
 		LEARNING_COMMAND => learning::handle_learning(session, params).await,
 		SHARE_COMMAND => share::handle_share(session).await,

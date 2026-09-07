@@ -146,7 +146,7 @@ For example, inspect available tools, the supervisor-managed plan, and backgroun
 the supervisor owns plan updates. `/share` uploads the log for viewing. `/analyze` starts a localhost bridge for the
 browser viewer without uploading the log through the share endpoint.
 
-There is no `/workflow` session command. See [Workflows](09-workflows.md) for stdin-driven CLI examples.
+`/workflow` lists tap workflows; `/workflow <name> <input>` runs one — it shells out to `octomind workflow <name> --format jsonl` with the input on stdin and returns the final step's output. See [Workflows](09-workflows.md) for the file format and CLI examples.
 
 ## Cost Monitoring
 

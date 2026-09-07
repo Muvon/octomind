@@ -71,13 +71,14 @@ Actions:
 - `list`       — show every run in this session: id, role, status (running|done|failed|cancelled), start time, workdir.
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
-- `capability` — trigger skill/capability auto-activation. Required: `prompt`."#.to_string(),
+- `capability` — trigger skill/capability auto-activation. Required: `prompt`.
+- `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. The result lands in your next turn like a `run`."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["run", "list", "stop", "discover", "capability"],
+					"enum": ["run", "list", "stop", "discover", "capability", "workflow"],
 					"description": "Action to perform"
 				},
 				"role": {
@@ -99,6 +100,14 @@ Actions:
 				"intent": {
 					"type": "string",
 					"description": "Free-text intent for discover (e.g., 'review a Singapore employment contract', 'debug a Kubernetes pod crash')."
+				},
+				"name": {
+					"type": "string",
+					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Omit to list installed workflows."
+				},
+				"input": {
+					"type": "string",
+					"description": "Input text for workflow — everything the workflow needs (URL, question, tab list); it starts with ZERO other context."
 				}
 			},
 			"required": ["action"]
@@ -127,10 +136,13 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		"stop" => handle_stop(call).await,
 		"discover" => handle_discover(call).await,
 		"capability" => handle_capability(call, config).await,
+		"workflow" => handle_workflow(call).await,
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!("Unknown action '{other}'. Use run, list, stop, discover, or capability."),
+			format!(
+				"Unknown action '{other}'. Use run, list, stop, discover, capability, or workflow."
+			),
 		)),
 	}
 }
@@ -155,6 +167,126 @@ async fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 		json!({
 			"count": entries.len(),
 			"runs": entries,
+		})
+		.to_string(),
+	))
+}
+
+/// `workflow`: list tap workflows, or run one as a background tap-run whose
+/// result is handed back through the inbox like a specialist reply.
+async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
+	let param = |key: &str| {
+		call.parameters
+			.get(key)
+			.and_then(|v| v.as_str())
+			.map(str::trim)
+			.filter(|s| !s.is_empty())
+			.map(str::to_string)
+	};
+	let Some(name) = param("name") else {
+		let workflows = crate::workflow::spawn::list_tap_workflows()?;
+		return Ok(McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			json!({
+				"count": workflows.len(),
+				"workflows": workflows,
+				"usage": "tap(action=\"workflow\", name=<name>, input=<everything the workflow needs>)",
+			})
+			.to_string(),
+		));
+	};
+	let Some(input) = param("input") else {
+		return Ok(McpToolResult::error(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Missing 'input' for workflow '{name}' (omit 'name' to list workflows)."),
+		));
+	};
+
+	let role = format!("workflow:{name}");
+	let id = tap_runs::generate_id(&role);
+	let workdir = crate::mcp::get_thread_working_directory()
+		.to_string_lossy()
+		.to_string();
+	let status = Arc::new(RwLock::new(TapJobStatus::Running));
+	let (cancel_tx, mut cancel_rx) = watch::channel(false);
+	tap_runs::register_job(TapJob {
+		id: id.clone(),
+		role: role.clone(),
+		workdir: workdir.clone(),
+		started_at: SystemTime::now(),
+		status: Arc::clone(&status),
+		cancel_tx,
+		live: Arc::new(RwLock::new(TapLiveState::default())),
+	});
+
+	let id_owned = id.clone();
+	let name_owned = name.clone();
+	let role_owned = role.clone();
+	let status_bg = Arc::clone(&status);
+	let session_id = crate::session::context::current_session_id();
+	tokio::spawn(async move {
+		let run = async move {
+			// A latched `stop` drops the runner future, which kills the child.
+			let cancelled = async {
+				loop {
+					if *cancel_rx.borrow() {
+						break;
+					}
+					if cancel_rx.changed().await.is_err() {
+						std::future::pending::<()>().await;
+					}
+				}
+			};
+			let outcome = tokio::select! {
+				r = crate::workflow::spawn::run_tap_workflow(&name_owned, &input) => Some(r),
+				_ = cancelled => None,
+			};
+			let (terminal, content) = match outcome {
+				Some(Ok(run)) => (
+					TapJobStatus::Done,
+					format!(
+						"[Workflow '{name_owned}' ({id_owned}) completed]\n\n{}",
+						run.output
+					),
+				),
+				Some(Err(e)) => (
+					TapJobStatus::Failed,
+					format!("[Workflow '{name_owned}' ({id_owned}) failed]\n\n{e:#}"),
+				),
+				None => (
+					TapJobStatus::Cancelled,
+					format!("[Workflow '{name_owned}' ({id_owned}) cancelled]"),
+				),
+			};
+			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::TapRun {
+					id: id_owned,
+					role: role_owned,
+				},
+				content,
+			});
+			if let Ok(mut s) = status_bg.write() {
+				if *s == TapJobStatus::Running {
+					*s = terminal;
+				}
+			}
+		};
+		if let Some(sid) = session_id {
+			crate::session::context::with_session_id(sid, run).await;
+		} else {
+			run.await;
+		}
+	});
+	Ok(McpToolResult::success(
+		call.tool_name.clone(),
+		call.tool_id.clone(),
+		json!({
+			"id": id,
+			"workflow": name,
+			"workdir": workdir,
+			"message": "Workflow started. Its result will be injected as a user message when ready; `stop` with this id cancels it.",
 		})
 		.to_string(),
 	))

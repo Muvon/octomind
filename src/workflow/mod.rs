@@ -22,6 +22,7 @@
 pub mod proc;
 pub mod run;
 pub mod schema;
+pub mod spawn;
 pub mod validate;
 
 pub use run::execute as execute_workflow;

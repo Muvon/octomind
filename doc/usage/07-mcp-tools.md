@@ -191,12 +191,14 @@ or browse the catalog.
 
 | Parameter | Type / requirement | Meaning |
 |-----------|--------------------|---------|
-| `action` | string, required | `"run"`, `"list"`, `"stop"`, `"discover"`, `"capability"` |
+| `action` | string, required | `"run"`, `"list"`, `"stop"`, `"discover"`, `"capability"`, `"workflow"` |
 | `role` | string | Role tag in `category:variant` form. Required for `run` when `session` is not given. |
 | `prompt` | string | User message for `run`, or capability intent for `capability`. Required for those actions. |
 | `session` | string | Run id (e.g. `tap-developer-general-a3f1c2`). Required for `stop`. For `run`, supply this to resume an existing run instead of starting a new one. |
 | `workdir` | string | Working directory the role operates in. Optional — defaults to the parent session's current cwd. |
 | `intent` | string | Free-text intent for `discover`. |
+| `name` | string | Tap workflow name for `workflow`; omit to list installed workflows. |
+| `input` | string | Input text for `workflow` (required with `name`). |
 
 | Action | Description |
 |--------|-------------|
@@ -205,6 +207,7 @@ or browse the catalog.
 | `stop` | Cancel a running role by id. Sends a watch-channel signal; the run aborts at its next checkpoint. |
 | `discover` | Semantic match free-text intent against installed roles' titles/descriptions. Requires the local embedding model (errors if not ready). Returns roles scoring above 0.2 cosine, top 5. |
 | `capability` | Run the prompt through the same skill/capability auto-activation path used for user messages. |
+| `workflow` | Run an installed tap workflow (`name` + `input`) as a background run; the final step's output is injected later. Without `name`, list installed workflows. `stop` with the returned id cancels it. |
 
 ```jsonl
 {"action": "discover", "intent": "review this codebase"}

@@ -153,7 +153,7 @@ injection correctness can be inspected.
 
 ### `/help`
 
-Show 27 built-ins with descriptions plus custom `/run` commands. `/usage` and `/login` are valid commands but are absent
+Show 29 built-ins with descriptions plus custom `/run` commands. `/usage` and `/login` are valid commands but are absent
 from the terminal-rendered list.
 
 > **Note:** `/?` appears in autocomplete but is **not wired into the command dispatcher** — typing it falls through as user input in the CLI. Only `/help` shows help.

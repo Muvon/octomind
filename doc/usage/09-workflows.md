@@ -657,6 +657,20 @@ stdout then carries newline-delimited JSON:
 Per-step progress still goes to stderr in both modes. For a real execution, only `jsonl` produces result events on
 stdout. Other `--format` strings are accepted but use the plain workflow path.
 
+## Run from inside a session
+
+Two session-side entry points share the CLI runner (`src/workflow/spawn.rs`): each spawns
+`octomind workflow <name> --format jsonl` with the input on stdin, inherits the environment, and returns the final step's
+`assistant` text.
+
+- `/workflow` lists installed tap workflows; `/workflow <name> <input…>` runs one and blocks the slash-command path until
+  it finishes. Everything after the name is the input, verbatim.
+- The `tap` tool: `tap(action="workflow", name="<name>", input="…")` runs it as a background tap-run and injects the
+  result into the session inbox like a specialist reply; `tap(action="workflow")` with no name lists them;
+  `tap(action="stop", session=<id>)` kills a running one. See [MCP Tools](07-mcp-tools.md#tap-tool-run-specialist-roles-from-taps).
+
+Only tap workflows resolve by name here — local TOML paths are a CLI-only feature.
+
 ## Check the Execution Plan
 
 `octomind workflow myflow.toml --dry-run` validates the file, resolves the execution graph, and prints the plan to

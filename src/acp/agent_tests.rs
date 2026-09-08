@@ -1001,6 +1001,48 @@ async fn prompt_runs_a_full_turn_against_the_scripted_provider() {
 
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
+async fn prompt_reports_request_spending_stop_in_response_meta() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		crate::session::chat::test_support::tool_call_response(
+			"no_such_tool_zzz",
+			serde_json::json!({}),
+		),
+	])
+	.await;
+	let agent = acp_agent();
+	agent.config.borrow_mut().max_request_spending_threshold = 0.0001;
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+	session.session.info.total_cost = 1.0;
+
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			install_session(&agent, "spending-stop", session).await;
+			let response = agent
+				.prompt(PromptRequest::new(
+					"spending-stop",
+					vec!["use the tool".into()],
+				))
+				.await
+				.expect("spending stop completes the prompt");
+			assert!(matches!(response.stop_reason, StopReason::EndTurn));
+			assert_eq!(
+				response
+					.meta
+					.as_ref()
+					.and_then(|meta| meta.get("octomind.spending_stop")),
+				Some(&serde_json::Value::String("request".to_string()))
+			);
+			context::cleanup_session(&"spending-stop".to_string());
+		})
+		.await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
 async fn prompt_streams_tool_lifecycle_updates() {
 	let _data = TestDataDirGuard::new();
 	let _env = StubEnv::new(vec![

@@ -20,6 +20,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 
 use octomind::config::Config;
+use octomind::session::chat::session::{SpendingStop, EXIT_SPENDING_STOP};
 
 mod commands;
 
@@ -168,6 +169,14 @@ async fn main() -> Result<(), anyhow::Error> {
 	// Make sure to clean up any started server processes
 	if let Err(e) = octomind::mcp::server::cleanup_servers() {
 		octomind::log_error!("Warning: Error cleaning up MCP servers: {}", e);
+	}
+
+	if let Err(e) = &result {
+		if let Some(stop) = e.downcast_ref::<SpendingStop>() {
+			eprintln!("Stopped: {stop} spending threshold reached");
+			octomind::telemetry::flush().await;
+			std::process::exit(EXIT_SPENDING_STOP);
+		}
 	}
 
 	if let Err(e) = &result {

@@ -1712,6 +1712,7 @@ pub async fn run_interactive_session_with_input(
 	// On follow-up failure the history already contains valid assistant(tool_calls) +
 	// tool_results — truncating would discard completed tool work.
 	let messages_before_api = chat_session.session.messages.len();
+	chat_session.start_request_spending_tracking();
 	let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
 		// For JSONL mode, set up a notification channel so MCP server notifications
 		// are forwarded as structured JSON lines alongside the regular output.
@@ -2065,6 +2066,9 @@ pub async fn run_interactive_session_with_input(
 		sandbox,
 		mcp_servers,
 	);
+	if let Some(stop) = chat_session.spending_stop {
+		return Err(stop.into());
+	}
 	Ok(())
 	}).await
 }

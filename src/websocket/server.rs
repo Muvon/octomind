@@ -555,6 +555,12 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					}
 
 					// Send cost update after processing.
+					if let Some(stop) = chat_session.spending_stop {
+						let _ = ctx.bg_tx.send(ServerMessage::status(
+							format!("Stopped: {stop} spending threshold reached"),
+							Some(session_id.clone()),
+						));
+					}
 					let total_tokens = chat_session.session.info.input_tokens
 						+ chat_session.session.info.output_tokens
 						+ chat_session.session.info.cache_read_tokens
@@ -1337,6 +1343,7 @@ async fn handle_user_message(
 	// Save session
 	log_debug!("Saving session: {}", session_id);
 	let save_result = chat_session.save();
+	let spending_stop = chat_session.spending_stop;
 	let total_tokens = chat_session.session.info.input_tokens
 		+ chat_session.session.info.output_tokens
 		+ chat_session.session.info.cache_read_tokens
@@ -1377,6 +1384,16 @@ async fn handle_user_message(
 
 	match api_result {
 		Ok(_) => {
+			if let Some(stop) = spending_stop {
+				send_message(
+					ws_sender,
+					&ServerMessage::status(
+						format!("Stopped: {stop} spending threshold reached"),
+						Some(session_id.clone()),
+					),
+				)
+				.await?;
+			}
 			// Cost message (events already emitted via sink — no reconstruction needed)
 			send_message(ws_sender, &cost_msg).await?;
 		}

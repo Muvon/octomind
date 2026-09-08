@@ -1083,6 +1083,8 @@ impl OctomindAgent {
 						.entry(session_id.to_string())
 						.or_default()
 						.new_operation();
+					// Per-request spending boundary (see websocket/server.rs handle_user_message).
+					chat_session.start_request_spending_tracking();
 					if let Err(e) =
 						prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone())
 							.await
@@ -1185,6 +1187,8 @@ impl OctomindAgent {
 			}
 
 			// Prepare for API call
+			// Per-request spending boundary (see websocket/server.rs handle_user_message).
+			chat_session.start_request_spending_tracking();
 			if let Err(e) =
 				prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone())
 					.await
@@ -1331,6 +1335,22 @@ impl OctomindAgent {
 
 			// Wait for the forwarding task to drain any remaining messages
 			let _ = forward_task.await;
+			let spending_stop = chat_session.spending_stop;
+
+			if let Some(stop) = spending_stop {
+				let conn = self.conn.borrow().clone();
+				if let Some(conn) = conn {
+					let text = format!("Stopped: {stop} spending threshold reached");
+					let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(text.into()));
+					let notif = SessionNotification::new(
+						std::sync::Arc::<str>::from(session_id.as_str()),
+						update,
+					);
+					if let Err(e) = conn.send_notification(notif) {
+						log_error!("ACP: failed to send spending stop: {}", e);
+					}
+				}
+			}
 
 			// Report this turn's verification verdict to the parent on the same
 			// `_meta` side-channel usage rides. A parent that delegates sees only
@@ -1351,6 +1371,12 @@ impl OctomindAgent {
 					"octomind.verified".to_string(),
 					serde_json::Value::Bool(verified),
 				);
+				if let Some(stop) = spending_stop {
+					meta.insert(
+						"octomind.spending_stop".to_string(),
+						serde_json::Value::String(stop.to_string()),
+					);
+				}
 				meta.insert(
 					"octomind.pending_work".to_string(),
 					serde_json::Value::Bool(crate::session::has_pending_async_work()),
@@ -1392,6 +1418,12 @@ impl OctomindAgent {
 						"octomind.pending_work".to_string(),
 						serde_json::Value::Bool(crate::session::has_pending_async_work()),
 					);
+					if let Some(stop) = spending_stop {
+						meta.insert(
+							"octomind.spending_stop".to_string(),
+							serde_json::Value::String(stop.to_string()),
+						);
+					}
 					Ok(PromptResponse::new(stop_reason).meta(meta))
 				}
 				Err(e) => {

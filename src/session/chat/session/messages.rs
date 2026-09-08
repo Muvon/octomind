@@ -14,7 +14,7 @@
 
 // Session message operations
 
-use super::core::ChatSession;
+use super::core::{ChatSession, SpendingStop};
 use crate::config::Config;
 use crate::session::ProviderExchange;
 use crate::{log_debug, log_info};
@@ -103,6 +103,7 @@ impl ChatSession {
 		if cost_since_checkpoint >= threshold {
 			// In ACP/WebSocket mode stdout/stderr are reserved for protocol — auto-decline silently
 			if crate::logging::tracing_setup::is_structured_output_mode() {
+				self.spending_stop = Some(SpendingStop::Session);
 				return Ok(false);
 			}
 
@@ -137,6 +138,7 @@ impl ChatSession {
 					"{}",
 					"Spending threshold reached but automatically declining in non-interactive mode. Stopping execution.".bright_red()
 				);
+				self.spending_stop = Some(SpendingStop::Session);
 				return Ok(false);
 			}
 
@@ -165,6 +167,7 @@ impl ChatSession {
 					"{}",
 					"✗ Session cancelled by user due to spending threshold.".bright_red()
 				);
+				self.spending_stop = Some(SpendingStop::Session);
 				Ok(false)
 			}
 		} else {
@@ -215,6 +218,7 @@ impl ChatSession {
 				println!();
 			}
 
+			self.spending_stop = Some(SpendingStop::Request);
 			return Ok(false); // Stop execution
 		}
 
@@ -224,6 +228,7 @@ impl ChatSession {
 	// Initialize request spending checkpoint at the start of a new request
 	pub fn start_request_spending_tracking(&mut self) {
 		self.request_spending_checkpoint = self.session.info.total_cost;
+		self.spending_stop = None;
 	}
 
 	// Write the initial SUMMARY entry the first time we touch the session file.

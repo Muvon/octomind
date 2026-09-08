@@ -159,6 +159,30 @@ pub(crate) fn generate_session_name() -> String {
 	format!("{}-{}-{}-{}", date_str, basename, time_str, short_uuid)
 }
 
+/// Which spending threshold stopped the current request. Set by the checks in
+/// messages.rs, cleared at the next request boundary. Read by the front-ends
+/// that cannot prompt (piped `run`, ACP, WebSocket) so a budget stop is
+/// distinguishable from a finished turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendingStop {
+	Session,
+	Request,
+}
+
+impl std::fmt::Display for SpendingStop {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.write_str(match self {
+			Self::Session => "session",
+			Self::Request => "request",
+		})
+	}
+}
+
+impl std::error::Error for SpendingStop {}
+
+/// sysexits EX_TEMPFAIL — the run is resumable, unattended callers branch on it.
+pub const EXIT_SPENDING_STOP: i32 = 75;
+
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
 	pub session: Session,
@@ -185,9 +209,10 @@ pub struct ChatSession {
 	pub cache_next_user_message: bool, // Flag to cache the next user message
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
 	pub request_spending_checkpoint: f64, // Track spending at start of current request
+	pub spending_stop: Option<SpendingStop>,
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 	pub pending_video: Option<crate::session::video::VideoAttachment>, // Pending video attachment
-	pub max_retries: u32,              // Maximum number of retries for provider errors
+	pub max_retries: u32, // Maximum number of retries for provider errors
 	pub retry_timeout: u64,
 	pub request_timeout_seconds: u64,
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
@@ -401,8 +426,9 @@ impl ChatSession {
 			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 			request_spending_checkpoint: 0.0,   // Initialize request spending checkpoint
-			pending_image: None,                // Initialize pending image
-			pending_video: None,                // Initialize pending video
+			spending_stop: None,
+			pending_image: None, // Initialize pending image
+			pending_video: None, // Initialize pending video
 			max_retries: profile.max_retries,
 			retry_timeout: profile.retry_timeout,
 			request_timeout_seconds: profile.request_timeout_seconds,
@@ -617,8 +643,9 @@ impl ChatSession {
 						cache_next_user_message: cache_next, // Restore from session.info
 						spending_threshold_checkpoint: spending_checkpoint, // Restore from session.info
 						request_spending_checkpoint: 0.0, // Initialize request spending checkpoint
-						pending_image: None,           // Initialize pending image
-						pending_video: None,           // Initialize pending video
+						spending_stop: None,
+						pending_image: None, // Initialize pending image
+						pending_video: None, // Initialize pending video
 						max_retries: effective_profile.max_retries,
 						retry_timeout: effective_profile.retry_timeout,
 						request_timeout_seconds: effective_profile.request_timeout_seconds,
@@ -1443,6 +1470,7 @@ impl ChatSession {
 			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
 			request_spending_checkpoint: 0.0,
+			spending_stop: None,
 			pending_image: None,
 			pending_video: None,
 			max_retries: 0,

@@ -267,6 +267,10 @@ async fn test_process_tool_results_request_spending_stop_returns_none() {
 		.expect("spending stop is a clean exit, not an error");
 
 	assert!(outcome.is_none());
+	assert_eq!(
+		session.spending_stop,
+		Some(crate::session::chat::session::SpendingStop::Request)
+	);
 	// Both tool results were appended as tool-role messages before the stop
 	let tool_messages: Vec<&crate::session::Message> = session
 		.session

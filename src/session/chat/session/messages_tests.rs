@@ -111,12 +111,16 @@ fn spending_thresholds_stop_execution_only_when_exceeded() {
 	// Over threshold with non-interactive stdin → auto-decline
 	session.session.info.total_cost = 2.0;
 	assert!(!session.check_spending_threshold(&config).unwrap());
+	assert_eq!(session.spending_stop, Some(SpendingStop::Session));
 
 	// Request-level threshold stops the request
 	config.max_request_spending_threshold = 0.5;
 	session.start_request_spending_tracking();
 	session.session.info.total_cost += 1.0;
 	assert!(!session.check_request_spending_threshold(&config).unwrap());
+	assert_eq!(session.spending_stop, Some(SpendingStop::Request));
+	session.start_request_spending_tracking();
+	assert_eq!(session.spending_stop, None);
 }
 
 #[test]

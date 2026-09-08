@@ -204,10 +204,12 @@ pub async fn process_tool_results(
 				// User chose not to continue due to spending threshold
 				// Stop global animation before returning
 				animation_manager.stop_current().await;
-				println!(
-					"{}",
-					"✗ Tool follow-up cancelled due to spending threshold.".bright_red()
-				);
+				if !crate::logging::tracing_setup::is_structured_output_mode() {
+					println!(
+						"{}",
+						"✗ Tool follow-up cancelled due to spending threshold.".bright_red()
+					);
+				}
 				return Ok(None);
 			}
 		}
@@ -229,10 +231,13 @@ pub async fn process_tool_results(
 				// Request spending threshold exceeded - stop execution
 				// Stop global animation before returning
 				animation_manager.stop_current().await;
-				println!(
-					"{}",
-					"✗ Tool follow-up cancelled due to request spending threshold.".bright_red()
-				);
+				if !crate::logging::tracing_setup::is_structured_output_mode() {
+					println!(
+						"{}",
+						"✗ Tool follow-up cancelled due to request spending threshold."
+							.bright_red()
+					);
+				}
 				return Ok(None);
 			}
 		}

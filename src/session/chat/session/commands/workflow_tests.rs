@@ -34,19 +34,34 @@ fn split_input_rejects_missing_input() {
 }
 
 #[tokio::test]
-async fn missing_input_is_a_usage_error_not_a_run() {
-	let res = handle_workflow("/workflow watch-page", &["watch-page"])
-		.await
-		.unwrap();
-	let CommandResult::HandledWithOutput(out) = res else {
+#[serial_test::serial]
+async fn name_without_input_shows_definition_not_a_run() {
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	let dir = tempfile::tempdir().expect("temp data dir");
+	std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
+	// Pre-create the default tap dir so `load_taps` never tries to clone it.
+	let wf_dir = dir
+		.path()
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("workflows");
+	std::fs::create_dir_all(&wf_dir).expect("workflows dir");
+	std::fs::write(wf_dir.join("watch-page.toml"), "description = \"d\"\n").expect("workflow");
+
+	let res = handle_workflow("/workflow watch-page", &["watch-page"]).await;
+	match previous {
+		Some(old) => std::env::set_var("OCTOMIND_DATA_DIR", old),
+		None => std::env::remove_var("OCTOMIND_DATA_DIR"),
+	}
+	let CommandResult::HandledWithOutput(out) = res.unwrap() else {
 		panic!("expected output");
 	};
 	let CommandOutput::Workflow { data } = *out else {
 		panic!("expected workflow output");
 	};
-	assert_eq!(data["subcommand"], "error");
-	assert!(data["message"]
-		.as_str()
-		.unwrap()
-		.starts_with("usage: /workflow watch-page"));
+	assert_eq!(data["subcommand"], "show");
+	assert_eq!(data["name"], "watch-page");
+	assert_eq!(data["source_tap"], "muvon/tap");
+	assert_eq!(data["definition"], "description = \"d\"\n");
 }

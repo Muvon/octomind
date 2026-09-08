@@ -2550,6 +2550,21 @@ pub(super) fn display_workflow(output: &CommandOutput) {
 			block_close_ok("/workflow", Some(&format!("{} available", workflows.len())));
 			println!();
 		}
+		"show" => {
+			let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
+			let source = data
+				.get("source_tap")
+				.and_then(|v| v.as_str())
+				.unwrap_or("");
+			block_open("/workflow", Some(name));
+			if let Some(text) = data.get("definition").and_then(|v| v.as_str()) {
+				for line in text.lines() {
+					block_line(line);
+				}
+			}
+			block_close_ok("/workflow", Some(&format!("from {source}, not run")));
+			println!();
+		}
 		"run" => {
 			let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
 			block_open("/workflow", Some(name));

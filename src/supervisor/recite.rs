@@ -35,20 +35,32 @@ const CONSTRAINTS_MAX: usize = 8;
 /// negation is almost always descriptive prose, not a directive.
 const CONSTRAINT_LEN_MAX: usize = 200;
 
-/// Deterministically extract explicit prohibitions from the user's request —
-/// "do not X", "never Y", "must not Z". These are the instructions models
+/// Deterministically extract the request's binding requirements — both explicit
+/// prohibitions ("do not X", "never Y", "must not Z") and explicit acceptance
+/// criteria ("must remain W", "preserve V"). These are the instructions models
 /// violate mid-task as prompt attention decays, so they get re-recited at the
 /// context tail verbatim. Domain-agnostic: matches directive phrasing, not any
 /// particular subject. High precision by construction: unit must be a short
-/// non-question sentence/line containing a strong negative imperative.
+/// non-question sentence/line containing a strong imperative.
+///
+/// Prohibitions alone are not the whole contract. A request that spells out the
+/// behaviours an accepted fix must exhibit is stating requirements just as
+/// binding as its "do not"s, and reciting only the negatives under a heading
+/// that claims to list what "voids the work" hands the model an authoritative
+/// but partial spec — it then satisfies the recited subset and stops.
 pub fn extract_constraints(task: &str) -> Vec<String> {
-	const MARKERS: [&str; 6] = [
+	const MARKERS: [&str; 11] = [
 		"do not ",
 		"don't ",
 		"never ",
 		"must not ",
 		"not allowed",
 		"forbidden",
+		"must remain ",
+		"must stay ",
+		"must still ",
+		"must be preserved",
+		"preserve ",
 	];
 	let mut out: Vec<String> = Vec::new();
 	let mut in_fence = false;
@@ -140,6 +152,12 @@ fn is_quoted_material(trimmed: &str) -> bool {
 	};
 	if first == '>' || matches!(first, '│' | '╭' | '╰' | '├' | '└' | '┃' | '▸' | '┆' | '║')
 	{
+		return true;
+	}
+	// A markdown heading names a section or restates a symptom ("# Code blocks
+	// sometimes don't render first character"); it is never the directive the
+	// requester issued, so reciting it as binding crowds out the real ones.
+	if first == '#' {
 		return true;
 	}
 	// `NN:` line-number prefix — a pasted code/file excerpt.

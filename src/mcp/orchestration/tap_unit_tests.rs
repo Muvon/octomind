@@ -492,3 +492,47 @@ async fn discover_reports_tap_enumeration_failures() {
 		"content: {content}"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// workflow
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[serial]
+async fn workflow_name_without_input_shows_definition_and_runs_nothing() {
+	let guard = TempDataDir::new();
+	// Pre-create the default tap dir so `load_taps` never tries to clone it.
+	let wf_dir = guard
+		.path()
+		.join("taps")
+		.join("muvon")
+		.join("octomind-tap")
+		.join("workflows");
+	std::fs::create_dir_all(&wf_dir).expect("workflows dir");
+	let toml = "description = \"watch a page\"\n[[steps]]\nname = \"s\"\nrole = \"developer:general\"\nprompt = \"Watch:\\n{{input}}\"\n";
+	std::fs::write(wf_dir.join("watch-page.toml"), toml).expect("write workflow");
+	let before = tap_runs::list_jobs().len();
+
+	let result = execute_tap_command(
+		&tap_call(json!({"action": "workflow", "name": "watch-page"})),
+		&unit_config(),
+	)
+	.await
+	.expect("dispatch");
+	assert!(!result.is_error(), "{}", result.extract_content());
+	let body: serde_json::Value =
+		serde_json::from_str(&result.extract_content()).expect("json body");
+	assert_eq!(body["name"], "watch-page");
+	assert_eq!(body["source_tap"], "muvon/tap");
+	assert_eq!(body["definition"], toml);
+	assert_eq!(tap_runs::list_jobs().len(), before, "nothing was launched");
+
+	let missing = execute_tap_command(
+		&tap_call(json!({"action": "workflow", "name": "nope"})),
+		&unit_config(),
+	)
+	.await
+	.expect("dispatch");
+	assert!(missing.is_error());
+	assert!(missing.extract_content().contains("nope"));
+}

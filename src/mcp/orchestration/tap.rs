@@ -72,7 +72,7 @@ Actions:
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
 - `capability` — trigger skill/capability auto-activation. Required: `prompt`.
-- `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
+- `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. With `name` but no `input`: nothing runs; returns the workflow definition (its steps and where `{{input}}` lands) so you can compose the input, then call again with `input`. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -103,7 +103,7 @@ Actions:
 				},
 				"name": {
 					"type": "string",
-					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Only pass a name the user explicitly asked to run. Omit to list installed workflows."
+					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Only pass a name the user explicitly asked to run. Omit to list installed workflows; pass it without `input` to inspect the definition."
 				},
 				"input": {
 					"type": "string",
@@ -172,8 +172,9 @@ async fn handle_list(call: &McpToolCall) -> Result<McpToolResult> {
 	))
 }
 
-/// `workflow`: list tap workflows, or run one as a background tap-run whose
-/// result is handed back through the inbox like a specialist reply.
+/// `workflow`: list tap workflows, show one's definition, or run one as a
+/// background tap-run whose result is handed back through the inbox like a
+/// specialist reply.
 async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 	let param = |key: &str| {
 		call.parameters
@@ -197,11 +198,26 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	};
 	let Some(input) = param("input") else {
-		return Ok(McpToolResult::error(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			format!("Missing 'input' for workflow '{name}' (omit 'name' to list workflows)."),
-		));
+		// Name without input = show the definition, so the caller can see
+		// where `{{input}}` lands before composing it.
+		return Ok(match crate::agent::taps::fetch_workflow(&name) {
+			Ok((definition, source_tap)) => McpToolResult::success(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				json!({
+					"name": name,
+					"source_tap": source_tap,
+					"definition": definition,
+					"usage": "Nothing was run. Read where `{{input}}` lands in the steps, then call again with `input` to start it.",
+				})
+				.to_string(),
+			),
+			Err(e) => McpToolResult::error(
+				call.tool_name.clone(),
+				call.tool_id.clone(),
+				format!("{e:#}"),
+			),
+		});
 	};
 
 	let role = format!("workflow:{name}");

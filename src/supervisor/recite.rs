@@ -34,6 +34,11 @@ const CONSTRAINTS_MAX: usize = 8;
 /// A genuine instruction is short; a long sentence merely *containing* a
 /// negation is almost always descriptive prose, not a directive.
 const CONSTRAINT_LEN_MAX: usize = 200;
+/// A bullet is the requester marking a line AS a requirement, so its length says
+/// nothing about whether it is one — an acceptance criterion routinely spells out
+/// the condition, the exception and the reason in one sentence. Prose keeps the
+/// strict cap; only explicitly listed items get the longer one.
+const LISTED_CONSTRAINT_LEN_MAX: usize = 400;
 
 /// Deterministically extract the request's binding requirements — both explicit
 /// prohibitions ("do not X", "never Y", "must not Z") and explicit acceptance
@@ -49,17 +54,17 @@ const CONSTRAINT_LEN_MAX: usize = 200;
 /// that claims to list what "voids the work" hands the model an authoritative
 /// but partial spec — it then satisfies the recited subset and stops.
 pub fn extract_constraints(task: &str) -> Vec<String> {
-	const MARKERS: [&str; 11] = [
+	// "must" is the normative keyword requesters actually use (RFC 2119), so it
+	// covers the prohibitions ("must not") and the acceptance criteria ("must
+	// remain", "must be", "must still") in one marker rather than a growing list
+	// of phrasings. "preserve" is the common imperative that carries no "must".
+	const MARKERS: [&str; 7] = [
 		"do not ",
 		"don't ",
 		"never ",
-		"must not ",
+		"must ",
 		"not allowed",
 		"forbidden",
-		"must remain ",
-		"must stay ",
-		"must still ",
-		"must be preserved",
 		"preserve ",
 	];
 	let mut out: Vec<String> = Vec::new();
@@ -78,6 +83,15 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		if in_fence || is_quoted_material(trimmed) {
 			continue;
 		}
+		let listed = trimmed.starts_with(['-', '*', '•'])
+			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
+				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())
+			});
+		let len_max = if listed {
+			LISTED_CONSTRAINT_LEN_MAX
+		} else {
+			CONSTRAINT_LEN_MAX
+		};
 		// Sentence-ish units: split lines on terminators so one long line
 		// containing an instruction still yields just that instruction.
 		for unit in line.split_inclusive(['.', '!', ';']) {
@@ -86,7 +100,7 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 				.trim_start_matches(['-', '*', '•'])
 				.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
 				.trim();
-			if unit.is_empty() || unit.len() > CONSTRAINT_LEN_MAX || unit.ends_with('?') {
+			if unit.is_empty() || unit.len() > len_max || unit.ends_with('?') {
 				continue;
 			}
 			// Units are cut at line ends as well as sentence ends, so a wrapped

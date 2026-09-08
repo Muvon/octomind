@@ -86,6 +86,23 @@ fn constraints_cover_acceptance_criteria_not_only_prohibitions() {
 		c.iter().any(|x| x.contains("space-indented fenced blocks")),
 		"{c:?}"
 	);
+	// A listed criterion stays a criterion however long it is: the requester
+	// marked it as one. Unlisted prose keeps the strict cap.
+	let long_bullet = "- A response cookie whose name starts with `__Host-` must be Secure, \
+host-only (no Domain), scoped to path `/`, and the original Set-Cookie header must actually \
+contain a `Path=` attribute (a bare `Path` token without `=` does not count — note the jar \
+defaults a missing Path, so the parsed cookie alone cannot tell you this)";
+	let c = extract_constraints(long_bullet);
+	assert!(
+		c.iter().any(|x| x.contains("must actually")),
+		"dropped a listed criterion for length: {c:?}"
+	);
+	let long_prose = long_bullet.trim_start_matches("- ").to_string();
+	assert!(
+		extract_constraints(&long_prose).is_empty(),
+		"unlisted prose should keep the strict cap"
+	);
+
 	// A wrapped sentence cut at the line end must not be recited as a stub.
 	let wrapped =
 		"- Preserve the\n  existing rejection path.\n- Preserve current default formatting.";

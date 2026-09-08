@@ -15,6 +15,7 @@
 //! /workflow command — list tap workflows or run one from inside a session.
 //!
 //! `/workflow`                  → list public tap workflows
+//! `/workflow <name>`           → show the definition of tap workflow `<name>` (nothing runs)
 //! `/workflow <name> <input…>`  → run tap workflow `<name>` with `<input…>` as its stdin
 //!
 //! Execution lives in `crate::workflow::spawn`, shared with the `tap` tool's
@@ -33,7 +34,15 @@ pub async fn handle_workflow(input: &str, params: &[&str]) -> Result<CommandResu
 		));
 	};
 	let Some(wf_input) = split_input(input) else {
-		return Ok(error(format!("usage: /workflow {name} <input>")));
+		return Ok(match crate::agent::taps::fetch_workflow(name) {
+			Ok((definition, source_tap)) => output(json!({
+				"subcommand": "show",
+				"name": name,
+				"source_tap": source_tap,
+				"definition": definition,
+			})),
+			Err(e) => error(format!("{e:#}")),
+		});
 	};
 	match crate::workflow::spawn::run_tap_workflow(name, wf_input).await {
 		Ok(run) => Ok(output(json!({

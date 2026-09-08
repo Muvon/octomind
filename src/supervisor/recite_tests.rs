@@ -58,6 +58,37 @@ fn constraints_skip_quoted_and_pasted_material() {
 }
 
 #[test]
+fn constraints_cover_acceptance_criteria_not_only_prohibitions() {
+	// Verbatim shape of a real reported issue: a symptom heading followed by the
+	// maintainer's acceptance criteria. Reciting only the "must not" bullet gave
+	// the agent an authoritative but partial spec, and it shipped work that
+	// satisfied exactly that subset.
+	let task = "Resolve the following reported issue.\n\
+# Code blocks sometimes don't render first character\n\n\
+### Maintainer clarification\n\
+- Tab-indented fences and their content must not lose the first character.\n\
+- A fenced block's info string must remain intact.\n\
+- If indentation consumes only part of a tab, preserve the tab's remaining visual width as spaces.\n\
+- Preserve the existing behavior of ordinary space-indented fenced blocks.";
+	let c = extract_constraints(task);
+	// A symptom heading is a title, not a directive the requester issued.
+	assert!(
+		!c.iter().any(|x| x.starts_with('#')),
+		"recited a heading as binding: {c:?}"
+	);
+	assert!(c.iter().any(|x| x.contains("must not lose")), "{c:?}");
+	assert!(c.iter().any(|x| x.contains("must remain intact")), "{c:?}");
+	assert!(
+		c.iter().any(|x| x.contains("remaining visual width")),
+		"dropped the acceptance criterion that decides the fix: {c:?}"
+	);
+	assert!(
+		c.iter().any(|x| x.contains("space-indented fenced blocks")),
+		"{c:?}"
+	);
+}
+
+#[test]
 fn constraints_deduped_and_capped() {
 	let line = "Do not push.\n".repeat(20);
 	let c = extract_constraints(&line);

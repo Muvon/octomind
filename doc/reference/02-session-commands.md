@@ -52,7 +52,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 | `/plan [show]` | Show the current structured plan |
 | `/skill [NAME\|PAGE\|PATTERN]` | List or toggle skills |
 | `/schedule [SUBCOMMAND]` | Schedule a future/recurring injected message |
-| `/workflow [NAME INPUT...]` | List tap workflows, or run one with the rest of the line as its input |
+| `/workflow [NAME [INPUT...]]` | List tap workflows, show one's definition (name only), or run one with the rest of the line as its input |
 | `/learning [ACTION]` | Manage cross-session lessons |
 
 ## Transport support

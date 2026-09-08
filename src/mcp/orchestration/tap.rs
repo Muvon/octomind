@@ -72,7 +72,7 @@ Actions:
 - `stop`       — cancel a running specialist. Required: `session` (the id).
 - `discover`   — find roles matching free-text intent. Required: `intent`. Returns top matches with title, description, and source tap.
 - `capability` — trigger skill/capability auto-activation. Required: `prompt`.
-- `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. The result lands in your next turn like a `run`."#.to_string(),
+- `workflow`   — run an installed tap workflow (a multi-step, self-verifying job) in the background. Required: `name` + `input`. Without `name`: list installed workflows with descriptions. ONLY when the user explicitly asks to run a workflow by name or clearly refers to one — never pick a workflow on your own to solve the current task; use `run` or your own tools for that. A workflow does not contribute to the current turn: it runs detached and its result arrives in a LATER turn like a `run`, so do not wait for it or assume it has finished."#.to_string(),
 		parameters: json!({
 			"type": "object",
 			"properties": {
@@ -103,7 +103,7 @@ Actions:
 				},
 				"name": {
 					"type": "string",
-					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Omit to list installed workflows."
+					"description": "Tap workflow name for workflow (e.g. 'watch-page'). Only pass a name the user explicitly asked to run. Omit to list installed workflows."
 				},
 				"input": {
 					"type": "string",

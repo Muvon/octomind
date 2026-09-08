@@ -53,6 +53,55 @@ const LISTED_CONSTRAINT_LEN_MAX: usize = 400;
 /// binding as its "do not"s, and reciting only the negatives under a heading
 /// that claims to list what "voids the work" hands the model an authoritative
 /// but partial spec — it then satisfies the recited subset and stops.
+/// Rejoin a request into the lines its author meant, dropping the material that
+/// is never a directive (fenced code, blockquotes, transcript decoration,
+/// line-numbered excerpts).
+///
+/// Requests are hard-wrapped, so a single criterion routinely spans several
+/// physical lines. Reading them one at a time truncates it at the wrap — a rule
+/// arrives as "preserve the tab's remaining" and loses the part that says what
+/// to preserve it as. A new logical line starts at a list marker or a blank
+/// line; anything else continues the current one.
+fn logical_lines(task: &str) -> Vec<String> {
+	let mut lines: Vec<String> = Vec::new();
+	let mut current = String::new();
+	let mut in_fence = false;
+	for raw in task.lines() {
+		let trimmed = raw.trim_start();
+		if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+			in_fence = !in_fence;
+			continue;
+		}
+		if in_fence || is_quoted_material(trimmed) {
+			continue;
+		}
+		let starts_item = trimmed.starts_with(['-', '*', '•'])
+			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
+				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())
+			});
+		if trimmed.is_empty() || starts_item {
+			if !current.trim().is_empty() {
+				lines.push(std::mem::take(&mut current));
+			}
+			if trimmed.is_empty() {
+				continue;
+			}
+			current = raw.to_string();
+			continue;
+		}
+		if current.is_empty() {
+			current = raw.to_string();
+		} else {
+			current.push(' ');
+			current.push_str(trimmed);
+		}
+	}
+	if !current.trim().is_empty() {
+		lines.push(current);
+	}
+	lines
+}
+
 pub fn extract_constraints(task: &str) -> Vec<String> {
 	// "must" is the normative keyword requesters actually use (RFC 2119), so it
 	// covers the prohibitions ("must not") and the acceptance criteria ("must
@@ -68,21 +117,9 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		"preserve ",
 	];
 	let mut out: Vec<String> = Vec::new();
-	let mut in_fence = false;
-	for line in task.lines() {
-		// Quoted material is not a directive: skip fenced code blocks,
-		// blockquotes, transcript decoration (box-drawing UI captures), and
-		// line-numbered excerpts ("185:Keys are revoked, never deleted…") —
-		// pasted CONTENT that merely contains a negation must never be
-		// recited back as a binding constraint.
+	for line in logical_lines(task) {
+		let line = line.as_str();
 		let trimmed = line.trim_start();
-		if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-			in_fence = !in_fence;
-			continue;
-		}
-		if in_fence || is_quoted_material(trimmed) {
-			continue;
-		}
 		let listed = trimmed.starts_with(['-', '*', '•'])
 			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
 				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())

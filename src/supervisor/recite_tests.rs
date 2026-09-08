@@ -103,6 +103,18 @@ defaults a missing Path, so the parsed cookie alone cannot tell you this)";
 		"unlisted prose should keep the strict cap"
 	);
 
+	// Hard-wrapped criteria arrive whole, not cut at the wrap. This exact rule
+	// reached the agent as "preserve the tab's remaining" and lost the part
+	// saying what to preserve it as.
+	let wrapped_rule = "- If indentation consumes only part of a tab, preserve the tab's remaining\n\
+  visual width as spaces up to the next four-column tab stop. For example, after\n\
+  one leading space, the remaining width of that tab is three spaces.";
+	let c = extract_constraints(wrapped_rule);
+	assert!(
+		c.iter().any(|x| x.contains("visual width as spaces")),
+		"criterion truncated at the wrap: {c:?}"
+	);
+
 	// A wrapped sentence cut at the line end must not be recited as a stub.
 	let wrapped =
 		"- Preserve the\n  existing rejection path.\n- Preserve current default formatting.";

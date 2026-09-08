@@ -89,6 +89,12 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 			if unit.is_empty() || unit.len() > CONSTRAINT_LEN_MAX || unit.ends_with('?') {
 				continue;
 			}
+			// Units are cut at line ends as well as sentence ends, so a wrapped
+			// sentence can yield a stub ("Preserve the"). One that stops without
+			// a terminator has to carry a whole clause to be worth a slot.
+			if !unit.ends_with(['.', '!', ';']) && unit.split_whitespace().count() < 4 {
+				continue;
+			}
 			// A unit opening with a quote character is cited material, not an
 			// instruction the user issued.
 			if unit.starts_with(['"', '\'', '“', '”', '‘', '`']) {

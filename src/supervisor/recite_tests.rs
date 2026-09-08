@@ -86,6 +86,19 @@ fn constraints_cover_acceptance_criteria_not_only_prohibitions() {
 		c.iter().any(|x| x.contains("space-indented fenced blocks")),
 		"{c:?}"
 	);
+	// A wrapped sentence cut at the line end must not be recited as a stub.
+	let wrapped =
+		"- Preserve the\n  existing rejection path.\n- Preserve current default formatting.";
+	let c = extract_constraints(wrapped);
+	assert!(
+		!c.iter().any(|x| x == "Preserve the"),
+		"recited a stub: {c:?}"
+	);
+	assert!(
+		c.iter()
+			.any(|x| x == "Preserve current default formatting."),
+		"{c:?}"
+	);
 }
 
 #[test]

@@ -678,6 +678,15 @@ pub async fn process_response<S: OutputSink>(
 							is_error,
 							result_content.len(),
 						);
+						if let Some(tr) = tr {
+							// A linked resource is detached work whose real output arrives
+							// later; this key returns it to the call that launched it.
+							for (uri, _) in
+								crate::session::shell_jobs::resource_links_in(&tr.result)
+							{
+								crate::session::shell_jobs::attach_sequence(&uri, sequence);
+							}
+						}
 						// Retained under the sequence the rendered ledger shows, so the
 						// verify-gate can ask for this exact call's output instead of
 						// ruling on a line that names the call but not what it returned.

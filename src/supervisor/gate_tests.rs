@@ -586,6 +586,39 @@ fn record_ground_evicts_the_oldest_once_the_total_exceeds_the_cap() {
 	assert_eq!(grounds[0].0, 2);
 }
 
+#[test]
+fn record_ground_merges_a_repeated_sequence() {
+	let mut ledger = EvidenceLedger::default();
+	ledger.record_ground(3, "moved to background job");
+	ledger.record_ground(3, "status: exited with code 0");
+
+	assert_eq!(ledger.grounds().len(), 1);
+	assert!(ledger.grounds()[0].1.contains("moved to background job"));
+	assert!(ledger.grounds()[0].1.contains("status: exited with code 0"));
+	let answered = render_readback(ledger.grounds(), &[3]);
+	assert!(answered.contains("moved to background job"));
+	assert!(answered.contains("status: exited with code 0"));
+}
+
+#[test]
+fn fold_job_completion_lands_in_ground_truth_and_readback() {
+	let mut ledger = EvidenceLedger::default();
+	let body = "status: exited with code 0\n\ntest result: ok";
+	ledger.fold_job_completion(Some(4), "cargo test", body);
+
+	assert_eq!(ledger.recent_commands().last(), Some(&("cargo test", body)));
+	assert_eq!(ledger.grounds().len(), 1);
+	assert_eq!(ledger.grounds()[0].0, 4);
+	assert!(ledger.grounds()[0].1.contains(body));
+
+	ledger.fold_job_completion(None, "cargo check", "status: exited with code 1");
+	assert_eq!(
+		ledger.recent_commands().last(),
+		Some(&("cargo check", "status: exited with code 1"))
+	);
+	assert_eq!(ledger.grounds().len(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // verdict(): protocol violations the checklist rejects in both encodings.
 // ---------------------------------------------------------------------------

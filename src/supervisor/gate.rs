@@ -446,12 +446,15 @@ impl EvidenceLedger {
 
 	/// Retain verbatim output as current-turn provenance. This state survives
 	/// context compression and is reset at the genuine user-turn boundary, so
-	/// older tasks can neither exonerate nor incriminate a current citation.
+	/// older tasks can neither exonerate nor incriminate a current citation. A
+	/// sequence recorded twice merges a detached job's launch notice and later
+	/// completion because readback resolves each sequence to one output.
 	pub fn record_ground(&mut self, sequence: u64, output: &str) {
 		if output.is_empty() {
 			return;
 		}
-		let bounded = if output.chars().count() > CITATION_GROUNDS_CHARS {
+		let output_chars = output.chars().count();
+		let bounded = if output_chars > CITATION_GROUNDS_CHARS {
 			output
 				.chars()
 				.take(CITATION_GROUNDS_CHARS)
@@ -459,8 +462,15 @@ impl EvidenceLedger {
 		} else {
 			output.to_string()
 		};
-		self.ground_chars += bounded.chars().count();
-		self.grounds.push((sequence, bounded));
+		let bounded_chars = bounded.chars().count();
+		if let Some((_, retained)) = self.grounds.iter_mut().find(|(seq, _)| *seq == sequence) {
+			retained.push('\n');
+			retained.push_str(&bounded);
+			self.ground_chars += 1 + bounded_chars;
+		} else {
+			self.ground_chars += bounded_chars;
+			self.grounds.push((sequence, bounded));
+		}
 		while self.ground_chars > CITATION_GROUNDS_CHARS && !self.grounds.is_empty() {
 			let (_, removed) = self.grounds.remove(0);
 			self.ground_chars = self.ground_chars.saturating_sub(removed.chars().count());
@@ -496,6 +506,14 @@ impl EvidenceLedger {
 		self.recent_commands.push_back((command.to_string(), tail));
 		if self.recent_commands.len() > RECENT_COMMANDS_KEPT {
 			self.recent_commands.pop_front();
+		}
+	}
+
+	/// Fold the deferred output of a detached job under the call that launched it.
+	pub fn fold_job_completion(&mut self, sequence: Option<u64>, command: &str, body: &str) {
+		self.record_command_output(command, body);
+		if let Some(sequence) = sequence {
+			self.record_ground(sequence, body);
 		}
 	}
 

@@ -134,7 +134,8 @@ async fn graceful_shutdown_waits_for_pending_work_in_every_session() {
 
 	assert!(crate::session::shell_jobs::complete_for_session(
 		&busy_session,
-		"job://coverage"
+		"job://coverage",
+		"status: exited with code 0"
 	));
 	agent.idle_notify.notify_waiters();
 	tokio::time::timeout(std::time::Duration::from_secs(1), waiter)

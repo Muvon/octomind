@@ -735,6 +735,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		} else {
 			String::new()
 		};
+		// Detached jobs that exited since the last pass are deferred results of
+		// recorded calls, so fold them before the verifier reads the ledger.
+		if let Some(session_id) = crate::session::context::current_session_id() {
+			for job in crate::session::shell_jobs::take_completed_for_session(&session_id) {
+				chat_session
+					.evidence
+					.fold_job_completion(job.sequence, &job.label, &job.body);
+			}
+		}
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
 		let mut ground_truth = crate::supervisor::gate::render_ground_truth(

@@ -302,7 +302,7 @@ async fn deliver_resource_update(
 				content,
 			},
 		);
-		crate::session::shell_jobs::complete_for_session(&session_id, &uri);
+		crate::session::shell_jobs::complete_for_session(&session_id, &uri, &body);
 	});
 }
 

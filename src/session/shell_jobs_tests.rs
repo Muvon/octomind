@@ -79,27 +79,75 @@ fn watch_complete_pending_and_labels_roundtrip() {
 		"a resource remains pending until its inbox delivery exists"
 	);
 
-	assert!(complete_for_session(sid, a), "a was watched");
+	assert!(complete_for_session(sid, a, "a complete"), "a was watched");
 	assert!(!is_watched_for_session(sid, a));
 	assert!(
 		has_pending_for_session(sid),
 		"b still keeps the session pending"
 	);
 	assert!(
-		!complete_for_session(sid, "octofs://jobs/unknown"),
+		!complete_for_session(sid, "octofs://jobs/unknown", "unknown"),
 		"completing an unwatched uri reports not-watched"
 	);
 
-	assert!(complete_for_session(sid, b), "b was watched");
+	assert!(complete_for_session(sid, b, "b complete"), "b was watched");
 	assert!(
 		!has_pending_for_session(sid),
 		"the empty set is dropped, so the session is no longer pending"
 	);
 	assert!(
-		!complete_for_session(sid, b),
+		!complete_for_session(sid, b, "duplicate"),
 		"already-cleared uri reports not-watched"
 	);
 	clear_for_session(sid);
+}
+
+#[test]
+fn completion_retains_sequence_label_and_body_until_taken() {
+	let sid = "shell-jobs-completed-ledger-session";
+	let uri = "octofs://jobs/completed-ledger";
+	let label = "cargo test";
+	let body = "status: exited with code 0\n\ntest result: ok";
+	clear_for_session(sid);
+	register_for_session(sid, "octofs", uri, label);
+	attach_sequence_for_session(sid, uri, 26);
+
+	assert!(complete_for_session(sid, uri, body));
+	assert!(!has_pending_for_session(sid));
+	let completed = take_completed_for_session(sid);
+	assert_eq!(completed.len(), 1);
+	assert_eq!(completed[0].sequence, Some(26));
+	assert_eq!(completed[0].label, label);
+	assert_eq!(completed[0].body, body);
+	assert!(take_completed_for_session(sid).is_empty());
+	clear_for_session(sid);
+}
+
+#[test]
+fn sequence_attaches_after_a_fast_completion() {
+	let sid = "shell-jobs-fast-completion-session";
+	let uri = "octofs://jobs/fast-completion";
+	clear_for_session(sid);
+	register_for_session(sid, "octofs", uri, "cargo check");
+	assert!(complete_for_session(sid, uri, "status: exited with code 0"));
+
+	attach_sequence_for_session(sid, uri, 9);
+	let completed = take_completed_for_session(sid);
+	assert_eq!(completed.len(), 1);
+	assert_eq!(completed[0].sequence, Some(9));
+	clear_for_session(sid);
+}
+
+#[test]
+fn clear_drops_banked_completions() {
+	let sid = "shell-jobs-clear-completed-session";
+	let uri = "octofs://jobs/clear-completed";
+	clear_for_session(sid);
+	register_for_session(sid, "octofs", uri, "cargo test");
+	assert!(complete_for_session(sid, uri, "status: exited with code 0"));
+
+	clear_for_session(sid);
+	assert!(take_completed_for_session(sid).is_empty());
 }
 
 /// Receive the next event for `session_id`, skipping events other parallel
@@ -153,7 +201,11 @@ async fn completing_a_watched_resource_publishes_an_event() {
 	register_for_session(sid, "octofs", "octofs://jobs/ev-1", "shell: build");
 	let mut events = subscribe_events();
 
-	assert!(complete_for_session(sid, "octofs://jobs/ev-1"));
+	assert!(complete_for_session(
+		sid,
+		"octofs://jobs/ev-1",
+		"status: exited with code 0"
+	));
 	match next_event_for(&mut events, sid).await {
 		WatchEvent::Completed { session_id, uri } => {
 			assert_eq!(session_id, sid);
@@ -163,7 +215,11 @@ async fn completing_a_watched_resource_publishes_an_event() {
 	}
 
 	// Unwatched completions publish nothing.
-	assert!(!complete_for_session(sid, "octofs://jobs/ev-1"));
+	assert!(!complete_for_session(
+		sid,
+		"octofs://jobs/ev-1",
+		"duplicate"
+	));
 	assert_no_event_for(&mut events, sid);
 	clear_for_session(sid);
 }

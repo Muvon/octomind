@@ -29,6 +29,11 @@
 //! Each entry keeps a short human label (the launching command, from the
 //! resource link's name) so pending jobs can be described deterministically,
 //! e.g. when re-injected into a compaction summary.
+//!
+//! An entry also carries the launching call's evidence-ledger sequence. Its
+//! completion is banked per session until the verify-gate folds it into that
+//! ledger line, following the same drain-at-next-owner pattern as
+//! `session::external_spend`.
 
 use rmcp::model::{CallToolResult, ContentBlock};
 use std::collections::HashMap;
@@ -39,8 +44,17 @@ use std::time::SystemTime;
 struct WatchedResource {
 	server_name: String,
 	label: String,
+	sequence: Option<u64>,
 	delivering: bool,
 	started_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompletedJob {
+	pub sequence: Option<u64>,
+	pub label: String,
+	pub body: String,
+	uri: String,
 }
 
 /// Point-in-time metadata for one MCP resource-backed background job.
@@ -60,6 +74,9 @@ pub(crate) struct PendingResource {
 // session id -> resources advertised but not yet delivered into the inbox.
 static WATCHED: RwLock<Option<HashMap<String, HashMap<String, WatchedResource>>>> =
 	RwLock::new(None);
+
+// session id -> completions waiting for the evidence ledger's next owner.
+static COMPLETED: RwLock<Option<HashMap<String, Vec<CompletedJob>>>> = RwLock::new(None);
 
 /// Lifecycle events for watched resources. Subscription tasks (which hold a
 /// `subscriptions/listen` stream open) listen for these so they can end the
@@ -137,10 +154,41 @@ pub fn register_for_session(session_id: &str, server_name: &str, uri: &str, labe
 			WatchedResource {
 				server_name: server_name.to_string(),
 				label: label.to_string(),
+				sequence: None,
 				delivering: false,
 				started_at: SystemTime::now(),
 			},
 		);
+}
+
+pub fn attach_sequence_for_session(session_id: &str, uri: &str, sequence: u64) {
+	let mut watched = WATCHED.write().unwrap();
+	if let Some(resource) = watched
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+		.and_then(|jobs| jobs.get_mut(uri))
+	{
+		resource.sequence = Some(sequence);
+		return;
+	}
+	if let Some(job) = COMPLETED
+		.write()
+		.unwrap()
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+		.and_then(|jobs| {
+			jobs.iter_mut()
+				.find(|job| job.uri == uri && job.sequence.is_none())
+		}) {
+		job.sequence = Some(sequence);
+	}
+}
+
+pub fn attach_sequence(uri: &str, sequence: u64) {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	attach_sequence_for_session(&session_id, uri, sequence);
 }
 
 pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
@@ -172,26 +220,48 @@ pub fn begin_delivery_for_session(session_id: &str, uri: &str) -> bool {
 	true
 }
 
-/// Clear a resource once its update has arrived. Returns true if it was watched.
-pub fn complete_for_session(session_id: &str, uri: &str) -> bool {
+/// Bank a resource once its update has arrived. Returns true if it was watched.
+pub fn complete_for_session(session_id: &str, uri: &str, body: &str) -> bool {
 	let mut guard = WATCHED.write().unwrap();
 	if let Some(registry) = guard.as_mut() {
 		if let Some(jobs) = registry.get_mut(session_id) {
-			let was_watched = jobs.remove(uri).is_some();
+			let watched = jobs.remove(uri);
 			if jobs.is_empty() {
 				registry.remove(session_id);
 			}
-			if was_watched {
+			if let Some(watched) = watched {
+				COMPLETED
+					.write()
+					.unwrap()
+					.get_or_insert_with(HashMap::new)
+					.entry(session_id.to_string())
+					.or_default()
+					.push(CompletedJob {
+						sequence: watched.sequence,
+						label: watched.label,
+						body: body.to_string(),
+						uri: uri.to_string(),
+					});
 				drop(guard);
 				let _ = WATCH_EVENTS.send(WatchEvent::Completed {
 					session_id: session_id.to_string(),
 					uri: uri.to_string(),
 				});
+				return true;
 			}
-			return was_watched;
+			return false;
 		}
 	}
 	false
+}
+
+pub(crate) fn take_completed_for_session(session_id: &str) -> Vec<CompletedJob> {
+	COMPLETED
+		.write()
+		.unwrap()
+		.as_mut()
+		.and_then(|registry| registry.remove(session_id))
+		.unwrap_or_default()
 }
 
 pub fn has_pending_for_session(session_id: &str) -> bool {
@@ -256,11 +326,14 @@ pub(crate) fn pending_resources_for_session(session_id: &str) -> Vec<PendingReso
 }
 
 pub fn clear_for_session(session_id: &str) {
-	let removed = WATCHED
-		.write()
-		.unwrap()
+	let mut watched = WATCHED.write().unwrap();
+	let removed = watched
 		.as_mut()
 		.is_some_and(|registry| registry.remove(session_id).is_some());
+	if let Some(registry) = COMPLETED.write().unwrap().as_mut() {
+		let _ = registry.remove(session_id);
+	}
+	drop(watched);
 	if removed {
 		let _ = WATCH_EVENTS.send(WatchEvent::Cleared {
 			session_id: session_id.to_string(),

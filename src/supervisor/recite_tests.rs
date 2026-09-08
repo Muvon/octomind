@@ -106,10 +106,13 @@ defaults a missing Path, so the parsed cookie alone cannot tell you this)";
 	// Hard-wrapped criteria arrive whole, not cut at the wrap. This exact rule
 	// reached the agent as "preserve the tab's remaining" and lost the part
 	// saying what to preserve it as.
-	let wrapped_rule =
-		"- If indentation consumes only part of a tab, preserve the tab's remaining\n\
-  visual width as spaces up to the next four-column tab stop. For example, after\n\
-  one leading space, the remaining width of that tab is three spaces.";
+	// NB: written without `\` line continuations — those strip the leading
+	// whitespace, which is exactly the indentation that marks a continuation.
+	let wrapped_rule = concat!(
+		"- If indentation consumes only part of a tab, preserve the tab's remaining\n",
+		"  visual width as spaces up to the next four-column tab stop. For example, after\n",
+		"  one leading space, the remaining width of that tab is three spaces."
+	);
 	let c = extract_constraints(wrapped_rule);
 	assert!(
 		c.iter().any(|x| x.contains("visual width as spaces")),

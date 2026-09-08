@@ -66,6 +66,7 @@ fn logical_lines(task: &str) -> Vec<String> {
 	let mut lines: Vec<String> = Vec::new();
 	let mut current = String::new();
 	let mut in_fence = false;
+	let mut in_item = false;
 	for raw in task.lines() {
 		let trimmed = raw.trim_start();
 		if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
@@ -79,10 +80,15 @@ fn logical_lines(task: &str) -> Vec<String> {
 			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
 				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())
 			});
-		if trimmed.is_empty() || starts_item {
+		// A list item's continuation is indented under it. Unindented text after
+		// an item is new prose, not part of the item — joining it would carry the
+		// item's laxer length budget onto a paragraph that never earned it.
+		let continues_item = in_item && raw.starts_with([' ', '\t']);
+		if trimmed.is_empty() || starts_item || (in_item && !continues_item) {
 			if !current.trim().is_empty() {
 				lines.push(std::mem::take(&mut current));
 			}
+			in_item = starts_item;
 			if trimmed.is_empty() {
 				continue;
 			}

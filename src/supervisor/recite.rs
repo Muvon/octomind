@@ -108,6 +108,35 @@ fn logical_lines(task: &str) -> Vec<String> {
 	lines
 }
 
+/// Split a line into sentence-ish units. A `.` between digits is a decimal point,
+/// not a terminator: splitting "below 8.2 must stay as it is" mid-version left the
+/// requirement recited as a subjectless "must stay as it is" — an unanchored
+/// directive in the slot the agent trusts most.
+fn sentence_units(line: &str) -> Vec<&str> {
+	let bytes = line.as_bytes();
+	let mut units = Vec::new();
+	let mut start = 0;
+	for (idx, ch) in line.char_indices() {
+		if !matches!(ch, '.' | '!' | ';') {
+			continue;
+		}
+		if ch == '.' {
+			let prev = bytes[..idx].last().is_some_and(u8::is_ascii_digit);
+			let next = bytes.get(idx + 1).is_some_and(|byte| byte.is_ascii_digit());
+			if prev && next {
+				continue;
+			}
+		}
+		let end = idx + ch.len_utf8();
+		units.push(&line[start..end]);
+		start = end;
+	}
+	if start < line.len() {
+		units.push(&line[start..]);
+	}
+	units
+}
+
 pub fn extract_constraints(task: &str) -> Vec<String> {
 	// "must" is the normative keyword requesters actually use (RFC 2119), so it
 	// covers the prohibitions ("must not") and the acceptance criteria ("must
@@ -137,12 +166,21 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		};
 		// Sentence-ish units: split lines on terminators so one long line
 		// containing an instruction still yields just that instruction.
-		for unit in line.split_inclusive(['.', '!', ';']) {
+		for (index, unit) in sentence_units(line).into_iter().enumerate() {
 			let unit = unit
 				.trim()
 				.trim_start_matches(['-', '*', '•'])
 				.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
 				.trim();
+			// Reciting under "violating one voids the work" is an assertion that the
+			// text IS the requirement. A unit after the first that opens mid-sentence
+			// means the split landed inside one, so what survives is a clause whose
+			// subject is elsewhere — the request said what must not change, the block
+			// would say only "must stay exactly as it is today". Stay silent instead:
+			// no constraint beats a binding-looking one that names nothing.
+			if index > 0 && unit.starts_with(|c: char| c.is_lowercase()) {
+				continue;
+			}
 			if unit.is_empty() || unit.len() > len_max || unit.ends_with('?') {
 				continue;
 			}

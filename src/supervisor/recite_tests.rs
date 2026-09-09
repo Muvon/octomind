@@ -376,3 +376,36 @@ fn verification_policy_is_projected_as_boundary_not_task() {
 	assert!(allowed.contains("revoked the prior no-verification rule"));
 	assert!(allowed.contains("permitted, not required"));
 }
+
+#[test]
+fn a_decimal_inside_a_requirement_is_not_a_sentence_end() {
+	// Real gold-case sentence. Splitting at the `.` in "8.2" cut the subject away
+	// and recited a bare "must stay exactly as it is today", so the agent deleted
+	// the PHP < 8.2 guards the requirement existed to protect.
+	let task = concat!(
+		"On PHP 8.2+, reading a period's `->end` after setEndDate() returns a stale value. ",
+		"Behavior on PHP versions below 8.2 must stay exactly as it is today.\n"
+	);
+	let got = extract_constraints(task);
+	assert!(
+		got.iter()
+			.any(|c| c.contains("below 8.2") && c.contains("must stay exactly as it is today")),
+		"the constraint keeps its subject: {got:?}"
+	);
+	assert!(
+		!got.iter().any(|c| c.starts_with("must stay")),
+		"no subjectless fragment is recited: {got:?}"
+	);
+}
+
+#[test]
+fn a_mid_sentence_fragment_is_dropped_rather_than_recited() {
+	// Even when a split does land inside a sentence, the surviving clause must not
+	// be presented as a binding requirement — silence is the safe failure.
+	let task = "Rewrite the exporter. The old CSV path stays; it must remain byte-identical.\n";
+	let got = extract_constraints(task);
+	assert!(
+		!got.iter().any(|c| c.starts_with("it must remain")),
+		"no subjectless clause is recited: {got:?}"
+	);
+}

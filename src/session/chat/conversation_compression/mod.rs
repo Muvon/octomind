@@ -297,10 +297,32 @@ pub async fn ensure_context_within_ceiling(
 		}
 	}
 	if current_tokens > ceiling {
+		let reason = if config.compression.threshold == 0 {
+			"compression is disabled (compression.threshold = 0)".to_string()
+		} else {
+			match find_compression_range_preserving_turn(&session.session.messages, true, true) {
+				Ok((start, end)) if start < end => {
+					let compressible = calculate_range_tokens(session, start + 1, end)?;
+					format!(
+						"eligible history remains (range {}..={}, {} tokens, {} tokens outside range); applied folds={}, pending fold={}; see compression failure diagnostics",
+						start + 1,
+						end,
+						compressible,
+						current_tokens.saturating_sub(compressible as usize),
+						session.session.info.compression_stats.conversation_compressions,
+						session.fold_job.is_some()
+					)
+				}
+				Ok(_) => "no eligible compression range while preserving the current exchange and task boundary".to_string(),
+				Err(error) => format!("compression range selection failed: {error:#}"),
+			}
+		};
 		return Err(anyhow::anyhow!(
-			"context remains above the usable ceiling after compression ({} > {} tokens); shorten the current request or increase the configured/model context limit",
+			"context remains above the usable ceiling after compression ({} > {} tokens); {}; threshold={}; shorten the current request or increase the configured/model context limit",
 			current_tokens,
-			ceiling
+			ceiling,
+			reason,
+			config.compression.threshold
 		));
 	}
 	Ok(())
@@ -409,7 +431,7 @@ async fn collect_fold_job(
 	let outcome = match handle.await {
 		Ok(outcome) => outcome,
 		Err(join_error) => {
-			log_debug!("Background fold task failed to join: {}", join_error);
+			crate::log_error!("Background fold task failed to join: {}", join_error);
 			note_fold_failure(session);
 			return Ok(false);
 		}
@@ -418,9 +440,12 @@ async fn collect_fold_job(
 		Ok(result) => result,
 		Err(error) => {
 			if crate::session::cancellation::is_cancelled(&error) {
-				log_debug!("Background fold cancelled");
+				crate::log_error!("Background fold cancelled before compression could be applied");
 			} else {
-				log_info!("Background fold call failed, continuing session: {}", error);
+				crate::log_error!(
+					"Background fold call failed, continuing session: {:#}",
+					error
+				);
 			}
 			note_fold_failure(session);
 			return Ok(false);
@@ -431,7 +456,7 @@ async fn collect_fold_job(
 			!= ctx.fingerprint
 	{
 		ai::record_decision_usage(session, usage.as_ref());
-		log_info!(
+		crate::log_error!(
 			"Background fold discarded: the drained range changed while the summary was being written"
 		);
 		note_fold_failure(session);
@@ -468,7 +493,12 @@ async fn finish_fold(
 	// fire-line ladder (that donated window headroom to a non-event and pushed
 	// the next fold toward the forced ceiling path). Hold for one runway instead.
 	if !should_compress {
-		log_debug!("AI decided compression not beneficial at this point");
+		let reason = if !summary.should_compress && !force {
+			"decision model declined"
+		} else {
+			"decision model returned no substantive summary"
+		};
+		crate::log_error!("Compression not applied: {} (force={})", reason, force);
 		note_fold_failure(session);
 		return Ok(false);
 	}
@@ -502,7 +532,7 @@ async fn finish_fold(
 					})
 				}
 				Err(error) => {
-					log_info!(
+					crate::log_error!(
 						"Compression rejected before drain: PACT attribution/continuity validation failed: {}",
 						error
 					);
@@ -618,7 +648,11 @@ pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> 
 	}
 	let job = session.fold_job.take().expect("checked above");
 	log_debug!("Turn finished with a completed background fold — applying before save");
-	collect_fold_job(session, config, job, false, false).await
+	collect_fold_job(session, config, job, false, false)
+		.await
+		.inspect_err(|error| {
+			crate::log_error!("Settled conversation compression failed: {:#}", error);
+		})
 }
 
 /// Inside the ceiling margin (see `decision::ceiling_reached`): folds are
@@ -635,6 +669,21 @@ pub async fn within_ceiling_margin(session: &mut ChatSession, config: &Config) -
 }
 
 pub async fn check_and_compress_conversation(
+	session: &mut ChatSession,
+	config: &Config,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+	trigger: CompressionTrigger,
+) -> Result<bool> {
+	// Callers can recover through deterministic trimming, but structured output
+	// suppresses their info/debug logs. Report the cause before they discard it.
+	check_and_compress_conversation_inner(session, config, operation_rx, trigger)
+		.await
+		.inspect_err(|error| {
+			crate::log_error!("Conversation compression failed: {:#}", error);
+		})
+}
+
+async fn check_and_compress_conversation_inner(
 	session: &mut ChatSession,
 	config: &Config,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
@@ -741,7 +790,14 @@ pub async fn check_and_compress_conversation(
 	// end_idx is already safe from find_compression_range
 
 	if start_idx >= end_idx {
-		log_debug!("No messages to compress (range invalid)");
+		if force && !force_done {
+			return Err(anyhow::anyhow!(
+				"forced compression has no eligible history while preserving the current exchange and task boundary (range {}..={})",
+				start_idx,
+				end_idx
+			));
+		}
+		log_info!("Compression skipped: no eligible history (range invalid)");
 		return Ok(false);
 	}
 

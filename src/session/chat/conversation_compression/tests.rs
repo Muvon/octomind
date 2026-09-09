@@ -3130,3 +3130,219 @@ async fn done_trigger_with_no_compressible_range_is_a_noop() {
 	assert!(!compressed);
 	assert_eq!(session.session.messages.len(), 3);
 }
+
+#[tokio::test]
+async fn regression_first_fold_triggers_after_crossing_threshold_without_a_watermark() {
+	let mut config = fold_config();
+	config.compression.threshold = 70_000;
+	config.max_session_tokens_threshold = 200_000;
+	config.mcp_response_tokens_threshold = 20_000;
+	config.compression.attention.enabled = true;
+	config.compression.attention.validator = true;
+	config.compression.attention.governance.enabled = true;
+	config.compression.attention.governance.verify_hash = true;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "Preserve the user's constraints."),
+		fold_message(
+			"user",
+			"Compare the observations and explain the conclusion.",
+		),
+	]);
+	session.model = "alibaba:glm-5.2".to_string();
+	session.max_tokens = 32_000;
+	session.cached_tools = Some(Vec::new());
+	assert_eq!(super::decision::context_ceiling(&session, &config), 168_000);
+	assert!(
+		!super::should_check_compression(&mut session, &config)
+			.await
+			.0
+	);
+
+	while session.get_full_context_tokens(&config).await < config.compression.threshold {
+		let mut assistant = fold_message("assistant", "Reviewing the next observation.");
+		assistant.thinking = Some(serde_json::json!({"content": "observation ".repeat(3_000)}));
+		session.session.messages.push(assistant);
+		session
+			.session
+			.messages
+			.push(fold_message("tool", "Observed result."));
+		session.session.info.total_api_calls += 1;
+	}
+	let current = session.get_full_context_tokens(&config).await;
+	assert!(current < super::decision::context_ceiling(&session, &config));
+	assert_eq!(
+		session.session.info.context_tokens_after_last_compression,
+		0
+	);
+	assert_eq!(
+		session
+			.session
+			.info
+			.compression_stats
+			.conversation_compressions,
+		0
+	);
+	assert!(!super::within_ceiling_margin(&mut session, &config).await);
+	assert!(
+		super::should_check_compression(&mut session, &config)
+			.await
+			.0
+	);
+	assert_eq!(
+		session.session.info.context_tokens_after_last_compression,
+		0
+	);
+}
+
+#[tokio::test]
+async fn regression_forced_empty_range_reports_why_the_hard_ceiling_still_aborts() {
+	let mut config = fold_config();
+	config.compression.threshold = 70_000;
+	config.max_session_tokens_threshold = 200_000;
+	config.mcp_response_tokens_threshold = 20_000;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "System instructions."),
+		fold_message("user", &"request ".repeat(170_000)),
+		fold_message("assistant", "The current exchange must survive verbatim."),
+	]);
+	session.model = "alibaba:glm-5.2".to_string();
+	session.max_tokens = 32_000;
+	session.cached_tools = Some(Vec::new());
+	let before = serde_json::to_value(&session.session.messages).unwrap();
+	let current = session.get_full_context_tokens(&config).await;
+	assert!(current > 168_000);
+	assert_eq!(
+		super::should_check_compression(&mut session, &config).await,
+		(true, MAX_COMPRESSION_RATIO)
+	);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let error = super::check_and_compress_conversation(
+		&mut session,
+		&config,
+		rx,
+		CompressionTrigger::Automatic,
+	)
+	.await
+	.expect_err("an impossible forced fold must report its reason");
+	assert!(error
+		.to_string()
+		.contains("forced compression has no eligible history"));
+	let error = super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.expect_err("an uncompressible request must never cross the ceiling");
+	let error = error.to_string();
+	assert!(error.contains(&format!("{current} > 168000 tokens")));
+	assert!(error.contains("no eligible compression range"));
+	assert_eq!(
+		serde_json::to_value(&session.session.messages).unwrap(),
+		before
+	);
+
+	config.compression.threshold = 0;
+	let error = super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.expect_err("disabling compression must not disable the ceiling");
+	assert!(error.to_string().contains("compression is disabled"));
+}
+
+#[tokio::test]
+async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
+	const CHILD_ENV: &str = "OCTOMIND_COMPRESSION_DIAGNOSTICS_CHILD";
+	if std::env::var_os(CHILD_ENV).is_none() {
+		let output = std::process::Command::new(std::env::current_exe().unwrap())
+			.args([
+				"regression_compression_failures_reach_stderr_in_jsonl_mode",
+				"--nocapture",
+			])
+			.env(CHILD_ENV, "1")
+			.output()
+			.expect("run isolated JSONL logging regression");
+		assert!(
+			output.status.success(),
+			"{}",
+			String::from_utf8_lossy(&output.stdout)
+		);
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		assert!(
+			stderr.contains("Conversation compression failed:"),
+			"{stderr}"
+		);
+		assert!(
+			stderr.contains("unsupported-compression-provider"),
+			"{stderr}"
+		);
+		assert!(stderr.contains("Background fold call failed"), "{stderr}");
+		assert!(
+			stderr.contains("scripted compression transport failure"),
+			"{stderr}"
+		);
+		assert!(
+			stderr.contains("Compression not applied: decision model declined"),
+			"{stderr}"
+		);
+		return;
+	}
+
+	let mut config = fold_config();
+	config.runtime_output_mode = Some("jsonl".to_string());
+	config.compression.model.model = Some("unsupported-compression-provider:model".to_string());
+	config.max_session_tokens_threshold = 8;
+	crate::config::set_thread_config(&config);
+	assert!(config.output_mode().should_suppress_cli_output());
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "System instructions."),
+		fold_message("user", "Compare the observations."),
+		fold_message("assistant", "First observation."),
+		fold_message("user", "Preserve the relevant qualifications."),
+		fold_message("assistant", "Current observation."),
+	]);
+	session.cached_tools = Some(Vec::new());
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	super::check_and_compress_conversation(
+		&mut session,
+		&config,
+		rx,
+		CompressionTrigger::Automatic,
+	)
+	.await
+	.expect_err("preparation failure must propagate");
+	let error = super::ensure_context_within_ceiling(&mut session, &config)
+		.await
+		.expect_err("failed compaction must not disable the ceiling");
+	assert!(error.to_string().contains("eligible history remains"));
+	assert!(error.to_string().contains("applied folds=0"));
+
+	let ctx = fold_ctx(
+		0,
+		3,
+		super::fold_fingerprint(&session.session.messages, 0, 3),
+	);
+	let job = super::FoldJob {
+		handle: tokio::spawn(async {
+			Err(anyhow::anyhow!("scripted compression transport failure"))
+		}),
+		ctx,
+	};
+	assert!(
+		!super::collect_fold_job(&mut session, &config, job, false, false)
+			.await
+			.unwrap()
+	);
+	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
+	let ctx = fold_ctx(
+		0,
+		3,
+		super::fold_fingerprint(&session.session.messages, 0, 3),
+	);
+	assert!(!super::finish_fold(
+		&mut session,
+		&config,
+		ctx,
+		CompressionSummary::default(),
+		None,
+		false,
+		false,
+	)
+	.await
+	.unwrap());
+}

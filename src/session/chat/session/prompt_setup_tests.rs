@@ -103,9 +103,13 @@ async fn fresh_session_non_interactive_builds_cached_system_prompt_and_welcome()
 	let system = &session.session.messages[0];
 	assert_eq!(system.role, "system");
 	assert!(!system.content.is_empty());
-	assert!(system
-		.content
-		.contains("You have access to the following tools:"));
+	assert!(
+		!system
+			.content
+			.contains("Retrieve the verbatim archived messages"),
+		"tool descriptions are sent as tool definitions; the system prompt must not repeat them"
+	);
+	assert!(system.content.contains("<important>"));
 	assert!(
 		system.cached,
 		"anthropic model supports caching → system prompt must be marked cached"

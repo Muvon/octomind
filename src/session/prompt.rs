@@ -29,26 +29,18 @@ pub async fn create_system_prompt(
 		crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir)
 			.await;
 
-	let mut has_tap_tool = false;
-
-	// Add MCP tools information if enabled
-	if !mcp_config.server_refs.is_empty() {
+	// Tool names and descriptions reach the model once, as the request's tool
+	// definitions (see providers.rs); listing them here again doubled that
+	// text on every turn.
+	let has_tap_tool = if mcp_config.server_refs.is_empty() {
+		false
+	} else {
 		let config_for_role = config.get_merged_config_for_role(mode);
-		let functions = crate::mcp::get_available_functions(&config_for_role).await;
-		if !functions.is_empty() {
-			prompt.push_str("\n\nYou have access to the following tools:");
-
-			for function in &functions {
-				if function.name == "tap" {
-					has_tap_tool = true;
-				}
-				prompt.push_str(&format!(
-					"\n\n- {} - {}",
-					function.name, function.description
-				));
-			}
-		}
-	}
+		crate::mcp::get_available_functions(&config_for_role)
+			.await
+			.iter()
+			.any(|function| function.name == "tap")
+	};
 
 	prompt.push_str("\n\n<important>");
 

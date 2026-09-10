@@ -267,13 +267,27 @@ async fn deliver_resource_update(
 		None,
 	);
 
-	let Some(session_id) = session_id else {
-		return;
-	};
 	// Owned copy: the delivery task outlives this call, and a borrowed
-	// &str cannot cross `tokio::spawn`.
-	let session_id = session_id.to_string();
+	// &str cannot cross `tokio::spawn`. The caller's session id is only a hint:
+	// the unsolicited-push path carries a connect-time snapshot that is empty
+	// whenever the connection was established outside a session task, which
+	// silently dropped every completion it delivered. The registry owns the
+	// mapping, so fall back to it before giving up.
+	let session_id = match session_id
+		.filter(|id| crate::session::shell_jobs::is_watched_for_session(id, &uri))
+		.map(str::to_string)
+		.or_else(|| crate::session::shell_jobs::find_session_for_uri(&uri))
+	{
+		Some(session_id) => session_id,
+		None => {
+			crate::log_debug!(
+				"resource {uri} updated but no session watches it; dropping completion"
+			);
+			return;
+		}
+	};
 	if !crate::session::shell_jobs::begin_delivery_for_session(&session_id, &uri) {
+		crate::log_debug!("resource {uri} update ignored: delivery already in flight");
 		return;
 	}
 	tokio::spawn(async move {

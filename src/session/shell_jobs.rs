@@ -201,6 +201,22 @@ pub fn is_watched_for_session(session_id: &str, uri: &str) -> bool {
 		.unwrap_or(false)
 }
 
+/// Owning session for a watched resource, found by URI alone.
+///
+/// The unsolicited `resources/updated` push arrives on the MCP connection's
+/// receive task, where the session task-local is unset, so its handler can
+/// only offer a connect-time snapshot that may be empty or stale. Job URIs are
+/// unique per server, so the registry is the authority for ownership.
+pub fn find_session_for_uri(uri: &str) -> Option<String> {
+	WATCHED
+		.read()
+		.unwrap()
+		.as_ref()?
+		.iter()
+		.find(|(_, jobs)| jobs.contains_key(uri))
+		.map(|(session_id, _)| session_id.clone())
+}
+
 /// Atomically claim one watched resource for delivery while keeping it
 /// pending until its inbox message exists. Duplicate update paths therefore
 /// cannot race two reads, and graceful shutdown cannot observe a false idle.

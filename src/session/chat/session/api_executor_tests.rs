@@ -926,6 +926,16 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 		let config = supervised_config();
 		let mut session = fake_session("verify the counter");
 		session.completion_gate_eligible = true;
+		// Missing detector clearance must neither bypass nor replace a real gap.
+		session.detectors.note_round_verification(
+			Some(10),
+			Some(11),
+			false,
+			false,
+			true,
+			false,
+			true,
+		);
 
 		run_turn(&mut session, &config)
 			.await
@@ -1006,64 +1016,117 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 	.await;
 }
 
-/// The deterministic mutation pre-gate: a `done` claim right after an
-/// unverified state change is nudged once; a second identical claim exhausts
-/// the shared budget and fails the gate without any verifier call.
+/// Missing heuristic clearance must reach the independent verifier. The first
+/// fixture is a saved artifact followed by a memory write; the second includes
+/// a command that tests behavior and creates a record in the same execution.
+/// These fixtures test routing and the evidence sent on the wire, not the
+/// quality of the scripted model's judgment.
 #[tokio::test]
-async fn test_pregate_unverified_mutation_nudges_once_then_exhausts_budget() {
+async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 	let _guard = ENV_LOCK.lock().await;
-	let sid = "api-exec-pregate-mutation".to_string();
-	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::init_session_services("assistant");
-		let url = spawn_stub(vec![
-			done_response("Shipped the change."),
-			done_response("Really shipped it this time."),
-		])
+	for mixed_command in [false, true] {
+		let sid = format!("api-exec-heuristic-evidence-{mixed_command}");
+		crate::session::context::with_session_id(sid.clone(), async {
+			crate::session::context::init_session_services("assistant");
+			let (url, requests) = spawn_recording_stub(vec![
+				done_response("Requested artifact saved."),
+				verifier_pass(),
+			])
+			.await;
+			std::env::set_var("OLLAMA_API_URL", &url);
+
+			let config = supervised_config();
+			let mut session = fake_session("save the requested artifact");
+			session.completion_gate_eligible = true;
+			let dir = tempfile::tempdir().expect("artifact directory");
+			let path = dir.path().join("artifact.txt");
+			let content = "requested-artifact-content-from-disk";
+			std::fs::write(&path, content).expect("write artifact fixture");
+			let write = serde_json::json!({"command": "create", "path": path});
+			let seq = session
+				.evidence
+				.record("text_editor", &write, true, false, 25);
+			session
+				.evidence
+				.record_ground(seq, "File created successfully");
+			session.evidence.record(
+				"memorize",
+				&serde_json::json!({"related_files": [path], "content": "artifact saved"}),
+				true,
+				false,
+				13,
+			);
+			if mixed_command {
+				let command = "bin/test --filter=coupons && manage-coupons --cmd=create";
+				let output = "PASS coupons; 1 test, 0 failures; https://example.test/c/TEST";
+				let seq = session.evidence.record(
+					"shell",
+					&serde_json::json!({"command": command}),
+					true,
+					false,
+					output.len(),
+				);
+				session.evidence.record_ground(seq, output);
+				session.evidence.record_command_output(command, output);
+			}
+			// Model the detector's conservative verdict even though evidence exists.
+			session.detectors.note_round_verification(
+				Some(10),
+				Some(11),
+				false,
+				false,
+				true,
+				false,
+				true,
+			);
+
+			run_turn(&mut session, &config)
+				.await
+				.expect("independent verification");
+
+			assert!(!session.gate_failed);
+			assert!(matches!(
+				session.learning_outcome,
+				crate::supervisor::learning::TrajectoryOutcome::Verified
+			));
+			assert_eq!(session.nudge_iterations, 0);
+			assert_eq!(session.session.info.total_api_calls, 1, "no agent re-run");
+			let captured = requests.lock().expect("captured requests");
+			assert_eq!(
+				captured.len(),
+				2,
+				"agent response then independent verifier"
+			);
+			let payload: serde_json::Value = serde_json::from_str(&captured[1]).expect("JSON");
+			let evidence = payload["messages"]
+				.as_array()
+				.expect("messages")
+				.iter()
+				.filter(|m| m["role"] == "user")
+				.filter_map(|m| m["content"].as_str())
+				.collect::<Vec<_>>()
+				.join("\n");
+			assert!(
+				evidence.contains(content),
+				"verifier receives the saved content"
+			);
+			assert!(evidence.contains("This heuristic does not establish"));
+			assert!(!evidence.contains("NO check of any kind has succeeded"));
+			if mixed_command {
+				assert!(evidence.contains("PASS coupons; 1 test, 0 failures"));
+				assert!(evidence.contains("https://example.test/c/TEST"));
+			}
+			assert!(!session
+				.session
+				.messages
+				.iter()
+				.any(|m| m.content.contains("octomind:pre_gate_unverified_mutation")));
+
+			std::env::remove_var("OLLAMA_API_URL");
+			crate::session::context::cleanup_session(&sid);
+		})
 		.await;
-		std::env::set_var("OLLAMA_API_URL", &url);
-
-		let config = supervised_config();
-		let mut session = fake_session("change the config");
-		session.completion_gate_eligible = true;
-		// Arm the detector the same way detect_tests does: a recorded agent
-		// round changed the tree (fp 10 -> 11) and nothing verified it since,
-		// so the live fingerprint can never match the verified baseline.
-		session.detectors.note_round_verification(
-			Some(10),
-			Some(11),
-			false,
-			false,
-			true,
-			false,
-			true,
-		);
-
-		run_turn(&mut session, &config)
-			.await
-			.expect("turn ends after budget exhaustion");
-
-		assert!(session.gate_failed);
-		assert!(matches!(
-			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Failed
-		));
-		assert_eq!(
-			session.nudge_iterations,
-			crate::supervisor::gate::MAX_ITERATIONS
-		);
-		let nudges = session
-			.session
-			.messages
-			.iter()
-			.filter(|m| m.content.contains(PREGATE_MARKER))
-			.count();
-		assert_eq!(nudges, 1, "second pass must not duplicate the nudge note");
-		assert_eq!(session.session.info.total_api_calls, 2);
-
-		std::env::remove_var("OLLAMA_API_URL");
-		crate::session::context::cleanup_session(&sid);
-	})
-	.await;
+	}
 }
 
 /// Gate disabled: a `done` claim with a `phase_complete` plan signal drives

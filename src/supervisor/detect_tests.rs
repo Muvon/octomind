@@ -498,7 +498,33 @@ fn operation_selector_is_never_a_verifier_whatever_the_operation_is_called() {
 		let call = json!({ "command": op, "path": "a.rs" });
 		assert!(is_mutation_call(editor, &call), "{op} edits");
 		assert!(!is_verifier_shaped(editor, &call), "{op} executes nothing");
+		assert!(!is_command_execution(editor, &call), "{op} is an operation");
 	}
+}
+
+#[test]
+fn mutating_command_output_remains_verification_evidence() {
+	let runner = "detectTestsMixedVerificationRunner";
+	register_tool_read_only_hint(runner, Some(false));
+	register_tool_command_shape(runner, true);
+	for command in [
+		"ssh dev \"docker exec php sh -c 'bin/test --filter=coupons && app/scripts/manage-coupons --cmd=create'\"",
+		"pytest tests/test_create_coupon.py",
+		"printf 'create update delete'",
+	] {
+		let call = json!({"command": command});
+		assert!(is_mutation_call(runner, &call), "heuristic matches: {command}");
+		assert!(
+			!is_verifier_shaped(runner, &call),
+			"no automatic verification credit"
+		);
+		assert!(
+			is_command_execution(runner, &call),
+			"retain evidence: {command}"
+		);
+	}
+	assert!(!is_command_execution(runner, &json!({"command": "  "})));
+	assert!(!is_command_execution(runner, &json!({"command": 42})));
 }
 
 #[test]

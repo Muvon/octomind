@@ -272,33 +272,31 @@ pub fn strip_self_report(text: &str) -> String {
 /// [`Detectors::note_round_verification`]: a candidate that dirtied the tree
 /// is a mutator, not a verifier.
 pub fn is_verifier_shaped(tool: &str, parameters: &serde_json::Value) -> bool {
+	!is_mutation_call(tool, parameters) && is_command_execution(tool, parameters)
+}
+
+/// A command execution can provide evidence even when it also mutates state.
+/// Keep that output for the independent verifier without granting deterministic
+/// verification credit. Registered runners are identified by their schema;
+/// unregistered tools retain the conservative non-mutation shape fallback.
+pub fn is_command_execution(tool: &str, parameters: &serde_json::Value) -> bool {
 	let Some(cmd) = parameters.get("command").and_then(|v| v.as_str()) else {
 		return false;
 	};
-	// A mutating call is never a verification candidate, whatever its parameter
-	// shape: editor tools also take a string `command` (octofs text_editor's
-	// command="str_replace" selects an edit operation, it executes nothing) —
-	// without this guard an edit round classified itself as its own verifier.
-	// [`is_mutation_call`] separates the two structurally (operation selector vs
-	// command runner) rather than by the words in the command; see there.
-	if is_mutation_call(tool, parameters) {
-		crate::log_debug!("verifier-shape: {} rejected: mutation call", tool);
+	if !executes_free_form_command(tool) && is_mutation_call(tool, parameters) {
 		return false;
 	}
 	// Reject empty command strings: they execute nothing and cannot validate
 	// completion.
 	if cmd.trim().is_empty() {
-		crate::log_debug!("verifier-shape: {} rejected: empty command", tool);
 		return false;
 	}
-	crate::log_debug!("verifier-shape: {} accepted: {}", tool, cmd);
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
 		Some(server) => !matches!(
 			server.as_str(),
 			"core" | "runtime" | "orchestration" | "agent"
 		),
-		// Unregistered tool with a command param: treat as a candidate — the
-		// observational tree check still guards against false verification.
+		// Unregistered command tool: retain the output as possible evidence.
 		None => true,
 	}
 }
@@ -544,7 +542,7 @@ pub struct Detectors {
 	/// the working-tree fingerprint at the last clean verification — a
 	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
 	/// first observed round's pre-fingerprint (the task-start tree). Once
-	/// `agent_dirty` is armed, the pre-gate compares the live fingerprint
+	/// `agent_dirty` is armed, the detector compares the live fingerprint
 	/// against this. Trajectory state, NOT a streak: it persists across turns,
 	/// so [`Detectors::reset_streak`] leaves it untouched.
 	verified_fp: Option<u64>,
@@ -787,9 +785,8 @@ impl Detectors {
 	/// for work with no command to run (documents, config, prose, data files)?
 	/// Domain-agnostic by construction: it matches artifact identity (the path
 	/// the agent changed), never tool names or file types. Command-verifiable
-	/// work still prefers the stronger exit — a check run — but a read-back is
-	/// exactly what the pre-gate note asks for ("inspect the resulting state"),
-	/// so it must count.
+	/// work still prefers the stronger signal — a check run — but a read-back
+	/// is evidence of artifact inspection and must count as such.
 	pub fn is_readback_call(
 		&self,
 		parameters: &serde_json::Value,
@@ -900,12 +897,13 @@ impl Detectors {
 		self.failed_verifier_rounds = 0;
 	}
 
-	/// Free pre-gate signal: an agent round changed the tree and nothing has
-	/// been run since to check it. Armed ONLY by the agent's own rounds
+	/// Heuristic signal: an agent round changed the tree and no qualifying
+	/// verification has been recognized since. This is not a completion verdict.
+	/// Armed ONLY by the agent's own rounds
 	/// (`agent_dirty`) — an agent that changed nothing is reporting, not
 	/// claiming work, and has nothing to verify, however much the tree drifts
 	/// externally. `fp_now` is the live fingerprint measured at decision time;
-	/// it stands the gate down when the tree is back at its last verified
+	/// it clears this signal when the tree is back at its last verified
 	/// state (e.g. the change was reverted).
 	pub fn needs_verification(&self, fp_now: Option<u64>) -> bool {
 		let r = self.agent_dirty

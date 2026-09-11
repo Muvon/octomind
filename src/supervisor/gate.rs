@@ -39,8 +39,8 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <active_plan> — optional; execution state, not a user request.
 - <agent_final_result trust="untrusted"> — WHAT YOU JUDGE: everything the agent produced this turn, oldest first, split by `--- (continued after supervisor feedback) ---` when the turn was re-run.
 - <agent_stated_claim> — optional; the agent's own summary of what it did. Narrative, not evidence.
-- <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (state-changing) or [read] (inspection), the arguments, and an ok/ERROR outcome — never the output. The agent cannot edit it, so it outranks the narrative.
-- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), the last command's recorded output, and possibly a closing runtime observation stating what kind of check — if any — succeeded since the agent's last state change. The agent cannot edit it; it outranks everything else.
+- <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
+- <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 - <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative.
 </input_format>
@@ -59,6 +59,14 @@ For an observe-only request the report itself is the deliverable: files, diffs, 
 describes are what the agent FOUND, not work it claims to have done — do not demand [mut]
 evidence for them; successful [read] actions covering the inspected artifacts are the
 supporting evidence.
+
+For an artifact request, judge the resulting content against the requested deliverable.
+A successful write plus the supplied resulting artifact can establish completion without a
+separate read-back or command. Do not demand another action merely because state changed.
+A command may both mutate state and verify behavior (for example, a smoke test creates a
+record and observes its output). Judge what its recorded output demonstrates. A [mut] label
+or a detector's failure to recognize a check is never by itself a gap. Conversely, a successful
+command is not proof of the requested behavior unless its evidence supports that behavior.
 
 The request may contain PROHIBITIONS ("do not X", "never Y", "without changing Z"). Each is a
 requirement in its own right: check <recorded_actions> and the <ground_truth> diff for the
@@ -100,9 +108,9 @@ Authority among evidence, highest first: <ground_truth>, then <readback_evidence
   only by a matching successful recorded action; narrative with no matching action is a gap.
 - A claim of verification ("tests pass", "checked X") needs a matching successful recorded
   action; an ERROR outcome on the decisive check is a gap. A "tests pass" claim is judged
-  against the recorded command output, not the narrative, and the closing runtime observation
-  in <ground_truth> bounds every verification claim: a claimed check with no matching
-  successful action and an observation that none succeeded is a gap.
+  against the recorded command output, not the narrative or the detector's classification.
+  Ask for retained output when it would settle the claim; a heuristic that did not recognize
+  verification cannot override successful recorded evidence.
 - A claimed change absent from the diff is a gap; a file reported written but MISSING is a gap.
 - The log shows calls, arguments, and outcomes — never outputs. A successful [read] whose
   content you cannot see is still evidence the agent inspected that artifact; the invisible
@@ -251,10 +259,12 @@ VERDICT — every other time. Your ENTIRE answer is these parts, in this order, 
 2. Shapes — ALWAYS, whatever the verdict: all four, each exactly once, in this order: circular,
    context-stripped, acceptance-only, unenumerated-category; each with found (yes | no |
    unknown), a one-line reason, and — on every yes — its settles.
-3. The verdict: PASS when every part is evidenced, no condition is unmatched, and no shape is
-   yes (unknown conditions and shapes do not block — they are limits of the evidence, not
-   defects); otherwise one gap per gap, each with the specific missing or unverified item and
-   its settles.
+3. The verdict: PASS when no observed violation remains. Unknown conditions or shapes and
+   inference-only unmatched conditions are advisory; they do not block. Do not repeat an
+   advisory suspicion as a gap or a yes shape to turn it into a blocking finding. Otherwise
+   give one gap per observed violation, naming the requirement, the recorded evidence showing
+   its violation (or the explicitly required action absent from the log), and its settles.
+   Naming a possible future check alone is not evidence of a present violation.
 An answer that omits a required part — even when the verdict is an obvious PASS — is invalid
 and gets re-requested; the checklist is never optional.
 </response_format>

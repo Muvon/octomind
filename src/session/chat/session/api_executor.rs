@@ -25,14 +25,7 @@ use tokio::sync::watch;
 
 use crate::session::output::{OutputMode, OutputSink};
 
-const PREGATE_MARKER: &str = "octomind:pre_gate_unverified_mutation";
-
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
-const PREGATE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unverified_mutation -->\nYou may only report done after a verification has actually passed. You reported done with state changes still unverified, so that claim isn't trustworthy yet. Run the check appropriate to this work (for example, inspect the resulting state, exercise the changed behavior, or use a domain-specific validator), watch the result, and report the actual outcome: pass, fail, or — if no meaningful check exists — what you inspected and why that is sufficient. Base the report on the observed result, not on what you expect.\n</pay-attention>";
-
-fn latest_real_user_turn_start(messages: &[crate::session::Message]) -> usize {
-	crate::session::latest_task_turn_index(messages).unwrap_or(messages.len())
-}
 
 fn claims_user_task_completion(
 	completion_gate_eligible: bool,
@@ -601,10 +594,6 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			!chat_session.evidence.mutated_paths().is_empty(),
 		) && chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS
 	{
-		// One genuine user message defines the verification turn. Supervisor,
-		// recall, skill, and continuation injections after it remain part of the
-		// runtime conversation but cannot move this boundary.
-		let turn_start = latest_real_user_turn_start(&chat_session.session.messages);
 		// Task content via the continuation-aware helper: after a compaction drains
 		// the raw user turns, the live request survives only inside the
 		// `<continuation>` wrapper's `<task>`. Reading the message directly returns
@@ -627,92 +616,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			resolved_task.answer_only,
 			plan_changed_this_turn
 		);
-		// Free pre-gate (no model call): the most common false-done is claiming
-		// completion right after a code change without re-running any check. Catch
-		// it deterministically before paying for the LLM verify-gate. Bounded by the
-		// free-check budget (nudge_iterations), so it can't loop unbounded.
-		// Check every message since the current turn's real user task, not just
-		// the newest user-role message: recite/steer/recall inject their own
-		// user-role notes after the pre-gate note, which would hide it and cause
-		// a duplicate nudge that burns the gate budget. Scoping to the current
-		// turn also avoids matching a pre-gate note left in earlier history.
-		let already_nudged = {
-			let msgs = &chat_session.session.messages;
-			msgs[turn_start..]
-				.iter()
-				.any(|m| m.content.contains(PREGATE_MARKER))
-		};
-		// A project with `[[validator]]` guardrails has declared its own
-		// verification regime: end-of-turn scripts that run on their configured
-		// conditions and fail loudly into the inbox. Nudging the model to "run
-		// a check" on top of that second-guesses the project's regime — and
-		// misfires on jobs whose deliverable is a report, where running checks
-		// is not the task. Job-agnostic by design: keyed on configuration
-		// presence, never on message or job content.
-		let validators_configured =
-			crate::session::guardrails::get_rules(&chat_session.session.info.name)
-				.map(|r| !r.validators.is_empty())
-				.unwrap_or(false);
-		// The current-turn verdict covers role instructions and immediate user
-		// wording. The persisted user policy covers prior genuine turns, including
-		// answer-only turns that never reached a completion claim. An explicit
-		// later permission changes that policy during turn admission; silence does
-		// not. Detector streak state is intentionally not an instruction store.
-		let check_run_forbidden = resolved_task.forbids_verification
-			|| chat_session.session.info.verification_policy.forbids();
-		if check_run_forbidden {
-			crate::log_debug!("Pre-gate: check-run forbidden by user/instructions; standing down");
-		}
-		// Observe-only turns (a report, briefing, review, explanation) deliver
-		// text, not state — "run a check" is a category error there, and the
-		// tree fingerprint may have moved for reasons outside the agent (a
-		// concurrent editor, a generated artifact). The classifier's
-		// answer_only verdict stands this pre-gate down just as it suppresses
-		// automatic plan formation; the LLM verify-gate still judges the report
-		// itself under its observe-only rules.
-		if !resolved_task.answer_only
-			&& !validators_configured
-			&& !check_run_forbidden
-			&& chat_session
-				.detectors
-				.needs_verification(crate::supervisor::workdir::fingerprint())
-		{
-			let next_iteration = chat_session.nudge_iterations.saturating_add(1);
-			if next_iteration >= crate::supervisor::gate::MAX_ITERATIONS {
-				chat_session.nudge_iterations = next_iteration;
-				chat_session.gate_failed = true;
-				chat_session.learning_outcome =
-					crate::supervisor::learning::TrajectoryOutcome::Failed;
-				chat_session.pending_plan_signal = None;
-				crate::supervisor::stats::pregate_block();
-				crate::supervisor::stats::gate_fail();
-				crate::supervisor::notify(
-					"unverified state changes remain — repair budget exhausted",
-				);
-				chat_session.finish_turn_timing();
-				return Ok(());
-			}
-			if !already_nudged {
-				chat_session.add_system_managed_user_message(PREGATE_NOTE)?;
-			}
-			chat_session.last_self_report = None; // force the re-run to re-evaluate
-			chat_session.nudge_iterations = next_iteration;
-			crate::supervisor::stats::pregate_block();
-			crate::supervisor::notify("done claimed with unverified state changes — re-running");
-			crate::log_debug!(
-				"Pre-gate: unverified mutation; re-running turn (iter {})",
-				chat_session.nudge_iterations
-			);
-			return Box::pin(execute_api_call_and_process_response(
-				chat_session,
-				config,
-				role,
-				operation_rx,
-				mode,
-				sink,
-			))
-			.await;
-		}
+		// Mutation and verification shapes are heuristic evidence, not a verdict.
+		// A write may itself fulfill the request; a command may exercise behavior
+		// while also changing state. Let the independent verifier judge the actual
+		// artifacts and outputs before spending a re-entry on a concrete gap.
 
 		// The whole turn's answer, not just its last message: a supervisor re-run
 		// answers the correction it was given, so the deliverable usually sits in an
@@ -750,22 +657,19 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			chat_session.evidence.mutated_paths(),
 			&chat_session.evidence.recent_commands(),
 		);
-		// Verification-evidence provenance: the runtime KNOWS whether any
-		// command-shaped check succeeded since the last state change; the
-		// verifier must not have to infer that absence from a raw action log
-		// (small verifiers demonstrably don't). Stated as observed fact — the
-		// verdict stays the verifier's.
+		// Report detector limits as heuristics. Failure to recognize a check is
+		// not proof that no check ran, or that the task requires another action.
 		if !chat_session.evidence.mutated_paths().is_empty() {
 			let provenance = if chat_session
 				.detectors
 				.needs_verification(crate::supervisor::workdir::fingerprint())
 			{
 				Some(
-					"Runtime observation: NO check of any kind has succeeded on the changed state since the agent's last state change.",
+					"Verification detector: no qualifying check was recognized after the recorded state changes. This heuristic does not establish that verification is absent or required; judge the recorded outputs and resulting artifacts against the request.",
 				)
 			} else if chat_session.detectors.cleared_by_readback_only() {
 				Some(
-					"Runtime observation: since its last state change the agent only re-read its own edited artifacts; no command-shaped check (build, test, run, validator) succeeded on the changed state. Inspection verifies artifact content, never behavior.",
+					"Verification detector: artifact read-back was recognized, but no qualifying command check was recognized at that clearance. This heuristic is not an exhaustive account of the evidence. Artifact content can satisfy an artifact request; behavior claims require supporting observations.",
 				)
 			} else {
 				None

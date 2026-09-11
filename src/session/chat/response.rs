@@ -555,12 +555,12 @@ pub async fn process_response<S: OutputSink>(
 					return Ok(());
 				}
 
-				// Observational verification (free pre-gate): fingerprint the working
+				// Observational verification signal: fingerprint the working
 				// tree BEFORE this round's tools run. Measuring after execution (the
 				// old site, inside the bookkeeping loop) made fp_before == fp_after
 				// unconditionally, so "tree_unchanged" was trivially true and a round
 				// that both edited and looked verifier-shaped marked its own mutation
-				// as verified — blinding the check-after-mutation pre-gate.
+				// as verified — losing the distinction between changes and checks.
 				let track_verification =
 					params.config.supervisor.enabled && params.config.supervisor.gate.enabled;
 				let fp_before = if track_verification {
@@ -694,11 +694,12 @@ pub async fn process_response<S: OutputSink>(
 							.chat_session
 							.evidence
 							.record_ground(sequence, &result_content);
-						// Ground truth for the gate: keep the last successful command
-						// execution's output — the decisive check normally runs right
-						// before `done`. Shape-based, the same definition as the
-						// verifier-candidate check, so any command-execution tool
-						// qualifies — never a hard-coded tool name.
+						// Retain command evidence independently of verification credit:
+						// a smoke test can mutate state and still demonstrate behavior.
+						let command_execution = crate::supervisor::detect::is_command_execution(
+							&call.tool_name,
+							&call.parameters,
+						);
 						let verifier_shaped = crate::supervisor::detect::is_verifier_shaped(
 							&call.tool_name,
 							&call.parameters,
@@ -709,7 +710,7 @@ pub async fn process_response<S: OutputSink>(
 						) {
 							round_verifier_outcomes.push((key, !is_error));
 						}
-						if verifier_shaped && !is_error {
+						if command_execution && !is_error {
 							let cmd = call
 								.parameters
 								.get("command")
@@ -743,7 +744,7 @@ pub async fn process_response<S: OutputSink>(
 						// call or a command execution could have moved the tree — errored
 						// ones included, a command may write before failing. A round of
 						// pure reads cannot, so fingerprint drift across it is external.
-						round_write_capable |= is_mutation || verifier_shaped;
+						round_write_capable |= is_mutation || command_execution;
 						if !is_error {
 							round_mutation |= is_mutation;
 							if is_mutation {

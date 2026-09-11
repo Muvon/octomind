@@ -191,19 +191,21 @@ no-progress while `exploring` waits; loop, recovery, or no-progress otherwise, s
 ## Verify-gate
 
 For an eligible user-task completion with supervision and the gate enabled, the claim is checked before completion is
-accepted — deterministic checks first, a model verification pass after those checks allow it:
+accepted by an independent model verification pass.
 
-**Free pre-gates (no model call):**
+**Free pre-check (no model call):**
 
-- **Mutation → check** — changed state lacks a successful check. A successful command-shaped check on unchanged state,
-  read-back of an agent-mutated artifact, or a verified child handback can clear the detector. Read-back proves artifact
-  content, not runtime behavior; the verifier receives that distinction.
 - **Unfinished handback** — non-interactive/background execution can nudge an `exploring` or `progressing` response that
   ends without action, within a fixed retry budget.
 
+Mutation and verification detectors supply heuristic context to the model pass; they cannot reject completion by
+themselves. A saved artifact can fulfill an artifact request without a separate check. A command can both change state
+and exercise behavior, so its output remains available as evidence. The verifier judges the requested outcome against
+the resulting artifacts and recorded outputs, and must identify a concrete gap before requesting more work.
+
 The gate also catches a missing self-report after mutations; `need_input` and `blocked` remain legitimate handbacks.
-Pending session-owned background work defers completion. Answer-only tasks, configured skill validators, and explicit
-user/instruction prohibitions suppress the automatic run-a-check pre-gate.
+Pending session-owned background work defers completion. User and standing-instruction prohibitions on verification
+remain binding: a forbidden check's absence is compliance, not a gap.
 
 For example, a standing verification prohibition persists until you explicitly change it:
 

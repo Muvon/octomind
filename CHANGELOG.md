@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.52.0] - 2026-09-11
+
+### 📋 Release Summary
+
+This release adds workflow definitions without requiring input, session-based TAP workflow execution, and a workflow chat command (02aa206b, 2b801d7f, b8621c10). Workflow documentation and invocation behavior are clarified, while MCP resource updates, prompts, session job handling, compression, spending status, and supervisor constraint formatting are improved (caad0dce, cccd728a, db1f6e9b, 262b89a4, 1fe85b87, c5fb9597, 6a7b060b, 70b6a165, 70f1d4c0, 38835b89, 57e780d2, 315afa99). Additional fixes improve recitation handling and preserve more reliable behavior across varied environments (a90222fe, 619dee0d).
+
+
+### ✨ New Features & Enhancements
+
+- **workflow**: show definitions without input `02aa206b`
+- **workflow**: run tap workflows in sessions `2b801d7f`
+- **workflow**: add workflow chat command `b8621c10`
+
+### 🔧 Improvements & Optimizations
+
+- **agent**: tolerate environment-specific error text `619dee0d`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: resolve session for resource updates `caad0dce`
+- **prompt**: avoid duplicating tool descriptions `db1f6e9b`
+- **recite**: drop subjectless constraint fragments `a90222fe`
+- **compression**: preserve ceiling on failures `c5fb9597`
+- **session**: preserve detached job evidence `262b89a4`
+- **spending**: report threshold stop status `6a7b060b`
+- **supervisor**: preserve wrapped rule indentation `70b6a165`
+- **supervisor**: separate prose after list items `70f1d4c0`
+- **supervisor**: preserve wrapped constraints `38835b89`
+- **supervisor**: preserve long listed constraints `57e780d2`
+- **supervisor**: filter incomplete constraint stubs `315afa99`
+- **mcp**: clarify workflow invocation behavior `cccd728a`
+- **session**: reconcile pending background jobs `1fe85b87`
+
+### 📚 Documentation & Examples
+
+- **workflow**: document session workflow commands `43e68590`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.51.1] - 2026-09-06
 
 ### 📋 Release Summary

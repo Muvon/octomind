@@ -1977,9 +1977,9 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 					.as_str()
 					.unwrap_or_default()
 					.contains("HANDBACK-TURN") =>
-				{
-					answered = true;
-				}
+			{
+				answered = true;
+			}
 			_ => {}
 		}
 		if injected && answered {

@@ -427,9 +427,25 @@ async fn get_or_create_session_lock(
 /// message arrives, the task takes the session from the map, processes the message
 /// through the full AI pipeline, sends results through `bg_tx` for the connection
 /// loop to forward to the client, and puts the session back.
+/// Inbox monitors currently alive. A monitor belongs to ONE connection, so this
+/// must fall back to zero as connections close — a count that only grows is the
+/// leak this exists to catch, and nothing else observes it from outside.
+static LIVE_INBOX_MONITORS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Decrements the live count however the monitor task ends, including a panic.
+struct MonitorGuard;
+
+impl Drop for MonitorGuard {
+	fn drop(&mut self) {
+		LIVE_INBOX_MONITORS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+	}
+}
+
 /// Exits when the session is removed from the map or the bg_tx channel is closed.
 fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 	tokio::spawn(async move {
+		LIVE_INBOX_MONITORS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+		let _reaped = MonitorGuard;
 		log_debug!(
 			"WebSocket: inbox monitor started for session: {}",
 			session_id
@@ -641,6 +657,10 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 			crate::session::context::with_session_id(session_id.clone(), async {
 				let inbox_notify = crate::session::inbox::get_inbox_notify();
 				tokio::select! {
+					// Without this the monitor of a closed connection parks until
+					// something else happens to wake it — one leaked task per
+					// connection, for the life of the process.
+					_ = ctx.bg_tx.closed() => {}
 					_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 					_ = async {
 						if let Some(notify) = inbox_notify {
@@ -739,7 +759,11 @@ async fn handle_session_message(
 	};
 
 	let session_id = chat_session.session.info.name.clone();
-	active_session_ids.insert(session_id.clone());
+	// A client may bind the same session more than once on one connection
+	// (octomind-api re-sends the `session` frame ahead of every turn). Only the
+	// FIRST bind gets a monitor: they all share this connection's bg_tx, so the
+	// extras are pure duplicates that park forever on the session's Notify.
+	let first_bind_here = active_session_ids.insert(session_id.clone());
 
 	// Wrap in session context so all session-scoped registries route correctly
 	let role_for_pool = session_role.clone();
@@ -780,7 +804,9 @@ async fn handle_session_message(
 
 	// Spawn independent background task that monitors schedules/inbox
 	// and processes messages automatically without waiting for user prompts.
-	spawn_ws_inbox_monitor(session_id, ctx.clone());
+	if first_bind_here {
+		spawn_ws_inbox_monitor(session_id, ctx.clone());
+	}
 
 	Ok(())
 }

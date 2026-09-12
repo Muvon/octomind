@@ -680,6 +680,23 @@ async fn create_session(ws: &mut ClientWs, session_id: Option<&str>) -> String {
 		.to_string()
 }
 
+fn live_inbox_monitors() -> usize {
+	super::LIVE_INBOX_MONITORS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The count is process-global and a previous test's monitor may still be
+/// winding down, so both the baseline and the final check poll instead of
+/// sampling once — under a fully loaded suite a reap can take seconds.
+async fn wait_for_inbox_monitors(target: usize) -> usize {
+	for _ in 0..300 {
+		if live_inbox_monitors() == target {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(50)).await;
+	}
+	live_inbox_monitors()
+}
+
 async fn inbox_has_messages(session_id: &str) -> bool {
 	crate::session::context::with_session_id(session_id.to_string(), async {
 		crate::session::inbox::has_inbox_messages()
@@ -2018,6 +2035,52 @@ async fn a_failing_background_inbox_turn_reports_an_error_frame() {
 			.unwrap_or_default()
 			.contains("injected message"),
 		"got: {error}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// One monitor per connection, and none left behind.
+///
+/// octomind-api re-sends the `session` bind ahead of every turn, so a client can
+/// bind the same session repeatedly; every bind used to spawn another monitor
+/// that shared the same `bg_tx` and simply parked on the session's Notify. And
+/// when the connection went away they all stayed parked, because the loop only
+/// notices a closed channel once something wakes it — one leaked task per turn,
+/// for the life of the process.
+#[tokio::test]
+#[serial_test::serial]
+async fn inbox_monitors_are_one_per_connection_and_die_with_it() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	// Baseline once any straggler from an earlier test has been reaped.
+	let before = wait_for_inbox_monitors(0).await;
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	assert_eq!(
+		live_inbox_monitors() - before,
+		1,
+		"the first bind gets the connection's monitor"
+	);
+
+	// Re-binding the same session on the same connection must not add another.
+	let rebound = create_session(&mut ws, Some(&session_id)).await;
+	assert_eq!(rebound, session_id);
+	assert_eq!(
+		live_inbox_monitors() - before,
+		1,
+		"a re-bind on the same connection is not a second monitor"
+	);
+
+	ws.close(None).await.ok();
+	drop(ws);
+	assert_eq!(
+		wait_for_inbox_monitors(before).await,
+		before,
+		"the monitor must be reaped when its connection closes"
 	);
 
 	crate::session::context::cleanup_session(&session_id);

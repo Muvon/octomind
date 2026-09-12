@@ -1884,3 +1884,94 @@ async fn monitor_defers_when_the_inbox_is_emptied_by_another_consumer() {
 
 	crate::session::context::cleanup_session(&session_id);
 }
+
+// ---- handback across a connection boundary ----
+
+/// A `tap` run outlives the turn that started it. The driver closes the socket
+/// on the terminal cost frame (octomind-api `AcpRunner::stream`), so when the
+/// run finishes minutes later there is no live connection — and the monitor
+/// belonging to that CLOSED connection is still parked on the session's
+/// `Notify`, because its `bg_tx.is_closed()` exit check only runs after the
+/// drain. It woke on the push, popped the message, and streamed it into a dead
+/// channel: the only copy of the answer, destroyed.
+///
+/// Observed in prod 2026-09-12 — `tap list` reported `done`, the user was told
+/// "lands in my next message", and nothing ever arrived. Sessions and their
+/// inboxes deliberately outlive a connection, so the handback must simply wait
+/// for the next one.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connection() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("HANDBACK-TURN")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	// The turn ended and the driver hung up — the monitor spawned for this
+	// connection is now orphaned, but still parked on the session's Notify.
+	ws.close(None).await.ok();
+	drop(ws);
+	tokio::time::sleep(Duration::from_millis(200)).await;
+
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::TapRun {
+				id: "tap-1".to_string(),
+				role: "assistant:researcher".to_string(),
+			},
+			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+
+	assert!(
+		inbox_has_messages(&session_id).await,
+		"the orphaned monitor must leave the handback alone, not drain it into a closed channel"
+	);
+
+	// The next connection resumes the session, spawns a live monitor, and
+	// delivers what the previous one left behind.
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let resumed = create_session(&mut ws, Some(&session_id)).await;
+	assert_eq!(resumed, session_id);
+
+	let mut injected = false;
+	let mut answered = false;
+	for _ in 0..40 {
+		let frame = read_json(&mut ws).await;
+		match frame["type"].as_str().unwrap_or_default() {
+			"injected" => {
+				assert!(
+					frame["content"]
+						.as_str()
+						.unwrap_or_default()
+						.contains("the research"),
+					"got: {frame}"
+				);
+				injected = true;
+			}
+			"assistant" => {
+				if frame["content"]
+					.as_str()
+					.unwrap_or_default()
+					.contains("HANDBACK-TURN")
+				{
+					answered = true;
+				}
+			}
+			_ => {}
+		}
+		if injected && answered {
+			break;
+		}
+	}
+	assert!(injected, "the handback must reach the new connection");
+	assert!(answered, "and drive a turn on it");
+
+	crate::session::context::cleanup_session(&session_id);
+}

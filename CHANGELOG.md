@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.52.1] - 2026-09-12
+
+### 📋 Release Summary
+
+Improved WebSocket reliability by preventing duplicate inbox monitors, reporting processing errors, and strengthening handback handling across connections (101dafbd, f79f7878, c9866792, a6d76623). Supervisor verification and steering behavior were refined for more consistent operation (b56484d7, 56eca091).
+
+
+### 🔧 Improvements & Optimizations
+
+- **websocket**: refine handback response matching `c9866792`
+- **websocket**: cover handback across connections `a6d76623`
+- **supervisor**: soften detector steering `b56484d7`
+- **supervisor**: route checks to verifier `56eca091`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: reap duplicate inbox monitors `101dafbd`
+- **websocket**: report inbox processing errors `f79f7878`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.52.0] - 2026-09-11
 
 ### 📋 Release Summary

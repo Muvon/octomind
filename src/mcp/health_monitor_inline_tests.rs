@@ -43,13 +43,44 @@ async fn spawn_health_stub(status: u16) -> String {
 		.expect("bind stub listener");
 	let addr = listener.local_addr().expect("stub local addr");
 	tokio::spawn(async move {
-		use tokio::io::AsyncWriteExt;
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
 		loop {
 			let Ok((mut sock, _)) = listener.accept().await else {
 				break;
 			};
-			let response = format!("HTTP/1.1 {status} Stub\r\nContent-Length: 0\r\n\r\n");
+			// Drain headers and body before closing: unread request data can
+			// cause Windows to reset the connection and discard the response.
+			let mut buf = Vec::new();
+			let mut tmp = [0u8; 8192];
+			let header_end = loop {
+				let n = sock.read(&mut tmp).await.unwrap_or(0);
+				if n == 0 {
+					break 0;
+				}
+				buf.extend_from_slice(&tmp[..n]);
+				if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+					break pos + 4;
+				}
+			};
+			if header_end > 0 {
+				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+				let content_length: usize = headers
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				while buf.len() < header_end + content_length {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						break;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+				}
+			}
+			let response =
+				format!("HTTP/1.1 {status} Stub\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
 			let _ = sock.write_all(response.as_bytes()).await;
+			let _ = sock.shutdown().await;
 		}
 	});
 	format!("http://{addr}")
@@ -247,7 +278,7 @@ fn http_auth_failure_uses_transport_status_and_challenges() {
 #[tokio::test]
 async fn http_health_check_classifies_auth_failure_as_unreachable() {
 	let url = spawn_health_stub(401).await;
-	let server = McpServerConfig::http("hm-test-401", &url, 2, vec![]);
+	let server = McpServerConfig::http("hm-test-auth-rejected", &url, 2, vec![]);
 	let result = perform_http_health_check(&server)
 		.await
 		.expect("health probe must classify, not fail");
@@ -278,7 +309,7 @@ async fn http_health_check_classifies_refused_connection_as_dead() {
 #[serial]
 #[tokio::test]
 async fn health_check_records_unreachable_for_auth_rejecting_http_server() {
-	const NAME: &str = "hm-test-403";
+	const NAME: &str = "hm-test-auth-status";
 	let url = spawn_health_stub(403).await;
 	let server = McpServerConfig::http(NAME, &url, 2, vec![]);
 	check_server_health_and_restart_if_dead(&server)

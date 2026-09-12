@@ -735,12 +735,17 @@ pub async fn connect_http(server: &McpServerConfig) -> Result<Arc<McpService>> {
 			.await
 			.map_err(|_| anyhow!("Timed out connecting to MCP server '{}'", server_name))?
 			.map_err(|e| {
-				anyhow!(
+				let message = format!(
 					"Failed to initialize MCP server '{}' (modern: {}; legacy: {})",
-					server_name,
-					modern_err,
-					e
-				)
+					server_name, modern_err, e
+				);
+				// Keep typed failures available to the health monitor; names and
+				// URLs in the diagnostic are not evidence of an HTTP auth status.
+				anyhow::Error::new(rmcp::service::ClientInitializeError::LegacyFallbackFailed {
+					discover: Box::new(modern_err),
+					fallback: Box::new(e),
+				})
+				.context(message)
 			})?
 		}
 		Err(_) => {

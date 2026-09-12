@@ -201,6 +201,48 @@ async fn http_health_check_requires_a_url() {
 	assert!(perform_http_health_check(&server).await.is_err());
 }
 
+#[test]
+fn http_auth_failure_uses_transport_status_and_challenges() {
+	use rmcp::service::ClientInitializeError;
+	use rmcp::transport::streamable_http_client::{
+		AuthRequiredError, InsufficientScopeError, StreamableHttpError,
+	};
+
+	let classify = |error: StreamableHttpError<reqwest::Error>| {
+		is_http_auth_failure(&ClientInitializeError::TransportError {
+			error: rmcp::transport::DynamicTransportError::from_parts(
+				"test",
+				std::any::TypeId::of::<()>(),
+				Box::new(error),
+			),
+			context: "health probe".into(),
+		})
+	};
+	for (response, expected) in [
+		("HTTP 401 Unauthorized: ", true),
+		("HTTP 403 Forbidden: ", true),
+		(
+			"HTTP 500 Internal Server Error: HTTP 401 Unauthorized",
+			false,
+		),
+		("HTTP 404 Not Found: /403/forbidden", false),
+	] {
+		assert_eq!(
+			classify(StreamableHttpError::UnexpectedServerResponse(
+				response.into()
+			)),
+			expected,
+			"{response}"
+		);
+	}
+	assert!(classify(StreamableHttpError::AuthRequired(
+		AuthRequiredError::new("Bearer realm=\"test\"".into())
+	)));
+	assert!(classify(StreamableHttpError::InsufficientScope(
+		InsufficientScopeError::new("Bearer scope=\"tools\"".into(), Some("tools".into()))
+	)));
+}
+
 #[serial]
 #[tokio::test]
 async fn http_health_check_classifies_auth_failure_as_unreachable() {
@@ -215,13 +257,18 @@ async fn http_health_check_classifies_auth_failure_as_unreachable() {
 #[serial]
 #[tokio::test]
 async fn http_health_check_classifies_refused_connection_as_dead() {
-	// Bind then drop a listener to get a guaranteed-closed port.
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
-	let addr = listener.local_addr().expect("addr");
-	drop(listener);
-	let server = McpServerConfig::http("hm-test-refused", &format!("http://{addr}"), 2, vec![]);
+	// Reserve the port without listening so another test cannot claim it.
+	let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+	socket.bind("127.0.0.1:0".parse().unwrap()).expect("bind");
+	let addr = socket.local_addr().expect("addr");
+	// Auth-looking text in a name/URL must not turn a transport failure into
+	// an auth failure (CI originally hit this with ephemeral port 34011).
+	let server = McpServerConfig::http(
+		"hm-test-refused-401-403-unauthorized-forbidden",
+		&format!("http://{addr}/34011/403/unauthorized/forbidden"),
+		2,
+		vec![],
+	);
 	let result = perform_http_health_check(&server)
 		.await
 		.expect("health probe must classify, not fail");

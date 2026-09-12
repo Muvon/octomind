@@ -413,6 +413,39 @@ pub async fn force_health_check(config: &Config) -> Result<(), anyhow::Error> {
 	Ok(())
 }
 
+fn is_http_auth_failure(error: &rmcp::service::ClientInitializeError) -> bool {
+	use rmcp::service::ClientInitializeError;
+	use rmcp::transport::streamable_http_client::StreamableHttpError;
+
+	match error {
+		ClientInitializeError::LegacyFallbackFailed { discover, fallback } => {
+			is_http_auth_failure(discover) || is_http_auth_failure(fallback)
+		}
+		ClientInitializeError::TransportError { error, .. } => {
+			match error
+				.error
+				.downcast_ref::<StreamableHttpError<reqwest::Error>>()
+			{
+				Some(
+					StreamableHttpError::AuthRequired(_)
+					| StreamableHttpError::InsufficientScope(_),
+				) => true,
+				Some(StreamableHttpError::UnexpectedServerResponse(response)) => {
+					// Without WWW-Authenticate, rmcp stores the response status here.
+					// Inspect only that prefix, never URLs, server names, or body text.
+					response.starts_with("HTTP 401 ") || response.starts_with("HTTP 403 ")
+				}
+				Some(StreamableHttpError::Client(error)) => matches!(
+					error.status(),
+					Some(reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN)
+				),
+				_ => false,
+			}
+		}
+		_ => false,
+	}
+}
+
 /// Perform HTTP health check for remote servers.
 ///
 /// A live rmcp client connection counts as healthy. When there is none (or it
@@ -446,12 +479,9 @@ async fn perform_http_health_check(
 		}
 		Err(e) => {
 			let msg = e.to_string();
-			let lower = msg.to_lowercase();
 			// 401/403 means reachable but auth/config failed — don't treat as dead.
-			if lower.contains("401")
-				|| lower.contains("403")
-				|| lower.contains("unauthorized")
-				|| lower.contains("forbidden")
+			if e.downcast_ref::<rmcp::service::ClientInitializeError>()
+				.is_some_and(is_http_auth_failure)
 			{
 				crate::log_error!(
 					"HTTP health check for '{}': 🔒 Authentication failed - check your credentials ({})",

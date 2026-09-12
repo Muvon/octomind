@@ -572,7 +572,7 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 	let _guard = ENV_LOCK.lock().await;
 	// Three identical tool rounds: round 1 comes from params, rounds 2-3 from
-	// the stub; the loop detector fires on round 3 and the steer note is
+	// the stub; the loop detector fires on round 3 and an advisory is
 	// injected before the final follow-up.
 	let url = spawn_stub(vec![
 		tool_call_response("loopdump", json!({})),
@@ -628,14 +628,19 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 			.await
 			.expect("loop turn completes under the supervisor");
 
-		let steered = session.session.messages.iter().any(|m| {
-			m.role == "user"
-				&& m.content
-					.contains("identical to one already in your context")
-		});
-		assert!(
-			steered,
-			"steer note missing: {:?}",
+		let advisories: Vec<_> = session
+			.session
+			.messages
+			.iter()
+			.enumerate()
+			.filter(|(_, m)| {
+				m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:")
+			})
+			.collect();
+		assert_eq!(
+			advisories.len(),
+			1,
+			"expected one loop advisory: {:?}",
 			session
 				.session
 				.messages
@@ -643,6 +648,26 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 				.map(|m| (&m.role, &m.content))
 				.collect::<Vec<_>>()
 		);
+		let (index, advisory) = advisories[0];
+		assert!(crate::session::is_system_managed_user_content(
+			&advisory.content
+		));
+		assert!(advisory.content.contains("identical calls"));
+		assert!(advisory.content.contains("intentional polling"));
+		assert!(advisory
+			.content
+			.contains("does not require extra work or a blocked handback"));
+		assert_eq!(
+			session.session.messages[..index]
+				.iter()
+				.filter(|m| m.role == "tool")
+				.count(),
+			3,
+			"the advisory follows the three recorded tool results"
+		);
+		assert!(session.session.messages[index + 1..]
+			.iter()
+			.any(|m| m.role == "assistant" && m.content == "done"));
 		assert!(session.steer_pending.is_none());
 		assert_eq!(session.steer_attempt, 0);
 		assert!(matches!(

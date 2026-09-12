@@ -419,6 +419,10 @@ pub async fn resolve(
 				}
 			};
 			parsed.validate_policy_update(context);
+			parsed.operational_constraints = grounded_operational_constraints(
+				&context.current_request,
+				&parsed.operational_constraints,
+			);
 			if !parsed.context_dependent {
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
@@ -571,11 +575,33 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 			.into_iter()
 			.map(|c| c.trim().to_string())
 			.filter(|c| !c.is_empty())
-			// Same runaway-bound rationale as conditions; four standing
-			// facts is the recitation slot's entire budget for them.
-			.take(4)
 			.collect(),
 	})
+}
+
+/// Model-selected excerpts must occur in the actual current request. Validate
+/// before applying the four-entry budget so unsupported candidates cannot crowd
+/// out supported ones. Selection does not make an excerpt a new instruction;
+/// its meaning and applicability still come from the full user request.
+pub(crate) fn grounded_operational_constraints(
+	request: &str,
+	candidates: &[String],
+) -> Vec<String> {
+	let mut grounded: Vec<String> = Vec::new();
+	for candidate in candidates {
+		let excerpt = candidate.trim();
+		if !excerpt.is_empty()
+			&& excerpt.chars().count() <= 120
+			&& request.contains(excerpt)
+			&& !grounded.iter().any(|existing| existing == excerpt)
+		{
+			grounded.push(excerpt.to_string());
+			if grounded.len() == 4 {
+				break;
+			}
+		}
+	}
+	grounded
 }
 
 impl ClassifierVerdict {

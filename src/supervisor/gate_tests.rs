@@ -1015,10 +1015,18 @@ mod verify_round_trip {
 	#[tokio::test]
 	async fn an_unknown_condition_is_reported_without_blocking_a_pass() {
 		let _guard = ENV_LOCK.lock().await;
-		let url = spawn_stub(vec![final_response(&format!(
-			r#"{CLEAN_SHAPES}<condition n="1" status="unknown" observation="the log is not retained">cannot decide</condition><verdict>PASS</verdict>"#
-		))])
-		.await;
+		let answer = format!(
+			r#"{CLEAN_SHAPES}<condition n="1" status="unknown">the log is not retained</condition><verdict>PASS</verdict>"#
+		);
+		// Distinguish protocol parsing from provider-fixture isolation. A valid
+		// answer must pass before transport as well as after the round trip.
+		let report = text_report(&answer);
+		assert_eq!(report.verdict(1), GateVerdict::Pass);
+		assert_eq!(
+			report.reported_findings(),
+			vec!["condition 1 unsettled: the log is not retained"]
+		);
+		let url = spawn_stub(vec![final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let conditions = vec!["the log shows the fix".to_string()];
 		let (_tx, rx) = rx();

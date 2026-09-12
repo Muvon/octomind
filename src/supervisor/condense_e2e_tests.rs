@@ -68,15 +68,34 @@ async fn run_round(config: &crate::config::Config, results: &mut [McpToolResult]
 
 /// Without an enabled local file-reading tool, condensation must decline the
 /// whole round untouched — narrowing away content that could never be
-/// re-read would lose it. (This is the gate every unit-test process hits.)
+/// re-read would lose it. Establish the empty tool map explicitly: other
+/// tests may have registered readers in this process.
 #[tokio::test]
 #[serial_test::serial]
 async fn test_condense_declines_without_spill_reader() {
-	let config = condense_config();
-	let mut results = vec![tool_result("t1", &big_body())];
-	let before = results[0].extract_content();
-	run_round(&config, &mut results).await;
-	assert_eq!(results[0].extract_content(), before);
+	// Even tests expecting no provider call must hold the shared endpoint
+	// lock when their path can reach one. Otherwise an unexpected reader can
+	// make this test consume another test's scripted verifier response.
+	let _guard = ENV_LOCK.lock().await;
+	let dir = tempfile::tempdir().expect("empty workdir");
+	let session = "condense-no-reader-session".to_string();
+	crate::session::context::with_session_id(session.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(dir.path().to_path_buf());
+		let mut config = condense_config();
+		config.mcp.servers.clear();
+		initialize_tool_map(&config).await.expect("empty tool map");
+		reset_tool_map().await;
+		assert!(
+			!spill_reader_available(),
+			"fixture must have no spill reader"
+		);
+		let mut results = vec![tool_result("t1", &big_body())];
+		let before = results[0].extract_content();
+		run_round(&config, &mut results).await;
+		assert_eq!(results[0].extract_content(), before);
+	})
+	.await;
+	crate::session::context::cleanup_session(&session);
 }
 
 /// A round under the token threshold returns before any other gate.

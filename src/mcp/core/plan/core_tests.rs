@@ -261,6 +261,79 @@ async fn broken_conditions_report_only_broken_open_ones() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn plan_file_conditions_use_the_session_anchor_and_survive_workdir_switches() {
+	let anchor = tempfile::tempdir().expect("session anchor");
+	let active = tempfile::tempdir().expect("temporary workdir");
+	std::fs::write(anchor.path().join("condition-fixture"), "present").expect("fixture");
+	let cwd = std::env::current_dir().expect("process directory");
+	let sid = unique_session("condition-anchor");
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::mcp::workdir::set_session_working_directory(anchor.path().to_path_buf());
+		crate::mcp::workdir::set_thread_working_directory(active.path().to_path_buf());
+		assert_eq!(
+			check_condition("file_exists: condition-fixture"),
+			Some(true)
+		);
+		assert_eq!(
+			check_condition("file_absent: condition-fixture"),
+			Some(false)
+		);
+		assert_eq!(check_condition("file_exists: missing-fixture"), Some(false));
+		assert_eq!(check_condition("file_absent: missing-fixture"), Some(true));
+		assert_eq!(
+			check_condition(&format!(
+				"file_exists: {}",
+				anchor.path().join("condition-fixture").display()
+			)),
+			Some(true)
+		);
+		let storage = get_storage();
+		storage
+			.lock()
+			.unwrap()
+			.create_plan(
+				"anchored".into(),
+				vec![
+					task("present", Some("file_exists: condition-fixture")),
+					task("missing", Some("file_exists: missing-fixture")),
+					task("unknown", Some("file_exists: invalid\0path")),
+				],
+			)
+			.expect("plan");
+		let broken = broken_plan_conditions();
+		assert_eq!(broken.len(), 1);
+		assert_eq!(broken[0].1, "missing");
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+	assert_eq!(std::env::current_dir().expect("process directory"), cwd);
+}
+
+#[test]
+fn invalid_filesystem_paths_are_unknown_not_broken_conditions() {
+	assert_eq!(check_condition("file_exists: invalid\0path"), None);
+	assert_eq!(check_condition("file_absent: invalid\0path"), None);
+	assert_eq!(check_condition("file_exists: "), None);
+	assert_eq!(check_condition("the API is reachable"), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_observation_errors_do_not_prove_absence() {
+	let dir = tempfile::tempdir().expect("fixture directory");
+	let cycle = dir.path().join("cycle");
+	std::os::unix::fs::symlink(&cycle, &cycle).expect("symlink cycle");
+	assert_eq!(
+		check_condition(&format!("file_exists: {}", cycle.display())),
+		None
+	);
+	assert_eq!(
+		check_condition(&format!("file_absent: {}", cycle.display())),
+		None
+	);
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn advance_rejects_when_every_task_is_already_complete() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;

@@ -223,16 +223,15 @@ pub fn active_constraints(
 		.or_else(|| crate::session::latest_real_user_task_content(messages))
 		.map(extract_constraints)
 		.unwrap_or_default();
-	// Affirmative operational facts ("we work on the remote server", "I
-	// deploy it myself") carry no negation marker, so the deterministic
-	// extractor above can never catch them; the resolver captured them
-	// verbatim at the only moment they are provably user-stated. They ride
-	// the same recitation/pin channel under the same cap, after the negation
-	// constraints — those are the ones models violate first.
-	for fact in resolved
-		.into_iter()
-		.flat_map(|task| task.operational_constraints.iter())
-	{
+	// Recheck source grounding at projection too: callers or restored state
+	// must not promote model-authored text into a user constraint. A follow-up
+	// rewrite is not an independent user source for operational excerpts.
+	let original = crate::session::latest_real_user_task_content(messages)
+		.or_else(|| resolved.map(|task| task.original_request.as_str()))
+		.unwrap_or_default();
+	for fact in resolved.into_iter().flat_map(|task| {
+		super::resolve::grounded_operational_constraints(original, &task.operational_constraints)
+	}) {
 		let fact = fact.trim();
 		if !fact.is_empty()
 			&& constraints.len() < CONSTRAINTS_MAX
@@ -354,7 +353,7 @@ pub fn recite_note(
 		}
 	}
 	if !constraints.is_empty() {
-		s.push_str("Constraints from the request — verbatim, still binding; violating one voids the work:\n");
+		s.push_str("Selected request excerpts — context reminders, not additional requirements. Interpret them in the full current request; quoted examples and superseded rules are not instructions:\n");
 		for c in constraints {
 			s.push_str("- ");
 			s.push_str(&xml_text(c));

@@ -167,11 +167,11 @@ fn should_steer_decision_table() {
 		DetectorSignal::NoProgress,
 		Some(SelfReport::Exploring)
 	));
-	assert!(should_steer(
+	assert!(!should_steer(
 		DetectorSignal::NoProgress,
 		Some(SelfReport::Blocked)
 	));
-	assert!(should_steer(
+	assert!(!should_steer(
 		DetectorSignal::NoProgress,
 		Some(SelfReport::NeedInput)
 	));
@@ -203,51 +203,122 @@ fn signal_description_covers_every_fired_signal() {
 }
 
 #[test]
-fn steer_note_ladder_rotates_and_conflict_clamps() {
-	assert_eq!(steer_note(DetectorSignal::None, None, 0), "");
-	let rungs = [
-		steer_note(DetectorSignal::Loop, None, 0),
-		steer_note(DetectorSignal::Loop, None, 1),
-		steer_note(DetectorSignal::Loop, None, 2),
-	];
-	assert_ne!(rungs[0], rungs[1]);
-	assert_ne!(rungs[1], rungs[2]);
-	// Persistent variants rotate by attempt but repeat on the mod-3 cycle.
-	assert_ne!(
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT),
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT + 1)
-	);
-	assert_eq!(
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT),
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT + 3)
-	);
-	// Conflict framing has its own ladder, clamped at its last variant.
-	let conflict = [
-		steer_note(DetectorSignal::NoProgress, Some(SelfReport::Progressing), 0),
-		steer_note(DetectorSignal::NoProgress, Some(SelfReport::Progressing), 1),
-		steer_note(DetectorSignal::NoProgress, Some(SelfReport::Progressing), 2),
-	];
-	assert_ne!(conflict[0], conflict[1]);
-	assert_ne!(conflict[1], conflict[2]);
+fn detector_hints_are_advisory_and_leave_handbacks_alone() {
+	assert_eq!(steer_note(DetectorSignal::None), "");
+	for signal in [
+		DetectorSignal::Loop,
+		DetectorSignal::NoProgress,
+		DetectorSignal::Recovery,
+	] {
+		let note = steer_note(signal);
+		assert!(note.contains("Advisory:"));
+		assert!(note.contains("does not require"));
+		for report in [SelfReport::Done, SelfReport::Blocked, SelfReport::NeedInput] {
+			assert!(!should_steer(signal, Some(report)));
+		}
+	}
 }
 
 #[test]
 fn note_call_novelty_rules() {
 	let mut d = Detectors::default();
-	let (_, first) = d.note_call("t", "r", false, false);
+	let (_, first) = d.note_call("t", &serde_json::json!({}), "r", false, false);
 	assert!(first, "first sight of a result is novel");
-	let (_, repeat) = d.note_call("t", "r", false, false);
+	let (_, repeat) = d.note_call("t", &serde_json::json!({}), "r", false, false);
 	assert!(!repeat, "an already-seen result is not novel");
-	let (_, errored) = d.note_call("t2", "fresh", true, false);
-	assert!(!errored, "errors carry no new information");
-	let (_, mutating) = d.note_call("t", "r", true, true);
-	assert!(mutating, "a mutation always advances state");
+	let (_, errored) = d.note_call("t2", &serde_json::json!({}), "fresh", true, false);
+	assert!(errored, "a fresh error provides diagnostic information");
+	let (_, mutating) = d.note_call("t", &serde_json::json!({}), "r", true, true);
+	assert!(mutating, "a new error receipt is information");
+	let (_, repeated_error) = d.note_call("t", &json!({}), "r", true, true);
+	assert!(
+		!repeated_error,
+		"failed mutation intent is not proof of progress"
+	);
+}
+
+#[test]
+fn identical_receipts_for_different_targets_are_not_a_loop() {
+	for (tool, result, error, mutation) in [
+		("editor", "OK", false, true),
+		("reader", "empty", false, false),
+		("shell", "not found", true, false),
+	] {
+		let mut d = Detectors::default();
+		for target in 0..10 {
+			let (identity, novel) = d.note_call(
+				tool,
+				&json!({"path": format!("file-{target}")}),
+				result,
+				error,
+				mutation,
+			);
+			assert!(novel, "each target supplies its own observation");
+			assert_eq!(
+				d.record_round_signals(&[identity], novel, 3, 5),
+				DetectorSignal::None
+			);
+		}
+	}
+}
+
+#[test]
+fn successful_mutations_do_not_trigger_loop_even_with_identical_receipts() {
+	let mut d = Detectors::default();
+	for _ in 0..10 {
+		let (identity, novel) = d.note_call("append", &json!({"path": "out"}), "OK", false, true);
+		assert_eq!(
+			d.record_round_signals(&[identity], novel, 3, 5),
+			DetectorSignal::None
+		);
+	}
+}
+
+#[test]
+fn exploratory_command_errors_are_receipts_not_failed_verification() {
+	let runner = "detectTestsExploratoryRunner";
+	register_tool_command_shape(runner, true);
+	let call = json!({"command": "cat optional.conf", "workdir": "/a"});
+	let key = command_key(runner, &call).expect("command receipt identity");
+	assert_ne!(
+		Some(key),
+		command_key(
+			runner,
+			&json!({"command": "cat optional.conf", "workdir": "/b"})
+		)
+	);
+	let mut d = Detectors::default();
+	for _ in 0..2 {
+		assert_eq!(
+			d.record_round_command_outcomes(&[(key, false)], 3),
+			DetectorSignal::None
+		);
+	}
+	let signal = d.record_round_command_outcomes(&[(key, false)], 3);
+	assert_eq!(signal, DetectorSignal::Recovery);
+	assert_eq!(
+		signal_description(signal),
+		"several command executions returned errors"
+	);
+	assert!(steer_note(signal).contains("expected probes"));
+	assert!(steer_note(signal).contains("does not require rerunning a command"));
+	assert!(
+		!d.needs_verification(None),
+		"error hints do not arm completion rejection"
+	);
+	assert_eq!(
+		d.record_round_command_outcomes(&[(key, true)], 3),
+		DetectorSignal::None
+	);
+	assert!(d.failed_commands.is_empty());
 }
 
 #[test]
 fn parallel_batch_is_one_round_for_loop_detection() {
 	let mut d = Detectors::default();
-	let h = d.note_call("grep", "same", false, false).0;
+	let h = d
+		.note_call("grep", &serde_json::json!({}), "same", false, false)
+		.0;
 	// Three identical calls inside ONE round are a single window entry.
 	assert_eq!(
 		d.record_round_signals(&[h, h, h], false, 3, 9),
@@ -266,8 +337,12 @@ fn parallel_batch_is_one_round_for_loop_detection() {
 #[test]
 fn loop_window_resets_on_a_new_result() {
 	let mut d = Detectors::default();
-	let a = d.note_call("grep", "a", false, false).0;
-	let b = d.note_call("grep", "b", false, false).0;
+	let a = d
+		.note_call("grep", &serde_json::json!({}), "a", false, false)
+		.0;
+	let b = d
+		.note_call("grep", &serde_json::json!({}), "b", false, false)
+		.0;
 	d.record_round_signals(&[a], true, 3, 9);
 	d.record_round_signals(&[a], false, 3, 9);
 	assert_eq!(
@@ -285,7 +360,9 @@ fn zero_thresholds_disable_their_signals() {
 	let mut d = Detectors::default();
 	// loop_threshold 0: identical novel rounds never fire Loop.
 	for i in 0..4 {
-		let h = d.note_call("t", &format!("r{i}"), false, false).0;
+		let h = d
+			.note_call("t", &serde_json::json!({}), &format!("r{i}"), false, false)
+			.0;
 		assert_eq!(
 			d.record_round_signals(&[h], true, 0, 9),
 			DetectorSignal::None
@@ -293,7 +370,9 @@ fn zero_thresholds_disable_their_signals() {
 	}
 	// no_progress_window 0: repeated stale rounds never fire NoProgress.
 	let mut stale = Detectors::default();
-	let h = stale.note_call("t", "r", false, false).0;
+	let h = stale
+		.note_call("t", &serde_json::json!({}), "r", false, false)
+		.0;
 	for _ in 0..6 {
 		assert_eq!(
 			stale.record_round_signals(&[h], false, 9, 0),
@@ -320,21 +399,21 @@ fn mutated_paths_dedupe_and_cap() {
 }
 
 #[test]
-fn verifier_key_is_shape_gated_and_stable() {
+fn command_key_is_shape_gated_and_stable() {
 	let params = json!({"command": "cargo test -p octomind"});
-	let key = verifier_key("detect_tests_runner", &params).expect("command-shaped check");
-	assert_eq!(Some(key), verifier_key("detect_tests_runner", &params));
+	let key = command_key("detect_tests_runner", &params).expect("command-shaped check");
+	assert_eq!(Some(key), command_key("detect_tests_runner", &params));
 	assert_ne!(
 		key,
-		verifier_key(
+		command_key(
 			"detect_tests_runner",
 			&json!({"command": "cargo test -p other"})
 		)
 		.expect("different command")
 	);
-	assert_eq!(verifier_key("view", &json!({"path": "a.rs"})), None);
+	assert_eq!(command_key("view", &json!({"path": "a.rs"})), None);
 	assert_eq!(
-		verifier_key("detect_tests_runner", &json!({"command": "deploy it"})),
+		command_key("detect_tests_runner", &json!({"command": "deploy it"})),
 		None,
 		"mutation intent is never a verifier"
 	);
@@ -398,12 +477,12 @@ fn cleared_by_readback_only_tracks_evidence_kind() {
 fn recovery_zero_threshold_and_empty_outcomes_are_inert() {
 	let mut d = Detectors::default();
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[], 3),
+		d.record_round_command_outcomes(&[], 3),
 		DetectorSignal::None
 	);
 	for _ in 0..5 {
 		assert_eq!(
-			d.record_round_verifier_outcomes(&[(9, false)], 0),
+			d.record_round_command_outcomes(&[(9, false)], 0),
 			DetectorSignal::None
 		);
 	}
@@ -413,25 +492,25 @@ fn recovery_zero_threshold_and_empty_outcomes_are_inert() {
 fn recovery_emission_resets_the_counter_not_the_ledger() {
 	let mut d = Detectors::default();
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(1, false)], 2),
+		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(1, false)], 2),
+		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::Recovery
 	);
 	// Counter restarted: one more failing round is below the threshold again…
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(1, false)], 2),
+		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::None
 	);
 	// …but the debt is still recorded: an unrelated success cannot discharge it.
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(2, true)], 2),
+		d.record_round_command_outcomes(&[(2, true)], 2),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(1, false)], 2),
+		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::Recovery
 	);
 }
@@ -477,7 +556,7 @@ fn write_capable_runner_still_verifies_on_read_only_commands() {
 		"a write-capable runner executing a check is a verifier candidate"
 	);
 	assert!(
-		verifier_key(runner, &check).is_some(),
+		command_key(runner, &check).is_some(),
 		"recovery tracking needs an identity for the same check"
 	);
 	assert!(

@@ -438,7 +438,7 @@ fn note_planner_failure(
 	chat_session.planner_failed = true;
 	if crate::mcp::core::plan::has_active_plan() {
 		chat_session.add_system_managed_user_message(
-			"<runtime-plan-feedback>The external plan manager could not decide. Plan state was not changed; do not infer a transition. Continue only safe evidence-gathering work.</runtime-plan-feedback>",
+			"<runtime-plan-feedback>The external plan manager could not decide. Plan bookkeeping is unchanged. This is not a finding against the work and adds no restriction: continue the user's authorized task using the available evidence. Completion remains subject to the normal verification gate.</runtime-plan-feedback>",
 		)?;
 		crate::supervisor::notify("external planner made no decision — current phase remains open");
 	} else {

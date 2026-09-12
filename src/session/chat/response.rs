@@ -653,10 +653,9 @@ pub async fn process_response<S: OutputSink>(
 					// (fp_before / track_verification are captured above, BEFORE
 					// execute_tools_parallel — see the pre-execution comment.)
 					let mut round_verifier = false;
-					// Stable command-check identities and observed outcomes. A failed
-					// check remains unresolved until that same check later succeeds;
-					// unrelated successful reads/diffs cannot erase the recovery state.
-					let mut round_verifier_outcomes: Vec<(u64, bool)> = Vec::new();
+					// Command identities and error receipts for advisory recovery hints;
+					// these do not establish whether a behavioral check ran or failed.
+					let mut round_command_outcomes: Vec<(u64, bool)> = Vec::new();
 					let mut round_readback = false;
 					let mut round_mutation = false;
 					let mut round_write_capable = false;
@@ -704,11 +703,11 @@ pub async fn process_response<S: OutputSink>(
 							&call.tool_name,
 							&call.parameters,
 						);
-						if let Some(key) = crate::supervisor::detect::verifier_key(
+						if let Some(key) = crate::supervisor::detect::command_key(
 							&call.tool_name,
 							&call.parameters,
 						) {
-							round_verifier_outcomes.push((key, !is_error));
+							round_command_outcomes.push((key, !is_error));
 						}
 						if command_execution && !is_error {
 							let cmd = call
@@ -724,6 +723,7 @@ pub async fn process_response<S: OutputSink>(
 						// Fold this call's per-result state in; aggregate the rest for the round.
 						let (rhash, novel) = params.chat_session.detectors.note_call(
 							&call.tool_name,
+							&call.parameters,
 							&result_content,
 							is_error,
 							is_mutation,
@@ -808,32 +808,25 @@ pub async fn process_response<S: OutputSink>(
 					);
 					round_signal = round_signal.merge(batch_signal);
 
-					// Recovery is outcome-based rather than freshness-based: a stream of
-					// new reads may be useful, but it must not hide repeated failed
-					// behavioral checks. Reuse the existing no-progress window as the
-					// bounded failure budget instead of adding another tuning knob.
+					// Command errors are observed facts, not proof of failed verification.
+					// Keep an advisory signal even while other calls add information.
 					let recovery_signal = params
 						.chat_session
 						.detectors
-						.record_round_verifier_outcomes(
-							&round_verifier_outcomes,
-							no_progress_window,
-						);
+						.record_round_command_outcomes(&round_command_outcomes, no_progress_window);
 					round_signal = round_signal.merge(recovery_signal);
 
-					// Steer at most once per round with the winning signal — but adapt the
-					// steer to whether the model is HEEDING it. "Ignored" is free to detect:
-					// the model's CHOSEN call-set (tool+params hash) repeating byte-for-byte
-					// after a delivered steer is provable non-compliance; a different call-set
-					// is the model TRYING, and keeps the escalation ladder running.
+					// At most one advisory per round. A recurring signal never proves
+					// non-compliance or justifies stronger instructions.
 					if crate::supervisor::detect::should_steer(
 						round_signal,
 						params.chat_session.last_self_report,
 					) {
-						// Rotate framing: same signal → advance the angle; a different signal
-						// starts a fresh run at the diagnostic frame.
+						// Count recurrence only to throttle hints. A different signal
+						// starts a fresh advisory sequence.
 						if round_signal == params.chat_session.steer_last_signal {
-							params.chat_session.steer_attempt += 1;
+							params.chat_session.steer_attempt =
+								params.chat_session.steer_attempt.saturating_add(1);
 						} else {
 							params.chat_session.steer_attempt = 0;
 							params.chat_session.steer_last_signal = round_signal;
@@ -842,44 +835,19 @@ pub async fn process_response<S: OutputSink>(
 						let attempt = params.chat_session.steer_attempt;
 						let calls_hash =
 							crate::supervisor::detect::call_set_hash(&current_tool_calls);
-						// A repeated byte-identical call-set is the model IGNORING the
-						// steer; a different call-set is it TRYING.
-						let ignoring = Some(calls_hash) == params.chat_session.last_steered_calls;
-
-						// Parameter-free adaptive backoff — no thresholds, no periods. Derived
-						// purely from the escalation ladder length + whether the model is ignoring:
-						// deliver the full ladder + persistent frame, then while the model
-						// keeps ignoring, re-emit on a DOUBLING schedule (gaps 1,2,4,8…): never
-						// fully silent, self-scaling to how persistently it is ignored.
-						// A model that is TRYING (different call-set) is never throttled.
-						// This is TCP's retransmission backoff (RFC 6298 §5.5: ×2 on no-progress)
-						// gated by Karn's algorithm (only an unambiguous change resets the timer —
-						// our call-set hash). Deliberately NO jitter: jitter only decorrelates N>1
-						// retriers against a shared resource; we have one agent on one channel.
-						// The doubling is intentionally UNCAPPED — emissions are O(log N)→0, so an
-						// ignored run is cheap, not silently expensive.
-						let emit = if ignoring
-							&& attempt >= crate::supervisor::detect::PERSISTENT_ATTEMPT
-						{
-							(attempt - crate::supervisor::detect::PERSISTENT_ATTEMPT + 1)
-								.is_power_of_two()
-						} else {
-							true
-						};
+						// Repeated polling is legitimate; back off duplicate hints without
+						// treating their recurrence as evidence that the agent ignored us.
+						let repeated = Some(calls_hash) == params.chat_session.last_steered_calls;
+						let emit = !repeated || attempt.saturating_add(1).is_power_of_two();
 
 						if emit {
 							params.chat_session.steer_pending = Some(
-								crate::supervisor::detect::steer_note(
-									round_signal,
-									params.chat_session.last_self_report,
-									attempt,
-								)
-								.to_string(),
+								crate::supervisor::detect::steer_note(round_signal).to_string(),
 							);
 							params.chat_session.last_steered_calls = Some(calls_hash);
 							crate::supervisor::stats::steer(round_signal);
 							crate::supervisor::notify(&format!(
-								"steering — {}",
+								"advisory — {}",
 								crate::supervisor::detect::signal_description(round_signal)
 							));
 							crate::log_debug!(

@@ -14,15 +14,10 @@
 
 //! Detectors — deterministic, free, every turn.
 //!
-//! Two free signals are fused before any model is woken:
-//! 1. **Self-report** — the agent annotates each turn with a `<sup>state</sup>`
-//!    token (it already knows whether it is exploring / stuck / done).
-//! 2. **Novelty counters** — derived from a single primitive: did this action
-//!    add *new information* to the agent's state? Loop = the same result repeats;
-//!    no-progress = a window of actions with zero novelty.
-//!
-//! Agreement needs no model. Only a *conflict* (e.g. counter says "no progress"
-//! while the agent reports `progressing`) is worth the rare model confirmation.
+//! Call identity, recorded results and self-reports nominate advisory hints.
+//! Repetition may be polling; errors may be expected probes. Neither proves a
+//! task failure, so these hints never demand a strategy change or a blocked
+//! handback. Completion and authorization are judged at their own boundaries.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashSet, VecDeque};
@@ -301,16 +296,11 @@ pub fn is_command_execution(tool: &str, parameters: &serde_json::Value) -> bool 
 	}
 }
 
-/// Stable identity for one command-shaped check. Recovery uses the concrete
-/// tool + command pair so a later success discharges only the failure it can
-/// actually prove resolved; an unrelated successful command is not progress on
-/// that check.
-pub fn verifier_key(tool: &str, parameters: &serde_json::Value) -> Option<u64> {
-	if !is_verifier_shaped(tool, parameters) {
-		return None;
-	}
-	let command = parameters.get("command")?.as_str()?.trim();
-	Some(hash2(tool, command))
+/// Identity of a command execution for the advisory error ledger. Include all
+/// arguments (such as workdir), since an identical command can address a
+/// different target. This identifies receipts, not behavioral test coverage.
+pub fn command_key(tool: &str, parameters: &serde_json::Value) -> Option<u64> {
+	is_command_execution(tool, parameters).then(|| hash2(tool, &parameters.to_string()))
 }
 
 /// Path-like values in a tool call's parameters — the artifact identities a
@@ -511,11 +501,11 @@ pub fn command_param_is_free_form(schema: &serde_json::Value) -> bool {
 
 const SEEN_CAP: usize = 128;
 
-/// Identical result this many times in a row → loop fired.
+/// Identical calls and results this many rounds in a row nominate a loop hint.
 pub const LOOP_THRESHOLD: usize = 3;
 
-/// Rounds without new information → no-progress fired. Also the bounded
-/// failure budget for the recovery signal (failed command-shaped checks).
+/// Rounds without new receipts nominate a no-progress hint. Also the bounded
+/// error budget for advisory command-recovery hints.
 pub const NO_PROGRESS_WINDOW: usize = 5;
 
 /// Cap on remembered agent-mutated paths (read-back verification candidates).
@@ -523,10 +513,9 @@ pub const NO_PROGRESS_WINDOW: usize = 5;
 /// most recent ones, which is where the read-back lands anyway.
 const MUTATED_PATHS_CAP: usize = 32;
 
-/// Cap on distinct command-shaped checks that have failed without a later
-/// success from the same check. Recovery tracking is a small current-turn
-/// ledger, not an unbounded command history.
-const FAILED_VERIFIERS_CAP: usize = 64;
+/// Cap on distinct command executions with errors and no later success for
+/// the same arguments. This advisory ledger is not a list of failed tests.
+const FAILED_COMMANDS_CAP: usize = 64;
 
 /// Deterministic per-session detector state, built on a single novelty primitive.
 #[derive(Debug, Default)]
@@ -570,30 +559,26 @@ pub struct Detectors {
 	/// kind of evidence blessed the tree instead of inferring it from a raw
 	/// action log ([`Detectors::cleared_by_readback_only`]).
 	readback_only_clearance: bool,
-	/// Command-shaped checks that failed and have not subsequently succeeded
-	/// with the same tool + command identity. An unrelated successful read,
-	/// diff, or probe must not erase a failed behavioral check.
-	failed_verifiers: HashSet<u64>,
-	/// Failed verifier rounds accumulated while the ledger above remains
-	/// unresolved. Counted per round because a parallel batch is one model
-	/// decision; reset when all failed checks are discharged or after emitting
-	/// a recovery steer.
-	failed_verifier_rounds: usize,
+	/// Command error receipts without a later success for the same tool and
+	/// arguments. Their relevance to the task is unknown to this detector.
+	failed_commands: HashSet<u64>,
+	/// Rounds containing command errors while the ledger above is non-empty.
+	/// Reset when all recorded errors have later successes, or after a hint.
+	failed_command_rounds: usize,
 }
 
-/// What the deterministic layer concluded for an action.
+/// A recorded pattern worth considering, not a verdict on task correctness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectorSignal {
 	/// Nothing notable.
 	None,
-	/// The same result repeated `loop_threshold` times — even across reworded
-	/// args (keyed on result, so near-duplicate calls are caught too).
+	/// Identical calls and results repeated `loop_threshold` times without
+	/// current-round novelty or a successful mutation.
 	Loop,
 	/// `no_progress_window` actions elapsed with zero new information.
 	NoProgress,
-	/// Repeated command-shaped checks have failed without the same checks later
-	/// succeeding. Unlike generic no-progress, unrelated fresh reads cannot hide
-	/// this unresolved recovery episode.
+	/// Several command executions returned errors without later successes for
+	/// the same calls. They may be expected probes, not failed verification.
 	Recovery,
 }
 
@@ -635,13 +620,19 @@ impl Detectors {
 	pub fn note_call(
 		&mut self,
 		tool: &str,
+		parameters: &serde_json::Value,
 		result: &str,
 		is_error: bool,
 		is_mutation: bool,
 	) -> (u64, bool) {
-		// Identity of this action's RESULT, keyed on tool+result so the same
-		// output from differently-worded calls still reads as a repeat.
-		let rhash = hash2(tool, result);
+		// Equal output from different requests is not repetition: each target
+		// may have independently returned the same answer or write receipt.
+		let mut h = DefaultHasher::new();
+		tool.hash(&mut h);
+		parameters.to_string().hash(&mut h);
+		result.hash(&mut h);
+		is_error.hash(&mut h);
+		let rhash = h.finish();
 
 		// Novelty: fresh = result content not seen in the recent window. Recorded
 		// per result (memory is per-result), but the novelty SIGNAL is per round.
@@ -654,7 +645,9 @@ impl Detectors {
 				}
 			}
 		}
-		let novel = is_mutation || (!is_error && fresh);
+		// A new error can answer an exploratory question. A repeated failed
+		// write is not evidence of progress merely because it was write-capable.
+		let novel = fresh || (!is_error && is_mutation);
 		(rhash, novel)
 	}
 
@@ -687,7 +680,8 @@ impl Detectors {
 		while self.loop_window.len() > loop_threshold.max(1) {
 			self.loop_window.pop_front();
 		}
-		let looping = loop_threshold > 0
+		let looping = !round_novel
+			&& loop_threshold > 0
 			&& self.loop_window.len() >= loop_threshold
 			&& self.loop_window.iter().all(|&h| h == round_hash);
 
@@ -730,13 +724,12 @@ impl Detectors {
 		}
 	}
 
-	/// Fold command-shaped verification outcomes into an unresolved-failure
-	/// ledger. A failed check is discharged only when that same tool + command
-	/// later succeeds; unrelated successful calls do not prove the failed
-	/// behavior. Once `threshold` failed verifier rounds accumulate, emit one
-	/// recovery signal and restart only the emission counter while retaining the
-	/// unresolved ledger. `threshold == 0` disables the signal.
-	pub fn record_round_verifier_outcomes(
+	/// Fold command outcomes into a bounded error ledger. A later success for
+	/// the same call removes its receipt; unrelated results leave it intact.
+	/// After `threshold` rounds with errors, nominate one advisory hint and
+	/// restart its counter. This does not establish a failed behavior or require
+	/// recovery. `threshold == 0` disables the signal.
+	pub fn record_round_command_outcomes(
 		&mut self,
 		outcomes: &[(u64, bool)],
 		threshold: usize,
@@ -757,23 +750,23 @@ impl Detectors {
 		// A parallel batch with conflicting outcomes for the same check is not a
 		// clearance. Only unambiguously successful checks discharge prior debt.
 		for key in succeeded.difference(&failed) {
-			self.failed_verifiers.remove(key);
+			self.failed_commands.remove(key);
 		}
 		if !failed.is_empty() {
-			self.failed_verifier_rounds = self.failed_verifier_rounds.saturating_add(1);
+			self.failed_command_rounds = self.failed_command_rounds.saturating_add(1);
 			for key in failed {
-				if self.failed_verifiers.len() < FAILED_VERIFIERS_CAP
-					|| self.failed_verifiers.contains(&key)
+				if self.failed_commands.len() < FAILED_COMMANDS_CAP
+					|| self.failed_commands.contains(&key)
 				{
-					self.failed_verifiers.insert(key);
+					self.failed_commands.insert(key);
 				}
 			}
 		}
-		if self.failed_verifiers.is_empty() {
-			self.failed_verifier_rounds = 0;
+		if self.failed_commands.is_empty() {
+			self.failed_command_rounds = 0;
 		}
-		if threshold > 0 && self.failed_verifier_rounds >= threshold {
-			self.failed_verifier_rounds = 0;
+		if threshold > 0 && self.failed_command_rounds >= threshold {
+			self.failed_command_rounds = 0;
 			DetectorSignal::Recovery
 		} else {
 			DetectorSignal::None
@@ -893,8 +886,8 @@ impl Detectors {
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
-		self.failed_verifiers.clear();
-		self.failed_verifier_rounds = 0;
+		self.failed_commands.clear();
+		self.failed_command_rounds = 0;
 	}
 
 	/// Heuristic signal: an agent round changed the tree and no qualifying
@@ -929,145 +922,51 @@ impl Detectors {
 	}
 }
 
-/// Fuse the deterministic signal with the agent's free self-report (no model
-/// call). The decision table:
-/// - any `done`                          → defer to the verify-gate (no steer)
-/// - no-progress while `exploring`      → wait (legitimate exploration)
-/// - loop, no-progress                   → steer
+/// Whether an advisory is useful on this response. Legitimate handbacks are
+/// left alone; the completion gate separately handles a `done` claim.
 pub fn should_steer(signal: DetectorSignal, report: Option<SelfReport>) -> bool {
 	if signal == DetectorSignal::None {
 		return false;
 	}
 	match report {
-		Some(SelfReport::Done) => false,
-		// No-progress can be legitimate while exploring; every other signal steers
-		// regardless of intent.
+		Some(SelfReport::Done | SelfReport::Blocked | SelfReport::NeedInput) => false,
 		Some(SelfReport::Exploring) if signal == DetectorSignal::NoProgress => false,
 		_ => true,
 	}
 }
 
-/// Short human description of a fired signal — for the user-facing
-/// `· Supervisor: steering — …` notice.
+/// Describe only the recorded signal, never a conclusion about task progress.
 pub fn signal_description(signal: DetectorSignal) -> &'static str {
 	match signal {
-		DetectorSignal::Loop => "repeated action without new results",
-		DetectorSignal::NoProgress => "no new information in recent steps",
-		DetectorSignal::Recovery => {
-			"verification keeps failing — unresolved checks need a different recovery strategy"
-		}
+		DetectorSignal::Loop => "identical calls returned identical results",
+		DetectorSignal::NoProgress => "recent call results repeated",
+		DetectorSignal::Recovery => "several command executions returned errors",
 		DetectorSignal::None => "",
 	}
 }
 
-/// Shared persistent-failure frame: the model has been steered through the full
-/// 0→1→2 ladder on a *stuck* signal and still has not broken out, so small tweaks are
-/// clearly not working. Signal-agnostic and held on clamp.
-///
-/// POLYMORPHIC by design: the persistent frame is re-emitted on the backoff schedule
-/// (attempts 3,4,6,10,…), and a *verbatim* repeat of a warning loses effect within 2-3
-/// exposures (habituation / repetition-suppression — Ancker 2017 measures ~30% drop in
-/// acceptance per identical repeat; Anderson 2015 CHI shows polymorphic warnings resist
-/// it). So we rotate equally-firm rephrasings by attempt index — each re-emit is a fresh
-/// stimulus that re-recruits attention. Derived from the counter, so still parameter-free.
-/// All variants carry the same firm ask (a fundamentally different path, or report
-/// `blocked`) so callers/tests can rely on the invariant content.
-const PERSISTENT_VARIANTS: &[&str] = &[
-	"<pay-attention>\nYou have been steered several times here and have not broken out — small adjustments are not working. Stop iterating on the same approach: either take a fundamentally different path to the goal, or report `blocked` and name the single obstacle in your way.\n</pay-attention>",
-	"<pay-attention>\nSame approach, same wall — the repeated nudges have not changed the outcome. Do not retry a near-identical call again. Either switch to a fundamentally different strategy (a different tool, scope, or sub-goal), or stop and report `blocked` with the one concrete thing standing in your way.\n</pay-attention>",
-	"<pay-attention>\nYou are repeating work that has not moved the task despite several course-corrections. Pause and decide, in one line, the single obstacle in your way. If a fundamentally different path to the goal exists, take it now; if it does not, report `blocked` instead of trying the same thing again.\n</pay-attention>",
-];
-
-/// Conflict framing: a no-progress signal while the agent self-reports
-/// `progressing`. The counters and the self-assessment disagree — the canonical
-/// reason the supervisor escalates at all — so name the contradiction directly
-/// instead of the generic no-progress note. Same 0→1→2 escalation.
-const CONFLICT_VARIANTS: &[&str] = &[
-	"<pay-attention>\nYou reported you are making progress, but the last several actions added nothing new — your self-assessment and what the actions show disagree. Check which is right before continuing.\n</pay-attention>",
-	"<pay-attention>\nYou report progressing, yet no new information has appeared. Name in one line the concrete result your recent steps produced. If you cannot, the work has stalled — take a single different step that visibly moves the goal, not another like the ones that yielded nothing.\n</pay-attention>",
-	"<pay-attention>\nYour actions are not advancing the task despite a `progressing` report. Re-anchor: state the goal, what is actually done, and the one next step that moves it — then take it. If nothing does, report `blocked` with what is missing.\n</pay-attention>",
-];
-
-/// The advisory steer note for a fired signal. Out-of-band; the `<pay-attention>`
-/// framing keeps it distinct from user content. Wording is positive-forward (the
-/// concrete action to take, not a bare prohibition) and puts that action last, in
-/// the recency slot — negation and buried directives are the empirically weakest
-/// forms for instruction-following.
-///
-/// `attempt` rotates the *framing* when the same signal re-fires without the model
-/// breaking out. Re-sending identical text loses salience (habituation), so each
-/// retry reframes the same constraint from a different angle:
-///   0 → diagnostic (what is happening; soft reconsider)
-///   1 → directive  (a grounded one-line self-check + the concrete alternative)
-///   2 → stop       (firm: a different approach now, or report `blocked`)
-///  3+ → persistent ([`PERSISTENT_VARIANTS`]: fundamentally different path or `blocked`)
-/// Advance-then-clamp, not modulo: never soften once the model has proven it is
-/// stuck — hold the firmest frame. `report` lets a no-progress signal switch to
-/// [`CONFLICT_VARIANTS`] when the agent insists it is `progressing`.
-pub fn steer_note(
-	signal: DetectorSignal,
-	report: Option<SelfReport>,
-	attempt: usize,
-) -> &'static str {
-	// Ladder exhausted on a stuck signal without breakout → hold the firmest frame, but
-	// rotate its phrasing each re-emit so the repeated nudge does not habituate (see
-	// PERSISTENT_VARIANTS), keyed on how far past the ladder we are.
-	if is_stuck(signal) && attempt >= PERSISTENT_ATTEMPT {
-		return PERSISTENT_VARIANTS[(attempt - PERSISTENT_ATTEMPT) % PERSISTENT_VARIANTS.len()];
+/// Counter signals are advisory at every repetition count. The main model
+/// sees the actual tool receipts and user task; it can decide whether polling,
+/// negative probes or retries are useful. Repetition never upgrades a heuristic
+/// into evidence of failure or permission to disregard the user's instructions.
+pub fn steer_note(signal: DetectorSignal) -> &'static str {
+	match signal {
+		DetectorSignal::Loop => "<pay-attention>\nAdvisory: identical calls have returned identical results across several rounds. This may be intentional polling or repeated observation, not a failure. Continue if these calls serve the user's task; consider a different approach only if the observed results show it is needed. This hint does not require extra work or a blocked handback.\n</pay-attention>",
+		DetectorSignal::NoProgress => "<pay-attention>\nAdvisory: recent calls have repeated previously observed results. The detector cannot determine whether the task is advancing. Use the actual outcomes and the user's request to decide the next step; continue the current approach when justified. This hint does not require extra work or a blocked handback.\n</pay-attention>",
+		DetectorSignal::Recovery => "<pay-attention>\nAdvisory: several command executions returned errors without a later success for those exact calls. These may be expected probes, obsolete attempts or failures unrelated to verification. Judge their relevance from the actual outputs and the user's task. Only an observed, relevant failure warrants recovery work; this hint does not require rerunning a command, changing code or reporting blocked. Honor all execution restrictions.\n</pay-attention>",
+		DetectorSignal::None => "",
 	}
-	// Counters say no-progress while the agent reports progressing: name the conflict.
-	if signal == DetectorSignal::NoProgress && report == Some(SelfReport::Progressing) {
-		return CONFLICT_VARIANTS[attempt.min(CONFLICT_VARIANTS.len() - 1)];
-	}
-	let variants: &[&str] = match signal {
-		DetectorSignal::Loop => &[
-			"<pay-attention>\nThis result is identical to one already in your context — the last call added nothing, so the current approach has stalled. Reconsider what is actually blocking progress before the next call.\n</pay-attention>",
-			"<pay-attention>\nSame result again — you are repeating a call that already failed to advance the task. In one sentence, name why it failed. Then change one concrete thing on the next call — a different tool, different arguments, or a different sub-goal — that approaches the goal a new way.\n</pay-attention>",
-			"<pay-attention>\nThis is a loop: the same call keeps returning the same result. Make a different call that approaches the goal another way — a different tool, scope, or sub-goal — or report `blocked` with the one obstacle stopping you.\n</pay-attention>",
-		],
-		DetectorSignal::NoProgress => &[
-			"<pay-attention>\nThe last few steps surfaced nothing new — this line of inquiry looks exhausted. Consider whether it can still reach what you need.\n</pay-attention>",
-			"<pay-attention>\nStill nothing new. Name in one line what you still need but have not found, then take a single concrete step toward the goal using what you already know — a decision or an action, not another exploratory probe.\n</pay-attention>",
-			"<pay-attention>\nThis exploration has stalled. Re-anchor on the user's actual request: state the goal in one line, what is done, and the one next step that delivers it — then take it. If no such step exists, report `blocked` with what is missing.\n</pay-attention>",
-		],
-		DetectorSignal::Recovery => &[
-			"<pay-attention>\nSeveral command-shaped checks have failed, and unrelated successful calls do not resolve them. Use the latest failure to isolate one concrete cause, change that cause, then rerun the narrowest check that proves it. Do not repeat a broad check until relevant state has changed.\n</pay-attention>",
-			"<pay-attention>\nThe verification failures remain unresolved. Stop broad trial-and-error: name the single failing behavior you are fixing now, trace it to its owning source, make one focused correction, and run the smallest check that can confirm or reject that correction.\n</pay-attention>",
-			"<pay-attention>\nThis recovery strategy is still producing failed checks. Re-anchor on the latest concrete failure and take a fundamentally different diagnostic or implementation path. Continue only with a focused cause-and-check loop, or report the specific blocker instead of accumulating more broad retries.\n</pay-attention>",
-		],
-		DetectorSignal::None => return "",
-	};
-	variants[attempt.min(variants.len() - 1)]
 }
-
-/// The "stuck" signal class — every real-waste failure mode. These escalate to
-/// [`PERSISTENT_VARIANTS`]; factored so the steer loop and the escalation
-/// ladder classify signals the same way.
-fn is_stuck(signal: DetectorSignal) -> bool {
-	matches!(
-		signal,
-		DetectorSignal::Loop | DetectorSignal::NoProgress | DetectorSignal::Recovery
-	)
-}
-
-/// The escalation rung at which a stuck signal stops reframing and holds the firmest
-/// [`PERSISTENT_VARIANTS`] frame — and the earliest rung at which the critical-signal
-/// de-spam cooldown may begin (the full 0→1→2 ladder plus one persistent frame have all
-/// been delivered by then).
-pub const PERSISTENT_ATTEMPT: usize = 3;
 
 /// Order-independent hash of a round's tool calls, keyed on each call's CHOSEN identity
-/// (`tool_name` + `parameters`) — NOT its result. This is the discriminator between a
-/// model IGNORING a steer (re-issues the byte-identical call-set) and one TRYING (a
-/// different call, even if it still trips the same detector). `tool_id` is a per-call
+/// (`tool_name` + `parameters`) — NOT its result. Used only to reduce repeated
+/// advisory messages for the same calls, never as proof of non-compliance. `tool_id` is a per-call
 /// unique id and is excluded so the same calls hash equal across rounds. Parameter JSON
 /// is key-order-canonical (serde_json `Value` is BTreeMap-backed here), so equal calls
 /// always hash equal.
 ///
-/// Known limit (accepted): cosmetic param churn — a model thrashing to *look* like it is
-/// trying — evades the THROTTLE but not the same-signal frame escalation nor the
-/// circuit-breaker ceiling. Closing it would need an LLM judge, which violates the
-/// free/deterministic contract, so we keep the cheap exact gate and let the breaker backstop.
+/// Different arguments bypass duplicate-hint throttling because the runtime
+/// cannot establish equivalence. They still receive only advisory context.
 pub fn call_set_hash(calls: &[crate::mcp::McpToolCall]) -> u64 {
 	let mut per_call: Vec<u64> = calls
 		.iter()

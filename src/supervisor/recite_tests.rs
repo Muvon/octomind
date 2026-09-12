@@ -156,7 +156,8 @@ fn constraints_recite_without_anchor_or_plan() {
 	.expect("constraints recite alone");
 	assert!(crate::supervisor::gate::is_supervisor_injection(&note));
 	assert!(note.contains("- Do NOT modify tests."));
-	assert!(note.contains("still binding"));
+	assert!(note.contains("context reminders, not additional requirements"));
+	assert!(!note.contains("violating one voids the work"));
 }
 
 #[test]
@@ -349,6 +350,26 @@ fn operational_constraints_from_the_resolver_ride_the_same_channel() {
 		active_constraints(&messages, Some(&resolved)),
 		vec!["I will rerun it on the server"]
 	);
+}
+
+#[test]
+fn recitation_drops_ungrounded_operational_facts_even_from_resolved_state() {
+	let messages = vec![crate::session::Message {
+		role: "user".into(),
+		content: "Change the files. I run tests myself.".into(),
+		..Default::default()
+	}];
+	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(
+		"Change the files. All releases run in production.",
+	);
+	resolved.operational_constraints = vec![
+		"All releases run in production".into(),
+		"I run tests myself".into(),
+	];
+	let constraints = active_constraints(&messages, Some(&resolved));
+	assert!(constraints.iter().any(|c| c == "I run tests myself"));
+	// The operational selection cannot use a model rewrite as its user source.
+	assert!(!constraints.iter().any(|c| c.contains("production")));
 }
 
 #[test]

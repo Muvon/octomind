@@ -484,6 +484,16 @@ async fn a_planner_failure_with_an_active_plan_leaves_the_phase_open() {
 			msgs.iter().any(|m| m.contains("could not decide")),
 			"the agent is told the plan manager did not decide: {msgs:?}"
 		);
+		assert!(msgs
+			.iter()
+			.any(|m| m.contains("continue the user's authorized task")));
+		assert!(!msgs
+			.iter()
+			.any(|m| m.contains("Continue only safe evidence-gathering")));
+		assert!(
+			session.completion_gate_eligible,
+			"planner failure does not revoke task ownership"
+		);
 	})
 	.await;
 }

@@ -423,10 +423,24 @@ fn check_condition(cond: &str) -> Option<bool> {
 	if path.is_empty() {
 		return None;
 	}
-	match op.trim().to_ascii_lowercase().as_str() {
-		"file_exists" => Some(std::path::Path::new(path).exists()),
-		"file_absent" => Some(!std::path::Path::new(path).exists()),
-		_ => None,
+	let expect_present = match op.trim().to_ascii_lowercase().as_str() {
+		"file_exists" => true,
+		"file_absent" => false,
+		_ => return None,
+	};
+	// Relative plan paths belong to the session anchor, not the daemon's cwd
+	// or a temporary workdir switch. Stat errors are unknown, never absence.
+	let path = crate::mcp::workdir::get_thread_original_working_directory().join(path);
+	match path.try_exists() {
+		Ok(present) => Some(present == expect_present),
+		Err(error) => {
+			crate::log_debug!(
+				"Plan condition unavailable for {}: {}",
+				path.display(),
+				error
+			);
+			None
+		}
 	}
 }
 

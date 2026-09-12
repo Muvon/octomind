@@ -172,7 +172,11 @@ fn classifier_operational_constraints_acceptance_and_rejection() {
 		r#"{{"scope":"self_contained","operational_constraints":{}}}"#,
 		serde_json::to_string(&many).expect("serializes")
 	);
-	assert_eq!(parse_classifier(&wire).operational_constraints.len(), 4);
+	let parsed = parse_classifier(&wire);
+	assert_eq!(
+		grounded_operational_constraints(&many.join("; "), &parsed.operational_constraints).len(),
+		4
+	);
 	// Neighboring format — the field as a bare string instead of an array —
 	// must not ride the serde default into a silent empty list: the payload
 	// is rejected whole and the fail-open path runs.
@@ -185,6 +189,27 @@ fn classifier_operational_constraints_acceptance_and_rejection() {
 	assert!(parse_classifier(r#"{"scope":"self_contained"}"#)
 		.operational_constraints
 		.is_empty());
+}
+
+#[test]
+fn operational_constraints_require_current_user_evidence_before_the_cap() {
+	let request = "I run tests myself. Work happens on staging. Keep the local files in sync.";
+	let candidates = vec![
+		"Never edit files".into(),
+		"Production is approved".into(),
+		"Use the old server".into(),
+		"The role requires deployment".into(),
+		"I run tests myself".into(),
+		"I run tests myself".into(),
+		" Work happens on staging ".into(),
+	];
+	assert_eq!(
+		grounded_operational_constraints(request, &candidates),
+		vec!["I run tests myself", "Work happens on staging",]
+	);
+	assert!(grounded_operational_constraints("no facts here", &candidates).is_empty());
+	let long = "x".repeat(121);
+	assert!(grounded_operational_constraints(&long, std::slice::from_ref(&long)).is_empty());
 }
 
 #[test]
@@ -464,6 +489,31 @@ fn resolve_config() -> crate::config::Config {
 }
 
 const SELF_CONTAINED: &str = r#"{"scope":"self_contained","forbids_verification":true,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":["the staging endpoint is used"],"operational_constraints":[]}"#;
+
+#[tokio::test]
+async fn resolver_filters_ungrounded_constraints_on_both_classification_branches() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	for scope in ["self_contained", "context_dependent"] {
+		let classifier = serde_json::json!({
+			"scope": scope,
+			"operational_constraints": ["Use the old server", "I run tests myself", "I run tests myself"]
+		});
+		let mut replies = vec![final_response(&classifier.to_string())];
+		if scope == "context_dependent" {
+			replies.push(final_response(r#"{"scope":"ambiguous"}"#));
+		}
+		let url = spawn_stub(replies).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let mut ctx = resolve_context("Continue the work. I run tests myself.");
+		ctx.role_context = "Use the old server".into();
+		ctx.recent_history = "USER: Use the old server".into();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let result = resolve(&resolve_config(), &ctx, rx).await;
+		assert_eq!(result.operational_constraints, vec!["I run tests myself"]);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
 
 #[tokio::test]
 async fn a_self_contained_classification_returns_with_the_full_verdict() {

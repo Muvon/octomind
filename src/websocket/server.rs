@@ -435,6 +435,27 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 			session_id
 		);
 		loop {
+			// This connection is gone. The exit check below runs only AFTER the
+			// drain, so a handback that lands now (a tap run finishing long after
+			// its turn closed the socket) would be popped off the queue and
+			// "delivered" into a dead channel — destroying the only copy of an
+			// answer the user is still waiting for. Sessions and their inboxes
+			// deliberately outlive a connection, so leave both alone; the next
+			// connection spawns its own monitor and picks the message up.
+			if ctx.bg_tx.is_closed() {
+				// Pass the wakeup on: a live connection's monitor can be parked on
+				// this same Notify, and notify_one() only ever wakes one waiter.
+				crate::session::context::with_session_id(session_id.clone(), async {
+					if crate::session::inbox::has_inbox_messages() {
+						if let Some(notify) = crate::session::inbox::get_inbox_notify() {
+							notify.notify_one();
+						}
+					}
+				})
+				.await;
+				break;
+			}
+
 			// Process phase: flush due schedules into inbox, then drain.
 			// Returns true to exit the monitor loop.
 			let should_exit = crate::session::context::with_session_id(session_id.clone(), async {

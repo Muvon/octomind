@@ -28,7 +28,8 @@ impl Detectors {
 		loop_threshold: usize,
 		no_progress_window: usize,
 	) -> DetectorSignal {
-		let (rhash, novel) = self.note_call(tool, result, is_error, is_mutation);
+		let (rhash, novel) =
+			self.note_call(tool, &serde_json::json!({}), result, is_error, is_mutation);
 		self.record_round_signals(&[rhash], novel, loop_threshold, no_progress_window)
 	}
 }
@@ -471,35 +472,25 @@ fn steer_waits_while_exploring_but_fires_on_loop() {
 }
 
 #[test]
-fn conflict_framing_when_progressing_but_no_progress() {
-	// No-progress signal while the agent insists it is progressing → conflict text.
-	let conflict = steer_note(DetectorSignal::NoProgress, Some(SelfReport::Progressing), 0);
-	assert!(conflict.contains("disagree"));
-	// Without the progressing claim it stays the generic no-progress note.
-	let generic = steer_note(DetectorSignal::NoProgress, None, 0);
-	assert!(!generic.contains("disagree"));
-}
-
-#[test]
 fn failed_verifier_recovery_survives_unrelated_successes() {
 	let mut d = Detectors::default();
 	let failing_check = 11;
 	let unrelated_check = 22;
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+		d.record_round_command_outcomes(&[(failing_check, false)], 3),
 		DetectorSignal::None
 	);
 	// A different successful command does not prove the failed behavior.
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(unrelated_check, true)], 3),
+		d.record_round_command_outcomes(&[(unrelated_check, true)], 3),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+		d.record_round_command_outcomes(&[(failing_check, false)], 3),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(failing_check, false)], 3),
+		d.record_round_command_outcomes(&[(failing_check, false)], 3),
 		DetectorSignal::Recovery
 	);
 }
@@ -509,16 +500,16 @@ fn same_verifier_success_discharges_recovery() {
 	let mut d = Detectors::default();
 	let check = 11;
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(check, false)], 2),
+		d.record_round_command_outcomes(&[(check, false)], 2),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(check, true)], 2),
+		d.record_round_command_outcomes(&[(check, true)], 2),
 		DetectorSignal::None
 	);
 	// The old failed episode is gone, so one new failure is below threshold.
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(check, false)], 2),
+		d.record_round_command_outcomes(&[(check, false)], 2),
 		DetectorSignal::None
 	);
 }
@@ -528,11 +519,11 @@ fn conflicting_parallel_verifier_outcomes_do_not_clear_failure() {
 	let mut d = Detectors::default();
 	let check = 11;
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(check, false)], 2),
+		d.record_round_command_outcomes(&[(check, false)], 2),
 		DetectorSignal::None
 	);
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(check, true), (check, false)], 2),
+		d.record_round_command_outcomes(&[(check, true), (check, false)], 2),
 		DetectorSignal::Recovery
 	);
 }
@@ -541,12 +532,12 @@ fn conflicting_parallel_verifier_outcomes_do_not_clear_failure() {
 fn user_turn_reset_clears_failed_verifier_recovery() {
 	let mut d = Detectors::default();
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(11, false)], 2),
+		d.record_round_command_outcomes(&[(11, false)], 2),
 		DetectorSignal::None
 	);
 	d.reset_streak();
 	assert_eq!(
-		d.record_round_verifier_outcomes(&[(11, false)], 2),
+		d.record_round_command_outcomes(&[(11, false)], 2),
 		DetectorSignal::None
 	);
 }
@@ -577,14 +568,16 @@ fn call_set_hash_ignores_order_and_id_but_tracks_params() {
 }
 
 #[test]
-fn persistent_frame_clamps_stuck_signals_past_the_ladder() {
-	// A stuck signal re-firing past the 0→1→2 ladder holds the firmest frame: every
-	// persistent variant carries the same firm ask (a different path, or `blocked`).
-	assert!(steer_note(DetectorSignal::Loop, None, 5).contains("blocked"));
-	// …but the phrasing ROTATES each re-emit so the repeated nudge does not habituate
-	// (polymorphic warnings resist habituation — Anderson 2015 / Ancker 2017).
-	assert_ne!(
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT),
-		steer_note(DetectorSignal::Loop, None, PERSISTENT_ATTEMPT + 1)
-	);
+fn recurring_polling_never_becomes_a_required_strategy_change() {
+	let mut d = Detectors::default();
+	for round in 0..20 {
+		let signal = d.record_action("status", "pending", false, false, 3, 5);
+		if round >= 2 {
+			assert_eq!(signal, DetectorSignal::Loop);
+			let note = steer_note(signal);
+			assert!(note.contains("intentional polling"));
+			assert!(note.contains("Continue if these calls serve the user's task"));
+			assert!(note.contains("does not require extra work or a blocked handback"));
+		}
+	}
 }

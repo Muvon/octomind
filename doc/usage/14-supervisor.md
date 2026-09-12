@@ -167,7 +167,7 @@ older sessions.
 |-------|--------|
 | `done` | Arms the verify-gate |
 | `need_input` | Treated as a question — passed to you, **never** gated (no false-positive verification) |
-| `blocked` | Legitimate handback; detector signals may still cause steering |
+| `blocked` | Legitimate handback; detector hints do not interrupt it |
 | `exploring` / `progressing` | Fused with the counters below |
 
 ## Detectors
@@ -175,18 +175,19 @@ older sessions.
 Detectors run in-process after tool rounds without another model call. Their thresholds are fixed constants. The status
 report and injected notes still use tokens in normal agent requests.
 
-The first two derive from one primitive — **information novelty**: did the action add new information? A mutation
-(edit/write) always advances state; a read/search advances only when its result is one not seen recently.
+The first two track **receipt novelty**: tool name, arguments, result, and error status. Different targets returning
+the same output are distinct observations. A fresh error can provide diagnostic information, and a successful mutation
+counts as progress even when its receipt repeats.
 
-- **Loop** — the same result-set repeats for 3 tool rounds. Round identity hashes tool names and results, independent
-  of call order. No extra model call is needed.
-- **No-progress** — 5 tool rounds with **zero novelty** — churn, not genuine work.
-- **Recovery** — command-shaped checks keep failing and no later success from the *same* check discharges them;
-  unrelated fresh reads cannot hide the unresolved failure.
+- **Loop** — identical calls and results repeat for 3 tool rounds without current-round novelty.
+- **No-progress** — 5 tool rounds without new receipts or successful mutations.
+- **Recovery** — several command executions returned errors without a later success for those exact calls. The
+  detector does not establish whether they were tests, expected probes, or obsolete attempts.
 
-The power is in **fusing** the counter with the self-report: if the counter says "no progress" but the agent reports
-`progressing`, *that conflict* is the real stuck signal. The full fusion table: any `done` defers to the gate;
-no-progress while `exploring` waits; loop, recovery, or no-progress otherwise, steers. Agreement needs no model at all.
+All three signals are advisory. Repetition can be legitimate polling, and an error need not require recovery. Hints
+never escalate into mandatory strategy changes or blocked handbacks; repeated hints back off. `done`, `blocked`, and
+`need_input` are left alone, and no-progress hints are also suppressed while `exploring`. The main model judges relevance
+from the actual outputs and user request; a counter does not establish non-compliance.
 
 ## Verify-gate
 
@@ -218,8 +219,12 @@ Plan outcomes are judged against evidence, not whether every status box is alrea
 remaining bookkeeping items for the applicable plan. With the completion gate disabled, an eligible completion
 self-report can finalize it instead.
 
-Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) are monitored during execution. A broken
-assumption emits `reassess`; the external planner revises or holds the unfinished route before completion.
+Machine-checkable plan assumptions (for example `file_exists: src/foo.rs`) resolve relative paths from the session
+anchor. A confirmed broken assumption emits `reassess`; filesystem observation errors remain unknown. A planner outage
+preserves plan bookkeeping and allows the authorized task to continue.
+
+Model-selected operational excerpts are matched against the current user's exact text before recitation. Selected
+excerpts are contextual reminders, not independently binding rules or additional requirements.
 
 **Model pass (rare):** an independent verifier checks the result against your request:
 

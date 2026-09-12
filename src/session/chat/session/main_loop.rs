@@ -1846,6 +1846,11 @@ pub async fn run_interactive_session_with_input(
 	// Resources already reconciled once, so a job that stays pending is nudged at
 	// most once per reconcile window rather than on every pass.
 	let mut nudged_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
+	// Deadline for the background-job safety backstop, anchored when jobs first
+	// appear. It must live outside the loop: a sleep built inside the select is
+	// recreated every pass, so the shorter reconcile branch firing on its own
+	// timer reset the longer one forever and the backstop could never elapse.
+	let mut background_job_deadline: Option<tokio::time::Instant> = None;
 	loop {
 		// Flush any due schedule entries into the inbox first.
 		crate::mcp::orchestration::flush_due_to_inbox();
@@ -2029,6 +2034,15 @@ pub async fn run_interactive_session_with_input(
 		// hand the model what it says. The job is left pending — this unblocks the
 		// turn without stealing the real completion path.
 		const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_secs(600);
+		// Arm on the first pass that has jobs, disarm when none are left, so the
+		// window measures how long jobs have actually been blocking the exit.
+		let bg_deadline = if has_background_jobs {
+			*background_job_deadline
+				.get_or_insert_with(|| tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT)
+		} else {
+			background_job_deadline = None;
+			tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT
+		};
 		tokio::select! {
 			_ = crate::mcp::orchestration::next_schedule_sleep() => {}
 			_ = async {
@@ -2041,10 +2055,11 @@ pub async fn run_interactive_session_with_input(
 			_ = tokio::time::sleep(BACKGROUND_JOB_RECONCILE), if has_background_jobs => {
 				reconcile_pending_background_jobs(&mut nudged_jobs).await;
 			}
-			_ = tokio::time::sleep(BACKGROUND_JOB_MAX_WAIT), if has_background_jobs => {
+			_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
 				if let Some(session_id) = crate::session::context::current_session_id() {
 					crate::session::shell_jobs::clear_for_session(&session_id);
 				}
+				background_job_deadline = None;
 				log_debug!(
 					"A background job never signalled completion within the safety window; \
 					 abandoning it so the run can exit"

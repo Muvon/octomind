@@ -123,14 +123,6 @@ fn turn_answer_keeps_the_newest_pass_when_over_budget() {
 }
 
 #[test]
-fn pregate_feedback_is_domain_agnostic() {
-	assert!(PREGATE_NOTE.contains("state changes"));
-	assert!(PREGATE_NOTE.contains("domain-specific validator"));
-	assert!(!PREGATE_NOTE.contains("code changes"));
-	assert!(!PREGATE_NOTE.contains("build / test / lint"));
-}
-
-#[test]
 fn system_managed_response_cannot_complete_the_latest_user_task() {
 	use crate::supervisor::detect::SelfReport;
 

@@ -573,6 +573,15 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 
 					if let Err(e) = result {
 						log_debug!("WS monitor: error processing inbox message: {}", e);
+						// Say it out loud, exactly as the pre-user drain does. A debug
+						// log is invisible at the level machines actually run at, and
+						// the Cost frame below reads to every client as an ordinary
+						// finished turn — so a handback that failed resolved the chat
+						// with "the agent sent no reply" and left no trace anywhere.
+						let _ = ctx.bg_tx.send(ServerMessage::error(format!(
+							"Error processing injected message: {}",
+							e
+						)));
 					}
 
 					// Send cost update after processing.

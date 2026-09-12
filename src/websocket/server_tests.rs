@@ -1975,3 +1975,50 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 
 	crate::session::context::cleanup_session(&session_id);
 }
+
+/// A background inbox turn that fails must say so. The pre-user drain in this
+/// same file already does (`Error processing injected message`), but the
+/// monitor only `log_debug!`s — invisible at the info level machines run at —
+/// and then emits a Cost frame regardless. To every client that is an ordinary
+/// finished turn: our FrameTee treats `cost` as terminal, so the connector
+/// resolves the chat with "the agent sent no reply" and the real failure is
+/// never recorded anywhere.
+///
+/// Matches an unexplained prod pair on 2026-09-12 — two cost frames 14s apart
+/// carrying identical token counts, i.e. a drain whose API call did nothing.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_failing_background_inbox_turn_reports_an_error_frame() {
+	let _data = TestDataDirGuard::new();
+	let failures: Vec<(u16, serde_json::Value)> = (0..6)
+		.map(|_| (500u16, serde_json::json!({"error": {"message": "boom"}})))
+		.collect();
+	let _env = StubEnv::with_status(failures).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	// The connection stays open, so this session's own live monitor drains it.
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::TapRun {
+				id: "tap-1".to_string(),
+				role: "assistant:researcher".to_string(),
+			},
+			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
+		},
+	);
+
+	let error = read_until(&mut ws, |v| v["type"] == "error").await;
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("injected message"),
+		"got: {error}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}

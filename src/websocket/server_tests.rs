@@ -1972,15 +1972,14 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 				);
 				injected = true;
 			}
-			"assistant" => {
+			"assistant"
 				if frame["content"]
 					.as_str()
 					.unwrap_or_default()
-					.contains("HANDBACK-TURN")
+					.contains("HANDBACK-TURN") =>
 				{
 					answered = true;
 				}
-			}
 			_ => {}
 		}
 		if injected && answered {

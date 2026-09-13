@@ -40,30 +40,51 @@ use tokio::sync::Mutex as TokioMutex;
 
 /// Hardcoded internal embedding model.
 ///
-/// `muvon/octomind-embed` is an all-MiniLM-L6-v2 fine-tune trained on the
+/// `muvon/octomind-embed` is a BGE-small-en-v1.5 fine-tune trained on the
 /// octomind-tap capability triggers with paraphrase + hard-negative
-/// augmentation (see `octomind-tap/model/`). 22M params, 384-dim, same
-/// size/latency as base MiniLM-L6 but sharpened on the capability-routing
-/// task: confusable clusters (shell vs programming-rust, etc.) clear the
-/// margin gate where the base model abstains.
+/// augmentation (see `octomind-tap/model/`). 33M params, 384-dim, sharpened
+/// on the capability-routing task: confusable clusters (shell vs
+/// programming-rust, etc.) clear the margin gate where the base model
+/// abstains.
 ///
-/// MiniLM-L6 is a symmetric sentence-transformer: trained WITHOUT query/document
+/// BGE-small is a symmetric sentence-transformer: trained WITHOUT query/document
 /// instruction prefixes and capped at 256 tokens. Embed both sides bare
 /// (`InputType::None`) and keep inputs under the cap.
 ///
-/// Loaded via octolib's HuggingFace (candle) provider — downloads weights from
-/// `https://huggingface.co/<MODEL_NAME>` to the standard HF cache on first
-/// use and reuses them thereafter.
+/// Loaded via octolib's ONNX provider, which pulls `onnx/model_quantized.onnx`
+/// from `https://huggingface.co/muvon/octomind-embed` and runs it through ONNX
+/// Runtime. The int8 graph is ~4x smaller and 2-4x faster on CPU than the
+/// candle/safetensors path, which matters because auto-activation embeds on
+/// the user's hot path. The repo also ships fp32 safetensors; switching
+/// `EMBED_BACKEND` back to HuggingFace restores the candle path without
+/// republishing anything.
 const MODEL_NAME: &str = "muvon/octomind-embed";
 
-/// Embedding dimension. MiniLM-L6 is 384.
+/// Which octolib provider loads `MODEL_NAME`.
+///
+/// `Onnx` reads the repo's `onnx/` export (int8 preferred, fp32 fallback) and
+/// honours its `1_Pooling/config.json`. `HuggingFace` reads `model.safetensors`
+/// through candle and always mean-pools. Both produce 384-dim vectors for this
+/// model; they are NOT bit-identical, which is why `disk_cache_path` keys on
+/// the backend.
+const EMBED_BACKEND: EmbeddingProviderType = EmbeddingProviderType::Onnx;
+
+/// Short tag for the active backend, used in cache file names.
+const fn backend_tag() -> &'static str {
+	match EMBED_BACKEND {
+		EmbeddingProviderType::Onnx => "onnx",
+		_ => "hf",
+	}
+}
+
+/// Embedding dimension. BGE-small is 384.
 pub const EMBED_DIM: usize = 384;
 
-/// MiniLM-L6's input window in tokens — its sentence-transformers training cap.
-/// The model-exact budget: the candle backend errors past the 512-position
-/// ceiling and quality degrades past the 256 trained window. Enforced precisely
-/// via the model's own tokenizer (`chunk_to_token_limit`). A model fact, not
-/// config: the model is fixed, so its cap is too.
+/// BGE-small's input window in tokens — its sentence-transformers training cap.
+/// The model-exact budget: the backend errors past the 512-position ceiling and
+/// quality degrades past the 256 trained window. Enforced precisely via the
+/// model's own tokenizer (`chunk_to_token_limit`). A model fact, not config:
+/// the model is fixed, so its cap is too.
 pub const EMBED_MAX_INPUT_TOKENS: usize = 256;
 
 /// The loaded model plus the two facts about it octolib reports at load time:
@@ -115,11 +136,17 @@ fn cache() -> &'static RwLock<HashMap<u64, Vec<f32>>> {
 /// `muvon/octomind-embed`) automatically opens a fresh file instead of
 /// pointing the new model at vectors produced by the old one. The header also
 /// stores the model name + dim as belt-and-suspenders.
+///
+/// The backend tag is part of the name because the ONNX (int8) and candle
+/// (fp32) paths produce slightly different vectors for identical text. Mixing
+/// them in one file would silently shift cosine scores against a threshold
+/// tuned for one of them, so each backend owns its own cache file.
 fn disk_cache_path() -> Result<std::path::PathBuf> {
 	let dir = crate::directories::get_cache_dir()?.join("embeddings");
 	std::fs::create_dir_all(&dir)?;
 	let safe_name = MODEL_NAME.replace('/', "_");
-	Ok(dir.join(format!("triggers-{safe_name}.bin")))
+	let backend = backend_tag();
+	Ok(dir.join(format!("triggers-{safe_name}-{backend}.bin")))
 }
 
 /// Read the on-disk cache into the given map, merging without overwriting.
@@ -285,15 +312,14 @@ async fn model() -> Result<&'static Model> {
 	if let Some(m) = MODEL.get() {
 		return Ok(m);
 	}
-	let provider_type = EmbeddingProviderType::HuggingFace;
 	let provider =
-		octolib::create_embedding_provider_from_parts(&provider_type, MODEL_NAME).await?;
-	// Both are `Some` for every HuggingFace provider; `None` is the API
-	// provider case, which `provider_type` rules out.
+		octolib::create_embedding_provider_from_parts(&EMBED_BACKEND, MODEL_NAME).await?;
+	// Both are `Some` for every in-process provider (ONNX and HuggingFace);
+	// `None` is the API-provider case, which `EMBED_BACKEND` rules out.
 	let revision = provider
 		.model_revision()
 		.await?
-		.expect("HuggingFace provider reports its revision");
+		.expect("local embedding provider reports its revision");
 	let tokenizer = provider
 		.tokenizer()
 		.await?

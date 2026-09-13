@@ -32,8 +32,13 @@ opt-level = "s"         # Optimize for size while keeping vectorization ("z" dis
 overflow-checks = false # Disable overflow checks in release mode
 
 [dependencies]
-# octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface"] }
-octolib = { version = "0.37.0", default-features = false, features = ["llm", "embeddings", "huggingface"] }
+# `onnx` backs the internal embedding model (src/embeddings/mod.rs): the tap
+# publishes an int8 `onnx/` export that ORT runs ~2-4x faster than candle.
+# `huggingface` stays enabled so EMBED_BACKEND can fall back to safetensors.
+# NOTE: path dep until octolib 0.38.0 (which adds the `onnx` feature) is
+# published to crates.io; swap back to the version line after release.
+octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx"] }
+# octolib = { version = "0.38.0", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx"] }
 rmcp = { version = "3.1.4", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process

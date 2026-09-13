@@ -1404,9 +1404,9 @@ pub async fn run_interactive_session(
 					// never mutate messages; the harvested exchanges fold into
 					// cost at the top of the next loop iteration.
 					keepalive = KeepaliveHandle::spawn(
-						chat_session.session.messages.clone(),
-						chat_session.model.clone(),
-						current_config.clone(),
+						&chat_session.session.messages,
+						&chat_session.model,
+						&current_config,
 						current_config.cache_keepalive_enabled,
 						std::time::Duration::from_secs(
 							current_config.cache_keepalive_max_idle_seconds,
@@ -1794,9 +1794,9 @@ pub async fn run_interactive_session_with_input(
 			// inbox message or schedule fire. Cancelled+folded at the top of
 			// the inbox-drain loop or on exit.
 			keepalive = KeepaliveHandle::spawn(
-				chat_session.session.messages.clone(),
-				chat_session.model.clone(),
-				current_config.clone(),
+				&chat_session.session.messages,
+				&chat_session.model,
+				&current_config,
 				current_config.cache_keepalive_enabled,
 				std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
 			);
@@ -1969,9 +1969,9 @@ pub async fn run_interactive_session_with_input(
 				Ok(_) => {
 					// Spawn a fresh keepalive against the post-turn snapshot.
 					keepalive = KeepaliveHandle::spawn(
-						chat_session.session.messages.clone(),
-						chat_session.model.clone(),
-						current_config.clone(),
+						&chat_session.session.messages,
+						&chat_session.model,
+						&current_config,
 						current_config.cache_keepalive_enabled,
 						std::time::Duration::from_secs(
 							current_config.cache_keepalive_max_idle_seconds,

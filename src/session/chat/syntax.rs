@@ -20,16 +20,25 @@ use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
+use std::sync::LazyLock;
+
+// syntect's bundled dumps decompress to several MB of syntax definitions and
+// themes. A renderer is built per printed assistant message / report, so
+// loading them per instance allocated and freed that whole set every turn.
+// They are immutable — load once per process and share.
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+
 pub struct SyntaxHighlighter {
-	pub syntax_set: SyntaxSet,
-	pub theme_set: ThemeSet,
+	pub syntax_set: &'static SyntaxSet,
+	pub theme_set: &'static ThemeSet,
 }
 
 impl SyntaxHighlighter {
 	pub fn new() -> Self {
 		Self {
-			syntax_set: SyntaxSet::load_defaults_newlines(),
-			theme_set: ThemeSet::load_defaults(),
+			syntax_set: &SYNTAX_SET,
+			theme_set: &THEME_SET,
 		}
 	}
 
@@ -60,7 +69,7 @@ impl SyntaxHighlighter {
 		let mut highlighted = String::new();
 
 		for line in LinesWithEndings::from(code) {
-			let ranges: Vec<(Style, &str)> = highlighter.highlight_line(line, &self.syntax_set)?;
+			let ranges: Vec<(Style, &str)> = highlighter.highlight_line(line, self.syntax_set)?;
 			let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
 			highlighted.push_str(&escaped);
 		}

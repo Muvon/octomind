@@ -42,9 +42,9 @@ fn template_config() -> Config {
 #[tokio::test]
 async fn spawn_returns_none_when_disabled() {
 	let handle = KeepaliveHandle::spawn(
-		vec![cached_user_message()],
-		"anthropic:claude-sonnet-4-6".to_string(),
-		template_config(),
+		&[cached_user_message()],
+		"anthropic:claude-sonnet-4-6",
+		&template_config(),
 		false,
 		Duration::from_secs(60),
 	);
@@ -54,9 +54,9 @@ async fn spawn_returns_none_when_disabled() {
 #[tokio::test]
 async fn spawn_returns_none_with_empty_snapshot() {
 	let handle = KeepaliveHandle::spawn(
-		Vec::new(),
-		"anthropic:claude-sonnet-4-6".to_string(),
-		template_config(),
+		&[],
+		"anthropic:claude-sonnet-4-6",
+		&template_config(),
 		true,
 		Duration::from_secs(60),
 	);
@@ -66,9 +66,9 @@ async fn spawn_returns_none_with_empty_snapshot() {
 #[tokio::test]
 async fn spawn_returns_none_when_no_message_is_cached() {
 	let handle = KeepaliveHandle::spawn(
-		vec![uncached_user_message()],
-		"anthropic:claude-sonnet-4-6".to_string(),
-		template_config(),
+		&[uncached_user_message()],
+		"anthropic:claude-sonnet-4-6",
+		&template_config(),
 		true,
 		Duration::from_secs(60),
 	);
@@ -78,9 +78,9 @@ async fn spawn_returns_none_when_no_message_is_cached() {
 #[tokio::test]
 async fn spawn_returns_none_for_unparseable_model() {
 	let handle = KeepaliveHandle::spawn(
-		vec![cached_user_message()],
-		"no-provider-prefix".to_string(),
-		template_config(),
+		&[cached_user_message()],
+		"no-provider-prefix",
+		&template_config(),
 		true,
 		Duration::from_secs(60),
 	);
@@ -90,9 +90,9 @@ async fn spawn_returns_none_for_unparseable_model() {
 #[tokio::test]
 async fn spawn_returns_none_for_unsupported_model() {
 	let handle = KeepaliveHandle::spawn(
-		vec![cached_user_message()],
-		"anthropic:claude-not-a-real-model".to_string(),
-		template_config(),
+		&[cached_user_message()],
+		"anthropic:claude-not-a-real-model",
+		&template_config(),
 		true,
 		Duration::from_secs(60),
 	);
@@ -104,9 +104,9 @@ async fn spawn_returns_none_for_provider_without_keepalive_policy() {
 	// OpenAI manages its prompt cache server-side; pinging it would burn
 	// money for nothing, so spawn must refuse.
 	let handle = KeepaliveHandle::spawn(
-		vec![cached_user_message()],
-		"openai:gpt-5".to_string(),
-		template_config(),
+		&[cached_user_message()],
+		"openai:gpt-5",
+		&template_config(),
 		true,
 		Duration::from_secs(60),
 	);
@@ -116,9 +116,9 @@ async fn spawn_returns_none_for_provider_without_keepalive_policy() {
 #[tokio::test]
 async fn spawned_handle_cancels_before_any_ping() {
 	let handle = KeepaliveHandle::spawn(
-		vec![cached_user_message()],
-		"anthropic:claude-sonnet-4-6".to_string(),
-		template_config(),
+		&[cached_user_message()],
+		"anthropic:claude-sonnet-4-6",
+		&template_config(),
 		true,
 		Duration::from_secs(600),
 	)

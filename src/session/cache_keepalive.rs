@@ -62,10 +62,13 @@ impl KeepaliveHandle {
 	///
 	/// On success the task is detached and runs until `cancel()` is called
 	/// or `max_idle` is reached.
+	/// Borrows the conversation and config: the owned snapshot is taken only
+	/// after every bail-out check passes, so a disabled keepalive (the default)
+	/// never copies the whole message history once per turn.
 	pub fn spawn(
-		messages: Vec<Message>,
-		model: String,
-		config: Config,
+		messages: &[Message],
+		model: &str,
+		config: &Config,
 		enabled: bool,
 		max_idle: Duration,
 	) -> Option<Self> {
@@ -77,14 +80,14 @@ impl KeepaliveHandle {
 			return None;
 		}
 
-		let (provider, actual_model) = ProviderFactory::get_provider_for_model(&model).ok()?;
+		let (provider, actual_model) = ProviderFactory::get_provider_for_model(model).ok()?;
 		let policy = provider.keepalive_policy(&actual_model, true)?;
 
 		let (cancel_tx, cancel_rx) = watch::channel(false);
 		let task = tokio::spawn(run(
-			messages,
-			model,
-			config,
+			messages.to_vec(),
+			model.to_string(),
+			config.clone(),
 			policy.interval,
 			max_idle,
 			cancel_rx,

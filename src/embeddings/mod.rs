@@ -192,10 +192,11 @@ fn save_disk_cache_locked(model: &Model) {
 	let Ok(_guard) = DISK_WRITE_LOCK.try_lock() else {
 		return;
 	};
-	let snapshot: Vec<(u64, Vec<f32>)> = {
-		let c = cache().read().unwrap();
-		c.iter().map(|(k, v)| (*k, v.clone())).collect()
-	};
+	// Write straight out of the map under a read lock. Materializing a
+	// `Vec<(u64, Vec<f32>)>` first duplicated every cached vector in memory for
+	// the duration of the write; the lock is held instead, which only blocks
+	// concurrent embed inserts for the length of the (buffered) file write.
+	let snapshot = cache().read().unwrap();
 	let path = match disk_cache_path() {
 		Ok(p) => p,
 		Err(e) => {
@@ -218,7 +219,7 @@ fn save_disk_cache_locked(model: &Model) {
 		w.write_all(&(rev_bytes.len() as u32).to_le_bytes())?;
 		w.write_all(rev_bytes)?;
 		w.write_all(&(snapshot.len() as u32).to_le_bytes())?;
-		for (key, vec) in &snapshot {
+		for (key, vec) in snapshot.iter() {
 			w.write_all(&key.to_le_bytes())?;
 			for f in vec {
 				w.write_all(&f.to_le_bytes())?;

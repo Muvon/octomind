@@ -27,8 +27,11 @@
 //! No behavior change in this commit — this is the substrate. Capability
 //! discovery and tool gating wire it up in subsequent commits.
 
-use anyhow::Result;
+mod shared;
+
+use anyhow::{Context, Result};
 use octolib::{EmbeddingProvider, EmbeddingProviderType, InputType, Tokenizer};
+use shared::{Elected, Role};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -82,6 +85,10 @@ static MODEL: OnceLock<Model> = OnceLock::new();
 // process-global, and the tokio `Mutex` lets the slow async init run
 // inside `.await`. After init, callers take only the lock-free fast path.
 static INIT_LOCK: TokioMutex<()> = TokioMutex::const_new(());
+/// This process's membership in the machine-wide shared service: either we
+/// own the weights or we hold a client to the process that does.
+static SHARED: OnceLock<Elected> = OnceLock::new();
+static SHARED_INIT_LOCK: TokioMutex<()> = TokioMutex::const_new(());
 static CACHE: OnceLock<RwLock<HashMap<u64, Vec<f32>>>> = OnceLock::new();
 /// One-shot guard ensuring the on-disk cache is read in only once per process.
 static DISK_CACHE_LOADED: OnceLock<()> = OnceLock::new();
@@ -124,7 +131,7 @@ fn disk_cache_path() -> Result<std::path::PathBuf> {
 /// The model name and dim in the header are validated to defend against the
 /// theoretical case where the path filter is bypassed (e.g. user copies the
 /// file across machines with different model installs).
-fn load_disk_cache(model: &Model) -> Result<usize> {
+fn load_disk_cache(revision: &str) -> Result<usize> {
 	let path = disk_cache_path()?;
 	if !path.exists() {
 		return Ok(0);
@@ -157,7 +164,7 @@ fn load_disk_cache(model: &Model) -> Result<usize> {
 	let rev_len = read_u32(&mut r)? as usize;
 	let mut rev_bytes = vec![0u8; rev_len];
 	r.read_exact(&mut rev_bytes)?;
-	if std::str::from_utf8(&rev_bytes)? != model.revision {
+	if std::str::from_utf8(&rev_bytes)? != revision {
 		return Ok(0);
 	}
 
@@ -188,7 +195,7 @@ fn load_disk_cache(model: &Model) -> Result<usize> {
 /// Skips entirely if another writer holds the lock; the next batched embed
 /// will retry. This is intentional: we'd rather lose a write than block the
 /// hot path.
-fn save_disk_cache_locked(model: &Model) {
+fn save_disk_cache_locked(revision: &str) {
 	let Ok(_guard) = DISK_WRITE_LOCK.try_lock() else {
 		return;
 	};
@@ -215,7 +222,7 @@ fn save_disk_cache_locked(model: &Model) {
 		w.write_all(&(EMBED_DIM as u32).to_le_bytes())?;
 		// Model content fingerprint (HF commit SHA) — lets the cache
 		// self-invalidate when new weights are published under the same name.
-		let rev_bytes = model.revision.as_bytes();
+		let rev_bytes = revision.as_bytes();
 		w.write_all(&(rev_bytes.len() as u32).to_le_bytes())?;
 		w.write_all(rev_bytes)?;
 		w.write_all(&(snapshot.len() as u32).to_le_bytes())?;
@@ -252,8 +259,8 @@ fn read_u64<R: Read>(r: &mut R) -> Result<u64> {
 /// the process — subsequent calls are a no-op atomic check. Called from the
 /// public embed entry points so it happens *after* the embedding model is
 /// available (and after `model()` has resolved directory bootstrapping).
-fn ensure_disk_cache_loaded(model: &Model) {
-	DISK_CACHE_LOADED.get_or_init(|| match load_disk_cache(model) {
+fn ensure_disk_cache_loaded(revision: &str) {
+	DISK_CACHE_LOADED.get_or_init(|| match load_disk_cache(revision) {
 		Ok(0) => {}
 		Ok(n) => crate::log_debug!("embeddings: loaded {} cached vectors from disk", n),
 		Err(e) => crate::log_debug!("embeddings: disk cache load failed: {}", e),
@@ -301,6 +308,42 @@ async fn model() -> Result<&'static Model> {
 	Ok(MODEL.get().expect("MODEL set above"))
 }
 
+/// Join the machine-wide shared embedding service.
+///
+/// Exactly one process on the machine loads the ~90 MB of weights; the rest
+/// hold only a loopback client and the tokenizer, so running N octomind
+/// processes costs one model, not N. Clients that lose their owner re-elect
+/// on the next call — see `shared::join`.
+async fn shared() -> Result<&'static Elected> {
+	if let Some(s) = SHARED.get() {
+		return Ok(s);
+	}
+	let _guard = SHARED_INIT_LOCK.lock().await;
+	if let Some(s) = SHARED.get() {
+		return Ok(s);
+	}
+	let elected = shared::join().await?;
+	let _ = SHARED.set(elected);
+	Ok(SHARED.get().expect("SHARED set above"))
+}
+
+/// Embed via whichever side of the service this process is on: local
+/// inference for the owner, a request to the owner for everyone else.
+async fn embed_via_service(elected: &Elected, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+	match &elected.role {
+		Role::Owner => {
+			let m = model().await?;
+			// MiniLM-L6 is symmetric — embed bare, no query/document prefix.
+			let (vectors, _usage) = m
+				.provider
+				.generate_embeddings_batch(texts.to_vec(), InputType::None)
+				.await?;
+			Ok(vectors)
+		}
+		Role::Client(client) => client.embed_many(texts).await,
+	}
+}
+
 /// Kick off model initialization in the background so the first real
 /// `embed()` / `embed_many()` call doesn't pay the download/load cost.
 ///
@@ -320,10 +363,10 @@ async fn model() -> Result<&'static Model> {
 /// first one actually triggers init.
 pub fn warmup() {
 	tokio::spawn(async move {
-		match model().await {
-			Ok(m) => {
-				ensure_disk_cache_loaded(m);
-				crate::log_debug!("embeddings: model + disk cache ready");
+		match shared().await {
+			Ok(s) => {
+				ensure_disk_cache_loaded(&s.revision);
+				crate::log_debug!("embeddings: shared model + disk cache ready");
 			}
 			Err(e) => {
 				crate::log_debug!(
@@ -364,7 +407,7 @@ pub fn prewarm(texts: Vec<String>) {
 /// Whether the embedding model is initialized and ready (no further
 /// download/load cost). Useful for status UI; not required for correctness.
 pub fn is_ready() -> bool {
-	MODEL.get().is_some()
+	SHARED.get().is_some()
 }
 
 /// Embed a single text. Returns a cached vector if the same text was
@@ -376,13 +419,17 @@ pub fn is_ready() -> bool {
 /// bloat the cache file without payoff. Only batched embeds (used for
 /// trigger sets, which are stable across runs) write back to disk.
 pub async fn embed(text: &str) -> Result<Vec<f32>> {
-	let m = model().await?;
-	ensure_disk_cache_loaded(m);
+	let s = shared().await?;
+	ensure_disk_cache_loaded(&s.revision);
 	let key = cache_key(text);
 	if let Some(v) = cache().read().unwrap().get(&key) {
 		return Ok(v.clone());
 	}
-	let (v, _usage) = m.provider.generate_embedding(text).await?;
+	let v = embed_via_service(s, std::slice::from_ref(&text.to_string()))
+		.await?
+		.into_iter()
+		.next()
+		.context("embedding service returned no vector")?;
 	cache().write().unwrap().insert(key, v.clone());
 	Ok(v)
 }
@@ -399,8 +446,8 @@ pub async fn embed(text: &str) -> Result<Vec<f32>> {
 /// trigger set survive harmlessly in the file until they're naturally
 /// orphaned (never queried).
 pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
-	let m = model().await?;
-	ensure_disk_cache_loaded(m);
+	let s = shared().await?;
+	ensure_disk_cache_loaded(&s.revision);
 	let mut result: Vec<Option<Vec<f32>>> = Vec::with_capacity(texts.len());
 	let mut to_compute: Vec<(usize, String)> = Vec::new();
 	{
@@ -428,12 +475,7 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 			}
 		}
 
-		// MiniLM-L6 is symmetric — embed bare, no query/document prefix. The
-		// query side (`embed`) is already prefix-free; keep both consistent.
-		let (computed, _usage) = m
-			.provider
-			.generate_embeddings_batch(unique.clone(), InputType::None)
-			.await?;
+		let computed = embed_via_service(s, &unique).await?;
 		{
 			let mut cache_w = cache().write().unwrap();
 			for (text, vec) in unique.into_iter().zip(computed) {
@@ -448,7 +490,7 @@ pub async fn embed_many(texts: &[String]) -> Result<Vec<Vec<f32>>> {
 		}
 		// Persist after the write lock is released so the snapshot inside
 		// `save_disk_cache_locked` doesn't deadlock against itself.
-		save_disk_cache_locked(m);
+		save_disk_cache_locked(&s.revision);
 	}
 
 	Ok(result.into_iter().flatten().collect())
@@ -476,11 +518,13 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
 	}
 }
 
-/// The model's own tokenizer, handed over by octolib's provider, so our token
-/// counts match the model exactly. `None` until the model is initialized;
-/// callers then fall back to a char estimate.
+/// The model's own tokenizer, so our token counts match the model exactly.
+/// The owner takes it from its loaded weights; clients receive the same
+/// serialized tokenizer from the owner at handshake, so both sides chunk
+/// identically. `None` until the service is joined; callers then fall back to
+/// a char estimate.
 fn tokenizer() -> Option<&'static Tokenizer> {
-	MODEL.get().map(|m| &*m.tokenizer)
+	SHARED.get().map(|s| &*s.tokenizer)
 }
 
 /// Split `text` into chunks that each fit MiniLM-L6's token window, cutting at

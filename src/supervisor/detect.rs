@@ -229,6 +229,8 @@ fn is_self_report_body(inner: &str) -> bool {
 
 /// Remove `<sup>…</sup>` tokens that look like a self-report (see
 /// [`is_self_report_body`]), leaving legitimate superscript markup untouched.
+/// Only clean pairs — inner text free of another `<sup>` — are candidates,
+/// so a prose mention of the tag never swallows a later real report.
 pub fn strip_self_report(text: &str) -> String {
 	let mut out = String::with_capacity(text.len());
 	let mut rest = text;
@@ -236,15 +238,21 @@ pub fn strip_self_report(text: &str) -> String {
 		match rest[start..].find("</sup>") {
 			Some(rel_end) => {
 				let inner = &rest[start + "<sup>".len()..start + rel_end];
-				if is_self_report_body(inner) {
+				// A self-report pair is clean: no other opening tag inside. When
+				// the inner text contains a `<sup>`, this opening tag is a prose
+				// mention and the found `</sup>` closes a later report — pairing
+				// them judges the merged span, leaking the real report when the
+				// shape check fails or eating the prose between when it passes.
+				// Resume right after this opening tag instead.
+				if !inner.contains("<sup>") && is_self_report_body(inner) {
 					// Drop this token; keep text before it.
 					out.push_str(&rest[..start]);
 					rest = &rest[start + rel_end + "</sup>".len()..];
 				} else {
-					// Not ours — keep `<sup>…</sup>` verbatim and continue past it.
-					let keep_to = start + rel_end + "</sup>".len();
-					out.push_str(&rest[..keep_to]);
-					rest = &rest[keep_to..];
+					// Not ours — keep the opening tag; the remainder is re-scanned
+					// as plain text, so legitimate superscript survives intact.
+					out.push_str(&rest[..start + "<sup>".len()]);
+					rest = &rest[start + "<sup>".len()..];
 				}
 			}
 			None => break,

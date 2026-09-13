@@ -191,6 +191,34 @@ fn strips_report_with_unknown_lead_but_separator() {
 }
 
 #[test]
+fn prose_sup_mention_before_report_still_strips_report() {
+	// The reported leak: prose mentioning `<sup>` paired forward with the
+	// real report's `</sup>`, the merged span failed the shape check, and
+	// the whole thing — report included — was kept verbatim.
+	let text = r#"The `<sup>` token is hidden from the user.
+
+<sup>{"state":"done","focus":"f","next":null,"carry":[]}</sup>"#;
+	assert_eq!(
+		strip_self_report(text),
+		"The `<sup>` token is hidden from the user."
+	);
+}
+
+#[test]
+fn prose_sup_mention_with_separator_keeps_prose_and_strips_report() {
+	// The merged span contained `·`, so the shape check passed and the
+	// prose between the mention and the report was eaten with the report.
+	let text = r#"see <sup> · docs <sup>{"state":"done","focus":"f","next":null,"carry":[]}</sup>"#;
+	assert_eq!(strip_self_report(text), "see <sup> · docs");
+}
+
+#[test]
+fn legitimate_superscript_before_report_keeps_markup() {
+	let text = r#"x<sup>2</sup> <sup>{"state":"done","focus":"f","next":null,"carry":[]}</sup>"#;
+	assert_eq!(strip_self_report(text), "x<sup>2</sup>");
+}
+
+#[test]
 fn loop_fires_on_repeated_result() {
 	let mut d = Detectors::default();
 	assert_eq!(

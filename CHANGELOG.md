@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.53.0] - 2026-09-14
+
+### 📋 Release Summary
+
+This release adds support for fastembed ONNX models and sharing embedding models across processes (382dd326, c973bbab). Reliability and performance improvements enhance delegated-work tracking, report retention, MCP authentication error handling, WebSocket monitoring and error reporting, and resource reuse (3345c903, 75632a00, f9a645b6, 101dafbd, f79f7878, cdd987f1).
+
+
+### ✨ New Features & Enhancements
+
+- **embeddings**: support fastembed ONNX models `382dd326`
+- **embeddings**: share model across processes `c973bbab`
+
+### 🔧 Improvements & Optimizations
+
+- **websocket**: format server and role tests `a79c1759`
+- **cache**: reduce copies and reuse resources `cdd987f1`
+- **mcp**: drain health stub requests before responding `bc8e36e4`
+- **release**: 0.52.1 `df9c777a`
+- **websocket**: refine handback response matching `c9866792`
+- **websocket**: cover handback across connections `a6d76623`
+- **supervisor**: soften detector steering `b56484d7`
+- **supervisor**: route checks to verifier `56eca091`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: track delegated work state `3345c903`
+- **detect**: preserve reports after sup mentions `75632a00`
+- **mcp**: classify HTTP auth failures by transport status `f9a645b6`
+- **websocket**: reap duplicate inbox monitors `101dafbd`
+- **websocket**: report inbox processing errors `f79f7878`
+
+### 🔄 Other Changes
+
+2 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.52.1] - 2026-09-12
 
 ### 📋 Release Summary

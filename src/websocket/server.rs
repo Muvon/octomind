@@ -879,7 +879,10 @@ async fn session_config(
 /// machine wakes — often a connector or routine that sends no `/role` — as
 /// another agent with another agent's tools. The restored role's servers and
 /// tool map are built in the session's scope before the session loads.
-async fn resume_role_config(session_id: &str, server: &ServerState) -> Result<(Arc<Config>, String)> {
+async fn resume_role_config(
+	session_id: &str,
+	server: &ServerState,
+) -> Result<(Arc<Config>, String)> {
 	let Some(role) = crate::session::resume_role(session_id).filter(|role| *role != server.role)
 	else {
 		return Ok((Arc::clone(&server.config), server.role.clone()));

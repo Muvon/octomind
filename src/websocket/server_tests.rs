@@ -1051,17 +1051,27 @@ async fn role_switch_keeps_the_servers_other_sessions_use_running() {
 	// Only the server role references the stdio server, so the switch away from
 	// that role must leave it to the session still on it.
 	let mut config = two_role_config();
-	config.mcp.servers.push(crate::config::McpServerConfig::Stdin {
-		name: STUB.to_string(),
-		command: "python3".to_string(),
-		args: vec![concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_stub_server.py").to_string()],
-		timeout_seconds: 10,
-		tools: vec![],
-		env: HashMap::new(),
-		cwd: None,
-		auto_bind: None,
-	});
-	let assistant = config.role_map.get_mut("assistant").expect("assistant role");
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::Stdin {
+			name: STUB.to_string(),
+			command: "python3".to_string(),
+			args: vec![concat!(
+				env!("CARGO_MANIFEST_DIR"),
+				"/tests/fixtures/mcp_stub_server.py"
+			)
+			.to_string()],
+			timeout_seconds: 10,
+			tools: vec![],
+			env: HashMap::new(),
+			cwd: None,
+			auto_bind: None,
+		});
+	let assistant = config
+		.role_map
+		.get_mut("assistant")
+		.expect("assistant role");
 	assistant.mcp.server_refs.push(STUB.to_string());
 	assistant.mcp.allowed_tools.push(format!("{STUB}:*"));
 	crate::mcp::initialize_mcp_for_role("assistant", &config)

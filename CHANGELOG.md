@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.53.1] - 2026-09-14
+
+### 📋 Release Summary
+
+Improved session reliability by keeping session state and cost tracking properly isolated, preventing cross-session interference (4beb9b09).
+
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: isolate state and cost frames `4beb9b09`
+
 ## [0.53.0] - 2026-09-14
 
 ### 📋 Release Summary

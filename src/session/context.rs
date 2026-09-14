@@ -1092,6 +1092,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_hints_for_session(session_id);
 	clear_dynamic_agents_for_session(session_id);
 	clear_dynamic_servers_for_session(session_id);
+	crate::mcp::runtime::capability::clear_session_capabilities(session_id);
 	clear_job_manager_for_session(session_id);
 	clear_active_skills(session_id);
 	crate::mcp::runtime::skill_auto::clear_pool_for_session(session_id);

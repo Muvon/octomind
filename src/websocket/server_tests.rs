@@ -1230,6 +1230,44 @@ async fn user_message_resumes_a_disk_session_without_a_session_handshake() {
 	crate::session::context::cleanup_session(&"disk-lookup-1".to_string());
 }
 
+/// The sink emits a finished turn's cost frame. The server used to send its own
+/// copy right behind it, and clients read that as a second finished turn
+/// (octomind-api stored every `pending_work` cost twice).
+#[tokio::test]
+#[serial_test::serial]
+async fn a_finished_turn_sends_exactly_one_cost_frame() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("ONE-COST-OK")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session = create_session(&mut ws, Some("one-cost-1")).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "message", "session_id": session, "content": "hello", "request_id": "m1"
+		}),
+	)
+	.await;
+	read_until(&mut ws, |v| v["type"] == "cost").await;
+
+	// Whatever the turn still sends arrives right behind its cost.
+	while let Ok(Some(Ok(frame))) =
+		tokio::time::timeout(Duration::from_millis(1500), ws.next()).await
+	{
+		if let Message::Text(text) = frame {
+			let value: serde_json::Value =
+				serde_json::from_str(&text).expect("server frames are JSON");
+			assert_ne!(
+				value["type"], "cost",
+				"a second cost frame for one turn: {value}"
+			);
+		}
+	}
+
+	crate::session::context::cleanup_session(&session);
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn session_initialization_failure_is_reported_to_the_client() {

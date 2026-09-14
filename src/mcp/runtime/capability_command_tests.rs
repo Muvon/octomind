@@ -327,7 +327,8 @@ fn seed_cap(name: &str, server: &str, tools: &[&str], age_secs: u64) {
 }
 
 fn clear_seeded_caps(names: &[&str]) {
-	let mut reg = registry().write().unwrap();
+	let caps = registry();
+	let mut reg = caps.write().unwrap();
 	for n in names {
 		reg.remove(*n);
 	}
@@ -1118,6 +1119,46 @@ async fn test_load_env_capabilities_success_and_idempotent() {
 		.all(|(name, ok)| name == "captest-deps-ok" && *ok));
 
 	reset_registry();
+	crate::mcp::runtime::dynamic::clear_all();
+}
+
+/// One `octomind server` process hosts every session on a machine. A capability
+/// one session activated must not read as active in the next, or that session's
+/// env load skips it and it never gets the capability's tools.
+#[tokio::test]
+#[serial]
+async fn test_env_capabilities_load_for_every_session_on_the_process() {
+	let sb = CapSandbox::new("envsess");
+	install_fixture_caps(&sb);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let config = test_config();
+	let _env = EnvGuard::new(&["OCTOMIND_CAPABILITIES"]);
+	std::env::set_var("OCTOMIND_CAPABILITIES", "captest-deps-ok");
+
+	let sessions = ["captest-session-a", "captest-session-b"];
+	for sid in sessions {
+		crate::session::context::with_session_id(sid.to_string(), async {
+			assert!(
+				!is_active("captest-deps-ok"),
+				"{sid} inherited another session's activation"
+			);
+			load_env_capabilities(&config, None).await;
+			assert!(
+				is_active("captest-deps-ok"),
+				"{sid} did not get the env capability"
+			);
+		})
+		.await;
+	}
+	assert!(
+		!is_active("captest-deps-ok"),
+		"a session's activation leaked into the process scope"
+	);
+
+	for sid in sessions {
+		clear_session_capabilities(sid);
+	}
 	crate::mcp::runtime::dynamic::clear_all();
 }
 

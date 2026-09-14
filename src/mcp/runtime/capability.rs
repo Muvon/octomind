@@ -87,13 +87,33 @@ struct CapState {
 /// a new activation hits the cap. No background timers or idle cleanup.
 const MAX_ACTIVE_CAPS: usize = 4;
 
-/// Capabilities activated at runtime by this tool. Capabilities pre-loaded from
-/// the tap manifest at boot are NOT tracked here — they are already merged into
-/// the agent's effective config and represented as regular MCP servers.
-static ACTIVE_CAPABILITIES: OnceLock<Arc<RwLock<HashMap<String, CapState>>>> = OnceLock::new();
+/// Capabilities activated at runtime by this tool, per session (`""` outside
+/// one). Capabilities pre-loaded from the tap manifest at boot are NOT tracked
+/// here — they are already merged into the agent's effective config and
+/// represented as regular MCP servers.
+///
+/// Per session because what an activation registers is: dynamic servers live in
+/// the session's own registry. One `octomind server` process hosts every session
+/// on a machine, and a process-wide set answered the second session's
+/// `OCTOMIND_CAPABILITIES` load with "already active", so only the first session
+/// to bind ever got those tools.
+type CapRegistry = Arc<RwLock<HashMap<String, CapState>>>;
+static ACTIVE_CAPABILITIES: OnceLock<RwLock<HashMap<String, CapRegistry>>> = OnceLock::new();
 
-fn registry() -> &'static Arc<RwLock<HashMap<String, CapState>>> {
-	ACTIVE_CAPABILITIES.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+fn registry() -> CapRegistry {
+	let session = crate::session::context::current_session_id().unwrap_or_default();
+	let all = ACTIVE_CAPABILITIES.get_or_init(Default::default);
+	if let Some(caps) = all.read().unwrap().get(&session) {
+		return Arc::clone(caps);
+	}
+	Arc::clone(all.write().unwrap().entry(session).or_default())
+}
+
+/// Forget a session's active capabilities when the session ends.
+pub(crate) fn clear_session_capabilities(session_id: &str) {
+	if let Some(all) = ACTIVE_CAPABILITIES.get() {
+		all.write().unwrap().remove(session_id);
+	}
 }
 
 fn is_active(name: &str) -> bool {
@@ -122,7 +142,8 @@ fn mark_active(name: &str, server_tools: Vec<(String, Vec<String>)>) {
 /// its `last_used` to now. Called from the tool-call dispatch path so
 /// LRU eviction tracks real usage, not just activation order.
 pub(crate) fn touch_capability_for_server(server_name: &str) {
-	let mut reg = registry().write().unwrap();
+	let caps = registry();
+	let mut reg = caps.write().unwrap();
 	for state in reg.values_mut() {
 		if state.server_tools.iter().any(|(s, _)| s == server_name) {
 			state.last_used = Instant::now();
@@ -195,7 +216,8 @@ fn evict_lru_if_full(config: &Config) {
 	//   2. The role's static config declares it — the role still owns it
 	//      regardless of dynamic-cap activity.
 	let plan: Option<(String, Vec<DisablePlanEntry>)> = {
-		let mut reg = registry().write().unwrap();
+		let caps = registry();
+		let mut reg = caps.write().unwrap();
 		select_lru_in(&mut reg).map(|(lru_name, server_tools)| {
 			let entries = server_tools
 				.into_iter()
@@ -696,7 +718,8 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 	// static-config check stops `disable` from tearing down servers the
 	// role still relies on (the LRU eviction path uses the same rule).
 	let plan: Option<(CapState, Vec<DisablePlanEntry>)> = {
-		let mut reg = registry().write().unwrap();
+		let caps = registry();
+		let mut reg = caps.write().unwrap();
 		reg.remove(&name).map(|state| {
 			// Build the plan from a clone so the original state can be
 			// re-inserted verbatim if any disable step fails mid-loop.

@@ -136,14 +136,18 @@ fn template_config() -> Config {
 
 #[tokio::test]
 async fn lookup_session_returns_the_memory_copy_and_removes_it() {
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	sessions
+	let state = ServerState::new(
+		Arc::new(template_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
+	state
+		.sessions
 		.lock()
 		.await
 		.insert("in-mem".to_string(), ChatSession::for_tests(Vec::new()));
 
-	let config = template_config();
-	let session = lookup_session("in-mem", &sessions, &config, "assistant")
+	let session = lookup_session("in-mem", &state)
 		.await
 		.expect("memory hit resolves without touching disk");
 	assert_eq!(
@@ -151,16 +155,19 @@ async fn lookup_session_returns_the_memory_copy_and_removes_it() {
 		"the exact in-memory instance is returned"
 	);
 	assert!(
-		sessions.lock().await.is_empty(),
+		state.sessions.lock().await.is_empty(),
 		"lookup takes the session out for exclusive processing"
 	);
 }
 
 #[tokio::test]
 async fn lookup_session_never_auto_creates_a_missing_session() {
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	let config = template_config();
-	let error = lookup_session("no-such-session-zzz", &sessions, &config, "assistant")
+	let state = ServerState::new(
+		Arc::new(template_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
+	let error = lookup_session("no-such-session-zzz", &state)
 		.await
 		.err()
 		.expect("a session that exists nowhere must be an error");
@@ -169,7 +176,7 @@ async fn lookup_session_never_auto_creates_a_missing_session() {
 		"{error}"
 	);
 	assert!(
-		sessions.lock().await.is_empty(),
+		state.sessions.lock().await.is_empty(),
 		"nothing may be auto-created"
 	);
 }
@@ -336,24 +343,15 @@ async fn connection_lifecycle_over_loopback() {
 		.expect("bind loopback listener");
 	let addr = listener.local_addr().expect("local addr");
 
-	let config = Arc::new(template_config());
-	let role = "assistant".to_string();
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
-	let allow_origins: Arc<Vec<String>> = Arc::new(Vec::new());
+	let state = ServerState::new(
+		Arc::new(template_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
 
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
-			let _ = handle_connection(
-				stream,
-				peer,
-				config,
-				role,
-				sessions,
-				session_locks,
-				allow_origins,
-			)
-			.await;
+			let _ = handle_connection(stream, peer, state).await;
 		}
 	});
 
@@ -587,31 +585,14 @@ impl LoopbackServer {
 			.await
 			.expect("bind loopback listener");
 		let addr = listener.local_addr().expect("local addr");
-		let sessions: Arc<Mutex<HashMap<String, ChatSession>>> =
-			Arc::new(Mutex::new(HashMap::new()));
-		let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
-		let allow_origins: Arc<Vec<String>> = Arc::new(Vec::new());
-		let role = "assistant".to_string();
-		let sessions_handle = sessions.clone();
-		let locks_handle = session_locks.clone();
+		let state = ServerState::new(config, "assistant".to_string(), Vec::new());
+		let sessions = state.sessions.clone();
+		let session_locks = state.session_locks.clone();
 		tokio::spawn(async move {
 			while let Ok((stream, peer)) = listener.accept().await {
-				let config = config.clone();
-				let sessions = sessions_handle.clone();
-				let session_locks = locks_handle.clone();
-				let allow_origins = allow_origins.clone();
-				let role = role.clone();
+				let state = state.clone();
 				tokio::spawn(async move {
-					let _ = handle_connection(
-						stream,
-						peer,
-						config,
-						role,
-						sessions,
-						session_locks,
-						allow_origins,
-					)
-					.await;
+					let _ = handle_connection(stream, peer, state).await;
 				});
 			}
 		});
@@ -782,24 +763,16 @@ async fn abrupt_disconnect_without_close_ends_the_handler_cleanly() {
 		.await
 		.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let config = Arc::new(template_config());
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
-	let allow_origins: Arc<Vec<String>> = Arc::new(Vec::new());
+	let state = ServerState::new(
+		Arc::new(template_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
 	let handle = tokio::spawn(async move {
 		// Accept inside the task: the client only connects after this spawn,
 		// so awaiting accept on the main task would deadlock.
 		let (stream, peer) = listener.accept().await.expect("accept");
-		handle_connection(
-			stream,
-			peer,
-			config,
-			"assistant".to_string(),
-			sessions,
-			session_locks,
-			allow_origins,
-		)
-		.await
+		handle_connection(stream, peer, state).await
 	});
 
 	let mut ws = connect_ws(addr).await;
@@ -888,22 +861,14 @@ async fn named_session_resumes_from_disk_on_a_fresh_connection() {
 		.await
 		.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let config = Arc::new(ws_fake_config());
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
-	let sessions_for_task = sessions.clone();
+	let state = ServerState::new(
+		Arc::new(ws_fake_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
-			let _ = handle_connection(
-				stream,
-				peer,
-				config,
-				"assistant".to_string(),
-				sessions_for_task,
-				session_locks,
-				Arc::new(Vec::new()),
-			)
-			.await;
+			let _ = handle_connection(stream, peer, state).await;
 		}
 	});
 	let mut ws = connect_ws(addr).await;
@@ -926,6 +891,280 @@ async fn named_session_resumes_from_disk_on_a_fresh_connection() {
 	crate::session::context::cleanup_session(&"disk-resume-1".to_string());
 }
 
+// ---- per-session role tool binding ----
+
+/// Server role `assistant` owns core+orchestration; `outbound` swaps
+/// orchestration for runtime, so each role has a builtin server the other lacks.
+fn two_role_config() -> Config {
+	let mut config = ws_fake_config();
+	let mut assistant = config.role_map["assistant"].clone();
+	assistant.mcp.server_refs = vec!["core".to_string(), "orchestration".to_string()];
+	assistant.mcp.allowed_tools = vec!["core:*".to_string(), "orchestration:*".to_string()];
+	let mut outbound = assistant.clone();
+	outbound.name = "outbound".to_string();
+	outbound.mcp.server_refs = vec!["core".to_string(), "runtime".to_string()];
+	outbound.mcp.allowed_tools = vec!["core:*".to_string(), "runtime:*".to_string()];
+	config.role_map.insert("assistant".to_string(), assistant);
+	config.roles.push(outbound.clone());
+	config.role_map.insert("outbound".to_string(), outbound);
+	config
+}
+
+/// Registers and enables an in-memory agent owned by `session_id` alone.
+async fn register_session_agent(session_id: &str, name: &str) {
+	crate::session::context::with_session_id(session_id.to_string(), async {
+		crate::mcp::runtime::dynamic_agents::register_agent(
+			crate::mcp::runtime::dynamic_agents::DynamicAgentConfig {
+				name: name.to_string(),
+				description: "session-owned probe".to_string(),
+				system: "probe".to_string(),
+				welcome: String::new(),
+				model: None,
+				temperature: None,
+				top_p: None,
+				top_k: None,
+				server_refs: Vec::new(),
+				allowed_tools: Vec::new(),
+				workdir: ".".to_string(),
+			},
+		)
+		.expect("register agent");
+		crate::mcp::runtime::dynamic_agents::enable_agent(name).expect("enable agent");
+	})
+	.await;
+}
+
+/// Runs one turn whose scripted model reply calls `tool`, returning that call's
+/// `tool_result` frame once the turn has closed.
+async fn tool_turn(ws: &mut ClientWs, session_id: &str, tool: &str) -> serde_json::Value {
+	send_json(
+		ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": tool}),
+	)
+	.await;
+	let result = read_until(ws, |v| v["type"] == "tool_result").await;
+	read_until(ws, |v| v["type"] == "cost").await;
+	result
+}
+
+fn assert_refused(frame: &serde_json::Value) {
+	assert_eq!(frame["success"], false, "got: {frame}");
+	assert!(
+		frame["content"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("not found"),
+		"got: {frame}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn role_switch_binds_each_session_to_its_own_tools() {
+	let _data = TestDataDirGuard::new();
+	let calls = [
+		("mcp", serde_json::json!({"action": "list"})),
+		("schedule", serde_json::json!({"command": "list"})),
+		("mcp", serde_json::json!({"action": "list"})),
+		("schedule", serde_json::json!({"command": "list"})),
+		("agent_outbound_probe", serde_json::json!({"task": "x"})),
+		("agent_default_probe", serde_json::json!({"task": "x"})),
+	];
+	let script = calls
+		.into_iter()
+		.flat_map(|(tool, args)| {
+			[
+				crate::session::chat::test_support::tool_call_response(tool, args),
+				final_response("done"),
+			]
+		})
+		.collect();
+	let _env = StubEnv::new(script).await;
+	let config = two_role_config();
+	// `octomind server` builds the process-wide tool map for its role at startup.
+	crate::mcp::initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("server MCP init");
+	let server = LoopbackServer::start(Arc::new(config)).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	let switched = create_session(&mut ws, Some("role-bind-switched")).await;
+	let default = create_session(&mut ws, Some("role-bind-default")).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "command", "session_id": switched, "command": "role", "args": ["outbound"]
+		}),
+	)
+	.await;
+	let status = read_until(&mut ws, |v| v["type"] == "status").await;
+	assert!(
+		status["data"].to_string().contains("outbound"),
+		"got: {status}"
+	);
+
+	// Each session dispatches the tools of its own role...
+	let own = tool_turn(&mut ws, &switched, "mcp").await;
+	assert_eq!(
+		own["success"], true,
+		"switched session lost its role tool: {own}"
+	);
+	let own = tool_turn(&mut ws, &default, "schedule").await;
+	assert_eq!(
+		own["success"], true,
+		"default session lost its role tool: {own}"
+	);
+
+	// ...and never the other role's.
+	assert_refused(&tool_turn(&mut ws, &default, "mcp").await);
+	assert_refused(&tool_turn(&mut ws, &switched, "schedule").await);
+
+	// Tools one session registered at runtime stay invisible to the other.
+	register_session_agent(&switched, "outbound_probe").await;
+	register_session_agent(&default, "default_probe").await;
+	assert_refused(&tool_turn(&mut ws, &default, "agent_outbound_probe").await);
+	assert_refused(&tool_turn(&mut ws, &switched, "agent_default_probe").await);
+
+	crate::session::context::cleanup_session(&switched);
+	crate::session::context::cleanup_session(&default);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn role_switch_keeps_the_servers_other_sessions_use_running() {
+	const STUB: &str = "ws-role-shared-stub";
+	let _data = TestDataDirGuard::new();
+	let echo = || {
+		crate::session::chat::test_support::tool_call_response(
+			"echo",
+			serde_json::json!({"msg": "hi"}),
+		)
+	};
+	let _env = StubEnv::new(vec![
+		echo(),
+		final_response("done"),
+		echo(),
+		final_response("done"),
+	])
+	.await;
+	// Only the server role references the stdio server, so the switch away from
+	// that role must leave it to the session still on it.
+	let mut config = two_role_config();
+	config.mcp.servers.push(crate::config::McpServerConfig::Stdin {
+		name: STUB.to_string(),
+		command: "python3".to_string(),
+		args: vec![concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_stub_server.py").to_string()],
+		timeout_seconds: 10,
+		tools: vec![],
+		env: HashMap::new(),
+		cwd: None,
+		auto_bind: None,
+	});
+	let assistant = config.role_map.get_mut("assistant").expect("assistant role");
+	assistant.mcp.server_refs.push(STUB.to_string());
+	assistant.mcp.allowed_tools.push(format!("{STUB}:*"));
+	crate::mcp::initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("server MCP init");
+	let server = LoopbackServer::start(Arc::new(config)).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	let user = create_session(&mut ws, Some("shared-stub-user")).await;
+	let switcher = create_session(&mut ws, Some("shared-stub-switcher")).await;
+	let used = tool_turn(&mut ws, &user, "echo").await;
+	assert_eq!(used["success"], true, "got: {used}");
+	let live = crate::mcp::client::get(STUB).expect("stub server connected");
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "command", "session_id": switcher, "command": "role", "args": ["outbound"]
+		}),
+	)
+	.await;
+	let status = read_until(&mut ws, |v| v["type"] == "status").await;
+	assert!(
+		status["data"].to_string().contains("outbound"),
+		"got: {status}"
+	);
+
+	// The very connection the user session's calls ride on — a restarted server
+	// would be a new one, and every call in flight at the switch would be lost.
+	let after = crate::mcp::client::get(STUB).expect("stub server must survive the switch");
+	assert!(Arc::ptr_eq(&live, &after), "stub server was restarted");
+	assert!(!after.is_closed(), "stub server connection was closed");
+	let used = tool_turn(&mut ws, &user, "echo").await;
+	assert_eq!(used["success"], true, "got: {used}");
+
+	let _ = crate::mcp::process::cleanup_server_process(STUB);
+	crate::session::context::cleanup_session(&user);
+	crate::session::context::cleanup_session(&switcher);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn restarted_server_resumes_a_switched_session_under_its_own_role() {
+	let _data = TestDataDirGuard::new();
+	let script = (0..2)
+		.flat_map(|_| {
+			[
+				crate::session::chat::test_support::tool_call_response(
+					"mcp",
+					serde_json::json!({"action": "list"}),
+				),
+				final_response("done"),
+			]
+		})
+		.collect();
+	let _env = StubEnv::new(script).await;
+	let config = Arc::new(two_role_config());
+	crate::mcp::initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("server MCP init");
+
+	let session = {
+		let server = LoopbackServer::start(Arc::clone(&config)).await;
+		let mut ws = connect_ws(server.addr).await;
+		let _welcome = read_json(&mut ws).await;
+		let session = create_session(&mut ws, Some("role-restore")).await;
+		send_json(
+			&mut ws,
+			serde_json::json!({
+				"type": "command", "session_id": session, "command": "role", "args": ["outbound"]
+			}),
+		)
+		.await;
+		let status = read_until(&mut ws, |v| v["type"] == "status").await;
+		assert!(
+			status["data"].to_string().contains("outbound"),
+			"got: {status}"
+		);
+		session
+	};
+
+	// Each pass is a process restart: a fresh server and no session-scoped state,
+	// only the session file. The first turn comes from a client that never sends
+	// `/role` — once after a `session` rebind, once as a bare message.
+	for rebind in [true, false] {
+		crate::session::context::cleanup_session(&session);
+		let server = LoopbackServer::start(Arc::clone(&config)).await;
+		let mut ws = connect_ws(server.addr).await;
+		let _welcome = read_json(&mut ws).await;
+		if rebind {
+			create_session(&mut ws, Some(&session)).await;
+		}
+		let own = tool_turn(&mut ws, &session, "mcp").await;
+		assert_eq!(
+			own["success"], true,
+			"rebind={rebind}: resumed session lost its role tool: {own}"
+		);
+	}
+
+	crate::session::context::cleanup_session(&session);
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn user_message_resumes_a_disk_session_without_a_session_handshake() {
@@ -946,22 +1185,14 @@ async fn user_message_resumes_a_disk_session_without_a_session_handshake() {
 		.await
 		.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let config = Arc::new(ws_fake_config());
-	let sessions: Arc<Mutex<HashMap<String, ChatSession>>> = Arc::new(Mutex::new(HashMap::new()));
-	let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
-	let sessions_for_task = sessions.clone();
+	let state = ServerState::new(
+		Arc::new(ws_fake_config()),
+		"assistant".to_string(),
+		Vec::new(),
+	);
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
-			let _ = handle_connection(
-				stream,
-				peer,
-				config,
-				"assistant".to_string(),
-				sessions_for_task,
-				session_locks,
-				Arc::new(Vec::new()),
-			)
-			.await;
+			let _ = handle_connection(stream, peer, state).await;
 		}
 	});
 	let mut ws = connect_ws(addr).await;
@@ -1988,6 +2219,179 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 	}
 	assert!(injected, "the handback must reach the new connection");
 	assert!(answered, "and drive a turn on it");
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+// ---- pending work: the cost frame tells a driver more is coming ----
+
+/// A turn that delegates ends on its promise — "the researcher is on it" — while
+/// the run works for minutes. Its result streams back as a follow-up turn, and
+/// only to a connection that is still open; octomind-api hung up on the first
+/// cost frame, so routines settled on the promise and chats replied with it
+/// (dev, 2026-09-14). The cost frame has to say that more is coming.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		final_response("ON-IT"),
+		final_response("NOTHING-LEFT"),
+	])
+	.await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	let status = Arc::new(std::sync::RwLock::new(
+		crate::session::tap_runs::TapJobStatus::Running,
+	));
+	let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
+	let job = crate::session::tap_runs::TapJob {
+		id: "tap-researcher-000001".to_string(),
+		role: "assistant:researcher".to_string(),
+		workdir: String::new(),
+		started_at: std::time::SystemTime::now(),
+		status: Arc::clone(&status),
+		cancel_tx,
+		live: Arc::new(std::sync::RwLock::new(
+			crate::session::tap_runs::TapLiveState::default(),
+		)),
+	};
+	crate::session::context::with_session_id(session_id.clone(), async move {
+		crate::session::tap_runs::register_job(job);
+	})
+	.await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "research this"}),
+	)
+	.await;
+	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert_eq!(cost["pending_work"], true, "the run is still going: {cost}");
+
+	*status.write().expect("status lock") = crate::session::tap_runs::TapJobStatus::Done;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "anything else?"}),
+	)
+	.await;
+	read_until(&mut ws, |v| {
+		v["type"] == "assistant"
+			&& v["content"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("NOTHING-LEFT")
+	})
+	.await;
+	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert!(
+		cost.get("pending_work").is_none(),
+		"nothing is left to hand back, so the frame reads as it always did: {cost}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// Parks the session's live monitor with a handback still queued: the push wakes
+/// it while the session lock is held (as a client frame would hold it), so it
+/// gives up its pass and parks, and releasing the lock does not wake it again.
+async fn park_a_handback_behind_the_session_lock(server: &LoopbackServer, session_id: &str) {
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	let lock = get_or_create_session_lock(session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		session_id,
+		InboxMessage {
+			source: InboxSource::TapRun {
+				id: "tap-1".to_string(),
+				role: "assistant:researcher".to_string(),
+			},
+			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	drop(guard);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	assert!(
+		inbox_has_messages(session_id).await,
+		"precondition: the parked monitor left the handback queued"
+	);
+}
+
+/// A handback that lands while a client frame holds the session lock wakes the
+/// monitor, which fails `try_lock` and parks again — and a turn's own wake-up
+/// fires BEFORE that lock is released. Nothing woke the monitor afterwards, so a
+/// driver told `pending_work` would wait out its cap for a turn that never ran.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_handback_parked_behind_a_client_frame_runs_once_that_frame_lets_go() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![final_response("HANDBACK-AFTER-LOCK")]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	park_a_handback_behind_the_session_lock(&server, &session_id).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": session_id, "command": "info"}),
+	)
+	.await;
+	read_until(&mut ws, |v| {
+		v["type"] == "assistant"
+			&& v["content"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("HANDBACK-AFTER-LOCK")
+	})
+	.await;
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// A handback still queued when the client's next message arrives is answered
+/// first, inside that message's frame, and closes with a cost frame of its own.
+/// octomind-api reads a cost frame as the end of the turn it sent, so it hung up
+/// on the handback and the reply to its own message was never recorded.
+#[tokio::test]
+#[serial_test::serial]
+async fn a_handback_answered_ahead_of_a_message_does_not_end_that_message_turn() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		final_response("HANDBACK-FIRST"),
+		final_response("REPLY-SECOND"),
+	])
+	.await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	park_a_handback_behind_the_session_lock(&server, &session_id).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "any update?"}),
+	)
+	.await;
+	let handback = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert_eq!(
+		handback["pending_work"], true,
+		"the message's own turn is still to come: {handback}"
+	);
+	read_until(&mut ws, |v| {
+		v["type"] == "assistant"
+			&& v["content"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("REPLY-SECOND")
+	})
+	.await;
+	let reply = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert!(reply.get("pending_work").is_none(), "got: {reply}");
 
 	crate::session::context::cleanup_session(&session_id);
 }

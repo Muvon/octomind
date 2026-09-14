@@ -378,10 +378,40 @@ fn test_server_message_cost_serialization() {
 		cache_write_tokens: 4,
 		reasoning_tokens: 0,
 		session_id: "sess_123".to_string(),
+		pending_work: false,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"cost\""));
 	assert!(json.contains("\"session_tokens\":1234"));
+	assert!(
+		!json.contains("pending_work"),
+		"an idle turn's frame reads exactly as it always did"
+	);
+}
+
+#[test]
+fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
+	let frame = ServerMessage::Cost(CostPayload {
+		session_tokens: 10,
+		session_cost: 0.08,
+		input_tokens: 8,
+		output_tokens: 2,
+		cache_read_tokens: 0,
+		cache_write_tokens: 0,
+		reasoning_tokens: 0,
+		session_id: "sess_123".to_string(),
+		pending_work: true,
+	});
+	let json = serde_json::to_value(&frame).unwrap();
+	assert_eq!(json["pending_work"], true);
+
+	// A frame from an agent that predates the flag reads as nothing pending, so a
+	// driver keeps its one-turn behaviour against older machines.
+	let old = r#"{"type":"cost","session_tokens":10,"session_cost":0.08,"input_tokens":8,"output_tokens":2,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"sess_123"}"#;
+	match serde_json::from_str::<ServerMessage>(old).unwrap() {
+		ServerMessage::Cost(cost) => assert!(!cost.pending_work),
+		other => panic!("expected a cost frame, got {other:?}"),
+	}
 }
 
 #[test]

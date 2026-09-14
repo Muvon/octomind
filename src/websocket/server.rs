@@ -44,14 +44,45 @@ use tokio_tungstenite::WebSocketStream;
 /// Per-session processing locks to prevent concurrent access to the same session.
 type SessionLocks = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 
-/// Per-connection shared state, built once per WebSocket connection and passed to
-/// the message handlers as one value instead of a parameter per field.
+/// Configs committed by a `/role` switch or restored from the session log on
+/// load, keyed by session id. A tap role's servers exist only in the config its
+/// switch resolved.
+type RoleConfigs = Arc<Mutex<HashMap<String, Arc<Config>>>>;
+
+/// Server-wide state every connection shares, cloned into each connection as one
+/// value instead of a parameter per field.
 #[derive(Clone)]
-struct ConnCtx {
+struct ServerState {
 	config: Arc<Config>,
 	role: String,
+	/// Active sessions (session_id -> ChatSession).
 	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
+	/// Held for a message's entire processing, so different connections never
+	/// drive the same session concurrently.
 	session_locks: SessionLocks,
+	role_configs: RoleConfigs,
+	/// Browser origins permitted to open a connection. Empty = refuse every
+	/// handshake that carries an `Origin` header.
+	allow_origins: Arc<Vec<String>>,
+}
+
+impl ServerState {
+	fn new(config: Arc<Config>, role: String, allow_origins: Vec<String>) -> Self {
+		Self {
+			config,
+			role,
+			sessions: Arc::default(),
+			session_locks: Arc::default(),
+			role_configs: Arc::default(),
+			allow_origins: Arc::new(allow_origins),
+		}
+	}
+}
+
+/// Per-connection context passed to the message handlers.
+#[derive(Clone)]
+struct ConnCtx {
+	server: ServerState,
 	/// Background tasks (schedule/inbox monitors) push client-bound messages here;
 	/// the connection loop forwards them to the WebSocket.
 	bg_tx: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
@@ -60,11 +91,7 @@ struct ConnCtx {
 /// WebSocket server for handling AI sessions
 pub struct WebSocketServer {
 	addr: SocketAddr,
-	config: Arc<Config>,
-	role: String,
-	/// Browser origins permitted to open a connection. Empty = refuse every
-	/// handshake that carries an `Origin` header.
-	allow_origins: Arc<Vec<String>>,
+	state: ServerState,
 }
 
 impl WebSocketServer {
@@ -79,9 +106,7 @@ impl WebSocketServer {
 		let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 		Ok(Self {
 			addr,
-			config: Arc::new(config),
-			role,
-			allow_origins: Arc::new(allow_origins),
+			state: ServerState::new(Arc::new(config), role, allow_origins),
 		})
 	}
 
@@ -90,44 +115,24 @@ impl WebSocketServer {
 		let listener = TcpListener::bind(&self.addr).await?;
 		log_info!("WebSocket server listening on ws://{}", self.addr);
 		println!("🚀 WebSocket server started on ws://{}", self.addr);
-		if self.allow_origins.is_empty() {
+		if self.state.allow_origins.is_empty() {
 			println!("Browser connections refused (no --allow-origin configured)");
 		} else {
-			println!("Allowed browser origins: {}", self.allow_origins.join(", "));
+			println!(
+				"Allowed browser origins: {}",
+				self.state.allow_origins.join(", ")
+			);
 		}
 		println!("Press Ctrl+C to stop the server");
-
-		// Active sessions map (session_id -> ChatSession)
-		let sessions: Arc<Mutex<HashMap<String, ChatSession>>> =
-			Arc::new(Mutex::new(HashMap::new()));
-
-		// Per-session processing locks — prevents concurrent access to the same session
-		// from different connections. The lock is held during the entire message processing.
-		let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
 
 		loop {
 			match listener.accept().await {
 				Ok((stream, peer_addr)) => {
 					log_info!("Connection accepted from {}", peer_addr);
 
-					let config = Arc::clone(&self.config);
-					let role = self.role.clone();
-					let sessions = Arc::clone(&sessions);
-					let session_locks = Arc::clone(&session_locks);
-					let allow_origins = Arc::clone(&self.allow_origins);
-
+					let state = self.state.clone();
 					tokio::spawn(async move {
-						if let Err(e) = handle_connection(
-							stream,
-							peer_addr,
-							config,
-							role,
-							sessions,
-							session_locks,
-							allow_origins,
-						)
-						.await
-						{
+						if let Err(e) = handle_connection(stream, peer_addr, state).await {
 							log_error!("Connection handler failed for {}: {}", peer_addr, e);
 						}
 					});
@@ -180,11 +185,7 @@ impl Callback for OriginAllowlist {
 async fn handle_connection(
 	stream: TcpStream,
 	peer_addr: SocketAddr,
-	config: Arc<Config>,
-	role: String,
-	sessions: Arc<Mutex<HashMap<String, ChatSession>>>,
-	session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-	allow_origins: Arc<Vec<String>>,
+	server: ServerState,
 ) -> Result<()> {
 	// Accept WebSocket connection with compression enabled
 	let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
@@ -194,7 +195,7 @@ async fn handle_connection(
 
 	let ws_stream = tokio_tungstenite::accept_hdr_async_with_config(
 		stream,
-		OriginAllowlist(allow_origins),
+		OriginAllowlist(Arc::clone(&server.allow_origins)),
 		Some(ws_config),
 	)
 	.await?;
@@ -207,7 +208,10 @@ async fn handle_connection(
 
 	// Send welcome message
 	let welcome = ServerMessage::status(
-		format!("Connected to Octomind WebSocket server (role: {})", role),
+		format!(
+			"Connected to Octomind WebSocket server (role: {})",
+			server.role
+		),
 		None,
 	);
 	send_message(&mut ws_sender, &welcome).await?;
@@ -217,13 +221,7 @@ async fn handle_connection(
 	// ServerMessages here and the connection loop forwards them.
 	let (bg_tx, mut bg_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
 
-	let ctx = ConnCtx {
-		config,
-		role,
-		sessions,
-		session_locks,
-		bg_tx,
-	};
+	let ctx = ConnCtx { server, bg_tx };
 
 	// Process messages from both WebSocket and background tasks
 	loop {
@@ -327,8 +325,8 @@ async fn handle_connection(
 	//
 	// INVARIANT: Do NOT call stop_all_servers() here. MCP server processes are shared
 	// across all active sessions. Killing them on disconnect would break other sessions
-	// that are still using the same servers. stop_all_servers() is only called on
-	// process shutdown (main.rs) or role switch (CLI only).
+	// that are still using the same servers — which is also why a role switch never
+	// stops any. stop_all_servers() is only called on process shutdown (main.rs).
 	for sid in &active_session_ids {
 		crate::session::context::clear_notification_sender_for_session(sid);
 	}
@@ -359,7 +357,7 @@ async fn process_client_message(
 			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
-			let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
+			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
@@ -372,12 +370,13 @@ async fn process_client_message(
 				}
 			};
 
-			let result = crate::session::context::with_session_id(session_id, async {
-				handle_user_message(msg, ws_sender, &ctx.config, &ctx.role, &ctx.sessions).await
+			let result = crate::session::context::with_session_id(session_id.clone(), async {
+				handle_user_message(msg, ws_sender, &ctx.server).await
 			})
 			.await;
 
 			drop(guard);
+			wake_inbox_monitor(session_id).await;
 			result
 		}
 		ClientMessage::Command(msg) => {
@@ -385,7 +384,7 @@ async fn process_client_message(
 			active_session_ids.insert(session_id.clone());
 
 			// Acquire per-session lock to prevent concurrent access
-			let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
+			let lock = get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
 			let guard = match lock.try_lock() {
 				Ok(guard) => guard,
 				Err(_) => {
@@ -398,12 +397,13 @@ async fn process_client_message(
 				}
 			};
 
-			let result = crate::session::context::with_session_id(session_id, async {
-				handle_command_message(msg, ws_sender, &ctx.config, &ctx.role, &ctx.sessions).await
+			let result = crate::session::context::with_session_id(session_id.clone(), async {
+				handle_command_message(msg, ws_sender, &ctx.server).await
 			})
 			.await;
 
 			drop(guard);
+			wake_inbox_monitor(session_id).await;
 			result
 		}
 	}
@@ -419,6 +419,23 @@ async fn get_or_create_session_lock(
 		.entry(session_id.to_string())
 		.or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
 		.clone()
+}
+
+/// Re-fire the session's inbox wake-up once a client frame has released the
+/// session lock. A handback that lands while the frame runs wakes the monitor,
+/// which fails `try_lock` and parks again; the turn's own wake-up
+/// (`handle_user_message`) fires while that lock is still held. Without this the
+/// result sits queued until something unrelated wakes the monitor — and a client
+/// told `pending_work` waits out its cap for a turn that never starts.
+async fn wake_inbox_monitor(session_id: String) {
+	crate::session::context::with_session_id(session_id, async {
+		if crate::session::inbox::has_inbox_messages() {
+			if let Some(notify) = crate::session::inbox::get_inbox_notify() {
+				notify.notify_one();
+			}
+		}
+	})
+	.await;
 }
 
 /// Spawn a background task that monitors schedules and inbox for a WebSocket session.
@@ -486,7 +503,8 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 				// same file. If the client holds the lock, stop this pass; it fires
 				// inbox_notify on return and wakes us from the wait section.
 				while crate::session::inbox::has_inbox_messages() {
-					let lock = get_or_create_session_lock(&session_id, &ctx.session_locks).await;
+					let lock =
+						get_or_create_session_lock(&session_id, &ctx.server.session_locks).await;
 					let guard = match lock.try_lock() {
 						Ok(g) => g,
 						Err(_) => return false,
@@ -506,19 +524,22 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					}
 
 					// Take session for exclusive access (lock guarantees no client race).
-					let mut chat_session = match ctx.sessions.lock().await.remove(&session_id) {
-						Some(s) => s,
-						None => {
-							// Session genuinely gone (cleanup). Put the batch back and stop.
-							for inbox_msg in batch {
-								crate::session::inbox::push_inbox_message(inbox_msg);
+					let mut chat_session =
+						match ctx.server.sessions.lock().await.remove(&session_id) {
+							Some(s) => s,
+							None => {
+								// Session genuinely gone (cleanup). Put the batch back and stop.
+								for inbox_msg in batch {
+									crate::session::inbox::push_inbox_message(inbox_msg);
+								}
+								drop(guard);
+								return false;
 							}
-							drop(guard);
-							return false;
-						}
-					};
+						};
 
-					let config_for_role = ctx.config.get_merged_config_for_role(&ctx.role);
+					let config_for_role =
+						session_config(&ctx.server.config, &ctx.server.role_configs, &chat_session)
+							.await;
 					let mut cancellation = crate::session::cancellation::SessionCancellation::new();
 					let op_rx = cancellation.new_operation();
 
@@ -537,7 +558,8 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 
 					if let Err(e) = chat_session.add_inbox_batch(&batch) {
 						log_error!("WS monitor: failed to add inbox message: {}", e);
-						ctx.sessions
+						ctx.server
+							.sessions
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
@@ -551,7 +573,8 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 							.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
-						ctx.sessions
+						ctx.server
+							.sessions
 							.lock()
 							.await
 							.insert(session_id.clone(), chat_session);
@@ -577,7 +600,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					let result = execute_api_call_and_process_response(
 						&mut chat_session,
 						&config_for_role,
-						&ctx.role,
+						&ctx.server.role,
 						op_rx,
 						OutputMode::WebSocket,
 						ws_sink,
@@ -621,13 +644,15 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						cache_write_tokens: chat_session.session.info.cache_write_tokens,
 						reasoning_tokens: chat_session.session.info.reasoning_tokens,
 						session_id: session_id.clone(),
+						pending_work: crate::session::has_pending_handback(),
 					}));
 
 					// Save and put session back.
 					if let Err(e) = chat_session.save() {
 						log_error!("WS monitor: failed to save session: {}", e);
 					}
-					ctx.sessions
+					ctx.server
+						.sessions
 						.lock()
 						.await
 						.insert(session_id.clone(), chat_session);
@@ -697,35 +722,46 @@ async fn handle_session_message(
 		Some(session_id) => {
 			// session_id present: create-or-resume
 			// Check memory first
-			let existing = ctx.sessions.lock().await.remove(session_id);
+			let existing = ctx.server.sessions.lock().await.remove(session_id);
 			if let Some(session) = existing {
 				log_debug!("Resumed session from memory: {}", session_id);
-				let cfg = ctx.config.get_merged_config_for_role(&ctx.role);
-				(session, cfg, ctx.role.clone(), false)
+				let cfg =
+					session_config(&ctx.server.config, &ctx.server.role_configs, &session).await;
+				let role = session.role.clone();
+				(session, cfg, role, false)
 			} else {
 				// Try disk: resume if exists, create with this name if not
-				let args = if crate::session::get_sessions_dir()
+				let (args, config) = if crate::session::get_sessions_dir()
 					.map(|d| d.join(format!("{}.jsonl.zst", session_id)).exists())
 					.unwrap_or(false)
 				{
 					log_debug!("Resuming session from disk: {}", session_id);
-					GenericSessionArgs {
+					let (config, role) = match resume_role_config(session_id, &ctx.server).await {
+						Ok(restored) => restored,
+						Err(e) => {
+							send_message(ws_sender, &ServerMessage::error(e.to_string())).await?;
+							return Ok(());
+						}
+					};
+					let args = GenericSessionArgs {
 						resume: Some(session_id.clone()),
-						role: ctx.role.clone(),
+						role,
 						mode: "websocket".into(),
 						..Default::default()
-					}
+					};
+					(args, config)
 				} else {
 					log_debug!("Creating named session: {}", session_id);
-					GenericSessionArgs {
+					let args = GenericSessionArgs {
 						name: Some(session_id.clone()),
-						role: ctx.role.clone(),
+						role: ctx.server.role.clone(),
 						mode: "websocket".into(),
 						..Default::default()
-					}
+					};
+					(args, Arc::clone(&ctx.server.config))
 				};
 
-				match setup_and_initialize_session(&args, &ctx.config, false).await {
+				match setup_and_initialize_session(&args, &config, false).await {
 					Ok((session, cfg, role_name, _, _)) => {
 						let is_new = !session.was_resumed;
 						(session, cfg, role_name, is_new)
@@ -741,13 +777,16 @@ async fn handle_session_message(
 		}
 		None => {
 			// No session_id: create new auto-named session
-			log_debug!("Creating new auto-named session with role: {}", ctx.role);
+			log_debug!(
+				"Creating new auto-named session with role: {}",
+				ctx.server.role
+			);
 			let args = GenericSessionArgs {
-				role: ctx.role.clone(),
+				role: ctx.server.role.clone(),
 				mode: "websocket".into(),
 				..Default::default()
 			};
-			match setup_and_initialize_session(&args, &ctx.config, false).await {
+			match setup_and_initialize_session(&args, &ctx.server.config, false).await {
 				Ok((session, cfg, role_name, _, _)) => (session, cfg, role_name, true),
 				Err(e) => {
 					let error = ServerMessage::error(format!("Failed to create session: {}", e));
@@ -788,7 +827,8 @@ async fn handle_session_message(
 		log_info!("{}", status_msg);
 
 		chat_session.save()?;
-		ctx.sessions
+		ctx.server
+			.sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
@@ -811,25 +851,84 @@ async fn handle_session_message(
 	Ok(())
 }
 
+/// Config a session's turn runs under, merged for the session's own role.
+///
+/// The MCP tool map and ownership check both key off this config. Merging for
+/// the server role instead hands a `/role`-switched session another role's
+/// servers, and every call to its own tools is rejected.
+async fn session_config(
+	base: &Config,
+	role_configs: &RoleConfigs,
+	session: &ChatSession,
+) -> Config {
+	let pinned = role_configs
+		.lock()
+		.await
+		.get(&session.session.info.name)
+		.cloned();
+	pinned
+		.as_deref()
+		.unwrap_or(base)
+		.get_merged_config_for_role(&session.role)
+}
+
+/// Role and config a session loaded from disk runs under.
+///
+/// A `/role` switch is pinned in memory, which a restart loses; the session log
+/// keeps it. Loading under the server role instead runs the first turn after a
+/// machine wakes — often a connector or routine that sends no `/role` — as
+/// another agent with another agent's tools. The restored role's servers and
+/// tool map are built in the session's scope before the session loads.
+async fn resume_role_config(session_id: &str, server: &ServerState) -> Result<(Arc<Config>, String)> {
+	let Some(role) = crate::session::resume_role(session_id).filter(|role| *role != server.role)
+	else {
+		return Ok((Arc::clone(&server.config), server.role.clone()));
+	};
+	let (config, role) =
+		crate::agent::resolver::resolve_config_and_role(Some(&role), &server.config, None)
+			.await
+			.map_err(|e| {
+				anyhow::anyhow!(
+					"Failed to restore role '{}' of session {}: {}",
+					role,
+					session_id,
+					e
+				)
+			})?;
+	crate::session::context::with_session_id(
+		session_id.to_string(),
+		crate::mcp::initialize_mcp_for_role(&role, &config),
+	)
+	.await?;
+	let config = Arc::new(config);
+	server
+		.role_configs
+		.lock()
+		.await
+		.insert(session_id.to_string(), Arc::clone(&config));
+	Ok((config, role))
+}
+
 /// Look up an existing session: memory first, then disk. Never auto-create.
 /// Returns the session or an error message for the client (callers wrap it in
 /// `ServerMessage::error` — keeping the Err variant small).
 async fn lookup_session(
 	session_id: &str,
-	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
-	config: &Config,
-	role: &str,
+	server: &ServerState,
 ) -> std::result::Result<ChatSession, String> {
-	let existing = sessions.lock().await.remove(session_id);
+	let existing = server.sessions.lock().await.remove(session_id);
 	if let Some(session) = existing {
 		log_debug!("Resumed session from memory: {}", session_id);
 		return Ok(session);
 	}
 
 	log_debug!("Loading session from disk: {}", session_id);
-	let mut args = GenericSessionArgs::resume(session_id.to_string(), role.to_string());
+	let (config, role) = resume_role_config(session_id, server)
+		.await
+		.map_err(|e| e.to_string())?;
+	let mut args = GenericSessionArgs::resume(session_id.to_string(), role);
 	args.mode = "websocket".to_string();
-	match setup_and_initialize_session(&args, config, false).await {
+	match setup_and_initialize_session(&args, &config, false).await {
 		Ok((mut session, config_for_role, session_role, _, _)) => {
 			if let Err(e) =
 				setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false)
@@ -856,9 +955,7 @@ async fn handle_command_message(
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
 	>,
-	config: &Config,
-	role: &str,
-	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
+	server: &ServerState,
 ) -> Result<()> {
 	let session_id = msg.session_id.as_str();
 	let command_name = msg.command.trim();
@@ -877,7 +974,7 @@ async fn handle_command_message(
 		slash_command
 	);
 
-	let mut chat_session = match lookup_session(session_id, sessions, config, role).await {
+	let mut chat_session = match lookup_session(session_id, server).await {
 		Ok(s) => s,
 		Err(error) => {
 			send_message(ws_sender, &ServerMessage::error(error)).await?;
@@ -886,7 +983,7 @@ async fn handle_command_message(
 	};
 
 	let session_id = session_id.to_string();
-	let config_for_role = config.get_merged_config_for_role(role);
+	let config_for_role = session_config(&server.config, &server.role_configs, &chat_session).await;
 	let mut cancellation = SessionCancellation::new();
 	let operation_rx = cancellation.new_operation();
 
@@ -901,7 +998,11 @@ async fn handle_command_message(
 			Ok(DoneOutcome::Failed(e)) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				let save_result = chat_session.save();
-				sessions.lock().await.insert(session_id, chat_session);
+				server
+					.sessions
+					.lock()
+					.await
+					.insert(session_id, chat_session);
 				if let Err(save_err) = save_result {
 					send_message(
 						ws_sender,
@@ -916,7 +1017,11 @@ async fn handle_command_message(
 			Err(e) => {
 				let error = ServerMessage::error(format!("Compression failed: {}", e));
 				let save_result = chat_session.save();
-				sessions.lock().await.insert(session_id, chat_session);
+				server
+					.sessions
+					.lock()
+					.await
+					.insert(session_id, chat_session);
 				if let Err(save_err) = save_result {
 					send_message(
 						ws_sender,
@@ -938,7 +1043,8 @@ async fn handle_command_message(
 			serde_json::json!({ "command_type": "done", "message": status_msg }),
 		);
 		let save_result = chat_session.save();
-		sessions
+		server
+			.sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
@@ -961,17 +1067,26 @@ async fn handle_command_message(
 				content: instructions,
 				attachments: Vec::new(),
 			};
-			return handle_user_message(user_msg, ws_sender, config, role, sessions).await;
+			return handle_user_message(user_msg, ws_sender, server).await;
 		}
 		return Ok(());
 	}
 
 	use crate::session::chat::session::commands::CommandResult;
+	// `/role` resolves against the server's unmerged config, as `octomind server
+	// <role>` does at startup: a config merged for the current role has already
+	// dropped every server that role lacks.
+	let previous_role = chat_session.role.clone();
+	let mut command_config = if command_name == "role" {
+		(*server.config).clone()
+	} else {
+		config_for_role.clone()
+	};
 	let command_result = match chat_session
 		.process_command(
 			&slash_command,
-			&mut config_for_role.clone(),
-			role,
+			&mut command_config,
+			&server.role,
 			operation_rx,
 		)
 		.await
@@ -980,7 +1095,11 @@ async fn handle_command_message(
 		Err(e) => {
 			let error = ServerMessage::error(format!("Command failed: {}", e));
 			let save_result = chat_session.save();
-			sessions.lock().await.insert(session_id, chat_session);
+			server
+				.sessions
+				.lock()
+				.await
+				.insert(session_id, chat_session);
 			if let Err(save_err) = save_result {
 				send_message(
 					ws_sender,
@@ -993,6 +1112,16 @@ async fn handle_command_message(
 			return Ok(());
 		}
 	};
+
+	// A switch committed the new role's config: pin it so this session's later
+	// turns keep that role's tools instead of the server role's.
+	if chat_session.role != previous_role {
+		server
+			.role_configs
+			.lock()
+			.await
+			.insert(session_id.clone(), Arc::new(command_config));
+	}
 
 	let terminal = match command_result {
 		CommandResult::Handled => {
@@ -1025,7 +1154,8 @@ async fn handle_command_message(
 			);
 			// Don't store session back — it's ended
 			if let Err(e) = chat_session.save() {
-				sessions
+				server
+					.sessions
 					.lock()
 					.await
 					.insert(session_id.clone(), chat_session);
@@ -1049,7 +1179,11 @@ async fn handle_command_message(
 	};
 
 	let save_result = chat_session.save();
-	sessions.lock().await.insert(session_id, chat_session);
+	server
+		.sessions
+		.lock()
+		.await
+		.insert(session_id, chat_session);
 	if let Err(e) = save_result {
 		send_message(
 			ws_sender,
@@ -1176,9 +1310,7 @@ async fn handle_user_message(
 		WebSocketStream<TcpStream>,
 		tokio_tungstenite::tungstenite::Message,
 	>,
-	config: &Config,
-	role: &str,
-	sessions: &Arc<Mutex<HashMap<String, ChatSession>>>,
+	server: &ServerState,
 ) -> Result<()> {
 	let session_id = msg.session_id.as_str();
 	let input = msg.content.clone();
@@ -1190,7 +1322,7 @@ async fn handle_user_message(
 		msg.attachments.len()
 	);
 
-	let mut chat_session = match lookup_session(session_id, sessions, config, role).await {
+	let mut chat_session = match lookup_session(session_id, server).await {
 		Ok(s) => s,
 		Err(error) => {
 			send_message(ws_sender, &ServerMessage::error(error)).await?;
@@ -1203,7 +1335,8 @@ async fn handle_user_message(
 		match load_message_attachments(&chat_session, &msg.attachments, &media_root()) {
 			Ok(attachments) => attachments,
 			Err(error) => {
-				sessions
+				server
+					.sessions
 					.lock()
 					.await
 					.insert(session_id.clone(), chat_session);
@@ -1219,7 +1352,7 @@ async fn handle_user_message(
 			}
 		};
 
-	let config_for_role = config.get_merged_config_for_role(role);
+	let config_for_role = session_config(&server.config, &server.role_configs, &chat_session).await;
 	let mut cancellation = SessionCancellation::new();
 	// The main-call `operation_rx` is created AFTER the pre-user inbox drain
 	// below: the drain calls new_operation() per message, each dropping the
@@ -1284,13 +1417,18 @@ async fn handle_user_message(
 			let result = execute_api_call_and_process_response(
 				&mut chat_session,
 				&config_for_role,
-				role,
+				&server.role,
 				op_rx,
 				OutputMode::WebSocket,
 				sink,
 			)
 			.await;
-			while let Ok(msg) = rx.try_recv() {
+			while let Ok(mut msg) = rx.try_recv() {
+				// This cost closes an injected turn, not the client's: the message
+				// that drained it runs next, on this same connection.
+				if let ServerMessage::Cost(cost) = &mut msg {
+					cost.pending_work = true;
+				}
 				send_message(ws_sender, &msg).await?;
 			}
 			if let Err(e) = result {
@@ -1311,17 +1449,19 @@ async fn handle_user_message(
 	// Run pipe pre-processing if a matching [[pipe]] is configured.
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
-	let processed_input = match run_pipe_if_enabled(&input, role, first_message_processed).await {
-		Ok(input) => input,
-		Err(e) => {
-			sessions
-				.lock()
-				.await
-				.insert(session_id.clone(), chat_session);
-			send_message(ws_sender, &ServerMessage::error(format!("Error: {}", e))).await?;
-			return Ok(());
-		}
-	};
+	let processed_input =
+		match run_pipe_if_enabled(&input, &server.role, first_message_processed).await {
+			Ok(input) => input,
+			Err(e) => {
+				server
+					.sessions
+					.lock()
+					.await
+					.insert(session_id.clone(), chat_session);
+				send_message(ws_sender, &ServerMessage::error(format!("Error: {}", e))).await?;
+				return Ok(());
+			}
+		};
 
 	// Add user message
 	if let Err(e) = chat_session.add_user_message_with_attachments(
@@ -1329,7 +1469,8 @@ async fn handle_user_message(
 		loaded_attachments.images,
 		loaded_attachments.videos,
 	) {
-		sessions
+		server
+			.sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
@@ -1346,7 +1487,8 @@ async fn handle_user_message(
 	if let Err(e) =
 		prepare_for_api_call(&mut chat_session, &config_for_role, operation_rx.clone()).await
 	{
-		sessions
+		server
+			.sessions
 			.lock()
 			.await
 			.insert(session_id.clone(), chat_session);
@@ -1375,7 +1517,7 @@ async fn handle_user_message(
 		let api_fut = execute_api_call_and_process_response(
 			&mut chat_session,
 			&config_for_role,
-			role,
+			&server.role,
 			operation_rx.clone(),
 			OutputMode::WebSocket,
 			ws_sink,
@@ -1414,13 +1556,15 @@ async fn handle_user_message(
 		cache_write_tokens: chat_session.session.info.cache_write_tokens,
 		reasoning_tokens: chat_session.session.info.reasoning_tokens,
 		session_id: session_id.clone(),
+		pending_work: crate::session::has_pending_handback(),
 	});
 
 	// Clear the notification sender now that this request is done
 	crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
 
 	// Store session back and wake inbox monitor if it has pending messages.
-	sessions
+	server
+		.sessions
 		.lock()
 		.await
 		.insert(session_id.clone(), chat_session);

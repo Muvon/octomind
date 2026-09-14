@@ -30,6 +30,58 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// Global tool map singleton - initialized once at startup
 static TOOL_MAP: OnceLock<Arc<RwLock<ToolMapState>>> = OnceLock::new();
 
+type SharedToolMap = Arc<RwLock<ToolMapState>>;
+
+/// Tool maps owned by single sessions, keyed by session id. A session that
+/// rebuilds for a different role after the process map exists (`/role` in a
+/// multi-session server) gets its own map: replacing the process map would strip
+/// the tools every other session on the process routes through.
+static SESSION_TOOL_MAPS: OnceLock<RwLock<HashMap<String, SharedToolMap>>> = OnceLock::new();
+
+fn session_tool_maps() -> &'static RwLock<HashMap<String, SharedToolMap>> {
+	SESSION_TOOL_MAPS.get_or_init(Default::default)
+}
+
+/// The map the current task routes through: its session's own map when it has
+/// one, otherwise the process map.
+fn active_tool_map() -> Option<SharedToolMap> {
+	if let Some(session_id) = crate::session::context::current_session_id() {
+		if let Some(state) = session_tool_maps().read().unwrap().get(&session_id) {
+			return Some(Arc::clone(state));
+		}
+	}
+	TOOL_MAP.get().cloned()
+}
+
+/// The map an initialization writes: the process map on first build and outside
+/// sessions, the session's own map once it diverges from the process config.
+fn target_tool_map(process_map: &SharedToolMap, config_hash: u64) -> SharedToolMap {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return Arc::clone(process_map);
+	};
+	if let Some(own) = session_tool_maps().read().unwrap().get(&session_id) {
+		return Arc::clone(own);
+	}
+	{
+		let process = process_map.read().unwrap();
+		if !process.initialized || process.config_hash == config_hash {
+			return Arc::clone(process_map);
+		}
+	}
+	Arc::clone(
+		session_tool_maps()
+			.write()
+			.unwrap()
+			.entry(session_id)
+			.or_default(),
+	)
+}
+
+/// Drop the tool map a session owns, if any, when the session ends.
+pub fn clear_session_tool_map(session_id: &str) {
+	session_tool_maps().write().unwrap().remove(session_id);
+}
+
 #[derive(Debug, Clone, Default)]
 struct ToolMapState {
 	/// Tool name -> Server config mapping
@@ -63,7 +115,8 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 	let config_hash = calculate_config_hash(config);
 
 	// Get or create the tool map state
-	let tool_map_state = TOOL_MAP.get_or_init(|| Arc::new(RwLock::new(ToolMapState::default())));
+	let process_map = TOOL_MAP.get_or_init(|| Arc::new(RwLock::new(ToolMapState::default())));
+	let tool_map_state = target_tool_map(process_map, config_hash);
 
 	// Check if we need to (re)initialize
 	{
@@ -109,7 +162,7 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 /// If the tool map is not initialized, this function returns `None` and the
 /// caller should fall back to the original `build_tool_server_map()` logic.
 pub fn get_server_for_tool(tool_name: &str) -> Option<McpServerConfig> {
-	let mapped = TOOL_MAP.get().and_then(|tool_map_state| {
+	let mapped = active_tool_map().and_then(|tool_map_state| {
 		let state = tool_map_state.read().unwrap();
 		if !state.initialized {
 			return None;
@@ -159,10 +212,10 @@ pub fn get_tool_server_name(tool_name: &str) -> Option<String> {
 /// * `true` if the tool map is ready for use
 /// * `false` if the tool map is not initialized (use fallback logic)
 pub fn is_initialized() -> bool {
-	TOOL_MAP
-		.get()
-		.map(|state| state.read().unwrap().initialized)
-		.unwrap_or(false)
+	active_tool_map().is_some_and(|state| {
+		let state = state.read().unwrap();
+		state.initialized
+	})
 }
 
 /// Get all available tools from the initialized tool map
@@ -171,7 +224,7 @@ pub fn is_initialized() -> bool {
 /// * Vector of tool names if initialized
 /// * Empty vector if not initialized
 pub fn get_all_tool_names() -> Vec<String> {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => return Vec::new(),
 	};
@@ -193,7 +246,7 @@ pub fn get_all_tool_names() -> Vec<String> {
 /// * Vector of tool names belonging to `server_name`.
 /// * Empty vector if not initialized or the server has no tools registered.
 pub fn get_tools_for_server(server_name: &str) -> Vec<String> {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => return Vec::new(),
 	};
@@ -222,7 +275,7 @@ pub fn get_tools_for_server(server_name: &str) -> Vec<String> {
 /// * Set of server names if initialized
 /// * Empty set if not initialized
 pub fn get_all_server_names() -> std::collections::HashSet<String> {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => return std::collections::HashSet::new(),
 	};
@@ -243,7 +296,7 @@ pub fn get_all_server_names() -> std::collections::HashSet<String> {
 ///
 /// Call this when an agent is enabled to make its tool available.
 pub fn register_dynamic_agent_tool(agent_name: &str) {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => {
 			crate::log_debug!("Tool map not initialized, cannot register dynamic agent");
@@ -268,7 +321,7 @@ pub fn register_dynamic_agent_tool(agent_name: &str) {
 ///
 /// Call this when an agent is disabled or removed.
 pub fn unregister_dynamic_agent_tool(agent_name: &str) {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => {
 			crate::log_debug!("Tool map not initialized, cannot unregister dynamic agent");
@@ -290,7 +343,7 @@ pub fn register_dynamic_server_tools(
 	server_config: &McpServerConfig,
 	tool_names: &[String],
 ) {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => {
 			crate::log_debug!("Tool map not initialized, cannot register dynamic server");
@@ -316,7 +369,7 @@ pub fn register_dynamic_server_tools(
 ///
 /// Call this when a server is disabled or removed.
 pub fn unregister_dynamic_server_tools(server_name: &str, tool_names: &[String]) {
-	let tool_map_state = match TOOL_MAP.get() {
+	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => {
 			crate::log_debug!("Tool map not initialized, cannot unregister dynamic server");

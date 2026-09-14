@@ -275,6 +275,13 @@ pub struct CostPayload {
 	pub cache_write_tokens: u64,
 	pub reasoning_tokens: u64,
 	pub session_id: String,
+	/// The turn is over, but it left work that streams a follow-up turn to this
+	/// connection on its own — a delegated `tap` run, an async agent job, or a
+	/// result already queued (`session::has_pending_handback`). A client that
+	/// wants that result stays connected until a cost frame without it. Omitted
+	/// when false, so an idle turn's frame reads exactly as older agents' did.
+	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
+	pub pending_work: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

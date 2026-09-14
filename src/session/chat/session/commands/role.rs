@@ -19,8 +19,8 @@
 //   - Tap agent tag   (e.g. `developer:general`)    → fetched from tap registry,
 //     INPUT/ENV resolved, dep scripts run, manifest merged into the active config
 //
-// Both paths end with `reinitialize_for_role` which restarts MCP servers and
-// rebuilds the system prompt for the new role.
+// Both paths end with `reinitialize_for_role` which starts the new role's MCP
+// servers and rebuilds the system prompt for the new role.
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
@@ -138,7 +138,7 @@ pub async fn handle_role(
 	session.apply_model_profile(&role_profile);
 	crate::config::set_thread_role(&session.role);
 
-	// Reinitialize for the new role: restart MCP servers, rebuild system prompt.
+	// Reinitialize for the new role: start its MCP servers, rebuild system prompt.
 	if let Err(e) = session.reinitialize_for_role(&target_role, config).await {
 		// Revert everything
 		session.role = old_role.clone();

@@ -1297,14 +1297,9 @@ impl ChatSession {
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let config_for_role = config.get_merged_config_for_role(new_role);
 
-		// Shutdown existing MCP servers first
-		if let Err(e) = crate::mcp::process::stop_all_servers() {
-			println!(
-				"{}: {}",
-				"Warning: Failed to stop existing MCP servers".bright_yellow(),
-				e
-			);
-		}
+		// Never stop servers here: they are keyed by name and shared by every
+		// session on the process, so another session may be mid-call on one. MCP
+		// init below starts only the new role's servers that aren't running yet.
 
 		// Mirror the session-startup boot sequence so /role swaps get the same
 		// tool surface a fresh session for the new role would get: static MCP

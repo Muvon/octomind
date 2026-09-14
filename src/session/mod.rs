@@ -71,10 +71,19 @@ pub use token_counter::{
 /// Whether the current session still owns asynchronous work whose completion
 /// must be delivered before a headless session may exit.
 pub fn has_pending_async_work() -> bool {
-	crate::mcp::orchestration::has_pending_schedules()
+	has_pending_handback()
+		|| crate::mcp::orchestration::has_pending_schedules()
 		|| crate::mcp::orchestration::has_running_monitors()
 		|| shell_jobs::has_pending()
-		|| tap_runs::has_running_jobs()
+}
+
+/// Work that comes back into the current session by itself, as a follow-up
+/// turn: a delegated `tap` run or async agent job still going, or a result
+/// already queued. Finite by construction — schedules, monitors and watched
+/// shell jobs can stay pending indefinitely, so a client told to wait on them
+/// (websocket `CostPayload::pending_work`) would wait out its whole cap.
+pub fn has_pending_handback() -> bool {
+	tap_runs::has_running_jobs()
 		|| context::get_job_manager_for_session().is_some_and(|manager| manager.active_count() > 0)
 		|| inbox::has_inbox_messages()
 }

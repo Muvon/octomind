@@ -57,3 +57,20 @@ fn take_drains_accumulator() {
 	assert_eq!(take(), 2.5);
 	assert_eq!(take(), 0.0);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn spend_is_folded_only_by_the_session_that_spent_it() {
+	// `octomind server` runs every session in one process: a tap run's spend in
+	// one session used to land in whichever session folded next.
+	use crate::session::context::with_session_id;
+	take();
+	with_session_id("spend-a".to_string(), async { record(0.75) }).await;
+	let other = with_session_id("spend-b".to_string(), async { take() }).await;
+	assert_eq!(
+		other, 0.0,
+		"another session must not fold this session's spend"
+	);
+	let own = with_session_id("spend-a".to_string(), async { take() }).await;
+	assert_eq!(own, 0.75);
+}

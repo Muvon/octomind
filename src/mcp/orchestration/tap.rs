@@ -259,23 +259,7 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 				r = crate::workflow::spawn::run_tap_workflow(&name_owned, &input) => Some(r),
 				_ = cancelled => None,
 			};
-			let (terminal, content) = match outcome {
-				Some(Ok(run)) => (
-					TapJobStatus::Done,
-					format!(
-						"[Workflow '{name_owned}' ({id_owned}) completed]\n\n{}",
-						run.output
-					),
-				),
-				Some(Err(e)) => (
-					TapJobStatus::Failed,
-					format!("[Workflow '{name_owned}' ({id_owned}) failed]\n\n{e:#}"),
-				),
-				None => (
-					TapJobStatus::Cancelled,
-					format!("[Workflow '{name_owned}' ({id_owned}) cancelled]"),
-				),
-			};
+			let (terminal, content) = workflow_handback(&name_owned, &id_owned, outcome);
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
 				source: crate::session::inbox::InboxSource::TapRun {
 					id: id_owned,
@@ -306,6 +290,35 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 		})
 		.to_string(),
 	))
+}
+
+/// The handback a finished tap workflow leaves in the inbox. Also banks what the
+/// run spent on the calling session: its steps bill the account either way, but
+/// only banked spend reaches that session's reported cost.
+fn workflow_handback(
+	name: &str,
+	id: &str,
+	outcome: Option<Result<crate::workflow::spawn::RunOutcome>>,
+) -> (TapJobStatus, String) {
+	match outcome {
+		Some(Ok(run)) => {
+			if let Some(cost) = run.cost {
+				crate::session::external_spend::record(cost);
+			}
+			(
+				TapJobStatus::Done,
+				format!("[Workflow '{name}' ({id}) completed]\n\n{}", run.output),
+			)
+		}
+		Some(Err(e)) => (
+			TapJobStatus::Failed,
+			format!("[Workflow '{name}' ({id}) failed]\n\n{e:#}"),
+		),
+		None => (
+			TapJobStatus::Cancelled,
+			format!("[Workflow '{name}' ({id}) cancelled]"),
+		),
+	}
 }
 
 async fn handle_stop(call: &McpToolCall) -> Result<McpToolResult> {

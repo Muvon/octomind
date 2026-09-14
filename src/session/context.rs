@@ -1085,6 +1085,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	clear_session_workdir(session_id);
 	clear_session_role(session_id);
 	clear_session_config(session_id);
+	crate::mcp::tool_map::clear_session_tool_map(session_id);
 	clear_plan_storage(session_id);
 	clear_task_start_index(session_id);
 	clear_schedule_storage(session_id);

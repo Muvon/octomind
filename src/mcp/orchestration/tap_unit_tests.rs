@@ -28,6 +28,35 @@ fn tap_call(params: serde_json::Value) -> McpToolCall {
 	}
 }
 
+#[tokio::test]
+#[serial]
+async fn a_finished_workflow_banks_its_cost_on_the_session_that_ran_it() {
+	// The workflow run reports its total and tap read only its output: the steps
+	// billed the account while the session that ran them showed none of it.
+	crate::session::context::with_session_id("wf-cost-session".to_string(), async {
+		crate::session::external_spend::take();
+		let (status, content) = workflow_handback(
+			"digest",
+			"tap-workflow-digest-000001",
+			Some(Ok(crate::workflow::spawn::RunOutcome {
+				output: "the brief".to_string(),
+				cost: Some(0.42),
+			})),
+		);
+		assert_eq!(status, TapJobStatus::Done);
+		assert!(
+			content.contains("completed") && content.contains("the brief"),
+			"got: {content}"
+		);
+		let banked = crate::session::external_spend::take();
+		assert!(
+			(banked - 0.42).abs() < 1e-9,
+			"expected 0.42 banked, got {banked}"
+		);
+	})
+	.await;
+}
+
 fn unit_config() -> Config {
 	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
 		.expect("parse default config template");

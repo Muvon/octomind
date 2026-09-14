@@ -1044,6 +1044,7 @@ pub async fn process_response<S: OutputSink>(
 		cache_write_tokens: params.chat_session.session.info.cache_write_tokens,
 		reasoning_tokens: params.chat_session.session.info.reasoning_tokens,
 		session_id,
+		pending_work: crate::session::has_pending_handback(),
 	});
 
 	params.emit(cost_msg);

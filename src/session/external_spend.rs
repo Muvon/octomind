@@ -13,41 +13,56 @@
 // limitations under the License.
 
 //! Spend by models that run outside the main agent loop — subagents (`agent_*`,
-//! `tap run`), layers, and the supervisor's own cheap-model calls.
+//! `tap run`, tap workflows), layers, and the supervisor's own cheap-model calls.
 //!
-//! None of them hold a `&mut Session` at the moment they spend, so the cost
-//! lands in this process-global accumulator and is drained into
-//! `SessionInfo::total_cost` by [`crate::session::Session::fold_external_spend`]
-//! at the next point that does. Draining (rather than reading a running total)
-//! is what makes every dollar land exactly once, including across the
-//! monotonic-max merge that `persistence` applies on resume.
+//! None of them hold a `&mut Session` at the moment they spend, so the cost is
+//! banked here and drained into `SessionInfo::total_cost` by
+//! [`crate::session::Session::fold_external_spend`] at the next point that does.
+//! Draining (rather than reading a running total) is what makes every dollar
+//! land exactly once, including across the monotonic-max merge that
+//! `persistence` applies on resume.
 //!
-//! One process == one interactive session, so a global is effectively
-//! session-scoped (same assumption as `supervisor::stats`).
+//! Banked per session, by the recording task's session context: `octomind
+//! server` runs every session in one process, and a single accumulator handed
+//! one session's delegated spend to whichever session folded next. Detached runs
+//! re-enter their session's context (`tap`, `agent_*`). Spend recorded outside
+//! any session (detached lesson extraction) has no owner to wait for, so the
+//! next fold takes it, as before.
 
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-fn pending() -> &'static Mutex<f64> {
-	static P: OnceLock<Mutex<f64>> = OnceLock::new();
-	P.get_or_init(|| Mutex::new(0.0))
+use crate::session::context::{current_session_id, SessionId};
+
+/// `None` = spend recorded outside any session context.
+fn pending() -> &'static Mutex<HashMap<Option<SessionId>, f64>> {
+	static P: OnceLock<Mutex<HashMap<Option<SessionId>, f64>>> = OnceLock::new();
+	P.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Bank spend by a model that runs outside the main loop.
+/// Bank spend by a model that runs outside the main loop, against the current session.
 pub fn record(cost: f64) {
 	if cost <= 0.0 {
 		return;
 	}
 	if let Ok(mut p) = pending().lock() {
-		*p += cost;
+		*p.entry(current_session_id()).or_insert(0.0) += cost;
 	}
 }
 
-/// Take everything banked so far, leaving the accumulator empty.
+/// Take everything banked for the current session (plus unowned spend),
+/// leaving both empty.
 pub fn take() -> f64 {
-	pending()
-		.lock()
-		.map(|mut p| std::mem::take(&mut *p))
-		.unwrap_or(0.0)
+	let Ok(mut p) = pending().lock() else {
+		return 0.0;
+	};
+	let own = current_session_id();
+	let unowned = if own.is_some() {
+		p.remove(&None).unwrap_or(0.0)
+	} else {
+		0.0
+	};
+	p.remove(&own).unwrap_or(0.0) + unowned
 }
 
 #[cfg(test)]

@@ -25,12 +25,12 @@ use crate::mcp::{oauth, McpToolCall};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
 	CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams,
-	CancelledNotificationParam, ClientCapabilities, ClientInfo, ClientRequest, ElicitRequestParams,
-	ElicitResult, ElicitationAction, ElicitationCapability, ExtensionCapabilities,
-	FormElicitationCapability, GetTaskParams, Implementation, InputRequest, InputResponses,
-	ProgressToken, ProtocolVersion, ServerNotification, ServerResult, SubscriptionFilter,
-	TaskPayload, UpdateTaskParams, UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS,
-	TASKS_EXTENSION_ID,
+	CancelledNotificationParam, ClientCapabilities, ClientConfig, ClientRequest,
+	ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability,
+	ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation, InputRequest,
+	InputResponses, ProgressToken, ProtocolVersion, ServerNotification, ServerResult,
+	SubscriptionFilter, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
+	DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
@@ -122,7 +122,7 @@ impl OctoClientHandler {
 }
 
 impl ClientHandler for OctoClientHandler {
-	fn get_info(&self) -> ClientInfo {
+	fn get_info(&self) -> ClientConfig {
 		build_client_info(if self.legacy {
 			ProtocolVersion::V_2025_03_26
 		} else {
@@ -323,7 +323,7 @@ async fn deliver_resource_update(
 /// Client identity + capabilities sent on every request (modern) or during
 /// the initialize handshake (legacy). The octomind session context rides in
 /// the experimental capabilities, same as before.
-fn build_client_info(protocol_version: ProtocolVersion) -> ClientInfo {
+fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 	let (role, spec, project, session_id, workdir) = super::process::get_session_context();
 	let git = octolib::utils::is_git_repo(std::path::Path::new(&workdir));
 	let session = serde_json::json!({
@@ -352,7 +352,7 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientInfo {
 				.with_url(UrlElicitationCapability::default()),
 		);
 	}
-	ClientInfo::new(
+	ClientConfig::new(
 		capabilities,
 		Implementation::new("octomind", env!("CARGO_PKG_VERSION")),
 	)

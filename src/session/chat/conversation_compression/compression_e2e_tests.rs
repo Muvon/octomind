@@ -19,10 +19,18 @@
 //! is always XML here.
 
 use super::*;
+use crate::mcp::core::plan::sidecar_start;
 use crate::session::chat::session::ChatSession;
 use crate::session::chat::test_support::{
 	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
 };
+
+fn plan_directive(title: &str) -> crate::supervisor::plan::PlanTaskDirective {
+	crate::supervisor::plan::PlanTaskDirective {
+		title: title.to_string(),
+		done_when: format!("{title} is verified"),
+	}
+}
 
 fn msg(role: &str, content: &str) -> crate::session::Message {
 	crate::session::Message {
@@ -825,6 +833,127 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 			.iter()
 			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
 		"the settled summary must be spliced in"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// A corroborated deferral is the one case where the runtime declines to spend:
+/// the claim is confirmed by a live plan step and an unblocked agent, so the
+/// round is held without a paid fold call. The deferral stays recorded for the
+/// next eligible round to re-judge against fresh state.
+#[tokio::test]
+async fn verify_corroborated_deferral_holds_without_a_paid_call() {
+	let _guard = ENV_LOCK.lock().await;
+	// An empty script: any fold call would hit the exhausted-stub fallback and
+	// fail to parse, so the hold has to be real, not a swallowed error.
+	let url = spawn_stub(Vec::new()).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+	// No configured safety limit and an unresolvable model: nothing caps the
+	// session, so the ceiling margin cannot be what holds this round.
+	config.max_session_tokens_threshold = 0;
+
+	let sid = format!("compress-defer-e2e-{}", std::process::id());
+	crate::session::context::with_session_id(sid.clone(), async {
+		let mut session = regime_session(&mut config).await;
+		session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+		// The runtime-owned corroboration: a plan whose open step is the very
+		// step the decline was about.
+		sidecar_start(
+			"Ship the widget",
+			&[plan_directive("implement"), plan_directive("verify")],
+		)
+		.expect("plan starts");
+		session.fold_deferral = Some(FoldDeferral {
+			reason: DeferReason::MidDerivation,
+			step: crate::mcp::core::plan::active_step_index(),
+		});
+
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let compressed = check_and_compress_conversation(
+			&mut session,
+			&config,
+			rx,
+			CompressionTrigger::Automatic,
+		)
+		.await
+		.expect("compression pipeline");
+
+		assert!(!compressed, "a corroborated deferral must not fold");
+		assert!(
+			session.fold_job.is_none(),
+			"a corroborated deferral must not pay for a fold"
+		);
+		assert_eq!(
+			session.fold_deferral,
+			Some(FoldDeferral {
+				reason: DeferReason::MidDerivation,
+				step: Some(0),
+			}),
+			"a held deferral stays recorded for the next eligible round"
+		);
+		assert_eq!(
+			session.session.info.compression_stats.input_tokens, 0,
+			"a held round spends nothing"
+		);
+	})
+	.await;
+	crate::session::context::clear_plan_storage(&sid);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// The other half of the judgment: a veto the runtime cannot corroborate is
+/// overruled, not obeyed. No reason means no claim, so the fold proceeds inline
+/// and the spent deferral is consumed rather than re-litigated.
+#[tokio::test]
+async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&veto_summary_body()),
+		final_response(&veto_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+	// A bare veto: the model declined without naming a reason. There is no
+	// in-flight claim for the runtime to confirm, so the premise is refuted.
+	session.fold_deferral = Some(FoldDeferral {
+		reason: DeferReason::None,
+		step: None,
+	});
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
+
+	assert!(
+		compressed,
+		"an uncorroborated deferral must be overruled, not obeyed"
+	);
+	assert!(
+		session.fold_job.is_none(),
+		"an overruled deferral folds inline, it does not park a job"
+	);
+	assert!(
+		session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"the overruled veto must still produce the fold"
+	);
+	assert_eq!(
+		session.fold_deferral, None,
+		"a refuted deferral is consumed, not re-litigated"
 	);
 
 	std::env::remove_var("OLLAMA_API_URL");

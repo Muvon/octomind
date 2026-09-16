@@ -52,6 +52,13 @@ use decision::{
 	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
+// The model's deferral crosses module boundaries: recorded on the session,
+// judged by `decision`. `DeferReason` itself is named only from test code —
+// production reaches it through `FoldDeferral` — so that re-export is
+// test-only, or it reads as an unused import in a normal build.
+pub(crate) use decision::FoldDeferral;
+#[cfg(test)]
+pub(crate) use schema::DeferReason;
 
 use crate::config::Config;
 use crate::session::chat::get_animation_manager;
@@ -493,12 +500,32 @@ async fn finish_fold(
 	// fire-line ladder (that donated window headroom to a non-event and pushed
 	// the next fold toward the forced ceiling path). Hold for one runway instead.
 	if !should_compress {
-		let reason = if !summary.should_compress && !force {
-			"decision model declined"
+		// A refusal is the one fold failure a cooldown cannot fix: the call was
+		// paid for and returned nothing to apply, so the next attempt asks the
+		// model the same question and gets the same answer. Record WHY it
+		// declined — that reason is the judgment input for the next eligible
+		// fold, which honours it only if the runtime can corroborate it. Only a
+		// genuine veto is worth recording: a non-substantive summary is rejected
+		// under force too, so forcing it would buy nothing.
+		if !summary.should_compress && !force {
+			// Pair the reason with the plan step it was about. A held round makes
+			// no fold call, so this is the only moment the step identity can be
+			// captured — and it is what lets the next round refute a claim about a
+			// step that has since advanced.
+			session.fold_deferral = Some(decision::FoldDeferral {
+				reason: summary.defer_reason,
+				step: crate::mcp::core::plan::active_step_index(),
+			});
+			crate::log_error!(
+				"Compression not applied: decision model deferred the fold (reason={})",
+				summary.defer_reason.as_token()
+			);
 		} else {
-			"decision model returned no substantive summary"
-		};
-		crate::log_error!("Compression not applied: {} (force={})", reason, force);
+			crate::log_error!(
+				"Compression not applied: decision model returned no substantive summary (force={})",
+				force
+			);
+		}
 		note_fold_failure(session);
 		return Ok(false);
 	}
@@ -628,6 +655,9 @@ async fn finish_fold(
 		);
 	}
 
+	// The fold landed, so any deferral is spent either way.
+	session.fold_deferral = None;
+
 	Ok(true)
 }
 
@@ -724,7 +754,44 @@ async fn check_and_compress_conversation_inner(
 	// Inside the ceiling margin, force compression — inline, deepest ratio,
 	// and the AI cannot refuse. The ceiling is the user's explicit safety
 	// limit or the model's physical window, whichever is lower.
-	let force = force_done || within_ceiling_margin(session, config).await;
+	let force_ceiling = within_ceiling_margin(session, config).await;
+	// A model deferral is a claim, not an order: honour it only when the runtime
+	// can corroborate it from state it owns — the SAME plan step the decline was
+	// about is still open, and the agent does not report itself blocked.
+	// Everything else (stuck, transcript_minimal, no reason given, or an in-flight
+	// claim about a step that has since advanced) is a premise the runtime can
+	// refute, and the fold proceeds.
+	let deferral = session.fold_deferral;
+	let force = decision::fold_is_forced(
+		force_done,
+		force_ceiling,
+		deferral,
+		crate::mcp::core::plan::active_step_index(),
+		session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked),
+	);
+	if force {
+		if let Some(deferral) = deferral {
+			// Judged and overruled: consume it so the same refuted premise is not
+			// re-litigated on the next round.
+			crate::log_info!(
+				"Fold deferral overruled (reason={}) — forcing the fold",
+				deferral.reason.as_token()
+			);
+			session.fold_deferral = None;
+		}
+	} else if let Some(deferral) = deferral {
+		// Corroborated: the same plan step the decline was about is still open
+		// and the agent does not report itself blocked, so a fold would blunt
+		// work that is in flight. Hold without paying for a fold call. The
+		// deferral stays recorded — the next eligible round re-judges it against
+		// fresh state, a genuine user turn clears it, and the ceiling margin
+		// above overrides it.
+		log_debug!(
+			"Fold deferral honoured (reason={}) — no fold this round",
+			deferral.reason.as_token()
+		);
+		return Ok(false);
+	}
 
 	if !force && session.session.info.total_api_calls < session.fold_cooldown_until_call {
 		log_debug!(
@@ -790,7 +857,7 @@ async fn check_and_compress_conversation_inner(
 	// end_idx is already safe from find_compression_range
 
 	if start_idx >= end_idx {
-		if force && !force_done {
+		if force_ceiling && !force_done {
 			return Err(anyhow::anyhow!(
 				"forced compression has no eligible history while preserving the current exchange and task boundary (range {}..={})",
 				start_idx,

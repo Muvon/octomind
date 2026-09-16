@@ -333,6 +333,10 @@ impl ChatSession {
 		// the one place a fold is free. A genuine turn clears it; system-managed
 		// injections still do not, so a broken folder is not retried every round.
 		self.fold_cooldown_until_call = 0;
+		// Same boundary for a pending deferral: a fresh request is a natural
+		// seam, so a deferral that held the previous turn does not carry into
+		// this one.
+		self.fold_deferral = None;
 		self.session.info.note_turn_start();
 		self.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 

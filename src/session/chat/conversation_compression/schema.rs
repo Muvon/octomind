@@ -36,6 +36,95 @@ use serde::{Deserialize, Serialize};
 /// Mirrors the JSON schema bound so JSON and XML paths validate identically.
 const FILE_CONTEXT_LINE_MAX: usize = 10_000;
 
+/// Why the decision model declined to fold — the one thing a bare `false`
+/// cannot carry.
+///
+/// Grounded in three independent results that converge on the same conclusion:
+/// the scaffold, not the model, owns the timing decision.
+///
+/// - SelfCompact (arXiv:2606.23525) pairs a compaction tool with a rubric and
+///   shows both are load-bearing. Its framing: *"unprompted models cannot
+///   reliably tell when their own context is rotting"*, so when-to-compact is
+///   "a capability scaffolds can supply without training". Its rubric fires on
+///   a resolved sub-task or a converging trajectory and suppresses
+///   mid-derivation — the buckets below are that rubric, made checkable.
+/// - AutoCompact (autocompact.github.io, SWE-bench Verified) reports the model
+///   "is more reliable at what to preserve than when to compact", and keeps a
+///   judge that corrects the compaction action step-by-step "under explicit
+///   criteria". The runtime corroboration in `decision` is that judge, minus
+///   the training loop.
+/// - ConfTuner (arXiv:2508.18847) documents systematic overconfidence in
+///   self-reported confidence. Hence verbal buckets, not a numeric
+///   self-estimate: a token is cheaper to emit and harder to fake than a
+///   fake-precise number.
+///
+/// A refusal is therefore a claim the runtime checks, never an order it obeys.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeferReason {
+	/// No deferral recorded, or a token the runtime does not recognise.
+	#[default]
+	None,
+	/// A build, test, edit, or hypothesis is genuinely half-finished.
+	MidDerivation,
+	/// A verification the agent is waiting on has not returned.
+	VerificationInFlight,
+	/// The agent is stalled and re-reading to recover its footing.
+	///
+	/// Not a reason to suppress: AutoCompact observes that keeping the full
+	/// exploration "adds noise that can interfere with the model's subsequent
+	/// reasoning; for example, it may cause the model to revisit hypotheses it
+	/// has already ruled out", and SelfCompact lists "stuck" among its
+	/// *suppress* conditions. Stale exploration is what impairs the next step,
+	/// so a stuck agent is the case compaction exists for — the runtime refutes
+	/// this premise and folds.
+	Stuck,
+	/// There is nothing older worth folding yet.
+	TranscriptMinimal,
+}
+
+impl DeferReason {
+	/// Tolerant token parse: an unknown, empty, or malformed value degrades to
+	/// `None`, which claims nothing and therefore never vetoes a fold.
+	pub fn from_token(token: &str) -> Self {
+		match token.trim().to_ascii_lowercase().as_str() {
+			"mid_derivation" => Self::MidDerivation,
+			"verification_in_flight" => Self::VerificationInFlight,
+			"stuck" => Self::Stuck,
+			"transcript_minimal" => Self::TranscriptMinimal,
+			_ => Self::None,
+		}
+	}
+
+	pub fn as_token(self) -> &'static str {
+		match self {
+			Self::None => "none",
+			Self::MidDerivation => "mid_derivation",
+			Self::VerificationInFlight => "verification_in_flight",
+			Self::Stuck => "stuck",
+			Self::TranscriptMinimal => "transcript_minimal",
+		}
+	}
+
+	/// Whether the reason asserts a step is still running — the only claim a
+	/// runtime-owned plan and the agent's own self-report can corroborate.
+	pub fn claims_step_in_flight(self) -> bool {
+		matches!(self, Self::MidDerivation | Self::VerificationInFlight)
+	}
+}
+
+/// Never fails: the schema is strict, but a provider that omits, nulls, or
+/// invents a token must not abort compression over an advisory field.
+fn defer_reason_from_value<'de, D>(deserializer: D) -> Result<DeferReason, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	let value = serde_json::Value::deserialize(deserializer)?;
+	Ok(match value {
+		serde_json::Value::String(token) => DeferReason::from_token(&token),
+		_ => DeferReason::None,
+	})
+}
+
 /// Typed deserialization target for the model's structured response.
 ///
 /// `#[serde(default)]` on every field is defensive — the schema is strict, so
@@ -63,6 +152,11 @@ pub struct CompressionSummary {
 	/// Empty only on the legacy compression path or when there is no completed
 	/// evidence to fold.
 	pub folded_units: Vec<FoldedUnit>,
+	/// Why the model declined, when it did. Runtime-only judgment input: the
+	/// next eligible fold honours it only if the runtime can corroborate an
+	/// in-flight step, and it is never rendered into the summary.
+	#[serde(deserialize_with = "defer_reason_from_value")]
+	pub defer_reason: DeferReason,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -223,6 +317,38 @@ fn xml_escape(value: &str) -> String {
 		.replace('\'', "&apos;")
 }
 
+/// The fold-timing rubric: when folding helps and when it would cost more
+/// than it frees.
+///
+/// This is SelfCompact's rubric (arXiv:2606.23525), carried as prose because
+/// the JSON path gets no prompt rubric (its schema descriptions carry the
+/// guidance) and the XML path gets no schema. SelfCompact fires when "a
+/// sub-task has resolved, or the trajectory is converging" and suppresses
+/// "mid-derivation, or when stuck"; the text below states exactly those two
+/// conditions in the vocabulary of this codebase. Behavioural guidance, not
+/// wire shape: the tag contract stays in `XML_OUTPUT_SPEC`.
+///
+/// One source of truth: the JSON schema description carries the same constant
+/// to providers that surface schema descriptions, and the prompt carries it
+/// verbatim to providers on the XML path.
+pub const SHOULD_COMPRESS_RULE: &str = "True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. WHEN a fold happens matters as much as what it keeps: folding while a step is half-finished blunts the newest exchange and leaves the agent unable to tell which actions it has already taken, so it repeats them. Answer true at a natural seam — a sub-task just resolved, a check passed, or the work is converging on its answer. Answer false only when a step is genuinely still running (a build or test is in flight, an edit is started but unverified, a hypothesis is being chased), and set defer_reason to name it. A stalled agent is not mid-derivation: when the agent is stuck and re-reading to recover its footing, or the transcript is already minimal, answer true — stale exploration is what impairs the next step, and folding it is the remedy. A deferral is a short reprieve, not a veto: the runtime checks defer_reason against the live plan and the agent's own state and overrules any claim it cannot confirm, and when the context nears its limit the decision is forced regardless.";
+
+/// The forced variant of `SHOULD_COMPRESS_RULE`: under `/done` or the ceiling
+/// margin the model has no veto, so the rule is replaced rather than extended.
+pub const SHOULD_COMPRESS_FORCED_RULE: &str =
+	"Compression has been forced by the user. MUST be true.";
+
+/// What each `defer_reason` token means, and why naming one honestly is in the
+/// model's interest: the runtime corroborates the claim against state it owns.
+pub const DEFER_REASON_RULE: &str = "Only meaningful when should_compress is false: why the fold is deferred. mid_derivation — a build, test, edit, or hypothesis is still running; verification_in_flight — a verification the agent is waiting on has not returned; stuck — the agent is stalled and re-reading; transcript_minimal — there is nothing older worth folding. Use none when should_compress is true. The runtime corroborates an in-flight claim against the live plan and the agent's own state and overrules any claim it cannot confirm, so name the reason honestly rather than picking one to be safe.";
+
+/// The forced variant of `DEFER_REASON_RULE`: under force there is no deferral
+/// to justify, so the field is nailed to `none` rather than explaining buckets
+/// the model may not use. Mirrors `SHOULD_COMPRESS_FORCED_RULE` — the guidance
+/// is replaced, not extended, so nothing in a forced call can invite a veto.
+pub const DEFER_REASON_FORCED_RULE: &str =
+	"Compression has been forced by the user, so there is no deferral to justify. MUST be none.";
+
 /// Build the JSON Schema sent to the provider via `with_schema(..)`.
 ///
 /// `force=true`: model has no veto. `should_compress` MUST be `true`; the
@@ -235,9 +361,14 @@ fn xml_escape(value: &str) -> String {
 /// when `should_compress` is false.
 pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 	let should_compress_desc = if force {
-		"Compression has been forced by the user. MUST be true."
+		SHOULD_COMPRESS_FORCED_RULE
 	} else {
-		"True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. WHEN a fold happens matters as much as what it keeps: folding while a step is half-finished blunts the newest exchange and leaves the agent unable to tell which actions it has already taken, so it repeats them. Answer true at a natural seam — a sub-task just resolved, a check passed, or the work is converging on its answer. Answer false when the agent is mid-derivation (a build or test is in flight, an edit is started but unverified, a hypothesis is being chased) or is stuck and re-reading to recover its footing, and false when the transcript is already minimal. Deferring is a short reprieve, not a veto: when the context nears its limit this decision is forced and the fold happens regardless, so defer only for a genuinely unfinished step, never as a general preference."
+		SHOULD_COMPRESS_RULE
+	};
+	let defer_reason_desc = if force {
+		DEFER_REASON_FORCED_RULE
+	} else {
+		DEFER_REASON_RULE
 	};
 
 	let mut schema = serde_json::json!({
@@ -247,6 +378,17 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 			"should_compress": {
 				"type": "boolean",
 				"description": should_compress_desc
+			},
+			"defer_reason": {
+				"type": "string",
+				"enum": [
+					"none",
+					"mid_derivation",
+					"verification_in_flight",
+					"stuck",
+					"transcript_minimal"
+				],
+				"description": defer_reason_desc
 			},
 			"original_request": {
 				"type": "string",
@@ -382,6 +524,7 @@ pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
 		},
 		"required": [
 			"should_compress",
+			"defer_reason",
 			"original_request",
 			"session_context",
 			"current_task",
@@ -488,6 +631,9 @@ pub fn parse_xml_summary(text: &str) -> Result<CompressionSummary> {
 
 	Ok(CompressionSummary {
 		should_compress,
+		defer_reason: extract_text(body, "defer_reason")
+			.map(|token| DeferReason::from_token(&token))
+			.unwrap_or_default(),
 		original_request: extract_text(body, "original_request").unwrap_or_default(),
 		session_context: extract_text(body, "session_context").unwrap_or_default(),
 		current_task: extract_text(body, "current_task").unwrap_or_default(),
@@ -656,6 +802,7 @@ pub const XML_OUTPUT_SPEC: &str = r#"<output_format>
 Emit ONE single XML document with the following tags, in this order. Every required tag MUST be present. Use the exact tag names below. Do not add additional tags or attributes.
 
 <should_compress>true|false</should_compress>             (required, exactly true or false)
+<defer_reason>none|mid_derivation|verification_in_flight|stuck|transcript_minimal</defer_reason>  (required; use none when should_compress is true)
 <original_request>verbatim MOST RECENT user request</original_request>   (required, may be empty when should_compress is false)
 <session_context>one sentence</session_context>           (required, may be empty when should_compress is false)
 <current_task>1-2 sentences</current_task>                (required, may be empty when should_compress is false)
@@ -709,3 +856,7 @@ Output ONLY the XML. No prose, no code fences, no markdown headers — the respo
 #[cfg(test)]
 #[path = "schema_xml_parser_tests.rs"]
 mod xml_parser_tests;
+
+#[cfg(test)]
+#[path = "schema_defer_tests.rs"]
+mod defer_tests;

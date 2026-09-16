@@ -22,16 +22,18 @@
 //     by JSON schema (see `schema::build_compression_schema`); the prompt
 //     carries only behavioural guidance.
 //   - XML mode (`build_compression_prompt_xml`): for providers without
-//     structured-output support; the prompt additionally embeds the XML
-//     output specification (`schema::XML_OUTPUT_SPEC`) so the model knows
-//     the exact tag shape `schema::parse_xml_summary` will validate against.
+//     structured-output support; the prompt additionally embeds the fold-timing
+//     rubric (`schema::SHOULD_COMPRESS_RULE` / `schema::DEFER_REASON_RULE`, the
+//     same text the JSON schema carries in its descriptions) and the XML output
+//     specification (`schema::XML_OUTPUT_SPEC`) so the model knows both when a
+//     fold helps and the exact tag shape `schema::parse_xml_summary` validates.
 //
 // The user content (transcript + prior knowledge + file refs) is identical
 // across modes — only the system content and the closing task instruction
 // differ.
 
 use super::knowledge::{strip_regrown_sections, SUMMARY_TAG_OPEN_PREFIX};
-use super::schema::XML_OUTPUT_SPEC;
+use super::schema::{DEFER_REASON_RULE, SHOULD_COMPRESS_RULE, XML_OUTPUT_SPEC};
 use crate::session::chat::file_context;
 use crate::session::chat::session::ChatSession;
 
@@ -44,8 +46,10 @@ pub(super) enum OutputMode {
 	/// Schema-driven JSON path (preferred). Provider receives the
 	/// `build_compression_schema(..)` value as `structured_output`.
 	Json,
-	/// XML path. No schema attached; the model is told to emit XML matching
-	/// `XML_OUTPUT_SPEC` and the response is parsed by `parse_xml_summary`.
+	/// XML path. No schema attached; the model reads the fold-timing rubric
+	/// (`SHOULD_COMPRESS_RULE` / `DEFER_REASON_RULE`) and the tag contract
+	/// (`XML_OUTPUT_SPEC`) from the prompt, and the response is parsed by
+	/// `parse_xml_summary`.
 	Xml,
 }
 
@@ -73,9 +77,9 @@ pub(super) fn build_compression_prompt_json(
 /// Build the system and user prompt for the XML-mode compression call.
 ///
 /// Used when the provider does not support structured output. The system
-/// prompt embeds the XML output specification so the model knows the
-/// exact tag contract; the user-side task instruction directs raw-XML
-/// output (no fences, no prose).
+/// prompt embeds the fold-timing rubric and the XML output specification so
+/// the model knows both when a fold helps and the exact tag contract; the
+/// user-side task instruction directs raw-XML output (no fences, no prose).
 pub(super) fn build_compression_prompt_xml(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
@@ -109,7 +113,8 @@ fn build_compression_prompt(
 ) -> (String, String) {
 	// Behavioural guidance shared by both modes: how to choose what to put
 	// where, what to carry forward, what to drop. Mode-specific output
-	// contract is appended (schema reference for JSON, XML spec for XML).
+	// contract is appended — the schema reference for JSON, the fold-timing
+	// rubric plus the tag spec for XML, which has no schema to carry either.
 	let force_directive = if force {
 		"\n<forced>\nThe user has explicitly requested compression. Set should_compress to true and fill every field. Refusal is not an option.\n</forced>"
 	} else {
@@ -121,9 +126,17 @@ fn build_compression_prompt(
 		OutputMode::Xml => "You are a conversation compressor. Read a conversation transcript and emit a faithful structured summary so the session can continue with full working context. Your output is an XML document — the exact tag contract is specified in <output_format> below and is parsed by tag boundaries.",
 	};
 
+	// Behavioural guidance the JSON path receives through its schema
+	// descriptions has to travel in the prompt for providers on the XML path,
+	// which get no schema at all. Same constants, one source of truth. Under
+	// force the model has no veto, so the `<forced>` directive stands alone and
+	// the rubric would contradict it.
 	let mode_appendix = match mode {
 		OutputMode::Json => String::new(),
-		OutputMode::Xml => format!("\n\n{XML_OUTPUT_SPEC}"),
+		OutputMode::Xml if force => format!("\n\n{XML_OUTPUT_SPEC}"),
+		OutputMode::Xml => format!(
+			"\n\n<fold_timing_rule>\n{SHOULD_COMPRESS_RULE}\n\n{DEFER_REASON_RULE}\n</fold_timing_rule>\n\n{XML_OUTPUT_SPEC}"
+		),
 	};
 	let durable_state_rule = if pact.is_some() {
 		"Preserve durable protocol as attributed folded_units with source refs. Legacy critical_knowledge and analysis_findings are wire-compatibility fields in PACT mode: return them empty because the runtime neither renders nor commits their un-attributed prose."

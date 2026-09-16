@@ -53,7 +53,7 @@ commands, or delegation; a tap's fetched manifest determines which capabilities 
 | `/image <path>` | Attach an image to the next message |
 | `/done` | Force context compression and start lesson extraction when learning is enabled |
 | `/clear` | Clear the terminal |
-| `/copy` | Copy the last response |
+| `/copy [scope]` | Copy the last response, or `assistant`/`user`/`all` |
 | `/exit` | Exit the session; `Ctrl+D` also exits interactive input |
 
 For example, inspect a session, finish a task, and then exit:

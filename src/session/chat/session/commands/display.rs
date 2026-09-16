@@ -39,7 +39,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		// (command_with_args, description) for the built-in command listing.
 		let builtins: &[(&str, &str)] = &[
 			(HELP_COMMAND, "Show this help message"),
-			(COPY_COMMAND, "Copy last response to clipboard"),
+			(
+				COPY_COMMAND,
+				"Copy last response, or scope: last|assistant|user|all",
+			),
 			(CLEAR_COMMAND, "Clear the screen"),
 			(LIST_COMMAND, "List all available sessions"),
 			(NEW_COMMAND, "Start a fresh session (optional title)"),

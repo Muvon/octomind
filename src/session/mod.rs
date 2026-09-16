@@ -391,8 +391,6 @@ pub struct SessionInfo {
 	pub last_cache_checkpoint_time: u64,
 	// Runtime state tracking (Phase 2: ChatSession runtime state for proper resume)
 	#[serde(default)]
-	pub cache_next_user_message: bool,
-	#[serde(default)]
 	pub spending_threshold_checkpoint: f64,
 	// Exact post-compression context watermark used by the adaptive controller.
 	#[serde(default)]
@@ -569,7 +567,6 @@ impl Session {
 				current_total_tokens: 0,
 				last_cache_checkpoint_time: timestamp,
 				// Initialize runtime state
-				cache_next_user_message: false,
 				spending_threshold_checkpoint: 0.0,
 
 				context_tokens_after_last_compression: 0,

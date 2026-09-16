@@ -351,24 +351,6 @@ fn test_complete_context_filters() {
 }
 
 #[test]
-fn test_complete_cache_subcommands() {
-	let config = test_config();
-	let completer = CommandCompleter::new(&config, "developer");
-
-	let (start, candidates) = completer.complete("/cache ", 7);
-	assert_eq!(start, 7);
-	assert_eq!(candidates.len(), 3);
-
-	let (_, candidates) = completer.complete("/cache st", 9);
-	assert_eq!(candidates.len(), 1);
-	assert_eq!(candidates[0].replacement, "stats");
-
-	let (_, candidates) = completer.complete("/cache c", 8);
-	assert_eq!(candidates.len(), 1);
-	assert_eq!(candidates[0].replacement, "clear");
-}
-
-#[test]
 fn test_complete_role_names() {
 	let config = test_config();
 	let completer = CommandCompleter::new(&config, "developer");
@@ -552,10 +534,6 @@ fn test_hint_extended() {
 		completer.hint("/context"),
 		Some(" [all|assistant|user|tool|large]".to_string())
 	);
-	assert_eq!(
-		completer.hint("/cache"),
-		Some(" [stats|clear|threshold]".to_string())
-	);
 	assert_eq!(completer.hint("/role"), Some(" <role_name>".to_string()));
 	assert_eq!(completer.hint("/model"), Some(" <model_name>".to_string()));
 
@@ -615,10 +593,6 @@ fn test_hint_extended() {
 	assert_eq!(
 		completer.hint("/mcp "),
 		Some("list|info|full|health|dump|validate".to_string())
-	);
-	assert_eq!(
-		completer.hint("/cache "),
-		Some("stats|clear|threshold".to_string())
 	);
 	assert_eq!(
 		completer.hint("/loglevel "),
@@ -786,8 +760,6 @@ fn test_complete_with_cursor_inside_prefix_lists_all() {
 	assert_eq!(candidates.len(), 6);
 	let (_, candidates) = completer.complete("/context ", 0);
 	assert_eq!(candidates.len(), 5);
-	let (_, candidates) = completer.complete("/cache ", 0);
-	assert_eq!(candidates.len(), 3);
 	let (_, candidates) = completer.complete("/loglevel ", 0);
 	assert_eq!(candidates.len(), 3);
 	let (_, candidates) = completer.complete("/role ", 0);

@@ -124,14 +124,11 @@ fn spending_thresholds_stop_execution_only_when_exceeded() {
 }
 
 #[test]
-fn user_message_resets_turn_state_and_cache_flag() {
+fn user_message_is_added_and_gate_eligible() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.cache_next_user_message = true;
 	session.add_user_message("hello").unwrap();
 	assert_eq!(session.session.messages.len(), 1);
 	assert_eq!(session.session.messages[0].role, "user");
-	// ollama:fake-model does not support caching → flag reset, no marker applied
-	assert!(!session.cache_next_user_message);
 	assert!(session.completion_gate_eligible);
 }
 

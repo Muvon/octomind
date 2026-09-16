@@ -362,8 +362,6 @@ mod adaptive_compression_tests {
 				current_non_cached_tokens: 100, // Simulate some cache activity
 				current_total_tokens: 500,      // This is the cache counter, NOT full context
 				last_cache_checkpoint_time: timestamp,
-				// Runtime state (Phase 2)
-				cache_next_user_message: false,
 				spending_threshold_checkpoint: 0.0,
 				context_tokens_after_last_compression: 0,
 				turn_call_counts: Vec::new(),

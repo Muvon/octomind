@@ -718,7 +718,6 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 		"cov-resume-runtime",
 		vec![
 			serde_json::json!({"type": "COMMAND", "command": "/role task_refiner"}),
-			serde_json::json!({"type": "COMMAND", "command": "/cache"}),
 			serde_json::json!({"type": "KNOWLEDGE_ENTRY", "content": "keep the widget minimal"}),
 			serde_json::to_value(&user_msg).unwrap(),
 		],

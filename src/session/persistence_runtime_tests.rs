@@ -47,7 +47,6 @@ fn test_runtime_state_replays_commands_across_restoration_point() {
 		&path,
 		json!({"type": "COMMAND", "command": "/model ollama:after"}),
 	);
-	append(&path, json!({"type": "COMMAND", "command": "/cache"}));
 	append(
 		&path,
 		json!({"type": "KNOWLEDGE_ENTRY", "content": "fresh knowledge"}),
@@ -62,7 +61,6 @@ fn test_runtime_state_replays_commands_across_restoration_point() {
 	assert_eq!(state.model.as_deref(), Some("ollama:after"));
 	assert_eq!(state.role, None, "role predates the restoration point");
 	assert_eq!(state.reasoning_effort, None);
-	assert!(state.cache_next_message);
 	assert_eq!(
 		state.critical_knowledge,
 		vec!["fresh knowledge".to_string()]

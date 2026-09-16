@@ -248,7 +248,6 @@ async fn test_ws_session_message_roundtrip() {
 		("mcp", serde_json::json!(["list"])),
 		("effort", serde_json::json!(["low"])),
 		("loglevel", serde_json::json!(["none"])),
-		("cache", serde_json::json!([])),
 		("report", serde_json::json!([])),
 	]
 	.into_iter()

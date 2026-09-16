@@ -75,7 +75,6 @@ impl ChatSession {
 	fn sync_runtime_state(&mut self) {
 		crate::supervisor::authorizer::sync(self);
 		self.session.info.role = self.role.clone();
-		self.session.info.cache_next_user_message = self.cache_next_user_message;
 		self.session.info.spending_threshold_checkpoint = self.spending_threshold_checkpoint;
 		// Snapshot the verify-gate's ground truth so a resume restores the
 		// still-open turn's recorded actions instead of an empty ledger.
@@ -370,28 +369,6 @@ impl ChatSession {
 		// task's tree, so letting it reach this turn's first round fold could clear
 		// a change it never saw.
 		let _ = crate::supervisor::delegate::take_handback();
-
-		// Check if we should cache this user message (after push, so the message exists
-		// at a known index and the cache manager can enforce the 2-marker limit).
-		if self.cache_next_user_message {
-			let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
-			if supports_caching {
-				let cache_manager = crate::session::cache::CacheManager::new();
-				if let Ok(true) = cache_manager
-					.apply_cache_to_current_user_message(&mut self.session, supports_caching)
-				{
-					if !crate::logging::tracing_setup::is_structured_output_mode() {
-						use colored::*;
-						println!(
-							"{}",
-							"✓ Current user message marked for caching".bright_green()
-						);
-					}
-				}
-			}
-			// Reset the flag after applying (or attempting to apply) cache
-			self.cache_next_user_message = false;
-		}
 
 		Ok(())
 	}

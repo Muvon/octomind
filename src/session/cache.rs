@@ -315,7 +315,7 @@ impl CacheManager {
 	}
 
 	/// Apply cache marker to a specific message immediately
-	/// This is used when /cache command is used or auto-cache threshold is reached
+	/// This is used by the auto-cache threshold check.
 	pub fn apply_cache_to_message(
 		&self,
 		session: &mut Session,
@@ -391,27 +391,6 @@ impl CacheManager {
 		}
 
 		Ok(false)
-	}
-
-	/// Apply cache marker to the current user message when /cache command is used
-	/// This should be called AFTER the user message is added but BEFORE the API request
-	pub fn apply_cache_to_current_user_message(
-		&self,
-		session: &mut Session,
-		supports_caching: bool,
-	) -> Result<bool> {
-		if !supports_caching {
-			return Ok(false);
-		}
-
-		// Find the last user message
-		for (i, msg) in session.messages.iter().enumerate().rev() {
-			if msg.role == "user" {
-				return self.apply_cache_to_message(session, i, supports_caching);
-			}
-		}
-
-		Err(anyhow::anyhow!("No user message found to cache"))
 	}
 }
 

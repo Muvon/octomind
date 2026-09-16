@@ -280,3 +280,34 @@ fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
 		"a system-managed injection must not clear the cooldown"
 	);
 }
+
+#[test]
+fn user_turn_clears_a_pending_fold_deferral_but_system_managed_injection_does_not() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.fold_deferral = Some(
+		crate::session::chat::conversation_compression::FoldDeferral {
+			reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
+			step: Some(0),
+		},
+	);
+
+	session
+		.add_system_managed_user_message("control-plane note")
+		.unwrap();
+	assert_eq!(
+		session.fold_deferral,
+		Some(
+			crate::session::chat::conversation_compression::FoldDeferral {
+				reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
+				step: Some(0),
+			}
+		),
+		"a system-managed injection must not clear a deferral"
+	);
+
+	session.add_user_message("new request").unwrap();
+	assert_eq!(
+		session.fold_deferral, None,
+		"a genuine user turn is a natural seam and must clear a pending deferral"
+	);
+}

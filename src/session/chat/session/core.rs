@@ -229,6 +229,15 @@ pub struct ChatSession {
 	/// when a background fold fails or is discarded, so a broken folder is
 	/// retried on the runway ladder instead of on every round.
 	pub fold_cooldown_until_call: usize,
+	/// The decision model's last decline, with the plan step it was about
+	/// (runtime-only). A bare refusal carries nothing to judge, so the reason is
+	/// recorded and the next eligible fold weighs it against state the runtime
+	/// owns — that same plan step still open, and an agent that does not report
+	/// itself blocked. A model's timing judgment is the part it is documented to
+	/// get wrong, so a claim the runtime cannot corroborate is overruled instead
+	/// of obeyed, and a claim about a step that has since advanced lapses.
+	/// `None` means no deferral is pending.
+	pub fold_deferral: Option<crate::session::chat::conversation_compression::FoldDeferral>,
 	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
 	/// Critical knowledge entries extracted from compressions — persisted across
@@ -434,6 +443,7 @@ impl ChatSession {
 			cached_tools: None,          // Initialize tool cache (populated on first use)
 			fold_job: None,
 			fold_cooldown_until_call: 0,
+			fold_deferral: None,
 			schema: None, // Schema set later via CLI override
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),
@@ -649,6 +659,7 @@ impl ChatSession {
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						fold_job: None,
 						fold_cooldown_until_call: 0,
+						fold_deferral: None,
 						schema: None,                   // Schema applied after init via CLI override
 						critical_knowledge: Vec::new(), // Will be restored from session log below
 						analysis_findings: Vec::new(),
@@ -1466,6 +1477,7 @@ impl ChatSession {
 			cached_tools: None,
 			fold_job: None,
 			fold_cooldown_until_call: 0,
+			fold_deferral: None,
 			schema: None,
 			critical_knowledge: Vec::new(),
 			analysis_findings: Vec::new(),

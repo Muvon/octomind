@@ -19,6 +19,7 @@
 // line, the fold depth, and whether a fold behind the line is amortized by the
 // work this session's own pace predicts.
 
+use super::schema::DeferReason;
 use crate::log_debug;
 use crate::session::chat::session::ChatSession;
 
@@ -178,6 +179,77 @@ pub(super) const MAX_COMPRESSION_RATIO: f64 = 16.0;
 /// runway projections when a session is too young to have a symmetry signal.
 pub(super) const MIN_RUNWAY_TURNS: f64 = 5.0;
 
+/// A recorded fold deferral: the model's reason plus the plan step that was
+/// open when it declined.
+///
+/// The reason is the model's claim; the step is the runtime's own bookkeeping.
+/// Keeping both is what makes the claim checkable — see `stands_against`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FoldDeferral {
+	pub reason: DeferReason,
+	/// Plan step index at the moment of the decline, `None` when no plan was
+	/// active. Identity, not liveness: see `stands_against`.
+	pub step: Option<usize>,
+}
+
+impl FoldDeferral {
+	/// Whether the deferral still stands against the plan's current step and
+	/// the agent's own self-report.
+	///
+	/// Identity, not liveness. A claim that a step is in flight stands only
+	/// while that SAME step is still open. Testing a bare "a plan exists"
+	/// instead would let one paid decline suppress every soft fold for the
+	/// plan's whole life: a held round makes no fold call, so nothing can
+	/// re-record the reason, and the next judgment would keep honouring a claim
+	/// about work that has since advanced.
+	pub(super) fn stands_against(self, current_step: Option<usize>, agent_blocked: bool) -> bool {
+		!agent_blocked
+			&& self.reason.claims_step_in_flight()
+			&& matches!(
+				(self.step, current_step),
+				(Some(recorded), Some(current)) if recorded == current
+			)
+	}
+}
+
+/// Whether a fold must happen regardless of the decision model's veto: `/done`,
+/// the ceiling margin, or a deferral the runtime cannot corroborate. Escalation
+/// bypasses the veto, not the fire line — the caller only reaches it past the
+/// line — and a forced fold that also fails falls back to the normal cooldown
+/// instead of retrying.
+pub(super) fn fold_is_forced(
+	force_done: bool,
+	force_ceiling: bool,
+	deferral: Option<FoldDeferral>,
+	current_step: Option<usize>,
+	agent_blocked: bool,
+) -> bool {
+	force_done || force_ceiling || !deferral_stands(deferral, current_step, agent_blocked)
+}
+
+/// Whether a recorded deferral still stands against state the runtime owns.
+///
+/// A model judges *what* to preserve well and *when* to fold badly
+/// (AutoCompact, SWE-bench Verified), so its veto is treated as a claim to
+/// check, never an order to obey — this is AutoCompact's judge, without the
+/// training loop. Only a claim that a step is in flight can be corroborated —
+/// and only while the same plan step is still open and the agent does not
+/// report itself blocked. `stuck`, `transcript_minimal`, a missing or
+/// unrecognised reason, and an in-flight claim with no step behind it are all
+/// premises the runtime can refute, so the fold proceeds. `None` means no
+/// deferral is pending at all: there is nothing to overrule and nothing to
+/// force.
+pub(super) fn deferral_stands(
+	deferral: Option<FoldDeferral>,
+	current_step: Option<usize>,
+	agent_blocked: bool,
+) -> bool {
+	match deferral {
+		None => true,
+		Some(deferral) => deferral.stands_against(current_step, agent_blocked),
+	}
+}
+
 /// Inside the ceiling margin: fewer than `MIN_RUNWAY_TURNS` calls of measured
 /// growth remain before the hard ceiling. Everything here is forced and
 /// inline — no background job, no decision-model veto — because the next few
@@ -269,7 +341,7 @@ pub(super) fn autonomous_runway(consecutive_compressions: u32) -> f64 {
 }
 
 /// The soft trigger. Geometric per-turn ladder: the k-th consecutive
-/// autonomous fold (or paid decline) in one turn doubles the line —
+/// autonomous fold in one turn doubles the line —
 /// threshold, 2x, 4x… capped just under the ceiling — so a single long turn
 /// earns progressively more room instead of re-folding at the same mark
 /// (measured failure: 7 folds in 4 turns, each at ~80k). A genuine user turn

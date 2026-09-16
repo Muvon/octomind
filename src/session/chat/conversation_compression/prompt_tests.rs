@@ -11,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+use super::super::schema::{
+	build_compression_schema, DEFER_REASON_FORCED_RULE, DEFER_REASON_RULE,
+	SHOULD_COMPRESS_FORCED_RULE, SHOULD_COMPRESS_RULE,
+};
 use super::*;
 
 #[test]
@@ -119,6 +123,67 @@ fn force_directive_is_emitted_only_for_forced_calls() {
 	assert!(forced_system.contains("<forced>"));
 	let (plain_system, _) = build_compression_prompt_json(&session, &messages, None, false, 2.0);
 	assert!(!plain_system.contains("<forced>"));
+}
+
+/// The fold-timing rubric is behavioural guidance, so it has to reach the model
+/// on both wire modes: providers that enforce a response schema read it in the
+/// schema descriptions, and providers on the XML path — which receive no schema
+/// at all — read the same text from the prompt. One source of truth, or the two
+/// modes drift and XML providers lose the timing guidance entirely.
+#[test]
+fn xml_mode_carries_the_fold_timing_rubric_in_the_prompt() {
+	let session = ChatSession::for_tests(Vec::new());
+	let messages = vec![role_message("user", "fix the parser")];
+	let (system, _) = build_compression_prompt_xml(&session, &messages, None, false, 2.0);
+
+	assert!(system.contains("<fold_timing_rule>"));
+	assert!(system.contains(SHOULD_COMPRESS_RULE));
+	assert!(system.contains(DEFER_REASON_RULE));
+}
+
+#[test]
+fn json_mode_leaves_the_rubric_to_the_schema_descriptions() {
+	let session = ChatSession::for_tests(Vec::new());
+	let messages = vec![role_message("user", "fix the parser")];
+	let (system, _) = build_compression_prompt_json(&session, &messages, None, false, 2.0);
+
+	assert!(!system.contains("<fold_timing_rule>"));
+
+	let schema = build_compression_schema(false, false);
+	assert_eq!(
+		schema["properties"]["should_compress"]["description"],
+		serde_json::json!(SHOULD_COMPRESS_RULE)
+	);
+	assert_eq!(
+		schema["properties"]["defer_reason"]["description"],
+		serde_json::json!(DEFER_REASON_RULE)
+	);
+}
+
+/// Under force the model has no veto, so the rubric is not merely unnecessary —
+/// emitting it would contradict the directive stating that refusal is not an
+/// option. Both wire modes carry the forced rule instead.
+#[test]
+fn forced_calls_emit_the_directive_without_the_veto_rubric() {
+	let session = ChatSession::for_tests(Vec::new());
+	let messages = vec![role_message("user", "fix the parser")];
+	let (system, _) = build_compression_prompt_xml(&session, &messages, None, true, 2.0);
+
+	assert!(system.contains("<forced>"));
+	assert!(!system.contains("<fold_timing_rule>"));
+
+	let schema = build_compression_schema(true, false);
+	assert_eq!(
+		schema["properties"]["should_compress"]["description"],
+		serde_json::json!(SHOULD_COMPRESS_FORCED_RULE)
+	);
+	// The deferral field is required by the strict schema, so it cannot be
+	// dropped — but its guidance is replaced the same way, or a forced call
+	// would carry a rubric inviting the very veto it forbids.
+	assert_eq!(
+		schema["properties"]["defer_reason"]["description"],
+		serde_json::json!(DEFER_REASON_FORCED_RULE)
+	);
 }
 
 #[test]

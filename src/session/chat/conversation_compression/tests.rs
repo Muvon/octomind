@@ -1,13 +1,15 @@
 use super::collect_preserved_skills;
 use super::decision::{
-	compression_depth, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
+	compression_depth, FoldDeferral, MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO, MIN_RUNWAY_TURNS,
 };
 use super::knowledge::{
 	analysis_findings_tokens, format_compressed_entry_with_context, latest_analysis_findings,
 	select_findings_with_vectors, select_newest_with_budget, strip_regrown_sections,
 };
 use super::range::{find_compression_range, find_compression_range_preserving_turn};
-use super::schema::{is_summary_substantive, render_summary, CompressionSummary, KeyEntities};
+use super::schema::{
+	is_summary_substantive, render_summary, CompressionSummary, DeferReason, KeyEntities,
+};
 use super::{preserves_active_skills, CompressionTrigger};
 use crate::session::Message;
 use serde_json::json;
@@ -3030,7 +3032,8 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 }
 
 /// A paid decline frees nothing, so it must not climb the fire-line ladder;
-/// it holds the next unforced attempt for one runway instead.
+/// it holds the next unforced attempt for one runway instead, and its reason
+/// is recorded for the next eligible fold to judge.
 #[tokio::test]
 async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
 	let config = fold_config();
@@ -3062,6 +3065,103 @@ async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
 	let runway = super::decision::autonomous_runway(1) as usize;
 	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
 	assert_eq!(session.session.messages.len(), 3);
+	assert_eq!(
+		session.fold_deferral,
+		Some(FoldDeferral {
+			reason: DeferReason::None,
+			step: None,
+		}),
+		"a reasonless veto is recorded as `none` — a claim the runtime then refutes"
+	);
+}
+
+/// The reason is the judgment input: a veto that claims a step is in flight is
+/// held only if the runtime can corroborate it, so the exact reason the model
+/// named must survive the paid round trip.
+#[tokio::test]
+async fn finish_fold_records_the_models_defer_reason() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system"),
+		fold_message("user", "task"),
+		fold_message("assistant", "work"),
+	]);
+	session.session.info.consecutive_compressions = 1;
+	session.session.info.total_api_calls = 10;
+	let fingerprint = super::fold_fingerprint(&session.session.messages, 0, 2);
+	let summary = CompressionSummary {
+		should_compress: false,
+		defer_reason: DeferReason::MidDerivation,
+		..Default::default()
+	};
+	let applied = super::finish_fold(
+		&mut session,
+		&config,
+		fold_ctx(0, 2, fingerprint),
+		summary,
+		None,
+		false,
+		false,
+	)
+	.await
+	.expect("finish veto");
+
+	assert!(!applied);
+	assert_eq!(
+		session.fold_deferral,
+		Some(FoldDeferral {
+			reason: DeferReason::MidDerivation,
+			step: None,
+		}),
+		"the reason survives the round trip, paired with the plan step it was about"
+	);
+	assert_eq!(session.session.info.consecutive_compressions, 1);
+	let runway = super::decision::autonomous_runway(1) as usize;
+	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
+	assert_eq!(session.session.messages.len(), 3);
+}
+
+/// A deferral is spent by the fold it was waiting for: once the fold lands,
+/// the next decline must earn its own reason rather than inherit this one.
+#[tokio::test]
+async fn finish_fold_landing_spends_a_pending_deferral() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "stabilise the deploy pipeline"),
+		fold_message("assistant", "investigating"),
+		fold_message("assistant", "found the race"),
+	]);
+	session.fold_deferral = Some(FoldDeferral {
+		reason: DeferReason::MidDerivation,
+		step: Some(0),
+	});
+	let (start, end) =
+		find_compression_range_preserving_turn(&session.session.messages, true, false)
+			.expect("compressible range");
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "stabilise the deploy pipeline".to_string(),
+		..Default::default()
+	};
+	let applied = super::finish_fold(
+		&mut session,
+		&config,
+		fold_ctx(
+			start,
+			end,
+			super::fold_fingerprint(&session.session.messages, start, end),
+		),
+		summary,
+		None,
+		true,
+		false,
+	)
+	.await
+	.expect("forced fold");
+
+	assert!(applied);
+	assert_eq!(session.fold_deferral, None);
 }
 
 #[tokio::test]

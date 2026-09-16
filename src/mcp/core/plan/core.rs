@@ -80,6 +80,20 @@ pub fn has_active_plan() -> bool {
 	storage.has_active_plan().unwrap_or(false)
 }
 
+/// The plan's current step index, or `None` when no plan is active.
+///
+/// Identity rather than liveness: a deferral is corroborated only while the
+/// SAME step it was recorded against is still open, so a held round cannot
+/// inherit a claim about work that has since advanced.
+pub fn active_step_index() -> Option<usize> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+	storage.get_current_task_index().ok()
+}
+
 /// Appended to plan recitations and the compaction fold prompt when the active
 /// plan was last touched before the latest real user message: the plan
 /// predates the current request and needs explicit confirmation, not silent

@@ -44,9 +44,8 @@ fn autonomous_runway_expands_until_a_user_turn_resets_the_counter() {
 
 #[test]
 fn adaptive_fire_line_doubles_per_consecutive_fold() {
-	// Level 0 fires at the configured threshold; each in-turn fold (or
-	// paid decline) doubles it; the cap sits one safety margin under the
-	// ceiling.
+	// Level 0 fires at the configured threshold; each in-turn fold doubles
+	// it; the cap sits one safety margin under the ceiling.
 	assert_eq!(adaptive_fire_line(70_000, 200_000, 0, 2_000.0, 0), 70_000);
 	assert_eq!(
 		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1),

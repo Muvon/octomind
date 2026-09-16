@@ -102,3 +102,43 @@ fn test_next_hint_token_splits_first_word() {
 	// Hint for /mc completes toward /mcp — the next token is a single word
 	assert!(!adapter.next_hint_token().contains(' '));
 }
+/// Foreground color of the styled segment whose text is exactly `text`.
+fn segment_color(styled: &reedline::StyledText, text: &str) -> Option<Color> {
+	styled
+		.buffer
+		.iter()
+		.find(|(_, segment)| segment == text)
+		.unwrap_or_else(|| panic!("no segment {text:?} in {:?}", styled.buffer))
+		.0
+		.foreground
+}
+
+#[test]
+fn test_highlighter_colors_first_argument() {
+	let (adapter, ..) = adapter();
+
+	// A valid scope is green, an invalid one red; the text is preserved verbatim
+	let valid = adapter.highlight("/copy last", 0);
+	assert_eq!(styled_to_string(&valid), "/copy last");
+	assert_eq!(segment_color(&valid, "last"), Some(Color::Green));
+
+	let invalid = adapter.highlight("/copy bogus", 0);
+	assert_eq!(styled_to_string(&invalid), "/copy bogus");
+	assert_eq!(segment_color(&invalid, "bogus"), Some(Color::Red));
+
+	// Everything after the first argument stays plain
+	let with_rest = adapter.highlight("/status agents abc", 0);
+	assert_eq!(styled_to_string(&with_rest), "/status agents abc");
+	assert_eq!(segment_color(&with_rest, "agents"), Some(Color::Green));
+	assert_eq!(segment_color(&with_rest, " abc"), None);
+
+	// Commands with free-form arguments are never validated
+	let free_form = adapter.highlight("/run whatever", 0);
+	assert_eq!(styled_to_string(&free_form), "/run whatever");
+	assert_eq!(segment_color(&free_form, " whatever"), None);
+
+	// A partial command name is not a known command — nothing is validated
+	let partial = adapter.highlight("/co last", 0);
+	assert_eq!(styled_to_string(&partial), "/co last");
+	assert_eq!(segment_color(&partial, " last"), None);
+}

@@ -50,13 +50,18 @@ fn test_find_at_query() {
 }
 
 #[test]
-fn test_is_image_file() {
-	assert!(CC::is_image_file("photo.PNG"));
-	assert!(CC::is_image_file("dir/pic.jpeg"));
-	assert!(CC::is_image_file("icon.svg"));
-	assert!(!CC::is_image_file("doc.pdf"));
-	assert!(!CC::is_image_file("main.rs"));
-	assert!(!CC::is_image_file("png"));
+fn test_is_media_file() {
+	assert!(CC::is_media_file("photo.PNG", MediaKind::Image));
+	assert!(CC::is_media_file("dir/pic.jpeg", MediaKind::Image));
+	assert!(CC::is_media_file("icon.svg", MediaKind::Image));
+	assert!(!CC::is_media_file("doc.pdf", MediaKind::Image));
+	assert!(!CC::is_media_file("main.rs", MediaKind::Image));
+	assert!(!CC::is_media_file("png", MediaKind::Image));
+
+	// Video accepts its own set only
+	assert!(CC::is_media_file("clip.MP4", MediaKind::Video));
+	assert!(CC::is_media_file("clip.mkv", MediaKind::Video));
+	assert!(!CC::is_media_file("photo.png", MediaKind::Video));
 }
 
 #[test]
@@ -117,18 +122,18 @@ fn test_complete_file_path_directory_listing() {
 
 	// Trailing slash lists the directory: dirs first (with trailing /),
 	// image files included, non-image files excluded
-	let listing = CC::complete_file_path(&format!("{}/", base.display()));
+	let listing = CC::complete_file_path(&format!("{}/", base.display()), MediaKind::Image);
 	assert_eq!(listing.len(), 2);
 	assert!(listing[0].replacement.ends_with("subdir/"));
 	assert!(listing[1].replacement.ends_with("pic.png"));
 
 	// Filename prefix filtering is case-insensitive
-	let filtered = CC::complete_file_path(&format!("{}/PI", base.display()));
+	let filtered = CC::complete_file_path(&format!("{}/PI", base.display()), MediaKind::Image);
 	assert_eq!(filtered.len(), 1);
 	assert!(filtered[0].replacement.ends_with("pic.png"));
 
 	// Non-matching prefix yields nothing
-	assert!(CC::complete_file_path(&format!("{}/zz", base.display())).is_empty());
+	assert!(CC::complete_file_path(&format!("{}/zz", base.display()), MediaKind::Image).is_empty());
 }
 
 /// Cache-dependent assertions live in ONE test: FILE_CACHE is a process
@@ -391,6 +396,129 @@ fn test_complete_skill_no_match_is_empty() {
 }
 
 #[test]
+fn test_complete_copy_scopes() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/copy ", 6);
+	assert_eq!(start, 6);
+	assert_eq!(candidates.len(), 4);
+
+	let (_, candidates) = completer.complete("/copy a", 7);
+	assert_eq!(candidates.len(), 2);
+	assert_eq!(candidates[0].replacement, "assistant");
+	assert_eq!(candidates[1].replacement, "all");
+
+	let (_, candidates) = completer.complete("/copy last", 10);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "last");
+}
+
+#[test]
+fn test_complete_effort_levels() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/effort ", 8);
+	assert_eq!(start, 8);
+	assert_eq!(candidates.len(), 5);
+
+	let (_, candidates) = completer.complete("/effort x", 9);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "xhigh");
+}
+
+#[test]
+fn test_complete_status_views() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/status ", 8);
+	assert_eq!(start, 8);
+	assert_eq!(candidates.len(), 3);
+
+	let (_, candidates) = completer.complete("/status j", 9);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "jobs");
+}
+
+#[test]
+fn test_complete_schedule_subcommands() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/schedule ", 10);
+	assert_eq!(start, 10);
+	assert_eq!(candidates.len(), 5);
+
+	let (_, candidates) = completer.complete("/schedule re", 12);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "remove");
+}
+
+#[test]
+fn test_complete_learning_subcommands() {
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	let (start, candidates) = completer.complete("/learning ", 10);
+	assert_eq!(start, 10);
+	assert_eq!(candidates.len(), 5);
+
+	let (_, candidates) = completer.complete("/learning ev", 12);
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].replacement, "evolution");
+}
+
+#[test]
+fn test_complete_video_file_completion() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let base = tmp.path();
+	std::fs::write(base.join("clip.mp4"), b"x").expect("write video");
+	std::fs::write(base.join("pic.png"), b"x").expect("write image");
+
+	let config = test_config();
+	let completer = CommandCompleter::new(&config, "developer");
+
+	// Video formats only — the image in the same directory is excluded
+	let line = format!("/video {}/", base.display());
+	let (start, candidates) = completer.complete(&line, line.len());
+	assert_eq!(start, 7);
+	assert!(!candidates
+		.iter()
+		.any(|c| c.replacement.ends_with("pic.png")));
+	assert!(candidates
+		.iter()
+		.any(|c| c.replacement.ends_with("clip.mp4")));
+}
+
+#[test]
+fn test_argument_candidates_cover_alias_and_unknown() {
+	// Enumerable first arguments
+	assert_eq!(CC::argument_candidates("/copy").map(|c| c.len()), Some(4));
+	assert!(CC::argument_candidates("/loglevel")
+		.expect("loglevel")
+		.contains(&"debug"));
+
+	// Aliases the handlers accept must be present, or highlighting would mark
+	// a valid argument red
+	assert!(CC::argument_candidates("/schedule")
+		.expect("schedule")
+		.contains(&"rm"));
+	assert!(CC::argument_candidates("/learning")
+		.expect("learning")
+		.contains(&"get"));
+	assert!(CC::argument_candidates("/effort")
+		.expect("effort")
+		.contains(&"x-high"));
+
+	// Commands with free-form or dynamic arguments are not validated
+	assert!(CC::argument_candidates("/run").is_none());
+	assert!(CC::argument_candidates("/model").is_none());
+	assert!(CC::argument_candidates("/zzz").is_none());
+}
+
+#[test]
 fn test_complete_command_prefix_filtering() {
 	let config = test_config();
 	let completer = CommandCompleter::new(&config, "developer");
@@ -431,6 +559,42 @@ fn test_hint_extended() {
 	assert_eq!(completer.hint("/role"), Some(" <role_name>".to_string()));
 	assert_eq!(completer.hint("/model"), Some(" <model_name>".to_string()));
 
+	assert_eq!(
+		completer.hint("/copy"),
+		Some(" [last|assistant|user|all]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/effort"),
+		Some(" [low|medium|high|xhigh|max]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/status"),
+		Some(" [agents|monitors|jobs]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/schedule"),
+		Some(" [list|remove|add|edit|help]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/learning"),
+		Some(" [list|show|delete|clear|evolution]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/video"),
+		Some(" <path_to_video>".to_string())
+	);
+	assert_eq!(
+		completer.hint("/workflow"),
+		Some(" <name> [input...]".to_string())
+	);
+	assert_eq!(
+		completer.hint("/skill"),
+		Some(" [<name>|<page>|*pattern*]".to_string())
+	);
+	assert_eq!(completer.hint("/list"), Some(" [page]".to_string()));
+	assert_eq!(completer.hint("/rename"), Some(" [title]".to_string()));
+	assert_eq!(completer.hint("/new"), Some(" [title]".to_string()));
+
 	// Empty-arg hints (guard is >= so the empty branch is reachable)
 	assert_eq!(
 		completer.hint("/image "),
@@ -465,12 +629,54 @@ fn test_hint_extended() {
 		Some("Start typing model name...".to_string())
 	);
 
+	assert_eq!(
+		completer.hint("/copy "),
+		Some("last|assistant|user|all".to_string())
+	);
+	assert_eq!(
+		completer.hint("/effort "),
+		Some("low|medium|high|xhigh|max".to_string())
+	);
+	assert_eq!(
+		completer.hint("/status "),
+		Some("agents|monitors|jobs".to_string())
+	);
+	assert_eq!(
+		completer.hint("/schedule "),
+		Some("list|remove|add|edit|help".to_string())
+	);
+	assert_eq!(
+		completer.hint("/learning "),
+		Some("list|show|delete|clear|evolution".to_string())
+	);
+	assert_eq!(
+		completer.hint("/video "),
+		Some("Start typing video file path...".to_string())
+	);
+	assert_eq!(
+		completer.hint("/workflow "),
+		Some("Start typing workflow name...".to_string())
+	);
+	assert_eq!(
+		completer.hint("/skill "),
+		Some("Start typing skill name...".to_string())
+	);
+
 	// Non-empty arg falls through to the completer
 	assert_eq!(completer.hint("/image x"), None);
 	assert_eq!(completer.hint("/mcp li"), None);
 	assert_eq!(completer.hint("/loglevel d"), None);
 	assert_eq!(completer.hint("/role x"), None);
 	assert_eq!(completer.hint("/model x"), None);
+
+	assert_eq!(completer.hint("/copy x"), None);
+	assert_eq!(completer.hint("/effort x"), None);
+	assert_eq!(completer.hint("/status x"), None);
+	assert_eq!(completer.hint("/schedule x"), None);
+	assert_eq!(completer.hint("/learning x"), None);
+	assert_eq!(completer.hint("/video x"), None);
+	assert_eq!(completer.hint("/workflow x"), None);
+	assert_eq!(completer.hint("/skill x"), None);
 
 	// Prefix completion of a unique command
 	assert_eq!(completer.hint("/hel"), Some("p".to_string()));
@@ -494,10 +700,10 @@ fn test_hint_role_lists_configured_roles() {
 #[test]
 fn test_complete_file_path_edge_cases() {
 	// Missing directory under ~ expands and fails to list — empty, no panic
-	assert!(CC::complete_file_path("~/definitely_missing_dir_xyz/").is_empty());
+	assert!(CC::complete_file_path("~/definitely_missing_dir_xyz/", MediaKind::Image).is_empty());
 
 	// Empty part lists the cwd (repo root during tests) — dirs sort first
-	let cwd_listing = CC::complete_file_path("");
+	let cwd_listing = CC::complete_file_path("", MediaKind::Image);
 	assert!(!cwd_listing.is_empty());
 	assert!(cwd_listing[0].replacement.ends_with('/'));
 
@@ -507,7 +713,7 @@ fn test_complete_file_path_edge_cases() {
 	let base = tmp.path();
 	std::fs::create_dir(base.join("subdir")).expect("mkdir");
 	std::fs::write(base.join("pic.png"), b"x").expect("write image");
-	let listing = CC::complete_file_path(&format!("{}/", base.display()));
+	let listing = CC::complete_file_path(&format!("{}/", base.display()), MediaKind::Image);
 	assert_eq!(listing.len(), 2);
 	assert!(listing[0]
 		.replacement
@@ -529,7 +735,7 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 
 	// "~/" with a trailing slash lists home contents as absolute paths
 	// (the tilde rewrite only applies to non-slash input below)
-	let home_listing = CC::complete_file_path("~/");
+	let home_listing = CC::complete_file_path("~/", MediaKind::Image);
 	assert!(!home_listing.is_empty());
 	assert!(
 		home_listing
@@ -545,7 +751,7 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	// "~/name" without a slash converts the match back to tilde notation
 	let probe = home.join("octomind_complete_probe");
 	std::fs::create_dir_all(&probe).expect("mkdir probe");
-	let matches = CC::complete_file_path("~/octomind_complete_probe");
+	let matches = CC::complete_file_path("~/octomind_complete_probe", MediaKind::Image);
 	assert!(
 		matches
 			.iter()
@@ -555,13 +761,13 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	std::fs::remove_dir(&probe).expect("cleanup probe");
 
 	// Relative single-segment path: empty parent resolves to the cwd
-	let rel = CC::complete_file_path("sr");
+	let rel = CC::complete_file_path("sr", MediaKind::Image);
 	assert!(!rel.is_empty());
 	assert!(rel[0].replacement.starts_with("sr"));
 
 	// Absolute path INSIDE the cwd (no trailing slash) is rewritten relative to it
 	let cwd = std::env::current_dir().expect("cwd");
-	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()));
+	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()), MediaKind::Image);
 	assert!(!inside.is_empty());
 	assert!(
 		inside.iter().all(|c| !c.replacement.starts_with('/')),

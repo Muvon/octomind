@@ -239,6 +239,14 @@ pub enum ReasoningEffortConfig {
 }
 
 impl ReasoningEffortConfig {
+	/// Every level, in ascending order — the set `/effort` accepts.
+	pub const ALL: [ReasoningEffortConfig; 5] = [
+		ReasoningEffortConfig::Low,
+		ReasoningEffortConfig::Medium,
+		ReasoningEffortConfig::High,
+		ReasoningEffortConfig::XHigh,
+		ReasoningEffortConfig::Max,
+	];
 	pub fn to_octolib(self) -> octolib::llm::ReasoningEffort {
 		match self {
 			ReasoningEffortConfig::Low => octolib::llm::ReasoningEffort::Low,

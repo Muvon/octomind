@@ -13,6 +13,8 @@
 // limitations under the License.
 
 // Implementation of a command completer for reedline
+use crate::config::ReasoningEffortConfig;
+use crate::session::chat::session::commands::CopyScope;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use lazy_static::lazy_static;
@@ -29,6 +31,29 @@ pub struct Pair {
 
 lazy_static! {
 	static ref FILE_CACHE: Mutex<Option<Vec<String>>> = Mutex::new(None);
+}
+/// Which media kind a file-completion arm accepts.
+#[derive(Clone, Copy)]
+enum MediaKind {
+	Image,
+	Video,
+}
+
+impl MediaKind {
+	/// Extensions without a leading dot, compared against the path's extension.
+	/// Video is taken from the video processor so completion and attach-time
+	/// validation cannot drift apart.
+	fn extensions(self) -> &'static [&'static str] {
+		match self {
+			// Wider than the model's accepted image set: the user may type these,
+			// and attach-time validation reports the real support.
+			Self::Image => &[
+				"png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "ico", "svg", "avif", "heic",
+				"heif",
+			],
+			Self::Video => crate::session::video::VideoProcessor::supported_extensions(),
+		}
+	}
 }
 
 pub(crate) struct CommandCompleter<'a> {
@@ -83,17 +108,73 @@ impl<'a> CommandCompleter<'a> {
 		self.config.roles.iter().map(|r| r.name.clone()).collect()
 	}
 
-	/// Check if the given file extension is a supported image format
-	fn is_image_file(path: &str) -> bool {
-		let supported_extensions = [
-			".png", ".jpg", ".jpeg", ".gif", ".webp", ".tiff", ".tif", ".ico", ".svg", ".avif",
-			".heic", ".heif",
-		];
+	/// Get available /status views for completion, hints and highlighting
+	fn get_status_filters() -> Vec<&'static str> {
+		vec!["agents", "monitors", "jobs"]
+	}
 
-		let path_lower = path.to_lowercase();
-		supported_extensions
+	/// Get available /schedule subcommands — the primary names the command documents
+	fn get_schedule_subcommands() -> Vec<&'static str> {
+		vec!["list", "remove", "add", "edit", "help"]
+	}
+
+	/// Get available /learning subcommands — the primary names the command documents
+	fn get_learning_subcommands() -> Vec<&'static str> {
+		vec!["list", "show", "delete", "clear", "evolution"]
+	}
+
+	/// Everything /schedule accepts, aliases included: highlighting must not mark
+	/// a valid alias red. Kept in sync with `schedule::handle_schedule`.
+	fn accepted_schedule_subcommands() -> Vec<&'static str> {
+		Self::get_schedule_subcommands()
+			.into_iter()
+			.chain(["rm", "del", "delete", "?"])
+			.collect()
+	}
+
+	/// Everything /learning accepts, aliases included. Kept in sync with
+	/// `learning::handle_learning`.
+	fn accepted_learning_subcommands() -> Vec<&'static str> {
+		Self::get_learning_subcommands()
+			.into_iter()
+			.chain(["rm", "remove", "get"])
+			.collect()
+	}
+
+	/// First-argument set for `command`, or `None` when the command takes no
+	/// enumerable first argument (free-form text, dynamic names, or no argument).
+	/// Shares the sources `complete`/`hint` use so highlighting cannot drift.
+	pub(crate) fn argument_candidates(command: &str) -> Option<Vec<&'static str>> {
+		let candidates: Vec<&'static str> = match command {
+			"/context" => Self::get_context_filters(),
+			"/mcp" => Self::get_mcp_subcommands(),
+			"/loglevel" => Self::get_log_levels(),
+			"/status" => Self::get_status_filters(),
+			"/schedule" => Self::accepted_schedule_subcommands(),
+			"/learning" => Self::accepted_learning_subcommands(),
+			"/copy" => CopyScope::ALL.iter().map(|scope| scope.name()).collect(),
+			// `ReasoningEffortConfig::parse` also accepts these spellings.
+			"/effort" => ReasoningEffortConfig::ALL
+				.iter()
+				.map(|level| level.as_str())
+				.chain(["med", "x-high", "extra-high", "maximum"])
+				.collect(),
+			_ => return None,
+		};
+		Some(candidates)
+	}
+
+	/// Whether `path` carries an extension `media` accepts. Only the extension is
+	/// compared, so a file literally named `png` does not qualify.
+	fn is_media_file(path: &str, media: MediaKind) -> bool {
+		let Some(extension) = Path::new(path).extension().and_then(|ext| ext.to_str()) else {
+			return false;
+		};
+		let extension = extension.to_lowercase();
+		media
+			.extensions()
 			.iter()
-			.any(|ext| path_lower.ends_with(ext))
+			.any(|supported| *supported == extension)
 	}
 
 	/// Expand tilde (~) to home directory
@@ -226,10 +307,10 @@ impl<'a> CommandCompleter<'a> {
 	}
 
 	/// Custom file completion that handles absolute paths and tilde expansion
-	fn complete_file_path(file_part: &str) -> Vec<Pair> {
+	fn complete_file_path(file_part: &str, media: MediaKind) -> Vec<Pair> {
 		if file_part.is_empty() {
 			// Show current directory contents
-			return Self::list_directory_contents(".");
+			return Self::list_directory_contents(".", media);
 		}
 
 		// Expand tilde if present
@@ -238,7 +319,7 @@ impl<'a> CommandCompleter<'a> {
 
 		// If the path ends with a separator, list contents of that directory
 		if file_part.ends_with('/') || file_part.ends_with('\\') {
-			return Self::list_directory_contents(&expanded_str);
+			return Self::list_directory_contents(&expanded_str, media);
 		}
 
 		// Determine the parent directory and filename part
@@ -262,7 +343,7 @@ impl<'a> CommandCompleter<'a> {
 			(".", file_part)
 		};
 
-		let mut candidates = Self::list_directory_contents(parent_dir);
+		let mut candidates = Self::list_directory_contents(parent_dir, media);
 
 		// Filter candidates that start with the filename part
 		if !filename_part.is_empty() {
@@ -317,8 +398,8 @@ impl<'a> CommandCompleter<'a> {
 		candidates
 	}
 
-	/// List contents of a directory, returning both directories and image files
-	fn list_directory_contents(dir_path: &str) -> Vec<Pair> {
+	/// List contents of a directory, returning directories and files `media` accepts
+	fn list_directory_contents(dir_path: &str, media: MediaKind) -> Vec<Pair> {
 		let mut candidates = Vec::new();
 
 		if let Ok(entries) = fs::read_dir(dir_path) {
@@ -337,7 +418,7 @@ impl<'a> CommandCompleter<'a> {
 						replacement: format!("{}/", path_str),
 					});
 				} else if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-					if Self::is_image_file(filename) {
+					if Self::is_media_file(filename, media) {
 						candidates.push(Pair {
 							display: filename.to_string(),
 							replacement: path_str,
@@ -440,11 +521,156 @@ impl<'a> CommandCompleter<'a> {
 			};
 
 			// Use our custom file completion that handles absolute paths and tilde expansion
-			let candidates = Self::complete_file_path(file_part);
+			let candidates = Self::complete_file_path(file_part, MediaKind::Image);
 			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
 
 			// For file completion, we want to replace from the start of the file part
 			(prefix_len, filtered_candidates)
+		} else if line.starts_with("/video ") {
+			// Handle /video command with file completion, video formats only
+			let prefix_len = "/video ".len();
+
+			let file_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates = Self::complete_file_path(file_part, MediaKind::Video);
+			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
+
+			(prefix_len, filtered_candidates)
+		} else if line.starts_with("/copy ") {
+			// Handle /copy command with clipboard-scope completion
+			let prefix_len = "/copy ".len();
+
+			let scope_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = CopyScope::ALL
+				.iter()
+				.map(|scope| scope.name())
+				.filter(|name| name.starts_with(scope_part))
+				.map(|name| Pair {
+					display: name.to_string(),
+					replacement: name.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/effort ") {
+			// Handle /effort command with reasoning-level completion
+			let prefix_len = "/effort ".len();
+
+			let level_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = ReasoningEffortConfig::ALL
+				.iter()
+				.map(|level| level.as_str())
+				.filter(|name| name.starts_with(level_part))
+				.map(|name| Pair {
+					display: name.to_string(),
+					replacement: name.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/status ") {
+			// Handle /status command with view completion
+			let prefix_len = "/status ".len();
+
+			let view_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = Self::get_status_filters()
+				.iter()
+				.filter(|view| view.starts_with(view_part))
+				.map(|view| Pair {
+					display: view.to_string(),
+					replacement: view.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/schedule ") {
+			// Handle /schedule command with subcommand completion
+			let prefix_len = "/schedule ".len();
+
+			let subcommand_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = Self::get_schedule_subcommands()
+				.iter()
+				.filter(|subcommand| subcommand.starts_with(subcommand_part))
+				.map(|subcommand| Pair {
+					display: subcommand.to_string(),
+					replacement: subcommand.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/learning ") {
+			// Handle /learning command with subcommand completion
+			let prefix_len = "/learning ".len();
+
+			let subcommand_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			let candidates: Vec<Pair> = Self::get_learning_subcommands()
+				.iter()
+				.filter(|subcommand| subcommand.starts_with(subcommand_part))
+				.map(|subcommand| Pair {
+					display: subcommand.to_string(),
+					replacement: subcommand.to_string(),
+				})
+				.collect();
+
+			(prefix_len, candidates)
+		} else if line.starts_with("/workflow ") {
+			// Handle /workflow command with tap-workflow name completion
+			let prefix_len = "/workflow ".len();
+
+			let name_part = if pos > prefix_len {
+				&line[prefix_len..pos]
+			} else {
+				""
+			};
+
+			// A registry that cannot be read yields no candidates here; the
+			// command itself reports the failure when it runs.
+			let candidates: Vec<Pair> = crate::workflow::spawn::list_tap_workflows()
+				.unwrap_or_default()
+				.into_iter()
+				.filter_map(|workflow| {
+					workflow
+						.get("name")
+						.and_then(|name| name.as_str())
+						.map(str::to_string)
+				})
+				.filter(|name| name.starts_with(name_part))
+				.map(|name| Pair {
+					display: name.clone(),
+					replacement: name,
+				})
+				.collect();
+
+			(prefix_len, candidates)
 		} else if line.starts_with("/prompt ") {
 			// Handle /prompt command with template name completion
 			let prompt_prefix = "/prompt ";
@@ -714,6 +940,69 @@ impl<'a> CommandCompleter<'a> {
 			return Some(" <model_name>".to_string());
 		}
 
+		// Special hint for /copy command
+		if line == "/copy" {
+			return Some(format!(
+				" [{}]",
+				CopyScope::ALL.map(CopyScope::name).join("|")
+			));
+		}
+
+		// Special hint for /video command
+		if line == "/video" {
+			return Some(" <path_to_video>".to_string());
+		}
+
+		// Special hint for /effort command
+		if line == "/effort" {
+			return Some(format!(
+				" [{}]",
+				ReasoningEffortConfig::ALL
+					.map(|level| level.as_str())
+					.join("|")
+			));
+		}
+
+		// Special hint for /status command
+		if line == "/status" {
+			return Some(format!(" [{}]", Self::get_status_filters().join("|")));
+		}
+
+		// Special hint for /schedule command
+		if line == "/schedule" {
+			return Some(format!(" [{}]", Self::get_schedule_subcommands().join("|")));
+		}
+
+		// Special hint for /learning command
+		if line == "/learning" {
+			return Some(format!(" [{}]", Self::get_learning_subcommands().join("|")));
+		}
+
+		// Special hint for /workflow command
+		if line == "/workflow" {
+			return Some(" <name> [input...]".to_string());
+		}
+
+		// Special hint for /skill command
+		if line == "/skill" {
+			return Some(" [<name>|<page>|*pattern*]".to_string());
+		}
+
+		// Special hint for /list command
+		if line == "/list" {
+			return Some(" [page]".to_string());
+		}
+
+		// Special hint for /rename command
+		if line == "/rename" {
+			return Some(" [title]".to_string());
+		}
+
+		// Special hint for /new command
+		if line == "/new" {
+			return Some(" [title]".to_string());
+		}
+
 		if line.starts_with("/image ") && line.len() >= 7 {
 			let file_part = &line[7..]; // "/image ".len() = 7
 			if file_part.is_empty() {
@@ -788,6 +1077,66 @@ impl<'a> CommandCompleter<'a> {
 				return Some("Start typing model name...".to_string());
 			}
 			return None; // Let completer handle this
+		}
+
+		if line.starts_with("/copy ") {
+			if line[6..].is_empty() {
+				return Some(CopyScope::ALL.map(CopyScope::name).join("|"));
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/effort ") {
+			if line[8..].is_empty() {
+				return Some(
+					ReasoningEffortConfig::ALL
+						.map(|level| level.as_str())
+						.join("|"),
+				);
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/status ") {
+			if line[8..].is_empty() {
+				return Some(Self::get_status_filters().join("|"));
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/schedule ") {
+			if line[10..].is_empty() {
+				return Some(Self::get_schedule_subcommands().join("|"));
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/learning ") {
+			if line[10..].is_empty() {
+				return Some(Self::get_learning_subcommands().join("|"));
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/video ") {
+			if line[7..].is_empty() {
+				return Some("Start typing video file path...".to_string());
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/workflow ") {
+			if line[10..].is_empty() {
+				return Some("Start typing workflow name...".to_string());
+			}
+			return None; // Let the completer handle this
+		}
+
+		if line.starts_with("/skill ") {
+			if line[7..].is_empty() {
+				return Some("Start typing skill name...".to_string());
+			}
+			return None; // Let the completer handle this
 		}
 
 		// Look for a command that starts with the current input

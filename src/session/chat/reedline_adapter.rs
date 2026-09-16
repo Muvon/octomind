@@ -51,6 +51,42 @@ impl ReedlineAdapter {
 			line_state,
 		}
 	}
+
+	/// Paint `remainder` — the text after the command token. The first argument
+	/// is validated against the command's accepted set: green when it matches,
+	/// red when it does not. The rest of the line stays plain.
+	fn push_remainder(styled: &mut StyledText, command: &str, remainder: &str) {
+		let Some(accepted) =
+			crate::session::chat_helper::CommandCompleter::argument_candidates(command)
+		else {
+			styled.push((Style::new(), remainder.to_string()));
+			return;
+		};
+
+		let trimmed = remainder.trim_start();
+		let argument_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+		let (argument, rest) = trimmed.split_at(argument_end);
+		let leading = &remainder[..remainder.len() - trimmed.len()];
+
+		if !leading.is_empty() {
+			styled.push((Style::new(), leading.to_string()));
+		}
+		if !argument.is_empty() {
+			let argument_lower = argument.to_lowercase();
+			let argument_style = if accepted
+				.iter()
+				.any(|candidate| candidate.starts_with(&argument_lower))
+			{
+				Style::new().fg(Color::Green)
+			} else {
+				Style::new().fg(Color::Red)
+			};
+			styled.push((argument_style, argument.to_string()));
+		}
+		if !rest.is_empty() {
+			styled.push((Style::new(), rest.to_string()));
+		}
+	}
 }
 
 impl Completer for ReedlineAdapter {
@@ -109,9 +145,7 @@ impl Highlighter for ReedlineAdapter {
 		};
 
 		styled.push((command_style, command.to_string()));
-		if !remainder.is_empty() {
-			styled.push((Style::new(), remainder.to_string()));
-		}
+		Self::push_remainder(&mut styled, command, remainder);
 		styled
 	}
 }

@@ -19,7 +19,14 @@ use super::{CommandOutput, CommandResult};
 use crate::config::{Config, ReasoningEffortConfig};
 use anyhow::Result;
 
-const VALID: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+/// Accepted levels for the `/effort` error payload, derived from the parser's
+/// own list so the two cannot drift.
+fn valid_levels() -> Vec<&'static str> {
+	ReasoningEffortConfig::ALL
+		.iter()
+		.map(|e| e.as_str())
+		.collect()
+}
 
 pub fn handle_effort(
 	session: &mut ChatSession,
@@ -46,7 +53,7 @@ pub fn handle_effort(
 			return Ok(CommandResult::HandledWithOutput(Box::new(
 				CommandOutput::Error {
 					error: format!("Invalid reasoning effort: '{}'", arg),
-					context: Some(serde_json::json!({ "valid": VALID })),
+					context: Some(serde_json::json!({ "valid": valid_levels() })),
 				},
 			)));
 		}

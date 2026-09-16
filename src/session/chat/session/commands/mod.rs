@@ -18,6 +18,7 @@ mod agents;
 mod clear;
 mod context;
 mod copy;
+pub use copy::CopyScope;
 mod display;
 mod done;
 pub use done::{handle_done, DoneOutcome};

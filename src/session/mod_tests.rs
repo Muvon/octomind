@@ -381,7 +381,6 @@ fn test_session_loading_preserves_stats_from_summary() {
 				"current_non_cached_tokens": 0,
 				"current_total_tokens": 0,
 				"last_cache_checkpoint_time": 1000,
-				"cache_next_user_message": false,
 				"spending_threshold_checkpoint": 0.0,
 
 			}
@@ -473,7 +472,6 @@ fn test_session_loading_preserves_stats_from_summary() {
 				"current_non_cached_tokens": 0,
 				"current_total_tokens": 0,
 				"last_cache_checkpoint_time": 2000,
-				"cache_next_user_message": false,
 				"spending_threshold_checkpoint": 0.0,
 
 			}
@@ -596,7 +594,6 @@ fn test_session_loading_restores_model_from_command() {
 				"current_non_cached_tokens": 0,
 				"current_total_tokens": 0,
 				"last_cache_checkpoint_time": 1000,
-				"cache_next_user_message": false,
 				"spending_threshold_checkpoint": 0.0,
 
 			}
@@ -665,7 +662,6 @@ fn test_session_loading_restores_model_from_command() {
 				"current_non_cached_tokens": 0,
 				"current_total_tokens": 0,
 				"last_cache_checkpoint_time": 2000,
-				"cache_next_user_message": false,
 				"spending_threshold_checkpoint": 0.0,
 
 			}
@@ -733,7 +729,6 @@ fn test_session_loading_model_without_command() {
 				"current_non_cached_tokens": 0,
 				"current_total_tokens": 0,
 				"last_cache_checkpoint_time": 1000,
-				"cache_next_user_message": false,
 				"spending_threshold_checkpoint": 0.0,
 
 			}

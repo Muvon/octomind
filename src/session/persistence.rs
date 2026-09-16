@@ -727,7 +727,6 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		current_non_cached_tokens: 0,
 		current_total_tokens: 0,
 		last_cache_checkpoint_time: crate::utils::time::now_secs(),
-		cache_next_user_message: false,
 		spending_threshold_checkpoint: 0.0,
 		context_tokens_after_last_compression: 0,
 		turn_call_counts: Vec::new(),
@@ -827,7 +826,6 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 #[derive(Debug, Default)]
 pub struct SessionRuntimeState {
 	pub model: Option<String>,
-	pub cache_next_message: bool,
 	pub role: Option<String>, // Track runtime role changes
 	pub reasoning_effort: Option<crate::config::ReasoningEffortConfig>,
 	pub critical_knowledge: Vec<String>, // Knowledge entries from compressions
@@ -934,10 +932,6 @@ fn apply_command_to_runtime_state(state: &mut SessionRuntimeState, command_line:
 			if let Some(e) = crate::config::ReasoningEffortConfig::parse(parts[1]) {
 				state.reasoning_effort = Some(e);
 			}
-		}
-		"/cache" => {
-			// Set cache next message flag
-			state.cache_next_message = true;
 		}
 		_ => {
 			// Unknown command, ignore

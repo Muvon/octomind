@@ -93,11 +93,6 @@ impl<'a> CommandCompleter<'a> {
 			.collect()
 	}
 
-	/// Get available cache subcommands for /cache command
-	fn get_cache_subcommands() -> Vec<&'static str> {
-		vec!["stats", "clear", "threshold"]
-	}
-
 	/// Get available log levels for /loglevel command
 	fn get_log_levels() -> Vec<&'static str> {
 		vec!["none", "info", "debug"]
@@ -769,28 +764,6 @@ impl<'a> CommandCompleter<'a> {
 				.collect();
 
 			(prefix_len, candidates)
-		} else if line.starts_with("/cache ") {
-			// Handle /cache command with subcommand completion
-			let cache_prefix = "/cache ";
-			let prefix_len = cache_prefix.len();
-
-			// Extract the subcommand part up to cursor position
-			let subcommand_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
-
-			let candidates: Vec<Pair> = Self::get_cache_subcommands()
-				.iter()
-				.filter(|subcommand| subcommand.starts_with(subcommand_part))
-				.map(|subcommand| Pair {
-					display: subcommand.to_string(),
-					replacement: subcommand.to_string(),
-				})
-				.collect();
-
-			(prefix_len, candidates)
 		} else if line.starts_with("/skill ") {
 			let skill_prefix = "/skill ";
 			let prefix_len = skill_prefix.len();
@@ -920,11 +893,6 @@ impl<'a> CommandCompleter<'a> {
 			return Some(" [list|info|full|health|dump|validate]".to_string());
 		}
 
-		// Special hint for /cache command
-		if line == "/cache" {
-			return Some(" [stats|clear|threshold]".to_string());
-		}
-
 		// Special hint for /loglevel command
 		if line == "/loglevel" {
 			return Some(" [none|info|debug]".to_string());
@@ -1039,14 +1007,6 @@ impl<'a> CommandCompleter<'a> {
 			let subcommand_part = &line[5..]; // "/mcp ".len() = 5
 			if subcommand_part.is_empty() {
 				return Some("list|info|full|health|dump|validate".to_string());
-			}
-			return None; // Let completer handle this
-		}
-
-		if line.starts_with("/cache ") && line.len() >= 7 {
-			let subcommand_part = &line[7..]; // "/cache ".len() = 7
-			if subcommand_part.is_empty() {
-				return Some("stats|clear|threshold".to_string());
 			}
 			return None; // Let completer handle this
 		}

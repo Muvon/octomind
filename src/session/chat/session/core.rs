@@ -206,9 +206,8 @@ pub struct ChatSession {
 	pub top_k: u32, // Top-k sampling parameter
 	pub max_tokens: u32,
 	pub estimated_cost: f64,
-	pub cache_next_user_message: bool, // Flag to cache the next user message
 	pub spending_threshold_checkpoint: f64, // Track spending at last threshold check
-	pub request_spending_checkpoint: f64, // Track spending at start of current request
+	pub request_spending_checkpoint: f64,   // Track spending at start of current request
 	pub spending_stop: Option<SpendingStop>,
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 	pub pending_video: Option<crate::session::video::VideoAttachment>, // Pending video attachment
@@ -390,7 +389,6 @@ impl ChatSession {
 			current_total_tokens: 0,
 			last_cache_checkpoint_time: timestamp,
 			// Initialize runtime state
-			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
 
 			context_tokens_after_last_compression: 0,
@@ -423,7 +421,6 @@ impl ChatSession {
 			top_k: profile.top_k,
 			max_tokens: profile.max_tokens,
 			estimated_cost: 0.0,                // Initialize estimated cost as zero
-			cache_next_user_message: false,     // Initialize cache flag
 			spending_threshold_checkpoint: 0.0, // Initialize spending checkpoint
 			request_spending_checkpoint: 0.0,   // Initialize request spending checkpoint
 			spending_stop: None,
@@ -620,7 +617,6 @@ impl ChatSession {
 					let restored_cost = session.info.total_cost; // Extract cost before moving session
 
 					// Restore runtime state from session.info
-					let cache_next = session.info.cache_next_user_message;
 					let spending_checkpoint = session.info.spending_threshold_checkpoint;
 					// Restore the verify-gate's evidence ledger for the still-open
 					// turn. The gate re-derives its conditions from the persisted
@@ -640,7 +636,6 @@ impl ChatSession {
 						top_k: effective_profile.top_k,
 						max_tokens: effective_profile.max_tokens,
 						estimated_cost: restored_cost, // FIXED: Use actual cost from session
-						cache_next_user_message: cache_next, // Restore from session.info
 						spending_threshold_checkpoint: spending_checkpoint, // Restore from session.info
 						request_spending_checkpoint: 0.0, // Initialize request spending checkpoint
 						spending_stop: None,
@@ -688,11 +683,6 @@ impl ChatSession {
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
-
-					// Apply runtime state from session log (legacy support)
-					if runtime_state.cache_next_message {
-						chat_session.cache_next_user_message = true;
-					}
 
 					// Apply restored role if available. An explicitly named role is a
 					// deliberate switch and outranks whatever `/role` the session
@@ -1462,7 +1452,6 @@ impl ChatSession {
 			top_k: 0,
 			max_tokens: 4096,
 			estimated_cost: 0.0,
-			cache_next_user_message: false,
 			spending_threshold_checkpoint: 0.0,
 			request_spending_checkpoint: 0.0,
 			spending_stop: None,

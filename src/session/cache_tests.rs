@@ -525,50 +525,6 @@ fn apply_cache_keeps_existing_markers_below_the_two_marker_limit() {
 	assert!(session.messages[2].cached);
 }
 
-// ── apply_cache_to_current_user_message ──────────────────────────────────────
-
-#[test]
-fn apply_cache_to_current_user_targets_the_last_user_message() {
-	let manager = CacheManager::new();
-	let mut session = test_session("anthropic/claude-sonnet-4-6");
-	session.messages = vec![
-		msg("user", "first turn", false),
-		msg("assistant", "reply", false),
-		msg("user", "latest turn", false),
-	];
-	assert!(manager
-		.apply_cache_to_current_user_message(&mut session, true)
-		.unwrap());
-	assert!(!session.messages[0].cached);
-	assert!(
-		session.messages[2].cached,
-		"the LAST user message is the cacheable boundary"
-	);
-}
-
-#[test]
-fn apply_cache_to_current_user_without_user_message_is_error() {
-	let manager = CacheManager::new();
-	let mut session = test_session("anthropic/claude-sonnet-4-6");
-	session.messages = vec![msg("system", "sys", false), msg("assistant", "hi", false)];
-	let err = manager
-		.apply_cache_to_current_user_message(&mut session, true)
-		.unwrap_err()
-		.to_string();
-	assert!(err.contains("No user message"), "unexpected error: {err}");
-}
-
-#[test]
-fn apply_cache_to_current_user_respects_disabled_caching() {
-	let manager = CacheManager::new();
-	let mut session = test_session("anthropic/claude-sonnet-4-6");
-	session.messages = vec![msg("user", "hi", false)];
-	assert!(!manager
-		.apply_cache_to_current_user_message(&mut session, false)
-		.unwrap());
-	assert!(!session.messages[0].cached);
-}
-
 // ── clear_content_cache_markers ──────────────────────────────────────────────
 
 #[test]

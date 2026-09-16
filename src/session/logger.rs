@@ -104,7 +104,7 @@ pub fn log_knowledge_entry(session_name: &str, knowledge: &str) -> Result<()> {
 	append_to_session_file(&log_file, &serde_json::to_string(&entry)?)
 }
 
-/// Log runtime-only commands (`/model`, `/role`, `/layers`, `/cache`) so they
+/// Log runtime-only commands (`/model`, `/role`, `/layers`) so they
 /// can be replayed on resume to reconstruct runtime state.
 pub fn log_session_command(session_name: &str, command_line: &str) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;

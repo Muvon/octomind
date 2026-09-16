@@ -342,14 +342,17 @@ async fn test_inline_output_render_arms() {
 		CommandOutput::Copy {
 			copied: true,
 			length: Some(42),
+			scope: "last".to_string(),
 		},
 		CommandOutput::Copy {
 			copied: true,
 			length: None,
+			scope: "all".to_string(),
 		},
 		CommandOutput::Copy {
 			copied: false,
 			length: None,
+			scope: "user".to_string(),
 		},
 		CommandOutput::Rename {
 			session_name: "s".to_string(),

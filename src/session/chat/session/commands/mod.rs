@@ -145,6 +145,8 @@ pub enum CommandOutput {
 	Copy {
 		copied: bool,
 		length: Option<usize>,
+		/// Which slice of the session was copied: `last`, `assistant`, `user`, `all`.
+		scope: String,
 	},
 	Clear {
 		success: bool,
@@ -277,8 +279,12 @@ impl CommandOutput {
 			Self::Effort { .. } => display::display_effort(self),
 			Self::Role { .. } => display::display_role(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
-			Self::Copy { copied, length } => {
-				block_open("/copy", None);
+			Self::Copy {
+				copied,
+				length,
+				scope,
+			} => {
+				block_open("/copy", Some(scope.as_str()));
 				if *copied {
 					if let Some(len) = length {
 						let kw = key_width(["copied"]);
@@ -395,7 +401,7 @@ pub async fn process_command(
 			Ok(CommandResult::Exit)
 		}
 		HELP_COMMAND => help::handle_help(config, &current_role).await,
-		COPY_COMMAND => copy::handle_copy(&session.last_response),
+		COPY_COMMAND => copy::handle_copy(session, params),
 		CLEAR_COMMAND => clear::handle_clear(),
 		INFO_COMMAND => info::handle_info(session, config),
 		REPORT_COMMAND => report::handle_report(session, config),

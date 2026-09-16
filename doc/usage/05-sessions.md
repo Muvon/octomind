@@ -122,7 +122,7 @@ Reference](../reference/02-session-commands.md) for detailed arguments.
 | Monitoring | `/status`, `/info`, `/report`, `/loglevel debug` |
 | Model and behavior | `/model octohub:auto`, `/role assistant`, `/effort high`, `/prompt` |
 | Context and compression | `/done`, `/context tool`, `/context large` |
-| Media and clipboard | `/image screenshot.png`, `/video demo.mp4`, `/copy` |
+| Media and clipboard | `/image screenshot.png`, `/video demo.mp4`, `/copy all` |
 | Tools and planning | `/mcp`, `/run`, `/plan`, `/skill`, `/schedule` |
 | Account, learning, and viewing | `/usage`, `/login`, `/learning list`, `/share`, `/analyze` |
 

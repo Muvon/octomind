@@ -37,7 +37,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 | `/login` | Sign in to an Octomind account |
 | `/share` | Upload the session log and print the returned share URL |
 | `/analyze` | Open the session in the web viewer locally, without uploading |
-| `/copy` | Copy the last assistant response to the clipboard |
+| `/copy [SCOPE]` | Copy last response, or a scope: `last`, `assistant`, `user`, `all` |
 | `/model [MODEL]` | Show or switch the model (runtime + session file) |
 | `/role [ROLE]` | Show or switch the role |
 | `/effort [LEVEL]` | Show or set reasoning effort (runtime + session file) |
@@ -384,13 +384,25 @@ your next message.
 /video demo.mp4
 ```
 
-### `/copy`
+### `/copy [SCOPE]`
 
-Copy the last assistant response to the clipboard. Returns success and byte length, or `copied: false` when there is no
-response or the host clipboard is unavailable.
+Copy session text to the clipboard. With no argument it copies the last assistant response verbatim. A scope selects
+more of the session and renders it as markdown-labelled blocks in session order:
+
+| Scope | Copies |
+|-------|--------|
+| `last` | The last assistant response (default) |
+| `assistant` | Every assistant message |
+| `user` | Every user message |
+| `all` | User and assistant messages, interleaved |
+
+Tool calls, tool results, and system-managed injections are never copied. Returns success and byte length, or
+`copied: false` when the scope selects nothing or the host clipboard is unavailable. An unknown scope returns an error
+listing the valid ones.
 
 ```text
 /copy
+/copy all
 ```
 
 ## MCP & Tools

@@ -129,7 +129,7 @@ pub fn handle_copy(session: &ChatSession, params: &[&str]) -> Result<CommandResu
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Copy {
 			copied,
-			length: copied.then(|| payload.len()),
+			length: copied.then_some(payload.len()),
 			scope: scope.name().to_string(),
 		},
 	)))

@@ -258,3 +258,25 @@ fn empty_inbox_batch_changes_nothing() {
 	assert!(session.session.messages.is_empty());
 	assert!(!session.completion_gate_eligible);
 }
+
+#[test]
+fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.total_api_calls = 40;
+	session.fold_cooldown_until_call = 50;
+
+	session.add_user_message("new request").unwrap();
+	assert_eq!(
+		session.fold_cooldown_until_call, 0,
+		"a genuine user turn must clear the call-based fold cooldown"
+	);
+
+	session.fold_cooldown_until_call = 50;
+	session
+		.add_system_managed_user_message("control-plane note")
+		.unwrap();
+	assert_eq!(
+		session.fold_cooldown_until_call, 50,
+		"a system-managed injection must not clear the cooldown"
+	);
+}

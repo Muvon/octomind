@@ -328,6 +328,11 @@ impl ChatSession {
 		// behavior identical; system-managed user-role injections use a different
 		// method and intentionally do not reset it.
 		self.session.info.consecutive_compressions = 0;
+		// The cooldown after a declined or failed fold is measured in session-wide
+		// API calls, so it would otherwise hold straight across this turn boundary —
+		// the one place a fold is free. A genuine turn clears it; system-managed
+		// injections still do not, so a broken folder is not retried every round.
+		self.fold_cooldown_until_call = 0;
 		self.session.info.note_turn_start();
 		self.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 

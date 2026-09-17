@@ -1039,15 +1039,15 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let completer handle this
 		}
 
-		if line.starts_with("/copy ") {
-			if line[6..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/copy ") {
+			if rest.is_empty() {
 				return Some(CopyScope::ALL.map(CopyScope::name).join("|"));
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/effort ") {
-			if line[8..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/effort ") {
+			if rest.is_empty() {
 				return Some(
 					ReasoningEffortConfig::ALL
 						.map(|level| level.as_str())
@@ -1057,43 +1057,43 @@ impl<'a> CommandCompleter<'a> {
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/status ") {
-			if line[8..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/status ") {
+			if rest.is_empty() {
 				return Some(Self::get_status_filters().join("|"));
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/schedule ") {
-			if line[10..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/schedule ") {
+			if rest.is_empty() {
 				return Some(Self::get_schedule_subcommands().join("|"));
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/learning ") {
-			if line[10..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/learning ") {
+			if rest.is_empty() {
 				return Some(Self::get_learning_subcommands().join("|"));
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/video ") {
-			if line[7..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/video ") {
+			if rest.is_empty() {
 				return Some("Start typing video file path...".to_string());
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/workflow ") {
-			if line[10..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/workflow ") {
+			if rest.is_empty() {
 				return Some("Start typing workflow name...".to_string());
 			}
 			return None; // Let the completer handle this
 		}
 
-		if line.starts_with("/skill ") {
-			if line[7..].is_empty() {
+		if let Some(rest) = line.strip_prefix("/skill ") {
+			if rest.is_empty() {
 				return Some("Start typing skill name...".to_string());
 			}
 			return None; // Let the completer handle this

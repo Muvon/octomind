@@ -3181,14 +3181,11 @@ async fn finish_fold_landing_spends_a_pending_deferral() {
 		current_task: "stabilise the deploy pipeline".to_string(),
 		..Default::default()
 	};
+	let fingerprint = super::fold_fingerprint(&session.session.messages, start, end);
 	let applied = super::finish_fold(
 		&mut session,
 		&config,
-		fold_ctx(
-			start,
-			end,
-			super::fold_fingerprint(&session.session.messages, start, end),
-		),
+		fold_ctx(start, end, fingerprint),
 		summary,
 		None,
 		true,

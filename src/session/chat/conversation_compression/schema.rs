@@ -333,39 +333,39 @@ fn xml_escape(value: &str) -> String {
 /// verbatim to providers on the XML path.
 pub const SHOULD_COMPRESS_RULE: &str = "True if the transcript contains older exchanges that can be safely compressed without losing information needed to continue. WHEN a fold happens matters as much as what it keeps: folding while a step is half-finished blunts the newest exchange and leaves the agent unable to tell which actions it has already taken, so it repeats them. Answer true at a natural seam — a sub-task just resolved, a check passed, or the work is converging on its answer. Answer false only when a step is genuinely still running (a build or test is in flight, an edit is started but unverified, a hypothesis is being chased), and set defer_reason to name it. A stalled agent is not mid-derivation: when the agent is stuck and re-reading to recover its footing, or the transcript is already minimal, answer true — stale exploration is what impairs the next step, and folding it is the remedy. A deferral is a short reprieve, not a veto: the runtime checks defer_reason against the live plan and the agent's own state and overrules any claim it cannot confirm, and when the context nears its limit the decision is forced regardless.";
 
-/// The forced variant of `SHOULD_COMPRESS_RULE`: under `/done` or the ceiling
-/// margin the model has no veto, so the rule is replaced rather than extended.
-pub const SHOULD_COMPRESS_FORCED_RULE: &str =
-	"Compression has been forced by the user. MUST be true.";
+/// The no-veto variant of `SHOULD_COMPRESS_RULE`: `/done`, the ceiling margin,
+/// an overruled deferral, or no plan step for the runtime to check a claim
+/// against. The rule is replaced rather than extended.
+pub const SHOULD_COMPRESS_FORCED_RULE: &str = "Compression is required on this call. MUST be true.";
 
 /// What each `defer_reason` token means, and why naming one honestly is in the
 /// model's interest: the runtime corroborates the claim against state it owns.
 pub const DEFER_REASON_RULE: &str = "Only meaningful when should_compress is false: why the fold is deferred. mid_derivation — a build, test, edit, or hypothesis is still running; verification_in_flight — a verification the agent is waiting on has not returned; stuck — the agent is stalled and re-reading; transcript_minimal — there is nothing older worth folding. Use none when should_compress is true. The runtime corroborates an in-flight claim against the live plan and the agent's own state and overrules any claim it cannot confirm, so name the reason honestly rather than picking one to be safe.";
 
-/// The forced variant of `DEFER_REASON_RULE`: under force there is no deferral
-/// to justify, so the field is nailed to `none` rather than explaining buckets
+/// The no-veto variant of `DEFER_REASON_RULE`: there is no deferral to
+/// justify, so the field is nailed to `none` rather than explaining buckets
 /// the model may not use. Mirrors `SHOULD_COMPRESS_FORCED_RULE` — the guidance
-/// is replaced, not extended, so nothing in a forced call can invite a veto.
+/// is replaced, not extended, so nothing in a no-veto call can invite a veto.
 pub const DEFER_REASON_FORCED_RULE: &str =
-	"Compression has been forced by the user, so there is no deferral to justify. MUST be none.";
+	"Compression is required on this call, so there is no deferral to justify. MUST be none.";
 
 /// Build the JSON Schema sent to the provider via `with_schema(..)`.
 ///
-/// `force=true`: model has no veto. `should_compress` MUST be `true`; the
-/// schema description nails it down so the model doesn't return `false` and
-/// stall a forced compression.
+/// `no_veto=true`: `should_compress` MUST be `true`; the schema description
+/// nails it down so the model doesn't return `false` and stall a fold the
+/// runtime has already decided on.
 ///
-/// `force=false`: model may return `should_compress: false` when the
-/// transcript is already minimal. Other fields are still required by the
-/// schema (strict mode); they're expected to be empty strings / empty arrays
-/// when `should_compress` is false.
-pub fn build_compression_schema(force: bool, pact: bool) -> serde_json::Value {
-	let should_compress_desc = if force {
+/// `no_veto=false`: model may return `should_compress: false` for a genuinely
+/// unfinished step, naming it in `defer_reason`. Other fields are still
+/// required by the schema (strict mode); they're expected to be empty strings
+/// / empty arrays when `should_compress` is false.
+pub fn build_compression_schema(no_veto: bool, pact: bool) -> serde_json::Value {
+	let should_compress_desc = if no_veto {
 		SHOULD_COMPRESS_FORCED_RULE
 	} else {
 		SHOULD_COMPRESS_RULE
 	};
-	let defer_reason_desc = if force {
+	let defer_reason_desc = if no_veto {
 		DEFER_REASON_FORCED_RULE
 	} else {
 		DEFER_REASON_RULE

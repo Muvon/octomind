@@ -390,6 +390,12 @@ struct FoldContext {
 	pact: Option<attention::PactContext>,
 	preserve_recent_user_bridge: bool,
 	started: std::time::Instant,
+	/// Plan step open when the call was prepared — the subject of any deferral
+	/// the model returns (see `FoldDeferral::step`).
+	step: Option<usize>,
+	/// The veto was not offered on this call: `/done`, the ceiling margin, an
+	/// overruled deferral, or nothing for the runtime to check a claim against.
+	no_veto: bool,
 }
 
 /// Content identity of the drained range. Excludes mutable presentation state
@@ -494,38 +500,37 @@ async fn finish_fold(
 			compression_cost: usage.as_ref().and_then(|u| u.cost).unwrap_or(0.0),
 		});
 	}
-	let should_compress = ai::evaluate_decision(&summary, force, ctx.pact.is_some());
+	let no_veto = force || ctx.no_veto;
+	let should_compress = ai::evaluate_decision(&summary, no_veto, ctx.pact.is_some());
 
 	// A paid decline is not a fold: it frees nothing, so it must not climb the
 	// fire-line ladder (that donated window headroom to a non-event and pushed
-	// the next fold toward the forced ceiling path). Hold for one runway instead.
+	// the next fold toward the forced ceiling path).
 	if !should_compress {
-		// A refusal is the one fold failure a cooldown cannot fix: the call was
-		// paid for and returned nothing to apply, so the next attempt asks the
-		// model the same question and gets the same answer. Record WHY it
-		// declined — that reason is the judgment input for the next eligible
-		// fold, which honours it only if the runtime can corroborate it. Only a
-		// genuine veto is worth recording: a non-substantive summary is rejected
-		// under force too, so forcing it would buy nothing.
-		if !summary.should_compress && !force {
-			// Pair the reason with the plan step it was about. A held round makes
-			// no fold call, so this is the only moment the step identity can be
-			// captured — and it is what lets the next round refute a claim about a
-			// step that has since advanced.
+		// A genuine veto is the one fold outcome a cooldown cannot fix: the call
+		// was paid for and returned nothing to apply, and asking again mid-step
+		// gets the same answer. Record WHY it declined, paired with the step the
+		// call was about; the next eligible round honours it only while the
+		// runtime can corroborate it and overrules it otherwise. The deferral
+		// is the hold — no cooldown on top, or an overruled claim would still
+		// wait out a runway before folding.
+		if !summary.should_compress && !no_veto {
 			session.fold_deferral = Some(decision::FoldDeferral {
 				reason: summary.defer_reason,
-				step: crate::mcp::core::plan::active_step_index(),
+				step: ctx.step,
 			});
 			crate::log_error!(
 				"Compression not applied: decision model deferred the fold (reason={})",
 				summary.defer_reason.as_token()
 			);
-		} else {
-			crate::log_error!(
-				"Compression not applied: decision model returned no substantive summary (force={})",
-				force
-			);
+			return Ok(false);
 		}
+		// A non-substantive summary is rejected with or without a veto, so
+		// there is nothing to record: hold for one runway and retry.
+		crate::log_error!(
+			"Compression not applied: decision model returned no substantive summary (no_veto={})",
+			no_veto
+		);
 		note_fold_failure(session);
 		return Ok(false);
 	}
@@ -755,43 +760,46 @@ async fn check_and_compress_conversation_inner(
 	// and the AI cannot refuse. The ceiling is the user's explicit safety
 	// limit or the model's physical window, whichever is lower.
 	let force_ceiling = within_ceiling_margin(session, config).await;
-	// A model deferral is a claim, not an order: honour it only when the runtime
-	// can corroborate it from state it owns — the SAME plan step the decline was
-	// about is still open, and the agent does not report itself blocked.
-	// Everything else (stuck, transcript_minimal, no reason given, or an in-flight
-	// claim about a step that has since advanced) is a premise the runtime can
-	// refute, and the fold proceeds.
-	let deferral = session.fold_deferral;
-	let force = decision::fold_is_forced(
-		force_done,
-		force_ceiling,
-		deferral,
-		crate::mcp::core::plan::active_step_index(),
-		session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked),
-	);
-	if force {
-		if let Some(deferral) = deferral {
-			// Judged and overruled: consume it so the same refuted premise is not
-			// re-litigated on the next round.
+	let force = force_done || force_ceiling;
+
+	// The decision model's veto is a claim the runtime checks, never an order it
+	// obeys. A recorded deferral is honoured only while the SAME plan step it
+	// was about is still open and the agent does not report itself blocked;
+	// anything else (stuck, transcript_minimal, no reason given, a step that
+	// has since advanced) is a premise the runtime refutes, and the fold
+	// proceeds without a veto. Force skips the judgment: `/done` and the
+	// ceiling margin fold now, inline.
+	let current_step = crate::mcp::core::plan::active_step_index();
+	let agent_blocked =
+		session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
+	let overruled = match session.fold_deferral {
+		Some(deferral) if !force && deferral.stands_against(current_step, agent_blocked) => {
+			// Corroborated: hold without paying for a fold call. The deferral
+			// stays recorded — the next eligible round re-judges it against
+			// fresh state, and a genuine user turn clears it.
+			log_debug!(
+				"Fold deferral honoured (reason={}) — no fold this round",
+				deferral.reason.as_token()
+			);
+			return Ok(false);
+		}
+		Some(deferral) => {
+			// Judged and overruled (or superseded by force): consume it so the
+			// same refuted premise is not re-litigated on the next round.
 			crate::log_info!(
-				"Fold deferral overruled (reason={}) — forcing the fold",
+				"Fold deferral overruled (reason={}) — folding without a veto",
 				deferral.reason.as_token()
 			);
 			session.fold_deferral = None;
+			true
 		}
-	} else if let Some(deferral) = deferral {
-		// Corroborated: the same plan step the decline was about is still open
-		// and the agent does not report itself blocked, so a fold would blunt
-		// work that is in flight. Hold without paying for a fold call. The
-		// deferral stays recorded — the next eligible round re-judges it against
-		// fresh state, a genuine user turn clears it, and the ceiling margin
-		// above overrides it.
-		log_debug!(
-			"Fold deferral honoured (reason={}) — no fold this round",
-			deferral.reason.as_token()
-		);
-		return Ok(false);
-	}
+		None => false,
+	};
+	// The veto is offered only when the runtime could check the answer. Asking
+	// with nothing to check against buys a paid decline the next round must
+	// overrule anyway — the shape that used to hold a session unfolded until
+	// the ceiling.
+	let no_veto = force || overruled || !decision::veto_checkable(current_step, agent_blocked);
 
 	if !force && session.session.info.total_api_calls < session.fold_cooldown_until_call {
 		log_debug!(
@@ -1078,7 +1086,18 @@ async fn check_and_compress_conversation_inner(
 		pact,
 		preserve_recent_user_bridge,
 		started: pact_started,
+		step: current_step,
+		no_veto,
 	};
+
+	let prepared = ai::prepare_decision(
+		session,
+		config,
+		&messages_to_compress,
+		ctx.pact.as_ref(),
+		no_veto,
+		target_ratio,
+	)?;
 
 	// Unforced folds run in the background: the paid decision+summary call is
 	// the slow part (minutes on big transcripts), and nothing about it needs
@@ -1086,14 +1105,6 @@ async fn check_and_compress_conversation_inner(
 	// summary is applied at the next round boundary. Forced folds (ceiling,
 	// /done) cannot proceed without the result and stay inline.
 	if !force {
-		let prepared = ai::prepare_decision(
-			session,
-			config,
-			&messages_to_compress,
-			ctx.pact.as_ref(),
-			false,
-			target_ratio,
-		)?;
 		let config_for_task = config.clone();
 		let task_rx = operation_rx.clone();
 		let handle = tokio::spawn(async move {
@@ -1112,14 +1123,6 @@ async fn check_and_compress_conversation_inner(
 		return Ok(false);
 	}
 
-	let prepared = ai::prepare_decision(
-		session,
-		config,
-		&messages_to_compress,
-		ctx.pact.as_ref(),
-		force,
-		target_ratio,
-	)?;
 	let (summary, usage) = ai::run_decision_call(
 		config,
 		prepared.system_content,

@@ -61,14 +61,14 @@ pub(super) fn build_compression_prompt_json(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
 	pact: Option<&super::attention::PactContext>,
-	force: bool,
+	no_veto: bool,
 	target_ratio: f64,
 ) -> (String, String) {
 	build_compression_prompt(
 		session,
 		messages_to_compress,
 		pact,
-		force,
+		no_veto,
 		target_ratio,
 		OutputMode::Json,
 	)
@@ -84,14 +84,14 @@ pub(super) fn build_compression_prompt_xml(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
 	pact: Option<&super::attention::PactContext>,
-	force: bool,
+	no_veto: bool,
 	target_ratio: f64,
 ) -> (String, String) {
 	build_compression_prompt(
 		session,
 		messages_to_compress,
 		pact,
-		force,
+		no_veto,
 		target_ratio,
 		OutputMode::Xml,
 	)
@@ -100,14 +100,14 @@ pub(super) fn build_compression_prompt_xml(
 /// Shared implementation. Returns `(system_content, user_content)`.
 ///
 /// The system content is byte-identical across every compression call that
-/// shares the same `(force, mode)` pair. `ai.rs` flags it as cached so the
+/// shares the same `(no_veto, mode)` pair. `ai.rs` flags it as cached so the
 /// provider can amortise it across calls — a small but real cost win for
 /// sessions that compress multiple times.
 fn build_compression_prompt(
 	session: &ChatSession,
 	messages_to_compress: &[crate::session::Message],
 	pact: Option<&super::attention::PactContext>,
-	force: bool,
+	no_veto: bool,
 	target_ratio: f64,
 	mode: OutputMode,
 ) -> (String, String) {
@@ -115,8 +115,10 @@ fn build_compression_prompt(
 	// where, what to carry forward, what to drop. Mode-specific output
 	// contract is appended — the schema reference for JSON, the fold-timing
 	// rubric plus the tag spec for XML, which has no schema to carry either.
-	let force_directive = if force {
-		"\n<forced>\nThe user has explicitly requested compression. Set should_compress to true and fill every field. Refusal is not an option.\n</forced>"
+	// `/done`, the ceiling margin, an overruled deferral, or no runtime state to
+	// check a claim against: the fold happens on this call.
+	let force_directive = if no_veto {
+		"\n<forced>\nCompression is required on this call: the runtime has already decided the fold happens now. Set should_compress to true and fill every field. Refusal is not an option.\n</forced>"
 	} else {
 		""
 	};
@@ -128,12 +130,12 @@ fn build_compression_prompt(
 
 	// Behavioural guidance the JSON path receives through its schema
 	// descriptions has to travel in the prompt for providers on the XML path,
-	// which get no schema at all. Same constants, one source of truth. Under
-	// force the model has no veto, so the `<forced>` directive stands alone and
-	// the rubric would contradict it.
+	// which get no schema at all. Same constants, one source of truth. Without
+	// a veto the `<forced>` directive stands alone: the rubric would contradict
+	// it.
 	let mode_appendix = match mode {
 		OutputMode::Json => String::new(),
-		OutputMode::Xml if force => format!("\n\n{XML_OUTPUT_SPEC}"),
+		OutputMode::Xml if no_veto => format!("\n\n{XML_OUTPUT_SPEC}"),
 		OutputMode::Xml => format!(
 			"\n\n<fold_timing_rule>\n{SHOULD_COMPRESS_RULE}\n\n{DEFER_REASON_RULE}\n</fold_timing_rule>\n\n{XML_OUTPUT_SPEC}"
 		),

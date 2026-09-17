@@ -52,16 +52,20 @@ fn build_context_bar(pct: f64) -> String {
 
 /// Build the persistent "session status" line printed above each prompt:
 ///
-///   `▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2%`
+///   `▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2% · 260917-octomind-1432-a1b2`
 ///
 /// The `(+$delta)` part shows the cost increase since the previous prompt
-/// (only when positive and non-trivial). When there's no cost and no max
-/// threshold to show, returns an empty string — caller should skip printing.
+/// (only when positive and non-trivial). The session label (`title (id)`,
+/// or just the id when no title was set) trails dim so the session can be
+/// told apart without competing with the numbers.
+/// When there's no cost and no max threshold to show, returns an empty
+/// string — caller should skip printing.
 pub fn build_status_line(
 	cost: f64,
 	context_tokens: u64,
 	max_threshold: u64,
 	delta: Option<f64>,
+	session_label: &str,
 ) -> String {
 	let pct = if max_threshold > 0 {
 		Some((context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0))
@@ -95,6 +99,10 @@ pub fn build_status_line(
 			parts.push("∞".bright_blue().to_string());
 		}
 		None => {}
+	}
+
+	if !session_label.is_empty() {
+		parts.push(format!("· {session_label}").bright_black().to_string());
 	}
 
 	parts.join(" ")

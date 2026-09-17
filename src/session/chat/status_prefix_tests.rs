@@ -34,25 +34,30 @@ fn test_build_context_bar_fill_levels() {
 #[test]
 fn test_build_status_line() {
 	// Nothing to show → empty, caller skips printing
-	assert_eq!(build_status_line(0.0, 0, 0, None), "");
+	assert_eq!(build_status_line(0.0, 0, 0, None, ""), "");
 
-	let line = build_status_line(0.48, 542, 1000, Some(0.013));
+	let line = build_status_line(0.48, 542, 1000, Some(0.013), "");
 	assert!(line.contains("$0.48"));
 	assert!(line.contains("(+$0.013)"));
 	assert!(line.contains("54.2%"));
 
 	// Tiny delta is suppressed
-	let line = build_status_line(0.48, 542, 1000, Some(0.00005));
+	let line = build_status_line(0.48, 542, 1000, Some(0.00005), "");
 	assert!(!line.contains("+$"));
 
 	// Cost but no threshold → infinity marker instead of a bar
-	let line = build_status_line(0.50, 999, 0, None);
+	let line = build_status_line(0.50, 999, 0, None, "");
 	assert!(line.contains("$0.50"));
 	assert!(line.contains("∞"));
 
 	// Usage above the threshold clamps at 100%
-	let line = build_status_line(0.0, 2000, 1000, None);
+	let line = build_status_line(0.0, 2000, 1000, None, "");
 	assert!(line.contains("100.0%"));
+
+	// Session name trails the numbers, dim, behind the `·` separator
+	let line = build_status_line(0.48, 542, 1000, None, "260917-octomind-1432-a1b2");
+	assert!(line.contains("54.2%"));
+	assert!(line.ends_with(&"· 260917-octomind-1432-a1b2".bright_black().to_string()));
 }
 
 #[test]

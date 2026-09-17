@@ -491,7 +491,7 @@ pub fn read_user_input(
 		.with_poll_interval(std::time::Duration::from_millis(100));
 
 	// Print the persistent status line ABOVE the prompt:
-	//   ▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2%
+	//   ▍ $0.48 (+$0.013) ▰▰▰▱▱ 54.2% · 260917-octomind-1432-a1b2
 	//   ▍ 〉
 	// The `▍` on both lines acts as a session-identity rail. Reedline only
 	// owns the bottom row (`▍ 〉` + input); the status line is a plain
@@ -514,11 +514,20 @@ pub fn read_user_input(
 		} else {
 			None
 		};
+		// Title set via /rename or /new leads; the session id stays so it can
+		// always be typed into /session or --resume.
+		let session_label = match crate::session::titles::get_session_meta(session_id)
+			.and_then(|meta| meta.title)
+		{
+			Some(title) => format!("{title} ({session_id})"),
+			None => session_id.to_string(),
+		};
 		let status_line = crate::session::chat::status_prefix::build_status_line(
 			estimated_cost,
 			current_context_tokens,
 			max_u64,
 			delta,
+			&session_label,
 		);
 		if !status_line.is_empty() {
 			std::println!("{}", status_line);

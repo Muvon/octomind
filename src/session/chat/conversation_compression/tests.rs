@@ -3136,7 +3136,7 @@ async fn finish_fold_no_veto_overrides_a_refusal_and_records_nothing() {
 		fold_message("assistant", "found the race"),
 	]);
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, false, false)
+		find_compression_range_preserving_turn(&session.session.messages, true, false)
 			.expect("compressible range");
 	let summary = CompressionSummary {
 		should_compress: false,
@@ -3411,7 +3411,7 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 			"{stderr}"
 		);
 		assert!(
-			stderr.contains("Compression not applied: decision model declined"),
+			stderr.contains("Compression not applied: decision model deferred the fold"),
 			"{stderr}"
 		);
 		return;

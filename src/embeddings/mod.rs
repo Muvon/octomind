@@ -20,9 +20,9 @@
 //! intent against tool/capability descriptions.
 //!
 //! The model identity is an implementation detail. Users do not configure it
-//! and cannot change it: `muvon/octomind-embed`, an all-MiniLM-L6-v2 fine-tune
-//! (22M params, 384-dim, CPU-only). Weights are downloaded on first use to the
-//! HuggingFace cache directory and reused across runs.
+//! and cannot change it: `muvon/octomind-embed`, a granite-embedding-30m
+//! fine-tune (30M params, 384-dim, CPU-only). Weights are downloaded on first
+//! use to the HuggingFace cache directory and reused across runs.
 //!
 //! No behavior change in this commit — this is the substrate. Capability
 //! discovery and tool gating wire it up in subsequent commits.
@@ -40,24 +40,28 @@ use tokio::sync::Mutex as TokioMutex;
 
 /// Hardcoded internal embedding model.
 ///
-/// `muvon/octomind-embed` is a BGE-small-en-v1.5 fine-tune trained on the
-/// octomind-tap capability triggers with paraphrase + hard-negative
-/// augmentation (see `octomind-tap/model/`). 33M params, 384-dim, sharpened
-/// on the capability-routing task: confusable clusters (shell vs
-/// programming-rust, etc.) clear the margin gate where the base model
-/// abstains.
+/// `muvon/octomind-embed` is `ibm-granite/granite-embedding-30m-english`
+/// (6-layer RoBERTa, 384-dim, CLS-pooled) fine-tuned on the octomind-tap
+/// capability triggers with paraphrase + hard-negative augmentation and
+/// blended back into the base as a WiSE-FT soup (see `octomind-tap/model/`).
+/// Picked by the 2026-09 base bake-off on the raw trigger corpus: gate
+/// accuracy 0.846 zero-shot vs 0.690 for the previous BGE-small fine-tune, at half
+/// the layers (int8 graph ≈ 1.7 ms per intent on CPU).
 ///
-/// BGE-small is a symmetric sentence-transformer: trained WITHOUT query/document
-/// instruction prefixes and capped at 256 tokens. Embed both sides bare
-/// (`InputType::None`) and keep inputs under the cap.
+/// The model is prefix-free: embed both sides bare (`InputType::None`).
+/// Its native cap is 512 tokens; we keep the 256-token chunking below.
 ///
 /// Loaded via octolib's ONNX provider, which pulls `onnx/model_quantized.onnx`
-/// from `https://huggingface.co/muvon/octomind-embed` and runs it through ONNX
+/// from `https://huggingface.co/muvon/octomind-embed`, honours the CLS
+/// pooling declared in `1_Pooling/config.json`, and runs it through ONNX
 /// Runtime. The int8 graph is ~4x smaller and 2-4x faster on CPU than the
 /// candle/safetensors path, which matters because auto-activation embeds on
-/// the user's hot path. The repo also ships fp32 safetensors; switching
-/// `EMBED_BACKEND` back to HuggingFace restores the candle path without
-/// republishing anything.
+/// the user's hot path. The candle `HuggingFace` backend always mean-pools,
+/// so switching `EMBED_BACKEND` back to it degrades this model's routing.
+///
+/// Thresholds are model-specific: `capability::AUTO_ACTIVATE_*` and
+/// `skill::SEMANTIC_*` were calibrated against this int8 graph and must be
+/// re-calibrated whenever new weights are published under this name.
 const MODEL_NAME: &str = "muvon/octomind-embed";
 
 /// Which octolib provider loads `MODEL_NAME`.

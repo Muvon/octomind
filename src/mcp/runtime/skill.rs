@@ -56,20 +56,21 @@ pub struct SkillMeta {
 	pub rules: Vec<Vec<ActivateCheck>>,
 }
 /// Default cosine floor for `semantic(phrase)` checks. Tuned for
-/// `muvon/octomind-embed` (BGE-small-en-v1.5 fine-tune).
+/// `muvon/octomind-embed` (granite-embedding-30m soup).
 ///
-/// 0.45 is the post-fine-tune calibration. After fine-tuning, lexical-
-/// overlap noise (a "humanize the landing page" prompt clearing
-/// `marketing-guest-posting` paraphrases on "blogs"/"landing" alone)
-/// drops away — the FT model learned a dedicated OOS cluster and pushes
-/// chitchat / generic-vocabulary inputs into it. The precision lever is
-/// the margin gate (`SEMANTIC_MARGIN`) applied across candidate skills
-/// in `skill_auto`. Authors override per check via `semantic(phrase, 0.6)`.
+/// 0.65 is the 2026-09 calibration for the granite soup (its cosines sit
+/// higher than the BGE fine-tune's, which ran at 0.45). Lexical-overlap
+/// noise (a "humanize the landing page" prompt clearing
+/// `marketing-guest-posting` paraphrases on "blogs"/"landing" alone) is
+/// filtered by this absolute floor plus the `_oos` cluster learned at
+/// training time. The precision lever is the margin gate
+/// (`SEMANTIC_MARGIN`) applied across candidate skills in `skill_auto`.
+/// Authors override per check via `semantic(phrase, 0.7)`.
 ///
 /// Re-calibrate after every embed retrain with
 /// `octomind-tap/model/scripts/calibrate_thresholds.py`. Keep this in
 /// sync with `capability::AUTO_ACTIVATE_THRESHOLD`.
-pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.45;
+pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.65;
 
 /// Required gap between top-1 and top-2 semantic-only skill scores in a
 /// single activation cycle. Mirrors `capability::AUTO_ACTIVATE_MARGIN`. When
@@ -77,11 +78,10 @@ pub const SEMANTIC_DEFAULT_THRESHOLD: f32 = 0.45;
 /// "landing page" pulls marketing/copy/ad skills together), neither fires
 /// — better to abstain than activate the wrong one. Skills that match via
 /// any deterministic check (file/content/grep/match/etc.) bypass this gate;
-/// hand-authored regex/keyword rules are precise by construction. Tightened
-/// from 0.05 to require a clearer "exact winner" before activating, which
-/// reduces false positives on ambiguous prompts at the cost of a few more
-/// abstains on genuinely close matches.
-pub const SEMANTIC_MARGIN: f32 = 0.08;
+/// hand-authored regex/keyword rules are precise by construction. 0.05 →
+/// 0.08 for the BGE fine-tune; 0.06 for the granite soup (narrower margins,
+/// higher absolute floor), calibrated with `SEMANTIC_DEFAULT_THRESHOLD`.
+pub const SEMANTIC_MARGIN: f32 = 0.06;
 
 /// Individual activation check within a group.
 #[derive(Debug, Clone)]

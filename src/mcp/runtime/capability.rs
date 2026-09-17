@@ -828,34 +828,35 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 // ---------------------------------------------------------------------------
 
 /// Mean-of-top-K cosine threshold a capability must clear to be auto-activated.
-/// Tuned for `muvon/octomind-embed` (BGE-small-en-v1.5 fine-tune) over short
+/// Tuned for `muvon/octomind-embed` (granite-embedding-30m soup) over short
 /// hand-authored triggers.
 ///
-/// 0.45 is the post-fine-tune calibration. After fine-tuning, the FT model
-/// places every matched-intent positive well above 0.55 (mean top1 cosine
-/// on `eval_real` is ~0.7+), so the threshold is no longer the load-bearing
-/// constraint — `AUTO_ACTIVATE_MARGIN` is. The floor is kept at 0.45 only
-/// as a safety net for the bottom-tail of legitimately-matched intents that
-/// score lower than typical; tightening it further trades recall for no
-/// false-positive reduction, since the FT model already separates chitchat
-/// / OOD inputs into a distinct cluster (see `_oos` sink label training in
-/// octomind-tap/model/scripts/build_dataset.py).
+/// 0.65 is the 2026-09 calibration for the granite soup, measured on the
+/// int8 ONNX graph the runtime loads (quantization shifts cosines) against
+/// the raw trigger corpus: gate accuracy 0.848 at null false-positive rate
+/// 0.022 on `eval_real`. This model's cosines sit higher than the BGE
+/// fine-tune's, so the floor does real work again alongside the margin;
+/// chitchat / OOD inputs are pushed below it by the `_oos` sink cluster
+/// learned at training time (octomind-tap/model/scripts/build_dataset.py).
 ///
 /// Re-calibrate after every model retrain with
 /// `octomind-tap/model/scripts/calibrate_thresholds.py`.
 ///
 /// History: 0.42 (base BGE, recall-tuned) → 0.55 (base BGE, FP-tuned for
-/// chitchat aversion) → 0.45 (FT model, margin is now the binding gate).
-const AUTO_ACTIVATE_THRESHOLD: f32 = 0.45;
+/// chitchat aversion) → 0.45 (BGE FT, margin is now the binding gate) →
+/// 0.65 (granite soup, 2026-09: its cosines sit higher; calibrated on the
+/// int8 graph against the raw trigger corpus, gate 0.848 at fpr 0.022).
+const AUTO_ACTIVATE_THRESHOLD: f32 = 0.65;
 
 /// Required gap between top-1 and top-2 capability scores. Prevents
 /// activating one of two near-tied capabilities (e.g. `database-postgres`
 /// vs `database-mysql`) when the user's intent doesn't disambiguate.
 /// Ambiguous matches abstain — the user (or the agent later via
-/// `capability(action="discover")`) clarifies. Tightened from 0.05 because
-/// the previous gap let near-ties through on generic chitchat where the
-/// embedding produces low-but-similar cosines across multiple caps.
-const AUTO_ACTIVATE_MARGIN: f32 = 0.08;
+/// `capability(action="discover")`) clarifies. Was 0.05 → 0.08 for the BGE
+/// fine-tune (near-ties on chitchat); 0.06 for the granite soup, whose
+/// margins are narrower but whose absolute threshold now does the
+/// chitchat filtering (calibrated together with the threshold above).
+const AUTO_ACTIVATE_MARGIN: f32 = 0.06;
 
 /// How many triggers per capability contribute to the per-cap score.
 /// Mean-of-top-K smooths a single noisy trigger while still rewarding

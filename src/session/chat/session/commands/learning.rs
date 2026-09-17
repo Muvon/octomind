@@ -191,7 +191,9 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 			json!({"subcommand":"evolution_action","action":"rollback","record":crate::supervisor::learning::evolution::record_summary(&record)})
 		}
 		"distill" => {
-			let config = session.config.clone();
+			let config = crate::session::context::current_session_id()
+				.and_then(|id| crate::session::context::get_session_config(&id))
+				.ok_or_else(|| anyhow::anyhow!("no session config available for distill"))?;
 			let role = role.clone();
 			let project = project.clone();
 			tokio::spawn(async move {

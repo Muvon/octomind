@@ -280,7 +280,7 @@ const GATE_TEXT_FORMAT: &str = r#"
 <output_encoding format="tags">
 Write the parts of <response_format> as tag lines, one per line, with no other text:
 - readback request: <readback seq="N">what its output would settle</readback>
-- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference">observation</condition> — the basis attribute only on an unmatched line.
+- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference">observation</condition> — the basis attribute only on an unmatched line. Only when an <evidence_conditions> block was given; write no condition line otherwise.
 - shape: <shape name="circular|context-stripped|acceptance-only|unenumerated-category" found="yes|no|unknown" settles="the observation that would clear it">one-line reason</shape> — the settles attribute only on a yes.
 - verdict PASS: <verdict>PASS</verdict>
 - gaps, in place of the PASS line: <gap settles="the observation that would close it">specific missing or unverified item</gap>, one line per gap.
@@ -960,8 +960,13 @@ pub async fn verify(
 		// Do not echo parser text derived from the malformed model response back
 		// into an instruction-bearing block. The retry needs the contract, not
 		// attacker-controlled tag names or content.
+		let condition_rule = if conditions == 0 {
+			"no condition lines (no <evidence_conditions> block was given)".to_string()
+		} else {
+			format!("conditions 1 through {conditions}, each exactly once (an unmatched one with its basis)")
+		};
 		let retry_user = format!(
-            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit every numbered condition exactly once (an unmatched one with its basis), all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
+            "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
         );
 		match ask_verifier(
 			config,

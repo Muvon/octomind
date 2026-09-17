@@ -314,7 +314,7 @@ fn grep_workdir(pattern: &str, path_filter: Option<&str>, workdir: &std::path::P
 
 /// Parse the `rule:` line into a list of checks.
 /// Format: `file(Cargo.toml) content(rust) grep(fn main, *.rs)`
-fn parse_rule_line(line: &str) -> Vec<ActivateCheck> {
+pub(crate) fn parse_rule_line(line: &str) -> Vec<ActivateCheck> {
 	let mut checks = Vec::new();
 	let mut rest = line.trim();
 	while !rest.is_empty() {

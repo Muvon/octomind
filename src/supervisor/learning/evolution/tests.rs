@@ -679,3 +679,54 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 		std::env::remove_var("OCTOMIND_DATA_DIR");
 	}
 }
+
+#[serial_test::serial]
+#[tokio::test]
+async fn store_synthesis_is_stamped_daily_and_bypassed_by_the_command() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	let stamp = store_synthesis_stamp().unwrap();
+
+	assert_eq!(
+		synthesize_store_if_due(&config, "developer:general", "project")
+			.await
+			.unwrap(),
+		None
+	);
+	assert!(!stamp.exists(), "disabled evolution must not stamp");
+
+	config.supervisor.learning.evolution.enabled = true;
+	assert_eq!(
+		synthesize_store_if_due(&config, "developer:general", "project")
+			.await
+			.unwrap(),
+		None
+	);
+	let first = std::fs::read_to_string(&stamp).unwrap();
+	std::fs::write(&stamp, "earlier").unwrap();
+	assert_eq!(
+		synthesize_store_if_due(&config, "developer:general", "project")
+			.await
+			.unwrap(),
+		None
+	);
+	assert_eq!(std::fs::read_to_string(&stamp).unwrap(), "earlier");
+	assert_eq!(
+		synthesize_store_now(&config, "developer:general", "project")
+			.await
+			.unwrap(),
+		None
+	);
+	assert_ne!(std::fs::read_to_string(&stamp).unwrap(), "earlier");
+	assert!(first.starts_with("20"));
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}

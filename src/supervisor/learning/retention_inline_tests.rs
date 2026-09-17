@@ -469,3 +469,61 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 		std::env::remove_var("OLLAMA_API_URL");
 	}
 }
+
+#[tokio::test]
+async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = super::super::backend::file::FileBackend;
+	let rule = |project: &str, day: u8, importance: f64, use_count: u64| {
+		let mut item = memory(
+			"Leave all file changes unstaged; the user commits themselves",
+			"learning",
+		);
+		item.project = project.to_string();
+		item.scope = "scoped".to_string();
+		item.created = format!("2026-01-{day:02}T00:00:00Z");
+		item.importance = importance;
+		item.use_count = use_count;
+		item.evidence = vec![format!("session://{project}/message/1")];
+		item
+	};
+	backend.store(&rule("octomind", 1, 0.9, 4)).await.unwrap();
+	backend.store(&rule("octolib", 2, 0.6, 1)).await.unwrap();
+	backend.store(&rule("octofs", 3, 0.7, 2)).await.unwrap();
+	// Two projects only: stays scoped.
+	let mut pair = memory("Prefer tabs in TOML files", "learning");
+	pair.project = "octomind".to_string();
+	backend.store(&pair).await.unwrap();
+	pair.project = "octolib".to_string();
+	backend.store(&pair).await.unwrap();
+
+	let promoted = promote_recurring(&backend).await.unwrap();
+	assert_eq!(promoted, 1);
+
+	let global = backend.retrieve_global().await.unwrap();
+	assert_eq!(global.len(), 1);
+	let keeper = &global[0];
+	assert_eq!(keeper.project, "octomind");
+	assert_eq!(keeper.importance, 0.9);
+	assert_eq!(keeper.use_count, 7);
+	assert_eq!(keeper.related.len(), 2);
+	assert_eq!(keeper.evidence.len(), 3);
+	for project in ["octomind", "octolib"] {
+		let hot = backend.retrieve_all("developer", project).await.unwrap();
+		assert_eq!(hot.len(), 1);
+		assert_eq!(hot[0].content, "Prefer tabs in TOML files");
+	}
+	assert!(backend
+		.retrieve_all("developer", "octofs")
+		.await
+		.unwrap()
+		.is_empty());
+	for project in ["octolib", "octofs"] {
+		let cold = super::super::backend::file::FileBackend::read_archived(
+			&crate::directories::get_learning_dir("developer", project).unwrap(),
+		);
+		assert_eq!(cold.len(), 1);
+	}
+	assert_eq!(promote_recurring(&backend).await.unwrap(), 0);
+}

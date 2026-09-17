@@ -43,6 +43,12 @@ const GLOBAL_ORIENTATION_HARD_TOKENS: usize = 8_000;
 const GLOBAL_EXPERIENCE_HARD_TOKENS: usize = 16_000;
 
 const MIN_PAIR_SIGNAL: f64 = 0.20;
+/// A scoped short rule recurring near-verbatim in this many projects is a
+/// user-wide preference that extraction kept re-learning per project.
+const RECURRENCE_MIN_PROJECTS: usize = 3;
+/// Promotion is automatic and unreviewed, so only near-identical wording
+/// qualifies; MIN_PAIR_SIGNAL is the looser bar for model-reviewed merges.
+const RECURRENCE_PAIR_SIGNAL: f64 = 0.6;
 const MAX_CONSOLIDATION_INPUT_TOKENS: usize = 8_000;
 const MAX_CONSOLIDATED_FRACTION: usize = 4; // output must be <= 3/4 of input
 
@@ -67,6 +73,7 @@ supported=true only when every claim in the candidate is entailed by the sources
 pub struct RetentionReport {
 	pub consolidated: u64,
 	pub archived: u64,
+	pub promoted: u64,
 }
 
 /// Compact sparse index for cold paging. It intentionally stores only enough
@@ -114,13 +121,118 @@ impl ArchiveCatalogEntry {
 /// Maintain both the current project/role scope and the global scope.
 pub async fn maintain(config: &Config, role: &str, project: &str) -> Result<RetentionReport> {
 	let backend = FileBackend;
+	// Promotion first so a newly global rule is budgeted in the global bucket.
+	let promoted = promote_recurring(&backend).await?;
 	let scoped = backend.retrieve_all(role, project).await?;
 	let global = backend.retrieve_global().await?;
 	let mut report = maintain_scope(&backend, config, scoped, false).await?;
 	let global_report = maintain_scope(&backend, config, global, true).await?;
 	report.consolidated += global_report.consolidated;
 	report.archived += global_report.archived;
+	report.promoted = promoted;
 	Ok(report)
+}
+
+/// Promote a scoped short rule that recurs across projects into one global
+/// record. The keeper is the highest-importance instance and its content stays
+/// verbatim, so the quote-first contract holds; evidence is unioned, the other
+/// instances are linked through `related` and cold-archived, never deleted.
+async fn promote_recurring(backend: &FileBackend) -> Result<u64> {
+	let rules: Vec<Lesson> = backend
+		.retrieve_store()
+		.await?
+		.into_iter()
+		.filter(|item| item.memory_type == "learning" && item.scope != "global")
+		.collect();
+	let mut promoted = 0_u64;
+	for cluster in recurrence_clusters(&rules, RECURRENCE_PAIR_SIGNAL) {
+		let projects: HashSet<&str> = cluster
+			.iter()
+			.map(|index| rules[*index].project.as_str())
+			.collect();
+		if projects.len() < RECURRENCE_MIN_PROJECTS {
+			continue;
+		}
+		let mut members: Vec<&Lesson> = cluster.iter().map(|index| &rules[*index]).collect();
+		members.sort_by(|a, b| {
+			b.importance
+				.partial_cmp(&a.importance)
+				.unwrap_or(std::cmp::Ordering::Equal)
+				.then_with(|| b.use_count.cmp(&a.use_count))
+		});
+		let Some((keeper_source, others)) = members.split_first() else {
+			continue;
+		};
+		let mut keeper = (*keeper_source).clone();
+		keeper.scope = "global".to_string();
+		keeper.storage_path = String::new();
+		keeper
+			.related
+			.extend(others.iter().map(|item| item.file_id()));
+		keeper.related.sort();
+		keeper.related.dedup();
+		keeper
+			.evidence
+			.extend(others.iter().flat_map(|item| item.evidence.clone()));
+		keeper.evidence.sort();
+		keeper.evidence.dedup();
+		keeper.use_count = members
+			.iter()
+			.map(|item| item.use_count)
+			.fold(0, u64::saturating_add);
+		keeper.last_used = members
+			.iter()
+			.map(|item| item.last_used.as_str())
+			.max()
+			.unwrap_or_default()
+			.to_string();
+		backend.store(&keeper).await?;
+		// The global copy is now the authority; the scoped original is removed
+		// rather than archived so cold paging cannot resurrect a duplicate.
+		if !keeper_source.storage_path.is_empty() {
+			std::fs::remove_file(&keeper_source.storage_path)?;
+		}
+		for item in others {
+			archive_record(item)?;
+		}
+		crate::log_debug!(
+			"Learning retention: promoted recurring rule to global across {} projects: {}",
+			projects.len(),
+			keeper.content
+		);
+		promoted += 1;
+	}
+	Ok(promoted)
+}
+
+/// Single-link clusters over `pair_signal`, as index groups of size >= 2.
+pub(crate) fn recurrence_clusters(items: &[Lesson], min_signal: f64) -> Vec<Vec<usize>> {
+	fn root(parent: &mut [usize], index: usize) -> usize {
+		let mut current = index;
+		while parent[current] != current {
+			parent[current] = parent[parent[current]];
+			current = parent[current];
+		}
+		current
+	}
+	let mut parent: Vec<usize> = (0..items.len()).collect();
+	for left in 0..items.len() {
+		for right in (left + 1)..items.len() {
+			if pair_signal(&items[left], &items[right]) >= min_signal {
+				let (left_root, right_root) = (root(&mut parent, left), root(&mut parent, right));
+				parent[right_root] = left_root;
+			}
+		}
+	}
+	let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+	for index in 0..items.len() {
+		let cluster_root = root(&mut parent, index);
+		groups.entry(cluster_root).or_default().push(index);
+	}
+	groups
+		.into_values()
+		.filter(|members| members.len() >= 2)
+		.collect()
 }
 
 async fn maintain_scope(
@@ -247,7 +359,7 @@ fn jaccard(left: &HashSet<String>, right: &HashSet<String>) -> f64 {
 }
 
 /// Similarity chooses a pair for semantic review; it never authorizes a merge.
-fn pair_signal(left: &Lesson, right: &Lesson) -> f64 {
+pub(crate) fn pair_signal(left: &Lesson, right: &Lesson) -> f64 {
 	if left.memory_type != right.memory_type || left.scope != right.scope {
 		return 0.0;
 	}

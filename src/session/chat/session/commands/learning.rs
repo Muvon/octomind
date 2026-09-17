@@ -20,6 +20,7 @@
 //! `/learning show <index>`     → inspect full content, provenance, and links
 //! `/learning delete <index>`   → delete lesson by 1-based index from last list
 //! `/learning clear`            → delete ALL lessons for current role+project
+//! `/learning evolution distill` → run cross-store behavior synthesis now
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
@@ -189,9 +190,33 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 			})?;
 			json!({"subcommand":"evolution_action","action":"rollback","record":crate::supervisor::learning::evolution::record_summary(&record)})
 		}
+		"distill" => {
+			let config = session.config.clone();
+			let role = role.clone();
+			let project = project.clone();
+			tokio::spawn(async move {
+				let notice = match crate::supervisor::learning::evolution::synthesize_store_now(
+					&config, &role, &project,
+				)
+				.await
+				{
+					Ok(Some(id)) => format!("evolution store distill: candidate {id}"),
+					Ok(None) => {
+						"evolution store distill: no recurring pattern qualified".to_string()
+					}
+					Err(error) => format!("evolution store distill failed: {error}"),
+				};
+				crate::supervisor::notify(&notice);
+			});
+			json!({
+				"subcommand":"evolution_action",
+				"action":"distill",
+				"record":{"name":"cross-store synthesis","state":"started in background"}
+			})
+		}
 		_ => json!({
 			"subcommand":"error",
-			"message":"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>]"
+			"message":"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>|distill]"
 		}),
 	};
 	Ok(CommandResult::HandledWithOutput(Box::new(

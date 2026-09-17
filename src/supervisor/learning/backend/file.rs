@@ -528,6 +528,35 @@ impl FileBackend {
 		Ok(Self::read_lessons_sorted(&dir))
 	}
 
+	/// Every hot record across all projects, roles, and the global scope.
+	/// Only detached cross-store passes (recurrence promotion, store
+	/// synthesis) read the whole corpus; nothing on the user-turn path does.
+	pub(crate) async fn retrieve_store(&self) -> Result<Vec<Lesson>> {
+		let mut lessons =
+			Self::read_lessons_sorted(&crate::directories::get_global_learning_dir()?);
+		let root = crate::directories::get_octomind_data_dir()?.join("learning");
+		let Ok(projects) = std::fs::read_dir(&root) else {
+			return Ok(lessons);
+		};
+		for project in projects.flatten().filter(|entry| entry.path().is_dir()) {
+			let name = project.file_name();
+			let name = name.to_string_lossy();
+			if name == "_" || name.starts_with('.') {
+				continue;
+			}
+			let Ok(roles) = std::fs::read_dir(project.path()) else {
+				continue;
+			};
+			for role in roles.flatten().filter(|entry| entry.path().is_dir()) {
+				if role.file_name().to_string_lossy().starts_with('.') {
+					continue;
+				}
+				lessons.extend(Self::read_lessons_sorted(&role.path()));
+			}
+		}
+		Ok(lessons)
+	}
+
 	pub(crate) async fn retrieve_archived_global(
 		&self,
 		intent: &str,

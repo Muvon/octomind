@@ -66,6 +66,17 @@ compile one highest-value grounded memory per extraction into a machine-local sk
 move through shadow, bounded trial, active, and rollback states; generated behavior never overwrites authored skills or
 `.agents/guardrails.toml`.
 
+Two synthesis modes share that pipeline. **Session** mode runs after each extraction on the memories that session just
+stored, with the transcript as evidence. **Store** mode runs at most once per day (or on `/learning evolution distill`)
+over the whole hot store: short rules that were materially used or came from a direct correction, plus verified
+experiences, are clustered by wording and paraphrase, and the cluster that recurs across the most projects becomes one
+candidate. Its scope follows the recurrence: two or more projects make the project dimension global, two or more role
+domains make the domain dimension global, so a rule you keep restating in every repository can become one skill that
+binds everywhere. Every generated skill must pass a deterministic trigger screen before the verifier runs: the
+proposal's replay cases are executed against the rendered activation rules, quoted arguments and `&&` are rejected,
+and a body that embeds session evidence handles or machine-local paths is rejected as an experience dump rather than a
+procedure.
+
 The auto-compaction extraction minimum (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule
 sub-cap are fixed constants, not knobs.
 
@@ -122,6 +133,7 @@ Individual rows stay compact; use `show` for full provenance and retention metad
 | `/learning evolution` | List evolved behavior matching the current project/domain. |
 | `/learning evolution show <id>` | Inspect scope, provenance, native artifact, trials, and history. |
 | `/learning evolution approve\|reject\|rollback <id>` | Explicitly control a generated behavior lifecycle. |
+| `/learning evolution distill` | Run cross-store synthesis now, in the background, ignoring the daily stamp. |
 
 The unfiltered list covers current scoped hot records followed by global hot records, each sorted by importance. `show`
 and `delete` reload that unfiltered list: filtered row numbers are not safe to reuse, and indices may change when
@@ -311,6 +323,11 @@ their evidence, inherits the lower importance, and does not strengthen confidenc
 
 Short user-backed rules are never synthesized by this pass because a generated merge would break their quote-first
 contract. They continue to change only through explicit, separately verified extraction and `supersedes`.
+
+Maintenance also promotes recurrence. When a scoped short rule appears near-verbatim (word Jaccard about 0.6 or higher)
+in three or more projects, the highest-importance instance moves to `learning/_/` with its content unchanged, its
+evidence unioned, and the other instances listed in `related`; those instances are cold-archived in their project
+scopes, never deleted.
 
 After that single consolidation attempt, the lowest-utility records move to `.archive/<memory_type>/` until the hot
 store is back at 80%. Utility combines bounded importance, direct-use count, confidence, and last-use recency:

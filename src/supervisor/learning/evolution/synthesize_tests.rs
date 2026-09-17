@@ -723,3 +723,148 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 		std::env::remove_var("OCTOMIND_DATA_DIR");
 	}
 }
+
+#[test]
+fn activation_rules_reject_quoted_arguments_and_boolean_operators() {
+	assert!(
+		validate_activation_rules(&["content(brief) match(\\bchanges\\b)".to_string()]).is_ok()
+	);
+	assert!(validate_activation_rules(&["match(\"brief the changes\")".to_string()]).is_err());
+	assert!(validate_activation_rules(&["content('polish')".to_string()]).is_err());
+	assert!(
+		validate_activation_rules(&["file(Cargo.toml) && content(octolib)".to_string()]).is_err()
+	);
+	assert!(validate_activation_rules(&["brief the changes".to_string()]).is_err());
+}
+
+#[test]
+fn skill_body_rejects_evidence_handles_and_machine_local_paths() {
+	assert!(validate_skill_body("1. Enumerate the diff.\n2. Verify each claim.").is_ok());
+	assert!(validate_skill_body("See session://abc/message/3 for the trace.").is_err());
+	if let Some(home) = dirs::home_dir() {
+		assert!(validate_skill_body(&format!("cd {}", home.display())).is_err());
+	}
+}
+
+#[tokio::test]
+async fn replay_screen_runs_text_checks_and_counts_environment_checks_as_satisfied() {
+	let native = "---\nname: evolved-brief\ndescription: \"brief\"\ndomains: developer\nrules:\n  - content(brief) file(README.md)\n---\n\nBrief it.\n";
+	let cases = |negative: &str| {
+		vec![
+			super::super::ReplayCase {
+				label: "positive".to_string(),
+				input: "brief the staged changes".to_string(),
+				expected_match: true,
+				boundary: false,
+			},
+			super::super::ReplayCase {
+				label: "negative".to_string(),
+				input: negative.to_string(),
+				expected_match: false,
+				boundary: false,
+			},
+		]
+	};
+	assert!(screen_replay_cases(native, &cases("write release notes"))
+		.await
+		.is_ok());
+	let error = screen_replay_cases(native, &cases("brief overview of the codebase"))
+		.await
+		.unwrap_err();
+	assert!(error.to_string().contains("negative"));
+	let environment_only = native.replace("content(brief) file(README.md)", "file(README.md)");
+	assert!(
+		screen_replay_cases(&environment_only, &cases("write release notes"))
+			.await
+			.is_err()
+	);
+}
+
+#[test]
+fn scope_basis_derives_global_dimensions_from_recurrence() {
+	let mut first = memory("scoped");
+	first.project = "octomind".to_string();
+	first.role = "developer:general".to_string();
+	first.source = "s1".to_string();
+	first.use_count = 3;
+	let mut second = memory("scoped");
+	second.project = "octolib".to_string();
+	second.role = "developer:brief".to_string();
+	second.source = "s2".to_string();
+	second.use_count = 2;
+	let basis = ScopeBasis::from_memories(&[first.clone(), second.clone()]);
+	assert_eq!(
+		basis.scope(),
+		ArtifactScope {
+			project: None,
+			domain: Some("developer".to_string()),
+		}
+	);
+	assert_eq!(basis.total_use_count, 5);
+	assert_eq!(basis.sessions, vec!["s1".to_string(), "s2".to_string()]);
+	let mut other_domain = second.clone();
+	other_domain.role = "content:writer".to_string();
+	assert_eq!(
+		ScopeBasis::from_memories(&[first.clone(), other_domain]).scope(),
+		ArtifactScope {
+			project: None,
+			domain: None,
+		}
+	);
+	assert_eq!(
+		ScopeBasis::from_memories(&[first]).scope(),
+		ArtifactScope {
+			project: Some("octomind".to_string()),
+			domain: Some("developer".to_string()),
+		}
+	);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn recurring_store_cluster_requires_two_projects_and_demonstrated_value() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let backend = FileBackend;
+	let rule = |content: &str, project: &str, use_count: u64| {
+		let mut item = memory("scoped");
+		item.content = content.to_string();
+		item.title = content.to_string();
+		item.project = project.to_string();
+		item.source = format!("session-{project}");
+		item.use_count = use_count;
+		item.importance = 0.6;
+		item
+	};
+	let wording = "Never run cargo build locally; the user builds on the dev server";
+	backend.store(&rule(wording, "octomind", 4)).await.unwrap();
+	backend
+		.store(&rule(
+			"Never run cargo build locally, the user builds on the dev server themselves",
+			"octolib",
+			2,
+		))
+		.await
+		.unwrap();
+	backend.store(&rule(wording, "octofs", 0)).await.unwrap();
+	backend
+		.store(&rule("Keep README edits text only", "octomind", 5))
+		.await
+		.unwrap();
+
+	let cluster = recurring_store_cluster().await.unwrap();
+	let projects: BTreeSet<&str> = cluster.iter().map(|item| item.project.as_str()).collect();
+	assert_eq!(projects.len(), 2);
+	assert!(cluster
+		.iter()
+		.all(|item| item.content.starts_with("Never run cargo build")));
+	assert!(cluster[0].use_count >= cluster[1].use_count);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}

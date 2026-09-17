@@ -187,6 +187,10 @@ impl EvolutionRecord {
 }
 
 pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
+/// Cross-store synthesis scans and embeds the whole hot store, so detached
+/// extraction runs it at most once per interval; the command bypasses it.
+const STORE_SYNTHESIS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+const STORE_SYNTHESIS_STAMP: &str = "store-synthesis.stamp";
 pub const SHADOW_MATCHES_REQUIRED: u32 = 2;
 pub const TRIAL_SUCCESSES_REQUIRED: u32 = 2;
 pub const TRIAL_FAILURE_LIMIT: u32 = 1;
@@ -226,6 +230,46 @@ pub async fn synthesize_after_extraction(
 		return Ok(None);
 	}
 	synthesize::synthesize(messages, config, role, project, session_name).await
+}
+
+/// Called by the canonical extraction worker after maintenance. Stamps before
+/// running so a concurrent extraction cannot start a second scan.
+pub async fn synthesize_store_if_due(
+	config: &crate::config::Config,
+	role: &str,
+	project: &str,
+) -> anyhow::Result<Option<String>> {
+	if !config.supervisor.learning.evolution.enabled {
+		return Ok(None);
+	}
+	let stamp = store_synthesis_stamp()?;
+	let fresh = std::fs::metadata(&stamp)
+		.and_then(|metadata| metadata.modified())
+		.ok()
+		.and_then(|modified| modified.elapsed().ok())
+		.is_some_and(|age| age < STORE_SYNTHESIS_INTERVAL);
+	if fresh {
+		return Ok(None);
+	}
+	std::fs::write(&stamp, chrono::Utc::now().to_rfc3339())?;
+	synthesize::synthesize_store(config, role, project).await
+}
+
+/// `/learning evolution distill`: run the cross-store pass now.
+pub async fn synthesize_store_now(
+	config: &crate::config::Config,
+	role: &str,
+	project: &str,
+) -> anyhow::Result<Option<String>> {
+	if !config.supervisor.learning.evolution.enabled {
+		anyhow::bail!("[supervisor.learning.evolution] is disabled");
+	}
+	std::fs::write(store_synthesis_stamp()?, chrono::Utc::now().to_rfc3339())?;
+	synthesize::synthesize_store(config, role, project).await
+}
+
+fn store_synthesis_stamp() -> anyhow::Result<PathBuf> {
+	Ok(crate::directories::get_learning_evolution_dir()?.join(STORE_SYNTHESIS_STAMP))
 }
 
 /// Human/structured command representation of a record without exposing raw

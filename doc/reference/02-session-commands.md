@@ -556,6 +556,7 @@ Guide](../usage/13-learning.md) for full details.
 | `/learning evolution approve <id>` | Authorize a shadow candidate for a bounded live trial. |
 | `/learning evolution reject <id>` | Mark a generated record rejected. |
 | `/learning evolution rollback <id>` | Return a trial or active behavior to shadow and reset counters. |
+| `/learning evolution distill` | Start cross-store behavior synthesis in the background, bypassing the daily stamp. |
 
 Any other subcommand returns an error listing `list`, `show`, `delete`, `clear`, and `evolution`.
 

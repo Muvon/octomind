@@ -533,6 +533,11 @@ async fn finish_extraction(
 			Err(error) => crate::log_debug!("Evolution synthesis failed closed: {}", error),
 		}
 	}
+	match super::evolution::synthesize_store_if_due(config, role, project).await {
+		Ok(Some(id)) => crate::log_debug!("Evolution store candidate stored: {}", id),
+		Ok(None) => {}
+		Err(error) => crate::log_debug!("Evolution store synthesis failed closed: {}", error),
+	}
 	Ok(stored)
 }
 

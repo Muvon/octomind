@@ -906,7 +906,8 @@ async fn verify_corroborated_deferral_holds_without_a_paid_call() {
 }
 
 /// The other half of the judgment: a veto the runtime cannot corroborate is
-/// overruled, not obeyed. No reason means no claim, so the fold proceeds inline
+/// overruled, not obeyed. No reason means no claim, so the fold proceeds on the
+/// normal background path with the veto withdrawn — not as an emergency fold —
 /// and the spent deferral is consumed rather than re-litigated.
 #[tokio::test]
 async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
@@ -934,14 +935,18 @@ async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
 			.await
 			.expect("compression pipeline");
+	assert!(
+		!compressed && session.fold_job.is_some(),
+		"an overruled deferral is not an emergency: the fold still runs in the background"
+	);
+	assert_eq!(
+		session.fold_deferral, None,
+		"a refuted deferral is consumed, not re-litigated"
+	);
 
 	assert!(
-		compressed,
+		settle_folds(&mut session, &config).await,
 		"an uncorroborated deferral must be overruled, not obeyed"
-	);
-	assert!(
-		session.fold_job.is_none(),
-		"an overruled deferral folds inline, it does not park a job"
 	);
 	assert!(
 		session
@@ -951,9 +956,49 @@ async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
 		"the overruled veto must still produce the fold"
 	);
+	assert_eq!(session.fold_deferral, None);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+/// The original failure: the decision model declined every fold and the session
+/// sat unfolded until the ceiling. Without a plan step there is nothing for the
+/// runtime to check a claim against, so the veto is not offered at all — the
+/// model's `false` is overridden on the first call, not paid for twice.
+#[tokio::test]
+async fn verify_veto_is_not_offered_without_a_plan_step_to_check_it_against() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&veto_summary_body()),
+		final_response(&veto_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+
+	let mut session = regime_session(&mut config).await;
+	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
+
+	assert!(
+		settle_folds(&mut session, &config).await,
+		"with no plan the model's decline must not hold the fold"
+	);
 	assert_eq!(
 		session.fold_deferral, None,
-		"a refuted deferral is consumed, not re-litigated"
+		"no veto was offered, so nothing is recorded"
+	);
+	assert!(
+		session.session.info.compression_stats.input_tokens > 0,
+		"the single paid call landed the fold"
+	);
+	assert!(
+		session
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		"the fold must be applied"
 	);
 
 	std::env::remove_var("OLLAMA_API_URL");

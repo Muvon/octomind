@@ -180,15 +180,17 @@ pub(super) const MAX_COMPRESSION_RATIO: f64 = 16.0;
 pub(super) const MIN_RUNWAY_TURNS: f64 = 5.0;
 
 /// A recorded fold deferral: the model's reason plus the plan step that was
-/// open when it declined.
+/// open when the fold call it answered was prepared.
 ///
 /// The reason is the model's claim; the step is the runtime's own bookkeeping.
 /// Keeping both is what makes the claim checkable — see `stands_against`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldDeferral {
 	pub reason: DeferReason,
-	/// Plan step index at the moment of the decline, `None` when no plan was
-	/// active. Identity, not liveness: see `stands_against`.
+	/// Plan step index when the fold call was prepared, `None` when no plan was
+	/// active. Captured at spawn, not at collection: a background call answers
+	/// the transcript it was given, so a step that advanced while it ran must
+	/// lapse the claim rather than be recorded as its subject.
 	pub step: Option<usize>,
 }
 
@@ -202,6 +204,13 @@ impl FoldDeferral {
 	/// plan's whole life: a held round makes no fold call, so nothing can
 	/// re-record the reason, and the next judgment would keep honouring a claim
 	/// about work that has since advanced.
+	///
+	/// A model judges *what* to preserve well and *when* to fold badly
+	/// (AutoCompact, SWE-bench Verified), so its veto is a claim to check, never
+	/// an order to obey. Only a claim that a step is in flight can be
+	/// corroborated; `stuck`, `transcript_minimal`, a missing or unrecognised
+	/// reason, and an in-flight claim with no step behind it are premises the
+	/// runtime refutes, so the fold proceeds.
 	pub(super) fn stands_against(self, current_step: Option<usize>, agent_blocked: bool) -> bool {
 		!agent_blocked
 			&& self.reason.claims_step_in_flight()
@@ -212,42 +221,15 @@ impl FoldDeferral {
 	}
 }
 
-/// Whether a fold must happen regardless of the decision model's veto: `/done`,
-/// the ceiling margin, or a deferral the runtime cannot corroborate. Escalation
-/// bypasses the veto, not the fire line — the caller only reaches it past the
-/// line — and a forced fold that also fails falls back to the normal cooldown
-/// instead of retrying.
-pub(super) fn fold_is_forced(
-	force_done: bool,
-	force_ceiling: bool,
-	deferral: Option<FoldDeferral>,
-	current_step: Option<usize>,
-	agent_blocked: bool,
-) -> bool {
-	force_done || force_ceiling || !deferral_stands(deferral, current_step, agent_blocked)
-}
-
-/// Whether a recorded deferral still stands against state the runtime owns.
-///
-/// A model judges *what* to preserve well and *when* to fold badly
-/// (AutoCompact, SWE-bench Verified), so its veto is treated as a claim to
-/// check, never an order to obey — this is AutoCompact's judge, without the
-/// training loop. Only a claim that a step is in flight can be corroborated —
-/// and only while the same plan step is still open and the agent does not
-/// report itself blocked. `stuck`, `transcript_minimal`, a missing or
-/// unrecognised reason, and an in-flight claim with no step behind it are all
-/// premises the runtime can refute, so the fold proceeds. `None` means no
-/// deferral is pending at all: there is nothing to overrule and nothing to
-/// force.
-pub(super) fn deferral_stands(
-	deferral: Option<FoldDeferral>,
-	current_step: Option<usize>,
-	agent_blocked: bool,
-) -> bool {
-	match deferral {
-		None => true,
-		Some(deferral) => deferral.stands_against(current_step, agent_blocked),
-	}
+/// Whether the runtime could corroborate an in-flight claim at all: an open
+/// plan step to pin it to, and an agent that does not report itself blocked.
+/// When it cannot, the veto is not offered — a decline would only be paid for
+/// and overruled on the next round, which is the shape that used to hold a
+/// session unfolded until the ceiling. Without a plan the range selection still
+/// keeps the live step verbatim, so a fold there is never blind to the work in
+/// flight.
+pub(super) fn veto_checkable(current_step: Option<usize>, agent_blocked: bool) -> bool {
+	!agent_blocked && current_step.is_some()
 }
 
 /// Inside the ceiling margin: fewer than `MIN_RUNWAY_TURNS` calls of measured

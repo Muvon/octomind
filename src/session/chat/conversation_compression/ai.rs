@@ -65,7 +65,7 @@ pub(super) async fn run_decision_call(
 
 	// Cache the system prompt only if the compression model supports caching.
 	// The system content is stable across compression calls (only varies on
-	// `force` and mode), so cache hits amortise the system tokens.
+	// `no_veto` and mode), so cache hits amortise the system tokens.
 	let supports_caching = crate::session::model_supports_caching(&decision_config.model);
 
 	let messages = vec![
@@ -160,7 +160,7 @@ pub(super) fn prepare_decision(
 	config: &Config,
 	messages_to_compress: &[crate::session::Message],
 	pact: Option<&super::attention::PactContext>,
-	force: bool,
+	no_veto: bool,
 	target_ratio: f64,
 ) -> Result<PreparedDecision> {
 	let profile = config.get_compression_model_profile();
@@ -169,11 +169,11 @@ pub(super) fn prepare_decision(
 	let use_json = provider.enforces_response_schema(&actual_model);
 
 	let (system_content, user_content) = if use_json {
-		build_compression_prompt_json(session, messages_to_compress, pact, force, target_ratio)
+		build_compression_prompt_json(session, messages_to_compress, pact, no_veto, target_ratio)
 	} else {
-		build_compression_prompt_xml(session, messages_to_compress, pact, force, target_ratio)
+		build_compression_prompt_xml(session, messages_to_compress, pact, no_veto, target_ratio)
 	};
-	let schema = use_json.then(|| build_compression_schema(force, pact.is_some()));
+	let schema = use_json.then(|| build_compression_schema(no_veto, pact.is_some()));
 	log_debug!(
 		"Compression wire mode: {} (provider='{}', model='{}')",
 		if use_json { "json" } else { "xml" },
@@ -213,16 +213,20 @@ pub(super) fn record_decision_usage(
 
 /// The veto and substantive-summary rules, shared by the inline and background
 /// paths. Returns the effective should_compress.
-pub(super) fn evaluate_decision(summary: &CompressionSummary, force: bool, has_pact: bool) -> bool {
+pub(super) fn evaluate_decision(
+	summary: &CompressionSummary,
+	no_veto: bool,
+	has_pact: bool,
+) -> bool {
 	let mut should_compress = summary.should_compress;
 	if !should_compress {
-		if force {
-			// Forced compression (ceiling breach or /done) grants the decision
-			// model no veto — the schema/prompt demand should_compress=true, so a
-			// false here is a protocol violation, not a decision. Override and let
-			// the substantive-summary guard stay the real safety.
+		if no_veto {
+			// The veto was not offered on this call — the schema/prompt demand
+			// should_compress=true, so a false here is a protocol violation, not
+			// a decision. Override and let the substantive-summary guard stay the
+			// real safety.
 			log_info!(
-				"Forced compression: decision model returned should_compress=false — overriding (refusal is not an option under force)"
+				"Decision model returned should_compress=false on a no-veto call — overriding"
 			);
 			should_compress = true;
 		} else {

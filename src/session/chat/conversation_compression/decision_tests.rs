@@ -80,55 +80,23 @@ fn deferral(reason: DeferReason, step: Option<usize>) -> FoldDeferral {
 
 #[test]
 fn deferral_stands_only_while_the_same_step_is_open() {
-	// Nothing pending: nothing to overrule and nothing to force.
-	assert!(deferral_stands(None, None, false));
-	assert!(deferral_stands(None, Some(2), false));
-
 	// An in-flight claim about step 1, corroborated by that same step still
 	// being open and an agent that does not report itself blocked.
-	assert!(deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, Some(1))),
-		Some(1),
-		false
-	));
-	assert!(deferral_stands(
-		Some(deferral(DeferReason::VerificationInFlight, Some(3))),
-		Some(3),
-		false
-	));
+	assert!(deferral(DeferReason::MidDerivation, Some(1)).stands_against(Some(1), false));
+	assert!(deferral(DeferReason::VerificationInFlight, Some(3)).stands_against(Some(3), false));
 
 	// The plan ADVANCED past the step the decline was about: the claim is about
 	// work that is no longer in flight, so it lapses. This is what stops one
 	// paid decline from suppressing every soft fold for the plan's whole life —
 	// a held round makes no fold call, so nothing can re-record the reason.
-	assert!(!deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, Some(1))),
-		Some(2),
-		false
-	));
+	assert!(!deferral(DeferReason::MidDerivation, Some(1)).stands_against(Some(2), false));
 
-	// The same claim with no plan step behind it, or with the agent reporting
-	// itself blocked, is a premise the runtime can refute.
-	assert!(!deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, None)),
-		None,
-		false
-	));
-	assert!(!deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, Some(1))),
-		None,
-		false
-	));
-	assert!(!deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, None)),
-		Some(1),
-		false
-	));
-	assert!(!deferral_stands(
-		Some(deferral(DeferReason::MidDerivation, Some(1))),
-		Some(1),
-		true
-	));
+	// The same claim with no plan step behind it, with the plan gone, or with
+	// the agent reporting itself blocked, is a premise the runtime can refute.
+	assert!(!deferral(DeferReason::MidDerivation, None).stands_against(None, false));
+	assert!(!deferral(DeferReason::MidDerivation, Some(1)).stands_against(None, false));
+	assert!(!deferral(DeferReason::MidDerivation, None).stands_against(Some(1), false));
+	assert!(!deferral(DeferReason::MidDerivation, Some(1)).stands_against(Some(1), true));
 
 	// Reasons that never assert a running step are refuted by construction,
 	// even with the same step still open.
@@ -138,42 +106,19 @@ fn deferral_stands_only_while_the_same_step_is_open() {
 		DeferReason::TranscriptMinimal,
 	] {
 		assert!(
-			!deferral_stands(Some(deferral(reason, Some(1))), Some(1), false),
+			!deferral(reason, Some(1)).stands_against(Some(1), false),
 			"{reason:?} must never stand"
 		);
 	}
 }
 
 #[test]
-fn fold_is_forced_by_done_ceiling_or_an_uncorroborated_deferral() {
-	// No deferral: the two hard triggers are the only force.
-	assert!(!fold_is_forced(false, false, None, None, false));
-	assert!(fold_is_forced(true, false, None, None, false));
-	assert!(fold_is_forced(false, true, None, None, false));
-
-	let standing = Some(deferral(DeferReason::MidDerivation, Some(1)));
-	// A corroborated deferral suppresses the force...
-	assert!(!fold_is_forced(false, false, standing, Some(1), false));
-	// ...but never against `/done` or the ceiling margin, which are the
-	// non-hardcoded backstops behind any held deferral.
-	assert!(fold_is_forced(true, false, standing, Some(1), false));
-	assert!(fold_is_forced(false, true, standing, Some(1), false));
-	// ...and it lapses the moment the plan advances past its step.
-	assert!(fold_is_forced(false, false, standing, Some(2), false));
-
-	// An uncorroborated deferral is overruled: the fold proceeds.
-	assert!(fold_is_forced(
-		false,
-		false,
-		Some(deferral(DeferReason::Stuck, Some(1))),
-		Some(1),
-		false
-	));
-	assert!(fold_is_forced(
-		false,
-		false,
-		Some(deferral(DeferReason::None, None)),
-		Some(1),
-		false
-	));
+fn veto_is_offered_only_when_the_runtime_could_check_it() {
+	assert!(veto_checkable(Some(0), false));
+	// No plan: nothing could corroborate an in-flight claim, so asking would
+	// only buy a decline the next round has to overrule.
+	assert!(!veto_checkable(None, false));
+	// A blocked agent is the case a fold exists for, plan or not.
+	assert!(!veto_checkable(Some(0), true));
+	assert!(!veto_checkable(None, true));
 }

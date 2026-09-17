@@ -2763,6 +2763,8 @@ fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldCo
 		pact: None,
 		preserve_recent_user_bridge: false,
 		started: std::time::Instant::now(),
+		step: None,
+		no_veto: false,
 	}
 }
 
@@ -3031,11 +3033,12 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 	assert_eq!(session.session.messages.len(), 3);
 }
 
-/// A paid decline frees nothing, so it must not climb the fire-line ladder;
-/// it holds the next unforced attempt for one runway instead, and its reason
-/// is recorded for the next eligible fold to judge.
+/// A paid decline frees nothing, so it must not climb the fire-line ladder.
+/// It starts no cooldown either: the recorded deferral is the hold, judged by
+/// the next eligible round — a cooldown on top would make an overruled claim
+/// wait out a runway before folding.
 #[tokio::test]
-async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
+async fn finish_fold_veto_records_a_deferral_without_a_cooldown() {
 	let config = fold_config();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "system"),
@@ -3062,8 +3065,10 @@ async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
 	.expect("finish veto");
 	assert!(!applied);
 	assert_eq!(session.session.info.consecutive_compressions, 1);
-	let runway = super::decision::autonomous_runway(1) as usize;
-	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
+	assert_eq!(
+		session.fold_cooldown_until_call, 0,
+		"a veto is not a failure"
+	);
 	assert_eq!(session.session.messages.len(), 3);
 	assert_eq!(
 		session.fold_deferral,
@@ -3077,9 +3082,10 @@ async fn finish_fold_veto_holds_a_runway_without_climbing_the_ladder() {
 
 /// The reason is the judgment input: a veto that claims a step is in flight is
 /// held only if the runtime can corroborate it, so the exact reason the model
-/// named must survive the paid round trip.
+/// named must survive the paid round trip — paired with the step the call was
+/// prepared against, not whatever step is open when a background call lands.
 #[tokio::test]
-async fn finish_fold_records_the_models_defer_reason() {
+async fn finish_fold_records_the_models_defer_reason_against_the_spawn_step() {
 	let config = fold_config();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "system"),
@@ -3094,31 +3100,62 @@ async fn finish_fold_records_the_models_defer_reason() {
 		defer_reason: DeferReason::MidDerivation,
 		..Default::default()
 	};
-	let applied = super::finish_fold(
-		&mut session,
-		&config,
-		fold_ctx(0, 2, fingerprint),
-		summary,
-		None,
-		false,
-		false,
-	)
-	.await
-	.expect("finish veto");
+	let mut ctx = fold_ctx(0, 2, fingerprint);
+	ctx.step = Some(4);
+	let applied = super::finish_fold(&mut session, &config, ctx, summary, None, false, false)
+		.await
+		.expect("finish veto");
 
 	assert!(!applied);
 	assert_eq!(
 		session.fold_deferral,
 		Some(FoldDeferral {
 			reason: DeferReason::MidDerivation,
-			step: None,
+			step: Some(4),
 		}),
-		"the reason survives the round trip, paired with the plan step it was about"
+		"the reason survives the round trip, paired with the step the call was prepared against"
 	);
 	assert_eq!(session.session.info.consecutive_compressions, 1);
-	let runway = super::decision::autonomous_runway(1) as usize;
-	assert_eq!(session.fold_cooldown_until_call, 10 + runway);
+	assert_eq!(
+		session.fold_cooldown_until_call, 0,
+		"a veto is not a failure"
+	);
 	assert_eq!(session.session.messages.len(), 3);
+}
+
+/// A call that offered no veto ignores a `false`: the model was told the fold
+/// happens, so a refusal is a protocol violation, and the substantive summary
+/// it still produced is applied. Nothing is recorded — there is no claim.
+#[tokio::test]
+async fn finish_fold_no_veto_overrides_a_refusal_and_records_nothing() {
+	let config = fold_config();
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "stabilise the deploy pipeline"),
+		fold_message("assistant", "investigating"),
+		fold_message("assistant", "found the race"),
+	]);
+	let (start, end) =
+		find_compression_range_preserving_turn(&session.session.messages, false, false)
+			.expect("compressible range");
+	let summary = CompressionSummary {
+		should_compress: false,
+		defer_reason: DeferReason::MidDerivation,
+		current_task: "stabilise the deploy pipeline".to_string(),
+		..Default::default()
+	};
+	let mut ctx = fold_ctx(
+		start,
+		end,
+		super::fold_fingerprint(&session.session.messages, start, end),
+	);
+	ctx.no_veto = true;
+	let applied = super::finish_fold(&mut session, &config, ctx, summary, None, false, false)
+		.await
+		.expect("no-veto fold");
+
+	assert!(applied, "a refusal on a no-veto call is overridden");
+	assert_eq!(session.fold_deferral, None);
 }
 
 /// A deferral is spent by the fold it was waiting for: once the fold lands,

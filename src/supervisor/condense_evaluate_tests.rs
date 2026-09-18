@@ -347,21 +347,31 @@ async fn run_round(config: &Config, results: &mut [McpToolResult], session: &str
 	.await;
 }
 
-/// A spill reader registered the way runtime `mcp add` does; the core builtin
-/// exposes no file-reading tool.
-async fn with_spill_reader<F: std::future::Future<Output = ()>>(config: &Config, body: F) {
-	let mut empty = config.clone();
-	empty.mcp.servers = Vec::new();
-	crate::mcp::tool_map::initialize_tool_map(&empty)
-		.await
-		.expect("tool map initializes empty");
-	crate::mcp::tool_map::register_dynamic_server_tools(
-		"spill-reader",
-		&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
-		&["view".to_string()],
-	);
-	body.await;
-	crate::mcp::tool_map::unregister_dynamic_server_tools("spill-reader", &["view".to_string()]);
+/// Run `body` under a session that owns an isolated tool map carrying a spill
+/// reader, registered the way runtime `mcp add` does; the core builtin exposes
+/// no file-reading tool. The process map, which other tests initialize
+/// concurrently, is never consulted.
+async fn with_spill_reader<F: std::future::Future<Output = ()>>(
+	config: &Config,
+	session: &str,
+	body: F,
+) {
+	crate::mcp::tool_map::isolate_session_tool_map(session);
+	crate::session::context::with_session_id(session.to_string(), async {
+		let mut empty = config.clone();
+		empty.mcp.servers = Vec::new();
+		crate::mcp::tool_map::initialize_tool_map(&empty)
+			.await
+			.expect("tool map initializes empty");
+		crate::mcp::tool_map::register_dynamic_server_tools(
+			"spill-reader",
+			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
+			&["view".to_string()],
+		);
+		body.await;
+	})
+	.await;
+	crate::session::context::cleanup_session(&session.to_string());
 }
 
 #[tokio::test]
@@ -378,6 +388,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	let mut results = round_results();
 	with_spill_reader(
 		&config,
+		"__condense_eval_round",
 		run_round(&config, &mut results, "__condense_eval_round"),
 	)
 	.await;
@@ -415,6 +426,7 @@ async fn a_failed_window_falls_back_to_one_model_condenser_call() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 	with_spill_reader(
 		&config,
+		"__condense_eval_fallback",
 		run_round(&config, &mut results, "__condense_eval_fallback"),
 	)
 	.await;

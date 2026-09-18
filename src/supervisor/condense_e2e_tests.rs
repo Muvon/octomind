@@ -68,8 +68,9 @@ async fn run_round(config: &crate::config::Config, results: &mut [McpToolResult]
 
 /// Without an enabled local file-reading tool, condensation must decline the
 /// whole round untouched — narrowing away content that could never be
-/// re-read would lose it. Establish the empty tool map explicitly: other
-/// tests may have registered readers in this process.
+/// re-read would lose it. The session owns an isolated empty tool map: the
+/// process map, which other tests initialize with readers concurrently, is
+/// never consulted.
 #[tokio::test]
 #[serial_test::serial]
 async fn test_condense_declines_without_spill_reader() {
@@ -79,12 +80,12 @@ async fn test_condense_declines_without_spill_reader() {
 	let _guard = ENV_LOCK.lock().await;
 	let dir = tempfile::tempdir().expect("empty workdir");
 	let session = "condense-no-reader-session".to_string();
+	crate::mcp::tool_map::isolate_session_tool_map(&session);
 	crate::session::context::with_session_id(session.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(dir.path().to_path_buf());
 		let mut config = condense_config();
 		config.mcp.servers.clear();
 		initialize_tool_map(&config).await.expect("empty tool map");
-		reset_tool_map().await;
 		assert!(
 			!spill_reader_available(),
 			"fixture must have no spill reader"
@@ -153,28 +154,36 @@ use crate::session::chat::test_support::{
 	final_response, spawn_stub, spawn_stub_with_status, ENV_LOCK,
 };
 
-/// Register a spill reader the way runtime `mcp add` does: a dynamic server
-/// contributing a `view` tool to the global tool map. The core builtin exposes
-/// no file-reading tool, so `spill_reader_available()` keys on exactly this
-/// registration path.
-async fn enable_spill_reader() {
-	let mut config = condense_config();
-	config.mcp.servers = Vec::new();
-	initialize_tool_map(&config)
-		.await
-		.expect("tool map initializes empty");
-	crate::mcp::tool_map::register_dynamic_server_tools(
-		"spill-reader",
-		&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
-		&["view".to_string()],
-	);
-}
-
-/// Drop the dynamic registration so tests asserting the no-spill-reader
-/// decline keep their meaning after this file runs. Re-initializing alone
-/// would short-circuit on an unchanged config hash and leave `view` mapped.
-async fn reset_tool_map() {
-	crate::mcp::tool_map::unregister_dynamic_server_tools("spill-reader", &["view".to_string()]);
+/// Run one round under a session that owns an isolated tool map carrying a
+/// spill reader, registered the way runtime `mcp add` does: a dynamic server
+/// contributing a `view` tool. The core builtin exposes no file-reading tool,
+/// so `spill_reader_available()` keys on exactly this registration path. The
+/// process map, which other tests initialize concurrently, is never consulted,
+/// and the session's map and spill files are dropped afterwards.
+async fn run_round_with_spill_reader(
+	session: &str,
+	config: &crate::config::Config,
+	results: &mut [McpToolResult],
+) {
+	crate::mcp::tool_map::isolate_session_tool_map(session);
+	crate::session::context::with_session_id(session.to_string(), async {
+		let mut empty = config.clone();
+		empty.mcp.servers = Vec::new();
+		initialize_tool_map(&empty)
+			.await
+			.expect("tool map initializes empty");
+		crate::mcp::tool_map::register_dynamic_server_tools(
+			"spill-reader",
+			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
+			&["view".to_string()],
+		);
+		run_round(config, results).await;
+	})
+	.await;
+	crate::session::context::cleanup_session(&session.to_string());
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("spill").join(session));
+	}
 }
 fn verdict_json(body: &str) -> String {
 	format!(r#"{{"results":{body}}}"#)
@@ -184,7 +193,6 @@ fn verdict_json(body: &str) -> String {
 #[serial_test::serial]
 async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 	let _guard = ENV_LOCK.lock().await;
-	enable_spill_reader().await;
 	let mut config = condense_config();
 	config.supervisor.condense.adaptive = true;
 
@@ -199,16 +207,8 @@ async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 	))])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	crate::session::context::with_session_id(
-		"__condense_e2e_full".to_string(),
-		run_round(&config, &mut results),
-	)
-	.await;
+	run_round_with_spill_reader("__condense_e2e_full", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
-	reset_tool_map().await;
-	if let Ok(sessions) = crate::directories::get_sessions_dir() {
-		let _ = std::fs::remove_dir_all(sessions.join("spill").join("__condense_e2e_full"));
-	}
 
 	plain = results.remove(0);
 	let condensed = plain.extract_content();
@@ -233,7 +233,6 @@ async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 #[serial_test::serial]
 async fn an_unparseable_condenser_answer_leaves_the_round_untouched() {
 	let _guard = ENV_LOCK.lock().await;
-	enable_spill_reader().await;
 	let mut config = condense_config();
 	config.supervisor.condense.adaptive = true;
 	let mut results = vec![tool_result("t1", &big_body())];
@@ -241,9 +240,8 @@ async fn an_unparseable_condenser_answer_leaves_the_round_untouched() {
 
 	let url = spawn_stub(vec![final_response("sorry, I cannot answer that")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	run_round(&config, &mut results).await;
+	run_round_with_spill_reader("__condense_e2e_unparseable", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
-	reset_tool_map().await;
 
 	assert_eq!(results[0].extract_content(), before);
 }
@@ -252,7 +250,6 @@ async fn an_unparseable_condenser_answer_leaves_the_round_untouched() {
 #[serial_test::serial]
 async fn a_failed_condenser_call_leaves_results_as_is() {
 	let _guard = ENV_LOCK.lock().await;
-	enable_spill_reader().await;
 	let config = condense_config();
 	let mut results = vec![tool_result("t1", &big_body())];
 	let before = results[0].extract_content();
@@ -263,9 +260,8 @@ async fn a_failed_condenser_call_leaves_results_as_is() {
 	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	run_round(&config, &mut results).await;
+	run_round_with_spill_reader("__condense_e2e_failed", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
-	reset_tool_map().await;
 
 	assert_eq!(results[0].extract_content(), before);
 }
@@ -274,7 +270,6 @@ async fn a_failed_condenser_call_leaves_results_as_is() {
 #[serial_test::serial]
 async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	let _guard = ENV_LOCK.lock().await;
-	enable_spill_reader().await;
 	let config = condense_config();
 	let mut results = vec![
 		tool_result("t1", &big_body()),
@@ -287,16 +282,8 @@ async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	))])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	crate::session::context::with_session_id(
-		"__condense_e2e_missing".to_string(),
-		run_round(&config, &mut results),
-	)
-	.await;
+	run_round_with_spill_reader("__condense_e2e_missing", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
-	reset_tool_map().await;
-	if let Ok(sessions) = crate::directories::get_sessions_dir() {
-		let _ = std::fs::remove_dir_all(sessions.join("spill").join("__condense_e2e_missing"));
-	}
 
 	assert_eq!(
 		results[0].extract_content(),
@@ -310,7 +297,6 @@ async fn a_missing_verdict_costs_only_the_result_it_omits() {
 #[serial_test::serial]
 async fn a_selection_that_cannot_shrink_the_result_is_left_inline() {
 	let _guard = ENV_LOCK.lock().await;
-	enable_spill_reader().await;
 	let mut config = condense_config();
 	config.supervisor.condense.adaptive = true;
 	let mut results = vec![tool_result("t1", &big_body())];
@@ -323,9 +309,8 @@ async fn a_selection_that_cannot_shrink_the_result_is_left_inline() {
 	))])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
-	run_round(&config, &mut results).await;
+	run_round_with_spill_reader("__condense_e2e_noshrink", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
-	reset_tool_map().await;
 
 	assert_eq!(
 		results[0].extract_content(),

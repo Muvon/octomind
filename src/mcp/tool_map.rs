@@ -82,6 +82,17 @@ pub fn clear_session_tool_map(session_id: &str) {
 	session_tool_maps().write().unwrap().remove(session_id);
 }
 
+/// Give `session_id` an empty map of its own before it initializes, so a
+/// test's registrations and lookups under that session never touch the
+/// process map every other test in the binary shares and rewrites.
+#[cfg(test)]
+pub(crate) fn isolate_session_tool_map(session_id: &str) {
+	session_tool_maps()
+		.write()
+		.unwrap()
+		.insert(session_id.to_string(), Arc::default());
+}
+
 #[derive(Debug, Clone, Default)]
 struct ToolMapState {
 	/// Tool name -> Server config mapping

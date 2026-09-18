@@ -393,9 +393,13 @@ pub async fn run_extraction(
 		.await;
 	}
 
-	// 2. One batched LLM pass: does the evidence actually support each lesson's
-	//    rule? Fail-closed — an unverifiable rule must not become durable state.
-	let keep = verify_lessons(config, &candidates, &transcript).await;
+	// 2. Does the evidence actually support each lesson's rule? The evaluation
+	//    seam answers per candidate; otherwise one batched LLM pass does.
+	//    Fail-closed — an unverifiable rule must not become durable state.
+	let keep = match evaluate_lessons(config, &candidates, &transcript).await {
+		Some(keep) => keep,
+		None => verify_lessons(config, &candidates, &transcript).await,
+	};
 	let candidates: Vec<Candidate> = candidates
 		.into_iter()
 		.zip(keep.iter())
@@ -843,6 +847,56 @@ Empty array when every lesson is supported."#;
 /// call cheap.
 const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
 
+/// The excerpt both lesson judges see.
+fn verifier_view(transcript: &str) -> String {
+	transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect()
+}
+
+/// Evaluation-model grounding: one Noul per candidate lesson over the same
+/// excerpt the chat verifier receives. `None` means the seam is off or
+/// unavailable and the chat verifier decides.
+async fn evaluate_lessons(
+	config: &Config,
+	lessons: &[Candidate],
+	transcript: &str,
+) -> Option<Vec<bool>> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let state = serde_json::json!({
+		"lessons": lessons
+			.iter()
+			.enumerate()
+			.map(|(i, c)| {
+				serde_json::json!({
+					"number": i + 1,
+					"rule": c.lesson.content,
+					"evidence": c.evidence,
+				})
+			})
+			.collect::<Vec<_>>(),
+		"transcript": verifier_view(transcript),
+	});
+	let answers = evaluate::run(
+		&config.supervisor,
+		Seam::Distill,
+		state,
+		evaluate::distill_questions(lessons.len()),
+	)
+	.await?;
+	let keep: Vec<bool> = (0..lessons.len())
+		.map(|slot| {
+			evaluate::probability(&answers, &evaluate::distill_question_id(slot))
+				>= evaluate::DISTILL_KEEP_AT
+		})
+		.collect();
+	crate::log_debug!(
+		"evaluate distill: kept {} of {} lessons",
+		keep.iter().filter(|kept| **kept).count(),
+		lessons.len()
+	);
+	crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
+	Some(keep)
+}
+
 /// One batched verifier pass: which of the candidate lessons does the
 /// transcript evidence actually support? Returns a keep-mask aligned with
 /// `lessons`. Fail-CLOSED: a verifier outage or unusable output rejects
@@ -858,7 +912,7 @@ async fn verify_lessons(config: &Config, lessons: &[Candidate], transcript: &str
 			c.evidence
 		));
 	}
-	let view: String = transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect();
+	let view = verifier_view(transcript);
 	let user = format!(
 		"<candidate_lessons>\n{}</candidate_lessons>\n\n<transcript trust=\"untrusted\">\n{}\n</transcript>",
 		listed, view
@@ -1756,6 +1810,10 @@ async fn call_supervisor_model(
 #[cfg(test)]
 #[path = "extract_inline_tests.rs"]
 mod inline_tests;
+
+#[cfg(test)]
+#[path = "extract_evaluate_tests.rs"]
+mod evaluate_tests;
 
 #[cfg(test)]
 #[path = "extract_unit_tests.rs"]

@@ -995,7 +995,10 @@ pub async fn verify(
 	// refute each finding with evidence already in the input. What it refutes is
 	// reported to the user instead of costing a re-run; what stands blocks.
 	if let GateVerdict::Gaps(gaps) = verdict.clone() {
-		let (standing, refuted) = refute(config, &user, &gaps, operation_rx).await;
+		let (standing, refuted) = match evaluate_refute(config, &user, &gaps).await {
+			Some(split) => split,
+			None => refute(config, &user, &gaps, operation_rx).await,
+		};
 		if !refuted.is_empty() {
 			crate::log_info!(
 				"Verify-gate refutation cleared {} of {} finding(s)",
@@ -1187,6 +1190,46 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 		},
 		"required": ["conditions", "shapes", "gaps", "verdict", "readback"]
 	})
+}
+
+/// Evaluation-model refutation: one Noul per charged finding over the same
+/// evidence the verifier saw. `None` means the seam is off or unavailable and
+/// the chat refuter decides.
+async fn evaluate_refute(
+	config: &Config,
+	evidence: &str,
+	gaps: &[String],
+) -> Option<(Vec<String>, Vec<String>)> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let state = serde_json::json!({
+		"evidence": evidence,
+		"findings": gaps
+			.iter()
+			.enumerate()
+			.map(|(i, gap)| serde_json::json!({ "number": i + 1, "text": gap }))
+			.collect::<Vec<_>>(),
+	});
+	let answers = evaluate::run(
+		&config.supervisor,
+		Seam::Gate,
+		state,
+		evaluate::gate_questions(gaps.len()),
+	)
+	.await?;
+	let refuted: HashSet<usize> = (0..gaps.len())
+		.filter(|slot| {
+			evaluate::probability(&answers, &evaluate::gate_question_id(*slot))
+				>= evaluate::GATE_REFUTE_AT
+		})
+		.map(|slot| slot + 1)
+		.collect();
+	crate::log_debug!(
+		"evaluate gate: refuted {} of {} findings",
+		refuted.len(),
+		gaps.len()
+	);
+	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
+	Some(split_refuted(gaps, &refuted))
 }
 
 /// Run the refutation pass over a blocking verdict's findings. Returns
@@ -1947,6 +1990,10 @@ pub fn unverified_reentry(iterations: u8, max_iterations: u8) -> Option<String> 
 #[cfg(test)]
 #[path = "gate_tests.rs"]
 mod gate_tests;
+
+#[cfg(test)]
+#[path = "gate_evaluate_tests.rs"]
+mod evaluate_tests;
 
 #[cfg(test)]
 #[path = "gate_inline_tests.rs"]

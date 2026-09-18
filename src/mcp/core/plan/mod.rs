@@ -24,10 +24,10 @@ pub mod storage;
 
 pub use compression::CompressionMetrics;
 pub use core::{
-	active_step_index, broken_plan_conditions, clear_task_start_index, get_current_plan_display,
-	get_current_task_start_index, has_active_plan, plan_staleness_marker, render_plan_checklist,
-	render_plan_checklist_with_staleness, render_plan_details, set_current_task_start_index,
-	sidecar_advance, sidecar_finish, sidecar_revise, sidecar_start,
+	active_step_index, broken_plan_conditions, clear_task_start_index, current_phase,
+	get_current_plan_display, get_current_task_start_index, has_active_plan, plan_staleness_marker,
+	render_plan_checklist, render_plan_checklist_with_staleness, render_plan_details,
+	set_current_task_start_index, sidecar_advance, sidecar_finish, sidecar_revise, sidecar_start,
 };
 pub use memory_storage::MemoryPlanStorage;
 pub use storage::{ExecutionPlan, MessageRange, PlanStatus, PlanStorage, PlanTask, TaskStatus};

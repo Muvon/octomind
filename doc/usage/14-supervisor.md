@@ -137,7 +137,7 @@ execute at their existing lifecycle points outside this tool-call check.
 ## Evaluation gates
 
 `[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
-module) as a gate at five seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
+module) as a gate at eight seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
 probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
 every seam off leaves behavior byte-identical to a release without this section.
 
@@ -149,6 +149,9 @@ every seam off leaves behavior byte-identical to a release without this section.
 | `authorizer` | With `[supervisor.authorizer] enabled = true`, after the memoized-denial cache and before the two-judge supervisor path, three Nouls per pending call ask whether it is `prohibited` by user or role instructions, `destructive` to non-regenerable files or git history, or `external` to the working directory. When every answer is below 0.5 the batch is admitted without waking the supervisor model; otherwise the pre-change judgment and verification run unchanged. The pre-screen can only admit, never block. |
 | `condense` | With `[supervisor.condense] enabled = true`, the same candidates the condenser would judge (`tokens_threshold` and `adaptive` unchanged) are scored instead of sent to the supervisor model: each candidate's full original text is split into line-aligned chunks of at most 256 tokens, windowed under the state cap (at most 96 chunks per call, all windows of a round in flight together), and one Noul per chunk asks whether the agent needs it for the task. Chunks at or above 0.5 are kept with one neighbour on each side, plus diagnostics and any truncation notice; the kept lines go through the existing verbatim reconstruction, spill file, and `📎 CONDENSED` notice. Everything kept leaves the result untouched; nothing kept omits an ok result (never an error). If any window is unavailable, the whole round's answers are discarded and the supervisor-model condenser runs once exactly as before. The adaptive controller sees the same numbers either way. |
 | `compression` | Before a fold's decision call, every `ToolInteraction` packet the PACT allocator placed in the `summarize` lane is scored with one Noul (state: pinned task, constraints, plan focus, and a 512-token head-and-tail sample per packet; at most 96 units per call, windows concurrent). Packets below 0.5 are demoted to `archive_reference`, so the fold model reads their one-line descriptor instead of their content; `keep_exact`, non-tool, real-user, and already-archived packets are never scored, and a packet another selected packet depends on is never demoted. The drained range, archive, fingerprint, validator, and fold decision are untouched. If any window is unavailable, nothing is demoted and the fold proceeds on the evidence set as allocated. |
+| `distill` | At lesson extraction (`/done`, exit, compaction), the candidate lessons are grounded by one Noul each (state: every candidate's number, rule, and cited quote, plus the same 12,000-character transcript excerpt the chat verifier receives) instead of the batched supervisor-model verifier. Candidates at or above 0.5 are kept; the rest are rejected with the same debug line as before. Dedup, supersede, importance, storage, experiences, and orientation are untouched. If the evaluation is unavailable, the supervisor-model verifier runs once for the same candidates, fail-closed as before. |
+| `plan` | With `[supervisor.plan] enabled = true`, after every deterministic skip and before the planner call, a `request` signal is scored with one Noul asking whether the remaining work needs an external plan (state: current and working request, outcome conditions, runtime evidence, phase trajectory), and a `phase_complete` signal with one Noul asking whether the runtime evidence shows the active phase's `done_when` (state: phase title and `done_when`, evidence since the phase checkpoint, phase trajectory). Below 0.2 the `request` is declined and the `phase_complete` is held with the feedback `runtime evidence does not yet show: <done_when>`, without a planner call; otherwise the planner runs unchanged. `reassess` is never scored. The pre-screen can only skip a call, never create, advance, or revise; an unavailable evaluation runs the planner and never sets the per-turn failure latch. |
+| `gate` | When the verifier rules `GAPS`, each charged finding is scored with one Noul over the same rendered evidence the verifier saw (after any readback round). Findings at or above 0.8 are refuted and reported as `refuted by second verifier: …`; the rest stand, and when every finding is refuted the verdict is `PASS`, exactly as after the chat refutation. The verifier pass, readback round, and format retry are untouched. If the evaluation is unavailable or the evidence exceeds the state cap, the supervisor-model refutation runs as before. |
 
 Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for the
 `cloudflare` provider, `TYPESAFE_API_KEY` for `typesafe`. Nothing is stored in config.
@@ -159,11 +162,13 @@ incomplete answer set, a state or skill roster too large to send — keeps the p
 one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. For the
 recall, skills, and authorizer seams the state never contains tool results, assistant messages, or condensed-output
 notices; the condense and compression seams judge tool output by design and send that output and nothing else from
-the transcript. Thresholds and question text are constants in `src/supervisor/evaluate.rs`, not config keys.
+the transcript. The distill, plan, and gate seams receive exactly the payload the chat call they replace receives, and
+their answers can only reject a lesson, skip a planner call, or drop a finding — never store, create, advance, or pass. Thresholds and question text are constants in `src/supervisor/evaluate.rs`, not config keys.
 
 `/info` shows, per seam, `calls` (attempts), `unavailable` (fallbacks), and `applied` (recall: candidates excluded;
 skills: activations; authorizer: batches admitted without the supervisor; condense: results whose inline content
-changed; compression: packets demoted). Usage lands under one `evaluate` call kind in the supervisor totals and in the
+changed; compression: packets demoted; distill: verification rounds answered; plan: planner calls skipped; gate:
+refutation passes answered). Usage lands under one `evaluate` call kind in the supervisor totals and in the
 session's external spend.
 
 ## The closed loop
@@ -273,15 +278,18 @@ excerpts are contextual reminders, not independently binding rules or additional
   successful response gets one bounded format-only retry; substantive gaps do not.
 
 The verifier can request one bounded read-back of recorded tool evidence. Blocking findings receive a separate
-refutation pass before causing rework. These passes use the shared supervisor profile; a separate call does not
-guarantee a different model family. Change `[supervisor.model]` in the configuration example to choose the profile.
+refutation pass before causing rework: with `[supervisor.evaluate] gate = true` the evaluation model answers it per
+finding, otherwise a second supervisor-model call does. These passes use the shared supervisor profile; a separate call
+does not guarantee a different model family. Change `[supervisor.model]` in the configuration example to choose the profile.
 
 ## Adaptive external planning
 
 Planning is exceptional and supervisor-owned. Focused answers and routine work stay plan-free. For work with meaningful
 dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal
 alongside normal work. A separate supervisor call makes one structured create/no-plan decision from the current request,
-specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence.
+specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence. With
+`[supervisor.evaluate] plan = true` the evaluation model pre-screens `request` and `phase_complete` first and skips the
+planner call when it is confident no plan is needed or the phase outcome is not yet evidenced.
 
 The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses;
 the external manager advances, holds, or revises runtime state. Evidence is checkpointed per phase, and the completion

@@ -397,6 +397,24 @@ pub fn render_plan_checklist() -> Option<String> {
 	Some(s)
 }
 
+/// Title and `done_when` of the active phase, or `None` without an active
+/// plan. Sidecar phases store the outcome as `Done when: …`; the prefix is
+/// stripped so callers get the bare condition.
+pub fn current_phase() -> Option<(String, String)> {
+	let storage = get_storage();
+	let storage = storage.lock().unwrap();
+	if !storage.has_active_plan().unwrap_or(false) {
+		return None;
+	}
+	let plan = storage.get_plan().ok()?;
+	let task = plan.tasks.get(plan.current_task_index)?;
+	let done_when = task
+		.description
+		.strip_prefix("Done when: ")
+		.unwrap_or(&task.description);
+	Some((task.title.clone(), done_when.to_string()))
+}
+
 /// Full manager/verifier view of the runtime-owned plan. Unlike recitation,
 /// this expands every phase's outcome so an external decision never relies on
 /// titles alone.

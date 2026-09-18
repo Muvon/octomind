@@ -61,6 +61,9 @@ fn master_switch_off_disables_every_seam() {
 	let mut config = config(true, true, true);
 	config.evaluate.condense = true;
 	config.evaluate.compression = true;
+	config.evaluate.distill = true;
+	config.evaluate.plan = true;
+	config.evaluate.gate = true;
 	for seam in Seam::ALL {
 		assert!(enabled(&config, seam));
 	}
@@ -474,5 +477,46 @@ fn condense_and_compression_questions_are_nouls_keyed_by_slot() {
 	assert_eq!(Seam::ALL.len(), SEAM_COUNT);
 	for (i, seam) in Seam::ALL.iter().enumerate() {
 		assert_eq!(seam.index(), i);
+	}
+}
+
+#[test]
+fn distill_plan_and_gate_questions_name_their_item() {
+	let instructions = |question: &Question| match question {
+		Question::Noul { instructions, .. } => instructions.as_str().unwrap_or("").to_string(),
+		_ => panic!("every seam question is a Noul"),
+	};
+	let distill = distill_questions(2);
+	assert_eq!(distill.keys().cloned().collect::<Vec<_>>(), ["l0", "l1"]);
+	assert!(instructions(&distill["l1"]).starts_with("Lesson 2: "));
+	let gate = gate_questions(2);
+	assert_eq!(gate.keys().cloned().collect::<Vec<_>>(), ["f0", "f1"]);
+	assert!(instructions(&gate["f0"]).starts_with("Finding 1: "));
+	let request = plan_request_question();
+	assert_eq!(
+		request.keys().cloned().collect::<Vec<_>>(),
+		[PLAN_QUESTION_ID]
+	);
+	let phase = plan_phase_question("cargo test exits 0");
+	assert!(instructions(&phase[PLAN_QUESTION_ID]).ends_with("done_when: cargo test exits 0"));
+	let answers = crate::session::chat::test_support::nouls(&[("l0", 0.93), ("l1", 0.11)]);
+	assert_eq!(probability(&answers, "l0"), 0.93);
+	assert_eq!(probability(&answers, "l1"), 0.11);
+}
+
+#[tokio::test]
+async fn snapshot_lists_distill_plan_and_gate_with_their_three_counters() {
+	let _lock = install_fake_evaluation(Vec::new()).await;
+	for seam in [Seam::Distill, Seam::Plan, Seam::Gate] {
+		crate::supervisor::stats::evaluate_call(seam);
+		crate::supervisor::stats::evaluate_unavailable(seam);
+		crate::supervisor::stats::evaluate_applied(seam, 1);
+	}
+	let snapshot = crate::supervisor::stats::snapshot().expect("non-idle");
+	for name in ["distill", "plan", "gate"] {
+		let seam = &snapshot["evaluate"][name];
+		for key in ["calls", "unavailable", "applied"] {
+			assert!(seam[key].as_u64().unwrap() >= 1, "{name}.{key}");
+		}
 	}
 }

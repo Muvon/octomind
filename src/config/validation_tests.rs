@@ -234,3 +234,32 @@ fn evaluate_condense_and_compression_keys_are_strict_and_default_off() {
 		assert!(error.contains(key), "{key} missing: {error}");
 	}
 }
+
+#[test]
+fn evaluate_distill_plan_and_gate_keys_are_strict_and_default_off() {
+	let template = include_str!("../../config-templates/default.toml");
+	let config: crate::config::Config = toml::from_str(template).unwrap();
+	assert!(!config.supervisor.evaluate.distill);
+	assert!(!config.supervisor.evaluate.plan);
+	assert!(!config.supervisor.evaluate.gate);
+
+	for key in ["distill", "plan", "gate"] {
+		let line = format!("\n{key} = false\n");
+		assert_eq!(
+			template.matches(&line).count(),
+			1,
+			"template layout changed: {key}"
+		);
+		let mistyped = template.replace(&line, &format!("\n{key} = \"yes\"\n"));
+		let error = toml::from_str::<crate::config::Config>(&mistyped)
+			.unwrap_err()
+			.to_string();
+		assert!(error.contains(key), "{key} mistyped: {error}");
+
+		let missing = template.replace(&line, "\n");
+		let error = toml::from_str::<crate::config::Config>(&missing)
+			.unwrap_err()
+			.to_string();
+		assert!(error.contains(key), "{key} missing: {error}");
+	}
+}

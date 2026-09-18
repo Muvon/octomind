@@ -13,12 +13,14 @@
 // limitations under the License.
 
 //! Evaluation gates: calibrated answers from an evaluation model (TypeSafe
-//! Jev through octolib's `evaluation` module) at five supervisor seams —
+//! Jev through octolib's `evaluation` module) at eight supervisor seams —
 //! a relevance filter after recall ranking, a roster choice when skill rules
 //! abstain, a pre-screen that decides whether the authorizer needs to wake
 //! the supervisor model at all, chunk scoring of oversized tool results in
-//! place of the supervisor-model condenser, and pre-fold demotion of dead
-//! tool packets in the PACT evidence set.
+//! place of the supervisor-model condenser, pre-fold demotion of dead tool
+//! packets in the PACT evidence set, grounding of extracted lessons in place
+//! of the chat verifier, a pre-screen before the external planner, and
+//! per-finding refutation of a blocking verify-gate verdict.
 //!
 //! This is the only module that builds evaluation requests. It owns every
 //! question text and threshold, applies the master and per-seam switches,
@@ -31,7 +33,10 @@
 //! notices — the reviewer must never read the thing that might be arguing.
 //! The condense and compression seams judge tool output by design; their
 //! states carry that output and nothing else from the transcript, and their
-//! answers can only drop or demote text, never author it.
+//! answers can only drop or demote text, never author it. The distill, plan,
+//! and gate seams receive exactly the payload the chat model they replace
+//! receives, and may only reject a lesson, skip a planner call, or drop a
+//! finding — never store, advance, create, or pass.
 
 use octolib::evaluation::{
 	Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question,
@@ -50,6 +55,9 @@ pub struct EvaluateConfig {
 	pub authorizer: bool,
 	pub condense: bool,
 	pub compression: bool,
+	pub distill: bool,
+	pub plan: bool,
+	pub gate: bool,
 }
 
 /// The unit of switching, stats, and fallback.
@@ -60,9 +68,12 @@ pub enum Seam {
 	Authorizer,
 	Condense,
 	Compression,
+	Distill,
+	Plan,
+	Gate,
 }
 
-pub const SEAM_COUNT: usize = 5;
+pub const SEAM_COUNT: usize = 8;
 
 impl Seam {
 	pub const ALL: [Seam; SEAM_COUNT] = [
@@ -71,6 +82,9 @@ impl Seam {
 		Seam::Authorizer,
 		Seam::Condense,
 		Seam::Compression,
+		Seam::Distill,
+		Seam::Plan,
+		Seam::Gate,
 	];
 
 	pub fn name(self) -> &'static str {
@@ -80,6 +94,9 @@ impl Seam {
 			Seam::Authorizer => "authorizer",
 			Seam::Condense => "condense",
 			Seam::Compression => "compression",
+			Seam::Distill => "distill",
+			Seam::Plan => "plan",
+			Seam::Gate => "gate",
 		}
 	}
 
@@ -90,6 +107,9 @@ impl Seam {
 			Seam::Authorizer => 2,
 			Seam::Condense => 3,
 			Seam::Compression => 4,
+			Seam::Distill => 5,
+			Seam::Plan => 6,
+			Seam::Gate => 7,
 		}
 	}
 
@@ -100,6 +120,9 @@ impl Seam {
 			Seam::Authorizer => config.authorizer,
 			Seam::Condense => config.condense,
 			Seam::Compression => config.compression,
+			Seam::Distill => config.distill,
+			Seam::Plan => config.plan,
+			Seam::Gate => config.gate,
 		}
 	}
 }
@@ -125,6 +148,17 @@ pub const CONDENSE_CHUNK_TOKENS: usize = 256;
 pub const COMPRESSION_KEEP_AT: f64 = 0.5;
 /// Compression: head-and-tail sample of a packet's rendered content.
 pub const COMPRESSION_SAMPLE_TOKENS: usize = 512;
+/// Distill: a candidate lesson at or above this is kept — the same yes/no the
+/// chat verifier answers on the same evidence.
+pub const DISTILL_KEEP_AT: f64 = 0.5;
+/// Plan: a `request` or `phase_complete` signal below this is consumed
+/// without a planner call. Low on purpose: the pre-screen may only remove a
+/// call when the evaluation is confident nothing is needed, since the planner
+/// already leans toward `no_plan` and `hold`.
+pub const PLAN_SKIP_BELOW: f64 = 0.2;
+/// Gate: a charged finding at or above this is refuted. High on purpose:
+/// "doubt is not refutation" is the pre-change rule.
+pub const GATE_REFUTE_AT: f64 = 0.8;
 /// Below the model's 32k state limit with headroom for question text.
 pub const MAX_STATE_TOKENS: usize = 24_000;
 /// Questions per window. The provider's per-call limit is undocumented; this
@@ -151,6 +185,10 @@ pub const SKILL_QUESTION_ID: &str = "skill";
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes only when applying the lesson would change how the request is carried out; no when it concerns a different tool, language, file, or task.";
 const CONDENSE_QUESTION: &str = "Must the agent read this chunk to finish the current task? Yes only when the chunk holds an error message or stack trace, the specific data the task or the tool arguments ask for, an explicit negative result, a count, total or exit code, or a path, line number or signature the agent must act on. No when the chunk is more of a listing that other chunks already answer, boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.";
 const COMPRESSION_QUESTION: &str = "Does the work that continues after this fold still need the content of this tool interaction? Yes when it holds an unresolved error, a user-facing correction, or facts the pinned task, constraints or plan still depend on; no when it is a completed step whose outcome is already established or a lookup the task has moved past.";
+const DISTILL_QUESTION: &str = "Does this lesson's rule follow from its cited evidence quote as that quote appears in the transcript? Yes only when the rule states what the quote says without generalizing beyond it, adding requirements the quote does not state, or inventing scope the quote does not establish; no when the quote is absent from the transcript, misread, or overreached.";
+const PLAN_REQUEST_QUESTION: &str = "Does the work remaining on the current request need an external plan? Yes only when the remaining work has at least three meaningful dependent phases, material context-loss risk, or a real branch that must be tracked; no for an answer, a review with one deliverable, a focused fix, or a routine read, change and check sequence, and no when the runtime evidence shows the work is already mostly done.";
+const PLAN_PHASE_QUESTION: &str = "Do the runtime-recorded actions or tool observations show that the active phase's done_when condition is met? Yes only when a recorded action or tool output evidences the stated outcome; no when only the assistant's narration claims it or the evidence shows unrelated or unfinished work.";
+const GATE_QUESTION: &str = "Is this finding refuted by a citable observation in the evidence: a recorded action that performed the check the finding calls missing, a diff hunk containing the change it calls absent, a successful recorded check whose output exercised the condition it calls violated, or request text showing the demand was never made? No when the evidence merely makes the finding doubtful; doubt is not refutation.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
 /// Authorizer Nouls, keyed by the suffix appended to each pending call id.
@@ -256,6 +294,71 @@ pub fn compression_questions<'a>(
 			)
 		})
 		.collect()
+}
+
+pub fn distill_question_id(lesson: usize) -> String {
+	format!("l{lesson}")
+}
+
+/// One Noul per candidate lesson, keyed by slot and named by its 1-based
+/// number in the state.
+pub fn distill_questions(count: usize) -> BTreeMap<String, Question> {
+	(0..count)
+		.map(|slot| {
+			(
+				distill_question_id(slot),
+				Question::noul(format!("Lesson {}: {DISTILL_QUESTION}", slot + 1)),
+			)
+		})
+		.collect()
+}
+
+/// Question id of the single plan pre-screen Noul.
+pub const PLAN_QUESTION_ID: &str = "plan";
+
+/// The `request` pre-screen: does the remaining work need a plan at all?
+pub fn plan_request_question() -> BTreeMap<String, Question> {
+	BTreeMap::from([(
+		PLAN_QUESTION_ID.to_string(),
+		Question::noul(PLAN_REQUEST_QUESTION),
+	)])
+}
+
+/// The `phase_complete` pre-screen names the phase outcome it judges.
+pub fn plan_phase_question(done_when: &str) -> BTreeMap<String, Question> {
+	BTreeMap::from([(
+		PLAN_QUESTION_ID.to_string(),
+		Question::noul(format!(
+			"{PLAN_PHASE_QUESTION} The phase's done_when: {done_when}"
+		)),
+	)])
+}
+
+pub fn gate_question_id(finding: usize) -> String {
+	format!("f{finding}")
+}
+
+/// One Noul per charged finding, keyed by slot and named by its 1-based
+/// number in the state.
+pub fn gate_questions(count: usize) -> BTreeMap<String, Question> {
+	(0..count)
+		.map(|slot| {
+			(
+				gate_question_id(slot),
+				Question::noul(format!("Finding {}: {GATE_QUESTION}", slot + 1)),
+			)
+		})
+		.collect()
+}
+
+/// The Noul probability answered under `id`. The runner only returns answer
+/// sets that carry a Noul for every Noul asked, so a caller reading its own
+/// question ids always gets a number.
+pub fn probability(answers: &BTreeMap<String, Answer>, id: &str) -> f64 {
+	match answers.get(id) {
+		Some(Answer::Noul { noul }) => *noul,
+		_ => 0.0,
+	}
 }
 
 /// Split `items` into consecutive windows whose state stays under the runner's

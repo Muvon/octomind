@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 15
+version = 16
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -693,9 +693,8 @@ enabled = true
 enabled = false
 
 # Evaluation gates: a calibrated evaluation model (TypeSafe Jev) answers one
-# bounded question at each of three seams — whether a recalled lesson bears on
-# the request, which skill fits when no activation rule matched, and whether a
-# tool batch needs the supervisor model at all. Each seam is one switch, off by
+# bounded question at each of eight supervisor seams in place of a chat-model
+# judgment. Each seam is one switch, off by
 # default. One attempt per call, 5 s timeout, no retries; any failure keeps the
 # pre-change behavior for that turn. Thresholds are fixed constants. Keys come
 # from the environment: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID for
@@ -717,6 +716,19 @@ condense = false
 # no longer needed to archive_reference so the fold model reads a one-line
 # descriptor instead of their content. Unavailable → the evidence set as allocated.
 compression = false
+# Ground extracted lessons (one question per candidate over the same transcript
+# excerpt) instead of the supervisor-model verifier; candidates below 0.5 are
+# rejected. Unavailable → the supervisor-model verifier runs, fail-closed.
+distill = false
+# Before the external planner is called on a `request` or `phase_complete`
+# signal, ask whether a plan is needed / the phase outcome is evidenced; below
+# 0.2 the signal is declined or held without a planner call. `reassess` and
+# every deterministic skip are unchanged; unavailable → the planner call.
+plan = false
+# On a GAPS verdict, refute each charged finding against the same evidence the
+# verifier saw (refuted at 0.8 or above) instead of the second-verifier chat
+# pass. Unavailable or evidence over the state cap → the chat refutation.
+gate = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

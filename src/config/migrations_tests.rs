@@ -357,3 +357,32 @@ fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserv
 		.unwrap()
 		.is_none());
 }
+
+#[test]
+fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_evaluate_values() {
+	let mut document = template_document();
+	document["version"] = toml_edit::value(15);
+	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
+	evaluate.remove("distill");
+	evaluate.remove("plan");
+	evaluate.remove("gate");
+	evaluate["model"] = toml_edit::value("typesafe:jev-latest");
+	evaluate["recall"] = toml_edit::value(true);
+	evaluate["condense"] = toml_edit::value(true);
+	let migrated = migrate_once(&document.to_string());
+	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+	assert!(!config.supervisor.evaluate.distill);
+	assert!(!config.supervisor.evaluate.plan);
+	assert!(!config.supervisor.evaluate.gate);
+	assert_eq!(config.supervisor.evaluate.model, "typesafe:jev-latest");
+	assert!(config.supervisor.evaluate.recall);
+	assert!(config.supervisor.evaluate.condense);
+	assert!(!config.supervisor.evaluate.skills);
+	assert!(!config.supervisor.evaluate.authorizer);
+	assert!(!config.supervisor.evaluate.compression);
+	assert!(plan()
+		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.is_none());
+}

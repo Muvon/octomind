@@ -323,7 +323,7 @@ fn render_specialist_context(
 	chat_session: &ChatSession,
 	signal: PlanSignal,
 	trajectory_max_tokens: usize,
-) -> String {
+) -> serde_json::Value {
 	let instructions = chat_session
 		.session
 		.messages
@@ -398,7 +398,75 @@ fn render_specialist_context(
 		"phase_trajectory": trajectory,
 		"runtime_evidence": evidence,
 	})
-	.to_string()
+}
+
+fn hold_feedback(reason: &str) -> String {
+	format!(
+		"<runtime-plan-feedback>Current phase remains open: {}</runtime-plan-feedback>",
+		xml_feedback(reason)
+	)
+}
+
+/// Evaluation-model pre-screen over the planner's own payload fields, after
+/// every deterministic skip. `Ok(true)` means the signal was consumed without
+/// a planner call: a `request` the evaluation is confident needs no plan, or a
+/// `phase_complete` whose outcome the runtime evidence does not show. `reassess`
+/// is never scored; an unavailable evaluation runs the planner unchanged.
+async fn prescreen(
+	chat_session: &mut ChatSession,
+	config: &Config,
+	signal: PlanSignal,
+	payload: &serde_json::Value,
+) -> Result<bool> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let (state, questions, done_when) = match signal {
+		PlanSignal::Request => (
+			serde_json::json!({
+				"current_request": payload["current_request"],
+				"working_request": payload["working_request"],
+				"outcome_conditions": payload["outcome_conditions"],
+				"runtime_evidence": payload["runtime_evidence"],
+				"phase_trajectory": payload["phase_trajectory"],
+			}),
+			evaluate::plan_request_question(),
+			None,
+		),
+		PlanSignal::PhaseComplete => {
+			let Some((title, done_when)) = crate::mcp::core::plan::current_phase() else {
+				return Ok(false);
+			};
+			(
+				serde_json::json!({
+					"phase_title": title,
+					"done_when": done_when,
+					"runtime_evidence": payload["runtime_evidence"],
+					"phase_trajectory": payload["phase_trajectory"],
+				}),
+				evaluate::plan_phase_question(&done_when),
+				Some(done_when),
+			)
+		}
+		PlanSignal::Reassess => return Ok(false),
+	};
+	let Some(answers) = evaluate::run(&config.supervisor, Seam::Plan, state, questions).await
+	else {
+		return Ok(false);
+	};
+	let probability = evaluate::probability(&answers, evaluate::PLAN_QUESTION_ID);
+	if probability >= evaluate::PLAN_SKIP_BELOW {
+		return Ok(false);
+	}
+	match done_when {
+		None => crate::log_debug!("evaluate plan: request declined (p={:.2})", probability),
+		Some(done_when) => {
+			chat_session.add_system_managed_user_message(&hold_feedback(&format!(
+				"runtime evidence does not yet show: {done_when}"
+			)))?;
+			crate::log_debug!("evaluate plan: phase_complete held (p={:.2})", probability);
+		}
+	}
+	crate::supervisor::stats::evaluate_applied(Seam::Plan, 1);
+	Ok(true)
 }
 
 fn plan_state_note() -> Option<String> {
@@ -522,9 +590,12 @@ pub async fn reconcile_after_actions(
 		chat_session.cached_tools = Some(crate::mcp::get_available_functions(config).await);
 	}
 	let payload = render_specialist_context(chat_session, signal, TRAJECTORY_MAX_TOKENS);
+	if prescreen(chat_session, config, signal, &payload).await? {
+		return Ok(());
+	}
 	let response = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
-		SupervisorPrompt::new(PLANNER_PROMPT.to_string(), payload),
+		SupervisorPrompt::new(PLANNER_PROMPT.to_string(), payload.to_string()),
 		crate::supervisor::stats::CallKind::Plan,
 		build_plan_schema(signal),
 		operation_rx,
@@ -583,10 +654,7 @@ pub async fn reconcile_after_actions(
 				Ok(Transition::Revised)
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Hold { reason }) => {
-				chat_session.add_system_managed_user_message(&format!(
-					"<runtime-plan-feedback>Current phase remains open: {}</runtime-plan-feedback>",
-					xml_feedback(&reason)
-				))?;
+				chat_session.add_system_managed_user_message(&hold_feedback(&reason))?;
 				Ok(Transition::None)
 			}
 			(PlanSignal::Reassess, PlanDecision::Revise { reason, tasks }) => {

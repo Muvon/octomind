@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.54.0] - 2026-09-18
+
+### 📋 Release Summary
+
+Session status lines now display session labels, changing the existing status-line output (b1a2a530). Added support for Octohub evaluation models, evaluation-driven supervisor gates, and compression evaluation, along with cross-store learning synthesis, expanded command/media completion, and scoped session copying (b7f4339b, 83f9d2ac, 40894f3f, 8ad82c76, 5d7e5bd1, 239637d9, efb97a55). Several fixes improve compression and folding behavior, MCP session isolation, prompt labeling, learning configuration, and session handling (ca917378, ec889bb6, 57fafec3, 11784f24, c548ea39, 710abdaf, 1680d3e1, 9f186e4d, fe0d3e10).
+
+
+### ✨ New Features & Enhancements
+
+- **config**: support octohub evaluation models `b7f4339b`
+- **supervisor**: add evaluation-driven gates `83f9d2ac`
+- **supervisor**: evaluate condense/compression `40894f3f`
+- **supervisor**: add evaluation gates `8ad82c76`
+- **chat**: show session labels in status line `b1a2a530`
+- **learning**: enable cross-store synthesis `5d7e5bd1`
+- **chat**: extend command and media completion `239637d9`
+- **session**: support scoped session copying `efb97a55`
+
+### 🔧 Improvements & Optimizations
+
+- **supervisor**: track evaluation savings `7aee0395`
+- **learning**: serialize data directory test setup `633a7100`
+- **runtime**: refine ambiguous routing fixtures `0a521ca5`
+- **compression**: update fold regression expectations `52d763ef`
+- **conversation**: reuse fold fingerprint in landing test `4732a4b1`
+- **session**: use safe command prefix parsing `b4d4526d`
+- **compression**: rework fold deferral flow `13d9b5e2`
+- **session**: remove deferred cache state `4dba5a3a`
+
+### 🐛 Bug Fixes & Stability
+
+- **compression**: redrain summaries on force `ca917378`
+- **mcp**: isolate session tool maps `ec889bb6`
+- **prompts**: label source units `57fafec3`
+- **mcp**: recalibrate Granite activation `11784f24`
+- **supervisor**: omit conditions without evidence block `c548ea39`
+- **learning**: use current session config for distill `710abdaf`
+- **compression**: validate and honor fold deferrals `1680d3e1`
+- **session**: reset fold cooldown per user turn `9f186e4d`
+- **mcp**: update client config API usage `fe0d3e10`
+
+### 📚 Documentation & Examples
+
+- **agents**: refresh contributor guidance `bd51d33d`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.53.1] - 2026-09-14
 
 ### 📋 Release Summary

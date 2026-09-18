@@ -221,18 +221,20 @@ pub(crate) async fn build(
 		}
 		plan_focus.push_str(marker);
 	}
-	if attention_enabled {
-		allocate_lanes(
-			&mut packets,
-			drained,
-			&pinned,
-			&grounded_hints,
-			&plan_focus,
-			target_tokens,
-			minimal_frontier,
-		)
-		.await;
-	}
+	// Lanes are allocated for every PACT build: the evidence set is the fold
+	// model's only view of the drained range, so a governance-only build must
+	// carry the same content as an attention-enabled one. `attention_enabled`
+	// only decides what the live context renders after the fold.
+	allocate_lanes(
+		&mut packets,
+		drained,
+		&pinned,
+		&grounded_hints,
+		&plan_focus,
+		target_tokens,
+		minimal_frontier,
+	)
+	.await;
 
 	let registry = super::archive::read_session_block_registry(&session.session.info.name);
 	let mut known_provenance: BTreeMap<String, Provenance> = registry
@@ -1179,6 +1181,125 @@ fn source_span(lines: &[&str], start_line: usize, end_line: usize) -> SourceSpan
 impl PactContext {
 	pub(crate) fn record_metrics(&mut self, metrics: PactMetrics) {
 		self.metrics = metrics;
+	}
+
+	/// Ask the evaluation model, per summarize-lane tool packet, whether the
+	/// work after the fold still needs its content, and demote the dead ones
+	/// to `archive_reference` before the fold model reads the evidence set. A
+	/// demoted packet has exactly the shape of one the allocator never
+	/// admitted, so rendering, citation rules, archive, and telemetry need no
+	/// special case. All or nothing: one unavailable window leaves every lane
+	/// as allocated.
+	pub(crate) async fn prune_dead_tool_packets(
+		&mut self,
+		supervisor: &crate::supervisor::SupervisorConfig,
+	) {
+		use crate::supervisor::evaluate::{self, Seam};
+		if !evaluate::enabled(supervisor, Seam::Compression) {
+			return;
+		}
+		let units: Vec<usize> = self
+			.packets
+			.iter()
+			.enumerate()
+			.filter(|(_, packet)| {
+				packet.lane == Lane::Summarize
+					&& packet.kind == PacketKind::ToolInteraction
+					&& packet.provenance != Provenance::RealUser
+			})
+			.map(|(index, _)| index)
+			.collect();
+		if units.is_empty() {
+			return;
+		}
+		let mut header = serde_json::json!({
+			"task": self.pinned.task.text,
+			"constraints": self
+				.pinned
+				.constraints
+				.iter()
+				.map(|item| item.text.as_str())
+				.collect::<Vec<_>>(),
+			"units": [],
+		});
+		if !self.plan_focus.trim().is_empty() {
+			header["plan"] = serde_json::Value::String(self.plan_focus.trim().to_string());
+		}
+		let header_tokens = crate::session::estimate_tokens(&header.to_string());
+		let samples: Vec<(usize, serde_json::Value)> = units
+			.iter()
+			.map(|index| {
+				let packet = &self.packets[*index];
+				(
+					*index,
+					serde_json::json!({
+						"id": packet.id,
+						"tokens": packet.tokens,
+						"sample": crate::supervisor::condense::truncate_preserving_edges(
+							packet.prompt_content.trim(),
+							evaluate::COMPRESSION_SAMPLE_TOKENS,
+						),
+					}),
+				)
+			})
+			.collect();
+		let windows = evaluate::windows(samples, header_tokens, |(_, unit)| {
+			crate::session::estimate_tokens(&unit.to_string())
+		});
+		let requests = windows
+			.iter()
+			.map(|window| {
+				let mut state = header.clone();
+				state["units"] = window.iter().map(|(_, unit)| unit.clone()).collect();
+				(state, evaluate::compression_questions(window.len()))
+			})
+			.collect();
+		let Some(answers) = evaluate::run_windows(supervisor, Seam::Compression, requests).await
+		else {
+			return;
+		};
+		let mut dead: Vec<usize> = Vec::new();
+		for (window, answers) in windows.iter().zip(answers) {
+			for (slot, (index, _)) in window.iter().enumerate() {
+				if let Some(octolib::evaluation::Answer::Noul { noul }) =
+					answers.get(&evaluate::compression_question_id(slot))
+				{
+					if *noul < evaluate::COMPRESSION_KEEP_AT {
+						dead.push(*index);
+					}
+				}
+			}
+		}
+		// Dependencies point backwards, so deciding from the last unit to the
+		// first sees every dependent's final lane. A unit a selected packet
+		// still depends on stays: the validator rejects a live packet whose
+		// dependency is a recall pointer, and the allocator never makes one.
+		let mut demoted = 0u64;
+		let mut removed_tokens = 0usize;
+		for index in dead.into_iter().rev() {
+			let id = self.packets[index].id.as_str();
+			let depended_on = self.packets.iter().any(|packet| {
+				packet.lane != Lane::ArchiveReference && packet.depends_on.iter().any(|d| d == id)
+			});
+			if depended_on {
+				continue;
+			}
+			let packet = &mut self.packets[index];
+			removed_tokens += crate::session::estimate_tokens(&packet.prompt_content);
+			packet.lane = Lane::ArchiveReference;
+			packet.prompt_content.clear();
+			packet.exact_spans.clear();
+			demoted += 1;
+		}
+		if demoted > 0 {
+			crate::supervisor::stats::evaluate_applied(Seam::Compression, demoted);
+			crate::log_debug!(
+				"evaluate compression: demoted {} of {} summarize packets ({} tokens) to archive_reference",
+				demoted,
+				units.len(),
+				removed_tokens
+			);
+		}
 	}
 
 	pub(crate) fn prompt_view(&self) -> String {

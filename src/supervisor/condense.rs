@@ -383,6 +383,19 @@ pub async fn condense_round(
 		.map(|candidate| sizes[candidate.result_index] as u64)
 		.sum();
 
+	// The calibrated scorer judges the same candidates first; any failure of
+	// its round falls through to the supervisor-model condenser unchanged.
+	if let Some(outcomes) =
+		evaluate_candidates(config, results, calls, &candidates, task, tool_round_intent).await
+	{
+		let condensed = finish_round(results, cfg, floor, attempted_tokens, outcomes);
+		crate::supervisor::stats::evaluate_applied(
+			crate::supervisor::evaluate::Seam::Condense,
+			condensed,
+		);
+		return;
+	}
+
 	let response = match crate::supervisor::learning::extract::call_learning_llm(
 		config,
 		SYSTEM_PROMPT.to_string(),
@@ -413,30 +426,57 @@ pub async fn condense_round(
 	};
 
 	let entries = unambiguous_entries(&parsed);
+	let outcomes = candidates
+		.iter()
+		.map(|candidate| {
+			let r = &results[candidate.result_index];
+			let original = r.extract_content();
+			let entry = entries.get(r.tool_id.as_str());
+			// One unusable verdict costs its own result, never the round: a single
+			// bad line range used to discard every other result's correct selection.
+			Outcome {
+				result_index: candidate.result_index,
+				content: entry
+					.and_then(|entry| apply_verdict(entry, r, &original, &candidate.view)),
+				verdict: entry
+					.map_or("missing", |entry| entry.verdict.as_str())
+					.to_string(),
+			}
+		})
+		.collect();
+	finish_round(results, cfg, floor, attempted_tokens, outcomes);
+}
+
+/// One candidate's resolved verdict: replacement content, or `None` to leave
+/// the result untouched, plus the verdict name for the debug line.
+struct Outcome {
+	result_index: usize,
+	content: Option<String>,
+	verdict: String,
+}
+
+/// Apply the round's outcomes — replace what shrank, leave the rest — then feed
+/// the adaptive controller and report. Both judges end here, so accounting and
+/// notices are identical whichever produced the outcomes. Returns how many
+/// results changed.
+fn finish_round(
+	results: &mut [McpToolResult],
+	cfg: &crate::supervisor::CondenseConfig,
+	floor: usize,
+	attempted_tokens: u64,
+	outcomes: Vec<Outcome>,
+) -> u64 {
 	let mut summary = Vec::new();
 	let mut n_condensed = 0u64;
 	let mut saved_tokens = 0u64;
 	let mut untouched = Vec::new();
-	for candidate in &candidates {
-		let idx = candidate.result_index;
-		let r = &mut results[idx];
-		let original = r.extract_content();
-		let before = estimate_tokens(&original);
-		let outcome = entries
-			.get(r.tool_id.as_str())
-			.and_then(|entry| apply_verdict(entry, r, &original, &candidate.view));
-		// One unusable verdict costs its own result, never the round: a single
-		// bad line range used to discard every other result's correct selection.
-		let Some(new_content) = outcome else {
-			untouched.push(format!(
-				"{} {}",
-				r.tool_name,
-				entries
-					.get(r.tool_id.as_str())
-					.map_or("missing", |entry| entry.verdict.as_str())
-			));
+	for outcome in outcomes {
+		let r = &mut results[outcome.result_index];
+		let Some(new_content) = outcome.content else {
+			untouched.push(format!("{} {}", r.tool_name, outcome.verdict));
 			continue;
 		};
+		let before = estimate_tokens(&r.extract_content());
 		let after = estimate_tokens(&new_content);
 		if after >= before {
 			untouched.push(format!("{} no-gain", r.tool_name));
@@ -476,6 +516,191 @@ pub async fn condense_round(
 			crate::session::chat::format_number(next_threshold.max(MIN_CANDIDATE_TOKENS) as u64)
 		);
 	}
+	n_condensed
+}
+
+/// A consecutive run of whole original lines, numbered from 1 like the
+/// verdict ranges.
+#[derive(Debug, PartialEq, Eq)]
+struct Chunk {
+	index: usize,
+	first_line: usize,
+	last_line: usize,
+	text: String,
+}
+
+/// Split text into line-aligned chunks of at most `CONDENSE_CHUNK_TOKENS`; a
+/// single longer line is a chunk of its own. Every line lands in exactly one
+/// chunk.
+fn chunk_lines(content: &str) -> Vec<Chunk> {
+	let limit = crate::supervisor::evaluate::CONDENSE_CHUNK_TOKENS;
+	let mut chunks: Vec<Chunk> = Vec::new();
+	let mut current = String::new();
+	let mut first_line = 1usize;
+	let mut lines_in_chunk = 0usize;
+	for (offset, line) in content.lines().enumerate() {
+		let number = offset + 1;
+		if lines_in_chunk > 0 {
+			let candidate = format!("{current}\n{line}");
+			if estimate_tokens(&candidate) <= limit {
+				current = candidate;
+				lines_in_chunk += 1;
+				continue;
+			}
+			chunks.push(Chunk {
+				index: chunks.len(),
+				first_line,
+				last_line: number - 1,
+				text: std::mem::take(&mut current),
+			});
+		}
+		first_line = number;
+		current = line.to_string();
+		lines_in_chunk = 1;
+	}
+	if lines_in_chunk > 0 {
+		chunks.push(Chunk {
+			index: chunks.len(),
+			first_line,
+			last_line: first_line + lines_in_chunk - 1,
+			text: current,
+		});
+	}
+	chunks
+}
+
+/// Chunk-score every candidate through the condense seam: one Noul per chunk
+/// over the candidate's full original text, windowed under the state cap, all
+/// windows of the round in flight together. `None` means the seam is off or a
+/// window was unavailable — the caller runs the supervisor-model condenser
+/// exactly as before, so the round never mixes two judges.
+async fn evaluate_candidates(
+	config: &Config,
+	results: &[McpToolResult],
+	calls: &[McpToolCall],
+	candidates: &[Candidate],
+	task: &str,
+	tool_round_intent: &str,
+) -> Option<Vec<Outcome>> {
+	use crate::supervisor::evaluate::{self, Seam};
+	if !evaluate::enabled(&config.supervisor, Seam::Condense) {
+		return None;
+	}
+	let task_block = task_block(task);
+	let intent_block = truncate_preserving_edges(tool_round_intent.trim(), TOOL_INTENT_CAP_TOKENS);
+	let mut plans = Vec::with_capacity(candidates.len());
+	let mut requests = Vec::new();
+	for candidate in candidates {
+		let r = &results[candidate.result_index];
+		let content = r.extract_content();
+		let chunks = chunk_lines(&content);
+		let args = calls
+			.iter()
+			.find(|c| c.tool_id == r.tool_id)
+			.map(|c| compact_args(&c.parameters))
+			.unwrap_or_default();
+		let header = serde_json::json!({
+			"task": task_block,
+			"intent": intent_block,
+			"tool": r.tool_name,
+			"status": if r.is_error() { "error" } else { "ok" },
+			"arguments": args,
+			"chunks": [],
+		});
+		let header_tokens = estimate_tokens(&header.to_string());
+		let items: Vec<serde_json::Value> = chunks
+			.iter()
+			.map(|chunk| {
+				serde_json::json!({
+					"index": chunk.index,
+					"first_line": chunk.first_line,
+					"last_line": chunk.last_line,
+					"text": chunk.text,
+				})
+			})
+			.collect();
+		let windows = evaluate::windows(items, header_tokens, |item| {
+			estimate_tokens(&item.to_string())
+		});
+		let window_sizes: Vec<usize> = windows.iter().map(Vec::len).collect();
+		for window in windows {
+			let mut state = header.clone();
+			let count = window.len();
+			state["chunks"] = serde_json::Value::Array(window);
+			requests.push((state, evaluate::condense_questions(count)));
+		}
+		plans.push((candidate.result_index, content, chunks, window_sizes));
+	}
+	let mut answers = evaluate::run_windows(&config.supervisor, Seam::Condense, requests)
+		.await?
+		.into_iter();
+	let mut outcomes = Vec::with_capacity(plans.len());
+	for (result_index, content, chunks, window_sizes) in plans {
+		let mut keep = Vec::with_capacity(chunks.len());
+		for size in window_sizes {
+			let window = answers.next()?;
+			keep.extend((0..size).map(|slot| {
+				matches!(
+					window.get(&evaluate::condense_question_id(slot)),
+					Some(octolib::evaluation::Answer::Noul { noul }) if *noul >= evaluate::CONDENSE_KEEP_AT
+				)
+			}));
+		}
+		let r = &results[result_index];
+		crate::log_debug!(
+			"evaluate condense: {} kept {} of {} chunks",
+			r.tool_name,
+			keep.iter().filter(|kept| **kept).count(),
+			chunks.len()
+		);
+		outcomes.push(outcome_from_scores(
+			result_index,
+			r,
+			&content,
+			&chunks,
+			&keep,
+		));
+	}
+	Some(outcomes)
+}
+
+/// Kept chunks plus one neighbour on each side (chunk boundaries split stack
+/// traces and diffs), then the deterministic protections; the selection goes
+/// through the same reconstruction, spill, and notice code as a model verdict.
+fn outcome_from_scores(
+	result_index: usize,
+	r: &McpToolResult,
+	original: &str,
+	chunks: &[Chunk],
+	keep: &[bool],
+) -> Outcome {
+	let lines: Vec<&str> = original.lines().collect();
+	let selected: Vec<(usize, usize)> = chunks
+		.iter()
+		.enumerate()
+		.filter(|(i, _)| {
+			keep[*i] || (*i > 0 && keep[i - 1]) || keep.get(i + 1).copied().unwrap_or(false)
+		})
+		.map(|(_, chunk)| (chunk.first_line, chunk.last_line))
+		.collect();
+	let ranges = protect_ranges(selected, &lines);
+	if ranges.is_empty() {
+		return Outcome {
+			result_index,
+			content: omission_notice(r, original),
+			verdict: "omit".to_string(),
+		};
+	}
+	let verdict = if ranges == [(1, lines.len())] {
+		"keep"
+	} else {
+		"extract"
+	};
+	Outcome {
+		result_index,
+		content: extract_content(r, original, &lines, &ranges),
+		verdict: verdict.to_string(),
+	}
 }
 
 /// Build the numbered views for `sizable` results and the single JSON payload
@@ -504,11 +729,7 @@ fn build_request(
 	// level. The floor keeps a small candidate's view usable.
 	let selected_tokens: usize = selected.iter().map(|&i| sizes[i]).sum::<usize>().max(1);
 
-	let task_block = if task.trim().is_empty() {
-		"(task context unavailable — be conservative, keep anything plausibly useful)".to_string()
-	} else {
-		truncate_preserving_edges(task.trim(), TASK_CAP_TOKENS)
-	};
+	let task_block = task_block(task);
 	let agent_block = truncate_preserving_edges(agent_context.trim(), AGENT_CONTEXT_CAP_TOKENS);
 	let intent_block = truncate_preserving_edges(tool_round_intent.trim(), TOOL_INTENT_CAP_TOKENS);
 
@@ -586,43 +807,75 @@ fn apply_verdict(
 			// A range reaching across a gap the sampled view never showed is
 			// clipped to what the model actually read, not rejected: rejecting it
 			// threw away a whole correct selection over one careless endpoint.
-			let mut ranges = clip_to_visible(parse_ranges(&entry.lines, lines.len())?, view);
+			let ranges = clip_to_visible(parse_ranges(&entry.lines, lines.len())?, view);
 			if ranges.is_empty() {
 				return None;
 			}
-			// The model chooses task relevance, but load-bearing diagnostics are
-			// protected deterministically even if its selection misses one. This
-			// can only retain more original evidence; it never invents content.
-			ranges.extend(diagnostic_ranges(&lines));
-			// The hard cap runs before us, so a candidate may already carry the
-			// truncation notice with the path to its untruncated body. Cutting that
-			// away would strand the tail the agent was told how to recover.
-			ranges.extend(truncation_notice_range(&lines));
-			ranges = merge_ranges(ranges);
-			let (body, kept) = reconstruct(&lines, &ranges, lines.len());
-			if kept >= lines.len() {
-				return None; // selected everything — identical to "keep"
-			}
-			let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
-			Some(format!(
-				"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; kept text was reconstructed from the original, not rewritten. Full original output:\n  {}\nIf something you need was cut, read the exact span from that file. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
-				lines.len(),
-				path.display()
-			))
+			extract_content(r, original, &lines, &protect_ranges(ranges, &lines))
 		}
 		"replace" => {
-			if r.is_error() || view.partial {
+			if view.partial {
 				return None;
 			}
-			let total_lines = original.lines().count();
-			let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
-			Some(format!(
-				"{CONDENSE_NOTICE_TAG}: omitted the complete {total_lines}-line successful `{}` result because none of it was judged to advance the current task. No tool facts were summarized or rewritten. Full original output:\n  {}\nRead it there if needed. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
-				r.tool_name,
-				path.display()
-			))
+			omission_notice(r, original)
 		}
 		_ => None, // "keep" or unknown — untouched
+	}
+}
+
+/// Deterministic protections on any selection: load-bearing diagnostics with
+/// context, and the truncation notice a candidate may already carry (the hard
+/// cap runs first, and cutting the notice would strand the tail the agent was
+/// told how to recover). This can only retain more original evidence; it
+/// never invents content.
+fn protect_ranges(mut ranges: Vec<(usize, usize)>, lines: &[&str]) -> Vec<(usize, usize)> {
+	ranges.extend(diagnostic_ranges(lines));
+	ranges.extend(truncation_notice_range(lines));
+	merge_ranges(ranges)
+}
+
+/// Kept ranges → the inline body with omission markers and the extract notice.
+/// `None` when the selection is everything (identical to "keep") or the spill
+/// cannot be written.
+fn extract_content(
+	r: &McpToolResult,
+	original: &str,
+	lines: &[&str],
+	ranges: &[(usize, usize)],
+) -> Option<String> {
+	let (body, kept) = reconstruct(lines, ranges, lines.len());
+	if kept >= lines.len() {
+		return None;
+	}
+	let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
+	Some(format!(
+		"{body}\n\n──────────\n{CONDENSE_NOTICE_TAG}: kept {kept} of {} original lines relevant to the current task — the condenser returned line numbers only; kept text was reconstructed from the original, not rewritten. Full original output:\n  {}\nIf something you need was cut, read the exact span from that file. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
+		lines.len(),
+		path.display()
+	))
+}
+
+/// The whole-result omission notice for an ok result. An error result is never
+/// omitted: its failing lines are the payload.
+fn omission_notice(r: &McpToolResult, original: &str) -> Option<String> {
+	if r.is_error() {
+		return None;
+	}
+	let total_lines = original.lines().count();
+	let path = crate::utils::spill::write_spill(&r.tool_name, original)?;
+	Some(format!(
+		"{CONDENSE_NOTICE_TAG}: omitted the complete {total_lines}-line successful `{}` result because none of it was judged to advance the current task. No tool facts were summarized or rewritten. Full original output:\n  {}\nRead it there if needed. Re-run the original tool only when its underlying state may have changed, not merely to recover omitted text.",
+		r.tool_name,
+		path.display()
+	))
+}
+
+/// The task block every request carries, under the same cap on both judges.
+fn task_block(task: &str) -> String {
+	if task.trim().is_empty() {
+		"(task context unavailable — be conservative, keep anything plausibly useful)".to_string()
+	} else {
+		truncate_preserving_edges(task.trim(), TASK_CAP_TOKENS)
 	}
 }
 
@@ -949,7 +1202,7 @@ fn diagnostic_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
 	indices_to_ranges(&indices.into_iter().collect::<Vec<_>>())
 }
 
-fn truncate_preserving_edges(text: &str, max_tokens: usize) -> String {
+pub(crate) fn truncate_preserving_edges(text: &str, max_tokens: usize) -> String {
 	if max_tokens == 0 || text.is_empty() {
 		return String::new();
 	}
@@ -1130,3 +1383,7 @@ mod condense_e2e_tests;
 #[cfg(test)]
 #[path = "condense_unit_tests.rs"]
 mod unit_tests;
+
+#[cfg(test)]
+#[path = "condense_evaluate_tests.rs"]
+mod evaluate_tests;

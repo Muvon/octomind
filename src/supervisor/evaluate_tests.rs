@@ -59,6 +59,8 @@ fn template_defaults_every_seam_off_on_cloudflare_jev() {
 #[test]
 fn master_switch_off_disables_every_seam() {
 	let mut config = config(true, true, true);
+	config.evaluate.condense = true;
+	config.evaluate.compression = true;
 	for seam in Seam::ALL {
 		assert!(enabled(&config, seam));
 	}
@@ -318,5 +320,150 @@ fn question_builders_use_stable_ids_and_documented_options() {
 			matches!(authorizer.get(id), Some(Question::Noul { .. })),
 			"missing {id}"
 		);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Window packing and the all-or-nothing multi-window runner
+// ---------------------------------------------------------------------------
+
+#[test]
+fn windows_respect_the_state_cap_and_the_question_bound_in_order() {
+	// 200 items of 100 tokens: the state cap allows ~237 per window, so the
+	// question bound splits first; then 40 items of 1,000 tokens hit the cap.
+	let small: Vec<(usize, usize)> = (0..200).map(|i| (i, 100)).collect();
+	let packed = windows(small, 500, |(_, tokens)| *tokens);
+	assert_eq!(packed.len(), 3);
+	assert!(packed.iter().all(|w| w.len() <= MAX_WINDOW_QUESTIONS));
+	let order: Vec<usize> = packed.iter().flatten().map(|(i, _)| *i).collect();
+	assert_eq!(order, (0..200).collect::<Vec<_>>());
+
+	let large: Vec<(usize, usize)> = (0..40).map(|i| (i, 1_000)).collect();
+	let packed = windows(large, 500, |(_, tokens)| *tokens);
+	assert!(packed.len() >= 2);
+	for window in &packed {
+		let tokens: usize = window.iter().map(|(_, t)| *t).sum();
+		assert!(
+			tokens + 500 <= MAX_STATE_TOKENS,
+			"window over the cap: {tokens}"
+		);
+	}
+	assert!(windows(Vec::<usize>::new(), 0, |_| 1).is_empty());
+}
+
+#[tokio::test]
+async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(nouls(&[("k0", 0.9)])),
+		FakeEvaluationStep::Answers(nouls(&[("k0", 0.1)])),
+		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
+		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
+	])
+	.await;
+	let mut config = config(false, false, false);
+	config.evaluate.condense = true;
+	let seam = Seam::Condense;
+	let calls_before = evaluate_counter(seam, "calls");
+	let unavailable_before = evaluate_counter(seam, "unavailable");
+
+	let answers = run_windows(
+		&config,
+		seam,
+		vec![
+			(serde_json::json!({"w": 0}), condense_questions(1)),
+			(serde_json::json!({"w": 1}), condense_questions(1)),
+		],
+	)
+	.await
+	.expect("both windows answered");
+	assert_eq!(answers.len(), 2);
+	assert!(matches!(answers[0].get("k0"), Some(Answer::Noul { noul }) if *noul > 0.5));
+	assert!(matches!(answers[1].get("k0"), Some(Answer::Noul { noul }) if *noul < 0.5));
+	assert_eq!(fake.requests()[0].state["w"], 0);
+	assert_eq!(fake.requests()[1].state["w"], 1);
+
+	// Two failing windows count one fallback for the round, not two.
+	let failed = run_windows(
+		&config,
+		seam,
+		vec![
+			(serde_json::json!({"w": 2}), condense_questions(1)),
+			(serde_json::json!({"w": 3}), condense_questions(1)),
+		],
+	)
+	.await;
+	assert!(failed.is_none());
+	assert_eq!(evaluate_counter(seam, "calls") - calls_before, 4);
+	assert_eq!(
+		evaluate_counter(seam, "unavailable") - unavailable_before,
+		1
+	);
+
+	// Seam off: no call, no counter, and an empty round is not a fallback.
+	config.evaluate.condense = false;
+	assert!(run_windows(
+		&config,
+		seam,
+		vec![(serde_json::json!({}), condense_questions(1))]
+	)
+	.await
+	.is_none());
+	config.evaluate.condense = true;
+	assert_eq!(
+		run_windows(&config, seam, Vec::new()).await,
+		Some(Vec::new())
+	);
+	assert_eq!(fake.requests().len(), 4);
+}
+
+#[tokio::test]
+async fn run_windows_issues_every_window_concurrently() {
+	let delay = std::time::Duration::from_millis(300);
+	let _fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Sleep(delay),
+		FakeEvaluationStep::Sleep(delay),
+		FakeEvaluationStep::Sleep(delay),
+	])
+	.await;
+	let mut config = config(false, false, false);
+	config.evaluate.compression = true;
+	let started = std::time::Instant::now();
+	let answers = run_windows(
+		&config,
+		Seam::Compression,
+		(0..3)
+			.map(|w| (serde_json::json!({"w": w}), compression_questions(1)))
+			.collect(),
+	)
+	.await;
+	assert!(answers.is_none());
+	assert!(
+		started.elapsed() < delay * 2,
+		"windows ran one after another: {:?}",
+		started.elapsed()
+	);
+}
+
+#[test]
+fn condense_and_compression_questions_are_nouls_keyed_by_slot() {
+	let condense = condense_questions(3);
+	assert_eq!(
+		condense.keys().cloned().collect::<Vec<_>>(),
+		["k0", "k1", "k2"]
+	);
+	assert!(condense
+		.values()
+		.all(|question| matches!(question, Question::Noul { .. })));
+	let compression = compression_questions(2);
+	assert_eq!(
+		compression.keys().cloned().collect::<Vec<_>>(),
+		["u0", "u1"]
+	);
+	assert!(compression
+		.values()
+		.all(|question| matches!(question, Question::Noul { .. })));
+	assert_eq!(Seam::ALL.len(), SEAM_COUNT);
+	for (i, seam) in Seam::ALL.iter().enumerate() {
+		assert_eq!(seam.index(), i);
 	}
 }

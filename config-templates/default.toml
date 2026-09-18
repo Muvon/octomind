@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 14
+version = 15
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -708,6 +708,15 @@ recall = false
 skills = false
 # Skip the two-judge supervisor authorization when nothing in the batch is flagged.
 authorizer = false
+# Score oversized tool results chunk by chunk instead of asking the supervisor
+# model for line ranges; the model condenser still runs when this is off or the
+# evaluation is unavailable. Candidate selection (tokens_threshold, adaptive)
+# is unchanged.
+condense = false
+# Before a compression fold, demote summarize-lane tool packets the model judges
+# no longer needed to archive_reference so the fold model reads a one-line
+# descriptor instead of their content. Unavailable → the evidence set as allocated.
+compression = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

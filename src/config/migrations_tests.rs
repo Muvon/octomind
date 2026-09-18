@@ -331,3 +331,29 @@ fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
 		.unwrap()
 		.is_none());
 }
+
+#[test]
+fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserves_evaluate_values()
+{
+	let mut document = template_document();
+	document["version"] = toml_edit::value(14);
+	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
+	evaluate.remove("condense");
+	evaluate.remove("compression");
+	evaluate["model"] = toml_edit::value("typesafe:jev-latest");
+	evaluate["recall"] = toml_edit::value(true);
+	evaluate["authorizer"] = toml_edit::value(true);
+	let migrated = migrate_once(&document.to_string());
+	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+	assert!(!config.supervisor.evaluate.condense);
+	assert!(!config.supervisor.evaluate.compression);
+	assert_eq!(config.supervisor.evaluate.model, "typesafe:jev-latest");
+	assert!(config.supervisor.evaluate.recall);
+	assert!(!config.supervisor.evaluate.skills);
+	assert!(config.supervisor.evaluate.authorizer);
+	assert!(plan()
+		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.is_none());
+}

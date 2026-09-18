@@ -1251,7 +1251,14 @@ impl PactContext {
 			.map(|window| {
 				let mut state = header.clone();
 				state["units"] = window.iter().map(|(_, unit)| unit.clone()).collect();
-				(state, evaluate::compression_questions(window.len()))
+				(
+					state,
+					evaluate::compression_questions(
+						window
+							.iter()
+							.map(|(index, _)| self.packets[*index].id.as_str()),
+					),
+				)
 			})
 			.collect();
 		let Some(answers) = evaluate::run_windows(supervisor, Seam::Compression, requests).await

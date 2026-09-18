@@ -137,7 +137,7 @@ execute at their existing lifecycle points outside this tool-call check.
 ## Evaluation gates
 
 `[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
-module) as a gate at three seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
+module) as a gate at five seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
 probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
 every seam off leaves behavior byte-identical to a release without this section.
 
@@ -147,6 +147,8 @@ every seam off leaves behavior byte-identical to a release without this section.
 | `recall` | After scoped lessons are ranked and before pack admission, one Noul per scoped candidate asks whether it bears on the current request. Candidates below 0.5 are excluded; the rank order of the rest is kept. Global-tier rules are never sent and are admitted exactly as before. Zero scoped candidates make no call. |
 | `skills` | When auto-activation runs and every rule abstained (no deterministic match, no semantic candidate cleared the margin), one Choice lists every inactive skill in the domain pool (name and description) plus `none`. The chosen skill activates with trigger `evaluate` when it is not `none` and confidence is at least 0.8. Skills without rules join the pool for this choice only; they never meet the rule engine. A shadow evolution binding records a match instead of activating. |
 | `authorizer` | With `[supervisor.authorizer] enabled = true`, after the memoized-denial cache and before the two-judge supervisor path, three Nouls per pending call ask whether it is `prohibited` by user or role instructions, `destructive` to non-regenerable files or git history, or `external` to the working directory. When every answer is below 0.5 the batch is admitted without waking the supervisor model; otherwise the pre-change judgment and verification run unchanged. The pre-screen can only admit, never block. |
+| `condense` | With `[supervisor.condense] enabled = true`, the same candidates the condenser would judge (`tokens_threshold` and `adaptive` unchanged) are scored instead of sent to the supervisor model: each candidate's full original text is split into line-aligned chunks of at most 256 tokens, windowed under the state cap (at most 96 chunks per call, all windows of a round in flight together), and one Noul per chunk asks whether the agent needs it for the task. Chunks at or above 0.5 are kept with one neighbour on each side, plus diagnostics and any truncation notice; the kept lines go through the existing verbatim reconstruction, spill file, and `📎 CONDENSED` notice. Everything kept leaves the result untouched; nothing kept omits an ok result (never an error). If any window is unavailable, the whole round's answers are discarded and the supervisor-model condenser runs once exactly as before. The adaptive controller sees the same numbers either way. |
+| `compression` | Before a fold's decision call, every `ToolInteraction` packet the PACT allocator placed in the `summarize` lane is scored with one Noul (state: pinned task, constraints, plan focus, and a 512-token head-and-tail sample per packet; at most 96 units per call, windows concurrent). Packets below 0.5 are demoted to `archive_reference`, so the fold model reads their one-line descriptor instead of their content; `keep_exact`, non-tool, real-user, and already-archived packets are never scored, and a packet another selected packet depends on is never demoted. The drained range, archive, fingerprint, validator, and fold decision are untouched. If any window is unavailable, nothing is demoted and the fold proceeds on the evidence set as allocated. |
 
 Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for the
 `cloudflare` provider, `TYPESAFE_API_KEY` for `typesafe`. Nothing is stored in config.
@@ -154,13 +156,15 @@ Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY
 Every call is one attempt with a 5-second timeout and no retries, and the assembled state is capped at 24,000
 estimated tokens. Any failure — missing key, HTTP 401/402/403/429/5xx, timeout, transport error, an unparseable or
 incomplete answer set, a state or skill roster too large to send — keeps the pre-change behavior for that turn, writes
-one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. The state never
-contains tool results, assistant messages, or condensed-output notices. Thresholds and question text are constants in
-`src/supervisor/evaluate.rs`, not config keys.
+one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. For the
+recall, skills, and authorizer seams the state never contains tool results, assistant messages, or condensed-output
+notices; the condense and compression seams judge tool output by design and send that output and nothing else from
+the transcript. Thresholds and question text are constants in `src/supervisor/evaluate.rs`, not config keys.
 
 `/info` shows, per seam, `calls` (attempts), `unavailable` (fallbacks), and `applied` (recall: candidates excluded;
-skills: activations; authorizer: batches admitted without the supervisor). Usage lands under one `evaluate` call kind in
-the supervisor totals and in the session's external spend.
+skills: activations; authorizer: batches admitted without the supervisor; condense: results whose inline content
+changed; compression: packets demoted). Usage lands under one `evaluate` call kind in the supervisor totals and in the
+session's external spend.
 
 ## The closed loop
 

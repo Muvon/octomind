@@ -113,6 +113,11 @@ fn plan() -> MigrationPlan {
 				to: 14,
 				apply: add_v14_evaluate,
 			},
+			VersionMigration {
+				from: 14,
+				to: 15,
+				apply: add_v15_evaluate_seams,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -132,6 +137,15 @@ fn add_v14_evaluate(
 		"user config",
 	)?;
 	merge_missing(supervisor, template_supervisor, "evaluate")
+}
+
+/// Add the `condense` and `compression` seams (off) to an existing evaluate
+/// section; every key the user already has stays as it is.
+fn add_v15_evaluate_seams(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	add_v14_evaluate(document, template)
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

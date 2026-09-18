@@ -1922,3 +1922,451 @@ fn prompt_view_renders_descriptor_lines_and_grounded_hints() {
 	assert!(view.contains("<grounded_self_report>"));
 	assert!(view.contains("focus: b:x"));
 }
+
+// ---------------------------------------------------------------------------
+// Governance-only builds carry the same evidence as attention-enabled ones
+// ---------------------------------------------------------------------------
+
+fn tool_session(name: &str) -> crate::session::chat::session::ChatSession {
+	let mut call = message("assistant", "running the tests");
+	call.tool_calls = Some(serde_json::json!([{
+		"id": "call-1",
+		"function": {"name": "shell", "arguments": "{\"cmd\":\"cargo test\"}"}
+	}]));
+	let mut result = message(
+		"tool",
+		"running 12 tests\ntest deploy::race ... FAILED\nthread panicked at src/deploy.rs:42\ntest result: FAILED",
+	);
+	result.tool_call_id = Some("call-1".into());
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "stabilise the deploy pipeline"),
+		call,
+		result,
+		message("assistant", "found the race in src/deploy.rs"),
+	]);
+	session.session.info.name = name.to_string();
+	session
+}
+
+#[tokio::test]
+async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() {
+	let session = tool_session("governance-only-evidence");
+	let end = session.session.messages.len() - 1;
+	let governed = build(&session, 1, end, 1.0, false, false)
+		.await
+		.expect("governance-only build");
+	let attended = build(&session, 1, end, 1.0, true, false)
+		.await
+		.expect("attention-enabled build");
+	assert_eq!(governed.packets.len(), attended.packets.len());
+	for (g, a) in governed.packets.iter().zip(&attended.packets) {
+		assert_eq!(g.id, a.id);
+		assert_eq!(g.lane, a.lane, "{}", g.id);
+		assert_eq!(g.prompt_content, a.prompt_content, "{}", g.id);
+		assert_eq!(g.exact_spans, a.exact_spans, "{}", g.id);
+	}
+	assert_eq!(governed.prompt_view(), attended.prompt_view());
+	assert!(
+		governed
+			.prompt_view()
+			.contains("thread panicked at src/deploy.rs:42"),
+		"{}",
+		governed.prompt_view()
+	);
+	assert!(governed
+		.packets
+		.iter()
+		.any(|packet| packet.lane != Lane::ArchiveReference));
+	// The live context after the fold is unchanged: pinned band only.
+	let (pinned, recall) = governed.render_live_bands(None);
+	assert!(pinned.starts_with("<pinned_state>"));
+	assert!(recall.is_empty());
+	let (_, attended_recall) = attended.render_live_bands(None);
+	assert!(!attended_recall.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Pre-fold pruning through the compression seam
+// ---------------------------------------------------------------------------
+
+use crate::session::chat::test_support::{
+	evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep,
+};
+use crate::supervisor::evaluate::{compression_question_id, Seam, COMPRESSION_SAMPLE_TOKENS};
+
+fn supervisor(compression: bool) -> crate::supervisor::SupervisorConfig {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+			.expect("default template must deserialize");
+	config.supervisor.enabled = true;
+	config.supervisor.evaluate.compression = compression;
+	config.supervisor
+}
+
+fn tool_packet(id: &str, lane: Lane, content: &str) -> EvidencePacket {
+	let mut packet = packet(id, Provenance::ToolObserved, lane);
+	packet.prompt_content = content.to_string();
+	packet.tokens = crate::session::estimate_tokens(content) * 2;
+	packet.depends_on = vec!["b:root".to_string()];
+	packet.descriptor = format!(
+		"ToolInteraction / ToolObserved; 2 message(s), approximately {} tokens",
+		packet.tokens
+	);
+	if lane == Lane::Summarize {
+		packet.exact_spans = vec![SourceSpan {
+			start_line: 1,
+			end_line: 1,
+			content_digest: "digest".into(),
+		}];
+	}
+	packet
+}
+
+fn pact_with_packets(packets: Vec<EvidencePacket>) -> PactContext {
+	let mut pact = pact_with(packet("b:seed", Provenance::ToolObserved, Lane::KeepExact));
+	pact.known_provenance = packets
+		.iter()
+		.map(|packet| (packet.id.clone(), packet.provenance))
+		.collect();
+	pact.source_tokens = packets.iter().map(|packet| packet.tokens).sum();
+	pact.target_tokens = pact.source_tokens.max(1);
+	pact.packets = packets;
+	pact
+}
+
+fn unit_answers(count: usize, probability: impl Fn(usize) -> f64) -> FakeEvaluationStep {
+	let pairs: Vec<(String, f64)> = (0..count)
+		.map(|slot| (compression_question_id(slot), probability(slot)))
+		.collect();
+	let borrowed: Vec<(&str, f64)> = pairs.iter().map(|(id, p)| (id.as_str(), *p)).collect();
+	FakeEvaluationStep::Answers(nouls(&borrowed))
+}
+
+fn long_output(label: &str, lines: usize) -> String {
+	(1..=lines)
+		.map(|i| format!("{label} output line {i} with some tool text"))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+#[tokio::test]
+async fn prune_seam_off_makes_no_call_and_keeps_the_view_byte_identical() {
+	let fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.1)]).await;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:s1", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 40)),
+	]);
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets(&supervisor(false)).await;
+	assert!(fake.requests().is_empty());
+	assert_eq!(pact.prompt_view(), before);
+}
+
+#[tokio::test]
+async fn prune_scores_only_summarize_tool_packets_with_bounded_samples() {
+	let fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.9)]).await;
+	let big = long_output("cargo", 600);
+	let mut user_note = tool_packet("b:user", Lane::Summarize, "never touch main");
+	user_note.kind = PacketKind::UserConstraintOrCorrection;
+	let mut real = tool_packet("b:real", Lane::Summarize, "typed by a person");
+	real.provenance = Provenance::RealUser;
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:exact", Lane::KeepExact, &long_output("frontier", 30)),
+		tool_packet("b:s1", Lane::Summarize, &big),
+		user_note,
+		tool_packet("b:ref", Lane::ArchiveReference, ""),
+		tool_packet("b:s2", Lane::Summarize, &long_output("view", 20)),
+		real,
+	]);
+	pact.plan_focus = "[ ] add retry with backoff".to_string();
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+
+	let requests = fake.requests();
+	assert_eq!(requests.len(), 1);
+	let state = requests[0].state.as_object().expect("object state");
+	let mut keys: Vec<&str> = state.keys().map(String::as_str).collect();
+	keys.sort_unstable();
+	assert_eq!(keys, ["constraints", "plan", "task", "units"]);
+	assert_eq!(state["task"], "continue the task");
+	assert_eq!(state["plan"], "[ ] add retry with backoff");
+	let units = state["units"].as_array().unwrap();
+	let ids: Vec<&str> = units.iter().map(|u| u["id"].as_str().unwrap()).collect();
+	assert_eq!(ids, ["b:s1", "b:s2"]);
+	let sample = units[0]["sample"].as_str().unwrap();
+	assert!(crate::session::estimate_tokens(sample) <= COMPRESSION_SAMPLE_TOKENS);
+	assert!(sample.starts_with("cargo output line 1 with"));
+	assert!(sample.ends_with("cargo output line 600 with some tool text"));
+	assert!(!requests[0].state.to_string().contains("frontier output"));
+	assert!(!requests[0].state.to_string().contains("typed by a person"));
+	assert_eq!(requests[0].questions.len(), 2);
+	assert_eq!(requests[0].max_retries, 0);
+	// Every unit scored as needed: nothing changes.
+	assert_eq!(pact.prompt_view(), before);
+}
+
+#[tokio::test]
+async fn prune_demotes_below_threshold_with_the_unadmitted_shape() {
+	let _fake = install_fake_evaluation(vec![unit_answers(
+		2,
+		|slot| {
+			if slot == 0 {
+				0.1
+			} else {
+				0.9
+			}
+		},
+	)])
+	.await;
+	let applied_before = evaluate_counter(Seam::Compression, "applied");
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:dead", Lane::Summarize, &long_output("build", 40)),
+		tool_packet("b:live", Lane::Summarize, &long_output("view", 40)),
+	]);
+	let live_before = pact.packets[1].clone();
+	let dead_before = pact.packets[0].clone();
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+
+	let dead = &pact.packets[0];
+	assert_eq!(dead.lane, Lane::ArchiveReference);
+	assert!(dead.prompt_content.is_empty());
+	assert!(dead.exact_spans.is_empty());
+	assert_eq!(dead.descriptor, dead_before.descriptor);
+	assert_eq!(dead.depends_on, dead_before.depends_on);
+	assert_eq!(dead.tokens, dead_before.tokens);
+	assert_eq!(
+		serde_json::to_value(dead.lane).unwrap(),
+		serde_json::json!("archive_reference")
+	);
+	let live = &pact.packets[1];
+	assert_eq!(live.lane, live_before.lane);
+	assert_eq!(live.prompt_content, live_before.prompt_content);
+	assert_eq!(live.exact_spans, live_before.exact_spans);
+
+	let view = pact.prompt_view();
+	let dead_header = view
+		.find("[b:dead archive_reference")
+		.expect("demoted header");
+	let descriptor = view
+		.find(&format!("descriptor: {}", dead.descriptor))
+		.unwrap();
+	let live_header = view.find("[b:live summarize").expect("kept header");
+	assert!(dead_header < descriptor && descriptor < live_header);
+	assert!(!view.contains("build output line 1 with"));
+	assert!(view.contains("view output line 1 with"));
+	assert_eq!(
+		evaluate_counter(Seam::Compression, "applied") - applied_before,
+		1
+	);
+}
+
+#[tokio::test]
+async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
+	let _fake =
+		install_fake_evaluation(vec![unit_answers(2, |_| 0.1), unit_answers(2, |_| 0.1)]).await;
+	let applied_before = evaluate_counter(Seam::Compression, "applied");
+	let mut checkpoint = packet("b:check", Provenance::AssistantReported, Lane::Summarize);
+	checkpoint.kind = PacketKind::AssistantCheckpoint;
+	checkpoint.depends_on = vec!["b:tool".to_string()];
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
+		checkpoint.clone(),
+		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
+	]);
+	pact.packets[2].depends_on = vec!["b:tool".to_string()];
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	// b:chain is dead and unreferenced → demoted; b:tool is dead but the live
+	// checkpoint depends on it → kept, so the validator's dependency rule holds.
+	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
+	assert_eq!(pact.packets[0].lane, Lane::Summarize);
+	assert!(!pact.packets[0].prompt_content.is_empty());
+	assert_eq!(
+		evaluate_counter(Seam::Compression, "applied") - applied_before,
+		1
+	);
+	pact.validate_summary(&CompressionSummary {
+		should_compress: true,
+		current_task: "continue the task".to_string(),
+		folded_units: vec![FoldedUnit {
+			text: "build finished".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: vec!["b:tool".to_string(), "b:check".to_string()],
+		}],
+		..Default::default()
+	})
+	.expect("dependency rule intact after pruning");
+
+	// Once the dependent is itself a recall pointer, the unit can go.
+	checkpoint.lane = Lane::ArchiveReference;
+	checkpoint.prompt_content.clear();
+	checkpoint.exact_spans.clear();
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:tool", Lane::Summarize, &long_output("build", 20)),
+		checkpoint,
+		tool_packet("b:chain", Lane::Summarize, &long_output("view", 20)),
+	]);
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	assert_eq!(pact.packets[0].lane, Lane::ArchiveReference);
+	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
+}
+
+#[tokio::test]
+async fn prune_windows_many_units_in_packet_order() {
+	let fake =
+		install_fake_evaluation(vec![unit_answers(96, |_| 0.9), unit_answers(34, |_| 0.9)]).await;
+	let calls_before = evaluate_counter(Seam::Compression, "calls");
+	let packets: Vec<EvidencePacket> = (0..130)
+		.map(|i| {
+			tool_packet(
+				&format!("b:u{i}"),
+				Lane::Summarize,
+				&format!("unit {i} output"),
+			)
+		})
+		.collect();
+	let mut pact = pact_with_packets(packets);
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	let requests = fake.requests();
+	assert_eq!(requests.len(), 2);
+	let sizes: Vec<usize> = requests
+		.iter()
+		.map(|request| request.state["units"].as_array().unwrap().len())
+		.collect();
+	assert_eq!(sizes, [96, 34]);
+	let ids: Vec<String> = requests
+		.iter()
+		.flat_map(|request| request.state["units"].as_array().unwrap().clone())
+		.map(|unit| unit["id"].as_str().unwrap().to_string())
+		.collect();
+	assert_eq!(ids, (0..130).map(|i| format!("b:u{i}")).collect::<Vec<_>>());
+	for request in &requests {
+		assert!(
+			crate::session::estimate_tokens(&request.state.to_string())
+				<= crate::supervisor::evaluate::MAX_STATE_TOKENS
+		);
+	}
+	assert_eq!(
+		evaluate_counter(Seam::Compression, "calls") - calls_before,
+		2
+	);
+	assert!(pact.packets.iter().all(|p| p.lane == Lane::Summarize));
+}
+
+#[tokio::test]
+async fn prune_unavailable_window_demotes_nothing() {
+	let fake = install_fake_evaluation(vec![
+		unit_answers(96, |_| 0.1),
+		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
+	])
+	.await;
+	let unavailable_before = evaluate_counter(Seam::Compression, "unavailable");
+	let applied_before = evaluate_counter(Seam::Compression, "applied");
+	let packets: Vec<EvidencePacket> = (0..100)
+		.map(|i| {
+			tool_packet(
+				&format!("b:u{i}"),
+				Lane::Summarize,
+				&format!("unit {i} output"),
+			)
+		})
+		.collect();
+	let mut pact = pact_with_packets(packets);
+	let before = pact.prompt_view();
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	assert_eq!(fake.requests().len(), 2);
+	assert_eq!(pact.prompt_view(), before);
+	assert_eq!(
+		evaluate_counter(Seam::Compression, "unavailable") - unavailable_before,
+		1
+	);
+	assert_eq!(
+		evaluate_counter(Seam::Compression, "applied"),
+		applied_before
+	);
+}
+
+#[tokio::test]
+async fn prune_without_summarize_tool_packets_makes_no_call() {
+	let fake = install_fake_evaluation(vec![unit_answers(1, |_| 0.1)]).await;
+	let calls_before = evaluate_counter(Seam::Compression, "calls");
+	let mut pact = pact_with_packets(vec![
+		tool_packet("b:exact", Lane::KeepExact, "frontier"),
+		tool_packet("b:ref", Lane::ArchiveReference, ""),
+	]);
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	assert!(fake.requests().is_empty());
+	assert_eq!(evaluate_counter(Seam::Compression, "calls"), calls_before);
+}
+
+#[tokio::test]
+async fn prune_leaves_archive_verification_and_validation_intact() {
+	let _fake = install_fake_evaluation(vec![unit_answers(1, |_| 0.1)]).await;
+	// A user turn right after the tool round keeps the checkpoint from
+	// depending on it, and a trailing user turn empties the exact frontier,
+	// so the tool round is a summarize unit nothing selected depends on.
+	let mut session = tool_session("prune-archive-unit");
+	session
+		.session
+		.messages
+		.insert(4, message("user", "ok, what did you find?"));
+	session
+		.session
+		.messages
+		.push(message("user", "keep going with the race fix"));
+	let end = session.session.messages.len() - 1;
+	let mut pact = build(&session, 1, end, 1.0, true, false)
+		.await
+		.expect("pact context builds");
+	let tool_id = pact
+		.packets
+		.iter()
+		.find(|p| p.kind == PacketKind::ToolInteraction && p.lane == Lane::Summarize)
+		.map(|p| p.id.clone())
+		.expect("fixture has a summarize tool packet");
+	pact.prune_dead_tool_packets(&supervisor(true)).await;
+	let demoted = pact.packets.iter().find(|p| p.id == tool_id).unwrap();
+	assert_eq!(demoted.lane, Lane::ArchiveReference);
+
+	let drained = &session.session.messages[1..=end];
+	let bundle = super::super::archive::archive_messages_with_index(
+		&session.session.info.name,
+		"prune-archive-cid",
+		drained,
+		&pact.packets,
+	)
+	.expect("archive writes");
+	pact.verify_archive(&bundle, drained)
+		.expect("archive verifies");
+	let archived = std::fs::read_to_string(&bundle.path).expect("archive readable");
+	assert!(archived.contains("thread panicked at src/deploy.rs:42"));
+
+	// Every packet still in the summarize lane must be cited; the demoted
+	// tool round must not be.
+	let cited: Vec<String> = pact
+		.packets
+		.iter()
+		.filter(|p| p.lane == Lane::Summarize)
+		.map(|p| p.id.clone())
+		.collect();
+	assert!(!cited.contains(&tool_id));
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: pact.pinned.task.text.clone(),
+		// Only assistant checkpoints remain in the summarize lane (real-user
+		// packets are never admitted), so the unit cannot claim established.
+		folded_units: vec![FoldedUnit {
+			text: "the race was found in src/deploy.rs".to_string(),
+			kind: "observation".to_string(),
+			status: "pending".to_string(),
+			refs: cited,
+		}],
+		..Default::default()
+	};
+	pact.validate_summary(&summary)
+		.expect("a summary that omits the demoted id validates");
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("archive").join("prune-archive-unit"));
+	}
+}

@@ -13,10 +13,12 @@
 // limitations under the License.
 
 //! Evaluation gates: calibrated answers from an evaluation model (TypeSafe
-//! Jev through octolib's `evaluation` module) at three supervisor seams —
+//! Jev through octolib's `evaluation` module) at five supervisor seams —
 //! a relevance filter after recall ranking, a roster choice when skill rules
-//! abstain, and a pre-screen that decides whether the authorizer needs to
-//! wake the supervisor model at all.
+//! abstain, a pre-screen that decides whether the authorizer needs to wake
+//! the supervisor model at all, chunk scoring of oversized tool results in
+//! place of the supervisor-model condenser, and pre-fold demotion of dead
+//! tool packets in the PACT evidence set.
 //!
 //! This is the only module that builds evaluation requests. It owns every
 //! question text and threshold, applies the master and per-seam switches,
@@ -24,9 +26,12 @@
 //! size, and attributes usage. Callers never see a provider error: they get
 //! answers or `None`, and `None` always means "keep the pre-change result".
 //!
-//! Security rule: the state never carries tool results, assistant messages,
-//! or condensed-output notices — the reviewer must never read the thing that
-//! might be arguing.
+//! Security rule for the recall, skills, and authorizer seams: the state
+//! never carries tool results, assistant messages, or condensed-output
+//! notices — the reviewer must never read the thing that might be arguing.
+//! The condense and compression seams judge tool output by design; their
+//! states carry that output and nothing else from the transcript, and their
+//! answers can only drop or demote text, never author it.
 
 use octolib::evaluation::{
 	Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question,
@@ -43,6 +48,8 @@ pub struct EvaluateConfig {
 	pub recall: bool,
 	pub skills: bool,
 	pub authorizer: bool,
+	pub condense: bool,
+	pub compression: bool,
 }
 
 /// The unit of switching, stats, and fallback.
@@ -51,16 +58,28 @@ pub enum Seam {
 	Recall,
 	Skills,
 	Authorizer,
+	Condense,
+	Compression,
 }
 
+pub const SEAM_COUNT: usize = 5;
+
 impl Seam {
-	pub const ALL: [Seam; 3] = [Seam::Recall, Seam::Skills, Seam::Authorizer];
+	pub const ALL: [Seam; SEAM_COUNT] = [
+		Seam::Recall,
+		Seam::Skills,
+		Seam::Authorizer,
+		Seam::Condense,
+		Seam::Compression,
+	];
 
 	pub fn name(self) -> &'static str {
 		match self {
 			Seam::Recall => "recall",
 			Seam::Skills => "skills",
 			Seam::Authorizer => "authorizer",
+			Seam::Condense => "condense",
+			Seam::Compression => "compression",
 		}
 	}
 
@@ -69,6 +88,8 @@ impl Seam {
 			Seam::Recall => 0,
 			Seam::Skills => 1,
 			Seam::Authorizer => 2,
+			Seam::Condense => 3,
+			Seam::Compression => 4,
 		}
 	}
 
@@ -77,6 +98,8 @@ impl Seam {
 			Seam::Recall => config.recall,
 			Seam::Skills => config.skills,
 			Seam::Authorizer => config.authorizer,
+			Seam::Condense => config.condense,
+			Seam::Compression => config.compression,
 		}
 	}
 }
@@ -92,8 +115,24 @@ pub const RECALL_KEEP_AT: f64 = 0.5;
 pub const SKILL_CONFIDENCE_FLOOR: f64 = 0.8;
 /// Authorizer: any Noul at or above this flags the batch for the supervisor.
 pub const AUTHORIZER_FLAG_AT: f64 = 0.5;
+/// Condense: a chunk at or above this is kept, together with its neighbours.
+pub const CONDENSE_KEEP_AT: f64 = 0.5;
+/// Condense: line-aligned chunk size of a candidate's original text. A single
+/// line above this forms its own chunk.
+pub const CONDENSE_CHUNK_TOKENS: usize = 256;
+/// Compression: a summarize-lane tool packet below this is demoted to a
+/// recall pointer before the fold model reads the evidence set.
+pub const COMPRESSION_KEEP_AT: f64 = 0.5;
+/// Compression: head-and-tail sample of a packet's rendered content.
+pub const COMPRESSION_SAMPLE_TOKENS: usize = 512;
 /// Below the model's 32k state limit with headroom for question text.
 pub const MAX_STATE_TOKENS: usize = 24_000;
+/// Questions per window. The provider's per-call limit is undocumented; this
+/// stays well under the 255-option bound a Choice carries.
+pub const MAX_WINDOW_QUESTIONS: usize = 96;
+/// Windows are packed from per-item estimates; the slack keeps the serialized
+/// state under the runner's cap even when JSON framing adds a little.
+const WINDOW_SLACK_TOKENS: usize = 256;
 /// Per-candidate content budget inside the recall state.
 pub const RECALL_CANDIDATE_TOKENS: usize = 320;
 /// A Choice needs room for `none`; the API caps options at 255.
@@ -110,6 +149,8 @@ pub const SKILL_TRIGGER: &str = "evaluate";
 pub const SKILL_QUESTION_ID: &str = "skill";
 
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes only when applying the lesson would change how the request is carried out; no when it concerns a different tool, language, file, or task.";
+const CONDENSE_QUESTION: &str = "Does the agent need this chunk of the tool output to advance the current task? Yes for error messages and stack traces, the data the tool call's arguments were querying for, explicit negative results, counts, totals and exit codes, and the paths, line numbers or signatures the task points at; no for boilerplate, progress noise, decorative separators, unrelated matches, and stretches the task never touches.";
+const COMPRESSION_QUESTION: &str = "Does the work that continues after this fold still need the content of this tool interaction? Yes when it holds an unresolved error, a user-facing correction, or facts the pinned task, constraints or plan still depend on; no when it is a completed step whose outcome is already established or a lookup the task has moved past.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
 /// Authorizer Nouls, keyed by the suffix appended to each pending call id.
@@ -173,6 +214,66 @@ pub fn authorizer_questions(call_ids: &[String]) -> BTreeMap<String, Question> {
 		.collect()
 }
 
+pub fn condense_question_id(chunk: usize) -> String {
+	format!("k{chunk}")
+}
+
+/// One Noul per chunk of one window, keyed by the chunk's slot in that window.
+pub fn condense_questions(count: usize) -> BTreeMap<String, Question> {
+	(0..count)
+		.map(|slot| {
+			(
+				condense_question_id(slot),
+				Question::noul(CONDENSE_QUESTION),
+			)
+		})
+		.collect()
+}
+
+pub fn compression_question_id(unit: usize) -> String {
+	format!("u{unit}")
+}
+
+/// One Noul per scoring unit of one window, keyed by the unit's slot.
+pub fn compression_questions(count: usize) -> BTreeMap<String, Question> {
+	(0..count)
+		.map(|slot| {
+			(
+				compression_question_id(slot),
+				Question::noul(COMPRESSION_QUESTION),
+			)
+		})
+		.collect()
+}
+
+/// Split `items` into consecutive windows whose state stays under the runner's
+/// cap and whose question count stays under the per-call bound. `header_tokens`
+/// is the cost of the state with no item in it. An item larger than a whole
+/// window gets one of its own and fails the state cap at call time.
+pub fn windows<T>(
+	items: Vec<T>,
+	header_tokens: usize,
+	item_tokens: impl Fn(&T) -> usize,
+) -> Vec<Vec<T>> {
+	let budget = MAX_STATE_TOKENS.saturating_sub(WINDOW_SLACK_TOKENS + header_tokens);
+	let mut out: Vec<Vec<T>> = Vec::new();
+	let mut current: Vec<T> = Vec::new();
+	let mut used = 0usize;
+	for item in items {
+		let cost = item_tokens(&item);
+		if !current.is_empty() && (used + cost > budget || current.len() >= MAX_WINDOW_QUESTIONS) {
+			out.push(std::mem::take(&mut current));
+			used = 0;
+		}
+		used += cost;
+		current.push(item);
+	}
+	if !current.is_empty() {
+		out.push(current);
+	}
+	out
+}
+
 /// The seam falls through to its pre-change result: one debug line and one
 /// counter, whether a call was attempted or skipped before it could be.
 pub fn unavailable(seam: Seam, reason: &str) {
@@ -192,9 +293,56 @@ pub async fn run(
 	if !enabled(config, seam) {
 		return None;
 	}
-	if crate::session::estimate_tokens(&state.to_string()) > MAX_STATE_TOKENS {
-		unavailable(seam, "state too large");
+	match attempt(config, seam, state, questions).await {
+		Ok(answers) => Some(answers),
+		Err(reason) => {
+			unavailable(seam, &reason);
+			None
+		}
+	}
+}
+
+/// Evaluate the windows of one round concurrently, all or nothing: one failed
+/// window discards every answer, counts one fallback for the round, and the
+/// caller keeps its pre-change behavior. Answers come back in window order.
+/// An empty round makes no call and yields no answers.
+pub async fn run_windows(
+	config: &super::SupervisorConfig,
+	seam: Seam,
+	windows: Vec<(serde_json::Value, BTreeMap<String, Question>)>,
+) -> Option<Vec<BTreeMap<String, Answer>>> {
+	if !enabled(config, seam) {
 		return None;
+	}
+	let results = futures::future::join_all(
+		windows
+			.into_iter()
+			.map(|(state, questions)| attempt(config, seam, state, questions)),
+	)
+	.await;
+	let mut answers = Vec::with_capacity(results.len());
+	for result in results {
+		match result {
+			Ok(window) => answers.push(window),
+			Err(reason) => {
+				unavailable(seam, &reason);
+				return None;
+			}
+		}
+	}
+	Some(answers)
+}
+
+/// One bounded attempt. `Err` carries the fallback reason and leaves the
+/// counting to the caller so a multi-window round counts one fallback.
+async fn attempt(
+	config: &super::SupervisorConfig,
+	seam: Seam,
+	state: serde_json::Value,
+	questions: BTreeMap<String, Question>,
+) -> Result<BTreeMap<String, Answer>, String> {
+	if crate::session::estimate_tokens(&state.to_string()) > MAX_STATE_TOKENS {
+		return Err("state too large".to_string());
 	}
 	let mut request = EvaluationRequest::new(state);
 	request.questions = questions.clone();
@@ -206,14 +354,8 @@ pub async fn run(
 	let response = match tokio::time::timeout(TIMEOUT, call(&config.evaluate.model, request)).await
 	{
 		Ok(Ok(response)) => response,
-		Ok(Err(error)) => {
-			unavailable(seam, &error.to_string());
-			return None;
-		}
-		Err(_) => {
-			unavailable(seam, "timeout");
-			return None;
-		}
+		Ok(Err(error)) => return Err(error.to_string()),
+		Err(_) => return Err("timeout".to_string()),
 	};
 	super::stats::record_call(
 		super::stats::CallKind::Evaluate,
@@ -234,10 +376,9 @@ pub async fn run(
 		)
 	});
 	if !well_formed {
-		unavailable(seam, "invalid response");
-		return None;
+		return Err("invalid response".to_string());
 	}
-	Some(response.answers)
+	Ok(response.answers)
 }
 
 async fn call(model: &str, request: EvaluationRequest) -> EvaluationResult<EvaluationResponse> {

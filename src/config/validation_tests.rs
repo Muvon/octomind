@@ -210,3 +210,27 @@ fn evaluate_section_is_strict_about_seam_keys() {
 		.to_string();
 	assert!(error.contains("skills"), "got: {error}");
 }
+
+#[test]
+fn evaluate_condense_and_compression_keys_are_strict_and_default_off() {
+	let template = include_str!("../../config-templates/default.toml");
+	let config: crate::config::Config = toml::from_str(template).unwrap();
+	assert!(!config.supervisor.evaluate.condense);
+	assert!(!config.supervisor.evaluate.compression);
+
+	for key in ["condense", "compression"] {
+		let line = format!("{key} = false\n");
+		assert!(template.contains(&line), "template layout changed: {key}");
+		let mistyped = template.replace(&line, &format!("{key} = \"yes\"\n"));
+		let error = toml::from_str::<crate::config::Config>(&mistyped)
+			.unwrap_err()
+			.to_string();
+		assert!(error.contains(key), "{key} mistyped: {error}");
+
+		let missing = template.replace(&line, "");
+		let error = toml::from_str::<crate::config::Config>(&missing)
+			.unwrap_err()
+			.to_string();
+		assert!(error.contains(key), "{key} missing: {error}");
+	}
+}

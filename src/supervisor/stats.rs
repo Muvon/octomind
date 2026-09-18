@@ -42,7 +42,7 @@ pub enum CallKind {
 	Condense,
 	/// Intent-based tool admission, using the shared supervisor profile.
 	Authorize,
-	/// Calibrated evaluation-model gate (recall / skills / authorizer seams).
+	/// Calibrated evaluation-model gate (one of the `evaluate::Seam`s).
 	Evaluate,
 }
 
@@ -58,9 +58,9 @@ struct Stats {
 	authorize_calls: u64,
 	evaluate_calls: u64,
 	// Per-seam evaluation gate counters, indexed by `evaluate::Seam::index`.
-	evaluate_seam_calls: [u64; 3],
-	evaluate_seam_unavailable: [u64; 3],
-	evaluate_seam_applied: [u64; 3],
+	evaluate_seam_calls: [u64; crate::supervisor::evaluate::SEAM_COUNT],
+	evaluate_seam_unavailable: [u64; crate::supervisor::evaluate::SEAM_COUNT],
+	evaluate_seam_applied: [u64; crate::supervisor::evaluate::SEAM_COUNT],
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	memory_pack_items: u64,
@@ -237,7 +237,8 @@ pub fn evaluate_unavailable(seam: crate::supervisor::evaluate::Seam) {
 	with(|s| s.evaluate_seam_unavailable[seam.index()] += 1);
 }
 /// The seam's answers changed the outcome `n` times (candidates dropped,
-/// skill activated, supervisor judgment skipped).
+/// skill activated, supervisor judgment skipped, results condensed, packets
+/// demoted).
 pub fn evaluate_applied(seam: crate::supervisor::evaluate::Seam, n: u64) {
 	with(|s| s.evaluate_seam_applied[seam.index()] += n);
 }
@@ -275,9 +276,9 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.evolution_promoted == 0
 		&& s.evolution_rollbacks == 0
 		&& s.evolution_retired == 0
-		&& s.evaluate_seam_calls == [0; 3]
-		&& s.evaluate_seam_unavailable == [0; 3]
-		&& s.evaluate_seam_applied == [0; 3];
+		&& s.evaluate_seam_calls.iter().all(|n| *n == 0)
+		&& s.evaluate_seam_unavailable.iter().all(|n| *n == 0)
+		&& s.evaluate_seam_applied.iter().all(|n| *n == 0);
 	if idle {
 		return None;
 	}

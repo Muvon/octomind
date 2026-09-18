@@ -3248,6 +3248,74 @@ async fn finish_fold_forced_with_pact_applies_compacted_state() {
 }
 
 #[tokio::test]
+async fn finish_fold_governance_only_applies_with_populated_evidence() {
+	let mut config = fold_config();
+	config.compression.attention.enabled = false;
+	config.compression.attention.governance.enabled = true;
+	let mut call = fold_message("assistant", "running the tests");
+	call.tool_calls = Some(serde_json::json!([{
+		"id": "call-1",
+		"function": {"name": "shell", "arguments": "{\"cmd\":\"cargo test\"}"}
+	}]));
+	let mut result = fold_message(
+		"tool",
+		"test deploy::race ... FAILED\nthread panicked at src/deploy.rs:42",
+	);
+	result.tool_call_id = Some("call-1".to_string());
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "stabilise the deploy pipeline"),
+		call,
+		result,
+		fold_message("assistant", "found the race in src/deploy.rs"),
+	]);
+	session.session.info.name = "finish-fold-governance-unit".to_string();
+	let (start, end) =
+		find_compression_range_preserving_turn(&session.session.messages, true, false)
+			.expect("compressible range");
+	let pact = super::attention::build(&session, start + 1, end, 1.0, false, false)
+		.await
+		.expect("governance-only pact context builds");
+	assert!(
+		pact.prompt_view().contains("test deploy::race ... FAILED"),
+		"{}",
+		pact.prompt_view()
+	);
+	let mut ctx = fold_ctx(
+		start,
+		end,
+		super::fold_fingerprint(&session.session.messages, start, end),
+	);
+	ctx.pact = Some(pact);
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "stabilise the deploy pipeline".to_string(),
+		folded_units: vec![super::schema::FoldedUnit {
+			text: "race identified in src/deploy.rs".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: Vec::new(),
+		}],
+		..Default::default()
+	};
+	// Not forced: an archive verification failure would surface as an error
+	// instead of being sanitized away.
+	let applied = super::finish_fold(&mut session, &config, ctx, summary, None, false, false)
+		.await
+		.expect("governance-only fold applies");
+	assert!(applied);
+	assert!(session
+		.session
+		.messages
+		.iter()
+		.any(|m| m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)));
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ =
+			std::fs::remove_dir_all(sessions.join("archive").join("finish-fold-governance-unit"));
+	}
+}
+
+#[tokio::test]
 async fn done_trigger_with_no_compressible_range_is_a_noop() {
 	let config = fold_config();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![

@@ -42,6 +42,8 @@ pub enum CallKind {
 	Condense,
 	/// Intent-based tool admission, using the shared supervisor profile.
 	Authorize,
+	/// Calibrated evaluation-model gate (recall / skills / authorizer seams).
+	Evaluate,
 }
 
 #[derive(Default, Clone)]
@@ -54,6 +56,11 @@ struct Stats {
 	distill_calls: u64,
 	condense_calls: u64,
 	authorize_calls: u64,
+	evaluate_calls: u64,
+	// Per-seam evaluation gate counters, indexed by `evaluate::Seam::index`.
+	evaluate_seam_calls: [u64; 3],
+	evaluate_seam_unavailable: [u64; 3],
+	evaluate_seam_applied: [u64; 3],
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	memory_pack_items: u64,
@@ -122,6 +129,7 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Authorize => s.authorize_calls += 1,
+			CallKind::Evaluate => s.evaluate_calls += 1,
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -219,6 +227,21 @@ pub fn memory_retention(consolidated: u64, archived: u64) {
 	});
 }
 
+/// One evaluation-gate call was attempted for `seam`.
+pub fn evaluate_call(seam: crate::supervisor::evaluate::Seam) {
+	with(|s| s.evaluate_seam_calls[seam.index()] += 1);
+}
+/// The seam fell through to its pre-change result (failure, timeout, or a
+/// state / roster too large to send).
+pub fn evaluate_unavailable(seam: crate::supervisor::evaluate::Seam) {
+	with(|s| s.evaluate_seam_unavailable[seam.index()] += 1);
+}
+/// The seam's answers changed the outcome `n` times (candidates dropped,
+/// skill activated, supervisor judgment skipped).
+pub fn evaluate_applied(seam: crate::supervisor::evaluate::Seam, n: u64) {
+	with(|s| s.evaluate_seam_applied[seam.index()] += n);
+}
+
 pub fn evolution(action: &str) {
 	with(|stats| match action {
 		"shadow" | "candidate" => stats.evolution_candidates += 1,
@@ -251,10 +274,37 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.evolution_trials == 0
 		&& s.evolution_promoted == 0
 		&& s.evolution_rollbacks == 0
-		&& s.evolution_retired == 0;
+		&& s.evolution_retired == 0
+		&& s.evaluate_seam_calls == [0; 3]
+		&& s.evaluate_seam_unavailable == [0; 3]
+		&& s.evaluate_seam_applied == [0; 3];
 	if idle {
 		return None;
 	}
+	// Per-seam evaluation counters, only for seams that did anything, so an
+	// install with every seam off shows no evaluate section at all.
+	let evaluate: serde_json::Map<String, serde_json::Value> =
+		crate::supervisor::evaluate::Seam::ALL
+			.into_iter()
+			.filter(|seam| {
+				let i = seam.index();
+				s.evaluate_seam_calls[i]
+					+ s.evaluate_seam_unavailable[i]
+					+ s.evaluate_seam_applied[i]
+					> 0
+			})
+			.map(|seam| {
+				let i = seam.index();
+				(
+					seam.name().to_string(),
+					serde_json::json!({
+						"calls": s.evaluate_seam_calls[i],
+						"unavailable": s.evaluate_seam_unavailable[i],
+						"applied": s.evaluate_seam_applied[i],
+					}),
+				)
+			})
+			.collect();
 	// Steer breakdown by signal — ordered, non-zero only, so display stays generic.
 	let steer_signals: Vec<serde_json::Value> = [
 		("loop", s.steer_loop),
@@ -274,6 +324,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"distill_calls": s.distill_calls,
 		"condense_calls": s.condense_calls,
 		"authorize_calls": s.authorize_calls,
+		"evaluate_calls": s.evaluate_calls,
+		"evaluate": evaluate,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,
 		"memory_pack_items": s.memory_pack_items,

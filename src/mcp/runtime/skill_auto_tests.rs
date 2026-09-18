@@ -276,6 +276,7 @@ async fn run_activation_disabled_in_config_activates_nothing() {
 
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -310,6 +311,7 @@ async fn run_activation_skips_system_managed_content() {
 	let sid = "__skillauto_sysmgd".to_string();
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -342,6 +344,7 @@ async fn run_activation_rejects_low_intent_input() {
 	let sid = "__skillauto_lowintent".to_string();
 	set_pool(vec![PoolEntry {
 		name: "never".to_string(),
+		description: String::new(),
 		rules: content_rule("try"),
 		evolution: None,
 	}]);
@@ -398,6 +401,7 @@ async fn run_activation_deterministic_match_injects_skill() {
 	let sid = "__skillauto_match".to_string();
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -432,6 +436,7 @@ async fn run_activation_no_matching_rule_is_silent() {
 	let sid = "__skillauto_nomatch".to_string();
 	set_pool(vec![PoolEntry {
 		name: "py-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("python"),
 		evolution: None,
 	}]);
@@ -464,6 +469,7 @@ async fn run_activation_skips_already_active_skills() {
 	add_active_skill(&sid, "rust-helper");
 	set_pool(vec![PoolEntry {
 		name: "rust-helper".to_string(),
+		description: String::new(),
 		rules: content_rule("rust"),
 		evolution: None,
 	}]);
@@ -499,11 +505,13 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 	set_pool(vec![
 		PoolEntry {
 			name: "rust-a".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: None,
 		},
 		PoolEntry {
 			name: "rust-b".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: None,
 		},
@@ -533,10 +541,10 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 
 #[test]
 #[serial]
-fn init_pool_collects_domain_matching_rule_bearing_skills() {
+fn init_pool_collects_domain_matching_skills_with_descriptions() {
 	let _guard = DataDirGuard::new();
 	install_tap_skill("in-domain", "developer", &["content(rust)"]);
-	// No rules → excluded from the auto-activation pool.
+	// No rules → still in the pool, reachable only by the evaluation choice.
 	install_tap_skill("no-rules", "developer", &[]);
 	// Different domain → excluded.
 	install_tap_skill("other-domain", "medical", &["content(rust)"]);
@@ -548,10 +556,13 @@ fn init_pool_collects_domain_matching_rule_bearing_skills() {
 		let pool = pool.get("__default__").expect("pool initialized");
 		let names: Vec<&str> = pool.entries.iter().map(|e| e.name.as_str()).collect();
 		assert!(names.contains(&"in-domain"));
-		assert!(
-			!names.contains(&"no-rules"),
-			"rule-less skills stay out of the pool"
-		);
+		let no_rules = pool
+			.entries
+			.iter()
+			.find(|e| e.name == "no-rules")
+			.expect("rule-less skills join the pool");
+		assert!(no_rules.rules.is_empty());
+		assert_eq!(no_rules.description, "Test skill no-rules");
 		assert!(!names.contains(&"other-domain"), "domain filter applies");
 	}
 	clear_pool();
@@ -590,6 +601,7 @@ async fn run_activation_skips_shadow_bound_skills() {
 	set_pool(vec![
 		PoolEntry {
 			name: "shadowed".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
 				id: "__skillauto_shadow_binding".to_string(),
@@ -599,6 +611,7 @@ async fn run_activation_skips_shadow_bound_skills() {
 		},
 		PoolEntry {
 			name: "failclosed".to_string(),
+			description: String::new(),
 			rules: content_rule("rust"),
 			evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
 				id: "__skillauto_unknown_binding".to_string(),
@@ -1067,4 +1080,308 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 
 	cleanup_session(&sid);
 	get_retry_tracker().write().expect("retry lock").clear();
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation gate (supervisor.evaluate.skills): one Choice over the inactive
+// pool plus `none`, only when every rule abstained. The fake guard holds
+// ENV_LOCK itself, so these tests do not lock it again.
+// ---------------------------------------------------------------------------
+
+use crate::session::chat::test_support::{
+	choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep,
+};
+use crate::supervisor::evaluate::{Seam, SKILL_QUESTION_ID};
+
+fn evaluate_config() -> crate::config::Config {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml"))
+			.expect("parse default config template");
+	config.supervisor.enabled = true;
+	config.supervisor.evaluate.skills = true;
+	config
+}
+
+fn rule_less(name: &str, description: &str) -> PoolEntry {
+	PoolEntry {
+		name: name.to_string(),
+		description: description.to_string(),
+		rules: Vec::new(),
+		evolution: None,
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn run_activation_evaluate_chooses_a_skill_when_rules_abstain() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
+		SKILL_QUESTION_ID,
+		"content-translate",
+		1.0,
+	))])
+	.await;
+	let _data = DataDirGuard::new();
+	install_tap_skill("content-translate", "developer", &[]);
+
+	let sid = "__skillauto_evaluate_choice".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(vec![
+		PoolEntry {
+			name: "git-workflow".to_string(),
+			description: "Git branching and commits".to_string(),
+			rules: content_rule("git"),
+			evolution: None,
+		},
+		rule_less("content-translate", "Translate documents between languages"),
+		rule_less("code-review", "Review a diff"),
+		rule_less("programming-rust", "Rust guidance"),
+	]);
+	let applied = evaluate_counter(Seam::Skills, "applied");
+	let message = "translate README.md into Spanish, keep the code blocks untouched";
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(message, Path::new("/tmp"), &mut session).await;
+	})
+	.await;
+
+	assert_eq!(session.session.messages.len(), 1);
+	assert!(session.session.messages[0]
+		.content
+		.contains("<skill name=\"content-translate\""));
+	assert!(has_active_skill(&sid, "content-translate"));
+	assert!(!has_active_skill(&sid, "git-workflow"));
+	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied + 1);
+
+	let request = &fake.requests()[0];
+	assert_eq!(
+		request.state,
+		serde_json::Value::String(message.to_string())
+	);
+	match &request.questions[SKILL_QUESTION_ID] {
+		octolib::evaluation::Question::Choice { criteria, .. } => {
+			assert_eq!(
+				criteria.keys().cloned().collect::<Vec<_>>(),
+				[
+					"code-review",
+					"content-translate",
+					"git-workflow",
+					"none",
+					"programming-rust"
+				]
+			);
+			assert_eq!(
+				criteria["content-translate"],
+				Some(serde_json::Value::String(
+					"Translate documents between languages".into()
+				))
+			);
+		}
+		other => panic!("expected a choice, got {other:?}"),
+	}
+	cleanup_session(&sid);
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn run_activation_evaluate_confidence_floor_is_inclusive_and_none_is_inert() {
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.79)),
+		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "none", 1.0)),
+		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.80)),
+	])
+	.await;
+	let _data = DataDirGuard::new();
+	install_tap_skill("markup-landing-page", "developer", &[]);
+
+	let sid = "__skillauto_evaluate_floor".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(vec![rule_less(
+		"markup-landing-page",
+		"Landing page markup",
+	)]);
+	let calls = evaluate_counter(Seam::Skills, "calls");
+	let applied = evaluate_counter(Seam::Skills, "applied");
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		for _ in 0..2 {
+			run_activation(
+				"hmm let me think about the layout",
+				Path::new("/tmp"),
+				&mut session,
+			)
+			.await;
+			assert!(session.session.messages.is_empty());
+			assert!(!has_active_skill(&sid, "markup-landing-page"));
+		}
+		run_activation(
+			"hmm let me think about the layout",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+
+	assert!(has_active_skill(&sid, "markup-landing-page"));
+	assert_eq!(session.session.messages.len(), 1);
+	assert_eq!(fake.requests().len(), 3);
+	assert_eq!(evaluate_counter(Seam::Skills, "calls"), calls + 3);
+	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied + 1);
+	cleanup_session(&sid);
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn run_activation_deterministic_match_makes_no_evaluation_call() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
+		SKILL_QUESTION_ID,
+		"other",
+		1.0,
+	))])
+	.await;
+	let _data = DataDirGuard::new();
+	install_tap_skill("rust-helper", "developer", &["content(rust)"]);
+	install_tap_skill("other", "developer", &[]);
+
+	let sid = "__skillauto_evaluate_det".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(vec![
+		PoolEntry {
+			name: "rust-helper".to_string(),
+			description: "Rust".to_string(),
+			rules: content_rule("rust"),
+			evolution: None,
+		},
+		rule_less("other", "Other"),
+	]);
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(
+			"please help with rust development",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+
+	assert!(has_active_skill(&sid, "rust-helper"));
+	assert!(!has_active_skill(&sid, "other"));
+	assert!(
+		fake.requests().is_empty(),
+		"rules decided; no evaluation call"
+	);
+	cleanup_session(&sid);
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn run_activation_evaluate_choice_respects_shadow_bindings() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
+		SKILL_QUESTION_ID,
+		"shadowed",
+		1.0,
+	))])
+	.await;
+	let _data = DataDirGuard::new();
+	install_tap_skill("shadowed", "developer", &[]);
+
+	let sid = "__skillauto_evaluate_shadow".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(vec![PoolEntry {
+		name: "shadowed".to_string(),
+		description: "Generated".to_string(),
+		rules: Vec::new(),
+		evolution: Some(crate::supervisor::learning::evolution::SkillBinding {
+			id: "__skillauto_evaluate_shadow_binding".to_string(),
+			shadow: true,
+			path: PathBuf::new(),
+		}),
+	}]);
+	let applied = evaluate_counter(Seam::Skills, "applied");
+
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(
+			"please help with rust development",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+
+	assert!(session.session.messages.is_empty());
+	assert!(!has_active_skill(&sid, "shadowed"));
+	assert_eq!(fake.requests().len(), 1);
+	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied);
+	cleanup_session(&sid);
+	clear_pool();
+}
+
+#[tokio::test]
+#[serial]
+async fn run_activation_evaluate_roster_cap_and_seam_switch() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
+		SKILL_QUESTION_ID,
+		"skill-0",
+		1.0,
+	))])
+	.await;
+	let _data = DataDirGuard::new();
+
+	// 255 inactive entries: above the 254 cap, no call, one unavailable.
+	let sid = "__skillauto_evaluate_roster".to_string();
+	set_session_config(&sid, &evaluate_config());
+	set_pool(
+		(0..255)
+			.map(|i| rule_less(&format!("skill-{i}"), "x"))
+			.collect(),
+	);
+	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(
+			"please help with rust development",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+	assert!(fake.requests().is_empty());
+	assert_eq!(
+		evaluate_counter(Seam::Skills, "unavailable"),
+		unavailable + 1
+	);
+	assert!(session.session.messages.is_empty());
+	cleanup_session(&sid);
+
+	// Seam off: a rule-less pool entry is unreachable and no call is made.
+	let sid = "__skillauto_evaluate_off".to_string();
+	let mut config = evaluate_config();
+	config.supervisor.evaluate.skills = false;
+	set_session_config(&sid, &config);
+	set_pool(vec![rule_less("skill-0", "x")]);
+	let mut session = ChatSession::for_tests(Vec::new());
+	with_session_id(sid.clone(), async {
+		run_activation(
+			"please help with rust development",
+			Path::new("/tmp"),
+			&mut session,
+		)
+		.await;
+	})
+	.await;
+	assert!(fake.requests().is_empty());
+	assert!(session.session.messages.is_empty());
+	assert!(!has_active_skill(&sid, "skill-0"));
+	cleanup_session(&sid);
+	clear_pool();
 }

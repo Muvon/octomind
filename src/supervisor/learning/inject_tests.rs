@@ -304,3 +304,140 @@ fn retrieval_rewrite_validation_accepts_keywords_and_rejects_answers() {
 	.is_err());
 	assert!(validate_retrieval_patterns("one\ntwo").is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Evaluation gate (supervisor.evaluate.recall): the relevance filter between
+// ranking and admission. `install_fake_evaluation` holds ENV_LOCK itself.
+// ---------------------------------------------------------------------------
+
+use crate::session::chat::test_support::{
+	evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep,
+};
+use crate::supervisor::evaluate::Seam;
+
+fn recall_gate_config() -> crate::config::Config {
+	let mut config = fake_provider_config();
+	config.supervisor.enabled = true;
+	config.supervisor.evaluate.recall = true;
+	config
+}
+
+#[serial]
+#[tokio::test]
+async fn recall_gate_drops_unrelated_scoped_candidates_and_keeps_rank_order() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
+		("c0", 0.91),
+		("c1", 0.08),
+		("c2", 0.74),
+	]))])
+	.await;
+	let config = recall_gate_config();
+	let proj = "__inject_test_proj_gate";
+	let applied = evaluate_counter(Seam::Recall, "applied");
+	let mut candidates = vec![(
+		lesson(proj, "global rule: always run fmt", "learning", &[]),
+		true,
+	)];
+	for content in [
+		"reqwest retry pattern",
+		"svelte store naming",
+		"http timeout defaults",
+	] {
+		candidates.push((lesson(proj, content, "learning", &[]), false));
+	}
+	let request = "add retry with backoff to the http client";
+	let kept = filter_scoped_by_relevance(&config.supervisor, request, candidates).await;
+	let contents: Vec<&str> = kept.iter().map(|(l, _)| l.content.as_str()).collect();
+	assert_eq!(
+		contents,
+		[
+			"global rule: always run fmt",
+			"reqwest retry pattern",
+			"http timeout defaults"
+		]
+	);
+	assert_eq!(evaluate_counter(Seam::Recall, "applied"), applied + 1);
+
+	// The state holds the request and the scoped candidates only: no global
+	// lesson, no tool result, no assistant text.
+	let state = fake.requests()[0].state.clone();
+	let mut keys: Vec<&String> = state.as_object().unwrap().keys().collect();
+	keys.sort();
+	assert_eq!(keys, ["candidates", "request"]);
+	assert_eq!(state["request"], request);
+	assert!(!state.to_string().contains("global rule"));
+	let sent = state["candidates"].as_array().unwrap();
+	assert_eq!(sent.len(), 3);
+	assert_eq!(sent[1]["index"], 1);
+	assert_eq!(sent[1]["content"], "svelte store naming");
+	assert_eq!(fake.requests()[0].questions.len(), 3);
+}
+
+#[serial]
+#[tokio::test]
+async fn recall_gate_skips_the_call_without_scoped_candidates_and_can_leave_globals_only() {
+	let fake =
+		install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.1)]))]).await;
+	let config = recall_gate_config();
+	let proj = "__inject_test_proj_gate_empty";
+	let calls = evaluate_counter(Seam::Recall, "calls");
+	let global_only = vec![(lesson(proj, "global rule", "learning", &[]), true)];
+	let kept =
+		filter_scoped_by_relevance(&config.supervisor, "anything", global_only.clone()).await;
+	assert_eq!(kept.len(), 1);
+	assert!(
+		fake.requests().is_empty(),
+		"zero scoped candidates make no call"
+	);
+	assert_eq!(evaluate_counter(Seam::Recall, "calls"), calls);
+
+	let mut mixed = global_only;
+	mixed.push((lesson(proj, "scoped thing", "learning", &[]), false));
+	let kept = filter_scoped_by_relevance(&config.supervisor, "anything", mixed).await;
+	assert_eq!(kept.len(), 1);
+	assert!(kept[0].1, "only the global lesson survives");
+	assert_eq!(fake.requests().len(), 1);
+}
+
+#[serial]
+#[tokio::test]
+async fn recall_gate_end_to_end_empties_the_pack_or_falls_through_when_unavailable() {
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(nouls(&[("c0", 0.05)])),
+		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
+	])
+	.await;
+	let _data = TestDataDir::new();
+	let proj = "__inject_test_proj_gate_e2e";
+	cleanup(proj);
+	let config = recall_gate_config();
+	FileBackend
+		.store(&lesson(
+			proj,
+			"always run the test suite on the dev box",
+			"learning",
+			&["testing"],
+		))
+		.await
+		.expect("store lesson");
+
+	// Every scoped candidate excluded, no global rules: the pack is empty.
+	let (_tx1, rx1) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx1).await;
+	assert!(text.is_empty(), "pack should be empty, got: {text}");
+	assert!(selected.is_empty());
+	assert_eq!(fake.requests().len(), 1);
+
+	// Provider unavailable: the pre-change pack, one unavailable, no panic.
+	let unavailable = evaluate_counter(Seam::Recall, "unavailable");
+	let (_tx2, rx2) = cancel_pair();
+	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await;
+	assert!(text.contains("always run the test suite on the dev box"));
+	assert_eq!(selected.len(), 1);
+	assert_eq!(
+		evaluate_counter(Seam::Recall, "unavailable"),
+		unavailable + 1
+	);
+
+	cleanup(proj);
+}

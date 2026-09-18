@@ -170,3 +170,147 @@ pub(crate) fn fake_session(user_input: &str) -> ChatSession {
 		.expect("add user message");
 	session
 }
+
+// ---------------------------------------------------------------------------
+// In-process evaluation provider for the supervisor's evaluation gates. No
+// network: the seam runner routes to it through `evaluate::set_fake_provider`.
+// Process-global, so tests installing it must hold `ENV_LOCK` or be `#[serial]`.
+// ---------------------------------------------------------------------------
+
+pub(crate) enum FakeEvaluationStep {
+	/// Answer the request with exactly these answers.
+	Answers(std::collections::BTreeMap<String, octolib::evaluation::Answer>),
+	/// Fail as if the named key env var were unset.
+	MissingKey(&'static str),
+	/// Hang for this long before failing — exercises the runner timeout.
+	Sleep(std::time::Duration),
+}
+
+pub(crate) struct FakeEvaluation {
+	steps: StdMutex<VecDeque<FakeEvaluationStep>>,
+	pub usage: octolib::evaluation::EvaluationUsage,
+	/// Every request the runner sent, in order — assert on captured state.
+	pub requests: StdMutex<Vec<octolib::evaluation::EvaluationRequest>>,
+}
+
+impl FakeEvaluation {
+	pub(crate) fn requests(&self) -> Vec<octolib::evaluation::EvaluationRequest> {
+		self.requests.lock().unwrap().clone()
+	}
+}
+
+#[async_trait::async_trait]
+impl octolib::evaluation::EvaluationProvider for FakeEvaluation {
+	fn name(&self) -> &str {
+		"fake"
+	}
+	fn supports_model(&self, _model: &str) -> bool {
+		true
+	}
+	fn get_model_pricing(&self, _model: &str) -> Option<octolib::evaluation::EvaluationPricing> {
+		None
+	}
+	async fn evaluate(
+		&self,
+		request: octolib::evaluation::EvaluationRequest,
+	) -> octolib::evaluation::EvaluationResult<octolib::evaluation::EvaluationResponse> {
+		self.requests.lock().unwrap().push(request.clone());
+		let step = self.steps.lock().unwrap().pop_front();
+		match step {
+			Some(FakeEvaluationStep::Answers(answers)) => {
+				Ok(octolib::evaluation::EvaluationResponse {
+					model: request.model,
+					answers,
+					usage: self.usage.clone(),
+				})
+			}
+			Some(FakeEvaluationStep::MissingKey(var)) => Err(
+				octolib::evaluation::EvaluationError::MissingApiKey(var.to_string()),
+			),
+			Some(FakeEvaluationStep::Sleep(duration)) => {
+				tokio::time::sleep(duration).await;
+				Err(octolib::evaluation::EvaluationError::MissingApiKey(
+					"slept".to_string(),
+				))
+			}
+			None => Err(octolib::evaluation::EvaluationError::InvalidRequest(
+				"fake evaluation: no scripted step left".to_string(),
+			)),
+		}
+	}
+}
+
+/// Holds `ENV_LOCK` for its lifetime (the fake is process-global) and
+/// uninstalls the fake on drop so a failed test cannot leak it into the next.
+pub(crate) struct FakeEvaluationGuard(
+	pub std::sync::Arc<FakeEvaluation>,
+	#[allow(dead_code)] tokio::sync::MutexGuard<'static, ()>,
+);
+
+impl std::ops::Deref for FakeEvaluationGuard {
+	type Target = FakeEvaluation;
+	fn deref(&self) -> &FakeEvaluation {
+		&self.0
+	}
+}
+
+impl Drop for FakeEvaluationGuard {
+	fn drop(&mut self) {
+		crate::supervisor::evaluate::set_fake_provider(None);
+	}
+}
+
+/// Takes `ENV_LOCK` itself — callers must not hold it already.
+pub(crate) async fn install_fake_evaluation(steps: Vec<FakeEvaluationStep>) -> FakeEvaluationGuard {
+	let lock = ENV_LOCK.lock().await;
+	let fake = std::sync::Arc::new(FakeEvaluation {
+		steps: StdMutex::new(steps.into()),
+		usage: octolib::evaluation::EvaluationUsage {
+			input_tokens: 100,
+			output_tokens: 0,
+			cost: Some(0.000_004_2),
+		},
+		requests: StdMutex::new(Vec::new()),
+	});
+	crate::supervisor::evaluate::set_fake_provider(Some(fake.clone()));
+	FakeEvaluationGuard(fake, lock)
+}
+
+/// Per-seam evaluation counter from the `/info` snapshot; 0 when absent. The
+/// stats sink is process-global, so assert on deltas around the call.
+pub(crate) fn evaluate_counter(seam: crate::supervisor::evaluate::Seam, key: &str) -> u64 {
+	crate::supervisor::stats::snapshot()
+		.and_then(|s| s.get("evaluate")?.get(seam.name())?.get(key)?.as_u64())
+		.unwrap_or(0)
+}
+
+/// Shorthand for a Noul answer map keyed by question id.
+pub(crate) fn nouls(
+	pairs: &[(&str, f64)],
+) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
+	pairs
+		.iter()
+		.map(|(id, noul)| {
+			(
+				id.to_string(),
+				octolib::evaluation::Answer::Noul { noul: *noul },
+			)
+		})
+		.collect()
+}
+
+/// Shorthand for a single Choice answer under `id`.
+pub(crate) fn choice(
+	id: &str,
+	chosen: &str,
+	confidence: f64,
+) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
+	std::collections::BTreeMap::from([(
+		id.to_string(),
+		octolib::evaluation::Answer::Choice {
+			choice: chosen.to_string(),
+			probabilities: std::collections::BTreeMap::from([(chosen.to_string(), confidence)]),
+			confidence,
+		},
+	)])
+}

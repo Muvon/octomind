@@ -638,6 +638,12 @@ pub async fn check_batch(
 		if !sources.iter().any(|s| s.kind == "user" || s.kind == "role") {
 			bail!("no role or user evidence");
 		}
+		if prescreen_admits(config, &sources, &pending, calls, generated_guards).await {
+			return Ok(pending
+				.iter()
+				.map(|index| Decision::allow(*index))
+				.collect());
+		}
 		check_budget(&payload, SYSTEM_PROMPT, &response_schema(&sources, calls))?;
 		let value = tokio::time::timeout_at(
 			deadline,
@@ -755,6 +761,59 @@ pub async fn check_batch(
 		Err(error) => note_unavailable(id, pending.len(), &error),
 	}
 	admissions
+}
+
+/// Evaluation pre-screen: three calibrated Nouls per pending call decide
+/// whether the two-judge supervisor path needs to run at all. It can only
+/// admit; a block still requires the supervisor judgment and its verification.
+/// The state carries the instruction sources and the calls — never tool
+/// definitions, completed actions, or the wider judgment context.
+async fn prescreen_admits(
+	config: &Config,
+	sources: &[InstructionSource],
+	pending: &[usize],
+	calls: &[McpToolCall],
+	generated_guards: &[Vec<(String, String)>],
+) -> bool {
+	use crate::supervisor::evaluate::{self, Seam};
+
+	if !evaluate::enabled(&config.supervisor, Seam::Authorizer) {
+		return false;
+	}
+	let ids: Vec<String> = pending.iter().map(|index| index.to_string()).collect();
+	let state = json!({
+		"sources": sources.iter().map(|s| json!({"id": s.id, "kind": s.kind, "text": s.text})).collect::<Vec<_>>(),
+		"calls": pending.iter().map(|index| json!({
+			"id": index.to_string(), "tool": calls[*index].tool_name,
+			"arguments": calls[*index].parameters, "generated_guards": generated_guards.get(*index),
+		})).collect::<Vec<_>>(),
+	});
+	let Some(answers) = evaluate::run(
+		&config.supervisor,
+		Seam::Authorizer,
+		state,
+		evaluate::authorizer_questions(&ids),
+	)
+	.await
+	else {
+		return false;
+	};
+	let flagged = answers.values().any(|answer| {
+		matches!(answer, octolib::evaluation::Answer::Noul { noul } if *noul >= evaluate::AUTHORIZER_FLAG_AT)
+	});
+	if flagged {
+		crate::log_debug!(
+			"evaluate authorizer: batch of {} flagged, supervisor judgment runs",
+			pending.len()
+		);
+		return false;
+	}
+	crate::log_debug!(
+		"evaluate authorizer: batch of {} admitted without supervisor judgment",
+		pending.len()
+	);
+	crate::supervisor::stats::evaluate_applied(Seam::Authorizer, 1);
+	true
 }
 
 fn note_unavailable(id: &str, count: usize, error: &anyhow::Error) {

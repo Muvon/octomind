@@ -303,3 +303,31 @@ fn force_upgrade_stamps_an_outdated_file_and_is_quiet_on_current_ones() {
 	assert_eq!(fs::read_to_string(&path).unwrap(), stamped);
 	assert_eq!(bak_files(dir.path()).len(), 1, "no second backup expected");
 }
+
+#[test]
+fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
+	let mut document = template_document();
+	document["version"] = toml_edit::value(13);
+	let supervisor = document["supervisor"].as_table_mut().unwrap();
+	supervisor.remove("evaluate");
+	supervisor["enabled"] = toml_edit::value(true);
+	supervisor["model"]["name"] = toml_edit::value("openai:custom-supervisor");
+	supervisor["authorizer"]["enabled"] = toml_edit::value(true);
+	let migrated = migrate_once(&document.to_string());
+	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+	assert_eq!(config.supervisor.evaluate.model, "cloudflare:typesafe/jev");
+	assert!(!config.supervisor.evaluate.recall);
+	assert!(!config.supervisor.evaluate.skills);
+	assert!(!config.supervisor.evaluate.authorizer);
+	assert!(config.supervisor.enabled);
+	assert_eq!(
+		config.supervisor.model.model.as_deref(),
+		Some("openai:custom-supervisor")
+	);
+	assert!(config.supervisor.authorizer.enabled);
+	assert!(plan()
+		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.is_none());
+}

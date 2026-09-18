@@ -108,9 +108,30 @@ fn plan() -> MigrationPlan {
 				to: 13,
 				apply: add_v13_authorizer,
 			},
+			VersionMigration {
+				from: 13,
+				to: 14,
+				apply: add_v14_evaluate,
+			},
 		],
 	)
 	.with_missing_version(0)
+}
+
+/// Add the required evaluation-gate section (every seam off) without changing
+/// existing supervisor settings.
+fn add_v14_evaluate(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	merge_missing(supervisor, template_supervisor, "evaluate")
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

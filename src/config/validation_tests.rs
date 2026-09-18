@@ -169,3 +169,44 @@ fn compression_model_errors_surface_through_full_validate() {
 	let error = config.validate().unwrap_err().to_string();
 	assert!(error.contains("compression.model.name"), "got: {error}");
 }
+
+#[test]
+fn evaluate_model_must_be_a_supported_provider_model_pair() {
+	for bad in ["jev-latest", "openai:gpt", "typesafe:", ":jev", ""] {
+		let mut config = template_config();
+		config.supervisor.evaluate.model = bad.to_string();
+		let error = config.validate().unwrap_err().to_string();
+		assert!(
+			error.contains("supervisor.evaluate.model"),
+			"{bad:?}: {error}"
+		);
+	}
+	for good in ["typesafe:jev-latest", "cloudflare:typesafe/jev"] {
+		let mut config = template_config();
+		config.supervisor.evaluate.model = good.to_string();
+		config.validate().expect(good);
+	}
+}
+
+#[test]
+fn evaluate_section_is_strict_about_seam_keys() {
+	let template = include_str!("../../config-templates/default.toml");
+	let section = "[supervisor.evaluate]\nmodel = \"cloudflare:typesafe/jev\"\n";
+	assert!(template.contains(section), "template layout changed");
+	let mistyped = template.replace(
+		&format!("{section}# Drop recalled scoped lessons the model judges unrelated to the request.\nrecall = false\n"),
+		&format!("{section}recall = \"yes\"\n"),
+	);
+	assert_ne!(mistyped, template);
+	let error = toml::from_str::<crate::config::Config>(&mistyped)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains("recall"), "got: {error}");
+
+	let missing = template.replace("skills = false\n", "");
+	assert_ne!(missing, template);
+	let error = toml::from_str::<crate::config::Config>(&missing)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains("skills"), "got: {error}");
+}

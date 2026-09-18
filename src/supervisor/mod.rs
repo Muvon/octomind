@@ -41,6 +41,7 @@ pub mod authorizer;
 pub mod condense;
 pub mod delegate;
 pub mod detect;
+pub mod evaluate;
 pub mod gate;
 pub mod learning;
 pub mod plan;
@@ -196,6 +197,8 @@ pub struct SupervisorConfig {
 	pub plan: PlanConfig,
 	/// Task-aware condensation of oversized tool outputs.
 	pub condense: CondenseConfig,
+	/// Calibrated evaluation gates at the recall, skill, and authorizer seams.
+	pub evaluate: evaluate::EvaluateConfig,
 }
 
 /// Condense: task-aware narrowing of oversized tool outputs. A result whose own

@@ -164,7 +164,16 @@ fn build_continuation_content(
 			)
 		})
 		.unwrap_or_default();
+	// When no validated frontier advanced past the request, `task_body` is the
+	// request verbatim, so a separate `<request>` block would embed the entire
+	// request a SECOND time. A request can be tens of thousands of tokens (a
+	// single "edit every block below" ask), and duplicating it made the fold's
+	// own output outweigh the drained range — the measured "Compression
+	// INCREASED context" failure that then loops the hard-ceiling retry until it
+	// hits the window. Emit `<request>` only when it differs from `<task>`; the
+	// anti-replay separation exists exactly for that case.
 	let request_block = request
+		.filter(|request| *request != task_body)
 		.map(|request| format!("<request>{request}</request>\n"))
 		.unwrap_or_default();
 	let plan_note = if plan_active {

@@ -79,6 +79,46 @@ fn fresh_user_turn_preserves_exact_previous_assistant_bridge() {
 }
 
 #[test]
+fn force_redrains_a_prior_summary_that_would_otherwise_wedge_the_ceiling() {
+	// A resumed session's tail after a fold: [system, summary, continuation,
+	// fresh request]. The summary is the only assistant-role message before the
+	// request, so bridge preservation would keep it — leaving nothing to drain.
+	// This is the measured hard-ceiling wedge: force reported "no eligible
+	// history" while the summary it could re-fold sat right there.
+	let mut request = msg("user");
+	request.content = "the resumed request".to_string();
+	let messages = vec![
+		msg("system"),
+		summary_msg("prior work folded here"),
+		continuation_msg("resume the task"),
+		request,
+	];
+
+	// Automatic (non-force) still preserves the summary as the bridge: nothing
+	// to compress here, which is correct — an automatic fold does not re-fold a
+	// fresh summary.
+	assert_eq!(
+		find_compression_range_preserving_turn(&messages, false, true).unwrap(),
+		(0, 0)
+	);
+
+	// Force must be able to re-fold the summary: the drain covers it, the
+	// continuation, and the fresh request (carried forward by the new wrapper).
+	let (start_idx, end_idx) =
+		find_compression_range_preserving_turn(&messages, true, true).unwrap();
+	assert_eq!(start_idx, 0, "anchor is the system preamble");
+	assert_eq!(
+		end_idx,
+		messages.len() - 1,
+		"the summary is drainable again"
+	);
+	assert!(
+		start_idx < end_idx,
+		"force yields a non-empty range, not 0..=0"
+	);
+}
+
+#[test]
 fn mid_task_fold_keeps_the_live_exchange_verbatim() {
 	// Compaction usually fires mid-task, where the tail is a tool result rather
 	// than a new request. That path used to drain to the tail, folding away the

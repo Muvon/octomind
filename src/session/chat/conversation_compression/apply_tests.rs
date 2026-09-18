@@ -256,12 +256,36 @@ fn extract_handles_multibyte_intent_without_panicking() {
 fn continuation_round_trips_exact_previous_assistant_response() {
 	let previous = "  Exact answer\nwith formatting and trailing space ";
 	let request = "  exact follow-up\nwith trailing space ";
-	let wrapper = build_continuation_content(Some(previous), Some(request), None, false);
+	// A distinct validated frontier keeps `<request>` and `<task>` separate, so
+	// this exercises the full three-block shape.
+	let wrapper = build_continuation_content(
+		Some(previous),
+		Some(request),
+		Some("resume the upload"),
+		false,
+	);
 	assert_eq!(
 		extract_previous_assistant_response(&wrapper).as_deref(),
 		Some(previous)
 	);
 	assert!(wrapper.contains(&format!("<request>{request}</request>")));
+}
+
+#[test]
+fn continuation_does_not_duplicate_the_request_when_it_is_the_task() {
+	// No validated frontier: the request IS the resumption task. It must appear
+	// exactly once (in <task>), never a second time in <request> — duplicating a
+	// large request is what pushed a fold net-negative and looped the ceiling.
+	let request = "Surgically edit every language block below and return the full file";
+	let wrapper = build_continuation_content(None, Some(request), None, false);
+	// The request text appears once, inside <task>. (The fixed preamble names the
+	// `<request>` tag, so assert on the emitted block, not the bare tag name.)
+	assert_eq!(wrapper.matches(request).count(), 1);
+	assert!(!wrapper.contains(&format!("<request>{request}</request>")));
+	assert_eq!(
+		extract_continuation_task(&wrapper).as_deref(),
+		Some(request)
+	);
 }
 
 fn default_config() -> crate::config::Config {

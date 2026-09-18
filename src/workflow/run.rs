@@ -293,6 +293,16 @@ impl Executor {
 			let session_name: Option<String> = match s.session {
 				SessionMode::Fresh => None,
 				SessionMode::Continue => {
+					// A retry before this session ever completed a turn starts a
+					// new one. The failed attempt's session already holds the full
+					// templated prompt (plus re-injected skills), and the retry
+					// sends it again: each attempt stacked another copy until the
+					// context could not fit the window (211k -> 303k tokens). The
+					// cost baseline goes too — the new session counts from zero.
+					if attempt > 1 && !*self.used_continue.get(&s.name).unwrap_or(&false) {
+						self.session_ids.remove(&s.name);
+						self.cost_baseline.remove(&s.name);
+					}
 					let id = self
 						.session_ids
 						.entry(s.name.clone())

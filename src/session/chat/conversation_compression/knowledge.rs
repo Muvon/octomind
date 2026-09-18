@@ -81,8 +81,9 @@ pub(super) fn format_compressed_entry_with_pact(
 	compression_id: String,
 	archive: Option<&super::archive::ArchiveBundle>,
 	pact: &super::attention::PactContext,
+	carried_request: Option<&str>,
 ) -> String {
-	let (pinned, frontier_and_recall) = pact.render_live_bands(archive);
+	let (pinned, frontier_and_recall) = pact.render_live_bands(archive, carried_request);
 	let mut sections = pinned;
 	sections.push('\n');
 	if !body.is_empty() {

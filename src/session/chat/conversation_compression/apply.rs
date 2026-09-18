@@ -459,6 +459,19 @@ pub(super) async fn apply_compression(
 	// carry signal so the body stays terse on early or sparse compressions.
 	let summary_body = if pact_live {
 		render_pact_summary(summary)
+	} else if let Some(pact) = pact {
+		// Governance-only PACT normalized both fields to the pinned task, which
+		// the pinned band already covers — rendering them repeats the request
+		// twice more.
+		let pinned_task = pact.pinned.task.text.as_str();
+		let mut body = summary.clone();
+		if body.original_request == pinned_task {
+			body.original_request.clear();
+		}
+		if body.current_task == pinned_task {
+			body.current_task.clear();
+		}
+		render_summary(&body)
 	} else {
 		render_summary(summary)
 	};
@@ -517,12 +530,26 @@ pub(super) async fn apply_compression(
 	};
 
 	let base_entry = if let Some(pact) = pact {
+		// The request the post-fold user turn holds verbatim: the newest real
+		// request in the preserved tail, else the one the wrapper will embed. A
+		// background fold can land after a newer request arrived, so the tail is
+		// read, not assumed to hold `continuation_request`.
+		let carried_request = if tail_carries_user_request {
+			session.session.messages[end_idx + 1..]
+				.iter()
+				.rev()
+				.find(|message| crate::session::is_real_user_task_message(message))
+				.map(|message| message.content.as_str())
+		} else {
+			continuation_request.as_deref()
+		};
 		format_compressed_entry_with_pact(
 			&summary_body,
 			&file_context_content,
 			compression_id.clone(),
 			archive_bundle.as_ref(),
 			pact,
+			carried_request,
 		)
 	} else {
 		format_compressed_entry_with_context(

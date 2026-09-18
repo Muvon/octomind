@@ -861,6 +861,131 @@ async fn apply_compression_with_tail_bridge_keeps_exchange_without_wrapper() {
 	assert_eq!(session.session.messages[3].content, "done with tests");
 }
 
+/// A stand-in for the workflow brief that wedged `wf-localize-fix-020348ff`:
+/// one user message carrying every language block (179k chars there).
+fn oversized_request() -> String {
+	format!(
+		"Surgically edit every language block below.\n{}",
+		"<lang>th</lang> ข้อความที่ต้องแก้ไข paragraph to polish.\n".repeat(200)
+	)
+	.trim()
+	.to_string()
+}
+
+/// Fold the stand-in request the way `finish_fold` does (PACT build,
+/// normalize, apply) and return the post-fold session. `bridge` keeps the
+/// request live as the preserved [assistant, request] tail; otherwise it is
+/// drained and carried by the continuation wrapper.
+async fn fold_oversized_request(
+	name: &str,
+	attention: bool,
+	bridge: bool,
+) -> (ChatSession, String) {
+	let mut config = default_config();
+	config.compression.attention.enabled = attention;
+	let request = oversized_request();
+	let (messages, end_idx) = if bridge {
+		(
+			vec![
+				plain_message("system", "system prompt"),
+				plain_message("user", "translate the brief"),
+				plain_message("assistant", "drafts ready"),
+				plain_message("assistant", "ready for the next edit"),
+				plain_message("user", &request),
+			],
+			2,
+		)
+	} else {
+		(
+			vec![
+				plain_message("system", "system prompt"),
+				plain_message("user", &request),
+				plain_message("assistant", "editing th"),
+				plain_message("assistant", "editing ru"),
+			],
+			3,
+		)
+	};
+	let mut session = ChatSession::for_tests(messages);
+	session.session.info.name = name.to_string();
+	let pact = super::super::attention::build(&session, 1, end_idx, 2.0, attention, false)
+		.await
+		.expect("pact context builds");
+	let mut summary = CompressionSummary {
+		should_compress: true,
+		..Default::default()
+	};
+	pact.normalize_summary(&mut summary);
+	apply_compression(
+		&mut session,
+		0,
+		end_idx,
+		&summary,
+		800,
+		900,
+		Vec::new(),
+		Some(plain_message("user", &request)),
+		None,
+		Vec::new(),
+		Vec::new(),
+		&config,
+		Some(&pact),
+		None,
+		false,
+		bridge,
+	)
+	.await
+	.expect("apply pact compression");
+	(session, request)
+}
+
+fn live_copies(session: &ChatSession, text: &str) -> usize {
+	session
+		.session
+		.messages
+		.iter()
+		.map(|message| message.content.matches(text).count())
+		.sum()
+}
+
+#[tokio::test]
+async fn pact_fold_into_continuation_keeps_one_copy_of_the_request() {
+	// Attempt 1 of the failed run: the request was drained and carried by the
+	// continuation wrapper, while the summary's pinned band rendered it again —
+	// the fold grew the context 135k -> 195k tokens.
+	let (session, request) =
+		fold_oversized_request("apply-request-once-wrapper-unit", true, false).await;
+	assert!(session
+		.session
+		.messages
+		.last()
+		.is_some_and(|m| m.content.trim_start().starts_with(CONTINUATION_TAG_OPEN)));
+	assert_eq!(live_copies(&session, &request), 1);
+}
+
+#[tokio::test]
+async fn pact_fold_with_preserved_bridge_keeps_one_copy_of_the_request() {
+	// Attempt 2 of the failed run: the request stayed live as the preserved
+	// [assistant, request] bridge and the pinned band repeated it above.
+	let (session, request) =
+		fold_oversized_request("apply-request-once-bridge-unit", true, true).await;
+	assert_eq!(
+		session.session.messages.last().map(|m| m.content.as_str()),
+		Some(request.as_str())
+	);
+	assert_eq!(live_copies(&session, &request), 1);
+}
+
+#[tokio::test]
+async fn governance_only_fold_keeps_one_copy_of_the_request() {
+	// Default config (attention off, governance on): normalize_summary copies
+	// the pinned task into <original_request> and <current_task>, which the
+	// legacy body rendered beside the pinned band and the wrapper — four copies.
+	let (session, request) =
+		fold_oversized_request("apply-request-once-governance-unit", false, false).await;
+	assert_eq!(live_copies(&session, &request), 1);
+}
+
 #[test]
 fn select_continuation_action_is_disabled_without_pact() {
 	let summary = CompressionSummary {

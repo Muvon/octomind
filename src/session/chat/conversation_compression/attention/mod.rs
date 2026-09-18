@@ -1317,7 +1317,7 @@ impl PactContext {
 			self.source_tokens, self.target_tokens
 		));
 		out.push_str("<pinned_state>\n");
-		out.push_str(&render_pinned_lines(&self.pinned));
+		out.push_str(&render_pinned_lines(&self.pinned, false));
 		if !self.plan_focus.trim().is_empty() {
 			out.push_str(&format!("live_plan:\n{}\n", self.plan_focus.trim()));
 		}
@@ -1343,13 +1343,21 @@ impl PactContext {
 		out
 	}
 
+	/// `carried_request` is the exact request the post-fold user turn holds
+	/// (continuation wrapper or preserved bridge). When it IS the pinned task,
+	/// the band points at it instead of repeating it: one oversized request
+	/// (179k chars) rendered here AND carried below made the fold's own output
+	/// outweigh the drained range — context grew 135k -> 195k tokens.
 	pub(crate) fn render_live_bands(
 		&self,
 		archive: Option<&super::archive::ArchiveBundle>,
+		carried_request: Option<&str>,
 	) -> (String, String) {
+		let task_carried =
+			carried_request.is_some_and(|request| request.trim() == self.pinned.task.text);
 		let pinned_band = format!(
 			"<pinned_state>\n{}</pinned_state>",
-			render_pinned_lines(&self.pinned)
+			render_pinned_lines(&self.pinned, task_carried)
 		);
 		if !self.enabled {
 			return (pinned_band, String::new());
@@ -2048,9 +2056,15 @@ fn packet_header(packet: &EvidencePacket) -> String {
 	)
 }
 
+/// Live pinned-band stand-in for a task the post-fold user turn already
+/// carries verbatim.
+const TASK_CARRIED_BY_USER_TURN: &str =
+	"exact text is the latest user request below this summary — not repeated here";
+
 /// Compact plain-line rendering of pinned state — replaces the pretty-JSON
 /// serialization that stayed in the model's context every turn.
-fn render_pinned_lines(pinned: &PinnedState) -> String {
+/// `task_carried` swaps the task text for [`TASK_CARRIED_BY_USER_TURN`].
+fn render_pinned_lines(pinned: &PinnedState, task_carried: bool) -> String {
 	let mut out = String::new();
 	let source = pinned
 		.task
@@ -2058,7 +2072,12 @@ fn render_pinned_lines(pinned: &PinnedState) -> String {
 		.as_deref()
 		.map(|id| format!(" (source: {id})"))
 		.unwrap_or_default();
-	out.push_str(&format!("task{source}: {}\n", pinned.task.text));
+	let task = if task_carried {
+		TASK_CARRIED_BY_USER_TURN
+	} else {
+		pinned.task.text.as_str()
+	};
+	out.push_str(&format!("task{source}: {task}\n"));
 	for constraint in &pinned.constraints {
 		let source = constraint
 			.source

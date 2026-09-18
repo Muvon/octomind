@@ -706,6 +706,56 @@ async fn exec_sequential_continue_creates_and_reuses_session_id() {
 }
 
 #[tokio::test]
+async fn exec_sequential_continue_retry_before_first_success_starts_a_new_session() {
+	// wf-localize-fix-020348ff: every retry resumed the failed attempt's session
+	// and re-sent the full prompt into it, stacking one more copy per attempt
+	// until the context could not fit the model window.
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "cont"
+		role = "developer:general"
+		prompt = "refine {{input}}"
+		session = "continue"
+		retries = 1
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("c", false);
+	ex.session_ids
+		.insert("cont".to_string(), "wf-c-cont-failed".to_string());
+	ex.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("both attempts fail");
+	let id = ex
+		.session_ids
+		.get("cont")
+		.expect("the retry opened a session");
+	assert_ne!(
+		id, "wf-c-cont-failed",
+		"a retry must not resume the failed first attempt's session"
+	);
+	assert!(id.starts_with("wf-c-cont-"), "got: {id}");
+
+	// A session that already completed a turn holds earlier rounds: its retry
+	// keeps it (and folds the failed attempt with /done).
+	ex.session_ids
+		.insert("cont".to_string(), "wf-c-cont-used".to_string());
+	ex.used_continue.insert("cont".to_string(), true);
+	ex.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("both attempts fail");
+	assert_eq!(
+		ex.session_ids.get("cont"),
+		Some(&"wf-c-cont-used".to_string())
+	);
+}
+
+#[tokio::test]
 async fn exec_sequential_continue_reuse_sends_done_and_feeds_prior_output() {
 	let wf: WorkflowDef = toml::from_str(
 		r#"

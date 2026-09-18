@@ -1262,7 +1262,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	// The live context after this cycle must NOT carry the prior render
 	// verbatim (that was the original nesting bug); it keeps only the
 	// prior's recall coordinates.
-	let (_, recall_band) = pact.render_live_bands(None);
+	let (_, recall_band) = pact.render_live_bands(None, None);
 	assert!(
 		!recall_band.contains("prior folded line"),
 		"prior summary render leaked into the live context"
@@ -1732,7 +1732,7 @@ fn repeated_compaction_keeps_visible_prior_block_recall_coordinates() {
 			descriptor: "prior exact tool packet".into(),
 		},
 	);
-	let (_, recall) = pact.render_live_bands(None);
+	let (_, recall) = pact.render_live_bands(None, None);
 	assert!(recall.contains("b:prior"));
 	assert!(recall.contains("/tmp/prior.jsonl"));
 	assert!(recall.contains("7"));
@@ -1767,7 +1767,7 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 		.await
 		.expect("pact context builds");
 	assert!(pact.packets.iter().any(|p| p.lane == Lane::KeepExact));
-	let (pinned_band, recall_band) = pact.render_live_bands(None);
+	let (pinned_band, recall_band) = pact.render_live_bands(None, None);
 	assert!(pinned_band.contains("stabilise the deploy pipeline"));
 	assert!(recall_band.contains("<recall_index>"));
 }
@@ -1776,9 +1776,26 @@ async fn build_with_attention_enabled_assigns_lanes_and_live_bands() {
 fn render_live_bands_disabled_returns_pinned_only() {
 	let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::KeepExact));
 	pact.enabled = false;
-	let (pinned, recall) = pact.render_live_bands(None);
+	let (pinned, recall) = pact.render_live_bands(None, None);
 	assert!(pinned.contains("task: continue the task"));
 	assert!(recall.is_empty());
+}
+
+#[test]
+fn live_pinned_band_points_at_a_request_the_user_turn_carries() {
+	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::KeepExact));
+	// The user turn below the summary holds the task verbatim: repeating it
+	// here doubles an oversized request.
+	let (carried, _) = pact.render_live_bands(None, Some("  continue the task\n"));
+	assert!(!carried.contains("continue the task"), "{carried}");
+	assert!(carried.contains(TASK_CARRIED_BY_USER_TURN), "{carried}");
+	// A different or absent carried request leaves the band the only copy.
+	let (other, _) = pact.render_live_bands(None, Some("an unrelated follow-up"));
+	assert!(other.contains("task: continue the task"), "{other}");
+	let (absent, _) = pact.render_live_bands(None, None);
+	assert!(absent.contains("task: continue the task"), "{absent}");
+	// The fold model's own view always keeps the full task.
+	assert!(pact.prompt_view().contains("task: continue the task"));
 }
 
 #[test]
@@ -1861,7 +1878,7 @@ fn render_pinned_lines_covers_sources_and_every_policy_variant() {
 		verification_policy: crate::supervisor::VerificationPolicy::Forbidden,
 		governance_hash: "abc".to_string(),
 	};
-	let lines = render_pinned_lines(&pinned);
+	let lines = render_pinned_lines(&pinned, false);
 	assert!(lines.contains("task (source: b:task): ship the release"));
 	assert!(lines.contains("constraint: no force pushes"));
 	assert!(lines.contains("verification_policy: forbidden"));
@@ -1871,13 +1888,13 @@ fn render_pinned_lines_covers_sources_and_every_policy_variant() {
 		verification_policy: crate::supervisor::VerificationPolicy::Allowed,
 		..pinned.clone()
 	};
-	assert!(render_pinned_lines(&allowed).contains("verification_policy: allowed"));
+	assert!(render_pinned_lines(&allowed, false).contains("verification_policy: allowed"));
 
 	let unspecified = PinnedState {
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		..pinned.clone()
 	};
-	assert!(!render_pinned_lines(&unspecified).contains("verification_policy:"));
+	assert!(!render_pinned_lines(&unspecified, false).contains("verification_policy:"));
 }
 
 #[test]
@@ -1979,10 +1996,10 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 		.iter()
 		.any(|packet| packet.lane != Lane::ArchiveReference));
 	// The live context after the fold is unchanged: pinned band only.
-	let (pinned, recall) = governed.render_live_bands(None);
+	let (pinned, recall) = governed.render_live_bands(None, None);
 	assert!(pinned.starts_with("<pinned_state>"));
 	assert!(recall.is_empty());
-	let (_, attended_recall) = attended.render_live_bands(None);
+	let (_, attended_recall) = attended.render_live_bands(None, None);
 	assert!(!attended_recall.is_empty());
 }
 

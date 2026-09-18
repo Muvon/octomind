@@ -43,6 +43,16 @@
 use crate::session::chat::session::ChatSession;
 use anyhow::Result;
 
+/// True when a message is a synthetic compression summary — an assistant-role
+/// message this module inserted (by name) or whose body carries the summary
+/// tag. It is compacted state, never a live assistant turn.
+fn is_synthetic_summary(m: &crate::session::Message) -> bool {
+	m.role == "assistant"
+		&& (m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
+			|| m.content
+				.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
+}
+
 /// True when a message can state or restate "what the user wants": a real user
 /// turn, a prior compression summary, or a prior continuation wrapper.
 ///
@@ -52,14 +62,12 @@ use anyhow::Result;
 fn states_task(m: &crate::session::Message) -> bool {
 	crate::session::is_real_user_task_message(m)
 		|| (m.role == "user" && super::apply::is_continuation_message(&m.content))
-		|| (m.role == "assistant"
-			// Two markers, either sufficient. `name` is what this module and
-			// `plan/compression.rs` set; the tag is what the body always
-			// carries. A summary missing one (older session file, a different
-			// insertion path) would otherwise become invisible here and
-			// accumulate in the prefix forever, stale task and all.
-			&& (m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
-				|| m.content.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX)))
+		// A summary carries one of two markers, either sufficient. `name` is what
+		// this module and `plan/compression.rs` set; the tag is what the body
+		// always carries. A summary missing one (older session file, a different
+		// insertion path) would otherwise become invisible here and accumulate in
+		// the prefix forever, stale task and all.
+		|| is_synthetic_summary(m)
 }
 
 /// Find the compression range deterministically from message structure.
@@ -121,10 +129,18 @@ pub(super) fn find_compression_range_preserving_turn(
 		tail_idx
 	} else if crate::session::is_real_user_task_message(&messages[tail_idx]) {
 		// A fresh request just arrived: keep the [assistant, request] bridge.
-		match messages[..tail_idx]
-			.iter()
-			.rposition(|message| message.role == "assistant")
-		{
+		//
+		// A synthetic compression summary carries the assistant role but is
+		// compacted STATE, not a live exchange. On a resumed [summary,
+		// continuation, request] tail it is the only "assistant" before the
+		// request, so preserving it as the bridge leaves an empty range — and a
+		// hard-ceiling force then reports "no eligible history" while the summary
+		// it could re-fold sits right there, wedging the session over the
+		// ceiling. Under force, skip synthetic summaries so a prior fold's output
+		// stays drainable; automatic folds keep their exact prior behavior.
+		match messages[..tail_idx].iter().rposition(|message| {
+			message.role == "assistant" && !(force && is_synthetic_summary(message))
+		}) {
 			Some(previous_assistant_idx) => previous_assistant_idx.saturating_sub(1),
 			None => tail_idx,
 		}

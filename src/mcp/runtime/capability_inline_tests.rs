@@ -1023,21 +1023,28 @@ async fn capability_routing_diversity_fixtures() {
 			Some("maps"),
 		),
 		// --- Ambiguous: only *truly* balanced cross-domain prompts.
-		// "send the docker container logs to our slack channel" genuinely
-		// splits between docker (the logs) and slack (the send target) —
-		// neither dominates (both ~0.62, gap <0.01), so the margin gate
-		// correctly abstains. Prompts where ONE cap is the clear action
-		// target are NOT ambiguous and were removed: "deploy this docker
-		// image to my kubernetes cluster" routes to kubernetes (the deploy
-		// target wins cleanly), and "fetch the postgres release notes from
-		// the web" routes to postgres (strong noun phrase) — a good model
+		// Each of these splits between two caps with a top-1/top-2 gap
+		// under 0.02 on the published int8 granite graph (kubernetes 0.721
+		// vs messaging-slack 0.716 for the kubectl→slack prompt), so the
+		// margin gate correctly abstains. Prompts where ONE cap is the
+		// clear action target are NOT ambiguous and were removed: "deploy
+		// this docker image to my kubernetes cluster" routes to kubernetes
+		// and "send the docker container logs to our slack channel" routes
+		// to messaging-slack (the send target wins by ~0.09) — a good model
 		// answers both, and forcing abstention there would cripple real
-		// single-cap intents.
+		// single-cap intents. Re-probe candidates with
+		// octomind-tap/model/scripts/eval_runtime_gate.py after a retrain.
 		(
 			"ambiguous",
-			"send the docker container logs to our slack channel",
+			"post the kubectl get pods output to slack",
 			None,
 		),
+		(
+			"ambiguous",
+			"check which docker container is running postgres",
+			None,
+		),
+		("ambiguous", "put the meeting location on the map", None),
 		// --- Short: mid-session acks (most common false-positive class) ---
 		("short", "try", None),
 		("short", "ok", None),

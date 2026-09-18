@@ -134,6 +134,7 @@ async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier
 	let _data = TestDataDir::new();
 	let calls = distill_chat_calls();
 	let applied = evaluate_counter(Seam::Distill, "applied");
+	let replaced = evaluate_counter(Seam::Distill, "avoided");
 	let (stored, memories) = extract(
 		&config(true),
 		"__distill_seam_role",
@@ -148,6 +149,7 @@ async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier
 	assert_eq!(memories[0].content, BACKOFF_RULE);
 	assert_eq!(distill_chat_calls() - calls, 1, "the extraction call only");
 	assert_eq!(evaluate_counter(Seam::Distill, "applied") - applied, 1);
+	assert_eq!(evaluate_counter(Seam::Distill, "avoided") - replaced, 1);
 
 	let requests = fake.requests();
 	assert_eq!(requests.len(), 1);
@@ -176,6 +178,46 @@ async fn grounded_lessons_are_kept_and_the_rest_rejected_without_a_chat_verifier
 			_ => panic!("distill questions are Nouls"),
 		}
 	}
+}
+
+#[tokio::test]
+async fn a_quote_past_the_transcript_head_reaches_the_judge_in_its_own_turn() {
+	let fake = install_fake_evaluation(vec![answers(&[0.93, 0.11])]).await;
+	let _data = TestDataDir::new();
+	// Forty assistant turns of filler push the chronological transcript well
+	// past the head before the correction the lessons quote.
+	let mut late = vec![message("user", "start by reading the crate layout")];
+	for step in 0..40 {
+		late.push(message(
+			"assistant",
+			&format!(
+				"step {step}: {}",
+				"inspecting modules and reading files ".repeat(20)
+			),
+		));
+	}
+	late.extend(messages());
+	let correction = late.len() - 1;
+	let (stored, memories) = extract(
+		&config(true),
+		"__distill_late_role",
+		"__distill_late_project",
+		&late,
+		TrajectoryOutcome::Unknown,
+		vec![final_response(EXTRACTION)],
+	)
+	.await;
+	assert_eq!(stored, 1);
+	assert_eq!(memories[0].content, BACKOFF_RULE);
+	let request = &fake.requests()[0];
+	let transcript = request.state["transcript"].as_str().expect("transcript");
+	assert!(
+		transcript.chars().count() > VERIFY_TRANSCRIPT_CHARS,
+		"the quote sits past the head and its turn is appended"
+	);
+	assert!(transcript.contains(&format!(
+		"[M{correction} USER]: use exponential backoff with jitter for retries"
+	)));
 }
 
 #[tokio::test]

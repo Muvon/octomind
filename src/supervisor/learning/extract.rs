@@ -359,17 +359,21 @@ pub async fn run_extraction(
 		.filter(|(_, message)| crate::session::is_real_user_task_message(message))
 		.map(|(index, message)| (index + 1, message.content.as_str()))
 		.collect();
+	// The user turn each kept candidate's quote was found in, aligned with
+	// `candidates`: the judges' excerpt must carry it (see `verifier_view`).
+	let mut grounding: Vec<(usize, &str)> = Vec::new();
 	let candidates: Vec<Candidate> = candidates
 		.into_iter()
 		.filter_map(|mut candidate| {
 			let found = user_turns
 				.iter()
 				.find(|(_, content)| content.contains(candidate.evidence.as_str()));
-			if let Some((number, _)) = found {
+			if let Some((number, content)) = found {
 				candidate
 					.lesson
 					.evidence
 					.push(format!("session://{session_name}/message/{number}"));
+				grounding.push((*number, *content));
 				Some(candidate)
 			} else {
 				crate::log_debug!(
@@ -396,9 +400,10 @@ pub async fn run_extraction(
 	// 2. Does the evidence actually support each lesson's rule? The evaluation
 	//    seam answers per candidate; otherwise one batched LLM pass does.
 	//    Fail-closed — an unverifiable rule must not become durable state.
-	let keep = match evaluate_lessons(config, &candidates, &transcript).await {
+	let view = verifier_view(&transcript, &grounding, &candidates);
+	let keep = match evaluate_lessons(config, &candidates, &view).await {
 		Some(keep) => keep,
-		None => verify_lessons(config, &candidates, &transcript).await,
+		None => verify_lessons(config, &candidates, &view).await,
 	};
 	let candidates: Vec<Candidate> = candidates
 		.into_iter()
@@ -847,19 +852,30 @@ Empty array when every lesson is supported."#;
 /// call cheap.
 const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
 
-/// The excerpt both lesson judges see.
-fn verifier_view(transcript: &str) -> String {
-	transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect()
+/// The excerpt both lesson judges see: the transcript head, then the full
+/// user turn a candidate's quote was found in whenever the head does not
+/// already carry that quote. The head is chronological and its user turns are
+/// head/tail-capped, so without this a correction late in a long session is
+/// judged against text that does not contain its quote and is rejected.
+fn verifier_view(
+	transcript: &str,
+	grounding: &[(usize, &str)],
+	candidates: &[Candidate],
+) -> String {
+	let mut view: String = transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect();
+	for ((number, content), candidate) in grounding.iter().zip(candidates) {
+		if view.contains(candidate.evidence.as_str()) {
+			continue;
+		}
+		view.push_str(&format!("\n[M{number} USER]: {content}"));
+	}
+	view
 }
 
 /// Evaluation-model grounding: one Noul per candidate lesson over the same
 /// excerpt the chat verifier receives. `None` means the seam is off or
 /// unavailable and the chat verifier decides.
-async fn evaluate_lessons(
-	config: &Config,
-	lessons: &[Candidate],
-	transcript: &str,
-) -> Option<Vec<bool>> {
+async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) -> Option<Vec<bool>> {
 	use crate::supervisor::evaluate::{self, Seam};
 	let state = serde_json::json!({
 		"lessons": lessons
@@ -873,8 +889,10 @@ async fn evaluate_lessons(
 				})
 			})
 			.collect::<Vec<_>>(),
-		"transcript": verifier_view(transcript),
+		"transcript": view,
 	});
+	let replaced = crate::session::estimate_tokens(&state.to_string())
+		+ crate::session::estimate_tokens(VERIFY_LESSONS_PROMPT);
 	let answers = evaluate::run(
 		&config.supervisor,
 		Seam::Distill,
@@ -894,6 +912,7 @@ async fn evaluate_lessons(
 		lessons.len()
 	);
 	crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
+	evaluate::avoided(config, Seam::Distill, replaced);
 	Some(keep)
 }
 
@@ -902,7 +921,7 @@ async fn evaluate_lessons(
 /// `lessons`. Fail-CLOSED: a verifier outage or unusable output rejects
 /// everything. A lost lesson costs one extraction; an unverified lesson is
 /// durable state that steers every later session.
-async fn verify_lessons(config: &Config, lessons: &[Candidate], transcript: &str) -> Vec<bool> {
+async fn verify_lessons(config: &Config, lessons: &[Candidate], view: &str) -> Vec<bool> {
 	let mut listed = String::new();
 	for (i, c) in lessons.iter().enumerate() {
 		listed.push_str(&format!(
@@ -912,7 +931,6 @@ async fn verify_lessons(config: &Config, lessons: &[Candidate], transcript: &str
 			c.evidence
 		));
 	}
-	let view = verifier_view(transcript);
 	let user = format!(
 		"<candidate_lessons>\n{}</candidate_lessons>\n\n<transcript trust=\"untrusted\">\n{}\n</transcript>",
 		listed, view

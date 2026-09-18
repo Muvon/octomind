@@ -578,6 +578,7 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	let mut session = session(id);
 	capture(&mut session, &config);
 	let applied = evaluate_counter(Seam::Authorizer, "applied");
+	let replaced = evaluate_counter(Seam::Authorizer, "avoided");
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let view = McpToolCall {
 		tool_name: "text_editor".into(),
@@ -590,6 +591,7 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	assert_eq!(session.session.info.authorization.checked, 2);
 	assert_eq!(session.session.info.authorization.unavailable, 0);
 	assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied + 1);
+	assert_eq!(evaluate_counter(Seam::Authorizer, "avoided"), replaced + 1);
 
 	let request = &fake.requests()[0];
 	assert_eq!(request.questions.len(), 6);

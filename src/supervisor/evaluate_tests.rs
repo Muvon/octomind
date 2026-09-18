@@ -294,6 +294,11 @@ fn question_builders_use_stable_ids_and_documented_options() {
 		vec!["c0", "c1", "c2"]
 	);
 	assert!(recall.values().all(|q| matches!(q, Question::Noul { .. })));
+	let instructions = |question: &Question| match question {
+		Question::Noul { instructions, .. } => instructions.as_str().unwrap_or("").to_string(),
+		other => panic!("expected a noul, got {other:?}"),
+	};
+	assert!(instructions(&recall["c2"]).starts_with("Candidate 2: "));
 
 	match skill_question([("git-workflow", "Git"), ("code-review", "Review")]) {
 		Question::Choice { criteria, .. } => {
@@ -311,7 +316,7 @@ fn question_builders_use_stable_ids_and_documented_options() {
 		other => panic!("expected a choice, got {other:?}"),
 	}
 
-	let authorizer = authorizer_questions(&["0".into(), "3".into()]);
+	let authorizer = authorizer_questions([("0", "shell"), ("3", "write_file")]);
 	assert_eq!(authorizer.len(), 6);
 	for id in [
 		"0.prohibited",
@@ -324,6 +329,7 @@ fn question_builders_use_stable_ids_and_documented_options() {
 			"missing {id}"
 		);
 	}
+	assert!(instructions(&authorizer["3.destructive"]).starts_with("Call 3 (write_file): "));
 }
 
 // ---------------------------------------------------------------------------
@@ -454,6 +460,58 @@ async fn run_windows_issues_every_window_concurrently() {
 		"windows ran one after another: {:?}",
 		started.elapsed()
 	);
+}
+
+#[tokio::test]
+async fn run_windows_keeps_at_most_four_windows_in_flight() {
+	let delay = std::time::Duration::from_millis(200);
+	let _fake =
+		install_fake_evaluation((0..5).map(|_| FakeEvaluationStep::Sleep(delay)).collect()).await;
+	let mut config = config(false, false, false);
+	config.evaluate.compression = true;
+	let started = std::time::Instant::now();
+	let answers = run_windows(
+		&config,
+		Seam::Compression,
+		(0..5)
+			.map(|w| (serde_json::json!({"w": w}), compression_questions(["b:x"])))
+			.collect(),
+	)
+	.await;
+	assert!(answers.is_none());
+	assert!(
+		started.elapsed() >= delay * 2,
+		"five windows ran all at once: {:?}",
+		started.elapsed()
+	);
+}
+
+#[tokio::test]
+async fn avoided_chat_calls_are_counted_and_priced_at_the_supervisor_model() {
+	let _fake = install_fake_evaluation(Vec::new()).await;
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.model.model = Some("openai:gpt-5.6-terra".to_string());
+	let expected =
+		octolib::llm::reference_pricing::calculate_reference_cost("gpt-5.6-terra", 1_000, 0, 0)
+			.expect("a priced reference model");
+	assert!(expected > 0.0);
+	let calls = snapshot_u64("evaluate_avoided_calls");
+	let tokens = snapshot_u64("evaluate_avoided_tokens");
+	let cost = snapshot_f64("evaluate_avoided_cost");
+	let seam = evaluate_counter(Seam::Plan, "avoided");
+	avoided(&config, Seam::Plan, 1_000);
+	assert_eq!(snapshot_u64("evaluate_avoided_calls") - calls, 1);
+	assert_eq!(snapshot_u64("evaluate_avoided_tokens") - tokens, 1_000);
+	assert!((snapshot_f64("evaluate_avoided_cost") - cost - expected).abs() < 1e-12);
+	assert_eq!(evaluate_counter(Seam::Plan, "avoided") - seam, 1);
+
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	let unpriced =
+		octolib::llm::reference_pricing::calculate_reference_cost("fake-model", 10, 0, 0)
+			.unwrap_or(0.0);
+	let cost = snapshot_f64("evaluate_avoided_cost");
+	avoided(&config, Seam::Gate, 10);
+	assert!((snapshot_f64("evaluate_avoided_cost") - cost - unpriced).abs() < 1e-12);
 }
 
 #[test]

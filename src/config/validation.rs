@@ -45,24 +45,15 @@ impl Config {
 	}
 
 	/// `[supervisor.evaluate].model` must be `provider:model` on a provider that
-	/// serves an evaluation model — octolib's evaluation factory is the list.
-	/// Checked even when the supervisor is off: a typo here is a typo regardless
-	/// of which switches are on.
+	/// serves that evaluation model — octolib's evaluation factory is the list,
+	/// and it resolves the pair without touching the network. Checked even when
+	/// the supervisor is off: a typo here is a typo regardless of which switches
+	/// are on, and at call time it would only surface as a silent fallback.
 	fn validate_evaluate_model(&self) -> Result<()> {
 		use octolib::evaluation::EvaluationProviderFactory;
-		let model = &self.supervisor.evaluate.model;
-		let (provider, _) = EvaluationProviderFactory::parse_model(model)
-			.map_err(|error| anyhow!("supervisor.evaluate.model: {error}"))?;
-		let providers = EvaluationProviderFactory::supported_providers();
-		if !providers.contains(&provider.as_str()) {
-			return Err(anyhow!(
-				"supervisor.evaluate.model: unsupported provider '{}' in '{}' (expected one of {})",
-				provider,
-				model,
-				providers.join(", ")
-			));
-		}
-		Ok(())
+		EvaluationProviderFactory::get_provider_for_model(&self.supervisor.evaluate.model)
+			.map(|_| ())
+			.map_err(|error| anyhow!("supervisor.evaluate.model: {error}"))
 	}
 
 	fn validate_model_profiles(&self) -> Result<()> {

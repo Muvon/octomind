@@ -466,6 +466,12 @@ async fn prescreen(
 		}
 	}
 	crate::supervisor::stats::evaluate_applied(Seam::Plan, 1);
+	evaluate::avoided(
+		config,
+		Seam::Plan,
+		crate::session::estimate_tokens(&payload.to_string())
+			+ crate::session::estimate_tokens(PLANNER_PROMPT),
+	);
 	Ok(true)
 }
 

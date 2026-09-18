@@ -134,8 +134,11 @@ impl Seam {
 /// Recall: a scoped candidate whose "bears on the request" probability is
 /// below this is excluded from pack admission.
 pub const RECALL_KEEP_AT: f64 = 0.5;
-/// Skills: the chosen skill auto-activates only at or above this confidence.
-pub const SKILL_CONFIDENCE_FLOOR: f64 = 0.8;
+/// Skills: the chosen skill auto-activates only when its own probability in
+/// the Choice distribution is at or above this. The distribution sums to 1
+/// over the roster plus `none`, so it is the same kind of number every other
+/// seam thresholds; the answer's derived `confidence` is not.
+pub const SKILL_ACTIVATE_AT: f64 = 0.8;
 /// Authorizer: any Noul at or above this flags the batch for the supervisor.
 pub const AUTHORIZER_FLAG_AT: f64 = 0.5;
 /// Condense: a chunk at or above this is kept, together with its neighbours.
@@ -143,6 +146,9 @@ pub const CONDENSE_KEEP_AT: f64 = 0.5;
 /// Condense: line-aligned chunk size of a candidate's original text. A single
 /// line above this forms its own chunk.
 pub const CONDENSE_CHUNK_TOKENS: usize = 256;
+/// Condense: head-and-tail sample of a chunk that is one oversized line, so
+/// no single line can push a window over the state cap.
+pub const CONDENSE_CHUNK_SAMPLE_TOKENS: usize = 512;
 /// Compression: a summarize-lane tool packet below this is demoted to a
 /// recall pointer before the fold model reads the evidence set.
 pub const COMPRESSION_KEEP_AT: f64 = 0.5;
@@ -164,6 +170,10 @@ pub const MAX_STATE_TOKENS: usize = 24_000;
 /// Questions per window. The provider's per-call limit is undocumented; this
 /// stays well under the 255-option bound a Choice carries.
 pub const MAX_WINDOW_QUESTIONS: usize = 96;
+/// Windows of one round in flight at once. Bounded so a large round cannot
+/// fan out into a burst the provider rate-limits, which with no retries
+/// would fail the whole round.
+const MAX_WINDOWS_IN_FLIGHT: usize = 4;
 /// Windows are packed from per-item estimates; the slack keeps the serialized
 /// state under the runner's cap even when JSON framing adds a little.
 const WINDOW_SLACK_TOKENS: usize = 256;
@@ -216,10 +226,17 @@ pub fn recall_question_id(index: usize) -> String {
 	format!("c{index}")
 }
 
-/// One Noul per scoped candidate, keyed by its index in the state.
+/// One Noul per scoped candidate, keyed by its index in the state. Each
+/// question names its candidate by index so the answer is tied to that
+/// candidate's text, not to an opaque id.
 pub fn recall_questions(count: usize) -> BTreeMap<String, Question> {
 	(0..count)
-		.map(|index| (recall_question_id(index), Question::noul(RECALL_QUESTION)))
+		.map(|index| {
+			(
+				recall_question_id(index),
+				Question::noul(format!("Candidate {index}: {RECALL_QUESTION}")),
+			)
+		})
 		.collect()
 }
 
@@ -237,15 +254,18 @@ pub fn authorizer_question_id(call_id: &str, noul: &str) -> String {
 	format!("{call_id}.{noul}")
 }
 
-/// Three Nouls per pending call.
-pub fn authorizer_questions(call_ids: &[String]) -> BTreeMap<String, Question> {
-	call_ids
-		.iter()
-		.flat_map(|id| {
+/// Three Nouls per pending call, each naming the call it judges by id and
+/// tool so a batch of several calls is not scored as one.
+pub fn authorizer_questions<'a>(
+	calls: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> BTreeMap<String, Question> {
+	calls
+		.into_iter()
+		.flat_map(|(id, tool)| {
 			AUTHORIZER_NOULS.iter().map(move |(noul, instructions)| {
 				(
 					authorizer_question_id(id, noul),
-					Question::noul(*instructions),
+					Question::noul(format!("Call {id} ({tool}): {instructions}")),
 				)
 			})
 		})
@@ -396,6 +416,21 @@ pub fn unavailable(seam: Seam, reason: &str) {
 	super::stats::evaluate_unavailable(seam);
 }
 
+/// One chat call this seam stood in for, measured by the payload that call
+/// would have carried: `input_tokens` estimated from it, priced at the
+/// supervisor model's reference input rate when the table knows the model.
+/// Output tokens and wall time are not counted, so the figure is a floor.
+pub fn avoided(config: &crate::config::Config, seam: Seam, input_tokens: usize) {
+	let model = config.get_supervisor_model_profile().model;
+	let name = model
+		.split_once(':')
+		.map_or(model.as_str(), |(_, name)| name);
+	let cost =
+		octolib::llm::reference_pricing::calculate_reference_cost(name, input_tokens as u64, 0, 0)
+			.unwrap_or(0.0);
+	super::stats::evaluate_avoided(seam, input_tokens as u64, cost);
+}
+
 /// Evaluate `questions` over `state` for `seam`. `None` means the caller keeps
 /// its pre-change behavior: the seam is off, the state is too large, the
 /// provider failed or timed out, or the answers did not match the questions.
@@ -417,10 +452,11 @@ pub async fn run(
 	}
 }
 
-/// Evaluate the windows of one round concurrently, all or nothing: one failed
-/// window discards every answer, counts one fallback for the round, and the
-/// caller keeps its pre-change behavior. Answers come back in window order.
-/// An empty round makes no call and yields no answers.
+/// Evaluate the windows of one round concurrently (at most
+/// `MAX_WINDOWS_IN_FLIGHT` at a time), all or nothing: one failed window
+/// discards every answer, counts one fallback for the round, and the caller
+/// keeps its pre-change behavior. Answers come back in window order. An empty
+/// round makes no call and yields no answers.
 pub async fn run_windows(
 	config: &super::SupervisorConfig,
 	seam: Seam,
@@ -429,11 +465,14 @@ pub async fn run_windows(
 	if !enabled(config, seam) {
 		return None;
 	}
-	let results = futures::future::join_all(
+	use futures::StreamExt;
+	let results: Vec<_> = futures::stream::iter(
 		windows
 			.into_iter()
 			.map(|(state, questions)| attempt(config, seam, state, questions)),
 	)
+	.buffered(MAX_WINDOWS_IN_FLIGHT)
+	.collect()
 	.await;
 	let mut answers = Vec::with_capacity(results.len());
 	for result in results {

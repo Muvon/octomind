@@ -652,16 +652,19 @@ async fn run_evaluation_choice(
 		return;
 	};
 	let Some(octolib::evaluation::Answer::Choice {
-		choice, confidence, ..
+		choice,
+		probabilities,
+		..
 	}) = answers.get(evaluate::SKILL_QUESTION_ID)
 	else {
 		return;
 	};
-	if choice == evaluate::SKILL_NONE || *confidence < evaluate::SKILL_CONFIDENCE_FLOOR {
+	let probability = probabilities.get(choice).copied().unwrap_or(0.0);
+	if choice == evaluate::SKILL_NONE || probability < evaluate::SKILL_ACTIVATE_AT {
 		crate::log_debug!(
-			"skill_auto: evaluate chose '{}' at confidence {:.2} — not activating",
+			"skill_auto: evaluate chose '{}' at p={:.2} — not activating",
 			choice,
-			confidence
+			probability
 		);
 		return;
 	}
@@ -676,10 +679,10 @@ async fn run_evaluation_choice(
 		}
 	}
 	crate::log_debug!(
-		"skill_auto: activated '{}' via [{}] (confidence {:.2})",
+		"skill_auto: activated '{}' via [{}] (p={:.2})",
 		entry.name,
 		evaluate::SKILL_TRIGGER,
-		confidence
+		probability
 	);
 	auto_activate_skill(&entry.name, evaluate::SKILL_TRIGGER, session).await;
 	crate::supervisor::stats::evaluate_applied(Seam::Skills, 1);

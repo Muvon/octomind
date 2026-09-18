@@ -1209,6 +1209,8 @@ async fn evaluate_refute(
 			.map(|(i, gap)| serde_json::json!({ "number": i + 1, "text": gap }))
 			.collect::<Vec<_>>(),
 	});
+	let replaced = crate::session::estimate_tokens(&state.to_string())
+		+ crate::session::estimate_tokens(REFUTE_PROMPT);
 	let answers = evaluate::run(
 		&config.supervisor,
 		Seam::Gate,
@@ -1229,6 +1231,7 @@ async fn evaluate_refute(
 		gaps.len()
 	);
 	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
+	evaluate::avoided(config, Seam::Gate, replaced);
 	Some(split_refuted(gaps, &refuted))
 }
 

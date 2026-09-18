@@ -795,6 +795,7 @@ pub fn display_info(output: &CommandOutput) {
 				"learning",
 				"gate",
 				"evaluate",
+				"seams",
 				"calls",
 				"tokens",
 				"throughput",
@@ -924,23 +925,50 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				block_row("gate", &g.join(" · "), kw_sv);
 			}
-			if let Some(seams) = sstats.get("evaluate").and_then(|v| v.as_object()) {
+			if let Some(seams) = sstats
+				.get("evaluate")
+				.and_then(|v| v.as_object())
+				.filter(|seams| !seams.is_empty())
+			{
+				// Totals first: what the evaluation model cost against the chat
+				// calls it stood in for (input-only estimate, so a floor).
+				let mut totals = vec![
+					format!("{} calls", evaluate_calls),
+					format!("{} in", format_number(get_u64("evaluate_input_tokens"))),
+					format!("${:.5}", get_f64("evaluate_cost")),
+				];
+				let avoided_calls = get_u64("evaluate_avoided_calls");
+				if avoided_calls > 0 {
+					let mut replaced = format!(
+						"replaced {} chat calls ≈ {} in",
+						avoided_calls,
+						format_number(get_u64("evaluate_avoided_tokens"))
+					);
+					let avoided_cost = get_f64("evaluate_avoided_cost");
+					if avoided_cost > 0.0 {
+						replaced.push_str(&format!(" ≈ ${:.5}", avoided_cost));
+					}
+					totals.push(replaced);
+				}
+				block_row("evaluate", &totals.join(&format!(" {} ", dot)), kw_sv);
 				let parts: Vec<String> = seams
 					.iter()
 					.map(|(seam, counters)| {
 						let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-						format!(
+						let mut part = format!(
 							"{} {} calls / {} applied / {} unavailable",
 							seam,
 							n("calls"),
 							n("applied"),
 							n("unavailable")
-						)
+						);
+						if n("avoided") > 0 {
+							part.push_str(&format!(" / {} replaced", n("avoided")));
+						}
+						part
 					})
 					.collect();
-				if !parts.is_empty() {
-					block_row("evaluate", &parts.join(&format!(" {} ", dot)), kw_sv);
-				}
+				block_row("seams", &parts.join(&format!(" {} ", dot)), kw_sv);
 			}
 			if calls > 0 {
 				// Break the opaque total down by mechanic so the flow is legible.

@@ -57,10 +57,17 @@ struct Stats {
 	condense_calls: u64,
 	authorize_calls: u64,
 	evaluate_calls: u64,
+	evaluate_input_tokens: u64,
+	evaluate_cost: f64,
 	// Per-seam evaluation gate counters, indexed by `evaluate::Seam::index`.
 	evaluate_seam_calls: [u64; crate::supervisor::evaluate::SEAM_COUNT],
 	evaluate_seam_unavailable: [u64; crate::supervisor::evaluate::SEAM_COUNT],
 	evaluate_seam_applied: [u64; crate::supervisor::evaluate::SEAM_COUNT],
+	// Chat calls a seam stood in for, with the estimated input tokens and
+	// reference cost those calls would have carried.
+	evaluate_seam_avoided: [u64; crate::supervisor::evaluate::SEAM_COUNT],
+	evaluate_avoided_tokens: u64,
+	evaluate_avoided_cost: f64,
 	condensed_results: u64,
 	condense_saved_tokens: u64,
 	memory_pack_items: u64,
@@ -129,7 +136,11 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Authorize => s.authorize_calls += 1,
-			CallKind::Evaluate => s.evaluate_calls += 1,
+			CallKind::Evaluate => {
+				s.evaluate_calls += 1;
+				s.evaluate_input_tokens += input_tokens;
+				s.evaluate_cost += cost;
+			}
 		}
 		s.input_tokens += input_tokens;
 		s.output_tokens += output_tokens;
@@ -242,6 +253,15 @@ pub fn evaluate_unavailable(seam: crate::supervisor::evaluate::Seam) {
 pub fn evaluate_applied(seam: crate::supervisor::evaluate::Seam, n: u64) {
 	with(|s| s.evaluate_seam_applied[seam.index()] += n);
 }
+/// The seam stood in for one chat call that would have carried `input_tokens`
+/// at `cost` (0 when the supervisor model has no reference price).
+pub fn evaluate_avoided(seam: crate::supervisor::evaluate::Seam, input_tokens: u64, cost: f64) {
+	with(|s| {
+		s.evaluate_seam_avoided[seam.index()] += 1;
+		s.evaluate_avoided_tokens += input_tokens;
+		s.evaluate_avoided_cost += cost;
+	});
+}
 
 pub fn evolution(action: &str) {
 	with(|stats| match action {
@@ -278,7 +298,8 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.evolution_retired == 0
 		&& s.evaluate_seam_calls.iter().all(|n| *n == 0)
 		&& s.evaluate_seam_unavailable.iter().all(|n| *n == 0)
-		&& s.evaluate_seam_applied.iter().all(|n| *n == 0);
+		&& s.evaluate_seam_applied.iter().all(|n| *n == 0)
+		&& s.evaluate_seam_avoided.iter().all(|n| *n == 0);
 	if idle {
 		return None;
 	}
@@ -292,6 +313,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 				s.evaluate_seam_calls[i]
 					+ s.evaluate_seam_unavailable[i]
 					+ s.evaluate_seam_applied[i]
+					+ s.evaluate_seam_avoided[i]
 					> 0
 			})
 			.map(|seam| {
@@ -302,6 +324,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 						"calls": s.evaluate_seam_calls[i],
 						"unavailable": s.evaluate_seam_unavailable[i],
 						"applied": s.evaluate_seam_applied[i],
+						"avoided": s.evaluate_seam_avoided[i],
 					}),
 				)
 			})
@@ -326,6 +349,11 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"condense_calls": s.condense_calls,
 		"authorize_calls": s.authorize_calls,
 		"evaluate_calls": s.evaluate_calls,
+		"evaluate_input_tokens": s.evaluate_input_tokens,
+		"evaluate_cost": s.evaluate_cost,
+		"evaluate_avoided_calls": s.evaluate_seam_avoided.iter().sum::<u64>(),
+		"evaluate_avoided_tokens": s.evaluate_avoided_tokens,
+		"evaluate_avoided_cost": s.evaluate_avoided_cost,
 		"evaluate": evaluate,
 		"condensed_results": s.condensed_results,
 		"condense_saved_tokens": s.condense_saved_tokens,

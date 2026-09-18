@@ -393,6 +393,11 @@ pub async fn condense_round(
 			crate::supervisor::evaluate::Seam::Condense,
 			condensed,
 		);
+		crate::supervisor::evaluate::avoided(
+			config,
+			crate::supervisor::evaluate::Seam::Condense,
+			estimate_tokens(&user) + estimate_tokens(SYSTEM_PROMPT),
+		);
 		return;
 	}
 
@@ -659,12 +664,19 @@ async fn evaluate_candidates(
 	Some(outcomes)
 }
 
+/// A chunk over the chunk budget is one oversized line (chunking is
+/// line-aligned); its text goes in as a head-and-tail sample so no single
+/// line can push a window over the state cap and take the whole round to the
+/// model condenser. The answer still keeps or drops the whole line.
 fn chunk_json(chunk: &Chunk) -> serde_json::Value {
 	serde_json::json!({
 		"index": chunk.index,
 		"first_line": chunk.first_line,
 		"last_line": chunk.last_line,
-		"text": chunk.text,
+		"text": truncate_preserving_edges(
+			&chunk.text,
+			crate::supervisor::evaluate::CONDENSE_CHUNK_SAMPLE_TOKENS
+		),
 	})
 }
 

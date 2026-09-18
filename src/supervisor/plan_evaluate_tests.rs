@@ -125,6 +125,7 @@ async fn a_request_the_evaluation_declines_makes_no_planner_call() {
 	in_plan_session("__plan_eval_declined", async {
 		let calls = planner_calls();
 		let applied = evaluate_counter(Seam::Plan, "applied");
+		let replaced = evaluate_counter(Seam::Plan, "avoided");
 		let mut session = session(PlanSignal::Request);
 		reconcile(&mut session, &config(true), NO_PLANNER).await;
 		assert!(session.pending_plan_signal.is_none(), "signal consumed");
@@ -133,6 +134,7 @@ async fn a_request_the_evaluation_declines_makes_no_planner_call() {
 		assert!(!crate::mcp::core::plan::has_active_plan());
 		assert_eq!(planner_calls() - calls, 0);
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 1);
+		assert_eq!(evaluate_counter(Seam::Plan, "avoided") - replaced, 1);
 
 		let requests = fake.requests();
 		assert_eq!(requests.len(), 1);
@@ -193,6 +195,7 @@ async fn a_phase_complete_below_the_threshold_is_held_with_the_documented_reason
 		start_plan();
 		let calls = planner_calls();
 		let applied = evaluate_counter(Seam::Plan, "applied");
+		let replaced = evaluate_counter(Seam::Plan, "avoided");
 		let mut session = session(PlanSignal::PhaseComplete);
 		session.session.messages.push(msg("assistant", "edited src/cli.rs"));
 		reconcile(&mut session, &config(true), NO_PLANNER).await;
@@ -201,6 +204,7 @@ async fn a_phase_complete_below_the_threshold_is_held_with_the_documented_reason
 		assert!(session.pending_plan_signal.is_none());
 		assert_eq!(planner_calls() - calls, 0);
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 1);
+		assert_eq!(evaluate_counter(Seam::Plan, "avoided") - replaced, 1);
 		let expected = format!(
 			"<runtime-plan-feedback>Current phase remains open: runtime evidence does not yet show: {DONE_WHEN}</runtime-plan-feedback>"
 		);

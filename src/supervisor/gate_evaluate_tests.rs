@@ -106,6 +106,7 @@ async fn findings_at_the_threshold_are_refuted_and_the_rest_stand() {
 	let fake = install_fake_evaluation(vec![answers(&[0.91, 0.22])]).await;
 	let calls = gate_chat_calls();
 	let applied = evaluate_counter(Seam::Gate, "applied");
+	let replaced = evaluate_counter(Seam::Gate, "avoided");
 	let verdict = run(
 		&config(true),
 		ACTIONS,
@@ -116,6 +117,7 @@ async fn findings_at_the_threshold_are_refuted_and_the_rest_stand() {
 	assert_eq!(verdict, GateVerdict::Gaps(vec![README_FINDING.to_string()]));
 	assert_eq!(gate_chat_calls() - calls, 1, "the verifier call only");
 	assert_eq!(evaluate_counter(Seam::Gate, "applied") - applied, 1);
+	assert_eq!(evaluate_counter(Seam::Gate, "avoided") - replaced, 1);
 
 	let requests = fake.requests();
 	assert_eq!(requests.len(), 1);

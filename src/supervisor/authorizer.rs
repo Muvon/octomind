@@ -639,6 +639,12 @@ pub async fn check_batch(
 			bail!("no role or user evidence");
 		}
 		if prescreen_admits(config, &sources, &pending, calls, generated_guards).await {
+			crate::supervisor::evaluate::avoided(
+				config,
+				crate::supervisor::evaluate::Seam::Authorizer,
+				crate::session::estimate_tokens(&payload.to_string())
+					+ crate::session::estimate_tokens(SYSTEM_PROMPT),
+			);
 			return Ok(pending
 				.iter()
 				.map(|index| Decision::allow(*index))
@@ -780,7 +786,10 @@ async fn prescreen_admits(
 	if !evaluate::enabled(&config.supervisor, Seam::Authorizer) {
 		return false;
 	}
-	let ids: Vec<String> = pending.iter().map(|index| index.to_string()).collect();
+	let ids: Vec<(String, &str)> = pending
+		.iter()
+		.map(|index| (index.to_string(), calls[*index].tool_name.as_str()))
+		.collect();
 	let state = json!({
 		"sources": sources.iter().map(|s| json!({"id": s.id, "kind": s.kind, "text": s.text})).collect::<Vec<_>>(),
 		"calls": pending.iter().map(|index| json!({
@@ -792,7 +801,7 @@ async fn prescreen_admits(
 		&config.supervisor,
 		Seam::Authorizer,
 		state,
-		evaluate::authorizer_questions(&ids),
+		evaluate::authorizer_questions(ids.iter().map(|(id, tool)| (id.as_str(), *tool))),
 	)
 	.await
 	else {

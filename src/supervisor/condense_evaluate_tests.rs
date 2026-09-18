@@ -25,7 +25,7 @@ use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
 	spawn_stub, FakeEvaluationStep,
 };
-use crate::supervisor::evaluate::{Seam, CONDENSE_CHUNK_TOKENS};
+use crate::supervisor::evaluate::{Seam, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS};
 
 fn config(condense: bool) -> Config {
 	let mut config = fake_provider_config();
@@ -141,6 +141,37 @@ fn an_oversized_line_is_a_chunk_of_its_own() {
 	assert_eq!(chunks[1].text, long);
 	assert_eq!((chunks[2].first_line, chunks[2].last_line), (3, 3));
 	assert!(chunk_lines("").is_empty());
+}
+
+#[tokio::test]
+async fn an_oversized_line_is_sampled_so_the_round_stays_under_the_state_cap() {
+	let fake = install_fake_evaluation(vec![chunk_answers(
+		3,
+		|slot| {
+			if slot == 1 {
+				0.9
+			} else {
+				0.1
+			}
+		},
+	)])
+	.await;
+	let long = "word ".repeat(40_000);
+	let results = vec![ok("t1", &format!("short\n{long}\nshort again"))];
+	let outcomes = score(&config(true), &results, "condense-eval-oversized")
+		.await
+		.expect("one window under the state cap");
+	assert_eq!(outcomes.len(), 1);
+	let request = &fake.requests()[0];
+	let chunks = request.state["chunks"].as_array().expect("chunks");
+	assert_eq!(chunks.len(), 3);
+	assert_eq!(chunks[0]["text"], "short");
+	let sample = chunks[1]["text"].as_str().expect("sampled text");
+	assert!(estimate_tokens(sample) <= CONDENSE_CHUNK_SAMPLE_TOKENS);
+	assert!(sample.starts_with("word word"));
+	assert!(sample.contains("middle omitted"));
+	assert_eq!(chunks[1]["first_line"], 2);
+	assert_eq!(chunks[1]["last_line"], 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +415,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	.await;
 	let calls_before = evaluate_counter(Seam::Condense, "calls");
 	let applied_before = evaluate_counter(Seam::Condense, "applied");
+	let replaced_before = evaluate_counter(Seam::Condense, "avoided");
 	let config = config(true);
 	let mut results = round_results();
 	with_spill_reader(
@@ -397,6 +429,11 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	assert_eq!(
 		evaluate_counter(Seam::Condense, "applied") - applied_before,
 		2
+	);
+	assert_eq!(
+		evaluate_counter(Seam::Condense, "avoided") - replaced_before,
+		1,
+		"one model condenser call stood in for"
 	);
 	let first = results[0].extract_content();
 	assert!(first.contains("payload line number 1 with"));

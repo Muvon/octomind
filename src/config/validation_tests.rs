@@ -172,7 +172,15 @@ fn compression_model_errors_surface_through_full_validate() {
 
 #[test]
 fn evaluate_model_must_be_a_supported_provider_model_pair() {
-	for bad in ["jev-latest", "openai:gpt", "typesafe:", ":jev", ""] {
+	for bad in [
+		"jev-latest",
+		"openai:gpt",
+		"typesafe:",
+		":jev",
+		"",
+		"cloudflare:@cf/meta/llama",
+		"typesafe:gpt-5",
+	] {
 		let mut config = template_config();
 		config.supervisor.evaluate.model = bad.to_string();
 		let error = config.validate().unwrap_err().to_string();

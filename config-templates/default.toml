@@ -698,7 +698,8 @@ enabled = false
 # default. One attempt per call, 5 s timeout, no retries; any failure keeps the
 # pre-change behavior for that turn. Thresholds are fixed constants. Keys come
 # from the environment: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID for
-# "cloudflare:typesafe/jev", TYPESAFE_API_KEY for "typesafe:jev-latest".
+# "cloudflare:typesafe/jev", TYPESAFE_API_KEY for "typesafe:jev-latest",
+# OCTOHUB_API_KEY (+ OCTOHUB_API_URL) for "octohub:auto".
 [supervisor.evaluate]
 model = "cloudflare:typesafe/jev"
 # Drop recalled scoped lessons the model judges unrelated to the request.

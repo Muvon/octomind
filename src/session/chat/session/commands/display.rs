@@ -951,24 +951,29 @@ pub fn display_info(output: &CommandOutput) {
 					totals.push(replaced);
 				}
 				block_row("evaluate", &totals.join(&format!(" {} ", dot)), kw_sv);
-				let parts: Vec<String> = seams
-					.iter()
-					.map(|(seam, counters)| {
-						let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-						let mut part = format!(
-							"{} {} calls / {} applied / {} unavailable",
-							seam,
-							n("calls"),
-							n("applied"),
-							n("unavailable")
-						);
-						if n("avoided") > 0 {
-							part.push_str(&format!(" / {} replaced", n("avoided")));
-						}
-						part
-					})
-					.collect();
-				block_row("seams", &parts.join(&format!(" {} ", dot)), kw_sv);
+				// One row per seam keeps the line readable. The first seam carries the
+				// `seams` label; the rest align under the value column, and seam names
+				// are padded to the widest so the counters line up.
+				let seam_kw = seams.keys().map(|s| s.chars().count()).max().unwrap_or(0);
+				let cont_pad = " ".repeat(kw_sv + 2);
+				for (i, (seam, counters)) in seams.iter().enumerate() {
+					let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+					let mut line = format!(
+						"{:seam_kw$}  {} calls / {} applied / {} unavailable",
+						seam,
+						n("calls"),
+						n("applied"),
+						n("unavailable"),
+					);
+					if n("avoided") > 0 {
+						line.push_str(&format!(" / {} replaced", n("avoided")));
+					}
+					if i == 0 {
+						block_row("seams", &line, kw_sv);
+					} else {
+						block_row_text(&format!("{cont_pad}{line}"));
+					}
+				}
 			}
 			if calls > 0 {
 				// Break the opaque total down by mechanic so the flow is legible.

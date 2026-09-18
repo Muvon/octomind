@@ -572,7 +572,15 @@ fn test_render_info_full_and_minimal() {
 			"input_tokens": 30_000, "output_tokens": 2_000,
 			"api_time_ms": 25_000, "tokens_per_second": 80.0, "cost": 0.12,
 			"gate_runs": 4, "gate_pass": 3, "gate_fail": 1,
-			"steers": 1, "steer_signals": {"loop": 1}
+			"steers": 1, "steer_signals": {"loop": 1},
+			"evaluate_calls": 30, "evaluate_input_tokens": 146_000, "evaluate_cost": 0.006,
+			"evaluate_avoided_calls": 12, "evaluate_avoided_tokens": 163_000,
+			"evaluate_avoided_cost": 0.049,
+			"evaluate": {
+				"recall": {"calls": 2, "applied": 32, "unavailable": 0},
+				"authorizer": {"calls": 28, "applied": 10, "unavailable": 0, "avoided": 10},
+				"compression": {"calls": 1, "applied": 0, "unavailable": 0}
+			}
 		})),
 		learning_stats: json!({
 			"packs": 3, "items": 9, "tokens": 1400,

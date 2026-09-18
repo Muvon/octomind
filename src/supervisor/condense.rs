@@ -608,26 +608,21 @@ async fn evaluate_candidates(
 			"chunks": [],
 		});
 		let header_tokens = estimate_tokens(&header.to_string());
-		let items: Vec<serde_json::Value> = chunks
-			.iter()
-			.map(|chunk| {
-				serde_json::json!({
-					"index": chunk.index,
-					"first_line": chunk.first_line,
-					"last_line": chunk.last_line,
-					"text": chunk.text,
-				})
-			})
-			.collect();
-		let windows = evaluate::windows(items, header_tokens, |item| {
-			estimate_tokens(&item.to_string())
+		let windows = evaluate::windows(chunks.iter().collect(), header_tokens, |chunk| {
+			estimate_tokens(&chunk_json(chunk).to_string())
 		});
 		let window_sizes: Vec<usize> = windows.iter().map(Vec::len).collect();
 		for window in windows {
 			let mut state = header.clone();
-			let count = window.len();
-			state["chunks"] = serde_json::Value::Array(window);
-			requests.push((state, evaluate::condense_questions(count)));
+			state["chunks"] = window.iter().map(|chunk| chunk_json(chunk)).collect();
+			requests.push((
+				state,
+				evaluate::condense_questions(
+					window
+						.iter()
+						.map(|chunk| (chunk.index, chunk.first_line, chunk.last_line)),
+				),
+			));
 		}
 		plans.push((candidate.result_index, content, chunks, window_sizes));
 	}
@@ -662,6 +657,15 @@ async fn evaluate_candidates(
 		));
 	}
 	Some(outcomes)
+}
+
+fn chunk_json(chunk: &Chunk) -> serde_json::Value {
+	serde_json::json!({
+		"index": chunk.index,
+		"first_line": chunk.first_line,
+		"last_line": chunk.last_line,
+		"text": chunk.text,
+	})
 }
 
 /// Kept chunks plus one neighbour on each side (chunk boundaries split stack

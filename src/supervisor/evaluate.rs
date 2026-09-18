@@ -149,7 +149,7 @@ pub const SKILL_TRIGGER: &str = "evaluate";
 pub const SKILL_QUESTION_ID: &str = "skill";
 
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes only when applying the lesson would change how the request is carried out; no when it concerns a different tool, language, file, or task.";
-const CONDENSE_QUESTION: &str = "Does the agent need this chunk of the tool output to advance the current task? Yes for error messages and stack traces, the data the tool call's arguments were querying for, explicit negative results, counts, totals and exit codes, and the paths, line numbers or signatures the task points at; no for boilerplate, progress noise, decorative separators, unrelated matches, and stretches the task never touches.";
+const CONDENSE_QUESTION: &str = "Must the agent read this chunk to finish the current task? Yes only when the chunk holds an error message or stack trace, the specific data the task or the tool arguments ask for, an explicit negative result, a count, total or exit code, or a path, line number or signature the agent must act on. No when the chunk is more of a listing that other chunks already answer, boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.";
 const COMPRESSION_QUESTION: &str = "Does the work that continues after this fold still need the content of this tool interaction? Yes when it holds an unresolved error, a user-facing correction, or facts the pinned task, constraints or plan still depend on; no when it is a completed step whose outcome is already established or a lookup the task has moved past.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
@@ -218,13 +218,21 @@ pub fn condense_question_id(chunk: usize) -> String {
 	format!("k{chunk}")
 }
 
-/// One Noul per chunk of one window, keyed by the chunk's slot in that window.
-pub fn condense_questions(count: usize) -> BTreeMap<String, Question> {
-	(0..count)
-		.map(|slot| {
+/// One Noul per chunk of one window, keyed by the chunk's slot in that
+/// window. Each question names its chunk by index and line range so the
+/// answer is tied to that chunk's text, not to an opaque id.
+pub fn condense_questions(
+	chunks: impl IntoIterator<Item = (usize, usize, usize)>,
+) -> BTreeMap<String, Question> {
+	chunks
+		.into_iter()
+		.enumerate()
+		.map(|(slot, (index, first_line, last_line))| {
 			(
 				condense_question_id(slot),
-				Question::noul(CONDENSE_QUESTION),
+				Question::noul(format!(
+					"Chunk {index} (lines {first_line}-{last_line}): {CONDENSE_QUESTION}"
+				)),
 			)
 		})
 		.collect()
@@ -234,13 +242,17 @@ pub fn compression_question_id(unit: usize) -> String {
 	format!("u{unit}")
 }
 
-/// One Noul per scoring unit of one window, keyed by the unit's slot.
-pub fn compression_questions(count: usize) -> BTreeMap<String, Question> {
-	(0..count)
-		.map(|slot| {
+/// One Noul per scoring unit of one window, keyed by the unit's slot. Each
+/// question names its packet id so the answer is tied to that unit.
+pub fn compression_questions<'a>(
+	ids: impl IntoIterator<Item = &'a str>,
+) -> BTreeMap<String, Question> {
+	ids.into_iter()
+		.enumerate()
+		.map(|(slot, id)| {
 			(
 				compression_question_id(slot),
-				Question::noul(COMPRESSION_QUESTION),
+				Question::noul(format!("Packet {id}: {COMPRESSION_QUESTION}")),
 			)
 		})
 		.collect()

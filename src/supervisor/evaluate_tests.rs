@@ -370,8 +370,11 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 		&config,
 		seam,
 		vec![
-			(serde_json::json!({"w": 0}), condense_questions(1)),
-			(serde_json::json!({"w": 1}), condense_questions(1)),
+			(serde_json::json!({"w": 0}), condense_questions([(0, 1, 9)])),
+			(
+				serde_json::json!({"w": 1}),
+				condense_questions([(1, 10, 20)]),
+			),
 		],
 	)
 	.await
@@ -387,8 +390,14 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 		&config,
 		seam,
 		vec![
-			(serde_json::json!({"w": 2}), condense_questions(1)),
-			(serde_json::json!({"w": 3}), condense_questions(1)),
+			(
+				serde_json::json!({"w": 2}),
+				condense_questions([(2, 21, 30)]),
+			),
+			(
+				serde_json::json!({"w": 3}),
+				condense_questions([(3, 31, 40)]),
+			),
 		],
 	)
 	.await;
@@ -404,7 +413,7 @@ async fn run_windows_answers_every_window_in_order_or_falls_back_once() {
 	assert!(run_windows(
 		&config,
 		seam,
-		vec![(serde_json::json!({}), condense_questions(1))]
+		vec![(serde_json::json!({}), condense_questions([(0, 1, 1)]))]
 	)
 	.await
 	.is_none());
@@ -432,7 +441,7 @@ async fn run_windows_issues_every_window_concurrently() {
 		&config,
 		Seam::Compression,
 		(0..3)
-			.map(|w| (serde_json::json!({"w": w}), compression_questions(1)))
+			.map(|w| (serde_json::json!({"w": w}), compression_questions(["b:x"])))
 			.collect(),
 	)
 	.await;
@@ -446,22 +455,22 @@ async fn run_windows_issues_every_window_concurrently() {
 
 #[test]
 fn condense_and_compression_questions_are_nouls_keyed_by_slot() {
-	let condense = condense_questions(3);
+	let instructions = |question: &Question| match question {
+		Question::Noul { instructions, .. } => instructions.as_str().unwrap_or("").to_string(),
+		_ => panic!("every seam question is a Noul"),
+	};
+	let condense = condense_questions([(4, 1, 10), (5, 11, 20), (6, 21, 30)]);
 	assert_eq!(
 		condense.keys().cloned().collect::<Vec<_>>(),
 		["k0", "k1", "k2"]
 	);
-	assert!(condense
-		.values()
-		.all(|question| matches!(question, Question::Noul { .. })));
-	let compression = compression_questions(2);
+	assert!(instructions(&condense["k1"]).starts_with("Chunk 5 (lines 11-20): "));
+	let compression = compression_questions(["b:one", "b:two"]);
 	assert_eq!(
 		compression.keys().cloned().collect::<Vec<_>>(),
 		["u0", "u1"]
 	);
-	assert!(compression
-		.values()
-		.all(|question| matches!(question, Question::Noul { .. })));
+	assert!(instructions(&compression["u1"]).starts_with("Packet b:two: "));
 	assert_eq!(Seam::ALL.len(), SEAM_COUNT);
 	for (i, seam) in Seam::ALL.iter().enumerate() {
 		assert_eq!(seam.index(), i);

@@ -44,9 +44,11 @@ use tokio::sync::Mutex as TokioMutex;
 /// (6-layer RoBERTa, 384-dim, CLS-pooled) fine-tuned on the octomind-tap
 /// capability triggers with paraphrase + hard-negative augmentation and
 /// blended back into the base as a WiSE-FT soup (see `octomind-tap/model/`).
-/// Picked by the 2026-09 base bake-off on the raw trigger corpus: gate
-/// accuracy 0.846 zero-shot vs 0.690 for the previous BGE-small fine-tune, at half
-/// the layers (int8 graph ≈ 1.7 ms per intent on CPU).
+/// Picked by the 2026-09 base bake-off on the raw trigger corpus (each model
+/// at its own best operating point): gate accuracy 0.846 zero-shot vs 0.690
+/// for the previous BGE-small fine-tune, at half the layers. At the shipped
+/// 0.65 / 0.06 point the published int8 graph scores 0.848 vs 0.778 for the
+/// old fine-tune, at ≈ 2 ms per intent on CPU.
 ///
 /// The model is prefix-free: embed both sides bare (`InputType::None`).
 /// Its native cap is 512 tokens; we keep the 256-token chunking below.

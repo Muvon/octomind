@@ -45,19 +45,21 @@ impl Config {
 	}
 
 	/// `[supervisor.evaluate].model` must be `provider:model` on a provider that
-	/// serves an evaluation model. Checked even when the supervisor is off: a
-	/// typo here is a typo regardless of which switches are on.
+	/// serves an evaluation model — octolib's evaluation factory is the list.
+	/// Checked even when the supervisor is off: a typo here is a typo regardless
+	/// of which switches are on.
 	fn validate_evaluate_model(&self) -> Result<()> {
-		const PROVIDERS: [&str; 2] = ["typesafe", "cloudflare"];
+		use octolib::evaluation::EvaluationProviderFactory;
 		let model = &self.supervisor.evaluate.model;
-		let (provider, _) = octolib::evaluation::EvaluationProviderFactory::parse_model(model)
+		let (provider, _) = EvaluationProviderFactory::parse_model(model)
 			.map_err(|error| anyhow!("supervisor.evaluate.model: {error}"))?;
-		if !PROVIDERS.contains(&provider.as_str()) {
+		let providers = EvaluationProviderFactory::supported_providers();
+		if !providers.contains(&provider.as_str()) {
 			return Err(anyhow!(
 				"supervisor.evaluate.model: unsupported provider '{}' in '{}' (expected one of {})",
 				provider,
 				model,
-				PROVIDERS.join(", ")
+				providers.join(", ")
 			));
 		}
 		Ok(())

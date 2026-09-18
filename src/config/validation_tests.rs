@@ -181,7 +181,11 @@ fn evaluate_model_must_be_a_supported_provider_model_pair() {
 			"{bad:?}: {error}"
 		);
 	}
-	for good in ["typesafe:jev-latest", "cloudflare:typesafe/jev"] {
+	for good in [
+		"typesafe:jev-latest",
+		"cloudflare:typesafe/jev",
+		"octohub:auto",
+	] {
 		let mut config = template_config();
 		config.supervisor.evaluate.model = good.to_string();
 		config.validate().expect(good);

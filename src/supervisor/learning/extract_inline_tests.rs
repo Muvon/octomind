@@ -1741,6 +1741,9 @@ async fn verify_lessons_rejects_everything_on_an_unusable_answer() {
 #[tokio::test]
 async fn detached_extraction_reports_zero_without_learning_enabled() {
 	use crate::supervisor::learning::backend::FileBackend;
+	// OCTOMIND_DATA_DIR is process-global: every test that points it at a
+	// temp dir holds the shared lock, or it flips the dir under another test.
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let mut config = learning_config();
 	config.supervisor.learning.enabled = false;

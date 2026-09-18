@@ -138,6 +138,16 @@ pub async fn retrieve_and_format(
 		Err(e) => crate::log_debug!("Learning: scoped retrieve failed: {}", e),
 	}
 
+	// Evaluation gate between ranking and admission: drop the scoped candidates
+	// the evaluation model judges unrelated to this request. Global rules are
+	// never sent — they apply to every task by definition.
+	if crate::supervisor::evaluate::enabled(
+		&config.supervisor,
+		crate::supervisor::evaluate::Seam::Recall,
+	) {
+		candidates = filter_scoped_by_relevance(&config.supervisor, user_input, candidates).await;
+	}
+
 	// Dedup global/scoped overlap, then greedily admit ranked candidates under a
 	// real token budget. Re-rendering the tiny prospective pack gives an exact
 	// bound including XML framing and escaped content; no count heuristic can do
@@ -189,6 +199,71 @@ pub async fn retrieve_and_format(
 		})
 		.collect::<Vec<_>>();
 	(out, refs)
+}
+
+/// One Noul per scoped candidate: does it bear on the request? Candidates
+/// below `RECALL_KEEP_AT` are removed; the rank order of the rest is kept.
+/// Any unavailable outcome returns the candidates untouched.
+async fn filter_scoped_by_relevance(
+	config: &crate::supervisor::SupervisorConfig,
+	user_input: &str,
+	candidates: Vec<(crate::supervisor::learning::Lesson, bool)>,
+) -> Vec<(crate::supervisor::learning::Lesson, bool)> {
+	use crate::supervisor::evaluate::{self, Seam};
+
+	let scoped: Vec<usize> = candidates
+		.iter()
+		.enumerate()
+		.filter(|(_, (_, global))| !global)
+		.map(|(position, _)| position)
+		.collect();
+	if scoped.is_empty() {
+		return candidates;
+	}
+	let state = serde_json::json!({
+		"request": user_input,
+		"candidates": scoped.iter().enumerate().map(|(index, position)| {
+			let lesson = &candidates[*position].0;
+			serde_json::json!({
+				"index": index,
+				"title": lesson.title,
+				"content": crate::session::truncate_to_tokens(&lesson.content, evaluate::RECALL_CANDIDATE_TOKENS),
+			})
+		}).collect::<Vec<_>>(),
+	});
+	let Some(answers) = evaluate::run(
+		config,
+		Seam::Recall,
+		state,
+		evaluate::recall_questions(scoped.len()),
+	)
+	.await
+	else {
+		return candidates;
+	};
+	let dropped: std::collections::HashSet<usize> = scoped
+		.iter()
+		.enumerate()
+		.filter(|(index, _)| {
+			matches!(
+				answers.get(&evaluate::recall_question_id(*index)),
+				Some(octolib::evaluation::Answer::Noul { noul }) if *noul < evaluate::RECALL_KEEP_AT
+			)
+		})
+		.map(|(_, position)| *position)
+		.collect();
+	crate::log_debug!(
+		"evaluate recall: {} of {} scoped candidates dropped",
+		dropped.len(),
+		scoped.len()
+	);
+	crate::supervisor::stats::evaluate_applied(Seam::Recall, dropped.len() as u64);
+	candidates
+		.into_iter()
+		.enumerate()
+		.filter(|(position, _)| !dropped.contains(position))
+		.map(|(_, candidate)| candidate)
+		.collect()
 }
 
 fn render_item(

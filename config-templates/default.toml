@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 13
+version = 14
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -691,6 +691,23 @@ enabled = true
 # Permanent learned guards remain controlled by learning.evolution.enabled.
 [supervisor.authorizer]
 enabled = false
+
+# Evaluation gates: a calibrated evaluation model (TypeSafe Jev) answers one
+# bounded question at each of three seams — whether a recalled lesson bears on
+# the request, which skill fits when no activation rule matched, and whether a
+# tool batch needs the supervisor model at all. Each seam is one switch, off by
+# default. One attempt per call, 5 s timeout, no retries; any failure keeps the
+# pre-change behavior for that turn. Thresholds are fixed constants. Keys come
+# from the environment: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID for
+# "cloudflare:typesafe/jev", TYPESAFE_API_KEY for "typesafe:jev-latest".
+[supervisor.evaluate]
+model = "cloudflare:typesafe/jev"
+# Drop recalled scoped lessons the model judges unrelated to the request.
+recall = false
+# Choose a skill from the domain pool when rules abstained (rule-less skills included).
+skills = false
+# Skip the two-judge supervisor authorization when nothing in the batch is flagged.
+authorizer = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

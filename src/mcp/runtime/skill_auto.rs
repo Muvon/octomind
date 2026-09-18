@@ -14,9 +14,10 @@
 
 //! Skill auto-activation engine.
 //!
-//! Scans the tap skill pool for skills with declarative rules, filtered by
-//! the current agent's domain. Evaluates rules on user input to determine
-//! which skills should be active.
+//! Scans the tap skill pool for skills in the current agent's domain.
+//! Evaluates declarative rules on user input to determine which skills
+//! should be active; when every rule abstains, the supervisor's evaluation
+//! gate may choose one skill from the whole pool (rule-less skills included).
 //!
 //! When a skill auto-activates, its required capabilities are auto-loaded
 //! (MCP servers enabled) and its content is injected via the inbox.
@@ -29,10 +30,12 @@ use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-/// Cached skill pool entry — a skill with declarative rules.
+/// Cached skill pool entry. `rules` may be empty: such a skill is invisible to
+/// the rule engine and reachable only through the evaluation choice.
 #[derive(Debug, Clone)]
 struct PoolEntry {
 	name: String,
+	description: String,
 	rules: Vec<Vec<super::skill::ActivateCheck>>,
 	evolution: Option<crate::supervisor::learning::evolution::SkillBinding>,
 }
@@ -208,11 +211,6 @@ pub fn init_pool(domain: &str) {
 				None => continue,
 			};
 
-			// Must have rules
-			if meta.rules.is_empty() {
-				continue;
-			}
-
 			// Must have domains that include the current domain
 			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
 				continue;
@@ -221,6 +219,7 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
+					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -253,10 +252,6 @@ pub fn init_pool(domain: &str) {
 				None => continue,
 			};
 
-			if meta.rules.is_empty() {
-				continue;
-			}
-
 			if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
 				continue;
 			}
@@ -264,6 +259,7 @@ pub fn init_pool(domain: &str) {
 			if seen_names.insert(meta.name.clone()) {
 				entries.push(PoolEntry {
 					name: meta.name,
+					description: meta.description,
 					rules: meta.rules,
 					evolution: None,
 				});
@@ -280,7 +276,7 @@ pub fn init_pool(domain: &str) {
 		let Some(meta) = super::skill::parse_skill_meta(&content) else {
 			continue;
 		};
-		if meta.name != expected_name || meta.rules.is_empty() {
+		if meta.name != expected_name {
 			continue;
 		}
 		if meta.domains.is_empty() || !meta.domains.iter().any(|d| d == domain || d == "*") {
@@ -289,6 +285,7 @@ pub fn init_pool(domain: &str) {
 		if seen_names.insert(meta.name.clone()) {
 			entries.push(PoolEntry {
 				name: meta.name,
+				description: meta.description,
 				rules: meta.rules,
 				evolution: Some(binding),
 			});
@@ -485,7 +482,9 @@ pub async fn run_activation(
 	)> = Vec::new();
 
 	for entry in &entries {
-		if active_skills.contains(&entry.name) {
+		// Rule-less skills never meet the rule engine; only the evaluation
+		// choice below can reach them.
+		if active_skills.contains(&entry.name) || entry.rules.is_empty() {
 			continue;
 		}
 
@@ -560,10 +559,15 @@ pub async fn run_activation(
 		auto_activate_skill(name, trigger, session).await;
 	}
 
+	// The evaluation choice runs only when the rules abstained: no deterministic
+	// group matched and no semantic candidate cleared the margin.
+	let mut rules_decided = !deterministic.is_empty();
+
 	semantic_candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 	if let Some((top1, name, trigger, evolution)) = semantic_candidates.first().cloned() {
 		let top2 = semantic_candidates.get(1).map(|x| x.0).unwrap_or(0.0);
 		if top1 - top2 >= super::skill::SEMANTIC_MARGIN {
+			rules_decided = true;
 			crate::log_debug!(
 				"skill_auto: activated '{}' via [{}] (semantic top1={:.3}, top2={:.3}, margin ok)",
 				name,
@@ -593,6 +597,92 @@ pub async fn run_activation(
 			);
 		}
 	}
+
+	if !rules_decided {
+		run_evaluation_choice(content, &entries, &active_skills, session).await;
+	}
+}
+
+/// Evaluation gate for the skill seam: one Choice over every inactive pool
+/// entry plus `none`. Activates the chosen skill only above the confidence
+/// floor; a shadow evolution binding records a match instead, as the rule
+/// engine does. Any unavailable outcome leaves the turn without a skill.
+async fn run_evaluation_choice(
+	content: &str,
+	entries: &[PoolEntry],
+	active_skills: &[String],
+	session: &mut crate::session::chat::session::ChatSession,
+) {
+	use crate::supervisor::evaluate::{self, Seam};
+
+	let Some(config) = crate::session::context::current_session_id()
+		.and_then(|sid| crate::session::context::get_session_config(&sid))
+	else {
+		return;
+	};
+	if !evaluate::enabled(&config.supervisor, Seam::Skills) {
+		return;
+	}
+	let inactive: Vec<&PoolEntry> = entries
+		.iter()
+		.filter(|entry| !active_skills.contains(&entry.name))
+		.collect();
+	if inactive.is_empty() {
+		return;
+	}
+	if inactive.len() > evaluate::MAX_SKILL_ROSTER {
+		evaluate::unavailable(Seam::Skills, "roster too large");
+		return;
+	}
+	let question = evaluate::skill_question(
+		inactive
+			.iter()
+			.map(|entry| (entry.name.as_str(), entry.description.as_str())),
+	);
+	let questions =
+		std::collections::BTreeMap::from([(evaluate::SKILL_QUESTION_ID.to_string(), question)]);
+	let Some(answers) = evaluate::run(
+		&config.supervisor,
+		Seam::Skills,
+		serde_json::Value::String(content.to_string()),
+		questions,
+	)
+	.await
+	else {
+		return;
+	};
+	let Some(octolib::evaluation::Answer::Choice {
+		choice, confidence, ..
+	}) = answers.get(evaluate::SKILL_QUESTION_ID)
+	else {
+		return;
+	};
+	if choice == evaluate::SKILL_NONE || *confidence < evaluate::SKILL_CONFIDENCE_FLOOR {
+		crate::log_debug!(
+			"skill_auto: evaluate chose '{}' at confidence {:.2} — not activating",
+			choice,
+			confidence
+		);
+		return;
+	}
+	let Some(entry) = inactive.iter().find(|entry| &entry.name == choice) else {
+		evaluate::unavailable(Seam::Skills, "invalid response");
+		return;
+	};
+	if let Some(binding) = &entry.evolution {
+		if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
+			crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
+			return;
+		}
+	}
+	crate::log_debug!(
+		"skill_auto: activated '{}' via [{}] (confidence {:.2})",
+		entry.name,
+		evaluate::SKILL_TRIGGER,
+		confidence
+	);
+	auto_activate_skill(&entry.name, evaluate::SKILL_TRIGGER, session).await;
+	crate::supervisor::stats::evaluate_applied(Seam::Skills, 1);
 }
 
 /// Pre-compute cosine similarity for every `semantic(phrase)` rule across

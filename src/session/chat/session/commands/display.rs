@@ -769,6 +769,7 @@ pub fn display_info(output: &CommandOutput) {
 			let distill_calls = get_u64("distill_calls");
 			let condense_calls = get_u64("condense_calls");
 			let authorize_calls = get_u64("authorize_calls");
+			let evaluate_calls = get_u64("evaluate_calls");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
 			let memory_consolidations = get_u64("memory_consolidations");
@@ -793,6 +794,7 @@ pub fn display_info(output: &CommandOutput) {
 				"activity",
 				"learning",
 				"gate",
+				"evaluate",
 				"calls",
 				"tokens",
 				"throughput",
@@ -922,6 +924,24 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				block_row("gate", &g.join(" · "), kw_sv);
 			}
+			if let Some(seams) = sstats.get("evaluate").and_then(|v| v.as_object()) {
+				let parts: Vec<String> = seams
+					.iter()
+					.map(|(seam, counters)| {
+						let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+						format!(
+							"{} {} calls / {} applied / {} unavailable",
+							seam,
+							n("calls"),
+							n("applied"),
+							n("unavailable")
+						)
+					})
+					.collect();
+				if !parts.is_empty() {
+					block_row("evaluate", &parts.join(&format!(" {} ", dot)), kw_sv);
+				}
+			}
 			if calls > 0 {
 				// Break the opaque total down by mechanic so the flow is legible.
 				let mut parts = Vec::new();
@@ -942,6 +962,9 @@ pub fn display_info(output: &CommandOutput) {
 				}
 				if authorize_calls > 0 {
 					parts.push(format!("{} authorize", authorize_calls));
+				}
+				if evaluate_calls > 0 {
+					parts.push(format!("{} evaluate", evaluate_calls));
 				}
 				let breakdown = if parts.is_empty() {
 					format_number(calls).bright_white().to_string()

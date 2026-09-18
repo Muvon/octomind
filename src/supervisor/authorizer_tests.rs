@@ -542,3 +542,141 @@ async fn false_cancellation_update_does_not_interrupt_a_judgment() {
 	clear_for_session(id);
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+// ---------------------------------------------------------------------------
+// Evaluation pre-screen (supervisor.evaluate.authorizer). The fake guard holds
+// ENV_LOCK itself, so these tests do not lock it again.
+// ---------------------------------------------------------------------------
+
+use crate::session::chat::test_support::{
+	evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep,
+};
+use crate::supervisor::evaluate::Seam;
+
+fn prescreen_config() -> Config {
+	let mut config = config();
+	config.supervisor.evaluate.authorizer = true;
+	config
+}
+
+#[tokio::test]
+async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
+		("0.prohibited", 0.1),
+		("0.destructive", 0.1),
+		("0.external", 0.1),
+		("1.prohibited", 0.1),
+		("1.destructive", 0.1),
+		("1.external", 0.1),
+	]))])
+	.await;
+	// No supervisor stub is listening: if the judge path ran it would be
+	// counted as unavailable, which is how this test proves it did not.
+	std::env::remove_var("OLLAMA_API_URL");
+	let config = prescreen_config();
+	let id = "authorizer-prescreen-admit";
+	let mut session = session(id);
+	capture(&mut session, &config);
+	let applied = evaluate_counter(Seam::Authorizer, "applied");
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let view = McpToolCall {
+		tool_name: "text_editor".into(),
+		tool_id: "t0".into(),
+		parameters: json!({"command":"view","path":"src/auth.rs"}),
+	};
+	let admissions = check_batch(id, &config, &[view, call()], &[vec![], vec![]], rx).await;
+	assert!(admissions.iter().all(|a| a.message.is_none()));
+	sync(&mut session);
+	assert_eq!(session.session.info.authorization.checked, 2);
+	assert_eq!(session.session.info.authorization.unavailable, 0);
+	assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied + 1);
+
+	let request = &fake.requests()[0];
+	assert_eq!(request.questions.len(), 6);
+	let state = &request.state;
+	let mut keys: Vec<&String> = state.as_object().unwrap().keys().collect();
+	keys.sort();
+	assert_eq!(keys, ["calls", "sources"]);
+	let text = state.to_string();
+	assert!(!text.contains("definitions"));
+	assert!(!text.contains("completed_actions"));
+	assert!(!text.contains("memories"));
+	assert_eq!(state["sources"][0]["kind"], "user");
+	assert_eq!(
+		state["sources"][0]["text"],
+		"Fix the bug. Do not run tests; I will test it."
+	);
+	assert_eq!(state["calls"][0]["tool"], "text_editor");
+	assert_eq!(state["calls"][1]["id"], "1");
+	assert_eq!(state["calls"][1]["arguments"]["command"], "cargo test");
+	clear_for_session(id);
+}
+
+#[tokio::test]
+async fn evaluate_prescreen_flag_hands_the_batch_to_the_supervisor_unchanged() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
+		("0.prohibited", 0.93),
+		("0.destructive", 0.1),
+		("0.external", 0.1),
+	]))])
+	.await;
+	let url = spawn_stub(vec![final_response(&verdict("allow", "").to_string())]).await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = prescreen_config();
+	let id = "authorizer-prescreen-flag";
+	let mut session = session(id);
+	capture(&mut session, &config);
+	let applied = evaluate_counter(Seam::Authorizer, "applied");
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let admissions = check_batch(id, &config, &[call()], &[vec![]], rx).await;
+	assert!(admissions[0].message.is_none());
+	sync(&mut session);
+	assert_eq!(session.session.info.authorization.checked, 1);
+	assert_eq!(
+		session.session.info.authorization.unavailable, 0,
+		"the supervisor judge answered through the stub"
+	);
+	assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied);
+	assert_eq!(fake.requests().len(), 1);
+	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
+#[tokio::test]
+async fn evaluate_prescreen_runs_after_the_denial_cache() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
+		("0.prohibited", 0.93),
+		("0.destructive", 0.1),
+		("0.external", 0.1),
+	]))])
+	.await;
+	let url = spawn_stub(vec![
+		final_response(&verdict("block", "Do not run tests").to_string()),
+		final_response(&confirmation(true).to_string()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let config = prescreen_config();
+	let id = "authorizer-prescreen-cache";
+	let mut session = session(id);
+	capture(&mut session, &config);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let first = check_batch(id, &config, &[call()], &[vec![]], rx.clone()).await;
+	assert!(first[0]
+		.message
+		.as_ref()
+		.unwrap()
+		.contains("Do not run tests"));
+	assert_eq!(fake.requests().len(), 1);
+	let second = check_batch(id, &config, &[call()], &[vec![]], rx).await;
+	assert_eq!(second[0].message, first[0].message);
+	assert_eq!(
+		fake.requests().len(),
+		1,
+		"a memoized denial never reaches the evaluation model"
+	);
+	sync(&mut session);
+	assert_eq!(session.session.info.authorization.cached, 1);
+	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
+}

@@ -53,6 +53,12 @@ enabled = true
 [supervisor.authorizer]    # user-intent check before tool execution
 enabled = false
 
+[supervisor.evaluate]      # calibrated evaluation gates, see below
+model = "cloudflare:typesafe/jev"
+recall = false
+skills = false
+authorizer = false
+
 [supervisor.plan]          # adaptive external plan manager
 enabled = true
 
@@ -127,6 +133,34 @@ without becoming learned rules. User cancellation still stops execution at the t
 Explicit native guards and sandbox protections retain their existing behavior. This is a model-based intent check, not
 a guarantee of zero false positives or protection against arbitrary code behavior. Configured pipes and hook scripts
 execute at their existing lifecycle points outside this tool-call check.
+
+## Evaluation gates
+
+`[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
+module) as a gate at three seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
+probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
+every seam off leaves behavior byte-identical to a release without this section.
+
+| Key | Meaning |
+|-----|---------|
+| `model` | `provider:model` string. Supported providers: `cloudflare` (`cloudflare:typesafe/jev`, AI Gateway unified billing) and `typesafe` (`typesafe:jev-latest`, direct). A malformed or unsupported value fails config loading naming `supervisor.evaluate.model`. There is no profile: Jev accepts no sampling parameters. |
+| `recall` | After scoped lessons are ranked and before pack admission, one Noul per scoped candidate asks whether it bears on the current request. Candidates below 0.5 are excluded; the rank order of the rest is kept. Global-tier rules are never sent and are admitted exactly as before. Zero scoped candidates make no call. |
+| `skills` | When auto-activation runs and every rule abstained (no deterministic match, no semantic candidate cleared the margin), one Choice lists every inactive skill in the domain pool (name and description) plus `none`. The chosen skill activates with trigger `evaluate` when it is not `none` and confidence is at least 0.8. Skills without rules join the pool for this choice only; they never meet the rule engine. A shadow evolution binding records a match instead of activating. |
+| `authorizer` | With `[supervisor.authorizer] enabled = true`, after the memoized-denial cache and before the two-judge supervisor path, three Nouls per pending call ask whether it is `prohibited` by user or role instructions, `destructive` to non-regenerable files or git history, or `external` to the working directory. When every answer is below 0.5 the batch is admitted without waking the supervisor model; otherwise the pre-change judgment and verification run unchanged. The pre-screen can only admit, never block. |
+
+Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for the
+`cloudflare` provider, `TYPESAFE_API_KEY` for `typesafe`. Nothing is stored in config.
+
+Every call is one attempt with a 5-second timeout and no retries, and the assembled state is capped at 24,000
+estimated tokens. Any failure — missing key, HTTP 401/402/403/429/5xx, timeout, transport error, an unparseable or
+incomplete answer set, a state or skill roster too large to send — keeps the pre-change behavior for that turn, writes
+one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. The state never
+contains tool results, assistant messages, or condensed-output notices. Thresholds and question text are constants in
+`src/supervisor/evaluate.rs`, not config keys.
+
+`/info` shows, per seam, `calls` (attempts), `unavailable` (fallbacks), and `applied` (recall: candidates excluded;
+skills: activations; authorizer: batches admitted without the supervisor). Usage lands under one `evaluate` call kind in
+the supervisor totals and in the session's external spend.
 
 ## The closed loop
 
@@ -370,6 +404,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Recite | Live goal, plan, constraints, or policy available | Context tokens | None (automatic) |
 | Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
 | Recall | First and subsequent genuine requests | First-query model prep, retrieval, pack tokens | `[supervisor.learning]` |
+| Evaluation gates (recall / skills / authorizer) | Ranked recall, rule abstention, pending tool batch | One bounded evaluation call per seam per turn | `[supervisor.evaluate]` |
 
 ## Source reference
 
@@ -380,6 +415,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Completion and plan state | [src/supervisor/gate.rs](../../src/supervisor/gate.rs), [src/session/chat/session/api_executor.rs](../../src/session/chat/session/api_executor.rs), [src/supervisor/plan.rs](../../src/supervisor/plan.rs) |
 | Condensation and recitation | [src/supervisor/condense.rs](../../src/supervisor/condense.rs), [src/supervisor/recite.rs](../../src/supervisor/recite.rs) |
 | Delegation and accounting | [src/supervisor/delegate.rs](../../src/supervisor/delegate.rs), [src/supervisor/stats.rs](../../src/supervisor/stats.rs), [src/session/external_spend.rs](../../src/session/external_spend.rs) |
+| Evaluation gates | [src/supervisor/evaluate.rs](../../src/supervisor/evaluate.rs), [src/supervisor/learning/inject.rs](../../src/supervisor/learning/inject.rs), [src/mcp/runtime/skill_auto.rs](../../src/mcp/runtime/skill_auto.rs), [src/supervisor/authorizer.rs](../../src/supervisor/authorizer.rs) |
 
 ## See also
 

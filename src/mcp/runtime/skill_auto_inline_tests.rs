@@ -187,6 +187,7 @@ fn skills_config_defaults_outside_session() {
 fn semantic_entry(name: &str, phrase: &str) -> PoolEntry {
 	PoolEntry {
 		name: name.to_string(),
+		description: String::new(),
 		rules: vec![vec![crate::mcp::runtime::skill::ActivateCheck::Semantic {
 			phrase: phrase.to_string(),
 			threshold: 0.45,
@@ -199,6 +200,7 @@ fn semantic_entry(name: &str, phrase: &str) -> PoolEntry {
 async fn semantic_scores_absent_when_no_semantic_checks() {
 	let entries = vec![PoolEntry {
 		name: "det-only".to_string(),
+		description: String::new(),
 		rules: vec![vec![crate::mcp::runtime::skill::ActivateCheck::File(
 			"Cargo.toml".to_string(),
 		)]],

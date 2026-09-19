@@ -40,7 +40,7 @@ pub struct EvaluateArgs {
 }
 
 /// Wire request minus the model, which comes from `-m` or config.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Input {
 	state: serde_json::Value,
 	questions: BTreeMap<String, Question>,

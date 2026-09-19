@@ -43,7 +43,7 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 
 **Session lifecycle (critical invariant).** Four entry points share one init contract; session-scoped state goes inside `init_session_services()` and ALL four must keep calling it (`rg init_session_services`): CLI + non-interactive (`main_loop.rs` `init_session_runtime()`), ACP `new_session` and ACP `initialize` (`src/acp/agent.rs`), WebSocket (`src/websocket/server.rs`) — always inside `with_session_id`. Never call `init_inbox_for_session` / `init_job_manager` / similar directly.
 
-**Processing pipeline.** User input → `/command` (`CommandResult` or `TreatAsUserInput`) → `run_activation` hook (main_loop only; skill auto-activation) → guardrails/pipe → workflows → layers → tool execution loop → `run_validators` hook (response.rs only) → spending check → output. `/done` is intercepted by the CLI main loop and the ACP prompt path, but the ACP `octomind/command` ext-method and WebSocket messages reach `process_command()` directly — its `DONE_COMMAND` arm is real; keep it working.
+**Processing pipeline.** User input → `/command` (`CommandResult` or `TreatAsUserInput`) → `run_activation` hook (main_loop only; skill auto-activation) → guardrails/pipe → workflows → layers → tool execution loop → `run_validators` hook (response.rs only) → spending check → output. `/done` is intercepted by the CLI main loop and the ACP prompt path, but the ACP `octomind/command` ext-method and WebSocket messages reach `process_command()` directly — its `DONE_COMMAND` arm is live code, not a leftover; keep it working.
 
 ## Conventions
 - Apache 2.0 header (verbatim, below) on every new `.rs` file
@@ -92,20 +92,20 @@ Open-source AI coding agent and agent runtime: one Rust binary, any model (multi
 
 ## Platforms
 One codebase for Linux, macOS and Windows — CI runs the full test suite on all three (stable on each OS + beta/nightly on Ubuntu; nightly is allowed to fail). Platform-sensitive facts:
-- Everywhere: `protoc` required to build; `rg` + `ast-grep` on PATH for tests (they are spawned)
+- Everywhere: `protoc` required to build; `rg` + `ast-grep` on PATH for tests (tests spawn them as subprocesses)
 - ONNX Runtime: Linux tests need the static lib via `ORT_LIB_LOCATION` (see the download step in `.github/workflows/ci.yml`); Windows/macOS auto-download prebuilts when it is unset
-- Windows MSVC quirks: `RUSTFLAGS=-C target-feature=-crt-static` plus `CXXFLAGS_x86_64_pc_windows_msvc=-MD` — mixed static/dynamic CRT gives LNK2038 / unresolved `__imp_*` link errors
-- First embedding test downloads the HF model `muvon/octomind-embed` (~130 MB) into the octolib cache: `~/.cache/octolib/huggingface` (Linux), `~/Library/Caches/octolib/huggingface` (macOS), `~/AppData/Local/octolib/huggingface` (Windows)
+- Windows MSVC quirks: `RUSTFLAGS=-C target-feature=-crt-static` plus `CXXFLAGS_x86_64_pc_windows_msvc=-MD` — a mixed static/dynamic CRT causes LNK2038 / unresolved `__imp_*` link errors
+- The first embedding test downloads the HF model `muvon/octomind-embed` (~130 MB) into the octolib cache: `~/.cache/octolib/huggingface` (Linux), `~/Library/Caches/octolib/huggingface` (macOS), `~/AppData/Local/octolib/huggingface` (Windows)
 - OS-specific code lives in cfg-gated modules — follow the `src/sandbox/{linux,macos}.rs` pattern (`landlock` is Linux-only; `libc`/`proctitle` are Unix-only; sandbox backends exist for Linux and macOS only). Don't sprinkle one-off `#[cfg]` where a module split exists
 - A test that cannot pass on every OS must be explicitly gated with the reason stated in code — silent per-OS divergence hides regressions
 - musl/static release builds compile ORT from source in Alpine (see ci.yml `musl-build` + `Cross.toml`); a plain glibc `cargo build --release` binary is what runs in the Debian bench containers
 
 ## Boundaries (telemetry, accounting, learning)
 Separate systems — wiring a metric into one does NOT make it appear in the others:
-- `src/supervisor/stats.rs` — process-local accumulator for `/info`/debug snapshots; not persisted, not anonymous telemetry; counters mix across concurrent daemon/ACP/WebSocket sessions
+- `src/supervisor/stats.rs` — process-local accumulator for `/info`/debug snapshots; not persisted, not anonymous telemetry; counters aggregate across all concurrent daemon/ACP/WebSocket sessions (no per-session split)
 - `SessionInfo` (`src/session/mod.rs`) — the persisted per-session record; add there (with `#[serde(default)]` + resume coverage) only when a metric must survive restart
-- `src/telemetry.rs::Event` — the exact anonymous wire schema; remotely reported only if added there and populated by `record_session`; audit each lifecycle (CLI/piped/daemon exit, ACP disconnect, workflow, WebSocket — WS emits no session row today)
-- Adaptive/controllers may stay session-keyed and ephemeral (e.g. condenser state, cleared by `cleanup_session`) — don't persist just to observe
+- `src/telemetry.rs::Event` — the exact anonymous wire schema; an event is reported remotely only if it is defined there and populated by `record_session`. Audit each lifecycle path (CLI/piped/daemon exit, ACP disconnect, workflow, WebSocket — WS emits no session row today)
+- Adaptive controllers may stay session-keyed and ephemeral (e.g. condenser state, cleared by `cleanup_session`) — don't persist just to observe
 - Learning records: `memory_type = "learning"` = quote-first user rules (verbatim real-user quote + separate verifier); `"experience"` = learner-formed from valuable trajectories (REAL USER/TOOL citations, `verified|failed|unknown`, grounding verifier, one bounded repair, then fail closed). Storage: `learning/{project}/{role}/` — project-scoped, role-filtered
 - File records are the sole supervisor-learning authority; external memory MCP tools are specialists, never learning stores. `related` = stable file IDs, `evidence` = `session://…/message/…`, retrieval expands links one hop
 - Recall = one runtime-only Active Memory Pack per genuine user turn (token-bounded, materialized per provider request, dropped under headroom pressure); outcome credit only for pack IDs the specialist materially used
@@ -115,12 +115,12 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 ## Gotchas
 - `mcp-*.toml` loads AFTER all base `*.toml` regardless of sort order — the intended override mechanism
 - `auto_bind` is exact-match: `"developer"` ≠ `"developer:general"` — use the full tag in both places
-- `allowed_tools` non-empty silently drops unlisted tools; `get_merged_config_for_role` auto-appends `"<server>:*"` for auto-bind servers — beware when constructing configs manually
+- A non-empty `allowed_tools` silently drops unlisted tools; `get_merged_config_for_role` auto-appends `"<server>:*"` for auto-bind servers — beware when constructing configs manually
 - In TOML config files, scalar keys must come BEFORE nested table headers in a section — a scalar placed after `[x.y]` is parsed as a field of that table and silently ignored
-- The compression decision/summary model is `[compression.model]`, separate from `model` (legacy `[compression.decision]` is migrated away)
+- The compression decision/summary model is `[compression.model]`, separate from `model` (the legacy `[compression.decision]` spelling is migrated away)
 - Log macros live in `src/config/mod.rs`; `src/lib.rs` only shadows the print macros
 - Builtin servers (each its own arm in `route_builtin_tool()` + `tool_map`): `core` (incl. conditional `recall`), `orchestration` (`tap`, `schedule`, `monitor`), `runtime` (`mcp`, `agent`, `skill`, `capability`), `agent` (`agent_*`), `local` (`.agents/tools/` scripts)
-- Dynamic tools are session-owned — one session's registrations are rejected from another (intentional isolation)
+- Dynamic tools are session-owned — a tool registered in one session is rejected when called from another (intentional isolation)
 
 ## Never
 - Return `Err()` from MCP tool execution — always `Ok(McpToolResult::error(...))`
@@ -129,7 +129,8 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 - Add session-scoped state outside `init_session_services` or to only some of the four entry points
 - Put inline `#[cfg(test)] mod tests {}` bodies in production files
 - Hardcode config values — defaults belong in `config-templates/default.toml`
-- Use `"stdin"` as MCP server type — the value is `"stdio"`; use `[role]` tables — roles are `[[roles]]` with `name = "..."`
+- Use `"stdin"` as the MCP server type — the value is `"stdio"`
+- Use `[role]` tables — roles are `[[roles]]` with `name = "..."`
 - Omit the Apache 2.0 header from a new `.rs` file
 - Hold `std::sync::Mutex` across `.await`
 - Add unrequested features or opportunistic cleanups

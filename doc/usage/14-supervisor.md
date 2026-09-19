@@ -159,7 +159,8 @@ Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY
 `octomind evaluate [FILE]` calls the same model with a hand-written `{"state", "questions"}` request and prints the
 answers as JSON, so a question can be tried on a real state before it becomes a seam constant, and a script or
 guardrail validator can get a calibrated answer without a session. `-m provider:model` overrides the model for one call.
-See the [CLI reference](../reference/01-cli-reference.md#octomind-evaluate-file).
+See the [CLI reference](../reference/01-cli-reference.md#octomind-evaluate-file) and
+[Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md).
 
 Every call is one attempt with a 5-second timeout and no retries, and the assembled state is capped at 24,000
 estimated tokens. Any failure — missing key, HTTP 401/402/403/429/5xx, timeout, transport error, an unparseable or

@@ -123,6 +123,7 @@ runs.
 | [Research with Dynamic Fan-out](use-cases/20-research-a-topic-with-dynamic-fanout.md) | Planner-driven parallel investigations |
 | [Implement–Review–Fix Loop](use-cases/21-implement-review-fix-loop.md) | Bounded graph workflow until review passes |
 | [Release Notes from Git History](use-cases/22-release-notes-from-git-history.md) | Plain drafts and schema-validated release data |
+| [Calibrated Checks](use-cases/23-calibrated-checks-with-evaluate.md) | Probability-scored done, scope, and vagueness checks in scripts, validators, and pipes |
 
 ## Development Guide
 

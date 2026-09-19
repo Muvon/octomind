@@ -387,7 +387,8 @@ as for the seams (`TYPESAFE_API_KEY`; `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOU
 `questions` map is rejected before any call; a missing key, HTTP error, or unparseable response exits non-zero. Unlike
 the seams, the call uses octolib's defaults: two retries on 429/5xx and a 30-second timeout.
 
-[config-templates/evaluate.json](../../config-templates/evaluate.json) is a runnable request with all three types:
+[config-templates/evaluate.json](../../config-templates/evaluate.json) is a runnable request with all three types;
+[Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md) wires the command into a validator and a pipe:
 
 ```bash
 octomind evaluate config-templates/evaluate.json

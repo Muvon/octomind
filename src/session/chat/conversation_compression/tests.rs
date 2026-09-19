@@ -119,6 +119,40 @@ fn force_redrains_a_prior_summary_that_would_otherwise_wedge_the_ceiling() {
 }
 
 #[test]
+fn force_drains_a_request_left_unanswered_before_the_fresh_one() {
+	// A turn timed out with its request unanswered and the retry re-sent it:
+	// [.., summary, step, result, request, re-anchor, request]. The step is not
+	// the fresh request's bridge, yet keeping it left only the summary
+	// drainable — the measured 248k/200k run died on "forced compression has no
+	// eligible history (range 0..=0)" with the stale copy in the kept tail.
+	let mut unanswered = msg("user");
+	unanswered.content = "edit every language in the brief".to_string();
+	let mut re_anchor = msg("user");
+	re_anchor.content = "<pay-attention>\nRe-anchor on your task.\n</pay-attention>".to_string();
+	let messages = vec![
+		msg("system"),
+		skill_msg("content-voice"),
+		summary_msg("prior work folded here"),
+		msg("assistant"),
+		msg("tool"),
+		unanswered.clone(),
+		re_anchor,
+		unanswered,
+	];
+
+	// Automatic folds keep the bridge: a queued follow-up is not stale.
+	assert_eq!(
+		find_compression_range_preserving_turn(&messages, false, true).unwrap(),
+		(0, 0)
+	);
+
+	let (start_idx, end_idx) =
+		find_compression_range_preserving_turn(&messages, true, true).unwrap();
+	assert_eq!(start_idx, 1, "anchor stays before the prior summary");
+	assert_eq!(end_idx, 5, "the drain runs through the unanswered request");
+}
+
+#[test]
 fn mid_task_fold_keeps_the_live_exchange_verbatim() {
 	// Compaction usually fires mid-task, where the tail is a tool result rather
 	// than a new request. That path used to drain to the tail, folding away the
@@ -406,6 +440,32 @@ fn dedupes_duplicate_skill_keeping_latest() {
 		preserved[0].content.contains("new body"),
 		"latest injection wins on dedup"
 	);
+}
+
+#[test]
+fn skips_a_drained_skill_whose_exact_copy_survives_the_fold() {
+	// Every resumed run re-injected the same skills, and every fold re-inserted
+	// the drained copy beside the one the kept prefix already held. The prefix
+	// sits before the anchor and is never drained, so copies only accumulated
+	// (three of each after three folds in the measured run).
+	let mut messages = vec![
+		msg("system"),
+		skill_msg("content-voice"),
+		msg("user"),
+		msg("assistant"),
+		skill_msg("content-voice"),
+		msg("user"),
+		msg("assistant"),
+	];
+	let active = vec!["content-voice".to_string()];
+	assert!(collect_preserved_skills(&messages, 2, 6, &active).is_empty());
+
+	// A changed body is not a copy: the drained version is still carried.
+	messages[4].content =
+		"<skill name=\"content-voice\" description=\"v2\">\nnew body\n</skill>".to_string();
+	let preserved = collect_preserved_skills(&messages, 2, 6, &active);
+	assert_eq!(preserved.len(), 1);
+	assert!(preserved[0].content.contains("new body"));
 }
 
 #[test]

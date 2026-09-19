@@ -1002,12 +1002,18 @@ async fn check_and_compress_conversation_inner(
 		} else {
 			&all_user_msgs[..]
 		};
-		exclude_last
+		// A drained copy of the latest request (a retry re-sent it) is not an
+		// earlier request: listing it as "already superseded" both repeats the
+		// live task verbatim and tells the model it is not the active one.
+		let latest = latest_real_user_idx.map(|idx| session.session.messages[idx].content.trim());
+		let earlier: Vec<&str> = exclude_last
 			.iter()
-			.rev()
-			.take(4)
-			.rev()
-			.map(|m| m.content.trim().to_string())
+			.map(|m| m.content.trim())
+			.filter(|content| Some(*content) != latest)
+			.collect();
+		earlier[earlier.len().saturating_sub(4)..]
+			.iter()
+			.map(|content| content.to_string())
 			.collect()
 	};
 

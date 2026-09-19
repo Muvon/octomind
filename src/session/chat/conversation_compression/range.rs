@@ -138,10 +138,24 @@ pub(super) fn find_compression_range_preserving_turn(
 		// it could re-fold sits right there, wedging the session over the
 		// ceiling. Under force, skip synthetic summaries so a prior fold's output
 		// stays drainable; automatic folds keep their exact prior behavior.
+		//
+		// Likewise under force, a real request after that assistant never got an
+		// answer (a timed-out turn the retry re-sent): the assistant is not the
+		// fresh request's bridge, and keeping it kept the unanswered copy too —
+		// on a [summary, step, request, request] tail only the summary was left
+		// to drain and force wedged. Drain through the unanswered request.
 		match messages[..tail_idx].iter().rposition(|message| {
 			message.role == "assistant" && !(force && is_synthetic_summary(message))
 		}) {
-			Some(previous_assistant_idx) => previous_assistant_idx.saturating_sub(1),
+			Some(previous_assistant_idx) => {
+				let unanswered = messages[previous_assistant_idx + 1..tail_idx]
+					.iter()
+					.rposition(crate::session::is_real_user_task_message);
+				match unanswered {
+					Some(offset) if force => previous_assistant_idx + 1 + offset,
+					_ => previous_assistant_idx.saturating_sub(1),
+				}
+			}
 			None => tail_idx,
 		}
 	} else {

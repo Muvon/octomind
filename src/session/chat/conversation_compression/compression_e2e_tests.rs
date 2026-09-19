@@ -324,6 +324,72 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+/// Replay of a failed workflow step: a turn timed out with its request
+/// unanswered, and the retry re-sent the same request into the session. Over
+/// the ceiling, force kept the step before the unanswered request as the fresh
+/// request's bridge, found nothing else to drain, and the run died with
+/// "forced compression has no eligible history (range 0..=0)" at 248k/200k.
+#[tokio::test]
+async fn verify_forced_fold_drains_a_request_the_retry_sent_again() {
+	let _guard = ENV_LOCK.lock().await;
+	let url = spawn_stub(vec![
+		final_response(&xml_summary_body()),
+		final_response(&xml_summary_body()),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let mut config = fake_provider_config();
+	config.compression.model.model = Some("ollama:fake-model".to_string());
+	config.max_session_tokens_threshold = 1;
+
+	let request = "Surgically edit every language in the brief (RESENT-REQUEST)";
+	let mut prior_summary = msg(
+		"assistant",
+		"<conversation_summary id=\"c1\">\nearlier work on the brief\n</conversation_summary>",
+	);
+	prior_summary.name = Some(apply::COMPRESSION_MESSAGE_NAME.to_string());
+	let mut session = ChatSession::for_tests(vec![
+		msg("system", "You are a helpful assistant."),
+		prior_summary,
+		msg("assistant", "reading the Spanish draft"),
+		msg("tool", "draft contents"),
+		msg("user", request),
+		msg(
+			"user",
+			"<pay-attention>\nRe-anchor on your task.\n</pay-attention>",
+		),
+		msg("user", request),
+	]);
+	session.model = "ollama:fake-model".to_string();
+	session.session.info.model = "ollama:fake-model".to_string();
+
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let compressed =
+		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("forced fold must drain the unanswered request");
+	assert!(compressed, "the ceiling fold must land");
+
+	let copies: usize = session
+		.session
+		.messages
+		.iter()
+		.map(|m| m.content.matches(request).count())
+		.sum();
+	assert_eq!(
+		copies, 1,
+		"only the fresh turn states the request — not an 'earlier request' too"
+	);
+	assert_eq!(
+		session.session.messages.last().map(|m| m.content.as_str()),
+		Some(request),
+		"the fresh request stays the live turn"
+	);
+
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
 /// Regression guard for the server-side chaining leak. Providers that keep
 /// conversation state server-side (OpenAI/xAI `previous_response_id`, OctoHub
 /// `previous_completion_id`) chain off the id of the last assistant message and

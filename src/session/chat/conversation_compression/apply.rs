@@ -1012,9 +1012,20 @@ pub(super) fn collect_preserved_skills(
 		}
 	}
 
+	// An exact copy kept outside the drain is already in context. Re-inserting
+	// the drained one adds a copy per fold, and the kept prefix it lands in is
+	// never drained again.
+	let kept = |content: &str| {
+		messages[..range_start]
+			.iter()
+			.chain(&messages[range_end + 1..])
+			.any(|m| m.role == "user" && m.content == content)
+	};
 	order
 		.into_iter()
-		.filter_map(|name| last_idx.get(&name).map(|&i| messages[i].clone()))
+		.filter_map(|name| last_idx.get(&name).map(|&i| &messages[i]))
+		.filter(|m| !kept(m.content.as_str()))
+		.cloned()
 		.collect()
 }
 

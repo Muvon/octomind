@@ -275,3 +275,24 @@ fn evaluate_distill_plan_and_gate_keys_are_strict_and_default_off() {
 		assert!(error.contains(key), "{key} missing: {error}");
 	}
 }
+
+#[test]
+fn evaluate_capabilities_key_is_strict_and_default_off() {
+	let template = include_str!("../../config-templates/default.toml");
+	let config: crate::config::Config = toml::from_str(template).unwrap();
+	assert!(!config.supervisor.evaluate.capabilities);
+
+	let line = "\ncapabilities = false\n";
+	assert_eq!(template.matches(line).count(), 1, "template layout changed");
+	let mistyped = template.replace(line, "\ncapabilities = \"yes\"\n");
+	let error = toml::from_str::<crate::config::Config>(&mistyped)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains("capabilities"), "mistyped: {error}");
+
+	let missing = template.replace(line, "\n");
+	let error = toml::from_str::<crate::config::Config>(&missing)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains("capabilities"), "missing: {error}");
+}

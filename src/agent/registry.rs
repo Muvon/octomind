@@ -429,12 +429,16 @@ pub fn list_all_tap_workflows() -> Result<Vec<TapWorkflow>> {
 /// - `<tap>/capabilities/<name>/<provider>.toml` — provider-specific MCP
 ///   wiring (deps, server_refs, allowed_tools, mcp.servers).
 ///
-/// We don't carry a `description` field; the deterministic routing layer
-/// uses triggers, and the authoring comments in each TOML cover human
-/// reading. `capability list` shows name + first few triggers as preview.
+/// The deterministic routing layer uses triggers; `description` (the provider
+/// file's `# Title:` and `# Description:` header comments) is what the
+/// evaluation seam's Choice shows the model. `capability list` shows name +
+/// first few triggers as preview.
 #[derive(Debug, Clone)]
 pub struct ResolvedCapability {
 	pub name: String,
+	/// `<title>. <description>` from the provider file's header block; the
+	/// trigger phrases when a tap author left the headers out.
+	pub description: String,
 	/// Required. Phrases a user might write to trigger this capability —
 	/// drive the deterministic auto-activation path (mean-of-top-K cosine
 	/// + margin gate). Authored in `<tap>/capabilities/<name>/config.toml`.
@@ -551,8 +555,14 @@ pub fn parse_capability_toml(
 	let cap: toml::Value = toml::from_str(&cap_str)
 		.with_context(|| format!("Failed to parse provider file: {}", provider_path.display()))?;
 
+	let description = match parse_agent_meta(&cap_str, cap_name) {
+		Ok(meta) => format!("{}. {}", meta.title, meta.description),
+		Err(_) => triggers.join("; "),
+	};
+
 	let mut resolved = ResolvedCapability {
 		name: cap_name.to_string(),
+		description,
 		triggers,
 		domains,
 		deps: Vec::new(),

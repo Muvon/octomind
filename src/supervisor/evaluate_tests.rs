@@ -316,6 +316,22 @@ fn question_builders_use_stable_ids_and_documented_options() {
 		other => panic!("expected a choice, got {other:?}"),
 	}
 
+	match capability_question([("docker", "Docker"), ("browser", "Browser")]) {
+		Question::Choice { criteria, .. } => {
+			assert_eq!(
+				criteria.keys().cloned().collect::<Vec<_>>(),
+				vec!["browser", "docker", "none"]
+			);
+			assert_eq!(
+				criteria["none"],
+				Some(serde_json::Value::String(
+					"No capability in this list applies to the request".into()
+				))
+			);
+		}
+		other => panic!("expected a choice, got {other:?}"),
+	}
+
 	let authorizer = authorizer_questions([("0", "shell"), ("3", "write_file")]);
 	assert_eq!(authorizer.len(), 6);
 	for id in [

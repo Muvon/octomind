@@ -161,7 +161,9 @@ registry with an empty server list.
 
 Asking the model "do you need a database tool?" before every turn would burn a routing turn for every message. Instead,
 Octomind embeds the user's message and matches it against the hand-authored triggers in each capability's `config.toml`.
-No LLM in the routing loop.
+No LLM in the routing loop. With `[supervisor.evaluate] capabilities = true` the cosine decision gets a second opinion
+from the calibrated evaluation model: one Choice over the five best-scored candidates plus `none` can veto a winner it
+rates near zero or promote one when cosine abstained; see [Evaluation gates](14-supervisor.md#evaluation-gates).
 
 ### When It Runs
 

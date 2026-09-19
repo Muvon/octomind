@@ -18,6 +18,7 @@ use crate::agent::registry::ResolvedCapability;
 fn make_cap_with_triggers(name: &str, triggers: &[&str]) -> ResolvedCapability {
 	ResolvedCapability {
 		name: name.to_string(),
+		description: format!("{name} capability"),
 		triggers: triggers.iter().map(|s| s.to_string()).collect(),
 		domains: Vec::new(),
 		deps: Vec::new(),
@@ -1167,4 +1168,55 @@ async fn capability_routing_diversity_fixtures() {
 				"category {cat}: accuracy {acc:.2} below {min_acc:.2} ({correct}/{total} correct){report}"
 			);
 	}
+}
+
+#[test]
+fn apply_capability_answer_confirms_vetoes_promotes_and_rejects_unknown() {
+	use std::collections::BTreeMap;
+	let p = |pairs: &[(&str, f64)]| {
+		pairs
+			.iter()
+			.map(|(k, v)| (k.to_string(), *v))
+			.collect::<BTreeMap<_, _>>()
+	};
+	let names = ["a", "b"];
+
+	// Cosine winner: kept at the confirm floor, vetoed below it, whatever was chosen.
+	assert_eq!(
+		apply_capability_answer(Some("a"), &names, "b", &p(&[("a", 0.05), ("b", 0.95)])),
+		Ok(Some("a"))
+	);
+	assert_eq!(
+		apply_capability_answer(
+			Some("a"),
+			&names,
+			"none",
+			&p(&[("a", 0.04), ("none", 0.96)])
+		),
+		Ok(None)
+	);
+
+	// No winner: the choice activates at the floor, not below, and `none` is inert.
+	assert_eq!(
+		apply_capability_answer(None, &names, "b", &p(&[("b", 0.6)])),
+		Ok(Some("b"))
+	);
+	assert_eq!(
+		apply_capability_answer(None, &names, "b", &p(&[("b", 0.59)])),
+		Ok(None)
+	);
+	assert_eq!(
+		apply_capability_answer(None, &names, "none", &p(&[("none", 1.0)])),
+		Ok(None)
+	);
+
+	// A choice that was never offered is an invalid response either way.
+	assert_eq!(
+		apply_capability_answer(None, &names, "zzz", &p(&[("zzz", 1.0)])),
+		Err("invalid response")
+	);
+	assert_eq!(
+		apply_capability_answer(Some("a"), &names, "zzz", &p(&[("a", 0.9)])),
+		Err("invalid response")
+	);
 }

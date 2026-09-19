@@ -386,3 +386,24 @@ fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_
 		.unwrap()
 		.is_none());
 }
+
+#[test]
+fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_values() {
+	let mut document = template_document();
+	document["version"] = toml_edit::value(16);
+	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
+	evaluate.remove("capabilities");
+	evaluate["skills"] = toml_edit::value(true);
+	evaluate["gate"] = toml_edit::value(true);
+	let migrated = migrate_once(&document.to_string());
+	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+	assert!(!config.supervisor.evaluate.capabilities);
+	assert!(config.supervisor.evaluate.skills);
+	assert!(config.supervisor.evaluate.gate);
+	assert!(!config.supervisor.evaluate.recall);
+	assert!(plan()
+		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.is_none());
+}

@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 16
+version = 17
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -709,6 +709,11 @@ model = "cloudflare:typesafe/jev"
 recall = false
 # Choose a skill from the domain pool when rules abstained (rule-less skills included).
 skills = false
+# Confirm or promote the cosine capability auto-activation: one Choice over the
+# five best-scored inactive capabilities plus none. A cosine winner the model
+# gives under 0.05 is not activated; with no cosine winner the model's choice
+# activates at 0.6 or above. Unavailable → the cosine decision.
+capabilities = false
 # Skip the two-judge supervisor authorization when nothing in the batch is flagged.
 authorizer = false
 # Score oversized tool results chunk by chunk instead of asking the supervisor

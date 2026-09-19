@@ -123,6 +123,11 @@ fn plan() -> MigrationPlan {
 				to: 16,
 				apply: add_v16_evaluate_seams,
 			},
+			VersionMigration {
+				from: 16,
+				to: 17,
+				apply: add_v17_evaluate_seams,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -156,6 +161,15 @@ fn add_v15_evaluate_seams(
 /// Add the `distill`, `plan`, and `gate` seams (off) to an existing evaluate
 /// section; every other key keeps its value.
 fn add_v16_evaluate_seams(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	add_v14_evaluate(document, template)
+}
+
+/// Add the `capabilities` seam (off) to an existing evaluate section; every
+/// other key keeps its value.
+fn add_v17_evaluate_seams(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {

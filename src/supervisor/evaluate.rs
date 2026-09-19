@@ -52,6 +52,7 @@ pub struct EvaluateConfig {
 	pub model: String,
 	pub recall: bool,
 	pub skills: bool,
+	pub capabilities: bool,
 	pub authorizer: bool,
 	pub condense: bool,
 	pub compression: bool,
@@ -71,9 +72,10 @@ pub enum Seam {
 	Distill,
 	Plan,
 	Gate,
+	Capabilities,
 }
 
-pub const SEAM_COUNT: usize = 8;
+pub const SEAM_COUNT: usize = 9;
 
 impl Seam {
 	pub const ALL: [Seam; SEAM_COUNT] = [
@@ -85,6 +87,7 @@ impl Seam {
 		Seam::Distill,
 		Seam::Plan,
 		Seam::Gate,
+		Seam::Capabilities,
 	];
 
 	pub fn name(self) -> &'static str {
@@ -97,6 +100,7 @@ impl Seam {
 			Seam::Distill => "distill",
 			Seam::Plan => "plan",
 			Seam::Gate => "gate",
+			Seam::Capabilities => "capabilities",
 		}
 	}
 
@@ -110,6 +114,7 @@ impl Seam {
 			Seam::Distill => 5,
 			Seam::Plan => 6,
 			Seam::Gate => 7,
+			Seam::Capabilities => 8,
 		}
 	}
 
@@ -123,6 +128,7 @@ impl Seam {
 			Seam::Distill => config.distill,
 			Seam::Plan => config.plan,
 			Seam::Gate => config.gate,
+			Seam::Capabilities => config.capabilities,
 		}
 	}
 }
@@ -165,6 +171,23 @@ pub const PLAN_SKIP_BELOW: f64 = 0.2;
 /// Gate: a charged finding at or above this is refuted. High on purpose:
 /// "doubt is not refutation" is the pre-change rule.
 pub const GATE_REFUTE_AT: f64 = 0.8;
+/// Capabilities: a cosine winner stays activated only when the Choice gives it
+/// at least this. Near zero on purpose: cosine already cleared its threshold
+/// and margin, so only a flat rejection says the phrasing fooled it. On the
+/// tap's eval set this removes most false activations on chitchat at a cost of
+/// one point of recall.
+pub const CAPABILITY_CONFIRM_AT: f64 = 0.05;
+/// Capabilities: with no cosine winner, the chosen capability activates only
+/// when its own probability in the Choice is at or above this. Lower than the
+/// skill floor because the roster is short: over five options plus `none` the
+/// mass is not spread thin, and 0.8 abstained on half of the recoverable
+/// margin-abstains.
+pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
+/// Capabilities: the Choice lists this many best-scored inactive capabilities
+/// plus `none`. The cosine top-5 holds the right capability 97% of the time on
+/// the tap's eval set; listing the whole roster spreads the distribution and
+/// costs nine times the tokens.
+pub const CAPABILITY_TOP_K: usize = 5;
 /// Below the model's 32k state limit with headroom for question text.
 pub const MAX_STATE_TOKENS: usize = 24_000;
 /// Questions per window. The provider's per-call limit is undocumented; this
@@ -191,6 +214,10 @@ pub const SKILL_NONE: &str = "none";
 pub const SKILL_TRIGGER: &str = "evaluate";
 /// Question id of the single skill Choice.
 pub const SKILL_QUESTION_ID: &str = "skill";
+/// Choice option meaning "no capability applies"; the same key as the skills'.
+pub const CAPABILITY_NONE: &str = SKILL_NONE;
+/// Question id of the single capability Choice.
+pub const CAPABILITY_QUESTION_ID: &str = "capability";
 
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes only when applying the lesson would change how the request is carried out; no when it concerns a different tool, language, file, or task.";
 const CONDENSE_QUESTION: &str = "Must the agent read this chunk to finish the current task? Yes only when the chunk holds an error message or stack trace, the specific data the task or the tool arguments ask for, an explicit negative result, a count, total or exit code, or a path, line number or signature the agent must act on. No when the chunk is more of a listing that other chunks already answer, boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.";
@@ -201,6 +228,8 @@ const PLAN_PHASE_QUESTION: &str = "Do the runtime-recorded actions or tool obser
 const GATE_QUESTION: &str = "Is this finding refuted by a citable observation in the evidence: a recorded action that performed the check the finding calls missing, a diff hunk containing the change it calls absent, a successful recorded check whose output exercised the condition it calls violated, or request text showing the demand was never made? No when the evidence merely makes the finding doubtful; doubt is not refutation.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
+const CAPABILITY_QUESTION: &str = "Which capability applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed capability fits.";
+const CAPABILITY_NONE_DESCRIPTION: &str = "No capability in this list applies to the request";
 /// Authorizer Nouls, keyed by the suffix appended to each pending call id.
 pub const AUTHORIZER_NOULS: [(&str, &str); 3] = [
 	(
@@ -242,11 +271,24 @@ pub fn recall_questions(count: usize) -> BTreeMap<String, Question> {
 
 /// One Choice over every inactive pool entry plus `none`.
 pub fn skill_question<'a>(roster: impl IntoIterator<Item = (&'a str, &'a str)>) -> Question {
+	roster_question(SKILL_QUESTION, SKILL_NONE_DESCRIPTION, roster)
+}
+
+/// One Choice over the best-scored inactive capabilities plus `none`.
+pub fn capability_question<'a>(roster: impl IntoIterator<Item = (&'a str, &'a str)>) -> Question {
+	roster_question(CAPABILITY_QUESTION, CAPABILITY_NONE_DESCRIPTION, roster)
+}
+
+fn roster_question<'a>(
+	instructions: &str,
+	none_description: &'a str,
+	roster: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Question {
 	Question::choice(
-		SKILL_QUESTION,
+		instructions,
 		roster
 			.into_iter()
-			.chain(std::iter::once((SKILL_NONE, SKILL_NONE_DESCRIPTION))),
+			.chain(std::iter::once((SKILL_NONE, none_description))),
 	)
 }
 

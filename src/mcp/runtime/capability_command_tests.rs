@@ -1486,3 +1486,146 @@ async fn test_enable_fails_when_server_registration_fails() {
 	reset_registry();
 	crate::mcp::runtime::dynamic::clear_all();
 }
+
+// ---------------------------------------------------------------------------
+// Evaluation seam over the cosine decision (`evaluate_pick`). No embedding
+// model: the seam takes the ranked candidates as input.
+// ---------------------------------------------------------------------------
+
+use crate::agent::registry::ResolvedCapability;
+use crate::session::chat::test_support::{
+	choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep,
+};
+use crate::supervisor::evaluate::{Seam, CAPABILITY_QUESTION_ID};
+
+fn eval_cap(name: &str) -> ResolvedCapability {
+	ResolvedCapability {
+		name: name.to_string(),
+		description: format!("{name} capability"),
+		triggers: vec![format!("use {name}")],
+		domains: Vec::new(),
+		deps: Vec::new(),
+		server_refs: Vec::new(),
+		allowed_tools: Vec::new(),
+		mcp_servers: Vec::new(),
+		required_env_keys: Vec::new(),
+		tap_root: std::path::PathBuf::new(),
+	}
+}
+
+fn evaluate_config() -> Config {
+	let mut config = test_config();
+	config.supervisor.enabled = true;
+	config.supervisor.evaluate.capabilities = true;
+	config
+}
+
+#[tokio::test]
+#[serial]
+async fn evaluate_pick_makes_no_call_when_the_seam_is_off() {
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(choice(
+		CAPABILITY_QUESTION_ID,
+		"none",
+		1.0,
+	))])
+	.await;
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
+	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.9, &caps[0]), (0.5, &caps[1])];
+	let calls = evaluate_counter(Seam::Capabilities, "calls");
+
+	let picked = evaluate_pick(&test_config(), "use a now please", Some(ranked[0]), &ranked).await;
+	assert_eq!(picked.map(|(_, cap)| cap.name.as_str()), Some("a"));
+	assert_eq!(evaluate_counter(Seam::Capabilities, "calls"), calls);
+	assert!(fake.requests().is_empty());
+}
+
+#[tokio::test]
+#[serial]
+async fn evaluate_pick_vetoes_a_cosine_winner_the_choice_rejects() {
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "none", 0.99)),
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "a", 0.05)),
+	])
+	.await;
+	let caps: Vec<ResolvedCapability> = ["a", "b", "c", "d", "e", "f", "g"]
+		.iter()
+		.map(|n| eval_cap(n))
+		.collect();
+	let ranked: Vec<(f32, &ResolvedCapability)> = caps
+		.iter()
+		.enumerate()
+		.map(|(i, cap)| (0.9 - i as f32 * 0.1, cap))
+		.collect();
+	let config = evaluate_config();
+	let applied = evaluate_counter(Seam::Capabilities, "applied");
+
+	// The winner gets no mass at all: vetoed, and counted as applied.
+	let picked = evaluate_pick(&config, "brb", Some(ranked[0]), &ranked).await;
+	assert!(picked.is_none());
+	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
+
+	// At the confirm floor the cosine decision stands with its own score.
+	let picked = evaluate_pick(&config, "use a now please", Some(ranked[0]), &ranked).await;
+	assert_eq!(
+		picked.map(|(score, cap)| (score, cap.name.as_str())),
+		Some((0.9, "a"))
+	);
+	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
+
+	// The Choice lists the top-K by score plus `none`, over the intent alone.
+	let requests = fake.requests();
+	assert_eq!(requests.len(), 2);
+	assert_eq!(requests[0].state, serde_json::Value::String("brb".into()));
+	match &requests[0].questions[CAPABILITY_QUESTION_ID] {
+		octolib::evaluation::Question::Choice { criteria, .. } => {
+			assert_eq!(
+				criteria.keys().cloned().collect::<Vec<_>>(),
+				vec!["a", "b", "c", "d", "e", "none"]
+			);
+			assert_eq!(
+				criteria["a"],
+				Some(serde_json::Value::String("a capability".into()))
+			);
+		}
+		other => panic!("expected a choice, got {other:?}"),
+	}
+}
+
+#[tokio::test]
+#[serial]
+async fn evaluate_pick_promotes_the_choice_only_at_the_floor_and_falls_through_otherwise() {
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "b", 0.6)),
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "b", 0.59)),
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "none", 1.0)),
+		FakeEvaluationStep::Answers(choice(CAPABILITY_QUESTION_ID, "zzz", 1.0)),
+		FakeEvaluationStep::MissingKey("TYPESAFE_API_KEY"),
+	])
+	.await;
+	let caps: Vec<ResolvedCapability> = ["a", "b"].iter().map(|n| eval_cap(n)).collect();
+	let ranked: Vec<(f32, &ResolvedCapability)> = vec![(0.7, &caps[0]), (0.68, &caps[1])];
+	let config = evaluate_config();
+	let applied = evaluate_counter(Seam::Capabilities, "applied");
+	let unavailable = evaluate_counter(Seam::Capabilities, "unavailable");
+
+	// Promoted at the floor, carrying the answer's probability as its score.
+	let picked = evaluate_pick(&config, "do the b thing please", None, &ranked).await;
+	assert_eq!(
+		picked.map(|(score, cap)| (score, cap.name.as_str())),
+		Some((0.6, "b"))
+	);
+	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
+
+	// Below the floor, `none`, a choice never offered, and a provider failure
+	// all leave the cosine abstain in place.
+	for _ in 0..4 {
+		let picked = evaluate_pick(&config, "do the b thing please", None, &ranked).await;
+		assert!(picked.is_none());
+	}
+	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
+	assert_eq!(
+		evaluate_counter(Seam::Capabilities, "unavailable"),
+		unavailable + 2
+	);
+	assert_eq!(fake.requests().len(), 5);
+}

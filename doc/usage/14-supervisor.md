@@ -137,7 +137,7 @@ execute at their existing lifecycle points outside this tool-call check.
 ## Evaluation gates
 
 `[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
-module) as a gate at eight seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
+module) as a gate at nine seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
 probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
 every seam off leaves behavior byte-identical to a release without this section.
 
@@ -146,6 +146,7 @@ every seam off leaves behavior byte-identical to a release without this section.
 | `model` | `provider:model` string. Supported providers: `cloudflare` (`cloudflare:typesafe/jev`, AI Gateway unified billing), `typesafe` (`typesafe:jev-latest`, direct) and `octohub` (`octohub:<alias>` or `octohub:auto` — the hub picks the model; `OCTOHUB_API_KEY`, optional `OCTOHUB_API_URL`). A malformed or unsupported value fails config loading naming `supervisor.evaluate.model`. There is no profile: Jev accepts no sampling parameters. |
 | `recall` | After scoped lessons are ranked and before pack admission, one Noul per scoped candidate asks whether it bears on the current request. Candidates below 0.5 are excluded; the rank order of the rest is kept. Global-tier rules are never sent and are admitted exactly as before. Zero scoped candidates make no call. |
 | `skills` | When auto-activation runs and every rule abstained (no deterministic match, no semantic candidate cleared the margin), one Choice lists every inactive skill in the domain pool (name and description) plus `none`. The chosen skill activates with trigger `evaluate` when it is not `none` and its probability in the answer's distribution is at least 0.8. Skills without rules join the pool for this choice only; they never meet the rule engine. A shadow evolution binding records a match instead of activating. |
+| `capabilities` | With `auto_capabilities = true`, after the cosine gate over a fresh user message has picked a winner or abstained, one Choice lists the five best-scored inactive capabilities (title and description from the provider file's header comments) plus `none`, over the stripped user message. A cosine winner whose probability in the answer is below 0.05 is not activated; with no cosine winner, the chosen capability activates when its probability is at least 0.6, and the activation log shows that probability as its score. The system-managed, intent-length, domain, and env gates before the cosine scoring are unchanged, and an unavailable evaluation activates exactly what cosine decided. |
 | `authorizer` | With `[supervisor.authorizer] enabled = true`, after the memoized-denial cache and before the two-judge supervisor path, three Nouls per pending call ask whether it is `prohibited` by user or role instructions, `destructive` to non-regenerable files or git history, or `external` to the working directory. When every answer is below 0.5 the batch is admitted without waking the supervisor model; otherwise the pre-change judgment and verification run unchanged. The pre-screen can only admit, never block. |
 | `condense` | With `[supervisor.condense] enabled = true`, the same candidates the condenser would judge (`tokens_threshold` and `adaptive` unchanged) are scored instead of sent to the supervisor model: each candidate's full original text is split into line-aligned chunks of at most 256 tokens, windowed under the state cap (at most 96 chunks per call, at most four windows in flight at once; a chunk that is one oversized line goes in as a 512-token head-and-tail sample), and one Noul per chunk asks whether the agent needs it for the task. Chunks at or above 0.5 are kept with one neighbour on each side, plus diagnostics and any truncation notice; the kept lines go through the existing verbatim reconstruction, spill file, and `📎 CONDENSED` notice. Everything kept leaves the result untouched; nothing kept omits an ok result (never an error). If any window is unavailable, the whole round's answers are discarded and the supervisor-model condenser runs once exactly as before. The adaptive controller sees the same numbers either way. |
 | `compression` | Before a fold's decision call, every `ToolInteraction` packet the PACT allocator placed in the `summarize` lane is scored with one Noul (state: pinned task, constraints, plan focus, and a 512-token head-and-tail sample per packet; at most 96 units per call, at most four windows in flight at once). Packets below 0.5 are demoted to `archive_reference`, so the fold model reads their one-line descriptor instead of their content; `keep_exact`, non-tool, real-user, and already-archived packets are never scored, and a packet another selected packet depends on is never demoted. The drained range, archive, fingerprint, validator, and fold decision are untouched. If any window is unavailable, nothing is demoted and the fold proceeds on the evidence set as allocated. |
@@ -166,13 +167,13 @@ Every call is one attempt with a 5-second timeout and no retries, and the assemb
 estimated tokens. Any failure — missing key, HTTP 401/402/403/429/5xx, timeout, transport error, an unparseable or
 incomplete answer set, a state or skill roster too large to send — keeps the pre-change behavior for that turn, writes
 one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. For the
-recall, skills, and authorizer seams the state never contains tool results, assistant messages, or condensed-output
+recall, skills, capabilities, and authorizer seams the state never contains tool results, assistant messages, or condensed-output
 notices; the condense and compression seams judge tool output by design and send that output and nothing else from
 the transcript. The distill, plan, and gate seams receive exactly the payload the chat call they replace receives, and
 their answers can only reject a lesson, skip a planner call, or drop a finding — never store, create, advance, or pass. Thresholds and question text are constants in `src/supervisor/evaluate.rs`, not config keys.
 
 `/info` shows, per seam, `calls` (attempts), `unavailable` (fallbacks), and `applied` (recall: candidates excluded;
-skills: activations; authorizer: batches admitted without the supervisor; condense: results whose inline content
+skills: activations; capabilities: cosine decisions overridden, vetoes and promotions alike; authorizer: batches admitted without the supervisor; condense: results whose inline content
 changed; compression: packets demoted; distill: verification rounds answered; plan: planner calls skipped; gate:
 refutation passes answered), plus `replaced` where the seam stood in for a chat call (authorizer, condense, distill,
 plan, gate). The `evaluate` row totals the seam calls with their input tokens and cost against the chat calls
@@ -425,7 +426,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Recite | Live goal, plan, constraints, or policy available | Context tokens | None (automatic) |
 | Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
 | Recall | First and subsequent genuine requests | First-query model prep, retrieval, pack tokens | `[supervisor.learning]` |
-| Evaluation gates (recall / skills / authorizer) | Ranked recall, rule abstention, pending tool batch | One bounded evaluation call per seam per turn | `[supervisor.evaluate]` |
+| Evaluation gates (recall / skills / capabilities / authorizer) | Ranked recall, rule abstention, cosine decision, pending tool batch | One bounded evaluation call per seam per turn | `[supervisor.evaluate]` |
 
 ## Source reference
 
@@ -436,7 +437,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Completion and plan state | [src/supervisor/gate.rs](../../src/supervisor/gate.rs), [src/session/chat/session/api_executor.rs](../../src/session/chat/session/api_executor.rs), [src/supervisor/plan.rs](../../src/supervisor/plan.rs) |
 | Condensation and recitation | [src/supervisor/condense.rs](../../src/supervisor/condense.rs), [src/supervisor/recite.rs](../../src/supervisor/recite.rs) |
 | Delegation and accounting | [src/supervisor/delegate.rs](../../src/supervisor/delegate.rs), [src/supervisor/stats.rs](../../src/supervisor/stats.rs), [src/session/external_spend.rs](../../src/session/external_spend.rs) |
-| Evaluation gates | [src/supervisor/evaluate.rs](../../src/supervisor/evaluate.rs), [src/supervisor/learning/inject.rs](../../src/supervisor/learning/inject.rs), [src/mcp/runtime/skill_auto.rs](../../src/mcp/runtime/skill_auto.rs), [src/supervisor/authorizer.rs](../../src/supervisor/authorizer.rs) |
+| Evaluation gates | [src/supervisor/evaluate.rs](../../src/supervisor/evaluate.rs), [src/supervisor/learning/inject.rs](../../src/supervisor/learning/inject.rs), [src/mcp/runtime/skill_auto.rs](../../src/mcp/runtime/skill_auto.rs), [src/mcp/runtime/capability.rs](../../src/mcp/runtime/capability.rs), [src/supervisor/authorizer.rs](../../src/supervisor/authorizer.rs) |
 
 ## See also
 

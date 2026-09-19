@@ -1147,7 +1147,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		}
 	};
 
-	let scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = inactive
+	let mut scored: Vec<(f32, &crate::agent::registry::ResolvedCapability)> = inactive
 		.iter()
 		.zip(offsets.iter())
 		.map(|(cap, (start, end))| {
@@ -1155,24 +1155,52 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 			(score, *cap)
 		})
 		.collect();
-
-	let mut ranked: Vec<(f32, String)> = scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
-	ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-	let preview: Vec<String> = ranked
+	scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+	let preview: Vec<String> = scored
 		.iter()
 		.take(5)
-		.map(|(s, n)| format!("{n}={s:.3}"))
+		.map(|(s, c)| format!("{}={s:.3}", c.name))
 		.collect();
 	crate::log_debug!(
 		"capability auto-activate: intent={:?} candidates={} threshold={} margin={} top5=[{}]",
 		intent,
-		ranked.len(),
+		scored.len(),
 		AUTO_ACTIVATE_THRESHOLD,
 		AUTO_ACTIVATE_MARGIN,
 		preview.join(", ")
 	);
 
-	let top = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
+	let top = select_with_margin(
+		scored.clone(),
+		AUTO_ACTIVATE_THRESHOLD,
+		AUTO_ACTIVATE_MARGIN,
+	);
+	if top.is_none() {
+		let top1 = scored.first().map(|x| x.0).unwrap_or(0.0);
+		let top2 = scored.get(1).map(|x| x.0).unwrap_or(0.0);
+		let top1_name = scored
+			.first()
+			.map(|x| x.1.name.as_str())
+			.unwrap_or("<none>");
+		let reason = if top1 < AUTO_ACTIVATE_THRESHOLD {
+			format!(
+				"top1 {top1:.3} below threshold {:.3}",
+				AUTO_ACTIVATE_THRESHOLD
+			)
+		} else {
+			format!(
+				"margin {:.3} below required {:.3} (top1={top1:.3} top2={top2:.3})",
+				top1 - top2,
+				AUTO_ACTIVATE_MARGIN
+			)
+		};
+		crate::log_debug!(
+			"capability auto-activate: no winner — {} (top1 was '{}')",
+			reason,
+			top1_name
+		);
+	}
+	let top = evaluate_pick(config, &intent, top, &scored).await;
 
 	if let Some((score, cap)) = top {
 		match activate_capability_inline(&cap.name, config).await {
@@ -1193,30 +1221,115 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 				);
 			}
 		}
-	} else {
-		let top1 = ranked.first().map(|x| x.0).unwrap_or(0.0);
-		let top2 = ranked.get(1).map(|x| x.0).unwrap_or(0.0);
-		let top1_name = ranked.first().map(|x| x.1.as_str()).unwrap_or("<none>");
-		let reason = if top1 < AUTO_ACTIVATE_THRESHOLD {
-			format!(
-				"top1 {top1:.3} below threshold {:.3}",
-				AUTO_ACTIVATE_THRESHOLD
-			)
-		} else {
-			format!(
-				"margin {:.3} below required {:.3} (top1={top1:.3} top2={top2:.3})",
-				top1 - top2,
-				AUTO_ACTIVATE_MARGIN
-			)
-		};
-		crate::log_debug!(
-			"capability auto-activate: no winner — {} (top1 was '{}')",
-			reason,
-			top1_name
-		);
 	}
 
 	Vec::new()
+}
+
+/// The evaluation seam's say over the cosine decision: a cosine winner the
+/// Choice gives under `CAPABILITY_CONFIRM_AT` is vetoed; with no winner, the
+/// Choice's pick activates at `CAPABILITY_ACTIVATE_AT` or above, carrying its
+/// probability as the score. The Choice lists the `CAPABILITY_TOP_K`
+/// best-scored candidates (name and description) plus `none` over the
+/// stripped intent. Off or unavailable, the cosine decision stands.
+async fn evaluate_pick<'a>(
+	config: &Config,
+	intent: &str,
+	cosine: Option<(f32, &'a crate::agent::registry::ResolvedCapability)>,
+	ranked: &[(f32, &'a crate::agent::registry::ResolvedCapability)],
+) -> Option<(f32, &'a crate::agent::registry::ResolvedCapability)> {
+	use crate::supervisor::evaluate::{self, Seam};
+
+	if !evaluate::enabled(&config.supervisor, Seam::Capabilities) {
+		return cosine;
+	}
+	let candidates = &ranked[..ranked.len().min(evaluate::CAPABILITY_TOP_K)];
+	let question = evaluate::capability_question(
+		candidates
+			.iter()
+			.map(|(_, cap)| (cap.name.as_str(), cap.description.as_str())),
+	);
+	let questions = std::collections::BTreeMap::from([(
+		evaluate::CAPABILITY_QUESTION_ID.to_string(),
+		question,
+	)]);
+	let Some(answers) = evaluate::run(
+		&config.supervisor,
+		Seam::Capabilities,
+		serde_json::Value::String(intent.to_string()),
+		questions,
+	)
+	.await
+	else {
+		return cosine;
+	};
+	let Some(octolib::evaluation::Answer::Choice {
+		choice,
+		probabilities,
+		..
+	}) = answers.get(evaluate::CAPABILITY_QUESTION_ID)
+	else {
+		return cosine;
+	};
+	let cosine_name = cosine.map(|(_, cap)| cap.name.as_str());
+	let names: Vec<&str> = candidates
+		.iter()
+		.map(|(_, cap)| cap.name.as_str())
+		.collect();
+	let verdict = match apply_capability_answer(cosine_name, &names, choice, probabilities) {
+		Ok(verdict) => verdict,
+		Err(reason) => {
+			evaluate::unavailable(Seam::Capabilities, reason);
+			return cosine;
+		}
+	};
+	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
+	let picked = match verdict {
+		Some(name) if cosine_name == Some(name) => cosine,
+		Some(name) => candidates
+			.iter()
+			.find(|(_, cap)| cap.name == name)
+			.map(|(_, cap)| (probability(name) as f32, *cap)),
+		None => None,
+	};
+	if picked.map(|(_, cap)| cap.name.as_str()) != cosine_name {
+		crate::log_debug!(
+			"capability evaluate: {} → {} (choice '{}' p={:.2})",
+			cosine_name.unwrap_or("none"),
+			picked.map(|(_, cap)| cap.name.as_str()).unwrap_or("none"),
+			choice,
+			probability(choice)
+		);
+		crate::supervisor::stats::evaluate_applied(Seam::Capabilities, 1);
+	}
+	picked
+}
+
+/// Apply the seam's rule to one Choice answer: `cosine` is the cosine
+/// winner's name, `candidates` the names the Choice listed. `Ok(Some)` is the
+/// capability to activate, `Ok(None)` an abstain; `Err` names a choice that
+/// was never offered. Pure, so the two floors are unit-testable.
+fn apply_capability_answer<'a>(
+	cosine: Option<&'a str>,
+	candidates: &[&'a str],
+	choice: &str,
+	probabilities: &std::collections::BTreeMap<String, f64>,
+) -> Result<Option<&'a str>, &'static str> {
+	use crate::supervisor::evaluate::{
+		CAPABILITY_ACTIVATE_AT, CAPABILITY_CONFIRM_AT, CAPABILITY_NONE,
+	};
+
+	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
+	if choice != CAPABILITY_NONE && !candidates.iter().any(|name| *name == choice) {
+		return Err("invalid response");
+	}
+	Ok(match cosine {
+		Some(winner) => (probability(winner) >= CAPABILITY_CONFIRM_AT).then_some(winner),
+		None => candidates
+			.iter()
+			.copied()
+			.find(|name| *name == choice && probability(name) >= CAPABILITY_ACTIVATE_AT),
+	})
 }
 
 /// Translate capability `allowed_tools` patterns into the bare-name

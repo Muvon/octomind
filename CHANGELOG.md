@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.54.1] - 2026-09-19
+
+### 📋 Release Summary
+
+This release adds capability-routing evaluation, calibrated checks, and a typed evaluation command (e0e74de4, ab40c005, 1481d750). Improvements enhance capability validation, supervisor guidance, request preservation and processing reliability, and seam statistics presentation (79ef9cf8, 4bde4a61, 55757a01, a3e0f16b, f1c5c4dc, 5b7b55eb, 695fd68d).
+
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: evaluate capability routing `e0e74de4`
+- **evaluate**: support calibrated checks `ab40c005`
+- **evaluate**: add typed evaluation command `1481d750`
+
+### 🔧 Improvements & Optimizations
+
+- **display**: improve seam statistics layout `695fd68d`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: validate capability choices with contains `79ef9cf8`
+- **supervisor**: clarify lesson recall criteria `4bde4a61`
+- **supervisor**: lower skill activation threshold `55757a01`
+- **compression**: drain retried requests `a3e0f16b`
+- **condense**: bound calls and raise token budget `f1c5c4dc`
+- **compression**: preserve requests across folds `5b7b55eb`
+
 ## [0.54.0] - 2026-09-18
 
 ### 📋 Release Summary

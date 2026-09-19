@@ -62,6 +62,15 @@ const MIN_RESULT_VIEW_TOKENS: usize = 256;
 /// `tokens_threshold` is configured: below this a request costs more than the
 /// selection can save.
 const MIN_CANDIDATE_TOKENS: usize = 512;
+/// Wall-clock bound on the condenser call. The next agent call waits for the
+/// verdict, and a verdict only saves context, so one that arrives late has
+/// already cost more than it can win back. Measured on a reasoning supervisor
+/// seat (eslint longrun, glm-5.3-flash agent): healthy rounds took 16-129s
+/// against 2-7s agent calls — half the turn's wall time — and one stalled call
+/// held a turn for 398s (the transport's 300s timeout plus its retry) only to
+/// keep the result in full. Past this bound the round fails open like any
+/// other condenser failure.
+const CONDENSE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 /// Cap on the task block (a pasted user request can itself be huge).
 const TASK_CAP_TOKENS: usize = 3_000;
 /// Cap on trusted standing instructions. These are passed verbatim every time;
@@ -281,6 +290,37 @@ pub(crate) fn clear_for_session(session_id: &crate::session::context::SessionId)
 	}
 }
 
+/// The round's one condenser call. `None` — the call failed or outlived
+/// `deadline` — leaves every result exactly as the tool returned it.
+async fn request_verdicts(
+	config: &Config,
+	user: String,
+	operation_rx: tokio::sync::watch::Receiver<bool>,
+	deadline: std::time::Duration,
+) -> Option<String> {
+	let call = crate::supervisor::learning::extract::call_learning_llm(
+		config,
+		SYSTEM_PROMPT.to_string(),
+		user,
+		crate::supervisor::stats::CallKind::Condense,
+		operation_rx,
+	);
+	match tokio::time::timeout(deadline, call).await {
+		Ok(Ok(response)) => Some(response),
+		Ok(Err(e)) => {
+			crate::log_debug!("Condense call failed, leaving results as-is: {}", e);
+			None
+		}
+		Err(_) => {
+			crate::log_debug!(
+				"Condense call outlived its {:?} deadline, leaving results as-is",
+				deadline
+			);
+			None
+		}
+	}
+}
+
 /// Condense the round's oversized results in place. One model call for the
 /// whole round; under-threshold results are never touched. Fail-open: any
 /// error leaves everything as-is for the truncation backstop.
@@ -401,20 +441,9 @@ pub async fn condense_round(
 		return;
 	}
 
-	let response = match crate::supervisor::learning::extract::call_learning_llm(
-		config,
-		SYSTEM_PROMPT.to_string(),
-		user,
-		crate::supervisor::stats::CallKind::Condense,
-		operation_rx,
-	)
-	.await
-	{
-		Ok(r) => r,
-		Err(e) => {
-			crate::log_debug!("Condense call failed, leaving results as-is: {}", e);
-			return;
-		}
+	let Some(response) = request_verdicts(config, user, operation_rx, CONDENSE_DEADLINE).await
+	else {
+		return;
 	};
 
 	let Some(parsed) = parse_response(&response) else {

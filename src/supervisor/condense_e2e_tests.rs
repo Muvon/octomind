@@ -246,6 +246,44 @@ async fn an_unparseable_condenser_answer_leaves_the_round_untouched() {
 	assert_eq!(results[0].extract_content(), before);
 }
 
+/// A chat endpoint that accepts the request and never answers — a stalled
+/// provider the transport would otherwise wait on for its whole request
+/// timeout, then again for its retry.
+async fn spawn_silent_stub() -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind silent stub");
+	let addr = listener.local_addr().expect("silent stub addr");
+	tokio::spawn(async move {
+		let mut held = Vec::new();
+		while let Ok((sock, _)) = listener.accept().await {
+			held.push(sock);
+		}
+	});
+	format!("http://{}/v1/chat/completions", addr)
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_stalled_condenser_fails_open_at_its_deadline() {
+	let _guard = ENV_LOCK.lock().await;
+	let config = condense_config();
+	let url = spawn_silent_stub().await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let deadline = std::time::Duration::from_millis(200);
+	let started = std::time::Instant::now();
+	let verdict = request_verdicts(&config, "inspect the payload".to_string(), rx, deadline).await;
+	let held = started.elapsed();
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert!(verdict.is_none(), "a late verdict is no verdict");
+	assert!(
+		held < std::time::Duration::from_secs(5),
+		"the stalled call held the round for {held:?}"
+	);
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn a_failed_condenser_call_leaves_results_as_is() {

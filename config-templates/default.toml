@@ -638,7 +638,10 @@ verify_hash = true
 [compression.model]
 name = "octohub:auto"
 reasoning_effort = "medium"
-max_tokens = 16000  # Enough for decision + summary
+# Reasoning shares this budget with the summary: medium-effort folds of a
+# 70-100k-token range thought for 11-16k tokens and were cut off at 16000
+# (finish_reason=length) before emitting any summary.
+max_tokens = 32000
 temperature = 0.3  # Lower temperature for consistent decisions
 top_p = 1.0
 top_k = 0

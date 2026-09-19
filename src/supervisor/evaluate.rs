@@ -143,8 +143,11 @@ pub const RECALL_KEEP_AT: f64 = 0.5;
 /// Skills: the chosen skill auto-activates only when its own probability in
 /// the Choice distribution is at or above this. The distribution sums to 1
 /// over the roster plus `none`, so it is the same kind of number every other
-/// seam thresholds; the answer's derived `confidence` is not.
-pub const SKILL_ACTIVATE_AT: f64 = 0.8;
+/// seam thresholds; the answer's derived `confidence` is not. A roster of a
+/// hundred skills spreads the mass: on the tap's eval set the right skill is
+/// the top choice 92% of the time, but 0.8 abstained on 13% of those, 0.6 on
+/// 5%, with one more chitchat false activation in thirty.
+pub const SKILL_ACTIVATE_AT: f64 = 0.6;
 /// Authorizer: any Noul at or above this flags the batch for the supervisor.
 pub const AUTHORIZER_FLAG_AT: f64 = 0.5;
 /// Condense: a chunk at or above this is kept, together with its neighbours.
@@ -238,7 +241,7 @@ pub const AUTHORIZER_NOULS: [(&str, &str); 3] = [
 	),
 	(
 		"destructive",
-		"The call deletes or overwrites files or git history that are not regenerable from a build.",
+		"The call deletes, overwrites, or discards files, uncommitted changes, data, or git history that are not regenerable from a build.",
 	),
 	(
 		"external",

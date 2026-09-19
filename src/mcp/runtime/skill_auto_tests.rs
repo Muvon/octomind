@@ -1187,9 +1187,9 @@ async fn run_activation_evaluate_chooses_a_skill_when_rules_abstain() {
 #[serial]
 async fn run_activation_evaluate_activation_floor_is_inclusive_and_none_is_inert() {
 	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.79)),
+		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.59)),
 		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "none", 1.0)),
-		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.80)),
+		FakeEvaluationStep::Answers(choice(SKILL_QUESTION_ID, "markup-landing-page", 0.60)),
 	])
 	.await;
 	let _data = DataDirGuard::new();

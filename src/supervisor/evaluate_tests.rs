@@ -64,6 +64,7 @@ fn master_switch_off_disables_every_seam() {
 	config.evaluate.distill = true;
 	config.evaluate.plan = true;
 	config.evaluate.gate = true;
+	config.evaluate.capabilities = true;
 	for seam in Seam::ALL {
 		assert!(enabled(&config, seam));
 	}

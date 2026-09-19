@@ -1320,7 +1320,7 @@ fn apply_capability_answer<'a>(
 	};
 
 	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
-	if choice != CAPABILITY_NONE && !candidates.iter().any(|name| *name == choice) {
+	if choice != CAPABILITY_NONE && !candidates.contains(&choice) {
 		return Err("invalid response");
 	}
 	Ok(match cosine {

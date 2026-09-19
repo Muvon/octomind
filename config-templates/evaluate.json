@@ -1,0 +1,31 @@
+{
+  "state": {
+    "task": "Fix the failing test in src/parser.rs without changing the public API",
+    "diff": "--- a/src/parser.rs\n+++ b/src/parser.rs\n@@ -42,7 +42,7 @@\n-    if input.is_empty() {\n+    if input.trim().is_empty() {\n         return Err(ParseError::Empty);\n     }",
+    "last_tool_result": "cargo test parser: 12 passed; 0 failed"
+  },
+  "questions": {
+    "done": {
+      "type": "noul",
+      "instructions": "Is the task complete?",
+      "criteria": {
+        "true": "The failing test passes and no public signature changed.",
+        "false": "Tests still fail, or the diff changes a public signature."
+      }
+    },
+    "next": {
+      "type": "choice",
+      "instructions": "What should the agent do next?",
+      "criteria": {
+        "stop": "Report completion.",
+        "run_full_suite": "Run the whole test suite before stopping.",
+        "ask_user": "Ask the user because the task is ambiguous."
+      }
+    },
+    "risk": {
+      "type": "score",
+      "instructions": "How likely is this diff to be reverted later?",
+      "criteria": ["very unlikely", "unlikely", "possible", "likely"]
+    }
+  }
+}

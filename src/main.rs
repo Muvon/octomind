@@ -68,6 +68,10 @@ enum Commands {
 	/// Send a message to a running session by name.
 	Send(commands::SendArgs),
 
+	/// Ask the evaluation model typed questions about a JSON state. Reads
+	/// `{"state", "questions"}` from FILE or stdin; prints answers as JSON.
+	Evaluate(commands::EvaluateArgs),
+
 	/// Run a multi-step workflow by NAME (fetched from taps) or from a local TOML file.
 	/// Omit NAME to list available tap workflows. Reads input from stdin; writes the
 	/// final result to stdout; per-step progress, cost, and tokens to stderr.
@@ -200,6 +204,7 @@ fn command_name(command: &Commands) -> &'static str {
 		Commands::Untap(_) => "untap",
 		Commands::Vars(_) => "vars",
 		Commands::Send(_) => "send",
+		Commands::Evaluate(_) => "evaluate",
 		Commands::Workflow(_) => "workflow",
 		Commands::Completion { .. } => "completion",
 		Commands::Complete(_) => "complete",
@@ -262,6 +267,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 		Commands::Untap(untap_args) => commands::untap::execute(&untap_args)?,
 		Commands::Vars(vars_args) => commands::vars::execute(&vars_args, &config).await?,
 		Commands::Send(send_args) => commands::send::execute(&send_args).await?,
+		Commands::Evaluate(eval_args) => commands::evaluate::execute(&eval_args, &config).await?,
 		Commands::Workflow(wf_args) => commands::workflow::execute(&wf_args, &config).await?,
 		Commands::Completion { shell } => {
 			let mut app = CliArgs::command();

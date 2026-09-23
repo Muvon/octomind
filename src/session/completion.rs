@@ -65,12 +65,14 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// Call origin for purpose-based routing (octohub `auto`). Defaults to
 	/// Main; supervisor and compression call sites tag themselves.
 	pub purpose: crate::providers::ModelPurpose,
-	/// Re-send an unchanged request after a length-cut empty completion
-	/// (`finish_reason=length`, nothing emitted). Default true: for the agent
-	/// loop the one identical retry is the only recovery there is. A caller
-	/// that repairs the request itself (compression, see
-	/// `conversation_compression::ai`) turns it off — an unchanged re-send of a
-	/// deterministic cut only costs the call again.
+	/// Retry a length-cut empty completion (`finish_reason=length`, nothing
+	/// emitted) within the request's own retry budget, with reasoning switched
+	/// off for the retry: the model spent the whole output budget thinking, so
+	/// the same request would do it again, while the same prompt without
+	/// reasoning gets an answer out. Default true — for the agent loop this is
+	/// the only recovery there is. A caller that repairs the request itself
+	/// (compression, see `conversation_compression::ai`) turns it off and sees
+	/// the typed error at once.
 	pub identical_retry_on_length_cut: bool,
 }
 
@@ -348,7 +350,7 @@ pub async fn chat_completion_with_validation(
 		chat_params
 	};
 
-	let chat_params = if let Some(effort) = params.reasoning_effort {
+	let mut chat_params = if let Some(effort) = params.reasoning_effort {
 		chat_params.with_reasoning_effort(effort)
 	} else {
 		chat_params
@@ -405,11 +407,21 @@ pub async fn chat_completion_with_validation(
 		// was consumed before any content appeared, and re-sending the same
 		// request buys the same result at the same price (measured: a 16k
 		// budget fold retried identically, ~2.7 min and one fold's cost per
-		// attempt, four times in one turn). A caller with its own repair asks
-		// to see it at once; the agent loop keeps its one retry — at a low
-		// temperature it rarely helps, but it is the only recovery it has.
-		if !identical_retry_on_length_cut && last_finish_reason.as_deref() == Some("length") {
-			break;
+		// attempt, four times in one turn; an agent turn at a 125k context
+		// died the same way after its identical retry). A caller with its own
+		// repair asks to see it at once; otherwise the retry goes out with
+		// reasoning switched off, which is what frees the output budget.
+		if last_finish_reason.as_deref() == Some("length") {
+			if !identical_retry_on_length_cut {
+				break;
+			}
+			if attempt + 1 < attempts {
+				crate::log_info!(
+					"Provider '{}' returned nothing within the output budget (reasoning consumed it) — retrying with reasoning off",
+					provider.name()
+				);
+				chat_params.reasoning_effort = Some(crate::config::ReasoningEffortConfig::None);
+			}
 		}
 	}
 	Err(EmptyCompletion {

@@ -648,6 +648,8 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 							cache_read_tokens: chat_session.session.info.cache_read_tokens,
 							cache_write_tokens: chat_session.session.info.cache_write_tokens,
 							reasoning_tokens: chat_session.session.info.reasoning_tokens,
+							aux_input_tokens: 0,
+							aux_output_tokens: 0,
 							session_id: session_id.clone(),
 							pending_work: crate::session::has_pending_handback(),
 						}));
@@ -1568,6 +1570,8 @@ async fn handle_user_message(
 		cache_read_tokens: chat_session.session.info.cache_read_tokens,
 		cache_write_tokens: chat_session.session.info.cache_write_tokens,
 		reasoning_tokens: chat_session.session.info.reasoning_tokens,
+		aux_input_tokens: 0,
+		aux_output_tokens: 0,
 		session_id: session_id.clone(),
 		pending_work: crate::session::has_pending_handback(),
 	});

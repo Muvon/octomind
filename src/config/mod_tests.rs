@@ -542,3 +542,23 @@ fn thread_role_roundtrip_via_process_global() {
 	set_thread_role("config-mod-test-role");
 	assert_eq!(get_thread_role().as_deref(), Some("config-mod-test-role"));
 }
+
+#[test]
+fn reasoning_effort_none_parses_and_maps_to_thinking_off() {
+	assert_eq!(
+		ReasoningEffortConfig::parse("none"),
+		Some(ReasoningEffortConfig::None)
+	);
+	assert_eq!(
+		ReasoningEffortConfig::parse("off"),
+		Some(ReasoningEffortConfig::None)
+	);
+	assert_eq!(ReasoningEffortConfig::None.as_str(), "none");
+	assert_eq!(
+		ReasoningEffortConfig::None.to_octolib(),
+		octolib::llm::ReasoningEffort::None
+	);
+	assert_eq!(ReasoningEffortConfig::ALL[0], ReasoningEffortConfig::None);
+	let parsed: ReasoningEffortConfig = serde_json::from_str("\"none\"").unwrap();
+	assert_eq!(parsed, ReasoningEffortConfig::None);
+}

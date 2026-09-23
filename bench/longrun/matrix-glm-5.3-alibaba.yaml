@@ -1,0 +1,4 @@
+runs:
+  - provider: octomind
+    model: glm-5.3
+    provider_model: alibaba:glm-5.3

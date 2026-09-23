@@ -403,7 +403,7 @@ fn test_complete_effort_levels() {
 
 	let (start, candidates) = completer.complete("/effort ", 8);
 	assert_eq!(start, 8);
-	assert_eq!(candidates.len(), 5);
+	assert_eq!(candidates.len(), 6);
 
 	let (_, candidates) = completer.complete("/effort x", 9);
 	assert_eq!(candidates.len(), 1);
@@ -543,7 +543,7 @@ fn test_hint_extended() {
 	);
 	assert_eq!(
 		completer.hint("/effort"),
-		Some(" [low|medium|high|xhigh|max]".to_string())
+		Some(" [none|low|medium|high|xhigh|max]".to_string())
 	);
 	assert_eq!(
 		completer.hint("/status"),
@@ -609,7 +609,7 @@ fn test_hint_extended() {
 	);
 	assert_eq!(
 		completer.hint("/effort "),
-		Some("low|medium|high|xhigh|max".to_string())
+		Some("none|low|medium|high|xhigh|max".to_string())
 	);
 	assert_eq!(
 		completer.hint("/status "),

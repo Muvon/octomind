@@ -133,7 +133,7 @@ same fields; name-only tap/workflow overrides retain the inherited parameters.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | `"octohub:auto"` | Provider-qualified model identifier |
-| `reasoning_effort` | enum | `"medium"` | `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"` |
+| `reasoning_effort` | enum | `"medium"` | `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. `"none"` requests no reasoning and switches thinking off where the provider has a switch (Alibaba, DeepSeek, Z.AI, OpenRouter, OpenAI); the default for `[compression.model]`, whose output is a summary, not a decision |
 | `max_tokens` | u32 | `32768` | Maximum output tokens; `0` uses provider behavior |
 | `temperature` | f32 | `0.3` | Sampling temperature, 0.0-2.0 |
 | `top_p` | f32 | `0.7` | Nucleus sampling, 0.0-1.0 |

@@ -1026,26 +1026,8 @@ pub async fn process_response<S: OutputSink>(
 	// `<validation validator="…">…</validation>` into the inbox.
 	crate::session::hooks::run_turn_validators(&session_id, params.role, &current_content).await;
 
-	// Emit cost message through sink (WebSocket/JSONL). Fold first so the
-	// reported total covers everything this turn spent, including subagents and
-	// the supervisor — a parent reading our `octomind.usage` gets the full bill.
-	params.chat_session.session.fold_external_spend();
-	let total_tokens = params.chat_session.session.info.input_tokens
-		+ params.chat_session.session.info.output_tokens
-		+ params.chat_session.session.info.cache_read_tokens
-		+ params.chat_session.session.info.cache_write_tokens
-		+ params.chat_session.session.info.reasoning_tokens;
-	let cost_msg = ServerMessage::Cost(CostPayload {
-		session_tokens: total_tokens,
-		session_cost: params.chat_session.session.info.total_cost,
-		input_tokens: params.chat_session.session.info.input_tokens,
-		output_tokens: params.chat_session.session.info.output_tokens,
-		cache_read_tokens: params.chat_session.session.info.cache_read_tokens,
-		cache_write_tokens: params.chat_session.session.info.cache_write_tokens,
-		reasoning_tokens: params.chat_session.session.info.reasoning_tokens,
-		session_id,
-		pending_work: crate::session::has_pending_handback(),
-	});
+	// Emit cost message through sink (WebSocket/JSONL).
+	let cost_msg = ServerMessage::Cost(session_cost_payload(params.chat_session, session_id));
 
 	params.emit(cost_msg);
 
@@ -1057,6 +1039,39 @@ pub async fn process_response<S: OutputSink>(
 	}
 
 	Ok(())
+}
+
+/// The session's running usage as one cost frame. Folds external spend first so
+/// the reported total covers everything the session spent, including subagents
+/// and the supervisor — a parent reading our `octomind.usage` gets the full
+/// bill. Also emitted when a turn dies on a provider error, so a harness that
+/// bills from the last frame still sees the tokens the failed turn consumed
+/// (the crashed turns of a long run were recorded as zero before).
+pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) -> CostPayload {
+	chat_session.session.fold_external_spend();
+	let info = &chat_session.session.info;
+	let total_tokens = info.input_tokens
+		+ info.output_tokens
+		+ info.cache_read_tokens
+		+ info.cache_write_tokens
+		+ info.reasoning_tokens;
+	let compression = &info.compression_stats;
+	let (supervisor_in, supervisor_out) = crate::supervisor::stats::token_totals();
+	CostPayload {
+		session_tokens: total_tokens,
+		session_cost: info.total_cost,
+		input_tokens: info.input_tokens,
+		output_tokens: info.output_tokens,
+		cache_read_tokens: info.cache_read_tokens,
+		cache_write_tokens: info.cache_write_tokens,
+		reasoning_tokens: info.reasoning_tokens,
+		aux_input_tokens: compression.input_tokens + supervisor_in,
+		aux_output_tokens: compression.output_tokens
+			+ compression.reasoning_tokens
+			+ supervisor_out,
+		session_id,
+		pending_work: crate::session::has_pending_handback(),
+	}
 }
 
 #[cfg(test)]

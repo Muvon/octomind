@@ -1835,6 +1835,7 @@ pub async fn run_interactive_session_with_input(
 			// resilient — it logs and keeps listening so transient errors don't
 			// kill the long-running process.
 			if !daemon {
+				emit_cost_on_failure(&mut chat_session, &current_config);
 				return Err(e);
 			}
 		}
@@ -1984,6 +1985,7 @@ pub async fn run_interactive_session_with_input(
 					// daemons keep listening so a single bad turn doesn't kill
 					// the long-running process.
 					if !daemon {
+						emit_cost_on_failure(&mut chat_session, &current_config);
 						return Err(e);
 					}
 				}
@@ -2101,6 +2103,21 @@ pub async fn run_interactive_session_with_input(
 	}
 	Ok(())
 	}).await
+}
+
+/// A one-shot JSONL run is about to exit on a provider error: the turn's usage
+/// is real spend, so the cost frame goes out before the non-zero exit. A
+/// harness billing from the last frame otherwise records the failed turn as
+/// zero tokens (measured: ~20 min of fold calls per crashed bench turn, unbilled).
+fn emit_cost_on_failure(chat_session: &mut ChatSession, config: &Config) {
+	if config.runtime_output_mode.as_deref() != Some("jsonl") {
+		return;
+	}
+	let session_id = chat_session.session.info.name.clone();
+	let payload = crate::session::chat::response::session_cost_payload(chat_session, session_id);
+	if let Ok(json) = serde_json::to_string(&crate::websocket::ServerMessage::Cost(payload)) {
+		println!("{}", json);
+	}
 }
 
 /// Re-read every still-pending background job from its resource — the authority

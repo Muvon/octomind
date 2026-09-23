@@ -274,6 +274,16 @@ pub struct CostPayload {
 	pub cache_read_tokens: u64,
 	pub cache_write_tokens: u64,
 	pub reasoning_tokens: u64,
+	/// Prompt tokens of the session's own auxiliary model calls — compression
+	/// folds and the supervisor (gate, condense, resolve, plan, learning) —
+	/// which the main-model counters above do not include. `session_cost` does;
+	/// these let a consumer that prices tokens itself bill the whole session.
+	/// Running totals, like every other counter here.
+	#[serde(default)]
+	pub aux_input_tokens: u64,
+	/// Completion tokens (reasoning included) of those auxiliary calls.
+	#[serde(default)]
+	pub aux_output_tokens: u64,
 	pub session_id: String,
 	/// The turn is over, but it left work that streams a follow-up turn to this
 	/// connection on its own — a delegated `tap` run, an async agent job, or a

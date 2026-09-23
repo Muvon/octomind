@@ -275,6 +275,15 @@ pub fn evolution(action: &str) {
 		_ => {}
 	});
 }
+/// Prompt and completion tokens (reasoning included) of every supervisor call
+/// so far in this process, for the cost frame's auxiliary counters.
+pub fn token_totals() -> (u64, u64) {
+	global()
+		.lock()
+		.map(|s| (s.input_tokens, s.output_tokens + s.reasoning_tokens))
+		.unwrap_or((0, 0))
+}
+
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {

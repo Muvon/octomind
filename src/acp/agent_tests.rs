@@ -257,6 +257,8 @@ fn messages_without_an_acp_equivalent_are_dropped() {
 			cache_read_tokens: 0,
 			cache_write_tokens: 0,
 			reasoning_tokens: 0,
+			aux_input_tokens: 0,
+			aux_output_tokens: 0,
 			session_id: "s".to_string(),
 			pending_work: false,
 		}))

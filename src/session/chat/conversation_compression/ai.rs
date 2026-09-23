@@ -155,11 +155,11 @@ pub(super) async fn run_decision_call(
 			// range and emitted no summary (measured: medium effort on a 70-190k
 			// range hit a 16k budget every time; each identical retry cost ~2.7
 			// min and a fold's price, then the turn died at the ceiling). One
-			// repair, with the request changed where it failed: no explicit
-			// reasoning effort and four times the budget. Providers whose
-			// thinking stays on without an effort (Alibaba's DeepSeek-V4) get
-			// only the budget, so it has to be generous — a 2× repair (32k) was
-			// still cut on a 100k range. A second failure is the caller's cooldown.
+			// repair, with the request changed where it failed: reasoning
+			// switched off (`ReasoningEffort::None` — an explicit off, not a
+			// missing hint: hybrid models such as Alibaba's DeepSeek-V4 keep
+			// thinking when the effort is merely absent) and four times the
+			// budget. A second failure is the caller's cooldown.
 			let mut repair_profile = decision_config.clone();
 			repair_profile.max_tokens = repair_profile.max_tokens.saturating_mul(4);
 			log_info!(
@@ -175,7 +175,7 @@ pub(super) async fn run_decision_call(
 				&operation_rx,
 				schema.as_ref(),
 			);
-			params.reasoning_effort = None;
+			params.reasoning_effort = Some(crate::config::ReasoningEffortConfig::None);
 			// Logs from this task can be dropped (thread-local config), so the
 			// repair leaves its trace on the error the main task reports.
 			crate::session::chat_completion_with_validation(params)

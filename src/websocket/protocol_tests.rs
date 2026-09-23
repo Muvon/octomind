@@ -377,6 +377,8 @@ fn test_server_message_cost_serialization() {
 		cache_read_tokens: 30,
 		cache_write_tokens: 4,
 		reasoning_tokens: 0,
+		aux_input_tokens: 0,
+		aux_output_tokens: 0,
 		session_id: "sess_123".to_string(),
 		pending_work: false,
 	});
@@ -399,6 +401,8 @@ fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
 		cache_read_tokens: 0,
 		cache_write_tokens: 0,
 		reasoning_tokens: 0,
+		aux_input_tokens: 0,
+		aux_output_tokens: 0,
 		session_id: "sess_123".to_string(),
 		pending_work: true,
 	});

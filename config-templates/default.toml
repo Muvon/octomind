@@ -637,10 +637,12 @@ verify_hash = true
 # Cost comparison: Haiku ~$0.0003 vs Sonnet ~$0.003 per compression decision
 [compression.model]
 name = "octohub:auto"
-reasoning_effort = "medium"
-# Reasoning shares this budget with the summary: medium-effort folds of a
-# 70-100k-token range thought for 11-16k tokens and were cut off at 16000
-# (finish_reason=length) before emitting any summary.
+# A fold is a summary, not a decision: "none" asks for no reasoning and turns
+# thinking off where the provider has a switch. Medium-effort folds of a
+# 70-190k-token range thought their whole 16-32k budget away and returned
+# nothing (finish_reason=length) on every attempt, measured on deepseek-v4-flash;
+# with thinking off the same folds land in a fraction of the time.
+reasoning_effort = "none"
 max_tokens = 32000
 temperature = 0.3  # Lower temperature for consistent decisions
 top_p = 1.0

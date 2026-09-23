@@ -1,0 +1,4 @@
+runs:
+  - provider: octomind
+    model: deepseek-v4-flash
+    provider_model: alibaba:deepseek-v4-flash-0731

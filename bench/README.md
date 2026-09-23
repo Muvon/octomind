@@ -26,9 +26,15 @@ Headline metrics:
 
 Build HEAD for the SWE images (`$OCTOMIND` = octomind checkout, `$OUT` = a build dir on the build box):
 ```
-docker run --rm -v "$OCTOMIND":/src:ro -v "$OUT":/out -e CARGO_TARGET_DIR=/out rust:bookworm \
-  bash -c "cargo build --release --locked --manifest-path /src/Cargo.toml && cp /out/release/octomind /out/octomind-head"
+docker run --rm -v "$OCTOMIND":/src:ro -v "$OUT":/out -e CARGO_TARGET_DIR=/out rust:bookworm bash -c '
+  apt-get update -qq && apt-get install -y -qq protobuf-compiler unzip
+  A=onnxruntime-linux-x64-static_lib-1.24.2-glibc2_17
+  curl -sL https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.24.2/$A.zip -o /out/ort.zip && unzip -q -o /out/ort.zip -d /out
+  export ORT_LIB_LOCATION=/out/$A/lib
+  cargo build --release --locked --manifest-path /src/Cargo.toml && cp /out/release/octomind /out/octomind-head'
 # -> $OUT/octomind-head  (glibc 2.36, runs in the SWE images)
+# protoc is a build dependency; without ORT_LIB_LOCATION the ort-sys prebuilt fails to link
+# (duplicate libstdc++ symbols) — the same static lib CI downloads (.github/workflows/ci.yml).
 ```
 
 ## Routine check: HEAD-only vs the baseline

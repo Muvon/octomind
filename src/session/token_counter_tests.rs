@@ -275,10 +275,15 @@ async fn minimum_tokens_cover_system_prompt_and_request_overhead() {
 }
 
 #[test]
-fn model_replays_thinking_mirrors_octolib_request_builders() {
+fn model_replays_thinking_comes_from_the_provider() {
 	use crate::session::model_utils::model_replays_thinking;
+	// Answered by `AiProvider::replays_thinking`; models must be ones the
+	// provider resolves (strict pricing tables on DeepSeek and Z.AI), and an
+	// unresolvable model counts nothing rather than guessing.
+	assert!(!model_replays_thinking("zai:not-a-model"));
+	assert!(!model_replays_thinking("no-provider-prefix"));
 	assert!(model_replays_thinking("zai:glm-5.3"));
-	assert!(model_replays_thinking("deepseek:deepseek-chat"));
+	assert!(model_replays_thinking("deepseek:deepseek-flash"));
 	assert!(model_replays_thinking("moonshot:kimi-k2.7"));
 	assert!(model_replays_thinking("ollama:kimi-k2.6"));
 	assert!(!model_replays_thinking("moonshot:kimi-k2-turbo"));
@@ -321,11 +326,11 @@ fn sent_estimate_counts_thinking_only_where_the_provider_replays_it() {
 
 	let messages = vec![msg("system", "sys"), message.clone(), msg("user", "next")];
 	assert!(
-		estimate_sent_session_tokens(&messages, "alibaba:x")
-			< estimate_sent_session_tokens(&messages, "zai:x")
+		estimate_sent_session_tokens(&messages, "alibaba:deepseek-v4-flash-0731")
+			< estimate_sent_session_tokens(&messages, "zai:glm-5.3")
 	);
 	assert!(
-		estimate_sent_full_context_tokens(&messages, None, "alibaba:x")
+		estimate_sent_full_context_tokens(&messages, None, "alibaba:deepseek-v4-flash-0731")
 			< estimate_full_context_tokens(&messages, None)
 	);
 }

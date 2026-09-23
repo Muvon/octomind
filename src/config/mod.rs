@@ -228,9 +228,14 @@ pub struct SkillsConfig {
 
 /// Reasoning effort hint for thinking-capable models.
 /// Maps 1:1 to `octolib::llm::ReasoningEffort`. Models without thinking support ignore it.
+/// `none` asks for no reasoning and switches thinking off where the provider has
+/// a switch — the right setting for calls whose output is the whole point
+/// (compression summaries, judges): a hybrid-thinking model left on its default
+/// spends the output budget reasoning and returns nothing.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffortConfig {
+	None,
 	Low,
 	Medium,
 	High,
@@ -240,7 +245,8 @@ pub enum ReasoningEffortConfig {
 
 impl ReasoningEffortConfig {
 	/// Every level, in ascending order — the set `/effort` accepts.
-	pub const ALL: [ReasoningEffortConfig; 5] = [
+	pub const ALL: [ReasoningEffortConfig; 6] = [
+		ReasoningEffortConfig::None,
 		ReasoningEffortConfig::Low,
 		ReasoningEffortConfig::Medium,
 		ReasoningEffortConfig::High,
@@ -249,6 +255,7 @@ impl ReasoningEffortConfig {
 	];
 	pub fn to_octolib(self) -> octolib::llm::ReasoningEffort {
 		match self {
+			ReasoningEffortConfig::None => octolib::llm::ReasoningEffort::None,
 			ReasoningEffortConfig::Low => octolib::llm::ReasoningEffort::Low,
 			ReasoningEffortConfig::Medium => octolib::llm::ReasoningEffort::Medium,
 			ReasoningEffortConfig::High => octolib::llm::ReasoningEffort::High,
@@ -259,6 +266,7 @@ impl ReasoningEffortConfig {
 
 	pub fn as_str(self) -> &'static str {
 		match self {
+			ReasoningEffortConfig::None => "none",
 			ReasoningEffortConfig::Low => "low",
 			ReasoningEffortConfig::Medium => "medium",
 			ReasoningEffortConfig::High => "high",
@@ -269,6 +277,7 @@ impl ReasoningEffortConfig {
 
 	pub fn parse(s: &str) -> Option<Self> {
 		match s.trim().to_ascii_lowercase().as_str() {
+			"none" | "off" => Some(ReasoningEffortConfig::None),
 			"low" => Some(ReasoningEffortConfig::Low),
 			"medium" | "med" => Some(ReasoningEffortConfig::Medium),
 			"high" => Some(ReasoningEffortConfig::High),

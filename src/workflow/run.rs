@@ -1297,6 +1297,8 @@ pub async fn execute(
 			cache_read_tokens: ex.totals.cache_read_tokens,
 			cache_write_tokens: ex.totals.cache_write_tokens,
 			reasoning_tokens: ex.totals.reasoning_tokens,
+			aux_input_tokens: 0,
+			aux_output_tokens: 0,
 			session_id: String::new(),
 			pending_work: false,
 		}));

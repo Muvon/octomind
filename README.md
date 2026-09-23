@@ -593,7 +593,7 @@ Exact field list: [Telemetry](doc/reference/04-environment-variables.md#telemetr
 | `/info` | Token usage and costs |
 | `/status [agents\|monitors\|jobs]` | Current agents and background activity |
 | `/model anthropic:claude-haiku-4-5` | Switch model mid-session |
-| `/effort high` | Set reasoning effort (low/medium/high/xhigh/max) |
+| `/effort high` | Set reasoning effort (none/low/medium/high/xhigh/max) |
 | `/role developer:general` | Switch to a configured role or tap tag |
 | `/new Review auth` | Start a fresh session; the title is optional |
 | `/done` | Force context compression and start background learning extraction when enabled |

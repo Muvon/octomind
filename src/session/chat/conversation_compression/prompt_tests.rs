@@ -44,8 +44,8 @@ fn recency_window_scales_with_ratio_and_keeps_active_edge() {
 			..Default::default()
 		})
 		.collect();
-	let gentle = recent_suffix_start(&messages, 2.0);
-	let aggressive = recent_suffix_start(&messages, 8.0);
+	let gentle = recent_suffix_start(&messages, 2.0, "openrouter:test");
+	let aggressive = recent_suffix_start(&messages, 8.0, "openrouter:test");
 	assert!(gentle <= aggressive);
 	assert!(aggressive < messages.len());
 }
@@ -286,9 +286,9 @@ fn suffix_to_tokens_handles_zero_budget_and_empty_content() {
 
 #[test]
 fn recent_suffix_start_covers_empty_and_single_message_transcripts() {
-	assert_eq!(recent_suffix_start(&[], 4.0), 0);
+	assert_eq!(recent_suffix_start(&[], 4.0, "openrouter:test"), 0);
 	let single = vec![role_message("user", "hi")];
-	assert_eq!(recent_suffix_start(&single, 4.0), 0);
+	assert_eq!(recent_suffix_start(&single, 4.0, "openrouter:test"), 0);
 }
 
 #[test]

@@ -462,6 +462,14 @@ fn handle_follow_up_cost_tracking(
 	_config: &Config,
 ) {
 	if let Some(usage) = &exchange.usage {
+		// The reply is not in the transcript yet: the messages are exactly the
+		// prompt this usage report describes.
+		if let Some(estimate) = chat_session.raw_context_estimate() {
+			chat_session.observe_prompt_tokens(
+				estimate,
+				usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
+			);
+		}
 		// Every follow-up exchange = one completed API call (mirrors CostTracker::track_exchange_cost)
 		chat_session.session.info.total_api_calls += 1;
 

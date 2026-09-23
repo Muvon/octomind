@@ -39,7 +39,7 @@ use crate::config::Config;
 use crate::providers::ProviderFactory;
 use crate::session::chat::session::ChatSession;
 use crate::{log_debug, log_info};
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Invoke the compression model and return the parsed summary.
 ///
@@ -53,6 +53,30 @@ use anyhow::Result;
 /// The decision call's spend is added to the session total. The system
 /// message is marked cached with 1h TTL so it's amortised across every
 /// compression call in a session.
+/// The fold request for one model profile: text-only (no MCP toolset — it
+/// wastes input tokens and makes proxy providers such as octohub skip schema
+/// enforcement, breaking the JSON wire mode), tagged for purpose routing, and
+/// cancellable through the job's own channel.
+fn decision_params<'a>(
+	messages: &'a [crate::session::Message],
+	profile: &'a crate::config::ModelProfile,
+	config: &'a Config,
+	operation_rx: &tokio::sync::watch::Receiver<bool>,
+	schema: Option<&serde_json::Value>,
+) -> crate::session::ChatCompletionWithValidationParams<'a> {
+	let params =
+		crate::session::ChatCompletionWithValidationParams::from_profile(messages, profile, config)
+			.with_full_context_tokens(true)
+			.with_cancellation_token(operation_rx.clone())
+			.with_purpose(crate::providers::ModelPurpose::Compression)
+			.without_tools()
+			.without_identical_retry_on_length_cut();
+	match schema {
+		Some(schema) => params.with_schema(schema.clone()),
+		None => params,
+	}
+}
+
 pub(super) async fn run_decision_call(
 	config: &Config,
 	system_content: String,
@@ -112,24 +136,59 @@ pub(super) async fn run_decision_call(
 		decision_config.temperature
 	);
 
-	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(
+	let response = match crate::session::chat_completion_with_validation(decision_params(
 		&messages,
 		&decision_config,
 		config,
-	)
-	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx)
-	.with_purpose(crate::providers::ModelPurpose::Compression)
-	// Text-only summarization: no tools. Sending the MCP toolset here wastes
-	// input tokens and makes proxy providers (octohub) skip schema
-	// enforcement, breaking the JSON wire mode.
-	.without_tools();
-
-	if let Some(s) = schema.clone() {
-		params = params.with_schema(s);
-	}
-
-	let response = crate::session::chat_completion_with_validation(params).await?;
+		&operation_rx,
+		schema.as_ref(),
+	))
+	.await
+	{
+		Ok(response) => response,
+		Err(error)
+			if error
+				.downcast_ref::<crate::session::completion::EmptyCompletion>()
+				.is_some_and(|empty| empty.is_length_cut()) =>
+		{
+			// The model spent the whole output budget reasoning about a large
+			// range and emitted no summary (measured: medium effort on a 70-190k
+			// range hit a 16k budget every time; each identical retry cost ~2.7
+			// min and a fold's price, then the turn died at the ceiling). One
+			// repair, with the request changed where it failed: no explicit
+			// reasoning effort and four times the budget. Providers whose
+			// thinking stays on without an effort (Alibaba's DeepSeek-V4) get
+			// only the budget, so it has to be generous — a 2× repair (32k) was
+			// still cut on a 100k range. A second failure is the caller's cooldown.
+			let mut repair_profile = decision_config.clone();
+			repair_profile.max_tokens = repair_profile.max_tokens.saturating_mul(4);
+			log_info!(
+				"Compression model '{}' returned nothing within {} output tokens (length cut) — retrying once with reasoning off and a {}-token budget",
+				decision_config.model,
+				decision_config.max_tokens,
+				repair_profile.max_tokens
+			);
+			let mut params = decision_params(
+				&messages,
+				&repair_profile,
+				config,
+				&operation_rx,
+				schema.as_ref(),
+			);
+			params.reasoning_effort = None;
+			// Logs from this task can be dropped (thread-local config), so the
+			// repair leaves its trace on the error the main task reports.
+			crate::session::chat_completion_with_validation(params)
+				.await
+				.with_context(|| {
+					format!(
+						"fold repaired once (reasoning off, {}-token budget) and still cut",
+						repair_profile.max_tokens
+					)
+				})?
+		}
+		Err(error) => return Err(error),
+	};
 	let usage = response.exchange.usage.clone();
 
 	let summary = if schema.is_some() {

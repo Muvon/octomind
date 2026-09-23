@@ -492,6 +492,8 @@ impl ChatSession {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
+		// The prompt this reply answers is the transcript as it stands here.
+		let prompt_estimate = self.raw_context_estimate();
 		self.session.messages.push(message);
 		self.last_response = content.to_string();
 		// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
@@ -502,6 +504,12 @@ impl ChatSession {
 		// Update token counts and estimated costs if we have usage data
 		if let Some(ex) = &exchange {
 			if let Some(usage) = &ex.usage {
+				if let Some(estimate) = prompt_estimate {
+					self.observe_prompt_tokens(
+						estimate,
+						usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
+					);
+				}
 				// Track API time if available
 				if let Some(api_time_ms) = usage.request_time_ms {
 					self.session.info.total_api_time_ms += api_time_ms;

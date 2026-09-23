@@ -214,10 +214,13 @@ pub(super) fn calculate_range_tokens(
 
 	for i in start_idx..=end_idx {
 		if let Some(message) = session.session.messages.get(i) {
-			let tokens = crate::session::estimate_message_tokens(message) as u64;
+			let tokens =
+				crate::session::estimate_sent_message_tokens(message, &session.model) as u64;
 			total_tokens += tokens;
 		}
 	}
 
-	Ok(total_tokens)
+	// Same units as `get_full_context_tokens`, so the compressible share is
+	// never larger than the context it is part of.
+	Ok(session.calibrated(total_tokens as usize) as u64)
 }

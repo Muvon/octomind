@@ -16,9 +16,7 @@
 
 use super::utils::format_number;
 use crate::config::Config;
-use crate::session::{
-	estimate_full_context_tokens, get_sessions_dir, load_session, CompressionStats, Session,
-};
+use crate::session::{get_sessions_dir, load_session, CompressionStats, Session};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use colored::Colorize;
@@ -238,6 +236,17 @@ pub struct ChatSession {
 	/// of obeyed, and a claim about a step that has since advanced lapses.
 	/// `None` means no deferral is pending.
 	pub fold_deferral: Option<crate::session::chat::conversation_compression::FoldDeferral>,
+	/// Provider-reported prompt tokens ÷ local estimate for this session
+	/// (runtime-only, EMA). The local counter is cl100k over what the provider
+	/// receives; a model's own tokenizer runs 10–30% off that in either
+	/// direction (measured: deepseek-v4-flash 0.89–0.90, i.e. undercounted),
+	/// and every context decision — fire line, ceiling margin, fold depth —
+	/// compares that estimate with absolute token limits. Each usage report
+	/// pairs the actual prompt size with the estimate of the same messages, so
+	/// after one call the session measures itself in the provider's units.
+	/// `None` until the first sample; a new process (each `-r` turn) starts
+	/// uncalibrated and converges within a call or two.
+	pub prompt_calibration: Option<f64>,
 	/// Optional JSON schema for structured output (set via WebSocket/ACP protocol)
 	pub schema: Option<serde_json::Value>,
 	/// Critical knowledge entries extracted from compressions — persisted across
@@ -442,6 +451,7 @@ impl ChatSession {
 			initial_status_shown: false, // Initialize status display flag
 			cached_tools: None,          // Initialize tool cache (populated on first use)
 			fold_job: None,
+			prompt_calibration: None,
 			fold_cooldown_until_call: 0,
 			fold_deferral: None,
 			schema: None, // Schema set later via CLI override
@@ -658,6 +668,7 @@ impl ChatSession {
 						initial_status_shown: true, // Don't show status for resumed sessions
 						cached_tools: None,         // Initialize tool cache (populated on first use)
 						fold_job: None,
+						prompt_calibration: None,
 						fold_cooldown_until_call: 0,
 						fold_deferral: None,
 						schema: None,                   // Schema applied after init via CLI override
@@ -1390,12 +1401,25 @@ impl ChatSession {
 		if self.cached_tools.is_none() {
 			self.cached_tools = Some(crate::mcp::get_available_functions(config).await);
 		}
+		let raw = self
+			.raw_context_estimate()
+			.expect("tool definitions cached above");
+		self.calibrated(raw)
+	}
 
-		// System prompt is already included in session.messages. The active memory
-		// pack normally is not: it materializes only around the provider request, so
-		// account for its bounded request cost explicitly when absent from the slice.
-		let mut total =
-			estimate_full_context_tokens(&self.session.messages, self.cached_tools.as_deref());
+	/// The local (uncalibrated) estimate of the next request: every message as
+	/// the provider receives it, the cached tool definitions, and the active
+	/// memory pack when it is not yet in the slice (it materializes around the
+	/// provider request). `None` until the tool definitions have been cached —
+	/// a sample taken without them would pair the provider's full prompt with a
+	/// partial estimate.
+	pub fn raw_context_estimate(&self) -> Option<usize> {
+		let tools = self.cached_tools.as_deref()?;
+		let mut total = crate::session::estimate_sent_full_context_tokens(
+			&self.session.messages,
+			Some(tools),
+			&self.model,
+		);
 		if !self
 			.session
 			.messages
@@ -1406,10 +1430,55 @@ impl ChatSession {
 				let content = crate::session::ensure_system_managed(pack);
 				let mut message = crate::session::Session::build_message("user", &content);
 				message.name = Some("__active_memory_pack".to_string());
-				total = total.saturating_add(crate::session::estimate_message_tokens(&message));
+				total = total.saturating_add(crate::session::estimate_sent_message_tokens(
+					&message,
+					&self.model,
+				));
 			}
 		}
-		total
+		Some(total)
+	}
+
+	/// A local estimate in the provider's units: scaled by the session's
+	/// measured calibration, unscaled until the first usage report.
+	pub fn calibrated(&self, tokens: usize) -> usize {
+		match self.prompt_calibration {
+			Some(factor) => (tokens as f64 * factor).round() as usize,
+			None => tokens,
+		}
+	}
+
+	/// One usage report: `actual` is the prompt the provider billed for the
+	/// request whose local estimate was `estimate` (taken over the same
+	/// messages, before the reply was appended). Short prompts are skipped —
+	/// fixed per-request overhead dominates them and would swing the ratio.
+	/// The ratio is clamped so one malformed usage report cannot halve or
+	/// double every context decision.
+	pub fn observe_prompt_tokens(&mut self, estimate: usize, actual: u64) {
+		const MIN_SAMPLE_TOKENS: usize = 2_000;
+		const SMOOTHING: f64 = 0.5;
+		const BOUNDS: (f64, f64) = (0.5, 2.0);
+		if estimate < MIN_SAMPLE_TOKENS || actual == 0 {
+			return;
+		}
+		let sample = (actual as f64 / estimate as f64).clamp(BOUNDS.0, BOUNDS.1);
+		let factor = match self.prompt_calibration {
+			Some(previous) => previous + SMOOTHING * (sample - previous),
+			None => sample,
+		};
+		if self
+			.prompt_calibration
+			.is_none_or(|previous| (previous - factor).abs() > 0.02)
+		{
+			crate::log_debug!(
+				"Prompt calibration: estimate={} actual={} sample={:.2} factor={:.2}",
+				estimate,
+				actual,
+				sample,
+				factor
+			);
+		}
+		self.prompt_calibration = Some(factor);
 	}
 
 	/// Invalidate tool cache (call when MCP configuration changes)
@@ -1476,6 +1545,7 @@ impl ChatSession {
 			initial_status_shown: false,
 			cached_tools: None,
 			fold_job: None,
+			prompt_calibration: None,
 			fold_cooldown_until_call: 0,
 			fold_deferral: None,
 			schema: None,

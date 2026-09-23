@@ -215,7 +215,7 @@ PACT live rendering and durable model-authored state admit only folded_units; le
 	// This adapts to tiny chat turns, large tool rounds, and every task domain;
 	// a fixed message count does not. Always include the newest message so the
 	// active edge can never disappear solely because it is large.
-	let recent_start = recent_suffix_start(messages_to_compress, target_ratio);
+	let recent_start = recent_suffix_start(messages_to_compress, target_ratio, &session.model);
 
 	let reduction_pct = ((1.0 - 1.0 / target_ratio) * 100.0) as u32;
 	let aggressiveness = if target_ratio >= 4.0 {
@@ -465,16 +465,20 @@ fn collect_file_refs(message: &crate::session::Message, refs: &mut Vec<String>) 
 	}
 }
 
-fn recent_suffix_start(messages: &[crate::session::Message], target_ratio: f64) -> usize {
+fn recent_suffix_start(
+	messages: &[crate::session::Message],
+	target_ratio: f64,
+	model: &str,
+) -> usize {
 	let transcript_tokens: usize = messages
 		.iter()
-		.map(crate::session::estimate_message_tokens)
+		.map(|message| crate::session::estimate_sent_message_tokens(message, model))
 		.sum();
 	let recent_budget = ((transcript_tokens as f64) / target_ratio.max(1.0)).ceil() as usize;
 	let mut recent_start = messages.len();
 	let mut recent_tokens = 0usize;
 	for (index, message) in messages.iter().enumerate().rev() {
-		let message_tokens = crate::session::estimate_message_tokens(message);
+		let message_tokens = crate::session::estimate_sent_message_tokens(message, model);
 		if recent_start < messages.len()
 			&& recent_tokens.saturating_add(message_tokens) > recent_budget
 		{

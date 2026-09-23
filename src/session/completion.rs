@@ -16,7 +16,9 @@
 
 use crate::config::Config;
 use crate::providers::{ChatCompletionParams, ProviderFactory, ProviderResponse};
-use crate::session::token_counter::{estimate_full_context_tokens, estimate_session_tokens};
+use crate::session::token_counter::{
+	estimate_sent_full_context_tokens, estimate_sent_session_tokens,
+};
 use crate::session::Message;
 use anyhow::Result;
 use tokio::sync::watch;
@@ -63,6 +65,13 @@ pub struct ChatCompletionWithValidationParams<'a> {
 	/// Call origin for purpose-based routing (octohub `auto`). Defaults to
 	/// Main; supervisor and compression call sites tag themselves.
 	pub purpose: crate::providers::ModelPurpose,
+	/// Re-send an unchanged request after a length-cut empty completion
+	/// (`finish_reason=length`, nothing emitted). Default true: for the agent
+	/// loop the one identical retry is the only recovery there is. A caller
+	/// that repairs the request itself (compression, see
+	/// `conversation_compression::ai`) turns it off — an unchanged re-send of a
+	/// deterministic cut only costs the call again.
+	pub identical_retry_on_length_cut: bool,
 }
 
 impl<'a> ChatCompletionWithValidationParams<'a> {
@@ -92,6 +101,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			schema: None,
 			reasoning_effort: None,
 			tools: true,
+			identical_retry_on_length_cut: true,
 			purpose: crate::providers::ModelPurpose::default(),
 		}
 	}
@@ -118,6 +128,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 			schema: None,
 			reasoning_effort: Some(profile.reasoning_effort),
 			tools: true,
+			identical_retry_on_length_cut: true,
 			purpose: crate::providers::ModelPurpose::default(),
 		}
 	}
@@ -176,6 +187,13 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 		self.purpose = purpose;
 		self
 	}
+
+	/// The caller repairs a length-cut empty completion itself: surface it at
+	/// once instead of re-sending the unchanged request.
+	pub fn without_identical_retry_on_length_cut(mut self) -> Self {
+		self.identical_retry_on_length_cut = false;
+		self
+	}
 }
 
 /// Parameters for chat completion with provider
@@ -206,6 +224,27 @@ fn is_empty_completion(
 	content.trim().is_empty()
 		&& tool_calls.is_none_or(|c| c.is_empty())
 		&& structured_output.is_none()
+}
+
+/// A successful HTTP response that carried no content, tool calls or structured
+/// output. Typed so callers can tell a length cut apart from a transport-level
+/// flake: `finish_reason == "length"` means the model spent the whole output
+/// budget (on reasoning, typically) before emitting anything, and the same
+/// request will do the same again — the caller has to change the request.
+#[derive(Debug, thiserror::Error)]
+#[error("Provider '{provider}' returned an empty response (finish_reason={finish_reason:?}, no content or tool calls) for model '{model}' after {attempts} attempt(s)")]
+pub struct EmptyCompletion {
+	pub provider: String,
+	pub model: String,
+	pub finish_reason: Option<String>,
+	pub attempts: usize,
+}
+
+impl EmptyCompletion {
+	/// The output budget ran out before any content was produced.
+	pub fn is_length_cut(&self) -> bool {
+		self.finish_reason.as_deref() == Some("length")
+	}
 }
 
 /// Delay between empty-completion retries. The retry COUNT is the request's own
@@ -248,13 +287,14 @@ pub async fn chat_completion_with_validation(
 		} else {
 			Vec::new()
 		};
-		estimate_full_context_tokens(
+		estimate_sent_full_context_tokens(
 			params.messages,
 			if tools.is_empty() { None } else { Some(&tools) },
+			params.model,
 		)
 	} else {
 		// Fallback for cases without chat session - use basic counting
-		estimate_session_tokens(params.messages)
+		estimate_sent_session_tokens(params.messages, params.model)
 	};
 	if total_input_tokens > max_input_tokens {
 		return Err(anyhow::anyhow!(
@@ -323,7 +363,9 @@ pub async fn chat_completion_with_validation(
 	// keeps the turn honest: returning an empty response would read as a normal
 	// end-of-turn, render nothing, and silently strand the user at the prompt.
 	let attempts = params.max_retries as usize + 1;
+	let identical_retry_on_length_cut = params.identical_retry_on_length_cut;
 	let mut last_finish_reason = None;
+	let mut attempts_made = 0usize;
 	for attempt in 0..attempts {
 		if attempt > 0 {
 			if let Some(ref token) = cancellation_token {
@@ -352,20 +394,31 @@ pub async fn chat_completion_with_validation(
 			return Ok(response);
 		}
 		last_finish_reason = response.finish_reason.clone();
+		attempts_made = attempt + 1;
 		crate::log_debug!(
 			"Provider '{}' returned an empty completion (attempt {}/{})",
 			provider.name(),
 			attempt + 1,
 			attempts
 		);
+		// A length cut is deterministic for this request: the output budget
+		// was consumed before any content appeared, and re-sending the same
+		// request buys the same result at the same price (measured: a 16k
+		// budget fold retried identically, ~2.7 min and one fold's cost per
+		// attempt, four times in one turn). A caller with its own repair asks
+		// to see it at once; the agent loop keeps its one retry — at a low
+		// temperature it rarely helps, but it is the only recovery it has.
+		if !identical_retry_on_length_cut && last_finish_reason.as_deref() == Some("length") {
+			break;
+		}
 	}
-	Err(anyhow::anyhow!(
-		"Provider '{}' returned an empty response (finish_reason={:?}, no content or tool calls) for model '{}' after {} attempt(s)",
-		provider.name(),
-		last_finish_reason,
-		actual_model,
-		attempts
-	))
+	Err(EmptyCompletion {
+		provider: provider.name().to_string(),
+		model: actual_model.clone(),
+		finish_reason: last_finish_reason,
+		attempts: attempts_made,
+	}
+	.into())
 }
 
 /// High-level function to send a chat completion using the provider abstraction.

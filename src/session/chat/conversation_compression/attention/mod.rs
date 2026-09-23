@@ -168,7 +168,7 @@ pub(crate) async fn build(
 		));
 	}
 	let drained = &session.session.messages[drain_start..=drain_end];
-	let mut packets = build_packets(&session.session.info.name, drained);
+	let mut packets = build_packets(&session.session.info.name, drained, &session.model);
 	link_dependencies(&mut packets);
 
 	let task_turn = crate::session::latest_task_turn_index(&session.session.messages);
@@ -272,7 +272,7 @@ pub(crate) async fn build(
 	})
 }
 
-fn build_packets(session_name: &str, messages: &[Message]) -> Vec<EvidencePacket> {
+fn build_packets(session_name: &str, messages: &[Message], model: &str) -> Vec<EvidencePacket> {
 	let mut packets = Vec::new();
 	let mut index = 0usize;
 	while index < messages.len() {
@@ -305,7 +305,7 @@ fn build_packets(session_name: &str, messages: &[Message]) -> Vec<EvidencePacket
 		let linkage = packet_linkage(slice, kind);
 		let tokens = slice
 			.iter()
-			.map(crate::session::estimate_message_tokens)
+			.map(|message| crate::session::estimate_sent_message_tokens(message, model))
 			.sum();
 		let id = stable_packet_id(session_name, slice);
 		packets.push(EvidencePacket {

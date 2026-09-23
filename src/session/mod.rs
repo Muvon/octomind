@@ -65,6 +65,7 @@ pub use project_context::ProjectContext;
 pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{
 	calculate_minimum_session_tokens, estimate_full_context_tokens, estimate_message_tokens,
+	estimate_sent_full_context_tokens, estimate_sent_message_tokens, estimate_sent_session_tokens,
 	estimate_session_tokens, estimate_tokens, truncate_to_tokens, validate_session_token_threshold,
 }; // Export token counting functions // Export cache management
 

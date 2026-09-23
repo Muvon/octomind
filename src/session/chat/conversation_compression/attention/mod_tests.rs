@@ -81,7 +81,7 @@ fn parallel_tool_calls_and_results_are_one_packet() {
 	first.tool_call_id = Some("a".into());
 	let mut second = message("tool", "second result");
 	second.tool_call_id = Some("b".into());
-	let packets = build_packets("session", &[assistant, first, second]);
+	let packets = build_packets("session", &[assistant, first, second], "openrouter:test");
 	assert_eq!(packets.len(), 1);
 	assert_eq!(packets[0].kind, PacketKind::ToolInteraction);
 	assert_eq!(packets[0].linkage, PacketLinkage::StructuredIds);
@@ -99,7 +99,7 @@ fn missing_provider_result_id_uses_visible_contiguous_fallback() {
 		content: "provider omitted the result ID".into(),
 		..Default::default()
 	};
-	let packets = build_packets("session", &[assistant, result]);
+	let packets = build_packets("session", &[assistant, result], "openrouter:test");
 	assert_eq!(packets.len(), 1);
 	assert_eq!(packets[0].linkage, PacketLinkage::ContiguousFallback);
 }
@@ -110,7 +110,7 @@ fn unresolved_structured_call_is_still_a_tool_interaction() {
 	assistant.tool_calls = Some(serde_json::json!([
 		{"id":"pending","function":{"name":"domain_tool","arguments":"{}"}}
 	]));
-	let packets = build_packets("session", &[assistant]);
+	let packets = build_packets("session", &[assistant], "openrouter:test");
 	assert_eq!(packets[0].kind, PacketKind::ToolInteraction);
 	assert_eq!(packets[0].provenance, Provenance::AssistantReported);
 }
@@ -124,6 +124,7 @@ fn runtime_event_never_becomes_real_user_provenance() {
 			message("assistant", "monitoring is active"),
 			message("user", "<system-note>check now</system-note>"),
 		],
+		"openrouter:test",
 	);
 	assert_eq!(packets.last().unwrap().kind, PacketKind::RuntimeEvent);
 	assert_eq!(
@@ -206,7 +207,7 @@ fn genuine_user_pivot_replaces_runtime_trigger_as_action_parent() {
 	let mut result = message("tool", "corrected source observed");
 	result.tool_call_id = Some("pivot-call".into());
 	let messages = vec![continuation, runtime, pivot, call, result];
-	let mut packets = build_packets("pivot", &messages);
+	let mut packets = build_packets("pivot", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let action = packets.last().unwrap();
 	assert!(action.depends_on.contains(&packets[2].id));
@@ -246,7 +247,7 @@ fn validated_continuation_keeps_protocol_and_runtime_trigger_in_active_closure()
 		..Default::default()
 	};
 	let messages = vec![prior, continuation, runtime, call, result];
-	let mut packets = build_packets("generic-session", &messages);
+	let mut packets = build_packets("generic-session", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 
 	assert_eq!(packets[1].kind, PacketKind::TaskContinuation);
@@ -313,7 +314,7 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 		live_call,
 		live_result,
 	];
-	let mut packets = build_packets("monitoring-replay", &messages);
+	let mut packets = build_packets("monitoring-replay", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let old_packet_id = packets[2].id.clone();
 	let live_packet_id = packets[4].id.clone();
@@ -405,7 +406,7 @@ fn archive_verification_proves_selected_exact_span_bytes() {
 			.collect::<Vec<_>>()
 			.join("\n"),
 	)];
-	let mut packet = build_packets("span-session", &messages).remove(0);
+	let mut packet = build_packets("span-session", &messages, "openrouter:test").remove(0);
 	packet.lane = Lane::KeepExact;
 	let rendered = render_packet_with_spans(&messages, &packet, 30);
 	packet.prompt_content = rendered.content;
@@ -766,7 +767,7 @@ fn telemetry_contains_cost_and_span_proof_but_no_evidence_text() {
 fn self_report_grounding_emits_only_refs_not_reported_content() {
 	let secret = "credential pointer vault/team/key with value ultra-secret-value";
 	let messages = vec![message("assistant", secret)];
-	let packets = build_packets("session", &messages);
+	let packets = build_packets("session", &messages, "openrouter:test");
 	let handoff = crate::supervisor::detect::SelfReportHandoff {
 		focus: String::new(),
 		next: secret.into(),
@@ -789,7 +790,7 @@ fn self_report_cannot_reactivate_state_before_a_new_real_user_boundary() {
 			"Use the corrected trajectory from this point forward.",
 		),
 	];
-	let packets = build_packets("session", &messages);
+	let packets = build_packets("session", &messages, "openrouter:test");
 	let handoff = crate::supervisor::detect::SelfReportHandoff {
 		focus: stale.into(),
 		next: String::new(),
@@ -821,7 +822,7 @@ async fn active_frontier_allocation_obeys_total_token_budget() {
 			.collect::<Vec<_>>()
 			.join("\n"),
 	)];
-	let mut packets = build_packets("session", &messages);
+	let mut packets = build_packets("session", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = PinnedState {
 		task: PinnedItem {
@@ -850,7 +851,7 @@ async fn done_trigger_produces_minimal_frontier_without_exact_packets() {
 		message("user", "do the thing"),
 		message("assistant", "working on the thing\nline two\nline three"),
 	];
-	let mut packets = build_packets("session", &messages);
+	let mut packets = build_packets("session", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = PinnedState {
 		task: PinnedItem {
@@ -882,7 +883,7 @@ async fn tight_budget_keeps_recoverable_spans_for_late_small_frontier_packets() 
 	);
 	let small = message("assistant", "small closing checkpoint");
 	let messages = vec![large, small];
-	let mut packets = build_packets("session", &messages);
+	let mut packets = build_packets("session", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	// Force both packets into the active closure.
 	let first_id = packets[0].id.clone();
@@ -993,7 +994,7 @@ fn prior_summary_packet_strips_regenerated_file_context() {
 		);
 	prior.name = Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into());
 	let messages = vec![prior];
-	let packets = build_packets("session", &messages);
+	let packets = build_packets("session", &messages, "openrouter:test");
 	let rendered = render_packet(&messages, &packets[0], usize::MAX);
 	assert!(rendered.contains("b:required"));
 	assert!(!rendered.contains("SECRET STALE FILE BYTES"));
@@ -1010,7 +1011,7 @@ fn pact_packet_includes_assistant_thinking() {
 		"tokens": 9
 	}));
 	let messages = vec![assistant];
-	let packets = build_packets("session", &messages);
+	let packets = build_packets("session", &messages, "openrouter:test");
 
 	let rendered = render_packet(&messages, &packets[0], usize::MAX);
 	assert!(rendered.contains("[MESSAGE 1 ASSISTANT THINKING]"));
@@ -1076,7 +1077,7 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 	// Generous budget: the prior summary WOULD fit the exact frontier —
 	// it must still be excluded, and no kept-exact packet may embed a
 	// summary tag.
-	let mut packets = build_packets("nesting-regression", &messages);
+	let mut packets = build_packets("nesting-regression", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 10_000, false).await;
 	let prior_packet = packets
@@ -1201,7 +1202,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 
 	// Budget far below the prior summary's size: must not matter.
 	let messages = build();
-	let mut packets = build_packets("full-fold", &messages);
+	let mut packets = build_packets("full-fold", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
 	let prior_packet = packets
@@ -1275,7 +1276,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	// /done's minimal frontier is a task boundary, not amnesia: the prior
 	// summary still folds whole there.
 	let messages = build();
-	let mut packets = build_packets("full-fold-done", &messages);
+	let mut packets = build_packets("full-fold-done", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, true).await;
 	let prior_packet = packets
@@ -1325,7 +1326,7 @@ async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
 		live_call,
 		live_result,
 	];
-	let mut packets = build_packets("budget-exempt", &messages);
+	let mut packets = build_packets("budget-exempt", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let old_pair_id = packets[2].id.clone();
 	let pinned = pinned_task("check the run status now");
@@ -1488,7 +1489,7 @@ async fn legacy_nested_prior_summary_folds_whole_after_stripping_regrown_section
 		"<continuation>\n<task>keep going</task>\n</continuation>",
 	);
 	let messages = vec![prior, continuation];
-	let mut packets = build_packets("legacy-blob", &messages);
+	let mut packets = build_packets("legacy-blob", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 100, false).await;
@@ -1536,7 +1537,7 @@ async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
 	let mut result = message("tool", "still running");
 	result.tool_call_id = Some("c1".into());
 	let messages = vec![prior, continuation, call, result];
-	let mut packets = build_packets("empty-prior", &messages);
+	let mut packets = build_packets("empty-prior", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 200, false).await;
@@ -1596,7 +1597,7 @@ async fn every_prior_summary_folds_whole_when_a_legacy_session_carries_several()
 		call,
 		result,
 	];
-	let mut packets = build_packets("two-priors", &messages);
+	let mut packets = build_packets("two-priors", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 150, false).await;
@@ -1626,7 +1627,7 @@ async fn compaction_with_only_a_prior_summary_still_folds_it_whole() {
 		.map(|line| format!("prior folded line {line}"))
 		.collect();
 	let messages = vec![prior_summary_message(&prior_lines)];
-	let mut packets = build_packets("prior-only", &messages);
+	let mut packets = build_packets("prior-only", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let pinned = pinned_task("keep going");
 	allocate_lanes(&mut packets, &messages, &pinned, &[], "", 50, false).await;
@@ -1692,7 +1693,7 @@ async fn tiny_summarize_candidate_renders_whole_instead_of_poisoning_its_depende
 		live_call,
 		live_result,
 	];
-	let mut packets = build_packets("tiny-candidate", &messages);
+	let mut packets = build_packets("tiny-candidate", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let continuation_id = packets[0].id.clone();
 	let old_pair_id = packets[1].id.clone();
@@ -1807,7 +1808,7 @@ fn ground_self_report_requires_handoff_and_grounds_candidates() {
 		next: String::new(),
 		carry: Vec::new(),
 	});
-	let packets = build_packets("ground", &session.session.messages);
+	let packets = build_packets("ground", &session.session.messages, "openrouter:test");
 	let hints = ground_self_report(&session, &session.session.messages, &packets);
 	assert_eq!(hints.len(), 1);
 	assert_eq!(hints[0].kind, "focus");

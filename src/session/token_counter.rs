@@ -94,6 +94,23 @@ pub fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
 ///
 /// Based on: <https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb>
 pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
+	message_tokens(message, true)
+}
+
+/// Tokens of a message as the provider serving `model` will receive it. The
+/// one field that differs from the stored message is `thinking`: most providers
+/// never see historical reasoning again (see `model_replays_thinking`), and a
+/// long agentic turn stores far more reasoning than transcript, so counting it
+/// inflates every context decision — the compression fire line, the ceiling
+/// margin, cache checkpoints and the pre-flight size check.
+pub fn estimate_sent_message_tokens(message: &crate::session::Message, model: &str) -> usize {
+	message_tokens(
+		message,
+		crate::session::model_utils::model_replays_thinking(model),
+	)
+}
+
+fn message_tokens(message: &crate::session::Message, count_thinking: bool) -> usize {
 	let mut tokens = 0;
 
 	// Per-message overhead (OpenAI formula: 3 tokens for message formatting)
@@ -114,10 +131,14 @@ pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
 		}
 	}
 
-	// Count thinking tokens if present
-	if let Some(thinking) = &message.thinking {
-		if let Ok(json_str) = serde_json::to_string(thinking) {
-			tokens += estimate_tokens(&json_str);
+	// Thinking rides the wire as the bare reasoning string (`reasoning_content`),
+	// not as the stored `{content, tokens}` object — and only where replayed.
+	if count_thinking {
+		if let Some(thinking) = &message.thinking {
+			tokens += match thinking.get("content").and_then(|content| content.as_str()) {
+				Some(content) => estimate_tokens(content),
+				None => estimate_tokens(&serde_json::to_string(thinking).unwrap_or_default()),
+			};
 		}
 	}
 
@@ -137,11 +158,23 @@ pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
 
 // Estimate tokens for multiple messages
 pub fn estimate_session_tokens(messages: &[crate::session::Message]) -> usize {
+	session_tokens(messages, true)
+}
+
+/// `estimate_session_tokens` as the provider serving `model` receives it.
+pub fn estimate_sent_session_tokens(messages: &[crate::session::Message], model: &str) -> usize {
+	session_tokens(
+		messages,
+		crate::session::model_utils::model_replays_thinking(model),
+	)
+}
+
+fn session_tokens(messages: &[crate::session::Message], count_thinking: bool) -> usize {
 	let mut total = 0;
 
 	// Count each message
 	for msg in messages {
-		total += estimate_message_tokens(msg);
+		total += message_tokens(msg, count_thinking);
 	}
 
 	// Add conversation priming overhead (OpenAI formula: +3 for <|start|>assistant<|message|>)
@@ -158,8 +191,30 @@ pub fn estimate_full_context_tokens(
 	messages: &[crate::session::Message],
 	tools: Option<&[crate::mcp::McpFunction]>,
 ) -> usize {
+	full_context_tokens(messages, tools, true)
+}
+
+/// `estimate_full_context_tokens` as the provider serving `model` receives it —
+/// the number every context decision (fire line, ceiling, size check) must use.
+pub fn estimate_sent_full_context_tokens(
+	messages: &[crate::session::Message],
+	tools: Option<&[crate::mcp::McpFunction]>,
+	model: &str,
+) -> usize {
+	full_context_tokens(
+		messages,
+		tools,
+		crate::session::model_utils::model_replays_thinking(model),
+	)
+}
+
+fn full_context_tokens(
+	messages: &[crate::session::Message],
+	tools: Option<&[crate::mcp::McpFunction]>,
+	count_thinking: bool,
+) -> usize {
 	// Start with session tokens (includes all messages including system message)
-	let mut total = estimate_session_tokens(messages);
+	let mut total = session_tokens(messages, count_thinking);
 
 	// Add tool definition tokens if present
 	if let Some(tool_list) = tools {

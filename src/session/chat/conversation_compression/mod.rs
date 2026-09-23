@@ -374,6 +374,14 @@ pub struct FoldJob {
 		)>,
 	>,
 	ctx: FoldContext,
+	/// The fold request's cancellation channel, owned by the job. The
+	/// per-operation receiver is the wrong token here: octolib treats a dropped
+	/// sender as a cancel, and every turn boundary (a new user request, the
+	/// next inbox round of a piped run) swaps the operation channel and drops
+	/// the old sender — which killed every fold that spanned a boundary
+	/// ("Background fold cancelled before compression could be applied").
+	/// Dropping the job is now the only thing that cancels its request.
+	cancel: tokio::sync::watch::Sender<bool>,
 }
 
 struct FoldContext {
@@ -440,8 +448,77 @@ async fn collect_fold_job(
 	force: bool,
 	force_done: bool,
 ) -> Result<bool> {
-	let FoldJob { handle, ctx } = job;
-	let outcome = match handle.await {
+	let FoldJob {
+		handle,
+		ctx,
+		cancel: _cancel,
+	} = job;
+	let joined = handle.await;
+	apply_fold_outcome(session, config, ctx, joined, force, force_done).await
+}
+
+/// Bounded wait for a background fold when a one-shot (non-daemon piped) run is
+/// about to exit. The summary is already paid for, and the next `-r` turn is a
+/// new process that would otherwise start from the un-folded transcript and pay
+/// for the same fold again — the measured shape of multi-turn benchmark runs,
+/// where the context climbed past 2× the fire line because no fold ever
+/// landed. The wait is capped at the fold request's own budget (timeout ×
+/// attempts plus retry pauses; 0 = the request has no timeout, so neither does
+/// the wait), so a hung folder cannot hold the exit longer than it could hold
+/// a turn. Returns true when the fold was applied.
+pub async fn collect_fold_before_exit(session: &mut ChatSession, config: &Config) -> Result<bool> {
+	let Some(job) = session.fold_job.take() else {
+		return Ok(false);
+	};
+	let FoldJob {
+		handle,
+		ctx,
+		cancel: _cancel,
+	} = job;
+	let profile = config.get_compression_model_profile();
+	let attempts = profile.max_retries as u64 + 1;
+	let budget_secs = profile.request_timeout_seconds * attempts
+		+ profile.retry_timeout * profile.max_retries as u64;
+	log_info!(
+		"Run ending with a background fold in flight — waiting for it (≤{}s) so the saved session is compacted",
+		budget_secs
+	);
+	let joined = if budget_secs > 0 {
+		match tokio::time::timeout(std::time::Duration::from_secs(budget_secs), handle).await {
+			Ok(joined) => joined,
+			Err(_) => {
+				crate::log_error!(
+					"Background fold did not finish within {}s before exit — abandoning it",
+					budget_secs
+				);
+				note_fold_failure(session);
+				return Ok(false);
+			}
+		}
+	} else {
+		handle.await
+	};
+	apply_fold_outcome(session, config, ctx, joined, false, false).await
+}
+
+/// Everything after the fold task has been joined: discard on task failure,
+/// cancellation or a drained range that changed underneath the summary
+/// (failure cooldown in every case), otherwise apply through `finish_fold`.
+async fn apply_fold_outcome(
+	session: &mut ChatSession,
+	config: &Config,
+	ctx: FoldContext,
+	joined: std::result::Result<
+		Result<(
+			schema::CompressionSummary,
+			Option<crate::providers::TokenUsage>,
+		)>,
+		tokio::task::JoinError,
+	>,
+	force: bool,
+	force_done: bool,
+) -> Result<bool> {
+	let outcome = match joined {
 		Ok(outcome) => outcome,
 		Err(join_error) => {
 			crate::log_error!("Background fold task failed to join: {}", join_error);
@@ -1115,7 +1192,7 @@ async fn check_and_compress_conversation_inner(
 	// /done) cannot proceed without the result and stay inline.
 	if !force {
 		let config_for_task = config.clone();
-		let task_rx = operation_rx.clone();
+		let (cancel, task_rx) = tokio::sync::watch::channel(false);
 		let handle = tokio::spawn(async move {
 			ai::run_decision_call(
 				&config_for_task,
@@ -1126,7 +1203,11 @@ async fn check_and_compress_conversation_inner(
 			)
 			.await
 		});
-		session.fold_job = Some(FoldJob { handle, ctx });
+		session.fold_job = Some(FoldJob {
+			handle,
+			ctx,
+			cancel,
+		});
 		crate::supervisor::notify("compaction started in background");
 		log_debug!("Compression decision spawned in background");
 		return Ok(false);

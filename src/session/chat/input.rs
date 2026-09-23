@@ -16,7 +16,7 @@
 
 use crate::config::Config;
 use crate::mcp::get_available_functions;
-use crate::session::estimate_full_context_tokens;
+use crate::session::estimate_sent_full_context_tokens;
 use crate::session::history::{append_to_session_history_file, load_session_history_from_file};
 use anyhow::Result;
 use colored::*;
@@ -283,13 +283,13 @@ fn add_completion_menu_keybindings(keybindings: &mut Keybindings) {
 pub async fn calculate_current_context_tokens(
 	messages: &[crate::session::Message],
 	config: &Config,
-	_role: &str,
+	model: &str,
 ) -> u64 {
 	// Get available tools
 	let tools = get_available_functions(config).await;
 
 	// Calculate actual context tokens
-	estimate_full_context_tokens(messages, Some(&tools)) as u64
+	estimate_sent_full_context_tokens(messages, Some(&tools), model) as u64
 }
 pub fn read_user_input(
 	estimated_cost: f64,

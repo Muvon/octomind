@@ -3057,6 +3057,7 @@ async fn collect_fold_job_join_error_discards_and_sets_cooldown() {
 		&mut session,
 		&config,
 		super::FoldJob {
+			cancel: tokio::sync::watch::channel(false).0,
 			handle,
 			ctx: fold_ctx(0, 2, 0),
 		},
@@ -3085,6 +3086,7 @@ async fn collect_fold_job_cancelled_fold_sets_cooldown_without_applying() {
 		&mut session,
 		&config,
 		super::FoldJob {
+			cancel: tokio::sync::watch::channel(false).0,
 			handle,
 			ctx: fold_ctx(0, 2, 0),
 		},
@@ -3120,6 +3122,7 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 		&mut session,
 		&config,
 		super::FoldJob {
+			cancel: tokio::sync::watch::channel(false).0,
 			handle,
 			ctx: fold_ctx(0, 2, 42),
 		},
@@ -3620,6 +3623,7 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 		super::fold_fingerprint(&session.session.messages, 0, 3),
 	);
 	let job = super::FoldJob {
+		cancel: tokio::sync::watch::channel(false).0,
 		handle: tokio::spawn(async {
 			Err(anyhow::anyhow!("scripted compression transport failure"))
 		}),

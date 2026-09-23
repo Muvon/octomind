@@ -200,8 +200,10 @@ impl CacheManager {
 		let mut non_cached_tokens = 0;
 
 		for msg in &session.messages {
-			// Use accurate token counting that includes tool_calls, thinking, images, etc.
-			let message_tokens = crate::session::estimate_message_tokens(msg) as u64;
+			// Accurate token counting of what the provider receives (tool_calls,
+			// images, replayed thinking only).
+			let message_tokens =
+				crate::session::estimate_sent_message_tokens(msg, &session.info.model) as u64;
 
 			total_tokens += message_tokens;
 

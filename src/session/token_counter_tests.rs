@@ -273,3 +273,59 @@ async fn minimum_tokens_cover_system_prompt_and_request_overhead() {
 	// structure cost — the welcome message is always present.
 	assert!(minimum >= system_tokens + 70);
 }
+
+#[test]
+fn model_replays_thinking_mirrors_octolib_request_builders() {
+	use crate::session::model_utils::model_replays_thinking;
+	assert!(model_replays_thinking("zai:glm-5.3"));
+	assert!(model_replays_thinking("deepseek:deepseek-chat"));
+	assert!(model_replays_thinking("moonshot:kimi-k2.7"));
+	assert!(model_replays_thinking("ollama:kimi-k2.6"));
+	assert!(!model_replays_thinking("moonshot:kimi-k2-turbo"));
+	assert!(!model_replays_thinking("ollama:minimax-m3"));
+	assert!(!model_replays_thinking("alibaba:deepseek-v4-flash-0731"));
+	assert!(!model_replays_thinking(
+		"openrouter:deepseek/deepseek-v4-flash-0731"
+	));
+	assert!(!model_replays_thinking("anthropic:claude-opus-5"));
+	assert!(!model_replays_thinking("octohub:auto"));
+}
+
+#[test]
+fn sent_estimate_counts_thinking_only_where_the_provider_replays_it() {
+	let mut message = msg("assistant", "short answer");
+	let reasoning = "step ".repeat(2000);
+	message.thinking = Some(serde_json::json!({"content": reasoning, "tokens": 2000}));
+	let without = estimate_message_tokens(&msg("assistant", "short answer"));
+	let stored = estimate_message_tokens(&message);
+	assert!(
+		stored > without + 1000,
+		"stored size still carries the reasoning"
+	);
+
+	let dropped = estimate_sent_message_tokens(&message, "alibaba:deepseek-v4-flash-0731");
+	assert_eq!(
+		dropped, without,
+		"a provider that drops thinking is billed for none of it"
+	);
+
+	let replayed = estimate_sent_message_tokens(&message, "zai:glm-5.3");
+	assert!(
+		replayed > without + 1000,
+		"a replaying provider is billed for the reasoning text"
+	);
+	assert!(
+		replayed <= stored,
+		"the wire form is the bare string, never more than the stored JSON"
+	);
+
+	let messages = vec![msg("system", "sys"), message.clone(), msg("user", "next")];
+	assert!(
+		estimate_sent_session_tokens(&messages, "alibaba:x")
+			< estimate_sent_session_tokens(&messages, "zai:x")
+	);
+	assert!(
+		estimate_sent_full_context_tokens(&messages, None, "alibaba:x")
+			< estimate_full_context_tokens(&messages, None)
+	);
+}

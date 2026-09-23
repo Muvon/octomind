@@ -750,3 +750,55 @@ async fn resume_restores_role_and_critical_knowledge_from_log() {
 		"transcript messages must be restored"
 	);
 }
+
+#[tokio::test]
+async fn prompt_calibration_scales_context_decisions_into_provider_units() {
+	let config = crate::session::chat::test_support::fake_provider_config();
+	let mut session = ChatSession::for_tests(vec![
+		crate::session::Session::build_message("system", &"instructions ".repeat(3000)),
+		crate::session::Session::build_message("user", &"task ".repeat(3000)),
+	]);
+	session.cached_tools = Some(Vec::new());
+	let raw = session.raw_context_estimate().expect("tools cached");
+	assert!(raw >= 2_000, "fixture large enough to be sampled: {raw}");
+	assert_eq!(
+		session.get_full_context_tokens(&config).await,
+		raw,
+		"uncalibrated: the local estimate as is"
+	);
+
+	// The provider billed 20% more than the estimate for the same prompt.
+	session.observe_prompt_tokens(raw, (raw as f64 * 1.2) as u64);
+	let factor = session
+		.prompt_calibration
+		.expect("first sample sets the factor");
+	assert!((factor - 1.2).abs() < 0.01, "{factor}");
+	assert_eq!(
+		session.get_full_context_tokens(&config).await,
+		session.calibrated(raw)
+	);
+	assert!(session.calibrated(10_000) > 11_900 && session.calibrated(10_000) < 12_100);
+
+	// Later samples move the factor halfway (EMA), never by the whole jump.
+	session.observe_prompt_tokens(raw, (raw as f64 * 0.8) as u64);
+	let factor = session.prompt_calibration.expect("kept");
+	assert!((factor - 1.0).abs() < 0.01, "{factor}");
+
+	// Tiny prompts and empty usage are not samples; absurd ratios are clamped.
+	session.observe_prompt_tokens(500, 50_000);
+	session.observe_prompt_tokens(raw, 0);
+	assert!((session.prompt_calibration.expect("kept") - 1.0).abs() < 0.01);
+	session.observe_prompt_tokens(raw, raw as u64 * 50);
+	assert!(session.prompt_calibration.expect("kept") <= 2.0);
+}
+
+#[test]
+fn raw_context_estimate_needs_cached_tools() {
+	let session =
+		ChatSession::for_tests(vec![crate::session::Session::build_message("user", "hi")]);
+	assert!(
+		session.raw_context_estimate().is_none(),
+		"no sample without the tool definitions the provider also receives"
+	);
+	assert_eq!(session.calibrated(1234), 1234);
+}

@@ -649,7 +649,7 @@ pub async fn run_interactive_session(
 			let current_context_tokens = calculate_current_context_tokens(
 				&chat_session.session.messages,
 				&current_config,
-				&role,
+				&chat_session.model,
 			)
 			.await;
 
@@ -2070,6 +2070,21 @@ pub async fn run_interactive_session_with_input(
 
 	// Drain any in-flight keepalive so its cost lands in the persisted log.
 	drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await;
+
+	// A background fold still in flight when a one-shot run ends is a paid
+	// summary the next `-r` turn (a new process) could never collect: wait for
+	// it, bounded, so the persisted session is the compacted one. Daemons keep
+	// running and collect it at the next round like the interactive loop does.
+	if !daemon {
+		if let Err(error) = crate::session::chat::conversation_compression::collect_fold_before_exit(
+			&mut chat_session,
+			&current_config,
+		)
+		.await
+		{
+			crate::log_error!("Collecting the background fold before exit failed: {:#}", error);
+		}
+	}
 
 	// Save session before exit
 	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }

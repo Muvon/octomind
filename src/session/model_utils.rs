@@ -49,6 +49,30 @@ pub fn model_max_input_tokens(model: &str) -> Option<usize> {
 }
 
 // Function to check if a model supports caching
+/// Whether the provider sends stored assistant `thinking` back with later
+/// requests, so it occupies context the model actually reads. Mirrors the
+/// request builders in octolib 0.39: Z.AI replays every historical
+/// `reasoning_content` (Preserved Thinking), DeepSeek replays it on tool-using
+/// requests, Moonshot and Ollama only for Kimi K2.6+/K3; every other provider
+/// (the OpenAI-compatible family incl. Alibaba, Anthropic, OpenRouter, MiniMax,
+/// OctoHub, OpenAI) drops it on the floor. Counting dropped thinking towards the
+/// context estimate made a 60k-token prompt read as 100k (measured on
+/// deepseek-v4-flash via Alibaba), so folds fired at half the fire line and the
+/// "tokens saved" they reported were mostly text the provider never saw.
+pub fn model_replays_thinking(model: &str) -> bool {
+	let (provider, name) = model.split_once(':').unwrap_or(("", model));
+	let provider = provider.to_ascii_lowercase();
+	let name = name.to_ascii_lowercase();
+	let kimi_preserved = ["kimi-k2.6", "kimi-k2.7", "kimi-k3"]
+		.iter()
+		.any(|needle| name.contains(needle));
+	match provider.as_str() {
+		"zai" | "deepseek" => true,
+		"moonshot" | "ollama" => kimi_preserved,
+		_ => false,
+	}
+}
+
 pub fn model_supports_caching(model: &str) -> bool {
 	// Try to use the new provider system first
 	if let Ok((provider, actual_model)) = ProviderFactory::get_provider_for_model(model) {

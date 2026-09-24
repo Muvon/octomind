@@ -61,10 +61,39 @@ enabled = false
 Learning does not own a separate model. Extraction, recall, verification, retention, and evolution all use
 `[supervisor.model]`, which itself inherits omitted fields from `[model]`.
 
-`[supervisor.learning.evolution]` has one field, `enabled` (default `false`). When enabled, the detached learner may
+`[supervisor.learning.evolution]` is off by default (`enabled = false`). When enabled, the detached learner may
 compile one highest-value grounded memory per extraction into a machine-local skill or guardrail candidate. Candidates
-move through shadow, bounded trial, active, and rollback states; generated behavior never overwrites authored skills or
+move through shadow, bounded trial, active, and retired states; generated behavior never overwrites authored skills or
 `.agents/guardrails.toml`.
+
+Promotion is measured against a counterfactual rather than by counting wins. While a candidate is in **shadow**, its
+trigger is evaluated but the behavior is not applied; every turn where it matched and the verify-gate returned a
+verdict becomes its **control** sample (pass or fail, plus the turn's API-call count). After `min_samples` control
+verdicts it opens a live **trial**, the **treatment** arm. At most one trial runs among artifacts whose scopes can bind
+in the same session, so a verdict is never shared between two trials. Pass rates are Laplace-smoothed, and the trial
+is judged once both arms hold `min_samples` verdicts:
+
+- **Promoted** when the treatment beats the control by more than `noise_margin` and the extra API calls stay within
+  `cost_allowance + cost_per_gain × gain`, or when the pass rate stays within the noise margin while API calls drop by
+  more than `cost_allowance`.
+- **Regressed** (retired) when the treatment falls below the control by more than `noise_margin`.
+- **Inconclusive** (retired) after `max_trial_uses` live uses without either decision.
+
+An active behavior must keep earning its place. It is **pruned** once it no longer beats its control at all (the same
+rule with the margin relaxed to zero, so one unlucky verdict near the promotion edge does not remove it). Any shadow,
+trial, or active artifact with no trigger match or use for 90 days retires as **stale**. Rejected and retired records
+stay in the registry with their reason, and synthesis receives them as falsified hypotheses: a candidate drawn only
+from memories that already produced a record is dropped before verification.
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `min_samples` | Verify-gate verdicts required in each arm before comparison | `3` |
+| `noise_margin` | Smoothed pass-rate gap treated as noise | `0.15` |
+| `cost_allowance` | Relative API-call increase tolerated at negligible gain; also the saving that counts as cheaper | `0.10` |
+| `cost_per_gain` | Extra relative API-call increase allowed per unit of pass-rate gain | `2.0` |
+| `max_trial_uses` | Live uses before an undecided trial retires | `8` |
+
+Evolution needs `[supervisor.gate]` enabled: without verdicts no arm collects samples, and trials end inconclusive.
 
 Two synthesis modes share that pipeline. **Session** mode runs after each extraction on the memories that session just
 stored, with the transcript as evidence. **Store** mode runs at most once per day (or on `/learning evolution distill`)
@@ -159,7 +188,7 @@ To inspect generated behavior, use the ID returned by the evolution list (replac
 ```
 
 `approve` moves only a shadow candidate into trial. `reject` rejects a record; `rollback` moves a trial or active record
-back to shadow. To remove all scoped hot and cold memories:
+back to shadow and clears its live-trial evidence (the control arm is kept). To remove all scoped hot and cold memories:
 
 ```text
 /learning clear

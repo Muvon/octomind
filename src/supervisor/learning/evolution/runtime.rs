@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-	domain_name, project_name, ArtifactKind, EffectClass, EvolutionRecord, EvolutionState,
-	SHADOW_MATCHES_REQUIRED, TRIAL_FAILURE_LIMIT, TRIAL_MAX_USES, TRIAL_SUCCESSES_REQUIRED,
+	domain_name, project_name, ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig,
+	EvolutionRecord, EvolutionState,
 };
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -31,6 +31,9 @@ pub struct SkillBinding {
 static SESSION_SKILLS: RwLock<Option<HashMap<String, HashMap<String, SkillBinding>>>> =
 	RwLock::new(None);
 static SESSION_BEHAVIORS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
+/// Shadow artifacts whose trigger matched since the last verdict — the
+/// control arm: the same situations, observed without the artifact applied.
+static SESSION_SHADOWS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
 
 pub fn init_for_session(role: &str) {
 	let Some(session_id) = crate::session::context::current_session_id() else {
@@ -98,6 +101,13 @@ pub fn init_for_session(role: &str) {
 			.entry(session_id.clone())
 			.or_default();
 	}
+	{
+		let mut guard = SESSION_SHADOWS.write().unwrap();
+		guard
+			.get_or_insert_with(HashMap::new)
+			.entry(session_id.clone())
+			.or_default();
+	}
 
 	match generated_guardrails(&matching) {
 		Ok(generated) => {
@@ -117,6 +127,11 @@ pub fn clear_for_session(session_id: &str) {
 		}
 	}
 	if let Ok(mut guard) = SESSION_BEHAVIORS.write() {
+		if let Some(entries) = guard.as_mut() {
+			entries.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = SESSION_SHADOWS.write() {
 		if let Some(entries) = guard.as_mut() {
 			entries.remove(session_id);
 		}
@@ -242,18 +257,17 @@ pub fn mark_shadow_match(id: &str) {
 		}
 		record.shadow_matches = record.shadow_matches.saturating_add(1);
 		super::registry::append_history(record, "shadow_match", "native trigger matched");
-		if record.shadow_matches >= SHADOW_MATCHES_REQUIRED
-			&& (record.effect != EffectClass::Effectful || record.explicit_authorization)
-		{
-			record.state = EvolutionState::Trial;
-			super::registry::append_history(record, "trial", "shadow trigger threshold satisfied");
-		}
 		Ok(())
 	});
 	crate::supervisor::stats::evolution("shadow_match");
-	if let Ok(record) = update {
-		if record.state == EvolutionState::Trial {
-			emit_lifecycle(&record, "trial");
+	if update.is_ok() {
+		if let Some(session_id) = crate::session::context::current_session_id() {
+			let mut guard = SESSION_SHADOWS.write().unwrap();
+			guard
+				.get_or_insert_with(HashMap::new)
+				.entry(session_id)
+				.or_default()
+				.insert(id.to_string());
 		}
 	}
 }
@@ -279,7 +293,74 @@ pub fn behavior_available(session_id: &str, id: &str) -> bool {
 		})
 }
 
-pub async fn reinforce_session(session_id: &str, delta: f64) {
+/// Laplace-smoothed pass rate: a few verdicts stay near 0.5 instead of
+/// jumping to 0 or 1, so small samples cannot manufacture a large gap.
+fn pass_rate(successes: u32, failures: u32) -> f64 {
+	(successes as f64 + 1.0) / ((successes + failures) as f64 + 2.0)
+}
+
+/// Treatment measured against the shadow control of the same artifact.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Evidence {
+	/// Treatment pass rate minus control pass rate.
+	pub gain: f64,
+	/// Relative change in API calls per verdict-bearing turn.
+	pub cost: f64,
+}
+
+/// `None` until both arms hold `min_samples` verdicts.
+pub(crate) fn evidence(record: &EvolutionRecord, policy: &EvolutionConfig) -> Option<Evidence> {
+	let treated = record.successes + record.failures;
+	let control = record.control_successes + record.control_failures;
+	if treated < policy.min_samples || control < policy.min_samples || treated == 0 || control == 0
+	{
+		return None;
+	}
+	// A turn costs at least one call; flooring the baseline keeps the ratio finite.
+	let control_calls = (record.control_calls as f64 / control as f64).max(1.0);
+	let treatment_calls = record.treatment_calls as f64 / treated as f64;
+	Some(Evidence {
+		gain: pass_rate(record.successes, record.failures)
+			- pass_rate(record.control_successes, record.control_failures),
+		cost: (treatment_calls - control_calls) / control_calls,
+	})
+}
+
+/// Admission clears the noise band at a cost the gain pays for, or holds the
+/// pass rate within noise while measurably cutting cost.
+pub(crate) fn admits(evidence: Evidence, policy: &EvolutionConfig) -> bool {
+	(evidence.gain > policy.noise_margin
+		&& evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
+		|| (evidence.gain >= -policy.noise_margin && evidence.cost < -policy.cost_allowance)
+}
+
+/// Retention is admission with the margin relaxed to zero: once active, an
+/// artifact stays while it still beats its control at all, so one unlucky
+/// verdict near the promotion edge does not flap it out.
+pub(crate) fn sustains(evidence: Evidence, policy: &EvolutionConfig) -> bool {
+	(evidence.gain > 0.0
+		&& evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
+		|| (evidence.gain >= -policy.noise_margin && evidence.cost < -policy.cost_allowance)
+}
+
+fn describe(evidence: Evidence) -> String {
+	format!(
+		"pass rate {:+.2} vs shadow control, API calls {:+.0}%",
+		evidence.gain,
+		evidence.cost * 100.0
+	)
+}
+
+/// Credit one verify-gate verdict (`delta` sign; zero = no verdict) to the
+/// artifacts touched since the last one: used live artifacts are the
+/// treatment arm, matched shadow artifacts the control arm. `turn_calls` is
+/// the API-call cost of the turn.
+pub async fn reinforce_session(
+	session_id: &str,
+	delta: f64,
+	turn_calls: u32,
+	policy: &EvolutionConfig,
+) {
 	let used = {
 		let mut guard = SESSION_BEHAVIORS.write().unwrap();
 		guard
@@ -288,61 +369,79 @@ pub async fn reinforce_session(session_id: &str, delta: f64) {
 			.map(std::mem::take)
 			.unwrap_or_default()
 	};
+	let shadowed = {
+		let mut guard = SESSION_SHADOWS.write().unwrap();
+		guard
+			.as_mut()
+			.and_then(|entries| entries.get_mut(session_id))
+			.map(std::mem::take)
+			.unwrap_or_default()
+	};
+	let passed = if delta > 0.0 {
+		Some(true)
+	} else if delta < 0.0 {
+		Some(false)
+	} else {
+		None
+	};
+	if let Some(passed) = passed {
+		record_control(shadowed, passed, turn_calls, policy);
+	}
 	for id in used {
 		let result = super::registry::mutate_record(&id, |record| {
 			record.last_used = Some(chrono::Utc::now().to_rfc3339());
 			if record.state == EvolutionState::Trial {
 				record.trial_uses = record.trial_uses.saturating_add(1);
 			}
-			if delta > 0.0 {
-				record.successes = record.successes.saturating_add(1);
+			if let Some(passed) = passed {
+				if passed {
+					record.successes = record.successes.saturating_add(1);
+				} else {
+					record.failures = record.failures.saturating_add(1);
+				}
+				record.treatment_calls = record.treatment_calls.saturating_add(turn_calls as u64);
 				super::registry::append_history(
 					record,
-					"success",
-					format!("outcome credit {delta}"),
+					if passed { "success" } else { "failure" },
+					format!("outcome credit {delta}, {turn_calls} API calls"),
 				);
-				if record.state == EvolutionState::Trial
-					&& record.successes >= TRIAL_SUCCESSES_REQUIRED
-				{
-					record.state = EvolutionState::Active;
-					record.promoted = Some(chrono::Utc::now().to_rfc3339());
-					super::registry::append_history(
-						record,
-						"promoted",
-						"bounded live trial succeeded",
-					);
-				}
-			} else if delta < 0.0 {
-				record.failures = record.failures.saturating_add(1);
-				super::registry::append_history(
-					record,
-					"failure",
-					format!("outcome credit {delta}"),
-				);
-				if matches!(record.state, EvolutionState::Trial | EvolutionState::Active)
-					&& record.failures >= TRIAL_FAILURE_LIMIT
-				{
-					record.state = EvolutionState::Shadow;
-					record.shadow_matches = 0;
-					record.successes = 0;
-					super::registry::append_history(
-						record,
-						"rollback",
-						"verified negative outcome",
-					);
-				}
 			}
-			if record.state == EvolutionState::Trial
-				&& record.trial_uses >= TRIAL_MAX_USES
-				&& record.successes < TRIAL_SUCCESSES_REQUIRED
-			{
-				record.state = EvolutionState::Retired;
-				record.retired = Some(chrono::Utc::now().to_rfc3339());
-				super::registry::append_history(
-					record,
-					"trial_inconclusive",
-					"bounded trial ended without enough verified successes",
-				);
+			let measured = evidence(record, policy);
+			match record.state {
+				EvolutionState::Trial => match measured {
+					Some(evidence) if admits(evidence, policy) => {
+						record.state = EvolutionState::Active;
+						record.promoted = Some(chrono::Utc::now().to_rfc3339());
+						super::registry::append_history(record, "promoted", describe(evidence));
+					}
+					Some(evidence) if evidence.gain < -policy.noise_margin => {
+						record.state = EvolutionState::Retired;
+						record.retired = Some(chrono::Utc::now().to_rfc3339());
+						super::registry::append_history(record, "regressed", describe(evidence));
+					}
+					_ if record.trial_uses >= policy.max_trial_uses => {
+						record.state = EvolutionState::Retired;
+						record.retired = Some(chrono::Utc::now().to_rfc3339());
+						super::registry::append_history(
+							record,
+							"trial_inconclusive",
+							measured.map_or_else(
+								|| "bounded trial ended without enough verdicts".to_string(),
+								describe,
+							),
+						);
+					}
+					_ => {}
+				},
+				EvolutionState::Active => {
+					if let Some(evidence) = measured.filter(|evidence| !sustains(*evidence, policy))
+					{
+						record.state = EvolutionState::Retired;
+						record.retired = Some(chrono::Utc::now().to_rfc3339());
+						super::registry::append_history(record, "pruned", describe(evidence));
+					}
+				}
+				_ => {}
 			}
 			Ok(())
 		});
@@ -362,8 +461,78 @@ pub async fn reinforce_session(session_id: &str, delta: f64) {
 					});
 				}
 			}
-			if matches!(event, Some("promoted" | "rollback" | "trial_inconclusive")) {
-				emit_lifecycle(&record, event.unwrap_or_default());
+			if let Some(action @ ("promoted" | "regressed" | "pruned" | "trial_inconclusive")) =
+				event
+			{
+				emit_lifecycle(&record, action);
+			}
+		}
+	}
+}
+
+/// Record one control verdict per matched shadow artifact. Once the baseline
+/// holds `min_samples` verdicts the artifact opens its live trial — unless
+/// another trial already runs in an overlapping scope, because two trials in
+/// one session share every verdict and neither could be credited.
+fn record_control(
+	shadowed: HashSet<String>,
+	passed: bool,
+	turn_calls: u32,
+	policy: &EvolutionConfig,
+) {
+	if shadowed.is_empty() {
+		return;
+	}
+	let mut open_trials: Vec<ArtifactScope> = match super::registry::list_records() {
+		Ok(records) => records
+			.into_iter()
+			.filter(|record| record.state == EvolutionState::Trial)
+			.map(|record| record.scope)
+			.collect(),
+		Err(error) => {
+			crate::log_error!(
+				"evolution registry unavailable; control verdict dropped: {}",
+				error
+			);
+			return;
+		}
+	};
+	for id in shadowed {
+		let mut opened = false;
+		let result = super::registry::mutate_record(&id, |record| {
+			if record.state != EvolutionState::Shadow {
+				return Ok(());
+			}
+			if passed {
+				record.control_successes = record.control_successes.saturating_add(1);
+			} else {
+				record.control_failures = record.control_failures.saturating_add(1);
+			}
+			record.control_calls = record.control_calls.saturating_add(turn_calls as u64);
+			let control = record.control_successes + record.control_failures;
+			if control >= policy.min_samples
+				&& (record.effect != EffectClass::Effectful || record.explicit_authorization)
+				&& !open_trials
+					.iter()
+					.any(|scope| scope.overlaps(&record.scope))
+			{
+				record.state = EvolutionState::Trial;
+				opened = true;
+				super::registry::append_history(
+					record,
+					"trial",
+					format!(
+						"shadow control baseline: {}/{} verified",
+						record.control_successes, control
+					),
+				);
+			}
+			Ok(())
+		});
+		if let Ok(record) = result {
+			if opened {
+				open_trials.push(record.scope.clone());
+				emit_lifecycle(&record, "trial");
 			}
 		}
 	}

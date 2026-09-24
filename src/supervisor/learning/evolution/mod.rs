@@ -40,6 +40,19 @@ pub use runtime::{
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EvolutionConfig {
 	pub enabled: bool,
+	/// Verify-gate verdicts required in each arm (shadow control, live
+	/// treatment) before the two pass rates are compared.
+	pub min_samples: u32,
+	/// Pass-rate difference within which control and treatment are
+	/// indistinguishable; promotion must clear it, regression must exceed it.
+	pub noise_margin: f64,
+	/// Relative increase in API calls per turn tolerated at a negligible gain,
+	/// and the reduction that counts as "cheaper" at an unchanged pass rate.
+	pub cost_allowance: f64,
+	/// Additional relative API-call increase allowed per unit of pass-rate gain.
+	pub cost_per_gain: f64,
+	/// Live uses after which a trial without a decision retires as inconclusive.
+	pub max_trial_uses: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +125,15 @@ impl ArtifactScope {
 		self.project.as_deref().is_none_or(|value| value == project)
 			&& self.domain.as_deref().is_none_or(|value| value == domain)
 	}
+
+	/// Whether some session can bind both scopes at once.
+	pub fn overlaps(&self, other: &ArtifactScope) -> bool {
+		fn compatible(left: Option<&str>, right: Option<&str>) -> bool {
+			left.is_none() || right.is_none() || left == right
+		}
+		compatible(self.project.as_deref(), other.project.as_deref())
+			&& compatible(self.domain.as_deref(), other.domain.as_deref())
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +188,18 @@ pub struct EvolutionRecord {
 	pub successes: u32,
 	pub failures: u32,
 	pub false_triggers: u32,
+	/// Verify-gate passes on turns where this artifact's trigger matched while it
+	/// was in shadow — the counterfactual baseline for the same situations.
+	#[serde(default)]
+	pub control_successes: u32,
+	#[serde(default)]
+	pub control_failures: u32,
+	/// API calls summed over the control turns above.
+	#[serde(default)]
+	pub control_calls: u64,
+	/// API calls summed over the verdict-bearing live uses (`successes` + `failures`).
+	#[serde(default)]
+	pub treatment_calls: u64,
 	pub created: String,
 	pub updated: String,
 	pub promoted: Option<String>,
@@ -191,10 +225,6 @@ pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
 /// extraction runs it at most once per interval; the command bypasses it.
 const STORE_SYNTHESIS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 const STORE_SYNTHESIS_STAMP: &str = "store-synthesis.stamp";
-pub const SHADOW_MATCHES_REQUIRED: u32 = 2;
-pub const TRIAL_SUCCESSES_REQUIRED: u32 = 2;
-pub const TRIAL_FAILURE_LIMIT: u32 = 1;
-pub const TRIAL_MAX_USES: u32 = 4;
 
 /// Existing learning project identity: current working-directory basename.
 /// Keeping this in one function prevents evolution from inventing a parallel
@@ -252,7 +282,38 @@ pub async fn synthesize_store_if_due(
 		return Ok(None);
 	}
 	std::fs::write(&stamp, chrono::Utc::now().to_rfc3339())?;
+	retire_stale()?;
 	synthesize::synthesize_store(config, role, project).await
+}
+
+/// Retire live-lifecycle artifacts with no activity (trigger match or use)
+/// for `DECAY_DAYS`: an artifact must keep earning its place in the harness.
+fn retire_stale() -> anyhow::Result<()> {
+	let horizon = chrono::Duration::days(super::DECAY_DAYS as i64);
+	let now = chrono::Utc::now();
+	for record in registry::list_records()? {
+		let idle = chrono::DateTime::parse_from_rfc3339(&record.updated)
+			.is_ok_and(|updated| now - updated.with_timezone(&chrono::Utc) > horizon);
+		if !idle
+			|| !matches!(
+				record.state,
+				EvolutionState::Shadow | EvolutionState::Trial | EvolutionState::Active
+			) {
+			continue;
+		}
+		let retired = registry::mutate_record(&record.id, |record| {
+			record.state = EvolutionState::Retired;
+			record.retired = Some(chrono::Utc::now().to_rfc3339());
+			registry::append_history(
+				record,
+				"stale",
+				format!("no trigger match or use for {} days", super::DECAY_DAYS),
+			);
+			Ok(())
+		})?;
+		runtime::emit_lifecycle(&retired, "stale");
+	}
+	Ok(())
 }
 
 /// `/learning evolution distill`: run the cross-store pass now.
@@ -290,6 +351,9 @@ pub fn record_summary(record: &EvolutionRecord) -> serde_json::Value {
 		"successes": record.successes,
 		"failures": record.failures,
 		"false_triggers": record.false_triggers,
+		"control_successes": record.control_successes,
+		"control_failures": record.control_failures,
+		"reason": record.history.last().map(|event| event.detail.as_str()),
 		"replay_cases": record.replay_cases.len(),
 		"created": record.created,
 		"updated": record.updated,

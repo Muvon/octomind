@@ -40,6 +40,8 @@ async fn outcome_credit_updates_only_materially_used_memory() {
 			.await
 			.unwrap();
 	}
+	let config: Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.recalled_refs = vec![
 		(
@@ -56,7 +58,7 @@ async fn outcome_credit_updates_only_materially_used_memory() {
 		),
 	];
 	session.used_memory_ids.insert("M2".to_string());
-	reinforce_recalled(&mut session, 0.05).await;
+	reinforce_recalled(&mut session, &config, 0.05).await;
 	session.recalled_refs = vec![(
 		"M3".to_string(),
 		"used without verdict".to_string(),
@@ -64,7 +66,7 @@ async fn outcome_credit_updates_only_materially_used_memory() {
 		project.to_string(),
 	)];
 	session.used_memory_ids.insert("M3".to_string());
-	reinforce_recalled(&mut session, 0.0).await;
+	reinforce_recalled(&mut session, &config, 0.0).await;
 	let memories = backend.retrieve_all(role, project).await.unwrap();
 	let unused = memories
 		.iter()

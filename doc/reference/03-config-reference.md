@@ -613,11 +613,18 @@ Guide](../usage/13-learning.md) for full details.
 
 Optional grounded behavior evolution. When enabled, newly stored quote-backed rules and verified experiences may produce
 scoped native skill or guardrail candidates. Synthesis and admission both use the single `[supervisor.model]` profile,
-which must support structured output. Thresholds and trial limits are fixed internal constants.
+which must support structured output. A trial is promoted only when it beats the candidate's own shadow control
+(verify-gate verdicts on turns where its trigger matched while not applied) beyond the noise margin at an acceptable
+API-call cost; see [Learning](../usage/13-learning.md).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable detached candidate synthesis and lifecycle-managed trials |
+| `min_samples` | integer | `3` | Verify-gate verdicts required in each arm (shadow control, live trial) before comparison |
+| `noise_margin` | float | `0.15` | Smoothed pass-rate gap treated as noise; promotion must exceed it, regression is below its negative |
+| `cost_allowance` | float | `0.10` | Relative API-call increase tolerated at negligible gain; also the saving that promotes at an unchanged pass rate |
+| `cost_per_gain` | float | `2.0` | Extra relative API-call increase allowed per unit of pass-rate gain |
+| `max_trial_uses` | integer | `8` | Live uses after which an undecided trial retires as inconclusive |
 
 ### `[supervisor.gate]`
 
@@ -683,6 +690,11 @@ enabled = true
 
 [supervisor.learning.evolution]
 enabled = false
+min_samples = 3
+noise_margin = 0.15
+cost_allowance = 0.10
+cost_per_gain = 2.0
+max_trial_uses = 8
 
 [supervisor.gate]
 enabled = true

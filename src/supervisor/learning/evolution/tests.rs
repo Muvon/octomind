@@ -52,6 +52,10 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		successes: 0,
 		failures: 0,
 		false_triggers: 0,
+		control_successes: 0,
+		control_failures: 0,
+		control_calls: 0,
+		treatment_calls: 0,
 		created: now.clone(),
 		updated: now,
 		promoted: None,
@@ -107,14 +111,25 @@ enabled = true
 model = "openai:gpt-5-mini"
 [evolution]
 enabled = false
+min_samples = 3
+noise_margin = 0.15
+cost_allowance = 0.1
+cost_per_gain = 2.0
+max_trial_uses = 8
 "#;
 	let parsed = toml::from_str::<crate::supervisor::learning::LearningConfig>(present).unwrap();
 	assert!(!parsed.evolution.enabled);
 }
 
+fn policy() -> EvolutionConfig {
+	let config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	config.supervisor.learning.evolution
+}
+
 #[serial_test::serial]
 #[tokio::test]
-async fn lifecycle_requires_shadow_then_verified_trial_and_rolls_back() {
+async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
@@ -127,42 +142,131 @@ async fn lifecycle_requires_shadow_then_verified_trial_and_rolls_back() {
 		None,
 	)
 	.unwrap();
+	let policy = policy();
 
-	mark_shadow_match(id);
-	assert_eq!(
-		get_record(id).unwrap().unwrap().state,
-		EvolutionState::Shadow
-	);
-	mark_shadow_match(id);
-	assert_eq!(
-		get_record(id).unwrap().unwrap().state,
-		EvolutionState::Trial
-	);
+	let session_id = "evolution-lifecycle-session".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		// Control arm: the trigger matched without the guard and the turns failed.
+		for turn in 0..policy.min_samples {
+			assert_eq!(
+				get_record(id).unwrap().unwrap().state,
+				EvolutionState::Shadow,
+				"trial opened before {turn} control verdicts"
+			);
+			mark_shadow_match(id);
+			reinforce_session(&session_id, -0.15, 2, &policy).await;
+		}
+		let trial = get_record(id).unwrap().unwrap();
+		assert_eq!(trial.state, EvolutionState::Trial);
+		assert_eq!(trial.control_failures, policy.min_samples);
+		assert_eq!(trial.control_calls, 2 * policy.min_samples as u64);
 
-	for _ in 0..TRIAL_SUCCESSES_REQUIRED {
-		mark_behavior_used("session", id);
-		reinforce_session("session", 0.05).await;
-	}
-	assert_eq!(
-		get_record(id).unwrap().unwrap().state,
-		EvolutionState::Active
-	);
+		// Treatment arm: the same situations pass at the same cost.
+		for _ in 0..policy.min_samples {
+			mark_behavior_used(&session_id, id);
+			reinforce_session(&session_id, 0.05, 2, &policy).await;
+		}
+		let active = get_record(id).unwrap().unwrap();
+		assert_eq!(active.state, EvolutionState::Active);
+		assert!(active.promoted.is_some());
 
-	mark_behavior_used("session", id);
-	reinforce_session("session", -0.15).await;
-	let rolled_back = get_record(id).unwrap().unwrap();
-	assert_eq!(rolled_back.state, EvolutionState::Shadow);
-	assert!(rolled_back
-		.history
-		.iter()
-		.any(|event| event.event == "rollback"));
+		// Sustained failures erase the measured gain: the guard is pruned.
+		for _ in 0..20 {
+			if get_record(id).unwrap().unwrap().state != EvolutionState::Active {
+				break;
+			}
+			mark_behavior_used(&session_id, id);
+			reinforce_session(&session_id, -0.15, 2, &policy).await;
+		}
+		let pruned = get_record(id).unwrap().unwrap();
+		assert_eq!(pruned.state, EvolutionState::Retired);
+		assert!(pruned.history.iter().any(|event| event.event == "pruned"));
+		clear_for_session(&session_id);
+	})
+	.await;
 
-	clear_for_session("session");
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
 	} else {
 		std::env::remove_var("OCTOMIND_DATA_DIR");
 	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn stale_live_artifacts_retire_and_terminal_ones_stay() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
+	let old = (chrono::Utc::now()
+		- chrono::Duration::days(crate::supervisor::learning::DECAY_DAYS as i64 + 1))
+	.to_rfc3339();
+	let mut stale = record(
+		"evo-stale-active",
+		ArtifactKind::Guard,
+		EvolutionState::Active,
+	);
+	stale.updated = old.clone();
+	let mut rejected = record(
+		"evo-stale-rejected",
+		ArtifactKind::Guard,
+		EvolutionState::Rejected,
+	);
+	rejected.updated = old;
+	let fresh = record(
+		"evo-fresh-active",
+		ArtifactKind::Guard,
+		EvolutionState::Active,
+	);
+	for item in [stale, rejected, fresh] {
+		super::registry::create_record(item, native, None).unwrap();
+	}
+
+	retire_stale().unwrap();
+	let stale = get_record("evo-stale-active").unwrap().unwrap();
+	assert_eq!(stale.state, EvolutionState::Retired);
+	assert!(stale.history.iter().any(|event| event.event == "stale"));
+	assert_eq!(
+		get_record("evo-stale-rejected").unwrap().unwrap().state,
+		EvolutionState::Rejected
+	);
+	assert_eq!(
+		get_record("evo-fresh-active").unwrap().unwrap().state,
+		EvolutionState::Active
+	);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[test]
+fn scope_overlap_treats_missing_dimensions_as_wildcards() {
+	let scope = |project: Option<&str>, domain: Option<&str>| ArtifactScope {
+		project: project.map(String::from),
+		domain: domain.map(String::from),
+	};
+	assert!(scope(Some("a"), Some("dev")).overlaps(&scope(Some("a"), Some("dev"))));
+	assert!(scope(None, Some("dev")).overlaps(&scope(Some("a"), Some("dev"))));
+	assert!(scope(None, None).overlaps(&scope(Some("a"), Some("writer"))));
+	assert!(!scope(Some("a"), Some("dev")).overlaps(&scope(Some("b"), Some("dev"))));
+	assert!(!scope(None, Some("dev")).overlaps(&scope(None, Some("writer"))));
+}
+
+#[test]
+fn summary_exposes_control_arm_and_last_reason() {
+	let mut item = record("evo-summary", ArtifactKind::Skill, EvolutionState::Retired);
+	item.control_successes = 2;
+	item.control_failures = 1;
+	super::registry::append_history(&mut item, "regressed", "pass rate -0.40 vs shadow control");
+	let summary = record_summary(&item);
+	assert_eq!(summary["control_successes"], 2);
+	assert_eq!(summary["control_failures"], 1);
+	assert_eq!(summary["reason"], "pass rate -0.40 vs shadow control");
 }
 
 #[serial_test::serial]
@@ -663,10 +767,13 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 				assert!(marker.exists(), "trial {} did not execute", item.id);
 			}
 		}
-		reinforce_session(&session_id, 0.05).await;
+		reinforce_session(&session_id, 0.05, 1, &config.supervisor.learning.evolution).await;
 		for (item, _) in &items {
+			let stored = get_record(&item.id).unwrap().unwrap();
 			if item.state == EvolutionState::Trial {
-				assert_eq!(get_record(&item.id).unwrap().unwrap().successes, 1);
+				assert_eq!(stored.successes, 1);
+			} else {
+				assert_eq!(stored.control_successes, 1, "shadow {} control", item.id);
 			}
 		}
 		crate::session::context::cleanup_session(&session_id);

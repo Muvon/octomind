@@ -271,7 +271,9 @@ pub fn evolution(action: &str) {
 		"trial" => stats.evolution_trials += 1,
 		"promoted" => stats.evolution_promoted += 1,
 		"rollback" => stats.evolution_rollbacks += 1,
-		"retired" | "trial_inconclusive" => stats.evolution_retired += 1,
+		"retired" | "trial_inconclusive" | "regressed" | "pruned" | "stale" => {
+			stats.evolution_retired += 1
+		}
 		_ => {}
 	});
 }

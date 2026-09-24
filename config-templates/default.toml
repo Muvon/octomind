@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 18
+version = 19
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -755,6 +755,12 @@ plan = false
 # verifier saw (refuted at 0.8 or above) instead of the second-verifier chat
 # pass. Unavailable or evidence over the state cap → the chat refutation.
 gate = false
+# Evolved-behavior trials: on each verified turn that touched a shadow or live
+# artifact, one call grades the outcome (probability the final answer fulfils
+# the request) and drops samples whose artifact does not apply to the request
+# (below 0.5). An artifact's first sample fixes its measure: graded artifacts
+# skip turns the evaluation cannot answer; ungraded ones keep the plain verdict.
+evolution = false
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

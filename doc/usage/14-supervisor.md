@@ -137,7 +137,7 @@ execute at their existing lifecycle points outside this tool-call check.
 ## Evaluation gates
 
 `[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
-module) as a gate at nine seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
+module) as a gate at ten seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
 probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
 every seam off leaves behavior byte-identical to a release without this section.
 
@@ -153,6 +153,7 @@ every seam off leaves behavior byte-identical to a release without this section.
 | `distill` | At lesson extraction (`/done`, exit, compaction), the candidate lessons are grounded by one Noul each (state: every candidate's number, rule, and cited quote, plus the same transcript excerpt the chat verifier receives: the first 12,000 characters, then the full user turn each quote was found in when that head does not already contain the quote) instead of the batched supervisor-model verifier. Candidates at or above 0.5 are kept; the rest are rejected with the same debug line as before. Dedup, supersede, importance, storage, experiences, and orientation are untouched. If the evaluation is unavailable, the supervisor-model verifier runs once for the same candidates, fail-closed as before. |
 | `plan` | With `[supervisor.plan] enabled = true`, after every deterministic skip and before the planner call, a `request` signal is scored with one Noul asking whether the remaining work needs an external plan (state: current and working request, outcome conditions, runtime evidence, phase trajectory), and a `phase_complete` signal with one Noul asking whether the runtime evidence shows the active phase's `done_when` (state: phase title and `done_when`, evidence since the phase checkpoint, phase trajectory). Below 0.2 the `request` is declined and the `phase_complete` is held with the feedback `runtime evidence does not yet show: <done_when>`, without a planner call; otherwise the planner runs unchanged. `reassess` is never scored. The pre-screen can only skip a call, never create, advance, or revise; an unavailable evaluation runs the planner and never sets the per-turn failure latch. |
 | `gate` | When the verifier rules `GAPS`, each charged finding is scored with one Noul over the same rendered evidence the verifier saw (after any readback round). Findings at or above 0.8 are refuted and reported as `refuted by second verifier: …`; the rest stand, and when every finding is refuted the verdict is `PASS`, exactly as after the chat refutation. The verifier pass, readback round, and format retry are untouched. If the evaluation is unavailable or the evidence exceeds the state cap, the supervisor-model refutation runs as before. |
+| `evolution` | On each turn with a verify-gate verdict that touched a shadow or live evolved artifact, one call reads the request and the turn's final answer and returns a Noul for "the final answer fulfils the request" plus one Noul per artifact for "this behavior applies to the request". An artifact measured this way scores each sample at the fulfilment probability instead of the 0/1 verdict, and drops samples it was judged inapplicable to (below 0.5, counted as `false_triggers`). An artifact's first sample fixes its measure for both arms: artifacts that start while the seam is on are graded, and skip turns the evaluation cannot answer; artifacts that already hold plain-verdict samples keep the verdict. Promotion arithmetic is unchanged; see [Learning](13-learning.md). |
 
 Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for the
 `cloudflare` provider, `TYPESAFE_API_KEY` for `typesafe`. Nothing is stored in config.
@@ -206,7 +207,7 @@ uncertain work. Supervisor context is explicit and mid-trajectory steering remai
 When supervision is enabled, the agent is instructed to end each response with a compact structured handoff:
 
 ```text
-<sup>{"state":"progressing","focus":"inspect authentication routing","next":"read the route handlers","carry":[],"plan":null,"memories":[],"behaviors":[]}</sup>
+<sup>{"state":"progressing","focus":"inspect authentication routing","next":"read the route handlers","carry":[],"plan":null,"memories":[]}</sup>
 ```
 
 `state` is one of `exploring`, `progressing`, `blocked`, `need_input`, `done`. The token is **parsed by the supervisor

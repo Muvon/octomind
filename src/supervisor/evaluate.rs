@@ -19,8 +19,9 @@
 //! the supervisor model at all, chunk scoring of oversized tool results in
 //! place of the supervisor-model condenser, pre-fold demotion of dead tool
 //! packets in the PACT evidence set, grounding of extracted lessons in place
-//! of the chat verifier, a pre-screen before the external planner, and
-//! per-finding refutation of a blocking verify-gate verdict.
+//! of the chat verifier, a pre-screen before the external planner,
+//! per-finding refutation of a blocking verify-gate verdict, and graded,
+//! applicability-filtered samples for evolved-behavior trials.
 //!
 //! This is the only module that builds evaluation requests. It owns every
 //! question text and threshold, applies the master and per-seam switches,
@@ -36,7 +37,10 @@
 //! answers can only drop or demote text, never author it. The distill, plan,
 //! and gate seams receive exactly the payload the chat model they replace
 //! receives, and may only reject a lesson, skip a planner call, or drop a
-//! finding — never store, advance, create, or pass.
+//! finding — never store, advance, create, or pass. The evolution seam reads
+//! the request and the turn's final answer; its answers only grade or drop a
+//! trial sample that already carries a verify-gate verdict, and every sample
+//! in both arms of one artifact is measured the same way.
 
 use octolib::evaluation::{
 	Answer, EvaluationRequest, EvaluationResponse, EvaluationResult, Question,
@@ -59,6 +63,7 @@ pub struct EvaluateConfig {
 	pub distill: bool,
 	pub plan: bool,
 	pub gate: bool,
+	pub evolution: bool,
 }
 
 /// The unit of switching, stats, and fallback.
@@ -73,9 +78,10 @@ pub enum Seam {
 	Plan,
 	Gate,
 	Capabilities,
+	Evolution,
 }
 
-pub const SEAM_COUNT: usize = 9;
+pub const SEAM_COUNT: usize = 10;
 
 impl Seam {
 	pub const ALL: [Seam; SEAM_COUNT] = [
@@ -88,6 +94,7 @@ impl Seam {
 		Seam::Plan,
 		Seam::Gate,
 		Seam::Capabilities,
+		Seam::Evolution,
 	];
 
 	pub fn name(self) -> &'static str {
@@ -101,6 +108,7 @@ impl Seam {
 			Seam::Plan => "plan",
 			Seam::Gate => "gate",
 			Seam::Capabilities => "capabilities",
+			Seam::Evolution => "evolution",
 		}
 	}
 
@@ -115,6 +123,7 @@ impl Seam {
 			Seam::Plan => 6,
 			Seam::Gate => 7,
 			Seam::Capabilities => 8,
+			Seam::Evolution => 9,
 		}
 	}
 
@@ -129,6 +138,7 @@ impl Seam {
 			Seam::Plan => config.plan,
 			Seam::Gate => config.gate,
 			Seam::Capabilities => config.capabilities,
+			Seam::Evolution => config.evolution,
 		}
 	}
 }
@@ -191,6 +201,14 @@ pub const CAPABILITY_ACTIVATE_AT: f64 = 0.6;
 /// the tap's eval set; listing the whole roster spreads the distribution and
 /// costs nine times the tokens.
 pub const CAPABILITY_TOP_K: usize = 5;
+/// Evolution: a shadow or live artifact whose "applies to this request"
+/// probability is below this contributes no sample for the turn — its trigger
+/// fired on a request its behavior does not address.
+pub const EVOLUTION_APPLIES_AT: f64 = 0.5;
+/// Evolution: head-and-tail budget of the request inside the state.
+pub const EVOLUTION_REQUEST_TOKENS: usize = 2_000;
+/// Evolution: budget of the turn's final answer inside the state.
+pub const EVOLUTION_ANSWER_TOKENS: usize = 6_000;
 /// Below the model's 32k state limit with headroom for question text.
 pub const MAX_STATE_TOKENS: usize = 24_000;
 /// Questions per window. The provider's per-call limit is undocumented; this
@@ -221,6 +239,8 @@ pub const SKILL_QUESTION_ID: &str = "skill";
 pub const CAPABILITY_NONE: &str = SKILL_NONE;
 /// Question id of the single capability Choice.
 pub const CAPABILITY_QUESTION_ID: &str = "capability";
+/// Question id of the evolution seam's turn-outcome Noul.
+pub const EVOLUTION_OUTCOME_ID: &str = "outcome";
 
 const RECALL_QUESTION: &str = "Does this lesson bear on the current request? Yes when the lesson states a convention, constraint, workflow step, or preference the work on this request must follow, or a fact it must take into account; no when it concerns a different tool, language, file, or task and following it would change nothing about this request.";
 const CONDENSE_QUESTION: &str = "Must the agent read this chunk to finish the current task? Yes only when the chunk holds an error message or stack trace, the specific data the task or the tool arguments ask for, an explicit negative result, a count, total or exit code, or a path, line number or signature the agent must act on. No when the chunk is more of a listing that other chunks already answer, boilerplate, progress noise, separators, or content the task never touches; dropped chunks stay readable in a file.";
@@ -229,6 +249,8 @@ const DISTILL_QUESTION: &str = "Does this lesson's rule follow from its cited ev
 const PLAN_REQUEST_QUESTION: &str = "Does the work remaining on the current request need an external plan? Yes only when the remaining work has at least three meaningful dependent phases, material context-loss risk, or a real branch that must be tracked; no for an answer, a review with one deliverable, a focused fix, or a routine read, change and check sequence, and no when the runtime evidence shows the work is already mostly done.";
 const PLAN_PHASE_QUESTION: &str = "Do the runtime-recorded actions or tool observations show that the active phase's done_when condition is met? Yes only when a recorded action or tool output evidences the stated outcome; no when only the assistant's narration claims it or the evidence shows unrelated or unfinished work.";
 const GATE_QUESTION: &str = "Is this finding refuted by a citable observation in the evidence: a recorded action that performed the check the finding calls missing, a diff hunk containing the change it calls absent, a successful recorded check whose output exercised the condition it calls violated, or request text showing the demand was never made? No when the evidence merely makes the finding doubtful; doubt is not refutation.";
+const EVOLUTION_OUTCOME_QUESTION: &str = "Does the final answer fulfil the request? Yes when it delivers what the request asks for, or reports a concrete blocker with its evidence; no when it is partial, off-target, claims work it does not show, or asks the user to do what was requested.";
+const EVOLUTION_APPLIES_QUESTION: &str = "Does this behavior's description address the kind of work the request asks for? Yes when following it would change how this request is done; no when it concerns a different task, tool, or situation and would change nothing here.";
 const SKILL_QUESTION: &str = "Which skill applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed skill fits.";
 const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the request";
 const CAPABILITY_QUESTION: &str = "Which capability applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed capability fits.";
@@ -397,6 +419,26 @@ pub fn plan_phase_question(done_when: &str) -> BTreeMap<String, Question> {
 			"{PLAN_PHASE_QUESTION} The phase's done_when: {done_when}"
 		)),
 	)])
+}
+
+pub fn evolution_question_id(artifact: usize) -> String {
+	format!("a{artifact}")
+}
+
+/// The turn-outcome Noul plus one applicability Noul per artifact, keyed by
+/// slot and named by its index in the state.
+pub fn evolution_questions(count: usize) -> BTreeMap<String, Question> {
+	std::iter::once((
+		EVOLUTION_OUTCOME_ID.to_string(),
+		Question::noul(EVOLUTION_OUTCOME_QUESTION),
+	))
+	.chain((0..count).map(|slot| {
+		(
+			evolution_question_id(slot),
+			Question::noul(format!("Behavior {slot}: {EVOLUTION_APPLIES_QUESTION}")),
+		)
+	}))
+	.collect()
 }
 
 pub fn gate_question_id(finding: usize) -> String {

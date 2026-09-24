@@ -76,14 +76,13 @@ fn parses_materially_used_memory_ids() {
 }
 
 #[test]
-fn parses_materially_used_evolved_behavior_ids_separately() {
+fn accepts_and_ignores_legacy_behavior_ids() {
 	let parsed = parse_self_report_handoff(
 			r#"answer
 <sup>{"state":"progressing","focus":"used evolved skill","next":"continue","carry":[],"plan":null,"memories":["M2"],"behaviors":["evo-rust-123"]}</sup>"#,
 		)
 		.unwrap();
 	assert_eq!(parsed.used_memories, vec!["M2"]);
-	assert_eq!(parsed.used_behaviors, vec!["evo-rust-123"]);
 }
 
 #[test]

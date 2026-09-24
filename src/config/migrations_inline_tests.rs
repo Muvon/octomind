@@ -944,3 +944,26 @@ enabled = true
 	assert_eq!(evolution["noise_margin"].as_float(), Some(0.15));
 	assert_eq!(evolution["max_trial_uses"].as_integer(), Some(8));
 }
+
+#[test]
+fn v18_gains_evaluate_evolution_seam_off_and_keeps_other_seams() {
+	let existing = r#"version = 18
+
+[supervisor.evaluate]
+model = "typesafe:jev-latest"
+gate = true
+"#;
+
+	let migration = plan()
+		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.expect("v18 must migrate");
+	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+	let evaluate = &migrated["supervisor"]["evaluate"];
+
+	assert_eq!(migration.from_version, 18);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(evaluate["evolution"].as_bool(), Some(false));
+	assert_eq!(evaluate["gate"].as_bool(), Some(true));
+	assert_eq!(evaluate["model"].as_str(), Some("typesafe:jev-latest"));
+}

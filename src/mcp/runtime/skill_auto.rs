@@ -782,6 +782,11 @@ async fn auto_activate_skill(
 
 			// Emit structured event for JSONL/WebSocket consumers
 			if let Some(sid) = crate::session::context::current_session_id() {
+				// Callers never reach here for a shadow binding, so this is the
+				// treatment arm's exposure: activation by the skill's own trigger.
+				if let Some(binding) = crate::supervisor::learning::evolution::skill_binding(name) {
+					crate::supervisor::learning::evolution::mark_skill_activated(&sid, &binding.id);
+				}
 				crate::mcp::process::send_notification_message(
 					crate::websocket::ServerMessage::skill(
 						"activate",

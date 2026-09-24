@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::super::{
-	ArtifactKind, ArtifactScope, EffectClass, EvolutionRecord, EvolutionState,
+	ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig, EvolutionRecord, EvolutionState,
 	REGISTRY_SCHEMA_VERSION,
 };
 use super::*;
@@ -56,6 +56,10 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		successes: 0,
 		failures: 0,
 		false_triggers: 0,
+		control_successes: 0,
+		control_failures: 0,
+		control_calls: 0,
+		treatment_calls: 0,
 		created: now.clone(),
 		updated: now,
 		promoted: None,
@@ -63,6 +67,10 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		retired: None,
 		history: Vec::new(),
 	}
+}
+
+fn policy() -> EvolutionConfig {
+	enabled_config().supervisor.learning.evolution
 }
 
 fn enabled_config() -> crate::config::Config {
@@ -259,13 +267,14 @@ async fn trial_without_successes_retires_at_use_limit() {
 	)
 	.unwrap();
 
-	for _ in 0..TRIAL_MAX_USES {
+	let policy = policy();
+	for _ in 0..policy.max_trial_uses {
 		mark_behavior_used("session", id);
-		reinforce_session("session", 0.0).await;
+		reinforce_session("session", 0.0, 1, &policy).await;
 	}
 	let stored = super::super::registry::get_record(id).unwrap().unwrap();
 	assert_eq!(stored.state, EvolutionState::Retired);
-	assert_eq!(stored.trial_uses, TRIAL_MAX_USES);
+	assert_eq!(stored.trial_uses, policy.max_trial_uses);
 	assert!(stored
 		.history
 		.iter()
@@ -288,7 +297,10 @@ async fn promotion_retires_superseded_artifacts_and_notifies_session() {
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
 	let successor_id = "evo-promote-successor";
 	let predecessor_id = "evo-promote-predecessor";
+	let policy = policy();
 	let mut successor = record(successor_id, ArtifactKind::Guard, EvolutionState::Trial);
+	successor.control_failures = policy.min_samples;
+	successor.control_calls = policy.min_samples as u64;
 	successor.superseded_ids = vec![predecessor_id.to_string()];
 	super::super::registry::create_record(successor, native, None).unwrap();
 	super::super::registry::create_record(
@@ -300,9 +312,9 @@ async fn promotion_retires_superseded_artifacts_and_notifies_session() {
 
 	let session_id = "evolution-promotion-session".to_string();
 	crate::session::context::with_session_id(session_id.clone(), async {
-		for _ in 0..TRIAL_SUCCESSES_REQUIRED {
+		for _ in 0..policy.min_samples {
 			mark_behavior_used(&session_id, successor_id);
-			reinforce_session(&session_id, 0.05).await;
+			reinforce_session(&session_id, 0.05, 1, &policy).await;
 		}
 		let promoted = super::super::registry::get_record(successor_id)
 			.unwrap()
@@ -333,7 +345,7 @@ async fn reinforce_session_skips_unknown_behavior_ids() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 
 	mark_behavior_used("session", "no-such-record");
-	reinforce_session("session", 0.05).await;
+	reinforce_session("session", 0.05, 1, &policy()).await;
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
@@ -391,6 +403,149 @@ async fn behavior_available_requires_runtime_affecting_binding() {
 		assert!(dirs.contains(&trial_binding.path));
 		assert!(!dirs.contains(&shadow_binding.path));
 		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+fn measured(control: (u32, u32, u64), treatment: (u32, u32, u64)) -> EvolutionRecord {
+	let mut item = record("evo-measured", ArtifactKind::Skill, EvolutionState::Trial);
+	(
+		item.control_successes,
+		item.control_failures,
+		item.control_calls,
+	) = control;
+	(item.successes, item.failures, item.treatment_calls) = treatment;
+	item
+}
+
+#[test]
+fn evidence_waits_for_min_samples_in_both_arms() {
+	let policy = policy();
+	let below = policy.min_samples - 1;
+	assert!(evidence(&measured((below, 0, 3), (3, 0, 3)), &policy).is_none());
+	assert!(evidence(&measured((3, 0, 3), (below, 0, 3)), &policy).is_none());
+	assert!(evidence(&measured((3, 0, 3), (3, 0, 3)), &policy).is_some());
+}
+
+#[test]
+fn admission_requires_gain_beyond_noise_paid_for_by_cost() {
+	let policy = policy();
+	// 0/3 control vs 3/3 treatment at equal cost: a real gain.
+	let gain = evidence(&measured((0, 3, 6), (3, 0, 6)), &policy).unwrap();
+	assert!(gain.gain > policy.noise_margin);
+	assert!(admits(gain, &policy));
+	// Same gain at ten times the API calls per turn: the gain does not pay for it.
+	let costly = evidence(&measured((0, 3, 6), (3, 0, 60)), &policy).unwrap();
+	assert!(!admits(costly, &policy));
+	// Equal outcomes and equal cost: nothing measurable to admit.
+	let flat = evidence(&measured((3, 0, 6), (3, 0, 6)), &policy).unwrap();
+	assert!(!admits(flat, &policy));
+	// Equal outcomes at half the API calls: admitted on cost alone.
+	let cheaper = evidence(&measured((3, 0, 12), (3, 0, 6)), &policy).unwrap();
+	assert!(admits(cheaper, &policy));
+}
+
+#[test]
+fn retention_keeps_a_small_positive_gain_that_admission_would_not() {
+	let policy = policy();
+	// 2/4 control vs 3/5 treatment: a small positive gap inside the noise band;
+	// one more failure turns it negative.
+	let edge = evidence(&measured((2, 2, 4), (3, 2, 5)), &policy).unwrap();
+	assert!(edge.gain > 0.0 && edge.gain <= policy.noise_margin);
+	assert!(!admits(edge, &policy));
+	assert!(sustains(edge, &policy));
+	let gone = evidence(&measured((2, 2, 4), (2, 3, 5)), &policy).unwrap();
+	assert!(!sustains(gone, &policy));
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn trial_below_control_retires_as_regressed() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let policy = policy();
+	let id = "evo-regressed";
+	let mut item = record(id, ArtifactKind::Guard, EvolutionState::Trial);
+	item.control_successes = policy.min_samples;
+	item.control_calls = policy.min_samples as u64;
+	super::super::registry::create_record(
+		item,
+		"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
+		None,
+	)
+	.unwrap();
+
+	for _ in 0..policy.min_samples {
+		mark_behavior_used("session", id);
+		reinforce_session("session", -0.15, 1, &policy).await;
+	}
+	let stored = super::super::registry::get_record(id).unwrap().unwrap();
+	assert_eq!(stored.state, EvolutionState::Retired);
+	assert!(stored
+		.history
+		.iter()
+		.any(|event| event.event == "regressed"));
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn overlapping_shadows_open_one_trial_at_a_time() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let policy = policy();
+	let ids = ["evo-overlap-a", "evo-overlap-b"];
+	for id in ids {
+		super::super::registry::create_record(
+			record(id, ArtifactKind::Guard, EvolutionState::Shadow),
+			"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
+			None,
+		)
+		.unwrap();
+	}
+
+	let session_id = "evolution-overlap-session".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		for _ in 0..policy.min_samples {
+			for id in ids {
+				mark_shadow_match(id);
+			}
+			reinforce_session(&session_id, 0.05, 1, &policy).await;
+		}
+		let states = ids
+			.iter()
+			.map(|id| {
+				super::super::registry::get_record(id)
+					.unwrap()
+					.unwrap()
+					.state
+			})
+			.collect::<Vec<_>>();
+		assert_eq!(
+			states
+				.iter()
+				.filter(|state| **state == EvolutionState::Trial)
+				.count(),
+			1,
+			"{states:?}"
+		);
+		assert!(states.contains(&EvolutionState::Shadow));
+		clear_for_session(&session_id);
 	})
 	.await;
 

@@ -922,3 +922,25 @@ fn remove_v10_learning_backends_tolerates_missing_sections() {
 	assert!(!learning.contains_key("backend"));
 	assert!(!learning.contains_key("store"));
 }
+
+#[test]
+fn v17_gains_evolution_control_thresholds_and_keeps_enabled() {
+	let existing = r#"version = 17
+
+[supervisor.learning.evolution]
+enabled = true
+"#;
+
+	let migration = plan()
+		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.expect("v17 must migrate");
+	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+	let evolution = &migrated["supervisor"]["learning"]["evolution"];
+
+	assert_eq!(migration.from_version, 17);
+	assert_eq!(evolution["enabled"].as_bool(), Some(true));
+	assert_eq!(evolution["min_samples"].as_integer(), Some(3));
+	assert_eq!(evolution["noise_margin"].as_float(), Some(0.15));
+	assert_eq!(evolution["max_trial_uses"].as_integer(), Some(8));
+}

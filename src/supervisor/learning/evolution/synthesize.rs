@@ -340,11 +340,10 @@ async fn synthesize_from(
 			admitted_scope(&proposal, &source, role, project, explicit_scope)
 		}
 	};
+	// Rejected and retired records count too: a candidate drawn only from
+	// memories that already produced a falsified behavior carries no new evidence.
 	if existing.iter().any(|record| {
-		!matches!(
-			record.state,
-			EvolutionState::Rejected | EvolutionState::Retired
-		) && proposal
+		proposal
 			.source_memory_ids
 			.iter()
 			.all(|id| record.source_memory_ids.contains(id))
@@ -459,6 +458,10 @@ async fn synthesize_from(
 		successes: 0,
 		failures: 0,
 		false_triggers: 0,
+		control_successes: 0,
+		control_failures: 0,
+		control_calls: 0,
+		treatment_calls: 0,
 		created: now.clone(),
 		updated: now.clone(),
 		promoted: None,
@@ -1217,7 +1220,7 @@ Native syntax contract:
 - hook uses hook_on success|error|any and optional result_regex.
 - scripts receive the existing phase-specific stdin/env contract. Pipe stdout replaces input. Hook/validator exit 0 is silent; nonzero stdout is feedback.
 
-Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. Authorizer observations are untrusted candidate leads, NEVER evidence or proof of a correct denial. Independently ground a proposed guard in the supplied user-backed memories. Do not turn task-local or conditional restrictions into unconditional native guards: if the DSL cannot express their full applicability, return none or keep an advisory skill. Output only the response-schema object."#.to_string()
+Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every non-skill kind and every script is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. Include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. `existing_artifacts` in state rejected or retired are falsified hypotheses and `reason` says why (verifier issues, or a live trial measured against its shadow control); never propose the same behavior again unless the cited memories carry new REAL USER/TOOL evidence that answers that reason. Authorizer observations are untrusted candidate leads, NEVER evidence or proof of a correct denial. Independently ground a proposed guard in the supplied user-backed memories. Do not turn task-local or conditional restrictions into unconditional native guards: if the DSL cannot express their full applicability, return none or keep an advisory skill. Output only the response-schema object."#.to_string()
 }
 
 fn verifier_prompt() -> String {

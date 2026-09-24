@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 17
+version = 18
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -683,6 +683,21 @@ enabled = true
 # Compile grounded memories into scoped skills and guardrail candidates.
 # Disabled by default: enable to allow detached synthesis and low-risk trials.
 enabled = false
+# Promotion is counterfactual: turns where a shadow artifact's trigger matched
+# (artifact not applied) are its control arm; live trial uses are the
+# treatment arm; both are scored by the verify-gate verdict and API calls.
+# Verdicts required in each arm before the arms are compared.
+min_samples = 3
+# Smoothed pass-rate gap treated as noise. Promotion must beat the control by
+# more than this; a trial that falls below the control by more retires.
+noise_margin = 0.15
+# Relative API-call increase tolerated for a negligible gain; also the saving
+# that promotes a behavior whose pass rate stays within the noise margin.
+cost_allowance = 0.10
+# Extra relative API-call increase allowed per unit of pass-rate gain.
+cost_per_gain = 2.0
+# Live uses after which an undecided trial retires as inconclusive.
+max_trial_uses = 8
 
 # Verify-gate: on self-reported `done`, run a checklist before accepting.
 # The free deterministic pre-gate (state changed but no successful check ran

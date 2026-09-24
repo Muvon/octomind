@@ -128,6 +128,11 @@ fn plan() -> MigrationPlan {
 				to: 17,
 				apply: add_v17_evaluate_seams,
 			},
+			VersionMigration {
+				from: 17,
+				to: 18,
+				apply: add_v18_evolution_control,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -174,6 +179,15 @@ fn add_v17_evaluate_seams(
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
 	add_v14_evaluate(document, template)
+}
+
+/// Add the shadow-control promotion thresholds to an existing evolution
+/// section; `enabled` and every other key keep their values.
+fn add_v18_evolution_control(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	add_v11_learning_evolution(document, template)
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

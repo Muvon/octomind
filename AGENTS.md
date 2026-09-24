@@ -110,7 +110,7 @@ Separate systems — wiring a metric into one does NOT make it appear in the oth
 - File records are the sole supervisor-learning authority; external memory MCP tools are specialists, never learning stores. `related` = stable file IDs, `evidence` = `session://…/message/…`, retrieval expands links one hop
 - Recall = one runtime-only Active Memory Pack per genuine user turn (token-bounded, materialized per provider request, dropped under headroom pressure); outcome credit only for pack IDs the specialist materially used
 - Retention: two-watermark hot/cold lifecycle, per-type token budgets; similarity selects merge candidates but never authorizes a merge; merges need a grounding verifier and move sources to `.archive/` only after the replacement is stored; cold recall is lexical paging via `.archive/catalog.jsonl`; materially used cold records promote to hot
-- Evolution (`[supervisor.learning.evolution]`): structured candidate → native-parser → verifier → shadow → bounded trial; learning text never becomes executable policy directly
+- Evolution (`[supervisor.learning.evolution]`): structured candidate → native-parser → verifier → shadow (control arm) → bounded trial (treatment arm, promoted only when it beats its shadow control beyond `noise_margin` at acceptable API-call cost) → active (pruned when the gain vanishes); learning text never becomes executable policy directly
 
 ## Gotchas
 - `mcp-*.toml` loads AFTER all base `*.toml` regardless of sort order — the intended override mechanism

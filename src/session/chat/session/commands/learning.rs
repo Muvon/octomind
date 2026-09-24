@@ -181,6 +181,8 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 				record.state = EvolutionState::Shadow;
 				record.shadow_matches = 0;
 				record.successes = 0;
+				record.failures = 0;
+				record.treatment_calls = 0;
 				record.history.push(HistoryEvent {
 					at: chrono::Utc::now().to_rfc3339(),
 					event: "rollback".to_string(),

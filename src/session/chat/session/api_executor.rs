@@ -93,11 +93,18 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 
 /// Apply the verify-gate's verdict only to active-pack entries the specialist
 /// reported materially using. Exposure alone earns no positive or negative
-/// credit. Clears the pack references and used-ID set either way.
-async fn reinforce_recalled(chat_session: &mut ChatSession, delta: f64) {
+/// credit. Clears the pack references and used-ID set either way. Evolved
+/// behavior is credited with the turn's API-call count as its cost.
+async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
+	let info = &chat_session.session.info;
+	let turn_calls = info
+		.total_api_calls
+		.saturating_sub(info.api_calls_at_turn_start) as u32;
 	crate::supervisor::learning::evolution::reinforce_session(
 		&chat_session.session.info.name,
 		delta,
+		turn_calls,
+		&config.supervisor.learning.evolution,
 	)
 	.await;
 	let refs = std::mem::take(&mut chat_session.recalled_refs);
@@ -724,7 +731,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						crate::supervisor::notify(&format!(
 							"completion evidence passed, but plan finalization failed: {error}"
 						));
-						reinforce_recalled(chat_session, -0.05).await;
+						reinforce_recalled(chat_session, config, -0.05).await;
 						chat_session.finish_turn_timing();
 						return Ok(());
 					}
@@ -738,7 +745,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!("Verify-gate: PASS");
 				crate::supervisor::notify("completion verified");
-				reinforce_recalled(chat_session, 0.05).await;
+				reinforce_recalled(chat_session, config, 0.05).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
@@ -767,7 +774,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 						"Verify-gate: {} gap(s) unchanged after new evidence; not re-running",
 						gaps.len()
 					);
-					reinforce_recalled(chat_session, -0.15).await;
+					reinforce_recalled(chat_session, config, -0.15).await;
 					chat_session.finish_turn_timing();
 					return Ok(());
 				}
@@ -811,7 +818,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					msg.push_str(g);
 				}
 				crate::supervisor::notify(&msg);
-				reinforce_recalled(chat_session, -0.15).await;
+				reinforce_recalled(chat_session, config, -0.15).await;
 			}
 			crate::supervisor::gate::GateVerdict::Indeterminate(reason) => {
 				chat_session.pending_plan_signal = None;
@@ -852,7 +859,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; completion unverified");
 				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
-				reinforce_recalled(chat_session, -0.05).await;
+				reinforce_recalled(chat_session, config, -0.05).await;
 			}
 		}
 	}
@@ -906,7 +913,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// A terminal turn without a verify-gate verdict still records materially
 	// reported use for retention, but applies no correctness credit. Gate paths
 	// already consumed the references above, so this is a no-op for them.
-	reinforce_recalled(chat_session, 0.0).await;
+	reinforce_recalled(chat_session, config, 0.0).await;
 	chat_session.finish_turn_timing();
 
 	Ok(())

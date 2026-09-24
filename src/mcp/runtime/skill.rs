@@ -1249,13 +1249,9 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Inject skill body wrapped in tags for detection on session resume.
 	let body = strip_frontmatter(&content);
 	let description = meta.description.replace('"', "&quot;");
-	let evolution_attr = crate::supervisor::learning::evolution::skill_binding(&name)
-		.filter(|binding| !binding.shadow && binding.path == skill_dir)
-		.map(|binding| format!(" evolution_id=\"{}\"", binding.id))
-		.unwrap_or_default();
 	let mut injection_content = format!(
-		"<skill name=\"{}\" description=\"{}\"{}>\n{}",
-		name, description, evolution_attr, body
+		"<skill name=\"{}\" description=\"{}\">\n{}",
+		name, description, body
 	);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);

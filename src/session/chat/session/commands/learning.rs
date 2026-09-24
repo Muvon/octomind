@@ -183,6 +183,7 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 				record.successes = 0;
 				record.failures = 0;
 				record.treatment_calls = 0;
+				record.treatment_score = 0.0;
 				record.history.push(HistoryEvent {
 					at: chrono::Utc::now().to_rfc3339(),
 					event: "rollback".to_string(),

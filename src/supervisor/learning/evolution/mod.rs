@@ -30,9 +30,9 @@ use std::path::{Path, PathBuf};
 pub(crate) use registry::create_record;
 pub use registry::{get_record, list_records, mutate_record};
 pub use runtime::{
-	active_skill_dirs, all_skill_bindings, behavior_available, binding_is_shadow,
-	clear_for_session, generated_guardrails, init_for_session, mark_behavior_used,
-	mark_shadow_match, reinforce_session, skill_binding, SkillBinding,
+	active_skill_dirs, all_skill_bindings, binding_is_shadow, clear_for_session,
+	generated_guardrails, init_for_session, mark_behavior_used, mark_shadow_match,
+	mark_skill_activated, reinforce_session, skill_binding, SkillBinding, TurnVerdict,
 };
 
 /// The only user-facing evolution knob. Models, evidence thresholds, trial
@@ -114,6 +114,18 @@ pub enum EffectClass {
 }
 
 /// Two independent scope dimensions. `None` means all projects/domains.
+/// How an artifact's samples are scored. Fixed by its first sample so the two
+/// arms of one comparison are never measured differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Measure {
+	/// The verify-gate verdict: 1 on pass, 0 otherwise.
+	Verdict,
+	/// The evaluation seam's probability that the turn fulfilled the request,
+	/// on turns where it also judged the artifact applicable.
+	Graded,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactScope {
 	pub project: Option<String>,
@@ -200,6 +212,15 @@ pub struct EvolutionRecord {
 	/// API calls summed over the verdict-bearing live uses (`successes` + `failures`).
 	#[serde(default)]
 	pub treatment_calls: u64,
+	/// Unset until the first sample of either arm.
+	#[serde(default)]
+	pub measure: Option<Measure>,
+	/// Graded outcome summed over the control samples (unused under `Verdict`).
+	#[serde(default)]
+	pub control_score: f64,
+	/// Graded outcome summed over the treatment samples (unused under `Verdict`).
+	#[serde(default)]
+	pub treatment_score: f64,
 	pub created: String,
 	pub updated: String,
 	pub promoted: Option<String>,
@@ -353,6 +374,7 @@ pub fn record_summary(record: &EvolutionRecord) -> serde_json::Value {
 		"false_triggers": record.false_triggers,
 		"control_successes": record.control_successes,
 		"control_failures": record.control_failures,
+		"measure": record.measure,
 		"reason": record.history.last().map(|event| event.detail.as_str()),
 		"replay_cases": record.replay_cases.len(),
 		"created": record.created,

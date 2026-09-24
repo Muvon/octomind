@@ -69,7 +69,12 @@ move through shadow, bounded trial, active, and retired states; generated behavi
 Promotion is measured against a counterfactual rather than by counting wins. While a candidate is in **shadow**, its
 trigger is evaluated but the behavior is not applied; every turn where it matched and the verify-gate returned a
 verdict becomes its **control** sample (pass or fail, plus the turn's API-call count). After `min_samples` control
-verdicts it opens a live **trial**, the **treatment** arm. At most one trial runs among artifacts whose scopes can bind
+verdicts it opens a live **trial**, the **treatment** arm. A generated skill stays loaded once its trigger activates it,
+so skill exposure is sticky in both arms: from a shadow skill's first trigger match, or a live skill's trigger
+activation, every later verdict in that session is a sample. Neither arm depends on the model's own report of what
+helped. With `[supervisor.evaluate] evolution = true`, samples are graded (the probability the answer fulfils the
+request) and turns where the artifact does not apply are dropped; see
+[Supervisor](14-supervisor.md#evaluation-gates). At most one trial runs among artifacts whose scopes can bind
 in the same session, so a verdict is never shared between two trials. Pass rates are Laplace-smoothed, and the trial
 is judged once both arms hold `min_samples` verdicts:
 

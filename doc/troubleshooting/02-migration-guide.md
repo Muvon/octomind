@@ -407,6 +407,7 @@ supported older primary config:
 | `11` | Adds `supervisor.learning.evolution.enabled` (template default `false`) |
 | `12` | Nests model profiles and removes separate supervisor-subsystem model settings |
 | `18` | Adds the `supervisor.learning.evolution` shadow-control thresholds (`min_samples`, `noise_margin`, `cost_allowance`, `cost_per_gain`, `max_trial_uses`) |
+| `19` | Adds `supervisor.evaluate.evolution` (template default `false`) |
 
 Version `4` preserves an existing threshold; otherwise it takes the lowest old pressure-level threshold, or the
 template value when no old threshold exists.

@@ -14,7 +14,7 @@
 
 use super::{
 	domain_name, project_name, ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig,
-	EvolutionRecord, EvolutionState,
+	EvolutionRecord, EvolutionState, Measure,
 };
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -34,6 +34,13 @@ static SESSION_BEHAVIORS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwL
 /// Shadow artifacts whose trigger matched since the last verdict — the
 /// control arm: the same situations, observed without the artifact applied.
 static SESSION_SHADOWS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
+/// Evolved skills exposed in the session, keyed by id: `true` once a live
+/// skill's trigger activated it, `false` once a shadow skill's trigger matched.
+/// A live skill stays loaded after activation, so exposure is sticky in both
+/// arms — every later verdict in the session is a sample, and neither arm is
+/// filtered by the model's own report of what helped.
+static SESSION_SKILL_EXPOSURE: RwLock<Option<HashMap<String, HashMap<String, bool>>>> =
+	RwLock::new(None);
 
 pub fn init_for_session(role: &str) {
 	let Some(session_id) = crate::session::context::current_session_id() else {
@@ -132,6 +139,11 @@ pub fn clear_for_session(session_id: &str) {
 		}
 	}
 	if let Ok(mut guard) = SESSION_SHADOWS.write() {
+		if let Some(entries) = guard.as_mut() {
+			entries.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = SESSION_SKILL_EXPOSURE.write() {
 		if let Some(entries) = guard.as_mut() {
 			entries.remove(session_id);
 		}
@@ -244,13 +256,14 @@ pub fn generated_guardrails(
 }
 
 pub fn mark_shadow_match(id: &str) {
-	if !super::registry::get_record(id)
+	let Some(kind) = super::registry::get_record(id)
 		.ok()
 		.flatten()
-		.is_some_and(|record| record.state == EvolutionState::Shadow)
-	{
+		.filter(|record| record.state == EvolutionState::Shadow)
+		.map(|record| record.kind)
+	else {
 		return;
-	}
+	};
 	let update = super::registry::mutate_record(id, |record| {
 		if record.state != EvolutionState::Shadow {
 			return Ok(());
@@ -260,16 +273,36 @@ pub fn mark_shadow_match(id: &str) {
 		Ok(())
 	});
 	crate::supervisor::stats::evolution("shadow_match");
-	if update.is_ok() {
-		if let Some(session_id) = crate::session::context::current_session_id() {
-			let mut guard = SESSION_SHADOWS.write().unwrap();
-			guard
-				.get_or_insert_with(HashMap::new)
-				.entry(session_id)
-				.or_default()
-				.insert(id.to_string());
-		}
+	if update.is_err() {
+		return;
 	}
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	if kind == ArtifactKind::Skill {
+		expose_skill(&session_id, id, false);
+		return;
+	}
+	let mut guard = SESSION_SHADOWS.write().unwrap();
+	guard
+		.get_or_insert_with(HashMap::new)
+		.entry(session_id)
+		.or_default()
+		.insert(id.to_string());
+}
+
+/// A live evolved skill was activated by its own trigger in this session.
+pub fn mark_skill_activated(session_id: &str, id: &str) {
+	expose_skill(session_id, id, true);
+}
+
+fn expose_skill(session_id: &str, id: &str, treated: bool) {
+	let mut guard = SESSION_SKILL_EXPOSURE.write().unwrap();
+	guard
+		.get_or_insert_with(HashMap::new)
+		.entry(session_id.to_string())
+		.or_default()
+		.insert(id.to_string(), treated);
 }
 
 pub fn mark_behavior_used(session_id: &str, id: &str) {
@@ -281,22 +314,16 @@ pub fn mark_behavior_used(session_id: &str, id: &str) {
 		.insert(id.to_string());
 }
 
-pub fn behavior_available(session_id: &str, id: &str) -> bool {
-	SESSION_SKILLS
-		.read()
-		.ok()
-		.and_then(|guard| guard.as_ref()?.get(session_id).cloned())
-		.is_some_and(|skills| {
-			skills
-				.values()
-				.any(|binding| binding.id == id && !binding_is_shadow(&binding.id, binding.shadow))
-		})
-}
-
-/// Laplace-smoothed pass rate: a few verdicts stay near 0.5 instead of
-/// jumping to 0 or 1, so small samples cannot manufacture a large gap.
-fn pass_rate(successes: u32, failures: u32) -> f64 {
-	(successes as f64 + 1.0) / ((successes + failures) as f64 + 2.0)
+/// Laplace-smoothed pass rate of one arm: a few samples stay near 0.5
+/// instead of jumping to 0 or 1, so small samples cannot manufacture a large
+/// gap. `successes + failures` counts samples under either measure; the hits
+/// are the verdict passes or the summed graded outcome.
+fn pass_rate(measure: Option<Measure>, successes: u32, failures: u32, score: f64) -> f64 {
+	let hits = match measure {
+		Some(Measure::Graded) => score,
+		_ => successes as f64,
+	};
+	(hits + 1.0) / ((successes + failures) as f64 + 2.0)
 }
 
 /// Treatment measured against the shadow control of the same artifact.
@@ -320,8 +347,17 @@ pub(crate) fn evidence(record: &EvolutionRecord, policy: &EvolutionConfig) -> Op
 	let control_calls = (record.control_calls as f64 / control as f64).max(1.0);
 	let treatment_calls = record.treatment_calls as f64 / treated as f64;
 	Some(Evidence {
-		gain: pass_rate(record.successes, record.failures)
-			- pass_rate(record.control_successes, record.control_failures),
+		gain: pass_rate(
+			record.measure,
+			record.successes,
+			record.failures,
+			record.treatment_score,
+		) - pass_rate(
+			record.measure,
+			record.control_successes,
+			record.control_failures,
+			record.control_score,
+		),
 		cost: (treatment_calls - control_calls) / control_calls,
 	})
 }
@@ -351,17 +387,124 @@ fn describe(evidence: Evidence) -> String {
 	)
 }
 
-/// Credit one verify-gate verdict (`delta` sign; zero = no verdict) to the
-/// artifacts touched since the last one: used live artifacts are the
-/// treatment arm, matched shadow artifacts the control arm. `turn_calls` is
-/// the API-call cost of the turn.
+/// One turn's outcome as the runtime saw it. `delta` carries the verify-gate
+/// verdict by sign (zero = no verdict); `request` and `answer` are read only
+/// by the evaluation seam.
+pub struct TurnVerdict<'a> {
+	pub delta: f64,
+	pub api_calls: u32,
+	pub request: &'a str,
+	pub answer: &'a str,
+}
+
+/// The evaluation seam's reading of one turn.
+struct TurnGrade {
+	outcome: f64,
+	applies: HashMap<String, bool>,
+}
+
+/// One sample for one artifact, or `None` when this turn does not count for
+/// it. The first sample fixes the measure: graded while the seam is on,
+/// verdict otherwise (and always for artifacts that already hold ungraded
+/// samples). A graded artifact skips turns the evaluation could not answer
+/// and turns where it judged the artifact inapplicable.
+fn sample_score(
+	record: &mut EvolutionRecord,
+	passed: bool,
+	seam_on: bool,
+	grade: Option<&TurnGrade>,
+) -> Option<f64> {
+	let sampled =
+		record.successes + record.failures + record.control_successes + record.control_failures;
+	let measure = *record.measure.get_or_insert(if seam_on && sampled == 0 {
+		Measure::Graded
+	} else {
+		Measure::Verdict
+	});
+	match measure {
+		Measure::Verdict => Some(if passed { 1.0 } else { 0.0 }),
+		Measure::Graded => {
+			let grade = grade?;
+			if !grade.applies.get(&record.id).copied().unwrap_or(false) {
+				record.false_triggers = record.false_triggers.saturating_add(1);
+				return None;
+			}
+			Some(grade.outcome)
+		}
+	}
+}
+
+/// One evaluation call per verdict turn that touched an artifact which is, or
+/// will become, graded. `None` keeps graded artifacts from sampling this turn.
+async fn grade_turn(
+	config: &crate::supervisor::SupervisorConfig,
+	turn: &TurnVerdict<'_>,
+	ids: &[&String],
+) -> Option<TurnGrade> {
+	use crate::supervisor::evaluate::{self, Seam};
+	let records = super::registry::list_records().ok()?;
+	let touched = ids
+		.iter()
+		.filter_map(|id| records.iter().find(|record| &&record.id == id))
+		.filter(|record| {
+			record.measure == Some(Measure::Graded)
+				|| (record.measure.is_none()
+					&& record.successes
+						+ record.failures + record.control_successes
+						+ record.control_failures
+						== 0)
+		})
+		.collect::<Vec<_>>();
+	if touched.is_empty() {
+		return None;
+	}
+	let state = serde_json::json!({
+		"request": crate::session::truncate_to_tokens(turn.request, evaluate::EVOLUTION_REQUEST_TOKENS),
+		"final_answer": turn.answer,
+		"behaviors": touched
+			.iter()
+			.enumerate()
+			.map(|(index, record)| serde_json::json!({
+				"index": index,
+				"name": record.name,
+				"description": record.description,
+			}))
+			.collect::<Vec<_>>(),
+	});
+	let answers = evaluate::run(
+		config,
+		Seam::Evolution,
+		state,
+		evaluate::evolution_questions(touched.len()),
+	)
+	.await?;
+	crate::supervisor::stats::evaluate_applied(Seam::Evolution, 1);
+	Some(TurnGrade {
+		outcome: evaluate::probability(&answers, evaluate::EVOLUTION_OUTCOME_ID),
+		applies: touched
+			.iter()
+			.enumerate()
+			.map(|(slot, record)| {
+				(
+					record.id.clone(),
+					evaluate::probability(&answers, &evaluate::evolution_question_id(slot))
+						>= evaluate::EVOLUTION_APPLIES_AT,
+				)
+			})
+			.collect(),
+	})
+}
+
+/// Credit one turn to the artifacts touched since the last one: used live
+/// artifacts are the treatment arm, matched shadow artifacts the control arm,
+/// and exposed evolved skills join their arm on every verdict turn.
 pub async fn reinforce_session(
 	session_id: &str,
-	delta: f64,
-	turn_calls: u32,
-	policy: &EvolutionConfig,
+	turn: &TurnVerdict<'_>,
+	config: &crate::supervisor::SupervisorConfig,
 ) {
-	let used = {
+	let policy = &config.learning.evolution;
+	let mut used = {
 		let mut guard = SESSION_BEHAVIORS.write().unwrap();
 		guard
 			.as_mut()
@@ -369,7 +512,7 @@ pub async fn reinforce_session(
 			.map(std::mem::take)
 			.unwrap_or_default()
 	};
-	let shadowed = {
+	let mut shadowed = {
 		let mut guard = SESSION_SHADOWS.write().unwrap();
 		guard
 			.as_mut()
@@ -377,15 +520,45 @@ pub async fn reinforce_session(
 			.map(std::mem::take)
 			.unwrap_or_default()
 	};
-	let passed = if delta > 0.0 {
+	let passed = if turn.delta > 0.0 {
 		Some(true)
-	} else if delta < 0.0 {
+	} else if turn.delta < 0.0 {
 		Some(false)
 	} else {
 		None
 	};
+	if passed.is_some() {
+		let exposed = SESSION_SKILL_EXPOSURE
+			.read()
+			.ok()
+			.and_then(|guard| guard.as_ref()?.get(session_id).cloned())
+			.unwrap_or_default();
+		for (id, treated) in exposed {
+			if treated {
+				used.insert(id);
+			} else {
+				shadowed.insert(id);
+			}
+		}
+	}
+	let seam_on =
+		crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Evolution);
+	let grade = match passed {
+		Some(_) if seam_on && !(used.is_empty() && shadowed.is_empty()) => {
+			let ids = used.iter().chain(shadowed.iter()).collect::<Vec<_>>();
+			grade_turn(config, turn, &ids).await
+		}
+		_ => None,
+	};
 	if let Some(passed) = passed {
-		record_control(shadowed, passed, turn_calls, policy);
+		record_control(
+			shadowed,
+			passed,
+			turn.api_calls,
+			policy,
+			seam_on,
+			grade.as_ref(),
+		);
 	}
 	for id in used {
 		let result = super::registry::mutate_record(&id, |record| {
@@ -394,17 +567,24 @@ pub async fn reinforce_session(
 				record.trial_uses = record.trial_uses.saturating_add(1);
 			}
 			if let Some(passed) = passed {
-				if passed {
-					record.successes = record.successes.saturating_add(1);
-				} else {
-					record.failures = record.failures.saturating_add(1);
+				if let Some(score) = sample_score(record, passed, seam_on, grade.as_ref()) {
+					if passed {
+						record.successes = record.successes.saturating_add(1);
+					} else {
+						record.failures = record.failures.saturating_add(1);
+					}
+					record.treatment_score += score;
+					record.treatment_calls =
+						record.treatment_calls.saturating_add(turn.api_calls as u64);
+					super::registry::append_history(
+						record,
+						if passed { "success" } else { "failure" },
+						format!(
+							"outcome credit {}, score {:.2}, {} API calls",
+							turn.delta, score, turn.api_calls
+						),
+					);
 				}
-				record.treatment_calls = record.treatment_calls.saturating_add(turn_calls as u64);
-				super::registry::append_history(
-					record,
-					if passed { "success" } else { "failure" },
-					format!("outcome credit {delta}, {turn_calls} API calls"),
-				);
 			}
 			let measured = evidence(record, policy);
 			match record.state {
@@ -470,8 +650,8 @@ pub async fn reinforce_session(
 	}
 }
 
-/// Record one control verdict per matched shadow artifact. Once the baseline
-/// holds `min_samples` verdicts the artifact opens its live trial — unless
+/// Record one control sample per matched shadow artifact. Once the baseline
+/// holds `min_samples` samples the artifact opens its live trial — unless
 /// another trial already runs in an overlapping scope, because two trials in
 /// one session share every verdict and neither could be credited.
 fn record_control(
@@ -479,6 +659,8 @@ fn record_control(
 	passed: bool,
 	turn_calls: u32,
 	policy: &EvolutionConfig,
+	seam_on: bool,
+	grade: Option<&TurnGrade>,
 ) {
 	if shadowed.is_empty() {
 		return;
@@ -503,11 +685,15 @@ fn record_control(
 			if record.state != EvolutionState::Shadow {
 				return Ok(());
 			}
+			let Some(score) = sample_score(record, passed, seam_on, grade) else {
+				return Ok(());
+			};
 			if passed {
 				record.control_successes = record.control_successes.saturating_add(1);
 			} else {
 				record.control_failures = record.control_failures.saturating_add(1);
 			}
+			record.control_score += score;
 			record.control_calls = record.control_calls.saturating_add(turn_calls as u64);
 			let control = record.control_successes + record.control_failures;
 			if control >= policy.min_samples
@@ -522,8 +708,14 @@ fn record_control(
 					record,
 					"trial",
 					format!(
-						"shadow control baseline: {}/{} verified",
-						record.control_successes, control
+						"shadow control baseline: {} samples, pass rate {:.2}",
+						control,
+						pass_rate(
+							record.measure,
+							record.control_successes,
+							record.control_failures,
+							record.control_score,
+						)
 					),
 				);
 			}

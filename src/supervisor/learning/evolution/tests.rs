@@ -56,6 +56,9 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		control_failures: 0,
 		control_calls: 0,
 		treatment_calls: 0,
+		measure: None,
+		control_score: 0.0,
+		treatment_score: 0.0,
 		created: now.clone(),
 		updated: now,
 		promoted: None,
@@ -121,6 +124,21 @@ max_trial_uses = 8
 	assert!(!parsed.evolution.enabled);
 }
 
+fn supervisor() -> crate::supervisor::SupervisorConfig {
+	let config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	config.supervisor
+}
+
+fn verdict(delta: f64, api_calls: u32) -> TurnVerdict<'static> {
+	TurnVerdict {
+		delta,
+		api_calls,
+		request: "",
+		answer: "",
+	}
+}
+
 fn policy() -> EvolutionConfig {
 	let config: crate::config::Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
@@ -154,7 +172,7 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 				"trial opened before {turn} control verdicts"
 			);
 			mark_shadow_match(id);
-			reinforce_session(&session_id, -0.15, 2, &policy).await;
+			reinforce_session(&session_id, &verdict(-0.15, 2), &supervisor()).await;
 		}
 		let trial = get_record(id).unwrap().unwrap();
 		assert_eq!(trial.state, EvolutionState::Trial);
@@ -164,7 +182,7 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 		// Treatment arm: the same situations pass at the same cost.
 		for _ in 0..policy.min_samples {
 			mark_behavior_used(&session_id, id);
-			reinforce_session(&session_id, 0.05, 2, &policy).await;
+			reinforce_session(&session_id, &verdict(0.05, 2), &supervisor()).await;
 		}
 		let active = get_record(id).unwrap().unwrap();
 		assert_eq!(active.state, EvolutionState::Active);
@@ -176,7 +194,7 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 				break;
 			}
 			mark_behavior_used(&session_id, id);
-			reinforce_session(&session_id, -0.15, 2, &policy).await;
+			reinforce_session(&session_id, &verdict(-0.15, 2), &supervisor()).await;
 		}
 		let pruned = get_record(id).unwrap().unwrap();
 		assert_eq!(pruned.state, EvolutionState::Retired);
@@ -767,7 +785,7 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 				assert!(marker.exists(), "trial {} did not execute", item.id);
 			}
 		}
-		reinforce_session(&session_id, 0.05, 1, &config.supervisor.learning.evolution).await;
+		reinforce_session(&session_id, &verdict(0.05, 1), &supervisor()).await;
 		for (item, _) in &items {
 			let stored = get_record(&item.id).unwrap().unwrap();
 			if item.state == EvolutionState::Trial {

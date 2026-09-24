@@ -97,14 +97,23 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 /// behavior is credited with the turn's API-call count as its cost.
 async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
 	let info = &chat_session.session.info;
-	let turn_calls = info
-		.total_api_calls
-		.saturating_sub(info.api_calls_at_turn_start) as u32;
+	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+		.unwrap_or_default();
+	let answer = current_turn_answer(
+		&chat_session.turn_answers,
+		crate::supervisor::evaluate::EVOLUTION_ANSWER_TOKENS,
+	);
 	crate::supervisor::learning::evolution::reinforce_session(
-		&chat_session.session.info.name,
-		delta,
-		turn_calls,
-		&config.supervisor.learning.evolution,
+		&info.name,
+		&crate::supervisor::learning::evolution::TurnVerdict {
+			delta,
+			api_calls: info
+				.total_api_calls
+				.saturating_sub(info.api_calls_at_turn_start) as u32,
+			request,
+			answer: &answer,
+		},
+		&config.supervisor,
 	)
 	.await;
 	let refs = std::mem::take(&mut chat_session.recalled_refs);

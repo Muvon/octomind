@@ -133,6 +133,11 @@ fn plan() -> MigrationPlan {
 				to: 18,
 				apply: add_v18_evolution_control,
 			},
+			VersionMigration {
+				from: 18,
+				to: 19,
+				apply: add_v19_evaluate_evolution,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -188,6 +193,15 @@ fn add_v18_evolution_control(
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
 	add_v11_learning_evolution(document, template)
+}
+
+/// Add the `evolution` seam (off) to an existing evaluate section; every
+/// other key keeps its value.
+fn add_v19_evaluate_evolution(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	add_v14_evaluate(document, template)
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

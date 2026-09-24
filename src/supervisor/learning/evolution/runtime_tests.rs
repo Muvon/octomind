@@ -14,7 +14,7 @@
 
 use super::super::{
 	ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig, EvolutionRecord, EvolutionState,
-	REGISTRY_SCHEMA_VERSION,
+	Measure, REGISTRY_SCHEMA_VERSION,
 };
 use super::*;
 
@@ -60,12 +60,30 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		control_failures: 0,
 		control_calls: 0,
 		treatment_calls: 0,
+		measure: None,
+		control_score: 0.0,
+		treatment_score: 0.0,
 		created: now.clone(),
 		updated: now,
 		promoted: None,
 		last_used: None,
 		retired: None,
 		history: Vec::new(),
+	}
+}
+
+fn supervisor() -> crate::supervisor::SupervisorConfig {
+	let config: crate::config::Config =
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
+	config.supervisor
+}
+
+fn verdict(delta: f64, api_calls: u32) -> TurnVerdict<'static> {
+	TurnVerdict {
+		delta,
+		api_calls,
+		request: "",
+		answer: "",
 	}
 }
 
@@ -270,7 +288,7 @@ async fn trial_without_successes_retires_at_use_limit() {
 	let policy = policy();
 	for _ in 0..policy.max_trial_uses {
 		mark_behavior_used("session", id);
-		reinforce_session("session", 0.0, 1, &policy).await;
+		reinforce_session("session", &verdict(0.0, 1), &supervisor()).await;
 	}
 	let stored = super::super::registry::get_record(id).unwrap().unwrap();
 	assert_eq!(stored.state, EvolutionState::Retired);
@@ -314,7 +332,7 @@ async fn promotion_retires_superseded_artifacts_and_notifies_session() {
 	crate::session::context::with_session_id(session_id.clone(), async {
 		for _ in 0..policy.min_samples {
 			mark_behavior_used(&session_id, successor_id);
-			reinforce_session(&session_id, 0.05, 1, &policy).await;
+			reinforce_session(&session_id, &verdict(0.05, 1), &supervisor()).await;
 		}
 		let promoted = super::super::registry::get_record(successor_id)
 			.unwrap()
@@ -345,7 +363,7 @@ async fn reinforce_session_skips_unknown_behavior_ids() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 
 	mark_behavior_used("session", "no-such-record");
-	reinforce_session("session", 0.05, 1, &policy()).await;
+	reinforce_session("session", &verdict(0.05, 1), &supervisor()).await;
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
@@ -356,7 +374,7 @@ async fn reinforce_session_skips_unknown_behavior_ids() {
 
 #[serial_test::serial]
 #[tokio::test]
-async fn behavior_available_requires_runtime_affecting_binding() {
+async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();
 	let project_dir = data.path().join("project");
@@ -390,9 +408,6 @@ async fn behavior_available_requires_runtime_affecting_binding() {
 		crate::session::context::set_session_config(&session_id, &enabled_config());
 		crate::session::guardrails::init_for_session();
 		init_for_session("developer:general");
-		assert!(behavior_available(&session_id, trial_id));
-		assert!(!behavior_available(&session_id, shadow_id));
-		assert!(!behavior_available("other-session", trial_id));
 
 		// Bindings exist for both skills, but only the trial skill's directory
 		// is exposed to the runtime — shadow skills stay observational.
@@ -485,7 +500,7 @@ async fn trial_below_control_retires_as_regressed() {
 
 	for _ in 0..policy.min_samples {
 		mark_behavior_used("session", id);
-		reinforce_session("session", -0.15, 1, &policy).await;
+		reinforce_session("session", &verdict(-0.15, 1), &supervisor()).await;
 	}
 	let stored = super::super::registry::get_record(id).unwrap().unwrap();
 	assert_eq!(stored.state, EvolutionState::Retired);
@@ -525,7 +540,7 @@ async fn overlapping_shadows_open_one_trial_at_a_time() {
 			for id in ids {
 				mark_shadow_match(id);
 			}
-			reinforce_session(&session_id, 0.05, 1, &policy).await;
+			reinforce_session(&session_id, &verdict(0.05, 1), &supervisor()).await;
 		}
 		let states = ids
 			.iter()
@@ -548,6 +563,145 @@ async fn overlapping_shadows_open_one_trial_at_a_time() {
 		clear_for_session(&session_id);
 	})
 	.await;
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[test]
+fn graded_evidence_separates_arms_with_equal_verdicts() {
+	let policy = policy();
+	let mut item = measured((3, 0, 3), (3, 0, 3));
+	assert!(!admits(evidence(&item, &policy).unwrap(), &policy));
+	item.measure = Some(Measure::Graded);
+	item.control_score = 1.2;
+	item.treatment_score = 2.7;
+	let graded = evidence(&item, &policy).unwrap();
+	assert!(graded.gain > policy.noise_margin, "{graded:?}");
+	assert!(admits(graded, &policy));
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn skill_exposure_is_sticky_in_both_arms() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let policy = policy();
+	let id = "evo-sticky-skill";
+	super::super::registry::create_record(
+		record(id, ArtifactKind::Skill, EvolutionState::Shadow),
+		"---\nname: evolved-evo-sticky-skill\ndescription: test\nrules:\n  - content(schema)\n---\nbody\n",
+		None,
+	)
+	.unwrap();
+
+	let session_id = "evolution-sticky-session".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		// One trigger match, then every verdict turn of the session is a
+		// control sample; a turn without a verdict is not.
+		mark_shadow_match(id);
+		reinforce_session(&session_id, &verdict(0.0, 1), &supervisor()).await;
+		for _ in 0..policy.min_samples {
+			reinforce_session(&session_id, &verdict(-0.15, 1), &supervisor()).await;
+		}
+		let trial = super::super::registry::get_record(id).unwrap().unwrap();
+		assert_eq!(trial.control_failures, policy.min_samples);
+		assert_eq!(trial.state, EvolutionState::Trial);
+
+		// Activation by the trigger makes the same skill treatment from then on.
+		mark_skill_activated(&session_id, id);
+		for _ in 0..2 {
+			reinforce_session(&session_id, &verdict(0.05, 1), &supervisor()).await;
+		}
+		let treated = super::super::registry::get_record(id).unwrap().unwrap();
+		assert_eq!(treated.successes, 2);
+		assert_eq!(treated.control_failures, policy.min_samples);
+		clear_for_session(&session_id);
+	})
+	.await;
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn graded_samples_use_evaluation_outcome_and_drop_inapplicable_turns() {
+	use crate::session::chat::test_support::{install_fake_evaluation, nouls, FakeEvaluationStep};
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(nouls(&[("outcome", 0.3), ("a0", 0.9)])),
+		FakeEvaluationStep::Answers(nouls(&[("outcome", 0.9), ("a0", 0.2)])),
+	])
+	.await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let graded_id = "evo-graded";
+	let verdict_id = "evo-verdict-locked";
+	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
+	super::super::registry::create_record(
+		record(graded_id, ArtifactKind::Guard, EvolutionState::Shadow),
+		native,
+		None,
+	)
+	.unwrap();
+	// Already holds ungraded samples: turning the seam on must not regrade it.
+	let mut locked = record(verdict_id, ArtifactKind::Guard, EvolutionState::Shadow);
+	locked.control_successes = 1;
+	super::super::registry::create_record(locked, native, None).unwrap();
+	let mut supervisor = supervisor();
+	supervisor.enabled = true;
+	supervisor.evaluate.evolution = true;
+	let turn = TurnVerdict {
+		delta: 0.05,
+		api_calls: 2,
+		request: "fix the failing build",
+		answer: "fixed; cargo build passes",
+	};
+
+	let session_id = "evolution-graded-session".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		for _ in 0..3 {
+			mark_shadow_match(graded_id);
+			mark_shadow_match(verdict_id);
+			reinforce_session(&session_id, &turn, &supervisor).await;
+		}
+		clear_for_session(&session_id);
+	})
+	.await;
+
+	// Turn 1 counts at the graded outcome, turn 2 is inapplicable, turn 3
+	// has no evaluation answer (the fake has no step left): both dropped.
+	let graded = super::super::registry::get_record(graded_id)
+		.unwrap()
+		.unwrap();
+	assert_eq!(graded.measure, Some(Measure::Graded));
+	assert_eq!(graded.control_successes, 1);
+	assert!((graded.control_score - 0.3).abs() < 1e-9);
+	assert_eq!(graded.false_triggers, 1);
+	let locked = super::super::registry::get_record(verdict_id)
+		.unwrap()
+		.unwrap();
+	assert_eq!(locked.measure, Some(Measure::Verdict));
+	// 1 prior + 2 plain verdicts reach the baseline; the trial then opens.
+	assert_eq!(locked.control_successes, policy().min_samples);
+	assert_eq!(locked.state, EvolutionState::Trial);
+
+	// Only the graded artifact is put to the evaluation, with the turn's text.
+	let requests = fake.requests.lock().unwrap();
+	assert_eq!(requests.len(), 3);
+	let state = requests[0].state.to_string();
+	assert!(state.contains("fix the failing build") && state.contains("cargo build passes"));
+	assert!(state.contains("evolved-evo-graded") && !state.contains("evolved-evo-verdict-locked"));
+	drop(requests);
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);

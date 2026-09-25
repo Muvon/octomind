@@ -227,12 +227,14 @@ pub async fn setup_and_initialize_session(
 	}
 
 	let mut chat_session = if let Some(ref sp) = spinner {
-		// `initialize` prints, so the bar must not draw over it. `suspend()` takes a
-		// sync closure and bridging an async call through it costs a `block_in_place`,
-		// which panics on any current-thread runtime — ACP's LocalSet and every
-		// `#[tokio::test]` that starts a session on a TTY. Hiding the bar for the
-		// duration keeps the output clean and blocks nothing.
+		// `initialize` prints, so the bar must not draw over it. Hiding the target
+		// stops future draws but does not erase the last frame — without the
+		// explicit erase the "⠹ Loading..." row fossilizes into scrollback once
+		// `initialize`'s output scrolls past it. stdout and stderr share the
+		// cursor on a TTY, so erasing via stdout clears the stderr-drawn row.
 		sp.set_draw_target(ProgressDrawTarget::hidden());
+		print!("\x1B[2K\r");
+		std::io::Write::flush(&mut std::io::stdout()).ok();
 		let result = ChatSession::initialize(session_params).await;
 		sp.set_draw_target(ProgressDrawTarget::stderr());
 		result?

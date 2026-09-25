@@ -17,6 +17,8 @@
 //! apply (drain + summary/continuation insertion), and stats bookkeeping.
 //! The ollama provider does not enforce response schemas, so the wire mode
 //! is always XML here.
+//! Archive writes also read `OCTOMIND_DATA_DIR`, so use the default serial
+//! lock before `ENV_LOCK` to exclude tests that replace and delete that directory.
 
 use super::*;
 use crate::mcp::core::plan::sidecar_start;
@@ -77,6 +79,7 @@ fn xml_summary_body() -> String {
 	.to_string()
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_done_compression_end_to_end() {
 	let _guard = ENV_LOCK.lock().await;
@@ -125,6 +128,7 @@ async fn test_done_compression_end_to_end() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_unparseable_summary_errors_and_keeps_messages() {
 	let _guard = ENV_LOCK.lock().await;
@@ -155,6 +159,7 @@ async fn test_unparseable_summary_errors_and_keeps_messages() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_compression_cancelled_before_api_call() {
 	let _guard = ENV_LOCK.lock().await;
@@ -179,6 +184,7 @@ async fn test_compression_cancelled_before_api_call() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn test_automatic_below_threshold_is_a_noop() {
 	// Tiny session, automatic trigger: should_check_compression says no and
@@ -198,6 +204,7 @@ async fn test_automatic_below_threshold_is_a_noop() {
 
 // ===== TEMPORARY VERIFICATION TESTS (scratch — not part of the staged change) =====
 
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_midturn_e2e_mid_task_automatic_compression_keeps_user_request() {
 	let _guard = ENV_LOCK.lock().await;
@@ -262,6 +269,7 @@ async fn verify_midturn_e2e_mid_task_automatic_compression_keeps_user_request() 
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper() {
 	let _guard = ENV_LOCK.lock().await;
@@ -329,6 +337,7 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 /// the ceiling, force kept the step before the unanswered request as the fresh
 /// request's bridge, found nothing else to drain, and the run died with
 /// "forced compression has no eligible history (range 0..=0)" at 248k/200k.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_forced_fold_drains_a_request_the_retry_sent_again() {
 	let _guard = ENV_LOCK.lock().await;
@@ -398,6 +407,7 @@ async fn verify_forced_fold_drains_a_request_the_retry_sent_again() {
 /// compacted transcript is never what the model sees. Every assistant id must
 /// therefore be gone after a fold — summary and retained live tail alike — so
 /// the next request rebases onto the compacted transcript.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_compaction_drops_provider_chain_ids() {
 	let _guard = ENV_LOCK.lock().await;
@@ -529,6 +539,7 @@ async fn settle_folds(session: &mut ChatSession, config: &crate::config::Config)
 	panic!("background fold never settled");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_turn_boundary_folds_on_crossing_the_line() {
 	let _guard = ENV_LOCK.lock().await;
@@ -556,6 +567,7 @@ async fn verify_turn_boundary_folds_on_crossing_the_line() {
 /// The core non-blocking guarantee: the trigger call spawns and returns
 /// without folding, and a stale summary is only ever discarded — the fold is
 /// applied solely to the exact range it was computed from.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_background_fold_discards_on_range_change() {
 	let _guard = ENV_LOCK.lock().await;
@@ -618,6 +630,7 @@ async fn verify_background_fold_discards_on_range_change() {
 	std::env::remove_var("OLLAMA_API_URL");
 }
 
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	let _guard = ENV_LOCK.lock().await;
@@ -689,6 +702,7 @@ async fn wait_until_finished(session: &ChatSession) {
 /// fold runs inline on the trigger call and lands even when the decision
 /// model declines (measured failure: a turn crawled for three hours, every
 /// round blocking on a fresh vetoable background fold 17k under the ceiling).
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_ceiling_margin_folds_inline_and_overrides_the_veto() {
 	let _guard = ENV_LOCK.lock().await;
@@ -735,6 +749,7 @@ async fn verify_ceiling_margin_folds_inline_and_overrides_the_veto() {
 
 /// A background fold that fails is not retried on the next round: unforced
 /// attempts wait one runway of calls, then try again.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_failed_background_fold_backs_off_for_a_runway() {
 	let _guard = ENV_LOCK.lock().await;
@@ -815,6 +830,7 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 }
 
 /// Turn end applies a finished fold and never waits for a running one.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 	let _guard = ENV_LOCK.lock().await;
@@ -919,6 +935,7 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 /// "cancelled before compression could be applied". On the current-thread
 /// test runtime the spawned task has not run yet when the sender is dropped,
 /// so this is exactly the boundary race, made deterministic.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
 	let _guard = ENV_LOCK.lock().await;
@@ -961,6 +978,7 @@ async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
 /// A one-shot run ending with a fold in flight waits for it — bounded by the
 /// fold request's own budget — and applies it; a fold that never returns is
 /// abandoned at the budget with the failure cooldown, never held past it.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
 	let _guard = ENV_LOCK.lock().await;
@@ -1064,6 +1082,7 @@ async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
 /// fold repairs itself once with reasoning off and twice the budget. With
 /// `max_retries = 0` the old path fails after the first attempt; the repair is
 /// the only way the second scripted response can be reached.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
 	let _guard = ENV_LOCK.lock().await;
@@ -1110,6 +1129,7 @@ async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
 
 /// Two length cuts in a row exhaust the single repair: the fold fails with the
 /// typed length-cut error and the cooldown starts, without a third request.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_second_length_cut_fails_the_fold_without_identical_retries() {
 	let _guard = ENV_LOCK.lock().await;
@@ -1166,6 +1186,7 @@ async fn verify_second_length_cut_fails_the_fold_without_identical_retries() {
 /// the claim is confirmed by a live plan step and an unblocked agent, so the
 /// round is held without a paid fold call. The deferral stays recorded for the
 /// next eligible round to re-judge against fresh state.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_corroborated_deferral_holds_without_a_paid_call() {
 	let _guard = ENV_LOCK.lock().await;
@@ -1233,6 +1254,7 @@ async fn verify_corroborated_deferral_holds_without_a_paid_call() {
 /// overruled, not obeyed. No reason means no claim, so the fold proceeds on the
 /// normal background path with the veto withdrawn — not as an emergency fold —
 /// and the spent deferral is consumed rather than re-litigated.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 	let _guard = ENV_LOCK.lock().await;
@@ -1289,6 +1311,7 @@ async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 /// sat unfolded until the ceiling. Without a plan step there is nothing for the
 /// runtime to check a claim against, so the veto is not offered at all — the
 /// model's `false` is overridden on the first call, not paid for twice.
+#[serial_test::serial]
 #[tokio::test]
 async fn verify_veto_is_not_offered_without_a_plan_step_to_check_it_against() {
 	let _guard = ENV_LOCK.lock().await;

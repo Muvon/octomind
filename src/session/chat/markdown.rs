@@ -19,12 +19,86 @@ use anyhow::Result;
 use regex::Regex;
 use std::str::FromStr;
 use std::sync::LazyLock;
-use termimad::MadSkin;
+use termimad::minimad::{Composite, Line, Text};
+use termimad::{FmtText, MadSkin};
+
+#[path = "markdown_links.rs"]
+mod links;
 
 // Fenced code-block matcher, compiled once. Reused by every render call
 // (streaming re-renders the same buffer repeatedly).
 static CODE_BLOCK_REGEX: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").expect("valid code-block regex"));
+
+static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r#"(?s)</?[A-Za-z][\w:.-]*(?:\s+(?:[^<>"']|"[^"]*"|'[^']*')*)?\s*/?>"#)
+		.expect("valid XML and HTML tag regex")
+});
+
+// Require a URL scheme, an explicit path prefix, or a filename extension so
+// ordinary prose such as "and/or" doesn't acquire code styling.
+static REFERENCE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(
+		r#"(?x)
+		(?:^|[\s(\[<"'=])
+		(?P<reference>
+			(?i:https?://|file://|ftp://|www\.)[^\s<>"'`]+
+			| (?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\.\.?[\\/]|/)[\p{L}\p{N}_.@~+%/\\:-]+
+			| (?:[\p{L}\p{N}_@.-]+[\\/])*[\p{L}\p{N}_@-][\p{L}\p{N}_@.-]*
+			  \.[A-Za-z][A-Za-z0-9]*(?::[0-9]+(?::[0-9]+)?)?
+			| \.[A-Za-z_][\p{L}\p{N}_.-]*(?::[0-9]+(?::[0-9]+)?)?
+		)"#,
+	)
+	.expect("valid URL and file reference regex")
+});
+
+fn highlight_references(composite: &mut Composite<'_>, tags: &[std::ops::Range<usize>]) {
+	if composite.is_code() {
+		return;
+	}
+	let mut compounds = Vec::new();
+	for compound in &composite.compounds {
+		if compound.code {
+			compounds.push(compound.clone());
+			continue;
+		}
+		let mut last_end = 0;
+		for captures in REFERENCE_REGEX.captures_iter(compound.src) {
+			let reference = captures.name("reference").expect("reference capture");
+			let address = compound.src.as_ptr() as usize + reference.start();
+			if tags.iter().any(|tag| tag.contains(&address)) {
+				continue;
+			}
+			let mut text = reference
+				.as_str()
+				.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+			// Leave surrounding prose punctuation uncolored, retaining balanced
+			// parentheses in URLs such as Wikipedia article addresses.
+			while let Some(closing) = text.chars().last() {
+				let opening = match closing {
+					')' => '(',
+					']' => '[',
+					'}' => '{',
+					_ => break,
+				};
+				if text.matches(closing).count() <= text.matches(opening).count() {
+					break;
+				}
+				text = text[..text.len() - closing.len_utf8()]
+					.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+			}
+			if reference.start() > last_end {
+				compounds.push(compound.sub(last_end, reference.start()));
+			}
+			last_end = reference.start() + text.len();
+			compounds.push(compound.sub(reference.start(), last_end).code());
+		}
+		if last_end < compound.src.len() {
+			compounds.push(compound.tail(last_end));
+		}
+	}
+	composite.compounds = compounds;
+}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum MarkdownTheme {
@@ -639,6 +713,34 @@ impl MarkdownRenderer {
 		Ok(result)
 	}
 
+	fn styled_text(&self, markdown: &str, width: usize) -> String {
+		let mut text = Text::from(markdown);
+		let base = markdown.as_ptr() as usize;
+		let tags: Vec<_> = TAG_REGEX
+			.find_iter(markdown)
+			.map(|tag| base + tag.start()..base + tag.end())
+			.collect();
+		let mut links = Vec::new();
+		for line in &mut text.lines {
+			match line {
+				Line::Normal(composite) => {
+					links::extract_links(composite, markdown, &tags, &mut links);
+					highlight_references(composite, &tags);
+				}
+				Line::TableRow(row) => {
+					for cell in &mut row.cells {
+						links::extract_links(cell, markdown, &tags, &mut links);
+						highlight_references(cell, &tags);
+					}
+				}
+				_ => {}
+			}
+		}
+		// Style parsed compounds before layout so ANSI escapes never affect
+		// wrapping or table widths, and existing inline/fenced code stays intact.
+		links::render_links(FmtText::from_text(&self.skin, text, Some(width)), &links)
+	}
+
 	pub fn render(&self, markdown: &str) -> Result<String> {
 		// First preprocess code blocks for syntax highlighting
 		let processed_markdown = self.preprocess_code_blocks(markdown)?;
@@ -647,12 +749,10 @@ impl MarkdownRenderer {
 		let width = termimad::terminal_size().0.clamp(60, 120);
 
 		// Render the markdown
-		let styled_content = self
-			.skin
-			.area_text(&processed_markdown, &termimad::Area::new(0, 0, width, 1000));
+		let styled_content = self.styled_text(&processed_markdown, usize::from(width) - 1);
 
 		// Convert to string
-		Ok(styled_content.to_string())
+		Ok(styled_content)
 	}
 
 	pub fn render_and_print(&self, markdown: &str) -> Result<()> {
@@ -666,14 +766,13 @@ impl MarkdownRenderer {
 		let mut last_end = 0;
 
 		for cap in CODE_BLOCK_REGEX.captures_iter(markdown) {
-			// Render content before this code block with termimad.
-			// `skin.print_text` writes straight to stdout and bypasses our
-			// shadowed print macros, so suspend the spinner explicitly here.
+			// Use the crate print macro to suspend the spinner while rendering.
 			let before_content = &markdown[last_end..cap.get(0).unwrap().start()];
 			if !before_content.trim().is_empty() {
-				crate::utils::terminal_output::with_suspended_spinner(|| {
-					self.skin.print_text(before_content);
-				});
+				print!(
+					"{}",
+					self.styled_text(before_content, usize::from(termimad::terminal_size().0))
+				);
 			}
 
 			let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
@@ -708,12 +807,12 @@ impl MarkdownRenderer {
 		}
 
 		// Render remaining content after last code block.
-		// Same reason as above: termimad bypasses our shadowed macros.
 		let remaining_content = &markdown[last_end..];
 		if !remaining_content.trim().is_empty() {
-			crate::utils::terminal_output::with_suspended_spinner(|| {
-				self.skin.print_text(remaining_content);
-			});
+			print!(
+				"{}",
+				self.styled_text(remaining_content, usize::from(termimad::terminal_size().0))
+			);
 		}
 
 		Ok(())
@@ -736,6 +835,7 @@ pub fn is_markdown_content(content: &str) -> bool {
 		|| content.contains("**")
 		|| content.contains("__")
 		|| content.contains("](")
+		|| REFERENCE_REGEX.is_match(content)
 	{
 		return true;
 	}

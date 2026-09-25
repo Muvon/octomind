@@ -91,12 +91,12 @@ fn strip_xml_no_tags_returns_borrowed_input() {
 #[test]
 fn strip_xml_removes_block_and_keeps_surrounding_text() {
 	assert_eq!(
-		strip_xml_blocks("before <log>noise</log> after"),
+		strip_xml_blocks("before <pasted_content>noise</pasted_content> after"),
 		"before  after"
 	);
 	// Multiline blocks are removed whole.
 	assert_eq!(
-		strip_xml_blocks("head\n<log>\nline1\nline2\n</log>\ntail"),
+		strip_xml_blocks("head\n<pasted_content>\nline1\nline2\n</pasted_content>\ntail"),
 		"head\n\ntail"
 	);
 	assert_eq!(strip_xml_blocks("<skill name=\"x\">body</skill>"), "");

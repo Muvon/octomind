@@ -88,6 +88,7 @@ async fn test_get_server_functions_rejects_builtin() {
 	);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_cached_functions_returned_without_connecting() {
 	const NAME: &str = "srvtest-cache";
@@ -111,6 +112,7 @@ async fn test_cached_functions_returned_without_connecting() {
 	FUNCTION_CACHE.write().unwrap().remove(NAME);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_cached_functions_skip_unavailable_servers() {
 	// Stdio server with no live connection → empty, and NOT cached (a cached
@@ -133,6 +135,8 @@ async fn test_cached_functions_skip_unavailable_servers() {
 	assert!(functions.is_empty());
 }
 
+// Clearing the whole cache must not overlap tests that fetch or seed entries.
+#[serial]
 #[test]
 fn test_clear_function_cache_scopes() {
 	FUNCTION_CACHE.write().unwrap().insert(
@@ -475,6 +479,7 @@ async fn spawn_fake_http_server(tag: &str, mode: &str) -> (String, tokio::proces
 		.env("FAKE_MODE", mode)
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::null())
+		.kill_on_drop(true)
 		.spawn()
 		.expect("spawn fake http server");
 	let port = {
@@ -547,6 +552,10 @@ async fn test_cached_functions_fetch_once_then_serve_from_cache() {
 	let (url, mut child) = spawn_fake_http_server("cache", "modern").await;
 	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
 
+	// Surface handshake failures before the cached API maps them to an empty list.
+	crate::mcp::client::connect_http(&server)
+		.await
+		.expect("cache fixture must establish its HTTP connection");
 	let first = get_server_functions_cached(&server)
 		.await
 		.expect("first fetch must succeed");
@@ -565,6 +574,7 @@ async fn test_cached_functions_fetch_once_then_serve_from_cache() {
 
 /// A fetch failure returns an EMPTY list without caching it — the next call
 /// must retry the fetch (cache stays unset).
+#[serial]
 #[tokio::test]
 async fn test_cached_functions_http_failure_returns_empty_uncached() {
 	const NAME: &str = "srv-http-fail-uncached";

@@ -258,13 +258,15 @@ impl EditMode for EmacsWithShortcutHelp {
 				self.attach_and_notify(item);
 				return ReedlineEvent::None;
 			}
-			// Auto-wrap multiline pastes (3+ lines) in <log>...</log> so the AI
-			// receives them as structured context rather than raw text, and so
-			// skill auto-activation ignores the pasted content. Wrapping happens
-			// at paste time on the pasted chunk only — typed-in newlines and
-			// pasted text mixed with typing are preserved verbatim.
+			// Auto-wrap multiline pastes (3+ lines) in <pasted_content>...</pasted_content>
+			// so the AI receives them as structured context rather than raw text, and so
+			// skill auto-activation ignores the pasted content. The tag name matches
+			// Claude Code's wire format — models are already tuned to treat its contents
+			// as user-pasted quoted material. Wrapping happens at paste time on the
+			// pasted chunk only — typed-in newlines and pasted text mixed with typing
+			// are preserved verbatim.
 			if text.lines().count() >= 3 {
-				let wrapped = format!("<log>\n{}\n</log>", text);
+				let wrapped = format!("<pasted_content>\n{}\n</pasted_content>", text);
 				return ReedlineEvent::Edit(vec![reedline::EditCommand::InsertString(wrapped)]);
 			}
 			// No image / no recognizable video path / short paste — fall through;

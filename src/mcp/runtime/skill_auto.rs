@@ -340,7 +340,7 @@ pub(crate) const MIN_INTENT_NON_WS_CHARS: usize = 8;
 /// Returns true when `input` has enough content to justify running
 /// auto-activation (both skill rule evaluation and capability semantic
 /// matching). Counted on non-whitespace chars after XML stripping so that
-/// `<log>…</log>` pastes don't artificially inflate the signal of an
+/// `<pasted_content>…</pasted_content>` pastes don't artificially inflate the signal of an
 /// otherwise empty user message.
 pub(crate) fn intent_has_enough_signal(input: &str) -> bool {
 	input.chars().filter(|c| !c.is_whitespace()).count() >= MIN_INTENT_NON_WS_CHARS

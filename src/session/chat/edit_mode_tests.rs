@@ -209,13 +209,13 @@ fn test_question_mark_shortcut_help() {
 fn test_paste_wrapping() {
 	let (mut h, ..) = mk();
 
-	// 3+ lines → wrapped in <log> tags
+	// 3+ lines → wrapped in <pasted_content> tags
 	let raw = ReedlineRawEvent::try_from(Event::Paste("a\nb\nc".to_string()))
 		.expect("paste event is convertible");
 	assert_eq!(
 		h.parse_event(raw),
 		ReedlineEvent::Edit(vec![EditCommand::InsertString(
-			"<log>\na\nb\nc\n</log>".to_string()
+			"<pasted_content>\na\nb\nc\n</pasted_content>".to_string()
 		)])
 	);
 

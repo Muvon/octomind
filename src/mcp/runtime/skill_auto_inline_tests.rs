@@ -295,22 +295,25 @@ async fn validators_return_empty_when_active_skill_has_no_validate_script() {
 // Validate script subprocess contract
 // -------------------------------------------------------------------------
 
-// Callers all run `#!/bin/sh` scripts and are `#[cfg(unix)]`-gated below;
-// the helper itself stays cross-platform (chmod is Unix-only) so Windows
-// test builds compile it without a dead-code warning.
-#[cfg_attr(not(unix), allow(dead_code))]
+// All callers exercise Unix shebang scripts. Write in a child so concurrent
+// test subprocesses cannot inherit a writable script fd and cause ETXTBSY.
+#[cfg(unix)]
 fn write_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 	let path = dir.join("validate");
-	std::fs::write(&path, body).expect("write validate script");
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		let mut perms = std::fs::metadata(&path)
-			.expect("script metadata")
-			.permissions();
-		perms.set_mode(0o755);
-		std::fs::set_permissions(&path, perms).expect("make script executable");
-	}
+	let status = std::process::Command::new("/bin/sh")
+		.args([
+			"-c",
+			"printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"",
+			"write-validate-script",
+		])
+		.arg(&path)
+		.arg(body)
+		.status()
+		.expect("spawn validate script writer");
+	assert!(
+		status.success(),
+		"write executable validate script: {status}"
+	);
 	path
 }
 

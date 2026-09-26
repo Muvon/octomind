@@ -18,6 +18,11 @@ use super::*;
 fn advertised_mcp3_capabilities_have_handlers() {
 	let info = build_client_info(ProtocolVersion::V_2026_07_28);
 	assert!(info.capabilities.supports_tasks());
+	assert!(info
+		.capabilities
+		.extensions
+		.as_ref()
+		.is_some_and(|extensions| extensions.contains_key(WATCH_RESOURCE_LINKS_EXTENSION)));
 	assert!(info.capabilities.sampling.is_none());
 	let elicitation = info
 		.capabilities

@@ -236,9 +236,8 @@ pub struct TimingConfig {
 	pub deliberation_factor: f64,
 	/// How long a run earns wait time after the last input, minutes.
 	pub attention_window_min: f64,
-	/// Share of a turn's estimate that must be code review to count as review.
-	pub review_share: f64,
-	/// Energy weight of a review turn; spec and dialog turns weigh 1.
+	/// Energy weight of a minute spent reading code; dialog, spec writing and
+	/// behavior checks weigh 1.
 	pub review_weight: f64,
 	/// Energy weight of attended waiting.
 	pub wait_weight: f64,

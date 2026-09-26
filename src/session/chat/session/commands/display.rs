@@ -27,7 +27,7 @@ use crate::session::chat::tool_display::{
 	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
 	block_row_text, block_section, block_section_with, key_width,
 };
-use crate::session::timing::{BREAK_MIN, MAX_REVIEW_LINES_PER_HOUR, MIN_PER_HOUR};
+use crate::session::timing::{BREAK_MIN, MIN_PER_HOUR};
 use colored::Colorize;
 
 // Note: Main display routing is now in CommandOutput::display_cli()
@@ -1890,12 +1890,14 @@ fn display_mcp_invalid(_data: &serde_json::Value) {
 	println!();
 }
 
-/// Whole minutes under an hour, hours with one decimal above — timesheet scale.
+/// `15m`, `1h 15m`, `3h` — time the way people read it, not `0.4h`.
 fn format_minutes(minutes: f64) -> String {
-	if minutes < MIN_PER_HOUR {
-		format!("{:.0}m", minutes)
-	} else {
-		format!("{:.1}h", minutes / MIN_PER_HOUR)
+	let total = minutes.round() as u64;
+	let per_hour = MIN_PER_HOUR as u64;
+	match (total / per_hour, total % per_hour) {
+		(0, minutes) => format!("{}m", minutes),
+		(hours, 0) => format!("{}h", hours),
+		(hours, minutes) => format!("{}h {}m", hours, minutes),
 	}
 }
 
@@ -1914,6 +1916,29 @@ fn timing_sessions(timing: &serde_json::Value) -> &[serde_json::Value] {
 		.unwrap_or_default()
 }
 
+/// Share of the changed lines whose reading time was spent; `–` when nothing
+/// changed.
+fn read_cell(value: &serde_json::Value) -> String {
+	let lines = number(value, "lines");
+	if lines > 0.0 {
+		format!("{:.0}%", 100.0 * number(value, "lines_read") / lines)
+	} else {
+		"–".to_string()
+	}
+}
+
+fn lines_summary(lines: f64, lines_read: f64) -> String {
+	if lines > 0.0 {
+		format!(
+			"{} lines changed, {:.0}% read",
+			lines,
+			100.0 * lines_read / lines
+		)
+	} else {
+		"no code changed".to_string()
+	}
+}
+
 fn rubber_stamps(timing: &serde_json::Value) -> usize {
 	timing_sessions(timing)
 		.iter()
@@ -1925,7 +1950,7 @@ fn rubber_stamps(timing: &serde_json::Value) -> usize {
 
 fn rubber_stamp_flag(count: usize) -> String {
 	format!(
-		"{} rubber-stamp(s): a large diff approved faster than it can be read",
+		"{} large change(s) approved before even the agent's summary could be read",
 		count
 	)
 }
@@ -1936,37 +1961,46 @@ fn display_flags(flags: Vec<String>) {
 	}
 }
 
-/// Timesheet line and burnout flags under a `/report` table, from a
-/// serialized `timing::Timing`.
-fn display_timing_summary(timing: &serde_json::Value) {
-	let sessions = timing_sessions(timing);
-	let active: f64 = sessions.iter().map(|s| number(s, "active_min")).sum();
-	let wait: f64 = sessions.iter().map(|s| number(s, "wait_min")).sum();
+/// Where the human time of one or more serialized `timing::Timing`s went.
+fn display_time_split(timings: &[&serde_json::Value], suffix: &str) {
+	let time: f64 = timings.iter().map(|t| number(t, "time_min")).sum();
+	let code: f64 = timings.iter().map(|t| number(t, "code_min")).sum();
+	let wait: f64 = timings
+		.iter()
+		.flat_map(|t| timing_sessions(t))
+		.map(|session| number(session, "wait_min"))
+		.sum();
 	block_line(&format!(
-		"{} {:.2}h {}  {} {:.2} of {:.0} DHE",
-		"human".bright_black(),
-		number(timing, "time_min") / MIN_PER_HOUR,
+		"{} {}{}  {}",
+		"human ".bright_black(),
+		format_minutes(time),
+		suffix,
 		format!(
-			"(active {}, wait {})",
-			format_minutes(active),
+			"code review {} · dialog/behavior {} · waiting {}",
+			format_minutes(code),
+			format_minutes(time - code - wait),
 			format_minutes(wait)
 		)
 		.dimmed(),
+	));
+}
+
+/// Timesheet lines and burnout flags under a single-session or single-day
+/// table, from a serialized `timing::Timing`.
+fn display_timing_summary(timing: &serde_json::Value) {
+	display_time_split(&[timing], "");
+	block_line(&format!(
+		"{} {:.2} of {:.0} DHE · {}",
 		"energy".bright_black(),
 		number(timing, "energy_dhe"),
 		number(timing, "budget_dhe"),
+		lines_summary(number(timing, "lines"), number(timing, "lines_read")),
 	));
 
 	let mut flags = Vec::new();
 	let stamps = rubber_stamps(timing);
 	if stamps > 0 {
 		flags.push(rubber_stamp_flag(stamps));
-	}
-	if sessions.iter().any(|s| is_set(s, "fast_review")) {
-		flags.push(format!(
-			"review pace above {:.0} lines/h",
-			MAX_REVIEW_LINES_PER_HOUR
-		));
 	}
 	if is_set(timing, "long_block") {
 		flags.push(format!(
@@ -1985,17 +2019,16 @@ fn display_timing_summary(timing: &serde_json::Value) {
 /// `ReportPeriod`.
 fn display_period_summary(days: &[serde_json::Value]) {
 	let timings: Vec<&serde_json::Value> = days.iter().map(|day| &day["timing"]).collect();
-	let hours = timings.iter().map(|t| number(t, "time_min")).sum::<f64>() / MIN_PER_HOUR;
-	let energy: f64 = timings.iter().map(|t| number(t, "energy_dhe")).sum();
+	display_time_split(&timings, &format!(" over {} day(s)", days.len()));
+	let sum = |key: &str| timings.iter().map(|t| number(t, key)).sum::<f64>();
+	let energy = sum("energy_dhe");
 	block_line(&format!(
-		"{} {:.2}h over {} day(s)  {} {:.2} DHE, {:.2} a day of {:.0}",
-		"human".bright_black(),
-		hours,
-		days.len(),
+		"{} {:.2} DHE, {:.2} a day of {:.0} · {}",
 		"energy".bright_black(),
 		energy,
 		energy / days.len() as f64,
 		number(timings[0], "budget_dhe"),
+		lines_summary(sum("lines"), sum("lines_read")),
 	));
 
 	let days_with = |key: &str| timings.iter().filter(|t| is_set(t, key)).count();
@@ -2003,17 +2036,6 @@ fn display_period_summary(days: &[serde_json::Value]) {
 	let stamps: usize = timings.iter().map(|t| rubber_stamps(t)).sum();
 	if stamps > 0 {
 		flags.push(rubber_stamp_flag(stamps));
-	}
-	let fast_reviews = timings
-		.iter()
-		.flat_map(|t| timing_sessions(t))
-		.filter(|s| is_set(s, "fast_review"))
-		.count();
-	if fast_reviews > 0 {
-		flags.push(format!(
-			"review pace above {:.0} lines/h in {} session(s)",
-			MAX_REVIEW_LINES_PER_HOUR, fast_reviews
-		));
 	}
 	let long_blocks = days_with("long_block");
 	if long_blocks > 0 {
@@ -2032,27 +2054,63 @@ fn display_period_summary(days: &[serde_json::Value]) {
 	display_flags(flags);
 }
 
+const W_TIME: usize = 7;
+const W_ENERGY: usize = 5;
+const W_LINES: usize = 5;
+const W_READ: usize = 6;
+
+/// `human  code  DHE  lines  read` cells of an aggregated row: a session, a
+/// day or a project.
+fn time_cells(value: &serde_json::Value) -> String {
+	format!(
+		"{}  {:>W_TIME$}  {}  {:>W_LINES$}  {:>W_READ$}",
+		format!("{:>W_TIME$}", format_minutes(number(value, "time_min"))).bright_cyan(),
+		format_minutes(number(value, "code_min")),
+		format!("{:>W_ENERGY$.2}", number(value, "energy_dhe")).bright_magenta(),
+		number(value, "lines"),
+		read_cell(value),
+	)
+}
+
+fn time_headers() -> String {
+	format!(
+		"{:>W_TIME$}  {:>W_TIME$}  {:>W_ENERGY$}  {:>W_LINES$}  {:>W_READ$}",
+		"human", "code", "DHE", "lines", "read"
+	)
+}
+
+fn time_dividers() -> String {
+	[W_TIME, W_TIME, W_ENERGY, W_LINES, W_READ]
+		.map(|width| "─".repeat(width))
+		.join("  ")
+}
+
 /// One row per session of a single day.
 fn display_day_sessions(day: &serde_json::Value) {
 	const W_NUM: usize = 3;
 	const W_SESSION: usize = 40;
 	const W_TURNS: usize = 5;
-	const W_TIME: usize = 6;
-	const W_ENERGY: usize = 5;
 
 	block_line(
 		&format!(
-			"{:>W_NUM$}  {:<W_SESSION$}  {:>W_TURNS$}  {:>W_TIME$}  {:>W_TIME$}  {:>W_TIME$}  {:>W_ENERGY$}",
-			"#", "session", "turns", "human", "active", "wait", "DHE"
+			"{:>W_NUM$}  {:<W_SESSION$}  {:>W_TURNS$}  {}",
+			"#",
+			"session",
+			"turns",
+			time_headers()
 		)
 		.bright_black()
 		.to_string(),
 	);
-	let divider = [W_NUM, W_SESSION, W_TURNS, W_TIME, W_TIME, W_TIME, W_ENERGY]
-		.map(|width| "─".repeat(width))
-		.join("  ")
-		.bright_black()
-		.to_string();
+	let divider = format!(
+		"{}  {}  {}  {}",
+		"─".repeat(W_NUM),
+		"─".repeat(W_SESSION),
+		"─".repeat(W_TURNS),
+		time_dividers()
+	)
+	.bright_black()
+	.to_string();
 	block_line(&divider);
 
 	let names = day["sessions"]
@@ -2069,49 +2127,32 @@ fn display_day_sessions(day: &serde_json::Value) {
 			.take(W_SESSION)
 			.collect();
 		block_line(&format!(
-			"{}  {:<W_SESSION$}  {:>W_TURNS$}  {}  {:>W_TIME$}  {:>W_TIME$}  {}",
+			"{}  {:<W_SESSION$}  {:>W_TURNS$}  {}",
 			format!("{:>W_NUM$}", i + 1).bright_white(),
 			name,
 			turns,
-			format!("{:>W_TIME$}", format_minutes(number(session, "time_min"))).bright_cyan(),
-			format_minutes(number(session, "active_min")),
-			format_minutes(number(session, "wait_min")),
-			format!("{:>W_ENERGY$.2}", number(session, "energy_dhe")).bright_magenta(),
+			time_cells(session),
 		));
 	}
 	block_line(&divider);
 }
 
-/// One row per day: human time, energy (red over the daily budget), and the
-/// day's projects.
+/// One row per day, energy red over the daily budget, with the day's projects.
 fn display_day_rows(days: &[serde_json::Value]) {
 	const W_DATE: usize = 10;
-	const W_TIME: usize = 6;
-	const W_ENERGY: usize = 5;
 
 	block_line(
-		&format!(
-			"{:<W_DATE$}  {:>W_TIME$}  {:>W_ENERGY$}  projects",
-			"date", "human", "DHE"
-		)
-		.bright_black()
-		.to_string(),
+		&format!("{:<W_DATE$}  {}  projects", "date", time_headers())
+			.bright_black()
+			.to_string(),
 	);
-	let divider = [W_DATE, W_TIME, W_ENERGY]
-		.map(|width| "─".repeat(width))
-		.join("  ")
+	let divider = format!("{}  {}", "─".repeat(W_DATE), time_dividers())
 		.bright_black()
 		.to_string();
 	block_line(&divider);
 
 	for day in days {
 		let timing = &day["timing"];
-		let energy = format!("{:>W_ENERGY$.2}", number(timing, "energy_dhe"));
-		let energy = if is_set(timing, "over_budget") {
-			energy.bright_red()
-		} else {
-			energy.bright_magenta()
-		};
 		let projects = day["projects"]
 			.as_array()
 			.map(Vec::as_slice)
@@ -2126,11 +2167,16 @@ fn display_day_rows(days: &[serde_json::Value]) {
 			})
 			.collect::<Vec<_>>()
 			.join(", ");
+		let date = day["date"].as_str().unwrap_or_default();
+		let date = if is_set(timing, "over_budget") {
+			format!("{:<W_DATE$}", date).bright_red()
+		} else {
+			format!("{:<W_DATE$}", date).normal()
+		};
 		block_line(&format!(
-			"{:<W_DATE$}  {}  {}  {}",
-			day["date"].as_str().unwrap_or_default(),
-			format!("{:>W_TIME$}", format_minutes(number(timing, "time_min"))).bright_cyan(),
-			energy,
+			"{}  {}  {}",
+			date,
+			time_cells(timing),
 			projects.dimmed(),
 		));
 	}
@@ -2140,16 +2186,11 @@ fn display_day_rows(days: &[serde_json::Value]) {
 /// Period totals per project, most time first.
 fn display_project_totals(projects: &serde_json::Value) {
 	const W_PROJECT: usize = 24;
-	const W_TIME: usize = 6;
-	const W_ENERGY: usize = 5;
 
 	block_line(
-		&format!(
-			"{:<W_PROJECT$}  {:>W_TIME$}  {:>W_ENERGY$}",
-			"project", "human", "DHE"
-		)
-		.bright_black()
-		.to_string(),
+		&format!("{:<W_PROJECT$}  {}", "project", time_headers())
+			.bright_black()
+			.to_string(),
 	);
 	for project in projects.as_array().map(Vec::as_slice).unwrap_or_default() {
 		let name: String = project["project"]
@@ -2158,12 +2199,7 @@ fn display_project_totals(projects: &serde_json::Value) {
 			.chars()
 			.take(W_PROJECT)
 			.collect();
-		block_line(&format!(
-			"{:<W_PROJECT$}  {}  {}",
-			name,
-			format!("{:>W_TIME$}", format_minutes(number(project, "time_min"))).bright_cyan(),
-			format!("{:>W_ENERGY$.2}", number(project, "energy_dhe")).bright_magenta(),
-		));
+		block_line(&format!("{:<W_PROJECT$}  {}", name, time_cells(project)));
 	}
 }
 
@@ -2203,19 +2239,21 @@ pub fn display_report_period(output: &CommandOutput) {
 		display_period_summary(days);
 	}
 
-	let hours = days
+	let minutes: f64 = days
 		.iter()
 		.map(|day| number(&day["timing"], "time_min"))
-		.sum::<f64>()
-		/ MIN_PER_HOUR;
-	block_close_ok("/report", Some(&format!("{} · {:.2}h", scope, hours)));
+		.sum();
+	block_close_ok(
+		"/report",
+		Some(&format!("{} · {}", scope, format_minutes(minutes))),
+	);
 	println!();
 }
 
 pub fn display_report(output: &CommandOutput, _config: &Config) {
 	use crate::session::chat::formatting::format_duration;
 
-	// Column widths — chosen to fit ~108 chars including the rail prefix.
+	// Column widths — chosen to fit ~122 chars including the rail prefix.
 	const W_NUM: usize = 3;
 	const W_REQUEST: usize = crate::session::report::REQUEST_CELL_WIDTH;
 	const W_COST: usize = 9;
@@ -2223,8 +2261,6 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 	const W_TASK: usize = 6;
 	const W_AI: usize = 6;
 	const W_PROC: usize = 6;
-	const W_HUMAN: usize = 6;
-	const W_ENERGY: usize = 5;
 
 	// Truncate to a single line of `max` chars, collapsing newlines to spaces
 	// so multi-line user prompts don't break the table layout.
@@ -2288,7 +2324,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 
 		// Header row + divider — both on the rail.
 		let header = format!(
-			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}  {}  {}",
 			pad_right("#", W_NUM).bright_black(),
 			pad_left("request", W_REQUEST).bright_black(),
 			pad_right("cost", W_COST).bright_black(),
@@ -2296,12 +2332,14 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			pad_right("task", W_TASK).bright_black(),
 			pad_right("ai", W_AI).bright_black(),
 			pad_right("proc", W_PROC).bright_black(),
-			pad_right("human", W_HUMAN).bright_black(),
+			pad_right("human", W_TIME).bright_black(),
 			pad_right("DHE", W_ENERGY).bright_black(),
+			pad_right("lines", W_LINES).bright_black(),
+			pad_right("read", W_READ).bright_black(),
 		);
 		block_line(&header);
 		let divider = format!(
-			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}  {}  {}",
 			"─".repeat(W_NUM),
 			"─".repeat(W_REQUEST),
 			"─".repeat(W_COST),
@@ -2309,8 +2347,10 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			"─".repeat(W_TASK),
 			"─".repeat(W_AI),
 			"─".repeat(W_PROC),
-			"─".repeat(W_HUMAN),
+			"─".repeat(W_TIME),
 			"─".repeat(W_ENERGY),
+			"─".repeat(W_LINES),
+			"─".repeat(W_READ),
 		);
 		block_line(&divider.bright_black().to_string());
 
@@ -2346,9 +2386,17 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				.get("energy_dhe")
 				.and_then(|v| v.as_f64())
 				.map_or_else(|| "-".to_string(), |dhe| format!("{:.2}", dhe));
+			let lines = entry.get("lines").and_then(|v| v.as_u64());
+			// Lines are read before the next message; the last answer's are
+			// unread until one follows.
+			let read = match (lines, entry.get("read_share").and_then(|v| v.as_f64())) {
+				(Some(0) | None, _) => "–".to_string(),
+				(Some(_), None) => "unread".to_string(),
+				(Some(_), Some(share)) => format!("{:.0}%", 100.0 * share),
+			};
 
 			let mut row = format!(
-				"{}  {}  {}  {}  {}  {}  {}  {}  {}",
+				"{}  {}  {}  {}  {}  {}  {}  {}  {}  {}  {}",
 				pad_right(&(i + 1).to_string(), W_NUM).bright_white(),
 				pad_left(&cell_text(user_request, W_REQUEST), W_REQUEST),
 				pad_right(cost, W_COST).bright_yellow(),
@@ -2356,8 +2404,13 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				pad_right(task_time, W_TASK),
 				pad_right(ai_time, W_AI),
 				pad_right(processing_time, W_PROC),
-				pad_right(&human, W_HUMAN).bright_cyan(),
+				pad_right(&human, W_TIME).bright_cyan(),
 				pad_right(&energy, W_ENERGY).bright_magenta(),
+				pad_right(
+					&lines.map_or_else(|| "-".to_string(), |l| l.to_string()),
+					W_LINES
+				),
+				pad_right(&read, W_READ),
 			);
 			if entry.get("rubber_stamp").and_then(|v| v.as_bool()) == Some(true) {
 				row.push_str(&format!("  {}", "⚠ rubber-stamp".bright_red()));
@@ -2389,10 +2442,8 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			.and_then(|v| v.as_u64())
 			.unwrap_or(0);
 		let timing = &totals["timing"];
-		let total_human = timing["time_min"].as_f64().unwrap_or(0.0);
-		let total_energy = timing["energy_dhe"].as_f64().unwrap_or(0.0);
 		let totals_row = format!(
-			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}  {}  {}",
 			pad_right("Σ", W_NUM).bright_cyan(),
 			pad_left(&format!("{} request(s)", entries.len()), W_REQUEST).dimmed(),
 			pad_right(&format!("${:.5}", total_cost), W_COST).bright_yellow(),
@@ -2400,8 +2451,10 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			pad_right(&format_duration(total_task), W_TASK),
 			pad_right(&format_duration(total_ai), W_AI),
 			pad_right(&format_duration(total_proc), W_PROC),
-			pad_right(&format_minutes(total_human), W_HUMAN).bright_cyan(),
-			pad_right(&format!("{:.2}", total_energy), W_ENERGY).bright_magenta(),
+			pad_right(&format_minutes(number(timing, "time_min")), W_TIME).bright_cyan(),
+			pad_right(&format!("{:.2}", number(timing, "energy_dhe")), W_ENERGY).bright_magenta(),
+			pad_right(&number(timing, "lines").to_string(), W_LINES),
+			pad_right(&read_cell(timing), W_READ),
 		);
 		block_line(&totals_row);
 		display_timing_summary(timing);

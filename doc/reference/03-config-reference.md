@@ -499,8 +499,7 @@ procedure. Reading, review and typing speeds and the flag thresholds are fixed r
 | `think_overhead_min` | f64 | `1.5` | Thinking time added to every turn's reading + typing estimate, minutes |
 | `deliberation_factor` | f64 | `2.0` | Cap on active time before an input, as a multiple of the turn estimate |
 | `attention_window_min` | f64 | `30.0` | Minutes after your last input during which an agent run earns wait time |
-| `review_share` | f64 | `0.5` | Share of a turn's estimate that must be code review for the turn to count as review |
-| `review_weight` | f64 | `2.0` | Energy per review minute, relative to spec and dialog minutes (weight 1) |
+| `review_weight` | f64 | `2.0` | Energy per minute of reading code, relative to dialog, spec writing and behavior checks (weight 1) |
 | `wait_weight` | f64 | `0.25` | Energy per minute of attended waiting |
 | `switch_cost_dhe` | f64 | `0.05` | Energy cost of one switch between parallel sessions, DHE |
 
@@ -509,7 +508,6 @@ procedure. Reading, review and typing speeds and the flag thresholds are fixed r
 think_overhead_min = 1.5
 deliberation_factor = 2.0
 attention_window_min = 30.0
-review_share = 0.5
 review_weight = 2.0
 wait_weight = 0.25
 switch_cost_dhe = 0.05

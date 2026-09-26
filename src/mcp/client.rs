@@ -320,6 +320,12 @@ async fn deliver_resource_update(
 	});
 }
 
+/// SEP-1724 extension telling a server that this client follows the resource
+/// links in tool results and surfaces their `resources/updated` to the model
+/// (`watch_resource_links` + `on_resource_updated`). octofs promises a background
+/// shell job's exit notification only to clients that declare it.
+const WATCH_RESOURCE_LINKS_EXTENSION: &str = "io.muvon/watch-resource-links";
+
 /// Client identity + capabilities sent on every request (modern) or during
 /// the initialize handshake (legacy). The octomind session context rides in
 /// the experimental capabilities, same as before.
@@ -345,6 +351,10 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 	if protocol_version >= ProtocolVersion::V_2026_07_28 {
 		let mut extensions = ExtensionCapabilities::new();
 		extensions.insert(TASKS_EXTENSION_ID.to_string(), serde_json::Map::new());
+		extensions.insert(
+			WATCH_RESOURCE_LINKS_EXTENSION.to_string(),
+			serde_json::Map::new(),
+		);
 		capabilities.extensions = Some(extensions);
 		capabilities.elicitation = Some(
 			ElicitationCapability::new()

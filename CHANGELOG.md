@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.55.0] - 2026-09-26
+
+### 📋 Release Summary
+
+Session timing now tracks code-reading time and read metrics, with calibrated token estimates, preserved folds, corrected reasoning retries, cost accounting, and report filtering. Reports support period and project filters and timing estimates; MCP advertises resource-link watching, markdown links render as terminal hyperlinks, and evolution supports graded evaluation with shadow controls. Chat output, pasted-content tags, and MCP runtime test setup were corrected.
+
+### 🚨 Breaking Changes
+
+- **timing**: track code-reading time and read metrics `98d899f1`
+
+### ✨ New Features & Enhancements
+
+- **mcp**: advertise resource link watching capability `b7720e9d`
+- **report**: support period and project-filtered reports `15c4301e`
+- **reporting**: show timing estimates in reports `b6f7e38f`
+- **markdown**: render markdown links as terminal hyperlinks `0f4f81ff`
+- **evolution**: support graded evolution evaluation `f45ffedd`
+- **evolution**: evaluate trials with shadow controls `fc3d4d3a`
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: serialize shared-state integration tests `b6a8ccd2`
+- **dependencies**: update locked dependency versions `9083060c`
+- **bench**: remove historical benchmark flow log `f97c58ab`
+- **dependencies**: upgrade octolib to 0.40.0 `8b8784ec`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: filter reports and fix session timing `eff7c475`
+- **mcp-runtime**: fix validate script test setup `c4ea0ad3`
+- **chat**: clear spinner output before session initialization `efd45eaa`
+- **pasting**: align pasted-content tags with wire format `f7ccf7b5`
+- **session**: fix reasoning retries and cost accounting `8720700e`
+- **session**: calibrate token estimates and preserve folds `5c15d672`
+
+### 📚 Documentation & Examples
+
+- **timing**: document session timing estimates `d002ce79`
+
 ## [0.54.1] - 2026-09-19
 
 ### 📋 Release Summary

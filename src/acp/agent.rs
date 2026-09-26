@@ -353,7 +353,8 @@ fn build_available_commands() -> Vec<AvailableCommand> {
 			.input(unstructured("<path>")),
 		AvailableCommand::new("loglevel", "Set logging level")
 			.input(unstructured("[none|info|debug]")),
-		AvailableCommand::new("report", "Generate detailed usage report for this session"),
+		AvailableCommand::new("report", "Generate detailed usage report for this session")
+			.input(unstructured("[day]")),
 		AvailableCommand::new("skill", "List, filter, or toggle skills")
 			.input(unstructured("[name|pattern|page]")),
 		AvailableCommand::new("effort", "View or change reasoning effort level")

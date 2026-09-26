@@ -138,6 +138,11 @@ fn plan() -> MigrationPlan {
 				to: 19,
 				apply: add_v19_evaluate_evolution,
 			},
+			VersionMigration {
+				from: 19,
+				to: 20,
+				apply: add_v20_timing,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -202,6 +207,14 @@ fn add_v19_evaluate_evolution(
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
 	add_v14_evaluate(document, template)
+}
+
+/// Add the required `[timing]` calibration section for `/report`.
+fn add_v20_timing(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	merge_missing(document.as_table_mut(), template.as_table(), "timing")
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

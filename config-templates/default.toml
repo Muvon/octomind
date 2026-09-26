@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 19
+version = 20
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -590,6 +590,37 @@ validation_timeout = 60
 # Prevents infinite loops when a validator consistently fails.
 # Counter resets when validation passes or skill is deactivated.
 max_retries = 3
+
+# ═══════════════════════════════════════════════════════════════════════
+# HUMAN TIME & ENERGY (/report)
+# /report estimates the timesheet hours a session occupied you and the energy
+# it drained, in deep-hour equivalents (1 DHE = one hour of pre-AI deep coding,
+# daily budget 4). Reading/typing/review speeds and the flag thresholds are
+# fixed research values; only these per-person calibration knobs are exposed.
+# Fit them against a few days of hand-logged time and end-of-day fatigue.
+# ═══════════════════════════════════════════════════════════════════════
+
+[timing]
+# Fixed thinking overhead per turn, in minutes.
+think_overhead_min = 1.5
+
+# Slack for deliberation over the reading + typing estimate of a turn.
+deliberation_factor = 2.0
+
+# How long an agent run keeps earning wait time after your last input, in minutes.
+attention_window_min = 30.0
+
+# Share of a turn's estimate that must be code review for it to count as review.
+review_share = 0.5
+
+# Energy weight of a review turn (spec and dialog turns weigh 1).
+review_weight = 2.0
+
+# Energy weight of waiting on an attended agent run.
+wait_weight = 0.25
+
+# Energy cost of one switch between parallel sessions, in DHE.
+switch_cost_dhe = 0.05
 
 # ═══════════════════════════════════════════════════════════════════════
 # AUTOMATIC CONTEXT COMPRESSION

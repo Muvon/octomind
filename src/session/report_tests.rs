@@ -23,6 +23,7 @@ fn entry(user_request: &str, tools_used: &str) -> ReportEntry {
 		task_time: "1.0s".to_string(),
 		ai_time: "0.5s".to_string(),
 		processing_time: "0.5s".to_string(),
+		turn: None,
 	}
 }
 
@@ -38,6 +39,7 @@ fn report(entries: Vec<ReportEntry>) -> SessionReport {
 			total_processing_time_ms: 1_000,
 			total_requests,
 		},
+		turns: Vec::new(),
 	}
 }
 
@@ -283,4 +285,78 @@ fn generate_from_log_attributes_cost_per_request_via_stats_checkpoints() {
 	assert_eq!(report.entries[1].cost, "3.00000");
 	assert_eq!(report.entries[1].ai_time, format_duration(300));
 	assert_eq!(report.entries[1].processing_time, format_duration(150));
+}
+
+fn write_log(path: &std::path::Path, entries: &[serde_json::Value]) {
+	for entry in entries {
+		crate::session::append_to_session_file(&path.to_path_buf(), &entry.to_string())
+			.expect("append report frame");
+	}
+}
+
+#[test]
+fn generate_from_log_collects_turns_from_agent_activity_only() {
+	let dir = tempfile::tempdir().expect("temp dir");
+	let path = dir.path().join("report.jsonl.zst");
+	write_log(
+		&path,
+		&[
+			serde_json::json!({"role":"user","content":"fix the parser now","timestamp":100}),
+			serde_json::json!({"role":"assistant","content":"on it","timestamp":110}),
+			serde_json::json!({
+				"role":"tool","timestamp":120,
+				"content":"...\n-3:ab..4:cd (2 lines)\n+3:ef|let a = 1;\n+4:01|let b = 2;\n+5:23|let c = 3;"
+			}),
+			serde_json::json!({"role":"assistant","content":"done, three lines","timestamp":130}),
+			serde_json::json!({"type":"COMMAND","command":"/info","timestamp":200}),
+			// Checkpoint written at the next input: not agent activity.
+			serde_json::json!({"type":"STATS","timestamp":300,"total_cost":0.1}),
+			serde_json::json!({"role":"user","content":"thanks","timestamp":300}),
+		],
+	);
+
+	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
+	assert_eq!(
+		report.turns,
+		vec![
+			Turn {
+				input_at: 100,
+				done_at: 130,
+				words_in: 4,
+				words_out: 5,
+				diff_lines: 4,
+			},
+			Turn {
+				input_at: 300,
+				done_at: 300,
+				words_in: 1,
+				..Default::default()
+			},
+		]
+	);
+	let rows: Vec<Option<usize>> = report.entries.iter().map(|entry| entry.turn).collect();
+	assert_eq!(rows, vec![Some(0), None, Some(1)]);
+}
+
+#[test]
+fn turns_since_keeps_only_sessions_and_turns_after_the_cutoff() {
+	let dir = tempfile::tempdir().expect("temp dir");
+	write_log(
+		&dir.path().join("b-today.jsonl.zst"),
+		&[
+			serde_json::json!({"role":"user","content":"yesterday","timestamp":50}),
+			serde_json::json!({"role":"user","content":"today","timestamp":150}),
+		],
+	);
+	write_log(
+		&dir.path().join("a-old.jsonl.zst"),
+		&[serde_json::json!({"role":"user","content":"old","timestamp":60})],
+	);
+	std::fs::write(dir.path().join("titles.json"), "{}").unwrap();
+
+	let sessions = SessionReport::turns_since(dir.path(), 100).expect("scan");
+	assert_eq!(sessions.len(), 1);
+	assert_eq!(sessions[0].0, "b-today");
+	assert_eq!(sessions[0].1.len(), 1);
+	assert_eq!(sessions[0].1[0].input_at, 150);
 }

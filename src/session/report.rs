@@ -17,11 +17,13 @@
 use crate::log_debug;
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::markdown::MarkdownRenderer;
-use anyhow::Result;
+use crate::session::timing::{self, Turn};
+use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 /// Width of the request column in the rendered table. Requests are truncated
 /// to it once, here, so the renderer never has to clip a second time (two caps
@@ -32,6 +34,8 @@ pub const REQUEST_CELL_WIDTH: usize = 42;
 pub struct SessionReport {
 	pub entries: Vec<ReportEntry>,
 	pub totals: ReportTotals,
+	/// Genuine user turns, for the human time and energy estimate.
+	pub turns: Vec<Turn>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -43,6 +47,8 @@ pub struct ReportEntry {
 	pub task_time: String,
 	pub ai_time: String,
 	pub processing_time: String,
+	/// Index into `SessionReport::turns`; `None` for slash commands.
+	pub turn: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -67,6 +73,7 @@ struct RequestContext {
 	pub api_time_after: u64,   // Total API time after this request
 	pub tool_time_before: u64, // Total tool time before this request
 	pub tool_time_after: u64,  // Total tool time after this request
+	pub turn: Option<usize>,
 }
 
 impl SessionReport {
@@ -78,6 +85,7 @@ impl SessionReport {
 
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;
+		let mut turns: Vec<Turn> = Vec::new();
 		let mut last_total_cost = 0.0;
 		let mut last_total_api_time_ms = 0u64;
 		let mut last_total_tool_time_ms = 0u64;
@@ -182,6 +190,15 @@ impl SessionReport {
 							.to_string()
 					};
 
+					let turn = (log_type == "USER").then(|| {
+						turns.push(Turn {
+							input_at: entry_timestamp,
+							done_at: entry_timestamp,
+							words_in: content.split_whitespace().count(),
+							..Default::default()
+						});
+						turns.len() - 1
+					});
 					current_context = Some(RequestContext {
 						user_request: content,
 						start_timestamp: entry_timestamp,
@@ -193,6 +210,7 @@ impl SessionReport {
 						api_time_after: last_total_api_time_ms,
 						tool_time_before: last_total_tool_time_ms,
 						tool_time_after: last_total_tool_time_ms,
+						turn,
 					});
 				}
 				"TOOL_CALL" => {
@@ -217,6 +235,18 @@ impl SessionReport {
 										*ctx.tools.entry(tool_name.to_string()).or_insert(0) += 1;
 									}
 								}
+							}
+						}
+					}
+					// Only agent activity ends a run: STATS/SUMMARY markers land at the
+					// next input and would erase the gap the human spent reading.
+					if role == "assistant" || role == "tool" {
+						if let Some(turn) = turns.last_mut() {
+							turn.done_at = turn.done_at.max(entry_timestamp);
+							if role == "assistant" {
+								turn.words_out += content.split_whitespace().count();
+							} else {
+								turn.diff_lines += timing::diff_lines(content);
 							}
 						}
 					}
@@ -339,10 +369,49 @@ impl SessionReport {
 				task_time: format_duration(task_time_ms),
 				ai_time: format_duration(ai_time_ms),
 				processing_time: format_duration(processing_time_ms),
+				turn: ctx.turn,
 			});
 		}
 
-		Ok(SessionReport { entries, totals })
+		Ok(SessionReport {
+			entries,
+			totals,
+			turns,
+		})
+	}
+
+	/// Turns submitted since `since` (unix seconds) in every session log under
+	/// `sessions_dir`, oldest session first. Logs untouched since then are
+	/// skipped unopened.
+	pub fn turns_since(sessions_dir: &Path, since: u64) -> Result<Vec<(String, Vec<Turn>)>> {
+		let since_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(since);
+		let mut sessions = Vec::new();
+		for entry in std::fs::read_dir(sessions_dir)? {
+			let path = entry?.path();
+			let Some(name) = path
+				.file_name()
+				.and_then(|name| name.to_str())
+				.and_then(|name| name.strip_suffix(".jsonl.zst"))
+			else {
+				continue;
+			};
+			if std::fs::metadata(&path)?.modified()? < since_time {
+				continue;
+			}
+			let report = Self::generate_from_log(&path.to_string_lossy())
+				.with_context(|| format!("reading session log {}", path.display()))?;
+			let turns: Vec<Turn> = report
+				.turns
+				.into_iter()
+				.filter(|turn| turn.input_at >= since)
+				.collect();
+			if !turns.is_empty() {
+				sessions.push((name.to_string(), turns));
+			}
+		}
+		// Session names start with their creation time.
+		sessions.sort_by(|a, b| a.0.cmp(&b.0));
+		Ok(sessions)
 	}
 
 	/// Format tools used as "tool_name(count), tool_name(count)"

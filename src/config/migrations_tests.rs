@@ -407,3 +407,22 @@ fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_
 		.unwrap()
 		.is_none());
 }
+
+#[test]
+fn v19_timing_migration_adds_the_section_and_keeps_calibrated_values() {
+	let mut document = template_document();
+	document["version"] = toml_edit::value(19);
+	let timing = document["timing"].as_table_mut().unwrap();
+	timing.remove("wait_weight");
+	timing["review_weight"] = toml_edit::value(3.0);
+	let migrated = migrate_once(&document.to_string());
+	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
+	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+	assert_eq!(config.timing.wait_weight, 0.25);
+	assert_eq!(config.timing.review_weight, 3.0);
+
+	document.remove("timing");
+	let config: crate::config::Config =
+		toml::from_str(&migrate_once(&document.to_string())).unwrap();
+	assert_eq!(config.timing.review_weight, 2.0);
+}

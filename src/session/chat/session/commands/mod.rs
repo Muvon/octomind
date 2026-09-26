@@ -204,6 +204,12 @@ pub enum CommandOutput {
 		entries: Vec<serde_json::Value>,
 		totals: serde_json::Value,
 	},
+	/// `/report day`: human time and energy per session since local midnight.
+	ReportDay {
+		/// Session names, in the order of `timing.sessions`.
+		sessions: Vec<String>,
+		timing: serde_json::Value,
+	},
 	Skill {
 		data: serde_json::Value,
 	},
@@ -327,6 +333,7 @@ impl CommandOutput {
 			Self::Run { .. } => display::display_run(self, config, &session.role),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
+			Self::ReportDay { .. } => display::display_report_day(self),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Workflow { .. } => display::display_workflow(self),
@@ -405,7 +412,7 @@ pub async fn process_command(
 		COPY_COMMAND => copy::handle_copy(session, params),
 		CLEAR_COMMAND => clear::handle_clear(),
 		INFO_COMMAND => info::handle_info(session, config),
-		REPORT_COMMAND => report::handle_report(session, config),
+		REPORT_COMMAND => report::handle_report(session, config, params),
 
 		CONTEXT_COMMAND => context::handle_context(session, params),
 		LOGLEVEL_COMMAND => loglevel::handle_loglevel(config, params),

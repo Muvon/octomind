@@ -72,7 +72,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 19;
+pub const CURRENT_CONFIG_VERSION: u32 = 20;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -224,6 +224,26 @@ pub struct SkillsConfig {
 
 	/// Maximum validation retries before giving up per skill per turn.
 	pub max_retries: u32,
+}
+
+/// Per-person calibration of the `/report` human-time and energy estimate.
+/// Research-fixed speeds and thresholds live in `src/session/timing.rs`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TimingConfig {
+	/// Fixed thinking overhead per turn, minutes.
+	pub think_overhead_min: f64,
+	/// Slack for deliberation over the reading + typing estimate.
+	pub deliberation_factor: f64,
+	/// How long a run earns wait time after the last input, minutes.
+	pub attention_window_min: f64,
+	/// Share of a turn's estimate that must be code review to count as review.
+	pub review_share: f64,
+	/// Energy weight of a review turn; spec and dialog turns weigh 1.
+	pub review_weight: f64,
+	/// Energy weight of attended waiting.
+	pub wait_weight: f64,
+	/// Energy cost of one switch between sessions, DHE.
+	pub switch_cost_dhe: f64,
 }
 
 /// Reasoning effort hint for thinking-capable models.
@@ -413,6 +433,9 @@ pub struct Config {
 
 	// Skill auto-activation and validation configuration (required [skills] section)
 	pub skills: SkillsConfig,
+
+	// Human time and energy estimate for /report (required [timing] section)
+	pub timing: TimingConfig,
 
 	// Webhook hook configurations
 	#[serde(default)]

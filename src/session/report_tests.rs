@@ -40,6 +40,7 @@ fn report(entries: Vec<ReportEntry>) -> SessionReport {
 			total_requests,
 		},
 		turns: Vec::new(),
+		opened_at: None,
 		interactive: false,
 	}
 }
@@ -343,7 +344,7 @@ fn generate_from_log_collects_turns_from_agent_activity_only() {
 fn turns_since_keeps_only_interactive_sessions_and_turns_after_the_cutoff() {
 	let dir = tempfile::tempdir().expect("temp dir");
 	let interactive = serde_json::json!({
-		"type":"SUMMARY","timestamp":40,"session_info":{"interactive":true}
+		"type":"SUMMARY","timestamp":40,"session_info":{"interactive":true,"created_at":40}
 	});
 	write_log(
 		&dir.path().join("b-today.jsonl.zst"),
@@ -369,7 +370,19 @@ fn turns_since_keeps_only_interactive_sessions_and_turns_after_the_cutoff() {
 
 	let sessions = SessionReport::turns_since(dir.path(), 100).expect("scan");
 	assert_eq!(sessions.len(), 1);
-	assert_eq!(sessions[0].0, "b-today");
-	assert_eq!(sessions[0].1.len(), 1);
-	assert_eq!(sessions[0].1[0].input_at, 150);
+	assert_eq!(sessions[0].name, "b-today");
+	assert_eq!(sessions[0].opened_at, Some(40));
+	assert_eq!(sessions[0].turns.len(), 1);
+	assert_eq!(sessions[0].turns[0].input_at, 150);
+}
+
+#[test]
+fn project_of_reads_generated_names_and_keeps_custom_ones_whole() {
+	assert_eq!(project_of("260926-backend-1407-29c0"), "backend");
+	assert_eq!(project_of("260926-octomind-web-1345-ba55"), "octomind-web");
+	assert_eq!(
+		project_of("tap-content-social-326a0b"),
+		"tap-content-social-326a0b"
+	);
+	assert_eq!(project_of("release-notes"), "release-notes");
 }

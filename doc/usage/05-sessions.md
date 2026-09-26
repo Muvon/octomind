@@ -184,11 +184,14 @@ recorded spend, so a provider call can cross a threshold before the next check.
 ## Human Time and Energy
 
 `/report` also estimates what the session cost *you*: the timesheet hours it occupied and the mental energy it drained.
-`/report day` does the same for every interactive CLI session with a turn since local midnight.
+`/report day`, `/report week` and `/report month` sum it over your interactive CLI sessions since local midnight, Monday,
+or the 1st of the month, per day and per project; add `here` to count only the current project.
 
 ```text
 /report
 /report day
+/report week here
+/report month
 ```
 
 Per request, `human` is the time the request occupied you and `DHE` its energy in deep-hour equivalents: 1 DHE is one
@@ -215,14 +218,17 @@ input; slash commands and injected system messages are not turns.
    plus `think_overhead_min`.
 2. **Active time** before an input is the gap since the previous run finished, capped at `deliberation_factor` × the
    estimate: a longer gap means you were away or elsewhere, a short one (pasted input) stays short. The first input of
-   a session gets the full cap. After the last run, a closing review of its output is added.
+   a session is measured from when the session opened. After the last run, a closing review of its output is added —
+   already when you run `/report` right after the answer.
 3. **Overlap.** Attention is single-threaded. Where active intervals of parallel sessions overlap, those minutes are
    split equally between the sessions.
 4. **Wait.** Time with no active interval anywhere while a run is in progress counts as wait, but only for
    `attention_window_min` after your last input to that session. A long autonomous run costs you its launch and its
    review, not its duration. Time with neither is idle and not counted.
 
-A session's time is its active plus wait minutes, and the day's total never counts a minute twice.
+A session's time is its active plus wait minutes, and the day's total never counts a minute twice. Periods are computed
+day by day, since the energy budget and the flags are daily. The project is the directory name in the session name
+(`YYMMDD-<project>-HHMM-<id>`); a session started with a custom `--name` is its own project.
 
 ### How energy is estimated
 

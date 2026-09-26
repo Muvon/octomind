@@ -59,8 +59,18 @@ pub struct Turn {
 	pub words_in: usize,
 	/// Words of assistant text shown to the human during the run.
 	pub words_out: usize,
-	/// Changed lines in the diffs the run's tool results showed.
+	/// Lines the agent's own edits wrote or removed during the run.
 	pub diff_lines: usize,
+}
+
+/// One session's turns, in order.
+#[derive(Debug, Clone)]
+pub struct SessionTurns {
+	pub name: String,
+	/// Unix seconds the session opened; bounds the attention before its first
+	/// input the way the previous run's end bounds every later one.
+	pub opened_at: Option<u64>,
+	pub turns: Vec<Turn>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -126,19 +136,20 @@ fn review_min(lines: usize) -> f64 {
 }
 
 /// Time and energy for a set of sessions whose turns may overlap in time.
-pub fn compute(sessions: &[Vec<Turn>], config: &TimingConfig) -> Timing {
+pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 	let mut active: Vec<Interval> = Vec::new();
 	let mut attended: Vec<Interval> = Vec::new();
 	let mut result: Vec<SessionTiming> = sessions
 		.iter()
-		.map(|turns| SessionTiming {
-			turns: vec![TurnTiming::default(); turns.len()],
+		.map(|session| SessionTiming {
+			turns: vec![TurnTiming::default(); session.turns.len()],
 			..Default::default()
 		})
 		.collect();
 	let mut review_lines = vec![0usize; sessions.len()];
 
-	for (s, turns) in sessions.iter().enumerate() {
+	for (s, session) in sessions.iter().enumerate() {
+		let turns = &session.turns;
 		for (i, turn) in turns.iter().enumerate() {
 			let prev = i.checked_sub(1).map(|p| &turns[p]);
 			let (prev_words, prev_lines) = prev.map_or((0, 0), |p| (p.words_out, p.diff_lines));
@@ -149,7 +160,8 @@ pub fn compute(sessions: &[Vec<Turn>], config: &TimingConfig) -> Timing {
 			let cap = config.deliberation_factor * estimate;
 			// A long gap means the human was away or elsewhere, so it is capped;
 			// a short one (pasted input) stays short.
-			let gap = prev.map(|p| (minutes(turn.input_at) - minutes(p.done_at)).max(0.0));
+			let since = prev.map(|p| p.done_at).or(session.opened_at);
+			let gap = since.map(|since| (minutes(turn.input_at) - minutes(since)).max(0.0));
 			let length = gap.map_or(cap, |gap| gap.min(cap));
 			let review = review_min(prev_lines) >= config.review_share * estimate;
 			result[s].turns[i].rubber_stamp = review

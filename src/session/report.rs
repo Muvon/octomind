@@ -17,7 +17,7 @@
 use crate::log_debug;
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::markdown::MarkdownRenderer;
-use crate::session::timing::{self, Turn};
+use crate::session::timing::{self, SessionTurns, Turn};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -36,8 +36,32 @@ pub struct SessionReport {
 	pub totals: ReportTotals,
 	/// Genuine user turns, for the human time and energy estimate.
 	pub turns: Vec<Turn>,
+	/// Unix seconds the session was created, from its first SUMMARY.
+	pub opened_at: Option<u64>,
 	/// A human drove the session from the interactive CLI.
 	pub interactive: bool,
+}
+
+/// Project of a generated session name `YYMMDD-<project>-HHMM-<id>` (see
+/// `generate_session_name`); a custom `--name` is its own project.
+pub fn project_of(name: &str) -> &str {
+	let digits =
+		|part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
+	let parts = name
+		.split_once('-')
+		.and_then(|(date, rest)| rest.rsplit_once('-').map(|(rest, _id)| (date, rest)))
+		.and_then(|(date, rest)| {
+			rest.rsplit_once('-')
+				.map(|(project, time)| (date, project, time))
+		});
+	match parts {
+		Some((date, project, time))
+			if digits(date, 6) && digits(time, 4) && !project.is_empty() =>
+		{
+			project
+		}
+		_ => name,
+	}
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -88,6 +112,7 @@ impl SessionReport {
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;
 		let mut turns: Vec<Turn> = Vec::new();
+		let mut opened_at = None;
 		let mut interactive = false;
 		let mut last_total_cost = 0.0;
 		let mut last_total_api_time_ms = 0u64;
@@ -279,6 +304,9 @@ impl SessionReport {
 						if session_info.get("interactive").and_then(|i| i.as_bool()) == Some(true) {
 							interactive = true;
 						}
+						if opened_at.is_none() {
+							opened_at = session_info.get("created_at").and_then(|c| c.as_u64());
+						}
 					}
 				}
 			}
@@ -383,6 +411,7 @@ impl SessionReport {
 			entries,
 			totals,
 			turns,
+			opened_at,
 			interactive,
 		})
 	}
@@ -390,7 +419,7 @@ impl SessionReport {
 	/// Turns submitted since `since` (unix seconds) in every interactive session
 	/// log under `sessions_dir`, oldest session first. Logs untouched since then
 	/// are skipped unopened.
-	pub fn turns_since(sessions_dir: &Path, since: u64) -> Result<Vec<(String, Vec<Turn>)>> {
+	pub fn turns_since(sessions_dir: &Path, since: u64) -> Result<Vec<SessionTurns>> {
 		let since_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(since);
 		let mut sessions = Vec::new();
 		for entry in std::fs::read_dir(sessions_dir)? {
@@ -416,11 +445,15 @@ impl SessionReport {
 				.filter(|turn| turn.input_at >= since)
 				.collect();
 			if !turns.is_empty() {
-				sessions.push((name.to_string(), turns));
+				sessions.push(SessionTurns {
+					name: name.to_string(),
+					opened_at: report.opened_at,
+					turns,
+				});
 			}
 		}
 		// Session names start with their creation time.
-		sessions.sort_by(|a, b| a.0.cmp(&b.0));
+		sessions.sort_by(|a, b| a.name.cmp(&b.name));
 		Ok(sessions)
 	}
 

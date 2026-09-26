@@ -74,7 +74,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(LEARNING_COMMAND, "Manage role/project lessons"),
 			(
 				REPORT_COMMAND,
-				"Usage report with human time and energy ([day])",
+				"Usage report with human time and energy ([day|week|month] [here])",
 			),
 			(SHARE_COMMAND, "Upload session and print shareable URL"),
 			(
@@ -1899,16 +1899,47 @@ fn format_minutes(minutes: f64) -> String {
 	}
 }
 
+fn number(value: &serde_json::Value, key: &str) -> f64 {
+	value[key].as_f64().unwrap_or(0.0)
+}
+
+fn is_set(value: &serde_json::Value, key: &str) -> bool {
+	value[key].as_bool() == Some(true)
+}
+
+fn timing_sessions(timing: &serde_json::Value) -> &[serde_json::Value] {
+	timing["sessions"]
+		.as_array()
+		.map(Vec::as_slice)
+		.unwrap_or_default()
+}
+
+fn rubber_stamps(timing: &serde_json::Value) -> usize {
+	timing_sessions(timing)
+		.iter()
+		.filter_map(|session| session["turns"].as_array())
+		.flatten()
+		.filter(|turn| is_set(turn, "rubber_stamp"))
+		.count()
+}
+
+fn rubber_stamp_flag(count: usize) -> String {
+	format!(
+		"{} rubber-stamp(s): a large diff approved faster than it can be read",
+		count
+	)
+}
+
+fn display_flags(flags: Vec<String>) {
+	for flag in flags {
+		block_line(&format!("⚠ {}", flag).bright_red().to_string());
+	}
+}
+
 /// Timesheet line and burnout flags under a `/report` table, from a
 /// serialized `timing::Timing`.
 fn display_timing_summary(timing: &serde_json::Value) {
-	let number = |value: &serde_json::Value, key: &str| {
-		value.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0)
-	};
-	let sessions = timing["sessions"]
-		.as_array()
-		.map(Vec::as_slice)
-		.unwrap_or_default();
+	let sessions = timing_sessions(timing);
 	let active: f64 = sessions.iter().map(|s| number(s, "active_min")).sum();
 	let wait: f64 = sessions.iter().map(|s| number(s, "wait_min")).sum();
 	block_line(&format!(
@@ -1926,60 +1957,88 @@ fn display_timing_summary(timing: &serde_json::Value) {
 		number(timing, "budget_dhe"),
 	));
 
-	let flag = |value: &serde_json::Value, key: &str| {
-		value.get(key).and_then(|v| v.as_bool()) == Some(true)
-	};
-	let rubber_stamps = sessions
-		.iter()
-		.filter_map(|s| s["turns"].as_array())
-		.flatten()
-		.filter(|turn| flag(turn, "rubber_stamp"))
-		.count();
 	let mut flags = Vec::new();
-	if rubber_stamps > 0 {
-		flags.push(format!(
-			"{} rubber-stamp(s): a large diff approved faster than it can be read",
-			rubber_stamps
-		));
+	let stamps = rubber_stamps(timing);
+	if stamps > 0 {
+		flags.push(rubber_stamp_flag(stamps));
 	}
-	if sessions.iter().any(|s| flag(s, "fast_review")) {
+	if sessions.iter().any(|s| is_set(s, "fast_review")) {
 		flags.push(format!(
 			"review pace above {:.0} lines/h",
 			MAX_REVIEW_LINES_PER_HOUR
 		));
 	}
-	if flag(timing, "long_block") {
+	if is_set(timing, "long_block") {
 		flags.push(format!(
 			"{} deep block without a {:.0}m break",
 			format_minutes(number(timing, "longest_block_min")),
 			BREAK_MIN
 		));
 	}
-	if flag(timing, "over_budget") {
+	if is_set(timing, "over_budget") {
 		flags.push("energy over the daily budget".to_string());
 	}
-	for flag in flags {
-		block_line(&format!("⚠ {}", flag).bright_red().to_string());
-	}
+	display_flags(flags);
 }
 
-pub fn display_report_day(output: &CommandOutput) {
+/// Period totals and how many days tripped each flag, from the days of a
+/// `ReportPeriod`.
+fn display_period_summary(days: &[serde_json::Value]) {
+	let timings: Vec<&serde_json::Value> = days.iter().map(|day| &day["timing"]).collect();
+	let hours = timings.iter().map(|t| number(t, "time_min")).sum::<f64>() / MIN_PER_HOUR;
+	let energy: f64 = timings.iter().map(|t| number(t, "energy_dhe")).sum();
+	block_line(&format!(
+		"{} {:.2}h over {} day(s)  {} {:.2} DHE, {:.2} a day of {:.0}",
+		"human".bright_black(),
+		hours,
+		days.len(),
+		"energy".bright_black(),
+		energy,
+		energy / days.len() as f64,
+		number(timings[0], "budget_dhe"),
+	));
+
+	let days_with = |key: &str| timings.iter().filter(|t| is_set(t, key)).count();
+	let mut flags = Vec::new();
+	let stamps: usize = timings.iter().map(|t| rubber_stamps(t)).sum();
+	if stamps > 0 {
+		flags.push(rubber_stamp_flag(stamps));
+	}
+	let fast_reviews = timings
+		.iter()
+		.flat_map(|t| timing_sessions(t))
+		.filter(|s| is_set(s, "fast_review"))
+		.count();
+	if fast_reviews > 0 {
+		flags.push(format!(
+			"review pace above {:.0} lines/h in {} session(s)",
+			MAX_REVIEW_LINES_PER_HOUR, fast_reviews
+		));
+	}
+	let long_blocks = days_with("long_block");
+	if long_blocks > 0 {
+		flags.push(format!(
+			"deep block without a {:.0}m break on {} day(s)",
+			BREAK_MIN, long_blocks
+		));
+	}
+	let over_budget = days_with("over_budget");
+	if over_budget > 0 {
+		flags.push(format!(
+			"energy over the daily budget on {} day(s)",
+			over_budget
+		));
+	}
+	display_flags(flags);
+}
+
+/// One row per session of a single day.
+fn display_day_sessions(day: &serde_json::Value) {
 	const W_NUM: usize = 3;
 	const W_SESSION: usize = 40;
 	const W_TURNS: usize = 5;
 	const W_TIME: usize = 6;
 	const W_ENERGY: usize = 5;
-
-	let CommandOutput::ReportDay { sessions, timing } = output else {
-		return;
-	};
-	block_open("/report", Some("day"));
-	if sessions.is_empty() {
-		block_line(&"No turns recorded today.".yellow().to_string());
-		block_close_ok("/report", Some("empty"));
-		println!();
-		return;
-	}
 
 	block_line(
 		&format!(
@@ -1996,33 +2055,160 @@ pub fn display_report_day(output: &CommandOutput) {
 		.to_string();
 	block_line(&divider);
 
-	let timings = timing["sessions"]
+	let names = day["sessions"]
 		.as_array()
 		.map(Vec::as_slice)
 		.unwrap_or_default();
-	for (i, (name, session)) in sessions.iter().zip(timings).enumerate() {
-		let number = |key: &str| session.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+	let timings = timing_sessions(&day["timing"]);
+	for (i, (name, session)) in names.iter().zip(timings).enumerate() {
 		let turns = session["turns"].as_array().map_or(0, Vec::len);
-		let name: String = name.chars().take(W_SESSION).collect();
+		let name: String = name
+			.as_str()
+			.unwrap_or_default()
+			.chars()
+			.take(W_SESSION)
+			.collect();
 		block_line(&format!(
 			"{}  {:<W_SESSION$}  {:>W_TURNS$}  {}  {:>W_TIME$}  {:>W_TIME$}  {}",
 			format!("{:>W_NUM$}", i + 1).bright_white(),
 			name,
 			turns,
-			format!("{:>W_TIME$}", format_minutes(number("time_min"))).bright_cyan(),
-			format_minutes(number("active_min")),
-			format_minutes(number("wait_min")),
-			format!("{:>W_ENERGY$.2}", number("energy_dhe")).bright_magenta(),
+			format!("{:>W_TIME$}", format_minutes(number(session, "time_min"))).bright_cyan(),
+			format_minutes(number(session, "active_min")),
+			format_minutes(number(session, "wait_min")),
+			format!("{:>W_ENERGY$.2}", number(session, "energy_dhe")).bright_magenta(),
 		));
 	}
 	block_line(&divider);
-	display_timing_summary(timing);
+}
 
-	let hours = timing["time_min"].as_f64().unwrap_or(0.0) / MIN_PER_HOUR;
-	block_close_ok(
-		"/report",
-		Some(&format!("{} session(s) · {:.2}h", sessions.len(), hours)),
+/// One row per day: human time, energy (red over the daily budget), and the
+/// day's projects.
+fn display_day_rows(days: &[serde_json::Value]) {
+	const W_DATE: usize = 10;
+	const W_TIME: usize = 6;
+	const W_ENERGY: usize = 5;
+
+	block_line(
+		&format!(
+			"{:<W_DATE$}  {:>W_TIME$}  {:>W_ENERGY$}  projects",
+			"date", "human", "DHE"
+		)
+		.bright_black()
+		.to_string(),
 	);
+	let divider = [W_DATE, W_TIME, W_ENERGY]
+		.map(|width| "─".repeat(width))
+		.join("  ")
+		.bright_black()
+		.to_string();
+	block_line(&divider);
+
+	for day in days {
+		let timing = &day["timing"];
+		let energy = format!("{:>W_ENERGY$.2}", number(timing, "energy_dhe"));
+		let energy = if is_set(timing, "over_budget") {
+			energy.bright_red()
+		} else {
+			energy.bright_magenta()
+		};
+		let projects = day["projects"]
+			.as_array()
+			.map(Vec::as_slice)
+			.unwrap_or_default()
+			.iter()
+			.map(|project| {
+				format!(
+					"{} {}",
+					project["project"].as_str().unwrap_or_default(),
+					format_minutes(number(project, "time_min"))
+				)
+			})
+			.collect::<Vec<_>>()
+			.join(", ");
+		block_line(&format!(
+			"{:<W_DATE$}  {}  {}  {}",
+			day["date"].as_str().unwrap_or_default(),
+			format!("{:>W_TIME$}", format_minutes(number(timing, "time_min"))).bright_cyan(),
+			energy,
+			projects.dimmed(),
+		));
+	}
+	block_line(&divider);
+}
+
+/// Period totals per project, most time first.
+fn display_project_totals(projects: &serde_json::Value) {
+	const W_PROJECT: usize = 24;
+	const W_TIME: usize = 6;
+	const W_ENERGY: usize = 5;
+
+	block_line(
+		&format!(
+			"{:<W_PROJECT$}  {:>W_TIME$}  {:>W_ENERGY$}",
+			"project", "human", "DHE"
+		)
+		.bright_black()
+		.to_string(),
+	);
+	for project in projects.as_array().map(Vec::as_slice).unwrap_or_default() {
+		let name: String = project["project"]
+			.as_str()
+			.unwrap_or_default()
+			.chars()
+			.take(W_PROJECT)
+			.collect();
+		block_line(&format!(
+			"{:<W_PROJECT$}  {}  {}",
+			name,
+			format!("{:>W_TIME$}", format_minutes(number(project, "time_min"))).bright_cyan(),
+			format!("{:>W_ENERGY$.2}", number(project, "energy_dhe")).bright_magenta(),
+		));
+	}
+}
+
+pub fn display_report_period(output: &CommandOutput) {
+	let CommandOutput::ReportPeriod {
+		period,
+		project,
+		days,
+		projects,
+	} = output
+	else {
+		return;
+	};
+	let scope = match project {
+		Some(project) => format!("{} · {}", period, project),
+		None => period.clone(),
+	};
+	block_open("/report", Some(&scope));
+	if days.is_empty() {
+		block_line(
+			&format!("No interactive turns recorded this {}.", period)
+				.yellow()
+				.to_string(),
+		);
+		block_close_ok("/report", Some("empty"));
+		println!();
+		return;
+	}
+
+	if period == "day" {
+		display_day_sessions(&days[0]);
+		display_project_totals(projects);
+		display_timing_summary(&days[0]["timing"]);
+	} else {
+		display_day_rows(days);
+		display_project_totals(projects);
+		display_period_summary(days);
+	}
+
+	let hours = days
+		.iter()
+		.map(|day| number(&day["timing"], "time_min"))
+		.sum::<f64>()
+		/ MIN_PER_HOUR;
+	block_close_ok("/report", Some(&format!("{} · {:.2}h", scope, hours)));
 	println!();
 }
 

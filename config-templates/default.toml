@@ -595,31 +595,40 @@ max_retries = 3
 # HUMAN TIME & ENERGY (/report)
 # /report estimates the timesheet hours a session occupied you and the energy
 # it drained, in deep-hour equivalents (1 DHE = one hour of pre-AI deep coding,
-# daily budget 4). Reading/typing/review speeds and the flag thresholds are
-# fixed research values; only these per-person calibration knobs are exposed.
-# Fit them against a few days of hand-logged time and end-of-day fatigue.
+# daily budget 4). `/report day` does the same across today's sessions.
+# Reading/typing/review speeds and the flag thresholds are fixed research
+# values; only these per-person calibration knobs are exposed. The defaults are
+# starting guesses — fit them against 5-10 days of hand-logged time and
+# end-of-day fatigue. Model, sources and calibration steps:
+# doc/usage/05-sessions.md, "Human Time and Energy".
 # ═══════════════════════════════════════════════════════════════════════
 
 [timing]
-# Fixed thinking overhead per turn, in minutes.
+# Thinking time added to every turn's reading + typing estimate, in minutes.
 think_overhead_min = 1.5
 
-# Slack for deliberation over the reading + typing estimate of a turn.
+# Active time before an input is the gap since the agent finished, capped at
+# this multiple of the turn estimate (a longer gap means you were elsewhere).
+# Raise it if you deliberate longer than you read.
 deliberation_factor = 2.0
 
-# How long an agent run keeps earning wait time after your last input, in minutes.
+# An agent run earns wait time only this long after your last input to it, in
+# minutes. A longer autonomous run costs you its launch and review, not its length.
 attention_window_min = 30.0
 
-# Share of a turn's estimate that must be code review for it to count as review.
+# A turn counts as review when reading changed code is at least this share of
+# its estimate.
 review_share = 0.5
 
-# Energy weight of a review turn (spec and dialog turns weigh 1).
+# Energy per review minute relative to spec and dialog minutes (weight 1).
+# Reviewing agent output is vigilance work and drains more than writing.
 review_weight = 2.0
 
-# Energy weight of waiting on an attended agent run.
+# Energy per minute of waiting on an agent run you are still attending to.
 wait_weight = 0.25
 
-# Energy cost of one switch between parallel sessions, in DHE.
+# Energy cost of switching between parallel sessions without a 10-minute
+# break, in DHE.
 switch_cost_dhe = 0.05
 
 # ═══════════════════════════════════════════════════════════════════════

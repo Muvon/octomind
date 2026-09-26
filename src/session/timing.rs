@@ -19,7 +19,8 @@
 //! daily budget: reviewing agent output drains more per hour than writing a
 //! spec, waiting on an agent far less. Attention is single-threaded, so active
 //! intervals that overlap across sessions split their time, and a run earns
-//! wait credit only while the human's last input to it is recent.
+//! wait credit only while the human's last input to it is recent. Model,
+//! references and calibration: doc/usage/05-sessions.md ("Human Time and Energy").
 
 use crate::config::TimingConfig;
 use serde::{Deserialize, Serialize};

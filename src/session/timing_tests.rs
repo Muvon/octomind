@@ -80,38 +80,72 @@ fn two_overlapping_sessions_split_attention_wait_and_energy() {
 	close(a.active_min, 65.5);
 	close(a.wait_min, 24.5);
 	close(a.time_min, 90.0);
-	close(a.energy_dhe, 117.625 / 60.0);
+	// A3's 46 min cover reading A2's text and replying (6 min at weight 1) and
+	// A2's 134 lines (the other 40 min at weight 2).
+	close(a.code_min, 40.0);
+	close(a.energy_dhe, 111.625 / 60.0);
+	assert_eq!(a.turns[1].read_share, Some(1.0));
 
 	let b = &timing.sessions[1];
 	close(b.active_min, 20.0);
 	close(b.wait_min, 8.5);
-	close(b.energy_dhe, 34.125 / 60.0);
+	// B2's 12 min: 6 for B1's text and the reply, 6 of the 10 B1's lines need.
+	close(b.code_min, 6.0);
+	close(b.energy_dhe, 28.125 / 60.0);
+	close(b.turns[0].read_share.expect("B2 followed B1"), 0.6);
 
 	close(timing.time_min, 118.5);
+	close(timing.code_min, 46.0);
+	assert_eq!(timing.lines, 201);
+	close(timing.lines_read, 134.0 + 67.0 * 0.6);
 	assert_eq!(timing.switches, 1);
-	close(timing.energy_dhe, (117.625 + 34.125) / 60.0 + 0.05);
-	// A3 (10:19–11:05) chains with the closing review 5 minutes later.
+	close(timing.energy_dhe, (111.625 + 28.125) / 60.0 + 0.05);
+	// A3 (10:19–11:05) chains with the closing read 5 minutes later.
 	close(timing.longest_block_min, 53.5);
 	assert!(!timing.long_block);
 	assert!(!timing.over_budget);
 	assert!(timing
 		.sessions
 		.iter()
-		.all(|s| !s.fast_review && s.turns.iter().all(|t| !t.rubber_stamp)));
+		.all(|s| s.turns.iter().all(|t| !t.rubber_stamp)));
 }
 
 #[test]
-fn approving_a_big_diff_within_a_minute_is_a_rubber_stamp() {
-	let turns = vec![
-		turn(at(10, 0), at(10, 10), 30, 0, 200),
-		turn(at(10, 11), at(10, 12), 2, 10, 0),
-	];
-	let timing = compute(&[session(turns)], &template_timing());
-	let session = &timing.sessions[0];
-	assert!(!session.turns[0].rubber_stamp);
-	assert!(session.turns[1].rubber_stamp);
-	// 200 lines "reviewed" in one minute is far past 500 lines/hour.
-	assert!(session.fast_review);
+fn time_before_the_next_input_tells_a_code_review_from_a_behavior_check() {
+	// A run changes 200 lines; the reply comes `secs` after it finished.
+	let reply_after = |secs: u64| {
+		let turns = vec![
+			turn(at(10, 0), at(10, 10), 30, 0, 200),
+			turn(at(10, 10) + secs, at(10, 10) + secs + 60, 2, 10, 0),
+		];
+		compute(&[session(turns)], &template_timing())
+			.sessions
+			.remove(0)
+	};
+
+	let reviewed = reply_after(40 * 60);
+	assert_eq!(reviewed.turns[0].read_share, Some(1.0));
+	assert!(reviewed.code_min > 30.0);
+
+	// A minute covers reading the reply's context and typing it, not 200 lines.
+	let checked = reply_after(60);
+	assert_eq!(checked.turns[0].read_share, Some(0.0));
+	assert!(!checked.turns[0].rubber_stamp);
+	close(checked.code_min, 0.0);
+
+	// Ten seconds is not enough to read even the agent's text.
+	let stamped = reply_after(10);
+	assert!(stamped.turns[0].rubber_stamp);
+
+	// Without a next input the lines stay unread, and the closing read covers
+	// only the agent's text.
+	let open = compute(
+		&[session(vec![turn(at(10, 0), at(10, 10), 30, 0, 200)])],
+		&template_timing(),
+	);
+	assert_eq!(open.sessions[0].turns[0].read_share, None);
+	close(open.code_min, 0.0);
+	assert_eq!(open.lines, 200);
 }
 
 #[test]

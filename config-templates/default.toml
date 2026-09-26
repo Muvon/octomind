@@ -617,12 +617,9 @@ deliberation_factor = 2.0
 # minutes. A longer autonomous run costs you its launch and review, not its length.
 attention_window_min = 30.0
 
-# A turn counts as review when reading changed code is at least this share of
-# its estimate.
-review_share = 0.5
-
-# Energy per review minute relative to spec and dialog minutes (weight 1).
-# Reviewing agent output is vigilance work and drains more than writing.
+# Energy per minute of reading code, relative to dialog, spec writing and
+# behavior checks (weight 1). Only the time left after reading the agent's text
+# and replying counts as reading code; reviewing is vigilance work and drains more.
 review_weight = 2.0
 
 # Energy per minute of waiting on an agent run you are still attending to.

@@ -38,13 +38,13 @@ pub const BREAK_MIN: f64 = 10.0;
 const MAX_BLOCK_MIN: f64 = 90.0;
 /// Daily energy budget, DHE (Ericsson et al. 1993: ~4 deliberate hours a day).
 pub const DAILY_BUDGET_DHE: f64 = 4.0;
-/// Energy weight of spec and dialog turns — the unit the other weights scale.
+/// Energy weight of dialog, spec and behavior checks — the unit the other
+/// weights scale.
 const OTHER_WEIGHT: f64 = 1.0;
-/// Review faster than this finds few defects, lines/hour (Cisco / SmartBear).
-pub const MAX_REVIEW_LINES_PER_HOUR: f64 = 500.0;
 /// A rubber-stamp needs a diff big enough to matter …
 const RUBBER_STAMP_MIN_LINES: usize = 50;
-/// … approved in less than this share of the time it takes to read.
+/// … approved in less than this share of the time it takes just to read the
+/// agent's text and reply — before even the summary could have been read.
 const RUBBER_STAMP_READ_SHARE: f64 = 0.3;
 const SECS_PER_MIN: f64 = 60.0;
 pub const MIN_PER_HOUR: f64 = 60.0;
@@ -76,12 +76,20 @@ pub struct SessionTurns {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TurnTiming {
 	/// Attention before the input — reading the previous output, deciding,
-	/// typing. The last turn also carries the closing review of its output.
+	/// typing. The last turn also carries the closing read of its output.
 	pub active_min: f64,
+	/// Part of `active_min` that went into reading code: the time left after
+	/// reading the agent's text, deciding and typing.
+	pub code_min: f64,
 	/// Attended waiting on this turn's run.
 	pub wait_min: f64,
 	pub energy_dhe: f64,
-	/// A big diff approved faster than it could have been read.
+	/// Lines this turn's run changed.
+	pub lines: usize,
+	/// Share of those lines' reading time spent before the next input.
+	/// `None` while no input followed yet, or when nothing changed.
+	pub read_share: Option<f64>,
+	/// Those lines were approved before even the agent's text could be read.
 	pub rubber_stamp: bool,
 }
 
@@ -89,20 +97,25 @@ pub struct TurnTiming {
 pub struct SessionTiming {
 	pub turns: Vec<TurnTiming>,
 	pub active_min: f64,
+	pub code_min: f64,
 	pub wait_min: f64,
 	pub time_min: f64,
 	pub energy_dhe: f64,
-	/// Lines reviewed per hour of review time above what review can catch.
-	pub fast_review: bool,
+	pub lines: usize,
+	/// Lines weighted by how much of their reading time was spent.
+	pub lines_read: f64,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Timing {
 	pub sessions: Vec<SessionTiming>,
 	pub time_min: f64,
+	pub code_min: f64,
 	/// Session energies plus the cost of switching between sessions.
 	pub energy_dhe: f64,
 	pub budget_dhe: f64,
+	pub lines: usize,
+	pub lines_read: f64,
 	pub switches: usize,
 	/// Longest chain of active intervals without a break.
 	pub longest_block_min: f64,
@@ -117,8 +130,8 @@ struct Interval {
 	start: f64,
 	end: f64,
 	weight: f64,
-	/// Diff lines read, when reading code dominates the interval.
-	review_lines: Option<usize>,
+	/// Share of the interval spent reading code.
+	code_share: f64,
 }
 
 impl Interval {
@@ -136,6 +149,11 @@ fn review_min(lines: usize) -> f64 {
 }
 
 /// Time and energy for a set of sessions whose turns may overlap in time.
+///
+/// What a person read is measured, not assumed: the time before an input
+/// first covers reading the agent's text, deciding and typing (weight 1), and
+/// only what is left over counts as reading the previous run's code (weight
+/// `review_weight`). A glance at a big diff is a behavior check, not a review.
 pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 	let mut active: Vec<Interval> = Vec::new();
 	let mut attended: Vec<Interval> = Vec::new();
@@ -146,42 +164,39 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 			..Default::default()
 		})
 		.collect();
-	let mut review_lines = vec![0usize; sessions.len()];
 
 	for (s, session) in sessions.iter().enumerate() {
 		let turns = &session.turns;
 		for (i, turn) in turns.iter().enumerate() {
+			result[s].turns[i].lines = turn.diff_lines;
 			let prev = i.checked_sub(1).map(|p| &turns[p]);
 			let (prev_words, prev_lines) = prev.map_or((0, 0), |p| (p.words_out, p.diff_lines));
-			let estimate = prev_words as f64 / READ_WORDS_PER_MIN
-				+ review_min(prev_lines)
+			let prose = prev_words as f64 / READ_WORDS_PER_MIN
 				+ turn.words_in as f64 / TYPE_WORDS_PER_MIN
 				+ config.think_overhead_min;
-			let cap = config.deliberation_factor * estimate;
+			let code = review_min(prev_lines);
+			let cap = config.deliberation_factor * (prose + code);
 			// A long gap means the human was away or elsewhere, so it is capped;
 			// a short one (pasted input) stays short.
 			let since = prev.map(|p| p.done_at).or(session.opened_at);
 			let gap = since.map(|since| (minutes(turn.input_at) - minutes(since)).max(0.0));
 			let length = gap.map_or(cap, |gap| gap.min(cap));
-			let review = review_min(prev_lines) >= config.review_share * estimate;
-			result[s].turns[i].rubber_stamp = review
-				&& prev_lines >= RUBBER_STAMP_MIN_LINES
-				&& gap.is_some_and(|gap| gap < RUBBER_STAMP_READ_SHARE * review_min(prev_lines));
-			if review {
-				review_lines[s] += prev_lines;
+			let code_min = (length - config.deliberation_factor * prose).max(0.0);
+			if prev_lines > 0 {
+				let reviewed = &mut result[s].turns[i - 1];
+				reviewed.read_share = Some((code_min / code).min(1.0));
+				reviewed.rubber_stamp = prev_lines >= RUBBER_STAMP_MIN_LINES
+					&& gap.is_some_and(|gap| gap < RUBBER_STAMP_READ_SHARE * prose);
 			}
+			let code_share = if length > 0.0 { code_min / length } else { 0.0 };
 			let input_at = minutes(turn.input_at);
 			active.push(Interval {
 				session: s,
 				turn: i,
 				start: input_at - length,
 				end: input_at,
-				weight: if review {
-					config.review_weight
-				} else {
-					OTHER_WEIGHT
-				},
-				review_lines: review.then_some(prev_lines),
+				weight: OTHER_WEIGHT + code_share * (config.review_weight - OTHER_WEIGHT),
+				code_share,
 			});
 			attended.push(Interval {
 				session: s,
@@ -189,30 +204,22 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 				start: input_at,
 				end: minutes(turn.done_at).min(input_at + config.attention_window_min),
 				weight: config.wait_weight,
-				review_lines: None,
+				code_share: 0.0,
 			});
 		}
 		if let Some(last) = turns.last() {
-			// The human reads the last run's output after it finishes.
-			let estimate = last.words_out as f64 / READ_WORDS_PER_MIN
-				+ review_min(last.diff_lines)
-				+ config.think_overhead_min;
-			let review = review_min(last.diff_lines) >= config.review_share * estimate;
-			if review {
-				review_lines[s] += last.diff_lines;
-			}
+			// The last run's text is read after it finishes. Its code stays
+			// unread until a next input shows how long the human spent on it.
 			let done_at = minutes(last.done_at);
 			active.push(Interval {
 				session: s,
 				turn: turns.len() - 1,
 				start: done_at,
-				end: done_at + estimate,
-				weight: if review {
-					config.review_weight
-				} else {
-					OTHER_WEIGHT
-				},
-				review_lines: review.then_some(last.diff_lines),
+				end: done_at
+					+ last.words_out as f64 / READ_WORDS_PER_MIN
+					+ config.think_overhead_min,
+				weight: OTHER_WEIGHT,
+				code_share: 0.0,
 			});
 		}
 	}
@@ -224,7 +231,6 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 		.collect();
 	cuts.sort_by(f64::total_cmp);
 	cuts.dedup();
-	let mut review_minutes = vec![0.0; sessions.len()];
 	// ponytail: O(segments × intervals); a sweep line if a day reaches thousands of turns.
 	for window in cuts.windows(2) {
 		let length = window[1] - window[0];
@@ -240,24 +246,26 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 			let turn = &mut result[interval.session].turns[interval.turn];
 			if is_active {
 				turn.active_min += share;
+				turn.code_min += share * interval.code_share;
 			} else {
 				turn.wait_min += share;
 			}
 			turn.energy_dhe += share * interval.weight / MIN_PER_HOUR;
-			if interval.review_lines.is_some() {
-				review_minutes[interval.session] += share;
-			}
 		}
 	}
 
-	for (s, session) in result.iter_mut().enumerate() {
+	for session in &mut result {
 		session.active_min = session.turns.iter().map(|t| t.active_min).sum();
+		session.code_min = session.turns.iter().map(|t| t.code_min).sum();
 		session.wait_min = session.turns.iter().map(|t| t.wait_min).sum();
 		session.time_min = session.active_min + session.wait_min;
 		session.energy_dhe = session.turns.iter().map(|t| t.energy_dhe).sum();
-		session.fast_review = review_minutes[s] > 0.0
-			&& review_lines[s] as f64 / (review_minutes[s] / MIN_PER_HOUR)
-				> MAX_REVIEW_LINES_PER_HOUR;
+		session.lines = session.turns.iter().map(|t| t.lines).sum();
+		session.lines_read = session
+			.turns
+			.iter()
+			.map(|t| t.lines as f64 * t.read_share.unwrap_or(0.0))
+			.sum();
 	}
 
 	active.retain(|a| a.end > a.start);
@@ -286,6 +294,9 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 		result.iter().map(|s| s.energy_dhe).sum::<f64>() + switches as f64 * config.switch_cost_dhe;
 	Timing {
 		time_min: result.iter().map(|s| s.time_min).sum(),
+		code_min: result.iter().map(|s| s.code_min).sum(),
+		lines: result.iter().map(|s| s.lines).sum(),
+		lines_read: result.iter().map(|s| s.lines_read).sum(),
 		sessions: result,
 		energy_dhe,
 		budget_dhe: DAILY_BUDGET_DHE,

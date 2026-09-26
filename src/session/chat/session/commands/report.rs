@@ -52,11 +52,14 @@ fn usage_error(params: &[&str]) -> CommandResult {
 	}))
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 struct ProjectTime {
 	project: String,
 	time_min: f64,
+	code_min: f64,
 	energy_dhe: f64,
+	lines: usize,
+	lines_read: f64,
 }
 
 /// Human time and energy per day and project from `first_day` through today,
@@ -114,12 +117,7 @@ fn period_report(
 		let timing = timing::compute(&day, &config.timing);
 		let day_projects = by_project(&day, &timing);
 		for entry in &day_projects {
-			add_project(
-				&mut projects,
-				&entry.project,
-				entry.time_min,
-				entry.energy_dhe,
-			);
+			add_project(&mut projects, entry.clone());
 		}
 		days.push(serde_json::json!({
 			"date": date.to_string(),
@@ -139,31 +137,38 @@ fn period_report(
 	)))
 }
 
-/// Time and energy per project, in first-seen order.
+/// Time, energy and lines per project, in first-seen order.
 fn by_project(sessions: &[SessionTurns], timing: &Timing) -> Vec<ProjectTime> {
 	let mut projects = Vec::new();
 	for (session, session_timing) in sessions.iter().zip(&timing.sessions) {
 		add_project(
 			&mut projects,
-			project_of(&session.name),
-			session_timing.time_min,
-			session_timing.energy_dhe,
+			ProjectTime {
+				project: project_of(&session.name).to_string(),
+				time_min: session_timing.time_min,
+				code_min: session_timing.code_min,
+				energy_dhe: session_timing.energy_dhe,
+				lines: session_timing.lines,
+				lines_read: session_timing.lines_read,
+			},
 		);
 	}
 	projects
 }
 
-fn add_project(projects: &mut Vec<ProjectTime>, project: &str, time_min: f64, energy_dhe: f64) {
-	match projects.iter_mut().find(|entry| entry.project == project) {
-		Some(entry) => {
-			entry.time_min += time_min;
-			entry.energy_dhe += energy_dhe;
+fn add_project(projects: &mut Vec<ProjectTime>, entry: ProjectTime) {
+	match projects
+		.iter_mut()
+		.find(|project| project.project == entry.project)
+	{
+		Some(project) => {
+			project.time_min += entry.time_min;
+			project.code_min += entry.code_min;
+			project.energy_dhe += entry.energy_dhe;
+			project.lines += entry.lines;
+			project.lines_read += entry.lines_read;
 		}
-		None => projects.push(ProjectTime {
-			project: project.to_string(),
-			time_min,
-			energy_dhe,
-		}),
+		None => projects.push(entry),
 	}
 }
 
@@ -219,6 +224,8 @@ fn session_report(session: &ChatSession, config: &Config) -> Result<CommandResul
 							"processing_time": entry.processing_time,
 							"human_time_min": turn.map(|t| t.active_min + t.wait_min),
 							"energy_dhe": turn.map(|t| t.energy_dhe),
+							"lines": turn.map(|t| t.lines),
+							"read_share": turn.and_then(|t| t.read_share),
 							"rubber_stamp": turn.is_some_and(|t| t.rubber_stamp)
 						})
 					})

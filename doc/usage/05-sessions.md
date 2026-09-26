@@ -194,9 +194,10 @@ or the 1st of the month, per day and per project; add `here` to count only the c
 /report month
 ```
 
-Per request, `human` is the time the request occupied you and `DHE` its energy in deep-hour equivalents: 1 DHE is one
-hour of pre-AI deep coding, and the daily budget is 4 DHE. The summary line under the table gives the totals and any
-warning flags.
+Per request, `human` is the time the request occupied you, `DHE` its energy in deep-hour equivalents (1 DHE is one hour
+of pre-AI deep coding; the daily budget is 4 DHE), `lines` how many lines its run changed, and `read` how much of their
+reading time you spent before your next message — `unread` for the last answer. The lines under the table split your
+time into code review, dialog/behavior checks and waiting, and list any warning flags.
 
 ### Why two numbers
 
@@ -218,8 +219,8 @@ input; slash commands and injected system messages are not turns.
    plus `think_overhead_min`.
 2. **Active time** before an input is the gap since the previous run finished, capped at `deliberation_factor` × the
    estimate: a longer gap means you were away or elsewhere, a short one (pasted input) stays short. The first input of
-   a session is measured from when the session opened. After the last run, a closing review of its output is added —
-   already when you run `/report` right after the answer.
+   a session is measured from when the session opened. After the last run, reading its text is added — already when
+   you run `/report` right after the answer; its changed lines stay `unread` until your next message.
 3. **Overlap.** Attention is single-threaded. Where active intervals of parallel sessions overlap, those minutes are
    split equally between the sessions.
 4. **Wait.** Time with no active interval anywhere while a run is in progress counts as wait, but only for
@@ -230,11 +231,18 @@ A session's time is its active plus wait minutes, and the day's total never coun
 day by day, since the energy budget and the flags are daily. The project is the directory name in the session name
 (`YYMMDD-<project>-HHMM-<id>`); a session started with a custom `--name` is its own project.
 
+### Code review or behavior check
+
+What you read is measured, not assumed. The time before your next message first covers reading the agent's text,
+deciding and typing (with the `deliberation_factor` slack); only the time left over counts as reading the changed code,
+up to the 400 lines/h it takes. A short reply after a big change is a **behavior check** — you trust the result, run it,
+or read the summary — and shows a low `read`; a long one is a **code review** and shows up to 100%. You know which one
+you did; the report shows both parts side by side, and nothing is flagged for choosing a behavior check.
+
 ### How energy is estimated
 
-A turn counts as **review** when reading changed code makes up at least `review_share` of its estimate. Review minutes
-weigh `review_weight`, spec and dialog minutes weigh 1, and attended waiting weighs `wait_weight`. Each switch between
-parallel sessions without a 10-minute break costs `switch_cost_dhe`.
+Code-reading minutes weigh `review_weight`; dialog, spec writing and behavior checks weigh 1; attended waiting weighs
+`wait_weight`. Each switch between parallel sessions without a 10-minute break costs `switch_cost_dhe`.
 
 Review weighs more than writing because validating output is vigilance work: detection drops within 15–30 minutes, and
 the work is demanding and stressful rather than passive (Mackworth 1948; Warm, Parasuraman & Matthews 2008). Monitoring
@@ -250,25 +258,24 @@ Krampe & Tesch-Römer 1993). With the default weights, 1.5 h of spec writing plu
 
 | Flag | Shown when | Basis |
 |------|------------|-------|
-| `rubber-stamp` (row) | The input follows a run with 50+ changed lines and came in under 30% of the time those lines take to read | Engagement with agent output drops as a task goes on (Catalan et al. 2026); review speed (Cohen 2006) |
-| Review pace | A session reviewed code faster than 500 lines/h | Review effectiveness falls above about 500 lines/h (Cohen 2006) |
+| `rubber-stamp` (row) | A run changed 50+ lines and your next message came in under 30% of the time it takes just to read the agent's text and reply | Engagement with agent output drops as a task goes on (Catalan et al. 2026) |
 | Deep block | Active intervals chained without a 10-minute break for more than 90 minutes | 60–90 minute review sessions (Cohen 2006); 10-minute breaks reset stress build-up (Microsoft WorkLab 2021) |
 | Over budget | Energy exceeds 4 DHE | Ericsson, Krampe & Tesch-Römer 1993 |
 
-The rubber-stamp flag is the most useful one: output approved faster than it could have been read is when fatigue ships
-bugs.
+A rubber-stamp is not a behavior check: it means a large change was approved before even its summary could have been
+read, which is when fatigue ships bugs.
 
 ### Calibrate
 
-The reading, review and typing speeds and the flag thresholds are fixed research values. The seven `[timing]` keys (see
+The reading, review and typing speeds and the flag thresholds are fixed research values. The six `[timing]` keys (see
 [Configuration Reference](../reference/03-config-reference.md#timing)) are starting guesses meant to be fitted per person:
 
 1. For 5–10 working days, log time per task by hand with a timer switched at every task change, and record an
    end-of-day fatigue score (NASA-TLX, or a 1–10 rating).
 2. Fit `think_overhead_min`, `deliberation_factor` and `attention_window_min` until the session times from `/report day`
    match the log; aim for a median per-task error within 15%.
-3. Keep spec and dialog weight at 1 and fit `review_weight`, `wait_weight`, `switch_cost_dhe` and `review_share`
-   against the fatigue scores.
+3. Keep dialog and spec weight at 1 and fit `review_weight`, `wait_weight` and `switch_cost_dhe` against the fatigue
+   scores.
 
 ### Limitations
 

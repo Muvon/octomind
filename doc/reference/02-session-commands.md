@@ -258,11 +258,21 @@ Display comprehensive session statistics:
 
 ### `/report`
 
-Generate a detailed usage report for the session with per-request breakdown.
+Generate a usage report for the session with a per-request breakdown: cost, tool calls, task/AI/tool time, and the
+estimated human time (`human`) and energy (`DHE`) each request cost you. A row where a large diff was approved faster
+than it can be read is marked `⚠ rubber-stamp`. The summary line shows timesheet hours, energy against the 4 DHE daily
+budget, and any warning flags.
+
+`/report day` shows human time and energy per session for every session with a turn since local midnight, with day
+totals that split overlapping sessions instead of counting their minutes twice.
 
 ```text
 /report
+/report day
 ```
+
+See [Human Time and Energy](../usage/05-sessions.md#human-time-and-energy) for how the estimate works and how to
+calibrate it.
 
 ### `/usage`
 

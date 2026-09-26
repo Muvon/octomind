@@ -181,6 +181,129 @@ The session threshold asks a terminal user whether to continue and resets its ch
 ACP/WebSocket decline automatically. The request threshold stops further work for the current request. These checks use
 recorded spend, so a provider call can cross a threshold before the next check.
 
+## Human Time and Energy
+
+`/report` also estimates what the session cost *you*: the timesheet hours it occupied and the mental energy it drained.
+`/report day` does the same for every session with a turn since local midnight.
+
+```text
+/report
+/report day
+```
+
+Per request, `human` is the time the request occupied you and `DHE` its energy in deep-hour equivalents: 1 DHE is one
+hour of pre-AI deep coding, and the daily budget is 4 DHE. The summary line under the table gives the totals and any
+warning flags.
+
+### Why two numbers
+
+When an agent writes the code, your work moves from writing to specifying and reviewing, and time stops being a good
+proxy for effort: an hour of reviewing agent output drains more than an hour of hand coding, and an hour of waiting on an
+agent drains much less. Timesheets need the hours (**time**); your workload limit needs the drain (**energy**). A day can
+log 8 hours while its energy reaches the daily budget by noon.
+
+Self-reports are unreliable here — developers in a randomized trial were 19% slower with AI while believing they were
+20% faster (METR 2025) — so both numbers are computed from the session log instead of asked for.
+
+### How time is estimated
+
+Each genuine user message starts a turn. The agent's run lasts until its last assistant or tool message before your next
+input; slash commands and injected system messages are not turns.
+
+1. **Turn estimate.** Reading the previous run's visible text at 238 words/min (Brysbaert 2019), reviewing its changed
+   lines at 6.7 lines/min, about 400 lines/h (Cohen 2006), and typing your input at 52 words/min (Dhakal et al. 2018),
+   plus `think_overhead_min`.
+2. **Active time** before an input is the gap since the previous run finished, capped at `deliberation_factor` × the
+   estimate: a longer gap means you were away or elsewhere, a short one (pasted input) stays short. The first input of
+   a session gets the full cap. After the last run, a closing review of its output is added.
+3. **Overlap.** Attention is single-threaded. Where active intervals of parallel sessions overlap, those minutes are
+   split equally between the sessions.
+4. **Wait.** Time with no active interval anywhere while a run is in progress counts as wait, but only for
+   `attention_window_min` after your last input to that session. A long autonomous run costs you its launch and its
+   review, not its duration. Time with neither is idle and not counted.
+
+A session's time is its active plus wait minutes, and the day's total never counts a minute twice.
+
+### How energy is estimated
+
+A turn counts as **review** when reading changed code makes up at least `review_share` of its estimate. Review minutes
+weigh `review_weight`, spec and dialog minutes weigh 1, and attended waiting weighs `wait_weight`. Each switch between
+parallel sessions without a 10-minute break costs `switch_cost_dhe`.
+
+Review weighs more than writing because validating output is vigilance work: detection drops within 15–30 minutes, and
+the work is demanding and stressful rather than passive (Mackworth 1948; Warm, Parasuraman & Matthews 2008). Monitoring
+an automated system is often harder than doing the task yourself (Bainbridge 1983). Generative AI moves effort from
+producing to verifying (Lee et al. 2025), verification load partly explains the stress and fatigue that build up across
+tasks with AI coding assistants (When Help Hurts, CHI 2026), and oversight of AI tools beyond one's capacity produces a
+distinct mental fatigue ("AI brain fry", Bedard et al. 2026).
+
+The 4 DHE budget follows the roughly 4 hours a day that elite performers sustain in deliberate practice (Ericsson,
+Krampe & Tesch-Römer 1993). With the default weights, 1.5 h of spec writing plus 1.25 h of review reaches it.
+
+### Flags
+
+| Flag | Shown when | Basis |
+|------|------------|-------|
+| `rubber-stamp` (row) | The input follows a run with 50+ changed lines and came in under 30% of the time those lines take to read | Engagement with agent output drops as a task goes on (Catalan et al. 2026); review speed (Cohen 2006) |
+| Review pace | A session reviewed code faster than 500 lines/h | Review effectiveness falls above about 500 lines/h (Cohen 2006) |
+| Deep block | Active intervals chained without a 10-minute break for more than 90 minutes | 60–90 minute review sessions (Cohen 2006); 10-minute breaks reset stress build-up (Microsoft WorkLab 2021) |
+| Over budget | Energy exceeds 4 DHE | Ericsson, Krampe & Tesch-Römer 1993 |
+
+The rubber-stamp flag is the most useful one: output approved faster than it could have been read is when fatigue ships
+bugs.
+
+### Calibrate
+
+The reading, review and typing speeds and the flag thresholds are fixed research values. The seven `[timing]` keys (see
+[Configuration Reference](../reference/03-config-reference.md#timing)) are starting guesses meant to be fitted per person:
+
+1. For 5–10 working days, log time per task by hand with a timer switched at every task change, and record an
+   end-of-day fatigue score (NASA-TLX, or a 1–10 rating).
+2. Fit `think_overhead_min`, `deliberation_factor` and `attention_window_min` until the session times from `/report day`
+   match the log; aim for a median per-task error within 15%.
+3. Keep spec and dialog weight at 1 and fit `review_weight`, `wait_weight`, `switch_cost_dhe` and `review_share`
+   against the fatigue scores.
+
+### Limitations
+
+- Work outside sessions — reading docs, reviewing in the IDE, meetings — is invisible.
+- Changed lines come from diffs in tool results (unified diffs and line-id editor output). Files written through `shell`
+  or created whole are not counted.
+- Reading and typing speeds are population averages; complex code reads slower than 400 lines/h.
+- `/report day` counts every session log with a turn today, including tap runs and workflow steps whose prompts came
+  from an agent rather than from you.
+- The energy weights are hypotheses, not measurements, and one number merges executive load (review, spec) with other
+  kinds of fatigue.
+- The estimate is meant for self-reporting and team norms. Used for per-minute surveillance, it would change behavior
+  and stop measuring what it claims to.
+
+### References
+
+- Bainbridge, L. (1983). Ironies of automation. *Automatica*, 19(6), 775–779.
+- Bedard, J., Kropp, M., Hsu, M., Karaman, O. T., Hawes, J., & Kellerman, G. R. (2026, March). When using AI leads to
+  "brain fry". *Harvard Business Review*. <https://hbr.org/2026/03/when-using-ai-leads-to-brain-fry>
+- Brysbaert, M. (2019). How many words do we read per minute? A review and meta-analysis of reading rate. *Journal of
+  Memory and Language*, 109, 104047.
+- Catalan, C. R., Dizon, L. M., Monderin, P. N., & Kuang, E. (2026). "I'm not reading all of that": Understanding
+  software engineers' level of cognitive engagement with agentic coding assistants. CHI 2026 Workshop on Tools for
+  Thought. <https://arxiv.org/abs/2603.14225>
+- Cohen, J. (2006). *Best Kept Secrets of Peer Code Review*. SmartBear Software (Cisco case study).
+- Dhakal, V., Feit, A. M., Kristensson, P. O., & Oulasvirta, A. (2018). Observations on typing from 136 million
+  keystrokes. *CHI 2018*.
+- Ericsson, K. A., Krampe, R. T., & Tesch-Römer, C. (1993). The role of deliberate practice in the acquisition of expert
+  performance. *Psychological Review*, 100(3), 363–406.
+- Lee, H.-P., et al. (2025). The impact of generative AI on critical thinking: Self-reported reductions in cognitive
+  effort and confidence effects from a survey of knowledge workers. *CHI 2025*.
+- Mackworth, N. H. (1948). The breakdown of vigilance during prolonged visual search. *Quarterly Journal of Experimental
+  Psychology*, 1(1), 6–21.
+- METR (2025). Measuring the impact of early-2025 AI on experienced open-source developer productivity.
+  <https://arxiv.org/abs/2507.09089>
+- Microsoft WorkLab (2021). Research proves your brain needs breaks.
+- Warm, J. S., Parasuraman, R., & Matthews, G. (2008). Vigilance requires hard mental work and is stressful. *Human
+  Factors*, 50(3), 433–441.
+- When help hurts: Verification load and fatigue with AI coding assistants (2026). *CHI 2026*.
+  <https://doi.org/10.1145/3772318.3791176>
+
 ## Adjust Model and Behavior
 
 A few commands change runtime settings without touching your global config:

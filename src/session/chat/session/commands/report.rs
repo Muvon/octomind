@@ -38,7 +38,7 @@ pub fn handle_report(
 	}
 }
 
-/// Human time and energy of every session with a turn since local midnight.
+/// Human time and energy of every interactive session with a turn since local midnight.
 fn day_report(config: &Config) -> Result<CommandResult> {
 	let now = chrono::Local::now();
 	// ponytail: on a DST-change day midnight is off by the shift; a turn

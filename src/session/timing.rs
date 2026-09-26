@@ -284,26 +284,31 @@ pub fn compute(sessions: &[Vec<Turn>], config: &TimingConfig) -> Timing {
 	}
 }
 
-/// Changed lines a tool result showed as a diff: unified-diff hunks, or the
-/// numbered `+12:ab|…` / `-12:ab (3 lines)` rows line-id editors return. Zero
-/// for output that is not a diff, so `- item` bullets never count.
+/// Lines the agent wrote, from the rows a line-id editor returns for its edit:
+/// `+12:ab|…` for a written line, `-12:ab (3 lines)` for a removed range.
+/// Unified diffs in tool output (`git diff` in a shell) are the agent reading
+/// existing changes, not writing them, so they count 0 — as do `- item` bullets.
 pub fn diff_lines(content: &str) -> usize {
-	let changed = |line: &&str| {
-		(line.starts_with('+') && !line.starts_with("+++"))
-			|| (line.starts_with('-') && !line.starts_with("---"))
+	content.lines().filter(|line| is_line_id_row(line)).count()
+}
+
+/// `+N:hh|…` (a written line) or `-N:hh (…` / `-N:hh..` (a removed range).
+fn is_line_id_row(line: &str) -> bool {
+	let Some((number, rest)) = line.get(1..).and_then(|rest| rest.split_once(':')) else {
+		return false;
 	};
-	let numbered = |line: &str| {
-		line[1..].split_once(':').is_some_and(|(number, _)| {
-			!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())
-		})
+	let (Some(hash), Some(tail)) = (rest.get(..2), rest.get(2..)) else {
+		return false;
 	};
-	let is_diff = content
-		.lines()
-		.any(|line| line.starts_with("@@") || (changed(&line) && numbered(line)));
-	if !is_diff {
-		return 0;
-	}
-	content.lines().filter(changed).count()
+	let shaped = match line.as_bytes()[0] {
+		b'+' => tail.starts_with('|'),
+		b'-' => tail.starts_with(" (") || tail.starts_with(".."),
+		_ => false,
+	};
+	shaped
+		&& !number.is_empty()
+		&& number.bytes().all(|b| b.is_ascii_digit())
+		&& hash.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

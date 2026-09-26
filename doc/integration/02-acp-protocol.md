@@ -445,7 +445,7 @@ distinct from the full interactive CLI command set:
 | `image` | `<path>` | Attach image to next message |
 | `video` | `<path>` | Attach video to next message |
 | `loglevel` | `[none\|info\|debug]` | Set logging level |
-| `report` | `[day]` | Generate detailed usage report for this session; `day` covers every session since local midnight |
+| `report` | `[day]` | Generate detailed usage report for this session; `day` covers every interactive CLI session since local midnight |
 | `skill` | `[name\|pattern\|page]` | List, filter, or toggle skills |
 | `effort` | `[low\|medium\|high]` | View or change reasoning effort level |
 | `schedule` | `[list\|add\|remove\|edit] [<id>] [when=...] [message=...] [every=...]` | Schedule a message to be injected at a future time |

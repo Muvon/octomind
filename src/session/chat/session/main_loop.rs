@@ -289,6 +289,8 @@ pub async fn run_interactive_session(
 		let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let mut chat_session = chat_session;
+		// A human types these turns, so they count toward `/report day`.
+		chat_session.session.info.interactive = true;
 		let mut first_message_processed = first_message_processed;
 
 		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, true).await?;

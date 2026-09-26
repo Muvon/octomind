@@ -184,7 +184,7 @@ recorded spend, so a provider call can cross a threshold before the next check.
 ## Human Time and Energy
 
 `/report` also estimates what the session cost *you*: the timesheet hours it occupied and the mental energy it drained.
-`/report day` does the same for every session with a turn since local midnight.
+`/report day` does the same for every interactive CLI session with a turn since local midnight.
 
 ```text
 /report
@@ -267,11 +267,13 @@ The reading, review and typing speeds and the flag thresholds are fixed research
 ### Limitations
 
 - Work outside sessions — reading docs, reviewing in the IDE, meetings — is invisible.
-- Changed lines come from diffs in tool results (unified diffs and line-id editor output). Files written through `shell`
-  or created whole are not counted.
+- Changed lines are the rows of the agent's own edits as a line-id editor (octofs `text_editor`, `batch_edit`) reports
+  them. Diffs the agent only reads, such as `git diff` in a shell, are not counted, and files written through `shell` or
+  created whole are invisible.
 - Reading and typing speeds are population averages; complex code reads slower than 400 lines/h.
-- `/report day` counts every session log with a turn today, including tap runs and workflow steps whose prompts came
-  from an agent rather than from you.
+- `/report day` counts only sessions a human drove from the interactive CLI. Tap runs, workflow steps, one-shot
+  `octomind run` prompts and ACP/WebSocket sessions are left out because their prompts often come from another agent;
+  that also leaves out a person typing in an ACP editor. Sessions last used before this marker existed are left out too.
 - The energy weights are hypotheses, not measurements, and one number merges executive load (review, spec) with other
   kinds of fatigue.
 - The estimate is meant for self-reporting and team norms. Used for per-minute surveillance, it would change behavior

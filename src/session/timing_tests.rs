@@ -106,10 +106,11 @@ fn approving_a_big_diff_within_a_minute_is_a_rubber_stamp() {
 }
 
 #[test]
-fn diff_lines_counts_unified_and_line_id_diffs_but_not_bullets() {
-	let unified = "--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n context";
-	assert_eq!(diff_lines(unified), 2);
-	let line_ids = "...\n-10:87 (1 line)\n+10:af|version = 20\n11:c5|\n";
-	assert_eq!(diff_lines(line_ids), 2);
+fn diff_lines_counts_only_rows_of_the_agents_own_edits() {
+	let edit = "...\n-10:87 (1 line)\n-12:ab..14:cd (3 lines)\n+10:af|version = 20\n11:c5|\n";
+	assert_eq!(diff_lines(edit), 3);
+	// A `git diff` the agent ran to read existing changes is not its writing.
+	let unified = "--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n+12:30 standup\n context";
+	assert_eq!(diff_lines(unified), 0);
 	assert_eq!(diff_lines("- item\n- other\n+ plus"), 0);
 }

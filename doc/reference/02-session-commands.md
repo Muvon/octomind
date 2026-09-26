@@ -263,8 +263,8 @@ estimated human time (`human`) and energy (`DHE`) each request cost you. A row w
 than it can be read is marked `⚠ rubber-stamp`. The summary line shows timesheet hours, energy against the 4 DHE daily
 budget, and any warning flags.
 
-`/report day` shows human time and energy per session for every session with a turn since local midnight, with day
-totals that split overlapping sessions instead of counting their minutes twice.
+`/report day` shows human time and energy per session for every interactive CLI session with a turn since local
+midnight, with day totals that split overlapping sessions instead of counting their minutes twice.
 
 ```text
 /report

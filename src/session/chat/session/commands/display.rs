@@ -27,6 +27,7 @@ use crate::session::chat::tool_display::{
 	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
 	block_row_text, block_section, block_section_with, key_width,
 };
+use crate::session::timing::{BREAK_MIN, MAX_REVIEW_LINES_PER_HOUR, MIN_PER_HOUR};
 use colored::Colorize;
 
 // Note: Main display routing is now in CommandOutput::display_cli()
@@ -71,7 +72,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 				"Show active agents, MCP jobs, and command monitors",
 			),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
-			(REPORT_COMMAND, "Generate detailed usage report"),
+			(
+				REPORT_COMMAND,
+				"Usage report with human time and energy ([day])",
+			),
 			(SHARE_COMMAND, "Upload session and print shareable URL"),
 			(
 				ANALYZE_COMMAND,
@@ -1886,10 +1890,146 @@ fn display_mcp_invalid(_data: &serde_json::Value) {
 	println!();
 }
 
+/// Whole minutes under an hour, hours with one decimal above — timesheet scale.
+fn format_minutes(minutes: f64) -> String {
+	if minutes < MIN_PER_HOUR {
+		format!("{:.0}m", minutes)
+	} else {
+		format!("{:.1}h", minutes / MIN_PER_HOUR)
+	}
+}
+
+/// Timesheet line and burnout flags under a `/report` table, from a
+/// serialized `timing::Timing`.
+fn display_timing_summary(timing: &serde_json::Value) {
+	let number = |value: &serde_json::Value, key: &str| {
+		value.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0)
+	};
+	let sessions = timing["sessions"]
+		.as_array()
+		.map(Vec::as_slice)
+		.unwrap_or_default();
+	let active: f64 = sessions.iter().map(|s| number(s, "active_min")).sum();
+	let wait: f64 = sessions.iter().map(|s| number(s, "wait_min")).sum();
+	block_line(&format!(
+		"{} {:.2}h {}  {} {:.2} of {:.0} DHE",
+		"human".bright_black(),
+		number(timing, "time_min") / MIN_PER_HOUR,
+		format!(
+			"(active {}, wait {})",
+			format_minutes(active),
+			format_minutes(wait)
+		)
+		.dimmed(),
+		"energy".bright_black(),
+		number(timing, "energy_dhe"),
+		number(timing, "budget_dhe"),
+	));
+
+	let flag = |value: &serde_json::Value, key: &str| {
+		value.get(key).and_then(|v| v.as_bool()) == Some(true)
+	};
+	let rubber_stamps = sessions
+		.iter()
+		.filter_map(|s| s["turns"].as_array())
+		.flatten()
+		.filter(|turn| flag(*turn, "rubber_stamp"))
+		.count();
+	let mut flags = Vec::new();
+	if rubber_stamps > 0 {
+		flags.push(format!(
+			"{} rubber-stamp(s): a large diff approved faster than it can be read",
+			rubber_stamps
+		));
+	}
+	if sessions.iter().any(|s| flag(s, "fast_review")) {
+		flags.push(format!(
+			"review pace above {:.0} lines/h",
+			MAX_REVIEW_LINES_PER_HOUR
+		));
+	}
+	if flag(timing, "long_block") {
+		flags.push(format!(
+			"{} deep block without a {:.0}m break",
+			format_minutes(number(timing, "longest_block_min")),
+			BREAK_MIN
+		));
+	}
+	if flag(timing, "over_budget") {
+		flags.push("energy over the daily budget".to_string());
+	}
+	for flag in flags {
+		block_line(&format!("⚠ {}", flag).bright_red().to_string());
+	}
+}
+
+pub fn display_report_day(output: &CommandOutput) {
+	const W_NUM: usize = 3;
+	const W_SESSION: usize = 40;
+	const W_TURNS: usize = 5;
+	const W_TIME: usize = 6;
+	const W_ENERGY: usize = 5;
+
+	let CommandOutput::ReportDay { sessions, timing } = output else {
+		return;
+	};
+	block_open("/report", Some("day"));
+	if sessions.is_empty() {
+		block_line(&"No turns recorded today.".yellow().to_string());
+		block_close_ok("/report", Some("empty"));
+		println!();
+		return;
+	}
+
+	block_line(
+		&format!(
+			"{:>W_NUM$}  {:<W_SESSION$}  {:>W_TURNS$}  {:>W_TIME$}  {:>W_TIME$}  {:>W_TIME$}  {:>W_ENERGY$}",
+			"#", "session", "turns", "human", "active", "wait", "DHE"
+		)
+		.bright_black()
+		.to_string(),
+	);
+	let divider = [W_NUM, W_SESSION, W_TURNS, W_TIME, W_TIME, W_TIME, W_ENERGY]
+		.map(|width| "─".repeat(width))
+		.join("  ")
+		.bright_black()
+		.to_string();
+	block_line(&divider);
+
+	let timings = timing["sessions"]
+		.as_array()
+		.map(Vec::as_slice)
+		.unwrap_or_default();
+	for (i, (name, session)) in sessions.iter().zip(timings).enumerate() {
+		let number = |key: &str| session.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+		let turns = session["turns"].as_array().map_or(0, Vec::len);
+		let name: String = name.chars().take(W_SESSION).collect();
+		block_line(&format!(
+			"{}  {:<W_SESSION$}  {:>W_TURNS$}  {}  {:>W_TIME$}  {:>W_TIME$}  {}",
+			format!("{:>W_NUM$}", i + 1).bright_white(),
+			name,
+			turns,
+			format!("{:>W_TIME$}", format_minutes(number("time_min"))).bright_cyan(),
+			format_minutes(number("active_min")),
+			format_minutes(number("wait_min")),
+			format!("{:>W_ENERGY$.2}", number("energy_dhe")).bright_magenta(),
+		));
+	}
+	block_line(&divider);
+	display_timing_summary(timing);
+
+	let hours = timing["time_min"].as_f64().unwrap_or(0.0) / MIN_PER_HOUR;
+	block_close_ok(
+		"/report",
+		Some(&format!("{} session(s) · {:.2}h", sessions.len(), hours)),
+	);
+	println!();
+}
+
 pub fn display_report(output: &CommandOutput, _config: &Config) {
 	use crate::session::chat::formatting::format_duration;
 
-	// Column widths — chosen to fit ~92 chars including the rail prefix.
+	// Column widths — chosen to fit ~108 chars including the rail prefix.
 	const W_NUM: usize = 3;
 	const W_REQUEST: usize = crate::session::report::REQUEST_CELL_WIDTH;
 	const W_COST: usize = 9;
@@ -1897,6 +2037,8 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 	const W_TASK: usize = 6;
 	const W_AI: usize = 6;
 	const W_PROC: usize = 6;
+	const W_HUMAN: usize = 6;
+	const W_ENERGY: usize = 5;
 
 	// Truncate to a single line of `max` chars, collapsing newlines to spaces
 	// so multi-line user prompts don't break the table layout.
@@ -1960,7 +2102,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 
 		// Header row + divider — both on the rail.
 		let header = format!(
-			"{}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
 			pad_right("#", W_NUM).bright_black(),
 			pad_left("request", W_REQUEST).bright_black(),
 			pad_right("cost", W_COST).bright_black(),
@@ -1968,10 +2110,12 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			pad_right("task", W_TASK).bright_black(),
 			pad_right("ai", W_AI).bright_black(),
 			pad_right("proc", W_PROC).bright_black(),
+			pad_right("human", W_HUMAN).bright_black(),
+			pad_right("DHE", W_ENERGY).bright_black(),
 		);
 		block_line(&header);
 		let divider = format!(
-			"{}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
 			"─".repeat(W_NUM),
 			"─".repeat(W_REQUEST),
 			"─".repeat(W_COST),
@@ -1979,6 +2123,8 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			"─".repeat(W_TASK),
 			"─".repeat(W_AI),
 			"─".repeat(W_PROC),
+			"─".repeat(W_HUMAN),
+			"─".repeat(W_ENERGY),
 		);
 		block_line(&divider.bright_black().to_string());
 
@@ -2006,8 +2152,17 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				.and_then(|v| v.as_str())
 				.unwrap_or("0ms");
 
-			let row = format!(
-				"{}  {}  {}  {}  {}  {}  {}",
+			let human = entry
+				.get("human_time_min")
+				.and_then(|v| v.as_f64())
+				.map_or_else(|| "-".to_string(), format_minutes);
+			let energy = entry
+				.get("energy_dhe")
+				.and_then(|v| v.as_f64())
+				.map_or_else(|| "-".to_string(), |dhe| format!("{:.2}", dhe));
+
+			let mut row = format!(
+				"{}  {}  {}  {}  {}  {}  {}  {}  {}",
 				pad_right(&(i + 1).to_string(), W_NUM).bright_white(),
 				pad_left(&cell_text(user_request, W_REQUEST), W_REQUEST),
 				pad_right(cost, W_COST).bright_yellow(),
@@ -2015,7 +2170,12 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				pad_right(task_time, W_TASK),
 				pad_right(ai_time, W_AI),
 				pad_right(processing_time, W_PROC),
+				pad_right(&human, W_HUMAN).bright_cyan(),
+				pad_right(&energy, W_ENERGY).bright_magenta(),
 			);
+			if entry.get("rubber_stamp").and_then(|v| v.as_bool()) == Some(true) {
+				row.push_str(&format!("  {}", "⚠ rubber-stamp".bright_red()));
+			}
 			block_line(&row);
 		}
 
@@ -2042,8 +2202,11 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			.get("total_processing_time_ms")
 			.and_then(|v| v.as_u64())
 			.unwrap_or(0);
+		let timing = &totals["timing"];
+		let total_human = timing["time_min"].as_f64().unwrap_or(0.0);
+		let total_energy = timing["energy_dhe"].as_f64().unwrap_or(0.0);
 		let totals_row = format!(
-			"{}  {}  {}  {}  {}  {}  {}",
+			"{}  {}  {}  {}  {}  {}  {}  {}  {}",
 			pad_right("Σ", W_NUM).bright_cyan(),
 			pad_left(&format!("{} request(s)", entries.len()), W_REQUEST).dimmed(),
 			pad_right(&format!("${:.5}", total_cost), W_COST).bright_yellow(),
@@ -2051,8 +2214,11 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 			pad_right(&format_duration(total_task), W_TASK),
 			pad_right(&format_duration(total_ai), W_AI),
 			pad_right(&format_duration(total_proc), W_PROC),
+			pad_right(&format_minutes(total_human), W_HUMAN).bright_cyan(),
+			pad_right(&format!("{:.2}", total_energy), W_ENERGY).bright_magenta(),
 		);
 		block_line(&totals_row);
+		display_timing_summary(timing);
 
 		block_close_ok(
 			"/report",

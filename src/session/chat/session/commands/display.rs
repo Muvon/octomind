@@ -1933,7 +1933,7 @@ fn display_timing_summary(timing: &serde_json::Value) {
 		.iter()
 		.filter_map(|s| s["turns"].as_array())
 		.flatten()
-		.filter(|turn| flag(*turn, "rubber_stamp"))
+		.filter(|turn| flag(turn, "rubber_stamp"))
 		.count();
 	let mut flags = Vec::new();
 	if rubber_stamps > 0 {

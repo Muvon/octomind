@@ -595,7 +595,8 @@ max_retries = 3
 # HUMAN TIME & ENERGY (/report)
 # /report estimates the timesheet hours a session occupied you and the energy
 # it drained, in deep-hour equivalents (1 DHE = one hour of pre-AI deep coding,
-# daily budget 4). `/report day` does the same across today's sessions.
+# daily budget 4). `/report day` does the same across today's interactive
+# CLI sessions.
 # Reading/typing/review speeds and the flag thresholds are fixed research
 # values; only these per-person calibration knobs are exposed. The defaults are
 # starting guesses — fit them against 5-10 days of hand-logged time and

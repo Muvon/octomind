@@ -204,7 +204,7 @@ pub enum CommandOutput {
 		entries: Vec<serde_json::Value>,
 		totals: serde_json::Value,
 	},
-	/// `/report day`: human time and energy per session since local midnight.
+	/// `/report day`: human time and energy per interactive session since local midnight.
 	ReportDay {
 		/// Session names, in the order of `timing.sessions`.
 		sessions: Vec<String>,

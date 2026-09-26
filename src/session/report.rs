@@ -36,6 +36,8 @@ pub struct SessionReport {
 	pub totals: ReportTotals,
 	/// Genuine user turns, for the human time and energy estimate.
 	pub turns: Vec<Turn>,
+	/// A human drove the session from the interactive CLI.
+	pub interactive: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -86,6 +88,7 @@ impl SessionReport {
 		let mut contexts: Vec<RequestContext> = Vec::new();
 		let mut current_context: Option<RequestContext> = None;
 		let mut turns: Vec<Turn> = Vec::new();
+		let mut interactive = false;
 		let mut last_total_cost = 0.0;
 		let mut last_total_api_time_ms = 0u64;
 		let mut last_total_tool_time_ms = 0u64;
@@ -273,6 +276,9 @@ impl SessionReport {
 						{
 							last_total_tool_time_ms = tool_ms;
 						}
+						if session_info.get("interactive").and_then(|i| i.as_bool()) == Some(true) {
+							interactive = true;
+						}
 					}
 				}
 			}
@@ -377,12 +383,13 @@ impl SessionReport {
 			entries,
 			totals,
 			turns,
+			interactive,
 		})
 	}
 
-	/// Turns submitted since `since` (unix seconds) in every session log under
-	/// `sessions_dir`, oldest session first. Logs untouched since then are
-	/// skipped unopened.
+	/// Turns submitted since `since` (unix seconds) in every interactive session
+	/// log under `sessions_dir`, oldest session first. Logs untouched since then
+	/// are skipped unopened.
 	pub fn turns_since(sessions_dir: &Path, since: u64) -> Result<Vec<(String, Vec<Turn>)>> {
 		let since_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(since);
 		let mut sessions = Vec::new();
@@ -400,6 +407,9 @@ impl SessionReport {
 			}
 			let report = Self::generate_from_log(&path.to_string_lossy())
 				.with_context(|| format!("reading session log {}", path.display()))?;
+			if !report.interactive {
+				continue;
+			}
 			let turns: Vec<Turn> = report
 				.turns
 				.into_iter()

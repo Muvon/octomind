@@ -431,6 +431,11 @@ pub struct SessionInfo {
 	/// them against an empty ledger, producing false verification gaps.
 	#[serde(default)]
 	pub evidence: crate::supervisor::gate::EvidenceLedger,
+	/// Set once a human drives this session from the interactive CLI. Only these
+	/// sessions count toward `/report day`: prompts in tap runs, workflow steps,
+	/// one-shot runs and ACP/WebSocket clients often come from another agent.
+	#[serde(default)]
+	pub interactive: bool,
 }
 
 impl SessionInfo {
@@ -581,6 +586,7 @@ impl Session {
 				verification_policy: crate::supervisor::VerificationPolicy::default(),
 				authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 				evidence: crate::supervisor::gate::EvidenceLedger::default(),
+				interactive: false,
 			},
 
 			messages: Vec::new(),

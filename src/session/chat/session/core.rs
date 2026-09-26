@@ -419,6 +419,7 @@ impl ChatSession {
 			verification_policy: crate::supervisor::VerificationPolicy::default(),
 			authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
+			interactive: false,
 		};
 
 		let session = Session {

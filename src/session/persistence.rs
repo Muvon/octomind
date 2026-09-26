@@ -738,6 +738,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		verification_policy: crate::supervisor::VerificationPolicy::default(),
 		authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 		evidence: crate::supervisor::gate::EvidenceLedger::default(),
+		interactive: false,
 	};
 
 	let runtime_state = extract_runtime_state_from_log(session_file)?;

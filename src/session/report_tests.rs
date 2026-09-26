@@ -40,6 +40,7 @@ fn report(entries: Vec<ReportEntry>) -> SessionReport {
 			total_requests,
 		},
 		turns: Vec::new(),
+		interactive: false,
 	}
 }
 
@@ -339,18 +340,30 @@ fn generate_from_log_collects_turns_from_agent_activity_only() {
 }
 
 #[test]
-fn turns_since_keeps_only_sessions_and_turns_after_the_cutoff() {
+fn turns_since_keeps_only_interactive_sessions_and_turns_after_the_cutoff() {
 	let dir = tempfile::tempdir().expect("temp dir");
+	let interactive = serde_json::json!({
+		"type":"SUMMARY","timestamp":40,"session_info":{"interactive":true}
+	});
 	write_log(
 		&dir.path().join("b-today.jsonl.zst"),
 		&[
+			interactive.clone(),
 			serde_json::json!({"role":"user","content":"yesterday","timestamp":50}),
 			serde_json::json!({"role":"user","content":"today","timestamp":150}),
 		],
 	);
 	write_log(
 		&dir.path().join("a-old.jsonl.zst"),
-		&[serde_json::json!({"role":"user","content":"old","timestamp":60})],
+		&[
+			interactive,
+			serde_json::json!({"role":"user","content":"old","timestamp":60}),
+		],
+	);
+	// A tap run or one-shot `octomind run`: an agent wrote its prompt.
+	write_log(
+		&dir.path().join("c-agent.jsonl.zst"),
+		&[serde_json::json!({"role":"user","content":"brief","timestamp":160})],
 	);
 	std::fs::write(dir.path().join("titles.json"), "{}").unwrap();
 

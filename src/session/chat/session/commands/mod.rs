@@ -204,11 +204,17 @@ pub enum CommandOutput {
 		entries: Vec<serde_json::Value>,
 		totals: serde_json::Value,
 	},
-	/// `/report day`: human time and energy per interactive session since local midnight.
-	ReportDay {
-		/// Session names, in the order of `timing.sessions`.
-		sessions: Vec<String>,
-		timing: serde_json::Value,
+	/// `/report day|week|month [here]`: human time and energy of interactive
+	/// sessions per day and project.
+	ReportPeriod {
+		period: String,
+		/// Set by `here`: only this project's sessions are counted.
+		project: Option<String>,
+		/// Days with turns: `date`, `sessions` (names in `timing.sessions`
+		/// order), `projects` and the day's `timing`.
+		days: Vec<serde_json::Value>,
+		/// Period totals per project, most time first.
+		projects: serde_json::Value,
 	},
 	Skill {
 		data: serde_json::Value,
@@ -333,7 +339,7 @@ impl CommandOutput {
 			Self::Run { .. } => display::display_run(self, config, &session.role),
 			Self::Mcp { .. } => display::display_mcp(self),
 			Self::Report { .. } => display::display_report(self, config),
-			Self::ReportDay { .. } => display::display_report_day(self),
+			Self::ReportPeriod { .. } => display::display_report_period(self),
 			Self::Skill { .. } => display::display_skill(self),
 			Self::Schedule { .. } => display::display_schedule(self),
 			Self::Workflow { .. } => display::display_workflow(self),

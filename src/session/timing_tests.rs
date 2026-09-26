@@ -36,6 +36,15 @@ fn turn(input_at: u64, done_at: u64, words_in: usize, words_out: usize, diff_lin
 	}
 }
 
+/// A session with no known opening time: its first input gets the full cap.
+fn session(turns: Vec<Turn>) -> SessionTurns {
+	SessionTurns {
+		name: String::new(),
+		opened_at: None,
+		turns,
+	}
+}
+
 fn close(actual: f64, expected: f64) {
 	assert!(
 		(actual - expected).abs() < 1e-6,
@@ -56,7 +65,7 @@ fn two_overlapping_sessions_split_attention_wait_and_energy() {
 		turn(at(9, 35), at(9, 50), 104, 238, 67),
 		turn(at(10, 2), at(10, 3), 26, 119, 0),
 	];
-	let timing = compute(&[a, b], &template_timing());
+	let timing = compute(&[session(a), session(b)], &template_timing());
 
 	let a = &timing.sessions[0];
 	let active: Vec<f64> = a.turns.iter().map(|t| t.active_min).collect();
@@ -93,16 +102,31 @@ fn two_overlapping_sessions_split_attention_wait_and_energy() {
 
 #[test]
 fn approving_a_big_diff_within_a_minute_is_a_rubber_stamp() {
-	let session = vec![
+	let turns = vec![
 		turn(at(10, 0), at(10, 10), 30, 0, 200),
 		turn(at(10, 11), at(10, 12), 2, 10, 0),
 	];
-	let timing = compute(&[session], &template_timing());
+	let timing = compute(&[session(turns)], &template_timing());
 	let session = &timing.sessions[0];
 	assert!(!session.turns[0].rubber_stamp);
 	assert!(session.turns[1].rubber_stamp);
 	// 200 lines "reviewed" in one minute is far past 500 lines/hour.
 	assert!(session.fast_review);
+}
+
+#[test]
+fn the_first_input_is_bounded_by_when_the_session_opened() {
+	// Opened, a 6-word request 3 s later, a 52 s run ending in a 672-word brief.
+	let brief = SessionTurns {
+		name: String::new(),
+		opened_at: Some(at(17, 31) + 6),
+		turns: vec![turn(at(17, 31) + 9, at(17, 32) + 1, 6, 672, 0)],
+	};
+	let timing = compute(&[brief], &template_timing());
+	let turn = &timing.sessions[0].turns[0];
+	// 3 s of typing, then reading the brief: 672 / 238 words/min + 1.5 min.
+	close(turn.active_min, 3.0 / 60.0 + 672.0 / 238.0 + 1.5);
+	close(turn.wait_min, 52.0 / 60.0);
 }
 
 #[test]

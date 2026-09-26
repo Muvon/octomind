@@ -263,12 +263,16 @@ estimated human time (`human`) and energy (`DHE`) each request cost you. A row w
 than it can be read is marked `⚠ rubber-stamp`. The summary line shows timesheet hours, energy against the 4 DHE daily
 budget, and any warning flags.
 
-`/report day` shows human time and energy per session for every interactive CLI session with a turn since local
-midnight, with day totals that split overlapping sessions instead of counting their minutes twice.
+`/report day`, `/report week` and `/report month` sum human time and energy over interactive CLI sessions from local
+midnight, Monday, or the 1st of the month, with totals per project. `day` lists each session; `week` and `month` list
+each day with its projects, marking days over the energy budget. Overlapping sessions are split instead of counted
+twice. Add `here` to count only the current project.
 
 ```text
 /report
 /report day
+/report week here
+/report month
 ```
 
 See [Human Time and Energy](../usage/05-sessions.md#human-time-and-energy) for how the estimate works and how to

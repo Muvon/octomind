@@ -62,11 +62,13 @@ fn test_session_roundtrip() {
 
 #[test]
 fn test_session_with_absolute_cwd_valid() {
-	let json = r#"{"type":"session","session_id":"s1","cwd":"/home/octo/octos/blog"}"#;
-	let msg: ClientMessage = serde_json::from_str(json).unwrap();
+	// A leading `/` is not absolute on Windows (no drive prefix) — use a real absolute path.
+	let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+	let json = serde_json::json!({"type": "session", "session_id": "s1", "cwd": cwd}).to_string();
+	let msg: ClientMessage = serde_json::from_str(&json).unwrap();
 	assert!(matches!(
 		&msg,
-		ClientMessage::Session(SessionMessage { cwd: Some(c), .. }) if c == "/home/octo/octos/blog"
+		ClientMessage::Session(SessionMessage { cwd: Some(c), .. }) if c == &cwd
 	));
 	assert!(msg.validate().is_ok());
 }

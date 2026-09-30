@@ -1538,6 +1538,10 @@ command = "./definitely-missing-pipe-script.sh"
 #[serial_test::serial]
 async fn session_cwd_that_is_not_a_directory_is_refused() {
 	let _data = TestDataDirGuard::new();
+	// Must be absolute on every OS (`/foo` is not on Windows) so it passes
+	// protocol validation and reaches the directory check.
+	let parent = tempfile::tempdir().expect("tempdir");
+	let missing = parent.path().join("missing-octo-workspace");
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
@@ -1547,7 +1551,7 @@ async fn session_cwd_that_is_not_a_directory_is_refused() {
 		serde_json::json!({
 			"type": "session",
 			"session_id": "octo-cwd-missing",
-			"cwd": "/definitely/not/a/real/octo/workspace",
+			"cwd": missing.to_string_lossy(),
 		}),
 	)
 	.await;

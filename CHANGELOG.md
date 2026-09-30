@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.55.1] - 2026-09-30
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: upgrade project dependencies `32367cb3`
+
 ## [0.55.0] - 2026-09-26
 
 ### 📋 Release Summary

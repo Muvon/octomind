@@ -49,10 +49,33 @@ fn test_session_roundtrip() {
 	let msg = ClientMessage::Session(SessionMessage {
 		request_id: None,
 		session_id: Some("my-session".to_string()),
+		cwd: None,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"session\""));
 	assert!(json.contains("my-session"));
+	assert!(
+		!json.contains("cwd"),
+		"an absent cwd must not appear on the wire"
+	);
+}
+
+#[test]
+fn test_session_with_absolute_cwd_valid() {
+	let json = r#"{"type":"session","session_id":"s1","cwd":"/home/octo/octos/blog"}"#;
+	let msg: ClientMessage = serde_json::from_str(json).unwrap();
+	assert!(matches!(
+		&msg,
+		ClientMessage::Session(SessionMessage { cwd: Some(c), .. }) if c == "/home/octo/octos/blog"
+	));
+	assert!(msg.validate().is_ok());
+}
+
+#[test]
+fn test_session_with_relative_cwd_invalid() {
+	let json = r#"{"type":"session","session_id":"s1","cwd":"octos/blog"}"#;
+	let msg: ClientMessage = serde_json::from_str(json).unwrap();
+	assert_eq!(msg.validate().unwrap_err(), "cwd must be an absolute path");
 }
 
 // UserMessage

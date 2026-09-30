@@ -1469,6 +1469,108 @@ command = "./definitely-missing-pipe-script.sh"
 	crate::session::context::cleanup_session(&session_id);
 }
 
+/// The same guardrail as above, reached WITHOUT touching the process cwd: the
+/// bind frame's `cwd` alone must make the session load `.agents/` from there.
+/// This is how octomind-api gives each octo its own workspace on one machine.
+#[tokio::test]
+#[serial_test::serial]
+async fn session_cwd_scopes_guardrails_without_chdir() {
+	let _data = TestDataDirGuard::new();
+	let workdir = tempfile::tempdir().expect("workdir");
+	std::fs::create_dir_all(workdir.path().join(".agents")).expect("agents dir");
+	std::fs::write(
+		workdir.path().join(".agents/guardrails.toml"),
+		r#"
+[[pipe]]
+name = "boom"
+command = "./definitely-missing-pipe-script.sh"
+"#,
+	)
+	.expect("guardrails fixture");
+	assert_ne!(
+		std::env::current_dir().expect("cwd"),
+		workdir.path(),
+		"the process must NOT be in the workspace, or this proves nothing"
+	);
+
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "session",
+			"session_id": "octo-cwd-1",
+			"cwd": workdir.path().to_string_lossy(),
+		}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["type"], "ack", "got: {ack}");
+	let status = read_json(&mut ws).await;
+	assert_eq!(status["type"], "status", "got: {status}");
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "message", "session_id": "octo-cwd-1", "content": "hello"
+		}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("failed to spawn"),
+		"the workspace's pipe must have run — got: {error}"
+	);
+
+	crate::session::context::cleanup_session(&"octo-cwd-1".to_string());
+}
+
+/// A directory that does not exist is refused before any session is created
+/// or taken out of memory.
+#[tokio::test]
+#[serial_test::serial]
+async fn session_cwd_that_is_not_a_directory_is_refused() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "session",
+			"session_id": "octo-cwd-missing",
+			"cwd": "/definitely/not/a/real/octo/workspace",
+		}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("cwd is not a directory"),
+		"got: {error}"
+	);
+	assert!(
+		!server
+			.sessions
+			.lock()
+			.await
+			.contains_key("octo-cwd-missing"),
+		"a refused bind must not create the session"
+	);
+}
+
 // ---- attachments on the message path ----
 
 /// Points OCTOMIND_MEDIA_ROOT at a temp dir and restores the previous value.

@@ -36,6 +36,15 @@ pub struct SessionMessage {
 	/// Session name / ID. Absent = auto-named, present = create-or-resume.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub session_id: Option<String>,
+
+	/// Working directory the session runs in: an existing absolute directory.
+	/// Absent = the server's own directory, as before. Everything octomind
+	/// resolves from the working directory follows it — `AGENTS.md`,
+	/// `.agents/` (guardrails, skills, tools, plugins) and the project id MCP
+	/// servers scope their state by. Re-sent on each bind; it re-anchors the
+	/// session, so a mid-turn `workdir` change does not outlive the turn.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub cwd: Option<String>,
 }
 
 /// Send user input to an existing session and receive an AI response.
@@ -173,7 +182,12 @@ impl ClientMessage {
 		}
 
 		match self {
-			ClientMessage::Session(_) => Ok(()),
+			ClientMessage::Session(m) => match &m.cwd {
+				Some(cwd) if !Path::new(cwd).is_absolute() => {
+					Err("cwd must be an absolute path".to_string())
+				}
+				_ => Ok(()),
+			},
 
 			ClientMessage::Message(m) => {
 				if m.session_id.trim().is_empty() {

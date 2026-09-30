@@ -726,6 +726,17 @@ async fn handle_session_message(
 ) -> Result<()> {
 	log_debug!("Handling session message: session_id={:?}", msg.session_id);
 
+	// Refused before the session is taken out of memory or created on disk, so a
+	// bad directory costs nothing and leaves an existing session untouched.
+	let cwd = match msg.cwd.as_deref().map(PathBuf::from) {
+		Some(path) if !path.is_dir() => {
+			let error = ServerMessage::error(format!("cwd is not a directory: {}", path.display()));
+			send_message(ws_sender, &error).await?;
+			return Ok(());
+		}
+		other => other,
+	};
+
 	let (mut chat_session, config_for_role, session_role, is_new) = match &msg.session_id {
 		Some(session_id) => {
 			// session_id present: create-or-resume
@@ -815,6 +826,12 @@ async fn handle_session_message(
 	// Wrap in session context so all session-scoped registries route correctly
 	let role_for_pool = session_role.clone();
 	crate::session::context::with_session_id(session_id.clone(), async {
+		// Anchor the directory FIRST: guardrails (init_session_services), skills,
+		// AGENTS.md (setup_system_prompt_and_cache) and the MCP session context
+		// all read it from the session registry, never from the process cwd.
+		if let Some(path) = cwd {
+			crate::mcp::set_session_working_directory(path);
+		}
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);

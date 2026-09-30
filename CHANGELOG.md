@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.55.2] - 2026-09-30
+
+### 📋 Release Summary
+
+WebSocket sessions now support specifying a working directory.
+
+### ✨ New Features & Enhancements
+
+- **websocket**: support session working directories `4a4155a9`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update locked dependency versions `02e7f225`
+
 ## [0.55.1] - 2026-09-30
 
 ### 🔧 Improvements & Optimizations

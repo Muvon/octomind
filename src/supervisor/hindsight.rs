@@ -47,7 +47,11 @@ pub struct HindsightConfig {
 /// per line, in the data directory.
 pub const RECORD_FILE: &str = "hindsight.jsonl";
 
-static MODEL: tokio::sync::OnceCell<Option<Arc<Hindsight>>> = tokio::sync::OnceCell::const_new();
+static MODEL: tokio::sync::OnceCell<Arc<Hindsight>> = tokio::sync::OnceCell::const_new();
+/// The "unavailable" notice is shown once per process; a failed load (a
+/// download that broke, a lock held by a parallel session) is retried at the
+/// next turn end without repeating it.
+static NOTIFIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The encoded trace of each session seen by this process, keyed by session
 /// name, with the message prefix it was built from.
@@ -67,27 +71,28 @@ pub fn enabled(config: &crate::config::Config) -> bool {
 }
 
 async fn model(spec: &str) -> Option<Arc<Hindsight>> {
-	MODEL
-		.get_or_init(|| async {
-			let started = std::time::Instant::now();
-			match Hindsight::load(spec).await {
-				Ok(model) => {
-					crate::log_debug!(
-						"hindsight: loaded {} in {} ms",
-						model.config().model,
-						started.elapsed().as_millis()
-					);
-					Some(Arc::new(model))
-				}
-				Err(error) => {
-					crate::log_debug!("hindsight unavailable: {:#}", error);
-					super::notify(&format!("hindsight unavailable: {error}"));
-					None
-				}
-			}
+	let started = std::time::Instant::now();
+	let loaded = MODEL
+		.get_or_try_init(|| async {
+			let model = Hindsight::load(spec).await?;
+			crate::log_debug!(
+				"hindsight: loaded {} in {} ms",
+				model.config().model,
+				started.elapsed().as_millis()
+			);
+			Ok::<_, anyhow::Error>(Arc::new(model))
 		})
-		.await
-		.clone()
+		.await;
+	match loaded {
+		Ok(model) => Some(model.clone()),
+		Err(error) => {
+			crate::log_debug!("hindsight unavailable: {:#}", error);
+			if !NOTIFIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+				super::notify(&format!("hindsight unavailable: {error}"));
+			}
+			None
+		}
+	}
 }
 
 /// Score the boundary at the end of `messages`. `None` when the seam is off,

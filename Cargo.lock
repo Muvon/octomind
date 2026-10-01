@@ -3238,8 +3238,6 @@ dependencies = [
 [[package]]
 name = "octolib"
 version = "0.40.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1578bb722eccc74e9e56aae7d4bb07f5f837532f1e557216a8f41c04fefac5"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3254,6 +3252,7 @@ dependencies = [
  "hf-hub 0.4.3",
  "jsonschema",
  "jsonwebtoken",
+ "ort",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

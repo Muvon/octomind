@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 20
+version = 21
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -799,6 +799,18 @@ gate = false
 # (below 0.5). An artifact's first sample fixes its measure: graded artifacts
 # skip turns the evaluation cannot answer; ungraded ones keep the plain verdict.
 evolution = false
+
+# hindsight: a local, calibrated verifier (octolib::hindsight, ONNX on CPU)
+# that reads the turn's event trace when the agent hands back and predicts
+# whether the user's next turn will be a correction, and of which class
+# (not_done, unrequested, rule_violation, ...). Observe-only: the scores are
+# logged, shown as a supervisor notice, tallied in /info and appended to
+# hindsight.jsonl in the data directory next to the verify-gate verdict.
+# `model` is a Hugging Face repo (files under onnx/; HF_TOKEN for a private
+# one) or a local directory holding the export.
+[supervisor.hindsight]
+enabled = false
+model = "muvon/hindsight"
 
 # Adaptive external plan manager. The specialist never receives a plan mutation
 # tool; it emits a sparse signal alongside real work and this manager makes one

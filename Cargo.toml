@@ -38,8 +38,8 @@ overflow-checks = false # Disable overflow checks in release mode
 # NOTE: path dep until octolib 0.40.0 (`ReasoningEffort::None`,
 # `AiProvider::replays_thinking`) is published to crates.io; swap back to the
 # version line after release.
-# octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx", "evaluation"] }
-octolib = { version = "0.40.2", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx", "evaluation"] }
+octolib = { path = "../octolib", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
+# octolib = { version = "0.40.2", default-features = false, features = ["llm", "embeddings", "huggingface", "onnx", "evaluation", "hindsight"] }
 rmcp = { version = "3.1.4", default-features = false, features = [
 	"client",                                  # MCP client service (2026-07-28 + legacy lifecycle)
 	"transport-child-process",                 # stdio servers via tokio child process

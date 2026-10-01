@@ -43,6 +43,7 @@ pub mod delegate;
 pub mod detect;
 pub mod evaluate;
 pub mod gate;
+pub mod hindsight;
 pub mod learning;
 pub mod plan;
 pub mod recite;
@@ -199,6 +200,8 @@ pub struct SupervisorConfig {
 	pub condense: CondenseConfig,
 	/// Calibrated evaluation gates at the supervisor seams (`evaluate::Seam`).
 	pub evaluate: evaluate::EvaluateConfig,
+	/// Local next-turn-correction verifier scored at every turn end.
+	pub hindsight: hindsight::HindsightConfig,
 }
 
 /// Condense: task-aware narrowing of oversized tool outputs. A result whose own

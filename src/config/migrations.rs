@@ -143,6 +143,11 @@ fn plan() -> MigrationPlan {
 				to: 20,
 				apply: add_v20_timing,
 			},
+			VersionMigration {
+				from: 20,
+				to: 21,
+				apply: add_v21_hindsight,
+			},
 		],
 	)
 	.with_missing_version(0)
@@ -215,6 +220,22 @@ fn add_v20_timing(
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
 	merge_missing(document.as_table_mut(), template.as_table(), "timing")
+}
+
+/// Add the required `[supervisor.hindsight]` section (off) without changing
+/// existing supervisor settings.
+fn add_v21_hindsight(
+	document: &mut toml_edit::DocumentMut,
+	template: &toml_edit::DocumentMut,
+) -> Result<()> {
+	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
+	let supervisor = ensure_table(
+		document.as_table_mut(),
+		template.as_table(),
+		"supervisor",
+		"user config",
+	)?;
+	merge_missing(supervisor, template_supervisor, "hindsight")
 }
 
 /// Add the required opt-in authorizer without changing existing supervisor settings.

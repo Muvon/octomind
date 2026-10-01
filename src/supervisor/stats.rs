@@ -103,6 +103,10 @@ struct Stats {
 	evolution_promoted: u64,
 	evolution_rollbacks: u64,
 	evolution_retired: u64,
+	/// Boundaries the hindsight verifier scored, and the sum of its
+	/// any-correction probabilities (mean = sum / scored).
+	hindsight_scored: u64,
+	hindsight_p_sum: f64,
 }
 
 fn global() -> &'static Mutex<Stats> {
@@ -263,6 +267,14 @@ pub fn evaluate_avoided(seam: crate::supervisor::evaluate::Seam, input_tokens: u
 	});
 }
 
+/// The hindsight verifier scored one turn end at any-correction probability `p`.
+pub fn hindsight(p: f32) {
+	with(|s| {
+		s.hindsight_scored += 1;
+		s.hindsight_p_sum += f64::from(p);
+	});
+}
+
 pub fn evolution(action: &str) {
 	with(|stats| match action {
 		"shadow" | "candidate" => stats.evolution_candidates += 1,
@@ -307,6 +319,7 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		&& s.evolution_promoted == 0
 		&& s.evolution_rollbacks == 0
 		&& s.evolution_retired == 0
+		&& s.hindsight_scored == 0
 		&& s.evaluate_seam_calls.iter().all(|n| *n == 0)
 		&& s.evaluate_seam_unavailable.iter().all(|n| *n == 0)
 		&& s.evaluate_seam_applied.iter().all(|n| *n == 0)
@@ -402,6 +415,12 @@ pub fn snapshot() -> Option<serde_json::Value> {
 		"evolution_promoted": s.evolution_promoted,
 		"evolution_rollbacks": s.evolution_rollbacks,
 		"evolution_retired": s.evolution_retired,
+		"hindsight_scored": s.hindsight_scored,
+		"hindsight_mean_p_correction": if s.hindsight_scored > 0 {
+			s.hindsight_p_sum / s.hindsight_scored as f64
+		} else {
+			0.0
+		},
 	}))
 }
 

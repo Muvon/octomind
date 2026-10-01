@@ -967,3 +967,33 @@ gate = true
 	assert_eq!(evaluate["gate"].as_bool(), Some(true));
 	assert_eq!(evaluate["model"].as_str(), Some("typesafe:jev-latest"));
 }
+
+#[test]
+fn v20_gains_hindsight_section_off_and_keeps_supervisor_values() {
+	let existing = r#"version = 20
+
+[supervisor]
+enabled = true
+
+[supervisor.evaluate]
+model = "typesafe:jev-latest"
+gate = true
+"#;
+
+	let migration = plan()
+		.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.expect("v20 must migrate");
+	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
+	let hindsight = &migrated["supervisor"]["hindsight"];
+
+	assert_eq!(migration.from_version, 20);
+	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
+	assert_eq!(hindsight["enabled"].as_bool(), Some(false));
+	assert_eq!(hindsight["model"].as_str(), Some("muvon/hindsight"));
+	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(true));
+	assert_eq!(
+		migrated["supervisor"]["evaluate"]["gate"].as_bool(),
+		Some(true)
+	);
+}

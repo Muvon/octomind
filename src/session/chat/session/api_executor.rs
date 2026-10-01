@@ -577,6 +577,16 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		.await;
 	}
 
+	// hindsight (observe-only): score the turn's trace for "the user's next
+	// turn will be a correction" before the verify-gate judges the same turn;
+	// the gate verdict is recorded beside it below.
+	crate::supervisor::hindsight::observe(
+		config,
+		&chat_session.session.info.name,
+		&chat_session.session.messages,
+	)
+	.await;
+
 	// Supervisor verify-gate: on self-reported completion, verify before accepting.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
 	let pending_async = crate::session::has_pending_async_work();
@@ -727,6 +737,20 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// the Gaps arm); one that survives a re-run with nothing new is not.
 		let new_evidence = chat_session.evidence.actions_since_gate() > 0;
 		chat_session.evidence.mark_gate_checkpoint();
+		crate::supervisor::hindsight::record_gate(
+			config,
+			match &verdict {
+				crate::supervisor::gate::GateVerdict::Pass => "pass",
+				crate::supervisor::gate::GateVerdict::Gaps(gaps)
+					if new_evidence
+						&& crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
+				{
+					"stall"
+				}
+				crate::supervisor::gate::GateVerdict::Gaps(_) => "gaps",
+				crate::supervisor::gate::GateVerdict::Indeterminate(_) => "indeterminate",
+			},
+		);
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
 				if plan_applies {

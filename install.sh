@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Octocode Installation Script
+# Octomind Installation Script
 # Universal installation script that works on Unix, Linux, macOS, and Windows
 # Works with: bash, zsh, sh, Git Bash, WSL, MSYS2
 # Requires: curl (for downloading releases)

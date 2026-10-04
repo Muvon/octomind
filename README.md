@@ -470,7 +470,7 @@ See [Configuration Reference](doc/reference/03-config-reference.md) for everythi
 curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
 ```
 
-Detects OS and architecture and installs to `~/.local/bin/` by default. macOS and Linux are supported.
+Detects OS and architecture and installs to `~/.local/bin/` by default. macOS, Linux and Windows are supported; on Windows, run it from Git Bash or MSYS2.
 The agent is one Rust binary; external MCP tools have their own dependencies. See [Installation](doc/usage/01-installation.md).
 
 ### Cargo

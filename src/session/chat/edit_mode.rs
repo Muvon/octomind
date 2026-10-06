@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use reedline::{EditMode, Emacs, ExternalPrinter, PromptEditMode, ReedlineEvent, ReedlineRawEvent};
+use reedline::{EditMode, Emacs, PromptEditMode, ReedlineEvent, ReedlineRawEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -28,10 +29,10 @@ pub struct EmacsWithShortcutHelp {
 	reverse_search_active: Arc<AtomicBool>,
 	hint_available: Arc<AtomicBool>,
 	line_state: Arc<Mutex<LineState>>,
-	/// Clone of the input loop's `ExternalPrinter`, used to print the
+	/// Sender of the input loop's `ExternalPrinter`, used to print the
 	/// "📎 attached" notification line above the prompt without disturbing
 	/// the typing buffer.
-	notifier: ExternalPrinter<String>,
+	notifier: SyncSender<String>,
 	meta_pending: bool,
 	/// Clipboard blob probe used by the Ctrl+V and bracketed-paste arms.
 	/// A seam: the real probe spawns `osascript` and opens NSPasteboard on
@@ -48,7 +49,7 @@ impl EmacsWithShortcutHelp {
 		reverse_search_active: Arc<AtomicBool>,
 		hint_available: Arc<AtomicBool>,
 		line_state: Arc<Mutex<LineState>>,
-		notifier: ExternalPrinter<String>,
+		notifier: SyncSender<String>,
 	) -> Self {
 		Self {
 			emacs,
@@ -102,7 +103,7 @@ impl EmacsWithShortcutHelp {
 			}
 			None => format!("\x1b[36m{}\x1b[0m", label),
 		};
-		let _ = self.notifier.print(payload);
+		let _ = self.notifier.send(payload);
 	}
 }
 

@@ -384,10 +384,9 @@ pub fn read_user_input(
 		crate::session::chat::reedline_adapter::LineState::default(),
 	));
 	// One ExternalPrinter shared between reedline (display) and edit_mode (Ctrl+V notifications).
-	// `ExternalPrinter` is `Clone` and shares its internal channel, so cloning before moving
-	// into reedline lets the Ctrl+V handler send notifications via the same render path.
+	// Senders feed the printer's channel, so the Ctrl+V handler notifies via the same render path.
 	let printer = reedline::ExternalPrinter::<String>::new(5);
-	let printer_for_edit = printer.clone();
+	let printer_for_edit = printer.sender();
 
 	let edit_mode = Box::new(crate::session::chat::EmacsWithShortcutHelp::new(
 		Emacs::new(keybindings),
@@ -450,7 +449,7 @@ pub fn read_user_input(
 	// When the user is idle (empty buffer, no reverse-search), it also flips
 	// `break_signal` so reedline returns immediately and the main loop drains
 	// the inbox without waiting for an Enter keypress.
-	// `printer` was created earlier and shared with edit_mode via clone.
+	// `printer` was created earlier and shared with edit_mode via its sender.
 	let sender = printer.sender();
 	let inbox_slot = inbox_pending;
 	let break_signal_for_thread = break_signal.clone();

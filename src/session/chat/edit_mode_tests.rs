@@ -33,7 +33,7 @@ fn mk() -> (
 		reverse.clone(),
 		hint.clone(),
 		line_state.clone(),
-		ExternalPrinter::new(5),
+		reedline::ExternalPrinter::<String>::new(5).sender(),
 	);
 	// Stub the OS clipboard probe: tests assert the no-blob fall-through and
 	// must not depend on (or crash in) the host pasteboard.

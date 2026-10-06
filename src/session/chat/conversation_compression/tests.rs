@@ -3453,7 +3453,7 @@ async fn regression_first_fold_triggers_after_crossing_threshold_without_a_water
 			"Compare the observations and explain the conclusion.",
 		),
 	]);
-	session.model = "alibaba:glm-5.2".to_string();
+	session.model = "alibaba:glm-5.1".to_string();
 	session.max_tokens = 32_000;
 	session.cached_tools = Some(Vec::new());
 	assert_eq!(super::decision::context_ceiling(&session, &config), 168_000);
@@ -3510,7 +3510,7 @@ async fn regression_forced_empty_range_reports_why_the_hard_ceiling_still_aborts
 		fold_message("user", &"request ".repeat(170_000)),
 		fold_message("assistant", "The current exchange must survive verbatim."),
 	]);
-	session.model = "alibaba:glm-5.2".to_string();
+	session.model = "alibaba:glm-5.1".to_string();
 	session.max_tokens = 32_000;
 	session.cached_tools = Some(Vec::new());
 	let before = serde_json::to_value(&session.session.messages).unwrap();

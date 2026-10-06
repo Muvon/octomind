@@ -56,6 +56,9 @@ pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
 	let messages: Vec<octomind::session::Message> =
 		serde_json::from_slice(&raw).context("failed to parse transcript snapshot")?;
 
+	// The crate's log macros read the thread config; without it the learner is
+	// silent whatever `log_level` says, and a rejected memory leaves no trace.
+	octomind::config::set_thread_config(config);
 	let stored = octomind::supervisor::learning::extract::run_extraction(
 		&messages,
 		config,

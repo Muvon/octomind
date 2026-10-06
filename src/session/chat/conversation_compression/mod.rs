@@ -670,24 +670,17 @@ async fn finish_fold(
 	// Capture learning input before apply_compression replaces the raw turns
 	// with one assistant summary. The extraction itself starts only after a
 	// successful apply, so a rejected/failed fold never teaches from a state
-	// transition that did not happen.
-	let learning_snapshot = if !force_done && config.supervisor.learning.enabled {
-		let user_msg_count = session
-			.session
-			.messages
-			.iter()
-			.filter(|message| crate::session::is_real_user_task_message(message))
-			.count();
-		(user_msg_count >= crate::supervisor::learning::MIN_MESSAGES_FOR_INTERMEDIATE).then(|| {
-			(
-				session.session.messages.clone(),
-				session.session.info.name.clone(),
-				session.learning_outcome,
-			)
-		})
-	} else {
-		None
-	};
+	// transition that did not happen. Every fold hands over its snapshot: the
+	// tool-grounded memories (experience, orientation) come from exactly the
+	// turns it discards, and an autonomous run has one user message however
+	// long it works, so gating on user turns would lose them all.
+	let learning_snapshot = (!force_done && config.supervisor.learning.enabled).then(|| {
+		(
+			session.session.messages.clone(),
+			session.session.info.name.clone(),
+			session.learning_outcome,
+		)
+	});
 
 	let preserve_bridge = ctx.preserve_recent_user_bridge
 		&& session.session.messages[ctx.end_idx + 1..]

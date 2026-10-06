@@ -197,10 +197,6 @@ pub struct LearningConfig {
 	pub evolution: evolution::EvolutionConfig,
 }
 
-/// Minimum user messages before intermediate learning triggers during
-/// auto-compaction.
-pub const MIN_MESSAGES_FOR_INTERMEDIATE: usize = 3;
-
 /// Soft time-decay: weak scoped entries unused for this many days (counted from
 /// the last material use, or creation when never used) move to the cold archive.
 pub const DECAY_DAYS: u64 = 90;

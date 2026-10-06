@@ -356,9 +356,10 @@ list is FIFO-trimmed to the most recent N (configurable via `knowledge_retention
 when the limit is exceeded. Separately, `analysis_findings_max_tokens` (default `6000`) bounds retained findings by
 relevance, recency, and diversity; `0` disables that findings channel.
 
-**Intermediate learning.** When `supervisor.learning.enabled = true` and the conversation has at least 3 genuine user
-task messages, a successful automatic compaction can start a detached lesson-extraction pass from a snapshot taken
-before the fold. This is asynchronous and never blocks compression. See [Learning](13-learning.md).
+**Intermediate learning.** When `supervisor.learning.enabled = true`, every successful automatic compaction starts a
+detached lesson-extraction pass from a snapshot taken before the fold, so the turns the fold discards are still learned
+from — including in a one-shot autonomous run, which has a single user message however long it works. This is
+asynchronous and never blocks compression. See [Learning](13-learning.md).
 
 ## Source Reference
 

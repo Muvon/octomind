@@ -123,8 +123,7 @@ proposal's replay cases are executed against the rendered activation rules, quot
 and a body that embeds session evidence handles or machine-local paths is rejected as an experience dump rather than a
 procedure.
 
-The auto-compaction extraction minimum (3 user messages), the 2,000-token active-pack cap, and its 512-token global-rule
-sub-cap are fixed constants, not knobs.
+The 2,000-token active-pack cap and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
 > **Strict config, template-provided values.** `[supervisor]` and its nested `learning`, `gate`, `plan`, and `condense`
 > tables are required by deserialization. `LearningConfig::default()` has `enabled = false`, while the shipped template
@@ -326,7 +325,8 @@ Extraction is triggered by:
 
 - **`/done`** — extracts (if `supervisor.learning.enabled`) regardless of the compression result, and marks the session
   so `/exit` and Ctrl+D don't extract a second time.
-- **Auto-compaction** — extracts during compression once the session has at least 3 user messages.
+- **Auto-compaction** — every successful fold first hands a snapshot of the turns it is about to discard to the
+  learner, so long autonomous runs learn from work that no longer fits in context.
 - **Session end** — a detached `octomind distill` child performs extraction when an interactive session ends naturally
   via `/exit`, `/quit`, or Ctrl+D, and when a one-shot run (`octomind run` with piped input or `--format`) finishes, so
   autonomous runs learn exactly as interactive ones do. Skipped if `/done` already extracted during the session; daemons

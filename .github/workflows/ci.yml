@@ -76,10 +76,17 @@ jobs:
     # rust-cache keys by exact rustc version — no cross-toolchain fallback.
     # The old restore-keys let beta restore stable's target/, which then got
     # fully rebuilt alongside → doubled disk usage → ENOSPC.
+    # ort-sys's build script downloads ORT prebuilts (Windows/macOS) into
+    # ort.pyke.io outside target/ and never re-runs once its output is fresh.
+    # A restored target/ without that dir fails ort-sys with "could not find
+    # native static library `onnxruntime`", so cache it alongside target/.
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
       with:
         cache-on-failure: true
+        cache-directories: |
+          ~/AppData/Local/ort.pyke.io
+          ~/Library/Caches/ort.pyke.io
 
     # Cache the HuggingFace model weights fetched by smoke tests
     # (`muvon/octomind-embed`, ~130MB safetensors). octolib stores them via

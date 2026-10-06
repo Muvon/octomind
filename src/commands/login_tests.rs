@@ -124,12 +124,22 @@ struct Cli {
 #[test]
 fn login_args_parse_flags_and_default_to_off() {
 	let cli = Cli::try_parse_from(["octomind"]).expect("bare login parses");
+	assert_eq!(cli.args.target, LoginTarget::Octomind);
 	assert!(!cli.args.force);
 	assert!(!cli.args.no_browser);
 
 	let cli = Cli::try_parse_from(["octomind", "--force", "--no-browser"]).expect("flags parse");
 	assert!(cli.args.force);
 	assert!(cli.args.no_browser);
+}
+
+#[test]
+fn login_args_select_the_chatgpt_target() {
+	let cli = Cli::try_parse_from(["octomind", "chatgpt", "--no-browser"]).expect("chatgpt parses");
+	assert_eq!(cli.args.target, LoginTarget::Chatgpt);
+	assert!(cli.args.no_browser);
+
+	assert!(Cli::try_parse_from(["octomind", "gemini"]).is_err());
 }
 
 #[tokio::test]
@@ -152,6 +162,7 @@ async fn execute_reports_an_existing_session_without_minting_new_credentials() {
 	.expect("seed session");
 
 	execute(&LoginArgs {
+		target: LoginTarget::Octomind,
 		force: false,
 		no_browser: false,
 	})
@@ -192,6 +203,7 @@ async fn execute_completes_the_device_flow_and_stores_credentials() {
 	std::env::set_var(account::API_URL_ENV, &url);
 
 	execute(&LoginArgs {
+		target: LoginTarget::Octomind,
 		force: true,
 		no_browser: true,
 	})
@@ -216,6 +228,7 @@ async fn execute_surfaces_a_failed_login_start() {
 	std::env::set_var(account::API_URL_ENV, &url);
 
 	let err = execute(&LoginArgs {
+		target: LoginTarget::Octomind,
 		force: true,
 		no_browser: true,
 	})

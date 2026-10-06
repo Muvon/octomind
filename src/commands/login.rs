@@ -22,17 +22,29 @@
 //! The device flow itself lives in [`crate::account`] so this command and the
 //! ACP `/login` command (driven by the octoweb panel) mint credentials the same
 //! way; this file is just the terminal presentation around it.
+//!
+//! `octomind login chatgpt` instead runs Sign in with ChatGPT, so `chatgpt:<model>`
+//! bills the user's ChatGPT plan; that OAuth flow and its token storage live in
+//! octolib.
 
 use anyhow::Result;
 use clap::Args;
 use colored::Colorize;
 use std::time::Duration;
 
+use octolib::llm::providers::chatgpt;
 use octomind::account;
 use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, key_width};
 
+/// App name suggested on the ChatGPT consent page.
+const CHATGPT_APP_NAME: &str = "Octomind";
+
 #[derive(Args, Debug)]
 pub struct LoginArgs {
+	/// What to sign in to.
+	#[arg(value_enum, default_value_t = LoginTarget::Octomind)]
+	pub target: LoginTarget,
+
 	/// Sign in again even if this machine already has a session.
 	#[arg(long)]
 	pub force: bool,
@@ -42,7 +54,22 @@ pub struct LoginArgs {
 	pub no_browser: bool,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginTarget {
+	/// Your Octomind account.
+	Octomind,
+	/// Your ChatGPT subscription, used through `chatgpt:<model>`.
+	Chatgpt,
+}
+
 pub async fn execute(args: &LoginArgs) -> Result<()> {
+	match args.target {
+		LoginTarget::Octomind => login_octomind(args).await,
+		LoginTarget::Chatgpt => login_chatgpt(args).await,
+	}
+}
+
+async fn login_octomind(args: &LoginArgs) -> Result<()> {
 	// Already signed in is worth saying out loud rather than silently minting a
 	// second set of credentials and killing the ones that were working.
 	if !args.force {
@@ -102,6 +129,61 @@ pub async fn execute(args: &LoginArgs) -> Result<()> {
 	block_close_ok("login", Some("signed in"));
 	println!();
 	Ok(())
+}
+
+async fn login_chatgpt(args: &LoginArgs) -> Result<()> {
+	if !args.force {
+		if let Some(account) = chatgpt::current_account()? {
+			block_open("login", Some("chatgpt"));
+			let kw = key_width(["account"]);
+			block_row(
+				"account",
+				&email_label(&account).bright_green().to_string(),
+				kw,
+			);
+			block_close_ok("login", Some("already signed in"));
+			println!();
+			println!("Use `octomind login chatgpt --force` to sign in again.");
+			return Ok(());
+		}
+	}
+
+	let pending = chatgpt::start_login(CHATGPT_APP_NAME).await?;
+	let authorize_url = pending.authorize_url();
+
+	block_open("login", Some("chatgpt"));
+	block_line("Approve access in your browser to use your ChatGPT plan.");
+	if args.no_browser {
+		block_line(&format!("Open: {authorize_url}"));
+	} else if open::that(authorize_url).is_err() {
+		// The redirect lands on this machine's loopback, so the URL must be
+		// opened in a browser running here.
+		block_line(&format!("Could not open a browser. Open: {authorize_url}"));
+	}
+	block_line("waiting…");
+
+	let account = pending.finish().await?;
+	let models = chatgpt::list_models().await?;
+
+	let kw = key_width(["account", "models"]);
+	block_row(
+		"account",
+		&email_label(&account).bright_green().to_string(),
+		kw,
+	);
+	let slugs: Vec<&str> = models.iter().map(|model| model.slug.as_str()).collect();
+	block_row("models", &slugs.join(", "), kw);
+	block_close_ok("login", Some("signed in"));
+	println!();
+	println!("Use it with model = \"chatgpt:<model>\".");
+	Ok(())
+}
+
+fn email_label(account: &chatgpt::Account) -> &str {
+	account
+		.email
+		.as_deref()
+		.unwrap_or("(no email on the account)")
 }
 
 #[cfg(test)]

@@ -45,7 +45,8 @@ enum Commands {
 	Run(commands::RunArgs),
 
 	/// Sign in to your Octomind account — confirm a code in the browser and the CLI
-	/// stores the hub key it mints.
+	/// stores the hub key it mints. `login chatgpt` signs in with ChatGPT instead, so
+	/// `chatgpt:<model>` runs on your ChatGPT plan.
 	Login(commands::LoginArgs),
 
 	/// Start WebSocket server for remote AI sessions

@@ -2075,6 +2075,23 @@ pub async fn run_interactive_session_with_input(
 	// Drain any in-flight keepalive so its cost lands in the persisted log.
 	drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await;
 
+	// A finished one-shot run learns exactly as an interactive exit does: the
+	// transcript goes to the detached `octomind distill` child, so the caller
+	// gets its exit at once. Taken before a pending fold replaces the raw turns
+	// the learner quotes. Daemons keep running and learn on `/done` and
+	// compaction like the interactive loop.
+	if !daemon
+		&& current_config.supervisor.learning.enabled
+		&& !chat_session.learning_extracted
+	{
+		crate::supervisor::learning::extract::extract_lessons_before_exit(
+			&chat_session,
+			&current_config,
+			role.clone(),
+			Some(&current_dir),
+		);
+	}
+
 	// A background fold still in flight when a one-shot run ends is a paid
 	// summary the next `-r` turn (a new process) could never collect: wait for
 	// it, bounded, so the persisted session is the compacted one. Daemons keep

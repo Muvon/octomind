@@ -241,8 +241,9 @@ Review the API authentication rules for this repository.
 **Why did a filtered delete target another item?** `show` and `delete` use the current unfiltered list. Always run
 `/learning list` and inspect the matching unfiltered index immediately before deletion.
 
-**Does exiting guarantee extraction finishes?** CLI exit starts a child process and returns immediately. Closing the
-terminal can terminate that child before it stores the memories.
+**Does exiting guarantee extraction finishes?** Exit starts a child process and returns immediately. Closing the
+terminal can terminate that child before it stores the memories; a script that starts the next run on the same
+project at once may recall before that child has stored them.
 
 ## Retrieval and storage reference
 
@@ -326,10 +327,12 @@ Extraction is triggered by:
 - **`/done`** — extracts (if `supervisor.learning.enabled`) regardless of the compression result, and marks the session
   so `/exit` and Ctrl+D don't extract a second time.
 - **Auto-compaction** — extracts during compression once the session has at least 3 user messages.
-- **Interactive CLI exit** — a detached `octomind distill` child performs extraction when the session ends naturally via
-  `/exit`, `/quit`, or Ctrl+D. Skipped if `/done` already extracted during the session.
+- **Session end** — a detached `octomind distill` child performs extraction when an interactive session ends naturally
+  via `/exit`, `/quit`, or Ctrl+D, and when a one-shot run (`octomind run` with piped input or `--format`) finishes, so
+  autonomous runs learn exactly as interactive ones do. Skipped if `/done` already extracted during the session; daemons
+  learn on `/done` and auto-compaction.
 
-Extraction runs **detached** (an in-process task for `/done`/compaction, a child process for CLI exit, with in-process
+Extraction runs **detached** (an in-process task for `/done`/compaction, a child process at session end, with in-process
 model costs folded into session spending; exit-child spending is separate) and is deliberately strict about what counts
 as a lesson:
 

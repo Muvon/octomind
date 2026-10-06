@@ -202,8 +202,8 @@ enabled = true
 ```
 
 `/done` captures the pre-compression transcript and starts extraction in the background. Eligible automatic compressions
-can also extract memories. Normal interactive CLI exits can launch a separate background distillation process; this does
-not guarantee that an abrupt terminal close will finish extraction.
+can also extract memories. Normal interactive exits and finished one-shot runs launch a separate background distillation
+process; this does not guarantee that an abrupt terminal close will finish extraction.
 
 Recall selects a bounded memory pack for the current user turn. It does not copy another session's full history into the
 new one or guarantee that every lesson is recalled. Inspect stored records after extraction:

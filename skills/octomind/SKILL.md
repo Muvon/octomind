@@ -23,7 +23,8 @@ context compaction, out-of-band planning and loop detection).
 
 ## Prerequisites
 
-- Install: `curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash` (or `cargo install octomind`)
+- Install: `brew install muvon/tap/octomind` (macOS/Linux) or `cargo install octomind`; release binaries:
+  https://github.com/muvon/octomind/releases
 - Model access: `octomind login` (Octomind Cloud), or set a provider key such as `OPENROUTER_API_KEY` and choose that
   provider's model in `~/.local/share/octomind/config/config.toml`
 - Verify: `octomind --version`

@@ -604,37 +604,58 @@ impl Drop for EnvGuard {
 	}
 }
 
-#[tokio::test]
+/// Signed out against the hosted gateway: the session still opens (octoweb drives
+/// `/login` from inside one) and slash commands run, but a model-bound prompt
+/// answers `auth_required` so editors offer the sign-in method.
+#[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
-async fn sessions_without_a_hub_key_ask_the_client_to_sign_in() {
+async fn signed_out_sessions_open_but_model_prompts_ask_to_sign_in() {
+	let _data = TestDataDirGuard::new();
 	let _lock = ENV_LOCK.lock().await;
 	let _env = EnvGuard::new(&[crate::account::HUB_KEY_ENV, crate::account::HUB_URL_ENV]);
 	std::env::remove_var(crate::account::HUB_KEY_ENV);
 	std::env::remove_var(crate::account::HUB_URL_ENV);
-	let agent = agent_with(crate::acp::AcpRunOptions {
-		model: Some("octohub:auto".to_string()),
-		..Default::default()
-	});
+	let agent = Rc::new(OctomindAgent::new(
+		acp_fake_config(),
+		"assistant".to_string(),
+		crate::acp::AcpRunOptions {
+			model: Some("octohub:auto".to_string()),
+			..Default::default()
+		},
+	));
 	let cwd = std::env::current_dir().expect("cwd");
 
-	let err = agent
-		.new_session(NewSessionRequest::new(cwd.clone()))
-		.await
-		.expect_err("no key, hosted hub");
-	assert!(
-		err.code == agent_client_protocol::Error::auth_required().code,
-		"got: {}",
-		err.code
-	);
-	let err = agent
-		.load_session(LoadSessionRequest::new("any-session".to_string(), cwd))
-		.await
-		.expect_err("no key, hosted hub");
-	assert!(
-		err.code == agent_client_protocol::Error::auth_required().code,
-		"got: {}",
-		err.code
-	);
+	let local = tokio::task::LocalSet::new();
+	local
+		.run_until(async {
+			let session_id = agent
+				.new_session(NewSessionRequest::new(cwd))
+				.await
+				.expect("a signed-out session still opens")
+				.session_id
+				.to_string();
+
+			let err = agent
+				.prompt(PromptRequest::new(session_id.clone(), vec!["hello".into()]))
+				.await
+				.expect_err("a model call needs a key");
+			assert!(
+				err.code == agent_client_protocol::Error::auth_required().code,
+				"got: {}",
+				err.code
+			);
+			assert!(
+				agent.sessions.borrow().contains_key(&session_id),
+				"the rejected prompt must hand the session back"
+			);
+
+			agent
+				.prompt(PromptRequest::new(session_id.clone(), vec!["/help".into()]))
+				.await
+				.expect("slash commands never reach the model");
+			context::cleanup_session(&session_id);
+		})
+		.await;
 }
 
 #[tokio::test]

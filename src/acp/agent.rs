@@ -213,21 +213,6 @@ impl OctomindAgent {
 			..Default::default()
 		}
 	}
-
-	/// `auth_required` when sessions would reach the hosted gateway without a key,
-	/// so the client offers [`LOGIN_AUTH_METHOD`] instead of the first prompt failing.
-	fn ensure_signed_in(&self, config: &Config) -> agent_client_protocol::Result<()> {
-		let model = self
-			.model
-			.clone()
-			.unwrap_or_else(|| config.get_model_profile_for_role(&self.role).model);
-		if crate::account::login_required(&model) {
-			return Err(agent_client_protocol::Error::auth_required().data(format!(
-				"{model} needs an Octomind sign-in, or configure your own provider keys"
-			)));
-		}
-		Ok(())
-	}
 }
 
 /// Convert ACP MCP server list into McpServerConfig entries and inject them into a config snapshot.
@@ -711,7 +696,6 @@ impl OctomindAgent {
 		&self,
 		args: NewSessionRequest,
 	) -> agent_client_protocol::Result<NewSessionResponse> {
-		self.ensure_signed_in(&self.config.borrow())?;
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
@@ -1068,6 +1052,20 @@ impl OctomindAgent {
 
 			// Restore this session's working directory for tool calls
 			crate::mcp::set_session_working_directory(session_cwd.clone());
+
+			// A hosted-gateway call without a key would fail on a bare 401; `auth_required`
+			// lets the client offer LOGIN_AUTH_METHOD and keep the prompt. Gated here rather
+			// than at session creation so slash commands still run signed out and clients that
+			// drive `/login` from inside a session (octoweb) can open one.
+			if crate::account::login_required(&chat_session.model) {
+				let model = chat_session.model.clone();
+				self.sessions
+					.borrow_mut()
+					.insert(session_id.clone(), (chat_session, session_cwd));
+				return Err(agent_client_protocol::Error::auth_required().data(format!(
+					"{model} needs an Octomind sign-in, or configure your own provider keys"
+				)));
+			}
 
 			let config_for_role = self.config.borrow().get_merged_config_for_role(&self.role);
 
@@ -1504,7 +1502,6 @@ impl OctomindAgent {
 		let session_id = args.session_id.to_string();
 		log_debug!("ACP: load_session requested: {}", session_id);
 
-		self.ensure_signed_in(&self.config.borrow())?;
 		// Set per-session working directory via thread-local
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();

@@ -30,17 +30,28 @@ fn write_script(dir: &std::path::Path, rel: &str, message: &str) {
 	let path = dir.join(rel);
 	std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
 
-	#[cfg(unix)]
-	let body = format!("#!/bin/sh\necho \"{message}\"\nexit 1\n");
-	#[cfg(windows)]
-	let body = format!("@echo off\r\necho {message}\r\nexit /b 1\r\n");
-	std::fs::write(&path, body).expect("write script");
-
+	// Write in a child so concurrent test subprocesses cannot inherit a
+	// writable script fd and cause ETXTBSY when the hook spawns it.
 	#[cfg(unix)]
 	{
-		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+		let status = std::process::Command::new("/bin/sh")
+			.args([
+				"-c",
+				"printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"",
+				"write-hook-script",
+			])
+			.arg(&path)
+			.arg(format!("#!/bin/sh\necho \"{message}\"\nexit 1\n"))
+			.status()
+			.expect("spawn hook script writer");
+		assert!(status.success(), "write executable hook script: {status}");
 	}
+	#[cfg(windows)]
+	std::fs::write(
+		&path,
+		format!("@echo off\r\necho {message}\r\nexit /b 1\r\n"),
+	)
+	.expect("write script");
 }
 
 fn hook_workdir() -> tempfile::TempDir {

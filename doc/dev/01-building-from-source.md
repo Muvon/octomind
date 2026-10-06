@@ -12,7 +12,7 @@ contributors who need a development binary or platform-specific build.
   - macOS: Xcode Command Line Tools (`xcode-select --install`)
 - **Protocol Buffers compiler (`protoc`)**, **ripgrep**, and **ast-grep** for the CI test environment.
 
-`Cargo.toml` declares Rust 1.95 as the minimum; the checked-in CI test matrix uses 1.98.0, plus beta and nightly on
+`Cargo.toml` declares Rust 1.95 as the minimum; the checked-in CI test matrix uses 1.99.0, plus beta and nightly on
 Linux. Check your tools before building:
 
 ```bash

@@ -731,8 +731,9 @@ async fn test_complete_run_lists_roles() {
 
 /// Full lesson-distillation pipeline against scripted verdicts: extraction
 /// call returns LEARN + one lesson (whose evidence is verbatim in a user
-/// turn) + one orientation; verification keeps everything. Both must land
-/// in the sandbox learning store.
+/// turn) + one orientation; the orientation grounding verifier supports it
+/// and lesson verification keeps everything. Both must land in the sandbox
+/// learning store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_distill_stores_lessons() {
 	let extraction = completion_body(concat!(
@@ -745,8 +746,9 @@ async fn test_distill_stores_lessons() {
 		"The project is a Rust CLI with a workspace build",
 		"</orientation>"
 	));
+	let orientation_verdict = completion_body("{\"supported\": true, \"issues\": []}");
 	let verification = completion_body("{\"unsupported\": []}");
-	let stub_url = spawn_scripted_stub(vec![extraction, verification]).await;
+	let stub_url = spawn_scripted_stub(vec![extraction, orientation_verdict, verification]).await;
 
 	let home = tempfile::tempdir().expect("temp home");
 	{

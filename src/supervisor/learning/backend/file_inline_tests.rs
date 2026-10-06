@@ -831,6 +831,10 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 		.store(&lesson("undated weak rule", 0.3, "not a date"))
 		.await
 		.unwrap();
+	// Old but recently used: age counts from the last use, so it stays hot.
+	let mut recently_used = lesson("old weak rule still in use", 0.3, "2020-01-01T00:00:00Z");
+	recently_used.last_used = chrono::Utc::now().to_rfc3339();
+	backend.store(&recently_used).await.unwrap();
 
 	backend
 		.prune_stale("developer", "project", 0)
@@ -842,7 +846,7 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 			.await
 			.unwrap()
 			.len(),
-		4
+		5
 	);
 
 	backend
@@ -850,7 +854,7 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 		.await
 		.unwrap();
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
-	assert_eq!(hot.len(), 3);
+	assert_eq!(hot.len(), 4);
 	assert!(hot.iter().all(|item| item.content != "stale weak rule"));
 
 	if let Some(value) = previous {

@@ -200,7 +200,9 @@ each assistant/tool round, no extra model call for detection:
 
 The verify-gate supplies outcome credit, but extraction is not limited to passed runs: quote-backed user rules may be
 retained independently, and experience records preserve `verified`, `failed`, or `unknown` rather than upgrading
-uncertain work. Supervisor context is explicit and mid-trajectory steering remains advisory.
+uncertain work. `verified` means execution evidence: the gate passed a turn that changed state and then ran a
+recognized check on the result. A pass resting on the verifier's reading alone is `unknown`. Supervisor context is
+explicit and mid-trajectory steering remains advisory.
 
 ## Self-report
 
@@ -282,11 +284,14 @@ excerpts are contextual reminders, not independently binding rules or additional
 
 **Model pass (rare):** an independent verifier checks the result against your request:
 
-- **Pass** → the trajectory is labelled verified; only materially used memories receive positive outcome credit.
+- **Pass** → completion is accepted. When the turn changed state and a recognized check ran on the result, the
+  trajectory is labelled verified and only materially used memories receive positive outcome credit; a pass without
+  that execution evidence is labelled unknown and earns no correctness credit.
 - **Gaps** → an advisory listing the gaps is injected and the turn re-runs, bounded by a fixed re-entry budget.
   Exhaustion ends the turn unverified. Unchanged gaps after new evidence can also stop retries early.
 - **Indeterminate** → transport failure or invalid verifier protocol fails closed for the turn. A structurally malformed
-  successful response gets one bounded format-only retry; substantive gaps do not.
+  successful response gets one bounded format-only retry; substantive gaps do not. Learning records the trajectory as
+  unknown, not failed, and applies no correctness credit.
 
 The verifier can request one bounded read-back of recorded tool evidence. Blocking findings receive a separate
 refutation pass before causing rework: with `[supervisor.evaluate] gate = true` the evaluation model answers it per

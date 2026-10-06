@@ -66,37 +66,49 @@ compile one highest-value grounded memory per extraction into a machine-local sk
 move through shadow, bounded trial, active, and retired states; generated behavior never overwrites authored skills or
 `.agents/guardrails.toml`.
 
-Promotion is measured against a counterfactual rather than by counting wins. While a candidate is in **shadow**, its
-trigger is evaluated but the behavior is not applied; every turn where it matched and the verify-gate returned a
-verdict becomes its **control** sample (pass or fail, plus the turn's API-call count). After `min_samples` control
-verdicts it opens a live **trial**, the **treatment** arm. A generated skill stays loaded once its trigger activates it,
-so skill exposure is sticky in both arms: from a shadow skill's first trigger match, or a live skill's trigger
-activation, every later verdict in that session is a sample. Neither arm depends on the model's own report of what
-helped. With `[supervisor.evaluate] evolution = true`, samples are graded (the probability the answer fulfils the
-request) and turns where the artifact does not apply are dropped; see
-[Supervisor](14-supervisor.md#evaluation-gates). At most one trial runs among artifacts whose scopes can bind
-in the same session, so a verdict is never shared between two trials. Pass rates are Laplace-smoothed, and the trial
-is judged once both arms hold `min_samples` verdicts:
+Promotion is measured against a concurrent counterfactual rather than by counting wins. While a candidate is in
+**shadow**, its trigger is evaluated but the behavior is not applied; after `min_samples` matched turns with a verify-gate
+verdict, this screen opens a live **trial**. During the trial each session is randomized, half to the **treatment**
+arm (behavior applied) and half to the **control** arm (trigger observed, behavior not applied), so both arms run over
+the same period, models, and task mix. The control arm restarts when the trial opens; the shadow screen proves only
+that the trigger fires. A generated skill stays loaded once its trigger activates it, so skill exposure is sticky in
+both arms: from a control skill's first trigger match, or a treatment skill's trigger activation, every later verdict in
+that session is a sample, together with the turn's API-call count. Neither arm depends on the model's own report of
+what helped. A verdict counts as a pass only when it is execution-verified (see [Supervisor](14-supervisor.md#verify-gate));
+a pass resting on the verifier's reading alone is not a sample. With `[supervisor.evaluate] evolution = true`, samples
+are graded (the probability the answer fulfils the request) and turns where the artifact does not apply are dropped;
+see [Supervisor](14-supervisor.md#evaluation-gates). At most one trial runs among artifacts whose scopes can bind in
+the same session, so a verdict is never shared between two trials.
 
-- **Promoted** when the treatment beats the control by more than `noise_margin` and the extra API calls stay within
-  `cost_allowance + cost_per_gain × gain`, or when the pass rate stays within the noise margin while API calls drop by
-  more than `cost_allowance`.
-- **Regressed** (retired) when the treatment falls below the control by more than `noise_margin`.
+Each arm's pass rate is a Beta(1,1) posterior, and the trial is judged after every treatment sample once both arms
+hold `min_samples` verdicts:
+
+- **Promoted** when the treatment beats the control by more than `noise_margin` and by more than 2.5 posterior
+  standard deviations, with extra API calls within `cost_allowance + cost_per_gain × gain`; or when the pass rate
+  is within `noise_margin` at that same confidence while API calls drop by more than `cost_allowance`, with the
+  saving significant on per-turn log calls.
+- **Regressed** (retired) when the treatment falls below the control by more than 2.5 posterior standard deviations.
 - **Inconclusive** (retired) after `max_trial_uses` live uses without either decision.
+
+The 2.5 bar accounts for checking after every sample: with the defaults, a behavior with no real effect is promoted
+in under 5% of trials across base pass rates from 0.5 to 0.95, and one that lowers the pass rate from 0.85 to 0.70
+in under 1% (a seeded simulation over the runtime's own decision code checks both). Older configurations with
+`min_samples = 3` and `max_trial_uses = 8` stay below the same false-promotion bound but rarely promote anything.
 
 An active behavior must keep earning its place. It is **pruned** once it no longer beats its control at all (the same
 rule with the margin relaxed to zero, so one unlucky verdict near the promotion edge does not remove it). Any shadow,
 trial, or active artifact with no trigger match or use for 90 days retires as **stale**. Rejected and retired records
 stay in the registry with their reason, and synthesis receives them as falsified hypotheses: a candidate drawn only
-from memories that already produced a record is dropped before verification.
+from memories that already produced a record is dropped before verification. Registries written before this test
+(schema 1) return their trial and active records to shadow on load, so the concurrent test re-validates them.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `min_samples` | Verify-gate verdicts required in each arm before comparison | `3` |
-| `noise_margin` | Smoothed pass-rate gap treated as noise | `0.15` |
+| `min_samples` | Verify-gate verdicts in the shadow screen, then in each concurrent arm, before comparison | `10` |
+| `noise_margin` | Smallest pass-rate gain worth promoting; also the non-inferiority bound for a cheaper behavior | `0.15` |
 | `cost_allowance` | Relative API-call increase tolerated at negligible gain; also the saving that counts as cheaper | `0.10` |
 | `cost_per_gain` | Extra relative API-call increase allowed per unit of pass-rate gain | `2.0` |
-| `max_trial_uses` | Live uses before an undecided trial retires | `8` |
+| `max_trial_uses` | Live uses before an undecided trial retires | `40` |
 
 Evolution needs `[supervisor.gate]` enabled: without verdicts no arm collects samples, and trials end inconclusive.
 
@@ -128,6 +140,12 @@ understanding of the subject: how it works, key decisions, constraints. It rides
 "orientation"` and is recalled as **working assumptions to verify**, never as truth, in the pack’s orientation group. It
 is part of learning — on whenever `[supervisor.learning]` is enabled, with fixed injection and decay bounds.
 
+Every orientation record cites 1–4 real user or tool messages and must pass the same grounding verifier as experience
+before it is stored: a citation that exists is not yet a citation that supports the claim, and a rejected record fails
+closed. A later record that restates an existing one (word-set Jaccard above 0.6) takes its hot slot; the restated
+record moves to the cold archive rather than being deleted. The comparison is symmetric, so a short fact contained in a
+richer record never displaces it.
+
 ### Long-lived experience memory
 
 A separate detached learner may emit one `memory_type = "experience"` record when a trajectory contains substantial
@@ -140,7 +158,8 @@ search are rejected.
 An experience is 150–600 words with Objective, Durable knowledge, Outcome and evidence, and Reuse conditions sections.
 It carries:
 
-- the external trajectory outcome: `verified`, `failed`, or honestly `unknown`;
+- the external trajectory outcome: `verified` (the verify-gate passed a turn that changed state and then ran a
+  recognized check), `failed`, or honestly `unknown` (including a pass on the verifier's reading alone);
 - 1–6 addressable `session://<session>/message/<n>` evidence handles, including real user/tool evidence;
 - stable IDs of related short lessons or prior memories;
 - a separate grounding-verifier verdict before storage. A rejected candidate gets at most one issue-driven repair and
@@ -358,10 +377,13 @@ their evidence, inherits the lower importance, and does not strengthen confidenc
 Short user-backed rules are never synthesized by this pass because a generated merge would break their quote-first
 contract. They continue to change only through explicit, separately verified extraction and `supersedes`.
 
-Maintenance also promotes recurrence. When a scoped short rule appears near-verbatim (word Jaccard about 0.6 or higher)
-in three or more projects, the highest-importance instance moves to `learning/_/` with its content unchanged, its
-evidence unioned, and the other instances listed in `related`; those instances are cold-archived in their project
-scopes, never deleted.
+Maintenance also reviews recurrence. When a scoped short rule appears near-verbatim (word Jaccard about 0.6 or higher)
+in three or more projects, recurrence only nominates it: three projects that share a language or toolchain produce the
+same stack-specific rule. A separate supervisor-model review must confirm the rule governs how you work in every
+project and role; otherwise the instances stay scoped. A cluster is reviewed only when the extraction that triggered
+maintenance just restated it, so a declined rule is asked again on new evidence, not on every extraction. On
+confirmation the highest-importance instance moves to `learning/_/` with its content unchanged, its evidence unioned,
+and the other instances listed in `related`; those instances are cold-archived in their project scopes, never deleted.
 
 After that single consolidation attempt, the lowest-utility records move to `.archive/<memory_type>/` until the hot
 store is back at 80%. Utility combines bounded importance, direct-use count, confidence, and last-use recency:
@@ -380,10 +402,10 @@ Memory Pack, so the specialist can open the full record. A cold record reported 
 promoted back to its hot scope before its use/outcome metadata is updated. This hysteresis prevents maintenance from
 moving one record on every extraction.
 
-Independently of the hard budget, a scoped record that is both weak (`importance <= 0.4`) and older than 90 days also
-moves to the same cold archive. Repeated negative outcome credit that lowers importance to `0.1` does the same
-immediately. Automatic retention never permanently deletes a file; explicit `/learning delete` and `clear` remain
-destructive user actions.
+Independently of the hard budget, a scoped record that is both weak (`importance <= 0.4`) and unused for 90 days
+(counted from its last material use, or creation when never used) also moves to the same cold archive. Repeated negative
+outcome credit that lowers importance to `0.1` does the same immediately. Automatic retention never permanently deletes
+a file; explicit `/learning delete` and `clear` remain destructive user actions.
 
 ### Active Memory Pack
 

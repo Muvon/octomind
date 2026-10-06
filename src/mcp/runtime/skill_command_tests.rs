@@ -771,15 +771,17 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 	)
 	.expect("write SKILL.md");
 	let registry = serde_json::json!({
-		"schema_version": 1,
+		"schema_version": crate::supervisor::learning::evolution::REGISTRY_SCHEMA_VERSION,
 		"records": [{
-			"schema_version": 1,
+			"schema_version": crate::supervisor::learning::evolution::REGISTRY_SCHEMA_VERSION,
 			"id": "evo1",
 			"name": "skilltest-evo",
 			"description": "generated skill",
 			"kind": "skill",
 			"scope": { "project": null, "domain": null },
-			"state": "trial",
+			// Active applies in every session; a trial would depend on the
+			// session's randomized arm.
+			"state": "active",
 			"effect": "advisory",
 			"explicit_authorization": true,
 			"source_memory_ids": [],

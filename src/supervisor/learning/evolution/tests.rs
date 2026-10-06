@@ -56,6 +56,10 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 		control_failures: 0,
 		control_calls: 0,
 		treatment_calls: 0,
+		control_log_calls: 0.0,
+		control_log_calls_sq: 0.0,
+		treatment_log_calls: 0.0,
+		treatment_log_calls_sq: 0.0,
 		measure: None,
 		control_score: 0.0,
 		treatment_score: 0.0,
@@ -145,9 +149,21 @@ fn policy() -> EvolutionConfig {
 	config.supervisor.learning.evolution
 }
 
+/// A session id the runtime randomizes into the given arm for every listed
+/// trial artifact.
+fn session_in_arm(ids: &[&str], treated: bool) -> String {
+	(0..)
+		.map(|index| format!("evolution-arm-session-{index}"))
+		.find(|session| {
+			ids.iter()
+				.all(|id| super::runtime::treatment_arm(id, session) == treated)
+		})
+		.expect("some session lands in the requested arm")
+}
+
 #[serial_test::serial]
 #[tokio::test]
-async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
+async fn lifecycle_measures_trial_against_concurrent_control_and_prunes() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
@@ -164,7 +180,7 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 
 	let session_id = "evolution-lifecycle-session".to_string();
 	crate::session::context::with_session_id(session_id.clone(), async {
-		// Control arm: the trigger matched without the guard and the turns failed.
+		// Shadow screen: the trigger matched without the guard and the turns failed.
 		for turn in 0..policy.min_samples {
 			assert_eq!(
 				get_record(id).unwrap().unwrap().state,
@@ -176,16 +192,32 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 		}
 		let trial = get_record(id).unwrap().unwrap();
 		assert_eq!(trial.state, EvolutionState::Trial);
-		assert_eq!(trial.control_failures, policy.min_samples);
-		assert_eq!(trial.control_calls, 2 * policy.min_samples as u64);
+		// The screen is not the comparison: control restarts on concurrent samples.
+		assert_eq!(trial.control_failures, 0);
+		assert_eq!(trial.control_calls, 0);
 
-		// Treatment arm: the same situations pass at the same cost.
-		for _ in 0..policy.min_samples {
+		// Concurrent arms: control turns pass half the time, treatment every
+		// time, at the same cost. Nothing is decided before both arms hold
+		// `min_samples`; then the gain clears the noise margin and the
+		// posterior bar together.
+		for turn in 0..policy.min_samples {
+			assert_eq!(
+				get_record(id).unwrap().unwrap().state,
+				EvolutionState::Trial
+			);
+			mark_shadow_match(id);
+			let control = if turn % 2 == 0 { 0.05 } else { -0.15 };
+			reinforce_session(&session_id, &verdict(control, 2), &supervisor()).await;
 			mark_behavior_used(&session_id, id);
 			reinforce_session(&session_id, &verdict(0.05, 2), &supervisor()).await;
 		}
 		let active = get_record(id).unwrap().unwrap();
-		assert_eq!(active.state, EvolutionState::Active);
+		assert_eq!(
+			active.state,
+			EvolutionState::Active,
+			"{:?}",
+			active.history.last()
+		);
 		assert!(active.promoted.is_some());
 
 		// Sustained failures erase the measured gain: the guard is pruned.
@@ -202,6 +234,57 @@ async fn lifecycle_measures_trial_against_shadow_control_and_prunes() {
 		clear_for_session(&session_id);
 	})
 	.await;
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn schema_one_registry_revalidates_live_records_on_load() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+
+	let mut active = record("evo-v1-active", ArtifactKind::Guard, EvolutionState::Active);
+	active.schema_version = 1;
+	active.successes = 3;
+	active.control_failures = 3;
+	active.promoted = Some("2026-09-01T00:00:00Z".to_string());
+	let mut trial = record("evo-v1-trial", ArtifactKind::Guard, EvolutionState::Trial);
+	trial.schema_version = 1;
+	trial.trial_uses = 2;
+	let mut rejected = record(
+		"evo-v1-rejected",
+		ArtifactKind::Guard,
+		EvolutionState::Rejected,
+	);
+	rejected.schema_version = 1;
+	let registry = serde_json::json!({
+		"schema_version": 1,
+		"records": [active, trial, rejected],
+	});
+	let path = crate::directories::get_learning_evolution_dir()
+		.unwrap()
+		.join("registry.json");
+	std::fs::write(&path, serde_json::to_vec(&registry).unwrap()).unwrap();
+
+	let records = list_records().expect("a schema 1 registry still loads");
+	let find = |id: &str| records.iter().find(|record| record.id == id).unwrap();
+	for id in ["evo-v1-active", "evo-v1-trial"] {
+		let record = find(id);
+		assert_eq!(record.state, EvolutionState::Shadow, "{id}");
+		assert_eq!(record.schema_version, REGISTRY_SCHEMA_VERSION);
+		assert_eq!(record.successes + record.failures + record.trial_uses, 0);
+		assert_eq!(record.control_successes + record.control_failures, 0);
+		assert!(record.promoted.is_none());
+		assert_eq!(record.history.last().unwrap().event, "revalidate");
+	}
+	assert_eq!(find("evo-v1-rejected").state, EvolutionState::Rejected);
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
@@ -298,7 +381,7 @@ async fn generated_guardrail_keeps_shadow_binding_for_native_runtime() {
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
 	let item = record(id, ArtifactKind::Guard, EvolutionState::Shadow);
 	super::registry::create_record(item.clone(), native, None).unwrap();
-	let generated = generated_guardrails(&[item]).unwrap();
+	let generated = generated_guardrails(&[item], "evolution-shadow-binding-session").unwrap();
 	let binding = generated.guards[0].evolution.as_ref().unwrap();
 	assert_eq!(binding.id, id);
 	assert!(binding.shadow);
@@ -321,7 +404,8 @@ async fn stored_trial_guard_blocks_with_exact_registry_attribution() {
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
 	let item = record(id, ArtifactKind::Guard, EvolutionState::Trial);
 	super::registry::create_record(item.clone(), native, None).unwrap();
-	let generated = generated_guardrails(&[item]).unwrap();
+	// A trial guard blocks in sessions randomized to its treatment arm.
+	let generated = generated_guardrails(&[item], &session_in_arm(&[id], true)).unwrap();
 	let evaluation = crate::config::guardrails::evaluate_guards(
 		&generated,
 		Some("shell"),
@@ -372,7 +456,7 @@ async fn session_loader_keeps_shadow_skill_observational_and_trial_skill_loadabl
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
 	config.supervisor.learning.evolution.enabled = true;
-	let session_id = "evolution-loader-session".to_string();
+	let session_id = session_in_arm(&[trial_id], true);
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::context::set_session_workdir(&session_id, project_dir);
 		crate::session::context::set_session_role(&session_id, "developer:general");
@@ -742,7 +826,12 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
 	config.supervisor.learning.evolution.enabled = true;
-	let session_id = "evolution-native-phases".to_string();
+	let trial_ids = items
+		.iter()
+		.filter(|(record, _)| record.state == EvolutionState::Trial)
+		.map(|(record, _)| record.id.as_str())
+		.collect::<Vec<_>>();
+	let session_id = session_in_arm(&trial_ids, true);
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::context::set_session_workdir(&session_id, project_dir);
 		crate::session::context::set_session_role(&session_id, "developer:general");
@@ -752,7 +841,7 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 			.iter()
 			.map(|(record, _)| record.clone())
 			.collect::<Vec<_>>();
-		let generated = generated_guardrails(&records).unwrap();
+		let generated = generated_guardrails(&records, &session_id).unwrap();
 		crate::session::guardrails::merge_generated_for_session(&session_id, generated);
 
 		let piped = crate::session::pipe::run_pipe(

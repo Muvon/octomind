@@ -40,11 +40,11 @@ pub use runtime::{
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EvolutionConfig {
 	pub enabled: bool,
-	/// Verify-gate verdicts required in each arm (shadow control, live
+	/// Verify-gate verdicts required in each arm (concurrent control,
 	/// treatment) before the two pass rates are compared.
 	pub min_samples: u32,
-	/// Pass-rate difference within which control and treatment are
-	/// indistinguishable; promotion must clear it, regression must exceed it.
+	/// Smallest pass-rate gain worth promoting, and the non-inferiority bound
+	/// a cheaper behavior must hold.
 	pub noise_margin: f64,
 	/// Relative increase in API calls per turn tolerated at a negligible gain,
 	/// and the reduction that counts as "cheaper" at an unchanged pass rate.
@@ -200,8 +200,9 @@ pub struct EvolutionRecord {
 	pub successes: u32,
 	pub failures: u32,
 	pub false_triggers: u32,
-	/// Verify-gate passes on turns where this artifact's trigger matched while it
-	/// was in shadow — the counterfactual baseline for the same situations.
+	/// Verify-gate passes in the control arm: shadow-phase matches before the
+	/// trial, then trial sessions randomized to control. Reset when the trial
+	/// opens so the comparison uses concurrent samples only.
 	#[serde(default)]
 	pub control_successes: u32,
 	#[serde(default)]
@@ -212,6 +213,17 @@ pub struct EvolutionRecord {
 	/// API calls summed over the verdict-bearing live uses (`successes` + `failures`).
 	#[serde(default)]
 	pub treatment_calls: u64,
+	/// Sum and sum of squares of ln(API calls) per control turn: the cost test
+	/// compares geometric means, robust to the heavy tail of per-turn calls.
+	#[serde(default)]
+	pub control_log_calls: f64,
+	#[serde(default)]
+	pub control_log_calls_sq: f64,
+	/// Sum and sum of squares of ln(API calls) per treatment turn.
+	#[serde(default)]
+	pub treatment_log_calls: f64,
+	#[serde(default)]
+	pub treatment_log_calls_sq: f64,
 	/// Unset until the first sample of either arm.
 	#[serde(default)]
 	pub measure: Option<Measure>,
@@ -239,9 +251,35 @@ impl EvolutionRecord {
 	pub fn native_path(&self) -> anyhow::Result<PathBuf> {
 		Ok(self.artifact_dir()?.join(&self.artifact_path))
 	}
+
+	/// Drop the live arm's evidence: a rolled-back or re-validated behavior
+	/// starts its next trial from no treatment samples.
+	pub fn clear_treatment_arm(&mut self) {
+		self.trial_uses = 0;
+		self.successes = 0;
+		self.failures = 0;
+		self.treatment_calls = 0;
+		self.treatment_score = 0.0;
+		self.treatment_log_calls = 0.0;
+		self.treatment_log_calls_sq = 0.0;
+	}
+
+	/// Drop the control arm's evidence: a trial compares against concurrent
+	/// control samples only, never against an earlier period.
+	pub fn clear_control_arm(&mut self) {
+		self.control_successes = 0;
+		self.control_failures = 0;
+		self.control_calls = 0;
+		self.control_score = 0.0;
+		self.control_log_calls = 0.0;
+		self.control_log_calls_sq = 0.0;
+	}
 }
 
-pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
+/// Version 2 replaced sequential shadow-then-trial comparison with randomized
+/// concurrent arms and a posterior test; version 1 trials and promotions were
+/// decided by the old rule and are re-validated on load (see the registry).
+pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
 /// Cross-store synthesis scans and embeds the whole hot store, so detached
 /// extraction runs it at most once per interval; the command bypasses it.
 const STORE_SYNTHESIS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);

@@ -269,8 +269,10 @@ pub async fn run_extraction(
 	}
 
 	// Orientation: durable subject understanding. Independent of the lesson
-	// decision gate, but every record must cite visible real-user/tool evidence.
-	// Invalid or assistant-only provenance fails closed before dedup/storage.
+	// decision gate, but every record must cite visible real-user/tool evidence
+	// and pass the same grounding verifier as experience: a citation that
+	// exists is not yet a citation that supports the claim. Recall hands this
+	// text to every later session, so an unverifiable record fails closed.
 	{
 		let orientations = parse_orientation_tags(
 			&response,
@@ -287,21 +289,32 @@ pub async fn run_extraction(
 			.filter(|l| l.memory_type == "orientation")
 			.cloned()
 			.collect();
-		for mut o in orientations {
-			o.outcome = outcome;
-			if let Some(id) = experience_id.as_ref() {
-				o.related.push(id.clone());
-			}
+		for mut candidate in orientations {
 			if existing_or
 				.iter()
-				.any(|e| e.content.trim() == o.content.trim())
+				.any(|e| e.content.trim() == candidate.lesson.content.trim())
 			{
 				continue;
 			}
+			candidate.lesson.outcome = outcome;
+			if !verify_experience(config, &candidate, messages).await {
+				crate::log_debug!(
+					"Orientation rejected (grounding verifier): {}",
+					candidate.lesson.content
+				);
+				continue;
+			}
+			let mut o = candidate.lesson;
+			if let Some(id) = experience_id.as_ref() {
+				o.related.push(id.clone());
+			}
+			// A near-duplicate re-observation takes the hot slot; the record it
+			// restates moves to the cold archive, where lexical recall can
+			// still page it back in.
 			if let Some(old) = best_overlap(&o.content, &existing_or) {
-				let _ = backend
-					.delete(&old.file_id(), &old.role, &old.project)
-					.await;
+				if let Err(error) = super::retention::archive_record(old) {
+					crate::log_debug!("Orientation supersede archive failed: {}", error);
+				}
 			}
 			if backend.store(&o).await.is_ok() {
 				stored += 1;
@@ -524,7 +537,7 @@ async fn finish_extraction(
 	{
 		crate::log_debug!("Learning stale-prune failed: {}", error);
 	}
-	if let Err(error) = super::retention::maintain(config, role, project).await {
+	if let Err(error) = super::retention::maintain(config, role, project, session_name).await {
 		crate::log_debug!("Learning retention maintenance failed: {}", error);
 	}
 	if stored > 0 {
@@ -999,7 +1012,12 @@ struct OrientationParseContext<'a> {
 /// Parse `<orientation>` tags — durable subject understanding. Every accepted
 /// record has 1-4 addressable citations to visible real-user/tool messages;
 /// missing, malformed, assistant-only, or budget-hidden evidence fails closed.
-fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>) -> Vec<Lesson> {
+/// Parsing proves only that the citations exist; the caller still runs the
+/// grounding verifier on what they say.
+fn parse_orientation_tags(
+	response: &str,
+	context: &OrientationParseContext<'_>,
+) -> Vec<GroundedCandidate> {
 	let mut out = Vec::new();
 	let now = chrono::Utc::now().to_rfc3339();
 	let mut remaining = response;
@@ -1015,7 +1033,7 @@ fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>)
 		};
 		let content = after_open[..end_tag].trim();
 		if !content.is_empty() {
-			let Some(evidence) = parse_orientation_evidence(attrs, context) else {
+			let Some(message_numbers) = parse_orientation_evidence(attrs, context) else {
 				crate::log_debug!(
 					"Orientation rejected (missing or invalid REAL USER/TOOL evidence): {}",
 					content
@@ -1037,24 +1055,31 @@ fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>)
 				let end = crate::utils::truncation::floor_char_boundary(content, 80);
 				format!("{}...", &content[..end])
 			};
-			out.push(Lesson {
-				content: content.to_string(),
-				title,
-				memory_type: "orientation".into(),
-				importance,
-				confidence,
-				tags,
-				source: context.source.to_string(),
-				role: context.role.to_string(),
-				project: context.project.to_string(),
-				scope: "scoped".into(),
-				created: now.clone(),
-				related: Vec::new(),
-				evidence,
-				outcome: super::TrajectoryOutcome::Unknown,
-				last_used: String::new(),
-				use_count: 0,
-				storage_path: String::new(),
+			let evidence = message_numbers
+				.iter()
+				.map(|number| format!("session://{}/message/{number}", context.source))
+				.collect();
+			out.push(GroundedCandidate {
+				lesson: Lesson {
+					content: content.to_string(),
+					title,
+					memory_type: "orientation".into(),
+					importance,
+					confidence,
+					tags,
+					source: context.source.to_string(),
+					role: context.role.to_string(),
+					project: context.project.to_string(),
+					scope: "scoped".into(),
+					created: now.clone(),
+					related: Vec::new(),
+					evidence,
+					outcome: super::TrajectoryOutcome::Unknown,
+					last_used: String::new(),
+					use_count: 0,
+					storage_path: String::new(),
+				},
+				message_numbers,
 			});
 		}
 		remaining = &after_open[end_tag + 14..]; // skip past </orientation>
@@ -1065,7 +1090,7 @@ fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>)
 fn parse_orientation_evidence(
 	attrs: &str,
 	context: &OrientationParseContext<'_>,
-) -> Option<Vec<String>> {
+) -> Option<Vec<usize>> {
 	let raw = extract_attr(attrs, "evidence")?;
 	let ids = raw.split(',').map(str::trim).collect::<Vec<_>>();
 	if ids.is_empty() || ids.len() > 4 || ids.iter().any(|id| id.is_empty()) {
@@ -1094,16 +1119,13 @@ fn parse_orientation_evidence(
 		numbers.push(number);
 	}
 
-	Some(
-		numbers
-			.into_iter()
-			.map(|number| format!("session://{}/message/{number}", context.source))
-			.collect(),
-	)
+	Some(numbers)
 }
 
+/// A parsed orientation or experience record and the message numbers its
+/// evidence cites — what the grounding verifier checks it against.
 #[derive(Debug)]
-struct ExperienceCandidate {
+struct GroundedCandidate {
 	lesson: Lesson,
 	message_numbers: Vec<usize>,
 }
@@ -1121,7 +1143,7 @@ struct ExperienceParseContext<'a> {
 fn parse_experience_tag(
 	response: &str,
 	context: &ExperienceParseContext<'_>,
-) -> Option<ExperienceCandidate> {
+) -> Option<GroundedCandidate> {
 	let messages = context.messages;
 	let transcript = context.transcript;
 	let reconcile = context.reconcile;
@@ -1221,7 +1243,7 @@ fn parse_experience_tag(
 		(super::TrajectoryOutcome::Unknown, _) => 0.55,
 	};
 
-	Some(ExperienceCandidate {
+	Some(GroundedCandidate {
 		lesson: Lesson {
 			content: content.to_string(),
 			title,
@@ -1247,7 +1269,7 @@ fn parse_experience_tag(
 
 async fn verify_experience(
 	config: &Config,
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> bool {
 	experience_verdict(config, candidate, messages)
@@ -1264,7 +1286,7 @@ struct ExperienceVerdict {
 
 async fn experience_verdict(
 	config: &Config,
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> Option<ExperienceVerdict> {
 	let response = experience_verifier_response(config, candidate, messages)
@@ -1275,7 +1297,7 @@ async fn experience_verdict(
 
 async fn experience_verifier_response(
 	config: &Config,
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> Result<String> {
 	let cited = render_experience_evidence(candidate, messages)?;
@@ -1315,11 +1337,11 @@ fn parse_experience_verdict(response: &str) -> Option<ExperienceVerdict> {
 
 async fn repair_experience(
 	config: &Config,
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 	reconcile: &[Lesson],
 	issues: &[String],
-) -> Option<ExperienceCandidate> {
+) -> Option<GroundedCandidate> {
 	let response = repair_experience_response(config, candidate, messages, issues)
 		.await
 		.ok()?;
@@ -1340,7 +1362,7 @@ async fn repair_experience(
 
 async fn repair_experience_response(
 	config: &Config,
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 	issues: &[String],
 ) -> Result<String> {
@@ -1378,7 +1400,7 @@ async fn repair_experience_response(
 }
 
 fn render_experience_evidence(
-	candidate: &ExperienceCandidate,
+	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> Result<String> {
 	let mut cited = String::new();
@@ -1416,16 +1438,20 @@ fn word_overlap(new_content: &str, existing_content: &str) -> f64 {
 	overlap as f64 / new_words.len() as f64
 }
 
-/// Find the existing entry most similar to `new_content` above the 0.6 overlap
-/// threshold — the candidate to supersede. None if nothing is close.
+/// Orientation a re-observation restates closely enough to replace: the most
+/// similar existing entry whose word-set Jaccard similarity exceeds 0.6, or
+/// None. Symmetric on purpose — a short new fact contained in a richer record
+/// does not reach the bar, so it can never displace the fuller account.
 ///
 /// Orientation only. Lessons reconcile through the model's explicit
 /// `supersedes` id: word overlap cannot tell a refinement from a contradiction
 /// from a coincidence, and it must not decide a deletion on its own.
 fn best_overlap<'a>(new_content: &str, existing: &'a [Lesson]) -> Option<&'a Lesson> {
+	use super::retention::{jaccard, normalized_words};
+	let new_words = normalized_words(new_content);
 	existing
 		.iter()
-		.map(|l| (word_overlap(new_content, &l.content), l))
+		.map(|l| (jaccard(&new_words, &normalized_words(&l.content)), l))
 		.filter(|(s, _)| *s > 0.6)
 		.max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
 		.map(|(_, l)| l)

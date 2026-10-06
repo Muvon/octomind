@@ -293,6 +293,9 @@ fn parse_orientations(
 			source: "session-a",
 		},
 	)
+	.into_iter()
+	.map(|candidate| candidate.lesson)
+	.collect()
 }
 
 #[test]
@@ -317,6 +320,22 @@ Auth is delegated to octolib
 	assert_eq!(
 		lesson.evidence,
 		vec!["session://session-a/message/1".to_string()]
+	);
+	let transcript = build_transcript(&messages);
+	let candidates = parse_orientation_tags(
+		response,
+		&OrientationParseContext {
+			messages: &messages,
+			transcript: &transcript,
+			role: "developer",
+			project: "octomind",
+			source: "session-a",
+		},
+	);
+	assert_eq!(
+		candidates[0].message_numbers,
+		vec![1],
+		"the grounding verifier receives the cited message numbers"
 	);
 	assert!(!lesson.created.is_empty());
 }
@@ -453,12 +472,24 @@ fn best_overlap_picks_strongest_above_threshold() {
 	let best = best_overlap("alpha beta gamma", &existing).expect("overlap above threshold");
 	assert_eq!(best.content, "alpha beta gamma");
 
-	// Exactly 0.6 is below the strictly-greater threshold.
+	// Exactly 0.6 (3 shared of 5 distinct words) is below the strictly-greater
+	// threshold.
 	let boundary = vec![Lesson {
-		content: "a b c".into(),
+		content: "alpha beta gamma delta epsilon".into(),
 		..Default::default()
 	}];
-	assert!(best_overlap("a b c d e", &boundary).is_none());
+	assert!(best_overlap("alpha beta gamma", &boundary).is_none());
+}
+
+#[test]
+fn a_short_restatement_never_displaces_a_richer_orientation() {
+	// Every word of the new fact appears in the old record, which an asymmetric
+	// containment ratio scored 1.0 — enough to archive the fuller account.
+	let existing = vec![Lesson {
+		content: "Auth is delegated to octolib; tokens are cached per provider and refreshed on 401 responses".into(),
+		..Default::default()
+	}];
+	assert!(best_overlap("Auth is delegated to octolib", &existing).is_none());
 }
 
 // ---------------------------------------------------------------------------

@@ -864,8 +864,9 @@ async fn test_unfinished_progressing_handback_is_continued_until_budget() {
 	.await;
 }
 
-/// A `done` claim the verifier accepts: gate state resets, the trajectory is
-/// labelled verified, and exactly one agent exchange was billed.
+/// A `done` claim the verifier accepts: gate state resets and exactly one agent
+/// exchange was billed. Nothing was changed or checked, so the pass rests on
+/// the verifier's reading alone and learning labels the trajectory Unknown.
 #[tokio::test]
 async fn test_verify_gate_pass_accepts_claim_and_clears_gate_state() {
 	let _guard = ENV_LOCK.lock().await;
@@ -890,13 +891,74 @@ async fn test_verify_gate_pass_accepts_claim_and_clears_gate_state() {
 		assert!(!session.gate_failed);
 		assert!(matches!(
 			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Verified
+			crate::supervisor::learning::TrajectoryOutcome::Unknown
 		));
 		assert_eq!(session.gate_iterations, 0);
 		assert_eq!(session.nudge_iterations, 0);
 		// The verifier call is an out-of-band supervisor side-call: only the
 		// agent exchange lands in the session's own bookkeeping.
 		assert_eq!(session.session.info.total_api_calls, 1);
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// A pass on a turn that changed state and then ran a recognized check on the
+/// result is execution evidence: learning labels it Verified.
+#[tokio::test]
+async fn test_verify_gate_pass_with_a_recognized_check_labels_verified() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-gate-pass-executed".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![
+			done_response("Fixed the counter; the test suite passes."),
+			verifier_pass(),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let config = supervised_config();
+		let mut session = fake_session("fix the counter");
+		session.completion_gate_eligible = true;
+		let dir = tempfile::tempdir().expect("edit directory");
+		let path = dir.path().join("stats.rs");
+		std::fs::write(&path, "pub fn counter() -> u32 { 1 }").expect("write edit fixture");
+		let edit = serde_json::json!({"command": "str_replace", "path": path});
+		session
+			.evidence
+			.record("text_editor", &edit, true, false, 12);
+		// The edit round moved the tree; the next round ran a check on it.
+		session.detectors.note_round_verification(
+			Some(10),
+			Some(11),
+			false,
+			false,
+			true,
+			false,
+			true,
+		);
+		session.detectors.note_round_verification(
+			Some(11),
+			Some(11),
+			true,
+			false,
+			false,
+			false,
+			true,
+		);
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("gated turn passes");
+
+		assert!(!session.gate_failed);
+		assert!(matches!(
+			session.learning_outcome,
+			crate::supervisor::learning::TrajectoryOutcome::Verified
+		));
 
 		std::env::remove_var("OLLAMA_API_URL");
 		crate::session::context::cleanup_session(&sid);
@@ -996,7 +1058,7 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 		);
 		assert!(matches!(
 			session.learning_outcome,
-			crate::supervisor::learning::TrajectoryOutcome::Failed
+			crate::supervisor::learning::TrajectoryOutcome::Unknown
 		));
 		assert_eq!(session.gate_iterations, 1);
 		session
@@ -1085,9 +1147,11 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 				.expect("independent verification");
 
 			assert!(!session.gate_failed);
+			// The verifier passed, but no check was recognized after the change:
+			// a judge-only pass is not execution evidence for learning.
 			assert!(matches!(
 				session.learning_outcome,
-				crate::supervisor::learning::TrajectoryOutcome::Verified
+				crate::supervisor::learning::TrajectoryOutcome::Unknown
 			));
 			assert_eq!(session.nudge_iterations, 0);
 			assert_eq!(session.session.info.total_api_calls, 1, "no agent re-run");

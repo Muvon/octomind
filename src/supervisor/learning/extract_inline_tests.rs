@@ -977,6 +977,7 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 <orientation confidence="high" tags="auth" evidence="M1">The subject authenticates every API call with bearer tokens</orientation>"#;
 	let url = spawn_stub(vec![
 		final_response(response),
+		final_response(r#"{"supported":true,"issues":[]}"#),
 		final_response(r#"{"unsupported":[]}"#),
 	])
 	.await;
@@ -986,8 +987,9 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.evolution.enabled = false;
 
-	// No tool turn: the experience value gate stays closed, so exactly one
-	// extraction call and one verifier call hit the stub.
+	// No tool turn: the experience value gate stays closed, so the stub sees
+	// the extraction call, the orientation grounding verifier, then the
+	// lesson verifier.
 	let messages = vec![
 		message("user", "always use bearer tokens for every api call"),
 		message("assistant", "understood, bearer tokens everywhere"),
@@ -1469,6 +1471,7 @@ async fn an_orientation_stored_alongside_experience_links_to_it() {
 		final_response(response),
 		final_response(&experience_tag(&experience_body())),
 		final_response(r#"{"supported":true}"#),
+		final_response(r#"{"supported":true,"issues":[]}"#),
 	])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -1514,7 +1517,11 @@ async fn an_identical_orientation_is_not_stored_twice() {
 	let response = "<decision>NONE</decision>\n<orientation confidence=\"high\" evidence=\"M1\">The subject requires stable provider identity</orientation>";
 
 	for _ in 0..2 {
-		let url = spawn_stub(vec![final_response(response)]).await;
+		let url = spawn_stub(vec![
+			final_response(response),
+			final_response(r#"{"supported":true,"issues":[]}"#),
+		])
+		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		run_extraction(
 			&[message("user", "keep the provider identity stable")],
@@ -1539,7 +1546,7 @@ async fn an_identical_orientation_is_not_stored_twice() {
 }
 
 #[tokio::test]
-async fn a_refining_orientation_replaces_the_one_it_overlaps() {
+async fn a_refining_orientation_archives_the_one_it_restates() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
@@ -1553,7 +1560,11 @@ async fn a_refining_orientation_replaces_the_one_it_overlaps() {
 	let first = "<decision>NONE</decision>\n<orientation confidence=\"medium\" evidence=\"M1\">The subject requires stable provider identity across resumed requests</orientation>";
 	let refined = "<decision>NONE</decision>\n<orientation confidence=\"high\" evidence=\"M1\">The subject requires stable provider identity across resumed requests and forbids silent model fallback</orientation>";
 
-	let url = spawn_stub(vec![final_response(first)]).await;
+	let url = spawn_stub(vec![
+		final_response(first),
+		final_response(r#"{"supported":true,"issues":[]}"#),
+	])
+	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	run_extraction(
 		&messages,
@@ -1567,7 +1578,11 @@ async fn a_refining_orientation_replaces_the_one_it_overlaps() {
 	.expect("first extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
 
-	let url = spawn_stub(vec![final_response(refined)]).await;
+	let url = spawn_stub(vec![
+		final_response(refined),
+		final_response(r#"{"supported":true,"issues":[]}"#),
+	])
+	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	run_extraction(
 		&messages,
@@ -1586,10 +1601,61 @@ async fn a_refining_orientation_replaces_the_one_it_overlaps() {
 		.iter()
 		.filter(|m| m.memory_type == "orientation")
 		.collect();
-	assert_eq!(orientations.len(), 1, "the overlapping original is deleted");
+	assert_eq!(
+		orientations.len(),
+		1,
+		"the restated original leaves the hot store"
+	);
 	assert!(orientations[0]
 		.content
 		.contains("forbids silent model fallback"));
+	let cold = FileBackend::read_archived(&dir);
+	assert_eq!(
+		cold.len(),
+		1,
+		"the restated original is archived, not deleted"
+	);
+	assert!(!cold[0].content.contains("forbids silent model fallback"));
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_orientation_the_grounding_verifier_rejects_is_not_stored() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__orientation_reject_role";
+	let project = "__orientation_reject_project";
+	let dir = crate::directories::get_learning_dir(role, project).unwrap();
+	let _ = std::fs::remove_dir_all(&dir);
+
+	// The citation is real and eligible, but it does not say what the record
+	// claims: structure passes, the verifier refuses.
+	let response = "<decision>NONE</decision>\n<orientation confidence=\"high\" evidence=\"M1\">Deploys run on GitLab, not GitHub</orientation>";
+	let url = spawn_stub(vec![
+		final_response(response),
+		final_response(r#"{"supported":false,"issues":["M1 never mentions deployment"]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let stored = run_extraction(
+		&[message("user", "keep the provider identity stable")],
+		&learning_config(),
+		role,
+		project,
+		"orientation-reject-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(stored, 0);
+	assert!(FileBackend
+		.retrieve_all(role, project)
+		.await
+		.unwrap()
+		.is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 

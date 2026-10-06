@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{EvolutionRecord, GeneratedScript, REGISTRY_SCHEMA_VERSION};
+use super::{EvolutionRecord, EvolutionState, GeneratedScript, REGISTRY_SCHEMA_VERSION};
 use anyhow::{Context, Result};
 use octolib::utils::config_file;
 use serde::{Deserialize, Serialize};
@@ -52,8 +52,11 @@ fn load_from(path: &Path) -> Result<Registry> {
 		}
 		Err(error) => return Err(error.into()),
 	};
-	let registry: Registry = serde_json::from_str(&content)
+	let mut registry: Registry = serde_json::from_str(&content)
 		.with_context(|| format!("invalid evolution registry {}", path.display()))?;
+	if registry.schema_version == 1 {
+		revalidate_v1(&mut registry);
+	}
 	if registry.schema_version != REGISTRY_SCHEMA_VERSION {
 		anyhow::bail!(
 			"unsupported evolution registry schema {} (expected {})",
@@ -62,6 +65,30 @@ fn load_from(path: &Path) -> Result<Registry> {
 		);
 	}
 	Ok(registry)
+}
+
+/// Schema 1 promoted on a sequential three-sample comparison that admitted a
+/// behavior with no real effect about half the time. Every trial and active
+/// record returns to shadow with both arms cleared so the concurrent test
+/// re-validates it; terminal records keep their state and history. Applied on
+/// every load until the next write persists schema 2.
+fn revalidate_v1(registry: &mut Registry) {
+	for record in &mut registry.records {
+		if matches!(record.state, EvolutionState::Trial | EvolutionState::Active) {
+			record.state = EvolutionState::Shadow;
+			record.promoted = None;
+			record.measure = None;
+			record.clear_treatment_arm();
+			record.clear_control_arm();
+			append_history(
+				record,
+				"revalidate",
+				"promotion test replaced (registry schema 2); re-entering shadow",
+			);
+		}
+		record.schema_version = REGISTRY_SCHEMA_VERSION;
+	}
+	registry.schema_version = REGISTRY_SCHEMA_VERSION;
 }
 
 fn persist(path: &Path, registry: &Registry) -> Result<()> {

@@ -163,7 +163,9 @@ async fn short_rules_obey_hard_budget_without_synthetic_merge_or_deletion() {
 	let before = backend.retrieve_all("developer", "project").await.unwrap();
 	assert!(storage_tokens(&before) > SCOPED_LEARNING_HARD_TOKENS);
 
-	let report = maintain(&config, "developer", "project").await.unwrap();
+	let report = maintain(&config, "developer", "project", "maintenance-session")
+		.await
+		.unwrap();
 	assert_eq!(report.consolidated, 0);
 	assert!(report.archived > 0);
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
@@ -402,7 +404,9 @@ async fn orientation_overflow_consolidates_through_a_verified_model_merge() {
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
-	let report = maintain(&config, "developer", "project").await.unwrap();
+	let report = maintain(&config, "developer", "project", "maintenance-session")
+		.await
+		.unwrap();
 	assert_eq!(report.consolidated, 1);
 	assert_eq!(report.archived, 2);
 	let hot = backend.retrieve_global().await.unwrap();
@@ -452,7 +456,9 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
-	let report = maintain(&config, "developer", "project").await.unwrap();
+	let report = maintain(&config, "developer", "project", "maintenance-session")
+		.await
+		.unwrap();
 	assert_eq!(report.consolidated, 0);
 	assert!(report.archived > 0);
 	let hot = backend.retrieve_global().await.unwrap();
@@ -470,27 +476,49 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 	}
 }
 
-#[tokio::test]
-async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
-	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let _data = TestDataDir::new();
-	let backend = super::super::backend::file::FileBackend;
+const RECURRING_RULE: &str = "Leave all file changes unstaged; the user commits themselves";
+
+/// The same short rule stored in three projects; `fresh` names the session
+/// that restated it in octofs.
+async fn store_recurring_rule(backend: &super::super::backend::file::FileBackend, fresh: &str) {
 	let rule = |project: &str, day: u8, importance: f64, use_count: u64| {
-		let mut item = memory(
-			"Leave all file changes unstaged; the user commits themselves",
-			"learning",
-		);
+		let mut item = memory(RECURRING_RULE, "learning");
 		item.project = project.to_string();
 		item.scope = "scoped".to_string();
 		item.created = format!("2026-01-{day:02}T00:00:00Z");
 		item.importance = importance;
 		item.use_count = use_count;
+		item.source = format!("{project}-session");
 		item.evidence = vec![format!("session://{project}/message/1")];
 		item
 	};
 	backend.store(&rule("octomind", 1, 0.9, 4)).await.unwrap();
 	backend.store(&rule("octolib", 2, 0.6, 1)).await.unwrap();
-	backend.store(&rule("octofs", 3, 0.7, 2)).await.unwrap();
+	let mut restated = rule("octofs", 3, 0.7, 2);
+	restated.source = fresh.to_string();
+	backend.store(&restated).await.unwrap();
+}
+
+/// Point the supervisor model at a stub answering the user-wide review.
+async fn promotion_verdict(supported: bool) -> Config {
+	let url = crate::session::chat::test_support::spawn_stub(vec![
+		crate::session::chat::test_support::final_response(&format!(
+			r#"{{"supported":{supported},"issues":[]}}"#
+		)),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", url);
+	let mut config = crate::session::chat::test_support::fake_provider_config();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config
+}
+
+#[tokio::test]
+async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = super::super::backend::file::FileBackend;
+	store_recurring_rule(&backend, "fresh-session").await;
 	// Two projects only: stays scoped.
 	let mut pair = memory("Prefer tabs in TOML files", "learning");
 	pair.project = "octomind".to_string();
@@ -498,7 +526,11 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 	pair.project = "octolib".to_string();
 	backend.store(&pair).await.unwrap();
 
-	let promoted = promote_recurring(&backend).await.unwrap();
+	let config = promotion_verdict(true).await;
+	let promoted = promote_recurring(&backend, &config, "fresh-session")
+		.await
+		.unwrap();
+	std::env::remove_var("OLLAMA_API_URL");
 	assert_eq!(promoted, 1);
 
 	let global = backend.retrieve_global().await.unwrap();
@@ -525,5 +557,51 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 		);
 		assert_eq!(cold.len(), 1);
 	}
-	assert_eq!(promote_recurring(&backend).await.unwrap(), 0);
+	assert_eq!(
+		promote_recurring(&backend, &config, "fresh-session")
+			.await
+			.unwrap(),
+		0
+	);
+}
+
+#[tokio::test]
+async fn recurring_rule_the_verifier_declines_stays_scoped() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = super::super::backend::file::FileBackend;
+	store_recurring_rule(&backend, "fresh-session").await;
+
+	let config = promotion_verdict(false).await;
+	let promoted = promote_recurring(&backend, &config, "fresh-session")
+		.await
+		.unwrap();
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(promoted, 0);
+	assert!(backend.retrieve_global().await.unwrap().is_empty());
+	for project in ["octomind", "octolib", "octofs"] {
+		let hot = backend.retrieve_all("developer", project).await.unwrap();
+		assert_eq!(hot.len(), 1, "{project} keeps its scoped instance");
+		assert_eq!(hot[0].scope, "scoped");
+	}
+}
+
+#[tokio::test]
+async fn recurring_rule_is_reviewed_only_when_this_session_restated_it() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let backend = super::super::backend::file::FileBackend;
+	store_recurring_rule(&backend, "earlier-session").await;
+
+	// The verifier would approve, but no instance came from this extraction,
+	// so the cluster is not put up for review at all.
+	let config = promotion_verdict(true).await;
+	let promoted = promote_recurring(&backend, &config, "unrelated-session")
+		.await
+		.unwrap();
+	std::env::remove_var("OLLAMA_API_URL");
+
+	assert_eq!(promoted, 0);
+	assert!(backend.retrieve_global().await.unwrap().is_empty());
 }

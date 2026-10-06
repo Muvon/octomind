@@ -772,13 +772,36 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.gate_iterations = 0;
 				chat_session.nudge_iterations = 0;
 				chat_session.gate_failed = false;
-				chat_session.learning_outcome =
-					crate::supervisor::learning::TrajectoryOutcome::Verified;
+				// Learning's "verified" means execution evidence, not the judge's
+				// reading alone: the turn changed state and a command-shaped check
+				// succeeded on the result. A pass resting only on the verifier
+				// (a pure answer, a read-back clearance) stays Unknown and earns no
+				// correctness credit — LLM judges accept confident false-success
+				// claims, and this label steers memory credit, experience records,
+				// and evolution samples.
+				let execution_verified = !chat_session.evidence.mutated_paths().is_empty()
+					&& !chat_session
+						.detectors
+						.needs_verification(crate::supervisor::workdir::fingerprint())
+					&& !chat_session.detectors.cleared_by_readback_only();
+				chat_session.learning_outcome = if execution_verified {
+					crate::supervisor::learning::TrajectoryOutcome::Verified
+				} else {
+					crate::supervisor::learning::TrajectoryOutcome::Unknown
+				};
 				chat_session.last_gate_gaps.clear();
 				crate::supervisor::stats::gate_pass();
-				crate::log_debug!("Verify-gate: PASS");
+				crate::log_debug!(
+					"Verify-gate: PASS (execution_verified={})",
+					execution_verified
+				);
 				crate::supervisor::notify("completion verified");
-				reinforce_recalled(chat_session, config, 0.05).await;
+				reinforce_recalled(
+					chat_session,
+					config,
+					if execution_verified { 0.05 } else { 0.0 },
+				)
+				.await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
@@ -857,10 +880,11 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.pending_plan_signal = None;
 				// A verdict the verifier could not produce is not verified work: the
 				// trajectory stays labelled unverified whatever the re-entry below
-				// does, and only a later PASS clears the label.
+				// does, and only a later PASS clears the label. Nor is it evidence of
+				// failure: learning records it as Unknown, never as a proven failure.
 				chat_session.gate_failed = true;
 				chat_session.learning_outcome =
-					crate::supervisor::learning::TrajectoryOutcome::Failed;
+					crate::supervisor::learning::TrajectoryOutcome::Unknown;
 				chat_session.gate_iterations += 1;
 				crate::log_debug!(
 					"Verify-gate: indeterminate: {} (iter {})",
@@ -892,7 +916,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; completion unverified");
 				crate::supervisor::notify(&format!("completion could not be verified: {reason}"));
-				reinforce_recalled(chat_session, config, -0.05).await;
+				// No verdict means no correctness credit either way; recorded use
+				// still counts for retention.
+				reinforce_recalled(chat_session, config, 0.0).await;
 			}
 		}
 	}

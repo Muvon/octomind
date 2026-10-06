@@ -150,6 +150,8 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 				}
 				record.explicit_authorization = true;
 				record.state = EvolutionState::Trial;
+				// The trial compares against concurrent control sessions only.
+				record.clear_control_arm();
 				record.history.push(HistoryEvent {
 					at: chrono::Utc::now().to_rfc3339(),
 					event: "approved".to_string(),
@@ -180,10 +182,7 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 				}
 				record.state = EvolutionState::Shadow;
 				record.shadow_matches = 0;
-				record.successes = 0;
-				record.failures = 0;
-				record.treatment_calls = 0;
-				record.treatment_score = 0.0;
+				record.clear_treatment_arm();
 				record.history.push(HistoryEvent {
 					at: chrono::Utc::now().to_rfc3339(),
 					event: "rollback".to_string(),

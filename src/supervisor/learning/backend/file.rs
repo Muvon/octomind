@@ -656,7 +656,14 @@ impl FileBackend {
 			if entry.importance > PRUNE_THRESHOLD {
 				continue; // proven useful — keep regardless of age
 			}
-			let stale = chrono::DateTime::parse_from_rfc3339(&entry.created)
+			// Age counts from the last material use: a weak record the specialist
+			// still relies on is not stale, whatever its creation date.
+			let anchor = if entry.last_used.is_empty() {
+				&entry.created
+			} else {
+				&entry.last_used
+			};
+			let stale = chrono::DateTime::parse_from_rfc3339(anchor)
 				.map(|c| (now - c.with_timezone(&chrono::Utc)).num_seconds() > cutoff_secs)
 				.unwrap_or(false);
 			if stale && super::super::retention::archive_record(&entry).is_ok() {

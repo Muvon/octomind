@@ -18,6 +18,7 @@ use super::{
 };
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -89,7 +90,7 @@ pub fn init_for_session(role: &str) {
 				record.name.clone(),
 				SkillBinding {
 					id: record.id.clone(),
-					shadow: record.state == EvolutionState::Shadow,
+					shadow: !applied_in_session(record, &session_id),
 					path,
 				},
 			);
@@ -116,7 +117,7 @@ pub fn init_for_session(role: &str) {
 			.or_default();
 	}
 
-	match generated_guardrails(&matching) {
+	match generated_guardrails(&matching, &session_id) {
 		Ok(generated) => {
 			crate::session::guardrails::merge_generated_for_session(&session_id, generated)
 		}
@@ -191,6 +192,33 @@ pub fn skill_binding(name: &str) -> Option<SkillBinding> {
 		.cloned()
 }
 
+/// Whether an artifact's behavior applies in this session. Active artifacts
+/// always apply; a trial randomizes each session into treatment or control so
+/// both arms run concurrently on the same population; everything else is
+/// shadow.
+fn applied_in_session(record: &EvolutionRecord, session_id: &str) -> bool {
+	match record.state {
+		EvolutionState::Active => true,
+		EvolutionState::Trial => treatment_arm(&record.id, session_id),
+		_ => false,
+	}
+}
+
+/// Stable 50/50 assignment of a session to one trial arm: every lookup within
+/// the session agrees, and assignments are independent across artifacts.
+pub(super) fn treatment_arm(id: &str, session_id: &str) -> bool {
+	let mut hasher = DefaultHasher::new();
+	id.hash(&mut hasher);
+	session_id.hash(&mut hasher);
+	hasher.finish().is_multiple_of(2)
+}
+
+/// States whose trigger matches feed the control arm: a shadow, or a trial in
+/// a session randomized to control.
+fn observes_control(state: EvolutionState) -> bool {
+	matches!(state, EvolutionState::Shadow | EvolutionState::Trial)
+}
+
 /// Snapshots never enable newly promoted behavior mid-task, but a durable
 /// downgrade must take effect immediately. A compiled shadow stays shadow;
 /// compiled trial/active behavior is suppressed when the registry has since
@@ -205,10 +233,10 @@ pub fn binding_is_shadow(id: &str, compiled_shadow: bool) -> bool {
 
 pub fn generated_guardrails(
 	records: &[EvolutionRecord],
+	session_id: &str,
 ) -> Result<crate::config::guardrails::Guardrails> {
 	let mut output = crate::config::guardrails::Guardrails::default();
-	let user_has_pipe = crate::session::context::current_session_id()
-		.and_then(|id| crate::session::guardrails::get_rules(&id))
+	let user_has_pipe = crate::session::guardrails::get_rules(&session_id.to_string())
 		.is_some_and(|rules| !rules.pipes.is_empty());
 	for record in records
 		.iter()
@@ -250,22 +278,24 @@ pub fn generated_guardrails(
 				continue;
 			}
 		};
-		output.append_generated(parsed, &record.id, record.state == EvolutionState::Shadow);
+		output.append_generated(parsed, &record.id, !applied_in_session(record, session_id));
 	}
 	Ok(output)
 }
 
+/// The native runtime saw a shadow binding's trigger match: a shadow record, or
+/// a trial in a session randomized to its control arm.
 pub fn mark_shadow_match(id: &str) {
 	let Some(kind) = super::registry::get_record(id)
 		.ok()
 		.flatten()
-		.filter(|record| record.state == EvolutionState::Shadow)
+		.filter(|record| observes_control(record.state))
 		.map(|record| record.kind)
 	else {
 		return;
 	};
 	let update = super::registry::mutate_record(id, |record| {
-		if record.state != EvolutionState::Shadow {
+		if !observes_control(record.state) {
 			return Ok(());
 		}
 		record.shadow_matches = record.shadow_matches.saturating_add(1);
@@ -314,25 +344,60 @@ pub fn mark_behavior_used(session_id: &str, id: &str) {
 		.insert(id.to_string());
 }
 
-/// Laplace-smoothed pass rate of one arm: a few samples stay near 0.5
-/// instead of jumping to 0 or 1, so small samples cannot manufacture a large
-/// gap. `successes + failures` counts samples under either measure; the hits
-/// are the verdict passes or the summed graded outcome.
-fn pass_rate(measure: Option<Measure>, successes: u32, failures: u32, score: f64) -> f64 {
+/// Posterior distance a trial must clear to decide. Arms are compared after
+/// every treatment sample, so the bar sits above the single-look 1.96: with
+/// the template's `min_samples` (10) and `max_trial_uses` (40), a behavior
+/// with no real effect is promoted in under 5% of trials at base pass rates
+/// from 0.5 to 0.95 (see `no_effect_behavior_rarely_promotes`).
+pub(crate) const DECISION_Z: f64 = 2.5;
+
+/// Beta(1,1) posterior mean and variance of one arm's pass rate. The mean is
+/// the Laplace-smoothed rate; the variance keeps a few samples from
+/// manufacturing a decision. `successes + failures` counts samples under
+/// either measure; the hits are the verdict passes or the summed graded outcome.
+fn posterior(measure: Option<Measure>, successes: u32, failures: u32, score: f64) -> (f64, f64) {
 	let hits = match measure {
 		Some(Measure::Graded) => score,
 		_ => successes as f64,
 	};
-	(hits + 1.0) / ((successes + failures) as f64 + 2.0)
+	let alpha = hits + 1.0;
+	let beta = (successes + failures) as f64 - hits + 1.0;
+	let total = alpha + beta;
+	(
+		alpha / total,
+		alpha * beta / (total * total * (total + 1.0)),
+	)
 }
 
-/// Treatment measured against the shadow control of the same artifact.
+/// Mean and sample variance of ln(API calls) over `samples` turns. One sample
+/// has no variance estimate, so it reads as infinitely uncertain.
+fn log_call_moments(sum: f64, sum_sq: f64, samples: u32) -> (f64, f64) {
+	let n = samples as f64;
+	let mean = sum / n;
+	if samples < 2 {
+		return (mean, f64::INFINITY);
+	}
+	(mean, ((sum_sq - n * mean * mean) / (n - 1.0)).max(0.0))
+}
+
+/// Accumulate one turn's API calls into an arm's log-call moments.
+fn add_log_calls(sum: &mut f64, sum_sq: &mut f64, calls: u32) {
+	let log_calls = f64::from(calls.max(1)).ln();
+	*sum += log_calls;
+	*sum_sq += log_calls * log_calls;
+}
+
+/// Treatment measured against the concurrent control of the same artifact.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Evidence {
-	/// Treatment pass rate minus control pass rate.
+	/// Treatment posterior mean pass rate minus the control's.
 	pub gain: f64,
-	/// Relative change in API calls per verdict-bearing turn.
+	/// Posterior standard deviation of `gain`.
+	pub spread: f64,
+	/// Relative change in mean API calls per verdict-bearing turn.
 	pub cost: f64,
+	/// Welch z that treatment needs fewer API calls, on ln(calls) per turn.
+	pub saving_z: f64,
 }
 
 /// `None` until both arms hold `min_samples` verdicts.
@@ -346,33 +411,62 @@ pub(crate) fn evidence(record: &EvolutionRecord, policy: &EvolutionConfig) -> Op
 	// A turn costs at least one call; flooring the baseline keeps the ratio finite.
 	let control_calls = (record.control_calls as f64 / control as f64).max(1.0);
 	let treatment_calls = record.treatment_calls as f64 / treated as f64;
+	let (treated_rate, treated_var) = posterior(
+		record.measure,
+		record.successes,
+		record.failures,
+		record.treatment_score,
+	);
+	let (control_rate, control_var) = posterior(
+		record.measure,
+		record.control_successes,
+		record.control_failures,
+		record.control_score,
+	);
+	let (treated_log, treated_log_var) = log_call_moments(
+		record.treatment_log_calls,
+		record.treatment_log_calls_sq,
+		treated,
+	);
+	let (control_log, control_log_var) = log_call_moments(
+		record.control_log_calls,
+		record.control_log_calls_sq,
+		control,
+	);
+	let log_se = (treated_log_var / treated as f64 + control_log_var / control as f64).sqrt();
 	Some(Evidence {
-		gain: pass_rate(
-			record.measure,
-			record.successes,
-			record.failures,
-			record.treatment_score,
-		) - pass_rate(
-			record.measure,
-			record.control_successes,
-			record.control_failures,
-			record.control_score,
-		),
+		gain: treated_rate - control_rate,
+		spread: (treated_var + control_var).sqrt(),
 		cost: (treatment_calls - control_calls) / control_calls,
+		saving_z: if log_se > 0.0 && log_se.is_finite() {
+			(control_log - treated_log) / log_se
+		} else {
+			0.0
+		},
 	})
 }
 
-/// Admission clears the noise band at a cost the gain pays for, or holds the
-/// pass rate within noise while measurably cutting cost.
+/// Promotion: a gain beyond the noise margin and beyond `DECISION_Z`
+/// posterior deviations, at a cost the gain pays for; or a pass rate held
+/// within the margin at the same confidence while API calls drop by more
+/// than `cost_allowance`, significantly.
 pub(crate) fn admits(evidence: Evidence, policy: &EvolutionConfig) -> bool {
-	(evidence.gain > policy.noise_margin
-		&& evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
-		|| (evidence.gain >= -policy.noise_margin && evidence.cost < -policy.cost_allowance)
+	let pays = evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain;
+	(evidence.gain > policy.noise_margin && evidence.gain >= DECISION_Z * evidence.spread && pays)
+		|| (evidence.gain + policy.noise_margin >= DECISION_Z * evidence.spread
+			&& evidence.cost < -policy.cost_allowance
+			&& evidence.saving_z >= DECISION_Z)
 }
 
-/// Retention is admission with the margin relaxed to zero: once active, an
-/// artifact stays while it still beats its control at all, so one unlucky
-/// verdict near the promotion edge does not flap it out.
+/// A trial regresses once its pass rate is below the control's by more than
+/// `DECISION_Z` posterior deviations.
+pub(crate) fn regresses(evidence: Evidence) -> bool {
+	evidence.gain <= -DECISION_Z * evidence.spread
+}
+
+/// Retention is admission with the confidence and margin relaxed to zero:
+/// once active, an artifact stays while it still beats its control at all, so
+/// one unlucky verdict near the promotion edge does not flap it out.
 pub(crate) fn sustains(evidence: Evidence, policy: &EvolutionConfig) -> bool {
 	(evidence.gain > 0.0
 		&& evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
@@ -381,8 +475,9 @@ pub(crate) fn sustains(evidence: Evidence, policy: &EvolutionConfig) -> bool {
 
 fn describe(evidence: Evidence) -> String {
 	format!(
-		"pass rate {:+.2} vs shadow control, API calls {:+.0}%",
+		"pass rate {:+.2} ± {:.2} vs concurrent control, API calls {:+.0}%",
 		evidence.gain,
+		evidence.spread,
 		evidence.cost * 100.0
 	)
 }
@@ -496,8 +591,9 @@ async fn grade_turn(
 }
 
 /// Credit one turn to the artifacts touched since the last one: used live
-/// artifacts are the treatment arm, matched shadow artifacts the control arm,
-/// and exposed evolved skills join their arm on every verdict turn.
+/// artifacts are the treatment arm, matched shadow artifacts (and trials in
+/// sessions randomized to control) the control arm, and exposed evolved skills
+/// join their arm on every verdict turn.
 pub async fn reinforce_session(
 	session_id: &str,
 	turn: &TurnVerdict<'_>,
@@ -576,6 +672,11 @@ pub async fn reinforce_session(
 					record.treatment_score += score;
 					record.treatment_calls =
 						record.treatment_calls.saturating_add(turn.api_calls as u64);
+					add_log_calls(
+						&mut record.treatment_log_calls,
+						&mut record.treatment_log_calls_sq,
+						turn.api_calls,
+					);
 					super::registry::append_history(
 						record,
 						if passed { "success" } else { "failure" },
@@ -594,7 +695,7 @@ pub async fn reinforce_session(
 						record.promoted = Some(chrono::Utc::now().to_rfc3339());
 						super::registry::append_history(record, "promoted", describe(evidence));
 					}
-					Some(evidence) if evidence.gain < -policy.noise_margin => {
+					Some(evidence) if regresses(evidence) => {
 						record.state = EvolutionState::Retired;
 						record.retired = Some(chrono::Utc::now().to_rfc3339());
 						super::registry::append_history(record, "regressed", describe(evidence));
@@ -650,10 +751,13 @@ pub async fn reinforce_session(
 	}
 }
 
-/// Record one control sample per matched shadow artifact. Once the baseline
-/// holds `min_samples` samples the artifact opens its live trial — unless
-/// another trial already runs in an overlapping scope, because two trials in
-/// one session share every verdict and neither could be credited.
+/// Record one control sample per artifact observed without its behavior: a
+/// shadow, or a trial in a session randomized to control. Once a shadow holds
+/// `min_samples` samples it opens its live trial — unless another trial
+/// already runs in an overlapping scope, because two trials in one session
+/// share every verdict and neither could be credited. Opening a trial clears
+/// the control arm: the comparison uses concurrent control samples only, so a
+/// drifting model, project, or task mix cannot pass for an effect.
 fn record_control(
 	shadowed: HashSet<String>,
 	passed: bool,
@@ -682,7 +786,7 @@ fn record_control(
 	for id in shadowed {
 		let mut opened = false;
 		let result = super::registry::mutate_record(&id, |record| {
-			if record.state != EvolutionState::Shadow {
+			if !observes_control(record.state) {
 				return Ok(());
 			}
 			let Some(score) = sample_score(record, passed, seam_on, grade) else {
@@ -695,8 +799,14 @@ fn record_control(
 			}
 			record.control_score += score;
 			record.control_calls = record.control_calls.saturating_add(turn_calls as u64);
+			add_log_calls(
+				&mut record.control_log_calls,
+				&mut record.control_log_calls_sq,
+				turn_calls,
+			);
 			let control = record.control_successes + record.control_failures;
-			if control >= policy.min_samples
+			if record.state == EvolutionState::Shadow
+				&& control >= policy.min_samples
 				&& (record.effect != EffectClass::Effectful || record.explicit_authorization)
 				&& !open_trials
 					.iter()
@@ -704,20 +814,21 @@ fn record_control(
 			{
 				record.state = EvolutionState::Trial;
 				opened = true;
+				let (rate, _) = posterior(
+					record.measure,
+					record.control_successes,
+					record.control_failures,
+					record.control_score,
+				);
 				super::registry::append_history(
 					record,
 					"trial",
 					format!(
-						"shadow control baseline: {} samples, pass rate {:.2}",
-						control,
-						pass_rate(
-							record.measure,
-							record.control_successes,
-							record.control_failures,
-							record.control_score,
-						)
+						"shadow screen: {} samples, pass rate {:.2}; control restarts concurrently",
+						control, rate
 					),
 				);
+				record.clear_control_arm();
 			}
 			Ok(())
 		});

@@ -940,9 +940,9 @@ enabled = true
 
 	assert_eq!(migration.from_version, 17);
 	assert_eq!(evolution["enabled"].as_bool(), Some(true));
-	assert_eq!(evolution["min_samples"].as_integer(), Some(3));
+	assert_eq!(evolution["min_samples"].as_integer(), Some(10));
 	assert_eq!(evolution["noise_margin"].as_float(), Some(0.15));
-	assert_eq!(evolution["max_trial_uses"].as_integer(), Some(8));
+	assert_eq!(evolution["max_trial_uses"].as_integer(), Some(40));
 }
 
 #[test]

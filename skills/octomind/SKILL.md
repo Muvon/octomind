@@ -1,25 +1,11 @@
 ---
 name: octomind
-description: Delegate coding to the Octomind CLI — a token-efficient, model-agnostic coding agent (features, fixes, reviews, long-running work).
-version: 1.0.0
-author: Muvon
+description: Delegate coding to the Octomind CLI — a token-efficient, model-agnostic coding agent. Use when the user asks to use Octomind, or to hand off features, fixes, refactors, reviews, or long-running coding work to an external agent.
 license: Apache-2.0
-platforms:
-  - linux
-  - macos
-  - windows
+compatibility: Requires the octomind CLI (Linux, macOS, Windows) and model access via `octomind login` or a provider API key
 metadata:
-  hermes:
-    tags:
-      - Coding-Agent
-      - Octomind
-      - Autonomous
-      - Refactoring
-      - Code-Review
-    related_skills:
-      - claude-code
-      - codex
-      - opencode
+  author: Muvon
+  version: "1.0.0"
 ---
 
 # Octomind CLI
@@ -98,7 +84,7 @@ terminal(command="echo 'Continue with the remaining tests' | octomind run develo
 
 | Flag | Use |
 |------|-----|
-| `run <tag>` | Start the specialist (`developer:general` for coding) |
+| `run <tag>` | Start a specialist: `developer:general` for coding; other `domain:spec` tags come from Octomind's tap registry |
 | `--format plain` / `--format jsonl` | Non-interactive output for piped input |
 | `--name <name>` / `-n` | Create or resume a named session |
 | `--resume-recent` | Resume the latest session in this directory |
@@ -106,6 +92,9 @@ terminal(command="echo 'Continue with the remaining tests' | octomind run develo
 | `--daemon` | Keep the session alive for `octomind send` |
 | `--sandbox` | Limit filesystem writes to the working directory |
 | `--schema <file>` | Constrain output to a JSON Schema (model must support structured output) |
+
+Hosts that speak the Agent Client Protocol (ACP) can run the same specialist as a sub-agent over stdio:
+`octomind acp developer:general`.
 
 ## Procedure
 
@@ -132,6 +121,8 @@ process(action="list")
 - The first run of a specialist fetches its tap and installs tool dependencies, so it is slower than later runs.
 - A missing `OCTOHUB_API_KEY` with the default `octohub:auto` model means `octomind login` was not run.
 - Avoid sharing one working directory across parallel Octomind sessions.
+- Run inside the project's git repository: the code-search server `octocode` refuses to start outside one, leaving
+  the agent without semantic search.
 
 ## Verification
 

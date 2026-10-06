@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.56.0] - 2026-10-06
+
+### 📋 Release Summary
+
+The CLI now includes an Octomind skill, supports hosted Octohub and ChatGPT account login, and adds hindsight turn scoring. Learning now captures lessons from successful auto-compaction and completed one-shot sessions, with tighter evolution and verification; ACP authentication is deferred until model prompts, and failed hindsight model loads are retried.
+
+### ✨ New Features & Enhancements
+
+- **octomind**: add Octomind CLI skill `1c9c75cb`
+- **acp**: support hosted Octohub login `e3123182`
+- **login**: support ChatGPT account login `062f1eed`
+- **supervisor**: add hindsight turn scoring `259f4bed`
+
+### 🔧 Improvements & Optimizations
+
+- **ci**: cache ORT prebuilt dependencies `580bc833`
+- **toolchain**: upgrade CI toolchain to Rust 1.99.0 `dbcf5de1`
+- **reedline**: upgrade reedline to 0.52 `222ad50f`
+- **metadata**: refresh docs URL, platforms, and providers `ecda3511`
+- **websocket**: use platform-valid absolute paths in tests `22aa3fa5`
+
+### 🐛 Bug Fixes & Stability
+
+- **learning**: learn from every successful auto-compaction `78079a30`
+- **session**: extract lessons when one-shot sessions finish `bed4eebe`
+- **learning**: tighten learning evolution and verification `b53683b3`
+- **acp**: defer authentication until model prompts `32d5c86a`
+- **hindsight**: retry failed model loads `2444a3f1`
+
+### 📚 Documentation & Examples
+
+- **octomind**: clarify Octomind CLI usage `1eae6925`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.55.2] - 2026-09-30
 
 ### 📋 Release Summary

@@ -41,6 +41,9 @@ pub const DEFAULT_API_URL: &str = "https://api.octomind.run";
 pub const PANEL_URL_ENV: &str = "OCTOMIND_PANEL_URL";
 /// Model-gateway credential, read by octolib's octohub provider.
 pub const HUB_KEY_ENV: &str = "OCTOHUB_API_KEY";
+/// Self-hosted gateway base URL, read by octolib's octohub provider. Such a hub
+/// may run without auth, so it never needs an Octomind login.
+pub const HUB_URL_ENV: &str = "OCTOHUB_API_URL";
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -49,6 +52,17 @@ pub fn api_url() -> String {
 		.unwrap_or_else(|_| DEFAULT_API_URL.to_string())
 		.trim_end_matches('/')
 		.to_string()
+}
+
+/// Whether `model` would reach the hosted octohub gateway with no key to
+/// present — the one state `octomind login` fixes. An unparsable model is left
+/// to session setup, which rejects it with its own error.
+pub fn login_required(model: &str) -> bool {
+	let routes_to_hub = crate::providers::ProviderFactory::parse_model(model)
+		.is_ok_and(|(provider, _)| provider.eq_ignore_ascii_case("octohub"));
+	routes_to_hub
+		&& std::env::var_os(HUB_URL_ENV).is_none()
+		&& !std::env::var(HUB_KEY_ENV).is_ok_and(|k| !k.trim().is_empty())
 }
 
 /// The stored panel session. Sits next to the config, mode 0600 — it is a live

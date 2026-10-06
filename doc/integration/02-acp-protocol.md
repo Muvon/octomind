@@ -92,7 +92,10 @@ Each step is labelled with who acts — **(host)** = the editor/parent client, *
 2. **(host → agent)** `initialize`: host sends its capabilities; agent responds with `ProtocolVersion::LATEST`, its
   capabilities, agent identity, and an `octomind.dev` extension marker (see [Agent Capabilities](#agent-capabilities)).
 
-3. **(host → agent)** `authenticate`: optional and a no-op. Provider credentials still come from the agent
+3. **(host → agent)** `authenticate`: needed only when session creation fails with `auth_required` (`-32000`), which
+  happens when the session model is `octohub:*`, `OCTOHUB_API_KEY` is unset, and `OCTOHUB_API_URL` does not point at a
+  self-hosted hub. `initialize` advertises one method, `octomind-login`; `authenticate` with it opens the browser for the
+  `octomind login` device flow and returns once the code is confirmed. Other providers take credentials from the agent
   environment/config.
 
 4. **(host → agent)** Session creation: `session/new` starts a fresh session; `session/load` resumes a specific session

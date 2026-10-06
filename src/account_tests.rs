@@ -679,3 +679,37 @@ fn finish_login_writes_the_env_file_and_the_session() {
 	assert_eq!(s.jwt, "jwt-final");
 	assert_eq!(s.refresh_token, "r-final");
 }
+
+#[test]
+#[serial]
+fn login_required_only_for_the_hosted_hub_without_a_key() {
+	let _env = EnvGuard::new(&[HUB_KEY_ENV, HUB_URL_ENV]);
+	std::env::remove_var(HUB_KEY_ENV);
+	std::env::remove_var(HUB_URL_ENV);
+
+	assert!(login_required("octohub:auto"));
+	assert!(
+		login_required("OctoHub:auto"),
+		"provider match is case-insensitive"
+	);
+	assert!(
+		!login_required("ollama:fake-model"),
+		"other providers bring their own keys"
+	);
+	assert!(
+		!login_required("octohub"),
+		"an unparsable model is session setup's to reject"
+	);
+
+	std::env::set_var(HUB_KEY_ENV, "   ");
+	assert!(login_required("octohub:auto"), "a blank key is no key");
+	std::env::set_var(HUB_KEY_ENV, "hk-live");
+	assert!(!login_required("octohub:auto"));
+
+	std::env::remove_var(HUB_KEY_ENV);
+	std::env::set_var(HUB_URL_ENV, "http://localhost:8080");
+	assert!(
+		!login_required("octohub:auto"),
+		"a self-hosted hub may run without auth"
+	);
+}

@@ -288,6 +288,7 @@ These attribution headers control how OpenRouter identifies and ranks the app.
 |----------|---------|-------------|
 | `OPENROUTER_APP_TITLE` | `"Octomind"` | Application title sent to OpenRouter |
 | `OPENROUTER_HTTP_REFERER` | `"https://octomind.run"` | HTTP referer sent to OpenRouter |
+| `OPENROUTER_APP_CATEGORIES` | `"cli-agent"` | Comma-separated OpenRouter app categories (`X-OpenRouter-Categories`) |
 
 You normally do not set these yourself: Octomind auto-sets them to the listed defaults at startup (during the `.env`
 load step, which runs unconditionally even when no `.env` file is present) **only if they are not already defined**.

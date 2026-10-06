@@ -20,14 +20,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use agent_client_protocol::schema::v1::{
-	AgentCapabilities, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
-	AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, CancelNotification,
-	ClientRequest, ContentBlock, ContentChunk, EmbeddedResourceResource, ExtRequest, ExtResponse,
-	Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
-	McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse, PromptCapabilities,
-	PromptRequest, PromptResponse, SessionInfoUpdate, SessionNotification, SessionUpdate,
-	StopReason, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-	UnstructuredCommandInput,
+	AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse,
+	AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents,
+	CancelNotification, ClientRequest, ContentBlock, ContentChunk, EmbeddedResourceResource,
+	ExtRequest, ExtResponse, Implementation, InitializeRequest, InitializeResponse,
+	LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest,
+	NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionInfoUpdate,
+	SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
+	ToolCallUpdateFields, UnstructuredCommandInput,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo, Responder};
@@ -44,6 +44,10 @@ use crate::session::chat::session::{
 use crate::session::output::{OutputMode, WebSocketSink};
 use crate::websocket::ServerMessage;
 use crate::{log_debug, log_error, log_info};
+
+/// The one auth method we advertise: the `octomind login` device flow, driven
+/// from `authenticate` because stdout carries JSON-RPC, not a terminal.
+const LOGIN_AUTH_METHOD: &str = "octomind-login";
 
 /// ACP agent implementation wrapping Octomind's session infrastructure.
 ///
@@ -208,6 +212,21 @@ impl OctomindAgent {
 			hooks: self.hooks.clone(),
 			..Default::default()
 		}
+	}
+
+	/// `auth_required` when sessions would reach the hosted gateway without a key,
+	/// so the client offers [`LOGIN_AUTH_METHOD`] instead of the first prompt failing.
+	fn ensure_signed_in(&self, config: &Config) -> agent_client_protocol::Result<()> {
+		let model = self
+			.model
+			.clone()
+			.unwrap_or_else(|| config.get_model_profile_for_role(&self.role).model);
+		if crate::account::login_required(&model) {
+			return Err(agent_client_protocol::Error::auth_required().data(format!(
+				"{model} needs an Octomind sign-in, or configure your own provider keys"
+			)));
+		}
+		Ok(())
 	}
 }
 
@@ -648,14 +667,43 @@ impl OctomindAgent {
 					)
 					.meta(meta),
 			)
-			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")));
+			.agent_info(Implementation::new("octomind", env!("CARGO_PKG_VERSION")))
+			.auth_methods(vec![AuthMethod::Agent(
+				AuthMethodAgent::new(LOGIN_AUTH_METHOD, "Sign in to Octomind").description(
+					"Confirm a one-time code in your browser. Not needed with your own provider keys."
+						.to_string(),
+				),
+			)]);
 		Ok(response)
 	}
 
 	async fn authenticate(
 		&self,
-		_args: AuthenticateRequest,
+		args: AuthenticateRequest,
 	) -> agent_client_protocol::Result<AuthenticateResponse> {
+		if &*args.method_id.0 != LOGIN_AUTH_METHOD {
+			return Err(agent_client_protocol::Error::invalid_params()
+				.data(format!("unknown auth method: {}", args.method_id)));
+		}
+		let start = crate::account::start_login()
+			.await
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+		// The confirm URL carries the code, so the browser is the whole UI here.
+		let confirm_url = crate::account::panel_url(&start.verification_url_complete);
+		open::that(&confirm_url).map_err(|e| {
+			agent_client_protocol::Error::internal_error().data(format!(
+				"could not open a browser ({e}); run `octomind login` in a terminal instead"
+			))
+		})?;
+		let claim = crate::account::poll_login(
+			&start.device_code,
+			std::time::Duration::from_secs(start.interval),
+		)
+		.await
+		.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+		crate::account::finish_login(&claim)
+			.map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))?;
+		log_info!("ACP: signed in to Octomind, key {}", claim.key_name);
 		Ok(AuthenticateResponse::default())
 	}
 
@@ -663,6 +711,7 @@ impl OctomindAgent {
 		&self,
 		args: NewSessionRequest,
 	) -> agent_client_protocol::Result<NewSessionResponse> {
+		self.ensure_signed_in(&self.config.borrow())?;
 		// Set per-session working directory via thread-local (safe: single-threaded LocalSet)
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();
@@ -1455,6 +1504,7 @@ impl OctomindAgent {
 		let session_id = args.session_id.to_string();
 		log_debug!("ACP: load_session requested: {}", session_id);
 
+		self.ensure_signed_in(&self.config.borrow())?;
 		// Set per-session working directory via thread-local
 		crate::mcp::set_session_working_directory(args.cwd.clone());
 		let session_cwd = args.cwd.clone();

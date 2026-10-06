@@ -86,6 +86,10 @@ impl EnvTracker {
 			std::env::set_var("OPENROUTER_HTTP_REFERER", "https://octomind.run");
 		}
 
+		if std::env::var("OPENROUTER_APP_CATEGORIES").is_err() {
+			std::env::set_var("OPENROUTER_APP_CATEGORIES", "cli-agent");
+		}
+
 		Ok(())
 	}
 

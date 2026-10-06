@@ -559,16 +559,82 @@ async fn initialize_advertises_agent_info_and_capabilities() {
 		response.agent_capabilities.load_session,
 		"load_session is supported"
 	);
+	// The ACP registry lists only agents that advertise an agent or terminal method.
+	assert!(
+		matches!(
+			response.auth_methods.as_slice(),
+			[AuthMethod::Agent(method)] if &*method.id.0 == LOGIN_AUTH_METHOD
+		),
+		"got: {:?}",
+		response.auth_methods
+	);
 }
 
 #[tokio::test]
-async fn authenticate_returns_the_default_response() {
+async fn authenticate_rejects_an_unknown_method() {
 	let agent = agent_with(Default::default());
-	let response = agent
+	let err = agent
 		.authenticate(AuthenticateRequest::new("local"))
 		.await
-		.expect("local auth needs no interaction");
-	assert_eq!(response, AuthenticateResponse::default());
+		.expect_err("only the advertised method is accepted");
+	assert!(
+		err.code == agent_client_protocol::Error::invalid_params().code,
+		"got: {}",
+		err.code
+	);
+}
+
+/// Snapshot env vars and restore them on drop.
+struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvGuard {
+	fn new(keys: &[&'static str]) -> Self {
+		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
+	}
+}
+
+impl Drop for EnvGuard {
+	fn drop(&mut self) {
+		for (key, saved) in &self.0 {
+			match saved {
+				Some(v) => std::env::set_var(key, v),
+				None => std::env::remove_var(key),
+			}
+		}
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn sessions_without_a_hub_key_ask_the_client_to_sign_in() {
+	let _lock = ENV_LOCK.lock().await;
+	let _env = EnvGuard::new(&[crate::account::HUB_KEY_ENV, crate::account::HUB_URL_ENV]);
+	std::env::remove_var(crate::account::HUB_KEY_ENV);
+	std::env::remove_var(crate::account::HUB_URL_ENV);
+	let agent = agent_with(crate::acp::AcpRunOptions {
+		model: Some("octohub:auto".to_string()),
+		..Default::default()
+	});
+	let cwd = std::env::current_dir().expect("cwd");
+
+	let err = agent
+		.new_session(NewSessionRequest::new(cwd.clone()))
+		.await
+		.expect_err("no key, hosted hub");
+	assert!(
+		err.code == agent_client_protocol::Error::auth_required().code,
+		"got: {}",
+		err.code
+	);
+	let err = agent
+		.load_session(LoadSessionRequest::new("any-session".to_string(), cwd))
+		.await
+		.expect_err("no key, hosted hub");
+	assert!(
+		err.code == agent_client_protocol::Error::auth_required().code,
+		"got: {}",
+		err.code
+	);
 }
 
 #[tokio::test]
@@ -632,7 +698,10 @@ async fn run_actor_dispatches_initialize_cancel_and_idle() {
 				reply,
 			))
 			.expect("actor alive");
-			rx_reply.await.expect("reply").expect("authenticate ok");
+			rx_reply
+				.await
+				.expect("reply")
+				.expect_err("unknown auth method is rejected");
 
 			// Cancel runs inline in the actor loop.
 			tx.send(Command::Cancel(CancelNotification::new(

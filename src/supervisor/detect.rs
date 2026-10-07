@@ -83,13 +83,13 @@ pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one comp
 	`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"],"plan":null,"memories":[]}</sup>`
 Use valid single-line JSON with exactly those fields. `carry` and `memories` may be empty and `next` is `null` when nothing remains to do. Put an active-memory ID such as `M2` in `memories` only when that entry materially affected this response or its chosen action. Never list entries merely because they were shown. Keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
-- `progressing` — actively making changes
+- `progressing` — actively making changes, or waiting for a background job you started: end the response without a tool call and its result resumes you
 - `blocked` — stuck, cannot proceed
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
 
 `plan` is normally `null`. Set it to `"request"` once, alongside real work, only when the task clearly needs 3+ dependent outcomes or durable tracking. With an injected plan, use `"phase_complete"` alongside the next work batch only after the current outcome is evidenced, or `"reassess"` when evidence invalidates the remaining route. The external manager owns the plan; never emit a response only for planning.
-Example: `<sup>{"state":"progressing","focus":"checking the active operation","next":"perform the next status check","carry":["use the resource reference established earlier"],"plan":null,"memories":["M2"]}</sup>`
+Example: `<sup>{"state":"progressing","focus":"fixing tab handling in the fence parser","next":"run the parser tests for the edited path","carry":["regression input is tests/fixtures/tabs.md"],"plan":null,"memories":["M2"]}</sup>`
 This line is read by the system and hidden from the user. Emit exactly one."#;
 
 #[derive(serde::Deserialize)]

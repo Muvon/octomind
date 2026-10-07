@@ -262,6 +262,41 @@ fn identical_receipts_for_different_targets_are_not_a_loop() {
 	}
 }
 
+/// Replays the 2026-10-06 CI brief runaway (Muvon/pulsora, 665 consecutive
+/// identical receipts): the agent widened one `grep -B` window by 200 lines per
+/// call while the output stayed byte-identical. The calls differ, so it is not
+/// a loop; the target and the receipt do not, so it is no progress.
+#[test]
+fn reworded_calls_with_identical_receipts_nominate_no_progress() {
+	let receipt = "name = \"ahash\"\nname = \"aho-corasick\"\nname = \"alloca\"\n===\n\
+		name = \"ahash\"\nname = \"aho-corasick\"\nname = \"alloca\"\n===\n\
+		name = \"ahash\"\nname = \"aho-corasick\"\nname = \"alloca\"";
+	let mut d = Detectors::default();
+	let signals: Vec<DetectorSignal> = (0..=NO_PROGRESS_WINDOW)
+		.map(|round| {
+			let window = 54_000 + 200 * round;
+			let command = format!(
+				"git show 8efc1d4:Cargo.lock | grep -B{window} '\"arrow-cmp\",' \
+				 | grep -E '^name = ' | head -3; echo ===; \
+				 git show 33483b8:Cargo.lock | grep -B{window} '\"multiversion\",' \
+				 | grep -E '^name = ' | head -3; echo ===; \
+				 git show 33483b8:Cargo.lock | grep -B{window} '\"pest\",' \
+				 | grep -E '^name = ' | head -3"
+			);
+			let call = json!({"command": command});
+			let (identity, novel) = d.note_call("shell", &call, receipt, false, false);
+			d.record_round_signals(&[identity], novel, LOOP_THRESHOLD, NO_PROGRESS_WINDOW)
+		})
+		.collect();
+	let (last, earlier) = signals.split_last().expect("rounds");
+	assert!(
+		earlier.iter().all(|s| *s == DetectorSignal::None),
+		"the window has not filled yet: {earlier:?}"
+	);
+	assert_eq!(*last, DetectorSignal::NoProgress);
+	assert!(should_steer(*last, None));
+}
+
 #[test]
 fn successful_mutations_do_not_trigger_loop_even_with_identical_receipts() {
 	let mut d = Detectors::default();

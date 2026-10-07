@@ -231,9 +231,11 @@ older sessions.
 Detectors run in-process after tool rounds without another model call. Their thresholds are fixed constants. The status
 report and injected notes still use tokens in normal agent requests.
 
-The first two track **receipt novelty**: tool name, arguments, result, and error status. Different targets returning
-the same output are distinct observations. A fresh error can provide diagnostic information, and a successful mutation
-counts as progress even when its receipt repeats.
+The first two track **receipt novelty**. A loop compares whole calls: tool name, arguments, result, and error status.
+Novelty compares the target a call addresses (its path-like arguments) with the result and error status: different
+targets returning the same output are distinct observations, but the same output for the same target under reworded
+arguments (a widened window, a bumped limit) is not new information. A fresh error can provide diagnostic information,
+and a successful mutation counts as progress even when its receipt repeats.
 
 - **Loop** — identical calls and results repeat for 3 tool rounds without current-round novelty.
 - **No-progress** — 5 tool rounds without new receipts or successful mutations.

@@ -626,8 +626,8 @@ impl Detectors {
 		is_error: bool,
 		is_mutation: bool,
 	) -> (u64, bool) {
-		// Equal output from different requests is not repetition: each target
-		// may have independently returned the same answer or write receipt.
+		// Loop identity: the whole call. Equal output from a different request is
+		// not the same call repeated.
 		let mut h = DefaultHasher::new();
 		tool.hash(&mut h);
 		parameters.to_string().hash(&mut h);
@@ -635,11 +635,22 @@ impl Detectors {
 		is_error.hash(&mut h);
 		let rhash = h.finish();
 
-		// Novelty: fresh = result content not seen in the recent window. Recorded
-		// per result (memory is per-result), but the novelty SIGNAL is per round.
-		let fresh = self.seen.insert(rhash);
+		// Novelty identity: the target the call addresses (its path-like
+		// parameters) and what came back. Equal output from a different target is
+		// that target's own observation; equal output for the same target under
+		// reworded arguments (a widened window, a bumped limit) is not new
+		// information — keying on every argument let a model that nudged one
+		// number per call look novel forever. Recorded per result (memory is
+		// per-result), but the novelty SIGNAL is per round.
+		let mut h = DefaultHasher::new();
+		tool.hash(&mut h);
+		param_paths(parameters).hash(&mut h);
+		result.hash(&mut h);
+		is_error.hash(&mut h);
+		let nhash = h.finish();
+		let fresh = self.seen.insert(nhash);
 		if fresh {
-			self.seen_order.push_back(rhash);
+			self.seen_order.push_back(nhash);
 			if self.seen_order.len() > SEEN_CAP {
 				if let Some(old) = self.seen_order.pop_front() {
 					self.seen.remove(&old);

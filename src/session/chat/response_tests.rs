@@ -683,6 +683,114 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 
 #[tokio::test]
 #[cfg(unix)]
+async fn test_process_response_supervisor_no_progress_fires_on_reworded_calls() {
+	let _guard = ENV_LOCK.lock().await;
+	// The 2026-10-06 CI brief runaway shape: every round widens one argument
+	// while the tool prints the same receipt. Round 1 comes from params, rounds
+	// 2-6 from the stub; the calls differ, so the loop detector stays quiet, and
+	// the no-progress advisory is injected before the final follow-up.
+	let url = spawn_stub(vec![
+		tool_call_response("windowdump", json!({"window": 400})),
+		tool_call_response("windowdump", json!({"window": 600})),
+		tool_call_response("windowdump", json!({"window": 800})),
+		tool_call_response("windowdump", json!({"window": 1000})),
+		tool_call_response("windowdump", json!({"window": 1200})),
+		final_response("done"),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(
+		tmp.path(),
+		"windowdump",
+		"#!/bin/sh\n# @description Print a fixed line.\n\
+		 # @param window integer Lines of context to show.\n\
+		 printf 'identical output\\n'\n",
+	);
+
+	let mut config = config_with_core_server(fake_provider_config());
+	config.supervisor.enabled = true;
+	config.supervisor.plan.enabled = false;
+
+	let session_id = "resp-steer-no-progress-test".to_string();
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+
+		let mut session = fake_session("show more context");
+		session.session.info.name = session_id.clone();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let sink = recording_sink();
+
+		let params = ResponseProcessingParams {
+			content: String::new(),
+			exchange: ProviderExchange::new(json!({}), json!({}), None, "test"),
+			tool_calls: Some(vec![crate::mcp::McpToolCall {
+				tool_name: "windowdump".to_string(),
+				parameters: json!({"window": 200}),
+				tool_id: "c1".to_string(),
+			}]),
+			thinking: None,
+			finish_reason: Some("tool_calls".to_string()),
+			response_id: None,
+			chat_session: &mut session,
+			config: &config,
+			role: "assistant",
+			operation_cancelled: rx,
+			sink,
+			mode: OutputMode::Jsonl,
+		};
+
+		process_response(params)
+			.await
+			.expect("reworded turn completes under the supervisor");
+
+		let advisories: Vec<_> = session
+			.session
+			.messages
+			.iter()
+			.enumerate()
+			.filter(|(_, m)| {
+				m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:")
+			})
+			.collect();
+		assert_eq!(
+			advisories.len(),
+			1,
+			"expected one no-progress advisory: {:?}",
+			session
+				.session
+				.messages
+				.iter()
+				.map(|m| (&m.role, &m.content))
+				.collect::<Vec<_>>()
+		);
+		let (index, advisory) = advisories[0];
+		assert!(advisory
+			.content
+			.contains("recent calls have repeated previously observed results"));
+		assert_eq!(
+			session.session.messages[..index]
+				.iter()
+				.filter(|m| m.role == "tool")
+				.count(),
+			6,
+			"the advisory follows the sixth identical receipt"
+		);
+		assert!(matches!(
+			session.steer_last_signal,
+			crate::supervisor::detect::DetectorSignal::NoProgress
+		));
+		assert_eq!(session.last_response, "done");
+
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+}
+
+#[tokio::test]
+#[cfg(unix)]
 async fn test_process_response_cancelled_mid_execution_skips_assistant_message() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	// The tool touches a marker file first, giving the test a deterministic

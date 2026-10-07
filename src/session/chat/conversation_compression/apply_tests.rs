@@ -1069,6 +1069,11 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 	assert!(wrapper
 		.content
 		.contains("watch the build (file:///tmp/watched)"));
+	assert!(wrapper.content.contains(concat!(
+		"Their output comes back to you as a message the moment each finishes — do NOT relaunch them, ",
+		"launch variants of them, poll them, or wait on them by hand. Continue only with work that does not need ",
+		"their results; with nothing left, end your turn: you are resumed with each result."
+	)));
 	assert!(wrapper.content.contains("<tap_runs_running>"));
 	assert!(wrapper.content.contains("developer:general (tap-unit-1)"));
 	crate::session::shell_jobs::clear_for_session(&session_id);

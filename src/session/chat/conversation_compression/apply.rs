@@ -198,7 +198,7 @@ fn build_continuation_content(
 				.join("\n");
 			format!(
 				"<background_jobs_running>\n\
-				As of this point these detached shell jobs were still running. Their output is delivered to you as a message the moment each finishes — do NOT relaunch them, poll them, or wait on them by hand; continue other work or wait. If that completion message never arrives (for example because this session was resumed in a fresh process), the job is gone: re-run the command whose result you still need.\n\
+				As of this point these detached shell jobs were still running. Their output comes back to you as a message the moment each finishes — do NOT relaunch them, launch variants of them, poll them, or wait on them by hand. Continue only with work that does not need their results; with nothing left, end your turn: you are resumed with each result. If that completion message never arrives (for example because this session was resumed in a fresh process), the job is gone: re-run the command whose result you still need.\n\
 				{list}\n\
 				</background_jobs_running>\n\n"
 			)

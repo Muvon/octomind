@@ -17,6 +17,7 @@
 use super::syntax::SyntaxHighlighter;
 use anyhow::Result;
 use regex::Regex;
+use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use termimad::minimad::{Composite, Line, Text};
@@ -756,52 +757,46 @@ impl MarkdownRenderer {
 	}
 
 	pub fn render_and_print(&self, markdown: &str) -> Result<()> {
-		// For printing, we'll handle code blocks manually for better control
-		self.render_with_syntax_highlighting(markdown)?;
+		// Resume the spinner only after the whole block has reached a fresh line.
+		print!("{}", self.render_with_syntax_highlighting(markdown)?);
 		Ok(())
 	}
 
-	fn render_with_syntax_highlighting(&self, markdown: &str) -> Result<()> {
+	fn render_with_syntax_highlighting(&self, markdown: &str) -> Result<String> {
+		let mut rendered = String::new();
 		// Split markdown by code blocks and process each part separately
 		let mut last_end = 0;
 
 		for cap in CODE_BLOCK_REGEX.captures_iter(markdown) {
-			// Use the crate print macro to suspend the spinner while rendering.
 			let before_content = &markdown[last_end..cap.get(0).unwrap().start()];
 			if !before_content.trim().is_empty() {
-				print!(
-					"{}",
-					self.styled_text(before_content, usize::from(termimad::terminal_size().0))
+				rendered.push_str(
+					&self.styled_text(before_content, usize::from(termimad::terminal_size().0)),
 				);
 			}
 
 			let language = cap.get(1).map(|m| m.as_str()).unwrap_or("text");
 			let code = cap.get(2).unwrap().as_str();
 
-			// Print syntax-highlighted code block
-			println!(); // Add some spacing
+			rendered.push('\n');
+			writeln!(rendered, "┌─ {} ─", language)?;
 			match self.syntax_highlighter.highlight_code_with_theme(
 				code,
 				language,
 				self.theme.get_syntax_theme_name(),
 			) {
 				Ok(highlighted) => {
-					// Print with a subtle border
-					println!("┌─ {} ─", language);
-					print!("{}", highlighted);
+					rendered.push_str(&highlighted);
 					if !highlighted.ends_with('\n') {
-						println!();
+						rendered.push('\n');
 					}
-					println!("└─────");
 				}
 				Err(_) => {
 					// Fall back to simple code block
-					println!("┌─ {} ─", language);
-					println!("{}", code);
-					println!("└─────");
+					writeln!(rendered, "{}", code)?;
 				}
 			}
-			println!(); // Add some spacing after
+			rendered.push_str("└─────\n\n");
 
 			last_end = cap.get(0).unwrap().end();
 		}
@@ -809,13 +804,12 @@ impl MarkdownRenderer {
 		// Render remaining content after last code block.
 		let remaining_content = &markdown[last_end..];
 		if !remaining_content.trim().is_empty() {
-			print!(
-				"{}",
-				self.styled_text(remaining_content, usize::from(termimad::terminal_size().0))
+			rendered.push_str(
+				&self.styled_text(remaining_content, usize::from(termimad::terminal_size().0)),
 			);
 		}
 
-		Ok(())
+		Ok(rendered)
 	}
 }
 

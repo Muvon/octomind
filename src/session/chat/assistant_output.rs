@@ -84,10 +84,7 @@ pub fn print_assistant_response(
 
 	if config.enable_markdown_rendering && is_markdown_content(&content_to_display) {
 		// Use markdown rendering with theme from config.
-		// The renderer suspends the spinner internally around each termimad
-		// `skin.print_text` call (those bypass our shadowed print macros).
-		// All other prints inside the renderer go through our shadowed
-		// macros, which suspend per-line on their own.
+		// The renderer writes the complete block through our spinner-aware macro.
 		let theme = config.markdown_theme.parse().unwrap_or_default();
 		let renderer = MarkdownRenderer::with_theme(theme);
 		match renderer.render_and_print(&content_to_display) {

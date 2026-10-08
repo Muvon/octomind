@@ -102,6 +102,23 @@ fn test_render_plain_and_empty_inputs() {
 }
 
 #[test]
+fn test_printed_document_keeps_code_and_prose_on_separate_lines() {
+	let renderer = MarkdownRenderer::new();
+	let rendered = renderer
+		.render_with_syntax_highlighting(
+			"## Diagram\n\n```text\n┌────┐\n└────┘\n```\n\nAfter the diagram.",
+		)
+		.expect("printable Markdown renders");
+	let plain = regex::Regex::new(r"\x1b\[[0-9;]*m")
+		.expect("valid ANSI style regex")
+		.replace_all(&rendered, "");
+	assert!(plain.contains("Diagram\n"));
+	assert!(plain.contains("\n┌─ text ─\n┌────┐\n└────┘\n└─────\n\n"));
+	assert!(plain.ends_with("After the diagram.\n"));
+	assert!(rendered.ends_with('\n'));
+}
+
+#[test]
 fn test_is_markdown_content_heuristics() {
 	assert!(is_markdown_content("## Heading"));
 	assert!(is_markdown_content("- a list item\n- another"));

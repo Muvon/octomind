@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.56.1] - 2026-10-08
+
+### 📋 Release Summary
+
+Supervisor progress detection now treats repeated guessed-write and reworded tool calls as non-progress and refines loop classification. Guidance has been clarified for progressing states, waiting on background-job results, and pending shell jobs.
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: refine loop progress detection `d35fc0be`
+- **supervisor**: ignore repeated guessed-write calls as progress `38e7fc06`
+- **background-jobs**: clarify waiting for background job results `86f84e37`
+- **supervisor**: clarify progressing state guidance `44039033`
+- **conversation-compression**: clarify guidance for pending shell jobs `8efac571`
+- **supervisor**: classify reworded tool calls as no progress `59170c1f`
+
+### 📚 Documentation & Examples
+
+- **octomind**: update installation prerequisites `61ef1a63`
+- **octomind**: update installation prerequisites `8b6d5612`
+
 ## [0.56.0] - 2026-10-06
 
 ### 📋 Release Summary

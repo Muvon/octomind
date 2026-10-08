@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.57.0] - 2026-10-08
+
+### 📋 Release Summary
+
+Chat now supports selecting and quoting replies. Supervisor verification respects its master switch and checks every user-owned turn stop; vision inputs are stripped for non-vision models, MCP tool-result images are preserved, static MCP capability grants are expanded, background-fold requests are retained, and markdown output is buffered before printing.
+
+### ✨ New Features & Enhancements
+
+- **chat**: add reply selection and quoting `c10deebd`
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: verify context-free monitor initialization `081ac04d`
+- **session**: format multiline assertions `921e220f`
+- **dependencies**: update zerocopy to 0.8.62 `f0de7836`
+- **dependencies**: upgrade agent client protocol `84c49d56`
+- **dependencies**: update octolib dependency `694cbb78`
+- **dependencies**: refresh locked dependency graph `90993e81`
+- **supervisor**: format long assertion `26e196fd`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: honor supervisor master switch in verify gate `89797f4f`
+- **supervisor**: verify every user-owned turn stop `f05940cb`
+- **vision**: strip images for non-vision models `de1d0465`
+- **tool-results**: preserve images in MCP tool results `47c1b22a`
+- **mcp**: expand static MCP capability tool grants `12f6bcca`
+- preserve requests during background folds `bd477360`
+- **markdown**: buffer markdown before printing `df07b63d`
+
 ## [0.56.1] - 2026-10-08
 
 ### 📋 Release Summary

@@ -108,6 +108,46 @@ pub fn init_tracing(mode: LoggingMode, log_level: &str) -> Result<()> {
 		LoggingMode::Silent => init_silent_logging(),
 	}
 }
+/// `MakeWriter` that suspends the working spinner around every write.
+///
+/// The CLI tracing subscriber writes to stderr — the same surface the
+/// spinner (indicatif) draws on. A log line emitted while the spinner is
+/// live desynchronizes indicatif's line accounting: the bar is never
+/// cleared from its row and survives as a stale line above later output
+/// (e.g. the `· Supervisor:` notices). Routing each write through
+/// `with_suspended_spinner` clears the bar first and redraws it after,
+/// keeping the terminal consistent.
+///
+/// ACP/WebSocket subscribers log to files and don't need this.
+#[derive(Clone, Copy, Default)]
+struct SpinnerAwareMakeWriter<W>(W);
+
+/// The per-event writer half of [`SpinnerAwareMakeWriter`].
+struct SpinnerAwareWriter<W>(W);
+
+impl<W> std::io::Write for SpinnerAwareWriter<W>
+where
+	W: std::io::Write,
+{
+	fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+		crate::utils::terminal_output::with_suspended_spinner(|| self.0.write(buf))
+	}
+
+	fn flush(&mut self) -> std::io::Result<()> {
+		crate::utils::terminal_output::with_suspended_spinner(|| self.0.flush())
+	}
+}
+
+impl<'a, W> tracing_subscriber::fmt::MakeWriter<'a> for SpinnerAwareMakeWriter<W>
+where
+	W: tracing_subscriber::fmt::MakeWriter<'a>,
+{
+	type Writer = SpinnerAwareWriter<W::Writer>;
+
+	fn make_writer(&'a self) -> Self::Writer {
+		SpinnerAwareWriter(self.0.make_writer())
+	}
+}
 
 /// Initialize CLI logging.
 ///
@@ -121,7 +161,7 @@ fn init_cli_logging(_log_level: &str) -> Result<()> {
 		let filter = EnvFilter::from_env("RUST_LOG");
 
 		let subscriber = tracing_subscriber::fmt()
-			.with_writer(std::io::stderr)
+			.with_writer(SpinnerAwareMakeWriter(std::io::stderr))
 			.with_target(false)
 			.with_thread_ids(false)
 			.with_file(false)
@@ -237,3 +277,7 @@ mod inline_tests;
 #[cfg(test)]
 #[path = "tracing_setup_tests.rs"]
 mod external_tests;
+
+#[cfg(test)]
+#[path = "tracing_setup_spinner_tests.rs"]
+mod spinner_tests;

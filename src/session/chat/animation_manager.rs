@@ -439,6 +439,13 @@ impl AnimationManager {
 		*cancel_watcher.lock().unwrap() = Some(handle);
 	}
 
+	#[cfg(test)]
+	/// Test-only: inject/replace the live spinner so tests can observe
+	/// suspension behavior against a recording draw target.
+	pub(crate) fn install_test_spinner(&self, pb: Option<ProgressBar>) {
+		*self.spinner.lock().unwrap() = pb;
+	}
+
 	/// Stop the current animation fully — indicatif's tick thread is joined
 	/// BEFORE this function returns so no ghost draw can race with
 	/// subsequent output.

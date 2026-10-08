@@ -517,3 +517,53 @@ async fn test_process_tool_results_delivers_background_results_mid_turn() {
 	})
 	.await;
 }
+
+#[tokio::test]
+async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
+	let mut config = template_config();
+	config.supervisor.enabled = false;
+	config.max_request_spending_threshold = 0.0001;
+	config.mcp_response_tokens_threshold = 32;
+	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+	session.session.info.total_cost = 1.0;
+	let results: Vec<_> = ["long output\n".repeat(500), String::new()]
+		.into_iter()
+		.enumerate()
+		.map(|(index, text)| crate::mcp::McpToolResult {
+			tool_name: "screenshot".into(),
+			tool_id: format!("call-{index}"),
+			result: serde_json::from_value(serde_json::json!({"content": [
+				{"type": "text", "text": text},
+				{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}
+			]}))
+			.unwrap(),
+		})
+		.collect();
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	assert!(
+		process_tool_results(results, 1, &mut session, &config, "assistant", rx)
+			.await
+			.unwrap()
+			.is_none()
+	);
+	let messages: Vec<_> = session
+		.session
+		.messages
+		.iter()
+		.filter(|message| message.role == "tool")
+		.collect();
+	assert_eq!(messages.len(), 2);
+	assert!(messages[0].content.contains("TRUNCATED"));
+	assert!(messages[1].content.is_empty());
+	for (index, message) in messages.iter().enumerate() {
+		assert_eq!(
+			message.tool_call_id.as_deref(),
+			Some(format!("call-{index}").as_str())
+		);
+		let images = message.images.as_ref().unwrap();
+		assert_eq!(images.len(), 1);
+		assert!(
+			matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U=")
+		);
+	}
+}

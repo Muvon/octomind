@@ -435,6 +435,7 @@ impl ChatSession {
 		tool_call_id: &str,
 		tool_name: &str,
 		_config: &Config,
+		images: Vec<crate::session::image::ImageAttachment>,
 	) -> Result<()> {
 		// Tool result content is persisted as a Message JSON below; no separate log entry.
 		// Create the tool message
@@ -448,6 +449,7 @@ impl ChatSession {
 			cached: false,
 			tool_call_id: Some(tool_call_id.to_string()),
 			name: Some(tool_name.to_string()),
+			images: (!images.is_empty()).then_some(images),
 			..Default::default()
 		};
 
@@ -464,6 +466,7 @@ impl ChatSession {
 		// Update token tracking for auto-cache threshold logic
 		// Tool messages count as "input" for the next API call, so we track them as non-cached input tokens
 		let tool_content_tokens = crate::session::estimate_tokens(content) as u64;
+		// Image costs are model-dependent; the request token estimator accounts for attachments.
 		let tool_overhead_tokens = 8; // Rough estimate for role + tool_call_id + name overhead
 
 		// Update the session's current token tracking

@@ -70,3 +70,27 @@ fn test_tool_results_to_messages() {
 	assert_eq!(messages[0].content, "out");
 	assert_eq!(messages[1].content, "fail");
 }
+
+#[test]
+fn tool_response_images_survive_text_truncation() {
+	let mut config: crate::config::Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	config.mcp_response_tokens_threshold = 32;
+	let result = McpToolResult {
+		tool_name: "screenshot".into(),
+		tool_id: "call-image".into(),
+		result: serde_json::from_value(serde_json::json!({"content": [
+			{"type": "text", "text": "long output\n".repeat(500)},
+			{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}
+		]}))
+		.unwrap(),
+	};
+	let messages = tool_results_to_messages(&[result], &config);
+	assert_eq!(messages[0].tool_call_id, "call-image");
+	assert!(messages[0].content.contains("TRUNCATED"));
+	let images = messages[0].images.as_ref().unwrap();
+	assert_eq!(images.len(), 1);
+	assert!(
+		matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U=")
+	);
+}

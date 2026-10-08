@@ -124,3 +124,25 @@ fn pact_archive_storage_failure_is_returned_to_the_transaction_caller() {
 	assert!(error.to_string().contains("failed to create archive dir"));
 	let _ = std::fs::remove_file(blocker);
 }
+
+#[test]
+fn compression_archive_keeps_image_payload_and_tool_call_id() {
+	let dir = tempfile::tempdir().unwrap();
+	let mut message = msg("tool", "screenshot");
+	message.tool_call_id = Some("call-image".into());
+	message.name = Some("screenshot".into());
+	message.images = Some(vec![crate::session::image::ImageAttachment {
+		data: crate::session::image::ImageData::Base64("aW1hZ2U=".into()),
+		media_type: "image/png".into(),
+		source_type: crate::session::image::SourceType::Url,
+		dimensions: None,
+		size_bytes: None,
+	}]);
+	let path = write_archive_to(dir.path(), "images", std::slice::from_ref(&message)).unwrap();
+	let restored: Message =
+		serde_json::from_str(std::fs::read_to_string(path).unwrap().trim()).unwrap();
+	assert_eq!(
+		serde_json::to_value(restored).unwrap(),
+		serde_json::to_value(message).unwrap()
+	);
+}

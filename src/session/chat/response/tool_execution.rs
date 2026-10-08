@@ -561,7 +561,11 @@ async fn execute_tools_with_context(
 					// the model as an error instead of a silent "success" only the model
 					// could tell was elided. It does NOT count as a tool failure (the
 					// tool ran fine — it's a repeat), so error_tracker is left untouched.
-					let dedup_placeholder = if res.is_error() {
+					// Text-only keys cannot distinguish changed image payloads or preserve
+					// their association with each new tool call; rich results are not elided.
+					let dedup_placeholder = if res.is_error()
+						|| !crate::supervisor::condense::is_plain_text_result(&res)
+					{
 						None
 					} else {
 						let content = res.extract_content();

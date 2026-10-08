@@ -112,6 +112,7 @@ pub async fn process_tool_results(
 			&tool_result.tool_id,
 			&tool_result.tool_name,
 			config,
+			tool_result.extract_images(),
 		)?;
 	}
 

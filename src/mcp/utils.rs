@@ -55,6 +55,8 @@ pub struct ToolResponseMessage {
 	pub tool_call_id: String,
 	pub name: String,
 	pub content: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub images: Option<Vec<crate::session::image::ImageAttachment>>,
 }
 
 // Convert tool results to proper messages with global truncation
@@ -95,6 +97,10 @@ pub fn tool_results_to_messages(
 			tool_call_id: result.tool_id.clone(),
 			name: result.tool_name.clone(),
 			content: final_content,
+			images: {
+				let images = result.extract_images();
+				(!images.is_empty()).then_some(images)
+			},
 		});
 	}
 

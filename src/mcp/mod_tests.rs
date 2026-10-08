@@ -1103,3 +1103,40 @@ async fn dispatch_log_covers_small_and_truncated_params() {
 
 	clear_function_cache();
 }
+
+#[test]
+fn extract_images_preserves_mixed_and_image_only_payloads() {
+	for text in [Some("screenshot"), None] {
+		let mut blocks = Vec::new();
+		if let Some(text) = text {
+			blocks.push(json!({"type": "text", "text": text}));
+		}
+		blocks.extend([
+			json!({"type": "image", "data": "aW1hZ2Ux", "mimeType": "image/png"}),
+			json!({"type": "image", "data": "aW1hZ2Uy", "mimeType": "image/jpeg"}),
+		]);
+		let result = McpToolResult {
+			tool_name: "screenshot".into(),
+			tool_id: "call-image".into(),
+			result: serde_json::from_value(json!({"content": blocks})).unwrap(),
+		};
+		assert_eq!(result.extract_content(), text.unwrap_or_default());
+		let images = result.extract_images();
+		assert_eq!(images.len(), 2);
+		for (image, data, mime) in [
+			(&images[0], "aW1hZ2Ux", "image/png"),
+			(&images[1], "aW1hZ2Uy", "image/jpeg"),
+		] {
+			assert!(
+				matches!(&image.data, crate::session::image::ImageData::Base64(value) if value == data)
+			);
+			assert_eq!(image.media_type, mime);
+		}
+		assert!(!crate::supervisor::condense::is_plain_text_result(&result));
+	}
+	assert!(
+		McpToolResult::success("view".into(), "call-text".into(), "body".into())
+			.extract_images()
+			.is_empty()
+	);
+}

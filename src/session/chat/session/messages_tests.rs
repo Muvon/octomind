@@ -62,7 +62,7 @@ fn message_lifecycle_persists_each_role_and_runtime_summary() {
 		.add_system_managed_turn_message("<system-note>event</system-note>")
 		.unwrap();
 	session
-		.add_tool_message("tool result", "call-1", "view", &config)
+		.add_tool_message("tool result", "call-1", "view", &config, Vec::new())
 		.unwrap();
 	session
 		.add_assistant_message("assistant answer", None, &config, "assistant")
@@ -310,4 +310,69 @@ fn user_turn_clears_a_pending_fold_deferral_but_system_managed_injection_does_no
 		session.fold_deferral, None,
 		"a genuine user turn is a natural seam and must clear a pending deferral"
 	);
+}
+
+#[test]
+fn tool_image_messages_roundtrip_through_session_persistence() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("tool-images.jsonl.zst");
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.session_file = Some(path.clone());
+	let config = crate::session::chat::test_support::fake_provider_config();
+	session.add_user_message("inspect screenshots").unwrap();
+	let parent = crate::session::Message {
+		role: "assistant".into(),
+		tool_calls: Some(serde_json::json!([
+			{"id": "mixed", "type": "function", "function": {"name": "screenshot", "arguments": "{}"}},
+			{"id": "image-only", "type": "function", "function": {"name": "screenshot", "arguments": "{}"}},
+			{"id": "text-only", "type": "function", "function": {"name": "screenshot", "arguments": "{}"}}
+		])),
+		..Default::default()
+	};
+	crate::session::append_to_session_file(&path, &serde_json::to_string(&parent).unwrap())
+		.unwrap();
+	session.session.messages.push(parent);
+	for (id, text, has_image) in [
+		("mixed", "caption", true),
+		("image-only", "", true),
+		("text-only", "body", false),
+	] {
+		let images = if has_image {
+			vec![crate::session::image::ImageAttachment {
+				data: crate::session::image::ImageData::Base64("aW1hZ2U=".into()),
+				media_type: "image/png".into(),
+				source_type: crate::session::image::SourceType::Url,
+				dimensions: None,
+				size_bytes: None,
+			}]
+		} else {
+			Vec::new()
+		};
+		session
+			.add_tool_message(text, id, "screenshot", &config, images)
+			.unwrap();
+	}
+	session
+		.add_assistant_message("done", None, &config, "assistant")
+		.unwrap();
+	session.save().unwrap();
+	let restored = crate::session::load_session(&path).unwrap();
+	let original: Vec<_> = session
+		.session
+		.messages
+		.iter()
+		.filter(|m| m.role == "tool")
+		.collect();
+	let loaded: Vec<_> = restored
+		.messages
+		.iter()
+		.filter(|m| m.role == "tool")
+		.collect();
+	assert_eq!(loaded.len(), 3);
+	for (original, loaded) in original.iter().zip(loaded) {
+		assert_eq!(
+			serde_json::to_value(original).unwrap(),
+			serde_json::to_value(loaded).unwrap()
+		);
+	}
 }

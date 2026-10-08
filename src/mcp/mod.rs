@@ -155,6 +155,25 @@ impl McpToolResult {
 
 		main_content
 	}
+
+	/// Extract MCP image blocks separately so text truncation cannot discard their payloads.
+	pub fn extract_images(&self) -> Vec<crate::session::image::ImageAttachment> {
+		use crate::session::image::{ImageAttachment, ImageData, SourceType};
+		self.result
+			.content
+			.iter()
+			.filter_map(|block| match block {
+				rmcp::model::ContentBlock::Image(image) => Some(ImageAttachment {
+					data: ImageData::Base64(image.data.clone()),
+					media_type: image.mime_type.clone(),
+					source_type: SourceType::Url,
+					dimensions: None,
+					size_bytes: None,
+				}),
+				_ => None,
+			})
+			.collect()
+	}
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -679,3 +679,31 @@ async fn test_parent_task_context_includes_active_plan_checklist() {
 	})
 	.await;
 }
+
+#[tokio::test]
+async fn image_results_bypass_text_only_rebuilding_and_deduplication() {
+	let mut config = template_config();
+	config.mcp_response_tokens_threshold = 32;
+	let results: Vec<_> = ["aW1hZ2Ux", "aW1hZ2Uy"]
+		.into_iter()
+		.enumerate()
+		.map(|(index, data)| crate::mcp::McpToolResult {
+			tool_name: "screenshot".into(),
+			tool_id: format!("call-{index}"),
+			result: serde_json::from_value(serde_json::json!({"content": [
+				{"type": "text", "text": "identical caption\n".repeat(500)},
+				{"type": "image", "data": data, "mimeType": "image/png"}
+			]}))
+			.unwrap(),
+		})
+		.collect();
+	for result in &results {
+		// The dedup and condenser rails both require a plain-text result.
+		assert!(!crate::supervisor::condense::is_plain_text_result(result));
+	}
+	let original = serde_json::to_value(&results).unwrap();
+	let processed = handle_large_tool_results(results, &config, OutputMode::NonInteractive)
+		.await
+		.unwrap();
+	assert_eq!(serde_json::to_value(processed).unwrap(), original);
+}

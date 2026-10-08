@@ -36,7 +36,7 @@ fn populated_session() -> ChatSession {
 		.add_assistant_message("Looking into it now.", None, &config, "assistant")
 		.expect("assistant");
 	session
-		.add_tool_message("file contents here", "call_1", "view", &config)
+		.add_tool_message("file contents here", "call_1", "view", &config, Vec::new())
 		.expect("tool");
 	session.session.info.total_cost = 0.42;
 	session.session.info.input_tokens = 1000;

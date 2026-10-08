@@ -3771,3 +3771,44 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 	.await
 	.unwrap());
 }
+
+#[test]
+fn tool_image_survives_compression_text_cap_and_live_exchange_selection() {
+	let mut image_result = msg("tool");
+	image_result.content = "long caption\n".repeat(500);
+	image_result.tool_call_id = Some("call-image".into());
+	image_result.name = Some("screenshot".into());
+	image_result.images = Some(vec![crate::session::image::ImageAttachment {
+		data: crate::session::image::ImageData::Base64("aW1hZ2U=".into()),
+		media_type: "image/png".into(),
+		source_type: crate::session::image::SourceType::Url,
+		dimensions: None,
+		size_bytes: None,
+	}]);
+	let mut messages = vec![
+		msg("system"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+		msg("assistant"),
+		msg("user"),
+	];
+	messages.push(msg("assistant"));
+	messages.push(image_result.clone());
+	let (_, end) = find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	assert_eq!(end, 6);
+	assert_eq!(
+		serde_json::to_value(&messages[8]).unwrap(),
+		serde_json::to_value(&image_result).unwrap()
+	);
+	let mut session = ChatSession::for_tests(messages);
+	assert_eq!(trim_oversized_tool_results(&mut session, 32), 1);
+	let result = &session.session.messages[8];
+	assert!(result.content.contains("TRUNCATED"));
+	assert_eq!(result.tool_call_id, image_result.tool_call_id);
+	assert_eq!(
+		serde_json::to_value(&result.images).unwrap(),
+		serde_json::to_value(&image_result.images).unwrap()
+	);
+}

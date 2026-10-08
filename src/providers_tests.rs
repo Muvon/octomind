@@ -744,3 +744,34 @@ async fn test_octolib_params_without_tools_keeps_tools_empty() {
 		"text-only calls must not attach tools"
 	);
 }
+
+#[test]
+fn tool_and_prompt_images_convert_without_losing_payload_or_association() {
+	for role in ["tool", "user"] {
+		for content in ["screenshot", ""] {
+			let message = Message {
+				tool_call_id: (role == "tool").then(|| "call-image".into()),
+				name: (role == "tool").then(|| "screenshot".into()),
+				images: Some(vec![crate::session::image::ImageAttachment {
+					data: crate::session::image::ImageData::Base64("aW1hZ2U=".into()),
+					media_type: "image/png".into(),
+					source_type: crate::session::image::SourceType::Url,
+					dimensions: None,
+					size_bytes: None,
+				}]),
+				..msg(role, content)
+			};
+			let converted = convert_message_to_octolib(&message).unwrap();
+			assert_eq!(converted.role, role);
+			assert_eq!(converted.content, content);
+			assert_eq!(converted.tool_call_id, message.tool_call_id);
+			assert_eq!(converted.name, message.name);
+			let images = converted.images.unwrap();
+			assert_eq!(images.len(), 1);
+			assert_eq!(images[0].media_type, "image/png");
+			assert!(
+				matches!(&images[0].data, octolib::llm::ImageData::Base64(data) if data == "aW1hZ2U=")
+			);
+		}
+	}
+}

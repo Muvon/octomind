@@ -105,7 +105,7 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-agent-client-protocol = "2.0"
+agent-client-protocol = "3.1.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 which = "8.0.5"
 

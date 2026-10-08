@@ -602,8 +602,8 @@ fn recurring_polling_never_becomes_a_required_strategy_change() {
 		if round >= 2 {
 			assert_eq!(signal, DetectorSignal::Loop);
 			let note = steer_note(signal);
-			assert!(note.contains("intentional polling"));
-			assert!(note.contains("Continue if these calls serve the user's task"));
+			assert!(note.contains("arrives on its own as your next message"));
+			assert!(note.contains("reply with a brief status and no tool call"));
 			assert!(note.contains("does not require extra work or a blocked handback"));
 		}
 	}

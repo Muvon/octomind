@@ -83,7 +83,7 @@ pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one comp
 	`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"],"plan":null,"memories":[]}</sup>`
 Use valid single-line JSON with exactly those fields. `carry` and `memories` may be empty and `next` is `null` when nothing remains to do. Put an active-memory ID such as `M2` in `memories` only when that entry materially affected this response or its chosen action. Never list entries merely because they were shown. Keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
-- `progressing` — actively making changes, or waiting for a background job you started: end the response without a tool call and its result resumes you
+- `progressing` — actively making changes, or waiting for a background job you started: to wait, reply with a brief status and no tool call; the job's result arrives as your next message
 - `blocked` — stuck, cannot proceed
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
@@ -963,7 +963,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 /// into evidence of failure or permission to disregard the user's instructions.
 pub fn steer_note(signal: DetectorSignal) -> &'static str {
 	match signal {
-		DetectorSignal::Loop => "<pay-attention>\nAdvisory: identical calls have returned identical results across several rounds. This may be intentional polling or repeated observation, not a failure. Continue if these calls serve the user's task; consider a different approach only if the observed results show it is needed. This hint does not require extra work or a blocked handback.\n</pay-attention>",
+		DetectorSignal::Loop => "<pay-attention>\nAdvisory: identical calls have returned identical results across several rounds. Repeating a call does not bring a background job's result sooner: it arrives on its own as your next message — to wait for it, reply with a brief status and no tool call. Otherwise decide the next step from the results you already have. This hint does not require extra work or a blocked handback.\n</pay-attention>",
 		DetectorSignal::NoProgress => "<pay-attention>\nAdvisory: recent calls have repeated previously observed results. The detector cannot determine whether the task is advancing. Use the actual outcomes and the user's request to decide the next step; continue the current approach when justified. This hint does not require extra work or a blocked handback.\n</pay-attention>",
 		DetectorSignal::Recovery => "<pay-attention>\nAdvisory: several command executions returned errors without a later success for those exact calls. These may be expected probes, obsolete attempts or failures unrelated to verification. Judge their relevance from the actual outputs and the user's task. Only an observed, relevant failure warrants recovery work; this hint does not require rerunning a command, changing code or reporting blocked. Honor all execution restrictions.\n</pay-attention>",
 		DetectorSignal::None => "",

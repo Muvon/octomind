@@ -653,7 +653,9 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 			&advisory.content
 		));
 		assert!(advisory.content.contains("identical calls"));
-		assert!(advisory.content.contains("intentional polling"));
+		assert!(advisory
+			.content
+			.contains("arrives on its own as your next message"));
 		assert!(advisory
 			.content
 			.contains("does not require extra work or a blocked handback"));

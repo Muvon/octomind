@@ -537,7 +537,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// when its result arrives, whereas recursively nudging here keeps the ACP
 	// prompt open and prevents that monitor from acquiring the session. Bounded
 	// by the free-check budget, so a model that keeps yielding cannot loop it.
-	if config.supervisor.gate.enabled
+	if config.supervisor.enabled
+		&& config.supervisor.gate.enabled
 		&& chat_session.completion_gate_eligible
 		&& !mode.is_interactive()
 		&& !crate::session::has_pending_async_work()
@@ -580,7 +581,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// Supervisor verify-gate: every stop of a user-owned turn is verified before it is accepted.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
 	let pending_async = crate::session::has_pending_async_work();
-	if config.supervisor.gate.enabled {
+	if config.supervisor.enabled && config.supervisor.gate.enabled {
 		crate::log_debug!(
 			"gate: self_report={:?} iter={}/{} nudges={} needs_verification={} pending_async={}",
 			chat_session.last_self_report,
@@ -603,7 +604,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// and the gate judges that later turn instead of accusing this one of
 	// delivering a status line.
 	chat_session.gate_deferred = chat_session.completion_gate_eligible && pending_async;
-	if config.supervisor.gate.enabled
+	if config.supervisor.enabled
+		&& config.supervisor.gate.enabled
 		&& !pending_async
 		&& chat_session.completion_gate_eligible
 		&& chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS

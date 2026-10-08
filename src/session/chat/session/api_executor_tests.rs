@@ -534,7 +534,7 @@ async fn test_empty_response_is_retried_by_validation() {
 async fn test_real_builtin_tool_round_schedule_list() {
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
-		tool_call_response("schedule", serde_json::json!({"action": "list"})),
+		tool_call_response("schedule", serde_json::json!({"command": "list"})),
 		final_response("schedule round complete"),
 	])
 	.await;
@@ -619,7 +619,7 @@ async fn test_pre_cancelled_turn_records_nothing() {
 async fn test_interactive_mode_tool_round_renders_and_truncates() {
 	let _guard = ENV_LOCK.lock().await;
 	let url = spawn_stub(vec![
-		tool_call_response("schedule", serde_json::json!({"action": "list"})),
+		tool_call_response("schedule", serde_json::json!({"command": "list"})),
 		final_response("interactive round done"),
 	])
 	.await;
@@ -833,6 +833,9 @@ async fn test_unfinished_progressing_handback_is_continued_until_budget() {
 			progressing_response("Still working on it."),
 			progressing_response("Still working, pass two."),
 			progressing_response("Third pass."),
+			// Budget spent, so the third stop reaches the verify-gate: it needs a
+			// verdict entry like every other user-owned stop.
+			verifier_pass(),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -857,6 +860,39 @@ async fn test_unfinished_progressing_handback_is_continued_until_budget() {
 			.filter(|m| m.content.contains("octomind:pre_gate_unfinished_handback"))
 			.count();
 		assert_eq!(continuations, 2, "one CONTINUE note per nudge");
+
+		std::env::remove_var("OLLAMA_API_URL");
+		crate::session::context::cleanup_session(&sid);
+	})
+	.await;
+}
+
+/// `supervisor.enabled = false` is a master switch: even with the gate
+/// sub-switch left on from the template, the turn must end with no verifier
+/// side-call. The script has no spare entry, so any gate run would surface as
+/// SCRIPT EXHAUSTED or an extra billed call.
+#[tokio::test]
+async fn test_gate_silent_when_supervisor_master_switch_off() {
+	let _guard = ENV_LOCK.lock().await;
+	let sid = "api-exec-master-off".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		crate::session::context::init_session_services("assistant");
+		let url = spawn_stub(vec![done_response("Finished without the control plane.")]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+
+		let mut config = supervised_config();
+		config.supervisor.enabled = false;
+		let mut session = fake_session("finish quietly");
+		session.completion_gate_eligible = true;
+
+		run_turn(&mut session, &config)
+			.await
+			.expect("master-off turn completes");
+
+		assert_eq!(session.session.info.total_api_calls, 1);
+		assert_eq!(session.gate_iterations, 0, "gate must not run");
+		assert!(!session.gate_failed);
+		assert_eq!(session.nudge_iterations, 0, "pre-gate must not run");
 
 		std::env::remove_var("OLLAMA_API_URL");
 		crate::session::context::cleanup_session(&sid);
@@ -967,7 +1003,8 @@ async fn test_verify_gate_pass_with_a_recognized_check_labels_verified() {
 }
 
 /// A `done` claim the verifier rejects with a charged gap: the advisory lands
-/// in the conversation, the turn re-runs once, and the gap is retained.
+/// in the conversation, the turn re-runs once, and the re-run's stop is
+/// verified too — its PASS clears the retained gap.
 #[tokio::test]
 async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 	let _guard = ENV_LOCK.lock().await;
@@ -979,8 +1016,10 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 			verifier_gap(),
 			// Refutation pass (if the verifier asks for one) sees no refutation.
 			final_response("no finding was refuted"),
-			// The re-run answers without a completion claim, ending the turn.
+			// The re-run answers without a completion claim; its stop is still
+			// verified (every-stop contract) and the second pass accepts.
 			final_response("The gap is closed now: counter verified."),
+			verifier_pass(),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -1003,8 +1042,8 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 			.await
 			.expect("gaps re-run completes");
 
-		assert_eq!(session.gate_iterations, 1);
-		assert_eq!(session.last_gate_gaps.len(), 1);
+		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
+		assert!(session.last_gate_gaps.is_empty(), "PASS clears retained gaps");
 		assert!(
 			!session.gate_failed,
 			"re-run without a new claim ends the turn cleanly"
@@ -1034,12 +1073,16 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::session::context::init_session_services("assistant");
 		// Two garbage bodies: the parser may retry once before giving up; both
-		// are interchangeable so the stub order does not matter.
+		// are interchangeable so the stub order does not matter. The re-run's
+		// stop is verified too and fails the same way, spending the last budget
+		// slot — same two interchangeable bodies for that pass.
 		let url = spawn_stub(vec![
 			done_response("Done, no evidence needed."),
 			final_response("certainly! here is no protocol at all"),
 			final_response("still no protocol"),
 			final_response("Second pass with a proper answer."),
+			final_response("third pass, still no protocol"),
+			final_response("fourth pass, no protocol either"),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -1060,7 +1103,7 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 			session.learning_outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Unknown
 		));
-		assert_eq!(session.gate_iterations, 1);
+		assert_eq!(session.gate_iterations, 2, "both stops verified, budget spent");
 		session
 			.session
 			.messages

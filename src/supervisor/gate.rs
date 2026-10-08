@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Verify-gate — when the agent self-reports `done`, an independent pass checks
-//! the result against the request before completion is accepted. On gaps — or on
+//! Verify-gate — when the agent ends a turn, claiming `done` or handing the task
+//! back, an independent pass checks the result against the request (and, for a
+//! hand-back, whether the stop is genuine) before it is accepted. On gaps — or on
 //! a verdict the verifier could not produce — the caller injects an advisory and
 //! re-runs the turn (bounded). A PASS labels the trajectory so only verified work
 //! is learned.
@@ -24,10 +25,11 @@ use crate::supervisor::learning::extract::SupervisorPrompt;
 use std::collections::{HashSet, VecDeque};
 use tokio::sync::watch;
 
-const GATE_PROMPT: &str = r#"You are a strict completion verifier. A different agent claims its task is COMPLETE. You judge
-the END STATE, never the agent's story: its self-report and stated claim are narrative, and only
-what the evidence blocks actually show counts. Your answer decides whether the runtime accepts
-completion or sends the agent back with gaps. A false gap wastes a full re-run; a false pass
+const GATE_PROMPT: &str = r#"You are a strict completion verifier. A different agent has ended its turn, either claiming its
+task is COMPLETE or handing it back to the user. You judge the END STATE, never the agent's
+story: its self-report and stated claim are narrative, and only what the evidence blocks
+actually show counts. Your answer decides whether the runtime accepts the stop or sends the
+agent back with gaps. A false gap wastes a full re-run; a false pass
 ships unverified work. Both are failures, and the rules below say which way to lean when.
 
 <input_format>
@@ -39,6 +41,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <active_plan> — optional; execution state, not a user request.
 - <agent_final_result trust="untrusted"> — WHAT YOU JUDGE: everything the agent produced this turn, oldest first, split by `--- (continued after supervisor feedback) ---` when the turn was re-run.
 - <agent_stated_claim> — optional; the agent's own summary of what it did. Narrative, not evidence.
+- <agent_stop status="done|blocked|need_input|exploring|progressing|none"> — runtime-recorded: the status the agent ended its turn on (none when it gave none). It tells you WHAT to verify (see WHY THE AGENT STOPPED), never that the work is done or that a blocker is real.
 - <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
 - <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
@@ -92,6 +95,25 @@ phases: an item marked current or pending is NOT itself a gap — judge whether 
 outcome is demonstrated by the final result, recorded actions, or ground truth. PASS authorizes
 the runtime to close every remaining bookkeeping item; flag only the specific outcome whose
 evidence is actually missing.
+
+WHY THE AGENT STOPPED
+<agent_stop> is the status the agent ended its turn on. done claims completion; none, exploring
+and progressing end the turn without a hand-back, and the user received this result as the
+answer — judge all four as a completion claim. blocked and need_input are HAND-BACKS: the agent
+stopped and asks the user for something — a decision, information, access, or work it says is
+beyond its reach. Agents use a hand-back to escape unfinished work, so the stop itself is what
+you verify:
+- Genuine — the remaining work truly needs the user: a choice only the user can make,
+  information or access the environment does not offer (a recorded attempt shows it failing, or
+  no available action could obtain it), or an action <current_user_turn> or
+  <standing_instructions> forbid. PASS a genuine hand-back when the work that was possible is
+  done and evidenced and the result names exactly what is needed and why. Conditions that only
+  the user's answer can satisfy are unknown, not unmatched: they wait on the user, not the agent.
+- Not genuine — the agent could clear the blocker itself with actions available to it within
+  the request's scope: work it labels someone else's with no recorded reason it cannot do it, a
+  question the evidence already answers, an obstacle it never attempted, permission for an
+  action the request already authorized. Each is a gap: name the claimed blocker and, as its
+  settles, the action that would clear it.
 
 WHAT COUNTS AS EVIDENCE
 Only an observation counts: a recorded action whose output the claim traces to (a read, search,
@@ -856,8 +878,10 @@ pub struct GateInput<'a> {
 	pub resolution_evidence: &'a [crate::supervisor::resolve::ResolutionEvidence],
 	/// The agent's final answer.
 	pub result: &'a str,
-	/// The agent's own stated reason from its `done` self-report.
+	/// The agent's own stated reason from its final self-report.
 	pub claim: Option<&'a str>,
+	/// The status the agent ended its turn on; `None` when it gave none.
+	pub stop: Option<crate::supervisor::detect::SelfReport>,
 	/// Rendered [`EvidenceLedger`] (empty when no tools ran — pure reasoning).
 	pub actions: &'a str,
 	/// Retained tool output keyed by the `#N` shown in `actions`. The verifier
@@ -1487,6 +1511,10 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 		}
 		_ => String::new(),
 	};
+	let stop_line = format!(
+		"\n\n<agent_stop status=\"{}\" />",
+		input.stop.map_or("none", |stop| stop.as_str())
+	);
 	let actions_block = if input.actions.trim().is_empty() {
 		String::new()
 	} else {
@@ -1576,7 +1604,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 	let original_task = xml_text(input.original_task);
 	let result = xml_text(input.result);
 	format!(
-		"<current_user_turn authority=\"true\">\n{original_task}\n</current_user_turn>{resolution_block}{conditions_block}{role_block}{plan_block}\n\n<agent_final_result trust=\"untrusted\">\n{result}\n</agent_final_result>{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
+		"<current_user_turn authority=\"true\">\n{original_task}\n</current_user_turn>{resolution_block}{conditions_block}{role_block}{plan_block}\n\n<agent_final_result trust=\"untrusted\">\n{result}\n</agent_final_result>{stop_line}{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
 	)
 }
 
@@ -1950,7 +1978,7 @@ impl VerifierReport {
 /// Build the out-of-band advisory injected back into the loop on gaps.
 pub fn format_advisory(gaps: &[String]) -> String {
 	let mut s = String::from(
-		"<pay-attention>\nYou reported this task complete, but a verification pass found gaps before it can be accepted as done:\n",
+		"<pay-attention>\nYou ended this turn, but a verification pass found gaps before it can be accepted:\n",
 	);
 	for g in gaps {
 		s.push_str("- ");
@@ -1971,7 +1999,7 @@ pub fn format_advisory(gaps: &[String]) -> String {
 /// instruction-bearing block.
 fn format_unverified_advisory() -> String {
 	let mut s = String::from(
-		"<pay-attention>\nYou reported this task complete, but the independent verification pass could not be completed, so completion is not accepted yet. This is a failure of the check itself, not a finding against your work.\n",
+		"<pay-attention>\nYou ended this turn, but the independent verification pass could not be completed, so it is not accepted yet. This is a failure of the check itself, not a finding against your work.\n",
 	);
 	s.push_str(
 		"Make the next pass checkable: restate your result as a numbered list of the conditions the user's request has to satisfy — one per line — and for each give the observation that satisfies it: the action you ran and what its output showed, or the artifact and where it is. A condition you cannot point at an observation for must be listed as unsatisfied rather than argued.\n",

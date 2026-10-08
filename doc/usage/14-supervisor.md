@@ -47,7 +47,7 @@ enabled = true
 [supervisor.learning.evolution]
 enabled = false
 
-[supervisor.gate]          # verify on self-reported `done`
+[supervisor.gate]          # verify every turn stop: `done` or a hand-back
 enabled = true
 
 [supervisor.authorizer]    # user-intent check before tool execution
@@ -221,9 +221,9 @@ older sessions.
 
 | State | Effect |
 |-------|--------|
-| `done` | Arms the verify-gate |
-| `need_input` | Treated as a question — passed to you, **never** gated (no false-positive verification) |
-| `blocked` | Legitimate handback; detector hints do not interrupt it |
+| `done` | Completion claim, checked by the verify-gate |
+| `need_input` | Hand-back with a question; the verify-gate checks it is genuine before it reaches you |
+| `blocked` | Hand-back; detector hints do not interrupt it, and the verify-gate checks the blocker is genuine |
 | `exploring` / `progressing` | Fused with the counters below |
 
 ## Detectors
@@ -249,8 +249,8 @@ from the actual outputs and user request; a counter does not establish non-compl
 
 ## Verify-gate
 
-For an eligible user-task completion with supervision and the gate enabled, the claim is checked before completion is
-accepted by an independent model verification pass.
+With supervision and the gate enabled, every stop of a user-owned turn — a `done` claim, a hand-back, or a turn that ends
+with no status — is checked by an independent model verification pass before it is accepted.
 
 **Free pre-check (no model call):**
 
@@ -262,7 +262,9 @@ themselves. A saved artifact can fulfill an artifact request without a separate 
 and exercise behavior, so its output remains available as evidence. The verifier judges the requested outcome against
 the resulting artifacts and recorded outputs, and must identify a concrete gap before requesting more work.
 
-The gate also catches a missing self-report after mutations; `need_input` and `blocked` remain legitimate handbacks.
+A `blocked` or `need_input` stop is a hand-back, and agents use hand-backs to escape unfinished work: the verifier
+passes one only when the remaining work truly needs you (a decision, access the environment lacks, or an action the
+request forbids), and otherwise sends the agent back to clear the blocker itself.
 Pending session-owned background work defers completion. User and standing-instruction prohibitions on verification
 remain binding: a forbidden check's absence is compliance, not a gap.
 

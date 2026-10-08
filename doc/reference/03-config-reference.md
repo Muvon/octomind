@@ -657,7 +657,8 @@ cost; see [Learning](../usage/13-learning.md).
 
 ### `[supervisor.gate]`
 
-Verify-gate on self-reported completion. Free deterministic pre-gates run first (no model call); the LLM checklist runs
+Verify-gate on every turn stop: a `done` claim, or a `blocked`/`need_input` hand-back checked for being genuine. Free
+deterministic pre-gates run first (no model call); the LLM checklist runs
 only if those pass.
 
 | Field | Type | Default | Description |

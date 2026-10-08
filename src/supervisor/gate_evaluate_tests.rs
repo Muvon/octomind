@@ -58,6 +58,7 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 		resolution_evidence: &[],
 		result: "the flag is renamed and the suite passes",
 		claim: Some("done: tests pass"),
+		stop: Some(crate::supervisor::detect::SelfReport::Done),
 		actions,
 		grounds,
 		plan: "",

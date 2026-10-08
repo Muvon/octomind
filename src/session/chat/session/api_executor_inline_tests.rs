@@ -123,21 +123,3 @@ fn turn_answer_keeps_the_newest_pass_when_over_budget() {
 	let answers = vec![old, "the amendment".to_string()];
 	assert_eq!(current_turn_answer(&answers, 16), "the amendment");
 }
-
-#[test]
-fn system_managed_response_cannot_complete_the_latest_user_task() {
-	use crate::supervisor::detect::SelfReport;
-
-	assert!(claims_user_task_completion(
-		true,
-		Some(SelfReport::Done),
-		false
-	));
-	assert!(claims_user_task_completion(true, None, true));
-	assert!(!claims_user_task_completion(
-		false,
-		Some(SelfReport::Done),
-		false
-	));
-	assert!(!claims_user_task_completion(false, None, true));
-}

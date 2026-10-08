@@ -27,16 +27,6 @@ use crate::session::output::{OutputMode, OutputSink};
 
 const CONTINUE_NOTE: &str = "<pay-attention>\n<!-- octomind:pre_gate_unfinished_handback -->\nYour last message ended the turn while your own status was still in progress and no action was taken \u{2014} that is a promise, not a result. Continue the work now. When it is genuinely finished, report done; if you cannot proceed, report blocked or need_input with the reason.\n</pay-attention>";
 
-fn claims_user_task_completion(
-	completion_gate_eligible: bool,
-	self_report: Option<crate::supervisor::detect::SelfReport>,
-	has_mutations: bool,
-) -> bool {
-	completion_gate_eligible
-		&& (self_report == Some(crate::supervisor::detect::SelfReport::Done)
-			|| (self_report.is_none() && has_mutations))
-}
-
 /// Read the admission-time task resolution used by both verifier-backed and
 /// trusted no-gate completion. A missing/mismatched cache stays conservative,
 /// so an unrelated `done` cannot retire an older plan merely because it is open.
@@ -541,9 +531,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// runs there is no user to pick the turn back up, so a final message with no
 	// tool calls while the agent's OWN status still says exploring/progressing is
 	// a promise, not a result ("Let me implement the fix." → session end). Advisory
-	// continuation driven purely by the self-report — done stays gated,
-	// blocked/need_input stay legitimate hand-backs. A session-owned background
-	// job is also a legitimate hand-back: the inbox monitor resumes the agent
+	// continuation driven purely by the self-report — done, blocked and
+	// need_input go straight to the verify-gate below. A session-owned background
+	// job is a legitimate hand-back: the inbox monitor resumes the agent
 	// when its result arrives, whereas recursively nudging here keeps the ACP
 	// prompt open and prevents that monitor from acquiring the session. Bounded
 	// by the free-check budget, so a model that keeps yielding cannot loop it.
@@ -587,7 +577,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	)
 	.await;
 
-	// Supervisor verify-gate: on self-reported completion, verify before accepting.
+	// Supervisor verify-gate: every stop of a user-owned turn is verified before it is accepted.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
 	let pending_async = crate::session::has_pending_async_work();
 	if config.supervisor.gate.enabled {
@@ -603,22 +593,20 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			pending_async
 		);
 	}
-	// An explicit `done` self-report claims completion — and so does ending the
-	// turn with no status at all after having changed state: a token the model
-	// forgot must not become an unverified exit (observed: sessions ending with
-	// self_report=None skipped the whole gate). Pure answers (no mutations)
-	// stay ungated, in every mode alike. A session-owned background job (or an
-	// unread inbox result) means the turn is a wait, not a completion claim: the
-	// inbox monitor resumes the agent when the result lands, and the gate judges
-	// that later turn instead of accusing this one of delivering a status line.
+	// Every stop of a turn the user's task owns goes through the gate, whatever its
+	// status and whether or not it changed state: `done` is a completion claim, and
+	// a `blocked`/`need_input` stop is a hand-back the verifier must find genuine.
+	// A status label the gate never read was an unverified exit (observed: a
+	// `blocked` report right after a gap advisory skipped the whole gate). A
+	// session-owned background job (or an unread inbox result) means the turn is a
+	// wait, not a stop: the inbox monitor resumes the agent when the result lands,
+	// and the gate judges that later turn instead of accusing this one of
+	// delivering a status line.
 	chat_session.gate_deferred = chat_session.completion_gate_eligible && pending_async;
 	if config.supervisor.gate.enabled
 		&& !pending_async
-		&& claims_user_task_completion(
-			chat_session.completion_gate_eligible,
-			chat_session.last_self_report,
-			!chat_session.evidence.mutated_paths().is_empty(),
-		) && chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS
+		&& chat_session.completion_gate_eligible
+		&& chat_session.gate_iterations < crate::supervisor::gate::MAX_ITERATIONS
 	{
 		// Task content via the continuation-aware helper: after a compaction drains
 		// the raw user turns, the live request survives only inside the
@@ -660,6 +648,17 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			result
 		};
 		let claim = chat_session.last_self_report_reason.clone();
+		// A PASS on a `blocked`/`need_input` stop rules the hand-back genuine: the
+		// task is still open, so it neither retires the plan nor earns completion
+		// credit.
+		let stop = chat_session.last_self_report;
+		let hand_back = matches!(
+			stop,
+			Some(
+				crate::supervisor::detect::SelfReport::Blocked
+					| crate::supervisor::detect::SelfReport::NeedInput
+			)
+		);
 		let actions = chat_session.evidence.render();
 		// Only a relevant pre-existing plan or a plan changed by this turn reaches
 		// the verifier. Unrelated old plan state remains alive but cannot add scope.
@@ -720,6 +719,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				resolution_evidence: &resolved_task.resolution_evidence,
 				result: &result,
 				claim: claim.as_deref(),
+				stop,
 				actions: &actions,
 				grounds: chat_session.evidence.grounds(),
 				plan: &plan,
@@ -753,7 +753,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		);
 		match verdict {
 			crate::supervisor::gate::GateVerdict::Pass => {
-				if plan_applies {
+				if plan_applies && !hand_back {
 					let summary = claim.as_deref().unwrap_or("Completion verified");
 					if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary)
 					{
@@ -779,7 +779,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// correctness credit — LLM judges accept confident false-success
 				// claims, and this label steers memory credit, experience records,
 				// and evolution samples.
-				let execution_verified = !chat_session.evidence.mutated_paths().is_empty()
+				let execution_verified = !hand_back
+					&& !chat_session.evidence.mutated_paths().is_empty()
 					&& !chat_session
 						.detectors
 						.needs_verification(crate::supervisor::workdir::fingerprint())
@@ -792,10 +793,15 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				chat_session.last_gate_gaps.clear();
 				crate::supervisor::stats::gate_pass();
 				crate::log_debug!(
-					"Verify-gate: PASS (execution_verified={})",
-					execution_verified
+					"Verify-gate: PASS (execution_verified={} hand_back={})",
+					execution_verified,
+					hand_back
 				);
-				crate::supervisor::notify("completion verified");
+				crate::supervisor::notify(if hand_back {
+					"hand-back verified as genuine"
+				} else {
+					"completion verified"
+				});
 				reinforce_recalled(
 					chat_session,
 					config,

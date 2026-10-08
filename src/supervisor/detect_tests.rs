@@ -310,6 +310,27 @@ fn successful_mutations_do_not_trigger_loop_even_with_identical_receipts() {
 }
 
 #[test]
+fn an_exact_repeat_of_a_runner_command_guessed_as_a_write_is_not_progress() {
+	let runner = "detectTestsRepeatRunner";
+	register_tool_command_shape(runner, true);
+	let call = json!({"command": "php -r 'echo bin2hex(SetCookie::fromString(\"a=b; Path=;\")->getPath());'"});
+	assert!(
+		is_mutation_call(runner, &call),
+		"`SetCookie` reads as a write verb"
+	);
+	let mut d = Detectors::default();
+	let signals: Vec<_> = (0..4)
+		.map(|_| {
+			let (identity, novel) = d.note_call(runner, &call, "", false, true);
+			d.record_round_signals(&[identity], novel, 3, 5)
+		})
+		.collect();
+	assert_eq!(signals[1], DetectorSignal::None);
+	assert_eq!(signals[2], DetectorSignal::Loop);
+	assert_eq!(signals[3], DetectorSignal::Loop);
+}
+
+#[test]
 fn exploratory_command_errors_are_receipts_not_failed_verification() {
 	let runner = "detectTestsExploratoryRunner";
 	register_tool_command_shape(runner, true);

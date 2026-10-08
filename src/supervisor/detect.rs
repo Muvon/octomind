@@ -528,6 +528,9 @@ pub struct Detectors {
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
 	seen: HashSet<u64>,
 	seen_order: VecDeque<u64>,
+	/// Identity of the previous call (tool, arguments, result). A write-shaped call
+	/// that exactly repeats it changed nothing, so it does not count as progress.
+	last_call: Option<u64>,
 	/// Observational verification state (see `supervisor::workdir::fingerprint`):
 	/// the working-tree fingerprint at the last clean verification — a
 	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
@@ -659,7 +662,15 @@ impl Detectors {
 		}
 		// A new error can answer an exploratory question. A repeated failed
 		// write is not evidence of progress merely because it was write-capable.
-		let novel = fresh || (!is_error && is_mutation);
+		// A runner's write shape is only a guess from words in its command (a
+		// read-only probe naming `SetCookie` reads as "set"), so an exact repeat of
+		// the previous call — same command, same output — is no evidence of change;
+		// counting it as progress would keep the loop detector silent however long
+		// the repetition runs. A write tool's own repeats (an append) still count.
+		let repeated = self.last_call == Some(rhash);
+		self.last_call = Some(rhash);
+		let guessed_write = executes_free_form_command(tool);
+		let novel = fresh || (!is_error && is_mutation && !(repeated && guessed_write));
 		(rhash, novel)
 	}
 
@@ -895,6 +906,7 @@ impl Detectors {
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
+		self.last_call = None;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;

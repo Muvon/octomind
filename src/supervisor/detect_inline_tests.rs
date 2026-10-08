@@ -605,7 +605,9 @@ fn recurring_polling_never_becomes_a_required_strategy_change() {
 			assert!(note.contains("arrives on its own as your next message"));
 			assert!(note.contains("reply with a brief status and no tool call"));
 			assert!(note.contains("If the tool registered automatic background-result delivery"));
-			assert!(note.contains("polling may be necessary when no automatic delivery was registered"));
+			assert!(
+				note.contains("polling may be necessary when no automatic delivery was registered")
+			);
 			assert!(note.contains("Repeated receipts alone do not prove that state is unchanged"));
 			assert!(note.contains("does not require extra work or a blocked handback"));
 		}

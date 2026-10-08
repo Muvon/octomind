@@ -83,7 +83,7 @@ pub const SELF_REPORT_INSTRUCTION: &str = r#"Finish every response with one comp
 	`<sup>{"state":"STATE","focus":"current subgoal and why","next":"next action","carry":["minimum fact or opaque reference needed after context loss"],"plan":null,"memories":[]}</sup>`
 Use valid single-line JSON with exactly those fields. `carry` and `memories` may be empty and `next` is `null` when nothing remains to do. Put an active-memory ID such as `M2` in `memories` only when that entry materially affected this response or its chosen action. Never list entries merely because they were shown. Keep only information genuinely needed to resume. Never copy credentials or secret values into the report — retain only an opaque pointer, name, or location used to obtain them. Avoid generic text such as "working" or "continuing". STATE must be exactly one of:
 - `exploring` — still gathering context, reading code
-- `progressing` — actively making changes, or waiting for a background job you started: to wait, reply with a brief status and no tool call; the job's result arrives as your next message
+- `progressing` — actively making changes, or waiting for a background job you started that registered automatic result delivery: to wait, reply with a brief status and no tool call; the job's result arrives as a later message
 - `blocked` — stuck, cannot proceed
 - `need_input` — asking the user a question and waiting on them
 - `done` — the user's task is fully complete
@@ -528,9 +528,6 @@ pub struct Detectors {
 	/// Result hashes seen recently — for novelty. Bounded by `SEEN_CAP`.
 	seen: HashSet<u64>,
 	seen_order: VecDeque<u64>,
-	/// Identity of the previous call (tool, arguments, result). A write-shaped call
-	/// that exactly repeats it changed nothing, so it does not count as progress.
-	last_call: Option<u64>,
 	/// Observational verification state (see `supervisor::workdir::fingerprint`):
 	/// the working-tree fingerprint at the last clean verification — a
 	/// verifier-shaped call that succeeded on an UNCHANGED tree. Seeded from the
@@ -662,15 +659,11 @@ impl Detectors {
 		}
 		// A new error can answer an exploratory question. A repeated failed
 		// write is not evidence of progress merely because it was write-capable.
-		// A runner's write shape is only a guess from words in its command (a
-		// read-only probe naming `SetCookie` reads as "set"), so an exact repeat of
-		// the previous call — same command, same output — is no evidence of change;
-		// counting it as progress would keep the loop detector silent however long
-		// the repetition runs. A write tool's own repeats (an append) still count.
-		let repeated = self.last_call == Some(rhash);
-		self.last_call = Some(rhash);
-		let guessed_write = executes_free_form_command(tool);
-		let novel = fresh || (!is_error && is_mutation && !(repeated && guessed_write));
+		// A runner's mutation intent is only a guess, not evidence of a write.
+		// Use the same bounded receipt novelty as reads, independent of call order
+		// or command wording. Explicit write tools retain mutation credit. A stale
+		// receipt does not prove nothing changed: the resulting hint is advisory.
+		let novel = fresh || (!is_error && is_mutation && !executes_free_form_command(tool));
 		(rhash, novel)
 	}
 
@@ -906,7 +899,6 @@ impl Detectors {
 	pub fn reset_streak(&mut self) {
 		self.novelty_window.clear();
 		self.loop_window.clear();
-		self.last_call = None;
 		self.agent_dirty = false;
 		self.mutated_paths.clear();
 		self.readback_only_clearance = false;
@@ -975,7 +967,7 @@ pub fn signal_description(signal: DetectorSignal) -> &'static str {
 /// into evidence of failure or permission to disregard the user's instructions.
 pub fn steer_note(signal: DetectorSignal) -> &'static str {
 	match signal {
-		DetectorSignal::Loop => "<pay-attention>\nAdvisory: identical calls have returned identical results across several rounds. Repeating a call does not bring a background job's result sooner: it arrives on its own as your next message — to wait for it, reply with a brief status and no tool call. Otherwise decide the next step from the results you already have. This hint does not require extra work or a blocked handback.\n</pay-attention>",
+		DetectorSignal::Loop => "<pay-attention>\nAdvisory: identical calls have returned identical results across several rounds. If the tool registered automatic background-result delivery, repeating a call does not bring that result sooner: it arrives on its own as your next message — to wait for it, reply with a brief status and no tool call. Otherwise follow the tool's actual completion contract; polling may be necessary when no automatic delivery was registered. Repeated receipts alone do not prove that state is unchanged or the task is stalled. This hint does not require extra work or a blocked handback.\n</pay-attention>",
 		DetectorSignal::NoProgress => "<pay-attention>\nAdvisory: recent calls have repeated previously observed results. The detector cannot determine whether the task is advancing. Use the actual outcomes and the user's request to decide the next step; continue the current approach when justified. This hint does not require extra work or a blocked handback.\n</pay-attention>",
 		DetectorSignal::Recovery => "<pay-attention>\nAdvisory: several command executions returned errors without a later success for those exact calls. These may be expected probes, obsolete attempts or failures unrelated to verification. Judge their relevance from the actual outputs and the user's task. Only an observed, relevant failure warrants recovery work; this hint does not require rerunning a command, changing code or reporting blocked. Honor all execution restrictions.\n</pay-attention>",
 		DetectorSignal::None => "",

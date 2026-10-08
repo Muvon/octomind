@@ -658,6 +658,12 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 			.contains("arrives on its own as your next message"));
 		assert!(advisory
 			.content
+			.contains("If the tool registered automatic background-result delivery"));
+		assert!(advisory
+			.content
+			.contains("polling may be necessary when no automatic delivery was registered"));
+		assert!(advisory
+			.content
 			.contains("does not require extra work or a blocked handback"));
 		assert_eq!(
 			session.session.messages[..index]

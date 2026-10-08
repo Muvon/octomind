@@ -331,6 +331,79 @@ fn an_exact_repeat_of_a_runner_command_guessed_as_a_write_is_not_progress() {
 }
 
 #[test]
+fn repeated_guessed_write_batches_are_not_progress_regardless_of_call_order() {
+	let runner = "detectTestsBatchRepeatRunner";
+	register_tool_command_shape(runner, true);
+	let probe = json!({"command": "php -r 'echo bin2hex(SetCookie::fromString(\"a=b; Path=;\")->getPath());'"});
+	assert!(is_mutation_call(runner, &probe));
+	let read = json!({"path": "out"});
+	for reorder in [false, true] {
+		let mut d = Detectors::default();
+		for round in 0..=LOOP_THRESHOLD {
+			let mut calls = [(runner, &probe, "", true), ("reader", &read, "same", false)];
+			if reorder && round % 2 == 1 {
+				calls.reverse();
+			}
+			let mut hashes = Vec::new();
+			let mut round_novel = false;
+			for (tool, params, result, mutation) in calls {
+				let (hash, novel) = d.note_call(tool, params, result, false, mutation);
+				hashes.push(hash);
+				round_novel |= novel;
+			}
+			assert_eq!(round_novel, round == 0);
+			assert_eq!(
+				d.record_round_signals(&hashes, round_novel, LOOP_THRESHOLD, NO_PROGRESS_WINDOW),
+				if round + 1 >= LOOP_THRESHOLD {
+					DetectorSignal::Loop
+				} else {
+					DetectorSignal::None
+				}
+			);
+		}
+	}
+}
+
+#[test]
+fn reworded_guessed_writes_with_stale_receipts_nominate_no_progress() {
+	let runner = "detectTestsRewordedRunner";
+	register_tool_command_shape(runner, true);
+	let mut d = Detectors::default();
+	for round in 0..=NO_PROGRESS_WINDOW {
+		let call = json!({"command": format!("inspect --field update --limit {}", round + 1)});
+		assert!(is_mutation_call(runner, &call));
+		let (hash, novel) = d.note_call(runner, &call, "same", false, true);
+		assert_eq!(novel, round == 0);
+		assert_eq!(
+			d.record_round_signals(&[hash], novel, LOOP_THRESHOLD, NO_PROGRESS_WINDOW),
+			if round == NO_PROGRESS_WINDOW {
+				DetectorSignal::NoProgress
+			} else {
+				DetectorSignal::None
+			}
+		);
+	}
+}
+
+#[test]
+fn guessed_writes_still_credit_new_receipts_and_targets() {
+	let runner = "detectTestsFreshRunner";
+	register_tool_command_shape(runner, true);
+	let mut d = Detectors::default();
+	for (path, receipt, is_error) in [
+		("a", "first", false),
+		("a", "changed", false),
+		("b", "changed", false),
+		("b", "changed", true),
+	] {
+		let call = json!({"command": "inspect --field update", "path": path});
+		assert!(is_mutation_call(runner, &call));
+		assert!(d.note_call(runner, &call, receipt, is_error, true).1);
+		assert!(!d.note_call(runner, &call, receipt, is_error, true).1);
+	}
+}
+
+#[test]
 fn exploratory_command_errors_are_receipts_not_failed_verification() {
 	let runner = "detectTestsExploratoryRunner";
 	register_tool_command_shape(runner, true);

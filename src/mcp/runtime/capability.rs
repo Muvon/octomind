@@ -592,27 +592,19 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		//    Register + enable through the dynamic registry as before; the
 		//    dynamic `get_all_functions` path surfaces its tools, no
 		//    overlay needed.
-		let already_in_static = config.mcp.servers.iter().any(|s| s.name() == server_name);
+		if let Some(server_config) = config.mcp.servers.iter().find(|s| s.name() == server_name) {
+			let bare_names = static_server_grant(server_config, filter_for_this, config).await;
 
-		if already_in_static {
-			let bare_names: Vec<String> = filter_for_this.clone().unwrap_or_default();
-
-			// Register THIS cap's named tools in the global tool_map so the
+			// Register THIS cap's tools in the global tool_map so the
 			// dispatcher can route a call like `octofs:shell` even though
-			// the role's static filter never listed it. Empty `bare_names`
-			// (capability allows all tools from this server) is a no-op
-			// here — the static path already mapped them.
+			// the role's static filter never listed it.
 			if !bare_names.is_empty() {
-				if let Some(server_config) =
-					config.mcp.servers.iter().find(|s| s.name() == server_name)
-				{
-					crate::mcp::tool_map::register_dynamic_server_tools(
-						&server_name,
-						server_config,
-						&bare_names,
-					);
-					crate::mcp::server::clear_function_cache_for_server(&server_name);
-				}
+				crate::mcp::tool_map::register_dynamic_server_tools(
+					&server_name,
+					server_config,
+					&bare_names,
+				);
+				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
 
@@ -1373,6 +1365,36 @@ fn filter_for_server(allowed_tools: &[String], server_name: &str) -> Option<Vec<
 	}
 }
 
+/// Concrete tool names a capability grants on a server the role's static
+/// config already runs. The tool map and the runtime overlay hold real names,
+/// so globs (`orchestration:*` → `*`) are expanded against the server's full
+/// tool list — registering the pattern itself maps a tool literally named `*`
+/// while the static filter keeps hiding the grant. No filter means the
+/// capability grants every tool on the server.
+async fn static_server_grant(
+	server: &crate::config::McpServerConfig,
+	filter: Option<Vec<String>>,
+	config: &Config,
+) -> Vec<String> {
+	let (globs, mut names): (Vec<String>, Vec<String>) = filter
+		.unwrap_or_else(|| vec!["*".to_string()])
+		.into_iter()
+		.partition(|pattern| pattern.ends_with('*'));
+	if globs.is_empty() {
+		return names;
+	}
+	let mut unfiltered = server.clone();
+	unfiltered.tools_mut().clear();
+	for function in crate::mcp::server_functions_for(&unfiltered, config).await {
+		if !names.contains(&function.name)
+			&& crate::mcp::is_tool_allowed_by_patterns(&function.name, &globs)
+		{
+			names.push(function.name);
+		}
+	}
+	names
+}
+
 /// Register + enable a capability's MCP servers and mark the capability
 /// active. Mirrors `handle_enable`'s logic minus the `McpToolResult`
 /// wrapping — errors propagate as `anyhow::Error` for the caller to log
@@ -1435,23 +1457,19 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
 
 		// Server already provided by the role's static config — extend
-		// rather than re-register. Mirrors the `already_in_static` branch
+		// rather than re-register. Mirrors the static-server branch
 		// in `handle_enable`. The overlay extends the role's per-server
 		// filter at next merge; tool_map registration makes named tools
 		// dispatchable now.
-		if config.mcp.servers.iter().any(|s| s.name() == server_name) {
-			let bare_names: Vec<String> = filter.clone().unwrap_or_default();
+		if let Some(server_config) = config.mcp.servers.iter().find(|s| s.name() == server_name) {
+			let bare_names = static_server_grant(server_config, filter, config).await;
 			if !bare_names.is_empty() {
-				if let Some(server_config) =
-					config.mcp.servers.iter().find(|s| s.name() == server_name)
-				{
-					crate::mcp::tool_map::register_dynamic_server_tools(
-						&server_name,
-						server_config,
-						&bare_names,
-					);
-					crate::mcp::server::clear_function_cache_for_server(&server_name);
-				}
+				crate::mcp::tool_map::register_dynamic_server_tools(
+					&server_name,
+					server_config,
+					&bare_names,
+				);
+				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
 			activated_server_tools.push((server_name.clone(), bare_names));

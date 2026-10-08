@@ -424,6 +424,69 @@ async fn test_capability_enable_static_server_extends_overlay() {
 	crate::mcp::runtime::dynamic::clear_all();
 }
 
+/// A glob grant (`orchestration:*`) on a static server the role restricts —
+/// interactive sessions keep only schedule/monitor — must expand to the
+/// server's real tool names: `tap` becomes routable and reaches the model's
+/// function list, and no tool literally named `*` is registered.
+#[tokio::test]
+#[serial]
+async fn test_capability_enable_static_glob_grant_exposes_real_tools() {
+	let sb = CapSandbox::new("static-glob");
+	sb.cap(
+		"captest-static-glob",
+		"triggers = [\"use the static glob cap\"]\n",
+		"[[mcp.servers]]\nname = \"orchestration\"\ntype = \"builtin\"\ntimeout_seconds = 30\ntools = []\n\n[roles.mcp]\nallowed_tools = [\"orchestration:*\"]\n",
+	);
+	crate::mcp::runtime::dynamic::clear_all();
+	reset_registry();
+	let mut config = test_config();
+	config.mcp.servers.retain(|s| s.name() != "orchestration");
+	config
+		.mcp
+		.servers
+		.push(crate::config::McpServerConfig::builtin(
+			"orchestration",
+			30,
+			vec!["schedule".to_string(), "monitor".to_string()],
+		));
+	crate::mcp::tool_map::initialize_tool_map(&config)
+		.await
+		.expect("init tool map");
+	assert!(crate::mcp::tool_map::get_server_for_tool("tap").is_none());
+
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "enable", "name": "captest-static-glob"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "enable failed: {}", text_of(&result));
+	assert!(crate::mcp::tool_map::get_server_for_tool("tap").is_some());
+	assert!(crate::mcp::tool_map::get_server_for_tool("*").is_none());
+	let names: Vec<String> = crate::mcp::get_available_functions(&config)
+		.await
+		.into_iter()
+		.map(|f| f.name)
+		.collect();
+	assert!(
+		names.contains(&"tap".to_string()),
+		"tap must reach the model: {names:?}"
+	);
+
+	// Disable strips only the cap's grant; role-owned tools stay routable.
+	let result = execute_capability_command(
+		&cap_call(serde_json::json!({"action": "disable", "name": "captest-static-glob"})),
+		&config,
+	)
+	.await
+	.expect("dispatch");
+	assert!(!is_err(&result), "disable failed: {}", text_of(&result));
+	assert!(crate::mcp::tool_map::get_server_for_tool("tap").is_none());
+	assert!(crate::mcp::tool_map::get_server_for_tool("schedule").is_some());
+
+	crate::mcp::runtime::dynamic::clear_all();
+}
+
 #[tokio::test]
 #[serial]
 async fn test_capability_enable_dynamic_builtin_fails_cleanly() {

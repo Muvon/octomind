@@ -43,6 +43,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 | `/effort [LEVEL]` | Show or set reasoning effort (runtime + session file) |
 | `/loglevel [LEVEL]` | Set the log level (runtime only) |
 | `/context [FILTER]` | Inspect the conversation context |
+| `/reply [N\|WORDS]` | Start the next prompt with an earlier assistant reply quoted, to answer it point by point |
 | `/done [INSTRUCTIONS]` | Force-compress context and extract lessons |
 | `/image [PATH]` | Attach an image (from path or clipboard) |
 | `/video [PATH]` | Attach a video |
@@ -71,6 +72,7 @@ or `success: false`; inspect it, not just the transport envelope.
 | `/new [TITLE]` | Reinitialize a fresh session. | Sets a new name and returns an exit request; use ACP session creation for a fresh conversation. | Sets a new name, saves, and removes session; create another session to continue. |
 | `/clear` | Renderer clears terminal. | Returns success; client decides how to clear UI. | Returns success; client decides how to clear UI. |
 | `/copy`, `/image`, `/video` | Use local clipboard/files. | Use the agent host clipboard/files, not client files. | Use the server host clipboard/files, not browser files. |
+| `/reply [N\|WORDS]` | Starts the next prompt with the quote. | Returns the quote as JSON text / `output`. | Returns the quote in `status.data`. |
 | `/done [INSTRUCTIONS]` | Compress, then process instructions if supplied. | Prompt path continues instructions; extension only compresses and returns no output. | Compress status, then process joined args as a message. |
 | `/analyze` | Prints loopback bridge URL. | URL points to agent host loopback. | URL points to server host loopback. |
 
@@ -360,6 +362,44 @@ An unrecognized filter value silently falls back to `all`.
 /context large
 ```
 
+### `/reply [N|WORDS]`
+
+Quote an earlier assistant reply so you can answer it point by point. A reply is any non-empty assistant message,
+including the prose of a message that also called tools; tool calls and tool output are never quoted. Replies are
+numbered newest first:
+
+| Form | Quotes |
+|------|--------|
+| `/reply` | The latest reply (default) |
+| `/reply N` | The Nth latest reply; `1` is the latest |
+| `/reply WORDS` | The latest reply containing every word, in any case and order |
+
+The CLI starts the next prompt with the reply as a markdown blockquote (`> ` before every line, a bare `>` for blank
+lines) and a blank line below it. Delete the quoted lines you do not need, type your answer underneath, and press Enter;
+Ctrl+C discards the draft. An unknown number, or words that no reply contains, returns an error. Other clients get
+`command_type: "reply"` with `number`, `timestamp` (Unix seconds), `lines`, and the `quote` text; nothing is prefilled
+for them.
+
+Picking in the CLI:
+
+- Press Tab after `/reply ` for a menu of replies, newest first. Each row reads like the reply: when it was sent, its
+  length, and its opening prose on one line, for example `4m ago    14 lines  You're right — I can launch…`. Typed
+  words filter by content, typed digits by reply number. Choosing a row leaves `/reply N` in the prompt; press Enter
+  to quote it.
+- Type `>` at the start of any prompt line to quote single lines instead. A menu lists the distinct lines of all
+  replies, newest first, each led by its reply's age; typed words narrow it, and the first 50 matches are shown. Blank
+  lines and code-fence lines are left out. Selecting a line inserts `> line` and moves to a new line, so another `>`
+  quotes the next one. A `>` typed mid-line, as in `->` or `a > b`, stays plain text.
+- While a menu has matches, Enter takes the highlighted entry. Esc closes the menu.
+
+Quoted lines are dimmed in the prompt and in the submitted message.
+
+```text
+/reply
+/reply 3
+/reply parser fix
+```
+
 ### `/done [INSTRUCTIONS]`
 
 Force-compress the conversation context **bypassing all automatic threshold, cooldown, and cost guards**, then (when
@@ -604,6 +644,10 @@ Use the ID returned by `/learning evolution list` for lifecycle actions:
 - **Why does copy or analyze fail remotely?** Clipboard and loopback access belong to the Octomind host. Use
   your client attachment/clipboard UI, or `/share` when uploading the log is intended.
 - **Why does `/plan show` not change a task?** Plan arguments are ignored: this command only displays runtime state.
+- **Why did Enter put a reply line in place of my own `>` text?** While the `>` menu has matches, Enter takes the
+  highlighted line. Press Esc to close the menu first, then Enter sends the message.
+- **Why does `/reply` not fill my editor's input?** Only the CLI prompt is prefilled. ACP and WebSocket clients get
+  the quote as data and decide what to do with it.
 
 ## Source map
 

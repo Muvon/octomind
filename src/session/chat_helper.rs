@@ -916,6 +916,11 @@ impl<'a> CommandCompleter<'a> {
 			));
 		}
 
+		// Special hint for /reply command
+		if line == "/reply" {
+			return Some(" [N|words]".to_string());
+		}
+
 		// Special hint for /video command
 		if line == "/video" {
 			return Some(" <path_to_video>".to_string());

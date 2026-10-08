@@ -38,6 +38,8 @@ mod new;
 mod plan;
 mod prompt;
 mod rename;
+mod reply;
+pub use reply::{age, assistant_replies, matches_words, quote, Reply};
 mod report;
 mod role;
 mod run;
@@ -148,6 +150,16 @@ pub enum CommandOutput {
 		length: Option<usize>,
 		/// Which slice of the session was copied: `last`, `assistant`, `user`, `all`.
 		scope: String,
+	},
+	/// `/reply`: an earlier assistant reply as a markdown quote. The CLI starts
+	/// its next prompt with `quote`; other clients get it as data.
+	Reply {
+		/// 1 is the latest reply.
+		number: usize,
+		/// Unix seconds the reply was recorded at.
+		timestamp: u64,
+		lines: usize,
+		quote: String,
 	},
 	Clear {
 		success: bool,
@@ -318,6 +330,15 @@ impl CommandOutput {
 				}
 				println!();
 			}
+			Self::Reply {
+				timestamp, lines, ..
+			} => {
+				let sent = age(*timestamp, crate::utils::time::now_secs());
+				block_open("/reply", Some(&format!("reply from {}", sent)));
+				let noun = if *lines == 1 { "line" } else { "lines" };
+				block_close_ok("/reply", Some(&format!("{} {} quoted", lines, noun)));
+				println!();
+			}
 			Self::Clear { message, .. } => {
 				print!("\x1B[2J\x1B[1;1H");
 				std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
@@ -416,6 +437,7 @@ pub async fn process_command(
 		}
 		HELP_COMMAND => help::handle_help(config, &current_role).await,
 		COPY_COMMAND => copy::handle_copy(session, params),
+		REPLY_COMMAND => reply::handle_reply(session, params),
 		CLEAR_COMMAND => clear::handle_clear(),
 		INFO_COMMAND => info::handle_info(session, config),
 		REPORT_COMMAND => report::handle_report(session, config, params),

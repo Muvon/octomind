@@ -50,10 +50,10 @@ fn key(code: KeyCode, mods: KeyModifiers) -> ReedlineRawEvent {
 fn test_esc_meta_sequences() {
 	let (mut h, ..) = mk();
 
-	// Esc arms the meta prefix and swallows the keypress
+	// Esc arms the meta prefix and closes any open completion menu
 	assert_eq!(
 		h.parse_event(key(KeyCode::Esc, KeyModifiers::NONE)),
-		ReedlineEvent::None
+		ReedlineEvent::Esc
 	);
 	// Esc+b → word left
 	assert_eq!(
@@ -104,6 +104,47 @@ fn test_ctrl_a_moves_to_line_start() {
 	assert_eq!(
 		h.parse_event(key(KeyCode::Char('a'), KeyModifiers::CONTROL)),
 		ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }])
+	);
+}
+
+#[test]
+fn test_gt_opens_reply_picker_only_at_line_start() {
+	let (mut h, state, _, reverse, _) = mk();
+	let picker = ReedlineEvent::Multiple(vec![
+		ReedlineEvent::Edit(vec![EditCommand::InsertChar('>')]),
+		ReedlineEvent::Menu("completion_menu".to_string()),
+	]);
+	let set = |buffer: &str, cursor: usize| {
+		let mut s = state.lock().expect("line state");
+		s.buffer = buffer.to_string();
+		s.cursor = cursor;
+	};
+
+	// Empty buffer, and the start of a later line, with or without SHIFT
+	set("", 0);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::NONE)),
+		picker
+	);
+	set("answer\n", 7);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::SHIFT)),
+		picker
+	);
+
+	// Mid-line `>` (`->`, `a > b`) is plain text
+	set("a -", 3);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::NONE)),
+		ReedlineEvent::Edit(vec![EditCommand::InsertChar('>')])
+	);
+
+	// Reverse search takes `>` as a search character
+	set("", 0);
+	reverse.store(true, Ordering::SeqCst);
+	assert_eq!(
+		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::NONE)),
+		ReedlineEvent::Edit(vec![EditCommand::InsertChar('>')])
 	);
 }
 

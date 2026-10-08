@@ -66,6 +66,14 @@ pub enum InputResult {
 	),
 }
 
+/// What the prompt takes from the session for `/reply`.
+pub struct ReplyInput {
+	/// Assistant replies, newest first, listed by the `/reply` and `>` pickers.
+	pub replies: Vec<crate::session::chat::session::commands::Reply>,
+	/// Quote `/reply` asked the prompt to start with.
+	pub prefill: Option<String>,
+}
+
 use crate::log_info;
 
 fn display_shortcuts_help() {
@@ -81,6 +89,14 @@ fn display_shortcuts_help() {
 	println!(
 		"{}",
 		"│ @           - Fuzzy file completion (e.g., @src/ma)     │".bright_black()
+	);
+	println!(
+		"{}",
+		"│ >           - At line start: quote a line from a reply  │".bright_black()
+	);
+	println!(
+		"{}",
+		"│ Esc         - Close the completion menu                 │".bright_black()
 	);
 	println!(
 		"{}",
@@ -239,13 +255,20 @@ fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str
 	// so it stays resize-stable and works on any terminal theme.
 	let marker = "\x1b[94m▍\x1b[39m"; // bright blue ▍, then reset fg only
 	let italic_on = "\x1b[3m";
+	// Quoted lines stay dim, as in the prompt, so the answer stands out.
+	let quote_on = "\x1b[2m";
 	let reset = "\x1b[0m";
 
 	// Prefix width = 2 cells (`▍ `); wrap budget is term_w - 2.
 	let wrap_w = term_w.saturating_sub(2).max(1);
-	let line_prefix = format!("{} {}", marker, italic_on);
 
 	for raw_line in line.split('\n') {
+		let text_on = if raw_line.starts_with('>') {
+			quote_on
+		} else {
+			italic_on
+		};
+		let line_prefix = format!("{} {}", marker, text_on);
 		// Split by char count, matching `display_cols`'s width model (safe
 		// underestimate for wide chars — we only ever wrap earlier, never
 		// past the right edge).
@@ -296,9 +319,9 @@ pub fn read_user_input(
 	octomind_config: &Config,
 	role: &str,
 	current_context_tokens: u64,
-	max_session_tokens_threshold: usize,
 	session_id: &str,
 	inbox_pending: Arc<std::sync::Mutex<Option<String>>>,
+	reply: ReplyInput,
 ) -> Result<InputResult> {
 	// Create reedline with in-memory history and preloaded role history
 	let mut history = FileBackedHistory::new(1000).expect("Error configuring history");
@@ -373,7 +396,8 @@ pub fn read_user_input(
 	add_completion_menu_keybindings(&mut keybindings);
 	let config = Arc::new(octomind_config.clone());
 	let role_name = role.to_string();
-	let buffer_empty = Arc::new(AtomicBool::new(true));
+	let buffer_empty = Arc::new(AtomicBool::new(reply.prefill.is_none()));
+	let replies = Arc::new(reply.replies);
 	let reverse_search_active = Arc::new(AtomicBool::new(false));
 	let hint_available = Arc::new(AtomicBool::new(false));
 	// External break signal — flipped by the inbox-watcher thread below when a
@@ -413,6 +437,7 @@ pub fn read_user_input(
 				buffer_empty.clone(),
 				hint_available.clone(),
 				line_state.clone(),
+				replies.clone(),
 			),
 		))
 		.with_menu(ReedlineMenu::EngineCompleter(completion_menu))
@@ -423,6 +448,7 @@ pub fn read_user_input(
 				buffer_empty.clone(),
 				hint_available.clone(),
 				line_state.clone(),
+				replies.clone(),
 			),
 		))
 		.with_hinter(Box::new(
@@ -432,6 +458,7 @@ pub fn read_user_input(
 				buffer_empty.clone(),
 				hint_available,
 				line_state.clone(),
+				replies,
 			),
 		))
 		.with_quick_completions(true)
@@ -502,7 +529,7 @@ pub fn read_user_input(
 	let last_cost = f64::from_bits(last_cost_bits);
 	let last_ctx = LAST_DISPLAYED_CTX.load(Ordering::Relaxed);
 	let last_max = LAST_DISPLAYED_MAX.load(Ordering::Relaxed);
-	let max_u64 = max_session_tokens_threshold as u64;
+	let max_u64 = octomind_config.max_session_tokens_threshold as u64;
 	let unchanged = last_ctx != u64::MAX
 		&& estimated_cost.to_bits() == last_cost_bits
 		&& current_context_tokens == last_ctx
@@ -556,6 +583,10 @@ pub fn read_user_input(
 	// sit in stdin's input queue — without this, reedline would consume
 	// them as the next prompt's input.
 	crate::utils::term_echo::drain_stdin();
+
+	if let Some(quote) = reply.prefill {
+		line_editor.run_edit_commands(&[EditCommand::InsertString(quote)]);
+	}
 
 	// Read line with reedline
 	loop {

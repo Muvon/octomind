@@ -23,6 +23,17 @@ fn adapter() -> (
 	Arc<AtomicBool>, // hint_available
 	Arc<Mutex<LineState>>,
 ) {
+	adapter_with_replies(Vec::new())
+}
+
+fn adapter_with_replies(
+	replies: Vec<Reply>,
+) -> (
+	ReedlineAdapter,
+	Arc<AtomicBool>, // buffer_empty
+	Arc<AtomicBool>, // hint_available
+	Arc<Mutex<LineState>>,
+) {
 	let config: crate::config::Config =
 		toml::from_str(include_str!("../../../config-templates/default.toml"))
 			.expect("parse default config template");
@@ -35,6 +46,7 @@ fn adapter() -> (
 		buffer_empty.clone(),
 		hint_available.clone(),
 		line_state.clone(),
+		Arc::new(replies),
 	);
 	(adapter, buffer_empty, hint_available, line_state)
 }
@@ -141,4 +153,140 @@ fn test_highlighter_colors_first_argument() {
 	let partial = adapter.highlight("/co last", 0);
 	assert_eq!(styled_to_string(&partial), "/co last");
 	assert_eq!(segment_color(&partial, " last"), None);
+}
+
+/// Newest first, as `assistant_replies` returns them: sent 2½ and 15
+/// minutes ago, far enough from the minute marks that the test's own clock
+/// tick cannot change the label.
+fn replies() -> Vec<Reply> {
+	let now = crate::utils::time::now_secs();
+	vec![
+		Reply {
+			text: "Tests pass.\n\nThe parser fix holds.".to_string(),
+			timestamp: now - 150,
+		},
+		Reply {
+			text: "Done — parser fixed.\n```rust\nfn parse() {}\n```\nTests pass.".to_string(),
+			timestamp: now - 930,
+		},
+	]
+}
+
+#[test]
+fn test_reply_argument_lists_replies_as_readable_rows() {
+	let (mut adapter, ..) = adapter_with_replies(replies());
+
+	let all = adapter.complete("/reply ", 7).suggestions().to_vec();
+	let values: Vec<&str> = all.iter().map(|s| s.value.as_str()).collect();
+	assert_eq!(values, ["1", "2"]);
+	// Each row reads as age, length and the reply's opening prose; heading
+	// marks, fences and blank lines drop out of the preview
+	let rows: Vec<&str> = all
+		.iter()
+		.map(|s| s.display_override.as_deref().expect("row text"))
+		.collect();
+	assert_eq!(
+		rows,
+		[
+			"2m ago     3 lines  Tests pass. The parser fix holds.",
+			"15m ago    5 lines  Done — parser fixed. fn parse() {} Tests pass.",
+		]
+	);
+	assert_eq!(all[0].style, Some(Style::new()));
+	assert_eq!((all[0].span.start, all[0].span.end), (7, 7));
+
+	// Words select by content, a number by its prefix
+	let by_word = adapter.complete("/reply FIXED", 12).suggestions().to_vec();
+	assert_eq!(by_word.len(), 1);
+	assert_eq!(by_word[0].value, "2");
+	assert_eq!((by_word[0].span.start, by_word[0].span.end), (7, 12));
+
+	let by_number = adapter.complete("/reply 2", 8).suggestions().to_vec();
+	assert_eq!(by_number.len(), 1);
+	assert_eq!(by_number[0].value, "2");
+}
+
+#[test]
+fn test_quote_picker_lists_distinct_lines_newest_first() {
+	let (mut adapter, ..) = adapter_with_replies(replies());
+
+	// `>` on a later line of the buffer: the span covers only that line
+	let buffer = "first line\n>";
+	let lines = adapter
+		.complete(buffer, buffer.len())
+		.suggestions()
+		.to_vec();
+	let values: Vec<&str> = lines.iter().map(|s| s.value.as_str()).collect();
+	// Blank lines and lone fences are skipped; the repeated line appears once
+	assert_eq!(
+		values,
+		[
+			"> Tests pass.\n",
+			"> The parser fix holds.\n",
+			"> Done — parser fixed.\n",
+			"> fn parse() {}\n",
+		]
+	);
+	assert_eq!(
+		lines[0].display_override.as_deref(),
+		Some("2m ago    Tests pass.")
+	);
+	assert_eq!(
+		lines[2].display_override.as_deref(),
+		Some("15m ago   Done — parser fixed.")
+	);
+	assert_eq!((lines[0].span.start, lines[0].span.end), (11, buffer.len()));
+
+	// Every typed word must appear in the line, in any case and order
+	let filtered = adapter.complete("> FIX parser", 12).suggestions().to_vec();
+	let values: Vec<&str> = filtered.iter().map(|s| s.value.as_str()).collect();
+	assert_eq!(
+		values,
+		["> The parser fix holds.\n", "> Done — parser fixed.\n"]
+	);
+}
+
+#[test]
+fn test_quote_picker_needs_gt_at_line_start() {
+	let (mut adapter, ..) = adapter_with_replies(replies());
+	assert!(adapter.complete("a > b", 5).suggestions().is_empty());
+	assert!(adapter.complete("text\nx>", 7).suggestions().is_empty());
+}
+
+#[test]
+fn test_highlighter_dims_quoted_lines() {
+	let (adapter, ..) = adapter();
+	let buffer = "> quoted\nmy answer\n>";
+	let styled = adapter.highlight(buffer, 0);
+	assert_eq!(styled_to_string(&styled), buffer);
+	let segments: Vec<(bool, &str)> = styled
+		.buffer
+		.iter()
+		.map(|(style, text)| (style.is_dimmed, text.as_str()))
+		.collect();
+	assert_eq!(
+		segments,
+		[(true, "> quoted\n"), (false, "my answer\n"), (true, ">")]
+	);
+}
+
+#[test]
+fn test_quote_buffers_get_no_history_hint() {
+	let (mut adapter, ..) = adapter();
+	let mut history = reedline::FileBackedHistory::new(10).expect("history");
+	history
+		.save(reedline::HistoryItem::from_command_line(
+			"> old quote\nanswer",
+		))
+		.expect("save");
+	history
+		.save(reedline::HistoryItem::from_command_line("hello world"))
+		.expect("save");
+
+	assert!(adapter.handle(">", 1, &history, false, "/tmp").is_empty());
+	// Ordinary text still completes from history
+	assert_eq!(
+		adapter.handle("hello", 5, &history, false, "/tmp"),
+		" world"
+	);
 }

@@ -541,6 +541,7 @@ fn test_hint_extended() {
 		completer.hint("/copy"),
 		Some(" [last|assistant|user|all]".to_string())
 	);
+	assert_eq!(completer.hint("/reply"), Some(" [N|words]".to_string()));
 	assert_eq!(
 		completer.hint("/effort"),
 		Some(" [none|low|medium|high|xhigh|max]".to_string())

@@ -54,6 +54,7 @@ commands, or delegation; a tap's fetched manifest determines which capabilities 
 | `/done` | Force context compression and start lesson extraction when learning is enabled |
 | `/clear` | Clear the terminal |
 | `/copy [scope]` | Copy the last response, or `assistant`/`user`/`all` |
+| `/reply [N]` | Quote an earlier reply into the prompt to answer it point by point; `>` at a line start picks single lines |
 | `/exit` | Exit the session; `Ctrl+D` also exits interactive input |
 
 For example, inspect a session, finish a task, and then exit:

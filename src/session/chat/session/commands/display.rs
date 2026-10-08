@@ -44,6 +44,10 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 				COPY_COMMAND,
 				"Copy last response, or scope: last|assistant|user|all",
 			),
+			(
+				REPLY_COMMAND,
+				"Quote a reply into the prompt: [N|words], Tab picks",
+			),
 			(CLEAR_COMMAND, "Clear the screen"),
 			(LIST_COMMAND, "List all available sessions"),
 			(NEW_COMMAND, "Start a fresh session (optional title)"),

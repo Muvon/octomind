@@ -473,7 +473,8 @@ For example, request MCP information through the prompt channel:
 Use the [Session Commands](../reference/02-session-commands.md) reference for argument examples. The advertised list is
 not a dispatch guarantee: `session`, `workflow`, and `agents` are unsupported. `/done` compresses and may start
 learning; despite its advertised description, this handler does not auto-commit. Remote `clear`/`copy` commands run on
-the agent host and do not clear your editor or copy to its clipboard.
+the agent host and do not clear your editor or copy to its clipboard. The unadvertised `/reply` returns the quoted reply
+as JSON text; it cannot fill the editor's input.
 
 ## Session context passed to downstream MCP servers
 

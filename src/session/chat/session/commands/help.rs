@@ -25,6 +25,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 
 	commands.push(HELP_COMMAND.to_string());
 	commands.push(COPY_COMMAND.to_string());
+	commands.push(REPLY_COMMAND.to_string());
 	commands.push(CLEAR_COMMAND.to_string());
 	commands.push(LIST_COMMAND.to_string());
 	commands.push(NEW_COMMAND.to_string());

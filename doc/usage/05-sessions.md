@@ -122,6 +122,7 @@ Reference](../reference/02-session-commands.md) for detailed arguments.
 | Monitoring | `/status`, `/info`, `/report`, `/loglevel debug` |
 | Model and behavior | `/model octohub:auto`, `/role assistant`, `/effort high`, `/prompt` |
 | Context and compression | `/done`, `/context tool`, `/context large` |
+| Replying | `/reply`, `/reply 2`, `/reply parser fix`, `>` at the start of a prompt line |
 | Media and clipboard | `/image screenshot.png`, `/video demo.mp4`, `/copy all` |
 | Tools and planning | `/mcp`, `/run`, `/plan`, `/skill`, `/schedule` |
 | Account, learning, and viewing | `/usage`, `/login`, `/learning list`, `/share`, `/analyze` |
@@ -147,6 +148,33 @@ the supervisor owns plan updates. `/share` uploads the log for viewing. `/analyz
 browser viewer without uploading the log through the share endpoint.
 
 `/workflow` lists tap workflows; `/workflow <name> <input>` runs one — it shells out to `octomind workflow <name> --format jsonl` with the input on stdin and returns the final step's output. See [Workflows](09-workflows.md) for the file format and CLI examples.
+
+## Answer Part of a Reply
+
+Use `/reply` to answer an earlier assistant reply point by point. It starts your next prompt with that reply as a
+markdown quote; delete the lines you do not need and type your answer underneath:
+
+```text
+/reply
+```
+
+The prompt then holds, for example, after trimming:
+
+```text
+> Fixed the parser and added a regression test.
+> Should I also update the CLI docs?
+
+Yes, update the docs too.
+```
+
+`/reply 2` quotes the reply before the latest, and `/reply parser fix` quotes the latest reply containing those words.
+Press Tab after `/reply ` to choose from a menu: each row shows when the reply was sent, how long it is, and how it
+opens, so you pick by content rather than by number.
+
+To quote single lines instead of a whole reply, type `>` at the start of a prompt line. A menu lists lines from recent
+replies, newest first; type words to narrow it and press Enter to insert the highlighted line. Type `>` again for the
+next line, then write your answer. Esc closes the menu. See [`/reply`](../reference/02-session-commands.md#reply-nwords)
+for the full behavior.
 
 ## Cost Monitoring
 

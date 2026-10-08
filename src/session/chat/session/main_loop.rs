@@ -15,11 +15,13 @@
 // Main session loop - orchestrates all session operations
 
 use super::super::commands::{MODEL_COMMAND, NEW_COMMAND, ROLE_COMMAND};
-use super::super::input::{calculate_current_context_tokens, read_user_input, InputResult};
+use super::super::input::{
+	calculate_current_context_tokens, read_user_input, InputResult, ReplyInput,
+};
 use super::super::CostTracker;
 use super::api_executor::execute_api_call_and_process_response;
 use super::api_prep::prepare_for_api_call;
-use super::commands::CommandResult;
+use super::commands::{assistant_replies, CommandOutput, CommandResult};
 use super::core::{ChatSession, SessionInitParams};
 use super::error_utils::{handle_api_error, handle_followup_api_error};
 use super::layer_processor::run_pipe_if_enabled;
@@ -477,6 +479,10 @@ pub async fn run_interactive_session(
 		// Cleared on any successful API call.
 		let mut last_failed_followup: bool = false;
 
+		// Quote set by `/reply`; the next prompt starts with it for the user to
+		// trim and answer below.
+		let mut reply_prefill: Option<String> = None;
+
 		// Idle-time prompt cache keepalive. Set after each successful API call,
 		// taken (cancelled) at the top of the next iteration before we read
 		// fresh user input. None when keepalive is disabled, the snapshot has
@@ -725,8 +731,11 @@ pub async fn run_interactive_session(
 				let config_clone = current_config.clone();
 				let role_clone = role.clone();
 				let session_name = chat_session.session.info.name.clone();
-				let max_threshold = current_config.max_session_tokens_threshold;
 				let inbox_pending_clone = inbox_pending.clone();
+				let reply = ReplyInput {
+					replies: assistant_replies(&chat_session),
+					prefill: reply_prefill.take(),
+				};
 
 				let result = tokio::task::spawn_blocking(move || {
 					read_user_input(
@@ -734,9 +743,9 @@ pub async fn run_interactive_session(
 						&config_clone,
 						&role_clone,
 						current_context_tokens,
-						max_threshold,
 						&session_name,
 						inbox_pending_clone,
+						reply,
 					)
 				})
 				.await
@@ -1143,6 +1152,11 @@ pub async fn run_interactive_session(
 						continue;
 					}
 					CommandResult::HandledWithOutput(mut json_output) => {
+						if let CommandOutput::Reply { quote, .. } = &*json_output {
+							// A blank line after the quote, so the answer starts
+							// outside it.
+							reply_prefill = Some(format!("{}\n\n", quote));
+						}
 						// Command was handled with output
 						// Print it for CLI using existing display functions
 						print_command_output(&mut json_output, &mut chat_session, &current_config)

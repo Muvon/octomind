@@ -15,6 +15,7 @@
 // Reedline adapter for existing CommandCompleter logic
 
 use crate::config::Config;
+use crate::session::chat::session::commands::{age, matches_words, quote, Reply};
 use nu_ansi_term::{Color, Style};
 use reedline::{
 	CommandLineSearch, Completer, CompletionResult, Highlighter, Hinter, History, SearchFilter,
@@ -24,6 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+/// Most lines the `>` picker lists at once; typing filters older lines in.
+const QUOTE_PICKER_LIMIT: usize = 50;
 /// Reedline adapter that reuses existing CommandCompleter logic
 pub struct ReedlineAdapter {
 	config: Arc<Config>,
@@ -32,6 +35,8 @@ pub struct ReedlineAdapter {
 	buffer_empty: Arc<AtomicBool>,
 	hint_available: Arc<AtomicBool>,
 	line_state: Arc<Mutex<LineState>>,
+	/// Assistant replies, newest first, listed by the `/reply` and `>` pickers.
+	replies: Arc<Vec<Reply>>,
 }
 
 impl ReedlineAdapter {
@@ -41,6 +46,7 @@ impl ReedlineAdapter {
 		buffer_empty: Arc<AtomicBool>,
 		hint_available: Arc<AtomicBool>,
 		line_state: Arc<Mutex<LineState>>,
+		replies: Arc<Vec<Reply>>,
 	) -> Self {
 		Self {
 			config,
@@ -49,6 +55,7 @@ impl ReedlineAdapter {
 			buffer_empty,
 			hint_available,
 			line_state,
+			replies,
 		}
 	}
 
@@ -87,10 +94,102 @@ impl ReedlineAdapter {
 			styled.push((Style::new(), rest.to_string()));
 		}
 	}
+
+	/// Suggestions for the reply pickers, or `None` when the cursor is in
+	/// neither: `/reply <query>` lists replies by number, and a line starting
+	/// with `>` lists reply lines to quote.
+	fn reply_suggestions(&self, line: &str, pos: usize) -> Option<Vec<Suggestion>> {
+		let pos = crate::utils::truncation::floor_char_boundary(line, pos.min(line.len()));
+		if let Some(query) = line[..pos].strip_prefix("/reply ") {
+			return Some(self.reply_number_suggestions(query, pos));
+		}
+		let line_start = line[..pos].rfind('\n').map_or(0, |index| index + 1);
+		let query = line[line_start..pos].strip_prefix('>')?;
+		Some(self.quote_line_suggestions(query, Span::new(line_start, pos)))
+	}
+
+	/// Replies matching `query` by words, or by number prefix when it is a
+	/// number. Each row reads like the reply itself — when it was sent, how
+	/// long it is, how it opens — so a person picks by content; the number
+	/// only travels in the buffer as `/reply N`.
+	fn reply_number_suggestions(&self, query: &str, pos: usize) -> Vec<Suggestion> {
+		let numeric = query.trim().parse::<usize>().is_ok();
+		let now = crate::utils::time::now_secs();
+		self.replies
+			.iter()
+			.zip(1usize..)
+			.filter(|(reply, number)| {
+				if numeric {
+					number.to_string().starts_with(query.trim())
+				} else {
+					matches_words(&reply.text, query)
+				}
+			})
+			.map(|(reply, number)| Suggestion {
+				value: number.to_string(),
+				display_override: Some(format!(
+					"{:<8} {:>9}  {}",
+					age(reply.timestamp, now),
+					reply.size(),
+					reply.preview()
+				)),
+				..picker_row(Span::new(pos - query.len(), pos))
+			})
+			.collect()
+	}
+
+	/// Distinct reply lines containing every word of `query`, newest first,
+	/// each led by its reply's age. Selecting one replaces the `>` line with
+	/// the quoted line and moves to a fresh line, ready for another `>` or the
+	/// user's answer.
+	fn quote_line_suggestions(&self, query: &str, span: Span) -> Vec<Suggestion> {
+		let now = crate::utils::time::now_secs();
+		let mut seen = std::collections::HashSet::new();
+		self.replies
+			.iter()
+			.flat_map(|reply| {
+				let sent = age(reply.timestamp, now);
+				reply
+					.text
+					.lines()
+					.map(move |text| (text.trim(), sent.clone()))
+			})
+			// A lone code fence carries nothing worth quoting.
+			.filter(|(text, _)| !text.is_empty() && !text.starts_with("```"))
+			.filter(|(text, _)| matches_words(text, query) && seen.insert(*text))
+			.take(QUOTE_PICKER_LIMIT)
+			.map(|(text, sent)| Suggestion {
+				value: format!("{}\n", quote(text)),
+				display_override: Some(format!("{:<8}  {}", sent, text)),
+				..picker_row(span)
+			})
+			.collect()
+	}
+}
+
+/// Shared shape of a reply-picker row.
+fn picker_row(span: Span) -> Suggestion {
+	Suggestion {
+		// Any description switches the menu to one row per suggestion; left
+		// empty because the row text fills the width.
+		description: Some(String::new()),
+		// Default text, not the dim used for commands: these rows are prose
+		// a person reads to choose.
+		style: Some(Style::new()),
+		span,
+		append_whitespace: false,
+		// Typed words are scattered through the row; reedline's fallback would
+		// highlight a stray substring instead.
+		match_indices: Some(Vec::new()),
+		..Default::default()
+	}
 }
 
 impl Completer for ReedlineAdapter {
 	fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+		if let Some(suggestions) = self.reply_suggestions(line, pos) {
+			return CompletionResult::fresh(suggestions);
+		}
 		let completer =
 			crate::session::chat_helper::CommandCompleter::new(self.config.as_ref(), &self.role);
 		let (start_pos, candidates) = completer.complete(line, pos);
@@ -125,8 +224,16 @@ impl Highlighter for ReedlineAdapter {
 	fn highlight(&self, line: &str, cursor: usize) -> StyledText {
 		std::hint::black_box(cursor);
 		if !line.starts_with('/') {
+			// Quoted lines render dim so the user's own answer stands out.
 			let mut styled = StyledText::new();
-			styled.push((Style::new(), line.to_string()));
+			for segment in line.split_inclusive('\n') {
+				let style = if segment.starts_with('>') {
+					Style::new().dimmed()
+				} else {
+					Style::new()
+				};
+				styled.push((style, segment.to_string()));
+			}
 			return styled;
 		}
 
@@ -171,6 +278,10 @@ impl Hinter for ReedlineAdapter {
 				&self.role,
 			);
 			completer.hint(line).unwrap_or_default()
+		} else if line.starts_with('>') {
+			// A quote buffer: a past quoted message's tail would only cover the
+			// `>` picker.
+			String::new()
 		} else {
 			self.history_hint(line, history)
 		};

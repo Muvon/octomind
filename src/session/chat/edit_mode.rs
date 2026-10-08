@@ -278,9 +278,11 @@ impl EditMode for EmacsWithShortcutHelp {
 			code, modifiers, ..
 		}) = event
 		{
+			// Esc arms the meta prefix and also closes an open completion menu —
+			// with persistent menus nothing else dismisses one short of accepting.
 			if modifiers == KeyModifiers::NONE && code == KeyCode::Esc {
 				self.meta_pending = true;
-				return ReedlineEvent::None;
+				return ReedlineEvent::Esc;
 			}
 			if self.meta_pending {
 				self.meta_pending = false;
@@ -363,6 +365,29 @@ impl EditMode for EmacsWithShortcutHelp {
 				&& self.buffer_empty.load(Ordering::SeqCst)
 			{
 				return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
+			}
+
+			// `>` typed at a line start opens the reply-line picker. Anywhere else
+			// it stays plain text: an empty menu would print "no records" under
+			// the prompt and swallow the arrow keys. Terminals differ in whether
+			// they report SHIFT for the shifted symbol, so both are accepted.
+			if code == KeyCode::Char('>')
+				&& (modifiers == KeyModifiers::NONE || modifiers == KeyModifiers::SHIFT)
+				&& !self.reverse_search_active.load(Ordering::SeqCst)
+			{
+				let at_line_start = self.line_state.lock().is_ok_and(|state| {
+					let cursor = crate::utils::truncation::floor_char_boundary(
+						&state.buffer,
+						state.cursor.min(state.buffer.len()),
+					);
+					cursor == 0 || state.buffer[..cursor].ends_with('\n')
+				});
+				if at_line_start {
+					return ReedlineEvent::Multiple(vec![
+						ReedlineEvent::Edit(vec![reedline::EditCommand::InsertChar('>')]),
+						ReedlineEvent::Menu("completion_menu".to_string()),
+					]);
+				}
 			}
 
 			// Ctrl+G: Add message to context without sending to API

@@ -226,7 +226,8 @@ the client prepends it when displaying:
 Notes:
 
 - The menu omits some registered commands and also includes three unsupported names. Commands such as `/learning`,
-  `/share`, `/analyze`, `/rename`, and `/status` are not advertised over ACP.
+  `/share`, `/analyze`, `/rename`, `/reply`, and `/status` are not advertised over ACP. `/reply` still runs when typed,
+  but returns the quote as JSON text instead of filling the editor's input.
 - `/done` is handled specially in ACP: it compresses the conversation and reports the result. If you pass trailing
   instructions (`/done <instructions>`), the agent compresses first, sends the compression status, then processes the
   instructions as a normal prompt.

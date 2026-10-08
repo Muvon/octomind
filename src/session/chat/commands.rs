@@ -20,6 +20,7 @@ pub const HELP_COMMAND_ALT: &str = "/?";
 pub const EXIT_COMMAND: &str = "/exit";
 pub const QUIT_COMMAND: &str = "/quit";
 pub const COPY_COMMAND: &str = "/copy";
+pub const REPLY_COMMAND: &str = "/reply";
 pub const CLEAR_COMMAND: &str = "/clear";
 pub const LIST_COMMAND: &str = "/list";
 pub const NEW_COMMAND: &str = "/new";
@@ -48,12 +49,13 @@ pub const LOGIN_COMMAND: &str = "/login";
 pub const RENAME_COMMAND: &str = "/rename";
 pub const WORKFLOW_COMMAND: &str = "/workflow";
 // List of all available commands for autocomplete
-pub const COMMANDS: [&str; 32] = [
+pub const COMMANDS: [&str; 33] = [
 	HELP_COMMAND,
 	HELP_COMMAND_ALT,
 	EXIT_COMMAND,
 	QUIT_COMMAND,
 	COPY_COMMAND,
+	REPLY_COMMAND,
 	CLEAR_COMMAND,
 	LIST_COMMAND,
 	NEW_COMMAND,

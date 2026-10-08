@@ -223,6 +223,30 @@ async fn test_display_commands_run_without_panicking() {
 }
 
 #[tokio::test]
+async fn test_reply_dispatches_and_renders() {
+	let mut session = ChatSession::for_tests(vec![crate::session::Message {
+		role: "assistant".to_string(),
+		content: "Tests pass.".to_string(),
+		..Default::default()
+	}]);
+	let mut config = test_config();
+	let result = dispatch_rendered(&mut session, &mut config, "/reply")
+		.await
+		.expect("reply dispatches");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed output");
+	};
+	assert!(matches!(
+		*output,
+		CommandOutput::Reply {
+			number: 1,
+			lines: 1,
+			..
+		}
+	));
+}
+
+#[tokio::test]
 async fn test_role_switch_without_session_file_fails_gracefully() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	// Start from a role the template actually defines — for_tests defaults

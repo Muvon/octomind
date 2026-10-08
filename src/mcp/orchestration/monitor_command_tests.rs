@@ -146,17 +146,18 @@ async fn next_message() -> InboxMessage {
 
 #[test]
 fn init_for_session_without_session_context_creates_no_global_bucket() {
-	// Outside a session the initializer must return without touching the
-	// process-global registry.
-	init_for_session();
-	let guard = MONITORS.read().expect("monitors registry lock");
-	assert!(
-		guard
-			.as_ref()
-			.map(|registry| registry.is_empty())
-			.unwrap_or(true),
-		"no session bucket may be created outside a session"
-	);
+	// Other sessions may own buckets concurrently. Holding the registry lock
+	// proves that a context-free call returns without accessing their state.
+	let guard = MONITORS.write().expect("monitors registry lock");
+	let (tx, rx) = std::sync::mpsc::channel();
+	let worker = std::thread::spawn(move || {
+		init_for_session();
+		tx.send(()).expect("completion receiver");
+	});
+	let completed = rx.recv_timeout(std::time::Duration::from_secs(5));
+	drop(guard);
+	worker.join().expect("initializer thread");
+	completed.expect("context-free initialization must not access the registry");
 }
 
 #[tokio::test]

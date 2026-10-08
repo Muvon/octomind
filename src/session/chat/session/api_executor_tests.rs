@@ -848,9 +848,11 @@ async fn test_unfinished_progressing_handback_is_continued_until_budget() {
 			.await
 			.expect("turn completes after nudges");
 
+		// Two nudges spent the budget, then the third stop reached the verify-gate
+		// and PASSED — which resets both iteration counters to zero.
 		assert_eq!(
-			session.nudge_iterations,
-			crate::supervisor::gate::MAX_ITERATIONS
+			session.nudge_iterations, 0,
+			"final PASS resets the nudge budget"
 		);
 		assert_eq!(session.session.info.total_api_calls, 3);
 		let continuations = session

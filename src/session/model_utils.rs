@@ -14,18 +14,21 @@
 
 // Utilities for model-specific features
 
-use crate::providers::ProviderFactory;
+use crate::providers::{AiProvider, ProviderFactory};
 
 /// Whether a model may receive image attachments.
+pub fn model_supports_vision(model: &str) -> anyhow::Result<bool> {
+	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
+	Ok(provider_supports_vision(provider.as_ref(), &actual_model))
+}
+
+/// Whether an already-resolved provider's model may receive image attachments.
 ///
 /// Unknown models stay permissive because proxy providers can expose models
 /// that are newer than octolib's reference table.
-pub fn model_supports_vision(model: &str) -> anyhow::Result<bool> {
-	let (provider, actual_model) = ProviderFactory::get_provider_for_model(model)?;
-	if octolib::llm::reference_capabilities::get_reference_capabilities(&actual_model).is_none() {
-		return Ok(true);
-	}
-	Ok(provider.supports_vision(&actual_model))
+pub fn provider_supports_vision(provider: &dyn AiProvider, actual_model: &str) -> bool {
+	octolib::llm::reference_capabilities::get_reference_capabilities(actual_model).is_none()
+		|| provider.supports_vision(actual_model)
 }
 
 /// Whether a model may receive video attachments.

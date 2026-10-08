@@ -331,7 +331,11 @@ pub async fn chat_completion_with_validation(
 		0 => None,
 		n => Some(std::time::Duration::from_secs(n)),
 	})
-	.with_purpose(params.purpose);
+	.with_purpose(params.purpose)
+	.with_vision(crate::session::model_utils::provider_supports_vision(
+		provider.as_ref(),
+		&actual_model,
+	));
 
 	if !params.tools {
 		chat_params = chat_params.without_tools();
@@ -455,7 +459,11 @@ pub async fn chat_completion_with_provider(
 		params.max_tokens,
 		params.config,
 	)
-	.with_max_retries(params.max_retries);
+	.with_max_retries(params.max_retries)
+	.with_vision(crate::session::model_utils::provider_supports_vision(
+		provider.as_ref(),
+		&actual_model,
+	));
 
 	let chat_params = if let Some(schema) = params.schema {
 		chat_params.with_schema(schema)

@@ -745,6 +745,46 @@ async fn test_octolib_params_without_tools_keeps_tools_empty() {
 	);
 }
 
+#[tokio::test]
+async fn test_octolib_params_without_vision_strips_prompt_and_tool_images() {
+	let config = test_config();
+	let image = crate::session::image::ImageAttachment {
+		data: crate::session::image::ImageData::Base64("aW1hZ2U=".into()),
+		media_type: "image/png".into(),
+		source_type: crate::session::image::SourceType::Url,
+		dimensions: None,
+		size_bytes: None,
+	};
+	let messages = vec![
+		Message {
+			images: Some(vec![image.clone()]),
+			..msg("user", "look")
+		},
+		Message {
+			tool_call_id: Some("call-image".into()),
+			name: Some("screenshot".into()),
+			images: Some(vec![image]),
+			..msg("tool", "shot")
+		},
+	];
+	for vision in [true, false] {
+		let octo = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
+			.with_vision(vision)
+			.to_octolib_params()
+			.await
+			.expect("conversion succeeds");
+		assert_eq!(octo.messages.len(), 2);
+		for message in &octo.messages {
+			assert_eq!(
+				message.images.is_some(),
+				vision,
+				"{} images with vision={vision}",
+				message.role
+			);
+		}
+	}
+}
+
 #[test]
 fn tool_and_prompt_images_convert_without_losing_payload_or_association() {
 	for role in ["tool", "user"] {

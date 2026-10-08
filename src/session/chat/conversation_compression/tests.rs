@@ -3802,8 +3802,8 @@ fn tool_image_survives_compression_text_cap_and_live_exchange_selection() {
 		serde_json::to_value(&messages[8]).unwrap(),
 		serde_json::to_value(&image_result).unwrap()
 	);
-	let mut session = ChatSession::for_tests(messages);
-	assert_eq!(trim_oversized_tool_results(&mut session, 32), 1);
+	let mut session = crate::session::chat::session::ChatSession::for_tests(messages);
+	assert_eq!(super::trim_oversized_tool_results(&mut session, 32), 1);
 	let result = &session.session.messages[8];
 	assert!(result.content.contains("TRUNCATED"));
 	assert_eq!(result.tool_call_id, image_result.tool_call_id);

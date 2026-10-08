@@ -112,6 +112,10 @@ pub struct ChatCompletionParams<'a> {
 	/// calls tools there, the definitions waste input tokens, and their
 	/// presence blocks schema enforcement on proxy providers.
 	pub tools: bool,
+	/// Send image attachments (default true). Callers clear this for models that
+	/// cannot read images: history keeps tool-result screenshots and images from
+	/// earlier vision models, and a text-only model rejects the whole request.
+	pub vision: bool,
 	/// Where this call originates (main | supervisor | compression) — becomes
 	/// the `X-Model-Purpose` header. Defaults to Main.
 	pub purpose: ModelPurpose,
@@ -146,6 +150,7 @@ impl<'a> ChatCompletionParams<'a> {
 			schema: None,
 			reasoning_effort: None,
 			tools: true,
+			vision: true,
 			purpose: ModelPurpose::default(),
 		}
 	}
@@ -190,6 +195,12 @@ impl<'a> ChatCompletionParams<'a> {
 		self
 	}
 
+	/// Whether the target model can read image attachments.
+	pub fn with_vision(mut self, vision: bool) -> Self {
+		self.vision = vision;
+		self
+	}
+
 	/// Tag this call's origin for purpose-based routing (octohub `auto`).
 	pub fn with_purpose(mut self, purpose: ModelPurpose) -> Self {
 		self.purpose = purpose;
@@ -207,6 +218,12 @@ impl<'a> ChatCompletionParams<'a> {
 			.collect();
 
 		let mut octolib_messages = octolib_messages?;
+
+		if !self.vision {
+			for message in &mut octolib_messages {
+				message.images = None;
+			}
+		}
 
 		// Long cache TTL on system message — always enabled (Anthropic 1h cache).
 		if let Some(sys_msg) = octolib_messages

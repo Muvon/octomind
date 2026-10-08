@@ -201,7 +201,11 @@ async fn send_ping(
 	// but must be valid; defaults match the provider's "no preference" path.
 	let chat_params = ChatCompletionParams::new(messages, &actual_model, 0.0, 1.0, 1, 1, config)
 		.with_max_retries(0)
-		.with_cancellation_token(cancel_rx);
+		.with_cancellation_token(cancel_rx)
+		.with_vision(crate::session::model_utils::provider_supports_vision(
+			provider.as_ref(),
+			&actual_model,
+		));
 
 	let octolib_params = chat_params
 		.to_octolib_params()

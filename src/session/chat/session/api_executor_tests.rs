@@ -1042,8 +1042,14 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 			.await
 			.expect("gaps re-run completes");
 
-		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
-		assert!(session.last_gate_gaps.is_empty(), "PASS clears retained gaps");
+		assert_eq!(
+			session.gate_iterations, 0,
+			"PASS resets the iteration budget"
+		);
+		assert!(
+			session.last_gate_gaps.is_empty(),
+			"PASS clears retained gaps"
+		);
 		assert!(
 			!session.gate_failed,
 			"re-run without a new claim ends the turn cleanly"
@@ -1103,7 +1109,10 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 			session.learning_outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Unknown
 		));
-		assert_eq!(session.gate_iterations, 2, "both stops verified, budget spent");
+		assert_eq!(
+			session.gate_iterations, 2,
+			"both stops verified, budget spent"
+		);
 		session
 			.session
 			.messages

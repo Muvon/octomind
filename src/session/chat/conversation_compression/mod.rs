@@ -388,6 +388,10 @@ struct FoldContext {
 	start_idx: usize,
 	end_idx: usize,
 	fingerprint: u64,
+	/// Transcript length when the fold was prepared: the end of what its pins
+	/// describe. Messages past it arrived while the fold ran and stay after the
+	/// summary verbatim.
+	fold_point: usize,
 	tokens_before: u64,
 	current_context_tokens: u64,
 	user_tasks_msgs: Vec<String>,
@@ -419,6 +423,23 @@ fn fold_fingerprint(messages: &[crate::session::Message], start_idx: usize, end_
 		message.content.hash(&mut hasher);
 	}
 	hasher.finish()
+}
+
+/// Re-verify the governance a background fold was pinned under against the live
+/// transcript as of its fold point (see `PactContext::verify_governance`). A
+/// failure means the transcript the fold was prepared from changed under it —
+/// stale like a changed drained range. `apply_compression` repeats the check as
+/// the commit-time assertion.
+fn verify_fold_governance(session: &ChatSession, config: &Config, ctx: &FoldContext) -> Result<()> {
+	match ctx.pact.as_ref() {
+		Some(pact)
+			if config.compression.attention.governance.enabled
+				&& config.compression.attention.governance.verify_hash =>
+		{
+			pact.verify_governance(session, ctx.fold_point)
+		}
+		_ => Ok(()),
+	}
 }
 
 /// A background attempt that produced nothing to apply: hold unforced attempts
@@ -502,8 +523,8 @@ pub async fn collect_fold_before_exit(session: &mut ChatSession, config: &Config
 }
 
 /// Everything after the fold task has been joined: discard on task failure,
-/// cancellation or a drained range that changed underneath the summary
-/// (failure cooldown in every case), otherwise apply through `finish_fold`.
+/// cancellation or a transcript that changed underneath the summary (failure
+/// cooldown in every case), otherwise apply through `finish_fold`.
 async fn apply_fold_outcome(
 	session: &mut ChatSession,
 	config: &Config,
@@ -541,14 +562,23 @@ async fn apply_fold_outcome(
 			return Ok(false);
 		}
 	};
-	if ctx.end_idx >= session.session.messages.len()
+	if ctx.fold_point > session.session.messages.len()
 		|| fold_fingerprint(&session.session.messages, ctx.start_idx, ctx.end_idx)
 			!= ctx.fingerprint
 	{
 		ai::record_decision_usage(session, usage.as_ref());
 		crate::log_error!(
-			"Background fold discarded: the drained range changed while the summary was being written"
+			"Background fold discarded: the transcript it was prepared from changed while the summary was being written"
 		);
+		note_fold_failure(session);
+		return Ok(false);
+	}
+	// A request that arrived past the fold point is not such a change: it stays
+	// after the summary verbatim, as when a fold lands at turn end and the user
+	// replies.
+	if let Err(error) = verify_fold_governance(session, config, &ctx) {
+		ai::record_decision_usage(session, usage.as_ref());
+		crate::log_error!("Background fold discarded: {:#}", error);
 		note_fold_failure(session);
 		return Ok(false);
 	}
@@ -690,6 +720,7 @@ async fn finish_fold(
 		session,
 		ctx.start_idx,
 		ctx.end_idx,
+		ctx.fold_point,
 		&summary,
 		ctx.tokens_before,
 		ctx.current_context_tokens,
@@ -1155,6 +1186,7 @@ async fn check_and_compress_conversation_inner(
 		start_idx,
 		end_idx,
 		fingerprint: fold_fingerprint(&session.session.messages, start_idx, end_idx),
+		fold_point: session.session.messages.len(),
 		tokens_before,
 		current_context_tokens,
 		user_tasks_msgs,

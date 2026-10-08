@@ -1411,27 +1411,53 @@ impl PactContext {
 		)
 	}
 
-	/// Recompute runtime-owned governance from the still-live transcript. This
+	/// Recompute runtime-owned governance from the still-live transcript as of
+	/// `fold_point`, the transcript length the pins were computed from. This
 	/// catches any mutation between packet construction and commit instead of
 	/// trusting model-authored fields or a stale controller snapshot.
-	pub(crate) fn verify_governance(&self, session: &ChatSession) -> Result<()> {
+	///
+	/// A background fold that outlives its turn commits after the user's next
+	/// request: that request sits past the fold point and is carried verbatim
+	/// after the summary (`apply_compression`), the same transcript a fold
+	/// landing at turn end produces once the user replies. Constraints and the
+	/// verification policy are resolved per genuine turn, so the live values then
+	/// belong to the newer turn and the pins stand for the fold point; the system
+	/// prompt and task are still recomputed from the live fold-point prefix.
+	pub(crate) fn verify_governance(&self, session: &ChatSession, fold_point: usize) -> Result<()> {
 		let messages = &session.session.messages;
-		let task = crate::session::latest_real_user_task_content(messages)
+		let prefix = messages.get(..fold_point).ok_or_else(|| {
+			anyhow!(
+				"PACT fold point {} is past the live transcript ({} messages)",
+				fold_point,
+				messages.len()
+			)
+		})?;
+		let newer_turn = messages[fold_point..]
+			.iter()
+			.any(crate::session::is_real_user_task_message);
+		let (scope, constraints, verification_policy) = if newer_turn {
+			(
+				prefix,
+				self.pinned.constraints.clone(),
+				self.pinned.verification_policy,
+			)
+		} else {
+			(
+				messages.as_slice(),
+				collect_constraints(session, None),
+				session.session.info.verification_policy.effective(
+					session
+						.gate_task
+						.as_ref()
+						.is_some_and(|task| task.forbids_verification),
+				),
+			)
+		};
+		let task = crate::session::latest_real_user_task_content(scope)
 			.unwrap_or_default()
 			.trim()
 			.to_string();
-		let constraints = collect_constraints(session, None);
-		let actual = governance_hash(
-			messages,
-			&task,
-			&constraints,
-			session.session.info.verification_policy.effective(
-				session
-					.gate_task
-					.as_ref()
-					.is_some_and(|task| task.forbids_verification),
-			),
-		);
+		let actual = governance_hash(scope, &task, &constraints, verification_policy);
 		if actual != self.pinned.governance_hash {
 			return Err(anyhow!(
 				"PACT governance changed before commit (expected {}, got {})",

@@ -359,7 +359,7 @@ pub fn record_api_error(e: &anyhow::Error) {
 /// Classify a provider failure. Providers report the same condition in a dozen
 /// wordings, so this matches on the text — but it returns `&'static str`, so no
 /// part of that text can travel with the classification.
-fn api_error_kind(e: &anyhow::Error) -> &'static str {
+pub(crate) fn api_error_kind(e: &anyhow::Error) -> &'static str {
 	let text = e.to_string().to_ascii_lowercase();
 	if text.contains("rate limit") || text.contains("429") {
 		"rate_limit"
@@ -374,6 +374,8 @@ fn api_error_kind(e: &anyhow::Error) -> &'static str {
 		|| text.contains("403")
 		|| text.contains("unauthorized")
 		|| text.contains("api key")
+		|| text.contains("signed in")
+		|| text.contains("sign in")
 	{
 		"auth"
 	} else if text.contains("500")

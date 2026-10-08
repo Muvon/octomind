@@ -1830,9 +1830,62 @@ async fn verify_governance_rejects_mutated_transcript() {
 	let pact = build(&session, 1, 2, 2.0, false, false)
 		.await
 		.expect("pact context builds");
-	assert!(pact.verify_governance(&session).is_ok());
+	let fold_point = session.session.messages.len();
+	assert!(pact.verify_governance(&session, fold_point).is_ok());
 	session.session.messages[0].content.push_str(" mutated");
-	assert!(pact.verify_governance(&session).is_err());
+	assert!(pact.verify_governance(&session, fold_point).is_err());
+}
+
+/// A background fold that outlives its turn commits after the user's next
+/// request. That request belongs past the fold point, so it supersedes nothing
+/// the fold pinned — even though it re-resolves the live task and constraints.
+#[tokio::test]
+async fn verify_governance_accepts_a_newer_turn_past_the_fold_point() {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "write the briefing; do not run the tests"),
+		message("assistant", "drafted section one"),
+	]);
+	session.session.info.name = "gov-newer-turn-unit".to_string();
+	let pact = build(&session, 1, 2, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	let fold_point = session.session.messages.len();
+
+	session
+		.add_user_message("please continue briefing")
+		.expect("user message");
+	assert!(pact.verify_governance(&session, fold_point).is_ok());
+
+	// The fold point itself is still guarded: a rewritten system prompt, or a
+	// transcript truncated below it, is a mutation under the fold.
+	session.session.messages[0].content.push_str(" mutated");
+	assert!(pact.verify_governance(&session, fold_point).is_err());
+	session.session.messages[0].content = "system prompt".to_string();
+	assert!(pact.verify_governance(&session, fold_point).is_ok());
+	session.session.messages.truncate(2);
+	assert!(pact.verify_governance(&session, fold_point).is_err());
+}
+
+/// Within the turn that prepared the fold, the live resolution is the fold's
+/// own: a request rewritten in place (not appended past the fold point) is a
+/// mutation, never a newer turn.
+#[tokio::test]
+async fn verify_governance_rejects_a_request_rewritten_inside_the_fold_point() {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("assistant", "ready"),
+		message("user", "write the briefing"),
+	]);
+	session.session.info.name = "gov-rewritten-unit".to_string();
+	let pact = build(&session, 1, 1, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	let fold_point = session.session.messages.len();
+	assert!(pact.verify_governance(&session, fold_point).is_ok());
+
+	session.session.messages[2].content = "translate the briefing".to_string();
+	assert!(pact.verify_governance(&session, fold_point).is_err());
 }
 
 #[test]

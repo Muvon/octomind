@@ -35,6 +35,14 @@ fn provider_failures_bucket_by_condition_not_by_wording() {
 		"context_length"
 	);
 	assert_eq!(kind("API error 401 unauthorized"), "auth");
+	assert_eq!(
+		kind("Not signed in with ChatGPT (no credentials at /tmp/auth.json)"),
+		"auth"
+	);
+	assert_eq!(
+		kind("Refreshing the ChatGPT session failed; sign in again"),
+		"auth"
+	);
 	assert_eq!(kind("API error 503 <unknown status code>"), "server");
 	// Unrecognised text falls through to the transport classification, and in
 	// no case does any of the message itself become the bucket.

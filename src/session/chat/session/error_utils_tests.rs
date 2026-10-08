@@ -80,6 +80,62 @@ fn unrecognised_errors_are_returned_unchanged() {
 }
 
 #[test]
+fn credential_hints_accompany_only_auth_failures() {
+	let hint = |provider: &str, raw: &str| {
+		let error = err(raw);
+		credential_hint(provider, &error, &format_provider_error(provider, &error))
+	};
+	// The live failure: a ChatGPT server fault reported mid-stream is not a
+	// credentials problem, for ChatGPT or any other provider.
+	assert_eq!(
+		hint(
+			"chatgpt",
+			r#"ChatGPT stream error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred while processing your request."},"sequence_number":7}"#,
+		),
+		None
+	);
+	assert_eq!(
+		hint(
+			"anthropic",
+			"Anthropic API error 500 Internal Server Error: upstream"
+		),
+		None
+	);
+	assert_eq!(hint("weird", "socket hang up"), None);
+
+	// ChatGPT signs in; it has no API key to check.
+	for raw in [
+		"Not signed in with ChatGPT (no credentials at /tmp/auth.json)",
+		"ChatGPT API error 401 Unauthorized: token expired",
+	] {
+		let chatgpt = hint("chatgpt", raw).expect("sign-in hint");
+		assert!(chatgpt.contains("octomind login chatgpt"), "{chatgpt}");
+		assert!(!chatgpt.contains("API key"), "{chatgpt}");
+	}
+	assert!(hint(
+		"anthropic",
+		"Anthropic API key not found in environment variable: ANTHROPIC_API_KEY"
+	)
+	.is_some_and(|hint| hint.contains("ANTHROPIC_API_KEY")));
+	assert_eq!(
+		hint("weird", "API error 401 Unauthorized"),
+		Some("Make sure the API key for this provider is properly configured.")
+	);
+
+	// OctoHub's own text carries the login hint on 401; only the plan
+	// restriction on 403 gets one here.
+	assert!(hint(
+		"octohub",
+		"OctoHub API error 403: model 'x' is not permitted for this API key"
+	)
+	.is_some_and(|hint| hint.contains("current plan")));
+	assert_eq!(
+		hint("octohub", "OctoHub API error 401: run `octomind login`"),
+		None
+	);
+}
+
+#[test]
 fn multibyte_error_text_does_not_panic() {
 	// The status-code branch slices by byte offset — non-ASCII text around
 	// the marker must not split a char.
@@ -165,7 +221,7 @@ fn api_error_removes_failed_user_message_and_prints_provider_help() {
 		&mut session,
 		0,
 		"weird:model",
-		&err("socket hang up"),
+		&err("API error 401 Unauthorized"),
 		OutputMode::NonInteractive,
 	);
 	handle_api_error(

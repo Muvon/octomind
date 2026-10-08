@@ -198,48 +198,52 @@ pub fn handle_api_error(
 		error_message
 	);
 
-	// Provider-specific help message
+	if let Some(hint) = credential_hint(&provider_name, error, &error_message) {
+		println!("{}", hint.yellow());
+	}
+}
+
+/// Provider-specific credentials help, only for a failure classified as an
+/// auth failure: beside a server fault or a timeout, "check your API key"
+/// points away from the actual problem.
+fn credential_hint(
+	provider_name: &str,
+	error: &anyhow::Error,
+	error_message: &str,
+) -> Option<&'static str> {
+	if crate::telemetry::api_error_kind(error) != "auth" {
+		return None;
+	}
 	match provider_name.to_lowercase().as_str() {
 		// octolib's error text already carries the actionable hint (login for
 		// 401, the server's model-restriction message for 403) — a generic
 		// "check your API key" line here would contradict it.
-		"octohub" => {
-			if error_message.contains("not permitted for this API key") {
-				println!(
-					"{}",
-					"This model is not included in your current plan — pick an included model or upgrade."
-						.yellow()
-				);
-			}
-		}
-		"openrouter" => {
-			println!("{}", "Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.".yellow());
-		}
-		"anthropic" => {
-			println!("{}", "Make sure Anthropic API key is set in the config or as ANTHROPIC_API_KEY environment variable.".yellow());
-		}
-		"openai" => {
-			println!("{}", "Make sure OpenAI API key is set in the config or as OPENAI_API_KEY environment variable.".yellow());
-		}
-		"google" => {
-			println!("{}", "Make sure Google credentials are set in the config or as GOOGLE_APPLICATION_CREDENTIALS environment variable.".yellow());
-		}
+		"octohub" => error_message
+			.contains("not permitted for this API key")
+			.then_some(
+				"This model is not included in your current plan — pick an included model or upgrade.",
+			),
+		// Sign in with ChatGPT has no API key; its credentials come from the login flow.
+		"chatgpt" => Some("Sign in with ChatGPT again: `octomind login chatgpt --force`."),
+		"openrouter" => Some(
+			"Make sure OpenRouter API key is set in the config or as OPENROUTER_API_KEY environment variable.",
+		),
+		"anthropic" => Some(
+			"Make sure Anthropic API key is set in the config or as ANTHROPIC_API_KEY environment variable.",
+		),
+		"openai" => Some(
+			"Make sure OpenAI API key is set in the config or as OPENAI_API_KEY environment variable.",
+		),
+		"google" => Some(
+			"Make sure Google credentials are set in the config or as GOOGLE_APPLICATION_CREDENTIALS environment variable.",
+		),
 		"amazon" => {
-			println!(
-				"{}",
-				"Make sure AWS credentials are configured properly for Amazon Bedrock access."
-					.yellow()
-			);
+			Some("Make sure AWS credentials are configured properly for Amazon Bedrock access.")
 		}
-		"cloudflare" => {
-			println!("{}", "Make sure Cloudflare API key is set in the config or as CLOUDFLARE_API_KEY environment variable.".yellow());
-		}
-		_ => {
-			println!(
-				"{}",
-				"Make sure the API key for this provider is properly configured.".yellow()
-			);
-		}
+		"cloudflare" => Some(
+			"Make sure Cloudflare API key is set in the config or as CLOUDFLARE_API_KEY environment variable.",
+		),
+		_ => Some("Make sure the API key for this provider is properly configured."),
 	}
 }
 

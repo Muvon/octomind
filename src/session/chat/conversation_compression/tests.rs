@@ -2853,6 +2853,9 @@ fn fold_ctx(start_idx: usize, end_idx: usize, fingerprint: u64) -> super::FoldCo
 		start_idx,
 		end_idx,
 		fingerprint,
+		// The shortest transcript the drained range fits in; a test modelling a
+		// parked fold sets the real transcript end.
+		fold_point: end_idx + 1,
 		tokens_before: 100,
 		current_context_tokens: 200,
 		user_tasks_msgs: Vec::new(),
@@ -3134,6 +3137,122 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 	assert!(!applied);
 	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
 	assert_eq!(session.session.messages.len(), 3);
+}
+
+/// A governance-pinned background fold over `write the briefing`, parked the
+/// way production parks it: fold point at the transcript end, the request as
+/// its last user message, the recent-user bridge preserved.
+async fn parked_briefing_fold(
+	session_name: &str,
+) -> (
+	crate::session::chat::session::ChatSession,
+	super::FoldContext,
+) {
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
+		fold_message("system", "system prompt"),
+		fold_message("user", "write the briefing"),
+		fold_message("assistant", "drafted section one"),
+		fold_message("assistant", "drafted section two"),
+	]);
+	session.session.info.name = session_name.to_string();
+	let (start, end) =
+		find_compression_range_preserving_turn(&session.session.messages, true, false)
+			.expect("compressible range");
+	let pact = super::attention::build(&session, start + 1, end, 1.0, false, false)
+		.await
+		.expect("governance-only pact context builds");
+	let mut ctx = fold_ctx(
+		start,
+		end,
+		super::fold_fingerprint(&session.session.messages, start, end),
+	);
+	ctx.fold_point = session.session.messages.len();
+	ctx.last_user_message = Some(fold_message("user", "write the briefing"));
+	ctx.preserve_recent_user_bridge = true;
+	ctx.pact = Some(pact);
+	(session, ctx)
+}
+
+fn briefing_fold_job(ctx: super::FoldContext) -> super::FoldJob {
+	let summary = CompressionSummary {
+		should_compress: true,
+		current_task: "write the briefing".to_string(),
+		folded_units: vec![super::schema::FoldedUnit {
+			text: "two briefing sections drafted".to_string(),
+			kind: "observation".to_string(),
+			status: "established".to_string(),
+			refs: Vec::new(),
+		}],
+		..Default::default()
+	};
+	super::FoldJob {
+		cancel: tokio::sync::watch::channel(false).0,
+		handle: tokio::spawn(async move { Ok((summary, None)) }),
+		ctx,
+	}
+}
+
+fn remove_fold_archive(session_name: &str) {
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("archive").join(session_name));
+	}
+}
+
+/// Regression for "PACT governance changed before commit": a fold still
+/// running at turn end is collected after the user's next request. That
+/// request arrived past the fold point, so the paid summary lands — the request
+/// stays after it verbatim, and the fold's goal stays signed with the request it
+/// was resolved from, so recitation retires it for the newer one.
+#[tokio::test]
+async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
+	let mut config = fold_config();
+	config.compression.attention.governance.enabled = true;
+	config.compression.attention.governance.verify_hash = true;
+	let name = "fold-outlived-turn-unit";
+	let (mut session, ctx) = parked_briefing_fold(name).await;
+	session
+		.add_user_message("please continue briefing")
+		.expect("user message");
+
+	let applied =
+		super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
+			.await
+			.expect("a fold that outlived its turn commits");
+	remove_fold_archive(name);
+
+	assert!(applied);
+	let messages = &session.session.messages;
+	assert!(messages
+		.iter()
+		.any(|m| m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)));
+	let last = messages.last().expect("newer request survives");
+	assert_eq!(last.role, "user");
+	assert_eq!(last.content, "please continue briefing");
+	assert_eq!(
+		session.session.info.anchor.intent_task_sig,
+		crate::session::anchor::task_sig("write the briefing")
+	);
+}
+
+/// A mutation under the fold point (here the system prompt) is still caught:
+/// the background fold is discarded like a changed drained range — cooldown,
+/// transcript untouched — instead of failing the round.
+#[tokio::test]
+async fn collect_fold_job_discards_a_fold_whose_fold_point_changed() {
+	let mut config = fold_config();
+	config.compression.attention.governance.enabled = true;
+	config.compression.attention.governance.verify_hash = true;
+	let (mut session, ctx) = parked_briefing_fold("fold-point-changed-unit").await;
+	session.session.messages[0].content.push_str(" rewritten");
+
+	let applied =
+		super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
+			.await
+			.expect("a stale background fold is not a compression failure");
+
+	assert!(!applied);
+	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
+	assert_eq!(session.session.messages.len(), 4);
 }
 
 /// A paid decline frees nothing, so it must not climb the fire-line ladder.

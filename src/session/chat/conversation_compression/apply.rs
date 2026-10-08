@@ -315,11 +315,16 @@ fn align_compression_cache_markers(
 /// Apply compression: drain all messages, insert summary, re-inject recent user messages.
 /// Pulls structured file contexts and critical knowledge directly from the
 /// typed summary — no markdown re-parsing.
+///
+/// `fold_point` is the transcript length the fold was prepared from. A
+/// background fold that outlives its turn lands after the user's next request;
+/// that request sits past the fold point and stays after the summary verbatim.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn apply_compression(
 	session: &mut ChatSession,
 	start_idx: usize,
 	end_idx: usize,
+	fold_point: usize,
 	summary: &CompressionSummary,
 	tokens_before: u64,
 	current_context_tokens: u64,
@@ -346,8 +351,9 @@ pub(super) async fn apply_compression(
 		.to_string();
 
 	// PACT commit checks run before ANY live session mutation. Governance is
-	// recomputed from the still-live transcript, then the full drain is archived
-	// and every stable packet ID is dereferenced back to byte-identical messages.
+	// recomputed from the still-live transcript as of the fold point, then the
+	// full drain is archived and every stable packet ID is dereferenced back to
+	// byte-identical messages.
 	// Optional compression aborts on either failure; a forced hard-ceiling
 	// compression may proceed without recall only when storage itself is the
 	// failing component, because retaining the oversized context can deadlock the
@@ -356,9 +362,22 @@ pub(super) async fn apply_compression(
 		&& config.compression.attention.governance.verify_hash
 	{
 		if let Some(pact) = pact {
-			pact.verify_governance(session)?;
+			pact.verify_governance(session, fold_point)?;
 		}
 	}
+
+	// The fold's goal was resolved from the request at the fold point, not from
+	// one that arrived past it while a background fold ran.
+	let fold_task_sig = crate::session::latest_real_user_task_content(
+		session.session.messages.get(..fold_point).ok_or_else(|| {
+			anyhow::anyhow!(
+				"fold point {} is past the live transcript ({} messages)",
+				fold_point,
+				session.session.messages.len()
+			)
+		})?,
+	)
+	.map(crate::session::anchor::task_sig);
 
 	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
 		.unwrap_or_else(|| "unknown".to_string());
@@ -410,13 +429,10 @@ pub(super) async fn apply_compression(
 	// Sign it with the request it was resolved from, so recitation stops once the
 	// user asks for something else — the goal only outlives the turn, not the ask.
 	if !continuation_goal.trim().is_empty() {
-		let intent_task_sig =
-			crate::session::latest_real_user_task_content(&session.session.messages)
-				.map(crate::session::anchor::task_sig);
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {
 				intent: Some(continuation_goal.clone()),
-				intent_task_sig,
+				intent_task_sig: fold_task_sig,
 				..Default::default()
 			},
 			crate::utils::time::now_secs(),
@@ -784,13 +800,10 @@ pub(super) async fn apply_compression(
 		// forever: this path fired on the late turns of long sequences, and the
 		// agent answered "the re-anchored goal is complete … out of scope" to a
 		// brand-new instruction, with zero tool calls.
-		let intent_task_sig =
-			crate::session::latest_real_user_task_content(&session.session.messages)
-				.map(crate::session::anchor::task_sig);
 		session.session.info.anchor.extend(
 			crate::session::anchor::AnchorUpdate {
 				intent: intent_seed,
-				intent_task_sig,
+				intent_task_sig: fold_task_sig,
 				changes_made: vec![format!(
 					"Conversation compaction: {} messages folded, {} tokens saved",
 					messages_removed, provisional_tokens_saved

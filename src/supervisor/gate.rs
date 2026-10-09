@@ -43,6 +43,7 @@ The user message is assembled from these blocks. Identify each by its TAG, never
 - <agent_stated_claim> — optional; the agent's own summary of what it did. Narrative, not evidence.
 - <agent_stop status="done|blocked|need_input|exploring|progressing|none"> — runtime-recorded: the status the agent ended its turn on (none when it gave none). It tells you WHAT to verify (see WHY THE AGENT STOPPED), never that the work is done or that a blocker is real.
 - <recorded_actions> — optional; the runtime's own log of every tool call the agent executed: a `#N` sequence number, [mut] (mutation-shaped) or [read] (read-shaped), the arguments, and an ok/ERROR outcome — never the output. Calls and outcomes are recorded facts; the shape labels are heuristics, not proof of effects or verification quality.
+- <historical_actions trust="untrusted"> — optional, for resolved follow-ups only; bounded prior-turn calls with their earlier requests. These are historical observations, NOT actions performed this turn. Their #N outputs are available through the same readback round. Use only evidence relevant to the resolved referent; unrelated historical actions neither satisfy nor violate this turn's requirements. Earlier successful checks cannot verify subsequent changes or satisfy a request to run a fresh check.
 - <ground_truth> — optional; runtime-gathered state: the working-tree diff of the files the agent changed, the current content of new files (or MISSING), recent commands' recorded outputs, and possibly a verification-detector note. Artifacts and outputs outrank narrative; detector notes report heuristic recognition limits, not completion verdicts.
 - <previously_flagged_gaps> — optional; gaps a prior pass found in this same turn.
 - <readback_evidence> — optional; verbatim output of recorded actions YOU asked to see, one <output seq="N" retained="yes|no"> per request. Present only on the second pass of a readback round; runtime-recorded, so it outranks the narrative.
@@ -62,6 +63,12 @@ For an observe-only request the report itself is the deliverable: files, diffs, 
 describes are what the agent FOUND, not work it claims to have done — do not demand [mut]
 evidence for them; successful [read] actions covering the inspected artifacts are the
 supporting evidence.
+
+A follow-up asking for confirmation or explanation of earlier findings may be supported by
+relevant <historical_actions> and their readback outputs; absence of a repeated action in
+<recorded_actions> alone is not a gap. Historical observations cannot establish the state
+after a later mutation or satisfy an explicit request for a new audit/check. Require current
+observations for those claims; never turn an earlier successful check into fresh proof.
 
 For an artifact request, judge the resulting content against the requested deliverable.
 A successful write plus the supplied resulting artifact can establish completion without a
@@ -460,9 +467,78 @@ pub struct EvidenceLedger {
 	/// loop tell a re-run that gathered new evidence from one that only reworded
 	/// its answer.
 	gate_checkpoint: u64,
+	/// Prior turns are never current-turn provenance or verification credit.
+	history: VecDeque<HistoricalEvidence>,
+}
+
+// Keep only the most recent tool-bearing turns in a resolved follow-up chain.
+const HISTORY_TURNS_KEPT: usize = 3;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct HistoricalEvidence {
+	request: String,
+	actions: String,
+	grounds: Vec<(u64, String)>,
 }
 
 impl EvidenceLedger {
+	/// Keep bounded historical provenance, but reset every current-turn counter.
+	/// Admission discards the history unless the resolver recognizes a follow-up.
+	pub fn begin_turn(&mut self, previous_request: &str) {
+		let mut history = std::mem::take(&mut self.history);
+		if !self.entries.is_empty() {
+			history.push_back(HistoricalEvidence {
+				request: previous_request.chars().take(READBACK_HEAD).collect(),
+				actions: self.render(),
+				grounds: std::mem::take(&mut self.grounds),
+			});
+		}
+		while history.len() > HISTORY_TURNS_KEPT
+			|| history
+				.iter()
+				.flat_map(|turn| &turn.grounds)
+				.map(|(_, output)| output.chars().count())
+				.sum::<usize>()
+				> CITATION_GROUNDS_CHARS
+		{
+			history.pop_front();
+		}
+		// Readback IDs must not alias an older turn's output after a reset.
+		let sequence = self.next_sequence;
+		self.reset();
+		self.next_sequence = sequence;
+		self.collapse_checkpoint = sequence;
+		self.gate_checkpoint = sequence;
+		self.history = history;
+	}
+
+	pub fn retain_history(&mut self, scope: crate::supervisor::resolve::ResolutionScope) {
+		if scope != crate::supervisor::resolve::ResolutionScope::FollowUp {
+			self.history.clear();
+		}
+	}
+
+	/// Historical calls remain separate from current actions, mutation tracking,
+	/// phase checkpoints, stall detection and execution-verification credit.
+	pub fn verification_evidence(
+		&self,
+		scope: crate::supervisor::resolve::ResolutionScope,
+	) -> (String, Vec<(u64, String)>) {
+		let mut actions = String::new();
+		let mut grounds = Vec::new();
+		if scope == crate::supervisor::resolve::ResolutionScope::FollowUp {
+			for turn in &self.history {
+				actions.push_str(&format!(
+					"Earlier user request: {}\n{}\n",
+					turn.request, turn.actions
+				));
+				grounds.extend_from_slice(&turn.grounds);
+			}
+		}
+		grounds.extend_from_slice(self.grounds());
+		(actions, grounds)
+	}
+
 	/// Start a fresh task slice (genuine user turn).
 	pub fn reset(&mut self) {
 		self.entries.clear();
@@ -474,6 +550,7 @@ impl EvidenceLedger {
 		self.grounds.clear();
 		self.ground_chars = 0;
 		self.gate_checkpoint = 0;
+		self.history.clear();
 	}
 
 	/// Retain verbatim output as current-turn provenance. This state survives
@@ -884,6 +961,8 @@ pub struct GateInput<'a> {
 	pub stop: Option<crate::supervisor::detect::SelfReport>,
 	/// Rendered [`EvidenceLedger`] (empty when no tools ran — pure reasoning).
 	pub actions: &'a str,
+	/// Bounded earlier calls, separately labelled; never current-turn actions.
+	pub historical_actions: &'a str,
 	/// Retained tool output keyed by the `#N` shown in `actions`. The verifier
 	/// judges a log of calls without their results; this is what it may pull
 	/// back, on request, before ruling on what a call returned.
@@ -1523,6 +1602,17 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 			xml_text(input.actions)
 		)
 	};
+	let historical_block = if input.task_scope
+		== crate::supervisor::resolve::ResolutionScope::FollowUp
+		&& !input.historical_actions.trim().is_empty()
+	{
+		format!(
+			"\n\n<historical_actions trust=\"untrusted\">\n{}\n</historical_actions>",
+			xml_text(input.historical_actions)
+		)
+	} else {
+		String::new()
+	};
 	let resolution_block = if input.task_scope
 		== crate::supervisor::resolve::ResolutionScope::FollowUp
 	{
@@ -1604,7 +1694,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 	let original_task = xml_text(input.original_task);
 	let result = xml_text(input.result);
 	format!(
-		"<current_user_turn authority=\"true\">\n{original_task}\n</current_user_turn>{resolution_block}{conditions_block}{role_block}{plan_block}\n\n<agent_final_result trust=\"untrusted\">\n{result}\n</agent_final_result>{stop_line}{claim_line}{actions_block}{ground_truth_block}{prior_gaps_block}"
+		"<current_user_turn authority=\"true\">\n{original_task}\n</current_user_turn>{resolution_block}{conditions_block}{role_block}{plan_block}\n\n<agent_final_result trust=\"untrusted\">\n{result}\n</agent_final_result>{stop_line}{claim_line}{actions_block}{historical_block}{ground_truth_block}{prior_gaps_block}"
 	)
 }
 

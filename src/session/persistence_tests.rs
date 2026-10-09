@@ -590,3 +590,29 @@ fn stats_checkpoint_restores_all_token_categories_after_summary() {
 	assert_eq!(loaded.info.prompt_tokens(), 620);
 	assert_eq!(loaded.info.total_tokens(), 665);
 }
+
+#[test]
+fn historical_evidence_restores_through_session_load() {
+	use crate::supervisor::resolve::ResolutionScope::FollowUp;
+	let mut info = SessionInfo::default();
+	let seq = info
+		.evidence
+		.record("view", &json!({"path":"providers"}), false, false, 32);
+	info.evidence.record_ground(seq, "anthropic.rs\nopenai.rs");
+	info.evidence.begin_turn("audit every provider");
+	let summary = serde_json::to_string(&json!({
+		"type": "SUMMARY",
+		"timestamp": 1_700_000_000u64,
+		"session_info": info,
+	}))
+	.unwrap();
+	let user = serde_json::to_string(&msg("user", "so we are good?")).unwrap();
+	let file = write_session(&[&summary, &user]);
+	let restored = load_session(&file.path().to_path_buf()).expect("load");
+	assert!(restored.info.evidence.render().is_empty());
+	assert!(restored.info.evidence.grounds().is_empty());
+	assert_eq!(
+		restored.info.evidence.verification_evidence(FollowUp),
+		info.evidence.verification_evidence(FollowUp)
+	);
+}

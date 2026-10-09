@@ -67,6 +67,7 @@ pub async fn prepare_for_api_call(
 				.info
 				.verification_policy
 				.apply(resolved.verification_policy_update);
+			chat_session.evidence.retain_history(resolved.scope);
 			chat_session.gate_task = Some(resolved);
 			if policy_changed {
 				// Persist at the ownership boundary. Most modes also save after the

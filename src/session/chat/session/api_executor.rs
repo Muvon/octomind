@@ -708,6 +708,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				ground_truth.push_str(p);
 			}
 		}
+		let (historical_actions, grounds) = chat_session
+			.evidence
+			.verification_evidence(resolved_task.scope);
 		let prior_gaps = chat_session.last_gate_gaps.clone();
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;
@@ -723,7 +726,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				claim: claim.as_deref(),
 				stop,
 				actions: &actions,
-				grounds: chat_session.evidence.grounds(),
+				historical_actions: &historical_actions,
+				grounds: &grounds,
 				plan: &plan,
 				ground_truth: &ground_truth,
 				prior_gaps: &prior_gaps,

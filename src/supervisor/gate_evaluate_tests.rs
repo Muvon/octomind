@@ -60,6 +60,7 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 		claim: Some("done: tests pass"),
 		stop: Some(crate::supervisor::detect::SelfReport::Done),
 		actions,
+		historical_actions: "",
 		grounds,
 		plan: "",
 		ground_truth: "",

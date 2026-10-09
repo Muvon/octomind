@@ -315,6 +315,10 @@ impl ChatSession {
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
+		let previous_request =
+			crate::session::latest_real_user_task_content(&self.session.messages)
+				.unwrap_or_default()
+				.to_string();
 		crate::supervisor::authorizer::record_user_input(self, &message);
 		self.session.messages.push(message);
 		self.begin_turn_timing();
@@ -353,7 +357,7 @@ impl ChatSession {
 		// must not latch the gate off for the rest of the session. `gate_failed` is
 		// deliberately NOT reset: it labels the trajectory for distill and is cleared
 		// only by a later PASS.
-		self.evidence.reset();
+		self.evidence.begin_turn(&previous_request);
 		self.gate_task = None;
 		self.gate_iterations = 0;
 		self.nudge_iterations = 0;

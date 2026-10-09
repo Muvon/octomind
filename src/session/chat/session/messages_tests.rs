@@ -376,3 +376,36 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 		);
 	}
 }
+
+#[test]
+fn genuine_turn_archives_evidence_but_system_messages_do_not() {
+	use crate::supervisor::resolve::ResolutionScope::FollowUp;
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.add_user_message("audit every provider").unwrap();
+	let seq = session.evidence.record(
+		"view",
+		&serde_json::json!({"path":"providers"}),
+		false,
+		false,
+		16,
+	);
+	session
+		.evidence
+		.record_ground(seq, "anthropic.rs\nopenai.rs");
+	session
+		.add_system_managed_user_message("<pay-attention>verify</pay-attention>")
+		.unwrap();
+	assert!(!session.evidence.render().is_empty());
+	assert!(session
+		.evidence
+		.verification_evidence(FollowUp)
+		.0
+		.is_empty());
+	session.add_user_message("so we are good?").unwrap();
+	assert!(session.evidence.render().is_empty());
+	assert!(session.evidence.grounds().is_empty());
+	let (history, grounds) = session.evidence.verification_evidence(FollowUp);
+	assert!(history.contains("audit every provider"));
+	assert!(!history.contains("so we are good?"));
+	assert_eq!(grounds, vec![(seq, "anthropic.rs\nopenai.rs".into())]);
+}

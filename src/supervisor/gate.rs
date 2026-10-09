@@ -82,9 +82,11 @@ The request may contain PROHIBITIONS ("do not X", "never Y", "without changing Z
 requirement in its own right: check <recorded_actions> and the <ground_truth> diff for the
 forbidden thing done (a [mut] action on what the request said not to touch, a forbidden change
 in the diff). A violated prohibition is a gap even when all requested work is complete — name
-the prohibition and the violating action. Prohibitions also bound what you may demand: when
-the request forbids checks or verification ("don't run tests", "no verification needed", "I'll
-review it myself"), the absence of a verification run is compliance, never a gap.
+the prohibition and the violating action. Prohibitions also bound what you may demand: preserve
+which action, object, environment, and duration each restriction actually covers. Absence of
+verification the user forbids is compliance, never a gap. Assigning a review or comparison to
+the user does not itself prohibit other assistant-run checks or checks built into a requested
+pipeline. Never broaden a scoped restriction or division of labor into a blanket ban.
 
 <standing_instructions> bind like prohibitions, and <current_user_turn> outranks them wherever
 the two conflict. A violation visible in <recorded_actions> or <ground_truth> is a gap — name

@@ -58,8 +58,10 @@ fn test_track_exchange_cost_accumulates_everything() {
 	assert_eq!(info.cache_read_tokens, 20);
 	assert_eq!(info.cache_write_tokens, 10);
 	assert_eq!(info.reasoning_tokens, 5);
-	// Threshold counters: total includes cache reads, non-cached does not
-	assert_eq!(info.current_total_tokens, 120);
+	// Threshold counters: total includes cache reads and writes; clean input does not.
+	assert_eq!(info.current_total_tokens, 130);
+	assert_eq!(info.prompt_tokens(), 130);
+	assert_eq!(info.total_tokens(), 185);
 	assert_eq!(info.current_non_cached_tokens, 100);
 }
 

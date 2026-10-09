@@ -404,7 +404,7 @@ fn update_token_tracking_accumulates_lifetime_and_current_counters() {
 	assert_eq!(session.info.cache_write_tokens, 20);
 	assert_eq!(session.info.reasoning_tokens, 8);
 	// current_total counts cached + non-cached input; non-cached only raw input.
-	assert_eq!(session.info.current_total_tokens, 900);
+	assert_eq!(session.info.current_total_tokens, 920);
 	assert_eq!(session.info.current_non_cached_tokens, 150);
 }
 
@@ -643,18 +643,21 @@ fn statistics_report_token_totals_and_cache_efficiency() {
 	session.info.cache_read_tokens = 300;
 	session.info.cache_write_tokens = 25;
 	session.info.current_non_cached_tokens = 100;
-	session.info.current_total_tokens = 400;
+	session.info.current_total_tokens = 425;
 
 	let stats = manager.get_cache_statistics(&session);
-	assert_eq!(stats.total_input_tokens, 400, "input + cache read");
+	assert_eq!(
+		stats.total_input_tokens, 425,
+		"input + cache read + cache write"
+	);
 	assert_eq!(stats.total_output_tokens, 60);
 	assert_eq!(stats.total_cache_read_tokens, 300);
 	assert_eq!(stats.total_cache_write_tokens, 25);
 	assert_eq!(stats.current_non_cached_tokens, 100);
-	assert_eq!(stats.current_total_tokens, 400);
+	assert_eq!(stats.current_total_tokens, 425);
 	assert!(
-		(stats.cache_efficiency - 75.0).abs() < 1e-9,
-		"300 of 400 input tokens cached = 75%"
+		(stats.cache_efficiency - 300.0 / 425.0 * 100.0).abs() < 1e-9,
+		"cache reads are a fraction of all prompt tokens"
 	);
 
 	// Zero tokens must not divide by zero.
@@ -690,11 +693,11 @@ fn format_for_display_renders_empty_and_populated_states() {
 		tool_markers: 1,
 		total_cache_read_tokens: 300,
 		total_cache_write_tokens: 25,
-		total_input_tokens: 400,
+		total_input_tokens: 425,
 		total_output_tokens: 60,
 		current_non_cached_tokens: 100,
-		current_total_tokens: 400,
-		cache_efficiency: 75.0,
+		current_total_tokens: 425,
+		cache_efficiency: 300.0 / 425.0 * 100.0,
 	};
 	let text = populated.format_for_display();
 	assert!(text.contains("Active markers:"));

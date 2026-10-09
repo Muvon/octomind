@@ -635,11 +635,7 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					}
 					// The sink already sent the cost of a turn that ran to completion.
 					if !cost_sent {
-						let total_tokens = chat_session.session.info.input_tokens
-							+ chat_session.session.info.output_tokens
-							+ chat_session.session.info.cache_read_tokens
-							+ chat_session.session.info.cache_write_tokens
-							+ chat_session.session.info.reasoning_tokens;
+						let total_tokens = chat_session.session.info.total_tokens();
 						let _ = ctx.bg_tx.send(ServerMessage::Cost(CostPayload {
 							session_tokens: total_tokens,
 							session_cost: chat_session.session.info.total_cost,
@@ -1574,11 +1570,7 @@ async fn handle_user_message(
 	log_debug!("Saving session: {}", session_id);
 	let save_result = chat_session.save();
 	let spending_stop = chat_session.spending_stop;
-	let total_tokens = chat_session.session.info.input_tokens
-		+ chat_session.session.info.output_tokens
-		+ chat_session.session.info.cache_read_tokens
-		+ chat_session.session.info.cache_write_tokens
-		+ chat_session.session.info.reasoning_tokens;
+	let total_tokens = chat_session.session.info.total_tokens();
 	let cost_msg = ServerMessage::Cost(CostPayload {
 		session_tokens: total_tokens,
 		session_cost: chat_session.session.info.total_cost,

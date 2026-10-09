@@ -17,7 +17,6 @@ use super::*;
 fn cumulative(cost: f64, tokens: u64) -> StepStats {
 	StepStats {
 		cost,
-		total_tokens: tokens,
 		input_tokens: tokens,
 		..Default::default()
 	}
@@ -38,7 +37,10 @@ fn continue_delta_counts_each_turn_once() {
 	// ~3x overcount that summing raw cumulative figures would produce.
 	let summed = d1.cost + d2.cost + d3.cost;
 	assert!((summed - 0.45).abs() < 1e-9, "summed={summed}");
-	assert_eq!(d1.total_tokens + d2.total_tokens + d3.total_tokens, 450);
+	assert_eq!(
+		d1.total_tokens() + d2.total_tokens() + d3.total_tokens(),
+		450
+	);
 }
 
 fn seq(name: &str) -> Sequential {
@@ -124,7 +126,7 @@ fn continue_delta_clamps_nonmonotonic_drop() {
 	let _ = continue_delta(&mut base, &cumulative(0.50, 500));
 	let d = continue_delta(&mut base, &cumulative(0.40, 400));
 	assert_eq!(d.cost, 0.0);
-	assert_eq!(d.total_tokens, 0);
+	assert_eq!(d.total_tokens(), 0);
 }
 
 #[test]
@@ -408,7 +410,7 @@ fn fold_stats_folds_continue_sessions_into_per_turn_deltas() {
 		(d2.cost - 0.15).abs() < 1e-9,
 		"second turn reports only the delta"
 	);
-	assert_eq!(d1.total_tokens + d2.total_tokens, 250);
+	assert_eq!(d1.total_tokens() + d2.total_tokens(), 250);
 }
 
 #[test]
@@ -561,7 +563,6 @@ fn totals_add_sums_every_counter() {
 	totals.add(&StepStats {
 		duration: Duration::from_secs(2),
 		cost: 0.5,
-		total_tokens: 200,
 		input_tokens: 150,
 		output_tokens: 50,
 		tool_count: 2,
@@ -569,7 +570,7 @@ fn totals_add_sums_every_counter() {
 		..Default::default()
 	});
 	assert!((totals.cost - 0.75).abs() < 1e-9);
-	assert_eq!(totals.tokens, 300);
+	assert_eq!(totals.total_tokens(), 300);
 	assert_eq!(totals.input_tokens, 250);
 	assert_eq!(totals.output_tokens, 50);
 	assert_eq!(totals.tools, 2);
@@ -593,7 +594,7 @@ fn fmt_stats_renders_duration_cost_tokens_and_tools() {
 	let stats = StepStats {
 		duration: Duration::from_millis(1500),
 		cost: 0.1,
-		total_tokens: 450,
+		input_tokens: 450,
 		tool_count: 2,
 		..Default::default()
 	};
@@ -1308,4 +1309,47 @@ async fn execute_graph_aborts_when_first_node_fails() {
 			.contains("step 'start' failed after 1 attempts"),
 		"got: {err}"
 	);
+}
+
+#[test]
+fn continued_steps_preserve_five_category_totals() {
+	for (input, read, write, output, reasoning) in [
+		(100, 500, 20, 40, 5),
+		(0, 0, 20, 0, 0),
+		(0, 0, 0, 0, 5),
+		(0, 0, 0, 0, 0),
+	] {
+		let mut base = StepStats::default();
+		let mut totals = Totals::default();
+		for multiplier in 1..=3 {
+			let current = StepStats {
+				input_tokens: input * multiplier,
+				cache_read_tokens: read * multiplier,
+				cache_write_tokens: write * multiplier,
+				output_tokens: output * multiplier,
+				reasoning_tokens: reasoning * multiplier,
+				..Default::default()
+			};
+			let delta = continue_delta(&mut base, &current);
+			assert_eq!(
+				(
+					delta.input_tokens,
+					delta.cache_read_tokens,
+					delta.cache_write_tokens,
+					delta.output_tokens,
+					delta.reasoning_tokens
+				),
+				(input, read, write, output, reasoning)
+			);
+			assert_eq!(delta.prompt_tokens(), input + read + write);
+			assert_eq!(
+				delta.total_tokens(),
+				input + read + write + output + reasoning
+			);
+			totals.add(&delta);
+			assert_eq!(totals.total_tokens(), current.total_tokens());
+			assert_eq!(totals.prompt_tokens(), current.prompt_tokens());
+			assert!(fmt_stats(&delta).contains(&format!("{} tok", delta.total_tokens())));
+		}
+	}
 }

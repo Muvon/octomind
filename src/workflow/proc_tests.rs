@@ -145,7 +145,7 @@ fn fold_stream_line_snapshots_cumulative_cost_fields() {
 		r#"{"type":"cost","session_tokens":100,"session_cost":0.5,"input_tokens":60,"output_tokens":40,"cache_read_tokens":7,"cache_write_tokens":3,"reasoning_tokens":11,"session_id":"s"}"#,
 		r#"{"type":"cost","session_tokens":250,"session_cost":1.25,"input_tokens":150,"output_tokens":100,"cache_read_tokens":9,"cache_write_tokens":5,"reasoning_tokens":13,"session_id":"s"}"#,
 	]);
-	assert_eq!(stats.total_tokens, 250);
+	assert_eq!(stats.total_tokens(), 277);
 	assert!((stats.cost - 1.25).abs() < f64::EPSILON);
 	assert_eq!(stats.input_tokens, 150);
 	assert_eq!(stats.output_tokens, 100);

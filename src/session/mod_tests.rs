@@ -759,3 +759,29 @@ fn test_session_loading_model_without_command() {
 		"Model should be restored from SUMMARY when no /model command exists"
 	);
 }
+
+#[test]
+fn normalized_token_totals_include_each_category_once() {
+	for (input, read, write, output, reasoning, prompt, total) in [
+		(100, 500, 20, 40, 5, 620, 665),
+		(0, 0, 20, 0, 0, 20, 20),
+		(0, 500, 0, 0, 0, 500, 500),
+		(0, 0, 0, 0, 5, 0, 5),
+		(0, 0, 0, 0, 0, 0, 0),
+	] {
+		let info = SessionInfo {
+			input_tokens: input,
+			cache_read_tokens: read,
+			cache_write_tokens: write,
+			output_tokens: output,
+			reasoning_tokens: reasoning,
+			..Default::default()
+		};
+		assert_eq!(info.prompt_tokens(), prompt);
+		assert_eq!(info.total_tokens(), total);
+		let restored: SessionInfo =
+			serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
+		assert_eq!(restored.prompt_tokens(), prompt);
+		assert_eq!(restored.total_tokens(), total);
+	}
+}

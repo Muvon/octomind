@@ -422,7 +422,7 @@ pub fn display_info(output: &CommandOutput) {
 			block_row("title", &title.bright_white().to_string(), kw_sess);
 		}
 		block_row("model", &model.bright_white().to_string(), kw_sess);
-		let total_tokens = tokens_used + tokens_cached + tokens_cache_write + tokens_reasoning;
+		let total_tokens = *tokens_used;
 		block_row(
 			"tokens",
 			&format!("{} total", format_number(total_tokens).bright_white()),

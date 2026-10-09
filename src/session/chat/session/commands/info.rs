@@ -26,7 +26,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	crate::supervisor::authorizer::sync(session);
 	let info = &session.session.info;
 
-	let tokens_used = info.input_tokens + info.output_tokens;
+	let tokens_used = info.total_tokens();
 	// Real throughput: generated tokens (visible + reasoning) over the summed
 	// request wall time. Reasoning tokens are produced inside the same request
 	// window, so excluding them understates thinking models by their share.

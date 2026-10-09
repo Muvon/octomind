@@ -43,7 +43,6 @@ use crate::websocket::{AssistantPayload, CostPayload, ServerMessage};
 struct Totals {
 	duration: Duration,
 	cost: f64,
-	tokens: u64,
 	input_tokens: u64,
 	output_tokens: u64,
 	cache_read_tokens: u64,
@@ -54,10 +53,16 @@ struct Totals {
 }
 
 impl Totals {
+	fn prompt_tokens(&self) -> u64 {
+		self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+	}
+
+	fn total_tokens(&self) -> u64 {
+		self.prompt_tokens() + self.output_tokens + self.reasoning_tokens
+	}
 	fn add(&mut self, s: &StepStats) {
 		self.duration += s.duration;
 		self.cost += s.cost;
-		self.tokens += s.total_tokens;
 		self.input_tokens += s.input_tokens;
 		self.output_tokens += s.output_tokens;
 		self.cache_read_tokens += s.cache_read_tokens;
@@ -984,7 +989,6 @@ fn continue_delta(base: &mut StepStats, current: &StepStats) -> StepStats {
 		cost: (current.cost - base.cost).max(0.0),
 		input_tokens: current.input_tokens.saturating_sub(base.input_tokens),
 		output_tokens: current.output_tokens.saturating_sub(base.output_tokens),
-		total_tokens: current.total_tokens.saturating_sub(base.total_tokens),
 		cache_read_tokens: current
 			.cache_read_tokens
 			.saturating_sub(base.cache_read_tokens),
@@ -1167,7 +1171,7 @@ fn fmt_stats(s: &StepStats) -> String {
 		"{dur}  {b} ${cost:.4}  {b} {tok} tok  {b} {tools}",
 		dur = fmt_dur(s.duration),
 		cost = s.cost,
-		tok = s.total_tokens,
+		tok = s.total_tokens(),
 		b = bullet,
 	)
 }
@@ -1279,7 +1283,7 @@ pub async fn execute(
 		sep = "·".bright_black(),
 		dur = fmt_dur(ex.totals.duration),
 		cost = ex.totals.cost,
-		tok = ex.totals.tokens,
+		tok = ex.totals.total_tokens(),
 		tools = fmt_tools(ex.totals.tools, ex.totals.tools_failed),
 		b = bullet,
 	);
@@ -1290,7 +1294,7 @@ pub async fn execute(
 	// for a workflow, so `session_id` is left empty.
 	if jsonl {
 		JsonlSink.emit(ServerMessage::Cost(CostPayload {
-			session_tokens: ex.totals.tokens,
+			session_tokens: ex.totals.total_tokens(),
 			session_cost: ex.totals.cost,
 			input_tokens: ex.totals.input_tokens,
 			output_tokens: ex.totals.output_tokens,

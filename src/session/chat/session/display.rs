@@ -96,11 +96,7 @@ impl ChatSession {
 			&self.session.info.model.bright_white().to_string(),
 			kw_sess,
 		);
-		let total_tokens = self.session.info.input_tokens
-			+ self.session.info.output_tokens
-			+ self.session.info.cache_read_tokens
-			+ self.session.info.cache_write_tokens
-			+ self.session.info.reasoning_tokens;
+		let total_tokens = self.session.info.total_tokens();
 		block_row(
 			"tokens",
 			&format!("{} total", format_number(total_tokens).bright_white()),
@@ -381,11 +377,7 @@ impl ChatSession {
 			}
 		}
 
-		let total_tokens = self.session.info.input_tokens
-			+ self.session.info.output_tokens
-			+ self.session.info.cache_read_tokens
-			+ self.session.info.cache_write_tokens
-			+ self.session.info.reasoning_tokens;
+		let total_tokens = self.session.info.total_tokens();
 
 		let total_time_ms = self.session.info.total_api_time_ms
 			+ self.session.info.total_tool_time_ms
@@ -457,17 +449,15 @@ impl ChatSession {
 		output.push_str(&format!("Session name: {}\n", self.session.info.name));
 		output.push_str(&format!("Main model: {}\n", self.session.info.model));
 
-		let total_tokens = self.session.info.input_tokens
-			+ self.session.info.output_tokens
-			+ self.session.info.cache_read_tokens
-			+ self.session.info.cache_write_tokens;
+		let total_tokens = self.session.info.total_tokens();
 		output.push_str(&format!("Total tokens: {}\n", format_number(total_tokens)));
 		output.push_str(&format!(
-			"Breakdown: {} input, {} output, {} cache read, {} cache write\n",
+			"Breakdown: {} input, {} output, {} cache read, {} cache write, {} reasoning\n",
 			format_number(self.session.info.input_tokens),
 			format_number(self.session.info.output_tokens),
 			format_number(self.session.info.cache_read_tokens),
-			format_number(self.session.info.cache_write_tokens)
+			format_number(self.session.info.cache_write_tokens),
+			format_number(self.session.info.reasoning_tokens)
 		));
 
 		// Cost information
@@ -750,10 +740,7 @@ impl ChatSession {
 		// Content length limits
 		let content_limit = if is_debug { None } else { Some(200) };
 		// Calculate total session tokens for percentage calculation
-		let total_session_tokens = self.session.info.input_tokens
-			+ self.session.info.output_tokens
-			+ self.session.info.cache_read_tokens
-			+ self.session.info.cache_write_tokens;
+		let total_session_tokens = self.session.info.total_tokens();
 		// "large" filter — show median / stddev / threshold stats as a section.
 		if filter == "large" && !self.session.messages.is_empty() {
 			let mut token_counts: Vec<f64> = self
@@ -906,10 +893,7 @@ impl ChatSession {
 		// Calculate current session context tokens using UNIFIED calculation
 		// This ensures consistency with compression, continuation, and all other systems
 		let current_context_tokens = self.get_full_context_tokens(config).await;
-		let total_tokens_sum = self.session.info.input_tokens
-			+ self.session.info.output_tokens
-			+ self.session.info.cache_read_tokens
-			+ self.session.info.cache_write_tokens;
+		let total_tokens_sum = self.session.info.total_tokens();
 		let total_cost = self.session.info.total_cost;
 
 		// Summary section — totals + mode footer, on the rail.

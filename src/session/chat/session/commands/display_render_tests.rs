@@ -535,7 +535,7 @@ fn test_render_info_full_and_minimal() {
 		role: "assistant".to_string(),
 		tokens_input: 120_000,
 		tokens_output: 8_500,
-		tokens_used: 128_500,
+		tokens_used: 224_000,
 		tokens_cached: 90_000,
 		tokens_cache_write: 4_000,
 		tokens_reasoning: 1_500,

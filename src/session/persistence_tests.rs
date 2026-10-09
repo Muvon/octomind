@@ -562,3 +562,31 @@ fn restoration_point_then_compression_clears_restoration_messages() {
 	assert_eq!(session.messages[0].content, "[POST-RP-COMP]");
 	assert_eq!(session.messages[1].content, "tail");
 }
+
+#[test]
+fn stats_checkpoint_restores_all_token_categories_after_summary() {
+	let info = SessionInfo {
+		name: "token-checkpoint".into(),
+		input_tokens: 100,
+		cache_read_tokens: 500,
+		cache_write_tokens: 20,
+		output_tokens: 40,
+		reasoning_tokens: 5,
+		..Default::default()
+	};
+	let summary = serde_json::to_string(&json!({
+		"type": "SUMMARY", "timestamp": 1, "session_info": SessionInfo::default()
+	}))
+	.unwrap();
+	let message = serde_json::to_string(&msg("user", "hi")).unwrap();
+	let file = write_session(&[&summary, &message]);
+	crate::session::logger::log_stats_checkpoint(file.path(), &info).unwrap();
+	let loaded = load_session(&file.path().to_path_buf()).unwrap();
+	assert_eq!(loaded.info.input_tokens, 100);
+	assert_eq!(loaded.info.cache_read_tokens, 500);
+	assert_eq!(loaded.info.cache_write_tokens, 20);
+	assert_eq!(loaded.info.output_tokens, 40);
+	assert_eq!(loaded.info.reasoning_tokens, 5);
+	assert_eq!(loaded.info.prompt_tokens(), 620);
+	assert_eq!(loaded.info.total_tokens(), 665);
+}

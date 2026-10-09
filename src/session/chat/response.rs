@@ -1044,11 +1044,7 @@ pub async fn process_response<S: OutputSink>(
 pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) -> CostPayload {
 	chat_session.session.fold_external_spend();
 	let info = &chat_session.session.info;
-	let total_tokens = info.input_tokens
-		+ info.output_tokens
-		+ info.cache_read_tokens
-		+ info.cache_write_tokens
-		+ info.reasoning_tokens;
+	let total_tokens = info.total_tokens();
 	let compression = &info.compression_stats;
 	let (supervisor_in, supervisor_out) = crate::supervisor::stats::token_totals();
 	CostPayload {

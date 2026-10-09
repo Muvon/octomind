@@ -188,7 +188,7 @@ impl CacheManager {
 		// For threshold checking:
 		// - current_total_tokens tracks all input tokens (cached + non-cached)
 		// - current_non_cached_tokens tracks only non-cached input tokens
-		let total_input = input_tokens + cache_read_tokens;
+		let total_input = input_tokens + cache_read_tokens + cache_write_tokens;
 		session.info.current_total_tokens += total_input;
 		session.info.current_non_cached_tokens += input_tokens;
 	}
@@ -278,22 +278,20 @@ impl CacheManager {
 			}
 		}
 
+		let total_input_tokens = session.info.prompt_tokens();
 		CacheStatistics {
 			content_markers,
 			system_markers,
 			tool_markers,
 			total_cache_read_tokens: session.info.cache_read_tokens,
 			total_cache_write_tokens: session.info.cache_write_tokens,
-			total_input_tokens: session.info.input_tokens + session.info.cache_read_tokens,
+			total_input_tokens,
 			total_output_tokens: session.info.output_tokens,
 			current_non_cached_tokens: session.info.current_non_cached_tokens,
 			current_total_tokens: session.info.current_total_tokens,
-			cache_efficiency: if session.info.input_tokens + session.info.cache_read_tokens > 0 {
-				// Cache efficiency = percentage of total input tokens that came from cache
-				// This shows the overall session cache efficiency (lifetime)
-				(session.info.cache_read_tokens as f64
-					/ (session.info.input_tokens + session.info.cache_read_tokens) as f64)
-					* 100.0
+			cache_efficiency: if total_input_tokens > 0 {
+				// Cache reads are a fraction of the entire prompt, including cache writes.
+				session.info.cache_read_tokens as f64 / total_input_tokens as f64 * 100.0
 			} else {
 				0.0
 			},
@@ -433,11 +431,16 @@ impl CacheStatistics {
 
 		if self.total_cache_read_tokens > 0 || self.total_cache_write_tokens > 0 {
 			output.push_str(&format!(
-				"Total input tokens: {} ({} cache read, {} cache write, {} processed)\n",
+				"Total input tokens: {} ({} cache read, {} cache write, {} uncached)\n",
 				format_number(self.total_input_tokens).bright_blue(),
 				format_number(self.total_cache_read_tokens).bright_magenta(),
 				format_number(self.total_cache_write_tokens).bright_yellow(),
-				format_number(self.total_input_tokens - self.total_cache_read_tokens).bright_cyan()
+				format_number(
+					self.total_input_tokens
+						- self.total_cache_read_tokens
+						- self.total_cache_write_tokens
+				)
+				.bright_cyan()
 			));
 			output.push_str(&format!(
 				"Total output tokens: {} (not cacheable)\n",

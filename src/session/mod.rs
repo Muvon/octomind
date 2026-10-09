@@ -439,6 +439,15 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+	/// Provider-normalized input excludes both cache categories.
+	pub fn prompt_tokens(&self) -> u64 {
+		self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+	}
+
+	/// Visible output and reasoning are disjoint in normalized usage.
+	pub fn total_tokens(&self) -> u64 {
+		self.prompt_tokens() + self.output_tokens + self.reasoning_tokens
+	}
 	/// Close the previous genuine turn's call count and open a new one. A turn
 	/// that made no calls (answered from context) carries no pace signal.
 	pub fn note_turn_start(&mut self) {

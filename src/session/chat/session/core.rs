@@ -609,10 +609,7 @@ impl ChatSession {
 						};
 
 						// Calculate total tokens
-						let total_tokens = session.info.input_tokens
-							+ session.info.output_tokens
-							+ session.info.cache_read_tokens
-							+ session.info.cache_write_tokens;
+						let total_tokens = session.info.total_tokens();
 
 						println!("{} {}", "Created:".blue(), created_time.white());
 						println!("{} {}", "Model:".blue(), model_name.yellow());

@@ -138,3 +138,33 @@ async fn test_display_session_context_all_filters() {
 	let mut empty = ChatSession::for_tests(Vec::new());
 	empty.display_session_context(&config).await;
 }
+
+#[test]
+fn session_text_json_and_cost_payload_agree_on_all_token_categories() {
+	for (input, read, write, output, reasoning, total) in [
+		(100, 500, 20, 40, 5, 665),
+		(0, 0, 20, 0, 0, 20),
+		(0, 0, 0, 0, 5, 5),
+		(0, 0, 0, 0, 0, 0),
+	] {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.input_tokens = input;
+		session.session.info.cache_read_tokens = read;
+		session.session.info.cache_write_tokens = write;
+		session.session.info.output_tokens = output;
+		session.session.info.reasoning_tokens = reasoning;
+		let json = session.get_session_info_json();
+		assert_eq!(json["tokens"]["total"], total);
+		let text = session.get_session_info_string();
+		assert!(text.contains(&format!("Total tokens: {total}\n")), "{text}");
+		assert!(text.contains(&format!("{reasoning} reasoning")), "{text}");
+		let payload =
+			crate::session::chat::response::session_cost_payload(&mut session, "test".into());
+		assert_eq!(payload.session_tokens, total);
+		assert_eq!(payload.input_tokens, input);
+		assert_eq!(payload.cache_read_tokens, read);
+		assert_eq!(payload.cache_write_tokens, write);
+		assert_eq!(payload.output_tokens, output);
+		assert_eq!(payload.reasoning_tokens, reasoning);
+	}
+}

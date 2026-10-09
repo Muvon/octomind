@@ -174,11 +174,10 @@ impl CostTracker {
 		let info = &chat_session.session.info;
 		let cache_read = info.cache_read_tokens;
 		let cache_write = info.cache_write_tokens;
-		let non_cached_prompt = info.input_tokens;
 		let completion = info.output_tokens;
 		let reasoning = info.reasoning_tokens;
-		let total_prompt = non_cached_prompt + cache_read;
-		let total = total_prompt + completion + reasoning;
+		let total_prompt = info.prompt_tokens();
+		let total = info.total_tokens();
 
 		block_open("session usage", Some(&info.model));
 		let kw = key_width([

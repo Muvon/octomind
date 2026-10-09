@@ -402,6 +402,9 @@ async fn info_throughput_counts_reasoning_tokens() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.session.info.output_tokens = 406;
 	session.session.info.reasoning_tokens = 8_900;
+	session.session.info.input_tokens = 100;
+	session.session.info.cache_read_tokens = 500;
+	session.session.info.cache_write_tokens = 20;
 	session.session.info.total_api_time_ms = 63_400;
 	session.session.info.total_api_calls = 2;
 	session.session.info.turn_timing.completed = 2;
@@ -421,6 +424,11 @@ async fn info_throughput_counts_reasoning_tokens() {
 	assert_eq!(json["timing"]["avg_turn_time_ms"], 45_000);
 
 	let CommandOutput::Info {
+		tokens_used,
+		tokens_input,
+		tokens_cached,
+		tokens_cache_write,
+		tokens_reasoning,
 		tokens_per_second,
 		timing,
 		..
@@ -428,6 +436,11 @@ async fn info_throughput_counts_reasoning_tokens() {
 	else {
 		panic!("expected info output variant");
 	};
+	assert_eq!(tokens_used, 9_926);
+	assert_eq!(tokens_input, 100);
+	assert_eq!(tokens_cached, 500);
+	assert_eq!(tokens_cache_write, 20);
+	assert_eq!(tokens_reasoning, 8_900);
 	// (406 + 8_900) / 63.4 s ≈ 146.8 tok/s; output-only math would show 6.4.
 	assert!(
 		(tokens_per_second - 146.8).abs() < 0.1,

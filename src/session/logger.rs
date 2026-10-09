@@ -172,6 +172,7 @@ pub fn log_stats_checkpoint(
 		"output_tokens": info.output_tokens,
 		"cache_read_tokens": info.cache_read_tokens,
 		"cache_write_tokens": info.cache_write_tokens,
+		"reasoning_tokens": info.reasoning_tokens,
 		"tool_calls": info.tool_calls,
 		"total_api_time_ms": info.total_api_time_ms,
 		"total_tool_time_ms": info.total_tool_time_ms,

@@ -452,6 +452,12 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 										info.cache_write_tokens = cache_write_tokens;
 									}
 								}
+								if let Some(reasoning_tokens) =
+									json_value.get("reasoning_tokens").and_then(|t| t.as_u64())
+								{
+									info.reasoning_tokens =
+										info.reasoning_tokens.max(reasoning_tokens);
+								}
 
 								if let Some(tool_calls) =
 									json_value.get("tool_calls").and_then(|t| t.as_u64())
@@ -770,6 +776,9 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 					.and_then(|t| t.as_u64())
 				{
 					info.cache_write_tokens = v;
+				}
+				if let Some(v) = json_value.get("reasoning_tokens").and_then(|t| t.as_u64()) {
+					info.reasoning_tokens = v;
 				}
 				if let Some(v) = json_value.get("tool_calls").and_then(|t| t.as_u64()) {
 					info.tool_calls = v;

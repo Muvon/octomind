@@ -27,7 +27,7 @@
 //! bills the user's ChatGPT plan; that OAuth flow and its token storage live in
 //! octolib.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use colored::Colorize;
 use std::time::Duration;
@@ -133,7 +133,9 @@ async fn login_octomind(args: &LoginArgs) -> Result<()> {
 
 async fn login_chatgpt(args: &LoginArgs) -> Result<()> {
 	if !args.force {
-		if let Some(account) = chatgpt::current_account()? {
+		if let Some(account) =
+			validated_chatgpt_account(chatgpt::current_account()?, chatgpt::list_models()).await?
+		{
 			block_open("login", Some("chatgpt"));
 			let kw = key_width(["account"]);
 			block_row(
@@ -177,6 +179,18 @@ async fn login_chatgpt(args: &LoginArgs) -> Result<()> {
 	println!();
 	println!("Use it with model = \"chatgpt:<model>\".");
 	Ok(())
+}
+
+async fn validated_chatgpt_account(
+	account: Option<chatgpt::Account>,
+	models: impl std::future::Future<Output = Result<Vec<chatgpt::ChatGptModel>>>,
+) -> Result<Option<chatgpt::Account>> {
+	if account.is_some() {
+		models.await.context(
+			"Could not validate the saved ChatGPT session; use `octomind login chatgpt --force` to sign in again",
+		)?;
+	}
+	Ok(account)
 }
 
 fn email_label(account: &chatgpt::Account) -> &str {

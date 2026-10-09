@@ -239,3 +239,35 @@ async fn execute_surfaces_a_failed_login_start() {
 		"{err}"
 	);
 }
+
+#[tokio::test]
+async fn saved_chatgpt_account_requires_successful_validation() {
+	let account = chatgpt::Account {
+		email: Some("dev@example.com".to_string()),
+	};
+	let validated = validated_chatgpt_account(Some(account), std::future::ready(Ok(Vec::new())))
+		.await
+		.expect("validated saved account");
+	assert_eq!(validated.unwrap().email.as_deref(), Some("dev@example.com"));
+}
+
+#[tokio::test]
+async fn rejected_chatgpt_session_does_not_report_signed_in() {
+	let account = chatgpt::Account { email: None };
+	let error = validated_chatgpt_account(
+		Some(account),
+		std::future::ready(Err(anyhow::anyhow!("invalid_grant"))),
+	)
+	.await
+	.expect_err("saved credentials alone are not a valid session");
+	assert!(error.to_string().contains("octomind login chatgpt --force"));
+	assert!(format!("{error:#}").contains("invalid_grant"));
+}
+
+#[tokio::test]
+async fn missing_chatgpt_account_does_not_make_a_validation_request() {
+	let account = validated_chatgpt_account(None, async { panic!("no saved account to validate") })
+		.await
+		.expect("start browser login instead");
+	assert!(account.is_none());
+}

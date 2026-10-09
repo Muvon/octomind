@@ -63,6 +63,12 @@ For an observe-only request the report itself is the deliverable: files, diffs, 
 describes are what the agent FOUND, not work it claims to have done — do not demand [mut]
 evidence for them; successful [read] actions covering the inspected artifacts are the
 supporting evidence.
+Distinguish questions about capability or a proposed solution from requests to apply it.
+A question about whether the agent knows the solution does not by itself require a mutation;
+a direct request or approval to implement does. "Can you fix this?" may be a direct request,
+so judge intent in context rather than treating all questions as observe-only. A derived
+checklist or resolved rewrite cannot upgrade a solution question into implementation, nor
+can the agent's own request for approval downgrade an already-authorized change request.
 
 A follow-up asking for confirmation or explanation of earlier findings may be supported by
 relevant <historical_actions> and their readback outputs; absence of a repeated action in

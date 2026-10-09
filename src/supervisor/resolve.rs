@@ -106,7 +106,12 @@ existing material. Producing such a report may take substantial reading and tool
 still answer_only because nothing outside the conversation is created or changed. False
 whenever the turn asks to create or change anything outside the reply (files, data,
 systems, published or sent content) or to continue such work; a turn that mixes an
-information ask with any change request is false. When in doubt, return false.
+information ask with any change request is false. Distinguish asking whether a solution is
+known or requesting a proposal from asking to apply it: a capability/solution question alone
+does not authorize implementation. Conversely, "can you fix this?" can be a direct change
+request, and "yes, implement it" or "why are you waiting instead of doing it?" can authorize
+continuation. Judge the requested deliverable in context, not the presence of a question
+mark. When intent remains uncertain, do not invent an implementation requirement.
 
 Field "conditions": decompose the request into the concrete observations that would
 demonstrate it is fulfilled — one short line per explicitly stated requirement, example,
@@ -152,6 +157,10 @@ action, temporal qualifier, prohibition, and scope boundary from the current req
 merge an older request, add a new action, or turn background into a requirement. Prefer the
 most recent relevant history; use durable session context or the active plan only when needed.
 If one minimal interpretation is not supported, return ambiguous and an empty request.
+Preserve the distinction between asking for a solution or proposal and authorizing its
+implementation. Resolving "it" to an earlier defect must not turn "do you know the solution?"
+into "implement the fix". Conversely, preserve approval or a demand to resume work as an
+action request; do not reduce "yes, implement it" to a request for information.
 
 Set plan_relevant=true only when the active plan supplies a missing referent and its checklist
 scope is entailed by the resolved request. A merely open or topically related plan is false. A

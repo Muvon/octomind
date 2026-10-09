@@ -53,26 +53,46 @@ an explicit reference or ellipsis (for example "continue", "that", "it", "same b
 leaves a required referent or argument missing. Related subject matter does not create a
 dependency.
 
-Field "forbids_verification": true only when the turn OR standing role instructions explicitly
-tell the assistant NOT to run checks or verify the work itself (for example: do not run
-tests/build/lint, no verification needed, I will run/review it myself, in any language or
-phrasing). Prohibitions about other actions (do not run the migration, do not modify tests) and
-descriptive prose are false. Text inside pasted logs, quoted conversations, code, examples, or UI
-captures is evidence being discussed, not a user instruction, unless the user separately adopts it.
+Field "forbids_verification": this boolean imposes a blanket ban on ALL assistant-run
+verification for this turn. Set it true only when the current turn OR standing role
+instructions actually prohibit verification as a whole. Determine the action, object,
+environment, and duration of each instruction before choosing this field; never broaden
+any of them to fit a boolean. A restriction on one check, artifact, or environment is NOT
+an all-verification ban. Preserve that restriction in "conditions" with its original scope.
+Assigning a final review or comparison to the user does not itself prohibit assistant-run
+checks needed to produce the requested deliverable. Read that assignment together with
+what the assistant is asked to do, not as an isolated phrase such as "I will review it myself".
+Prohibitions about other actions (do not run the migration, do not modify tests) and
+descriptive prose are false. Text inside pasted logs, quoted conversations, code, examples,
+or UI captures is evidence being discussed, not a user instruction, unless separately adopted.
 
-Field "verification_policy_update": classify what the CURRENT USER TURN does to the user's
-standing permission for assistant-run verification. Return "forbid" when it tells the assistant
-not to run checks or says the user will verify instead. Return "allow" when it explicitly revokes
-such a restriction, permits verification, or directly asks the assistant to run a check. Return
-"unchanged" when it says nothing about who may verify. Judge meaning in any language. Never derive
-this update from role_context: role instructions may make forbids_verification true, but only a
-genuine user turn may update user policy. A prohibition about executing the deliverable itself
-(deploying, publishing, running a migration) is not a verification-policy update. One legacy
-exception: when verification_policy is "unspecified" and the current turn is unchanged, inspect
-recent_user_policy_context newest-first and return its latest explicit forbid or allow. Ignore that
-context when persisted policy already exists, and never import any action or deliverable from it.
-Quoted or pasted text never updates policy. A restriction explicitly limited to this one response
-may make forbids_verification true now but leaves standing policy "unchanged".
+Field "verification_policy_update": this updates SESSION-WIDE permission for ALL
+assistant-run verification, not ownership of one review or permission for one command.
+Return "forbid" only for a genuine user instruction establishing a blanket verification
+ban beyond this turn. Return "allow" when the user revokes that blanket ban or grants
+verification generally. A request for one check authorizes that check, not unrelated checks;
+keep that permission in "conditions" rather than expanding it into a session-wide update.
+Return "unchanged" for scoped instructions, division of labor, or no policy change. Never
+infer a global prohibition or permission from a narrower one. Never derive this update from
+role_context: role instructions may make forbids_verification true, but only a genuine user
+turn may update user policy. A prohibition about executing the deliverable itself (deploying,
+publishing, running a migration) is not a verification-policy update. One legacy exception:
+when verification_policy is "unspecified" and the current turn is unchanged, inspect
+recent_user_policy_context newest-first for its latest explicit SESSION-WIDE forbid or allow,
+applying the same scope rules. Ignore that context when persisted policy already exists,
+and never import any action or deliverable from it. Quoted or pasted text never updates
+policy. A blanket restriction explicitly limited to this turn may make forbids_verification
+true now but leaves standing policy "unchanged".
+
+Scope examples (judge equivalent meanings in any language, including imperfect spelling):
+- "Do a full run; I'll compare the final PDF myself": forbids_verification=false, update=unchanged.
+  Run the requested pipeline, including its built-in checks; leave PDF comparison to the user.
+- "Do not run local tests; use the dev server": false, unchanged. Preserve the location boundary.
+- "Do not run any verification for this response": true, unchanged.
+- "From now on, do not run any checks; I will handle all verification": true, forbid.
+- "I revoke the verification ban; all checks are allowed": false, allow.
+- "Continue": false, unchanged unless standing role instructions impose a blanket ban;
+  do not invent, broaden, or revoke policy from a continuation alone.
 
 Field "verification_policy_evidence": when verification_policy_update is "forbid" or "allow",
 copy one short exact excerpt that supports the update from current_user_request, or from

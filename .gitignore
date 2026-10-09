@@ -24,3 +24,5 @@ Thumbs.db
 # Local design/branding exploration (canonical assets live in assets/)
 /branding
 /scripts
+
+/target-*

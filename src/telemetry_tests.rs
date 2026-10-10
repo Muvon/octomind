@@ -29,6 +29,12 @@ fn provider_failures_bucket_by_condition_not_by_wording() {
 	// Providers word the same condition differently; the bucket must not care.
 	assert_eq!(kind("API error 429 <unknown status code>"), "rate_limit");
 	assert_eq!(kind("Rate limit exceeded for gpt-5"), "rate_limit");
+	assert_eq!(
+		kind(
+			r#"ChatGPT stream error: {"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"... or use an API key instead."}}"#
+		),
+		"rate_limit"
+	);
 	assert_eq!(kind("Overloaded: upstream capacity"), "overloaded");
 	assert_eq!(
 		kind("maximum context length is 200000 tokens"),

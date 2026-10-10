@@ -361,7 +361,12 @@ pub fn record_api_error(e: &anyhow::Error) {
 /// part of that text can travel with the classification.
 pub(crate) fn api_error_kind(e: &anyhow::Error) -> &'static str {
 	let text = e.to_string().to_ascii_lowercase();
-	if text.contains("rate limit") || text.contains("429") {
+	// A spent ChatGPT plan allowance arrives mid-stream without a 429 and its
+	// text says "use an API key instead" — it must not land in `auth`.
+	if text.contains("rate limit")
+		|| text.contains("429")
+		|| text.contains("subscription_sharing_usage_limit_exceeded")
+	{
 		"rate_limit"
 	} else if text.contains("overloaded") || text.contains("529") {
 		"overloaded"

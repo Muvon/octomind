@@ -109,6 +109,13 @@ pub fn format_provider_error(provider_name: &str, error: &anyhow::Error) -> Stri
 		return error_str;
 	}
 
+	// octolib leads a ChatGPT plan-usage error (`subscription_sharing_usage_*`)
+	// with its own guidance; OpenAI's text ends "use an API key instead", which
+	// the "API key" branch below would turn into a sign-in failure.
+	if error_str.contains("subscription_sharing_usage") {
+		return error_str;
+	}
+
 	// Check if this is a status code error (like "520 <unknown status code>")
 	if error_str.contains("API error") && error_str.contains("<unknown status code>") {
 		// Extract status code and provide better context

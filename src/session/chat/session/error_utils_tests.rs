@@ -53,6 +53,20 @@ fn octohub_errors_are_passed_through_verbatim() {
 }
 
 #[test]
+fn chatgpt_usage_limit_is_not_reported_as_a_sign_in_failure() {
+	// The live failure: octolib's guidance over OpenAI's stream error, whose
+	// text ends "use an API key instead".
+	let raw = concat!(
+		"ChatGPT plan usage limit reached for this app. Check ChatGPT settings → Usage.\n",
+		r#"ChatGPT stream error: {"type":"error","error":{"type":"invalid_request_error","code":"subscription_sharing_usage_limit_exceeded","message":"The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.","param":null},"sequence_number":2}"#
+	);
+	let error = err(raw);
+	let message = format_provider_error("chatgpt", &error);
+	assert_eq!(message, raw);
+	assert_eq!(credential_hint("chatgpt", &error, &message), None);
+}
+
+#[test]
 fn common_failure_shapes_are_rewritten() {
 	assert!(format_provider_error("openai", &err("rate limit reached")).contains("Rate limit"));
 	assert!(format_provider_error("openai", &err("Rate limit hit")).contains("Rate limit"));

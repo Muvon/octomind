@@ -162,9 +162,14 @@ pub const SKILL_ACTIVATE_AT: f64 = 0.6;
 pub const AUTHORIZER_FLAG_AT: f64 = 0.5;
 /// Condense: a chunk at or above this is kept, together with its neighbours.
 pub const CONDENSE_KEEP_AT: f64 = 0.5;
-/// Condense: line-aligned chunk size of a candidate's original text. A single
-/// line above this forms its own chunk.
-pub const CONDENSE_CHUNK_TOKENS: usize = 256;
+/// Condense: hard token cap of a chunk of a candidate's original text. Chunks
+/// normally end at a paragraph boundary well below it; a single line above
+/// it forms its own chunk. Each kept chunk drags in a neighbour on both
+/// sides, so this also bounds the padding around every hit.
+pub const CONDENSE_CHUNK_TOKENS: usize = 96;
+/// Condense: a chunk shorter than this runs on past a blank line, so runs of
+/// tiny paragraphs do not each cost a scored question.
+pub const CONDENSE_CHUNK_MIN_TOKENS: usize = 32;
 /// Condense: head-and-tail sample of a chunk that is one oversized line, so
 /// no single line can push a window over the state cap.
 pub const CONDENSE_CHUNK_SAMPLE_TOKENS: usize = 512;

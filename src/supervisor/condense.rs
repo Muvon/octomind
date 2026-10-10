@@ -563,22 +563,30 @@ struct Chunk {
 	text: String,
 }
 
-/// Split text into line-aligned chunks of at most `CONDENSE_CHUNK_TOKENS`; a
-/// single longer line is a chunk of its own. Every line lands in exactly one
-/// chunk.
+/// Split text into line-aligned chunks. A chunk ends before the first
+/// non-blank line that follows a blank line once it holds at least
+/// `CONDENSE_CHUNK_MIN_TOKENS`, so a paragraph, record or function body is
+/// judged as a unit; `CONDENSE_CHUNK_TOKENS` is the hard cap for text with no
+/// such boundary, and a single longer line is a chunk of its own. Every line
+/// lands in exactly one chunk.
 fn chunk_lines(content: &str) -> Vec<Chunk> {
 	let limit = crate::supervisor::evaluate::CONDENSE_CHUNK_TOKENS;
+	let floor = crate::supervisor::evaluate::CONDENSE_CHUNK_MIN_TOKENS;
 	let mut chunks: Vec<Chunk> = Vec::new();
 	let mut current = String::new();
 	let mut first_line = 1usize;
 	let mut lines_in_chunk = 0usize;
+	let mut after_blank = false;
 	for (offset, line) in content.lines().enumerate() {
 		let number = offset + 1;
+		let is_blank = line.trim().is_empty();
 		if lines_in_chunk > 0 {
+			let at_boundary = after_blank && !is_blank && estimate_tokens(&current) >= floor;
 			let candidate = format!("{current}\n{line}");
-			if estimate_tokens(&candidate) <= limit {
+			if !at_boundary && estimate_tokens(&candidate) <= limit {
 				current = candidate;
 				lines_in_chunk += 1;
+				after_blank = is_blank;
 				continue;
 			}
 			chunks.push(Chunk {
@@ -591,6 +599,7 @@ fn chunk_lines(content: &str) -> Vec<Chunk> {
 		first_line = number;
 		current = line.to_string();
 		lines_in_chunk = 1;
+		after_blank = is_blank;
 	}
 	if lines_in_chunk > 0 {
 		chunks.push(Chunk {

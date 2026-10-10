@@ -25,7 +25,9 @@ use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
 	spawn_stub, FakeEvaluationStep,
 };
-use crate::supervisor::evaluate::{Seam, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS};
+use crate::supervisor::evaluate::{
+	Seam, CONDENSE_CHUNK_MIN_TOKENS, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS,
+};
 
 fn config(condense: bool) -> Config {
 	let mut config = fake_provider_config();
@@ -141,6 +143,68 @@ fn an_oversized_line_is_a_chunk_of_its_own() {
 	assert_eq!(chunks[1].text, long);
 	assert_eq!((chunks[2].first_line, chunks[2].last_line), (3, 3));
 	assert!(chunk_lines("").is_empty());
+}
+
+/// Four lines of filler: past `CONDENSE_CHUNK_MIN_TOKENS`, far below the cap.
+fn paragraph(id: usize) -> String {
+	(1..=4)
+		.map(|line| format!("record {id} line {line} with some filler text"))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
+#[test]
+fn chunks_end_at_paragraph_boundaries() {
+	let one = paragraph(0);
+	let tokens = estimate_tokens(&one);
+	assert!(tokens >= CONDENSE_CHUNK_MIN_TOKENS && tokens * 2 < CONDENSE_CHUNK_TOKENS);
+	let text = (0..6).map(paragraph).collect::<Vec<_>>().join("\n\n");
+	let lines: Vec<&str> = text.lines().collect();
+	let chunks = chunk_lines(&text);
+	assert_eq!(chunks.len(), 6, "one chunk per paragraph");
+	for (i, chunk) in chunks.iter().enumerate() {
+		assert!(chunk.text.starts_with(&format!("record {i} line 1")));
+		if i > 0 {
+			assert!(lines[chunk.first_line - 2].is_empty());
+		}
+	}
+}
+
+#[test]
+fn a_blank_run_stays_with_the_paragraph_it_follows() {
+	let text = format!("{}\n\n\n\n{}", paragraph(0), paragraph(1));
+	let chunks = chunk_lines(&text);
+	assert_eq!(chunks.len(), 2);
+	assert_eq!((chunks[0].first_line, chunks[0].last_line), (1, 7));
+	assert_eq!(chunks[1].first_line, 8);
+}
+
+#[test]
+fn tiny_paragraphs_merge_until_the_minimum() {
+	let text = (0..60)
+		.map(|i| format!("r{i}"))
+		.collect::<Vec<_>>()
+		.join("\n\n");
+	let chunks = chunk_lines(&text);
+	assert!(chunks.len() > 1 && chunks.len() < 60, "{}", chunks.len());
+	for chunk in &chunks[..chunks.len() - 1] {
+		assert!(estimate_tokens(&chunk.text) >= CONDENSE_CHUNK_MIN_TOKENS);
+		assert!(estimate_tokens(&chunk.text) <= CONDENSE_CHUNK_TOKENS);
+	}
+}
+
+#[test]
+fn a_paragraph_over_the_cap_is_split_at_the_cap() {
+	let text = (0..40)
+		.map(|line| format!("dense line {line} with no blank line anywhere"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	assert!(estimate_tokens(&text) > CONDENSE_CHUNK_TOKENS * 2);
+	let chunks = chunk_lines(&text);
+	assert!(chunks.len() > 2);
+	assert!(chunks
+		.iter()
+		.all(|chunk| estimate_tokens(&chunk.text) <= CONDENSE_CHUNK_TOKENS));
 }
 
 #[tokio::test]

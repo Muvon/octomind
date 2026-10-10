@@ -1,4 +1,4 @@
-# Editor Integration
+# Editor Integration: Neovim, Zed, and JetBrains via ACP
 
 Use this guide to connect an ACP-capable editor or client to Octomind. It covers the launch command, session setup, MCP
 injection, supported prompt content, and troubleshooting.

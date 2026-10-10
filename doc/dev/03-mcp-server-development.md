@@ -1,4 +1,4 @@
-# MCP Server Development
+# MCP Server Development: Build a Built-in MCP Server in Rust
 
 Add a built-in MCP server when you are extending Octomind itself. This contributor guide covers tool definitions,
 routing, role activation, error handling, and verification with a complete example.

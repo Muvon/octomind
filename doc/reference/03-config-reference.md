@@ -1,4 +1,4 @@
-# Configuration Reference
+# Configuration Reference: Octomind TOML Config Fields and Defaults
 
 Use this reference when editing Octomind’s TOML configuration or diagnosing a load error. It covers the complete shipped
 template, optional parsed fields, and model, role, tool, and supervisor settings.

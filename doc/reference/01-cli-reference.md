@@ -1,4 +1,4 @@
-# CLI Reference
+# CLI Reference: Octomind Commands, Flags, and Options
 
 Use this reference to launch sessions, configure Octomind, and automate workflows from your shell. It covers every CLI
 argument, including hidden internal commands.

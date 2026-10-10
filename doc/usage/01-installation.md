@@ -1,6 +1,7 @@
-# Installation
+# Install Octomind: Open-Source AI Coding Agent CLI
 
-Install Octomind for terminal use, sign in to the default OctoHub gateway, and set up shell completions.
+Install Octomind, an open-source AI coding agent for the terminal, sign in to the default OctoHub gateway, and set up
+shell completions.
 
 ## Get Started
 

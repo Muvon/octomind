@@ -1,4 +1,4 @@
-# Common Issues
+# Common Issues and Troubleshooting
 
 Use these checks when installation, authentication, configuration, MCP tools, or sessions fail.
 This guide also covers sandbox restrictions and ACP/WebSocket startup problems.

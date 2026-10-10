@@ -1,4 +1,4 @@
-# Structured Output
+# Structured Output: JSON Schema and JSONL for LLM Responses
 
 Use this guide to consume Octomind activity as JSONL and request schema-shaped model answers. It is for scripts and
 clients that need machine-readable session output.

@@ -1,4 +1,4 @@
-# Quickstart
+# Quickstart: Getting Started with the Octomind CLI Agent
 
 Start an interactive Octomind session through OctoHub, then learn the commands you need day-to-day.
 

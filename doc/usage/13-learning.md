@@ -1,4 +1,4 @@
-# Cross-Session Learning
+# Cross-Session Learning: Agent Memory Across Sessions
 
 Use cross-session learning to carry your rules and grounded project knowledge into later sessions. This guide covers
 configuration, inspection, retrieval, and retention for session users.

@@ -1,4 +1,4 @@
-# Automated Code Review in CI/CD
+# Automated AI Code Review in CI/CD Pipelines
 
 Use this guide to add Octomind reviews to a CI pipeline. It covers stdin prompts, structured review results, and a shell
 gate for pull requests.

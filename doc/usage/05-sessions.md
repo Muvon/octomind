@@ -1,4 +1,4 @@
-# Sessions
+# Sessions: Resume and Persist Agent Conversations
 
 Start, resume, and inspect Octomind conversations from the terminal. This guide also covers piped runs, background
 operation, saved settings, and entry points for ACP and WebSocket clients.

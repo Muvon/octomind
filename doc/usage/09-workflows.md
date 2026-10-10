@@ -1,7 +1,7 @@
-# Workflows
+# Workflows: Multi-Agent and Multi-Step AI Agent Workflows
 
-Use workflows to run repeatable multi-step tasks from local TOML files or installed taps. This guide covers sequential,
-parallel, loop, conditional, and graph execution for CLI automation.
+Use AI agent workflows to run repeatable multi-step tasks from local TOML files or installed taps. This guide covers
+sequential, parallel, loop, conditional, and graph execution for CLI automation.
 
 ## Get started
 

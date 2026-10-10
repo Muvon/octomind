@@ -1,6 +1,7 @@
-# ACP Protocol
+# ACP Protocol: Run Octomind as an Agent Client Protocol Agent
 
-ACP lets Octomind run as a JSON-RPC sub-agent over stdio for editor integration and agent-to-agent delegation.
+The Agent Client Protocol (ACP) lets Octomind run as a JSON-RPC sub-agent over stdio for editor integration and
+agent-to-agent delegation.
 
 ACP provides:
 

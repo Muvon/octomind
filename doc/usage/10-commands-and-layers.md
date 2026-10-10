@@ -1,4 +1,4 @@
-# Commands and Layers
+# Custom Commands, Layers, and Prompt Templates
 
 Use this guide to add reusable commands, ACP sub-agents, and prompt templates to your sessions. It also explains the
 layer configuration shared by custom commands and programmatic processing.

@@ -1,7 +1,7 @@
-# Context Compression
+# Context Compression and Context Window Management
 
-Use this guide to configure and inspect context compression in long-running sessions. It explains automatic folds,
-manual task boundaries, retained context, and archive recovery.
+Use this guide to configure and inspect context compression, which manages the context window of long-running
+sessions. It explains automatic folds, manual task boundaries, retained context, and archive recovery.
 
 ## Get Started
 

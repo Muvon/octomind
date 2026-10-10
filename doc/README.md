@@ -1,5 +1,6 @@
-# Octomind Documentation
+# Octomind Documentation: Open-Source AI Coding Agent CLI
 
+Octomind is an open-source AI coding agent and agent runtime for the terminal: one Rust binary, any model, MCP-native.
 Use these guides to install, configure, and operate Octomind's CLI agent runtime, or to contribute to its Rust code.
 Start with a terminal session, then follow the guides for automation, integrations, and development.
 

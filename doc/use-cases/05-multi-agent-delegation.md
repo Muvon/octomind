@@ -1,4 +1,4 @@
-# Multi-Agent Task Delegation
+# Multi-Agent Task Delegation with Sub-Agents
 
 Use this guide to delegate development tasks to local, tap-provided, or runtime-created specialists. It covers working
 role/tool configuration, asynchronous results, and troubleshooting for the coordinating session.

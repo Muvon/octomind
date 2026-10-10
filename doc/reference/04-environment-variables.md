@@ -1,4 +1,4 @@
-# Environment Variables
+# Environment Variables Reference
 
 Use this reference when configuring credentials, relocating state, or diagnosing startup and script behavior. It
 inventories direct environment reads in `src/`, delegated provider settings, and build/test-only variables.

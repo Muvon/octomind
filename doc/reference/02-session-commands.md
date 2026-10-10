@@ -1,4 +1,4 @@
-# Session Commands Reference
+# Session Commands Reference: In-Session Slash Commands
 
 Use this reference while operating a CLI session or implementing an ACP/WebSocket client. It lists every registered
 slash command, its arguments and output, and the transport differences.

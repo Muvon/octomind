@@ -1,4 +1,4 @@
-# Architecture
+# Architecture of the Octomind AI Agent Runtime
 
 Use this contributor guide to trace a request from CLI configuration through sessions, MCP tools, and supervision. It
 maps the runtime boundaries you need to preserve when changing code.

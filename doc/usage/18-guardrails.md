@@ -1,4 +1,4 @@
-# Guardrails
+# Guardrails: Safe AI Agent Policies, Hooks, and Validators
 
 Use `.agents/guardrails.toml` to transform session input, deny matching tool calls, and run feedback scripts. This guide
 is for project authors configuring those rules and checking their execution boundaries.

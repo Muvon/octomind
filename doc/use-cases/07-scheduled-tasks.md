@@ -1,4 +1,4 @@
-# Scheduled Tasks
+# Scheduled AI Agent Tasks and Timed Messages
 
 Use the built-in `schedule` tool or `/schedule` command for reminders, periodic checks, and follow-up work in a running
 session. This guide covers interactive scheduling, daemon operation, and resuming saved schedules.

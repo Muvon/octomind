@@ -1,4 +1,4 @@
-# Skills
+# Agent Skills: Auto-Activating Skills and Validators
 
 Use skills to load reusable instructions and supporting resources into a session. This guide covers using skills,
 authoring their metadata and activation rules, and configuring optional validators.

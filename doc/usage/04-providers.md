@@ -1,4 +1,4 @@
-# AI Providers
+# AI Providers: Multi-LLM Model Routing and Local Models
 
 Choose and authenticate models using `provider:model`. This guide is for users configuring OctoHub, direct providers,
 local endpoints, or a CLI-backed model.

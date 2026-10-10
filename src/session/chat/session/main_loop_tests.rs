@@ -125,13 +125,17 @@ fn test_missing_or_stale_index_preserves_state() {
 	assert_eq!(interrupted_call_truncation(&[], Some(0)), None);
 }
 
+fn snapshot(text: &str) -> JobStatusRead {
+	JobStatusRead::Snapshot(text.to_string())
+}
+
 #[test]
 fn background_job_first_status_check_uses_normal_message() {
 	assert_eq!(
 		background_job_status_message(
 			"custommcp://tasks/9",
 			600,
-			"still working",
+			&snapshot("still working"),
 			None,
 			BACKGROUND_JOB_RECONCILE,
 		),
@@ -143,20 +147,22 @@ fn background_job_first_status_check_uses_normal_message() {
 }
 
 #[test]
-fn background_job_unchanged_status_warns_that_it_may_be_stuck() {
+fn background_job_unchanged_status_asks_the_model_to_judge_whether_it_is_stuck() {
 	assert_eq!(
 		background_job_status_message(
 			"custommcp://tasks/9",
 			1200,
-			"still working",
+			&snapshot("still working"),
 			Some("still working"),
 			BACKGROUND_JOB_RECONCILE,
 		),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
 		 still working\n\
-		 The job has shown no change for at least 600 seconds, so it may be stuck. You can stop it using \
-		 the method the tool provided when the job started, or reply with a brief status to keep waiting.\n\
+		 The job's status has not changed since the previous check at least 600 seconds ago. \
+		 A command that prints only when it finishes looks the same while it is still working, so \
+		 judge from what it runs and how long that should take: if it is stuck, stop it using the \
+		 method the tool provided when it started; otherwise reply with a brief status to keep waiting.\n\
 		 </background_job>"
 	);
 }
@@ -167,7 +173,7 @@ fn background_job_changed_status_uses_normal_message() {
 		background_job_status_message(
 			"custommcp://tasks/9",
 			1200,
-			"phase two",
+			&snapshot("phase two"),
 			Some("phase one"),
 			BACKGROUND_JOB_RECONCILE,
 		),
@@ -176,6 +182,21 @@ fn background_job_changed_status_uses_normal_message() {
 		 phase two\n\
 		 </background_job>"
 	);
+}
+
+#[test]
+fn background_job_unavailable_status_is_never_called_unchanged() {
+	// The same failure text twice says nothing about the job itself.
+	let timed_out = "reading the resource timed out";
+	let message = background_job_status_message(
+		"custommcp://tasks/9",
+		1200,
+		&JobStatusRead::Unavailable(timed_out.to_string()),
+		Some(timed_out),
+		BACKGROUND_JOB_RECONCILE,
+	);
+	assert!(message.contains(timed_out));
+	assert!(!message.contains("has not changed"));
 }
 
 #[tokio::test]

@@ -2188,10 +2188,12 @@ async fn reconcile_pending_background_jobs(
 		)
 		.await
 		{
-			Ok(Ok(text)) if !text.trim().is_empty() => text,
-			Ok(Ok(_)) => "the resource reports no status".to_string(),
-			Ok(Err(error)) => format!("reading the resource failed: {error}"),
-			Err(_) => "reading the resource timed out".to_string(),
+			Ok(Ok(text)) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
+			Ok(Ok(_)) => JobStatusRead::Unavailable("the resource reports no status".to_string()),
+			Ok(Err(error)) => {
+				JobStatusRead::Unavailable(format!("reading the resource failed: {error}"))
+			}
+			Err(_) => JobStatusRead::Unavailable("reading the resource timed out".to_string()),
 		};
 		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
 		let content = background_job_status_message(
@@ -2201,7 +2203,10 @@ async fn reconcile_pending_background_jobs(
 			reported_statuses.get(&job.uri).map(String::as_str),
 			BACKGROUND_JOB_RECONCILE,
 		);
-		reported_statuses.insert(job.uri.clone(), status);
+		// A failed read says nothing about the job, so the last real snapshot stays the baseline.
+		if let JobStatusRead::Snapshot(snapshot) = status {
+			reported_statuses.insert(job.uri.clone(), snapshot);
+		}
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
@@ -2219,17 +2224,35 @@ async fn reconcile_pending_background_jobs(
 	}
 }
 
+/// What a background job's resource returned at a reconcile pass. Only a
+/// snapshot is evidence about the job; an unavailable read is not compared.
+enum JobStatusRead {
+	Snapshot(String),
+	Unavailable(String),
+}
+
 fn background_job_status_message(
 	uri: &str,
 	elapsed_secs: u64,
-	status: &str,
-	previous_status: Option<&str>,
+	status: &JobStatusRead,
+	previous_snapshot: Option<&str>,
 	reconcile_window: std::time::Duration,
 ) -> String {
-	let unchanged_guidance = if previous_status == Some(status) {
+	let (text, unchanged) = match status {
+		JobStatusRead::Snapshot(snapshot) => (
+			snapshot.as_str(),
+			previous_snapshot == Some(snapshot.as_str()),
+		),
+		JobStatusRead::Unavailable(reason) => (reason.as_str(), false),
+	};
+	// A command that prints only when it finishes is indistinguishable from a
+	// hung one by its status alone, so the model is asked to judge, not told.
+	let unchanged_guidance = if unchanged {
 		format!(
-			"\nThe job has shown no change for at least {} seconds, so it may be stuck. You can stop it using \
-			 the method the tool provided when the job started, or reply with a brief status to keep waiting.",
+			"\nThe job's status has not changed since the previous check at least {} seconds ago. \
+			 A command that prints only when it finishes looks the same while it is still working, so \
+			 judge from what it runs and how long that should take: if it is stuck, stop it using the \
+			 method the tool provided when it started; otherwise reply with a brief status to keep waiting.",
 			reconcile_window.as_secs()
 		)
 	} else {
@@ -2238,7 +2261,7 @@ fn background_job_status_message(
 	format!(
 		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
-		 {status}{unchanged_guidance}\n\
+		 {text}{unchanged_guidance}\n\
 		 </background_job>"
 	)
 }

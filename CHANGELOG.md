@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.57.1] - 2026-10-10
+
+### 📋 Release Summary
+
+JSONL sessions now report final usage, normalize token accounting across sessions, validate saved ChatGPT sessions before reuse, and preserve usage-limit error handling. Background-job reconciliation and snapshot handling, supervisor chunking and question/restriction distinctions, gate scope and historical evidence, and spinner behavior around tracing output have been corrected.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.41.11 `f187d378`
+- **dependencies**: update locked dependency versions `ea113d84`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: report final usage in jsonl sessions `d13054b9`
+- **background-jobs**: avoid treating failed reads as snapshots `ba7f69db`
+- **chat-session**: reconcile pending background jobs repeatedly `01437f93`
+- **errors**: preserve ChatGPT usage-limit error handling `ffd669da`
+- **supervisor**: split condense chunks at paragraph boundaries `8d12f0a1`
+- **supervisor**: distinguish solution questions from change requests `15218b72`
+- **gate**: preserve restriction scope in gate evaluation `e9cab70b`
+- **supervisor**: distinguish scoped verification restrictions `14cdd1dc`
+- **session**: preserve scoped historical evidence `287dc432`
+- **tokens**: normalize token accounting across sessions `6faa020f`
+- **login**: validate saved ChatGPT sessions before reuse `071da59e`
+- **logging**: preserve spinner around tracing output `041c1db9`
+
+### 📚 Documentation & Examples
+
+- **docs**: clarify Octomind documentation scope `c269b6a1`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.57.0] - 2026-10-08
 
 ### 📋 Release Summary

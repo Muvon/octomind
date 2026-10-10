@@ -1853,7 +1853,7 @@ pub async fn run_interactive_session_with_input(
 			// resilient — it logs and keeps listening so transient errors don't
 			// kill the long-running process.
 			if !daemon {
-				emit_cost_on_failure(&mut chat_session, &current_config);
+				emit_cost_frame(&mut chat_session, &current_config);
 				return Err(e);
 			}
 		}
@@ -2004,7 +2004,7 @@ pub async fn run_interactive_session_with_input(
 					// daemons keep listening so a single bad turn doesn't kill
 					// the long-running process.
 					if !daemon {
-						emit_cost_on_failure(&mut chat_session, &current_config);
+						emit_cost_frame(&mut chat_session, &current_config);
 						return Err(e);
 					}
 				}
@@ -2123,6 +2123,12 @@ pub async fn run_interactive_session_with_input(
 		}
 	}
 
+	// The verify-gate and the exit-time fold above run after the turn's last cost
+	// frame; a harness billing from the last frame would otherwise miss their spend.
+	if !daemon {
+		emit_cost_frame(&mut chat_session, &current_config);
+	}
+
 	// Save session before exit
 	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
 
@@ -2140,11 +2146,12 @@ pub async fn run_interactive_session_with_input(
 	}).await
 }
 
-/// A one-shot JSONL run is about to exit on a provider error: the turn's usage
-/// is real spend, so the cost frame goes out before the non-zero exit. A
-/// harness billing from the last frame otherwise records the failed turn as
-/// zero tokens (measured: ~20 min of fold calls per crashed bench turn, unbilled).
-fn emit_cost_on_failure(chat_session: &mut ChatSession, config: &Config) {
+/// Emit the session's running usage as one JSONL cost frame. A harness bills from
+/// the last frame, so it goes out when a one-shot run exits on a provider error
+/// (the failed turn's usage is real spend: ~20 min of fold calls per crashed bench
+/// turn were recorded as zero before) and when a run ends normally, after the
+/// verify-gate and the exit-time fold whose spend follows the turn's own frame.
+fn emit_cost_frame(chat_session: &mut ChatSession, config: &Config) {
 	if config.runtime_output_mode.as_deref() != Some("jsonl") {
 		return;
 	}

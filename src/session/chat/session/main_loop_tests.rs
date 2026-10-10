@@ -126,6 +126,85 @@ fn test_missing_or_stale_index_preserves_state() {
 }
 
 #[test]
+fn background_job_first_status_check_uses_normal_message() {
+	assert_eq!(
+		background_job_status_message(
+			"custommcp://tasks/9",
+			600,
+			"still working",
+			None,
+			BACKGROUND_JOB_RECONCILE,
+		),
+		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"600\">\n\
+		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 still working\n\
+		 </background_job>"
+	);
+}
+
+#[test]
+fn background_job_unchanged_status_warns_that_it_may_be_stuck() {
+	assert_eq!(
+		background_job_status_message(
+			"custommcp://tasks/9",
+			1200,
+			"still working",
+			Some("still working"),
+			BACKGROUND_JOB_RECONCILE,
+		),
+		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
+		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 still working\n\
+		 The job has shown no change for at least 600 seconds, so it may be stuck. You can stop it using \
+		 the method the tool provided when the job started, or reply with a brief status to keep waiting.\n\
+		 </background_job>"
+	);
+}
+
+#[test]
+fn background_job_changed_status_uses_normal_message() {
+	assert_eq!(
+		background_job_status_message(
+			"custommcp://tasks/9",
+			1200,
+			"phase two",
+			Some("phase one"),
+			BACKGROUND_JOB_RECONCILE,
+		),
+		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
+		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 phase two\n\
+		 </background_job>"
+	);
+}
+
+#[tokio::test]
+async fn background_job_finished_status_is_forgotten() {
+	let session_id = "main-loop-finished-background-job";
+	let uri = "custommcp://tasks/finished";
+	crate::session::shell_jobs::clear_for_session(session_id);
+	crate::session::shell_jobs::register_for_session(
+		session_id,
+		"custommcp",
+		uri,
+		"background task",
+	);
+	assert!(crate::session::shell_jobs::complete_for_session(
+		session_id, uri, "done"
+	));
+
+	let mut reported_statuses =
+		std::collections::HashMap::from([(uri.to_string(), "still working".to_string())]);
+	crate::session::context::with_session_id(session_id.to_string(), async {
+		reconcile_pending_background_jobs(&mut reported_statuses).await;
+	})
+	.await;
+
+	assert!(reported_statuses.is_empty());
+	crate::session::shell_jobs::clear_for_session(session_id);
+}
+
+#[test]
 fn test_clipboard_image_refused_for_known_non_vision_model() {
 	use crate::session::chat::reedline_adapter::PendingClipboardItem;
 	use crate::session::image::{ImageAttachment, ImageData, SourceType};

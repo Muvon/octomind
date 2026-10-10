@@ -37,6 +37,8 @@ use colored::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// RAII bundle of per-session listeners that must outlive the session loop.
 ///
 /// Dropping this releases the inject-listener socket and all webhook listeners
@@ -1860,9 +1862,10 @@ pub async fn run_interactive_session_with_input(
 
 	// Keep the session alive while an asynchronous producer can still inject work.
 	// Schedules, monitors, and background agents all push to the inbox — drain it here.
-	// Resources already reconciled once, so a job that stays pending is nudged at
-	// most once per reconcile window rather than on every pass.
-	let mut nudged_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
+	// Status snapshots are compared across reconcile windows so a stalled job
+	// can be distinguished from one that is still making progress.
+	let mut reported_job_statuses: std::collections::HashMap<String, String> =
+		std::collections::HashMap::new();
 	// Deadline for the background-job safety backstop, anchored when jobs first
 	// appear. It must live outside the loop: a sleep built inside the select is
 	// recreated every pass, so the shorter reconcile branch firing on its own
@@ -2051,7 +2054,6 @@ pub async fn run_interactive_session_with_input(
 		// mid-wait with nothing to show, so re-read the authority periodically and
 		// hand the model what it says. The job is left pending — this unblocks the
 		// turn without stealing the real completion path.
-		const BACKGROUND_JOB_RECONCILE: std::time::Duration = std::time::Duration::from_secs(600);
 		// Arm on the first pass that has jobs, disarm when none are left, so the
 		// window measures how long jobs have actually been blocking the exit.
 		let bg_deadline = if has_background_jobs {
@@ -2071,7 +2073,7 @@ pub async fn run_interactive_session_with_input(
 				}
 			} => {}
 			_ = tokio::time::sleep(BACKGROUND_JOB_RECONCILE), if has_background_jobs => {
-				reconcile_pending_background_jobs(&mut nudged_jobs).await;
+				reconcile_pending_background_jobs(&mut reported_job_statuses).await;
 			}
 			_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
 				if let Some(session_id) = crate::session::context::current_session_id() {
@@ -2161,17 +2163,23 @@ fn emit_cost_on_failure(chat_session: &mut ChatSession, config: &Config) {
 /// this the turn waits until the safety backstop, which any caller with a
 /// shorter deadline never reaches. The job stays registered: this reports
 /// status, it does not complete the job, so the real completion path still
-/// delivers the output. Each job is reported once so a genuinely long build
-/// does not wake the model repeatedly.
-async fn reconcile_pending_background_jobs(nudged: &mut std::collections::HashSet<String>) {
+/// delivers the output. Every still-pending, non-delivering job is reported
+/// once per reconcile window. This bounds silent waiting at the cost of one
+/// model turn per window while a job runs; an unchanged snapshot also tells
+/// the model that the job may be stuck.
+async fn reconcile_pending_background_jobs(
+	reported_statuses: &mut std::collections::HashMap<String, String>,
+) {
 	const RESOURCE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return;
 	};
-	for job in crate::session::shell_jobs::pending_resources_for_session(&session_id) {
+	let pending_jobs = crate::session::shell_jobs::pending_resources_for_session(&session_id);
+	reported_statuses.retain(|uri, _| pending_jobs.iter().any(|job| job.uri == *uri));
+	for job in pending_jobs {
 		// A delivery already in flight will produce the real completion message.
-		if job.delivering || !nudged.insert(job.uri.clone()) {
+		if job.delivering {
 			continue;
 		}
 		let status = match tokio::time::timeout(
@@ -2186,19 +2194,21 @@ async fn reconcile_pending_background_jobs(nudged: &mut std::collections::HashSe
 			Err(_) => "reading the resource timed out".to_string(),
 		};
 		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
+		let content = background_job_status_message(
+			&job.uri,
+			elapsed,
+			&status,
+			reported_statuses.get(&job.uri).map(String::as_str),
+			BACKGROUND_JOB_RECONCILE,
+		);
+		reported_statuses.insert(job.uri.clone(), status);
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
 				source: crate::session::inbox::InboxSource::BackgroundJob {
 					id: job.uri.clone(),
 				},
-				content: format!(
-					"<background_job resource=\"{}\" state=\"status_check\" elapsed_secs=\"{elapsed}\">\n\
-					 No completion signal arrived yet; this is the job's current status, not its exit.\n\
-					 {status}\n\
-					 </background_job>",
-					job.uri
-				),
+				content,
 			},
 		);
 		log_debug!(
@@ -2207,6 +2217,30 @@ async fn reconcile_pending_background_jobs(nudged: &mut std::collections::HashSe
 			job.uri
 		);
 	}
+}
+
+fn background_job_status_message(
+	uri: &str,
+	elapsed_secs: u64,
+	status: &str,
+	previous_status: Option<&str>,
+	reconcile_window: std::time::Duration,
+) -> String {
+	let unchanged_guidance = if previous_status == Some(status) {
+		format!(
+			"\nThe job has shown no change for at least {} seconds, so it may be stuck. You can stop it using \
+			 the method the tool provided when the job started, or reply with a brief status to keep waiting.",
+			reconcile_window.as_secs()
+		)
+	} else {
+		String::new()
+	};
+	format!(
+		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
+		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 {status}{unchanged_guidance}\n\
+		 </background_job>"
+	)
 }
 
 #[cfg(test)]

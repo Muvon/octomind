@@ -53,6 +53,15 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	let home_str = escape_profile_str(home.to_str().unwrap_or_default());
 	let xdg_data_home = home.join(".local").join("share");
 	let xdg_data_home_str = escape_profile_str(xdg_data_home.to_str().unwrap_or_default());
+	// octolib keeps provider OAuth state here (ChatGPT rewrites its token file and
+	// takes a refresh lock on every token refresh).
+	let octolib_config = dirs::config_dir()
+		.ok_or_else(|| anyhow::anyhow!("sandbox: could not determine config directory"))?
+		.join("octolib");
+	let octolib_config_str = octolib_config
+		.to_str()
+		.ok_or_else(|| anyhow::anyhow!("sandbox: config directory path is not valid UTF-8"))
+		.map(escape_profile_str)?;
 
 	// Build the Seatbelt profile.
 	// - Allow everything by default (reads, network, process ops, etc.)
@@ -61,6 +70,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	// - Re-allow writes to:
 	//   • the target working directory (the whole point of the sandbox)
 	//   • ~/.local/share — XDG data home; MCP servers write logs/state here
+	//   • <config_dir>/octolib — provider auth state (ChatGPT token refresh)
 	//   • /dev — pipes, ttys, and other character devices
 	//   • /tmp, /private/tmp — standard temp files
 	//   • /private/var/folders — macOS per-user temp cache (used by many syscalls)
@@ -82,6 +92,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 (allow file-write*
   (subpath "{dir}")
   (subpath "{xdg_data_home}")
+  (subpath "{octolib_config}")
   (subpath "/dev")
   (subpath "/tmp")
   (subpath "/private/tmp")
@@ -90,6 +101,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 		home = home_str,
 		dir = dir_str,
 		xdg_data_home = xdg_data_home_str,
+		octolib_config = octolib_config_str,
 	);
 
 	let profile_cstr = CString::new(profile)

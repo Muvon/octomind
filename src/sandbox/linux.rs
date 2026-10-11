@@ -23,8 +23,9 @@
 //!   while allowing reads everywhere else is not possible with Landlock v1-v3.
 //! - We therefore apply the practical safe default:
 //!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
-//!   • Read+write on cwd and ~/.local/share (MCP server state/logs)
-//!   • All writes outside those two paths are denied
+//!   • Read+write on cwd, ~/.local/share (MCP server state/logs) and
+//!     <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh)
+//!   • All writes outside those paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.
 //!   True read isolation on Linux requires namespaces/seccomp — out of scope here.
@@ -43,6 +44,11 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 
 	let home = dirs::home_dir().unwrap_or_default();
 	let xdg_data_home = home.join(".local").join("share");
+	// octolib keeps provider OAuth state here (ChatGPT rewrites its token file and
+	// takes a refresh lock on every token refresh).
+	let octolib_config = dirs::config_dir()
+		.ok_or_else(|| anyhow::anyhow!("sandbox: could not determine config directory"))?
+		.join("octolib");
 
 	let mut ruleset = Ruleset::default().handle_access(all_access)?.create()?;
 
@@ -50,10 +56,13 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	// configs, and project files outside cwd.
 	ruleset = ruleset.add_rules(path_beneath_rules(["/"], read_only))?;
 
-	// Read+write on cwd and XDG data home (MCP server logs/state).
+	// Read+write on cwd, XDG data home (MCP server logs/state) and octolib auth state.
 	let mut rw_paths: Vec<&std::path::Path> = vec![dir];
 	if xdg_data_home.exists() {
 		rw_paths.push(xdg_data_home.as_path());
+	}
+	if octolib_config.exists() {
+		rw_paths.push(octolib_config.as_path());
 	}
 	ruleset = ruleset.add_rules(path_beneath_rules(rw_paths, all_access))?;
 

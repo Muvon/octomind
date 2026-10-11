@@ -1113,6 +1113,14 @@ pub fn cleanup_session(session_id: &SessionId) {
 /// Initialize all session-scoped services. Call once per session inside `with_session_id`.
 /// Centralizes the init sequence so entry points don't duplicate it.
 pub fn init_session_services(role: &str) {
+	let session_id = expect_session_id();
+	if get_session_workdir_anchor(&session_id).is_none() {
+		set_session_workdir(
+			&session_id,
+			crate::mcp::get_thread_original_working_directory(),
+		);
+	}
+	set_session_role(&session_id, role);
 	crate::supervisor::authorizer::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();

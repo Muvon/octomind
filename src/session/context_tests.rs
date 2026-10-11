@@ -427,10 +427,47 @@ async fn notify_schedule_change_wakes_a_registered_waiter() {
 async fn init_session_services_runs_the_full_init_sequence_under_scope() {
 	let sid = unique("services");
 	with_session_id(sid.clone(), async {
+		let expected = crate::mcp::get_thread_original_working_directory();
+		assert!(get_session_workdir_anchor(&sid).is_none());
 		init_session_services("developer:general");
+		assert_eq!(get_session_workdir_anchor(&sid), Some(expected.clone()));
+		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
+		assert_eq!((role.as_str(), spec.as_str()), ("developer", "general"));
+		assert_eq!(
+			project,
+			crate::mcp::process::derive_project_id_from_path(&expected)
+		);
+		assert_eq!(session_id, sid);
+		assert_eq!(workdir, expected.to_string_lossy());
+		assert!(!workdir.is_empty());
 	})
 	.await;
 	// The sequence is registry/task-local init; the observable contract is
 	// that it completes without panicking and cleanup stays symmetric.
+	cleanup_session(&sid);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn init_session_services_preserves_explicit_workdir_anchor() {
+	let sid = unique("anchored-services");
+	let root = tempfile::tempdir().unwrap();
+	let current = root.path().join("subdir");
+	std::fs::create_dir(&current).unwrap();
+	with_session_id(sid.clone(), async {
+		set_session_workdir(&sid, root.path().to_path_buf());
+		set_current_workdir(&sid, current.clone());
+		init_session_services("cloud:octo");
+		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
+		assert_eq!((role.as_str(), spec.as_str()), ("cloud", "octo"));
+		assert_eq!(session_id, sid);
+		assert_eq!(
+			project,
+			crate::mcp::process::derive_project_id_from_path(root.path())
+		);
+		assert_eq!(workdir, root.path().to_string_lossy());
+		assert_eq!(get_current_workdir(&sid), Some(current));
+	})
+	.await;
 	cleanup_session(&sid);
 }

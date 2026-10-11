@@ -612,3 +612,85 @@ async fn cancelled_tool_call_notifies_the_server() {
 
 	disconnect(&name);
 }
+
+#[serial_test::serial]
+#[tokio::test]
+async fn shared_client_sends_each_sessions_project() {
+	use crate::session::context::{cleanup_session, with_session_id};
+
+	let name = unique_server("session-scopes");
+	let first = tempfile::tempdir().unwrap();
+	let second = tempfile::tempdir().unwrap();
+	let paths = [first.path(), second.path()];
+	let ids = ["scope-first".to_string(), "scope-second".to_string()];
+	for (id, path) in ids.iter().zip(paths) {
+		with_session_id(id.clone(), async {
+			crate::mcp::set_session_working_directory(path.to_path_buf());
+			crate::session::context::init_session_services("cloud:octo");
+		})
+		.await;
+	}
+	let peer = with_session_id(ids[0].clone(), async { serve_in_memory(&name) }).await;
+	register(&name, peer.service);
+	let shared = get(&name).unwrap();
+	let server = stdin_config(&name);
+	let mut outgoing = peer.outgoing;
+	let incoming = peer.incoming;
+	let responder = async {
+		let mut sessions = Vec::new();
+		while sessions.len() < 3 {
+			let JsonRpcMessage::Request(request) = outgoing.next().await.unwrap() else {
+				continue;
+			};
+			let ClientRequest::CallToolRequest(ref call) = request.request else {
+				panic!("expected tools/call")
+			};
+			let wire = serde_json::to_value(call).unwrap();
+			sessions.push(
+				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
+					["experimental"]["session"]
+					.clone(),
+			);
+			incoming
+				.unbounded_send(JsonRpcMessage::response(
+					ServerResult::CallToolResult(CallToolResult::success(vec![])),
+					request.id,
+				))
+				.unwrap();
+		}
+		sessions
+	};
+	let calls = async {
+		for index in [0, 1, 0] {
+			with_session_id(ids[index].clone(), async {
+				assert!(Arc::ptr_eq(
+					&shared,
+					&get_or_connect(&server).await.unwrap()
+				));
+				call_tool(&server, &tool_call("scoped-call"), None)
+					.await
+					.unwrap();
+			})
+			.await;
+		}
+	};
+	let (sessions, ()) = tokio::time::timeout(WAIT, async { tokio::join!(responder, calls) })
+		.await
+		.unwrap();
+	for id in &ids {
+		cleanup_session(id);
+	}
+	disconnect(&name);
+	for (session, index) in sessions.iter().zip([0, 1, 0]) {
+		assert_eq!(
+			session["project"],
+			super::super::process::derive_project_id_from_path(paths[index])
+		);
+		assert_eq!(session["role"], "cloud");
+		assert_eq!(session["spec"], "octo");
+		assert_eq!(session["git"], false);
+		assert_eq!(session["workdir"], paths[index].to_string_lossy().as_ref());
+		assert_eq!(session["session_id"], ids[index]);
+	}
+	assert_ne!(sessions[0]["project"], sessions[1]["project"]);
+}

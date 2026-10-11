@@ -28,8 +28,8 @@ use rmcp::model::{
 	CancelledNotificationParam, ClientCapabilities, ClientConfig, ClientRequest,
 	ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability,
 	ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation, InputRequest,
-	InputResponses, ProgressToken, ProtocolVersion, ServerNotification, ServerResult,
-	SubscriptionFilter, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
+	InputResponses, ProgressToken, ProtocolVersion, RequestMetaObject, ServerNotification,
+	ServerResult, SubscriptionFilter, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
 	DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
@@ -919,8 +919,12 @@ async fn call_tool_round(
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<CallToolResponse> {
 	let idle_timeout_seconds = server.timeout_seconds();
+	// The connection is shared, but its connect-time capabilities belong to one session.
+	let mut meta = RequestMetaObject::default();
+	meta.set_client_capabilities(build_client_info(ProtocolVersion::V_2026_07_28).capabilities);
 	let options = PeerRequestOptions::with_timeout(Duration::from_secs(idle_timeout_seconds))
-		.reset_timeout_on_progress();
+		.reset_timeout_on_progress()
+		.with_meta(meta);
 	// Progress keeps a call alive but must not extend it forever: a runaway
 	// command that streams output resets the idle timeout on every line, so
 	// without a ceiling one spinning tool stalls the whole session until an

@@ -285,6 +285,12 @@ impl<'a> ChatCompletionParams<'a> {
 			params = params.with_cancellation_token(token.clone());
 		}
 
+		// OpenAI-family providers route prompt caching by this key; without it the
+		// turns of one session miss the cache (0 of 11 turns hit on chatgpt).
+		if let Some(session_id) = crate::session::context::current_session_id() {
+			params = params.with_prompt_cache_key(session_id);
+		}
+
 		// Fetch and add MCP tools if MCP is configured
 		if self.tools && !self.config.mcp.servers.is_empty() {
 			let mcp_functions = crate::mcp::get_available_functions(self.config).await;

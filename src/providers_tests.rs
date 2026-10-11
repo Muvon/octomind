@@ -543,6 +543,26 @@ async fn test_octolib_params_builder_overrides() {
 }
 
 #[tokio::test]
+async fn test_octolib_params_key_prompt_cache_by_session() {
+	let config = test_config();
+	let messages = vec![msg("user", "hi")];
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
+	let outside = params
+		.to_octolib_params()
+		.await
+		.expect("conversion succeeds");
+	assert_eq!(outside.prompt_cache_key, None);
+	let inside = crate::session::context::with_session_id("s-1".to_string(), async {
+		params
+			.to_octolib_params()
+			.await
+			.expect("conversion succeeds")
+	})
+	.await;
+	assert_eq!(inside.prompt_cache_key.as_deref(), Some("s-1"));
+}
+
+#[tokio::test]
 async fn test_octolib_params_cached_system_message_gets_one_hour_ttl() {
 	let config = test_config();
 	let messages = vec![

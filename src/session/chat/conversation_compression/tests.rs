@@ -3192,24 +3192,20 @@ fn briefing_fold_job(ctx: super::FoldContext) -> super::FoldJob {
 	}
 }
 
-fn remove_fold_archive(session_name: &str) {
-	if let Ok(sessions) = crate::directories::get_sessions_dir() {
-		let _ = std::fs::remove_dir_all(sessions.join("archive").join(session_name));
-	}
-}
-
 /// Regression for "PACT governance changed before commit": a fold still
 /// running at turn end is collected after the user's next request. That
 /// request arrived past the fold point, so the paid summary lands — the request
 /// stays after it verbatim, and the fold's goal stays signed with the request it
 /// was resolved from, so recitation retires it for the newer one.
 #[tokio::test]
+#[serial_test::serial]
 async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
+	let data_dir = tempfile::tempdir().expect("temp data dir");
+	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 	let mut config = fold_config();
 	config.compression.attention.governance.enabled = true;
 	config.compression.attention.governance.verify_hash = true;
-	let name = "fold-outlived-turn-unit";
-	let (mut session, ctx) = parked_briefing_fold(name).await;
+	let (mut session, ctx) = parked_briefing_fold("fold-outlived-turn-unit").await;
 	session
 		.add_user_message("please continue briefing")
 		.expect("user message");
@@ -3218,7 +3214,7 @@ async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
 		super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
 			.await
 			.expect("a fold that outlived its turn commits");
-	remove_fold_archive(name);
+	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	assert!(applied);
 	let messages = &session.session.messages;

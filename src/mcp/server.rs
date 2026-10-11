@@ -22,14 +22,26 @@ use super::process;
 use super::{McpFunction, McpToolCall, McpToolResult};
 use crate::config::{Config, McpConnectionType, McpServerConfig};
 use crate::mcp::oauth::token_store;
+use crate::session::context::SessionId;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// A server's cached tool definitions.
+#[derive(Debug)]
+enum CachedFunctions {
+	/// One list for every session.
+	Shared(Vec<McpFunction>),
+	/// The server marks its list private (it depends on the requesting session's
+	/// context), so each session lists it once for itself. `None` is a request made
+	/// outside any session.
+	PerSession(HashMap<Option<SessionId>, Vec<McpFunction>>),
+}
+
 // Global cache for server function definitions to avoid repeated tools/list calls
 // Functions are cached until server restarts (no TTL needed)
 lazy_static::lazy_static! {
-	static ref FUNCTION_CACHE: Arc<RwLock<HashMap<String, Vec<McpFunction>>>> =
+	static ref FUNCTION_CACHE: Arc<RwLock<HashMap<String, CachedFunctions>>> =
 		Arc::new(RwLock::new(HashMap::new()));
 }
 
@@ -75,8 +87,8 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 	// Note: enabled check is now handled at the role level via server_refs
 	match server.connection_type() {
 		McpConnectionType::Http | McpConnectionType::Stdin => {
-			let tools = super::client::list_tools(server).await?;
-			Ok(tools_to_functions(&tools))
+			let list = super::client::list_tools(server).await?;
+			Ok(tools_to_functions(&list.tools))
 		}
 		McpConnectionType::Builtin => Err(anyhow::anyhow!(
 			"Built-in servers should not use get_server_functions"
@@ -88,12 +100,18 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 // available (optimized for system prompt generation)
 pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec<McpFunction>> {
 	let server_id = server.name();
+	let session_id = crate::session::context::current_session_id();
 
 	// First, check if we have cached functions
 	{
 		let cache = FUNCTION_CACHE.read().unwrap();
-		if let Some(cached_functions) = cache.get(server_id) {
-			return Ok(cached_functions.clone());
+		let cached = match cache.get(server_id) {
+			Some(CachedFunctions::Shared(functions)) => Some(functions),
+			Some(CachedFunctions::PerSession(sessions)) => sessions.get(&session_id),
+			None => None,
+		};
+		if let Some(functions) = cached {
+			return Ok(functions.clone());
 		}
 	}
 
@@ -136,12 +154,30 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 		// Server should be available - get fresh functions and cache them
 		crate::log_debug!("Fetching function definitions from server '{}'", server_id);
 
-		match get_server_functions(server).await {
-			Ok(functions) => {
+		match super::client::list_tools(server).await {
+			Ok(list) => {
+				let functions = tools_to_functions(&list.tools);
 				// Cache the functions (no expiration - only cleared on server restart)
 				{
 					let mut cache = FUNCTION_CACHE.write().unwrap();
-					cache.insert(server_id.to_string(), functions.clone());
+					if !list.session_scoped {
+						cache.insert(
+							server_id.to_string(),
+							CachedFunctions::Shared(functions.clone()),
+						);
+					} else if let Some(CachedFunctions::PerSession(sessions)) =
+						cache.get_mut(server_id)
+					{
+						sessions.insert(session_id, functions.clone());
+					} else {
+						cache.insert(
+							server_id.to_string(),
+							CachedFunctions::PerSession(HashMap::from([(
+								session_id,
+								functions.clone(),
+							)])),
+						);
+					}
 				}
 				crate::log_debug!("Server '{}' returned {} tools", server_id, functions.len());
 				Ok(functions)
@@ -183,6 +219,16 @@ pub fn clear_function_cache_for_server(server_name: &str) {
 			"Cleared function cache for server '{}' due to restart",
 			server_name
 		);
+	}
+}
+
+/// Drop the tool lists a session fetched from servers that list per session.
+pub fn clear_function_cache_for_session(session_id: &SessionId) {
+	let session_id = Some(session_id.clone());
+	for cached in FUNCTION_CACHE.write().unwrap().values_mut() {
+		if let CachedFunctions::PerSession(sessions) = cached {
+			sessions.remove(&session_id);
+		}
 	}
 }
 

@@ -480,8 +480,9 @@ as JSON text; it cannot fill the editor's input.
 ## Session context passed to downstream MCP servers
 
 This is **not** part of the ACP handshake with the host. It is client information Octomind sends downstream to MCP
-servers. Modern MCP requests carry client information per request; the legacy fallback carries it in `initialize`. In
-both cases, `capabilities.experimental.session` has this shape:
+servers. Modern MCP requests carry it per request (each tool call names its own session, even on a shared
+connection); the legacy fallback carries it in `initialize`. In both cases, `capabilities.experimental.session` has
+this shape:
 
 ```json
 {
@@ -490,18 +491,19 @@ both cases, `capabilities.experimental.session` has this shape:
       "session": {
         "role": "developer",
         "spec": "general",
-        "project": "my-project",
+        "project": "3f9a2c71d04b8e65",
         "session_id": "editor-session",
-        "workdir": "/tmp",
-        "git": false
+        "workdir": "/home/me/my-project",
+        "git": true
       }
     }
   }
 }
 ```
 
-The full object is `role` (the role domain), `spec`, `project`, `session_id`, `workdir`, and `git` (whether the workdir
-is inside a Git repository).
+`project` is the hashed `octolib::utils::path_to_id` of `workdir`, `workdir` is the session's anchor directory, and
+`git` says whether `workdir` itself is a git repository root. Field details and the rules servers follow are in
+[MCP Server Development](../dev/03-mcp-server-development.md#session-context-for-external-servers).
 
 ## See also
 

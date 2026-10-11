@@ -460,6 +460,35 @@ let callback = |progress: crate::mcp::McpInitProgress| {
 crate::mcp::initialize_servers_for_role_with_callback(config, Some(&callback)).await?;
 ```
 
+### Session Context for External Servers
+
+External servers receive the calling session in `capabilities.experimental.session` (`build_client_info` in
+`src/mcp/client.rs`). Modern (2026-07-28) connections carry it in every request's `_meta`; legacy connections carry it
+once in `initialize`. One connection to a server is shared by every session of the process, so each tool call
+overrides the connect-time value with the calling session's context.
+
+| Field | Value |
+|-------|-------|
+| `role` | Role domain (`developer` for `developer:general`) |
+| `spec` | Role spec (`general`), empty for a plain role |
+| `project` | `octolib::utils::path_to_id(workdir)`: 16 hex chars hashed from the normalized git remote, or from the canonical path without one. A stable key, not for display |
+| `session_id` | Octomind session id; empty outside a session |
+| `workdir` | The session's anchor directory (absolute), not the current `workdir` override |
+| `git` | Whether `workdir` itself is a git repository root (not a parent repo) |
+
+Rules for server authors:
+
+- Resolve the context per request and key session state by `session_id`. Never apply it once per connection: the
+  next request can belong to a different session.
+- Use `project` when an opaque stable key is enough. For a readable key (`github.com/org/repo`, or
+  `local/<parent>/<dir>` without a remote), derive `octolib::utils::path_to_scope(workdir)`; both functions read the
+  same git remote, so the two keys always name the same project.
+- Treat an absent `experimental.session` as a client without sessions (Claude Code, other hosts) and fall back to
+  the server's own root.
+
+Octobrain (memory scope from `path_to_scope(workdir)`) and octofs (per-session workdir and view cache) follow these
+rules.
+
 ## See also
 
 - [Architecture](02-architecture.md)

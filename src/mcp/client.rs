@@ -24,13 +24,13 @@ use crate::config::{McpConnectionType, McpServerConfig};
 use crate::mcp::{oauth, McpToolCall};
 use anyhow::{anyhow, Result};
 use rmcp::model::{
-	CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams,
+	CacheScope, CallToolRequest, CallToolRequestParams, CallToolResponse, CancelTaskParams,
 	CancelledNotificationParam, ClientCapabilities, ClientConfig, ClientRequest,
 	ElicitRequestParams, ElicitResult, ElicitationAction, ElicitationCapability,
 	ExtensionCapabilities, FormElicitationCapability, GetTaskParams, Implementation, InputRequest,
-	InputResponses, ProgressToken, ProtocolVersion, RequestMetaObject, ServerNotification,
-	ServerResult, SubscriptionFilter, TaskPayload, UpdateTaskParams, UrlElicitationCapability,
-	DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
+	InputResponses, ListToolsRequest, PaginatedRequestParams, ProgressToken, ProtocolVersion,
+	RequestMetaObject, ServerNotification, ServerResult, SubscriptionFilter, TaskPayload,
+	UpdateTaskParams, UrlElicitationCapability, DEFAULT_MRTR_MAX_ROUNDS, TASKS_EXTENSION_ID,
 };
 use rmcp::service::{
 	ClientLifecycleMode, ClientServiceExt, NotificationContext, PeerRequestOptions, RequestContext,
@@ -866,16 +866,63 @@ async fn http_auth_token_still_current(server: &McpServerConfig) -> bool {
 	true
 }
 
-/// List all tools from a server (rmcp drives pagination internally).
-pub async fn list_tools(server: &McpServerConfig) -> Result<Vec<rmcp::model::Tool>> {
+/// Request metadata naming the calling session. A connection is shared by every
+/// session, but its connect-time capabilities belong to one of them.
+fn session_request_meta() -> RequestMetaObject {
+	let mut meta = RequestMetaObject::default();
+	meta.set_client_capabilities(build_client_info(ProtocolVersion::V_2026_07_28).capabilities);
+	meta
+}
+
+/// A server's tool list as served to the calling session.
+#[derive(Debug)]
+pub struct ToolList {
+	pub tools: Vec<rmcp::model::Tool>,
+	/// The server marked the list `private`: it depends on the requesting
+	/// session's context, so it must not be reused for another session.
+	pub session_scoped: bool,
+}
+
+/// List all tools from a server for the calling session.
+///
+/// Sent through request options rather than `Peer::list_tools`: rmcp overwrites
+/// `params._meta` with the connect-time capabilities, and its response cache is
+/// keyed by cursor alone, so it would serve one session's list to another.
+pub async fn list_tools(server: &McpServerConfig) -> Result<ToolList> {
 	let service = get_or_connect(server).await?;
-	tokio::time::timeout(
-		Duration::from_secs(server.timeout_seconds()),
-		service.peer().list_all_tools(),
-	)
-	.await
-	.map_err(|_| anyhow!("tools/list timed out for server '{}'", server.name()))?
-	.map_err(|e| anyhow!("tools/list failed for server '{}': {}", server.name(), e))
+	let peer = service.peer();
+	let pages = async {
+		let mut list = ToolList {
+			tools: Vec::new(),
+			session_scoped: false,
+		};
+		let mut cursor = None;
+		loop {
+			let request =
+				ListToolsRequest::with_param(PaginatedRequestParams::default().with_cursor(cursor));
+			let response = peer
+				.send_request_with_option(
+					ClientRequest::ListToolsRequest(request),
+					PeerRequestOptions::default().with_meta(session_request_meta()),
+				)
+				.await?
+				.await_response()
+				.await?;
+			let ServerResult::ListToolsResult(page) = response else {
+				return Err(anyhow!("Unexpected response type for tools/list"));
+			};
+			list.session_scoped |= page.cache_scope == Some(CacheScope::Private);
+			list.tools.extend(page.tools);
+			cursor = page.next_cursor;
+			if cursor.is_none() {
+				return Ok(list);
+			}
+		}
+	};
+	tokio::time::timeout(Duration::from_secs(server.timeout_seconds()), pages)
+		.await
+		.map_err(|_| anyhow!("tools/list timed out for server '{}'", server.name()))?
+		.map_err(|e| anyhow!("tools/list failed for server '{}': {}", server.name(), e))
 }
 
 /// Wait until the cancellation token fires. A dropped sender has the same
@@ -919,12 +966,9 @@ async fn call_tool_round(
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<CallToolResponse> {
 	let idle_timeout_seconds = server.timeout_seconds();
-	// The connection is shared, but its connect-time capabilities belong to one session.
-	let mut meta = RequestMetaObject::default();
-	meta.set_client_capabilities(build_client_info(ProtocolVersion::V_2026_07_28).capabilities);
 	let options = PeerRequestOptions::with_timeout(Duration::from_secs(idle_timeout_seconds))
 		.reset_timeout_on_progress()
-		.with_meta(meta);
+		.with_meta(session_request_meta());
 	// Progress keeps a call alive but must not extend it forever: a runaway
 	// command that streams output resets the idle timeout on every line, so
 	// without a ceiling one spinning tool stalls the whole session until an

@@ -334,7 +334,8 @@ async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 	let tools = tokio::time::timeout(WAIT, list_tools(&server))
 		.await
 		.expect("tools/list must not hang")
-		.expect("tools/list must succeed");
+		.expect("tools/list must succeed")
+		.tools;
 	assert_eq!(tools.len(), 1);
 	assert_eq!(tools[0].name, "echo");
 	// The tool description is produced by the child, proving cwd + env.

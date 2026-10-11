@@ -94,11 +94,11 @@ async fn test_cached_functions_returned_without_connecting() {
 	const NAME: &str = "srvtest-cache";
 	FUNCTION_CACHE.write().unwrap().insert(
 		NAME.to_string(),
-		vec![McpFunction {
+		CachedFunctions::Shared(vec![McpFunction {
 			name: "cached_tool".to_string(),
 			description: "from cache".to_string(),
 			parameters: serde_json::json!({"type": "object"}),
-		}],
+		}]),
 	);
 	// HTTP config whose URL is never contacted: the cache is checked first.
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9", 5, vec![]);
@@ -109,6 +109,51 @@ async fn test_cached_functions_returned_without_connecting() {
 	assert_eq!(functions.len(), 1);
 	assert_eq!(functions[0].name, "cached_tool");
 
+	FUNCTION_CACHE.write().unwrap().remove(NAME);
+}
+
+/// A server that marks its list private is listed per session: another
+/// session's cached list is never served, and ending a session drops its list.
+#[serial]
+#[tokio::test]
+async fn test_private_tool_lists_are_cached_per_session() {
+	use crate::session::context::with_session_id;
+	const NAME: &str = "srvtest-per-session";
+	let listed = |name: &str| McpFunction {
+		name: name.to_string(),
+		description: String::new(),
+		parameters: serde_json::json!({"type": "object"}),
+	};
+	FUNCTION_CACHE.write().unwrap().insert(
+		NAME.to_string(),
+		CachedFunctions::PerSession(HashMap::from([(
+			Some("srvtest-first".to_string()),
+			vec![listed("first_tool")],
+		)])),
+	);
+	// Unreachable URL: a cache miss fails to list and exposes nothing.
+	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9", 5, vec![]);
+
+	let first = with_session_id("srvtest-first".to_string(), async {
+		get_server_functions_cached(&server).await.expect("cache hit")
+	})
+	.await;
+	assert_eq!(first.len(), 1);
+	assert_eq!(first[0].name, "first_tool");
+
+	let second = with_session_id("srvtest-second".to_string(), async {
+		get_server_functions_cached(&server).await.expect("dispatch")
+	})
+	.await;
+	assert!(second.is_empty(), "another session's list was served");
+
+	clear_function_cache_for_session(&"srvtest-first".to_string());
+	let cache = FUNCTION_CACHE.read().unwrap();
+	let Some(CachedFunctions::PerSession(sessions)) = cache.get(NAME) else {
+		panic!("per-session entry expected");
+	};
+	assert!(sessions.is_empty());
+	drop(cache);
 	FUNCTION_CACHE.write().unwrap().remove(NAME);
 }
 
@@ -141,19 +186,19 @@ async fn test_cached_functions_skip_unavailable_servers() {
 fn test_clear_function_cache_scopes() {
 	FUNCTION_CACHE.write().unwrap().insert(
 		"srvtest-clear-a".to_string(),
-		vec![McpFunction {
+		CachedFunctions::Shared(vec![McpFunction {
 			name: "t".to_string(),
 			description: String::new(),
 			parameters: serde_json::json!({}),
-		}],
+		}]),
 	);
 	FUNCTION_CACHE.write().unwrap().insert(
 		"srvtest-clear-b".to_string(),
-		vec![McpFunction {
+		CachedFunctions::Shared(vec![McpFunction {
 			name: "t".to_string(),
 			description: String::new(),
 			parameters: serde_json::json!({}),
-		}],
+		}]),
 	);
 
 	clear_function_cache_for_server("srvtest-clear-a");

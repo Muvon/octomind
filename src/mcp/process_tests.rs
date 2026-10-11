@@ -101,3 +101,34 @@ fn test_stdio_liveness_tracks_real_process() {
 	// Reaped pid → kill(pid, 0) fails → reported dead
 	assert_eq!(is_stdio_process_alive(name), Some(false));
 }
+
+#[test]
+fn project_id_is_derived_once_per_directory() {
+	let repo = tempfile::tempdir().expect("temp repo");
+	let git = |args: &[&str]| {
+		let status = std::process::Command::new("git")
+			.args(args)
+			.current_dir(repo.path())
+			.status()
+			.expect("run git");
+		assert!(status.success());
+	};
+	git(&["init", "-q"]);
+	git(&[
+		"remote",
+		"add",
+		"origin",
+		"https://github.com/muvon/first.git",
+	]);
+	let first = derive_project_id_from_path(repo.path());
+	assert_eq!(first, octolib::utils::path_to_id(repo.path()));
+
+	git(&[
+		"remote",
+		"set-url",
+		"origin",
+		"https://github.com/muvon/second.git",
+	]);
+	assert_ne!(octolib::utils::path_to_id(repo.path()), first);
+	assert_eq!(derive_project_id_from_path(repo.path()), first);
+}

@@ -117,6 +117,10 @@ lazy_static::lazy_static! {
 // use the session-keyed context in crate::session::context.
 lazy_static::lazy_static! {
 	static ref CLI_SESSION_CONTEXT: RwLock<(String, String, String)> = RwLock::new((String::new(), String::new(), String::new()));
+	// Every MCP tool call sends its session's project, and `path_to_id` spawns `git`,
+	// so each directory's id is computed once per process (a later remote change keeps
+	// the first id).
+	static ref PROJECT_IDS: RwLock<HashMap<std::path::PathBuf, String>> = RwLock::new(HashMap::new());
 }
 
 /// Derives a stable project identifier via octolib::utils::path_to_id.
@@ -126,7 +130,15 @@ pub fn derive_project_id() -> String {
 
 /// Derive project ID from a specific path (for session-scoped context).
 pub fn derive_project_id_from_path(path: &std::path::Path) -> String {
-	octolib::utils::path_to_id(path)
+	if let Some(id) = PROJECT_IDS.read().unwrap().get(path) {
+		return id.clone();
+	}
+	let id = octolib::utils::path_to_id(path);
+	PROJECT_IDS
+		.write()
+		.unwrap()
+		.insert(path.to_path_buf(), id.clone());
+	id
 }
 /// Set the session context (role + project + workdir) that will be sent to MCP servers on initialization.
 /// Call this before starting MCP servers for a session.

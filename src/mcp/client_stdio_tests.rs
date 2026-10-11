@@ -342,8 +342,55 @@ async fn list_tools_returns_the_advertised_tool_list() {
 		)),
 		_ => None,
 	});
-	let tools = list_tools(&server).await.expect("tools/list must succeed");
-	assert!(tools.is_empty());
+	let list = list_tools(&server).await.expect("tools/list must succeed");
+	assert!(list.tools.is_empty());
+	assert!(!list.session_scoped, "a list without cacheScope is shared");
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// `tools/list` names the calling session in its request metadata (the shared
+/// connection's connect-time capabilities belong to another session) and
+/// reports a list the server marks private as session-scoped.
+#[serial]
+#[tokio::test]
+async fn list_tools_sends_the_calling_session_and_reports_private_lists() {
+	let name = unique_server("list-session");
+	let InMemoryPeer {
+		service,
+		incoming,
+		outgoing,
+	} = serve_in_memory(&name);
+	register(&name, service);
+	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
+	let sessions = StdArc::new(std::sync::Mutex::new(Vec::new()));
+	let seen = sessions.clone();
+
+	let responder = spawn_responder(outgoing, incoming, move |request| match request {
+		ClientRequest::ListToolsRequest(list) => {
+			let wire = serde_json::to_value(&list).expect("serialize tools/list");
+			seen.lock().unwrap().push(
+				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
+					["experimental"]["session"]["session_id"]
+					.clone(),
+			);
+			Some(ServerResult::ListToolsResult(
+				ListToolsResult::with_all_items(Vec::new())
+					.with_cache_scope(rmcp::model::CacheScope::Private),
+			))
+		}
+		_ => None,
+	});
+	let list = crate::session::context::with_session_id("list-session-a".to_string(), async {
+		list_tools(&server).await.expect("tools/list must succeed")
+	})
+	.await;
+	assert!(list.session_scoped);
+	assert_eq!(
+		*sessions.lock().unwrap(),
+		vec![serde_json::json!("list-session-a")]
+	);
 
 	responder.abort();
 	disconnect(&name);

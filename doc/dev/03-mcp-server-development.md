@@ -492,8 +492,9 @@ Rules for server authors:
 - If the tool list depends on the session (parameters or allowed values that differ per session), mark the
   `tools/list` result `cacheScope: private`. A public list is shown to every session.
 
-Octobrain (memory scope from `path_to_scope(workdir)`, private tool list naming the session's repos) and octofs
-(per-session workdir and view cache) follow these rules.
+Octobrain (memory scope from `path_to_scope(workdir)`, private tool list naming the session's repos), octofs
+(per-session workdir and view cache) and octocode (each session's directory served like `mcp --auto`) follow these
+rules.
 
 ## See also
 

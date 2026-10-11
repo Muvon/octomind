@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.57.2] - 2026-10-11
+
+### 📋 Release Summary
+
+MCP tool caches, prompt caching, and client metadata are now scoped per session. MCP documentation now explains session scoping and per-session tool-list caching.
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: isolate MCP tool caches by session `4f075b8a`
+- **providers**: route prompt caching by session `aa4e9c96`
+- **mcp**: send session-scoped client metadata `260b2c73`
+
+### 📚 Documentation & Examples
+
+- **mcp**: document octocode session scoping `2a9a82e5`
+- **mcp**: document per-session tool list caching `0699c308`
+
 ## [0.57.1] - 2026-10-10
 
 ### 📋 Release Summary

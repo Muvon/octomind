@@ -45,9 +45,13 @@ async fn stub_stdio_server_end_to_end() {
 		.await
 		.expect("list_tools against stub server");
 	assert!(
-		tools.iter().any(|t| t.name == "echo"),
+		tools.tools.iter().any(|t| t.name == "echo"),
 		"stub must advertise the echo tool, got: {:?}",
-		tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
+		tools
+			.tools
+			.iter()
+			.map(|t| t.name.clone())
+			.collect::<Vec<_>>()
 	);
 
 	// The handshake stored the negotiated server info + instructions

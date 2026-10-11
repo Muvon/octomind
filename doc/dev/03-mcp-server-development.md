@@ -464,8 +464,12 @@ crate::mcp::initialize_servers_for_role_with_callback(config, Some(&callback)).a
 
 External servers receive the calling session in `capabilities.experimental.session` (`build_client_info` in
 `src/mcp/client.rs`). Modern (2026-07-28) connections carry it in every request's `_meta`; legacy connections carry it
-once in `initialize`. One connection to a server is shared by every session of the process, so each tool call
-overrides the connect-time value with the calling session's context.
+once in `initialize`. One connection to a server is shared by every session of the process, so each tool call and
+each `tools/list` overrides the connect-time value with the calling session's context.
+
+Tool lists are cached per server (`FUNCTION_CACHE` in `src/mcp/server.rs`) until the server restarts or sends
+`tools/list_changed`. A list the server marks `cacheScope: private` is fetched once per session and dropped in
+`cleanup_session`; any other list is fetched once and shared by every session.
 
 | Field | Value |
 |-------|-------|
@@ -485,9 +489,11 @@ Rules for server authors:
   same git remote, so the two keys always name the same project.
 - Treat an absent `experimental.session` as a client without sessions (Claude Code, other hosts) and fall back to
   the server's own root.
+- If the tool list depends on the session (parameters or allowed values that differ per session), mark the
+  `tools/list` result `cacheScope: private`. A public list is shown to every session.
 
-Octobrain (memory scope from `path_to_scope(workdir)`) and octofs (per-session workdir and view cache) follow these
-rules.
+Octobrain (memory scope from `path_to_scope(workdir)`, private tool list naming the session's repos) and octofs
+(per-session workdir and view cache) follow these rules.
 
 ## See also
 

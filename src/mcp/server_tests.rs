@@ -135,14 +135,18 @@ async fn test_private_tool_lists_are_cached_per_session() {
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9", 5, vec![]);
 
 	let first = with_session_id("srvtest-first".to_string(), async {
-		get_server_functions_cached(&server).await.expect("cache hit")
+		get_server_functions_cached(&server)
+			.await
+			.expect("cache hit")
 	})
 	.await;
 	assert_eq!(first.len(), 1);
 	assert_eq!(first[0].name, "first_tool");
 
 	let second = with_session_id("srvtest-second".to_string(), async {
-		get_server_functions_cached(&server).await.expect("dispatch")
+		get_server_functions_cached(&server)
+			.await
+			.expect("dispatch")
 	})
 	.await;
 	assert!(second.is_empty(), "another session's list was served");

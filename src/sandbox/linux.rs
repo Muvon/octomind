@@ -24,7 +24,7 @@
 //! - We therefore apply the practical safe default:
 //!   • Read-only (ReadFile | ReadDir | Execute) on `/` — whole filesystem readable
 //!   • Read+write on cwd, ~/.local/share (MCP server state/logs) and
-//!     <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh)
+//!   <config_dir>/octolib (provider auth state, e.g. ChatGPT token refresh)
 //!   • All writes outside those paths are denied
 //! - Sensitive credential dirs (~/.ssh, ~/.aws, etc.) are protected from
 //!   *writes* but remain readable. This matches the macOS write-only baseline.

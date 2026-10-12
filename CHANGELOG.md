@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.57.3] - 2026-10-12
+
+### 📋 Release Summary
+
+Sandboxed authentication state writes are fixed, and tool-list assertions now handle response wrappers correctly.
+
+### 🔧 Improvements & Optimizations
+
+- **sandbox**: align config path bullet indentation `ecf36c09`
+- **conversation-compression**: isolate fold collection regression test `f75a509f`
+
+### 🐛 Bug Fixes & Stability
+
+- **sandbox**: allow sandboxed auth state writes `5d5bcc96`
+- **tests**: fix tool list assertion for response wrapper `04b5f575`
+
+### 🔄 Other Changes
+
+1 maintenance, dependency, and tooling update not listed individually.
+
 ## [0.57.2] - 2026-10-11
 
 ### 📋 Release Summary

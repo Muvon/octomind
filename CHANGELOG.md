@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.58.0] - 2026-10-14
+
+### 📋 Release Summary
+
+Decision-model routing is now centralized. Sessions track supervisor accounting, with unified supervisor accounting/reporting; websocket cost frames include auxiliary model costs and are sent for all turn outcomes. Output and command provenance, gate findings across session snapshots, and output visibility during gate verification are preserved; runtime configuration/accounting, output prompt guidance, and unavailable-veto handling were corrected, with veto verification failing closed.
+
+### 🚨 Breaking Changes
+
+- **config**: centralize decision-model routing `82b8afe3`
+
+### ✨ New Features & Enhancements
+
+- **supervisor**: add session-scoped supervisor accounting `decb4daf`
+- **websocket**: report auxiliary model costs in cost frames `cd448de0`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.41.16 `effb7f35`
+- **dependencies**: use crates.io octolib dependency `9bbb26b9`
+- **session**: set learning switch in stale-pack test `c53efb22`
+- **supervisor**: unify supervisor accounting and reporting `d6587467`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: tighten output prompt guidance `71064867`
+- **supervisor**: preserve output provenance in gate evidence `43cc5e85`
+- preserve command-output provenance `6df1ba4a`
+- **supervisor**: preserve gate findings across session snapshots `772741a3`
+- **supervisor/gate**: account for output visibility in gate verification `9bdcb549`
+- **websocket**: send cost messages for all turn outcomes `fea7259a`
+- fix runtime configuration and accounting `e43d9e64`
+- **authorizer**: fail closed on unavailable veto verification `f8e25873`
+
 ## [0.57.3] - 2026-10-12
 
 ### 📋 Release Summary

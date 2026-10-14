@@ -675,6 +675,45 @@ pub async fn check_batch(
 		if !proposed.is_empty() {
 			let verification = json!({"request":payload,"proposed_decisions":proposed});
 			let confirmed = async {
+				use crate::supervisor::evaluate::{self, Seam};
+				if evaluate::enabled(config, Seam::Authorizer) {
+					let judgment = VERIFY_PROMPT
+						.rsplit_once("\nReturn only ")
+						.expect("confirmation output instruction")
+						.0;
+					let answers = tokio::time::timeout_at(
+						deadline,
+						evaluate::run(
+							config,
+							Seam::Authorizer,
+							verification.clone(),
+							evaluate::authorizer_confirmation_questions(
+								proposed.iter().map(|decision| decision.id.as_str()),
+								judgment,
+							),
+						),
+					)
+					.await
+					.context("veto verification timed out")?;
+					let Some(answers) = answers else {
+						return Ok(HashSet::new());
+					};
+					crate::supervisor::stats::evaluate_applied(Seam::Authorizer, 1);
+					evaluate::avoided(
+						config,
+						Seam::Authorizer,
+						crate::session::estimate_tokens(&verification.to_string())
+							+ crate::session::estimate_tokens(VERIFY_PROMPT),
+					);
+					return Ok(proposed
+						.iter()
+						.filter(|decision| {
+							evaluate::probability(&answers, &decision.id)
+								>= evaluate::AUTHORIZER_CONFIRM_AT
+						})
+						.map(|decision| decision.id.clone())
+						.collect());
+				}
 				check_budget(&verification, VERIFY_PROMPT, &verification_schema())?;
 				let value = tokio::time::timeout_at(
 					deadline,
@@ -783,7 +822,7 @@ async fn prescreen_admits(
 ) -> bool {
 	use crate::supervisor::evaluate::{self, Seam};
 
-	if !evaluate::enabled(&config.supervisor, Seam::Authorizer) {
+	if !evaluate::enabled(config, Seam::Authorizer) {
 		return false;
 	}
 	let ids: Vec<(String, &str)> = pending
@@ -798,7 +837,7 @@ async fn prescreen_admits(
 		})).collect::<Vec<_>>(),
 	});
 	let Some(answers) = evaluate::run(
-		&config.supervisor,
+		config,
 		Seam::Authorizer,
 		state,
 		evaluate::authorizer_questions(ids.iter().map(|(id, tool)| (id.as_str(), *tool))),

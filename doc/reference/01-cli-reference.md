@@ -365,14 +365,14 @@ octomind send --name ci-watcher "Check build status"
 
 ## `octomind evaluate [FILE]`
 
-Ask the evaluation model (the model `[supervisor.evaluate]` uses at its gate seams) a set of typed questions about one
+Ask the evaluation model (the model `[decision]` uses at its gate seams) a set of typed questions about one
 JSON state and print the calibrated answers. There is no generated text: every question comes back as a probability.
 Use it to try question wording on a real state before it becomes a seam constant, to check provider credentials, or
 from scripts and guardrail validators that need a calibrated yes/no without a session.
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Defaults to `[supervisor.evaluate] model`. |
+| `--model MODEL` | `-m` | `provider:model` to call (`typesafe:jev-latest`, `cloudflare:typesafe/jev`, `octohub:auto`, …). Defaults to `[decision] model`; absent or empty requires `-m`. |
 | `FILE` | | JSON request file. If omitted, reads from stdin. |
 
 The request is `{"state": <any JSON>, "questions": {"<id>": <question>, …}}`. A question is one of:

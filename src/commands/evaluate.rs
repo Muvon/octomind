@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 #[derive(Args, Debug)]
 pub struct EvaluateArgs {
 	/// Evaluation model as `provider:model` (e.g. `typesafe:jev-latest`).
-	/// Defaults to `[supervisor.evaluate].model` from config.
+	/// Defaults to `[decision].model` from config.
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 
@@ -51,7 +51,9 @@ pub async fn execute(args: &EvaluateArgs, config: &Config) -> Result<()> {
 	let model = args
 		.model
 		.as_deref()
-		.unwrap_or(&config.supervisor.evaluate.model);
+		.or(config.decision.model.as_deref())
+		.filter(|model| !model.is_empty())
+		.context("decision.model is absent or empty; pass --model")?;
 
 	let mut request = EvaluationRequest::new(input.state);
 	request.questions = input.questions;

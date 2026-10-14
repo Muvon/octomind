@@ -38,15 +38,32 @@ pub(crate) async fn spawn_stub(responses: Vec<serde_json::Value>) -> String {
 /// Like [`spawn_stub`] but each scripted entry carries its HTTP status,
 /// so provider-level error handling can be exercised.
 pub(crate) async fn spawn_stub_with_status(responses: Vec<(u16, serde_json::Value)>) -> String {
+	spawn_recording_stub_with_status(responses).await.0
+}
+
+pub(crate) type CapturedRequests = std::sync::Arc<StdMutex<Vec<serde_json::Value>>>;
+
+pub(crate) async fn spawn_recording_stub(
+	responses: Vec<serde_json::Value>,
+) -> (String, CapturedRequests) {
+	spawn_recording_stub_with_status(responses.into_iter().map(|r| (200, r)).collect()).await
+}
+
+async fn spawn_recording_stub_with_status(
+	responses: Vec<(u16, serde_json::Value)>,
+) -> (String, CapturedRequests) {
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind stub listener");
 	let addr = listener.local_addr().expect("stub addr");
 	let queue = std::sync::Arc::new(StdMutex::new(VecDeque::from(responses)));
+	let captured = std::sync::Arc::new(StdMutex::new(Vec::new()));
+	let requests = captured.clone();
 
 	tokio::spawn(async move {
 		while let Ok((mut sock, _)) = listener.accept().await {
 			let queue = queue.clone();
+			let requests = requests.clone();
 			tokio::spawn(async move {
 				// Read headers + Content-Length body of the POST request.
 				let mut buf = Vec::new();
@@ -74,6 +91,11 @@ pub(crate) async fn spawn_stub_with_status(responses: Vec<(u16, serde_json::Valu
 					}
 					buf.extend_from_slice(&tmp[..n]);
 				}
+
+				requests.lock().expect("captured requests").push(
+					serde_json::from_slice(&buf[header_end..header_end + content_length])
+						.expect("request JSON"),
+				);
 
 				let (status, body) = queue
 					.lock()
@@ -104,7 +126,7 @@ pub(crate) async fn spawn_stub_with_status(responses: Vec<(u16, serde_json::Valu
 		}
 	});
 
-	format!("http://{}/v1/chat/completions", addr)
+	(format!("http://{}/v1/chat/completions", addr), captured)
 }
 
 pub(crate) fn final_response(text: &str) -> serde_json::Value {

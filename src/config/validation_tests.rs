@@ -177,17 +177,13 @@ fn evaluate_model_must_be_a_supported_provider_model_pair() {
 		"openai:gpt",
 		"typesafe:",
 		":jev",
-		"",
 		"cloudflare:@cf/meta/llama",
 		"typesafe:gpt-5",
 	] {
 		let mut config = template_config();
-		config.supervisor.evaluate.model = bad.to_string();
+		config.decision.model = Some(bad.to_string());
 		let error = config.validate().unwrap_err().to_string();
-		assert!(
-			error.contains("supervisor.evaluate.model"),
-			"{bad:?}: {error}"
-		);
+		assert!(error.contains("decision.model"), "{bad:?}: {error}");
 	}
 	for good in [
 		"typesafe:jev-latest",
@@ -195,7 +191,7 @@ fn evaluate_model_must_be_a_supported_provider_model_pair() {
 		"octohub:auto",
 	] {
 		let mut config = template_config();
-		config.supervisor.evaluate.model = good.to_string();
+		config.decision.model = Some(good.to_string());
 		config.validate().expect(good);
 	}
 }
@@ -203,10 +199,10 @@ fn evaluate_model_must_be_a_supported_provider_model_pair() {
 #[test]
 fn evaluate_section_is_strict_about_seam_keys() {
 	let template = include_str!("../../config-templates/default.toml");
-	let section = "[supervisor.evaluate]\nmodel = \"cloudflare:typesafe/jev\"\n";
+	let section = "[decision]\nmodel = \"cloudflare:typesafe/jev\"\n";
 	assert!(template.contains(section), "template layout changed");
 	let mistyped = template.replace(
-		&format!("{section}# Drop recalled scoped lessons the model judges unrelated to the request.\nrecall = false\n"),
+		&format!("{section}# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.\nrecall = false\n"),
 		&format!("{section}recall = \"yes\"\n"),
 	);
 	assert_ne!(mistyped, template);
@@ -227,10 +223,10 @@ fn evaluate_section_is_strict_about_seam_keys() {
 fn evaluate_condense_and_compression_keys_are_strict_and_default_off() {
 	let template = include_str!("../../config-templates/default.toml");
 	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.supervisor.evaluate.condense);
-	assert!(!config.supervisor.evaluate.compression);
+	assert!(!config.decision.supervisor);
+	assert!(!config.decision.compression);
 
-	for key in ["condense", "compression"] {
+	for key in ["supervisor", "compression"] {
 		let line = format!("{key} = false\n");
 		assert!(template.contains(&line), "template layout changed: {key}");
 		let mistyped = template.replace(&line, &format!("{key} = \"yes\"\n"));
@@ -251,36 +247,33 @@ fn evaluate_condense_and_compression_keys_are_strict_and_default_off() {
 fn evaluate_distill_plan_and_gate_keys_are_strict_and_default_off() {
 	let template = include_str!("../../config-templates/default.toml");
 	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.supervisor.evaluate.distill);
-	assert!(!config.supervisor.evaluate.plan);
-	assert!(!config.supervisor.evaluate.gate);
+	assert!(!config.decision.supervisor);
 
-	for key in ["distill", "plan", "gate"] {
-		let line = format!("\n{key} = false\n");
-		assert_eq!(
-			template.matches(&line).count(),
-			1,
-			"template layout changed: {key}"
-		);
-		let mistyped = template.replace(&line, &format!("\n{key} = \"yes\"\n"));
-		let error = toml::from_str::<crate::config::Config>(&mistyped)
-			.unwrap_err()
-			.to_string();
-		assert!(error.contains(key), "{key} mistyped: {error}");
+	let key = "supervisor";
+	let line = format!("\n{key} = false\n");
+	assert_eq!(
+		template.matches(&line).count(),
+		1,
+		"template layout changed: {key}"
+	);
+	let mistyped = template.replace(&line, &format!("\n{key} = \"yes\"\n"));
+	let error = toml::from_str::<crate::config::Config>(&mistyped)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains(key), "{key} mistyped: {error}");
 
-		let missing = template.replace(&line, "\n");
-		let error = toml::from_str::<crate::config::Config>(&missing)
-			.unwrap_err()
-			.to_string();
-		assert!(error.contains(key), "{key} missing: {error}");
-	}
+	let missing = template.replace(&line, "\n");
+	let error = toml::from_str::<crate::config::Config>(&missing)
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains(key), "{key} missing: {error}");
 }
 
 #[test]
 fn evaluate_capabilities_key_is_strict_and_default_off() {
 	let template = include_str!("../../config-templates/default.toml");
 	let config: crate::config::Config = toml::from_str(template).unwrap();
-	assert!(!config.supervisor.evaluate.capabilities);
+	assert!(!config.decision.capabilities);
 
 	let line = "\ncapabilities = false\n";
 	assert_eq!(template.matches(line).count(), 1, "template layout changed");
@@ -295,4 +288,50 @@ fn evaluate_capabilities_key_is_strict_and_default_off() {
 		.unwrap_err()
 		.to_string();
 	assert!(error.contains("capabilities"), "missing: {error}");
+}
+
+#[test]
+fn absent_and_empty_decision_models_disable_routing_but_keep_flags_required() {
+	for model in [None, Some(String::new())] {
+		let mut config = template_config();
+		config.decision.model = model;
+		config.decision.supervisor = true;
+		config.validate().unwrap();
+		assert!(!crate::supervisor::evaluate::enabled(
+			&config,
+			crate::supervisor::evaluate::Seam::Gate
+		));
+	}
+	let mut value: toml::Value =
+		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	value["decision"].as_table_mut().unwrap().remove("model");
+	let config: crate::config::Config = value.try_into().unwrap();
+	assert!(config.decision.model.is_none());
+}
+
+#[test]
+fn decision_rejects_unknown_keys_and_requires_the_section() {
+	let template = include_str!("../../config-templates/default.toml");
+	for key in [
+		"unknown",
+		"gate",
+		"authorizer",
+		"distill",
+		"condense",
+		"plan",
+		"evolution",
+	] {
+		let raw = template.replace("[decision]", &format!("[decision]\n{key} = false"));
+		assert!(toml::from_str::<crate::config::Config>(&raw)
+			.unwrap_err()
+			.to_string()
+			.contains(key));
+	}
+	let mut value: toml::Value = toml::from_str(template).unwrap();
+	value.as_table_mut().unwrap().remove("decision");
+	assert!(value
+		.try_into::<crate::config::Config>()
+		.unwrap_err()
+		.to_string()
+		.contains("decision"));
 }

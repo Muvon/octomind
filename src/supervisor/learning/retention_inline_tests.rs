@@ -605,3 +605,154 @@ async fn recurring_rule_is_reviewed_only_when_this_session_restated_it() {
 	assert_eq!(promoted, 0);
 	assert!(backend.retrieve_global().await.unwrap().is_empty());
 }
+
+fn distill_chat_calls() -> u64 {
+	crate::supervisor::stats::snapshot()
+		.and_then(|stats| stats.get("distill_calls")?.as_u64())
+		.unwrap_or(0)
+}
+
+#[tokio::test]
+async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
+	use crate::session::chat::test_support::{
+		install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+	};
+	for (step, expected) in [
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
+			true,
+		),
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
+			false,
+		),
+		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+		(FakeEvaluationStep::Answers(nouls(&[])), false),
+	] {
+		let fake = install_fake_evaluation(vec![step]).await;
+		let (url, captured) = spawn_recording_stub(Vec::new()).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let chat_calls = distill_chat_calls();
+		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.decision.supervisor = true;
+		let member = memory(RECURRING_RULE, "learning");
+		assert_eq!(verify_user_wide(&config, &[&member]).await, expected);
+		assert!(captured.lock().unwrap().is_empty());
+		assert_eq!(fake.requests().len(), 1);
+		assert_eq!(
+			fake.requests()[0].state,
+			serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content}]})
+		);
+		assert_eq!(distill_chat_calls() - chat_calls, 0);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[tokio::test]
+async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_answers() {
+	use crate::session::chat::test_support::{
+		final_response, install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+	};
+	for (step, expected) in [
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
+			true,
+		),
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
+			false,
+		),
+		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+		(FakeEvaluationStep::Answers(nouls(&[])), false),
+	] {
+		let fake = install_fake_evaluation(vec![step]).await;
+		let sources = [
+			memory(
+				&"retain the grounded constraints ".repeat(40),
+				"orientation",
+			),
+			memory(&"preserve the outcome boundary ".repeat(40), "orientation"),
+		];
+		let (url, captured) = spawn_recording_stub(vec![final_response(r#"{"merge":true,"title":"merged","content":"retain grounded constraints and preserve outcome boundaries"}"#)]).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let chat_calls = distill_chat_calls();
+		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.supervisor.model.model = Some("ollama:fake-model".into());
+		config.decision.supervisor = true;
+		let merged = propose_and_verify(&config, &sources).await;
+		assert_eq!(merged.is_some(), expected);
+		assert_eq!(captured.lock().unwrap().len(), 1, "merge writer only");
+		assert_eq!(
+			captured.lock().unwrap()[0]["messages"][0]["content"],
+			CONSOLIDATE_PROMPT
+		);
+		let requests = fake.requests();
+		assert_eq!(requests.len(), 1);
+		assert_eq!(
+			requests[0].state["sources"],
+			serde_json::json!(sources.iter().map(source_view).collect::<Vec<_>>())
+		);
+		let candidate = build_consolidated(
+			&sources,
+			"merged",
+			"retain grounded constraints and preserve outcome boundaries",
+		);
+		assert_eq!(requests[0].state["candidate"], source_view(&candidate));
+		assert_eq!(distill_chat_calls() - chat_calls, 1);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[tokio::test]
+async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
+	use crate::session::chat::test_support::{
+		final_response, install_fake_evaluation, spawn_recording_stub,
+	};
+	let fake = install_fake_evaluation(Vec::new()).await;
+	let sources = [
+		memory(&"retain grounded constraints ".repeat(40), "orientation"),
+		memory(&"preserve outcome boundaries ".repeat(40), "orientation"),
+	];
+	for model in [
+		Some("cloudflare:typesafe/jev".to_string()),
+		None,
+		Some(String::new()),
+	] {
+		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.supervisor.model.model = Some("ollama:fake-model".into());
+		config.decision.supervisor = model.as_deref() != Some("cloudflare:typesafe/jev");
+		config.decision.model = model;
+		let (url, captured) = spawn_recording_stub(vec![
+			final_response(r#"{"supported":true,"issues":[]}"#),
+			final_response(
+				r#"{"merge":true,"title":"merged","content":"retain constraints and preserve boundaries"}"#,
+			),
+			final_response(r#"{"supported":true,"issues":[]}"#),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let chat_calls = distill_chat_calls();
+		assert!(verify_user_wide(&config, &[&sources[0]]).await);
+		let candidate = propose_and_verify(&config, &sources).await.unwrap();
+		let requests = captured.lock().unwrap();
+		assert_eq!(requests.len(), 3);
+		assert_eq!(requests[0]["messages"][0]["content"], PROMOTE_VERIFY_PROMPT);
+		assert_eq!(requests[1]["messages"][0]["content"], CONSOLIDATE_PROMPT);
+		assert_eq!(requests[2]["messages"][0]["content"], VERIFY_PROMPT);
+		let promotion: serde_json::Value =
+			serde_json::from_str(requests[0]["messages"][1]["content"].as_str().unwrap()).unwrap();
+		assert_eq!(
+			promotion,
+			serde_json::json!({"instances":[{"project":sources[0].project,"role":sources[0].role,"rule":sources[0].content}]})
+		);
+		let merge: serde_json::Value =
+			serde_json::from_str(requests[2]["messages"][1]["content"].as_str().unwrap()).unwrap();
+		assert_eq!(
+			merge,
+			serde_json::json!({"sources":sources.iter().map(source_view).collect::<Vec<_>>(),"candidate":source_view(&candidate)})
+		);
+		assert!(fake.requests().is_empty());
+		assert_eq!(distill_chat_calls() - chat_calls, 3);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}

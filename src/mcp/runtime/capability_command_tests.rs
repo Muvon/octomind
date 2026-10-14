@@ -1579,7 +1579,7 @@ fn eval_cap(name: &str) -> ResolvedCapability {
 fn evaluate_config() -> Config {
 	let mut config = test_config();
 	config.supervisor.enabled = true;
-	config.supervisor.evaluate.capabilities = true;
+	config.decision.capabilities = true;
 	config
 }
 

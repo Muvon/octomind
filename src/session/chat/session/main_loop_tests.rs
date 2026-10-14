@@ -141,6 +141,8 @@ fn background_job_first_status_check_uses_normal_message() {
 		),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"600\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
+		 using the method the tool provided when it started.\n\
 		 still working\n\
 		 </background_job>"
 	);
@@ -158,6 +160,8 @@ fn background_job_unchanged_status_asks_the_model_to_judge_whether_it_is_stuck()
 		),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
+		 using the method the tool provided when it started.\n\
 		 still working\n\
 		 The job's status has not changed since the previous check at least 600 seconds ago. \
 		 A command that prints only when it finishes looks the same while it is still working, so \
@@ -179,6 +183,8 @@ fn background_job_changed_status_uses_normal_message() {
 		),
 		"<background_job resource=\"custommcp://tasks/9\" state=\"status_check\" elapsed_secs=\"1200\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
+		 using the method the tool provided when it started.\n\
 		 phase two\n\
 		 </background_job>"
 	);
@@ -216,12 +222,36 @@ async fn background_job_finished_status_is_forgotten() {
 
 	let mut reported_statuses =
 		std::collections::HashMap::from([(uri.to_string(), "still working".to_string())]);
+	let mut checked_jobs = std::collections::HashSet::from([uri.to_string()]);
 	crate::session::context::with_session_id(session_id.to_string(), async {
-		reconcile_pending_background_jobs(&mut reported_statuses).await;
+		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
 	})
 	.await;
 
 	assert!(reported_statuses.is_empty());
+	assert!(checked_jobs.is_empty());
+	crate::session::shell_jobs::clear_for_session(session_id);
+}
+
+#[tokio::test]
+async fn background_job_left_running_at_turn_end_is_checked_at_once() {
+	let session_id = "main-loop-unchecked-background-job";
+	let uri = "custommcp://tasks/unchecked";
+	crate::session::shell_jobs::clear_for_session(session_id);
+	crate::session::shell_jobs::register_for_session(
+		session_id,
+		"custommcp",
+		uri,
+		"background task",
+	);
+
+	crate::session::context::with_session_id(session_id.to_string(), async {
+		let mut checked_jobs = std::collections::HashSet::new();
+		assert_eq!(reconcile_delay(&checked_jobs), std::time::Duration::ZERO);
+		checked_jobs.insert(uri.to_string());
+		assert_eq!(reconcile_delay(&checked_jobs), BACKGROUND_JOB_RECONCILE);
+	})
+	.await;
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 

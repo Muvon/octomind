@@ -27,6 +27,7 @@ pub fn get_env_tracker() -> &'static Mutex<env_source::EnvTracker> {
 }
 // Re-export all modules
 pub mod agents;
+pub mod decision;
 pub mod env_source;
 
 pub mod guardrails;
@@ -61,6 +62,7 @@ mod merge;
 // Tests should be rewritten to use complete config structures
 
 // Re-export commonly used types
+pub use decision::*;
 pub use hooks::*;
 pub use layers::*;
 pub use mcp::*;
@@ -72,7 +74,7 @@ pub use roles::*;
 // Agent configuration - removed, now uses LayerConfig directly
 
 // Current config version - increment when making breaking changes
-pub const CURRENT_CONFIG_VERSION: u32 = 21;
+pub const CURRENT_CONFIG_VERSION: u32 = 22;
 
 // Type alias to simplify the complex return type for get_role_config
 type RoleConfigResult<'a> = (
@@ -387,6 +389,8 @@ pub struct Config {
 
 	// Plan-driven compression configuration
 	pub compression: CompressionConfig,
+
+	pub decision: DecisionConfig,
 
 	// Supervisor: out-of-band control plane (learning, detectors, gate, plan, condense).
 	// Strict: required field — a missing [supervisor] section is a hard parse error.

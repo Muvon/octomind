@@ -103,7 +103,7 @@ async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, del
 			request,
 			answer: &answer,
 		},
-		&config.supervisor,
+		config,
 	)
 	.await;
 	let refs = std::mem::take(&mut chat_session.recalled_refs);

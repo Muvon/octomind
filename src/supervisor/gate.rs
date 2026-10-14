@@ -1106,9 +1106,13 @@ pub async fn verify(
 	// refute each finding with evidence already in the input. What it refutes is
 	// reported to the user instead of costing a re-run; what stands blocks.
 	if let GateVerdict::Gaps(gaps) = verdict.clone() {
-		let (standing, refuted) = match evaluate_refute(config, &user, &gaps).await {
-			Some(split) => split,
-			None => refute(config, &user, &gaps, operation_rx).await,
+		let (standing, refuted) = if super::evaluate::enabled(config, super::evaluate::Seam::Gate) {
+			match evaluate_refute(config, &user, &gaps).await {
+				Some(split) => split,
+				None => (gaps.clone(), Vec::new()),
+			}
+		} else {
+			refute(config, &user, &gaps, operation_rx).await
 		};
 		if !refuted.is_empty() {
 			crate::log_info!(
@@ -1323,7 +1327,7 @@ async fn evaluate_refute(
 	let replaced = crate::session::estimate_tokens(&state.to_string())
 		+ crate::session::estimate_tokens(REFUTE_PROMPT);
 	let answers = evaluate::run(
-		&config.supervisor,
+		config,
 		Seam::Gate,
 		state,
 		evaluate::gate_questions(gaps.len()),

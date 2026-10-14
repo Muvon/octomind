@@ -7,7 +7,7 @@
 #   • Validate config: octomind config --validate
 
 # Configuration version (DO NOT MODIFY - used for automatic upgrades)
-version = 21
+version = 22
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM-WIDE SETTINGS
@@ -697,6 +697,24 @@ request_timeout_seconds = 300
 # Storage: learning/{project}/{role}/ — project-scoped, role-filtered.
 # ═══════════════════════════════════════════════════════════════════════
 
+# Calibrated decisions: one attempt, 5 s timeout, no retries.
+# Missing or empty model disables routing. Supervisor decisions fail closed
+# on unavailable answers; writing remains on the supervisor model.
+# Keys: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID, TYPESAFE_API_KEY,
+# or OCTOHUB_API_KEY (+ OCTOHUB_API_URL), according to the provider.
+[decision]
+model = "cloudflare:typesafe/jev"
+# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.
+recall = false
+# Choose an inactive skill when rules abstain. Unavailable activates none.
+skills = false
+# Confirm or promote capability selection. Unavailable keeps the cosine result.
+capabilities = false
+# Demote unneeded summarize packets before a fold. Unavailable keeps lanes.
+compression = false
+# Route supervisor decisions and evolution grading through this model.
+supervisor = false
+
 [supervisor]
 # Master switch for the whole control plane
 enabled = true
@@ -752,56 +770,6 @@ enabled = true
 # Permanent learned guards remain controlled by learning.evolution.enabled.
 [supervisor.authorizer]
 enabled = false
-
-# Evaluation gates: a calibrated evaluation model (TypeSafe Jev) answers one
-# bounded question at each of eight supervisor seams in place of a chat-model
-# judgment. Each seam is one switch, off by
-# default. One attempt per call, 5 s timeout, no retries; any failure keeps the
-# pre-change behavior for that turn. Thresholds are fixed constants. Keys come
-# from the environment: CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID for
-# "cloudflare:typesafe/jev", TYPESAFE_API_KEY for "typesafe:jev-latest",
-# OCTOHUB_API_KEY (+ OCTOHUB_API_URL) for "octohub:auto".
-[supervisor.evaluate]
-model = "cloudflare:typesafe/jev"
-# Drop recalled scoped lessons the model judges unrelated to the request.
-recall = false
-# Choose a skill from the domain pool when rules abstained (rule-less skills included).
-skills = false
-# Confirm or promote the cosine capability auto-activation: one Choice over the
-# five best-scored inactive capabilities plus none. A cosine winner the model
-# gives under 0.05 is not activated; with no cosine winner the model's choice
-# activates at 0.6 or above. Unavailable → the cosine decision.
-capabilities = false
-# Skip the two-judge supervisor authorization when nothing in the batch is flagged.
-authorizer = false
-# Score oversized tool results chunk by chunk instead of asking the supervisor
-# model for line ranges; the model condenser still runs when this is off or the
-# evaluation is unavailable. Candidate selection (tokens_threshold, adaptive)
-# is unchanged.
-condense = false
-# Before a compression fold, demote summarize-lane tool packets the model judges
-# no longer needed to archive_reference so the fold model reads a one-line
-# descriptor instead of their content. Unavailable → the evidence set as allocated.
-compression = false
-# Ground extracted lessons (one question per candidate over the same transcript
-# excerpt) instead of the supervisor-model verifier; candidates below 0.5 are
-# rejected. Unavailable → the supervisor-model verifier runs, fail-closed.
-distill = false
-# Before the external planner is called on a `request` or `phase_complete`
-# signal, ask whether a plan is needed / the phase outcome is evidenced; below
-# 0.2 the signal is declined or held without a planner call. `reassess` and
-# every deterministic skip are unchanged; unavailable → the planner call.
-plan = false
-# On a GAPS verdict, refute each charged finding against the same evidence the
-# verifier saw (refuted at 0.8 or above) instead of the second-verifier chat
-# pass. Unavailable or evidence over the state cap → the chat refutation.
-gate = false
-# Evolved-behavior trials: on each verified turn that touched a shadow or live
-# artifact, one call grades the outcome (probability the final answer fulfils
-# the request) and drops samples whose artifact does not apply to the request
-# (below 0.5). An artifact's first sample fixes its measure: graded artifacts
-# skip turns the evaluation cannot answer; ungraded ones keep the plain verdict.
-evolution = false
 
 # hindsight: a local, calibrated verifier (octolib::hindsight, ONNX on CPU)
 # that reads the turn's event trace when the agent hands back and predicts

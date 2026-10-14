@@ -1083,7 +1083,7 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation gate (supervisor.evaluate.skills): one Choice over the inactive
+// Evaluation gate (decision.skills): one Choice over the inactive
 // pool plus `none`, only when every rule abstained. The fake guard holds
 // ENV_LOCK itself, so these tests do not lock it again.
 // ---------------------------------------------------------------------------
@@ -1098,7 +1098,7 @@ fn evaluate_config() -> crate::config::Config {
 		toml::from_str(include_str!("../../../config-templates/default.toml"))
 			.expect("parse default config template");
 	config.supervisor.enabled = true;
-	config.supervisor.evaluate.skills = true;
+	config.decision.skills = true;
 	config
 }
 
@@ -1366,7 +1366,7 @@ async fn run_activation_evaluate_roster_cap_and_seam_switch() {
 	// Seam off: a rule-less pool entry is unreachable and no call is made.
 	let sid = "__skillauto_evaluate_off".to_string();
 	let mut config = evaluate_config();
-	config.supervisor.evaluate.skills = false;
+	config.decision.skills = false;
 	set_session_config(&sid, &config);
 	set_pool(vec![rule_less("skill-0", "x")]);
 	let mut session = ChatSession::for_tests(Vec::new());

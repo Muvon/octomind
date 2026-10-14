@@ -518,3 +518,59 @@ model = "ollama:dup"
 		"a same-named role is not duplicated"
 	);
 }
+
+#[test]
+fn retired_evaluate_table_is_rejected_at_all_ingress_paths() {
+	let tmp = tempfile::tempdir().unwrap();
+	let legacy = "[supervisor.evaluate]\nrecall = true\n";
+	write_file(tmp.path(), "config.toml", &(template_toml() + legacy));
+	let error = Config::load_from_path(&tmp.path().join("config.toml")).unwrap_err();
+	assert!(format!("{error:#}").contains("supervisor.evaluate"));
+	write_file(tmp.path(), "config.toml", &template_toml());
+	write_file(tmp.path(), "override.toml", legacy);
+	let error = Config::load_from_path(tmp.path()).unwrap_err();
+	assert!(format!("{error:#}").contains("supervisor.evaluate"));
+	let config: Config = toml::from_str(&template_toml()).unwrap();
+	let error = merge_agent_toml(&config, legacy).unwrap_err();
+	assert!(format!("{error:#}").contains("supervisor.evaluate"));
+}
+
+#[test]
+fn decision_directory_and_agent_overrides_merge_without_losing_flags() {
+	let tmp = tempfile::tempdir().unwrap();
+	write_file(tmp.path(), "config.toml", &template_toml());
+	write_file(
+		tmp.path(),
+		"override.toml",
+		"[decision]\nmodel = \"typesafe:jev-latest\"\nrecall = true\n",
+	);
+	let config = Config::load_from_path(tmp.path()).unwrap();
+	assert!(config.decision.recall);
+	assert!(!config.decision.supervisor);
+	assert_eq!(
+		config.decision.model.as_deref(),
+		Some("typesafe:jev-latest")
+	);
+	let merged =
+		merge_agent_toml(&config, "[decision]\nsupervisor = true\nskills = true\n").unwrap();
+	assert!(merged.decision.recall && merged.decision.skills && merged.decision.supervisor);
+	assert!(!merged.decision.compression && !merged.decision.capabilities);
+	assert_eq!(
+		merged.decision.model.as_deref(),
+		Some("typesafe:jev-latest")
+	);
+	let role = merged.get_merged_config_for_role("developer");
+	assert!(role.decision.recall && role.decision.supervisor);
+}
+
+#[test]
+fn agent_decision_model_is_validated_even_when_routing_is_off() {
+	let mut config: Config = toml::from_str(&template_toml()).unwrap();
+	let error = merge_agent_toml(&config, "[decision]\nmodel = \"typesafe:gpt-5\"\n").unwrap_err();
+	assert!(error.to_string().contains("decision.model"));
+	let empty = merge_agent_toml(&config, "[decision]\nmodel = \"\"\nsupervisor = true\n").unwrap();
+	assert_eq!(empty.decision.model.as_deref(), Some(""));
+	config.decision.model = None;
+	let absent = merge_agent_toml(&config, "[decision]\nsupervisor = true\n").unwrap();
+	assert!(absent.decision.model.is_none());
+}

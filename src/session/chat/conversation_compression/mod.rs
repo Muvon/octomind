@@ -1163,7 +1163,7 @@ async fn check_and_compress_conversation_inner(
 		None
 	};
 	if let Some(pact) = pact.as_mut() {
-		pact.prune_dead_tool_packets(&config.supervisor).await;
+		pact.prune_dead_tool_packets(config).await;
 	}
 
 	// `analysis_findings` is runtime state, while the rendered summary is what

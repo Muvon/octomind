@@ -251,6 +251,25 @@ async fn verify_user_wide(config: &Config, members: &[&Lesson]) -> bool {
 			}))
 			.collect::<Vec<_>>(),
 	});
+	use crate::supervisor::evaluate::{self, Seam};
+	if evaluate::enabled(config, Seam::Distill) {
+		let replaced = crate::session::estimate_tokens(&payload.to_string())
+			+ crate::session::estimate_tokens(PROMOTE_VERIFY_PROMPT);
+		let Some(answers) = evaluate::run(
+			config,
+			Seam::Distill,
+			payload,
+			evaluate::retention_promote_question(),
+		)
+		.await
+		else {
+			return false;
+		};
+		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
+		evaluate::avoided(config, Seam::Distill, replaced);
+		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
+			>= evaluate::RETENTION_SUPPORT_AT;
+	}
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	super::extract::call_supervisor_json(
 		config,
@@ -528,6 +547,23 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 		"sources": sources.iter().map(source_view).collect::<Vec<_>>(),
 		"candidate": source_view(&candidate),
 	});
+	use crate::supervisor::evaluate::{self, Seam};
+	if evaluate::enabled(config, Seam::Distill) {
+		let replaced = crate::session::estimate_tokens(&verify_payload.to_string())
+			+ crate::session::estimate_tokens(VERIFY_PROMPT);
+		let answers = evaluate::run(
+			config,
+			Seam::Distill,
+			verify_payload,
+			evaluate::retention_merge_question(),
+		)
+		.await?;
+		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
+		evaluate::avoided(config, Seam::Distill, replaced);
+		return (evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
+			>= evaluate::RETENTION_SUPPORT_AT)
+			.then_some(candidate);
+	}
 	let (_tx, verify_rx) = tokio::sync::watch::channel(false);
 	let verified = super::extract::call_supervisor_json(
 		config,

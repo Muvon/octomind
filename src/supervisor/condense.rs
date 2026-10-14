@@ -423,11 +423,12 @@ pub async fn condense_round(
 		.map(|candidate| sizes[candidate.result_index] as u64)
 		.sum();
 
-	// The calibrated scorer judges the same candidates first; any failure of
-	// its round falls through to the supervisor-model condenser unchanged.
-	if let Some(outcomes) =
-		evaluate_candidates(config, results, calls, &candidates, task, tool_round_intent).await
-	{
+	if super::evaluate::enabled(config, super::evaluate::Seam::Condense) {
+		let Some(outcomes) =
+			evaluate_candidates(config, results, calls, &candidates, task, tool_round_intent).await
+		else {
+			return;
+		};
 		let condensed = finish_round(results, cfg, floor, attempted_tokens, outcomes);
 		crate::supervisor::stats::evaluate_applied(
 			crate::supervisor::evaluate::Seam::Condense,
@@ -615,8 +616,7 @@ fn chunk_lines(content: &str) -> Vec<Chunk> {
 /// Chunk-score every candidate through the condense seam: one Noul per chunk
 /// over the candidate's full original text, windowed under the state cap, all
 /// windows of the round in flight together. `None` means the seam is off or a
-/// window was unavailable — the caller runs the supervisor-model condenser
-/// exactly as before, so the round never mixes two judges.
+/// window was unavailable; the caller leaves the entire round untouched.
 async fn evaluate_candidates(
 	config: &Config,
 	results: &[McpToolResult],
@@ -626,7 +626,7 @@ async fn evaluate_candidates(
 	tool_round_intent: &str,
 ) -> Option<Vec<Outcome>> {
 	use crate::supervisor::evaluate::{self, Seam};
-	if !evaluate::enabled(&config.supervisor, Seam::Condense) {
+	if !evaluate::enabled(config, Seam::Condense) {
 		return None;
 	}
 	let task_block = task_block(task);
@@ -669,7 +669,7 @@ async fn evaluate_candidates(
 		}
 		plans.push((candidate.result_index, content, chunks, window_sizes));
 	}
-	let mut answers = evaluate::run_windows(&config.supervisor, Seam::Condense, requests)
+	let mut answers = evaluate::run_windows(config, Seam::Condense, requests)
 		.await?
 		.into_iter();
 	let mut outcomes = Vec::with_capacity(plans.len());
@@ -704,8 +704,7 @@ async fn evaluate_candidates(
 
 /// A chunk over the chunk budget is one oversized line (chunking is
 /// line-aligned); its text goes in as a head-and-tail sample so no single
-/// line can push a window over the state cap and take the whole round to the
-/// model condenser. The answer still keeps or drops the whole line.
+/// line can push a window over the state cap and discard the whole round. The answer still keeps or drops the whole line.
 fn chunk_json(chunk: &Chunk) -> serde_json::Value {
 	serde_json::json!({
 		"index": chunk.index,

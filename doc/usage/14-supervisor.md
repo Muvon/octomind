@@ -27,6 +27,14 @@ are optional overrides. Required mechanic tables must remain present even when d
 when the supervisor is enabled; completion pre-gates also require the gate to be enabled.
 
 ```toml
+[decision]                # optional calibrated decisions, see below
+model = "cloudflare:typesafe/jev"
+recall = false
+skills = false
+capabilities = false
+compression = false
+supervisor = false
+
 [supervisor]
 enabled = true
 
@@ -53,12 +61,6 @@ enabled = true
 [supervisor.authorizer]    # user-intent check before tool execution
 enabled = false
 
-[supervisor.evaluate]      # calibrated evaluation gates, see below
-model = "cloudflare:typesafe/jev"
-recall = false
-skills = false
-authorizer = false
-
 [supervisor.plan]          # adaptive external plan manager
 enabled = true
 
@@ -68,7 +70,7 @@ adaptive = false
 tokens_threshold = 5000
 ```
 
-Authorizer, gate, resolve, plan, condense, and every learning operation use the single supervisor profile. Omitting
+Supervisor writers use the shared profile. Eligible decision calls use `[decision]` when enabled; see below. Omitting
 `[supervisor.model]` uses `[model]` unchanged.
 
 `[supervisor.condense].adaptive` defaults to `false`. When enabled, the process-local runtime multiplier learns from
@@ -136,24 +138,39 @@ execute at their existing lifecycle points outside this tool-call check.
 
 ## Evaluation gates
 
-`[supervisor.evaluate]` adds a calibrated evaluation model (TypeSafe Jev, reached through octolib's `evaluation`
-module) as a gate at ten seams. Unlike the chat model, it takes one state and a set of typed questions and returns a
-probability per question; there is no generated text to parse. Each seam is one boolean, off by default, and switching
-every seam off leaves behavior byte-identical to a release without this section.
+`[decision]` routes calibrated questions through TypeSafe Jev via octolib's `evaluation` module.
+It takes a state and typed questions and returns probabilities without generating text. The four independent flags
+and the shared `supervisor` flag default to false. Routing requires `supervisor.enabled`, a nonempty `decision.model`,
+and the corresponding flag. Absent or empty model disables routing; malformed nonempty models fail validation naming
+`decision.model`. Unknown keys and missing or mistyped booleans fail config parsing.
 
 | Key | Meaning |
 |-----|---------|
-| `model` | `provider:model` string. Supported providers: `cloudflare` (`cloudflare:typesafe/jev`, AI Gateway unified billing), `typesafe` (`typesafe:jev-latest`, direct) and `octohub` (`octohub:<alias>` or `octohub:auto` — the hub picks the model; `OCTOHUB_API_KEY`, optional `OCTOHUB_API_URL`). A malformed or unsupported value fails config loading naming `supervisor.evaluate.model`. There is no profile: Jev accepts no sampling parameters. |
-| `recall` | After scoped lessons are ranked and before pack admission, one Noul per scoped candidate asks whether it bears on the current request. Candidates below 0.5 are excluded; the rank order of the rest is kept. Global-tier rules are never sent and are admitted exactly as before. Zero scoped candidates make no call. |
-| `skills` | When auto-activation runs and every rule abstained (no deterministic match, no semantic candidate cleared the margin), one Choice lists every inactive skill in the domain pool (name and description) plus `none`. The chosen skill activates with trigger `evaluate` when it is not `none` and its probability in the answer's distribution is at least 0.6. Skills without rules join the pool for this choice only; they never meet the rule engine. A shadow evolution binding records a match instead of activating. |
-| `capabilities` | With `auto_capabilities = true`, after the cosine gate over a fresh user message has picked a winner or abstained, one Choice lists the five best-scored inactive capabilities (title and description from the provider file's header comments) plus `none`, over the stripped user message. A cosine winner whose probability in the answer is below 0.05 is not activated; with no cosine winner, the chosen capability activates when its probability is at least 0.6, and the activation log shows that probability as its score. The system-managed, intent-length, domain, and env gates before the cosine scoring are unchanged, and an unavailable evaluation activates exactly what cosine decided. |
-| `authorizer` | With `[supervisor.authorizer] enabled = true`, after the memoized-denial cache and before the two-judge supervisor path, three Nouls per pending call ask whether it is `prohibited` by user or role instructions, `destructive` to non-regenerable files, uncommitted changes, data, or git history, or `external` to the working directory. When every answer is below 0.5 the batch is admitted without waking the supervisor model; otherwise the pre-change judgment and verification run unchanged. The pre-screen can only admit, never block. |
-| `condense` | With `[supervisor.condense] enabled = true`, the same candidates the condenser would judge (`tokens_threshold` and `adaptive` unchanged) are scored instead of sent to the supervisor model: each candidate's full original text is split into line-aligned chunks of at most 256 tokens, windowed under the state cap (at most 96 chunks per call, at most four windows in flight at once; a chunk that is one oversized line goes in as a 512-token head-and-tail sample), and one Noul per chunk asks whether the agent needs it for the task. Chunks at or above 0.5 are kept with one neighbour on each side, plus diagnostics and any truncation notice; the kept lines go through the existing verbatim reconstruction, spill file, and `📎 CONDENSED` notice. Everything kept leaves the result untouched; nothing kept omits an ok result (never an error). If any window is unavailable, the whole round's answers are discarded and the supervisor-model condenser runs once exactly as before. The adaptive controller sees the same numbers either way. |
-| `compression` | Before a fold's decision call, every `ToolInteraction` packet the PACT allocator placed in the `summarize` lane is scored with one Noul (state: pinned task, constraints, plan focus, and a 512-token head-and-tail sample per packet; at most 96 units per call, at most four windows in flight at once). Packets below 0.5 are demoted to `archive_reference`, so the fold model reads their one-line descriptor instead of their content; `keep_exact`, non-tool, real-user, and already-archived packets are never scored, and a packet another selected packet depends on is never demoted. The drained range, archive, fingerprint, validator, and fold decision are untouched. If any window is unavailable, nothing is demoted and the fold proceeds on the evidence set as allocated. |
-| `distill` | At lesson extraction (`/done`, exit, compaction), the candidate lessons are grounded by one Noul each (state: every candidate's number, rule, and cited quote, plus the same transcript excerpt the chat verifier receives: the first 12,000 characters, then the full user turn each quote was found in when that head does not already contain the quote) instead of the batched supervisor-model verifier. Candidates at or above 0.5 are kept; the rest are rejected with the same debug line as before. Dedup, supersede, importance, storage, experiences, and orientation are untouched. If the evaluation is unavailable, the supervisor-model verifier runs once for the same candidates, fail-closed as before. |
-| `plan` | With `[supervisor.plan] enabled = true`, after every deterministic skip and before the planner call, a `request` signal is scored with one Noul asking whether the remaining work needs an external plan (state: current and working request, outcome conditions, runtime evidence, phase trajectory), and a `phase_complete` signal with one Noul asking whether the runtime evidence shows the active phase's `done_when` (state: phase title and `done_when`, evidence since the phase checkpoint, phase trajectory). Below 0.2 the `request` is declined and the `phase_complete` is held with the feedback `runtime evidence does not yet show: <done_when>`, without a planner call; otherwise the planner runs unchanged. `reassess` is never scored. The pre-screen can only skip a call, never create, advance, or revise; an unavailable evaluation runs the planner and never sets the per-turn failure latch. |
-| `gate` | When the verifier rules `GAPS`, each charged finding is scored with one Noul over the same rendered evidence the verifier saw (after any readback round). Findings at or above 0.8 are refuted and reported as `refuted by second verifier: …`; the rest stand, and when every finding is refuted the verdict is `PASS`, exactly as after the chat refutation. The verifier pass, readback round, and format retry are untouched. If the evaluation is unavailable or the evidence exceeds the state cap, the supervisor-model refutation runs as before. |
-| `evolution` | On each turn with a verify-gate verdict that touched a shadow or live evolved artifact, one call reads the request and the turn's final answer and returns a Noul for "the final answer fulfils the request" plus one Noul per artifact for "this behavior applies to the request". An artifact measured this way scores each sample at the fulfilment probability instead of the 0/1 verdict, and drops samples it was judged inapplicable to (below 0.5, counted as `false_triggers`). An artifact's first sample fixes its measure for both arms: artifacts that start while the seam is on are graded, and skip turns the evaluation cannot answer; artifacts that already hold plain-verdict samples keep the verdict. Promotion arithmetic is unchanged; see [Learning](13-learning.md). |
+| `model` | Optional `provider:model`: `cloudflare:typesafe/jev`, `typesafe:jev-latest`, or `octohub:<alias>` / `octohub:auto`. No sampling profile. |
+| `recall` | One Noul per ranked scoped candidate; keep at 0.5. Global rules are unchanged. Unavailable keeps candidates. |
+| `skills` | When rules abstain, one Choice over inactive domain skills plus `none`; activate at 0.6. Unavailable activates none. |
+| `capabilities` | One Choice over the top five inactive capabilities plus `none`; confirm a cosine winner at 0.05 or promote a choice at 0.6. Unavailable keeps cosine selection. |
+| `compression` | Before a fold, score summarize-lane tool packets and demote below 0.5 to `archive_reference`, respecting dependencies. Any unavailable window keeps all lanes. |
+| `supervisor` | Enables every eligible supervisor decision below, plus existing evolution grading. Writers retain the supervisor model. |
+
+| Supervisor call | Decision behavior | Unavailable outcome |
+|-----------------|-------------------|---------------------|
+| Gate refutation | One Noul per charged finding over the verifier's evidence; refute at 0.8. | Every original gap stands. |
+| Short-lesson verifier | One Noul per candidate over the same transcript; keep at 0.5. | Reject every candidate. |
+| Condense selector | Line-aligned chunks (96-token budget), at most 96 questions per window and four windows in flight; keep at 0.5 with neighbors and diagnostics. Existing reconstruction and spill behavior remain. | Entire round untouched. |
+| Authorizer prescreen | Three risk Nouls per call; all below 0.5 admits ordinary allows without judges. | Primary writer runs, as on a flagged batch. |
+| Authorizer confirmation | One Noul per proposed veto or native-guard override, using the existing verification payload; confirm at 0.5. | Discard proposed vetoes and overrides; native guards remain. |
+| Plan prescreen | Below 0.2 declines a request or holds a phase with deterministic feedback. `reassess` is unscored. | Planner writer runs. |
+| Retention promotion verifier | One Noul for a rule's universality across projects and roles; support at 0.5. | Keep scoped. |
+| Retention merge verifier | One Noul for entailment and preserved boundaries; support at 0.5. Merge text remains a writer call. | No consolidation; independent archival still applies. |
+| Repaired experience and orientation verifiers | One grounding Noul over the existing candidate, outcome, and cited evidence; support at 0.5. | Reject candidate, preserving existing records. |
+| Evolution grading | Existing outcome and applicability Nouls; applicability floor 0.5. An artifact's first sample fixes its graded or plain-verdict measure for both arms. | Graded artifacts skip the turn; existing verdict sampling remains unchanged. |
+
+Decision mode never retries a replaced decision on the chat model. With decision routing disabled, the original chat
+prompts, payloads, and consumers remain unchanged. Gate primary judgment, readback and format repair, resolve
+classification and expansion, initial experience verification with repair diagnostics, evolution-proposal verification,
+extraction, repair, merge text, and evolution synthesis stay on `[supervisor.model]`. Authorizer and plan prescreens
+can skip their writers; a flagged or unavailable prescreen still requires the writer's authored output.
 
 Keys come from the environment, as for every other provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` for the
 `cloudflare` provider, `TYPESAFE_API_KEY` for `typesafe`. Nothing is stored in config.
@@ -164,17 +181,19 @@ guardrail validator can get a calibrated answer without a session. `-m provider:
 See the [CLI reference](../reference/01-cli-reference.md#octomind-evaluate-file) and
 [Calibrated Checks](../use-cases/23-calibrated-checks-with-evaluate.md).
 
-Every call is one attempt with a 5-second timeout and no retries, and the assembled state is capped at 24,000
-estimated tokens. Any failure — missing key, HTTP 401/402/403/429/5xx, timeout, transport error, an unparseable or
-incomplete answer set, a state or skill roster too large to send — keeps the pre-change behavior for that turn, writes
-one debug line (`evaluate <seam> unavailable: <reason>`) and increments the seam's `unavailable` counter. For the
-recall, skills, capabilities, and authorizer seams the state never contains tool results, assistant messages, or condensed-output
-notices; the condense and compression seams judge tool output by design and send that output and nothing else from
-the transcript. The distill, plan, and gate seams receive exactly the payload the chat call they replace receives, and
-their answers can only reject a lesson, skip a planner call, or drop a finding — never store, create, advance, or pass. Thresholds and question text are constants in `src/supervisor/evaluate.rs`, not config keys.
+Every decision call is one attempt with a 5-second timeout, no retries, and a 24,000-token state cap. Missing keys,
+HTTP failures, transport errors, timeouts, over-cap states, and malformed or incomplete answers produce the seam's
+unavailable outcome above. One debug line (`evaluate <seam> unavailable: <reason>`) and the existing `unavailable`
+counter record the failure. Module and stats names remain `evaluate`; thresholds and questions live in
+`src/supervisor/evaluate.rs`.
 
-`/info` shows, per seam, `calls` (attempts), `unavailable` (fallbacks), and `applied` (recall: candidates excluded;
-skills: activations; capabilities: cosine decisions overridden, vetoes and promotions alike; authorizer: batches admitted without the supervisor; condense: results whose inline content
+Recall, skills, capabilities, and the authorizer prescreen exclude tool outputs and assistant prose from their state.
+Confirmation uses the existing full verification payload. Condense and compression judge tool outputs by design;
+learning verifiers receive the same cited evidence as their chat counterparts. No production shadow decisions are
+added. Offline comparison with logged chat verdicts remains a release prerequisite for the new P2 questions.
+
+`/info` shows, per seam, `calls` (attempts), `unavailable` (unavailable decisions), and `applied` (recall: candidates excluded;
+skills: activations; capabilities: cosine decisions overridden, vetoes and promotions alike; authorizer: batches admitted without the supervisor and confirmation rounds answered; condense: results whose inline content
 changed; compression: packets demoted; distill: verification rounds answered; plan: planner calls skipped; gate:
 refutation passes answered), plus `replaced` where the seam stood in for a chat call (authorizer, condense, distill,
 plan, gate). The `evaluate` row totals the seam calls with their input tokens and cost against the chat calls
@@ -298,8 +317,8 @@ excerpts are contextual reminders, not independently binding rules or additional
   unknown, not failed, and applies no correctness credit.
 
 The verifier can request one bounded read-back of recorded tool evidence. Blocking findings receive a separate
-refutation pass before causing rework: with `[supervisor.evaluate] gate = true` the evaluation model answers it per
-finding, otherwise a second supervisor-model call does. These passes use the shared supervisor profile; a separate call
+refutation pass before causing rework: with `[decision] supervisor = true` the evaluation model answers it per
+finding, otherwise a second supervisor-model call does. Unavailable Jev refutation leaves gaps standing. The primary verifier and chat refutation use the shared supervisor profile; a separate call
 does not guarantee a different model family. Change `[supervisor.model]` in the configuration example to choose the profile.
 
 ## Adaptive external planning
@@ -308,7 +327,7 @@ Planning is exceptional and supervisor-owned. Focused answers and routine work s
 dependent phases, context-loss risk, or a real branch to track, the specialist emits a sparse hidden `request` signal
 alongside normal work. A separate supervisor call makes one structured create/no-plan decision from the current request,
 specialist instructions and capabilities, bounded current-phase assistant/tool trajectory, and runtime evidence. With
-`[supervisor.evaluate] plan = true` the evaluation model pre-screens `request` and `phase_complete` first and skips the
+`[decision] supervisor = true` the evaluation model pre-screens `request` and `phase_complete` first and skips the
 planner call when it is confident no plan is needed or the phase outcome is not yet evidenced.
 
 The specialist has no plan mutation tool. Later `phase_complete` or `reassess` signals ride with real work responses;
@@ -436,7 +455,7 @@ mix those counters. In-process supervisor costs feed session spending; detached 
 | Recite | Live goal, plan, constraints, or policy available | Context tokens | None (automatic) |
 | Distill (learn) + grounding verification | `/done`, exit, and eligible compaction | Model call | `[supervisor.learning]` |
 | Recall | First and subsequent genuine requests | First-query model prep, retrieval, pack tokens | `[supervisor.learning]` |
-| Evaluation gates (recall / skills / capabilities / authorizer) | Ranked recall, rule abstention, cosine decision, pending tool batch | One bounded evaluation call per seam per turn | `[supervisor.evaluate]` |
+| Evaluation gates (recall / skills / capabilities / authorizer) | Ranked recall, rule abstention, cosine decision, pending tool batch | One bounded evaluation call per seam per turn | `[decision]` |
 
 ## Source reference
 

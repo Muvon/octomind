@@ -308,6 +308,7 @@ fn force_upgrade_stamps_an_outdated_file_and_is_quiet_on_current_ones() {
 fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
 	let mut document = template_document();
 	document["version"] = toml_edit::value(13);
+	document.remove("decision");
 	let supervisor = document["supervisor"].as_table_mut().unwrap();
 	supervisor.remove("evaluate");
 	supervisor["enabled"] = toml_edit::value(true);
@@ -316,10 +317,13 @@ fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert_eq!(config.supervisor.evaluate.model, "cloudflare:typesafe/jev");
-	assert!(!config.supervisor.evaluate.recall);
-	assert!(!config.supervisor.evaluate.skills);
-	assert!(!config.supervisor.evaluate.authorizer);
+	assert_eq!(
+		config.decision.model.as_deref(),
+		Some("cloudflare:typesafe/jev")
+	);
+	assert!(!config.decision.recall);
+	assert!(!config.decision.skills);
+	assert!(!config.decision.supervisor);
 	assert!(config.supervisor.enabled);
 	assert_eq!(
 		config.supervisor.model.model.as_deref(),
@@ -337,6 +341,8 @@ fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserv
 {
 	let mut document = template_document();
 	document["version"] = toml_edit::value(14);
+	document.remove("decision");
+	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
 	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
 	evaluate.remove("condense");
 	evaluate.remove("compression");
@@ -346,12 +352,14 @@ fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserv
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert!(!config.supervisor.evaluate.condense);
-	assert!(!config.supervisor.evaluate.compression);
-	assert_eq!(config.supervisor.evaluate.model, "typesafe:jev-latest");
-	assert!(config.supervisor.evaluate.recall);
-	assert!(!config.supervisor.evaluate.skills);
-	assert!(config.supervisor.evaluate.authorizer);
+	assert!(!config.decision.compression);
+	assert_eq!(
+		config.decision.model.as_deref(),
+		Some("typesafe:jev-latest")
+	);
+	assert!(config.decision.recall);
+	assert!(!config.decision.skills);
+	assert!(config.decision.supervisor);
 	assert!(plan()
 		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
 		.unwrap()
@@ -362,6 +370,8 @@ fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserv
 fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_evaluate_values() {
 	let mut document = template_document();
 	document["version"] = toml_edit::value(15);
+	document.remove("decision");
+	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
 	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
 	evaluate.remove("distill");
 	evaluate.remove("plan");
@@ -372,15 +382,14 @@ fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert!(!config.supervisor.evaluate.distill);
-	assert!(!config.supervisor.evaluate.plan);
-	assert!(!config.supervisor.evaluate.gate);
-	assert_eq!(config.supervisor.evaluate.model, "typesafe:jev-latest");
-	assert!(config.supervisor.evaluate.recall);
-	assert!(config.supervisor.evaluate.condense);
-	assert!(!config.supervisor.evaluate.skills);
-	assert!(!config.supervisor.evaluate.authorizer);
-	assert!(!config.supervisor.evaluate.compression);
+	assert_eq!(
+		config.decision.model.as_deref(),
+		Some("typesafe:jev-latest")
+	);
+	assert!(config.decision.recall);
+	assert!(config.decision.supervisor);
+	assert!(!config.decision.skills);
+	assert!(!config.decision.compression);
 	assert!(plan()
 		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
 		.unwrap()
@@ -391,6 +400,8 @@ fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_
 fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_values() {
 	let mut document = template_document();
 	document["version"] = toml_edit::value(16);
+	document.remove("decision");
+	document["supervisor"]["evaluate"] = toml_edit::Item::Table(toml_edit::Table::new());
 	let evaluate = document["supervisor"]["evaluate"].as_table_mut().unwrap();
 	evaluate.remove("capabilities");
 	evaluate["skills"] = toml_edit::value(true);
@@ -398,10 +409,10 @@ fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert!(!config.supervisor.evaluate.capabilities);
-	assert!(config.supervisor.evaluate.skills);
-	assert!(config.supervisor.evaluate.gate);
-	assert!(!config.supervisor.evaluate.recall);
+	assert!(!config.decision.capabilities);
+	assert!(config.decision.skills);
+	assert!(config.decision.supervisor);
+	assert!(!config.decision.recall);
 	assert!(plan()
 		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
 		.unwrap()

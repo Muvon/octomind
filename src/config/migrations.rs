@@ -24,7 +24,8 @@ use octolib::utils::config_file;
 // `toml_edit` comes from octolib's re-export: the migration `apply` signature
 // is a function pointer, so both sides must see the exact same crate.
 use octolib::utils::config_migration::{
-	ensure_table, merge_missing, required_table, toml_edit, MigrationPlan, VersionMigration,
+	copy_item, ensure_table, merge_missing, required_table, toml_edit, MigrationPlan,
+	VersionMigration,
 };
 use std::fs;
 use std::path::Path;
@@ -108,25 +109,26 @@ fn plan() -> MigrationPlan {
 				to: 13,
 				apply: add_v13_authorizer,
 			},
+			// Legacy evaluate insertion steps are retired; v22 translates surviving values.
 			VersionMigration {
 				from: 13,
 				to: 14,
-				apply: add_v14_evaluate,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 14,
 				to: 15,
-				apply: add_v15_evaluate_seams,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 15,
 				to: 16,
-				apply: add_v16_evaluate_seams,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 16,
 				to: 17,
-				apply: add_v17_evaluate_seams,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 17,
@@ -136,7 +138,7 @@ fn plan() -> MigrationPlan {
 			VersionMigration {
 				from: 18,
 				to: 19,
-				apply: add_v19_evaluate_evolution,
+				apply: |_document, _template| Ok(()),
 			},
 			VersionMigration {
 				from: 19,
@@ -148,52 +150,145 @@ fn plan() -> MigrationPlan {
 				to: 21,
 				apply: add_v21_hindsight,
 			},
+			VersionMigration {
+				from: 21,
+				to: 22,
+				apply: move_v22_decision,
+			},
 		],
 	)
 	.with_missing_version(0)
 }
 
-/// Add the required evaluation-gate section (every seam off) without changing
-/// existing supervisor settings.
-fn add_v14_evaluate(
+/// Move calibrated routing without losing legacy switches or accepting conflicts.
+fn move_v22_decision(
 	document: &mut toml_edit::DocumentMut,
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
-	let template_supervisor = required_table(template.as_table(), "supervisor", "embedded config")?;
-	let supervisor = ensure_table(
-		document.as_table_mut(),
-		template.as_table(),
+	let legacy = match document.as_table_mut().get_mut("supervisor") {
+		Some(item) => item
+			.as_table_mut()
+			.context("supervisor: table required")?
+			.remove("evaluate"),
+		None => None,
+	};
+	let had_decision = document.contains_key("decision");
+	if !had_decision {
+		document["decision"] = toml_edit::Item::Table(toml_edit::Table::new());
+	}
+	let decision = document["decision"]
+		.as_table_mut()
+		.context("decision: table required")?;
+	for (key, item) in decision.iter() {
+		match key {
+			"model" if item.as_str().is_some() => {}
+			"recall" | "skills" | "capabilities" | "compression" | "supervisor"
+				if item.as_bool().is_some() => {}
+			_ => anyhow::bail!("decision.{key}: unknown key or malformed value"),
+		}
+	}
+	if let Some(legacy) = legacy {
+		let legacy = legacy
+			.as_table()
+			.context("supervisor.evaluate: table required")?;
+		if !had_decision {
+			*decision.decor_mut() = legacy.decor().clone();
+		}
+		let mut supervisor = false;
+		let mut has_supervisor_flag = false;
+		let mut supervisor_comments = String::new();
+		for (key, item) in legacy.iter() {
+			match key {
+				"model" | "recall" | "skills" | "capabilities" | "compression" => {
+					let valid = if key == "model" {
+						item.as_str().is_some()
+					} else {
+						item.as_bool().is_some()
+					};
+					anyhow::ensure!(valid, "supervisor.evaluate.{key}: malformed value");
+					if let Some(existing) = decision.get(key) {
+						anyhow::ensure!(
+							existing.as_str() == item.as_str()
+								&& existing.as_bool() == item.as_bool(),
+							"decision.{key}: conflicts with supervisor.evaluate.{key}"
+						);
+					} else {
+						copy_item(decision, legacy, key)?;
+					}
+				}
+				"authorizer" | "condense" | "distill" | "plan" | "gate" | "evolution" => {
+					supervisor |= item
+						.as_bool()
+						.with_context(|| format!("supervisor.evaluate.{key}: boolean required"))?;
+					has_supervisor_flag = true;
+					for raw in [
+						legacy
+							.key(key)
+							.expect("legacy switch key")
+							.leaf_decor()
+							.prefix(),
+						item.as_value()
+							.expect("legacy boolean switch")
+							.decor()
+							.suffix(),
+					]
+					.into_iter()
+					.flatten()
+					{
+						if let Some(text) = raw.as_str().filter(|text| !text.trim().is_empty()) {
+							supervisor_comments.push_str(text);
+							if !text.ends_with('\n') {
+								supervisor_comments.push('\n');
+							}
+						}
+					}
+				}
+				_ => anyhow::bail!("supervisor.evaluate.{key}: unknown key"),
+			}
+		}
+		if has_supervisor_flag {
+			if let Some(existing) = decision.get("supervisor") {
+				anyhow::ensure!(
+					existing.as_bool() == Some(supervisor),
+					"decision.supervisor: conflicts with legacy supervisor switches"
+				);
+			} else {
+				decision.insert("supervisor", toml_edit::value(supervisor));
+			}
+			if !supervisor_comments.is_empty() {
+				let mut key = decision
+					.key_mut("supervisor")
+					.expect("migrated supervisor switch");
+				let decor = key.leaf_decor_mut();
+				let prefix = decor
+					.prefix()
+					.and_then(|raw| raw.as_str())
+					.map_or(String::new(), str::to_string);
+				decor.set_prefix(format!("{prefix}{supervisor_comments}"));
+			}
+		}
+	}
+	let defaults = required_table(template.as_table(), "decision", "embedded config")?;
+	if !had_decision {
+		merge_missing(decision, defaults, "model")?;
+	}
+	for key in [
+		"recall",
+		"skills",
+		"capabilities",
+		"compression",
 		"supervisor",
-		"user config",
-	)?;
-	merge_missing(supervisor, template_supervisor, "evaluate")
-}
-
-/// Add the `condense` and `compression` seams (off) to an existing evaluate
-/// section; every key the user already has stays as it is.
-fn add_v15_evaluate_seams(
-	document: &mut toml_edit::DocumentMut,
-	template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	add_v14_evaluate(document, template)
-}
-
-/// Add the `distill`, `plan`, and `gate` seams (off) to an existing evaluate
-/// section; every other key keeps its value.
-fn add_v16_evaluate_seams(
-	document: &mut toml_edit::DocumentMut,
-	template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	add_v14_evaluate(document, template)
-}
-
-/// Add the `capabilities` seam (off) to an existing evaluate section; every
-/// other key keeps its value.
-fn add_v17_evaluate_seams(
-	document: &mut toml_edit::DocumentMut,
-	template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	add_v14_evaluate(document, template)
+	] {
+		merge_missing(decision, defaults, key)?;
+	}
+	if let Some(item) = decision.get("model") {
+		let model = item.as_str().expect("validated decision.model string");
+		if !model.is_empty() {
+			octolib::evaluation::EvaluationProviderFactory::get_provider_for_model(model)
+				.map_err(|error| anyhow::anyhow!("decision.model: {error}"))?;
+		}
+	}
+	Ok(())
 }
 
 /// Add the shadow-control promotion thresholds to an existing evolution
@@ -203,15 +298,6 @@ fn add_v18_evolution_control(
 	template: &toml_edit::DocumentMut,
 ) -> Result<()> {
 	add_v11_learning_evolution(document, template)
-}
-
-/// Add the `evolution` seam (off) to an existing evaluate section; every
-/// other key keeps its value.
-fn add_v19_evaluate_evolution(
-	document: &mut toml_edit::DocumentMut,
-	template: &toml_edit::DocumentMut,
-) -> Result<()> {
-	add_v14_evaluate(document, template)
 }
 
 /// Add the required `[timing]` calibration section for `/report`.

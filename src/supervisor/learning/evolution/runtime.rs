@@ -532,7 +532,7 @@ fn sample_score(
 /// One evaluation call per verdict turn that touched an artifact which is, or
 /// will become, graded. `None` keeps graded artifacts from sampling this turn.
 async fn grade_turn(
-	config: &crate::supervisor::SupervisorConfig,
+	config: &crate::config::Config,
 	turn: &TurnVerdict<'_>,
 	ids: &[&String],
 ) -> Option<TurnGrade> {
@@ -597,9 +597,9 @@ async fn grade_turn(
 pub async fn reinforce_session(
 	session_id: &str,
 	turn: &TurnVerdict<'_>,
-	config: &crate::supervisor::SupervisorConfig,
+	config: &crate::config::Config,
 ) {
-	let policy = &config.learning.evolution;
+	let policy = &config.supervisor.learning.evolution;
 	let mut used = {
 		let mut guard = SESSION_BEHAVIORS.write().unwrap();
 		guard

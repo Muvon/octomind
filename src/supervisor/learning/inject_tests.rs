@@ -306,7 +306,7 @@ fn retrieval_rewrite_validation_accepts_keywords_and_rejects_answers() {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation gate (supervisor.evaluate.recall): the relevance filter between
+// Evaluation gate (decision.recall): the relevance filter between
 // ranking and admission. `install_fake_evaluation` holds ENV_LOCK itself.
 // ---------------------------------------------------------------------------
 
@@ -318,7 +318,7 @@ use crate::supervisor::evaluate::Seam;
 fn recall_gate_config() -> crate::config::Config {
 	let mut config = fake_provider_config();
 	config.supervisor.enabled = true;
-	config.supervisor.evaluate.recall = true;
+	config.decision.recall = true;
 	config
 }
 
@@ -346,7 +346,7 @@ async fn recall_gate_drops_unrelated_scoped_candidates_and_keeps_rank_order() {
 		candidates.push((lesson(proj, content, "learning", &[]), false));
 	}
 	let request = "add retry with backoff to the http client";
-	let kept = filter_scoped_by_relevance(&config.supervisor, request, candidates).await;
+	let kept = filter_scoped_by_relevance(&config, request, candidates).await;
 	let contents: Vec<&str> = kept.iter().map(|(l, _)| l.content.as_str()).collect();
 	assert_eq!(
 		contents,
@@ -382,8 +382,7 @@ async fn recall_gate_skips_the_call_without_scoped_candidates_and_can_leave_glob
 	let proj = "__inject_test_proj_gate_empty";
 	let calls = evaluate_counter(Seam::Recall, "calls");
 	let global_only = vec![(lesson(proj, "global rule", "learning", &[]), true)];
-	let kept =
-		filter_scoped_by_relevance(&config.supervisor, "anything", global_only.clone()).await;
+	let kept = filter_scoped_by_relevance(&config, "anything", global_only.clone()).await;
 	assert_eq!(kept.len(), 1);
 	assert!(
 		fake.requests().is_empty(),
@@ -393,7 +392,7 @@ async fn recall_gate_skips_the_call_without_scoped_candidates_and_can_leave_glob
 
 	let mut mixed = global_only;
 	mixed.push((lesson(proj, "scoped thing", "learning", &[]), false));
-	let kept = filter_scoped_by_relevance(&config.supervisor, "anything", mixed).await;
+	let kept = filter_scoped_by_relevance(&config, "anything", mixed).await;
 	assert_eq!(kept.len(), 1);
 	assert!(kept[0].1, "only the global lesson survives");
 	assert_eq!(fake.requests().len(), 1);

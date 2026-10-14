@@ -198,8 +198,6 @@ pub struct SupervisorConfig {
 	pub plan: PlanConfig,
 	/// Task-aware condensation of oversized tool outputs.
 	pub condense: CondenseConfig,
-	/// Calibrated evaluation gates at the supervisor seams (`evaluate::Seam`).
-	pub evaluate: evaluate::EvaluateConfig,
 	/// Local next-turn-correction verifier scored at every turn end.
 	pub hindsight: hindsight::HindsightConfig,
 }

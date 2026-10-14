@@ -407,7 +407,17 @@ supported older primary config:
 | `11` | Adds `supervisor.learning.evolution.enabled` (template default `false`) |
 | `12` | Nests model profiles and removes separate supervisor-subsystem model settings |
 | `18` | Adds the `supervisor.learning.evolution` shadow-control thresholds (`min_samples`, `noise_margin`, `cost_allowance`, `cost_per_gain`, `max_trial_uses`) |
-| `19` | Adds `supervisor.evaluate.evolution` (template default `false`) |
+| `14`–`17`, `19` | Retired evaluation-table insertion steps; existing legacy values are translated by version 22 |
+| `20` | Adds the timing calibration section |
+| `21` | Adds the optional hindsight section |
+| `22` | Moves evaluation routing to `[decision]`; ORs the six legacy supervisor switches into `decision.supervisor` |
+
+Version `22` preserves the legacy model, recall, skills, capabilities, and compression values and comments.
+The old authorizer, condense, distill, plan, gate, and evolution switches become one `supervisor` flag: any true
+switch enables the eligible supervisor decisions and evolution grading. Missing required flags come from the template;
+malformed values and conflicting old/new tables abort the upgrade before any write. Unmigrated legacy tables at
+single-file, directory override, or agent-manifest boundaries are rejected. Empty or absent `decision.model` disables
+routing; all five booleans remain required, and unknown decision keys are rejected.
 
 Version `4` preserves an existing threshold; otherwise it takes the lowest old pressure-level threshold, or the
 template value when no old threshold exists.

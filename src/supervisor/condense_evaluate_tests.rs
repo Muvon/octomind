@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! The condense seam: chunking, the scored state, verdicts derived from
-//! chunk probabilities, and the round-level fallback to the supervisor-model
-//! condenser. Every provider interaction goes through the in-process fake;
+//! chunk probabilities, and the atomic unavailable outcome that leaves the
+//! round untouched. Every provider interaction goes through the in-process fake;
 //! `install_fake_evaluation` holds `ENV_LOCK`, so these tests never take it
 //! themselves.
 
@@ -22,8 +22,7 @@ use super::*;
 use crate::config::McpServerConfig;
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::chat::test_support::{
-	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
-	spawn_stub, FakeEvaluationStep,
+	evaluate_counter, fake_provider_config, install_fake_evaluation, nouls, FakeEvaluationStep,
 };
 use crate::supervisor::evaluate::{
 	Seam, CONDENSE_CHUNK_MIN_TOKENS, CONDENSE_CHUNK_SAMPLE_TOKENS, CONDENSE_CHUNK_TOKENS,
@@ -34,7 +33,7 @@ fn config(condense: bool) -> Config {
 	config.supervisor.enabled = true;
 	config.supervisor.condense.enabled = true;
 	config.supervisor.condense.tokens_threshold = 10;
-	config.supervisor.evaluate.condense = condense;
+	config.decision.supervisor = condense;
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config
 }
@@ -482,6 +481,9 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	let replaced_before = evaluate_counter(Seam::Condense, "avoided");
 	let config = config(true);
 	let mut results = round_results();
+	let (url, captured) =
+		crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
+	std::env::set_var("OLLAMA_API_URL", url);
 	with_spill_reader(
 		&config,
 		"__condense_eval_round",
@@ -489,6 +491,8 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	)
 	.await;
 	assert_eq!(fake.requests().len(), 2);
+	assert!(captured.lock().unwrap().is_empty());
+	std::env::remove_var("OLLAMA_API_URL");
 	assert_eq!(evaluate_counter(Seam::Condense, "calls") - calls_before, 2);
 	assert_eq!(
 		evaluate_counter(Seam::Condense, "applied") - applied_before,
@@ -510,7 +514,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn a_failed_window_falls_back_to_one_model_condenser_call() {
+async fn a_failed_window_leaves_the_entire_round_untouched() {
 	let fake = install_fake_evaluation(vec![
 		chunk_answers(64, |_| 0.1),
 		FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
@@ -520,10 +524,12 @@ async fn a_failed_window_falls_back_to_one_model_condenser_call() {
 	let applied_before = evaluate_counter(Seam::Condense, "applied");
 	let config = config(true);
 	let mut results = round_results();
-	let url = spawn_stub(vec![final_response(
-		r#"{"results":[{"id":"t1","verdict":"extract","lines":["10-20"]},{"id":"t2","verdict":"keep"}]}"#,
-	)])
-	.await;
+	let original = results
+		.iter()
+		.map(McpToolResult::extract_content)
+		.collect::<Vec<_>>();
+	let (url, captured) =
+		crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	with_spill_reader(
 		&config,
@@ -539,10 +545,14 @@ async fn a_failed_window_falls_back_to_one_model_condenser_call() {
 		1
 	);
 	assert_eq!(evaluate_counter(Seam::Condense, "applied"), applied_before);
-	// The model verdict, not the first window's answers, shaped the round.
-	let first = results[0].extract_content();
-	assert!(first.contains("kept 11 of 200 original lines"), "{first}");
-	assert!(!results[1].extract_content().contains(CONDENSE_NOTICE_TAG));
+	assert_eq!(
+		results
+			.iter()
+			.map(McpToolResult::extract_content)
+			.collect::<Vec<_>>(),
+		original
+	);
+	assert!(captured.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

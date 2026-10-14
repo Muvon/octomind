@@ -544,7 +544,7 @@ async fn false_cancellation_update_does_not_interrupt_a_judgment() {
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation pre-screen (supervisor.evaluate.authorizer). The fake guard holds
+// Evaluation pre-screen (decision.supervisor). The fake guard holds
 // ENV_LOCK itself, so these tests do not lock it again.
 // ---------------------------------------------------------------------------
 
@@ -555,7 +555,7 @@ use crate::supervisor::evaluate::Seam;
 
 fn prescreen_config() -> Config {
 	let mut config = config();
-	config.supervisor.evaluate.authorizer = true;
+	config.decision.supervisor = true;
 	config
 }
 
@@ -570,9 +570,9 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 		("1.external", 0.1),
 	]))])
 	.await;
-	// No supervisor stub is listening: if the judge path ran it would be
-	// counted as unavailable, which is how this test proves it did not.
-	std::env::remove_var("OLLAMA_API_URL");
+	let (url, captured) =
+		crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
+	std::env::set_var("OLLAMA_API_URL", url);
 	let config = prescreen_config();
 	let id = "authorizer-prescreen-admit";
 	let mut session = session(id);
@@ -611,7 +611,9 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	assert_eq!(state["calls"][0]["tool"], "text_editor");
 	assert_eq!(state["calls"][1]["id"], "1");
 	assert_eq!(state["calls"][1]["arguments"]["command"], "cargo test");
+	assert!(captured.lock().unwrap().is_empty());
 	clear_for_session(id);
+	std::env::remove_var("OLLAMA_API_URL");
 }
 
 #[tokio::test]
@@ -681,4 +683,154 @@ async fn evaluate_prescreen_runs_after_the_denial_cache() {
 	assert_eq!(session.session.info.authorization.cached, 1);
 	clear_for_session(id);
 	std::env::remove_var("OLLAMA_API_URL");
+}
+
+fn authorizer_chat_calls() -> u64 {
+	crate::supervisor::stats::snapshot()
+		.and_then(|stats| stats.get("authorize_calls")?.as_u64())
+		.unwrap_or(0)
+}
+
+#[tokio::test]
+async fn decision_confirmation_replaces_only_the_second_judge_and_fails_closed() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	for (index, step, confirmed) in [
+		(0, FakeEvaluationStep::Answers(nouls(&[("0", 0.5)])), true),
+		(1, FakeEvaluationStep::Answers(nouls(&[("0", 0.49)])), false),
+		(
+			2,
+			FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"),
+			false,
+		),
+		(3, FakeEvaluationStep::Answers(nouls(&[])), false),
+	] {
+		let fake = install_fake_evaluation(vec![
+			FakeEvaluationStep::Answers(nouls(&[
+				("0.prohibited", 0.9),
+				("0.destructive", 0.1),
+				("0.external", 0.1),
+			])),
+			step,
+		])
+		.await;
+		let (url, captured) = spawn_recording_stub(vec![final_response(
+			&verdict("block", "Do not run tests").to_string(),
+		)])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let config = prescreen_config();
+		let id = format!("decision-confirmation-{index}");
+		let mut session = session(&id);
+		capture(&mut session, &config);
+		let chat_calls = authorizer_chat_calls();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let admissions = check_batch(&id, &config, &[call()], &[vec![]], rx).await;
+		assert_eq!(admissions[0].message.is_some(), confirmed);
+		let requests = fake.requests();
+		assert_eq!(requests.len(), 2);
+		assert_eq!(captured.lock().unwrap().len(), 1, "primary writer only");
+		let writer = captured.lock().unwrap()[0].clone();
+		assert_eq!(writer["messages"][0]["content"], SYSTEM_PROMPT);
+		let payload: Value =
+			serde_json::from_str(writer["messages"][1]["content"].as_str().unwrap()).unwrap();
+		assert_eq!(requests[1].state["request"], payload);
+		let octolib::evaluation::Question::Noul { instructions, .. } = &requests[1].questions["0"]
+		else {
+			panic!("Noul required")
+		};
+		assert_eq!(
+			instructions.as_str().unwrap(),
+			format!(
+				"For proposed call 0, should this proposed decision be confirmed?\n{}",
+				VERIFY_PROMPT.rsplit_once("\nReturn only ").unwrap().0
+			)
+		);
+		assert_eq!(authorizer_chat_calls() - chat_calls, 1);
+		clear_for_session(&id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[tokio::test]
+async fn confirmation_disabled_mode_preserves_exact_chat_prompt_and_payload() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	let fake = install_fake_evaluation(Vec::new()).await;
+	for model in [
+		Some("cloudflare:typesafe/jev".to_string()),
+		None,
+		Some(String::new()),
+	] {
+		let mut config = config();
+		config.decision.supervisor = model.as_deref() != Some("cloudflare:typesafe/jev");
+		config.decision.model = model;
+		let (url, captured) = spawn_recording_stub(vec![
+			final_response(&verdict("block", "Do not run tests").to_string()),
+			final_response(&confirmation(true).to_string()),
+		])
+		.await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let id = "confirmation-chat-contract";
+		let mut session = session(id);
+		capture(&mut session, &config);
+		let chat_calls = authorizer_chat_calls();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let admissions = check_batch(id, &config, &[call()], &[vec![]], rx).await;
+		assert!(admissions[0].message.is_some());
+		let requests = captured.lock().unwrap();
+		assert_eq!(requests.len(), 2);
+		assert_eq!(requests[1]["messages"][0]["content"], VERIFY_PROMPT);
+		let primary: Value =
+			serde_json::from_str(requests[0]["messages"][1]["content"].as_str().unwrap()).unwrap();
+		let verification: Value =
+			serde_json::from_str(requests[1]["messages"][1]["content"].as_str().unwrap()).unwrap();
+		assert_eq!(verification["request"], primary);
+		assert_eq!(verification["proposed_decisions"][0]["id"], "0");
+		assert!(fake.requests().is_empty());
+		assert_eq!(authorizer_chat_calls() - chat_calls, 2);
+		clear_for_session(id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[tokio::test]
+async fn decision_confirmation_failure_preserves_native_guards() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	for (step, confirmed) in [
+		(FakeEvaluationStep::Answers(nouls(&[("0", 0.5)])), true),
+		(FakeEvaluationStep::Answers(nouls(&[("0", 0.49)])), false),
+		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+	] {
+		let fake = install_fake_evaluation(vec![
+			FakeEvaluationStep::Answers(nouls(&[
+				("0.prohibited", 0.9),
+				("0.destructive", 0.1),
+				("0.external", 0.1),
+			])),
+			step,
+		])
+		.await;
+		let mut proposal = verdict("allow", "Do not run tests");
+		proposal["decisions"][0]["source_id"] = json!("user:1");
+		proposal["decisions"][0]["overridden_guards"] = json!(["g1"]);
+		let (url, captured) =
+			spawn_recording_stub(vec![final_response(&proposal.to_string())]).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let config = prescreen_config();
+		let id = "decision-native-guard";
+		let mut session = session(id);
+		session
+			.add_user_message("Now explicitly run the tests.")
+			.unwrap();
+		capture(&mut session, &config);
+		let guards = vec![vec![("g1".into(), "Never run tests".into())]];
+		let chat_calls = authorizer_chat_calls();
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let admissions = check_batch(id, &config, &[call()], &guards, rx).await;
+		assert_eq!(admissions[0].overridden_guards.contains("g1"), confirmed);
+		assert_eq!(captured.lock().unwrap().len(), 1);
+		assert_eq!(fake.requests().len(), 2);
+		assert_eq!(authorizer_chat_calls() - chat_calls, 1);
+		clear_for_session(id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
 }

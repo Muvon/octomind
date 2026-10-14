@@ -2066,13 +2066,13 @@ use crate::session::chat::test_support::{
 };
 use crate::supervisor::evaluate::{compression_question_id, Seam, COMPRESSION_SAMPLE_TOKENS};
 
-fn supervisor(compression: bool) -> crate::supervisor::SupervisorConfig {
+fn supervisor(compression: bool) -> crate::config::Config {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
 			.expect("default template must deserialize");
 	config.supervisor.enabled = true;
-	config.supervisor.evaluate.compression = compression;
-	config.supervisor
+	config.decision.compression = compression;
+	config
 }
 
 fn tool_packet(id: &str, lane: Lane, content: &str) -> EvidencePacket {

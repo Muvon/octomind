@@ -44,16 +44,24 @@ impl Config {
 		Ok(())
 	}
 
-	/// `[supervisor.evaluate].model` must be `provider:model` on a provider that
+	/// `decision.model` must be `provider:model` on a provider that
 	/// serves that evaluation model — octolib's evaluation factory is the list,
 	/// and it resolves the pair without touching the network. Checked even when
 	/// the supervisor is off: a typo here is a typo regardless of which switches
-	/// are on, and at call time it would only surface as a silent fallback.
-	fn validate_evaluate_model(&self) -> Result<()> {
+	/// are on. An absent or empty model deliberately disables decision routing.
+	pub(super) fn validate_evaluate_model(&self) -> Result<()> {
 		use octolib::evaluation::EvaluationProviderFactory;
-		EvaluationProviderFactory::get_provider_for_model(&self.supervisor.evaluate.model)
+		let Some(model) = self
+			.decision
+			.model
+			.as_deref()
+			.filter(|model| !model.is_empty())
+		else {
+			return Ok(());
+		};
+		EvaluationProviderFactory::get_provider_for_model(model)
 			.map(|_| ())
-			.map_err(|error| anyhow!("supervisor.evaluate.model: {error}"))
+			.map_err(|error| anyhow!("decision.model: {error}"))
 	}
 
 	fn validate_model_profiles(&self) -> Result<()> {

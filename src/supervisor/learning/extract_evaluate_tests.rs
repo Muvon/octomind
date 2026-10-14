@@ -22,7 +22,7 @@
 use super::*;
 use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
-	spawn_stub, FakeEvaluationStep,
+	spawn_recording_stub, FakeEvaluationStep,
 };
 use crate::supervisor::evaluate::{distill_question_id, Seam};
 use crate::supervisor::learning::TrajectoryOutcome;
@@ -67,7 +67,7 @@ fn config(distill: bool) -> Config {
 	config.supervisor.enabled = true;
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.evolution.enabled = false;
-	config.supervisor.evaluate.distill = distill;
+	config.decision.supervisor = distill;
 	config
 }
 
@@ -118,12 +118,14 @@ async fn extract(
 	outcome: TrajectoryOutcome,
 	stub: Vec<serde_json::Value>,
 ) -> (usize, Vec<Lesson>) {
-	let url = spawn_stub(stub).await;
+	let expected_calls = stub.len();
+	let (url, captured) = spawn_recording_stub(stub).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let stored = run_extraction(messages, config, role, project, "distill-session", outcome)
 		.await
 		.expect("extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(captured.lock().unwrap().len(), expected_calls);
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
 	(stored, memories)
 }
@@ -221,7 +223,7 @@ async fn a_quote_past_the_transcript_head_reaches_the_judge_in_its_own_turn() {
 }
 
 #[tokio::test]
-async fn an_unavailable_evaluation_runs_the_chat_verifier_once_with_every_candidate() {
+async fn an_unavailable_evaluation_rejects_every_candidate_without_chat_verification() {
 	let fake =
 		install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
 	let _data = TestDataDir::new();
@@ -234,19 +236,12 @@ async fn an_unavailable_evaluation_runs_the_chat_verifier_once_with_every_candid
 		"__distill_fallback_project",
 		&messages(),
 		TrajectoryOutcome::Unknown,
-		vec![
-			final_response(EXTRACTION),
-			final_response(r#"{"unsupported":[2]}"#),
-		],
+		vec![final_response(EXTRACTION)],
 	)
 	.await;
-	assert_eq!(stored, 1);
-	assert_eq!(memories[0].content, BACKOFF_RULE);
-	assert_eq!(
-		distill_chat_calls() - calls,
-		2,
-		"extraction plus one verifier call"
-	);
+	assert_eq!(stored, 0);
+	assert!(memories.is_empty());
+	assert_eq!(distill_chat_calls() - calls, 1, "extraction only");
 	assert_eq!(
 		evaluate_counter(Seam::Distill, "unavailable") - unavailable,
 		1
@@ -378,4 +373,143 @@ async fn experiences_keep_the_chat_verifier_and_kept_lessons_store_the_same_fiel
 		.1
 		.iter()
 		.all(|m| m.content != "Retries use a fixed one second delay"));
+}
+
+#[tokio::test]
+async fn orientation_verification_uses_jev_and_only_supported_records_supersede() {
+	for (step, expected) in [
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
+			true,
+		),
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
+			false,
+		),
+		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+		(FakeEvaluationStep::Answers(nouls(&[])), false),
+	] {
+		let fake = install_fake_evaluation(vec![step]).await;
+		let _data = TestDataDir::new();
+		let chat_calls = distill_chat_calls();
+		let old = Lesson {
+			content: "Preserve provider identity across requests and forbid model fallback".into(),
+			memory_type: "orientation".into(),
+			scope: "scoped".into(),
+			created: "2026-01-01T00:00:00Z".into(),
+			role: "orientation-role".into(),
+			project: "orientation-project".into(),
+			..Default::default()
+		};
+		FileBackend.store(&old).await.unwrap();
+		let response = "<decision>NONE</decision><orientation confidence=\"high\" evidence=\"M1\">Preserve provider identity across requests and forbid silent model fallback</orientation>";
+		let (stored, memories) = extract(
+			&config(true),
+			&old.role,
+			&old.project,
+			&messages(),
+			TrajectoryOutcome::Unknown,
+			vec![final_response(response)],
+		)
+		.await;
+		assert_eq!(stored, usize::from(expected));
+		assert_eq!(distill_chat_calls() - chat_calls, 1);
+		assert!(memories.iter().any(|memory| memory.content == old.content) != expected);
+		let requests = fake.requests();
+		assert_eq!(requests.len(), 1);
+		let payload = requests[0].state.as_str().unwrap();
+		assert!(payload.contains("<proposed_memory outcome=\"unknown\" cited_messages=\"1\">"));
+		assert!(payload.contains(
+			"Preserve provider identity across requests and forbid silent model fallback"
+		));
+		assert!(payload.contains("use exponential backoff with jitter for retries"));
+	}
+}
+
+#[tokio::test]
+async fn repaired_experience_reverification_uses_jev_while_initial_verdict_and_repair_stay_chat() {
+	for (step, expected) in [
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
+			true,
+		),
+		(
+			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
+			false,
+		),
+		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+		(FakeEvaluationStep::Answers(nouls(&[])), false),
+	] {
+		let fake = install_fake_evaluation(vec![step]).await;
+		let _data = TestDataDir::new();
+		let chat_calls = distill_chat_calls();
+		let mut evidence = messages();
+		evidence.push(message(
+			"tool",
+			&"provider error invalid continuation identifier; preserve the resolved model "
+				.repeat(60),
+		));
+		let experience = format!("<experience title=\"Continuation recovery\" confidence=\"high\" evidence=\"M1,M3\">{}</experience>", experience_body());
+		let (stored, memories) = extract(
+			&config(true),
+			"repair-role",
+			"repair-project",
+			&evidence,
+			TrajectoryOutcome::Verified,
+			vec![
+				final_response("<decision>NONE</decision>"),
+				final_response(&experience),
+				final_response(
+					r#"{"supported":false,"issues":["Do not overstate what the provider output establishes"]}"#,
+				),
+				final_response(&experience),
+			],
+		)
+		.await;
+		assert_eq!(stored, usize::from(expected));
+		assert_eq!(distill_chat_calls() - chat_calls, 4);
+		assert_eq!(memories.len(), usize::from(expected));
+		assert_eq!(fake.requests().len(), 1);
+		let payload = fake.requests()[0].state.as_str().unwrap().to_string();
+		assert!(payload.contains("<proposed_memory outcome=\"verified\" cited_messages=\"1,3\">"));
+		assert!(payload.contains("provider error invalid continuation identifier"));
+	}
+}
+
+#[tokio::test]
+async fn boolean_memory_verifiers_disabled_mode_keep_the_exact_chat_payload() {
+	let fake = install_fake_evaluation(Vec::new()).await;
+	let candidate = GroundedCandidate {
+		lesson: Lesson {
+			content: "Durable subject understanding".into(),
+			memory_type: "orientation".into(),
+			outcome: TrajectoryOutcome::Unknown,
+			..Default::default()
+		},
+		message_numbers: vec![1],
+	};
+	let messages = messages();
+	let expected = experience_verifier_payload(&candidate, &messages).unwrap();
+	for model in [
+		Some("cloudflare:typesafe/jev".to_string()),
+		None,
+		Some(String::new()),
+	] {
+		let mut config = config(false);
+		config.decision.supervisor = model.as_deref() != Some("cloudflare:typesafe/jev");
+		config.decision.model = model;
+		let (url, captured) =
+			spawn_recording_stub(vec![final_response(r#"{"supported":true,"issues":[]}"#)]).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		assert!(verify_experience(&config, &candidate, &messages).await);
+		assert!(fake.requests().is_empty());
+		let requests = captured.lock().unwrap();
+		assert_eq!(requests.len(), 1);
+		assert_eq!(
+			requests[0]["messages"][0]["content"],
+			VERIFY_EXPERIENCE_PROMPT
+		);
+		assert_eq!(requests[0]["messages"][1]["content"], expected);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
 }

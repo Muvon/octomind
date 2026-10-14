@@ -18,6 +18,17 @@ use std::path::Path;
 
 use super::Config;
 
+fn reject_legacy_evaluate(value: &toml::Value) -> Result<()> {
+	if value
+		.get("supervisor")
+		.and_then(|supervisor| supervisor.get("evaluate"))
+		.is_some()
+	{
+		anyhow::bail!("supervisor.evaluate was removed in version 22; migrate to [decision]");
+	}
+	Ok(())
+}
+
 const MODEL_PROFILE_FIELDS: [&str; 8] = [
 	"reasoning_effort",
 	"max_tokens",
@@ -217,6 +228,7 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 
 		let mut value: toml::Value = toml::from_str(&content)
 			.context(format!("Failed to parse TOML file: {}", file.display()))?;
+		reject_legacy_evaluate(&value)?;
 		normalize_model_profile_syntax(&mut value);
 
 		merged = Some(if let Some(base) = merged {
@@ -437,6 +449,7 @@ impl Config {
 				.context(format!("Failed to read config from {}", path.display()))?;
 			let mut value: toml::Value =
 				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			reject_legacy_evaluate(&value)?;
 			normalize_model_profile_syntax(&mut value);
 			let mut config: Config = value
 				.try_into()
@@ -547,8 +560,12 @@ impl Config {
 				"Failed to read config from {}",
 				config_path.display()
 			))?;
-			let mut config: Config =
+			let value: toml::Value =
 				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			reject_legacy_evaluate(&value)?;
+			let mut config: Config = value
+				.try_into()
+				.context("Failed to parse TOML configuration")?;
 			config.config_path = Some(config_path.clone());
 			// SIMPLIFIED: Don't initialize internal servers
 			config
@@ -600,6 +617,7 @@ impl Config {
 pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	let mut agent_value: toml::Value =
 		toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
+	reject_legacy_evaluate(&agent_value)?;
 	normalize_model_profile_syntax(&mut agent_value);
 
 	// Serialize base config to toml::Value so we can manipulate it
@@ -683,6 +701,7 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	let mut merged: Config = base_value
 		.try_into()
 		.context("Failed to deserialize merged agent config")?;
+	merged.validate_evaluate_model()?;
 	merged.build_role_map();
 	Ok(merged)
 }

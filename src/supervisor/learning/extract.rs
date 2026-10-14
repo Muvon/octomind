@@ -414,10 +414,16 @@ pub async fn run_extraction(
 	//    seam answers per candidate; otherwise one batched LLM pass does.
 	//    Fail-closed — an unverifiable rule must not become durable state.
 	let view = verifier_view(&transcript, &grounding, &candidates);
-	let keep = match evaluate_lessons(config, &candidates, &view).await {
-		Some(keep) => keep,
-		None => verify_lessons(config, &candidates, &view).await,
-	};
+	let keep =
+		if crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Distill)
+		{
+			match evaluate_lessons(config, &candidates, &view).await {
+				Some(keep) => keep,
+				None => vec![false; candidates.len()],
+			}
+		} else {
+			verify_lessons(config, &candidates, &view).await
+		};
 	let candidates: Vec<Candidate> = candidates
 		.into_iter()
 		.zip(keep.iter())
@@ -887,7 +893,7 @@ fn verifier_view(
 
 /// Evaluation-model grounding: one Noul per candidate lesson over the same
 /// excerpt the chat verifier receives. `None` means the seam is off or
-/// unavailable and the chat verifier decides.
+/// unavailable; the caller rejects every candidate.
 async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) -> Option<Vec<bool>> {
 	use crate::supervisor::evaluate::{self, Seam};
 	let state = serde_json::json!({
@@ -907,7 +913,7 @@ async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) ->
 	let replaced = crate::session::estimate_tokens(&state.to_string())
 		+ crate::session::estimate_tokens(VERIFY_LESSONS_PROMPT);
 	let answers = evaluate::run(
-		&config.supervisor,
+		config,
 		Seam::Distill,
 		state,
 		evaluate::distill_questions(lessons.len()),
@@ -1272,6 +1278,28 @@ async fn verify_experience(
 	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> bool {
+	use crate::supervisor::evaluate::{self, Seam};
+	if evaluate::enabled(config, Seam::Distill) {
+		let Ok(user) = experience_verifier_payload(candidate, messages) else {
+			return false;
+		};
+		let replaced = crate::session::estimate_tokens(&user)
+			+ crate::session::estimate_tokens(VERIFY_EXPERIENCE_PROMPT);
+		let Some(answers) = evaluate::run(
+			config,
+			Seam::Distill,
+			serde_json::Value::String(user),
+			evaluate::memory_question(),
+		)
+		.await
+		else {
+			return false;
+		};
+		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
+		evaluate::avoided(config, Seam::Distill, replaced);
+		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
+			>= evaluate::MEMORY_SUPPORT_AT;
+	}
 	experience_verdict(config, candidate, messages)
 		.await
 		.is_some_and(|verdict| verdict.supported)
@@ -1300,8 +1328,24 @@ async fn experience_verifier_response(
 	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> Result<String> {
+	let user = experience_verifier_payload(candidate, messages)?;
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	call_learning_llm(
+		config,
+		VERIFY_EXPERIENCE_PROMPT.to_string(),
+		user,
+		crate::supervisor::stats::CallKind::Distill,
+		rx,
+	)
+	.await
+}
+
+fn experience_verifier_payload(
+	candidate: &GroundedCandidate,
+	messages: &[crate::session::Message],
+) -> Result<String> {
 	let cited = render_experience_evidence(candidate, messages)?;
-	let user = format!(
+	Ok(format!(
 		"<proposed_memory outcome=\"{}\" cited_messages=\"{}\">\n{}\n</proposed_memory>\n\n<transcript trust=\"untrusted\">\n{}\n</transcript>",
 		candidate.lesson.outcome.as_str(),
 		candidate
@@ -1312,16 +1356,7 @@ async fn experience_verifier_response(
 			.join(","),
 		crate::supervisor::escape_xml_text(&candidate.lesson.content),
 		cited
-	);
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	call_learning_llm(
-		config,
-		VERIFY_EXPERIENCE_PROMPT.to_string(),
-		user,
-		crate::supervisor::stats::CallKind::Distill,
-		rx,
-	)
-	.await
+	))
 }
 
 #[cfg(test)]

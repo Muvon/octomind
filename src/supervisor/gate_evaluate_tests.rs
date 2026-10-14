@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The gate seam: charged findings refuted by the evaluation model in place of
-//! the second-verifier chat pass, with that pass as the fallback. The verifier
+//! the second-verifier chat pass, failing closed when unavailable. The verifier
 //! itself always hits the scripted chat stub, so a refutation call the seam
 //! should have replaced reads "SCRIPT EXHAUSTED" and refutes nothing.
 //! `install_fake_evaluation` holds `ENV_LOCK`, so these tests never take it
@@ -22,7 +22,7 @@
 use super::*;
 use crate::session::chat::test_support::{
 	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
-	spawn_stub, FakeEvaluationStep,
+	spawn_recording_stub, FakeEvaluationStep,
 };
 use crate::supervisor::evaluate::{gate_question_id, Seam};
 use octolib::evaluation::Question;
@@ -41,7 +41,7 @@ fn config(gate: bool) -> Config {
 	let mut config = fake_provider_config();
 	config.supervisor.enabled = true;
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.evaluate.gate = gate;
+	config.decision.supervisor = gate;
 	config
 }
 
@@ -95,11 +95,13 @@ async fn run(
 	grounds: &[(u64, String)],
 	stub: Vec<serde_json::Value>,
 ) -> GateVerdict {
-	let url = spawn_stub(stub).await;
+	let expected_calls = stub.len();
+	let (url, captured) = spawn_recording_stub(stub).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	let verdict = verify(config, input(actions, grounds), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(captured.lock().unwrap().len(), expected_calls);
 	verdict
 }
 
@@ -175,7 +177,7 @@ async fn a_finding_below_the_threshold_stands() {
 }
 
 #[tokio::test]
-async fn an_unavailable_evaluation_runs_the_chat_refutation_once() {
+async fn an_unavailable_evaluation_leaves_all_findings_standing_without_chat_refutation() {
 	let fake =
 		install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
 	let calls = gate_chat_calls();
@@ -184,24 +186,17 @@ async fn an_unavailable_evaluation_runs_the_chat_refutation_once() {
 		&config(true),
 		ACTIONS,
 		&[],
-		vec![
-			final_response(&gaps(&[TEST_GAP])),
-			final_response(r#"<finding n="1" verdict="refuted">#1 ran the suite</finding>"#),
-		],
+		vec![final_response(&gaps(&[TEST_GAP]))],
 	)
 	.await;
-	assert_eq!(verdict, GateVerdict::Pass);
-	assert_eq!(
-		gate_chat_calls() - calls,
-		2,
-		"verifier plus chat refutation"
-	);
+	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
+	assert_eq!(gate_chat_calls() - calls, 1, "verifier only");
 	assert_eq!(evaluate_counter(Seam::Gate, "unavailable") - unavailable, 1);
 	assert_eq!(fake.requests().len(), 1);
 }
 
 #[tokio::test]
-async fn evidence_over_the_state_cap_runs_the_chat_refutation() {
+async fn evidence_over_the_state_cap_leaves_all_findings_standing() {
 	let fake = install_fake_evaluation(vec![answers(&[0.99])]).await;
 	let calls = gate_chat_calls();
 	let unavailable = evaluate_counter(Seam::Gate, "unavailable");
@@ -211,14 +206,11 @@ async fn evidence_over_the_state_cap_runs_the_chat_refutation() {
 		&config(true),
 		&huge,
 		&[],
-		vec![
-			final_response(&gaps(&[TEST_GAP])),
-			final_response(r#"<finding n="1" verdict="stands">nothing shows a run</finding>"#),
-		],
+		vec![final_response(&gaps(&[TEST_GAP]))],
 	)
 	.await;
 	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
-	assert_eq!(gate_chat_calls() - calls, 2);
+	assert_eq!(gate_chat_calls() - calls, 1);
 	assert_eq!(evaluate_counter(Seam::Gate, "unavailable") - unavailable, 1);
 	assert!(
 		fake.requests().is_empty(),

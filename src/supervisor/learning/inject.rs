@@ -141,11 +141,8 @@ pub async fn retrieve_and_format(
 	// Evaluation gate between ranking and admission: drop the scoped candidates
 	// the evaluation model judges unrelated to this request. Global rules are
 	// never sent — they apply to every task by definition.
-	if crate::supervisor::evaluate::enabled(
-		&config.supervisor,
-		crate::supervisor::evaluate::Seam::Recall,
-	) {
-		candidates = filter_scoped_by_relevance(&config.supervisor, user_input, candidates).await;
+	if crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Recall) {
+		candidates = filter_scoped_by_relevance(config, user_input, candidates).await;
 	}
 
 	// Dedup global/scoped overlap, then greedily admit ranked candidates under a
@@ -205,7 +202,7 @@ pub async fn retrieve_and_format(
 /// below `RECALL_KEEP_AT` are removed; the rank order of the rest is kept.
 /// Any unavailable outcome returns the candidates untouched.
 async fn filter_scoped_by_relevance(
-	config: &crate::supervisor::SupervisorConfig,
+	config: &Config,
 	user_input: &str,
 	candidates: Vec<(crate::supervisor::learning::Lesson, bool)>,
 ) -> Vec<(crate::supervisor::learning::Lesson, bool)> {

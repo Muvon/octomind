@@ -128,10 +128,10 @@ max_trial_uses = 8
 	assert!(!parsed.evolution.enabled);
 }
 
-fn supervisor() -> crate::supervisor::SupervisorConfig {
+fn supervisor() -> crate::config::Config {
 	let config: crate::config::Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
-	config.supervisor
+	config
 }
 
 fn verdict(delta: f64, api_calls: u32) -> TurnVerdict<'static> {

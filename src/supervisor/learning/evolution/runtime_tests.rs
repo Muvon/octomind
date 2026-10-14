@@ -76,10 +76,10 @@ fn record(id: &str, kind: ArtifactKind, state: EvolutionState) -> EvolutionRecor
 	}
 }
 
-fn supervisor() -> crate::supervisor::SupervisorConfig {
+fn supervisor() -> crate::config::Config {
 	let config: crate::config::Config =
 		toml::from_str(include_str!("../../../../config-templates/default.toml")).unwrap();
-	config.supervisor
+	config
 }
 
 fn verdict(delta: f64, api_calls: u32) -> TurnVerdict<'static> {
@@ -917,8 +917,8 @@ async fn graded_samples_use_evaluation_outcome_and_drop_inapplicable_turns() {
 	locked.control_successes = policy().min_samples - 2;
 	super::super::registry::create_record(locked, native, None).unwrap();
 	let mut supervisor = supervisor();
-	supervisor.enabled = true;
-	supervisor.evaluate.evolution = true;
+	supervisor.supervisor.enabled = true;
+	supervisor.decision.supervisor = true;
 	let turn = TurnVerdict {
 		delta: 0.05,
 		api_calls: 2,

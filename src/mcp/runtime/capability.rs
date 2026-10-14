@@ -1232,7 +1232,7 @@ async fn evaluate_pick<'a>(
 ) -> Option<(f32, &'a crate::agent::registry::ResolvedCapability)> {
 	use crate::supervisor::evaluate::{self, Seam};
 
-	if !evaluate::enabled(&config.supervisor, Seam::Capabilities) {
+	if !evaluate::enabled(config, Seam::Capabilities) {
 		return cosine;
 	}
 	let candidates = &ranked[..ranked.len().min(evaluate::CAPABILITY_TOP_K)];
@@ -1246,7 +1246,7 @@ async fn evaluate_pick<'a>(
 		question,
 	)]);
 	let Some(answers) = evaluate::run(
-		&config.supervisor,
+		config,
 		Seam::Capabilities,
 		serde_json::Value::String(intent.to_string()),
 		questions,

@@ -620,7 +620,7 @@ async fn run_evaluation_choice(
 	else {
 		return;
 	};
-	if !evaluate::enabled(&config.supervisor, Seam::Skills) {
+	if !evaluate::enabled(&config, Seam::Skills) {
 		return;
 	}
 	let inactive: Vec<&PoolEntry> = entries
@@ -642,7 +642,7 @@ async fn run_evaluation_choice(
 	let questions =
 		std::collections::BTreeMap::from([(evaluate::SKILL_QUESTION_ID.to_string(), question)]);
 	let Some(answers) = evaluate::run(
-		&config.supervisor,
+		&config,
 		Seam::Skills,
 		serde_json::Value::String(content.to_string()),
 		questions,

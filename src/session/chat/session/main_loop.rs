@@ -1866,6 +1866,11 @@ pub async fn run_interactive_session_with_input(
 	// can be distinguished from one that is still making progress.
 	let mut reported_job_statuses: std::collections::HashMap<String, String> =
 		std::collections::HashMap::new();
+	// Jobs the model has had a status check for. One still pending when the model
+	// ends its turn is checked at once: ending the turn is also how the model
+	// finishes, and a job it no longer needs would otherwise hold the run open for
+	// a whole reconcile window before the model could stop it.
+	let mut checked_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
 	// Deadline for the background-job safety backstop, anchored when jobs first
 	// appear. It must live outside the loop: a sleep built inside the select is
 	// recreated every pass, so the shorter reconcile branch firing on its own
@@ -2072,8 +2077,8 @@ pub async fn run_interactive_session_with_input(
 					std::future::pending::<()>().await;
 				}
 			} => {}
-			_ = tokio::time::sleep(BACKGROUND_JOB_RECONCILE), if has_background_jobs => {
-				reconcile_pending_background_jobs(&mut reported_job_statuses).await;
+			_ = tokio::time::sleep(reconcile_delay(&checked_jobs)), if has_background_jobs => {
+				reconcile_pending_background_jobs(&mut reported_job_statuses, &mut checked_jobs).await;
 			}
 			_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
 				if let Some(session_id) = crate::session::context::current_session_id() {
@@ -2171,11 +2176,13 @@ fn emit_cost_frame(chat_session: &mut ChatSession, config: &Config) {
 /// shorter deadline never reaches. The job stays registered: this reports
 /// status, it does not complete the job, so the real completion path still
 /// delivers the output. Every still-pending, non-delivering job is reported
-/// once per reconcile window. This bounds silent waiting at the cost of one
-/// model turn per window while a job runs; an unchanged snapshot also tells
-/// the model that the job may be stuck.
+/// once as soon as the model ends a turn with it running, then once per
+/// reconcile window. This bounds silent waiting at the cost of one model turn
+/// per report while a job runs; an unchanged snapshot also tells the model that
+/// the job may be stuck.
 async fn reconcile_pending_background_jobs(
 	reported_statuses: &mut std::collections::HashMap<String, String>,
+	checked_jobs: &mut std::collections::HashSet<String>,
 ) {
 	const RESOURCE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -2184,11 +2191,13 @@ async fn reconcile_pending_background_jobs(
 	};
 	let pending_jobs = crate::session::shell_jobs::pending_resources_for_session(&session_id);
 	reported_statuses.retain(|uri, _| pending_jobs.iter().any(|job| job.uri == *uri));
+	checked_jobs.retain(|uri| pending_jobs.iter().any(|job| job.uri == *uri));
 	for job in pending_jobs {
 		// A delivery already in flight will produce the real completion message.
 		if job.delivering {
 			continue;
 		}
+		checked_jobs.insert(job.uri.clone());
 		let status = match tokio::time::timeout(
 			RESOURCE_READ_TIMEOUT,
 			crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
@@ -2224,13 +2233,27 @@ async fn reconcile_pending_background_jobs(
 			},
 		);
 		log_debug!(
-			"background job {} had no completion signal after the reconcile window; \
-			 delivered a status snapshot",
+			"background job {} had no completion signal; delivered a status snapshot",
 			job.uri
 		);
 	}
 }
 
+/// Zero while a pending job has never had a status check, so the turn that left
+/// it running gets one at once; a full reconcile window otherwise.
+fn reconcile_delay(checked_jobs: &std::collections::HashSet<String>) -> std::time::Duration {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return BACKGROUND_JOB_RECONCILE;
+	};
+	let unchecked = crate::session::shell_jobs::pending_resources_for_session(&session_id)
+		.iter()
+		.any(|job| !job.delivering && !checked_jobs.contains(&job.uri));
+	if unchecked {
+		std::time::Duration::ZERO
+	} else {
+		BACKGROUND_JOB_RECONCILE
+	}
+}
 /// What a background job's resource returned at a reconcile pass. Only a
 /// snapshot is evidence about the job; an unavailable read is not compared.
 enum JobStatusRead {
@@ -2268,6 +2291,8 @@ fn background_job_status_message(
 	format!(
 		"<background_job resource=\"{uri}\" state=\"status_check\" elapsed_secs=\"{elapsed_secs}\">\n\
 		 No completion signal arrived yet; this is the job's current status, not its exit.\n\
+		 The run cannot finish while this job is pending: if you no longer need its result, stop it \
+		 using the method the tool provided when it started.\n\
 		 {text}{unchanged_guidance}\n\
 		 </background_job>"
 	)

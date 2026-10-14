@@ -27,8 +27,13 @@ evaluation provider you hold a key for: `TYPESAFE_API_KEY` for `typesafe:jev-lat
 `octohub:auto`. Either put it in config or pass it with `-m` on every call:
 
 ```toml
-[supervisor.evaluate]
+[decision]
 model = "typesafe:jev-latest"
+recall = false
+skills = false
+capabilities = false
+compression = false
+supervisor = false
 ```
 
 ```bash
@@ -248,8 +253,9 @@ print with, with, and without the prefix.
 - **CI scope check.** In a pull-request job, put the PR body and `git diff origin/main...HEAD` in the state and ask
   `unrelated` and `done`; fail the job below your threshold. The compact single-line output makes `jq -e` the whole
   gate.
-- **Destructive-command screening.** You do not need a script: `[supervisor.evaluate] authorizer = true` asks the
-  same model whether each pending call is prohibited, destructive, or external. Probed by hand, `git push --force
+- **Destructive-command screening.** You do not need a script: `[decision] supervisor = true` asks the
+  same model whether each pending call is prohibited, destructive, or external. Flagged or unavailable batches
+  still use the supervisor writer for grounded reasons; Jev confirms any proposed veto separately. Probed by hand, `git push --force
   origin master` scored 0.92 destructive and 0.98 prohibited under a "never push" instruction, `rm -rf target/` 0.17
   (regenerable), `cargo test` 0.07.
 - **Thresholds.** 0.5 and 0.7 above are starting points. Print the raw answers from your validator to stderr for a

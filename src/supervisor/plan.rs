@@ -448,8 +448,7 @@ async fn prescreen(
 		}
 		PlanSignal::Reassess => return Ok(false),
 	};
-	let Some(answers) = evaluate::run(&config.supervisor, Seam::Plan, state, questions).await
-	else {
+	let Some(answers) = evaluate::run(config, Seam::Plan, state, questions).await else {
 		return Ok(false);
 	};
 	let probability = evaluate::probability(&answers, evaluate::PLAN_QUESTION_ID);

@@ -42,7 +42,7 @@ fn config(plan: bool) -> crate::config::Config {
 	config.supervisor.enabled = true;
 	config.supervisor.plan.enabled = true;
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
-	config.supervisor.evaluate.plan = plan;
+	config.decision.supervisor = plan;
 	config
 }
 
@@ -123,16 +123,19 @@ fn instructions(question: &Question) -> String {
 async fn a_request_the_evaluation_declines_makes_no_planner_call() {
 	let fake = install_fake_evaluation(vec![answer(0.06)]).await;
 	in_plan_session("__plan_eval_declined", async {
+		let (url, captured) =
+			crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
 		let calls = planner_calls();
 		let applied = evaluate_counter(Seam::Plan, "applied");
 		let replaced = evaluate_counter(Seam::Plan, "avoided");
 		let mut session = session(PlanSignal::Request);
-		reconcile(&mut session, &config(true), NO_PLANNER).await;
+		reconcile(&mut session, &config(true), &url).await;
 		assert!(session.pending_plan_signal.is_none(), "signal consumed");
 		assert!(session.plan_evaluated);
 		assert!(!session.planner_failed, "declining is not failing");
 		assert!(!crate::mcp::core::plan::has_active_plan());
 		assert_eq!(planner_calls() - calls, 0);
+		assert!(captured.lock().unwrap().is_empty());
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 1);
 		assert_eq!(evaluate_counter(Seam::Plan, "avoided") - replaced, 1);
 
@@ -177,12 +180,15 @@ async fn a_request_at_or_above_the_threshold_runs_the_planner_unchanged() {
 	in_plan_session("__plan_eval_request_passes", async {
 		let calls = planner_calls();
 		let applied = evaluate_counter(Seam::Plan, "applied");
-		let url = spawn_stub(vec![final_response(CREATE)]).await;
+		let (url, captured) =
+			crate::session::chat::test_support::spawn_recording_stub(vec![final_response(CREATE)])
+				.await;
 		let mut session = session(PlanSignal::Request);
 		reconcile(&mut session, &config(true), &url).await;
 		assert!(crate::mcp::core::plan::has_active_plan());
 		assert!(!session.planner_failed);
 		assert_eq!(planner_calls() - calls, 1);
+		assert_eq!(captured.lock().unwrap().len(), 1);
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 0);
 	})
 	.await;
@@ -193,16 +199,18 @@ async fn a_phase_complete_below_the_threshold_is_held_with_the_documented_reason
 	let fake = install_fake_evaluation(vec![answer(0.08)]).await;
 	in_plan_session("__plan_eval_held", async {
 		start_plan();
+		let (url, captured) = crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
 		let calls = planner_calls();
 		let applied = evaluate_counter(Seam::Plan, "applied");
 		let replaced = evaluate_counter(Seam::Plan, "avoided");
 		let mut session = session(PlanSignal::PhaseComplete);
 		session.session.messages.push(msg("assistant", "edited src/cli.rs"));
-		reconcile(&mut session, &config(true), NO_PLANNER).await;
+		reconcile(&mut session, &config(true), &url).await;
 		assert_eq!(crate::mcp::core::plan::active_step_index(), Some(0));
 		assert!(!session.planner_failed);
 		assert!(session.pending_plan_signal.is_none());
 		assert_eq!(planner_calls() - calls, 0);
+		assert!(captured.lock().unwrap().is_empty());
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 1);
 		assert_eq!(evaluate_counter(Seam::Plan, "avoided") - replaced, 1);
 		let expected = format!(
@@ -235,10 +243,13 @@ async fn a_phase_complete_at_the_threshold_runs_the_planner_unchanged() {
 	in_plan_session("__plan_eval_phase_passes", async {
 		start_plan();
 		let applied = evaluate_counter(Seam::Plan, "applied");
-		let url = spawn_stub(vec![final_response(ADVANCE)]).await;
+		let (url, captured) =
+			crate::session::chat::test_support::spawn_recording_stub(vec![final_response(ADVANCE)])
+				.await;
 		let mut session = session(PlanSignal::PhaseComplete);
 		reconcile(&mut session, &config(true), &url).await;
 		assert_eq!(crate::mcp::core::plan::active_step_index(), Some(1));
+		assert_eq!(captured.lock().unwrap().len(), 1);
 		assert!(!session.planner_failed);
 		assert_eq!(evaluate_counter(Seam::Plan, "applied") - applied, 0);
 	})
@@ -267,7 +278,9 @@ async fn an_unavailable_evaluation_runs_the_planner_and_leaves_the_latch_alone()
 	in_plan_session("__plan_eval_unavailable", async {
 		let calls = planner_calls();
 		let unavailable = evaluate_counter(Seam::Plan, "unavailable");
-		let url = spawn_stub(vec![final_response(NO_PLAN)]).await;
+		let (url, captured) =
+			crate::session::chat::test_support::spawn_recording_stub(vec![final_response(NO_PLAN)])
+				.await;
 		let mut session = session(PlanSignal::Request);
 		reconcile(&mut session, &config(true), &url).await;
 		assert!(
@@ -276,6 +289,7 @@ async fn an_unavailable_evaluation_runs_the_planner_and_leaves_the_latch_alone()
 		);
 		assert!(!crate::mcp::core::plan::has_active_plan());
 		assert_eq!(planner_calls() - calls, 1);
+		assert_eq!(captured.lock().unwrap().len(), 1);
 		assert_eq!(evaluate_counter(Seam::Plan, "unavailable") - unavailable, 1);
 		assert_eq!(fake.requests().len(), 1);
 	})
@@ -287,7 +301,11 @@ async fn the_seam_off_makes_no_evaluation_request_for_either_signal() {
 	let fake = install_fake_evaluation(vec![answer(0.01), answer(0.01)]).await;
 	in_plan_session("__plan_eval_off", async {
 		let calls = planner_calls();
-		let url = spawn_stub(vec![final_response(NO_PLAN), final_response(HOLD)]).await;
+		let (url, captured) = crate::session::chat::test_support::spawn_recording_stub(vec![
+			final_response(NO_PLAN),
+			final_response(HOLD),
+		])
+		.await;
 		let mut session = session(PlanSignal::Request);
 		reconcile(&mut session, &config(false), &url).await;
 		assert!(!crate::mcp::core::plan::has_active_plan());
@@ -298,6 +316,7 @@ async fn the_seam_off_makes_no_evaluation_request_for_either_signal() {
 		assert!(fake.requests().is_empty());
 		assert!(!session.planner_failed);
 		assert_eq!(planner_calls() - calls, 2);
+		assert_eq!(captured.lock().unwrap().len(), 2);
 	})
 	.await;
 }

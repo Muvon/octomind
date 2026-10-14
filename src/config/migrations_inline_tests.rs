@@ -959,13 +959,13 @@ gate = true
 		.unwrap()
 		.expect("v18 must migrate");
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	let evaluate = &migrated["supervisor"]["evaluate"];
+	let decision = &migrated["decision"];
 
 	assert_eq!(migration.from_version, 18);
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
-	assert_eq!(evaluate["evolution"].as_bool(), Some(false));
-	assert_eq!(evaluate["gate"].as_bool(), Some(true));
-	assert_eq!(evaluate["model"].as_str(), Some("typesafe:jev-latest"));
+	assert!(!decision.as_table().unwrap().contains_key("evolution"));
+	assert_eq!(decision["supervisor"].as_bool(), Some(true));
+	assert_eq!(decision["model"].as_str(), Some("typesafe:jev-latest"));
 }
 
 #[test]
@@ -992,8 +992,134 @@ gate = true
 	assert_eq!(hindsight["enabled"].as_bool(), Some(false));
 	assert_eq!(hindsight["model"].as_str(), Some("muvon/hindsight"));
 	assert_eq!(migrated["supervisor"]["enabled"].as_bool(), Some(true));
-	assert_eq!(
-		migrated["supervisor"]["evaluate"]["gate"].as_bool(),
-		Some(true)
-	);
+	assert_eq!(migrated["decision"]["supervisor"].as_bool(), Some(true));
+}
+
+#[test]
+fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
+	for enabled in [
+		"authorizer",
+		"condense",
+		"distill",
+		"plan",
+		"gate",
+		"evolution",
+	] {
+		let flags = [
+			"authorizer",
+			"condense",
+			"distill",
+			"plan",
+			"gate",
+			"evolution",
+		]
+		.map(|key| {
+			format!(
+				"# {key} preference\n{key} = {} # {key} rationale\n",
+				key == enabled
+			)
+		})
+		.concat();
+		let original = format!("version = 21\n# custom decision settings\n[supervisor.evaluate]\n# custom decision model\nmodel = \"typesafe:jev-latest\" # preserve me\nrecall = true\nskills = true\ncapabilities = true\ncompression = true\n{flags}");
+		let migration = plan()
+			.migrate(&original, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
+		let value: toml::Value = toml::from_str(&migration.content).unwrap();
+		assert_eq!(value["version"].as_integer(), Some(22));
+		assert!(value
+			.get("supervisor")
+			.and_then(|supervisor| supervisor.get("evaluate"))
+			.is_none());
+		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
+		assert_eq!(decision.model.as_deref(), Some("typesafe:jev-latest"));
+		assert!(
+			decision.supervisor
+				&& decision.recall
+				&& decision.skills
+				&& decision.capabilities
+				&& decision.compression
+		);
+		assert!(migration.content.contains("# preserve me"));
+		assert!(migration.content.contains("# custom decision model"));
+		assert!(migration.content.contains("# custom decision settings"));
+		for key in [
+			"authorizer",
+			"condense",
+			"distill",
+			"plan",
+			"gate",
+			"evolution",
+		] {
+			assert!(migration.content.contains(&format!("# {key} preference")));
+			assert!(migration.content.contains(&format!("# {key} rationale")));
+		}
+	}
+}
+
+#[test]
+fn v22_fills_missing_flags_and_preserves_absent_or_empty_new_model() {
+	for existing in [
+		"version = 21\n",
+		"version = 21\n[supervisor.evaluate]\ngate = false\n",
+	] {
+		let migration = plan()
+			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
+		let value: toml::Value = toml::from_str(&migration.content).unwrap();
+		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
+		assert!(
+			!decision.supervisor
+				&& !decision.recall
+				&& !decision.skills
+				&& !decision.capabilities
+				&& !decision.compression
+		);
+	}
+	for model in ["", "model = \"\"\n"] {
+		let original = format!("version = 21\n[decision]\n{model}supervisor = true\n");
+		let migration = plan()
+			.migrate(&original, DEFAULT_CONFIG_TEMPLATE)
+			.unwrap()
+			.unwrap();
+		let value: toml::Value = toml::from_str(&migration.content).unwrap();
+		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
+		assert_eq!(
+			decision.model.as_deref(),
+			if model.is_empty() { None } else { Some("") }
+		);
+		assert!(decision.supervisor);
+	}
+}
+
+#[test]
+fn v22_rejects_malformed_values_and_conflicting_tables() {
+	for body in [
+		"supervisor = 1",
+		"[supervisor]\nevaluate = 1",
+		"[supervisor.evaluate]\nmodel = false",
+		"[supervisor.evaluate]\nmodel = \"openai:gpt\"",
+		"[supervisor.evaluate]\ngate = \"true\"",
+		"[supervisor.evaluate]\nrecall = 1",
+		"[supervisor.evaluate]\nunknown = true",
+		"[decision]\nmodel = 1",
+		"[decision]\nmodel = \"typesafe:gpt-5\"",
+		"[decision]\nskills = \"true\"",
+		"[decision]\nunknown = true",
+		"[decision]\nrecall = false\n[supervisor.evaluate]\nrecall = true",
+		"[decision]\nmodel = \"octohub:auto\"\n[supervisor.evaluate]\nmodel = \"typesafe:jev-latest\"",
+		"[decision]\nsupervisor = false\n[supervisor.evaluate]\nevolution = true",
+		"[decision]\nsupervisor = true\n[supervisor.evaluate]\ngate = false",
+	] {
+		assert!(plan().migrate(&format!("version = 21\n{body}\n"), DEFAULT_CONFIG_TEMPLATE).is_err(), "{body}");
+	}
+	let original = "version = 21\n[decision]\nrecall = true\nsupervisor = true\n[supervisor.evaluate]\nrecall = true\ngate = true\n";
+	let migration = plan()
+		.migrate(original, DEFAULT_CONFIG_TEMPLATE)
+		.unwrap()
+		.unwrap();
+	let value: toml::Value = toml::from_str(&migration.content).unwrap();
+	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
+	assert_eq!(value["decision"]["supervisor"].as_bool(), Some(true));
 }

@@ -56,3 +56,31 @@ fn parse_input_accepts_typed_questions_and_rejects_empty() {
 	let err = parse_input("not json").unwrap_err();
 	assert!(err.to_string().contains("invalid request JSON"));
 }
+
+#[tokio::test]
+async fn an_absent_or_empty_config_model_requires_an_explicit_model() {
+	let request = tempfile::NamedTempFile::new().unwrap();
+	std::fs::write(
+		request.path(),
+		include_str!("../../config-templates/evaluate.json"),
+	)
+	.unwrap();
+	for model in [None, Some(String::new())] {
+		let mut config: Config =
+			toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		config.decision.model = model;
+		let error = execute(
+			&EvaluateArgs {
+				model: None,
+				file: Some(request.path().to_path_buf()),
+			},
+			&config,
+		)
+		.await
+		.unwrap_err();
+		assert_eq!(
+			error.to_string(),
+			"decision.model is absent or empty; pass --model"
+		);
+	}
+}

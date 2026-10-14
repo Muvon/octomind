@@ -75,7 +75,7 @@ that the trigger fires. A generated skill stays loaded once its trigger activate
 both arms: from a control skill's first trigger match, or a treatment skill's trigger activation, every later verdict in
 that session is a sample, together with the turn's API-call count. Neither arm depends on the model's own report of
 what helped. A verdict counts as a pass only when it is execution-verified (see [Supervisor](14-supervisor.md#verify-gate));
-a pass resting on the verifier's reading alone is not a sample. With `[supervisor.evaluate] evolution = true`, samples
+a pass resting on the verifier's reading alone is not a sample. With `[decision] supervisor = true`, samples
 are graded (the probability the answer fulfils the request) and turns where the artifact does not apply are dropped;
 see [Supervisor](14-supervisor.md#evaluation-gates). At most one trial runs among artifacts whose scopes can bind in
 the same session, so a verdict is never shared between two trials.
@@ -349,6 +349,13 @@ as a lesson:
 Long-lived experiences are evaluated independently from that short-lesson decision. Their cited message handles are
 checked structurally, system-managed recall/steer messages are excluded from the transcript, and a separate verifier
 rejects unsupported or outcome-inflated records.
+
+With a nonempty `[decision] model` and `supervisor = true`, while supervision is enabled, Jev verifies short lessons,
+orientations, repaired experiences, retention promotions, and retention merges at a 0.5 support threshold. Unavailable
+answers reject candidates, keep rules scoped, or prevent consolidation; they never retry the replaced verifier on chat.
+Initial experience verification stays on `[supervisor.model]` because its issues guide the bounded repair writer.
+Extraction, experience repair, merged memory text, and evolution synthesis and proposal verification keep that profile.
+With decision routing disabled, the original verifier prompts, payloads, and consumers remain unchanged.
 
 Confidence drives importance: `confidence=high` (a direct correction) → `importance 0.9`; anything else (a stated
 preference, `confidence=medium`) → `importance 0.6`.

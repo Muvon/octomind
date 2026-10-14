@@ -1190,12 +1190,9 @@ impl PactContext {
 	/// admitted, so rendering, citation rules, archive, and telemetry need no
 	/// special case. All or nothing: one unavailable window leaves every lane
 	/// as allocated.
-	pub(crate) async fn prune_dead_tool_packets(
-		&mut self,
-		supervisor: &crate::supervisor::SupervisorConfig,
-	) {
+	pub(crate) async fn prune_dead_tool_packets(&mut self, config: &crate::config::Config) {
 		use crate::supervisor::evaluate::{self, Seam};
-		if !evaluate::enabled(supervisor, Seam::Compression) {
+		if !evaluate::enabled(config, Seam::Compression) {
 			return;
 		}
 		let units: Vec<usize> = self
@@ -1261,8 +1258,7 @@ impl PactContext {
 				)
 			})
 			.collect();
-		let Some(answers) = evaluate::run_windows(supervisor, Seam::Compression, requests).await
-		else {
+		let Some(answers) = evaluate::run_windows(config, Seam::Compression, requests).await else {
 			return;
 		};
 		let mut dead: Vec<usize> = Vec::new();

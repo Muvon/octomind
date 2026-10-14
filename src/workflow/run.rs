@@ -1303,6 +1303,7 @@ pub async fn execute(
 			reasoning_tokens: ex.totals.reasoning_tokens,
 			aux_input_tokens: 0,
 			aux_output_tokens: 0,
+			aux_cost: 0.0,
 			session_id: String::new(),
 			pending_work: false,
 		}));

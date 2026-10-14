@@ -298,6 +298,11 @@ pub struct CostPayload {
 	/// Completion tokens (reasoning included) of those auxiliary calls.
 	#[serde(default)]
 	pub aux_output_tokens: u64,
+	/// Provider-reported USD of those auxiliary calls. They run on their own
+	/// models, so a consumer pricing the main tokens itself must not reprice
+	/// these at the main model's rate.
+	#[serde(default)]
+	pub aux_cost: f64,
 	pub session_id: String,
 	/// The turn is over, but it left work that streams a follow-up turn to this
 	/// connection on its own — a delegated `tap` run, an async agent job, or a

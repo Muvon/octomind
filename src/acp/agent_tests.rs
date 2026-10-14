@@ -259,6 +259,7 @@ fn messages_without_an_acp_equivalent_are_dropped() {
 			reasoning_tokens: 0,
 			aux_input_tokens: 0,
 			aux_output_tokens: 0,
+			aux_cost: 0.0,
 			session_id: "s".to_string(),
 			pending_work: false,
 		}))

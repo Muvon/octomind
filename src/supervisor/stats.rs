@@ -289,13 +289,14 @@ pub fn evolution(action: &str) {
 		_ => {}
 	});
 }
-/// Prompt and completion tokens (reasoning included) of every supervisor call
-/// so far in this process, for the cost frame's auxiliary counters.
-pub fn token_totals() -> (u64, u64) {
+/// Prompt and completion tokens (reasoning included) and provider-reported cost
+/// of every supervisor call so far in this process, for the cost frame's
+/// auxiliary counters.
+pub fn usage_totals() -> (u64, u64, f64) {
 	global()
 		.lock()
-		.map(|s| (s.input_tokens, s.output_tokens + s.reasoning_tokens))
-		.unwrap_or((0, 0))
+		.map(|s| (s.input_tokens, s.output_tokens + s.reasoning_tokens, s.cost))
+		.unwrap_or((0, 0, 0.0))
 }
 
 /// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,

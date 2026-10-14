@@ -904,3 +904,16 @@ async fn test_process_response_request_spending_stop_ends_turn_without_final_ans
 	assert_eq!(roles, vec!["user", "assistant", "tool"]);
 	assert!(session.turn_answers.is_empty());
 }
+
+#[test]
+fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
+	let mut session = fake_session("hi");
+	session.session.info.compression_stats.input_tokens = 1_000;
+	session.session.info.compression_stats.cost = 0.002;
+	let (_, _, supervisor_cost) = crate::supervisor::stats::usage_totals();
+
+	let frame = session_cost_payload(&mut session, "s".to_string());
+
+	// The supervisor accumulator is process-global; other tests only add to it.
+	assert!(frame.aux_cost >= 0.002 + supervisor_cost);
+}

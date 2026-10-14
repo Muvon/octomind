@@ -494,6 +494,8 @@ const HISTORY_TURNS_KEPT: usize = 3;
 struct HistoricalEvidence {
 	request: String,
 	actions: String,
+	#[serde(default)]
+	entries: VecDeque<LedgerEntry>,
 	grounds: Vec<(u64, String)>,
 }
 
@@ -506,6 +508,7 @@ impl EvidenceLedger {
 			history.push_back(HistoricalEvidence {
 				request: previous_request.chars().take(READBACK_HEAD).collect(),
 				actions: self.render(),
+				entries: std::mem::take(&mut self.entries),
 				grounds: std::mem::take(&mut self.grounds),
 			});
 		}
@@ -700,6 +703,7 @@ impl EvidenceLedger {
 				{
 					last.repeats += 1;
 					last.last_sequence = sequence;
+					last.bytes = bytes;
 					return sequence;
 				}
 			}
@@ -976,6 +980,8 @@ pub struct GateInput<'a> {
 	pub claim: Option<&'a str>,
 	/// The status the agent ended its turn on; `None` when it gave none.
 	pub stop: Option<crate::supervisor::detect::SelfReport>,
+	/// Structured runtime facts for output visibility, including follow-up history.
+	pub ledger: &'a EvidenceLedger,
 	/// Rendered [`EvidenceLedger`] (empty when no tools ran — pure reasoning).
 	pub actions: &'a str,
 	/// Bounded earlier calls, separately labelled; never current-turn actions.
@@ -1076,7 +1082,7 @@ pub async fn verify(
 	}
 	// The evidence decision is one-shot. Only a structurally malformed response
 	// receives the bounded format-repair call below.
-	let mut verdict = report.verdict(conditions, &visibility.limited);
+	let mut verdict = report.verdict(conditions, &visibility.unseen);
 	if let GateVerdict::Indeterminate(reason) = verdict.clone() {
 		crate::log_info!(
 			"Verify-gate protocol invalid ({}); retrying format once",
@@ -1104,7 +1110,7 @@ pub async fn verify(
 		{
 			Ok((raw, retry)) => {
 				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, raw);
-				verdict = retry.verdict(conditions, &visibility.limited);
+				verdict = retry.verdict(conditions, &visibility.unseen);
 				report = retry;
 			}
 			Err(error) => {
@@ -1115,7 +1121,7 @@ pub async fn verify(
 	// Everything the verifier raised but could not make actionable. None of it
 	// blocks the turn — and none of it silently vanishes either: a finding the
 	// runtime declines to charge is exactly the one a human should see.
-	let mut reported = report.reported_findings(&visibility.limited);
+	let mut reported = report.reported_findings(&visibility.unseen);
 	// Second opinion, only on a blocking verdict: an independent model tries to
 	// refute each finding with evidence already in the input. What it refutes is
 	// reported to the user instead of costing a re-run; what stands blocks.
@@ -1151,6 +1157,13 @@ pub async fn verify(
 			};
 		}
 	}
+	crate::supervisor::accounting::record(
+		crate::supervisor::stats::CallKind::Gate,
+		crate::supervisor::accounting::Usage {
+			reported_findings: reported.iter().cloned().collect(),
+			..Default::default()
+		},
+	);
 	// A gaps verdict immediately emits one actionable re-run message. Showing
 	// non-chargeable findings beside it creates two overlapping supervisor
 	// diagnoses for one event. Defer those limits until a pass/indeterminate
@@ -1210,7 +1223,8 @@ Use comma-separated references in a sources attribute (tags) or sources string f
 Otherwise omit sources in tags or use null in JSON. These references apply to gaps, yes shapes,
 and unmatched checklist entries. Cite the visible observation in the finding's text.
 A claim supported only by omitted output is a verification limit, not a task failure. The runtime
-makes it advisory only when EVERY source is omitted:N and #N has an output limit in this pass.
+makes it advisory only when EVERY source is omitted:N and NONE of #N's output is visible in this pass.
+Any visible portion, including a partial readback, keeps the finding actionable.
 Never label an unseen action absent: its call and outcome remain recorded. Never label visible
 contradicting output or ground truth omitted merely because another part of that output is cut.
 After the one readback round, do not demand re-running an already recorded action merely to fit
@@ -1626,7 +1640,7 @@ fn charged(settles: &str, body: &str) -> Option<String> {
 }
 
 struct OutputVisibility {
-	limited: HashSet<u64>,
+	unseen: HashSet<u64>,
 	entries: Vec<(u64, &'static str)>,
 }
 
@@ -1644,31 +1658,30 @@ impl OutputVisibility {
 /// The action log contains no outputs. Only ground truth and the bounded
 /// readback can make retained output visible to this verifier pass.
 fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibility {
-	let historical = if input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp {
-		input.historical_actions
-	} else {
-		""
-	};
+	let historical = input
+		.ledger
+		.history
+		.iter()
+		.filter(|_| input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp);
 	let mut visibility = OutputVisibility {
-		limited: HashSet::new(),
+		unseen: HashSet::new(),
 		entries: Vec::new(),
 	};
-	for line in input.actions.lines().chain(historical.lines()) {
-		let Some((number, action)) = line.strip_prefix('#').and_then(|line| line.split_once(' '))
-		else {
-			continue;
-		};
-		let Ok(sequence) = number.parse::<u64>() else {
-			continue;
-		};
+	for entry in input
+		.ledger
+		.entries
+		.iter()
+		.chain(historical.flat_map(|turn| &turn.entries))
+	{
+		let sequence = entry.last_sequence;
 		let output = input.grounds.iter().find(|(n, _)| *n == sequence);
-		let (status, limited) = match output {
+		let (status, unseen) = match output {
 			Some((_, output)) if input.ground_truth.contains(output.as_str()) => {
 				("visible in ground truth", false)
 			}
 			Some((_, output)) if readback.contains(&sequence) => {
 				if output.chars().count() > READBACK_HEAD + READBACK_TAIL {
-					("partial: readback middle omitted", true)
+					("partial: readback middle omitted", false)
 				} else {
 					("visible in readback", false)
 				}
@@ -1677,12 +1690,12 @@ fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibilit
 				"not shown in readback; ground truth may contain excerpts",
 				true,
 			),
-			None if action.contains("→ ok (0b)") => ("empty output", false),
+			None if entry.bytes == 0 => ("empty output", false),
 			None => ("not retained; ground truth may contain excerpts", true),
 		};
 		// An observed error is never excused by retention limits on its details.
-		if limited && !action.contains("→ ERROR") {
-			visibility.limited.insert(sequence);
+		if unseen && !entry.error {
+			visibility.unseen.insert(sequence);
 		}
 		visibility.entries.push((sequence, status));
 	}
@@ -1692,14 +1705,14 @@ fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibilit
 /// Only explicit references to runtime-confirmed omissions qualify. A visible
 /// output, ground truth, absent action, or unknown reference keeps the finding
 /// actionable; prose and the model's PASS/GAPS label cannot grant an exemption.
-fn outside_view(sources: &str, limited: &HashSet<u64>) -> bool {
+fn outside_view(sources: &str, unseen: &HashSet<u64>) -> bool {
 	!sources.is_empty()
 		&& sources.split(',').all(|source| {
 			source
 				.trim()
 				.strip_prefix("omitted:")
 				.and_then(|number| number.parse::<u64>().ok())
-				.is_some_and(|sequence| limited.contains(&sequence))
+				.is_some_and(|sequence| unseen.contains(&sequence))
 		})
 }
 
@@ -2091,7 +2104,7 @@ impl VerifierReport {
 	/// condition is a gap even when the answer also says PASS (holistic
 	/// judgment demonstrably absorbs violated conditions when the overall
 	/// picture looks done). Evidence-shape findings are enforced the same way.
-	fn verdict(&self, expected_conditions: usize, limited: &HashSet<u64>) -> GateVerdict {
+	fn verdict(&self, expected_conditions: usize, unseen: &HashSet<u64>) -> GateVerdict {
 		let mut unmatched = Vec::new();
 		let mut window_advisory = false;
 		let mut seen_shapes = std::collections::HashSet::new();
@@ -2110,7 +2123,7 @@ impl VerifierReport {
 			// defect in the work. "yes" is an accusation, and is charged only under the
 			// rule every finding answers to (see [`charged`]).
 			match shape.found.as_str() {
-				"yes" if outside_view(&shape.sources, limited) => window_advisory = true,
+				"yes" if outside_view(&shape.sources, unseen) => window_advisory = true,
 				"yes" => {
 					if let Some(finding) = charged(&shape.settles, &shape.reason) {
 						unmatched.push(format!(
@@ -2149,7 +2162,7 @@ impl VerifierReport {
 				// violation: it can be neither charged nor excused.
 				"unmatched" => match condition.basis.as_str() {
 					BASIS_INFERENCE => {}
-					"recorded_output" if outside_view(&condition.sources, limited) => {
+					"recorded_output" if outside_view(&condition.sources, unseen) => {
 						window_advisory = true
 					}
 					basis if CONDITION_BASES.contains(&basis) => unmatched.push(format!(
@@ -2189,7 +2202,7 @@ impl VerifierReport {
 			.iter()
 			.filter(|finding| !finding.text.is_empty())
 			.filter(|finding| {
-				if outside_view(&finding.sources, limited) {
+				if outside_view(&finding.sources, unseen) {
 					window_advisory = true;
 					false
 				} else {
@@ -2211,7 +2224,7 @@ impl VerifierReport {
 	/// unmatched one it could only infer, an unknown shape, or a finding that
 	/// names no observation to close it. Surfaced to the user, never charged to
 	/// the agent.
-	fn reported_findings(&self, limited: &HashSet<u64>) -> Vec<String> {
+	fn reported_findings(&self, unseen: &HashSet<u64>) -> Vec<String> {
 		let mut reported = Vec::new();
 		for condition in &self.conditions {
 			let limit = match condition.status.as_str() {
@@ -2219,7 +2232,7 @@ impl VerifierReport {
 				"unmatched" if condition.basis == BASIS_INFERENCE => "suspected by inference only",
 				"unmatched"
 					if condition.basis == "recorded_output"
-						&& outside_view(&condition.sources, limited) =>
+						&& outside_view(&condition.sources, unseen) =>
 				{
 					"output outside gate view"
 				}
@@ -2237,7 +2250,7 @@ impl VerifierReport {
 		for shape in &self.shapes {
 			match shape.found.as_str() {
 				"unknown" => reported.push(format!("{} unsettled: {}", shape.name, shape.reason)),
-				"yes" if outside_view(&shape.sources, limited) => reported.push(format!(
+				"yes" if outside_view(&shape.sources, unseen) => reported.push(format!(
 					"{} output outside gate view: {}",
 					shape.name, shape.reason
 				)),
@@ -2251,7 +2264,7 @@ impl VerifierReport {
 			}
 		}
 		for finding in &self.gaps {
-			if outside_view(&finding.sources, limited) {
+			if outside_view(&finding.sources, unseen) {
 				reported.push(format!("gap output outside gate view: {}", finding.text));
 			} else if charged(&finding.settles, &finding.text).is_none() {
 				reported.push(format!(

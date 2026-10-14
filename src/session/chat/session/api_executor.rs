@@ -722,6 +722,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let verdict = crate::supervisor::gate::verify(
 			config,
 			crate::supervisor::gate::GateInput {
+				ledger: &chat_session.evidence,
 				original_task: &resolved_task.original_request,
 				task: &resolved_task.resolved_request,
 				task_scope: resolved_task.scope,

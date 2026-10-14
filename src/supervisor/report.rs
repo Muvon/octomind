@@ -20,7 +20,7 @@ use super::{
 	stats::CallKind,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +138,8 @@ pub enum Outcome {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MechanicUsage {
+	#[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+	pub reported_findings: BTreeSet<String>,
 	pub chat_calls: u64,
 	pub decision_calls: u64,
 	pub wall_blocking_ms: u64,
@@ -152,6 +154,8 @@ pub struct MechanicUsage {
 
 impl MechanicUsage {
 	fn include(&mut self, usage: &Usage) {
+		self.reported_findings
+			.extend(usage.reported_findings.iter().cloned());
 		self.api_ms += usage.api_time_ms;
 		self.input_tokens += usage.input_tokens;
 		self.output_tokens += usage.output_tokens;
@@ -162,7 +166,8 @@ impl MechanicUsage {
 		}
 	}
 	pub fn is_active(&self) -> bool {
-		self.chat_calls > 0
+		!self.reported_findings.is_empty()
+			|| self.chat_calls > 0
 			|| self.decision_calls > 0
 			|| self.wall_blocking_ms > 0
 			|| self.wall_background_ms > 0

@@ -175,3 +175,35 @@ async fn resume_preserves_the_same_mechanic_outcomes_and_authorizer_state() {
 	})
 	.await;
 }
+
+#[test]
+fn advisory_only_gate_outcomes_survive_reporting_and_old_reports_still_load() {
+	let mut info = crate::session::SessionInfo::default();
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Gate,
+		Usage {
+			reported_findings: ["output outside gate view".to_string()].into(),
+			..Default::default()
+		},
+	);
+	let report = SupervisorReport::for_session(&info);
+	let mut json = serde_json::to_value(report).unwrap();
+	assert_eq!(
+		json["mechanics"]["gate"]["reported_findings"],
+		serde_json::json!(["output outside gate view"])
+	);
+	json["mechanics"]["gate"]
+		.as_object_mut()
+		.unwrap()
+		.remove("reported_findings");
+	let restored: SupervisorReport = serde_json::from_value(json).unwrap();
+	assert!(restored.mechanics[&Mechanic::Gate]
+		.reported_findings
+		.is_empty());
+	let usage = serde_json::to_value(Usage::default()).unwrap();
+	assert!(usage.get("reported_findings").is_none());
+	assert!(serde_json::from_value::<Usage>(usage)
+		.unwrap()
+		.reported_findings
+		.is_empty());
+}

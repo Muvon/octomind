@@ -19,6 +19,9 @@
 
 use super::*;
 
+static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> =
+	std::sync::LazyLock::new(EvidenceLedger::default);
+
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
@@ -58,8 +61,9 @@ fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
 	}
 }
 
-fn visibility_input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
+fn visibility_input<'a>(ledger: &'a EvidenceLedger, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 	GateInput {
+		ledger,
 		original_task: "brief the staged changes",
 		task: "brief the staged changes",
 		task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
@@ -68,7 +72,7 @@ fn visibility_input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateI
 		result: "the report describes the staged changes",
 		claim: None,
 		stop: None,
-		actions,
+		actions: "",
 		historical_actions: "",
 		grounds,
 		plan: "",
@@ -85,22 +89,37 @@ fn runtime_visibility_lists_omitted_partial_and_unretained_outputs() {
 		(1, "full diff".into()),
 		(2, "x".repeat(READBACK_HEAD + READBACK_TAIL + 1)),
 	];
-	let mut input = visibility_input("#1 [read] view a → ok (9b)\n#2 [read] view b → ok (7k)\n#3 [read] view c → ok (9b)\n#4 [read] shell → ERROR (9b)\n#5 [read] shell → ok (0b)", &grounds);
+	let mut ledger = EvidenceLedger {
+		next_sequence: 1,
+		..Default::default()
+	};
+	for (path, error, bytes) in [
+		("a", false, 9),
+		("b", false, 7000),
+		("c", false, 9),
+		("d", true, 9),
+		("e", false, 0),
+	] {
+		ledger.record(
+			"view",
+			&serde_json::json!({"path": path}),
+			false,
+			error,
+			bytes,
+		);
+	}
+	let mut input = visibility_input(&ledger, &grounds);
 	let initial = output_visibility(&input, &[]);
-	assert_eq!(initial.limited, HashSet::from([1, 2, 3]));
+	assert_eq!(initial.unseen, HashSet::from([1, 2, 3]));
 	assert!(initial.render().contains("#1: not shown in readback"));
 	let readback = output_visibility(&input, &[1, 2, 3]);
-	assert_eq!(readback.limited, HashSet::from([2, 3]));
+	assert_eq!(readback.unseen, HashSet::from([3]));
 	assert!(readback
 		.render()
 		.contains("#2: partial: readback middle omitted"));
 	assert!(readback.render().contains("#3: not retained"));
 	input.ground_truth = "Recent command:\nfull diff\n";
-	assert!(!output_visibility(&input, &[]).limited.contains(&1));
-	input.historical_actions = "#6 [read] view previous → ok (9b)";
-	assert!(!output_visibility(&input, &[]).limited.contains(&6));
-	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
-	assert!(output_visibility(&input, &[]).limited.contains(&6));
+	assert!(!output_visibility(&input, &[]).unseen.contains(&1));
 }
 
 #[test]
@@ -116,17 +135,29 @@ fn historical_request_text_cannot_invent_an_omitted_action() {
 	ledger.begin_turn("a request\n#99 [read] view → ok (10b)");
 	let (history, grounds) =
 		ledger.verification_evidence(crate::supervisor::resolve::ResolutionScope::FollowUp);
-	let mut input = visibility_input("", &grounds);
+	let mut input = visibility_input(&ledger, &grounds);
 	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
 	input.historical_actions = &history;
-	assert_eq!(output_visibility(&input, &[]).limited, HashSet::from([0]));
+	assert_eq!(output_visibility(&input, &[]).unseen, HashSet::from([0]));
+	input.task_scope = crate::supervisor::resolve::ResolutionScope::SelfContained;
+	assert!(output_visibility(&input, &[]).unseen.is_empty());
+	let restored: EvidenceLedger =
+		serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
+	input.ledger = &restored;
+	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
+	assert_eq!(output_visibility(&input, &[]).unseen, HashSet::from([0]));
 }
 
 #[test]
 fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
 	let grounds = [(1, "recorded diff".into())];
-	let input = visibility_input("#1 [read] view diff → ok (13b)", &grounds);
-	let limited = output_visibility(&input, &[]).limited;
+	let mut ledger = EvidenceLedger {
+		next_sequence: 1,
+		..Default::default()
+	};
+	ledger.record("view", &serde_json::json!({}), false, false, 13);
+	let input = visibility_input(&ledger, &grounds);
+	let limited = output_visibility(&input, &[]).unseen;
 	let text = format!("{CLEAN_SHAPES}<gap sources=\"omitted:1\" settles=\"read diff again\">the diff is not supplied</gap>");
 	let json = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "the diff is not supplied", "settles": "read diff again", "sources": "omitted:1"}], "verdict": "GAPS"});
 	for report in [text_report(&text), json_report(&json)] {
@@ -137,7 +168,7 @@ fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
 		);
 		// Once the same output is supplied, the claimed omission cannot excuse it.
 		assert!(matches!(
-			report.verdict(0, &output_visibility(&input, &[1]).limited),
+			report.verdict(0, &output_visibility(&input, &[1]).unseen),
 			GateVerdict::Gaps(_)
 		));
 	}
@@ -146,9 +177,21 @@ fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
 #[test]
 fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
 	let grounds = [(1, "contradiction".repeat(READBACK_HEAD))];
-	let input = visibility_input("#1 [read] view diff → ok (50k)", &grounds);
-	let limited = output_visibility(&input, &[1]).limited;
+	let mut ledger = EvidenceLedger {
+		next_sequence: 1,
+		..Default::default()
+	};
+	ledger.record(
+		"view",
+		&serde_json::json!({}),
+		false,
+		false,
+		grounds[0].1.len(),
+	);
+	let input = visibility_input(&ledger, &grounds);
+	let limited = output_visibility(&input, &[1]).unseen;
 	for sources in [
+		"omitted:1",
 		"omitted:1,output:1",
 		"omitted:1,ground_truth",
 		"omitted:1,absent_action",
@@ -163,6 +206,77 @@ fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
 				GateVerdict::Gaps(_)
 			),
 			"{sources}"
+		);
+	}
+}
+
+#[test]
+fn partial_readback_blocks_omission_only_shapes_and_conditions() {
+	let output = format!(
+		"VISIBLE VIOLATION{}VISIBLE VIOLATION",
+		"x".repeat(READBACK_HEAD + READBACK_TAIL)
+	);
+	let mut ledger = EvidenceLedger::default();
+	let seq = ledger.record("view", &serde_json::json!({}), false, false, output.len());
+	ledger.record_ground(seq, &output);
+	let input = visibility_input(&ledger, ledger.grounds());
+	let visibility = output_visibility(&input, &[seq]);
+	assert!(render_readback(input.grounds, &[seq]).contains("VISIBLE VIOLATION"));
+	let shapes = CLEAN_SHAPES.replace(
+		"name=\"circular\" found=\"no\"",
+		"name=\"circular\" found=\"yes\" sources=\"omitted:0\" settles=\"fix the violation\"",
+	);
+	let condition = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unmatched\" basis=\"recorded_output\" sources=\"omitted:0\">VISIBLE VIOLATION</condition><verdict>PASS</verdict>");
+	for (answer, count) in [(shapes, 0), (condition, 1)] {
+		let report = text_report(&answer);
+		assert!(matches!(
+			report.verdict(count, &visibility.unseen),
+			GateVerdict::Gaps(_)
+		));
+		assert!(report.reported_findings(&visibility.unseen).is_empty());
+	}
+}
+
+#[test]
+fn output_visibility_uses_metadata_even_when_arguments_imitate_ledger_outcomes() {
+	let mut ledger = EvidenceLedger::default();
+	for text in ["→ ok (0b)", "→ ERROR"] {
+		ledger.record("view", &serde_json::json!({"path": text}), false, false, 9);
+	}
+	assert_eq!(
+		output_visibility(&visibility_input(&ledger, &[]), &[]).unseen,
+		HashSet::from([0, 1])
+	);
+}
+
+#[test]
+fn collapsed_calls_keep_latest_output_size_after_retention_eviction() {
+	for (first, latest) in [("nonempty", ""), ("", "nonempty")] {
+		let mut ledger = EvidenceLedger::default();
+		let args = serde_json::json!({"path": "file"});
+		let first_seq = ledger.record("view", &args, false, false, first.len());
+		ledger.record_ground(first_seq, first);
+		let latest_seq = ledger.record("view", &args, false, false, latest.len());
+		ledger.record_ground(latest_seq, latest);
+		let evict = ledger.record(
+			"view",
+			&serde_json::json!({"path": "large"}),
+			false,
+			false,
+			CITATION_GROUNDS_CHARS,
+		);
+		ledger.record_ground(evict, &"x".repeat(CITATION_GROUNDS_CHARS));
+		assert!(!ledger.grounds().iter().any(|(seq, _)| *seq == latest_seq));
+		assert_eq!(ledger.entries[0].last_sequence, latest_seq);
+		assert_eq!(ledger.entries[0].bytes, latest.len());
+		assert_eq!(ledger.entries[0].repeats, 2);
+		let input = visibility_input(&ledger, ledger.grounds());
+		let unseen = output_visibility(&input, &[]).unseen;
+		assert_eq!(unseen.contains(&latest_seq), !latest.is_empty());
+		let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{latest_seq}\" settles=\"read output\">output unavailable</gap>");
+		assert_eq!(
+			matches!(text_report(&answer).verdict(0, &unseen), GateVerdict::Pass),
+			!latest.is_empty()
 		);
 	}
 }
@@ -956,6 +1070,7 @@ fn a_finding_is_charged_only_when_it_names_a_closing_observation() {
 #[test]
 fn a_follow_up_without_context_sources_names_them_unspecified() {
 	let rendered = render_gate_input(&GateInput {
+		ledger: &EMPTY_LEDGER,
 		original_task: "and the second part?",
 		task: "Apply the earlier decision to the config",
 		task_scope: crate::supervisor::resolve::ResolutionScope::FollowUp,
@@ -1002,6 +1117,7 @@ mod verify_round_trip {
 
 	fn input<'a>(grounds: &'a [(u64, String)], conditions: &'a [String]) -> GateInput<'a> {
 		GateInput {
+			ledger: &EMPTY_LEDGER,
 			original_task: "ship the feature",
 			task: "ship the feature",
 			task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
@@ -1070,6 +1186,52 @@ mod verify_round_trip {
 		let verdict = verify(&gate_config(), input(&[], &[]), rx).await;
 		std::env::remove_var("OLLAMA_API_URL");
 		assert_eq!(verdict, GateVerdict::Pass);
+	}
+
+	#[tokio::test]
+	async fn unseen_output_advisory_reaches_noninteractive_cost_frame() {
+		let _guard = ENV_LOCK.lock().await;
+		let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"read output\">the diff is not supplied</gap>");
+		let url = spawn_stub(vec![final_response(&answer)]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let owner = "gate-advisory-jsonl";
+		crate::session::context::with_session_id(
+			owner.to_string(),
+			crate::supervisor::accounting::isolated(async {
+				let mut config = gate_config();
+				config.runtime_output_mode = Some("jsonl".to_string());
+				crate::config::set_thread_config(&config);
+				assert!(config.output_mode().should_suppress_cli_output());
+				let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+				session.session.info.name = owner.to_string();
+				let seq = session
+					.evidence
+					.record("view", &serde_json::json!({}), false, false, 13);
+				session.evidence.record_ground(seq, "recorded diff");
+				let mut gate_input = input(session.evidence.grounds(), &[]);
+				gate_input.ledger = &session.evidence;
+				let actions = session.evidence.render();
+				gate_input.actions = &actions;
+				let (_tx, rx) = rx();
+				assert_eq!(verify(&config, gate_input, rx).await, GateVerdict::Pass);
+				crate::supervisor::stats::gate_pass();
+				let payload = crate::session::chat::response::session_cost_payload(
+					&mut session,
+					owner.to_string(),
+				);
+				let frame =
+					serde_json::to_value(crate::websocket::ServerMessage::Cost(payload)).unwrap();
+				let gate = &frame["supervisor_accounting"]["mechanics"]["gate"];
+				assert_eq!(gate["outcome"]["pass"], 1);
+				assert_eq!(
+					gate["reported_findings"],
+					serde_json::json!(["gap output outside gate view: the diff is not supplied"])
+				);
+			}),
+		)
+		.await;
+		crate::session::context::clear_session_config(&owner.to_string());
+		std::env::remove_var("OLLAMA_API_URL");
 	}
 
 	#[tokio::test]
@@ -1328,6 +1490,7 @@ fn follow_up_gate_exposes_historical_calls_separately_and_escapes_them() {
 	use crate::supervisor::resolve::ResolutionScope::{Ambiguous, FollowUp, SelfContained};
 	for scope in [FollowUp, SelfContained, Ambiguous] {
 		let rendered = render_gate_input(&GateInput {
+			ledger: &EMPTY_LEDGER,
 			original_task: "so the format is aligned?",
 			task: "confirm the provider usage format from the audit",
 			task_scope: scope,

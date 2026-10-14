@@ -29,6 +29,8 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Usage {
+	#[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+	pub reported_findings: BTreeSet<String>,
 	#[serde(default)]
 	pub outcome: BTreeMap<Outcome, u64>,
 	pub calls: u64,
@@ -43,6 +45,8 @@ pub struct Usage {
 
 impl Usage {
 	fn add(&mut self, other: &Self) {
+		self.reported_findings
+			.extend(other.reported_findings.iter().cloned());
 		for (&key, &count) in &other.outcome {
 			*self.outcome.entry(key).or_default() += count;
 		}
@@ -56,6 +60,8 @@ impl Usage {
 		self.background_wall_time_ms += other.background_wall_time_ms;
 	}
 	fn merge_max(&mut self, other: &Self) {
+		self.reported_findings
+			.extend(other.reported_findings.iter().cloned());
 		for (&key, &count) in &other.outcome {
 			let own = self.outcome.entry(key).or_default();
 			*own = (*own).max(count);

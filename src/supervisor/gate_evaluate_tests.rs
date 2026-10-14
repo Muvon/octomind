@@ -27,6 +27,9 @@ use crate::session::chat::test_support::{
 use crate::supervisor::evaluate::{gate_question_id, Seam};
 use octolib::evaluation::Question;
 
+static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> =
+	std::sync::LazyLock::new(EvidenceLedger::default);
+
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
@@ -51,6 +54,7 @@ fn gaps(gaps: &[&str]) -> String {
 
 fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 	GateInput {
+		ledger: &EMPTY_LEDGER,
 		original_task: "rename the CLI flag --json to --format",
 		task: "rename the CLI flag --json to --format",
 		task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,

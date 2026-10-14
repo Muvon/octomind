@@ -493,3 +493,35 @@ fn detached_timer_events_preserve_exact_foreground_turn_time_before_job_completi
 	assert_eq!(total.background_wall_time_ms, Some(25));
 	assert_eq!(total.kinds[&CallKind::Distill].background_wall_time_ms, 25);
 }
+
+#[tokio::test]
+async fn reported_gate_findings_are_session_owned_and_survive_snapshot_merges() {
+	isolated(async {
+		for owner in ["gate-a", "gate-b"] {
+			with_session_id(owner.to_string(), async {
+				record(
+					CallKind::Gate,
+					Usage {
+						reported_findings: [format!("{owner}: unseen output")].into(),
+						..Default::default()
+					},
+				);
+			})
+			.await;
+		}
+		for owner in ["gate-a", "gate-b"] {
+			let delta = take_for(owner);
+			let mut merged = SupervisorAccounting::default();
+			merged.add(&delta);
+			merged.merge_max(&delta);
+			let restored: SupervisorAccounting =
+				serde_json::from_value(serde_json::to_value(&merged).unwrap()).unwrap();
+			assert_eq!(
+				restored.kinds[&CallKind::Gate].reported_findings,
+				[format!("{owner}: unseen output")].into()
+			);
+			assert!(take_for(owner).kinds.is_empty());
+		}
+	})
+	.await;
+}

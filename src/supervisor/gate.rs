@@ -806,6 +806,7 @@ const GT_FILE_HEAD_LINES: usize = 80;
 pub struct RenderedEvidence {
 	pub text: String,
 	output_sequences: HashSet<u64>,
+	has_unknown_output_provenance: bool,
 }
 
 /// Runtime-gathered GROUND TRUTH for the verifier: the working-tree diff of the
@@ -858,16 +859,14 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 			s.push_str("$ ");
 			s.push_str(cmd);
 			s.push('\n');
-			if let Some(sequence) = sequence {
-				if !out.is_empty() {
-					// The synthetic ellipsis is not an excerpt of the command output.
-					let prefix = if out.chars().count() > LAST_COMMAND_TAIL {
-						'…'.len_utf8()
-					} else {
-						0
-					};
-					output_starts.push((*sequence, s.len() + prefix));
-				}
+			if !out.is_empty() {
+				// The synthetic ellipsis is not an excerpt of the command output.
+				let prefix = if out.chars().count() > LAST_COMMAND_TAIL {
+					'…'.len_utf8()
+				} else {
+					0
+				};
+				output_starts.push((*sequence, s.len() + prefix));
 			}
 			s.push_str(out);
 			if !out.ends_with('\n') {
@@ -899,16 +898,26 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 		}
 		s.truncate(end);
 	}
-	let output_sequences = output_starts
+	let mut output_sequences = HashSet::new();
+	let mut has_unknown_output_provenance = false;
+	for (sequence, _) in output_starts
 		.into_iter()
-		.filter_map(|(sequence, start)| (start < s.len()).then_some(sequence))
-		.collect();
+		.filter(|(_, start)| *start < s.len())
+	{
+		match sequence {
+			Some(sequence) => {
+				output_sequences.insert(sequence);
+			}
+			None => has_unknown_output_provenance = true,
+		}
+	}
 	if truncated {
 		s.push_str("\n(ground truth truncated)\n");
 	}
 	RenderedEvidence {
 		text: s,
 		output_sequences,
+		has_unknown_output_provenance,
 	}
 }
 
@@ -1705,6 +1714,9 @@ impl OutputVisibility {
 /// The action log contains no outputs. Only ground truth and the bounded
 /// readback can make retained output visible to this verifier pass.
 fn output_visibility(input: &GateInput<'_>, readback: &RenderedEvidence) -> OutputVisibility {
+	// An unaddressable excerpt may belong to any sequence, so none is provably unseen.
+	let has_unknown_output_provenance =
+		input.ground_truth.has_unknown_output_provenance || readback.has_unknown_output_provenance;
 	let historical = input
 		.ledger
 		.history
@@ -1733,8 +1745,12 @@ fn output_visibility(input: &GateInput<'_>, readback: &RenderedEvidence) -> Outp
 					("visible in readback", false)
 				}
 			}
-			Some(_) => ("not shown in readback or ground truth", true),
 			None if entry.bytes == 0 => ("empty output", false),
+			_ if has_unknown_output_provenance => (
+				"visibility unknown: emitted excerpt lacks provenance",
+				false,
+			),
+			Some(_) => ("not shown in readback or ground truth", true),
 			None => ("not retained; no ground-truth excerpt", true),
 		};
 		// An observed error is never excused by retention limits on its details.
@@ -1786,6 +1802,7 @@ fn render_readback(grounds: &[(u64, String)], wanted: &[u64]) -> RenderedEvidenc
 	RenderedEvidence {
 		text: block,
 		output_sequences,
+		has_unknown_output_provenance: false,
 	}
 }
 

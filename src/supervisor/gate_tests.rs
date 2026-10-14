@@ -320,6 +320,81 @@ fn command_tail_contradictions_block_without_readback_before_and_after_eviction(
 }
 
 #[test]
+fn legacy_snapshot_contradictions_block_before_and_after_retention_eviction() {
+	let output = format!("{}VISIBLE VIOLATION", "x".repeat(LAST_COMMAND_TAIL + 1));
+	let tail = format!(
+		"…{}",
+		output
+			.chars()
+			.skip(output.chars().count() - LAST_COMMAND_TAIL)
+			.collect::<String>()
+	);
+	for evicted in [false, true] {
+		let mut ledger: EvidenceLedger = serde_json::from_value(serde_json::json!({
+			"entries": [
+				{"last_sequence": 0, "tool": "shell", "args": "command=check", "mutation": false, "error": false, "bytes": output.len(), "repeats": 1},
+				{"last_sequence": 1, "tool": "view", "args": "path=other", "mutation": false, "error": false, "bytes": 12, "repeats": 1}
+			],
+			"dropped": 0,
+			"next_sequence": 2,
+			"collapse_checkpoint": 0,
+			"mutated_paths": [],
+			"recent_commands": [["check", tail]],
+			"grounds": [[0, output], [1, "other output"]],
+			"ground_chars": output.chars().count() + 12,
+			"gate_checkpoint": 0,
+			"history": []
+		})).unwrap();
+		assert_eq!(ledger.recent_commands[0].2, None);
+		if evicted {
+			let other = ledger.record(
+				"view",
+				&serde_json::json!({"path": "large"}),
+				false,
+				false,
+				CITATION_GROUNDS_CHARS,
+			);
+			ledger.record_ground(other, &"x".repeat(CITATION_GROUNDS_CHARS));
+		}
+		assert_eq!(ledger.grounds().iter().any(|(n, _)| *n == 0), !evicted);
+		let truth = render_ground_truth(&ledger);
+		assert!(truth.text.contains("VISIBLE VIOLATION"));
+		assert!(truth.output_sequences.is_empty());
+		assert!(truth.has_unknown_output_provenance);
+		let mut input = visibility_input(&ledger, ledger.grounds());
+		input.ground_truth = &truth;
+		for readback in [
+			RenderedEvidence::default(),
+			render_readback(input.grounds, &[1]),
+		] {
+			let visibility = output_visibility(&input, &readback);
+			assert!(visibility.unseen.is_empty());
+			let gap = format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION</gap>");
+			let shapes = CLEAN_SHAPES.replace("name=\"circular\" found=\"no\">independent expectation", "name=\"circular\" found=\"yes\" sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION");
+			let condition = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unmatched\" basis=\"recorded_output\" sources=\"omitted:0\">VISIBLE VIOLATION</condition><verdict>PASS</verdict>");
+			let json_gap = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"}], "verdict": "GAPS"});
+			let mut json_shape = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [], "verdict": "GAPS"});
+			json_shape["shapes"][0] = serde_json::json!({"name": "circular", "found": "yes", "reason": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"});
+			let json_condition = serde_json::json!({"conditions": [{"n": 1, "status": "unmatched", "basis": "recorded_output", "observation": "VISIBLE VIOLATION", "sources": "omitted:0"}], "shapes": clean_json_shapes(), "gaps": [], "verdict": "PASS"});
+			for (report, count) in [
+				(text_report(&gap), 0),
+				(text_report(&shapes), 0),
+				(text_report(&condition), 1),
+				(json_report(&json_gap), 0),
+				(json_report(&json_shape), 0),
+				(json_report(&json_condition), 1),
+			] {
+				assert!(matches!(
+					report.verdict(count, &visibility.unseen),
+					GateVerdict::Gaps(_)
+				));
+				assert!(report.reported_findings(&visibility.unseen).is_empty());
+			}
+		}
+	}
+}
+
+#[test]
 fn ground_truth_visibility_tracks_only_output_bytes_surviving_final_truncation() {
 	let output = "界".repeat(LAST_COMMAND_TAIL + 1);
 	let mut ledger = EvidenceLedger::default();
@@ -336,28 +411,35 @@ fn ground_truth_visibility_tracks_only_output_bytes_surviving_final_truncation()
 	let tail_start = initial.text.find('…').unwrap();
 	// No tail, only the synthetic ellipsis, an incomplete UTF-8 character,
 	// and one complete character surviving the byte cap, respectively.
-	for (surviving_bytes, visible) in [(0, false), (3, false), (5, false), (6, true)] {
-		ledger.recent_commands[0].0 = format!(
-			"check{}",
-			"x".repeat(GT_TOTAL_MAX - tail_start - surviving_bytes)
-		);
-		let truth = render_ground_truth(&ledger);
-		assert!(truth.text.contains("(ground truth truncated)"));
-		assert_eq!(truth.text.contains('界'), visible);
-		let mut input = visibility_input(&ledger, ledger.grounds());
-		input.ground_truth = &truth;
-		let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
-		assert_eq!(visibility.unseen.contains(&seq), !visible);
-		let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
-		assert_eq!(
-			matches!(
-				text_report(&answer).verdict(0, &visibility.unseen),
-				GateVerdict::Pass
-			),
-			!visible
-		);
-		let readback = render_readback(input.grounds, &[seq]);
-		assert!(!output_visibility(&input, &readback).unseen.contains(&seq));
+	for provenance in [Some(seq), None] {
+		ledger.recent_commands[0].2 = provenance;
+		for (surviving_bytes, visible) in [(0, false), (3, false), (5, false), (6, true)] {
+			ledger.recent_commands[0].0 = format!(
+				"check{}",
+				"x".repeat(GT_TOTAL_MAX - tail_start - surviving_bytes)
+			);
+			let truth = render_ground_truth(&ledger);
+			assert!(truth.text.contains("(ground truth truncated)"));
+			assert_eq!(truth.text.contains('界'), visible);
+			assert_eq!(
+				truth.has_unknown_output_provenance,
+				provenance.is_none() && visible
+			);
+			let mut input = visibility_input(&ledger, ledger.grounds());
+			input.ground_truth = &truth;
+			let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
+			assert_eq!(visibility.unseen.contains(&seq), !visible);
+			let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
+			assert_eq!(
+				matches!(
+					text_report(&answer).verdict(0, &visibility.unseen),
+					GateVerdict::Pass
+				),
+				!visible
+			);
+			let readback = render_readback(input.grounds, &[seq]);
+			assert!(!output_visibility(&input, &readback).unseen.contains(&seq));
+		}
 	}
 }
 
@@ -376,6 +458,7 @@ fn identical_text_does_not_give_an_unseen_sequence_an_excerpt() {
 	ledger.record_ground(visible, "same text");
 	ledger.record_command_output("check", "same text");
 	let truth = render_ground_truth(&ledger);
+	assert!(!truth.has_unknown_output_provenance);
 	let mut input = visibility_input(&ledger, ledger.grounds());
 	input.ground_truth = &truth;
 	let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
@@ -384,6 +467,25 @@ fn identical_text_does_not_give_an_unseen_sequence_an_excerpt() {
 	let report = text_report(&answer);
 	assert_eq!(report.verdict(0, &visibility.unseen), GateVerdict::Pass);
 	assert_eq!(report.reported_findings(&visibility.unseen).len(), 1);
+}
+
+#[test]
+fn empty_unaddressable_command_output_keeps_unseen_outputs_exemptable() {
+	let mut ledger = EvidenceLedger::default();
+	let seq = ledger.record("view", &serde_json::json!({}), false, false, 9);
+	ledger.record_ground(seq, "some text");
+	ledger.fold_job_completion(None, "empty command", "");
+	let truth = render_ground_truth(&ledger);
+	assert!(!truth.has_unknown_output_provenance);
+	let mut input = visibility_input(&ledger, ledger.grounds());
+	input.ground_truth = &truth;
+	let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
+	assert_eq!(visibility.unseen, HashSet::from([seq]));
+	let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
+	assert_eq!(
+		text_report(&answer).verdict(0, &visibility.unseen),
+		GateVerdict::Pass
+	);
 }
 
 #[test]
@@ -396,19 +498,17 @@ fn command_tail_provenance_survives_resume_and_detached_completion() {
 		false,
 		9,
 	);
-	let other = ledger.record("view", &serde_json::json!({}), false, false, 9);
+	ledger.record("view", &serde_json::json!({}), false, false, 9);
 	ledger.fold_job_completion(Some(launch), "check", "completed");
 	ledger.fold_job_completion(None, "unknown legacy job", "other result");
 	let restored: EvidenceLedger =
 		serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
 	let truth = render_ground_truth(&restored);
 	assert_eq!(truth.output_sequences, HashSet::from([launch]));
+	assert!(truth.has_unknown_output_provenance);
 	let mut input = visibility_input(&restored, &[]);
 	input.ground_truth = &truth;
-	assert_eq!(
-		output_visibility(&input, &EMPTY_EVIDENCE).unseen,
-		HashSet::from([other])
-	);
+	assert!(output_visibility(&input, &EMPTY_EVIDENCE).unseen.is_empty());
 	let legacy: EvidenceLedger = serde_json::from_value(
 		serde_json::json!({"recent_commands": [["check", "legacy output"]]}),
 	)
@@ -416,6 +516,7 @@ fn command_tail_provenance_survives_resume_and_detached_completion() {
 	let truth = render_ground_truth(&legacy);
 	assert!(truth.text.contains("legacy output"));
 	assert!(truth.output_sequences.is_empty());
+	assert!(truth.has_unknown_output_provenance);
 }
 
 #[test]

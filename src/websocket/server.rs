@@ -1591,6 +1591,7 @@ async fn handle_user_message(
 			&ServerMessage::error(format!("Failed to save session: {}", e)),
 		)
 		.await?;
+		send_message(ws_sender, &cost_msg).await?;
 		return Ok(());
 	}
 
@@ -1606,7 +1607,6 @@ async fn handle_user_message(
 				)
 				.await?;
 			}
-			send_message(ws_sender, &cost_msg).await?;
 		}
 		Err(e) => {
 			log_error!("API call failed: {}", e);
@@ -1614,6 +1614,7 @@ async fn handle_user_message(
 			send_message(ws_sender, &error).await?;
 		}
 	}
+	send_message(ws_sender, &cost_msg).await?;
 
 	Ok(())
 }

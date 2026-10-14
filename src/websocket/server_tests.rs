@@ -2712,7 +2712,7 @@ async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
 			cost["supervisor_accounting"], info["supervisor_accounting"],
 			"inbox={inbox}"
 		);
-		assert_eq!(cost["total_cost"], info["total_cost"]);
+		assert_eq!(cost["session_cost"], info["total_cost"]);
 		ws.close(None).await.unwrap();
 		crate::session::context::cleanup_session(&session_id);
 	}

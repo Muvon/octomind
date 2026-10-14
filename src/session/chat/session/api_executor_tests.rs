@@ -1495,9 +1495,11 @@ async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
 	let url = spawn_stub(vec![final_response("Hello from stub")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
-	// fake_provider_config disables supervisor learning, so a pack left over
-	// from a previous configuration must be dropped before the request.
-	let config = fake_provider_config();
+	// Learning has its own switch, independent of `supervisor.enabled`, so a
+	// pack left over from a previous configuration must be dropped before the
+	// request once that switch is off.
+	let mut config = fake_provider_config();
+	config.supervisor.learning.enabled = false;
 	let mut session = fake_session("hi there");
 	session.active_memory_pack = Some("stale pack content".to_string());
 

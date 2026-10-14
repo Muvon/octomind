@@ -86,7 +86,7 @@ pub async fn create_system_prompt(
 
 	prompt.push_str(
 		"\n<output-rules>\n\
-		Be concise and action-first: <=25 words between tool calls, <=2 sentences in the final response unless more is genuinely needed. Skip intent narration (\"I'll now…\", \"Let me…\"), filler, request restatement, and unrequested reasoning — they cost tokens without informing the user.\n\
+		Be concise and action-first: lead with the answer or result; <=25 words between tool calls, <=2 sentences in the final response unless more is genuinely needed. The reader is an expert: skip basics, recaps of steps taken, hedging, pleasantries, closing offers, intent narration (\"I'll now…\", \"Let me…\"), filler, and request restatement; give details, alternatives, and reasoning only when asked. Keep code, commands, paths, numbers, and errors exact, and never drop a negation or qualifier to save words.\n\
 		</output-rules>",
 	);
 

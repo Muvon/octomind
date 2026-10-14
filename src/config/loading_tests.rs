@@ -66,6 +66,130 @@ fn write_file(dir: &std::path::Path, name: &str, content: &str) {
 }
 
 #[test]
+fn config_override_sets_a_nested_table_value() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	apply_config_overrides(
+		&mut value,
+		&["supervisor.model.name=openrouter:google/gemini-3.1-flash-lite:nitro".to_string()],
+	)
+	.expect("override");
+	assert_eq!(
+		value["supervisor"]["model"]["name"].as_str(),
+		Some("openrouter:google/gemini-3.1-flash-lite:nitro")
+	);
+}
+
+#[test]
+fn config_override_falls_back_to_a_plain_string() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	apply_config_overrides(&mut value, &["model.reasoning_effort=low".to_string()])
+		.expect("override");
+	assert_eq!(value["model"]["reasoning_effort"].as_str(), Some("low"));
+}
+
+#[test]
+fn config_override_parses_toml_boolean_and_integer_values() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	apply_config_overrides(
+		&mut value,
+		&[
+			"decision.recall=true".to_string(),
+			"model.max_tokens=123".to_string(),
+		],
+	)
+	.expect("overrides");
+	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
+	assert_eq!(value["model"]["max_tokens"].as_integer(), Some(123));
+}
+
+#[test]
+fn config_override_rejects_an_unknown_key() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	let error = apply_config_overrides(&mut value, &["supervisor.unknown=true".to_string()])
+		.expect_err("unknown key must fail");
+	assert!(
+		error
+			.to_string()
+			.contains("Unknown config override path 'supervisor.unknown'"),
+		"got: {error:#}"
+	);
+}
+
+#[test]
+fn config_override_rejects_array_indexing() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	let error = apply_config_overrides(&mut value, &["roles.0.name=developer".to_string()])
+		.expect_err("array path must fail");
+	assert!(
+		error.to_string().contains("cannot index into arrays"),
+		"got: {error:#}"
+	);
+}
+
+#[test]
+fn config_override_wrong_type_is_rejected_by_deserialization() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	apply_config_overrides(&mut value, &["supervisor.enabled=notabool".to_string()])
+		.expect("override");
+	let error = value
+		.try_into::<Config>()
+		.expect_err("string must not deserialize as a boolean");
+	assert!(error.to_string().contains("boolean"), "got: {error}");
+}
+
+#[test]
+fn later_config_override_wins() {
+	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
+	apply_config_overrides(
+		&mut value,
+		&[
+			"model.reasoning_effort=high".to_string(),
+			"model.reasoning_effort=low".to_string(),
+		],
+	)
+	.expect("overrides");
+	assert_eq!(value["model"]["reasoning_effort"].as_str(), Some("low"));
+}
+
+#[test]
+#[serial_test::serial]
+fn config_overrides_do_not_write_or_migrate_an_existing_config() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = tmp.path().join("config.toml");
+	let contents = template_toml().replace("version = 22", "version = 21");
+	write_file(tmp.path(), "config.toml", &contents);
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
+	let loaded = Config::load_with_overrides(&["supervisor.enabled=false".to_string()]);
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+
+	let config = loaded.expect("override load");
+	assert!(!config.supervisor.enabled);
+	assert_eq!(config.version, 21, "automatic migration must not run");
+	assert_eq!(
+		std::fs::read_to_string(path).expect("read config"),
+		contents,
+		"runtime overrides must not change the config file"
+	);
+}
+
+#[test]
+#[serial_test::serial]
+fn config_overrides_use_in_memory_defaults_without_creating_a_config() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let path = tmp.path().join("missing/config.toml");
+	std::env::set_var("OCTOMIND_CONFIG_PATH", &path);
+	let loaded = Config::load_with_overrides(&["decision.recall=true".to_string()]);
+	std::env::remove_var("OCTOMIND_CONFIG_PATH");
+
+	let config = loaded.expect("override load");
+	assert!(config.decision.recall);
+	assert!(
+		!path.exists(),
+		"runtime overrides must not create a config file"
+	);
+}
+
+#[test]
 fn config_toml_is_the_base_even_when_other_files_sort_earlier() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());

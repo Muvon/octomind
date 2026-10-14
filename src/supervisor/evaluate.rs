@@ -668,6 +668,7 @@ async fn attempt(
 			..Default::default()
 		},
 	);
+	super::accounting::checkpoint().map_err(|error| error.to_string())?;
 	// Every question must come back under its own id with the matching answer
 	// type; anything else is an unparseable response for the whole seam.
 	let well_formed = questions.iter().all(|(id, question)| {

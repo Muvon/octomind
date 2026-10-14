@@ -33,7 +33,7 @@ use hyper_util::rt::TokioIo;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::process::Command;
-use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
 
 use crate::config::HookConfig;
 use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
@@ -42,12 +42,23 @@ use crate::{log_debug, log_error, log_info};
 /// RAII guard that stops the webhook listener on drop.
 pub struct WebhookListenerGuard {
 	hook_name: String,
-	_abort: AbortHandle,
+	task: JoinHandle<()>,
+}
+
+impl WebhookListenerGuard {
+	pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+		self.task.abort();
+		match (&mut self.task).await {
+			Ok(()) => Ok(()),
+			Err(error) if error.is_cancelled() => Ok(()),
+			Err(error) => Err(error.into()),
+		}
+	}
 }
 
 impl Drop for WebhookListenerGuard {
 	fn drop(&mut self) {
-		self._abort.abort();
+		self.task.abort();
 		log_debug!("Webhook listener '{}' cleaned up", self.hook_name);
 	}
 }
@@ -131,7 +142,7 @@ pub async fn start_webhook_listener(
 
 	Ok(WebhookListenerGuard {
 		hook_name,
-		_abort: handle.abort_handle(),
+		task: handle,
 	})
 }
 

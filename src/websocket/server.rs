@@ -593,14 +593,14 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 
 					let bg_tx_fwd = ctx.bg_tx.clone();
 					let forward_task = tokio::spawn(async move {
-						let mut cost_sent = false;
 						while let Some(msg) = ws_rx.recv().await {
-							cost_sent |= matches!(msg, ServerMessage::Cost(_));
+							if matches!(msg, ServerMessage::Cost(_)) {
+								continue;
+							}
 							if bg_tx_fwd.send(msg).is_err() {
 								break; // connection closed
 							}
 						}
-						cost_sent
 					});
 
 					let result = crate::supervisor::accounting::background(
@@ -616,7 +616,9 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					.await;
 
 					crate::mcp::process::clear_notification_sender(Some(session_id.clone()));
-					let cost_sent = forward_task.await.unwrap_or(false);
+					forward_task
+						.await
+						.expect("WebSocket forwarding task must not panic");
 
 					if let Err(e) = result {
 						log_debug!("WS monitor: error processing inbox message: {}", e);
@@ -638,15 +640,12 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 							Some(session_id.clone()),
 						));
 					}
-					// The sink already sent the cost of a turn that ran to completion.
-					if !cost_sent {
-						let _ = ctx.bg_tx.send(ServerMessage::Cost(
-							crate::session::chat::response::session_cost_payload(
-								&mut chat_session,
-								session_id.clone(),
-							),
-						));
-					}
+					let _ = ctx.bg_tx.send(ServerMessage::Cost(
+						crate::session::chat::response::session_cost_payload(
+							&mut chat_session,
+							session_id.clone(),
+						),
+					));
 
 					// Save and put session back.
 					if let Err(e) = chat_session.save() {
@@ -1520,8 +1519,6 @@ async fn handle_user_message(
 	// Create channel for WebSocket sink to stream messages
 	let (ws_tx, mut ws_rx) = tokio::sync::mpsc::unbounded_channel();
 	let ws_sink = WebSocketSink::new(ws_tx.clone());
-	// Whether the sink already sent this turn's cost (see the fallback below).
-	let mut cost_sent = false;
 
 	// Forward MCP server notifications through the WebSocket channel
 	crate::mcp::process::set_notification_sender(Some(session_id.clone()), ws_tx);
@@ -1550,7 +1547,7 @@ async fn handle_user_message(
 			tokio::select! {
 				res = &mut api_fut => break res,
 				Some(msg) = ws_rx.recv() => {
-					cost_sent |= matches!(msg, ServerMessage::Cost(_));
+					if matches!(msg, ServerMessage::Cost(_)) { continue; }
 					send_message(ws_sender, &msg).await?;
 				}
 			}
@@ -1559,7 +1556,9 @@ async fn handle_user_message(
 
 	// Drain any messages queued between the last poll and completion.
 	while let Ok(msg) = ws_rx.try_recv() {
-		cost_sent |= matches!(msg, ServerMessage::Cost(_));
+		if matches!(msg, ServerMessage::Cost(_)) {
+			continue;
+		}
 		send_message(ws_sender, &msg).await?;
 	}
 
@@ -1607,12 +1606,7 @@ async fn handle_user_message(
 				)
 				.await?;
 			}
-			// The sink sends the cost of a turn that ran to completion; only a turn
-			// that returned early (cancelled) still needs this one. A second cost
-			// frame reads to every client as a second finished turn.
-			if !cost_sent {
-				send_message(ws_sender, &cost_msg).await?;
-			}
+			send_message(ws_sender, &cost_msg).await?;
 		}
 		Err(e) => {
 			log_error!("API call failed: {}", e);

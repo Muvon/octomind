@@ -1016,3 +1016,62 @@ async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {
 	})
 	.await;
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn new_session_releases_active_fixed_port_hook_before_runtime_init() {
+	let _data = DataDirGuard::new();
+	let script_dir = tempfile::tempdir().unwrap();
+	let script = script_dir.path().join("hook.sh");
+	std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+	}
+	let reservation = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = reservation.local_addr().unwrap();
+	drop(reservation);
+	let mut config = template_config();
+	config.hooks = vec![crate::config::HookConfig {
+		name: "fixed-port".into(),
+		bind: addr.to_string(),
+		script: script.to_string_lossy().into_owned(),
+		timeout: 5,
+	}];
+	let mut args = session_args();
+	args.hooks = vec!["fixed-port".into()];
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.name = uuid::Uuid::new_v4().to_string();
+	let old_id = session.session.info.name.clone();
+	let mut guards = crate::session::context::with_session_id(old_id.clone(), async {
+		init_session_runtime(&args, &config, &session, "assistant")
+			.await
+			.unwrap()
+	})
+	.await;
+	assert!(tokio::net::TcpListener::bind(addr).await.is_err());
+	let (_, rx) = tokio::sync::watch::channel(false);
+	let CommandResult::SwitchSession(new_id) = session
+		.process_command("/new", &mut config, "assistant", rx)
+		.await
+		.unwrap()
+	else {
+		panic!("/new must request a session switch");
+	};
+	guards.shutdown().await.unwrap();
+	drop(guards);
+	session.session.info.name = new_id.clone();
+	let mut guards = crate::session::context::with_session_id(new_id.clone(), async {
+		init_session_runtime(&args, &config, &session, "assistant")
+			.await
+			.expect("/new rebinds the fixed hook port after shutdown")
+	})
+	.await;
+	assert!(tokio::net::TcpListener::bind(addr).await.is_err());
+	guards.shutdown().await.unwrap();
+	drop(guards);
+	let _released = tokio::net::TcpListener::bind(addr).await.unwrap();
+	crate::session::context::cleanup_session(&old_id);
+	crate::session::context::cleanup_session(&new_id);
+}

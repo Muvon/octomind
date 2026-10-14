@@ -31,7 +31,7 @@ async fn concurrent_sessions_fold_only_their_own_usage_once() {
 		let barrier = Arc::clone(&barrier);
 		tasks.push(tokio::spawn(with_session_id(
 			id.to_owned(),
-			DETACHED_USAGE.scope(bank, async move {
+			TEST_PENDING.scope(Arc::clone(&banks), async move {
 				let timer = WallTimer::start(CallKind::Gate);
 				super::super::stats::record_call(CallKind::Gate, 100, 20, 5, 120, cost);
 				record_seam(
@@ -73,7 +73,7 @@ async fn concurrent_sessions_fold_only_their_own_usage_once() {
 #[tokio::test]
 async fn nested_timers_count_blocking_union_and_background_separately() {
 	isolated(async {
-		let bank = Arc::new(Mutex::new(Bank::default()));
+		let bank = session_bank();
 		DETACHED_USAGE
 			.scope(Arc::clone(&bank), async {
 				let outer = WallTimer::start(CallKind::Gate);
@@ -115,7 +115,7 @@ async fn nested_timers_count_blocking_union_and_background_separately() {
 #[tokio::test]
 async fn cancelled_mechanic_records_wall_time_without_usage() {
 	isolated(async {
-		let bank = Arc::new(Mutex::new(Bank::default()));
+		let bank = session_bank();
 		let result = tokio::time::timeout(
 			std::time::Duration::from_millis(10),
 			DETACHED_USAGE.scope(Arc::clone(&bank), async {
@@ -353,4 +353,143 @@ async fn outcome_counters_are_isolated_between_sessions_and_survive_fold() {
 		tokio::join!(a, b);
 	})
 	.await;
+}
+
+#[tokio::test]
+async fn shutdown_between_paid_detached_calls_resumes_without_loss_or_double_counting() {
+	isolated(async {
+		for fold_before_shutdown in [false, true] {
+			let dir = tempfile::tempdir().unwrap();
+			let file = dir.path().join("session.jsonl.zst");
+			let owner = uuid::Uuid::new_v4().to_string();
+			let mut session = Session::new(owner.clone(), "model".into());
+			session.session_file = Some(file.clone());
+			session.save().unwrap();
+			let (paid_tx, paid_rx) = tokio::sync::oneshot::channel();
+			let task = tokio::spawn(run_background(
+				owner.clone(),
+				Some(file.clone()),
+				async move {
+					super::super::stats::record_call(CallKind::Distill, 100, 20, 3, 50, 0.25);
+					checkpoint().unwrap();
+					paid_tx.send(()).unwrap();
+					std::future::pending::<()>().await;
+					super::super::stats::record_call(CallKind::Distill, 200, 40, 6, 100, 0.5);
+					checkpoint().unwrap();
+					Ok(())
+				},
+			));
+			paid_rx.await.unwrap();
+			if fold_before_shutdown {
+				session.fold_external_spend();
+				assert_eq!(session.info.total_cost, 0.25);
+				session.save().unwrap();
+			}
+			task.abort();
+			assert!(task.await.unwrap_err().is_cancelled());
+			// Discard process-local receipts as runtime shutdown would.
+			take_completed(&owner);
+			let mut resumed = crate::session::persistence::load_session(&file).unwrap();
+			assert_eq!(resumed.info.total_cost, 0.25);
+			assert_eq!(
+				resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
+				1
+			);
+			assert_eq!(
+				resumed.info.supervisor_accounting.kinds[&CallKind::Distill].input_tokens,
+				100
+			);
+			assert_eq!(resumed.info.supervisor_accounting.background_runs.len(), 1);
+
+			run_background(owner.clone(), Some(file.clone()), async {
+				super::super::stats::record_call(CallKind::Evaluate, 200, 40, 0, 100, 0.5);
+				record_seam(
+					Seam::Distill,
+					Usage {
+						calls: 1,
+						input_tokens: 200,
+						output_tokens: 40,
+						api_time_ms: 100,
+						cost: 0.5,
+						..Default::default()
+					},
+				);
+				checkpoint()?;
+				Ok(())
+			})
+			.await
+			.unwrap();
+			// Load the journal first, then consume the identical live receipts.
+			resumed = crate::session::persistence::load_session(&file).unwrap();
+			resumed.fold_external_spend();
+			assert_eq!(resumed.info.total_cost, 0.75);
+			assert_eq!(resumed.info.supervisor_accounting.totals().calls, 2);
+			assert_eq!(
+				resumed.info.supervisor_accounting.seams[&Seam::Distill].calls,
+				1
+			);
+			resumed.save().unwrap();
+			let reloaded = crate::session::persistence::load_session(&file).unwrap();
+			assert_eq!(reloaded.info.total_cost, 0.75);
+			assert_eq!(
+				reloaded.info.supervisor_accounting,
+				resumed.info.supervisor_accounting
+			);
+		}
+	})
+	.await;
+}
+
+#[test]
+fn detached_timer_events_preserve_exact_foreground_turn_time_before_job_completion() {
+	let live = Arc::new(Mutex::new(Bank::default()));
+	let detached = Arc::new(Mutex::new(Bank::default()));
+	let start = Instant::now();
+	let at = |ms| start + std::time::Duration::from_millis(ms);
+	with_clock(
+		&live,
+		&live,
+		|| at(0),
+		|clock, _, _| clock.enter(Mechanic::Gate, false, at(0)),
+	);
+	with_clock(
+		&detached,
+		&live,
+		|| at(5),
+		|clock, _, _| clock.enter(Mechanic::Distill, true, at(5)),
+	);
+	with_clock(
+		&detached,
+		&live,
+		|| at(10),
+		|clock, _, _| clock.enter(Mechanic::Distill, true, at(10)),
+	);
+	with_clock(
+		&detached,
+		&live,
+		|| at(15),
+		|clock, _, _| clock.leave(Mechanic::Distill, true),
+	);
+	with_clock(
+		&live,
+		&live,
+		|| at(20),
+		|clock, _, _| clock.leave(Mechanic::Gate, false),
+	);
+	let turn = std::mem::take(&mut live.lock().unwrap().usage);
+	assert_eq!(turn.blocking_wall_time_ms, 20);
+	assert_eq!(turn.kinds[&CallKind::Gate].blocking_wall_time_ms, 20);
+	assert_eq!(detached.lock().unwrap().usage.blocking_wall_time_ms, 0);
+	with_clock(
+		&detached,
+		&live,
+		|| at(30),
+		|clock, _, _| clock.leave(Mechanic::Distill, true),
+	);
+	let mut total = turn;
+	total.add(&detached.lock().unwrap().usage);
+	total.add(&live.lock().unwrap().usage);
+	assert_eq!(total.blocking_wall_time_ms, 20);
+	assert_eq!(total.background_wall_time_ms, Some(25));
+	assert_eq!(total.kinds[&CallKind::Distill].background_wall_time_ms, 25);
 }

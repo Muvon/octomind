@@ -243,6 +243,57 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 	})
 }
 
+fn parse_config_override_value(value: &str) -> toml::Value {
+	match value.parse() {
+		Ok(value) => value,
+		Err(_) => toml::Value::String(value.to_string()),
+	}
+}
+
+fn apply_config_overrides(merged: &mut toml::Value, overrides: &[String]) -> Result<()> {
+	for override_ in overrides {
+		let (path, raw_value) = override_.split_once('=').with_context(|| {
+			format!("Invalid config override '{override_}': expected key=value")
+		})?;
+		let keys: Vec<&str> = path.split('.').collect();
+		anyhow::ensure!(
+			!path.is_empty() && keys.iter().all(|key| !key.is_empty()),
+			"Invalid config override path '{path}'"
+		);
+
+		let mut current = &mut *merged;
+		for key in &keys[..keys.len() - 1] {
+			current = match current {
+				toml::Value::Table(table) => table
+					.get_mut(*key)
+					.ok_or_else(|| anyhow::anyhow!("Unknown config override path '{path}'"))?,
+				toml::Value::Array(_) => {
+					anyhow::bail!("Config override path '{path}' cannot index into arrays")
+				}
+				_ => anyhow::bail!(
+					"Config override path '{path}' traverses a value that is not a table"
+				),
+			};
+		}
+
+		let key = keys.last().expect("non-empty override path");
+		let table = match current {
+			toml::Value::Table(table) => table,
+			toml::Value::Array(_) => {
+				anyhow::bail!("Config override path '{path}' cannot index into arrays")
+			}
+			_ => {
+				anyhow::bail!("Config override path '{path}' traverses a value that is not a table")
+			}
+		};
+		let target = table
+			.get_mut(*key)
+			.ok_or_else(|| anyhow::anyhow!("Unknown config override path '{path}'"))?;
+		*target = parse_config_override_value(raw_value);
+	}
+	Ok(())
+}
+
 impl Config {
 	fn initialize_config(&mut self) {}
 
@@ -307,6 +358,11 @@ impl Config {
 	///
 	/// Environment variable OCTOMIND_CONFIG_PATH can be used to specify a custom config path.
 	pub fn load() -> Result<Self> {
+		Self::load_with_overrides(&[])
+	}
+
+	/// Load configuration with process-only dotted-path overrides.
+	pub fn load_with_overrides(overrides: &[String]) -> Result<Self> {
 		// Check for custom config path from environment variable
 		let config_path = if let Ok(custom_path) = std::env::var("OCTOMIND_CONFIG_PATH") {
 			std::path::PathBuf::from(custom_path)
@@ -327,6 +383,13 @@ impl Config {
 		};
 
 		if !config_dir.exists() {
+			if !overrides.is_empty() {
+				let mut merged_value: toml::Value =
+					toml::from_str(include_str!("../../config-templates/default.toml"))
+						.context("Failed to parse default configuration template")?;
+				apply_config_overrides(&mut merged_value, overrides)?;
+				return Self::deserialize_loaded_config(merged_value, config_path);
+			}
 			// Directory doesn't exist, create default config
 			let default_config = Self::inject_default_config()?;
 			default_config.save_to_path(&config_path)?;
@@ -350,6 +413,13 @@ impl Config {
 			});
 
 			if !has_toml_files {
+				if !overrides.is_empty() {
+					let mut merged_value: toml::Value =
+						toml::from_str(include_str!("../../config-templates/default.toml"))
+							.context("Failed to parse default configuration template")?;
+					apply_config_overrides(&mut merged_value, overrides)?;
+					return Self::deserialize_loaded_config(merged_value, config_path);
+				}
 				// No config files at all, inject default
 				let default_config = Self::inject_default_config()?;
 				default_config.save_to_path(&config_path)?;
@@ -358,14 +428,21 @@ impl Config {
 		}
 
 		// Check for automatic config upgrades on config.toml
-		if config_path.exists() {
+		if overrides.is_empty() && config_path.exists() {
 			super::migrations::check_and_upgrade_config(&config_path)
 				.context("Failed to check/upgrade config version")?;
 		}
 
 		// Load and merge all TOML files from the config directory
-		let merged_value = load_and_merge_toml_from_directory(config_dir)?;
+		let mut merged_value = load_and_merge_toml_from_directory(config_dir)?;
+		apply_config_overrides(&mut merged_value, overrides)?;
+		Self::deserialize_loaded_config(merged_value, config_path)
+	}
 
+	fn deserialize_loaded_config(
+		merged_value: toml::Value,
+		config_path: std::path::PathBuf,
+	) -> Result<Self> {
 		// Convert to Config struct
 		let mut config: Config = merged_value.try_into().context(
 			"Failed to parse merged TOML configuration. All required fields must be present.",

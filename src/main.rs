@@ -29,6 +29,10 @@ mod commands;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Octomind is a smart AI developer assistant with configurable MCP support")]
 struct CliArgs {
+	/// Override a config value for this process using a dotted path and TOML value (e.g. `-c supervisor.enabled=false`).
+	#[arg(short = 'c', long = "config", value_name = "KEY=VALUE", global = true)]
+	config_overrides: Vec<String>,
+
 	#[command(subcommand)]
 	command: Option<Commands>,
 }
@@ -123,6 +127,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	octomind::mcp::set_session_working_directory(launch_cwd);
 
 	let args = CliArgs::parse();
+	let config_overrides = args.config_overrides;
 
 	// Bare `octomind` (no subcommand) behaves like `octomind run`: drop into
 	// the interactive shell with the default role. Non-interactive callers
@@ -130,6 +135,9 @@ async fn main() -> Result<(), anyhow::Error> {
 	let command = args
 		.command
 		.unwrap_or_else(|| Commands::Run(commands::RunArgs::default()));
+	if !config_overrides.is_empty() && matches!(&command, Commands::Config(_)) {
+		anyhow::bail!("--config overrides cannot be used with the config subcommand");
+	}
 
 	// Set process/terminal title for long-running subcommands so they're
 	// self-identifying in `ps` and terminal tabs. `Run` is handled later in
@@ -152,7 +160,7 @@ async fn main() -> Result<(), anyhow::Error> {
 	}
 
 	// Load configuration
-	let config = Config::load()?;
+	let config = Config::load_with_overrides(&config_overrides)?;
 
 	// Arm telemetry before the command runs, so a crash still leaves a `start`
 	// row behind. No-op when opted out; never touches the network here.
@@ -429,3 +437,7 @@ fn patch_fish(script: &str, sub: &str, desc: &str) -> String {
 	);
 	format!("{script}{dynamic_line}")
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;

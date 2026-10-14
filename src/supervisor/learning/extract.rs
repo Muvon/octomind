@@ -1904,6 +1904,7 @@ async fn call_supervisor_model(
 			usage.request_time_ms.unwrap_or(0),
 			usage.cost.unwrap_or(0.0),
 		);
+		crate::supervisor::accounting::checkpoint()?;
 	}
 	Ok(response)
 }

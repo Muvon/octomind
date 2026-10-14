@@ -191,37 +191,46 @@ pub(super) fn has_detached_usage() -> bool {
 	DETACHED_USAGE.try_with(|_| ()).is_ok()
 }
 
-/// A completed job is journaled before it becomes available to a live fold.
-/// Model usage and outcomes stay private until completion; shared clocks
-/// allocate each wall-time increment to exactly one bank.
+/// Completed calls are journaled before the next await; completion publishes
+/// the remaining outcomes and wall time through the same deduplicated journal.
 pub async fn run_background<T>(
 	owner: SessionId,
 	session_file: Option<std::path::PathBuf>,
 	future: impl std::future::Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
-	let bank = Arc::new(Mutex::new(Bank::default()));
+	let bank = Arc::new(Mutex::new(Bank {
+		journal: Some(Journal {
+			owner: owner.clone(),
+			session_file,
+		}),
+		..Default::default()
+	}));
 	let result = crate::session::context::with_session_id(
 		owner.clone(),
 		background(DETACHED_USAGE.scope(Arc::clone(&bank), future)),
 	)
 	.await;
-	let accounting = bank
-		.lock()
+	bank.lock()
 		.expect("detached supervisor bank poisoned")
-		.take();
-	let id = uuid::Uuid::new_v4().to_string();
-	if let Some(path) = session_file {
-		let entry =
-			serde_json::json!({"type":"BACKGROUND_SUPERVISOR", "id":id, "accounting":accounting});
-		crate::session::persistence::append_to_session_file(&path, &entry.to_string())?;
-	}
-	completed()
-		.lock()
-		.expect("completed supervisor bank poisoned")
-		.entry(owner)
-		.or_default()
-		.insert(id, accounting);
+		.publish()?;
 	result
+}
+
+/// Called at the shared provider-response boundaries, after both aggregate and
+/// seam usage are recorded, before cancellation can interrupt another call.
+pub(super) fn checkpoint() -> anyhow::Result<()> {
+	match DETACHED_USAGE.try_with(Arc::clone) {
+		Ok(bank) => bank
+			.lock()
+			.expect("detached supervisor bank poisoned")
+			.publish(),
+		Err(_) => Ok(()),
+	}
+}
+
+struct Journal {
+	owner: SessionId,
+	session_file: Option<std::path::PathBuf>,
 }
 
 fn completed() -> &'static Mutex<HashMap<SessionId, BTreeMap<String, SupervisorAccounting>>> {
@@ -276,13 +285,22 @@ struct Clock {
 
 impl Clock {
 	fn tick(&mut self, now: Instant, usage: &mut SupervisorAccounting) {
-		usage.blocking_wall_time_ms += self.blocking.tick(now);
-		let background = self.background.tick(now);
-		*usage
-			.background_wall_time_ms
-			.as_mut()
-			.expect("live clock has a measured background total") += background;
-		for (&(mechanic, background), interval) in &mut self.mechanics {
+		self.tick_mode(now, usage, false);
+		self.tick_mode(now, usage, true);
+	}
+	fn tick_mode(&mut self, now: Instant, usage: &mut SupervisorAccounting, background: bool) {
+		if background {
+			*usage
+				.background_wall_time_ms
+				.as_mut()
+				.expect("live clock has a measured background total") += self.background.tick(now);
+		} else {
+			usage.blocking_wall_time_ms += self.blocking.tick(now);
+		}
+		for (&(mechanic, mode), interval) in &mut self.mechanics {
+			if mode != background {
+				continue;
+			}
 			let elapsed = interval.tick(now);
 			if elapsed == 0 {
 				continue;
@@ -323,9 +341,26 @@ impl Clock {
 struct Bank {
 	usage: SupervisorAccounting,
 	clock: Clock,
+	journal: Option<Journal>,
 }
 
 impl Bank {
+	fn publish(&mut self) -> anyhow::Result<()> {
+		let journal = self.journal.as_ref().expect("detached bank owns a journal");
+		let id = uuid::Uuid::new_v4().to_string();
+		if let Some(path) = &journal.session_file {
+			let entry = serde_json::json!({"type":"BACKGROUND_SUPERVISOR", "id":id, "accounting":self.usage});
+			crate::session::persistence::append_to_session_file(path, &entry.to_string())?;
+		}
+		completed()
+			.lock()
+			.expect("completed supervisor bank poisoned")
+			.entry(journal.owner.clone())
+			.or_default()
+			.insert(id, std::mem::take(&mut self.usage));
+		Ok(())
+	}
+
 	fn take(&mut self) -> SupervisorAccounting {
 		self.clock.tick(Instant::now(), &mut self.usage);
 		std::mem::take(&mut self.usage)
@@ -337,15 +372,21 @@ impl Bank {
 fn with_clock<T>(
 	bank: &Arc<Mutex<Bank>>,
 	clock_bank: &Arc<Mutex<Bank>>,
-	f: impl FnOnce(&mut Clock, &mut SupervisorAccounting) -> T,
+	now: impl FnOnce() -> Instant,
+	f: impl FnOnce(&mut Clock, &mut SupervisorAccounting, Instant) -> T,
 ) -> T {
 	let mut clock_bank_guard = clock_bank.lock().expect("supervisor clock poisoned");
+	let now = now();
 	if Arc::ptr_eq(bank, clock_bank) {
-		let Bank { clock, usage } = &mut *clock_bank_guard;
-		f(clock, usage)
+		let Bank { clock, usage, .. } = &mut *clock_bank_guard;
+		clock.tick(now, usage);
+		f(clock, usage, now)
 	} else {
 		let mut bank = bank.lock().expect("supervisor accounting bank poisoned");
-		f(&mut clock_bank_guard.clock, &mut bank.usage)
+		let Bank { clock, usage, .. } = &mut *clock_bank_guard;
+		clock.tick_mode(now, usage, false);
+		clock.tick_mode(now, &mut bank.usage, true);
+		f(clock, &mut bank.usage, now)
 	}
 }
 
@@ -487,9 +528,7 @@ impl WallTimer {
 		let bank = current_bank();
 		let clock_bank = session_bank();
 		let background = BACKGROUND.try_with(|value| *value).unwrap_or(false);
-		let started = with_clock(&bank, &clock_bank, |clock, usage| {
-			let now = Instant::now();
-			clock.tick(now, usage);
+		let started = with_clock(&bank, &clock_bank, Instant::now, |clock, _usage, now| {
 			clock.enter(mechanic, background, now);
 			now
 		});
@@ -506,24 +545,27 @@ impl WallTimer {
 
 impl Drop for WallTimer {
 	fn drop(&mut self) {
-		with_clock(&self.bank, &self.clock_bank, |clock, usage| {
-			let now = Instant::now();
-			clock.tick(now, usage);
-			clock.leave(self.mechanic, self.background);
-			// Keep the raw seam view for persisted journals. Standalone seams already
-			// own their mechanic interval, so adding their duration again would duplicate it.
-			if let Some(seam) = self.seam {
-				if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression) {
-					let elapsed = now.duration_since(self.started).as_millis() as u64;
-					let usage = usage.seams.entry(seam).or_default();
-					if self.background {
-						usage.background_wall_time_ms += elapsed;
-					} else {
-						usage.blocking_wall_time_ms += elapsed;
+		with_clock(
+			&self.bank,
+			&self.clock_bank,
+			Instant::now,
+			|clock, usage, now| {
+				clock.leave(self.mechanic, self.background);
+				// Keep the raw seam view for persisted journals. Standalone seams already
+				// own their mechanic interval, so adding their duration again would duplicate it.
+				if let Some(seam) = self.seam {
+					if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression) {
+						let elapsed = now.duration_since(self.started).as_millis() as u64;
+						let usage = usage.seams.entry(seam).or_default();
+						if self.background {
+							usage.background_wall_time_ms += elapsed;
+						} else {
+							usage.blocking_wall_time_ms += elapsed;
+						}
 					}
 				}
-			}
-		});
+			},
+		);
 	}
 }
 

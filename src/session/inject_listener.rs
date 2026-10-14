@@ -31,7 +31,7 @@ mod imp {
 	use std::path::PathBuf;
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 	use tokio::net::UnixListener;
-	use tokio::task::AbortHandle;
+	use tokio::task::JoinHandle;
 
 	use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
 	use crate::{log_debug, log_error};
@@ -47,12 +47,23 @@ mod imp {
 	/// RAII guard that stops the inject listener and cleans up socket/PID files on drop.
 	pub struct InjectListenerGuard {
 		session_name: String,
-		_abort: AbortHandle,
+		task: JoinHandle<()>,
+	}
+
+	impl InjectListenerGuard {
+		pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+			self.task.abort();
+			match (&mut self.task).await {
+				Ok(()) => Ok(()),
+				Err(error) if error.is_cancelled() => Ok(()),
+				Err(error) => Err(error.into()),
+			}
+		}
 	}
 
 	impl Drop for InjectListenerGuard {
 		fn drop(&mut self) {
-			self._abort.abort();
+			self.task.abort();
 			if let Ok(sock) = socket_path(&self.session_name) {
 				let _ = std::fs::remove_file(&sock);
 			}
@@ -80,7 +91,7 @@ mod imp {
 
 		InjectListenerGuard {
 			session_name,
-			_abort: handle.abort_handle(),
+			task: handle,
 		}
 	}
 
@@ -163,7 +174,7 @@ mod imp {
 mod imp {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 	use tokio::net::windows::named_pipe::ServerOptions;
-	use tokio::task::AbortHandle;
+	use tokio::task::JoinHandle;
 
 	use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
 	use crate::{log_debug, log_error};
@@ -176,12 +187,23 @@ mod imp {
 	/// RAII guard that stops the inject listener task on drop.
 	pub struct InjectListenerGuard {
 		session_name: String,
-		_abort: AbortHandle,
+		task: JoinHandle<()>,
+	}
+
+	impl InjectListenerGuard {
+		pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+			self.task.abort();
+			match (&mut self.task).await {
+				Ok(()) => Ok(()),
+				Err(error) if error.is_cancelled() => Ok(()),
+				Err(error) => Err(error.into()),
+			}
+		}
 	}
 
 	impl Drop for InjectListenerGuard {
 		fn drop(&mut self) {
-			self._abort.abort();
+			self.task.abort();
 			log_debug!(
 				"Inject listener cleaned up for session '{}'",
 				self.session_name
@@ -203,7 +225,7 @@ mod imp {
 
 		InjectListenerGuard {
 			session_name,
-			_abort: handle.abort_handle(),
+			task: handle,
 		}
 	}
 

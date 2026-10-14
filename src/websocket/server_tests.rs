@@ -2642,3 +2642,78 @@ async fn inbox_monitors_are_one_per_connection_and_die_with_it() {
 
 	crate::session::context::cleanup_session(&session_id);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
+	for inbox in [false, true] {
+		let _data = TestDataDirGuard::new();
+		let _env = StubEnv::new(vec![
+			final_response(r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#),
+			final_response("WS-GATE-TIMING: finished"),
+			final_response(r#"<shape name="circular" found="no">independent evidence</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>
+<verdict>PASS</verdict>"#),
+		]).await;
+		let mut config = ws_fake_config();
+		config.supervisor.enabled = true;
+		config.supervisor.model.model = Some("ollama:fake-model".into());
+		config.supervisor.gate.enabled = true;
+		config.supervisor.plan.enabled = false;
+		config.decision.model = None;
+		let server = LoopbackServer::start(Arc::new(config)).await;
+		let mut ws = connect_ws(server.addr).await;
+		let _welcome = read_json(&mut ws).await;
+		let session_id = create_session(&mut ws, None).await;
+		if inbox {
+			push_inbox_message_for_session(
+				&session_id,
+				InboxMessage {
+					source: InboxSource::Inject,
+					content: "Explain what this session does.".into(),
+				},
+			);
+		} else {
+			send_json(&mut ws, serde_json::json!({"type":"message", "session_id":session_id, "content":"Explain what this session does."})).await;
+		}
+		let cost = read_until(&mut ws, |frame| {
+			frame["type"] == "cost" || frame["type"] == "error"
+		})
+		.await;
+		assert_eq!(cost["type"], "cost", "{cost}");
+		assert!(
+			cost["supervisor_accounting"]["mechanics"]["gate"]["chat_calls"]
+				.as_u64()
+				.unwrap() > 0,
+			"{cost}"
+		);
+		// The session lock becomes available only after the outer executor and save finish.
+		let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+		drop(lock.lock().await);
+		send_json(
+			&mut ws,
+			serde_json::json!({"type":"command", "session_id":session_id, "command":"info"}),
+		)
+		.await;
+		let info = loop {
+			let frame = read_json(&mut ws).await;
+			assert_ne!(
+				frame["type"], "cost",
+				"only one completion frame per turn: {frame}"
+			);
+			assert_ne!(frame["type"], "error", "{frame}");
+			if frame["type"] == "status" && frame["data"].is_object() {
+				break frame["data"].clone();
+			}
+		};
+		assert_eq!(
+			cost["supervisor_accounting"], info["supervisor_accounting"],
+			"inbox={inbox}"
+		);
+		assert_eq!(cost["total_cost"], info["total_cost"]);
+		ws.close(None).await.unwrap();
+		crate::session::context::cleanup_session(&session_id);
+	}
+}

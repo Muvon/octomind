@@ -49,6 +49,16 @@ struct SessionRuntimeGuards {
 	_webhooks: Vec<crate::session::webhook_listener::WebhookListenerGuard>,
 }
 
+impl SessionRuntimeGuards {
+	async fn shutdown(&mut self) -> Result<()> {
+		self._inject.shutdown().await?;
+		for hook in &mut self._webhooks {
+			hook.shutdown().await?;
+		}
+		Ok(())
+	}
+}
+
 /// Boot the per-session runtime services shared by interactive and
 /// non-interactive paths: session-scoped service registry, plan/schedule
 /// restoration, inject-listener socket, and webhook listeners.
@@ -1080,6 +1090,7 @@ pub async fn run_interactive_session(
 					}
 					CommandResult::SwitchSession(new_session_name) => {
 						chat_session.save()?;
+						runtime_guards.shutdown().await?;
 						let workdir = crate::mcp::get_thread_working_directory();
 						let (new_session, new_guards) = crate::session::context::with_session_id(new_session_name.clone(), async {
 							crate::config::set_thread_config(&current_config);

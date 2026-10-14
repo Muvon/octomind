@@ -177,37 +177,7 @@ hand-picked instances. An enumerated item with no exercising evidence is a gap �
 and the check it lacks. This bar applies only to items the request explicitly enumerates,
 never to surfaces you infer.
 
-THE CONDITION CHECKLIST
-When <evidence_conditions> is present it is your PRIMARY checklist. Work it first, one
-condition at a time, in isolation, before forming any overall impression: a green overall check
-does not match a condition unless its recorded output demonstrably exercised THAT condition.
-Every condition gets exactly one of three statuses:
-- matched — ONLY with a citable observation: the recorded action or ground-truth artifact whose
-  OBSERVED OUTPUT demonstrates it. Say which action and what its output showed.
-- unmatched — ONLY on an observation of the violation, and you must name what that observation
-  is as the condition's basis. The runtime charges an unmatched condition by its basis, not by
-  its wording:
-  · recorded_output — a recorded action's output shows the condition failing: a failing check,
-    an ERROR outcome on the decisive call.
-  · ground_truth — the diff, a new file's content, or the last command output shows it
-    directly: the required change is absent, a forbidden change is present, a file is MISSING.
-  · absent_action — the condition calls for an action or check and no successful recorded
-    action performed it; the runtime log is authoritative, so that absence is an observation.
-  · inference — your own reading of the code: a defect you infer from source, a rewrite you
-    would prefer, or behavior you predict without a recorded output showing it. That is a
-    suspicion, not an observation: the runtime reports it to the user and does not block
-    completion — above all when a recorded check exercising that condition succeeded.
-    Declaring a suspicion under any other basis is the false positive this field exists to
-    stop.
-- unknown — the supplied evidence can establish neither satisfaction nor violation, and no
-  basis fits. A verification limit: reported to the user, never blocks completion. Prefer a
-  readback round over unknown when a recorded output would decide it.
-A condition that contradicts <current_user_turn> is void — mark it matched with the reason
-"void: contradicts request"; so is one whose only demonstration would require an action the
-request or standing instructions forbid. Satisfying every condition does not excuse a
-requirement of the request the conditions missed.
-
-THE FOUR EVIDENCE SHAPES
+{condition_checklist}THE FOUR EVIDENCE SHAPES
 Whether or not conditions are present, rule on each of these four shapes against the work as a
 whole. Each takes one of three values, and "yes" carries the highest bar:
 - no — the shape is absent.
@@ -288,12 +258,7 @@ second answer must be a full verdict. Spend this round rather than flagging some
 could have looked at.
 
 VERDICT — every other time. Your ENTIRE answer is these parts, in this order, and nothing else:
-1. Conditions — when <evidence_conditions> is present: one entry per condition, n = 1 through
-   the last, each exactly once, carrying its status (matched | unmatched | unknown), its
-   observation (what demonstrates it / what shows the violation / why the evidence cannot
-   decide), and — on every unmatched — its basis (recorded_output | ground_truth |
-   absent_action | inference).
-2. Shapes — ALWAYS, whatever the verdict: all four, each exactly once, in this order: circular,
+{condition_response}2. Shapes — ALWAYS, whatever the verdict: all four, each exactly once, in this order: circular,
    context-stripped, acceptance-only, unenumerated-category; each with found (yes | no |
    unknown), a one-line reason, and — on every yes — its settles.
 3. The verdict: PASS when no observed violation remains. Unknown conditions or shapes and
@@ -317,8 +282,7 @@ const GATE_TEXT_FORMAT: &str = r#"
 <output_encoding format="tags">
 Write the parts of <response_format> as tag lines, one per line, with no other text:
 - readback request: <readback seq="N">what its output would settle</readback>
-- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference">observation</condition> — the basis attribute only on an unmatched line. Only when an <evidence_conditions> block was given; write no condition line otherwise.
-- shape: <shape name="circular|context-stripped|acceptance-only|unenumerated-category" found="yes|no|unknown" settles="the observation that would clear it">one-line reason</shape> — the settles attribute only on a yes.
+{condition_encoding}- shape: <shape name="circular|context-stripped|acceptance-only|unenumerated-category" found="yes|no|unknown" settles="the observation that would clear it">one-line reason</shape> — the settles attribute only on a yes.
 - verdict PASS: <verdict>PASS</verdict>
 - gaps, in place of the PASS line: <gap settles="the observation that would close it">specific missing or unverified item</gap>, one line per gap.
 </output_encoding>"#;
@@ -329,12 +293,56 @@ Write the parts of <response_format> as tag lines, one per line, with no other t
 const GATE_JSON_FORMAT: &str = r#"
 <output_encoding format="json">
 Write the parts of <response_format> as ONE JSON object matching the response schema:
-- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise. Empty array when no <evidence_conditions> block was given.
-- "shapes": all four evidence shapes, each exactly once, in this order: circular, context-stripped, acceptance-only, unenumerated-category — {"name", "found": yes | no | unknown, "reason", "settles"}; "settles" is REQUIRED when "found" is yes (null otherwise) — a shape you cannot attach such an observation to is not yes.
+{condition_encoding}- "shapes": all four evidence shapes, each exactly once, in this order: circular, context-stripped, acceptance-only, unenumerated-category — {"name", "found": yes | no | unknown, "reason", "settles"}; "settles" is REQUIRED when "found" is yes (null otherwise) — a shape you cannot attach such an observation to is not yes.
 - "gaps": one entry per gap — {"gap": the specific missing or unverified item, "settles": the one observation that would close it}. Empty array when the verdict is PASS.
 - "verdict": "PASS" when every part is evidenced, no condition is unmatched and no shape is yes; "GAPS" otherwise.
 - "readback": empty in every ruling answer. To spend the readback round instead of ruling, put up to 3 {"seq", "need"} entries here, set "verdict" to "READBACK", and leave "conditions", "shapes" and "gaps" empty — an answer that carries shapes, gaps, or a PASS/GAPS verdict has ruled, and its readback entries are ignored.
 </output_encoding>"#;
+
+const GATE_CONDITION_CHECKLIST: &str = r#"THE CONDITION CHECKLIST
+When <evidence_conditions> is present it is your PRIMARY checklist. Work it first, one
+condition at a time, in isolation, before forming any overall impression: a green overall check
+does not match a condition unless its recorded output demonstrably exercised THAT condition.
+Every condition gets exactly one of three statuses:
+- matched — ONLY with a citable observation: the recorded action or ground-truth artifact whose
+  OBSERVED OUTPUT demonstrates it. Say which action and what its output showed.
+- unmatched — ONLY on an observation of the violation, and you must name what that observation
+  is as the condition's basis. The runtime charges an unmatched condition by its basis, not by
+  its wording:
+  · recorded_output — a recorded action's output shows the condition failing: a failing check,
+    an ERROR outcome on the decisive call.
+  · ground_truth — the diff, a new file's content, or the last command output shows it
+    directly: the required change is absent, a forbidden change is present, a file is MISSING.
+  · absent_action — the condition calls for an action or check and no successful recorded
+    action performed it; the runtime log is authoritative, so that absence is an observation.
+  · inference — your own reading of the code: a defect you infer from source, a rewrite you
+    would prefer, or behavior you predict without a recorded output showing it. That is a
+    suspicion, not an observation: the runtime reports it to the user and does not block
+    completion — above all when a recorded check exercising that condition succeeded.
+    Declaring a suspicion under any other basis is the false positive this field exists to
+    stop.
+- unknown — the supplied evidence can establish neither satisfaction nor violation, and no
+  basis fits. A verification limit: reported to the user, never blocks completion. Prefer a
+  readback round over unknown when a recorded output would decide it.
+A condition that contradicts <current_user_turn> is void — mark it matched with the reason
+"void: contradicts request"; so is one whose only demonstration would require an action the
+request or standing instructions forbid. Satisfying every condition does not excuse a
+requirement of the request the conditions missed.
+
+"#;
+
+const GATE_CONDITION_RESPONSE: &str = r#"1. Conditions — when <evidence_conditions> is present: one entry per condition, n = 1 through
+   the last, each exactly once, carrying its status (matched | unmatched | unknown), its
+   observation (what demonstrates it / what shows the violation / why the evidence cannot
+   decide), and — on every unmatched — its basis (recorded_output | ground_truth |
+   absent_action | inference).
+"#;
+
+const GATE_TEXT_CONDITION: &str = r#"- condition: <condition n="N" status="matched|unmatched|unknown" basis="recorded_output|ground_truth|absent_action|inference">observation</condition> — the basis attribute only on an unmatched line. Only when an <evidence_conditions> block was given; write no condition line otherwise.
+"#;
+
+const GATE_JSON_CONDITION: &str = r#"- "conditions": one entry per numbered evidence condition, n = 1 through the last, each exactly once — {"n", "status": matched | unmatched | unknown, "observation", "basis"}; "basis" is REQUIRED when "status" is unmatched (recorded_output, ground_truth, absent_action, or inference, exactly as defined) and null otherwise. Empty array when no <evidence_conditions> block was given.
+"#;
 
 /// Second-opinion pass on a blocking verdict. A first verifier's finding is an
 /// accusation; before the runtime spends a re-run on it, an independent model
@@ -538,7 +546,8 @@ impl EvidenceLedger {
 			for turn in &self.history {
 				actions.push_str(&format!(
 					"Earlier user request: {}\n{}\n",
-					turn.request, turn.actions
+					serde_json::Value::String(turn.request.clone()),
+					turn.actions
 				));
 				grounds.extend_from_slice(&turn.grounds);
 			}
@@ -1006,7 +1015,8 @@ pub async fn verify(
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Indeterminate("empty task or result".to_string());
 	}
-	let mut user = render_gate_input(&input);
+	let mut visibility = output_visibility(&input, &[]);
+	let mut user = format!("{}{}", render_gate_input(&input), visibility.render());
 	crate::log_debug!("Verify-gate input:\n{}", user);
 	let model = config.get_supervisor_model_profile().model;
 	let conditions = input.evidence_conditions.len();
@@ -1038,6 +1048,8 @@ pub async fn verify(
 	// cannot answer. One bounded round lets it pull the recorded output first.
 	let wanted = report.readback_request();
 	if !wanted.is_empty() {
+		visibility = output_visibility(&input, &wanted);
+		user = format!("{}{}", render_gate_input(&input), visibility.render());
 		user.push_str(&render_readback(input.grounds, &wanted));
 		let (raw, answered) = match ask_verifier(
 			config,
@@ -1064,7 +1076,7 @@ pub async fn verify(
 	}
 	// The evidence decision is one-shot. Only a structurally malformed response
 	// receives the bounded format-repair call below.
-	let mut verdict = report.verdict(conditions);
+	let mut verdict = report.verdict(conditions, &visibility.limited);
 	if let GateVerdict::Indeterminate(reason) = verdict.clone() {
 		crate::log_info!(
 			"Verify-gate protocol invalid ({}); retrying format once",
@@ -1092,7 +1104,7 @@ pub async fn verify(
 		{
 			Ok((raw, retry)) => {
 				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, raw);
-				verdict = retry.verdict(conditions);
+				verdict = retry.verdict(conditions, &visibility.limited);
 				report = retry;
 			}
 			Err(error) => {
@@ -1103,7 +1115,7 @@ pub async fn verify(
 	// Everything the verifier raised but could not make actionable. None of it
 	// blocks the turn — and none of it silently vanishes either: a finding the
 	// runtime declines to charge is exactly the one a human should see.
-	let mut reported = report.reported_findings();
+	let mut reported = report.reported_findings(&visibility.limited);
 	// Second opinion, only on a blocking verdict: an independent model tries to
 	// refute each finding with evidence already in the input. What it refutes is
 	// reported to the user instead of costing a re-run; what stands blocks.
@@ -1184,6 +1196,69 @@ impl Encoding {
 	}
 }
 
+const OUTPUT_VISIBILITY_PROMPT: &str = r#"
+<input_format>
+- <output_visibility> — runtime facts about which recorded actions' outputs are fully visible,
+  partial, not shown in readback, or not retained. Ground-truth excerpts remain evidence even
+  when the full output is unavailable. This block is rebuilt after readback.
+</input_format>
+<evidence_visibility_rules>
+For an accusation relying on unavailable output, attach sources listing ALL its evidence bases:
+output:N for an observed output or ERROR outcome, omitted:N for an unseen portion of recorded
+action #N, ground_truth for supplied ground truth, absent_action for a required action not run.
+Use comma-separated references in a sources attribute (tags) or sources string field (JSON).
+Otherwise omit sources in tags or use null in JSON. These references apply to gaps, yes shapes,
+and unmatched checklist entries. Cite the visible observation in the finding's text.
+A claim supported only by omitted output is a verification limit, not a task failure. The runtime
+makes it advisory only when EVERY source is omitted:N and #N has an output limit in this pass.
+Never label an unseen action absent: its call and outcome remain recorded. Never label visible
+contradicting output or ground truth omitted merely because another part of that output is cut.
+After the one readback round, do not demand re-running an already recorded action merely to fit
+its output into the same evidence window. Report that visibility limit and judge the evidence
+you can see. Visible violations and required actions that never ran still block completion.
+</evidence_visibility_rules>"#;
+
+fn render_gate_prompt(encoding: Encoding, expected_conditions: usize) -> String {
+	let has_conditions = expected_conditions > 0;
+	let prompt = GATE_PROMPT
+		.replace(
+			"{condition_checklist}",
+			if has_conditions {
+				GATE_CONDITION_CHECKLIST
+			} else {
+				""
+			},
+		)
+		.replace(
+			"{condition_response}",
+			if has_conditions {
+				GATE_CONDITION_RESPONSE
+			} else {
+				""
+			},
+		);
+	let (format, conditions) = match encoding {
+		Encoding::Text => (
+			GATE_TEXT_FORMAT,
+			if has_conditions {
+				GATE_TEXT_CONDITION
+			} else {
+				""
+			},
+		),
+		Encoding::Json => (
+			GATE_JSON_FORMAT,
+			if has_conditions {
+				GATE_JSON_CONDITION
+			} else {
+				"- \"conditions\": an empty array.\n"
+			},
+		),
+	};
+	let format = format.replace("{condition_encoding}", conditions);
+	format!("{prompt}\n{format}\n{OUTPUT_VISIBILITY_PROMPT}")
+}
+
 /// One call to the verifier model. The system contract is identical every time;
 /// only the user block and sampling differ between the first pass, a readback
 /// round, and a format repair. The answer is decoded here, so the decision never
@@ -1200,7 +1275,10 @@ async fn ask_verifier(
 		Encoding::Json => {
 			let value = crate::supervisor::learning::extract::call_supervisor_json(
 				config,
-				SupervisorPrompt::new(format!("{GATE_PROMPT}\n{GATE_JSON_FORMAT}"), user),
+				SupervisorPrompt::new(
+					render_gate_prompt(Encoding::Json, expected_conditions),
+					user,
+				),
 				crate::supervisor::stats::CallKind::Gate,
 				build_gate_schema(expected_conditions),
 				operation_rx,
@@ -1212,7 +1290,10 @@ async fn ask_verifier(
 		Encoding::Text => {
 			let resp = crate::supervisor::learning::extract::call_supervisor_llm(
 				config,
-				SupervisorPrompt::new(format!("{GATE_PROMPT}\n{GATE_TEXT_FORMAT}"), user),
+				SupervisorPrompt::new(
+					render_gate_prompt(Encoding::Text, expected_conditions),
+					user,
+				),
 				crate::supervisor::stats::CallKind::Gate,
 				operation_rx,
 			)
@@ -1229,6 +1310,7 @@ async fn ask_verifier(
 /// condition numbering) stays where it already was: [`VerifierReport::verdict`]
 /// checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
+	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. Null when no output-visibility exemption is claimed." });
 	serde_json::json!({
 		"type": "object",
 		"additionalProperties": false,
@@ -1240,6 +1322,7 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 					"type": "object",
 					"additionalProperties": false,
 					"properties": {
+						"sources": sources,
 						"n": { "type": "integer", "description": "Condition number, 1-based." },
 						"status": { "type": "string", "enum": ["matched", "unmatched", "unknown"] },
 						"observation": {
@@ -1252,7 +1335,7 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 							"description": "Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
 						}
 					},
-					"required": ["n", "status", "observation", "basis"]
+					"required": ["n", "status", "observation", "basis", "sources"]
 				},
 				"description": "One entry per numbered evidence condition, each exactly once. Empty when none were given."
 			},
@@ -1263,6 +1346,7 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 					"type": "object",
 					"additionalProperties": false,
 					"properties": {
+						"sources": sources,
 						"name": { "type": "string", "enum": REQUIRED_SHAPES },
 						"found": { "type": "string", "enum": ["yes", "no", "unknown"] },
 						"reason": { "type": "string", "description": "One-line reason." },
@@ -1271,7 +1355,7 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 							"description": "Required when found is yes: the one observation that would clear it. Null otherwise."
 						}
 					},
-					"required": ["name", "found", "reason", "settles"]
+					"required": ["name", "found", "reason", "settles", "sources"]
 				},
 				"description": "All four evidence shapes, each exactly once, in every ruling answer."
 			},
@@ -1281,13 +1365,14 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 					"type": "object",
 					"additionalProperties": false,
 					"properties": {
+						"sources": sources,
 						"gap": { "type": "string", "description": "The specific missing or unverified item." },
 						"settles": {
 							"type": ["string", "null"],
 							"description": "The one observation that would close it."
 						}
 					},
-					"required": ["gap", "settles"]
+					"required": ["gap", "settles", "sources"]
 				},
 				"description": "Empty when the verdict is PASS."
 			},
@@ -1540,6 +1625,84 @@ fn charged(settles: &str, body: &str) -> Option<String> {
 	Some(format!("{body} — clear it by: {settles}"))
 }
 
+struct OutputVisibility {
+	limited: HashSet<u64>,
+	entries: Vec<(u64, &'static str)>,
+}
+
+impl OutputVisibility {
+	fn render(&self) -> String {
+		let mut block = String::from("\n\n<output_visibility>\n");
+		for (sequence, status) in &self.entries {
+			block.push_str(&format!("#{sequence}: {status}\n"));
+		}
+		block.push_str("</output_visibility>");
+		block
+	}
+}
+
+/// The action log contains no outputs. Only ground truth and the bounded
+/// readback can make retained output visible to this verifier pass.
+fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibility {
+	let historical = if input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp {
+		input.historical_actions
+	} else {
+		""
+	};
+	let mut visibility = OutputVisibility {
+		limited: HashSet::new(),
+		entries: Vec::new(),
+	};
+	for line in input.actions.lines().chain(historical.lines()) {
+		let Some((number, action)) = line.strip_prefix('#').and_then(|line| line.split_once(' '))
+		else {
+			continue;
+		};
+		let Ok(sequence) = number.parse::<u64>() else {
+			continue;
+		};
+		let output = input.grounds.iter().find(|(n, _)| *n == sequence);
+		let (status, limited) = match output {
+			Some((_, output)) if input.ground_truth.contains(output.as_str()) => {
+				("visible in ground truth", false)
+			}
+			Some((_, output)) if readback.contains(&sequence) => {
+				if output.chars().count() > READBACK_HEAD + READBACK_TAIL {
+					("partial: readback middle omitted", true)
+				} else {
+					("visible in readback", false)
+				}
+			}
+			Some(_) => (
+				"not shown in readback; ground truth may contain excerpts",
+				true,
+			),
+			None if action.contains("→ ok (0b)") => ("empty output", false),
+			None => ("not retained; ground truth may contain excerpts", true),
+		};
+		// An observed error is never excused by retention limits on its details.
+		if limited && !action.contains("→ ERROR") {
+			visibility.limited.insert(sequence);
+		}
+		visibility.entries.push((sequence, status));
+	}
+	visibility
+}
+
+/// Only explicit references to runtime-confirmed omissions qualify. A visible
+/// output, ground truth, absent action, or unknown reference keeps the finding
+/// actionable; prose and the model's PASS/GAPS label cannot grant an exemption.
+fn outside_view(sources: &str, limited: &HashSet<u64>) -> bool {
+	!sources.is_empty()
+		&& sources.split(',').all(|source| {
+			source
+				.trim()
+				.strip_prefix("omitted:")
+				.and_then(|number| number.parse::<u64>().ok())
+				.is_some_and(|sequence| limited.contains(&sequence))
+		})
+}
+
 /// Answer a readback request from the outputs the runtime retained. A number
 /// with nothing behind it is answered explicitly: silence would read as "that
 /// call returned nothing", which is the inference this round exists to prevent.
@@ -1781,6 +1944,7 @@ struct ReportedCondition {
 	/// Empty when the answer gave none — fatal for an unmatched condition,
 	/// irrelevant for the others.
 	basis: String,
+	sources: String,
 }
 
 /// One `<shape>` line / `shapes[]` entry, as written.
@@ -1791,6 +1955,7 @@ struct ReportedShape {
 	reason: String,
 	/// The observation that would clear it; empty when the answer named none.
 	settles: String,
+	sources: String,
 }
 
 /// One `<gap>` line / `gaps[]` entry, as written.
@@ -1798,6 +1963,7 @@ struct ReportedShape {
 struct ReportedFinding {
 	text: String,
 	settles: String,
+	sources: String,
 }
 
 /// Decode the tag protocol. Elements are collected exactly as written — a
@@ -1812,6 +1978,7 @@ fn text_report(resp: &str) -> VerifierReport {
 				status: attr(attributes, "status").to_string(),
 				observation: body.to_string(),
 				basis: attr(attributes, "basis").to_string(),
+				sources: attr(attributes, "sources").to_string(),
 			})
 			.collect(),
 		shapes: elements(resp, "shape")
@@ -1821,6 +1988,7 @@ fn text_report(resp: &str) -> VerifierReport {
 				found: attr(attributes, "found").to_string(),
 				reason: body.to_string(),
 				settles: attr(attributes, "settles").to_string(),
+				sources: attr(attributes, "sources").to_string(),
 			})
 			.collect(),
 		gaps: elements(resp, "gap")
@@ -1828,6 +1996,7 @@ fn text_report(resp: &str) -> VerifierReport {
 			.map(|(attributes, body)| ReportedFinding {
 				text: body.to_string(),
 				settles: attr(attributes, "settles").to_string(),
+				sources: attr(attributes, "sources").to_string(),
 			})
 			.collect(),
 		ruled: resp.contains("<verdict>"),
@@ -1876,6 +2045,7 @@ fn json_report(value: &serde_json::Value) -> VerifierReport {
 				status: field(condition, "status"),
 				observation: field(condition, "observation"),
 				basis: field(condition, "basis"),
+				sources: field(condition, "sources"),
 			})
 			.collect(),
 		shapes: entries(value, "shapes")
@@ -1885,6 +2055,7 @@ fn json_report(value: &serde_json::Value) -> VerifierReport {
 				found: field(shape, "found"),
 				reason: field(shape, "reason"),
 				settles: field(shape, "settles"),
+				sources: field(shape, "sources"),
 			})
 			.collect(),
 		gaps: entries(value, "gaps")
@@ -1892,6 +2063,7 @@ fn json_report(value: &serde_json::Value) -> VerifierReport {
 			.map(|gap| ReportedFinding {
 				text: field(gap, "gap"),
 				settles: field(gap, "settles"),
+				sources: field(gap, "sources"),
 			})
 			.collect(),
 		ruled: verdict == JSON_VERDICT_PASS || verdict == JSON_VERDICT_GAPS,
@@ -1919,8 +2091,9 @@ impl VerifierReport {
 	/// condition is a gap even when the answer also says PASS (holistic
 	/// judgment demonstrably absorbs violated conditions when the overall
 	/// picture looks done). Evidence-shape findings are enforced the same way.
-	fn verdict(&self, expected_conditions: usize) -> GateVerdict {
+	fn verdict(&self, expected_conditions: usize, limited: &HashSet<u64>) -> GateVerdict {
 		let mut unmatched = Vec::new();
+		let mut window_advisory = false;
 		let mut seen_shapes = std::collections::HashSet::new();
 		for shape in &self.shapes {
 			if shape.name.is_empty() {
@@ -1937,6 +2110,7 @@ impl VerifierReport {
 			// defect in the work. "yes" is an accusation, and is charged only under the
 			// rule every finding answers to (see [`charged`]).
 			match shape.found.as_str() {
+				"yes" if outside_view(&shape.sources, limited) => window_advisory = true,
 				"yes" => {
 					if let Some(finding) = charged(&shape.settles, &shape.reason) {
 						unmatched.push(format!(
@@ -1975,6 +2149,9 @@ impl VerifierReport {
 				// violation: it can be neither charged nor excused.
 				"unmatched" => match condition.basis.as_str() {
 					BASIS_INFERENCE => {}
+					"recorded_output" if outside_view(&condition.sources, limited) => {
+						window_advisory = true
+					}
 					basis if CONDITION_BASES.contains(&basis) => unmatched.push(format!(
 						"Unmatched condition {n}: {}",
 						condition.observation
@@ -2011,11 +2188,19 @@ impl VerifierReport {
 			.gaps
 			.iter()
 			.filter(|finding| !finding.text.is_empty())
+			.filter(|finding| {
+				if outside_view(&finding.sources, limited) {
+					window_advisory = true;
+					false
+				} else {
+					true
+				}
+			})
 			.filter_map(|finding| charged(&finding.settles, &finding.text))
 			.collect();
 		if !gaps.is_empty() {
 			GateVerdict::Gaps(gaps)
-		} else if self.pass {
+		} else if self.pass || window_advisory {
 			GateVerdict::Pass
 		} else {
 			GateVerdict::Indeterminate("missing verdict markers".to_string())
@@ -2026,12 +2211,18 @@ impl VerifierReport {
 	/// unmatched one it could only infer, an unknown shape, or a finding that
 	/// names no observation to close it. Surfaced to the user, never charged to
 	/// the agent.
-	fn reported_findings(&self) -> Vec<String> {
+	fn reported_findings(&self, limited: &HashSet<u64>) -> Vec<String> {
 		let mut reported = Vec::new();
 		for condition in &self.conditions {
 			let limit = match condition.status.as_str() {
 				"unknown" => "unsettled",
 				"unmatched" if condition.basis == BASIS_INFERENCE => "suspected by inference only",
+				"unmatched"
+					if condition.basis == "recorded_output"
+						&& outside_view(&condition.sources, limited) =>
+				{
+					"output outside gate view"
+				}
 				_ => continue,
 			};
 			let number = condition
@@ -2046,6 +2237,10 @@ impl VerifierReport {
 		for shape in &self.shapes {
 			match shape.found.as_str() {
 				"unknown" => reported.push(format!("{} unsettled: {}", shape.name, shape.reason)),
+				"yes" if outside_view(&shape.sources, limited) => reported.push(format!(
+					"{} output outside gate view: {}",
+					shape.name, shape.reason
+				)),
 				"yes" if charged(&shape.settles, &shape.reason).is_none() => {
 					reported.push(format!(
 						"{} names no closing observation: {}",
@@ -2056,7 +2251,9 @@ impl VerifierReport {
 			}
 		}
 		for finding in &self.gaps {
-			if charged(&finding.settles, &finding.text).is_none() {
+			if outside_view(&finding.sources, limited) {
+				reported.push(format!("gap output outside gate view: {}", finding.text));
+			} else if charged(&finding.settles, &finding.text).is_none() {
 				reported.push(format!(
 					"gap names no closing observation: {}",
 					finding.text

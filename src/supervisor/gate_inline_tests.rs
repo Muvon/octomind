@@ -22,7 +22,10 @@ const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expe
 #[test]
 fn pass_parsed() {
 	let response = format!("{CLEAN_SHAPES}\n<verdict>PASS</verdict>");
-	assert_eq!(text_report(&response).verdict(0), GateVerdict::Pass);
+	assert_eq!(
+		text_report(&response).verdict(0, &HashSet::new()),
+		GateVerdict::Pass
+	);
 }
 
 #[test]
@@ -30,7 +33,7 @@ fn gaps_parsed() {
 	let response = format!(
 			"{CLEAN_SHAPES}\n<gap settles=\"a test run\">no tests</gap>\n<gap settles=\"the published page\">missing docs</gap>"
 		);
-	let v = text_report(&response).verdict(0);
+	let v = text_report(&response).verdict(0, &HashSet::new());
 	assert_eq!(
 		v,
 		GateVerdict::Gaps(vec![
@@ -43,7 +46,7 @@ fn gaps_parsed() {
 #[test]
 fn no_markers_is_indeterminate() {
 	assert!(matches!(
-		text_report("looks good to me").verdict(0),
+		text_report("looks good to me").verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(_)
 	));
 }
@@ -57,7 +60,7 @@ fn found_shape_outranks_holistic_pass() {
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
 	assert_eq!(
-			text_report(resp).verdict(1),
+			text_report(resp).verdict(1, &HashSet::new()),
 			GateVerdict::Gaps(vec![
 				"Evidence shape 'acceptance-only' present: only valid inputs exercised on a widened parser — clear it by: a test feeding an invalid input".into()
 			])
@@ -73,7 +76,7 @@ fn unmatched_condition_outranks_holistic_pass() {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
-	let v = text_report(resp).verdict(2);
+	let v = text_report(resp).verdict(2, &HashSet::new());
 	assert_eq!(
 		v,
 		GateVerdict::Gaps(vec![
@@ -85,7 +88,10 @@ fn unmatched_condition_outranks_holistic_pass() {
 {CLEAN_SHAPES}
 <verdict>PASS</verdict>"#
 	);
-	assert_eq!(text_report(&all_matched).verdict(1), GateVerdict::Pass);
+	assert_eq!(
+		text_report(&all_matched).verdict(1, &HashSet::new()),
+		GateVerdict::Pass
+	);
 }
 
 #[test]

@@ -24,6 +24,170 @@ const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expe
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>"#;
 
+#[test]
+fn zero_conditions_omit_the_condition_contract_in_both_encodings() {
+	for encoding in [Encoding::Text, Encoding::Json] {
+		let prompt = render_gate_prompt(encoding, 0);
+		assert!(!prompt.contains("<condition "));
+		assert!(!prompt.contains("one entry per condition"));
+		assert!(!prompt.contains("one entry per numbered evidence condition"));
+		assert!(!prompt.contains("Every condition gets"));
+	}
+	let extra = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"matched\">invented</condition><verdict>PASS</verdict>");
+	assert!(matches!(
+		text_report(&extra).verdict(0, &HashSet::new()),
+		GateVerdict::Indeterminate(_)
+	));
+}
+
+#[test]
+fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
+	use sha2::{Digest, Sha256};
+	for count in [1, 3] {
+		let prompt = render_gate_prompt(Encoding::Text, count);
+		let original = prompt
+			.strip_suffix(&format!("\n{OUTPUT_VISIBILITY_PROMPT}"))
+			.unwrap();
+		assert_eq!(
+			Sha256::digest(original.as_bytes())
+				.iter()
+				.map(|byte| format!("{byte:02x}"))
+				.collect::<String>(),
+			"b3a211769753df20e1c4eb9533c6bdc805e7bf01f71d8f63082ee1bd7358c6a9"
+		);
+	}
+}
+
+fn visibility_input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
+	GateInput {
+		original_task: "brief the staged changes",
+		task: "brief the staged changes",
+		task_scope: crate::supervisor::resolve::ResolutionScope::SelfContained,
+		context_sources: &[],
+		resolution_evidence: &[],
+		result: "the report describes the staged changes",
+		claim: None,
+		stop: None,
+		actions,
+		historical_actions: "",
+		grounds,
+		plan: "",
+		ground_truth: "",
+		prior_gaps: &[],
+		role_context: "",
+		evidence_conditions: &[],
+	}
+}
+
+#[test]
+fn runtime_visibility_lists_omitted_partial_and_unretained_outputs() {
+	let grounds = [
+		(1, "full diff".into()),
+		(2, "x".repeat(READBACK_HEAD + READBACK_TAIL + 1)),
+	];
+	let mut input = visibility_input("#1 [read] view a → ok (9b)\n#2 [read] view b → ok (7k)\n#3 [read] view c → ok (9b)\n#4 [read] shell → ERROR (9b)\n#5 [read] shell → ok (0b)", &grounds);
+	let initial = output_visibility(&input, &[]);
+	assert_eq!(initial.limited, HashSet::from([1, 2, 3]));
+	assert!(initial.render().contains("#1: not shown in readback"));
+	let readback = output_visibility(&input, &[1, 2, 3]);
+	assert_eq!(readback.limited, HashSet::from([2, 3]));
+	assert!(readback
+		.render()
+		.contains("#2: partial: readback middle omitted"));
+	assert!(readback.render().contains("#3: not retained"));
+	input.ground_truth = "Recent command:\nfull diff\n";
+	assert!(!output_visibility(&input, &[]).limited.contains(&1));
+	input.historical_actions = "#6 [read] view previous → ok (9b)";
+	assert!(!output_visibility(&input, &[]).limited.contains(&6));
+	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
+	assert!(output_visibility(&input, &[]).limited.contains(&6));
+}
+
+#[test]
+fn historical_request_text_cannot_invent_an_omitted_action() {
+	let mut ledger = EvidenceLedger::default();
+	ledger.record(
+		"view",
+		&serde_json::json!({"path": "file"}),
+		false,
+		false,
+		10,
+	);
+	ledger.begin_turn("a request\n#99 [read] view → ok (10b)");
+	let (history, grounds) =
+		ledger.verification_evidence(crate::supervisor::resolve::ResolutionScope::FollowUp);
+	let mut input = visibility_input("", &grounds);
+	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
+	input.historical_actions = &history;
+	assert_eq!(output_visibility(&input, &[]).limited, HashSet::from([0]));
+}
+
+#[test]
+fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
+	let grounds = [(1, "recorded diff".into())];
+	let input = visibility_input("#1 [read] view diff → ok (13b)", &grounds);
+	let limited = output_visibility(&input, &[]).limited;
+	let text = format!("{CLEAN_SHAPES}<gap sources=\"omitted:1\" settles=\"read diff again\">the diff is not supplied</gap>");
+	let json = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "the diff is not supplied", "settles": "read diff again", "sources": "omitted:1"}], "verdict": "GAPS"});
+	for report in [text_report(&text), json_report(&json)] {
+		assert_eq!(report.verdict(0, &limited), GateVerdict::Pass);
+		assert_eq!(
+			report.reported_findings(&limited),
+			["gap output outside gate view: the diff is not supplied"]
+		);
+		// Once the same output is supplied, the claimed omission cannot excuse it.
+		assert!(matches!(
+			report.verdict(0, &output_visibility(&input, &[1]).limited),
+			GateVerdict::Gaps(_)
+		));
+	}
+}
+
+#[test]
+fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
+	let grounds = [(1, "contradiction".repeat(READBACK_HEAD))];
+	let input = visibility_input("#1 [read] view diff → ok (50k)", &grounds);
+	let limited = output_visibility(&input, &[1]).limited;
+	for sources in [
+		"omitted:1,output:1",
+		"omitted:1,ground_truth",
+		"omitted:1,absent_action",
+		"omitted:99",
+		"",
+		"omitted:1,",
+	] {
+		let response = format!("{CLEAN_SHAPES}<gap sources=\"{sources}\" settles=\"fix the defect\">the visible head contradicts the claim</gap>");
+		assert!(
+			matches!(
+				text_report(&response).verdict(0, &limited),
+				GateVerdict::Gaps(_)
+			),
+			"{sources}"
+		);
+	}
+}
+
+#[test]
+fn window_limits_apply_to_shapes_and_recorded_output_conditions_only() {
+	let limited = HashSet::from([1]);
+	let shapes = CLEAN_SHAPES.replace(
+		"name=\"circular\" found=\"no\"",
+		"name=\"circular\" found=\"yes\" sources=\"omitted:1\" settles=\"read output\"",
+	);
+	let report = text_report(&shapes);
+	assert_eq!(report.verdict(0, &limited), GateVerdict::Pass);
+	assert_eq!(report.reported_findings(&limited).len(), 1);
+	for basis in ["recorded_output", "ground_truth", "absent_action"] {
+		let report = text_report(&format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unmatched\" basis=\"{basis}\" sources=\"omitted:1\">output not supplied</condition><verdict>PASS</verdict>"));
+		if basis == "recorded_output" {
+			assert_eq!(report.verdict(1, &limited), GateVerdict::Pass);
+			assert_eq!(report.reported_findings(&limited).len(), 1);
+		} else {
+			assert!(matches!(report.verdict(1, &limited), GateVerdict::Gaps(_)));
+		}
+	}
+}
+
 /// The number the verifier reads in `<recorded_actions>` must be the number a
 /// readback resolves. If these two ever drift the round silently answers about
 /// the wrong call, which is worse than not answering at all.
@@ -113,8 +277,11 @@ fn an_unsettled_shape_reports_without_blocking() {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="unknown">the search ran but its output is not in my input</shape>
 <verdict>PASS</verdict>"#;
-	assert_eq!(text_report(response).verdict(0), GateVerdict::Pass);
-	let reported = text_report(response).reported_findings();
+	assert_eq!(
+		text_report(response).verdict(0, &HashSet::new()),
+		GateVerdict::Pass
+	);
+	let reported = text_report(response).reported_findings(&HashSet::new());
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].starts_with("unenumerated-category unsettled"));
 }
@@ -132,9 +299,9 @@ fn an_unobserved_condition_suspicion_reports_without_blocking() {
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
 	let report = text_report(response);
-	assert_eq!(report.verdict(1), GateVerdict::Pass);
-	assert_eq!(report.reported_findings().len(), 1);
-	assert!(report.reported_findings()[0].contains("condition 1 unsettled"));
+	assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
+	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
+	assert!(report.reported_findings(&HashSet::new())[0].contains("condition 1 unsettled"));
 
 	let answer = serde_json::json!({
 		"conditions": [{
@@ -148,8 +315,8 @@ fn an_unobserved_condition_suspicion_reports_without_blocking() {
 		"readback": []
 	});
 	let report = json_report(&answer);
-	assert_eq!(report.verdict(1), GateVerdict::Pass);
-	assert_eq!(report.reported_findings().len(), 1);
+	assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
+	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
 }
 
 /// The same false positive when the verifier does write "unmatched": the basis
@@ -163,9 +330,10 @@ fn an_inference_only_unmatched_condition_reports_without_blocking() {
 <verdict>PASS</verdict>"#
 	);
 	let report = text_report(&response);
-	assert_eq!(report.verdict(1), GateVerdict::Pass);
-	assert_eq!(report.reported_findings().len(), 1);
-	assert!(report.reported_findings()[0].contains("condition 1 suspected by inference only"));
+	assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
+	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
+	assert!(report.reported_findings(&HashSet::new())[0]
+		.contains("condition 1 suspected by inference only"));
 }
 
 /// A violation the verifier was shown — here the absence of a called-for check
@@ -178,7 +346,7 @@ fn an_observed_unmatched_condition_is_charged() {
 <gap settles="a run of the suite">tests never ran</gap>"#
 	);
 	assert_eq!(
-		text_report(&response).verdict(1),
+		text_report(&response).verdict(1, &HashSet::new()),
 		GateVerdict::Gaps(vec![
 			"Unmatched condition 1: no recorded action ran the project's test suite".into()
 		])
@@ -198,7 +366,7 @@ fn an_unmatched_condition_without_a_known_basis_is_indeterminate() {
 		);
 		assert!(
 			matches!(
-				text_report(&response).verdict(1),
+				text_report(&response).verdict(1, &HashSet::new()),
 				GateVerdict::Indeterminate(_)
 			),
 			"attributes {attributes:?}"
@@ -221,9 +389,10 @@ fn the_json_path_reports_an_inference_only_unmatched_condition_without_blocking(
 		"readback": []
 	});
 	let report = json_report(&answer);
-	assert_eq!(report.verdict(2), GateVerdict::Pass);
-	assert_eq!(report.reported_findings().len(), 1);
-	assert!(report.reported_findings()[0].contains("condition 2 suspected by inference only"));
+	assert_eq!(report.verdict(2, &HashSet::new()), GateVerdict::Pass);
+	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
+	assert!(report.reported_findings(&HashSet::new())[0]
+		.contains("condition 2 suspected by inference only"));
 }
 
 /// The refutation pass can only remove findings: one the second verifier marks
@@ -261,8 +430,11 @@ fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="yes">the set is not bounded</shape>
 <verdict>PASS</verdict>"#;
-	assert_eq!(text_report(response).verdict(0), GateVerdict::Pass);
-	let reported = text_report(response).reported_findings();
+	assert_eq!(
+		text_report(response).verdict(0, &HashSet::new()),
+		GateVerdict::Pass
+	);
+	let reported = text_report(response).reported_findings(&HashSet::new());
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].contains("names no closing observation"));
 }
@@ -273,22 +445,27 @@ fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 fn a_free_form_gap_answers_to_the_same_rule() {
 	let unanswerable =
 		format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
-	assert_eq!(text_report(&unanswerable).verdict(0), GateVerdict::Pass);
-	let reported = text_report(&unanswerable).reported_findings();
+	assert_eq!(
+		text_report(&unanswerable).verdict(0, &HashSet::new()),
+		GateVerdict::Pass
+	);
+	let reported = text_report(&unanswerable).reported_findings(&HashSet::new());
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].contains("gap names no closing observation"));
 
 	let answerable = format!(
 		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
 	);
-	let GateVerdict::Gaps(gaps) = text_report(&answerable).verdict(0) else {
+	let GateVerdict::Gaps(gaps) = text_report(&answerable).verdict(0, &HashSet::new()) else {
 		panic!("a gap naming its observation is charged");
 	};
 	assert_eq!(
 		gaps,
 		["the counter is unverified — clear it by: a read of stats.rs"]
 	);
-	assert!(text_report(&answerable).reported_findings().is_empty());
+	assert!(text_report(&answerable)
+		.reported_findings(&HashSet::new())
+		.is_empty());
 }
 
 #[test]
@@ -297,7 +474,7 @@ fn a_settled_finding_carries_the_observation_that_would_clear_it() {
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="yes" settles="a listing of src/llm/providers naming every member">only touched members are covered</shape>"#;
-	let GateVerdict::Gaps(gaps) = text_report(response).verdict(0) else {
+	let GateVerdict::Gaps(gaps) = text_report(response).verdict(0, &HashSet::new()) else {
 		panic!("a settled finding is a gap");
 	};
 	assert_eq!(gaps.len(), 1);
@@ -312,7 +489,7 @@ fn a_shape_value_outside_the_contract_is_indeterminate() {
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#;
 	assert!(matches!(
-		text_report(response).verdict(0),
+		text_report(response).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(_)
 	));
 }
@@ -411,7 +588,7 @@ fn the_json_path_charges_an_unmatched_condition_over_a_holistic_pass() {
 		"readback": []
 	});
 	assert_eq!(
-		json_report(&answer).verdict(2),
+		json_report(&answer).verdict(2, &HashSet::new()),
 		GateVerdict::Gaps(vec![
 			"Unmatched condition 2: no test shows custom prettifier output preserved".into()
 		])
@@ -432,7 +609,7 @@ fn the_json_path_rejects_a_missing_evidence_shape() {
 		"readback": []
 	});
 	assert!(matches!(
-		json_report(&answer).verdict(0),
+		json_report(&answer).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("incomplete evidence-shape checklist")
 	));
 	// A shape claimed twice is the same violation from the other side.
@@ -446,7 +623,7 @@ fn the_json_path_rejects_a_missing_evidence_shape() {
 		"readback": []
 	});
 	assert!(matches!(
-		json_report(&answer).verdict(0),
+		json_report(&answer).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(_)
 	));
 }
@@ -466,8 +643,8 @@ fn both_encodings_reach_the_same_verdict() {
 		"readback": []
 	});
 	assert_eq!(
-		text_report(&charged_text).verdict(0),
-		json_report(&charged_json).verdict(0)
+		text_report(&charged_text).verdict(0, &HashSet::new()),
+		json_report(&charged_json).verdict(0, &HashSet::new())
 	);
 
 	// And a finding that names no closing observation is reported, not charged,
@@ -482,16 +659,16 @@ fn both_encodings_reach_the_same_verdict() {
 		"readback": []
 	});
 	assert_eq!(
-		text_report(&unactionable_text).verdict(0),
+		text_report(&unactionable_text).verdict(0, &HashSet::new()),
 		GateVerdict::Pass
 	);
 	assert_eq!(
-		json_report(&unactionable_json).verdict(0),
+		json_report(&unactionable_json).verdict(0, &HashSet::new()),
 		GateVerdict::Pass
 	);
 	assert_eq!(
-		text_report(&unactionable_text).reported_findings(),
-		json_report(&unactionable_json).reported_findings()
+		text_report(&unactionable_text).reported_findings(&HashSet::new()),
+		json_report(&unactionable_json).reported_findings(&HashSet::new())
 	);
 }
 
@@ -627,7 +804,7 @@ fn fold_job_completion_lands_in_ground_truth_and_readback() {
 fn a_shape_without_a_name_is_indeterminate() {
 	let resp = format!(r#"<shape found="no">nameless</shape>{CLEAN_SHAPES}"#);
 	assert!(matches!(
-		text_report(&resp).verdict(0),
+		text_report(&resp).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("shape without name")
 	));
 }
@@ -638,7 +815,7 @@ fn a_condition_without_a_numeric_index_is_indeterminate() {
 		r#"{CLEAN_SHAPES}<condition status="matched">ok</condition><verdict>PASS</verdict>"#
 	);
 	assert!(matches!(
-		text_report(&resp).verdict(1),
+		text_report(&resp).verdict(1, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition without numeric index")
 	));
 }
@@ -649,7 +826,7 @@ fn a_duplicate_condition_index_is_indeterminate() {
 		r#"{CLEAN_SHAPES}<condition n="1" status="matched">a</condition><condition n="1" status="matched">b</condition><verdict>PASS</verdict>"#
 	);
 	assert!(matches!(
-		text_report(&resp).verdict(1),
+		text_report(&resp).verdict(1, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("duplicate condition: 1")
 	));
 }
@@ -660,7 +837,7 @@ fn a_condition_status_outside_the_contract_is_indeterminate() {
 		r#"{CLEAN_SHAPES}<condition n="1" status="bogus">x</condition><verdict>PASS</verdict>"#
 	);
 	assert!(matches!(
-		text_report(&resp).verdict(1),
+		text_report(&resp).verdict(1, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition 1 has invalid status")
 	));
 }
@@ -671,7 +848,7 @@ fn a_condition_checklist_mismatch_is_indeterminate() {
 		r#"{CLEAN_SHAPES}<condition n="1" status="matched">only one</condition><verdict>PASS</verdict>"#
 	);
 	assert!(matches!(
-		text_report(&resp).verdict(2),
+		text_report(&resp).verdict(2, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason
 			.contains("condition checklist mismatch: expected 2, received 1")
 	));
@@ -682,7 +859,7 @@ fn a_ruled_answer_with_no_verdict_marker_is_indeterminate() {
 	// All four shapes clean, conditions match (none expected), no gap charged —
 	// but the answer never said PASS. That is unreadable, not accepted.
 	assert!(matches!(
-		text_report(CLEAN_SHAPES).verdict(0),
+		text_report(CLEAN_SHAPES).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("missing verdict markers")
 	));
 }
@@ -1025,9 +1202,9 @@ mod verify_round_trip {
 		// Distinguish protocol parsing from provider-fixture isolation. A valid
 		// answer must pass before transport as well as after the round trip.
 		let report = text_report(&answer);
-		assert_eq!(report.verdict(1), GateVerdict::Pass);
+		assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
 		assert_eq!(
-			report.reported_findings(),
+			report.reported_findings(&HashSet::new()),
 			vec!["condition 1 unsettled: the log is not retained"]
 		);
 		let url = spawn_stub(vec![final_response(&answer)]).await;

@@ -685,10 +685,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		}
 		// Runtime-gathered ground truth: the diff of what actually changed and
 		// the last command's recorded output — the verifier judges state, not story.
-		let mut ground_truth = crate::supervisor::gate::render_ground_truth(
-			chat_session.evidence.mutated_paths(),
-			&chat_session.evidence.recent_commands(),
-		);
+		let mut ground_truth = crate::supervisor::gate::render_ground_truth(&chat_session.evidence);
 		// Report detector limits as heuristics. Failure to recognize a check is
 		// not proof that no check ran, or that the task requires another action.
 		if !chat_session.evidence.mutated_paths().is_empty() {
@@ -707,10 +704,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				None
 			};
 			if let Some(p) = provenance {
-				if !ground_truth.is_empty() {
-					ground_truth.push_str("\n\n");
+				if !ground_truth.text.is_empty() {
+					ground_truth.text.push_str("\n\n");
 				}
-				ground_truth.push_str(p);
+				ground_truth.text.push_str(p);
 			}
 		}
 		let (historical_actions, grounds) = chat_session

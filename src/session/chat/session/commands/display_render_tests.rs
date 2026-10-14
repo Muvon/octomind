@@ -1222,11 +1222,11 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 	};
 	info.supervisor_accounting.blocking_wall_time_ms = 1_400;
 	let report = SupervisorReport::for_session(&info);
-	let table = supervisor_table(&report);
+	let table = plain_info_render(&supervisor_table(&report, 120));
 	assert!(table.contains("chat"));
 	assert!(table.contains("decision"));
-	assert!(table.contains("1.4s"));
-	assert!(table.contains("1.3s"));
+	assert!(table.contains("1s 400ms"));
+	assert!(table.contains("1s 300ms"));
 	assert!(table.contains("2 condensed · saved 5.7K tok"));
 	assert!(!table.contains("evaluate"));
 	assert!(!table.contains("resolve"));
@@ -1240,9 +1240,19 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 	);
 	assert_eq!(report.mechanics[&Mechanic::Condense].chat_calls, 0);
 	assert_eq!(report.mechanics[&Mechanic::Condense].decision_calls, 2);
-	let summary = supervisor_summary(&report);
-	assert!(summary.contains("blocking 1.4s of 2s turn time (70%)"));
-	assert!(summary.contains("main API 100ms · tools + runtime 500ms"));
+	let timing_rows = info_timing_rows(&super::super::InfoTiming {
+		split_time_ms: report.turn_time.total_time_ms,
+		turn_model_time_ms: report.turn_time.main_api_time_ms,
+		supervisor_blocking_time_ms: report.turn_time.blocking_supervisor_time_ms,
+		tools_runtime_time_ms: 500,
+		..Default::default()
+	});
+	assert_eq!(plain_info_render(&timing_rows[0].1), "100ms");
+	assert_eq!(
+		plain_info_render(&timing_rows[1].1),
+		"1s 400ms blocking · 70% of turn time"
+	);
+	assert_eq!(plain_info_render(&timing_rows[2].1), "500ms");
 	info.supervisor_accounting.kinds.insert(
 		CallKind::Distill,
 		Usage {
@@ -1252,11 +1262,11 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 		},
 	);
 	info.supervisor_accounting.background_wall_time_ms = Some(500);
-	assert!(supervisor_table(&SupervisorReport::for_session(&info)).contains("background"));
+	assert!(supervisor_table(&SupervisorReport::for_session(&info), 120).contains("background"));
 }
 
 #[test]
-fn supervisor_wall_only_and_local_rows_explain_the_absence_of_api_usage() {
+fn supervisor_wall_only_and_local_rows_preserve_usage_without_duplicate_outcomes() {
 	use crate::supervisor::{accounting::Usage, report::SupervisorReport, stats::CallKind};
 	let mut info = crate::session::SessionInfo::default();
 	info.supervisor_accounting.kinds.insert(
@@ -1274,10 +1284,14 @@ fn supervisor_wall_only_and_local_rows_explain_the_absence_of_api_usage() {
 			..Default::default()
 		},
 	);
-	let table = supervisor_table(&SupervisorReport::for_session(&info));
+	let table = plain_info_render(&supervisor_table(
+		&SupervisorReport::for_session(&info),
+		120,
+	));
 	assert!(table
 		.lines()
-		.any(|line| line.starts_with("condense") && line.contains("no model usage")));
+		.any(|line| line.starts_with("condense") && line.contains("1s 400ms")));
+	assert!(!table.contains("no model usage"));
 	assert!(table.lines().any(|line| line.starts_with("hindsight")
 		&& line.contains("local")
 		&& line.contains("800ms")));
@@ -1381,10 +1395,359 @@ fn supervisor_sample_renders_one_session_table_and_one_timing_split() {
 		(report.totals.input_tokens, report.totals.output_tokens),
 		(114_100, 5_700)
 	);
-	let table = supervisor_table(&report);
+	let table = plain_info_render(&supervisor_table(&report, 120));
 	assert!(!table.contains("evaluate"));
 	assert!(!table.contains("background"));
-	assert!(table.contains("$0.0138"));
-	println!("supervisor · {}", supervisor_summary(&report));
+	assert!(table.contains("$0.01380"));
+	println!("supervisor · this session");
 	println!("{}", table);
+}
+
+fn plain_info_render(text: &str) -> String {
+	regex::Regex::new(r"\x1b\[[0-9;]*m")
+		.expect("ANSI color pattern")
+		.replace_all(text, "")
+		.into_owned()
+}
+
+fn owner_info_timing() -> super::super::InfoTiming {
+	super::super::InfoTiming {
+		requests: 17,
+		avg_request_time_ms: 6_688,
+		completed_turns: 1,
+		total_turn_time_ms: 135_799,
+		avg_turn_time_ms: 135_799,
+		last_turn_time_ms: 135_799,
+		model_time_ms: 113_700,
+		turn_model_time_ms: 113_700,
+		split_turns: 1,
+		split_time_ms: 135_799,
+		supervisor_blocking_time_ms: 21_200,
+		tools_runtime_time_ms: 936,
+	}
+}
+
+fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
+	use crate::supervisor::report::{Mechanic, MechanicUsage, Outcome, SupervisorReport, Totals};
+	let mut report = SupervisorReport::default();
+	for (mechanic, chat, decision, wall, api, input, output, cost) in [
+		(Mechanic::Gate, 2, 0, 3_500, 3_500, 10_000, 268, 0.0018),
+		(
+			Mechanic::Authorize,
+			1,
+			16,
+			9_800,
+			9_700,
+			67_000,
+			1_100,
+			0.0032,
+		),
+		(
+			Mechanic::Condense,
+			0,
+			5,
+			2_900,
+			2_800,
+			66_000,
+			4_700,
+			0.0028,
+		),
+		(Mechanic::Recall, 1, 1, 1_500, 1_500, 8_001, 371, 0.0004),
+		(Mechanic::Resolve, 1, 0, 1_400, 1_400, 239, 80, 0.0001),
+		(Mechanic::Hindsight, 1, 0, 994, 0, 0, 0, 0.0),
+		(Mechanic::Capabilities, 0, 1, 1_100, 1_100, 527, 67, 0.0),
+	] {
+		report.mechanics.insert(
+			mechanic,
+			MechanicUsage {
+				chat_calls: chat,
+				decision_calls: decision,
+				wall_blocking_ms: wall,
+				api_ms: api,
+				input_tokens: input,
+				output_tokens: output,
+				cost,
+				..Default::default()
+			},
+		);
+	}
+	for (mechanic, outcomes) in [
+		(Mechanic::Gate, vec![(Outcome::Runs, 1), (Outcome::Pass, 1)]),
+		(
+			Mechanic::Authorize,
+			vec![
+				(Outcome::Checked, 17),
+				(Outcome::SkippedJudge, 16),
+				(Outcome::Applied, 15),
+				(Outcome::Replaced, 15),
+			],
+		),
+		(
+			Mechanic::Condense,
+			vec![
+				(Outcome::Condensed, 5),
+				(Outcome::SavedTokens, 19_000),
+				(Outcome::Applied, 5),
+				(Outcome::Replaced, 5),
+			],
+		),
+		(
+			Mechanic::Recall,
+			vec![(Outcome::Items, 10), (Outcome::Applied, 9)],
+		),
+	] {
+		report
+			.mechanics
+			.get_mut(&mechanic)
+			.expect("sample mechanic")
+			.outcome = outcomes.into_iter().collect();
+	}
+	report.totals = Totals {
+		chat_calls: 6,
+		decision_calls: 23,
+		wall_blocking_ms: 21_200,
+		api_ms: 19_900,
+		input_tokens: 153_000,
+		output_tokens: 6_500,
+		cost: 0.0083,
+		..Default::default()
+	};
+	report.turn_time = crate::supervisor::accounting::TurnTime {
+		completed: 1,
+		total_time_ms: 135_799,
+		main_api_time_ms: 113_700,
+		blocking_supervisor_time_ms: 21_200,
+	};
+	report
+}
+
+#[test]
+fn info_timing_split_uses_shared_durations_and_matched_turn_measurements() {
+	let mut timing = owner_info_timing();
+	timing.model_time_ms = 999_999;
+	let before = serde_json::to_value(&timing).expect("timing JSON");
+	let rows = info_timing_rows(&timing);
+	assert_eq!(
+		rows.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
+		[
+			"requests",
+			"turns",
+			"avg turn",
+			"main API",
+			"supervisor",
+			"tools + runtime",
+		]
+	);
+	assert_eq!(plain_info_render(&rows[0].1), "17 · 6s 688ms avg");
+	assert_eq!(
+		plain_info_render(&rows[1].1),
+		"1 completed · 2m 15s 799ms active"
+	);
+	assert_eq!(
+		plain_info_render(&rows[2].1),
+		"2m 15s 799ms · 2m 15s 799ms last"
+	);
+	assert_eq!(plain_info_render(&rows[3].1), "1m 53s 700ms");
+	assert_eq!(
+		plain_info_render(&rows[4].1),
+		"21s 200ms blocking · 16% of turn time"
+	);
+	assert_eq!(plain_info_render(&rows[5].1), "936ms");
+	assert_eq!(serde_json::to_value(&timing).expect("timing JSON"), before);
+
+	timing.split_time_ms = 0;
+	timing.split_turns = 0;
+	assert_eq!(info_timing_rows(&timing).len(), 3);
+	assert!(info_timing_rows(&Default::default()).is_empty());
+}
+
+#[test]
+fn info_supervisor_owner_sample_fits_widths_preserves_payload_and_styles_values() {
+	let report = owner_supervisor_report();
+	let before = serde_json::to_value(&report).expect("supervisor JSON");
+	for width in [120, 100, 80] {
+		let styled = supervisor_table(&report, width);
+		let table = plain_info_render(&styled);
+		for line in table.lines() {
+			assert!(
+				line.chars().count() + "│   ".chars().count() <= width,
+				"{width} columns: {line}"
+			);
+		}
+		assert_eq!(
+			table
+				.lines()
+				.filter(|line| line.starts_with("total"))
+				.count(),
+			1
+		);
+		assert_eq!(
+			table
+				.lines()
+				.filter(|line| line.starts_with("authorize"))
+				.count(),
+			1
+		);
+		assert_eq!(
+			table.lines().next().expect("header").contains("outcome"),
+			width == 120
+		);
+		assert!(table.contains("1 run · 1 pass"));
+		assert!(table.contains("17 checked · 16 skipped judge"));
+		assert!(table.contains("5 condensed · saved 19K tok"));
+		assert!(table.contains("10 items · 9 filtered"));
+		assert!(table.contains("$0.00830"));
+		assert!(!table.contains("decision applied"));
+		assert!(!table.contains("chat calls replaced"));
+		assert!(!table.contains("1 runs"));
+		assert!(!table.contains('-'));
+		let total = table
+			.lines()
+			.position(|line| line.starts_with("total"))
+			.expect("total row");
+		assert!(table
+			.lines()
+			.nth(total - 1)
+			.expect("total rule")
+			.chars()
+			.all(|c| c == '─'));
+		if width == 80 {
+			let mut lines = table.lines();
+			let gate = lines
+				.find(|line| line.starts_with("gate"))
+				.expect("gate row");
+			assert!(!gate.contains("run"));
+			assert_eq!(lines.next(), Some("  1 run · 1 pass"));
+			assert!(styled.contains(&"  1 run · 1 pass".dimmed().to_string()));
+		}
+		assert!(styled.contains(&"gate        ".bright_black().to_string()));
+		assert!(styled.contains(&"    10K".bright_blue().to_string()));
+		assert!(styled.contains(&"268".bright_green().to_string()));
+		assert!(styled.contains(&"$0.00180".bright_yellow().to_string()));
+	}
+	assert_eq!(
+		serde_json::to_value(&report).expect("supervisor JSON"),
+		before
+	);
+}
+
+#[test]
+fn info_supervisor_background_long_durations_and_outcomes_fit_without_losing_values() {
+	use crate::supervisor::report::{Mechanic, Outcome};
+	let mut report = owner_supervisor_report();
+	let gate = report.mechanics.get_mut(&Mechanic::Gate).expect("gate");
+	gate.wall_background_ms = 3_661_500;
+	gate.outcome = [
+		(Outcome::Runs, 1),
+		(Outcome::Pass, 2),
+		(Outcome::Fail, 3),
+		(Outcome::RefutedGaps, 4),
+		(Outcome::Unavailable, 5),
+		(Outcome::DecisionUnavailable, 6),
+	]
+	.into();
+	for width in [120, 100, 80] {
+		let table = plain_info_render(&supervisor_table(&report, width));
+		assert!(table.contains("background"));
+		assert!(table.contains(&format_duration(3_661_500)));
+		assert!(table.contains("6 decision unavailable"));
+		assert!(table.contains("1 run · 2 passes · 3 fails"));
+		assert!(table.contains('–'));
+		for line in table.lines() {
+			assert!(
+				line.chars().count() + "│   ".chars().count() <= width,
+				"{width} columns: {line}"
+			);
+		}
+	}
+}
+
+#[test]
+fn info_supervisor_outcomes_pluralize_counts_and_keep_mechanic_results() {
+	use crate::supervisor::report::{Mechanic, MechanicUsage, Outcome};
+	for (outcome, singular, plural) in [
+		(Outcome::Runs, "run", "runs"),
+		(Outcome::Pass, "pass", "passes"),
+		(Outcome::Fail, "fail", "fails"),
+		(Outcome::RefutedGaps, "gap refuted", "gaps refuted"),
+		(Outcome::Items, "item", "items"),
+		(Outcome::Lessons, "lesson", "lessons"),
+		(Outcome::Experiences, "experience", "experiences"),
+		(Outcome::PlanCalls, "planner call", "planner calls"),
+		(Outcome::Skips, "skip", "skips"),
+	] {
+		for (count, label) in [(1, singular), (2, plural)] {
+			let usage = MechanicUsage {
+				outcome: [(outcome, count)].into(),
+				..Default::default()
+			};
+			assert_eq!(
+				supervisor_outcome(Mechanic::Gate, &usage),
+				format!("{count} {label}")
+			);
+		}
+	}
+	for (mechanic, label) in [
+		(Mechanic::Skills, "activated"),
+		(Mechanic::Capabilities, "activated"),
+		(Mechanic::Recall, "filtered"),
+		(Mechanic::Compression, "demoted"),
+	] {
+		let usage = MechanicUsage {
+			outcome: [(Outcome::Applied, 1)].into(),
+			..Default::default()
+		};
+		assert_eq!(supervisor_outcome(mechanic, &usage), format!("1 {label}"));
+	}
+}
+
+#[test]
+fn info_restyle_render_samples() {
+	let timing = owner_info_timing();
+	let report = owner_supervisor_report();
+	for width in [120, 80] {
+		println!("INFO SAMPLE {width}");
+		block_section("timing");
+		let rows = info_timing_rows(&timing);
+		let kw = key_width(rows.iter().map(|(key, _)| *key));
+		for (key, value) in &rows {
+			block_row(key, value, kw);
+		}
+		block_section_with("supervisor", "this session");
+		for line in supervisor_table(&report, width).lines() {
+			block_row_text(line);
+		}
+		println!("END INFO SAMPLE");
+	}
+	println!("INFO SAMPLE zero activity");
+	let mut empty_report = crate::supervisor::report::SupervisorReport::default();
+	empty_report.turn_time.completed = 1;
+	assert!(supervisor_table(&empty_report, 80).is_empty());
+	display_info(&CommandOutput::Info {
+		session_name: "zero-supervisor".into(),
+		model: "m".into(),
+		role: "assistant".into(),
+		tokens_input: 0,
+		tokens_output: 0,
+		tokens_used: 0,
+		tokens_cached: 0,
+		tokens_cache_write: 0,
+		tokens_reasoning: 0,
+		total_cost: 0.0,
+		cache_savings: 0.0,
+		tokens_per_second: 0.0,
+		timing: Default::default(),
+		avg_tokens_per_compression: 0.0,
+		avg_tokens_per_tool: 0.0,
+		avg_tokens_per_response: 0.0,
+		avg_input_tokens: 0.0,
+		compression_stats: None,
+		cache_markers_system: 0,
+		cache_markers_tool: 0,
+		cache_markers_content: 0,
+		cache_non_cached_tokens: 0,
+		agents_stats: None,
+		supervisor_accounting: empty_report,
+	});
+	println!("END INFO SAMPLE");
 }

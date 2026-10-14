@@ -483,42 +483,12 @@ pub fn display_info(output: &CommandOutput) {
 		}
 
 		// ── timing ─────────────────────────────────────────────────────
-		if timing.requests > 0 || timing.completed_turns > 0 {
+		let timing_rows = info_timing_rows(timing);
+		if !timing_rows.is_empty() {
 			block_section("timing");
-			let kw = key_width(["requests", "turns", "avg turn"]);
-			if timing.requests > 0 {
-				block_row(
-					"requests",
-					&format!(
-						"{} {} {} avg",
-						timing.requests,
-						dot,
-						format_duration(timing.avg_request_time_ms)
-					),
-					kw,
-				);
-			}
-			if timing.completed_turns > 0 {
-				block_row(
-					"turns",
-					&format!(
-						"{} completed {} {} active",
-						timing.completed_turns,
-						dot,
-						format_duration(timing.total_turn_time_ms)
-					),
-					kw,
-				);
-				block_row(
-					"avg turn",
-					&format!(
-						"{} {} {} last",
-						format_duration(timing.avg_turn_time_ms),
-						dot,
-						format_duration(timing.last_turn_time_ms)
-					),
-					kw,
-				);
+			let kw = key_width(timing_rows.iter().map(|(key, _)| *key));
+			for (key, value) in &timing_rows {
+				block_row(key, value, kw);
 			}
 		}
 
@@ -747,11 +717,10 @@ pub fn display_info(output: &CommandOutput) {
 			}
 		}
 
-		if !supervisor_accounting.mechanics.is_empty()
-			|| supervisor_accounting.turn_time.completed > 0
-		{
-			block_section_with("supervisor", &supervisor_summary(supervisor_accounting));
-			for line in supervisor_table(supervisor_accounting).lines() {
+		if !supervisor_accounting.mechanics.is_empty() {
+			block_section_with("supervisor", "this session");
+			let terminal_width = usize::from(termimad::terminal_size().0);
+			for line in supervisor_table(supervisor_accounting, terminal_width).lines() {
 				block_row_text(line);
 			}
 		}
@@ -761,31 +730,66 @@ pub fn display_info(output: &CommandOutput) {
 	}
 }
 
-fn supervisor_duration(ms: u64) -> String {
-	if ms < 1_000 {
-		format!("{ms}ms")
-	} else {
-		format!("{:.1}s", ms as f64 / 1_000.0)
+fn info_timing_rows(timing: &super::InfoTiming) -> Vec<(&'static str, String)> {
+	let dot = "·".bright_black();
+	let mut rows = Vec::new();
+	if timing.requests > 0 {
+		rows.push((
+			"requests",
+			format!(
+				"{} {} {} avg",
+				timing.requests,
+				dot,
+				format_duration(timing.avg_request_time_ms)
+			),
+		));
 	}
-}
-
-fn supervisor_summary(report: &crate::supervisor::report::SupervisorReport) -> String {
-	let turn = &report.turn_time;
-	if turn.total_time_ms == 0 {
-		return "this session".into();
+	if timing.completed_turns > 0 {
+		rows.push((
+			"turns",
+			format!(
+				"{} completed {} {} active",
+				timing.completed_turns,
+				dot,
+				format_duration(timing.total_turn_time_ms)
+			),
+		));
+		rows.push((
+			"avg turn",
+			format!(
+				"{} {} {} last",
+				format_duration(timing.avg_turn_time_ms),
+				dot,
+				format_duration(timing.last_turn_time_ms)
+			),
+		));
 	}
-	let remainder = turn
-		.total_time_ms
-		.saturating_sub(turn.main_api_time_ms)
-		.saturating_sub(turn.blocking_supervisor_time_ms);
-	format!(
-		"this session · blocking {} of {} turn time ({:.0}%) · main API {} · tools + runtime {}",
-		supervisor_duration(turn.blocking_supervisor_time_ms),
-		format_duration(turn.total_time_ms),
-		turn.blocking_supervisor_time_ms as f64 * 100.0 / turn.total_time_ms as f64,
-		supervisor_duration(turn.main_api_time_ms),
-		supervisor_duration(remainder)
-	)
+	if timing.split_time_ms > 0 {
+		rows.extend([
+			(
+				"main API",
+				format_duration(timing.turn_model_time_ms)
+					.bright_white()
+					.to_string(),
+			),
+			(
+				"supervisor",
+				format!(
+					"{} blocking {} {:.0}% of turn time",
+					format_duration(timing.supervisor_blocking_time_ms).bright_white(),
+					dot,
+					timing.supervisor_blocking_time_ms as f64 * 100.0 / timing.split_time_ms as f64
+				),
+			),
+			(
+				"tools + runtime",
+				format_duration(timing.tools_runtime_time_ms)
+					.bright_white()
+					.to_string(),
+			),
+		]);
+	}
+	rows
 }
 
 fn supervisor_outcome(
@@ -800,12 +804,14 @@ fn supervisor_outcome(
 			continue;
 		}
 		let counted = |label: &str| format!("{count} {label}");
+		let plural =
+			|singular: &str, plural: &str| counted(if count == 1 { singular } else { plural });
 		let text = match outcome {
-			Outcome::Runs => counted("runs"),
-			Outcome::Pass => counted("pass"),
-			Outcome::Fail => counted("fail"),
+			Outcome::Runs => plural("run", "runs"),
+			Outcome::Pass => plural("pass", "passes"),
+			Outcome::Fail => plural("fail", "fails"),
 			Outcome::Stall => counted("stalled"),
-			Outcome::RefutedGaps => counted("gaps refuted"),
+			Outcome::RefutedGaps => plural("gap refuted", "gaps refuted"),
 			Outcome::Checked => counted("checked"),
 			Outcome::Blocked => counted("blocked"),
 			Outcome::Cached => counted("cached"),
@@ -813,35 +819,38 @@ fn supervisor_outcome(
 			Outcome::SkippedJudge => counted("skipped judge"),
 			Outcome::Condensed => counted("condensed"),
 			Outcome::SavedTokens => format!("saved {} tok", format_number(count)),
-			Outcome::Items => counted("items"),
+			Outcome::Items => plural("item", "items"),
 			Outcome::Used => counted("used"),
-			Outcome::Lessons => counted("lessons"),
-			Outcome::Experiences => counted("experiences"),
+			Outcome::Lessons => plural("lesson", "lessons"),
+			Outcome::Experiences => plural("experience", "experiences"),
 			Outcome::Orientation => counted("orientation"),
-			Outcome::PlanCalls => counted("planner calls"),
-			Outcome::Skips => counted("skips"),
+			Outcome::PlanCalls => plural("planner call", "planner calls"),
+			Outcome::Skips => plural("skip", "skips"),
 			Outcome::Applied => counted(match mechanic {
 				Mechanic::Skills | Mechanic::Capabilities => "activated",
 				Mechanic::Recall => "filtered",
 				Mechanic::Compression => "demoted",
-				_ => "decision applied",
+				_ => continue,
 			}),
 			Outcome::DecisionUnavailable => counted("decision unavailable"),
-			Outcome::Replaced => counted("chat calls replaced"),
+			Outcome::Replaced => continue,
 			Outcome::Consolidated => counted("consolidated"),
 			Outcome::Archived => counted("archived"),
 		};
 		parts.push(text);
 	}
-	if parts.is_empty() && usage.chat_calls == 0 && usage.decision_calls == 0 {
-		parts.push("no model usage".into());
-	}
 	parts.join(" · ")
 }
 
-fn supervisor_table(report: &crate::supervisor::report::SupervisorReport) -> String {
+fn supervisor_table(
+	report: &crate::supervisor::report::SupervisorReport,
+	terminal_width: usize,
+) -> String {
 	use crate::session::chat::session::utils::format_number;
 	use crate::supervisor::report::Mechanic;
+	const W_RAIL: usize = 4;
+	const W_GAP: usize = 2;
+	const W_OUTCOME_INDENT: usize = 2;
 	if report.mechanics.is_empty() {
 		return String::new();
 	}
@@ -886,22 +895,22 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport) -> Str
 			mechanic.name().into(),
 			chat,
 			decision,
-			supervisor_duration(usage.wall_blocking_ms),
+			format_duration(usage.wall_blocking_ms),
 		];
 		if background {
-			row.push(supervisor_duration(usage.wall_background_ms));
+			row.push(format_duration(usage.wall_background_ms));
 		}
 		if mechanic == Mechanic::Hindsight {
 			row.extend(["–".into(), "local".into(), "–".into()]);
 		} else {
 			row.extend([
-				supervisor_duration(usage.api_ms),
+				format_duration(usage.api_ms),
 				format!(
 					"{} / {}",
 					format_number(usage.input_tokens),
 					format_number(usage.output_tokens + usage.reasoning_tokens)
 				),
-				format!("${:.4}", usage.cost),
+				format!("${:.5}", usage.cost),
 			]);
 		}
 		row.push(supervisor_outcome(mechanic, usage));
@@ -912,24 +921,24 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport) -> Str
 		"total".into(),
 		totals.chat_calls.to_string(),
 		totals.decision_calls.to_string(),
-		supervisor_duration(totals.wall_blocking_ms),
+		format_duration(totals.wall_blocking_ms),
 	];
 	if background {
 		total.push(
 			totals
 				.wall_background_ms
-				.map(supervisor_duration)
+				.map(format_duration)
 				.unwrap_or_else(|| "–".into()),
 		);
 	}
 	total.extend([
-		supervisor_duration(totals.api_ms),
+		format_duration(totals.api_ms),
 		format!(
 			"{} / {}",
 			format_number(totals.input_tokens),
 			format_number(totals.output_tokens + totals.reasoning_tokens)
 		),
-		format!("${:.4}", totals.cost),
+		format!("${:.5}", totals.cost),
 		String::new(),
 	]);
 	rows.push(total);
@@ -941,24 +950,99 @@ fn supervisor_table(report: &crate::supervisor::report::SupervisorReport) -> Str
 				.expect("table header")
 		})
 		.collect();
-	rows.into_iter()
-		.map(|row| {
-			row.iter()
-				.enumerate()
-				.map(|(column, text)| {
-					if column == 0 || column == row.len() - 1 {
-						format!("{text:<width$}", width = widths[column])
+	let outcome_column = widths.len() - 1;
+	let token_column = outcome_column - 2;
+	let cost_column = outcome_column - 1;
+	let table_width = widths[..outcome_column].iter().sum::<usize>() + W_GAP * (outcome_column - 1);
+	let stacked = W_RAIL + table_width > terminal_width;
+	let inline_outcome = W_RAIL + table_width + W_GAP + widths[outcome_column] <= terminal_width;
+	let visible_columns = if inline_outcome {
+		widths.len()
+	} else {
+		outcome_column
+	};
+	let gap = " ".repeat(W_GAP);
+	let stacked_key_width = key_width(rows[0][1..outcome_column].iter());
+	let mut lines = Vec::new();
+	for (row_index, row) in rows.iter().enumerate() {
+		if stacked && row_index == 0 {
+			continue;
+		}
+		if row_index == rows.len() - 1 {
+			lines.push(
+				"─"
+					.repeat(table_width.min(terminal_width.saturating_sub(W_RAIL)))
+					.dimmed()
+					.to_string(),
+			);
+		}
+		let cells = row[..visible_columns]
+			.iter()
+			.enumerate()
+			.map(|(column, text)| {
+				let padded = if stacked {
+					text.clone()
+				} else if column == 0 {
+					format!("{text:<width$}", width = widths[column])
+				} else if column == outcome_column {
+					text.clone()
+				} else {
+					format!("{text:>width$}", width = widths[column])
+				};
+				if row_index == 0 || column == 0 || text == "–" || text == "local" {
+					padded.bright_black().to_string()
+				} else if column == outcome_column {
+					padded.dimmed().to_string()
+				} else if column == token_column {
+					let (input, output) = padded
+						.split_once(" / ")
+						.expect("supervisor tokens in / out");
+					format!(
+						"{} {} {}",
+						input.bright_blue(),
+						"/".bright_black(),
+						output.bright_green()
+					)
+				} else if column == cost_column {
+					padded.bright_yellow().to_string()
+				} else {
+					padded.bright_white().to_string()
+				}
+			})
+			.collect::<Vec<_>>();
+		if stacked {
+			lines.push(cells[0].clone());
+			for column in 1..outcome_column {
+				lines.push(format!(
+					"{}{}  {}",
+					" ".repeat(W_OUTCOME_INDENT),
+					format!("{:<width$}", rows[0][column], width = stacked_key_width)
+						.bright_black(),
+					cells[column]
+				));
+			}
+		} else {
+			lines.push(cells.join(&gap));
+		}
+		if !inline_outcome && row_index > 0 && !row[outcome_column].is_empty() {
+			let mut line = " ".repeat(W_OUTCOME_INDENT);
+			for part in row[outcome_column].split(" · ") {
+				if line.chars().count() > W_OUTCOME_INDENT {
+					if W_RAIL + line.chars().count() + " · ".chars().count() + part.chars().count()
+						> terminal_width
+					{
+						lines.push(line.dimmed().to_string());
+						line = " ".repeat(W_OUTCOME_INDENT);
 					} else {
-						format!("{text:>width$}", width = widths[column])
+						line.push_str(" · ");
 					}
-				})
-				.collect::<Vec<_>>()
-				.join("  ")
-				.trim_end()
-				.to_owned()
-		})
-		.collect::<Vec<_>>()
-		.join("\n")
+				}
+				line.push_str(part);
+			}
+			lines.push(line.dimmed().to_string());
+		}
+	}
+	lines.join("\n")
 }
 
 pub async fn display_context(

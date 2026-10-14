@@ -446,6 +446,10 @@ struct LedgerEntry {
 	repeats: usize,
 }
 
+/// Older sessions and detached jobs may have no addressable call sequence.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CommandOutput(String, String, #[serde(default)] Option<u64>);
+
 /// Runtime-recorded tool log for the current task — the ground truth the
 /// verify-gate checks completion claims against. Entries are written by the
 /// tool loop from actual executions, so the agent's narrative cannot alter
@@ -471,7 +475,7 @@ pub struct EvidenceLedger {
 	/// Command + output tails of the last few successful shell calls this task
 	/// — the decisive checks are normally the last commands run before
 	/// claiming done.
-	recent_commands: VecDeque<(String, String)>,
+	recent_commands: VecDeque<CommandOutput>,
 	/// Verbatim tool output of this task, each keyed by the ledger sequence its
 	/// call was recorded under so the verifier can ask for one back by number.
 	/// Replaces an unkeyed list: output that cannot be addressed cannot be
@@ -625,14 +629,25 @@ impl EvidenceLedger {
 
 	/// Record the output of a successful shell call; the last
 	/// [`RECENT_COMMANDS_KEPT`] are kept, oldest evicted first.
+	/// The tool loop calls this immediately after recording that call.
 	pub fn record_command_output(&mut self, command: &str, output: &str) {
+		let sequence = self
+			.entries
+			.back()
+			.expect("command output requires a recorded call")
+			.last_sequence;
+		self.retain_command_output(Some(sequence), command, output);
+	}
+
+	fn retain_command_output(&mut self, sequence: Option<u64>, command: &str, output: &str) {
 		let tail: String = if output.chars().count() > LAST_COMMAND_TAIL {
 			let skip = output.chars().count() - LAST_COMMAND_TAIL;
 			format!("…{}", output.chars().skip(skip).collect::<String>())
 		} else {
 			output.to_string()
 		};
-		self.recent_commands.push_back((command.to_string(), tail));
+		self.recent_commands
+			.push_back(CommandOutput(command.to_string(), tail, sequence));
 		if self.recent_commands.len() > RECENT_COMMANDS_KEPT {
 			self.recent_commands.pop_front();
 		}
@@ -640,7 +655,7 @@ impl EvidenceLedger {
 
 	/// Fold the deferred output of a detached job under the call that launched it.
 	pub fn fold_job_completion(&mut self, sequence: Option<u64>, command: &str, body: &str) {
-		self.record_command_output(command, body);
+		self.retain_command_output(sequence, command, body);
 		if let Some(sequence) = sequence {
 			self.record_ground(sequence, body);
 		}
@@ -655,7 +670,7 @@ impl EvidenceLedger {
 	pub fn recent_commands(&self) -> Vec<(&str, &str)> {
 		self.recent_commands
 			.iter()
-			.map(|(c, o)| (c.as_str(), o.as_str()))
+			.map(|CommandOutput(c, o, _)| (c.as_str(), o.as_str()))
 			.collect()
 	}
 
@@ -786,14 +801,24 @@ const GT_TOTAL_MAX: usize = 14_000;
 /// Head of a new/untracked mutated file attached when the diff can't cover it.
 const GT_FILE_HEAD_LINES: usize = 80;
 
+/// Text and the output sequences whose excerpts survived rendering limits.
+#[derive(Default)]
+pub struct RenderedEvidence {
+	pub text: String,
+	output_sequences: HashSet<u64>,
+}
+
 /// Runtime-gathered GROUND TRUTH for the verifier: the working-tree diff of the
 /// files successful mutations touched (vs HEAD, when inside a git repo), the
 /// current head of mutated files the diff does not cover (new/untracked), a
 /// MISSING note for mutated files that no longer exist, and the last command's
 /// recorded output tail. Deterministic — the agent's narrative cannot alter it.
 /// Empty when nothing was mutated and no command ran.
-pub fn render_ground_truth(mutated_paths: &[String], recent_commands: &[(&str, &str)]) -> String {
+pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
+	let mutated_paths = ledger.mutated_paths();
+	let recent_commands = &ledger.recent_commands;
 	let mut s = String::new();
+	let mut output_starts = Vec::new();
 	if !mutated_paths.is_empty() {
 		let diff = git_diff(mutated_paths);
 		if !diff.is_empty() {
@@ -829,10 +854,21 @@ pub fn render_ground_truth(mutated_paths: &[String], recent_commands: &[(&str, &
 	}
 	if !recent_commands.is_empty() {
 		s.push_str("Recent commands run (runtime-recorded output tails, oldest first):\n");
-		for (cmd, out) in recent_commands {
+		for CommandOutput(cmd, out, sequence) in recent_commands {
 			s.push_str("$ ");
 			s.push_str(cmd);
 			s.push('\n');
+			if let Some(sequence) = sequence {
+				if !out.is_empty() {
+					// The synthetic ellipsis is not an excerpt of the command output.
+					let prefix = if out.chars().count() > LAST_COMMAND_TAIL {
+						'…'.len_utf8()
+					} else {
+						0
+					};
+					output_starts.push((*sequence, s.len() + prefix));
+				}
+			}
 			s.push_str(out);
 			if !out.ends_with('\n') {
 				s.push('\n');
@@ -855,15 +891,25 @@ pub fn render_ground_truth(mutated_paths: &[String], recent_commands: &[(&str, &
 			s.push_str(&status);
 		}
 	}
-	if s.len() > GT_TOTAL_MAX {
+	let truncated = s.len() > GT_TOTAL_MAX;
+	if truncated {
 		let mut end = GT_TOTAL_MAX;
 		while !s.is_char_boundary(end) {
 			end -= 1;
 		}
 		s.truncate(end);
+	}
+	let output_sequences = output_starts
+		.into_iter()
+		.filter_map(|(sequence, start)| (start < s.len()).then_some(sequence))
+		.collect();
+	if truncated {
 		s.push_str("\n(ground truth truncated)\n");
 	}
-	s
+	RenderedEvidence {
+		text: s,
+		output_sequences,
+	}
 }
 
 /// Cap on the working-tree status lines inside the ground-truth block.
@@ -993,7 +1039,7 @@ pub struct GateInput<'a> {
 	/// Live plan checklist. Execution state only, never additional user intent.
 	pub plan: &'a str,
 	/// Rendered [`render_ground_truth`] block (diff + last command output).
-	pub ground_truth: &'a str,
+	pub ground_truth: &'a RenderedEvidence,
 	/// Gaps the previous verification pass found this task, so the re-verify
 	/// confirms each is closed instead of judging from scratch.
 	pub prior_gaps: &'a [String],
@@ -1021,7 +1067,7 @@ pub async fn verify(
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Indeterminate("empty task or result".to_string());
 	}
-	let mut visibility = output_visibility(&input, &[]);
+	let mut visibility = output_visibility(&input, &RenderedEvidence::default());
 	let mut user = format!("{}{}", render_gate_input(&input), visibility.render());
 	crate::log_debug!("Verify-gate input:\n{}", user);
 	let model = config.get_supervisor_model_profile().model;
@@ -1054,9 +1100,10 @@ pub async fn verify(
 	// cannot answer. One bounded round lets it pull the recorded output first.
 	let wanted = report.readback_request();
 	if !wanted.is_empty() {
-		visibility = output_visibility(&input, &wanted);
+		let readback = render_readback(input.grounds, &wanted);
+		visibility = output_visibility(&input, &readback);
 		user = format!("{}{}", render_gate_input(&input), visibility.render());
-		user.push_str(&render_readback(input.grounds, &wanted));
+		user.push_str(&readback.text);
 		let (raw, answered) = match ask_verifier(
 			config,
 			encoding,
@@ -1657,7 +1704,7 @@ impl OutputVisibility {
 
 /// The action log contains no outputs. Only ground truth and the bounded
 /// readback can make retained output visible to this verifier pass.
-fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibility {
+fn output_visibility(input: &GateInput<'_>, readback: &RenderedEvidence) -> OutputVisibility {
 	let historical = input
 		.ledger
 		.history
@@ -1676,22 +1723,19 @@ fn output_visibility(input: &GateInput<'_>, readback: &[u64]) -> OutputVisibilit
 		let sequence = entry.last_sequence;
 		let output = input.grounds.iter().find(|(n, _)| *n == sequence);
 		let (status, unseen) = match output {
-			Some((_, output)) if input.ground_truth.contains(output.as_str()) => {
-				("visible in ground truth", false)
+			_ if input.ground_truth.output_sequences.contains(&sequence) => {
+				("excerpt visible in ground truth", false)
 			}
-			Some((_, output)) if readback.contains(&sequence) => {
+			Some((_, output)) if readback.output_sequences.contains(&sequence) => {
 				if output.chars().count() > READBACK_HEAD + READBACK_TAIL {
 					("partial: readback middle omitted", false)
 				} else {
 					("visible in readback", false)
 				}
 			}
-			Some(_) => (
-				"not shown in readback; ground truth may contain excerpts",
-				true,
-			),
+			Some(_) => ("not shown in readback or ground truth", true),
 			None if entry.bytes == 0 => ("empty output", false),
-			None => ("not retained; ground truth may contain excerpts", true),
+			None => ("not retained; no ground-truth excerpt", true),
 		};
 		// An observed error is never excused by retention limits on its details.
 		if unseen && !entry.error {
@@ -1719,21 +1763,30 @@ fn outside_view(sources: &str, unseen: &HashSet<u64>) -> bool {
 /// Answer a readback request from the outputs the runtime retained. A number
 /// with nothing behind it is answered explicitly: silence would read as "that
 /// call returned nothing", which is the inference this round exists to prevent.
-fn render_readback(grounds: &[(u64, String)], wanted: &[u64]) -> String {
+fn render_readback(grounds: &[(u64, String)], wanted: &[u64]) -> RenderedEvidence {
 	let mut block = String::from("\n\n<readback_evidence>\n");
+	let mut output_sequences = HashSet::new();
 	for sequence in wanted {
 		match grounds.iter().find(|(n, _)| n == sequence) {
-			Some((_, output)) => block.push_str(&format!(
-				"<output seq=\"{sequence}\" retained=\"yes\">\n{}\n</output>\n",
-				xml_text(&bounded_output(output))
-			)),
+			Some((_, output)) => {
+				block.push_str(&format!(
+					"<output seq=\"{sequence}\" retained=\"yes\">\n{}\n</output>\n",
+					xml_text(&bounded_output(output))
+				));
+				if !output.is_empty() {
+					output_sequences.insert(*sequence);
+				}
+			}
 			None => block.push_str(&format!(
 				"<output seq=\"{sequence}\" retained=\"no\">This action's output was not retained. Its absence is a limit of the runtime's retention, and says nothing about what the action returned.</output>\n"
 			)),
 		}
 	}
 	block.push_str("</readback_evidence>");
-	block
+	RenderedEvidence {
+		text: block,
+		output_sequences,
+	}
 }
 
 /// Head and tail of one retained output. A listing's members sit at the head and
@@ -1856,12 +1909,12 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 			xml_text(input.plan)
 		)
 	};
-	let ground_truth_block = if input.ground_truth.trim().is_empty() {
+	let ground_truth_block = if input.ground_truth.text.trim().is_empty() {
 		String::new()
 	} else {
 		format!(
 			"\n\n<ground_truth>\n{}\n</ground_truth>",
-			xml_text(input.ground_truth)
+			xml_text(&input.ground_truth.text)
 		)
 	};
 	let prior_gaps_block = if input.prior_gaps.is_empty() {

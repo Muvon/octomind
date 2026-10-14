@@ -29,6 +29,8 @@ use octolib::evaluation::Question;
 
 static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> =
 	std::sync::LazyLock::new(EvidenceLedger::default);
+static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> =
+	std::sync::LazyLock::new(RenderedEvidence::default);
 
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
@@ -67,7 +69,7 @@ fn input<'a>(actions: &'a str, grounds: &'a [(u64, String)]) -> GateInput<'a> {
 		historical_actions: "",
 		grounds,
 		plan: "",
-		ground_truth: "",
+		ground_truth: &EMPTY_EVIDENCE,
 		prior_gaps: &[],
 		role_context: "",
 		evidence_conditions: &[],

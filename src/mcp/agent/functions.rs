@@ -399,6 +399,7 @@ async fn execute_dynamic_agent(
 				};
 				mgr.release_registered(&completion_job_id, CompletedJob { agent_name, output });
 			};
+			let run = crate::supervisor::accounting::background(run);
 			if let Some(sid) = session_id {
 				crate::session::context::with_session_id(sid, run).await;
 			} else {

@@ -400,6 +400,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_non_cached_tokens,
 		agents_stats,
 		supervisor_stats,
+		supervisor_accounting,
 		learning_stats,
 		..
 	} = output
@@ -449,11 +450,7 @@ pub fn display_info(output: &CommandOutput) {
 		// above are main-model only. Subtract the per-component costs back out so
 		// the main model's own share is visible next to the total.
 		let external_cost = compression_stats.as_ref().map(|s| s.cost).unwrap_or(0.0)
-			+ supervisor_stats
-				.as_ref()
-				.and_then(|s| s.get("cost"))
-				.and_then(|v| v.as_f64())
-				.unwrap_or(0.0)
+			+ supervisor_accounting.totals().cost
 			+ agents_stats
 				.as_ref()
 				.and_then(|s| s.get("total_cost"))
@@ -490,7 +487,20 @@ pub fn display_info(output: &CommandOutput) {
 		// ── timing ─────────────────────────────────────────────────────
 		if timing.requests > 0 || timing.completed_turns > 0 {
 			block_section("timing");
-			let kw = key_width(["requests", "turns", "avg turn"]);
+			let kw = key_width(["requests", "turns", "avg turn", "turn split"]);
+			if timing.split_turns > 0 {
+				block_row(
+					"turn split",
+					&format!(
+						"{} main API · {} blocking supervisor · {} tools + runtime ({} measured turns)",
+						format_duration(timing.turn_model_time_ms),
+						format_duration(timing.supervisor_blocking_time_ms),
+						format_duration(timing.tools_runtime_time_ms),
+						timing.split_turns
+					),
+					kw,
+				);
+			}
 			if timing.requests > 0 {
 				block_row(
 					"requests",
@@ -752,6 +762,73 @@ pub fn display_info(output: &CommandOutput) {
 			}
 		}
 
+		if !supervisor_accounting.kinds.is_empty() {
+			block_section_with("supervisor usage", "this session; inclusive wall time");
+			block_row_text("kind                         calls   wall blocking / background        API     in / out / reason       cost");
+			for (kind, usage) in &supervisor_accounting.kinds {
+				display_supervisor_usage(kind.name(), usage);
+			}
+			for (seam, usage) in &supervisor_accounting.seams {
+				display_supervisor_usage(&format!("evaluate/{}", seam.name()), usage);
+			}
+		}
+
+		let learning_u64 = |key: &str| {
+			learning_stats
+				.get(key)
+				.and_then(|value| value.as_u64())
+				.unwrap_or(0)
+		};
+		let packs = learning_u64("packs");
+		let used = learning_u64("used");
+		let active_items = learning_u64("active_items");
+		if packs > 0 || used > 0 || active_items > 0 {
+			block_section_with("learning", "this session");
+			let kw_sv = key_width(["learning"]);
+			let mut learning = vec![format!(
+				"{} packs {} {} items / {} tok {} {} used (+{}/-{}, {} neutral)",
+				packs,
+				dot,
+				learning_u64("items"),
+				format_number(learning_u64("tokens")),
+				dot,
+				used,
+				learning_u64("credit_positive"),
+				learning_u64("credit_negative"),
+				learning_u64("used_without_verdict")
+			)];
+			if active_items > 0 {
+				let used_ids = learning_stats
+					.get("active_used_ids")
+					.and_then(|value| value.as_array())
+					.map(|items| {
+						items
+							.iter()
+							.filter_map(|item| item.as_str())
+							.collect::<Vec<_>>()
+							.join(",")
+					})
+					.unwrap_or_default();
+				learning.push(format!(
+					"active {} / {} tok{}",
+					active_items,
+					format_number(learning_u64("active_tokens")),
+					if used_ids.is_empty() {
+						String::new()
+					} else {
+						format!(" (used {used_ids})")
+					}
+				));
+			}
+			let outcome = learning_stats
+				.get("outcome")
+				.and_then(|value| value.as_str())
+				.unwrap_or("unknown");
+			if outcome != "unknown" {
+				learning.push(format!("outcome {outcome}"));
+			}
+			block_row("learning", &learning.join(&format!(" {} ", dot)), kw_sv);
+		}
 		// ── supervisor ─────────────────────────────────────────────────
 		if let Some(sstats) = supervisor_stats {
 			if let Some(authorizer) = sstats.get("authorizer") {
@@ -769,24 +846,10 @@ pub fn display_info(output: &CommandOutput) {
 				}
 			}
 			let get_u64 = |k: &str| sstats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-			let get_f64 = |k: &str| sstats.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
-			let calls = get_u64("calls");
-			let recall_calls = get_u64("recall_calls");
-			let gate_calls = get_u64("gate_calls");
-			let resolve_calls = get_u64("resolve_calls");
-			let distill_calls = get_u64("distill_calls");
-			let condense_calls = get_u64("condense_calls");
-			let authorize_calls = get_u64("authorize_calls");
-			let evaluate_calls = get_u64("evaluate_calls");
 			let condensed_results = get_u64("condensed_results");
 			let condense_saved = get_u64("condense_saved_tokens");
 			let memory_consolidations = get_u64("memory_consolidations");
 			let memory_archived = get_u64("memory_archived");
-			let sup_in = get_u64("input_tokens");
-			let sup_out = get_u64("output_tokens");
-			let sup_time_ms = get_u64("api_time_ms");
-			let sup_tps = get_f64("tokens_per_second");
-			let sup_cost = get_f64("cost");
 			let gate_runs = get_u64("gate_runs");
 			let gate_pass = get_u64("gate_pass");
 			let gate_fail = get_u64("gate_fail");
@@ -797,7 +860,7 @@ pub fn display_info(output: &CommandOutput) {
 			let orientation = get_u64("orientation_stored");
 			let experiences = get_u64("experiences_stored");
 			let recalls = get_u64("recalls_injected");
-			block_section("supervisor");
+			block_section_with("supervisor activity", "process-wide");
 			let kw_sv = key_width([
 				"activity",
 				"learning",
@@ -866,60 +929,6 @@ pub fn display_info(output: &CommandOutput) {
 			if !activity.is_empty() {
 				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
 			}
-			let learning_u64 = |key: &str| {
-				learning_stats
-					.get(key)
-					.and_then(|value| value.as_u64())
-					.unwrap_or(0)
-			};
-			let packs = learning_u64("packs");
-			let used = learning_u64("used");
-			let active_items = learning_u64("active_items");
-			if packs > 0 || used > 0 || active_items > 0 {
-				let mut learning = vec![format!(
-					"{} packs {} {} items / {} tok {} {} used (+{}/-{}, {} neutral)",
-					packs,
-					dot,
-					learning_u64("items"),
-					format_number(learning_u64("tokens")),
-					dot,
-					used,
-					learning_u64("credit_positive"),
-					learning_u64("credit_negative"),
-					learning_u64("used_without_verdict")
-				)];
-				if active_items > 0 {
-					let used_ids = learning_stats
-						.get("active_used_ids")
-						.and_then(|value| value.as_array())
-						.map(|items| {
-							items
-								.iter()
-								.filter_map(|item| item.as_str())
-								.collect::<Vec<_>>()
-								.join(",")
-						})
-						.unwrap_or_default();
-					learning.push(format!(
-						"active {} / {} tok{}",
-						active_items,
-						format_number(learning_u64("active_tokens")),
-						if used_ids.is_empty() {
-							String::new()
-						} else {
-							format!(" (used {used_ids})")
-						}
-					));
-				}
-				let outcome = learning_stats
-					.get("outcome")
-					.and_then(|value| value.as_str())
-					.unwrap_or("unknown");
-				if outcome != "unknown" {
-					learning.push(format!("outcome {outcome}"));
-				}
-				block_row("learning", &learning.join(&format!(" {} ", dot)), kw_sv);
-			}
 			if gate_runs > 0 {
 				let mut g = vec![format!("{} runs", gate_runs)];
 				if gate_pass > 0 {
@@ -938,27 +947,6 @@ pub fn display_info(output: &CommandOutput) {
 				.and_then(|v| v.as_object())
 				.filter(|seams| !seams.is_empty())
 			{
-				// Totals first: what the evaluation model cost against the chat
-				// calls it stood in for (input-only estimate, so a floor).
-				let mut totals = vec![
-					format!("{} calls", evaluate_calls),
-					format!("{} in", format_number(get_u64("evaluate_input_tokens"))),
-					format!("${:.5}", get_f64("evaluate_cost")),
-				];
-				let avoided_calls = get_u64("evaluate_avoided_calls");
-				if avoided_calls > 0 {
-					let mut replaced = format!(
-						"replaced {} chat calls ≈ {} in",
-						avoided_calls,
-						format_number(get_u64("evaluate_avoided_tokens"))
-					);
-					let avoided_cost = get_f64("evaluate_avoided_cost");
-					if avoided_cost > 0.0 {
-						replaced.push_str(&format!(" ≈ ${:.5}", avoided_cost));
-					}
-					totals.push(replaced);
-				}
-				block_row("evaluate", &totals.join(&format!(" {} ", dot)), kw_sv);
 				// One row per seam keeps the line readable. The first seam carries the
 				// `seams` label; the rest align under the value column, and seam names
 				// are padded to the widest so the counters line up.
@@ -967,9 +955,8 @@ pub fn display_info(output: &CommandOutput) {
 				for (i, (seam, counters)) in seams.iter().enumerate() {
 					let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
 					let mut line = format!(
-						"{:seam_kw$}  {} calls / {} applied / {} unavailable",
+						"{:seam_kw$}  {} applied / {} unavailable",
 						seam,
-						n("calls"),
 						n("applied"),
 						n("unavailable"),
 					);
@@ -983,78 +970,26 @@ pub fn display_info(output: &CommandOutput) {
 					}
 				}
 			}
-			if calls > 0 {
-				// Break the opaque total down by mechanic so the flow is legible.
-				let mut parts = Vec::new();
-				if distill_calls > 0 {
-					parts.push(format!("{} distill", distill_calls));
-				}
-				if recall_calls > 0 {
-					parts.push(format!("{} recall", recall_calls));
-				}
-				if gate_calls > 0 {
-					parts.push(format!("{} gate", gate_calls));
-				}
-				if resolve_calls > 0 {
-					parts.push(format!("{} resolve", resolve_calls));
-				}
-				if condense_calls > 0 {
-					parts.push(format!("{} condense", condense_calls));
-				}
-				if authorize_calls > 0 {
-					parts.push(format!("{} authorize", authorize_calls));
-				}
-				if evaluate_calls > 0 {
-					parts.push(format!("{} evaluate", evaluate_calls));
-				}
-				let breakdown = if parts.is_empty() {
-					format_number(calls).bright_white().to_string()
-				} else {
-					format!(
-						"{} {} {}",
-						format_number(calls).bright_white(),
-						dot,
-						parts.join(&format!(" {} ", dot))
-					)
-				};
-				block_row("calls", &breakdown, kw_sv);
-			}
-			if sup_in > 0 || sup_out > 0 {
-				block_row(
-					"tokens",
-					&format!(
-						"{} in {} {} out",
-						format_number(sup_in).bright_blue(),
-						dot,
-						format_number(sup_out).bright_green(),
-					),
-					kw_sv,
-				);
-			}
-			if sup_tps > 0.0 {
-				let model_time = if sup_time_ms > 0 {
-					format!(" {} {} model time", dot, format_duration(sup_time_ms))
-				} else {
-					String::new()
-				};
-				block_row(
-					"throughput",
-					&format!("{:.1} tok/s{}", sup_tps, model_time),
-					kw_sv,
-				);
-			}
-			if sup_cost > 0.0 {
-				block_row(
-					"cost",
-					&format!("${:.5}", sup_cost).bright_yellow().to_string(),
-					kw_sv,
-				);
-			}
 		}
 
 		block_close_ok("/info", Some(session_name));
 		println!();
 	}
+}
+
+fn display_supervisor_usage(name: &str, usage: &crate::supervisor::accounting::Usage) {
+	block_row_text(&format!(
+		"{:<28} {:>5} {:>10} / {:<10} {:>10} {:>6} / {} / {}  ${:.5}",
+		name,
+		usage.calls,
+		format_duration(usage.blocking_wall_time_ms),
+		format_duration(usage.background_wall_time_ms),
+		format_duration(usage.api_time_ms),
+		usage.input_tokens,
+		usage.output_tokens,
+		usage.reasoning_tokens,
+		usage.cost
+	));
 }
 
 pub async fn display_context(

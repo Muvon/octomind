@@ -1001,6 +1001,8 @@ pub async fn verify(
 	input: GateInput<'_>,
 	operation_rx: watch::Receiver<bool>,
 ) -> GateVerdict {
+	let _timing =
+		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Gate);
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Indeterminate("empty task or result".to_string());
 	}

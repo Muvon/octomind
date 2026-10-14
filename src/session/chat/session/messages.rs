@@ -83,6 +83,7 @@ impl ChatSession {
 
 	// Save the session (syncs runtime state first)
 	pub fn save(&mut self) -> Result<()> {
+		self.session.fold_external_spend();
 		self.sync_runtime_state();
 		self.session.save()
 	}

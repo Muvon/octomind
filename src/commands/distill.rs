@@ -27,6 +27,10 @@ pub struct DistillArgs {
 	#[arg(long, value_name = "PATH")]
 	pub messages: PathBuf,
 
+	/// Owning session journal for background usage; absent for standalone extraction.
+	#[arg(long, value_name = "PATH")]
+	pub session_file: Option<PathBuf>,
+
 	/// Role the session ran under.
 	#[arg(long, default_value = "")]
 	pub role: String,
@@ -59,14 +63,33 @@ pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
 	// The crate's log macros read the thread config; without it the learner is
 	// silent whatever `log_level` says, and a rejected memory leaves no trace.
 	octomind::config::set_thread_config(config);
-	let stored = octomind::supervisor::learning::extract::run_extraction(
-		&messages,
-		config,
-		&args.role,
-		&args.project,
-		&args.session,
-		args.outcome,
-	)
+
+	let stored = octomind::session::context::with_session_id(args.session.clone(), async {
+		let result = octomind::supervisor::accounting::background(
+			octomind::supervisor::learning::extract::run_extraction(
+				&messages,
+				config,
+				&args.role,
+				&args.project,
+				&args.session,
+				args.outcome,
+			),
+		)
+		.await;
+		let accounting = octomind::supervisor::accounting::take();
+		if let Some(session_file) = &args.session_file {
+			let entry = serde_json::json!({
+				"type": "BACKGROUND_SUPERVISOR",
+				"id": uuid::Uuid::new_v4().to_string(),
+				"accounting": accounting,
+			});
+			octomind::session::persistence::append_to_session_file(
+				session_file,
+				&entry.to_string(),
+			)?;
+		}
+		result
+	})
 	.await?;
 
 	if stored > 0 {

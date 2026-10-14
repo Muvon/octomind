@@ -168,6 +168,7 @@ pub fn log_stats_checkpoint(
 		"type": "STATS",
 		"timestamp": get_timestamp(),
 		"total_cost": info.total_cost,
+		"supervisor_accounting": info.supervisor_accounting,
 		"input_tokens": info.input_tokens,
 		"output_tokens": info.output_tokens,
 		"cache_read_tokens": info.cache_read_tokens,

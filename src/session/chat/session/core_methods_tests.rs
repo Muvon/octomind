@@ -802,3 +802,53 @@ fn raw_context_estimate_needs_cached_tools() {
 	);
 	assert_eq!(session.calibrated(1234), 1234);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn supervisor_turn_split_excludes_history_and_abandoned_turns() {
+	use crate::session::context::with_session_id;
+	use crate::supervisor::accounting;
+	accounting::take();
+	with_session_id("turn-split-accounting".into(), async {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.total_api_time_ms = 1_000;
+		session
+			.session
+			.info
+			.supervisor_accounting
+			.blocking_wall_time_ms = 500;
+		session.begin_turn_timing();
+		session.session.info.total_api_time_ms += 100;
+		session
+			.session
+			.info
+			.supervisor_accounting
+			.blocking_wall_time_ms += 200;
+		session.abandon_turn_timing();
+		session.begin_turn_timing();
+		session.turn_started_at.as_mut().unwrap().at -= std::time::Duration::from_secs(1);
+		session.session.info.total_api_time_ms += 300;
+		session
+			.session
+			.info
+			.supervisor_accounting
+			.blocking_wall_time_ms += 400;
+		session.finish_turn_timing();
+		let split = &session.session.info.supervisor_accounting.turn_time;
+		assert_eq!(split.completed, 1);
+		assert_eq!(split.main_api_time_ms, 300);
+		assert_eq!(split.blocking_supervisor_time_ms, 400);
+		assert!(split.total_time_ms >= 1_000);
+		session.finish_turn_timing();
+		assert_eq!(
+			session
+				.session
+				.info
+				.supervisor_accounting
+				.turn_time
+				.completed,
+			1
+		);
+	})
+	.await;
+}

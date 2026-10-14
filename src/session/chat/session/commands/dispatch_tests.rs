@@ -410,6 +410,13 @@ async fn info_throughput_counts_reasoning_tokens() {
 	session.session.info.turn_timing.completed = 2;
 	session.session.info.turn_timing.total_time_ms = 90_000;
 	session.session.info.turn_timing.last_time_ms = 40_000;
+	session.session.info.supervisor_accounting.turn_time =
+		crate::supervisor::accounting::TurnTime {
+			completed: 2,
+			total_time_ms: 90_000,
+			main_api_time_ms: 63_400,
+			blocking_supervisor_time_ms: 10_000,
+		};
 	let mut config = test_config();
 	let result = dispatch(&mut session, &mut config, "/info")
 		.await
@@ -419,6 +426,8 @@ async fn info_throughput_counts_reasoning_tokens() {
 	};
 	let json = output.to_json();
 	assert_eq!(json["timing"]["model_time_ms"], 63_400);
+	assert_eq!(json["timing"]["supervisor_blocking_time_ms"], 10_000);
+	assert_eq!(json["timing"]["tools_runtime_time_ms"], 16_600);
 	assert_eq!(json["timing"]["avg_request_time_ms"], 31_700);
 	assert_eq!(json["timing"]["completed_turns"], 2);
 	assert_eq!(json["timing"]["avg_turn_time_ms"], 45_000);

@@ -38,6 +38,23 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	};
 	let timing = InfoTiming {
 		model_time_ms: info.total_api_time_ms,
+		turn_model_time_ms: info.supervisor_accounting.turn_time.main_api_time_ms,
+		split_turns: info.supervisor_accounting.turn_time.completed,
+		split_time_ms: info.supervisor_accounting.turn_time.total_time_ms,
+		supervisor_blocking_time_ms: info
+			.supervisor_accounting
+			.turn_time
+			.blocking_supervisor_time_ms,
+		tools_runtime_time_ms: info
+			.supervisor_accounting
+			.turn_time
+			.total_time_ms
+			.saturating_sub(info.supervisor_accounting.turn_time.main_api_time_ms)
+			.saturating_sub(
+				info.supervisor_accounting
+					.turn_time
+					.blocking_supervisor_time_ms,
+			),
 		requests: info.total_api_calls,
 		avg_request_time_ms: if info.total_api_calls > 0 {
 			info.total_api_time_ms / info.total_api_calls as u64
@@ -119,7 +136,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		"extracted": session.learning_extracted,
 	});
 
-	let mut supervisor_stats = crate::supervisor::stats::snapshot();
+	let mut supervisor_stats = crate::supervisor::stats::activity_snapshot();
 	if info.authorization.initialized || info.authorization.blocked > 0 {
 		let stats = supervisor_stats.get_or_insert_with(|| serde_json::json!({}));
 		stats["authorizer"] = serde_json::json!({
@@ -156,6 +173,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 			agents_stats: super::agents::get_agents_stats(),
 			supervisor_stats,
+			supervisor_accounting: info.supervisor_accounting.clone(),
 			learning_stats,
 		},
 	)))

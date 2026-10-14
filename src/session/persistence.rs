@@ -15,7 +15,7 @@
 // Session persistence: auto-save/load/list session files
 
 use super::{CompressionStats, Message, Session, SessionInfo};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs::{self as std_fs, File, OpenOptions};
 use std::io::Write;
 use std::io::{BufRead, BufReader};
@@ -283,6 +283,7 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 // Helper function to load a session from file - optimized to use streams
 /// Intermediate result of parsing a session log file line by line.
 struct ParsedLogLines {
+	background_supervisor: Vec<(String, crate::supervisor::accounting::SupervisorAccounting)>,
 	session_info: Option<SessionInfo>,
 	messages: Vec<Message>,
 	restoration_messages: Vec<Message>,
@@ -296,6 +297,7 @@ struct ParsedLogLines {
 fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 	let mut session_info: Option<SessionInfo> = None;
 	let mut last_summary_timestamp: u64 = 0;
+	let mut background_supervisor = Vec::new();
 	let mut messages: Vec<Message> = Vec::new();
 	let mut restoration_point_found = false;
 	let mut restoration_messages = Vec::new();
@@ -309,6 +311,21 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 			if let Some(log_type) = json_value.get("type").and_then(|t| t.as_str()) {
 				match log_type {
+					"BACKGROUND_SUPERVISOR" => {
+						let id: String = serde_json::from_value(
+							json_value
+								.get("id")
+								.context("BACKGROUND_SUPERVISOR.id missing")?
+								.clone(),
+						)?;
+						let accounting = serde_json::from_value(
+							json_value
+								.get("accounting")
+								.context("BACKGROUND_SUPERVISOR.accounting missing")?
+								.clone(),
+						)?;
+						background_supervisor.push((id, accounting));
+					}
 					"SUMMARY" => {
 						// Extract session info from JSON log entry
 						// SUMMARY is the source of truth - it contains complete session state
@@ -413,6 +430,10 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						// This prevents old STATS from overwriting fresh SUMMARY data on resume
 						if stats_timestamp > last_summary_timestamp {
 							if let Some(info) = &mut session_info {
+								if let Some(value) = json_value.get("supervisor_accounting") {
+									info.supervisor_accounting
+										.merge_max(&serde_json::from_value(value.clone())?);
+								}
 								// CRITICAL FIX: Only apply STATS values if they're greater than current values
 								// This prevents cached-only requests (where non-cached tokens = 0) from
 								// overwriting the accumulated token counts from the SUMMARY
@@ -645,6 +666,7 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 	}
 
 	Ok(ParsedLogLines {
+		background_supervisor,
 		session_info,
 		messages,
 		restoration_messages,
@@ -727,6 +749,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		total_tool_time_ms: 0,
 		total_layer_time_ms: 0,
 		turn_timing: crate::session::TurnTimingStats::default(),
+		supervisor_accounting: Default::default(),
 		compression_stats: CompressionStats::default(),
 		anchor: crate::session::anchor::Anchor::default(),
 		total_api_calls: 0,
@@ -759,6 +782,10 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		let line = line?;
 		if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 			if json_value.get("type").and_then(|t| t.as_str()) == Some("STATS") {
+				if let Some(value) = json_value.get("supervisor_accounting") {
+					info.supervisor_accounting
+						.merge_max(&serde_json::from_value(value.clone())?);
+				}
 				if let Some(v) = json_value.get("total_cost").and_then(|c| c.as_f64()) {
 					info.total_cost = v;
 				}
@@ -815,7 +842,9 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		return Err(anyhow::anyhow!("Session file does not exist"));
 	}
 
-	let reader = BufReader::new(ZstdDecoder::new(File::open(session_file)?)?);
+	let file = File::open(session_file)?;
+	file.lock_shared()?;
+	let reader = BufReader::new(ZstdDecoder::new(&file)?);
 	let parsed = parse_log_lines(reader)?;
 
 	let final_messages =
@@ -825,11 +854,23 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 			parsed.messages
 		};
 
-	if let Some(info) = parsed.session_info {
-		reconstruct_messages(info, final_messages, session_file)
+	let mut session = if let Some(info) = parsed.session_info {
+		reconstruct_messages(info, final_messages, session_file)?
 	} else {
-		restore_session_info(final_messages, session_file)
+		restore_session_info(final_messages, session_file)?
+	};
+	for (id, accounting) in parsed.background_supervisor {
+		if session
+			.info
+			.supervisor_accounting
+			.background_runs
+			.insert(id)
+		{
+			session.info.total_cost += accounting.totals().cost;
+			session.info.supervisor_accounting.add(&accounting);
+		}
 	}
+	Ok(session)
 }
 
 /// Runtime state extracted from session commands
@@ -965,8 +1006,12 @@ pub fn summary_log_entry(info: &SessionInfo) -> serde_json::Value {
 pub fn append_to_session_file(session_file: &PathBuf, content: &str) -> Result<(), anyhow::Error> {
 	let file = OpenOptions::new()
 		.create(true)
+		.read(true)
 		.append(true)
 		.open(session_file)?;
+	// A detached distiller can append while the parent saves its final SUMMARY.
+	// Keep each compressed frame intact across both writers.
+	file.lock()?;
 
 	// Ensure content is on a single line - replace any newlines with spaces
 	let single_line_content = content.replace(['\n', '\r'], " ");

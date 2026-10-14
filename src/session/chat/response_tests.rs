@@ -910,10 +910,22 @@ fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
 	let mut session = fake_session("hi");
 	session.session.info.compression_stats.input_tokens = 1_000;
 	session.session.info.compression_stats.cost = 0.002;
-	let (_, _, supervisor_cost) = crate::supervisor::stats::usage_totals();
-
+	session.session.info.supervisor_accounting.kinds.insert(
+		crate::supervisor::stats::CallKind::Gate,
+		crate::supervisor::accounting::Usage {
+			calls: 1,
+			input_tokens: 50,
+			cost: 0.003,
+			blocking_wall_time_ms: 400,
+			..Default::default()
+		},
+	);
 	let frame = session_cost_payload(&mut session, "s".to_string());
-
-	// The supervisor accumulator is process-global; other tests only add to it.
-	assert!(frame.aux_cost >= 0.002 + supervisor_cost);
+	assert_eq!(frame.aux_cost, 0.005);
+	assert_eq!(frame.aux_input_tokens, 1_050);
+	assert_eq!(
+		frame.supervisor_accounting.kinds[&crate::supervisor::stats::CallKind::Gate]
+			.blocking_wall_time_ms,
+		400
+	);
 }

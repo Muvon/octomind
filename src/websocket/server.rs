@@ -15,8 +15,8 @@
 // WebSocket server implementation
 
 use super::protocol::{
-	Attachment, AttachmentKind, ClientMessage, CommandMessage, CostPayload, ServerMessage,
-	SessionMessage, StatusPayload, UserMessage,
+	Attachment, AttachmentKind, ClientMessage, CommandMessage, ServerMessage, SessionMessage,
+	StatusPayload, UserMessage,
 };
 use crate::config::Config;
 use crate::session::cancellation::SessionCancellation;
@@ -568,9 +568,12 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 
 					// Per-request spending boundary (see handle_user_message).
 					chat_session.start_request_spending_tracking();
-					if let Err(e) =
-						prepare_for_api_call(&mut chat_session, &config_for_role, op_rx.clone())
-							.await
+					if let Err(e) = crate::supervisor::accounting::background(prepare_for_api_call(
+						&mut chat_session,
+						&config_for_role,
+						op_rx.clone(),
+					))
+					.await
 					{
 						log_error!("WS monitor: failed to prepare API call: {}", e);
 						ctx.server
@@ -600,13 +603,15 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 						cost_sent
 					});
 
-					let result = execute_api_call_and_process_response(
-						&mut chat_session,
-						&config_for_role,
-						&ctx.server.role,
-						op_rx,
-						OutputMode::WebSocket,
-						ws_sink,
+					let result = crate::supervisor::accounting::background(
+						execute_api_call_and_process_response(
+							&mut chat_session,
+							&config_for_role,
+							&ctx.server.role,
+							op_rx,
+							OutputMode::WebSocket,
+							ws_sink,
+						),
 					)
 					.await;
 
@@ -635,21 +640,12 @@ fn spawn_ws_inbox_monitor(session_id: String, ctx: ConnCtx) {
 					}
 					// The sink already sent the cost of a turn that ran to completion.
 					if !cost_sent {
-						let total_tokens = chat_session.session.info.total_tokens();
-						let _ = ctx.bg_tx.send(ServerMessage::Cost(CostPayload {
-							session_tokens: total_tokens,
-							session_cost: chat_session.session.info.total_cost,
-							input_tokens: chat_session.session.info.input_tokens,
-							output_tokens: chat_session.session.info.output_tokens,
-							cache_read_tokens: chat_session.session.info.cache_read_tokens,
-							cache_write_tokens: chat_session.session.info.cache_write_tokens,
-							reasoning_tokens: chat_session.session.info.reasoning_tokens,
-							aux_input_tokens: 0,
-							aux_output_tokens: 0,
-							aux_cost: 0.0,
-							session_id: session_id.clone(),
-							pending_work: crate::session::has_pending_handback(),
-						}));
+						let _ = ctx.bg_tx.send(ServerMessage::Cost(
+							crate::session::chat::response::session_cost_payload(
+								&mut chat_session,
+								session_id.clone(),
+							),
+						));
 					}
 
 					// Save and put session back.
@@ -1571,21 +1567,10 @@ async fn handle_user_message(
 	log_debug!("Saving session: {}", session_id);
 	let save_result = chat_session.save();
 	let spending_stop = chat_session.spending_stop;
-	let total_tokens = chat_session.session.info.total_tokens();
-	let cost_msg = ServerMessage::Cost(CostPayload {
-		session_tokens: total_tokens,
-		session_cost: chat_session.session.info.total_cost,
-		input_tokens: chat_session.session.info.input_tokens,
-		output_tokens: chat_session.session.info.output_tokens,
-		cache_read_tokens: chat_session.session.info.cache_read_tokens,
-		cache_write_tokens: chat_session.session.info.cache_write_tokens,
-		reasoning_tokens: chat_session.session.info.reasoning_tokens,
-		aux_input_tokens: 0,
-		aux_output_tokens: 0,
-		aux_cost: 0.0,
-		session_id: session_id.clone(),
-		pending_work: crate::session::has_pending_handback(),
-	});
+	let cost_msg = ServerMessage::Cost(crate::session::chat::response::session_cost_payload(
+		&mut chat_session,
+		session_id.clone(),
+	));
 
 	// Clear the notification sender now that this request is done
 	crate::mcp::process::clear_notification_sender(Some(session_id.clone()));

@@ -115,12 +115,15 @@ pub async fn execute_command(
 	let mut config_clone = config.borrow().clone();
 
 	// Execute the command
-	let result = process_command(
-		&mut chat_session,
-		&full_command,
-		&mut config_clone,
-		role,
-		operation_rx,
+	let result = crate::session::context::with_session_id(
+		chat_session.session.info.name.clone(),
+		process_command(
+			&mut chat_session,
+			&full_command,
+			&mut config_clone,
+			role,
+			operation_rx,
+		),
 	)
 	.await;
 

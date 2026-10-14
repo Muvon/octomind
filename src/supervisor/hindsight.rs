@@ -105,6 +105,7 @@ pub async fn observe(
 	if !enabled(config) {
 		return None;
 	}
+	let _timing = super::accounting::WallTimer::start(super::stats::CallKind::Hindsight);
 	let model = model(&config.supervisor.hindsight.model).await?;
 	let events = trace(messages);
 	if events.is_empty() {
@@ -131,6 +132,7 @@ pub async fn observe(
 	);
 	super::notify(&format!("hindsight {}", scores.summary()));
 	super::stats::hindsight(scores.p_correction);
+	super::stats::record_call(super::stats::CallKind::Hindsight, 0, 0, 0, 0, 0.0);
 	*LAST.lock().unwrap_or_else(|p| p.into_inner()) = Some((session_name.to_string(), events));
 	let classes: serde_json::Map<String, serde_json::Value> = scores
 		.classes

@@ -422,34 +422,38 @@ async fn execute_tools_with_context(
 			})
 		} else {
 			match context {
-				ToolExecutionContext::MainSession { .. } => tokio::spawn(async move {
-					// Propagate session ID to spawned task for session-scoped state
-					crate::session::context::with_session_id(session_id, async move {
-						let mut call_with_id = tool_call_clone.clone();
-						// CRITICAL: Use the original tool_id, don't change it
-						call_with_id.tool_id = tool_id_for_task.clone();
-						crate::mcp::execute_tool_call(
-							&call_with_id,
-							&config_clone,
-							cancel_token_for_task,
-						)
+				ToolExecutionContext::MainSession { .. } => {
+					tokio::spawn(crate::supervisor::accounting::inherit(async move {
+						// Propagate session ID to spawned task for session-scoped state
+						crate::session::context::with_session_id(session_id, async move {
+							let mut call_with_id = tool_call_clone.clone();
+							// CRITICAL: Use the original tool_id, don't change it
+							call_with_id.tool_id = tool_id_for_task.clone();
+							crate::mcp::execute_tool_call(
+								&call_with_id,
+								&config_clone,
+								cancel_token_for_task,
+							)
+							.await
+						})
 						.await
-					})
-					.await
-				}),
-				ToolExecutionContext::Layer { .. } => tokio::spawn(async move {
-					crate::session::context::with_session_id(session_id, async move {
-						let mut call_with_id = tool_call_clone.clone();
-						call_with_id.tool_id = tool_id_for_task.clone();
-						crate::mcp::execute_layer_tool_call(
-							&call_with_id,
-							&config_clone,
-							cancel_token_for_task,
-						)
+					}))
+				}
+				ToolExecutionContext::Layer { .. } => {
+					tokio::spawn(crate::supervisor::accounting::inherit(async move {
+						crate::session::context::with_session_id(session_id, async move {
+							let mut call_with_id = tool_call_clone.clone();
+							call_with_id.tool_id = tool_id_for_task.clone();
+							crate::mcp::execute_layer_tool_call(
+								&call_with_id,
+								&config_clone,
+								cancel_token_for_task,
+							)
+							.await
+						})
 						.await
-					})
-					.await
-				}),
+					}))
+				}
 			}
 		};
 

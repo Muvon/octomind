@@ -509,12 +509,13 @@ impl OctomindAgent {
 								continue;
 							}
 
-							if let Err(e) = prepare_for_api_call(
-								&mut chat_session,
-								&config_for_role,
-								op_rx.clone(),
-							)
-							.await
+							if let Err(e) =
+								crate::supervisor::accounting::background(prepare_for_api_call(
+									&mut chat_session,
+									&config_for_role,
+									op_rx.clone(),
+								))
+								.await
 							{
 								log_error!("ACP monitor: failed to prepare API call: {}", e);
 								sessions
@@ -554,13 +555,15 @@ impl OctomindAgent {
 								}
 							});
 
-							let result = execute_api_call_and_process_response(
-								&mut chat_session,
-								&config_for_role,
-								&role,
-								op_rx,
-								OutputMode::WebSocket,
-								ws_sink,
+							let result = crate::supervisor::accounting::background(
+								execute_api_call_and_process_response(
+									&mut chat_session,
+									&config_for_role,
+									&role,
+									op_rx,
+									OutputMode::WebSocket,
+									ws_sink,
+								),
 							)
 							.await;
 
@@ -1311,6 +1314,7 @@ impl OctomindAgent {
 										"cache_read_tokens":  p.cache_read_tokens,
 										"cache_write_tokens": p.cache_write_tokens,
 										"reasoning_tokens":   p.reasoning_tokens,
+										"supervisor_accounting": p.supervisor_accounting,
 									}),
 								);
 								let notif = SessionNotification::new(

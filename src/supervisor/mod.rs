@@ -37,6 +37,7 @@
 //! section or any missing key is a hard parse error — we own the schema, so we
 //! fail loudly instead of degrading to silent defaults.
 
+pub mod accounting;
 pub mod authorizer;
 pub mod condense;
 pub mod delegate;

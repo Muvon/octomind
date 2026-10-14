@@ -957,3 +957,59 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {
+	use crate::session::chat::session::commands::{process_command, CommandResult};
+	use crate::supervisor::{
+		accounting::{SupervisorAccounting, TurnTime, Usage},
+		stats::CallKind,
+	};
+	let mut session = ChatSession::for_tests(Vec::new());
+	session.session.info.supervisor_accounting = SupervisorAccounting {
+		kinds: [(
+			CallKind::Resolve,
+			Usage {
+				calls: 2,
+				input_tokens: 125,
+				output_tokens: 20,
+				api_time_ms: 200,
+				blocking_wall_time_ms: 300,
+				..Default::default()
+			},
+		)]
+		.into(),
+		turn_time: TurnTime {
+			completed: 1,
+			total_time_ms: 2_000,
+			main_api_time_ms: 1_000,
+			blocking_supervisor_time_ms: 300,
+		},
+		..Default::default()
+	};
+	session.session.info.turn_timing.completed = 1;
+	session.session.info.turn_timing.total_time_ms = 2_000;
+	let mut config = template_config();
+	let CommandResult::HandledWithOutput(mut output) = process_command(
+		&mut session,
+		"/info",
+		&mut config,
+		"assistant",
+		tokio::sync::watch::channel(false).1,
+	)
+	.await
+	.unwrap() else {
+		panic!("info output");
+	};
+	config.runtime_output_mode = Some("jsonl".to_string());
+	let json = output.to_json();
+	assert_eq!(
+		json["supervisor_accounting"]["kinds"]["resolve"]["calls"],
+		2
+	);
+	assert_eq!(json["timing"]["tools_runtime_time_ms"], 700);
+	print_command_output(&mut output, &mut session, &config).await;
+	config.runtime_output_mode = None;
+	print_command_output(&mut output, &mut session, &config).await;
+}

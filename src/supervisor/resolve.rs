@@ -389,6 +389,9 @@ pub async fn resolve(
 	context: &TaskContext,
 	operation_rx: watch::Receiver<bool>,
 ) -> ResolvedTask {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Resolve,
+	);
 	let raw = context.current_request.clone();
 	if raw.trim().is_empty() {
 		return ResolvedTask::self_contained(raw);

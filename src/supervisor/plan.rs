@@ -549,6 +549,8 @@ pub async fn reconcile_after_actions(
 	config: &Config,
 	operation_rx: watch::Receiver<bool>,
 ) -> Result<()> {
+	let _timing =
+		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Plan);
 	let Some(signal) = chat_session.pending_plan_signal.take() else {
 		return Ok(());
 	};

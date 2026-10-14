@@ -99,6 +99,7 @@ mod session_restore_tests {
 			total_api_time_ms: 0,
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
+			supervisor_accounting: Default::default(),
 			turn_timing: Default::default(),
 			compression_stats: octomind::session::CompressionStats::default(),
 			anchor: Default::default(),

@@ -1304,6 +1304,7 @@ pub async fn execute(
 			aux_input_tokens: 0,
 			aux_output_tokens: 0,
 			aux_cost: 0.0,
+			supervisor_accounting: Default::default(),
 			session_id: String::new(),
 			pending_work: false,
 		}));

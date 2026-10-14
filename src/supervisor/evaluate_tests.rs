@@ -130,6 +130,7 @@ async fn answers_come_back_keyed_by_question_id_and_are_attributed() {
 	let cost = snapshot_f64("cost");
 	let spend = crate::session::context::with_session_id("__evaluate_spend".to_string(), async {
 		let _ = crate::session::external_spend::take();
+		crate::supervisor::accounting::take();
 		let answers = run(
 			&config,
 			Seam::Recall,
@@ -140,6 +141,13 @@ async fn answers_come_back_keyed_by_question_id_and_are_attributed() {
 		.expect("answers");
 		assert_eq!(answers["c0"], Answer::Noul { noul: 0.91 });
 		assert_eq!(answers["c1"], Answer::Noul { noul: 0.08 });
+		let accounting = crate::supervisor::accounting::take();
+		let seam = &accounting.seams[&Seam::Recall];
+		let total = &accounting.kinds[&crate::supervisor::stats::CallKind::Evaluate];
+		assert_eq!(seam.calls, 1);
+		assert_eq!(seam.input_tokens, total.input_tokens);
+		assert_eq!(seam.cost, total.cost);
+		assert_eq!(accounting.totals().calls, 1);
 		crate::session::external_spend::take()
 	})
 	.await;

@@ -333,6 +333,9 @@ pub async fn condense_round(
 	tool_round_intent: &str,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Condense,
+	);
 	let cfg = &config.supervisor.condense;
 	if !config.supervisor.enabled || !cfg.enabled || cfg.tokens_threshold == 0 {
 		return;

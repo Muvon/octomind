@@ -426,3 +426,55 @@ async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
 
 	context::cleanup_session(&"s1".to_string());
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn info_extension_folds_the_owned_supervisor_bank_into_structured_output() {
+	use crate::supervisor::{
+		accounting,
+		stats::{record_call, CallKind},
+	};
+	accounting::take();
+	let (sessions, locks, config, cancellations) = harness();
+	let owner = sessions.borrow()["s1"].0.session.info.name.clone();
+	context::with_session_id(owner, async {
+		record_call(CallKind::Gate, 11, 7, 3, 120, 0.125);
+	})
+	.await;
+	context::with_session_id("other-acp-session".into(), async {
+		record_call(CallKind::Gate, 999, 0, 0, 10, 1.0);
+	})
+	.await;
+	let response = handle_ext_method(
+		ext_request(
+			COMMAND_NAMESPACE,
+			serde_json::json!({"session_id":"s1", "command":"/info"}),
+		),
+		&sessions,
+		&locks,
+		&config,
+		"assistant",
+		&cancellations,
+	)
+	.await
+	.unwrap();
+	let json = decode(response);
+	assert_eq!(
+		json["output"]["supervisor_accounting"]["kinds"]["gate"]["input_tokens"],
+		11
+	);
+	assert_eq!(
+		json["output"]["supervisor_accounting"]["kinds"]["gate"]["reasoning_tokens"],
+		3
+	);
+	assert_eq!(
+		json["output"]["supervisor_accounting"]["kinds"]["gate"]["cost"],
+		0.125
+	);
+	assert!(json["output"]["timing"]["tools_runtime_time_ms"].is_u64());
+	assert!(json["output"]["supervisor_stats"].get("calls").is_none());
+	context::with_session_id("other-acp-session".into(), async {
+		assert_eq!(accounting::take().kinds[&CallKind::Gate].input_tokens, 999);
+	})
+	.await;
+}

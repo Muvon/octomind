@@ -181,13 +181,19 @@ impl std::error::Error for SpendingStop {}
 /// sysexits EX_TEMPFAIL — the run is resumable, unattended callers branch on it.
 pub const EXIT_SPENDING_STOP: i32 = 75;
 
+pub(crate) struct TurnStart {
+	at: std::time::Instant,
+	main_api_time_ms: u64,
+	blocking_supervisor_time_ms: u64,
+}
+
 // Chat session manager for interactive coding sessions
 pub struct ChatSession {
 	pub session: Session,
 	pub last_response: String,
 	/// Monotonic start of the active genuine user turn. Abandoned/cancelled
 	/// turns are replaced by the next genuine turn and never enter averages.
-	pub(crate) turn_started_at: Option<std::time::Instant>,
+	pub(crate) turn_started_at: Option<TurnStart>,
 	/// The turn's deliverable as first-class state: every final assistant
 	/// message (content, no tool calls) since the latest genuine user turn,
 	/// oldest first. The verify-gate judges these as ONE deliverable. State,
@@ -399,6 +405,7 @@ impl ChatSession {
 			total_tool_time_ms: 0,
 			total_layer_time_ms: 0,
 			turn_timing: crate::session::TurnTimingStats::default(),
+			supervisor_accounting: Default::default(),
 			compression_stats: CompressionStats::default(),
 			anchor: crate::session::anchor::Anchor::default(),
 			total_api_calls: 0,
@@ -1485,7 +1492,16 @@ impl ChatSession {
 	}
 
 	pub(crate) fn begin_turn_timing(&mut self) {
-		self.turn_started_at = Some(std::time::Instant::now());
+		self.session.fold_external_spend();
+		self.turn_started_at = Some(TurnStart {
+			at: std::time::Instant::now(),
+			main_api_time_ms: self.session.info.total_api_time_ms,
+			blocking_supervisor_time_ms: self
+				.session
+				.info
+				.supervisor_accounting
+				.blocking_wall_time_ms,
+		});
 	}
 
 	pub(crate) fn finish_turn_timing(&mut self) {
@@ -1494,7 +1510,16 @@ impl ChatSession {
 			return;
 		}
 		if let Some(started_at) = self.turn_started_at.take() {
-			self.session.info.turn_timing.record(started_at.elapsed());
+			self.session.fold_external_spend();
+			let elapsed = started_at.at.elapsed();
+			self.session.info.turn_timing.record(elapsed);
+			let info = &mut self.session.info;
+			let split = &mut info.supervisor_accounting.turn_time;
+			split.completed += 1;
+			split.total_time_ms += elapsed.as_millis() as u64;
+			split.main_api_time_ms += info.total_api_time_ms - started_at.main_api_time_ms;
+			split.blocking_supervisor_time_ms += info.supervisor_accounting.blocking_wall_time_ms
+				- started_at.blocking_supervisor_time_ms;
 		}
 	}
 

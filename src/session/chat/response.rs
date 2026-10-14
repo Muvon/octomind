@@ -1046,7 +1046,7 @@ pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) 
 	let info = &chat_session.session.info;
 	let total_tokens = info.total_tokens();
 	let compression = &info.compression_stats;
-	let (supervisor_in, supervisor_out, supervisor_cost) = crate::supervisor::stats::usage_totals();
+	let supervisor = info.supervisor_accounting.totals();
 	CostPayload {
 		session_tokens: total_tokens,
 		session_cost: info.total_cost,
@@ -1055,11 +1055,13 @@ pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) 
 		cache_read_tokens: info.cache_read_tokens,
 		cache_write_tokens: info.cache_write_tokens,
 		reasoning_tokens: info.reasoning_tokens,
-		aux_input_tokens: compression.input_tokens + supervisor_in,
+		aux_input_tokens: compression.input_tokens + supervisor.input_tokens,
 		aux_output_tokens: compression.output_tokens
 			+ compression.reasoning_tokens
-			+ supervisor_out,
-		aux_cost: compression.cost + supervisor_cost,
+			+ supervisor.output_tokens
+			+ supervisor.reasoning_tokens,
+		aux_cost: compression.cost + supervisor.cost,
+		supervisor_accounting: info.supervisor_accounting.clone(),
 		session_id,
 		pending_work: crate::session::has_pending_handback(),
 	}

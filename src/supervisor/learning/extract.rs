@@ -152,6 +152,9 @@ pub async fn run_extraction(
 	session_name: &str,
 	outcome: super::TrajectoryOutcome,
 ) -> Result<usize> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Distill,
+	);
 	let learning = &config.supervisor.learning;
 	if !learning.enabled {
 		return Ok(0);
@@ -1581,16 +1584,38 @@ pub fn extract_lessons_detached(
 ) -> tokio::task::JoinHandle<()> {
 	let observations = crate::supervisor::authorizer::observations_for_session(&session_name);
 	let messages = crate::supervisor::authorizer::grounded_messages(&session_name, messages);
-	tokio::spawn(
-		crate::supervisor::authorizer::EXTRACTION_OBSERVATIONS.scope(observations, async move {
-			match run_extraction(&messages, &config, &role, &project, &session_name, outcome).await
-			{
-				Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
-				Ok(n) => crate::log_debug!("Learning detached: {} memory items extracted", n),
-				Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
-			}
-		}),
-	)
+
+	let owner = crate::session::context::current_session_id();
+	tokio::spawn(async move {
+		let extraction = crate::supervisor::accounting::background(
+			crate::supervisor::authorizer::EXTRACTION_OBSERVATIONS.scope(
+				observations,
+				async move {
+					match run_extraction(
+						&messages,
+						&config,
+						&role,
+						&project,
+						&session_name,
+						outcome,
+					)
+					.await
+					{
+						Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
+						Ok(n) => {
+							crate::log_debug!("Learning detached: {} memory items extracted", n)
+						}
+						Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
+					}
+				},
+			),
+		);
+		if let Some(owner) = owner {
+			crate::session::context::with_session_id(owner, extraction).await;
+		} else {
+			extraction.await;
+		}
+	})
 }
 
 /// Spawn extraction from an already captured transcript. Compression callers
@@ -1681,6 +1706,7 @@ pub fn extract_lessons_before_exit(
 		&project_name(current_dir),
 		session_name,
 		session.learning_outcome,
+		session.session.session_file.as_deref(),
 	) {
 		Ok(()) => crate::supervisor::notify("distilling lessons in background …"),
 		Err(e) => crate::log_debug!("Background distill spawn failed: {}", e),
@@ -1695,6 +1721,7 @@ fn spawn_distill_process(
 	project: &str,
 	session_name: &str,
 	outcome: super::TrajectoryOutcome,
+	session_file: Option<&std::path::Path>,
 ) -> Result<()> {
 	let exe = std::env::current_exe()?;
 	let snapshot = std::env::temp_dir().join(format!(
@@ -1703,8 +1730,12 @@ fn spawn_distill_process(
 		std::process::id()
 	));
 	std::fs::write(&snapshot, serde_json::to_vec(messages)?)?;
-	let spawned = std::process::Command::new(exe)
-		.arg("distill")
+	let mut command = std::process::Command::new(exe);
+	command.arg("distill");
+	if let Some(session_file) = session_file {
+		command.arg("--session-file").arg(session_file);
+	}
+	let spawned = command
 		.arg("--messages")
 		.arg(&snapshot)
 		.arg("--role")

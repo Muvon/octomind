@@ -891,3 +891,136 @@ fn summary_log_entry_snapshots_type_timestamp_and_session_info() {
 		"timestamp must serialize as seconds"
 	);
 }
+
+#[test]
+fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sessions() {
+	use crate::supervisor::{accounting::Usage, evaluate::Seam, stats::CallKind};
+	let mut info = test_session_info("supervisor-resume");
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Resolve,
+		Usage {
+			calls: 2,
+			input_tokens: 100,
+			cost: 0.2,
+			api_time_ms: 50,
+			blocking_wall_time_ms: 90,
+			..Default::default()
+		},
+	);
+	info.supervisor_accounting.seams.insert(
+		Seam::Plan,
+		Usage {
+			calls: 1,
+			cost: 0.1,
+			..Default::default()
+		},
+	);
+	info.supervisor_accounting.blocking_wall_time_ms = 90;
+	let mut later = info.supervisor_accounting.clone();
+	later.kinds.get_mut(&CallKind::Resolve).unwrap().calls = 3;
+	later
+		.kinds
+		.get_mut(&CallKind::Resolve)
+		.unwrap()
+		.input_tokens = 50;
+	later
+		.kinds
+		.get_mut(&CallKind::Resolve)
+		.unwrap()
+		.blocking_wall_time_ms = 150;
+	later.blocking_wall_time_ms = 150;
+	let parsed = parse(&[
+		summary_json_line(&info, 10),
+		json!({"type":"STATS", "timestamp":11, "supervisor_accounting": later}).to_string(),
+	]);
+	let restored = parsed.session_info.unwrap();
+	let usage = &restored.supervisor_accounting.kinds[&CallKind::Resolve];
+	assert_eq!(
+		(usage.calls, usage.input_tokens, usage.blocking_wall_time_ms),
+		(3, 100, 150)
+	);
+	assert_eq!(restored.supervisor_accounting.seams[&Seam::Plan].calls, 1);
+	assert_eq!(restored.supervisor_accounting.blocking_wall_time_ms, 150);
+	let mut legacy = serde_json::to_value(&info).unwrap();
+	legacy
+		.as_object_mut()
+		.unwrap()
+		.remove("supervisor_accounting");
+	let legacy: SessionInfo = serde_json::from_value(legacy).unwrap();
+	assert!(legacy.supervisor_accounting.kinds.is_empty());
+}
+
+#[test]
+fn detached_supervisor_usage_survives_resume_and_is_not_replayed_after_save() {
+	use crate::supervisor::{
+		accounting::{SupervisorAccounting, Usage},
+		stats::CallKind,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("supervisor-resume.jsonl.zst");
+	let info = test_session_info("supervisor-resume");
+	append_to_session_file(&file, &summary_log_entry(&info).to_string()).unwrap();
+	let mut accounting = SupervisorAccounting::default();
+	accounting.kinds.insert(
+		CallKind::Distill,
+		Usage {
+			calls: 2,
+			cost: 0.25,
+			background_wall_time_ms: 800,
+			..Default::default()
+		},
+	);
+	let delta = json!({"type": "BACKGROUND_SUPERVISOR", "id":"worker-a", "accounting": accounting});
+	append_to_session_file(&file, &delta.to_string()).unwrap();
+	let resumed = load_session(&file).unwrap();
+	assert_eq!(resumed.info.total_cost, 0.25);
+	assert_eq!(
+		resumed.info.supervisor_accounting.kinds[&CallKind::Distill].background_wall_time_ms,
+		800
+	);
+	resumed.save().unwrap();
+	// A stale SUMMARY from a still-running parent cannot discard the child delta.
+	append_to_session_file(&file, &summary_log_entry(&info).to_string()).unwrap();
+	let resumed = load_session(&file).unwrap();
+	assert_eq!(resumed.info.total_cost, 0.25);
+	resumed.save().unwrap();
+	let twice = load_session(&file).unwrap();
+	assert_eq!(twice.info.total_cost, 0.25);
+	assert_eq!(
+		twice.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
+		2
+	);
+}
+
+#[test]
+fn concurrent_background_and_summary_writers_keep_journal_frames_intact() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("concurrent.jsonl.zst");
+	let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+	std::thread::scope(|scope| {
+		for writer in 0..2 {
+			let file = &file;
+			let barrier = barrier.clone();
+			scope.spawn(move || {
+				barrier.wait();
+				for index in 0..20 {
+					append_to_session_file(
+						file,
+						&json!({"writer": writer, "index": index}).to_string(),
+					)
+					.unwrap();
+				}
+			});
+		}
+	});
+	let reader = BufReader::new(ZstdDecoder::new(File::open(&file).unwrap()).unwrap());
+	let mut entries = std::collections::HashSet::new();
+	for line in reader.lines() {
+		let value: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
+		assert!(entries.insert((
+			value["writer"].as_u64().unwrap(),
+			value["index"].as_u64().unwrap()
+		)));
+	}
+	assert_eq!(entries.len(), 40);
+}

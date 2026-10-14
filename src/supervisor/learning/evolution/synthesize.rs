@@ -201,6 +201,9 @@ pub async fn synthesize(
 	project: &str,
 	session_name: &str,
 ) -> Result<Option<String>> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Evolution,
+	);
 	let memories = source_memories(role, project, session_name).await?;
 	if memories.is_empty() {
 		return Ok(None);
@@ -225,6 +228,9 @@ pub async fn synthesize_store(
 	role: &str,
 	project: &str,
 ) -> Result<Option<String>> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Evolution,
+	);
 	let memories = recurring_store_cluster().await?;
 	if memories.is_empty() {
 		return Ok(None);
@@ -317,7 +323,7 @@ async fn synthesize_from(
 	let value = crate::supervisor::learning::extract::call_supervisor_json(
 		config,
 		crate::supervisor::learning::extract::SupervisorPrompt::new(system, user),
-		crate::supervisor::stats::CallKind::Distill,
+		crate::supervisor::stats::CallKind::Evolution,
 		proposal_schema(),
 		cancel_rx,
 	)
@@ -411,7 +417,7 @@ async fn synthesize_from(
 			verifier_prompt(),
 			serde_json::to_string_pretty(&verifier_payload)?,
 		),
-		crate::supervisor::stats::CallKind::Distill,
+		crate::supervisor::stats::CallKind::Evolution,
 		verdict_schema(),
 		verify_rx,
 	)

@@ -132,6 +132,9 @@ pub async fn maintain(
 	project: &str,
 	session_name: &str,
 ) -> Result<RetentionReport> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Retention,
+	);
 	let backend = FileBackend;
 	// Promotion first so a newly global rule is budgeted in the global bucket.
 	let promoted = promote_recurring(&backend, config, session_name).await?;
@@ -277,7 +280,7 @@ async fn verify_user_wide(config: &Config, members: &[&Lesson]) -> bool {
 			PROMOTE_VERIFY_PROMPT.to_string(),
 			payload.to_string(),
 		),
-		crate::supervisor::stats::CallKind::Distill,
+		crate::supervisor::stats::CallKind::Retention,
 		verdict_schema(),
 		rx,
 	)
@@ -517,7 +520,7 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 	let proposed = super::extract::call_supervisor_json(
 		config,
 		super::extract::SupervisorPrompt::new(CONSOLIDATE_PROMPT.to_string(), payload.to_string()),
-		crate::supervisor::stats::CallKind::Distill,
+		crate::supervisor::stats::CallKind::Retention,
 		schema,
 		rx,
 	)
@@ -571,7 +574,7 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 			VERIFY_PROMPT.to_string(),
 			verify_payload.to_string(),
 		),
-		crate::supervisor::stats::CallKind::Distill,
+		crate::supervisor::stats::CallKind::Retention,
 		verdict_schema(),
 		verify_rx,
 	)

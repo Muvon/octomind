@@ -583,6 +583,9 @@ pub async fn check_batch(
 	generated_guards: &[Vec<(String, String)>],
 	mut cancellation: tokio::sync::watch::Receiver<bool>,
 ) -> Vec<Admission> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Authorize,
+	);
 	if calls.is_empty() {
 		return Vec::new();
 	}

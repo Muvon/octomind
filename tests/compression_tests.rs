@@ -355,6 +355,7 @@ mod adaptive_compression_tests {
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
 				turn_timing: Default::default(),
+				supervisor_accounting: Default::default(),
 				compression_stats: octomind::session::CompressionStats::default(),
 				anchor: Default::default(),
 				total_api_calls: 0,

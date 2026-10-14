@@ -66,6 +66,12 @@ use serde::Serialize;
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct InfoTiming {
 	pub model_time_ms: u64,
+	/// Matched completed-turn measurements; older sessions have zero split coverage.
+	pub turn_model_time_ms: u64,
+	pub split_turns: u64,
+	pub split_time_ms: u64,
+	pub supervisor_blocking_time_ms: u64,
+	pub tools_runtime_time_ms: u64,
 	pub requests: usize,
 	pub avg_request_time_ms: u64,
 	pub completed_turns: u64,
@@ -110,8 +116,9 @@ pub enum CommandOutput {
 		cache_non_cached_tokens: u64,
 		/// Aggregated stats from all tap-offloaded agents this session.
 		agents_stats: Option<serde_json::Value>,
-		/// Supervisor activity + usage tally this session.
+		/// Additional process-wide activity counters and session authorizer state.
 		supervisor_stats: Option<serde_json::Value>,
+		supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting,
 		/// Session-isolated learning usage and current active-pack state.
 		learning_stats: serde_json::Value,
 	},

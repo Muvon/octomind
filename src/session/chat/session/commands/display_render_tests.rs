@@ -544,6 +544,11 @@ fn test_render_info_full_and_minimal() {
 		tokens_per_second: 55.5,
 		timing: crate::session::chat::session::commands::InfoTiming {
 			model_time_ms: 180_000,
+			turn_model_time_ms: 180_000,
+			split_turns: 3,
+			split_time_ms: 240_000,
+			supervisor_blocking_time_ms: 20_000,
+			tools_runtime_time_ms: 40_000,
 			requests: 12,
 			avg_request_time_ms: 15_000,
 			completed_turns: 3,
@@ -565,6 +570,32 @@ fn test_render_info_full_and_minimal() {
 			"tokens_input": 50_000, "tokens_output": 4_000,
 			"tokens_cached": 30_000, "total_cost": 0.55
 		})),
+		supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting {
+			kinds: [(
+				crate::supervisor::stats::CallKind::Gate,
+				crate::supervisor::accounting::Usage {
+					calls: 2,
+					input_tokens: 50,
+					output_tokens: 10,
+					reasoning_tokens: 5,
+					api_time_ms: 100,
+					blocking_wall_time_ms: 250,
+					cost: 0.02,
+					..Default::default()
+				},
+			)]
+			.into(),
+			seams: [(
+				crate::supervisor::evaluate::Seam::Gate,
+				crate::supervisor::accounting::Usage {
+					calls: 1,
+					background_wall_time_ms: 100,
+					..Default::default()
+				},
+			)]
+			.into(),
+			..Default::default()
+		},
 		supervisor_stats: Some(json!({
 			"calls": 12, "recall_calls": 2, "gate_calls": 4, "resolve_calls": 1,
 			"distill_calls": 1, "condense_calls": 2,
@@ -616,6 +647,7 @@ fn test_render_info_full_and_minimal() {
 		cache_markers_content: 0,
 		cache_non_cached_tokens: 0,
 		agents_stats: None,
+		supervisor_accounting: Default::default(),
 		supervisor_stats: None,
 		learning_stats: json!({}),
 	});
@@ -1040,6 +1072,7 @@ fn test_render_info_partial_sections() {
 			"total": 1, "running": 0, "done": 1, "failed": 0,
 			"tokens_input": 10, "tokens_output": 2, "tokens_cached": 0, "total_cost": 0.01
 		})),
+		supervisor_accounting: Default::default(),
 		supervisor_stats: None,
 		learning_stats: json!({
 			"packs": 1, "items": 2, "tokens": 300,

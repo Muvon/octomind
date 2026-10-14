@@ -371,6 +371,8 @@ pub struct SessionInfo {
 	/// timer is monotonic and process-local; only completed aggregates persist.
 	#[serde(default)]
 	pub turn_timing: TurnTimingStats,
+	#[serde(default)]
+	pub supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting,
 	// Compression tracking
 	#[serde(default)]
 	pub compression_stats: CompressionStats,
@@ -575,6 +577,7 @@ impl Session {
 				total_tool_time_ms: 0,
 				total_layer_time_ms: 0,
 				turn_timing: TurnTimingStats::default(),
+				supervisor_accounting: Default::default(),
 				compression_stats: CompressionStats::default(),
 				anchor: crate::session::anchor::Anchor::default(),
 				total_api_calls: 0,
@@ -723,6 +726,9 @@ impl Session {
 	/// breakdowns stay in their own accumulators for `/info` to show.
 	pub fn fold_external_spend(&mut self) {
 		self.info.total_cost += external_spend::take();
+		self.info
+			.supervisor_accounting
+			.add(&crate::supervisor::accounting::take());
 	}
 
 	// Save the session to a file - append-only approach

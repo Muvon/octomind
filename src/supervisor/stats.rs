@@ -12,21 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Supervisor activity + usage tally, surfaced in `/info`.
-//!
-//! The supervisor's own model calls (verify-gate, distill, recall-prep) run on a
-//! separate cheap model. This process-global accumulator captures their
-//! token/cost spend plus what the supervisor *did* (gate runs, steers,
-//! lessons/orientation stored, recalls) so `/info` can show it as its own
-//! breakdown; the cost also feeds `session::external_spend` so it lands in the
-//! session total. One process == one interactive session, so a global is
-//! effectively session-scoped (same approach as the agents stats).
+//! Process-wide supervisor diagnostics. Session-owned usage is also banked in
+//! `accounting` and cost in `external_spend`; neither uses this global snapshot.
 
 use std::sync::{Mutex, OnceLock};
 
 /// Which supervisor mechanic made a model call — so `/info` can break the count
 /// down instead of showing one opaque total.
-#[derive(Clone, Copy, Debug)]
+#[derive(
+	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum CallKind {
 	/// Recall keyword/query preparation.
 	Recall,
@@ -44,6 +40,27 @@ pub enum CallKind {
 	Authorize,
 	/// Calibrated evaluation-model gate (one of the `evaluate::Seam`s).
 	Evaluate,
+	Retention,
+	Evolution,
+	Hindsight,
+}
+
+impl CallKind {
+	pub fn name(self) -> &'static str {
+		match self {
+			Self::Recall => "recall",
+			Self::Gate => "gate",
+			Self::Resolve => "resolve",
+			Self::Plan => "plan",
+			Self::Distill => "distill",
+			Self::Condense => "condense",
+			Self::Authorize => "authorize",
+			Self::Evaluate => "evaluate",
+			Self::Retention => "retention",
+			Self::Evolution => "evolution",
+			Self::Hindsight => "hindsight",
+		}
+	}
 }
 
 #[derive(Default, Clone)]
@@ -130,6 +147,18 @@ pub fn record_call(
 	api_time_ms: u64,
 	cost: f64,
 ) {
+	super::accounting::record(
+		kind,
+		super::accounting::Usage {
+			calls: 1,
+			input_tokens,
+			output_tokens,
+			reasoning_tokens,
+			api_time_ms,
+			cost,
+			..Default::default()
+		},
+	);
 	with(|s| {
 		s.calls += 1;
 		match kind {
@@ -140,6 +169,7 @@ pub fn record_call(
 			CallKind::Distill => s.distill_calls += 1,
 			CallKind::Condense => s.condense_calls += 1,
 			CallKind::Authorize => s.authorize_calls += 1,
+			CallKind::Retention | CallKind::Evolution | CallKind::Hindsight => {}
 			CallKind::Evaluate => {
 				s.evaluate_calls += 1;
 				s.evaluate_input_tokens += input_tokens;
@@ -289,17 +319,49 @@ pub fn evolution(action: &str) {
 		_ => {}
 	});
 }
-/// Prompt and completion tokens (reasoning included) and provider-reported cost
-/// of every supervisor call so far in this process, for the cost frame's
-/// auxiliary counters.
-pub fn usage_totals() -> (u64, u64, f64) {
-	global()
-		.lock()
-		.map(|s| (s.input_tokens, s.output_tokens + s.reasoning_tokens, s.cost))
-		.unwrap_or((0, 0, 0.0))
+/// Non-usage diagnostics remain process-wide; session usage lives in SessionInfo.
+pub fn activity_snapshot() -> Option<serde_json::Value> {
+	let mut value = snapshot()?;
+	let fields = value
+		.as_object_mut()
+		.expect("supervisor snapshot is an object");
+	fields.retain(|key, _| {
+		!matches!(
+			key.as_str(),
+			"calls"
+				| "recall_calls"
+				| "gate_calls"
+				| "resolve_calls"
+				| "plan_calls"
+				| "distill_calls"
+				| "condense_calls"
+				| "authorize_calls"
+				| "evaluate_calls"
+				| "evaluate_input_tokens"
+				| "evaluate_cost"
+				| "input_tokens"
+				| "output_tokens"
+				| "api_time_ms"
+				| "tokens_per_second"
+				| "cost"
+		)
+	});
+	let seams = fields
+		.get_mut("evaluate")
+		.expect("supervisor snapshot includes evaluate")
+		.as_object_mut()
+		.expect("evaluation counters are an object");
+	for counters in seams.values_mut() {
+		counters
+			.as_object_mut()
+			.expect("seam counters are an object")
+			.remove("calls");
+	}
+	fields.insert("scope".into(), serde_json::json!("process"));
+	Some(value)
 }
 
-/// JSON snapshot for `/info`. Returns `None` when the supervisor did nothing,
+/// JSON snapshot for process diagnostics. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {
 	let s = global().lock().ok()?.clone();

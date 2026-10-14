@@ -51,7 +51,10 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// The unit of routing, stats, and unavailable outcomes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+	Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Seam {
 	Recall,
 	Skills,
@@ -564,6 +567,7 @@ pub async fn run(
 	if !enabled(config, seam) {
 		return None;
 	}
+	let _timing = super::accounting::WallTimer::seam(seam);
 	match attempt(config, seam, state, questions).await {
 		Ok(answers) => Some(answers),
 		Err(reason) => {
@@ -586,6 +590,7 @@ pub async fn run_windows(
 	if !enabled(config, seam) {
 		return None;
 	}
+	let _timing = super::accounting::WallTimer::seam(seam);
 	use futures::StreamExt;
 	let results: Vec<_> = futures::stream::iter(
 		windows
@@ -643,13 +648,25 @@ async fn attempt(
 		Ok(Err(error)) => return Err(error.to_string()),
 		Err(_) => return Err("timeout".to_string()),
 	};
+	let api_time_ms = started.elapsed().as_millis() as u64;
 	super::stats::record_call(
 		super::stats::CallKind::Evaluate,
 		response.usage.input_tokens,
 		response.usage.output_tokens,
 		0,
-		started.elapsed().as_millis() as u64,
+		api_time_ms,
 		response.usage.cost.unwrap_or(0.0),
+	);
+	super::accounting::record_seam(
+		seam,
+		super::accounting::Usage {
+			calls: 1,
+			input_tokens: response.usage.input_tokens,
+			output_tokens: response.usage.output_tokens,
+			api_time_ms,
+			cost: response.usage.cost.unwrap_or(0.0),
+			..Default::default()
+		},
 	);
 	// Every question must come back under its own id with the matching answer
 	// type; anything else is an unparseable response for the whole seam.

@@ -634,6 +634,7 @@ async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 		std::env::set_var("OLLAMA_API_URL", url);
 		let chat_calls = distill_chat_calls();
 		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.supervisor.enabled = true;
 		config.decision.supervisor = true;
 		let member = memory(RECURRING_RULE, "learning");
 		assert_eq!(verify_user_wide(&config, &[&member]).await, expected);
@@ -677,6 +678,7 @@ async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_
 		std::env::set_var("OLLAMA_API_URL", url);
 		let chat_calls = distill_chat_calls();
 		let mut config = crate::session::chat::test_support::fake_provider_config();
+		config.supervisor.enabled = true;
 		config.supervisor.model.model = Some("ollama:fake-model".into());
 		config.decision.supervisor = true;
 		let merged = propose_and_verify(&config, &sources).await;

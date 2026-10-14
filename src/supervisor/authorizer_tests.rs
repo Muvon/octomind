@@ -648,17 +648,20 @@ async fn evaluate_prescreen_flag_hands_the_batch_to_the_supervisor_unchanged() {
 
 #[tokio::test]
 async fn evaluate_prescreen_runs_after_the_denial_cache() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
-		("0.prohibited", 0.93),
-		("0.destructive", 0.1),
-		("0.external", 0.1),
-	]))])
-	.await;
-	let url = spawn_stub(vec![
-		final_response(&verdict("block", "Do not run tests").to_string()),
-		final_response(&confirmation(true).to_string()),
+	let fake = install_fake_evaluation(vec![
+		FakeEvaluationStep::Answers(nouls(&[
+			("0.prohibited", 0.93),
+			("0.destructive", 0.1),
+			("0.external", 0.1),
+		])),
+		FakeEvaluationStep::Answers(nouls(&[("0", 0.9)])),
 	])
 	.await;
+	let (url, captured) =
+		crate::session::chat::test_support::spawn_recording_stub(vec![final_response(
+			&verdict("block", "Do not run tests").to_string(),
+		)])
+		.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let config = prescreen_config();
 	let id = "authorizer-prescreen-cache";
@@ -671,13 +674,20 @@ async fn evaluate_prescreen_runs_after_the_denial_cache() {
 		.as_ref()
 		.unwrap()
 		.contains("Do not run tests"));
-	assert_eq!(fake.requests().len(), 1);
+	assert_eq!(fake.requests().len(), 2);
+	assert!(fake.requests()[0].questions.contains_key("0.prohibited"));
+	assert!(fake.requests()[1].questions.contains_key("0"));
 	let second = check_batch(id, &config, &[call()], &[vec![]], rx).await;
 	assert_eq!(second[0].message, first[0].message);
 	assert_eq!(
 		fake.requests().len(),
-		1,
+		2,
 		"a memoized denial never reaches the evaluation model"
+	);
+	assert_eq!(
+		captured.lock().unwrap().len(),
+		1,
+		"only the first primary writer runs"
 	);
 	sync(&mut session);
 	assert_eq!(session.session.info.authorization.cached, 1);
@@ -689,6 +699,90 @@ fn authorizer_chat_calls() -> u64 {
 	crate::supervisor::stats::snapshot()
 		.and_then(|stats| stats.get("authorize_calls")?.as_u64())
 		.unwrap_or(0)
+}
+
+#[tokio::test]
+async fn decision_confirmation_unavailable_counts_only_proposed_decisions() {
+	use crate::session::chat::test_support::spawn_recording_stub;
+	for (index, step, unavailable) in [
+		(
+			0,
+			FakeEvaluationStep::Answers(nouls(&[("0", 0.49), ("1", 0.49)])),
+			0,
+		),
+		(1, FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), 2),
+		(2, FakeEvaluationStep::Answers(nouls(&[])), 2),
+		(
+			3,
+			FakeEvaluationStep::Sleep(std::time::Duration::from_secs(6)),
+			2,
+		),
+	] {
+		let fake = install_fake_evaluation(vec![
+			FakeEvaluationStep::Answers(nouls(&[
+				("0.prohibited", 0.9),
+				("0.destructive", 0.1),
+				("0.external", 0.1),
+				("1.prohibited", 0.9),
+				("1.destructive", 0.1),
+				("1.external", 0.1),
+				("2.prohibited", 0.1),
+				("2.destructive", 0.1),
+				("2.external", 0.1),
+			])),
+			step,
+		])
+		.await;
+		let first = verdict("block", "Do not run tests")["decisions"][0].clone();
+		let mut second = first.clone();
+		second["id"] = json!("1");
+		let mut ordinary = verdict("allow", "")["decisions"][0].clone();
+		ordinary["id"] = json!("2");
+		let response = json!({"decisions": [first, second, ordinary]});
+		let (url, captured) =
+			spawn_recording_stub(vec![final_response(&response.to_string())]).await;
+		std::env::set_var("OLLAMA_API_URL", url);
+		let config = prescreen_config();
+		let id = format!("decision-confirmation-accounting-{index}");
+		let mut session = session(&id);
+		capture(&mut session, &config);
+		let mut second_call = call();
+		second_call.tool_id = "t2".into();
+		let mut ordinary_call = call();
+		ordinary_call.tool_id = "t3".into();
+		ordinary_call.parameters = json!({"command": "ls"});
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let admissions = check_batch(
+			&id,
+			&config,
+			&[call(), second_call, ordinary_call],
+			&[vec![], vec![], vec![]],
+			rx,
+		)
+		.await;
+		assert!(admissions
+			.iter()
+			.all(|admission| admission.message.is_none()));
+		sync(&mut session);
+		assert_eq!(session.session.info.authorization.checked, 3);
+		assert_eq!(session.session.info.authorization.unavailable, unavailable);
+		let requests = fake.requests();
+		assert_eq!(requests.len(), 2);
+		assert_eq!(
+			requests[1].state["proposed_decisions"]
+				.as_array()
+				.unwrap()
+				.len(),
+			2
+		);
+		assert_eq!(
+			captured.lock().unwrap().len(),
+			1,
+			"no chat confirmation retry"
+		);
+		clear_for_session(&id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
 }
 
 #[tokio::test]
@@ -726,6 +820,11 @@ async fn decision_confirmation_replaces_only_the_second_judge_and_fails_closed()
 		let (_tx, rx) = tokio::sync::watch::channel(false);
 		let admissions = check_batch(&id, &config, &[call()], &[vec![]], rx).await;
 		assert_eq!(admissions[0].message.is_some(), confirmed);
+		sync(&mut session);
+		assert_eq!(
+			session.session.info.authorization.unavailable,
+			if index >= 2 { 1 } else { 0 }
+		);
 		let requests = fake.requests();
 		assert_eq!(requests.len(), 2);
 		assert_eq!(captured.lock().unwrap().len(), 1, "primary writer only");

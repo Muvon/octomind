@@ -694,10 +694,8 @@ pub async fn check_batch(
 						),
 					)
 					.await
-					.context("veto verification timed out")?;
-					let Some(answers) = answers else {
-						return Ok(HashSet::new());
-					};
+					.context("veto verification timed out")?
+					.context("decision-model veto verification unavailable")?;
 					crate::supervisor::stats::evaluate_applied(Seam::Authorizer, 1);
 					evaluate::avoided(
 						config,

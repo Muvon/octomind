@@ -333,13 +333,13 @@ pub async fn condense_round(
 	tool_round_intent: &str,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Condense,
-	);
 	let cfg = &config.supervisor.condense;
 	if !config.supervisor.enabled || !cfg.enabled || cfg.tokens_threshold == 0 {
 		return;
 	}
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Condense,
+	);
 
 	// Per-result trigger: only outputs that individually exceed the threshold are
 	// worth a line-range round trip. Everything below it is left exactly as the

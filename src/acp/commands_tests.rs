@@ -127,6 +127,7 @@ async fn handle_ext_method_rejects_foreign_namespaces() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(result.is_err(), "only octomind/command is routed here");
@@ -142,6 +143,7 @@ async fn handle_ext_method_reports_invalid_params_as_a_failed_command() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await
 	.expect("invalid params still answer 200 with a failed payload");
@@ -167,6 +169,7 @@ async fn execute_command_errors_on_an_unknown_session() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(!response.success);
@@ -192,6 +195,7 @@ async fn execute_command_runs_help_and_returns_the_session_to_the_map() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(first.success, "{first:?}");
@@ -208,6 +212,7 @@ async fn execute_command_runs_help_and_returns_the_session_to_the_map() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(second.success, "{second:?}");
@@ -228,6 +233,7 @@ async fn execute_command_maps_exit_to_an_exit_action() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(response.success, "{response:?}");
@@ -252,6 +258,7 @@ async fn execute_command_reports_unknown_commands() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(!response.success);
@@ -276,6 +283,7 @@ async fn execute_command_joins_args_and_persists_config_mutations() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await;
 	assert!(response.success, "{response:?}");
@@ -300,6 +308,7 @@ async fn handle_ext_method_end_to_end_through_the_dispatcher() {
 		&config,
 		"assistant",
 		&cancellations,
+		None,
 	)
 	.await
 	.expect("ext method handled");
@@ -363,6 +372,7 @@ async fn execute_command_done_is_handled_and_wakes_the_inbox_monitor() {
 			&config,
 			"assistant",
 			&cancellations,
+			None,
 		)
 		.await
 	})
@@ -404,6 +414,7 @@ async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
 			&config,
 			"assistant",
 			&cancellations,
+			None,
 		)
 		.await
 	})
@@ -430,51 +441,55 @@ async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
 #[tokio::test]
 #[serial_test::serial]
 async fn info_extension_folds_the_owned_supervisor_bank_into_structured_output() {
-	use crate::supervisor::{
-		accounting,
-		stats::{record_call, CallKind},
-	};
-	accounting::take();
-	let (sessions, locks, config, cancellations) = harness();
-	let owner = sessions.borrow()["s1"].0.session.info.name.clone();
-	context::with_session_id(owner, async {
-		record_call(CallKind::Gate, 11, 7, 3, 120, 0.125);
-	})
-	.await;
-	context::with_session_id("other-acp-session".into(), async {
-		record_call(CallKind::Gate, 999, 0, 0, 10, 1.0);
-	})
-	.await;
-	let response = handle_ext_method(
-		ext_request(
-			COMMAND_NAMESPACE,
-			serde_json::json!({"session_id":"s1", "command":"/info"}),
-		),
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-	)
-	.await
-	.unwrap();
-	let json = decode(response);
-	assert_eq!(
-		json["output"]["supervisor_accounting"]["kinds"]["gate"]["input_tokens"],
-		11
-	);
-	assert_eq!(
-		json["output"]["supervisor_accounting"]["kinds"]["gate"]["reasoning_tokens"],
-		3
-	);
-	assert_eq!(
-		json["output"]["supervisor_accounting"]["kinds"]["gate"]["cost"],
-		0.125
-	);
-	assert!(json["output"]["timing"]["tools_runtime_time_ms"].is_u64());
-	assert!(json["output"]["supervisor_stats"].get("calls").is_none());
-	context::with_session_id("other-acp-session".into(), async {
-		assert_eq!(accounting::take().kinds[&CallKind::Gate].input_tokens, 999);
+	crate::supervisor::accounting::isolated(async {
+		use crate::supervisor::{
+			accounting,
+			stats::{record_call, CallKind},
+		};
+		accounting::take();
+		let (sessions, locks, config, cancellations) = harness();
+		let owner = sessions.borrow()["s1"].0.session.info.name.clone();
+		context::with_session_id(owner, async {
+			record_call(CallKind::Gate, 11, 7, 3, 120, 0.125);
+		})
+		.await;
+		context::with_session_id("other-acp-session".into(), async {
+			record_call(CallKind::Gate, 999, 0, 0, 10, 1.0);
+		})
+		.await;
+		let response = handle_ext_method(
+			ext_request(
+				COMMAND_NAMESPACE,
+				serde_json::json!({"session_id":"s1", "command":"/info"}),
+			),
+			&sessions,
+			&locks,
+			&config,
+			"assistant",
+			&cancellations,
+			None,
+		)
+		.await
+		.unwrap();
+		let json = decode(response);
+		assert_eq!(
+			json["output"]["supervisor_accounting"]["mechanics"]["gate"]["input_tokens"],
+			11
+		);
+		assert_eq!(
+			json["output"]["supervisor_accounting"]["mechanics"]["gate"]["reasoning_tokens"],
+			3
+		);
+		assert_eq!(
+			json["output"]["supervisor_accounting"]["mechanics"]["gate"]["cost"],
+			0.125
+		);
+		assert!(json["output"]["timing"]["tools_runtime_time_ms"].is_u64());
+		assert!(json["output"].get("supervisor_stats").is_none());
+		context::with_session_id("other-acp-session".into(), async {
+			assert_eq!(accounting::take().kinds[&CallKind::Gate].input_tokens, 999);
+		})
+		.await;
 	})
 	.await;
 }

@@ -905,27 +905,30 @@ async fn test_process_response_request_spending_stop_ends_turn_without_final_ans
 	assert!(session.turn_answers.is_empty());
 }
 
-#[test]
-fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
-	let mut session = fake_session("hi");
-	session.session.info.compression_stats.input_tokens = 1_000;
-	session.session.info.compression_stats.cost = 0.002;
-	session.session.info.supervisor_accounting.kinds.insert(
-		crate::supervisor::stats::CallKind::Gate,
-		crate::supervisor::accounting::Usage {
-			calls: 1,
-			input_tokens: 50,
-			cost: 0.003,
-			blocking_wall_time_ms: 400,
-			..Default::default()
-		},
-	);
-	let frame = session_cost_payload(&mut session, "s".to_string());
-	assert_eq!(frame.aux_cost, 0.005);
-	assert_eq!(frame.aux_input_tokens, 1_050);
-	assert_eq!(
-		frame.supervisor_accounting.kinds[&crate::supervisor::stats::CallKind::Gate]
-			.blocking_wall_time_ms,
-		400
-	);
+#[tokio::test]
+async fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
+	crate::supervisor::accounting::isolated(async {
+		let mut session = fake_session("hi");
+		session.session.info.compression_stats.input_tokens = 1_000;
+		session.session.info.compression_stats.cost = 0.002;
+		session.session.info.supervisor_accounting.kinds.insert(
+			crate::supervisor::stats::CallKind::Gate,
+			crate::supervisor::accounting::Usage {
+				calls: 1,
+				input_tokens: 50,
+				cost: 0.003,
+				blocking_wall_time_ms: 400,
+				..Default::default()
+			},
+		);
+		let frame = session_cost_payload(&mut session, "s".to_string());
+		assert_eq!(frame.aux_cost, 0.005);
+		assert_eq!(frame.aux_input_tokens, 1_050);
+		assert_eq!(
+			frame.supervisor_accounting.mechanics[&crate::supervisor::report::Mechanic::Gate]
+				.wall_blocking_ms,
+			400
+		);
+	})
+	.await;
 }

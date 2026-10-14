@@ -152,13 +152,13 @@ pub async fn run_extraction(
 	session_name: &str,
 	outcome: super::TrajectoryOutcome,
 ) -> Result<usize> {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Distill,
-	);
 	let learning = &config.supervisor.learning;
 	if !learning.enabled {
 		return Ok(0);
 	}
+	let _timing = crate::supervisor::accounting::WallTimer::start(
+		crate::supervisor::stats::CallKind::Distill,
+	);
 
 	let backend = FileBackend;
 	crate::log_debug!("Learning extraction: role={}, project={}", role, project);
@@ -1581,41 +1581,29 @@ pub fn extract_lessons_detached(
 	project: String,
 	session_name: String,
 	outcome: super::TrajectoryOutcome,
+	session_file: Option<std::path::PathBuf>,
 ) -> tokio::task::JoinHandle<()> {
 	let observations = crate::supervisor::authorizer::observations_for_session(&session_name);
 	let messages = crate::supervisor::authorizer::grounded_messages(&session_name, messages);
-
-	let owner = crate::session::context::current_session_id();
-	tokio::spawn(async move {
-		let extraction = crate::supervisor::accounting::background(
-			crate::supervisor::authorizer::EXTRACTION_OBSERVATIONS.scope(
-				observations,
-				async move {
-					match run_extraction(
-						&messages,
-						&config,
-						&role,
-						&project,
-						&session_name,
-						outcome,
-					)
-					.await
-					{
-						Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
-						Ok(n) => {
-							crate::log_debug!("Learning detached: {} memory items extracted", n)
-						}
-						Err(e) => crate::log_debug!("Learning detached extraction failed: {}", e),
-					}
-				},
-			),
-		);
-		if let Some(owner) = owner {
-			crate::session::context::with_session_id(owner, extraction).await;
-		} else {
-			extraction.await;
-		}
-	})
+	tokio::spawn(crate::session::context::with_session_id(
+		session_name.clone(),
+		async move {
+			let result = crate::supervisor::accounting::run_background(
+				session_name.clone(),
+				session_file,
+				crate::supervisor::authorizer::EXTRACTION_OBSERVATIONS.scope(
+					observations,
+					run_extraction(&messages, &config, &role, &project, &session_name, outcome),
+				),
+			)
+			.await;
+			match result {
+				Ok(0) => crate::log_debug!("Learning detached: no memory items extracted"),
+				Ok(n) => crate::log_debug!("Learning detached: {} memory items extracted", n),
+				Err(error) => crate::log_error!("Learning detached extraction failed: {}", error),
+			}
+		},
+	))
 }
 
 /// Spawn extraction from an already captured transcript. Compression callers
@@ -1628,6 +1616,7 @@ pub fn spawn_lesson_extraction_snapshot(
 	current_dir: Option<&std::path::Path>,
 	session_name: String,
 	outcome: super::TrajectoryOutcome,
+	session_file: Option<std::path::PathBuf>,
 ) -> Option<tokio::task::JoinHandle<()>> {
 	if !config.supervisor.learning.enabled {
 		return None;
@@ -1639,6 +1628,7 @@ pub fn spawn_lesson_extraction_snapshot(
 		project_name(current_dir),
 		session_name,
 		outcome,
+		session_file,
 	))
 }
 
@@ -1665,6 +1655,7 @@ pub fn spawn_lesson_extraction(
 		current_dir,
 		session.session.info.name.clone(),
 		session.learning_outcome,
+		session.session.session_file.clone(),
 	)
 }
 

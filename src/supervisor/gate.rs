@@ -1117,6 +1117,11 @@ pub async fn verify(
 			refute(config, &user, &gaps, operation_rx).await
 		};
 		if !refuted.is_empty() {
+			crate::supervisor::accounting::record_outcome(
+				crate::supervisor::report::Mechanic::Gate,
+				crate::supervisor::report::Outcome::RefutedGaps,
+				refuted.len() as u64,
+			);
 			crate::log_info!(
 				"Verify-gate refutation cleared {} of {} finding(s)",
 				refuted.len(),

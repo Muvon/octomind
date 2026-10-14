@@ -30,7 +30,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const MARKER: &str = "ACP-E2E-MARKER";
 
-async fn spawn_openai_stub() -> String {
+async fn spawn_openai_stub(script: Option<Vec<&'static str>>) -> String {
+	let script = std::sync::Arc::new(std::sync::Mutex::new(
+		script.map(std::collections::VecDeque::from),
+	));
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind stub");
@@ -38,6 +41,7 @@ async fn spawn_openai_stub() -> String {
 
 	tokio::spawn(async move {
 		while let Ok((mut sock, _)) = listener.accept().await {
+			let script = std::sync::Arc::clone(&script);
 			tokio::spawn(async move {
 				let mut buf = Vec::new();
 				let mut tmp = [0u8; 8192];
@@ -64,9 +68,16 @@ async fn spawn_openai_stub() -> String {
 					}
 					buf.extend_from_slice(&tmp[..n]);
 				}
+				let content = match script.lock().expect("script lock").as_mut() {
+					Some(responses) => responses
+						.pop_front()
+						.expect("unexpected provider call")
+						.to_owned(),
+					None => format!("{MARKER}: acp answer"),
+				};
 				let body = serde_json::json!({
 					"choices": [{
-						"message": {"role": "assistant", "content": format!("{MARKER}: acp answer")},
+						"message": {"role": "assistant", "content": content},
 						"finish_reason": "stop"
 					}],
 					"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18, "cost": 0.0001}
@@ -232,7 +243,7 @@ impl AcpClient {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_initialize_new_session_prompt() {
-	let stub_url = spawn_openai_stub().await;
+	let stub_url = spawn_openai_stub(None).await;
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
@@ -551,4 +562,79 @@ async fn test_acp_tool_round_updates() {
 			panic!("acp agent did not exit after stdin EOF");
 		}
 	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
+	let stub_url = spawn_openai_stub(Some(vec![
+		r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
+		"ACP-GATE-TIMING: finished",
+		r#"<shape name="circular" found="no">independent evidence</shape>
+<shape name="context-stripped" found="no">representative context</shape>
+<shape name="acceptance-only" found="no">not applicable</shape>
+<shape name="unenumerated-category" found="no">bounded scope</shape>
+<verdict>PASS</verdict>"#,
+	])).await;
+	let home = tempfile::tempdir().expect("sandbox home");
+	write_sandbox_config(home.path());
+	let path = home.path().join(".local/share/octomind/config/config.toml");
+	let mut config: octomind::config::Config =
+		toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+	config.supervisor.enabled = true;
+	config.supervisor.model.model = Some("ollama:fake-model".into());
+	config.supervisor.learning.enabled = false;
+	config.supervisor.plan.enabled = false;
+	config.decision.model = None;
+	std::fs::write(path, toml::to_string(&config).unwrap()).unwrap();
+	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
+	client
+		.request(
+			"initialize",
+			serde_json::json!({"protocolVersion":1,"clientCapabilities":{}}),
+		)
+		.await;
+	let (created, _) = client
+		.request(
+			"session/new",
+			serde_json::json!({"cwd":home.path(),"mcpServers":[]}),
+		)
+		.await;
+	let id = created["sessionId"].as_str().unwrap();
+	let (_, notifications) = client.request("session/prompt", serde_json::json!({"sessionId":id,"prompt":[{"type":"text","text":"Answer with ACP-GATE-TIMING"}]})).await;
+	let usage = notifications
+		.iter()
+		.filter_map(|message| message["params"]["_meta"].get("octomind.usage"))
+		.next_back()
+		.expect("final usage notification");
+	assert!(
+		usage["supervisor_accounting"]["mechanics"]["gate"]["chat_calls"]
+			.as_u64()
+			.unwrap() > 0
+	);
+	assert!(
+		usage["supervisor_accounting"]["mechanics"]["gate"]["cost"]
+			.as_f64()
+			.unwrap() > 0.0
+	);
+	assert_eq!(usage["supervisor_accounting"]["turn_time"]["completed"], 1);
+	let (info, _) = client
+		.request(
+			"_octomind/command",
+			serde_json::json!({"session_id":id,"command":"/info","args":[]}),
+		)
+		.await;
+	assert_eq!(
+		usage["supervisor_accounting"],
+		info["output"]["supervisor_accounting"]
+	);
+	assert_eq!(usage["session_cost"], info["output"]["total_cost"]);
+	let AcpClient {
+		mut child, stdin, ..
+	} = client;
+	drop(stdin);
+	assert!(tokio::time::timeout(Duration::from_secs(30), child.wait())
+		.await
+		.unwrap()
+		.unwrap()
+		.success());
 }

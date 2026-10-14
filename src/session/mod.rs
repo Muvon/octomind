@@ -441,6 +441,17 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+	pub(crate) fn apply_background_usage(
+		&mut self,
+		id: String,
+		usage: &crate::supervisor::accounting::SupervisorAccounting,
+	) {
+		if self.supervisor_accounting.background_runs.insert(id) {
+			self.total_cost += usage.totals().cost;
+			self.supervisor_accounting.add(usage);
+		}
+	}
+
 	/// Provider-normalized input excludes both cache categories.
 	pub fn prompt_tokens(&self) -> u64 {
 		self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
@@ -725,10 +736,13 @@ impl Session {
 	/// bill rather than just the main agent's share. Their per-source token
 	/// breakdowns stay in their own accumulators for `/info` to show.
 	pub fn fold_external_spend(&mut self) {
-		self.info.total_cost += external_spend::take();
+		self.info.total_cost += external_spend::take_for(&self.info.name);
 		self.info
 			.supervisor_accounting
-			.add(&crate::supervisor::accounting::take());
+			.add(&crate::supervisor::accounting::take_for(&self.info.name));
+		for (id, usage) in crate::supervisor::accounting::take_completed(&self.info.name) {
+			self.info.apply_background_usage(id, &usage);
+		}
 	}
 
 	// Save the session to a file - append-only approach

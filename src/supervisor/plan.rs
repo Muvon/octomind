@@ -24,6 +24,10 @@ use crate::config::Config;
 use crate::session::chat::session::ChatSession;
 use crate::supervisor::escape_xml_text as xml_text;
 use crate::supervisor::learning::extract::SupervisorPrompt;
+use crate::supervisor::{
+	accounting::record_outcome,
+	report::{Mechanic, Outcome},
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
@@ -549,14 +553,15 @@ pub async fn reconcile_after_actions(
 	config: &Config,
 	operation_rx: watch::Receiver<bool>,
 ) -> Result<()> {
-	let _timing =
-		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Plan);
 	let Some(signal) = chat_session.pending_plan_signal.take() else {
 		return Ok(());
 	};
 	if !config.supervisor.enabled || !config.supervisor.plan.enabled {
 		return Ok(());
 	}
+	let _timing =
+		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Plan);
+
 	// Per-turn failure latch: if the planner already failed for this genuine
 	// user turn, consume the signal silently without another planner call.
 	// Prevents an unbounded re-emit/fail/inject loop. Reset on new user turn.
@@ -565,14 +570,17 @@ pub async fn reconcile_after_actions(
 			"External plan signal {:?} consumed without planner call (per-turn failure latch)",
 			signal
 		);
+		record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 		return Ok(());
 	}
 	let active = crate::mcp::core::plan::has_active_plan();
 	if matches!(signal, PlanSignal::Request) && active {
+		record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 		return Ok(());
 	}
 	if matches!(signal, PlanSignal::Request) {
 		if chat_session.plan_evaluated {
+			record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 			return Ok(());
 		}
 		chat_session.plan_evaluated = true;
@@ -580,16 +588,19 @@ pub async fn reconcile_after_actions(
 		// durable execution state on its behalf.
 		if !chat_session.completion_gate_eligible {
 			crate::log_debug!("External plan request ignored for system-managed turn");
+			record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 			return Ok(());
 		}
 		if !plan_request_allowed(chat_session) {
 			crate::log_debug!(
 				"External plan request declined: current turn has one answer-only deliverable"
 			);
+			record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 			return Ok(());
 		}
 	}
 	if matches!(signal, PlanSignal::PhaseComplete | PlanSignal::Reassess) && !active {
+		record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 		return Ok(());
 	}
 
@@ -598,6 +609,7 @@ pub async fn reconcile_after_actions(
 	}
 	let payload = render_specialist_context(chat_session, signal, TRAJECTORY_MAX_TOKENS);
 	if prescreen(chat_session, config, signal, &payload).await? {
+		record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 		return Ok(());
 	}
 	let response = crate::supervisor::learning::extract::call_supervisor_json(

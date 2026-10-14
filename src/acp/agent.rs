@@ -261,6 +261,43 @@ fn build_config_with_injected_servers(
 	config
 }
 
+fn usage_notification(session: &mut ChatSession, session_id: &str) -> SessionNotification {
+	let usage =
+		crate::session::chat::response::session_cost_payload(session, session_id.to_owned());
+	let mut meta = serde_json::Map::new();
+	meta.insert(
+		"octomind.usage".to_owned(),
+		serde_json::json!({
+			"session_tokens": usage.session_tokens,
+			"session_cost": usage.session_cost,
+			"input_tokens": usage.input_tokens,
+			"output_tokens": usage.output_tokens,
+			"cache_read_tokens": usage.cache_read_tokens,
+			"cache_write_tokens": usage.cache_write_tokens,
+			"reasoning_tokens": usage.reasoning_tokens,
+			"supervisor_accounting": usage.supervisor_accounting,
+		}),
+	);
+	SessionNotification::new(
+		std::sync::Arc::<str>::from(session_id),
+		SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
+	)
+	.meta(meta)
+}
+
+pub(super) fn notify_usage(
+	conn: Option<&ConnectionTo<Client>>,
+	session_id: &str,
+	session: &mut ChatSession,
+) {
+	let notification = usage_notification(session, session_id);
+	if let Some(conn) = conn {
+		if let Err(error) = conn.send_notification(notification) {
+			log_error!("ACP: failed to send usage notification: {}", error);
+		}
+	}
+}
+
 /// Translate an internal `ServerMessage` (the protocol shared with the WebSocket
 /// server) into an ACP `SessionUpdate` for forwarding to the client. Returns
 /// `None` for messages that have no ACP equivalent (e.g. Cost — sent separately).
@@ -571,6 +608,10 @@ impl OctomindAgent {
 								session_id.clone(),
 							));
 							let _ = forward_task.await;
+							notify_usage(conn.borrow().as_ref(), &session_id, &mut chat_session);
+							if let Err(error) = chat_session.save() {
+								log_error!("ACP monitor: failed to save session: {}", error);
+							}
 
 							if let Err(e) = result {
 								log_debug!("ACP monitor: error processing inbox message: {}", e);
@@ -913,6 +954,7 @@ impl OctomindAgent {
 					}
 					Err(e) => format!("❌ Compression failed: {e}"),
 				};
+				notify_usage(self.conn.borrow().as_ref(), &session_id, &mut chat_session);
 				if let Some(instructions) = done_instructions {
 					// Send compression status then fall through to user-message processing.
 					let conn = self.conn.borrow().clone();
@@ -1011,9 +1053,10 @@ impl OctomindAgent {
 					Ok(crate::session::chat::session::commands::CommandResult::Handled) => {
 						"Command executed.".to_string()
 					}
-					Ok(crate::session::chat::session::commands::CommandResult::Exit) => {
-						"Session exit requested.".to_string()
-					}
+					Ok(
+						crate::session::chat::session::commands::CommandResult::Exit
+						| crate::session::chat::session::commands::CommandResult::SwitchSession(_),
+					) => "Session exit requested.".to_string(),
 					Ok(
 						crate::session::chat::session::commands::CommandResult::TreatAsUserInput,
 					) => {
@@ -1182,6 +1225,7 @@ impl OctomindAgent {
 
 					crate::mcp::process::clear_notification_sender(Some(session_id.to_string()));
 					let _ = forward_task.await;
+					notify_usage(self.conn.borrow().as_ref(), &session_id, &mut chat_session);
 
 					if let Err(e) = result {
 						log_debug!("ACP: error processing pre-user inbox message: {}", e);
@@ -1295,39 +1339,7 @@ impl OctomindAgent {
 							);
 							Some(SessionUpdate::ToolCallUpdate(update))
 						}
-						// Forward cost / token usage as a SessionInfoUpdate carrying an
-						// `octomind.usage` block in `_meta`. We don't gate on the unstable
-						// `UsageUpdate` variant — `_meta` is the spec-blessed extensibility
-						// channel and works on all clients that pass `_meta` through.
-						// Side-channel: we send the notification ourselves here (bypassing
-						// the `update` pattern below) because we need to attach `meta`.
-						ServerMessage::Cost(p) => {
-							if let Some(conn) = conn_for_task.as_ref() {
-								let mut meta = serde_json::Map::new();
-								meta.insert(
-									"octomind.usage".to_string(),
-									serde_json::json!({
-										"session_tokens":     p.session_tokens,
-										"session_cost":       p.session_cost,
-										"input_tokens":       p.input_tokens,
-										"output_tokens":      p.output_tokens,
-										"cache_read_tokens":  p.cache_read_tokens,
-										"cache_write_tokens": p.cache_write_tokens,
-										"reasoning_tokens":   p.reasoning_tokens,
-										"supervisor_accounting": p.supervisor_accounting,
-									}),
-								);
-								let notif = SessionNotification::new(
-									session_id_for_task.clone(),
-									SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new()),
-								)
-								.meta(meta);
-								if let Err(e) = conn.send_notification(notif) {
-									log_error!("ACP: failed to send usage notification: {}", e);
-								}
-							}
-							None
-						}
+						ServerMessage::Cost(_) => None,
 						ServerMessage::Evolution(p) => {
 							if let Some(conn) = conn_for_task.as_ref() {
 								let mut meta = serde_json::Map::new();
@@ -1387,6 +1399,7 @@ impl OctomindAgent {
 
 			// Wait for the forwarding task to drain any remaining messages
 			let _ = forward_task.await;
+			notify_usage(self.conn.borrow().as_ref(), &session_id, &mut chat_session);
 			let spending_stop = chat_session.spending_stop;
 
 			if let Some(stop) = spending_stop {
@@ -1582,6 +1595,7 @@ impl OctomindAgent {
 	}
 
 	async fn ext_method(&self, args: ExtRequest) -> agent_client_protocol::Result<ExtResponse> {
+		let conn = self.conn.borrow().clone();
 		super::commands::handle_ext_method(
 			args,
 			&self.sessions,
@@ -1589,6 +1603,7 @@ impl OctomindAgent {
 			&self.config,
 			&self.role,
 			&self.cancellations,
+			conn.as_ref(),
 		)
 		.await
 	}

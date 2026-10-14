@@ -921,7 +921,8 @@ fn xml_summary_body() -> String {
 }
 
 /// Inserts a memory-only session and initializes its session-scoped services.
-async fn install_session(agent: &Rc<OctomindAgent>, session_id: &str, session: ChatSession) {
+async fn install_session(agent: &Rc<OctomindAgent>, session_id: &str, mut session: ChatSession) {
+	session.session.info.name = session_id.to_owned();
 	agent.sessions.borrow_mut().insert(
 		session_id.to_string(),
 		(session, std::env::current_dir().expect("cwd")),
@@ -1783,4 +1784,74 @@ async fn run_actor_dispatches_session_lifecycle_commands() {
 	)
 	.await
 	.expect("actor commands must complete within the timeout");
+}
+
+#[tokio::test]
+async fn final_usage_notification_includes_gate_and_turn_timing_before_later_info() {
+	crate::supervisor::accounting::isolated(async {
+		use crate::session::chat::session::commands::{process_command, CommandResult};
+		use crate::supervisor::{accounting::Usage, stats::CallKind};
+		let id = uuid::Uuid::new_v4().to_string();
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.session.info.name = id.clone();
+		context::with_session_id(id.clone(), async {
+			session.begin_turn_timing();
+			let early = serde_json::to_value(usage_notification(&mut session, &id)).unwrap();
+			assert!(
+				early["_meta"]["octomind.usage"]["supervisor_accounting"]["mechanics"]
+					.get("gate")
+					.is_none()
+			);
+			// Reconciliation and the gate finish after response.rs emits its cost frame.
+			session.session.info.supervisor_accounting.kinds.insert(
+				CallKind::Gate,
+				Usage {
+					calls: 1,
+					input_tokens: 100,
+					output_tokens: 25,
+					reasoning_tokens: 5,
+					api_time_ms: 100,
+					blocking_wall_time_ms: 150,
+					cost: 0.25,
+					..Default::default()
+				},
+			);
+			session
+				.session
+				.info
+				.supervisor_accounting
+				.blocking_wall_time_ms += 150;
+			session.session.info.total_cost += 0.25;
+			session.finish_turn_timing();
+			let final_notification =
+				serde_json::to_value(usage_notification(&mut session, &id)).unwrap();
+			let final_usage = &final_notification["_meta"]["octomind.usage"];
+			assert_eq!(
+				final_usage["supervisor_accounting"]["mechanics"]["gate"]["cost"],
+				0.25
+			);
+			assert_eq!(
+				final_usage["supervisor_accounting"]["turn_time"]["completed"],
+				1
+			);
+			let CommandResult::HandledWithOutput(info) = process_command(
+				&mut session,
+				"/info",
+				&mut template_config(),
+				"assistant",
+				tokio::sync::watch::channel(false).1,
+			)
+			.await
+			.unwrap() else {
+				panic!("info output");
+			};
+			assert_eq!(
+				final_usage["supervisor_accounting"],
+				info.to_json()["supervisor_accounting"]
+			);
+			assert_eq!(final_usage["session_cost"], info.to_json()["total_cost"]);
+		})
+		.await;
+	})
+	.await;
 }

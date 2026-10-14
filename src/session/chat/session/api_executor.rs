@@ -117,6 +117,11 @@ async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, del
 			continue;
 		}
 		chat_session.session.info.learning_stats.record_use(delta);
+		crate::supervisor::accounting::record_outcome(
+			crate::supervisor::report::Mechanic::Recall,
+			crate::supervisor::report::Outcome::Used,
+			1,
+		);
 		let applied = backend.reinforce(content, role, project, delta).await;
 		if applied.is_ok() && delta != 0.0 {
 			crate::supervisor::stats::memory_credit(delta > 0.0);

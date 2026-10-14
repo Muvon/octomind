@@ -606,14 +606,16 @@ async fn recurring_rule_is_reviewed_only_when_this_session_restated_it() {
 	assert!(backend.retrieve_global().await.unwrap().is_empty());
 }
 
-fn distill_chat_calls() -> u64 {
-	crate::supervisor::stats::snapshot()
-		.and_then(|stats| stats.get("distill_calls")?.as_u64())
-		.unwrap_or(0)
+fn retention_chat_calls() -> u64 {
+	crate::supervisor::accounting::snapshot_owned()
+		.kinds
+		.get(&crate::supervisor::stats::CallKind::Retention)
+		.map_or(0, |usage| usage.calls)
 }
 
 #[tokio::test]
 async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
+	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
 	use crate::session::chat::test_support::{
 		install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
 	};
@@ -632,7 +634,7 @@ async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 		let fake = install_fake_evaluation(vec![step]).await;
 		let (url, captured) = spawn_recording_stub(Vec::new()).await;
 		std::env::set_var("OLLAMA_API_URL", url);
-		let chat_calls = distill_chat_calls();
+		let chat_calls = retention_chat_calls();
 		let mut config = crate::session::chat::test_support::fake_provider_config();
 		config.supervisor.enabled = true;
 		config.decision.supervisor = true;
@@ -644,13 +646,15 @@ async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 			fake.requests()[0].state,
 			serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content}]})
 		);
-		assert_eq!(distill_chat_calls() - chat_calls, 0);
+		assert_eq!(retention_chat_calls() - chat_calls, 0);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+	}).await;
 }
 
 #[tokio::test]
 async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_answers() {
+	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
 	use crate::session::chat::test_support::{
 		final_response, install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
 	};
@@ -676,7 +680,7 @@ async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_
 		];
 		let (url, captured) = spawn_recording_stub(vec![final_response(r#"{"merge":true,"title":"merged","content":"retain grounded constraints and preserve outcome boundaries"}"#)]).await;
 		std::env::set_var("OLLAMA_API_URL", url);
-		let chat_calls = distill_chat_calls();
+		let chat_calls = retention_chat_calls();
 		let mut config = crate::session::chat::test_support::fake_provider_config();
 		config.supervisor.enabled = true;
 		config.supervisor.model.model = Some("ollama:fake-model".into());
@@ -700,13 +704,15 @@ async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_
 			"retain grounded constraints and preserve outcome boundaries",
 		);
 		assert_eq!(requests[0].state["candidate"], source_view(&candidate));
-		assert_eq!(distill_chat_calls() - chat_calls, 1);
+		assert_eq!(retention_chat_calls() - chat_calls, 1);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+	}).await;
 }
 
 #[tokio::test]
 async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
+	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
 	use crate::session::chat::test_support::{
 		final_response, install_fake_evaluation, spawn_recording_stub,
 	};
@@ -733,7 +739,7 @@ async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", url);
-		let chat_calls = distill_chat_calls();
+		let chat_calls = retention_chat_calls();
 		assert!(verify_user_wide(&config, &[&sources[0]]).await);
 		let candidate = propose_and_verify(&config, &sources).await.unwrap();
 		let requests = captured.lock().unwrap();
@@ -754,7 +760,8 @@ async fn retention_disabled_mode_keeps_exact_verifier_prompts_and_payloads() {
 			serde_json::json!({"sources":sources.iter().map(source_view).collect::<Vec<_>>(),"candidate":source_view(&candidate)})
 		);
 		assert!(fake.requests().is_empty());
-		assert_eq!(distill_chat_calls() - chat_calls, 3);
+		assert_eq!(retention_chat_calls() - chat_calls, 3);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+	}).await;
 }

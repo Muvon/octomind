@@ -304,7 +304,7 @@ pub struct CostPayload {
 	#[serde(default)]
 	pub aux_cost: f64,
 	#[serde(default)]
-	pub supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting,
+	pub supervisor_accounting: crate::supervisor::report::SupervisorReport,
 	pub session_id: String,
 	/// The turn is over, but it left work that streams a follow-up turn to this
 	/// connection on its own — a delegated `tap` run, an async agent job, or a

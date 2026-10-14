@@ -14,7 +14,7 @@
 
 // Main session loop - orchestrates all session operations
 
-use super::super::commands::{MODEL_COMMAND, NEW_COMMAND, ROLE_COMMAND};
+use super::super::commands::{MODEL_COMMAND, ROLE_COMMAND};
 use super::super::input::{
 	calculate_current_context_tokens, read_user_input, InputResult, ReplyInput,
 };
@@ -290,7 +290,7 @@ pub async fn run_interactive_session(
 				.await?;
 		}
 
-		let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
+		let mut runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
 		let current_dir = crate::mcp::get_thread_working_directory();
 		let mut chat_session = chat_session;
 		// A human types these turns, so they count toward `/report day`.
@@ -494,8 +494,11 @@ pub async fn run_interactive_session(
 		// Set the thread-local config for logging macros
 		crate::config::set_thread_config(&current_config);
 		crate::config::set_thread_role(&role);
-		// Main interaction loop
+		// Each session owns its scope until /new switches the receiver.
 		loop {
+			let switched = crate::session::context::with_session_id(chat_session.session.info.name.clone(), async {
+				let mut switched = false;
+				loop {
 			// SMART CANCELLATION: Handle cancellation with surgical cleanup
 			// CRITICAL: Check cancellation BEFORE resetting processing state
 			// This ensures cleanup logic sees the correct state (e.g., CallingAPI)
@@ -1075,56 +1078,34 @@ pub async fn run_interactive_session(
 					CommandResult::TreatAsUserInput => {
 						// This input should be treated as user input, fall through to normal processing
 					}
-					CommandResult::Exit => {
-						// First check if it's a session switch command
-						if input.starts_with(NEW_COMMAND) {
-							// We need to switch to another session
-							let new_session_name = chat_session.session.info.name.clone();
-
-							// Save current session before switching
-							chat_session.save()?;
-
-							// Initialize the new session
+					CommandResult::SwitchSession(new_session_name) => {
+						chat_session.save()?;
+						let workdir = crate::mcp::get_thread_working_directory();
+						let (new_session, new_guards) = crate::session::context::with_session_id(new_session_name.clone(), async {
+							crate::config::set_thread_config(&current_config);
+							crate::config::set_thread_role(&role);
+							crate::session::context::set_session_workdir(&new_session_name, workdir);
 							let session_params = SessionInitParams::new(&current_config, &role)
 								.with_name(new_session_name)
 								.with_max_retries(current_config.max_retries);
-							let new_chat_session = ChatSession::initialize(session_params).await?;
-
-							// Replace the current chat session
-							chat_session = new_chat_session;
-
-							// Reset first message flag for new session
-							first_message_processed = !chat_session.session.messages.is_empty();
-
-							// Confirm the switch — a fresh session has no history to replay.
-							println!(
-								"{}",
-								format!("Starting new session: {}", chat_session.session.info.name)
-									.bright_green()
-							);
-
-							// Print the last few messages for context with colors
-							if !chat_session.session.messages.is_empty() {
-								let last_messages = chat_session
-									.session
-									.messages
-									.iter()
-									.rev()
-									.take(3)
-									.collect::<Vec<_>>();
-
-								for msg in last_messages.iter().rev() {
-									if msg.role == "assistant" {
-										println!("{}", msg.content.bright_green());
-									} else if msg.role == "user" {
-										println!("> {}", msg.content.bright_blue());
-									}
-								}
-							}
-
-							// Continue with the session
-							continue;
-						} else if input.starts_with(MODEL_COMMAND)
+							let mut new_session = ChatSession::initialize(session_params).await?;
+							new_session.session.info.interactive = true;
+							crate::mcp::initialize_mcp_for_role(&role, &current_config).await?;
+							let guards = init_session_runtime(args, &current_config, &new_session, &role).await?;
+							setup_system_prompt_and_cache(&mut new_session, &current_config, &role, true).await?;
+							crate::mcp::runtime::skill_auto::load_env_skills(&mut new_session).await;
+							crate::mcp::runtime::capability::load_env_capabilities(&current_config, None).await;
+							Ok::<_, anyhow::Error>((new_session, guards))
+						}).await?;
+						chat_session = new_session;
+						runtime_guards = new_guards;
+						first_message_processed = !chat_session.session.messages.is_empty();
+						println!("{}", format!("Starting new session: {}", chat_session.session.info.name).bright_green());
+						switched = true;
+						break;
+					}
+					CommandResult::Exit => {
+						if input.starts_with(MODEL_COMMAND)
 							|| input.starts_with(ROLE_COMMAND)
 						{
 							// This is a command that requires config reload
@@ -1476,6 +1457,12 @@ pub async fn run_interactive_session(
 				.await;
 		}
 
+				Ok::<_, anyhow::Error>(switched)
+			}).await?;
+			if !switched { break; }
+		}
+		drop(runtime_guards);
+
 		// Session is ending — drain any in-flight keepalive so its cost is
 		// reflected in the persisted session log.
 		if drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true)
@@ -1666,7 +1653,7 @@ pub async fn run_interactive_session_with_input(
 			crate::session::chat::session::commands::CommandResult::TreatAsUserInput => {
 				// This input should be treated as user input, fall through to normal processing
 			}
-			crate::session::chat::session::commands::CommandResult::Exit => {
+			crate::session::chat::session::commands::CommandResult::Exit | crate::session::chat::session::commands::CommandResult::SwitchSession(_) => {
 				// Check if it's a session switch command
 				if input.starts_with(crate::session::chat::commands::NEW_COMMAND) {
 					println!("{}", "Note: /new is not supported in run mode. Start a new session with 'octomind run'.".yellow())

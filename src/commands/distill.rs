@@ -64,32 +64,18 @@ pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
 	// silent whatever `log_level` says, and a rejected memory leaves no trace.
 	octomind::config::set_thread_config(config);
 
-	let stored = octomind::session::context::with_session_id(args.session.clone(), async {
-		let result = octomind::supervisor::accounting::background(
-			octomind::supervisor::learning::extract::run_extraction(
-				&messages,
-				config,
-				&args.role,
-				&args.project,
-				&args.session,
-				args.outcome,
-			),
-		)
-		.await;
-		let accounting = octomind::supervisor::accounting::take();
-		if let Some(session_file) = &args.session_file {
-			let entry = serde_json::json!({
-				"type": "BACKGROUND_SUPERVISOR",
-				"id": uuid::Uuid::new_v4().to_string(),
-				"accounting": accounting,
-			});
-			octomind::session::persistence::append_to_session_file(
-				session_file,
-				&entry.to_string(),
-			)?;
-		}
-		result
-	})
+	let stored = octomind::supervisor::accounting::run_background(
+		args.session.clone(),
+		args.session_file.clone(),
+		octomind::supervisor::learning::extract::run_extraction(
+			&messages,
+			config,
+			&args.role,
+			&args.project,
+			&args.session,
+			args.outcome,
+		),
+	)
 	.await?;
 
 	if stored > 0 {

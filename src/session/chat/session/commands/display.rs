@@ -399,9 +399,7 @@ pub fn display_info(output: &CommandOutput) {
 		cache_markers_content,
 		cache_non_cached_tokens,
 		agents_stats,
-		supervisor_stats,
 		supervisor_accounting,
-		learning_stats,
 		..
 	} = output
 	{
@@ -450,7 +448,7 @@ pub fn display_info(output: &CommandOutput) {
 		// above are main-model only. Subtract the per-component costs back out so
 		// the main model's own share is visible next to the total.
 		let external_cost = compression_stats.as_ref().map(|s| s.cost).unwrap_or(0.0)
-			+ supervisor_accounting.totals().cost
+			+ supervisor_accounting.totals.cost
 			+ agents_stats
 				.as_ref()
 				.and_then(|s| s.get("total_cost"))
@@ -487,20 +485,7 @@ pub fn display_info(output: &CommandOutput) {
 		// ── timing ─────────────────────────────────────────────────────
 		if timing.requests > 0 || timing.completed_turns > 0 {
 			block_section("timing");
-			let kw = key_width(["requests", "turns", "avg turn", "turn split"]);
-			if timing.split_turns > 0 {
-				block_row(
-					"turn split",
-					&format!(
-						"{} main API · {} blocking supervisor · {} tools + runtime ({} measured turns)",
-						format_duration(timing.turn_model_time_ms),
-						format_duration(timing.supervisor_blocking_time_ms),
-						format_duration(timing.tools_runtime_time_ms),
-						timing.split_turns
-					),
-					kw,
-				);
-			}
+			let kw = key_width(["requests", "turns", "avg turn"]);
 			if timing.requests > 0 {
 				block_row(
 					"requests",
@@ -762,213 +747,12 @@ pub fn display_info(output: &CommandOutput) {
 			}
 		}
 
-		if !supervisor_accounting.kinds.is_empty() {
-			block_section_with("supervisor usage", "this session; inclusive wall time");
-			block_row_text("kind                         calls   wall blocking / background        API     in / out / reason       cost");
-			for (kind, usage) in &supervisor_accounting.kinds {
-				display_supervisor_usage(kind.name(), usage);
-			}
-			for (seam, usage) in &supervisor_accounting.seams {
-				display_supervisor_usage(&format!("evaluate/{}", seam.name()), usage);
-			}
-		}
-
-		let learning_u64 = |key: &str| {
-			learning_stats
-				.get(key)
-				.and_then(|value| value.as_u64())
-				.unwrap_or(0)
-		};
-		let packs = learning_u64("packs");
-		let used = learning_u64("used");
-		let active_items = learning_u64("active_items");
-		if packs > 0 || used > 0 || active_items > 0 {
-			block_section_with("learning", "this session");
-			let kw_sv = key_width(["learning"]);
-			let mut learning = vec![format!(
-				"{} packs {} {} items / {} tok {} {} used (+{}/-{}, {} neutral)",
-				packs,
-				dot,
-				learning_u64("items"),
-				format_number(learning_u64("tokens")),
-				dot,
-				used,
-				learning_u64("credit_positive"),
-				learning_u64("credit_negative"),
-				learning_u64("used_without_verdict")
-			)];
-			if active_items > 0 {
-				let used_ids = learning_stats
-					.get("active_used_ids")
-					.and_then(|value| value.as_array())
-					.map(|items| {
-						items
-							.iter()
-							.filter_map(|item| item.as_str())
-							.collect::<Vec<_>>()
-							.join(",")
-					})
-					.unwrap_or_default();
-				learning.push(format!(
-					"active {} / {} tok{}",
-					active_items,
-					format_number(learning_u64("active_tokens")),
-					if used_ids.is_empty() {
-						String::new()
-					} else {
-						format!(" (used {used_ids})")
-					}
-				));
-			}
-			let outcome = learning_stats
-				.get("outcome")
-				.and_then(|value| value.as_str())
-				.unwrap_or("unknown");
-			if outcome != "unknown" {
-				learning.push(format!("outcome {outcome}"));
-			}
-			block_row("learning", &learning.join(&format!(" {} ", dot)), kw_sv);
-		}
-		// ── supervisor ─────────────────────────────────────────────────
-		if let Some(sstats) = supervisor_stats {
-			if let Some(authorizer) = sstats.get("authorizer") {
-				block_section_with("authorizer", "this session");
-				for key in ["checked", "blocked", "cached", "unavailable"] {
-					block_row(
-						key,
-						&authorizer
-							.get(key)
-							.and_then(|v| v.as_u64())
-							.unwrap_or(0)
-							.to_string(),
-						11,
-					);
-				}
-			}
-			let get_u64 = |k: &str| sstats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-			let condensed_results = get_u64("condensed_results");
-			let condense_saved = get_u64("condense_saved_tokens");
-			let memory_consolidations = get_u64("memory_consolidations");
-			let memory_archived = get_u64("memory_archived");
-			let gate_runs = get_u64("gate_runs");
-			let gate_pass = get_u64("gate_pass");
-			let gate_fail = get_u64("gate_fail");
-			let gate_stall = get_u64("gate_stall");
-			let steers = get_u64("steers");
-			let pregate_blocks = get_u64("pregate_blocks");
-			let lessons = get_u64("lessons_stored");
-			let orientation = get_u64("orientation_stored");
-			let experiences = get_u64("experiences_stored");
-			let recalls = get_u64("recalls_injected");
-			block_section_with("supervisor activity", "process-wide");
-			let kw_sv = key_width([
-				"activity",
-				"learning",
-				"gate",
-				"evaluate",
-				"seams",
-				"calls",
-				"tokens",
-				"throughput",
-			]);
-			let dot = "·".bright_black();
-
-			let mut activity = Vec::new();
-			if recalls > 0 {
-				activity.push(format!("{} recalls", recalls));
-			}
-			if steers > 0 {
-				let by_signal: Vec<String> = sstats
-					.get("steer_signals")
-					.and_then(|v| v.as_array())
-					.map(|a| {
-						a.iter()
-							.filter_map(|e| {
-								let label = e.get("label")?.as_str()?;
-								let count = e.get("count")?.as_u64()?;
-								Some(format!("{} {}", count, label))
-							})
-							.collect()
-					})
-					.unwrap_or_default();
-				if by_signal.is_empty() {
-					activity.push(format!("{} steers", steers));
-				} else {
-					activity.push(format!(
-						"{} steers ({})",
-						steers,
-						by_signal.join(&format!(" {} ", dot))
-					));
-				}
-			}
-			if pregate_blocks > 0 {
-				activity.push(format!("{} check-blocks", pregate_blocks));
-			}
-			if lessons > 0 {
-				activity.push(format!("{} lessons", lessons));
-			}
-			if orientation > 0 {
-				activity.push(format!("{} orientation", orientation));
-			}
-			if experiences > 0 {
-				activity.push(format!("{} experiences", experiences));
-			}
-			if memory_consolidations > 0 {
-				activity.push(format!("{} consolidated", memory_consolidations));
-			}
-			if memory_archived > 0 {
-				activity.push(format!("{} archived", memory_archived));
-			}
-			if condensed_results > 0 {
-				activity.push(format!(
-					"{} condensed (saved {} tok)",
-					condensed_results,
-					format_number(condense_saved)
-				));
-			}
-			if !activity.is_empty() {
-				block_row("activity", &activity.join(&format!(" {} ", dot)), kw_sv);
-			}
-			if gate_runs > 0 {
-				let mut g = vec![format!("{} runs", gate_runs)];
-				if gate_pass > 0 {
-					g.push(format!("{} pass", gate_pass).bright_green().to_string());
-				}
-				if gate_fail > 0 {
-					g.push(format!("{} fail", gate_fail).bright_red().to_string());
-				}
-				if gate_stall > 0 {
-					g.push(format!("{} stalled", gate_stall).yellow().to_string());
-				}
-				block_row("gate", &g.join(" · "), kw_sv);
-			}
-			if let Some(seams) = sstats
-				.get("evaluate")
-				.and_then(|v| v.as_object())
-				.filter(|seams| !seams.is_empty())
-			{
-				// One row per seam keeps the line readable. The first seam carries the
-				// `seams` label; the rest align under the value column, and seam names
-				// are padded to the widest so the counters line up.
-				let seam_kw = seams.keys().map(|s| s.chars().count()).max().unwrap_or(0);
-				let cont_pad = " ".repeat(kw_sv + 2);
-				for (i, (seam, counters)) in seams.iter().enumerate() {
-					let n = |k: &str| counters.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-					let mut line = format!(
-						"{:seam_kw$}  {} applied / {} unavailable",
-						seam,
-						n("applied"),
-						n("unavailable"),
-					);
-					if n("avoided") > 0 {
-						line.push_str(&format!(" / {} replaced", n("avoided")));
-					}
-					if i == 0 {
-						block_row("seams", &line, kw_sv);
-					} else {
-						block_row_text(&format!("{cont_pad}{line}"));
-					}
-				}
+		if !supervisor_accounting.mechanics.is_empty()
+			|| supervisor_accounting.turn_time.completed > 0
+		{
+			block_section_with("supervisor", &supervisor_summary(supervisor_accounting));
+			for line in supervisor_table(supervisor_accounting).lines() {
+				block_row_text(line);
 			}
 		}
 
@@ -977,19 +761,204 @@ pub fn display_info(output: &CommandOutput) {
 	}
 }
 
-fn display_supervisor_usage(name: &str, usage: &crate::supervisor::accounting::Usage) {
-	block_row_text(&format!(
-		"{:<28} {:>5} {:>10} / {:<10} {:>10} {:>6} / {} / {}  ${:.5}",
-		name,
-		usage.calls,
-		format_duration(usage.blocking_wall_time_ms),
-		format_duration(usage.background_wall_time_ms),
-		format_duration(usage.api_time_ms),
-		usage.input_tokens,
-		usage.output_tokens,
-		usage.reasoning_tokens,
-		usage.cost
-	));
+fn supervisor_duration(ms: u64) -> String {
+	if ms < 1_000 {
+		format!("{ms}ms")
+	} else {
+		format!("{:.1}s", ms as f64 / 1_000.0)
+	}
+}
+
+fn supervisor_summary(report: &crate::supervisor::report::SupervisorReport) -> String {
+	let turn = &report.turn_time;
+	if turn.total_time_ms == 0 {
+		return "this session".into();
+	}
+	let remainder = turn
+		.total_time_ms
+		.saturating_sub(turn.main_api_time_ms)
+		.saturating_sub(turn.blocking_supervisor_time_ms);
+	format!(
+		"this session · blocking {} of {} turn time ({:.0}%) · main API {} · tools + runtime {}",
+		supervisor_duration(turn.blocking_supervisor_time_ms),
+		format_duration(turn.total_time_ms),
+		turn.blocking_supervisor_time_ms as f64 * 100.0 / turn.total_time_ms as f64,
+		supervisor_duration(turn.main_api_time_ms),
+		supervisor_duration(remainder)
+	)
+}
+
+fn supervisor_outcome(
+	mechanic: crate::supervisor::report::Mechanic,
+	usage: &crate::supervisor::report::MechanicUsage,
+) -> String {
+	use crate::session::chat::session::utils::format_number;
+	use crate::supervisor::report::{Mechanic, Outcome};
+	let mut parts = Vec::new();
+	for (&outcome, &count) in &usage.outcome {
+		if count == 0 {
+			continue;
+		}
+		let counted = |label: &str| format!("{count} {label}");
+		let text = match outcome {
+			Outcome::Runs => counted("runs"),
+			Outcome::Pass => counted("pass"),
+			Outcome::Fail => counted("fail"),
+			Outcome::Stall => counted("stalled"),
+			Outcome::RefutedGaps => counted("gaps refuted"),
+			Outcome::Checked => counted("checked"),
+			Outcome::Blocked => counted("blocked"),
+			Outcome::Cached => counted("cached"),
+			Outcome::Unavailable => counted("unavailable"),
+			Outcome::SkippedJudge => counted("skipped judge"),
+			Outcome::Condensed => counted("condensed"),
+			Outcome::SavedTokens => format!("saved {} tok", format_number(count)),
+			Outcome::Items => counted("items"),
+			Outcome::Used => counted("used"),
+			Outcome::Lessons => counted("lessons"),
+			Outcome::Experiences => counted("experiences"),
+			Outcome::Orientation => counted("orientation"),
+			Outcome::PlanCalls => counted("planner calls"),
+			Outcome::Skips => counted("skips"),
+			Outcome::Applied => counted(match mechanic {
+				Mechanic::Skills | Mechanic::Capabilities => "activated",
+				Mechanic::Recall => "filtered",
+				Mechanic::Compression => "demoted",
+				_ => "decision applied",
+			}),
+			Outcome::DecisionUnavailable => counted("decision unavailable"),
+			Outcome::Replaced => counted("chat calls replaced"),
+			Outcome::Consolidated => counted("consolidated"),
+			Outcome::Archived => counted("archived"),
+		};
+		parts.push(text);
+	}
+	if parts.is_empty() && usage.chat_calls == 0 && usage.decision_calls == 0 {
+		parts.push("no model usage".into());
+	}
+	parts.join(" · ")
+}
+
+fn supervisor_table(report: &crate::supervisor::report::SupervisorReport) -> String {
+	use crate::session::chat::session::utils::format_number;
+	use crate::supervisor::report::Mechanic;
+	if report.mechanics.is_empty() {
+		return String::new();
+	}
+	let background = report
+		.mechanics
+		.values()
+		.any(|usage| usage.wall_background_ms > 0);
+	let mut headers = vec![
+		"".to_owned(),
+		"chat".into(),
+		"decision".into(),
+		"wall".into(),
+	];
+	if background {
+		headers.push("background".into());
+	}
+	headers.extend([
+		"API".into(),
+		"tokens in/out".into(),
+		"cost".into(),
+		"outcome".into(),
+	]);
+	let mut rows = vec![headers];
+	for (&mechanic, usage) in &report.mechanics {
+		let chat = if matches!(
+			mechanic,
+			Mechanic::Skills | Mechanic::Capabilities | Mechanic::Compression
+		) {
+			"–".into()
+		} else {
+			usage.chat_calls.to_string()
+		};
+		let decision = if matches!(
+			mechanic,
+			Mechanic::Resolve | Mechanic::Hindsight | Mechanic::Retention
+		) {
+			"–".into()
+		} else {
+			usage.decision_calls.to_string()
+		};
+		let mut row = vec![
+			mechanic.name().into(),
+			chat,
+			decision,
+			supervisor_duration(usage.wall_blocking_ms),
+		];
+		if background {
+			row.push(supervisor_duration(usage.wall_background_ms));
+		}
+		if mechanic == Mechanic::Hindsight {
+			row.extend(["–".into(), "local".into(), "–".into()]);
+		} else {
+			row.extend([
+				supervisor_duration(usage.api_ms),
+				format!(
+					"{} / {}",
+					format_number(usage.input_tokens),
+					format_number(usage.output_tokens + usage.reasoning_tokens)
+				),
+				format!("${:.4}", usage.cost),
+			]);
+		}
+		row.push(supervisor_outcome(mechanic, usage));
+		rows.push(row);
+	}
+	let totals = &report.totals;
+	let mut total = vec![
+		"total".into(),
+		totals.chat_calls.to_string(),
+		totals.decision_calls.to_string(),
+		supervisor_duration(totals.wall_blocking_ms),
+	];
+	if background {
+		total.push(
+			totals
+				.wall_background_ms
+				.map(supervisor_duration)
+				.unwrap_or_else(|| "–".into()),
+		);
+	}
+	total.extend([
+		supervisor_duration(totals.api_ms),
+		format!(
+			"{} / {}",
+			format_number(totals.input_tokens),
+			format_number(totals.output_tokens + totals.reasoning_tokens)
+		),
+		format!("${:.4}", totals.cost),
+		String::new(),
+	]);
+	rows.push(total);
+	let widths: Vec<usize> = (0..rows[0].len())
+		.map(|column| {
+			rows.iter()
+				.map(|row| row[column].chars().count())
+				.max()
+				.expect("table header")
+		})
+		.collect();
+	rows.into_iter()
+		.map(|row| {
+			row.iter()
+				.enumerate()
+				.map(|(column, text)| {
+					if column == 0 || column == row.len() - 1 {
+						format!("{text:<width$}", width = widths[column])
+					} else {
+						format!("{text:>width$}", width = widths[column])
+					}
+				})
+				.collect::<Vec<_>>()
+				.join("  ")
+				.trim_end()
+				.to_owned()
+		})
+		.collect::<Vec<_>>()
+		.join("\n")
 }
 
 pub async fn display_context(

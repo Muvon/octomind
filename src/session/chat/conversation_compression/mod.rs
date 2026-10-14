@@ -746,6 +746,7 @@ async fn finish_fold(
 			None,
 			session_name,
 			outcome,
+			session.session.session_file.clone(),
 		);
 	}
 

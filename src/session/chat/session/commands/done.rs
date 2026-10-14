@@ -74,6 +74,7 @@ pub async fn handle_done(
 				None,
 				session_name,
 				outcome,
+				session.session.session_file.clone(),
 			);
 		}
 		// Mark as extracted so /exit and Ctrl+D don't double-extract.

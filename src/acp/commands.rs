@@ -62,6 +62,7 @@ pub async fn execute_command(
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
+	conn: Option<&agent_client_protocol::ConnectionTo<agent_client_protocol::Client>>,
 ) -> CommandResponse {
 	// Acquire the same per-session exclusion lock prompt() and the inbox monitor
 	// use. Without it this path removes the session from the map with no lock, so
@@ -132,6 +133,8 @@ pub async fn execute_command(
 	// single-threaded ACP, no RefCell borrow held across the await above.
 	*config.borrow_mut() = config_clone;
 
+	super::agent::notify_usage(conn, &request.session_id, &mut chat_session);
+
 	// Put session back and wake the inbox monitor for anything it pushed back
 	// while the session was out (mirrors prompt()).
 	sessions
@@ -152,7 +155,7 @@ pub async fn execute_command(
 			output: Some(output.to_json()),
 			error: None,
 		},
-		Ok(CommandResult::Exit) => CommandResponse {
+		Ok(CommandResult::Exit | CommandResult::SwitchSession(_)) => CommandResponse {
 			success: true,
 			output: Some(serde_json::json!({ "action": "exit" })),
 			error: None,
@@ -178,6 +181,7 @@ pub async fn handle_ext_method(
 	config: &RefCell<Config>,
 	role: &str,
 	cancellations: &Rc<RefCell<std::collections::HashMap<String, SessionCancellation>>>,
+	conn: Option<&agent_client_protocol::ConnectionTo<agent_client_protocol::Client>>,
 ) -> Result<ExtResponse, Error> {
 	// Only handle commands in our namespace
 	if !request.method.starts_with(COMMAND_NAMESPACE) {
@@ -206,6 +210,7 @@ pub async fn handle_ext_method(
 		config,
 		role,
 		cancellations,
+		conn,
 	)
 	.await;
 

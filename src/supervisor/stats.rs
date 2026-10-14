@@ -15,6 +15,10 @@
 //! Process-wide supervisor diagnostics. Session-owned usage is also banked in
 //! `accounting` and cost in `external_spend`; neither uses this global snapshot.
 
+use super::{
+	accounting::record_outcome,
+	report::{Mechanic, Outcome},
+};
 use std::sync::{Mutex, OnceLock};
 
 /// Which supervisor mechanic made a model call — so `/info` can break the count
@@ -43,24 +47,6 @@ pub enum CallKind {
 	Retention,
 	Evolution,
 	Hindsight,
-}
-
-impl CallKind {
-	pub fn name(self) -> &'static str {
-		match self {
-			Self::Recall => "recall",
-			Self::Gate => "gate",
-			Self::Resolve => "resolve",
-			Self::Plan => "plan",
-			Self::Distill => "distill",
-			Self::Condense => "condense",
-			Self::Authorize => "authorize",
-			Self::Evaluate => "evaluate",
-			Self::Retention => "retention",
-			Self::Evolution => "evolution",
-			Self::Hindsight => "hindsight",
-		}
-	}
 }
 
 #[derive(Default, Clone)]
@@ -159,6 +145,10 @@ pub fn record_call(
 			..Default::default()
 		},
 	);
+	if kind == CallKind::Plan {
+		record_outcome(Mechanic::Plan, Outcome::PlanCalls, 1);
+	}
+
 	with(|s| {
 		s.calls += 1;
 		match kind {
@@ -182,25 +172,31 @@ pub fn record_call(
 		s.api_time_ms += api_time_ms;
 		s.cost += cost;
 	});
-	crate::session::external_spend::record(cost);
+	if !super::accounting::has_detached_usage() {
+		crate::session::external_spend::record(cost);
+	}
 }
 
 /// A verify-gate verification ran (regardless of verdict).
 pub fn gate_run() {
+	record_outcome(Mechanic::Gate, Outcome::Runs, 1);
 	with(|s| s.gate_runs += 1);
 }
 /// The verify-gate accepted the run.
 pub fn gate_pass() {
+	record_outcome(Mechanic::Gate, Outcome::Pass, 1);
 	with(|s| s.gate_pass += 1);
 }
 /// The verify-gate gave up with gaps remaining (trajectory unverified).
 pub fn gate_fail() {
+	record_outcome(Mechanic::Gate, Outcome::Fail, 1);
 	with(|s| s.gate_fail += 1);
 }
 /// The verify-gate returned an unchanged finding after the re-run gathered new
 /// evidence — the check could not converge, so the loop stopped charging it.
 /// A rising count means the verifier is asking for something unreachable.
 pub fn gate_stall() {
+	record_outcome(Mechanic::Gate, Outcome::Stall, 1);
 	with(|s| s.gate_stall += 1);
 }
 /// A steer (advisory re-anchor) was queued, attributed to the detector signal
@@ -223,14 +219,17 @@ pub fn pregate_block() {
 }
 /// `n` lessons were stored by distill.
 pub fn lessons(n: u64) {
+	record_outcome(Mechanic::Distill, Outcome::Lessons, n);
 	with(|s| s.lessons_stored += n);
 }
 /// `n` orientation entries were stored by distill.
 pub fn orientation(n: u64) {
+	record_outcome(Mechanic::Distill, Outcome::Orientation, n);
 	with(|s| s.orientation_stored += n);
 }
 /// `n` grounded long-lived experience records were stored by distill.
 pub fn experience(n: u64) {
+	record_outcome(Mechanic::Distill, Outcome::Experiences, n);
 	with(|s| s.experiences_stored += n);
 }
 /// One recall injection happened.
@@ -240,6 +239,8 @@ pub fn recall() {
 /// `results` tool outputs were condensed this round, saving `saved_tokens`
 /// estimated tokens of agent-model context.
 pub fn condensed(results: u64, saved_tokens: u64) {
+	record_outcome(Mechanic::Condense, Outcome::Condensed, results);
+	record_outcome(Mechanic::Condense, Outcome::SavedTokens, saved_tokens);
 	with(|s| {
 		s.condensed_results += results;
 		s.condense_saved_tokens += saved_tokens;
@@ -247,6 +248,7 @@ pub fn condensed(results: u64, saved_tokens: u64) {
 }
 /// One bounded active-memory pack was selected for a genuine user turn.
 pub fn memory_pack(items: u64, tokens: u64) {
+	record_outcome(Mechanic::Recall, Outcome::Items, items);
 	with(|s| {
 		s.memory_pack_items += items;
 		s.memory_pack_tokens += tokens;
@@ -266,6 +268,8 @@ pub fn memory_credit(positive: bool) {
 /// counters answer how much consolidation/archive work occurred; they are not
 /// anonymous telemetry and detached exit distillers have their own process.
 pub fn memory_retention(consolidated: u64, archived: u64) {
+	record_outcome(Mechanic::Retention, Outcome::Consolidated, consolidated);
+	record_outcome(Mechanic::Retention, Outcome::Archived, archived);
 	with(|s| {
 		s.memory_consolidations += consolidated;
 		s.memory_archived += archived;
@@ -279,17 +283,20 @@ pub fn evaluate_call(seam: crate::supervisor::evaluate::Seam) {
 /// The seam fell through to its pre-change result (failure, timeout, or a
 /// state / roster too large to send).
 pub fn evaluate_unavailable(seam: crate::supervisor::evaluate::Seam) {
+	record_outcome(Mechanic::from_seam(seam), Outcome::DecisionUnavailable, 1);
 	with(|s| s.evaluate_seam_unavailable[seam.index()] += 1);
 }
 /// The seam's answers changed the outcome `n` times (candidates dropped,
 /// skill activated, supervisor judgment skipped, results condensed, packets
 /// demoted).
 pub fn evaluate_applied(seam: crate::supervisor::evaluate::Seam, n: u64) {
+	record_outcome(Mechanic::from_seam(seam), Outcome::Applied, n);
 	with(|s| s.evaluate_seam_applied[seam.index()] += n);
 }
 /// The seam stood in for one chat call that would have carried `input_tokens`
 /// at `cost` (0 when the supervisor model has no reference price).
 pub fn evaluate_avoided(seam: crate::supervisor::evaluate::Seam, input_tokens: u64, cost: f64) {
+	record_outcome(Mechanic::from_seam(seam), Outcome::Replaced, 1);
 	with(|s| {
 		s.evaluate_seam_avoided[seam.index()] += 1;
 		s.evaluate_avoided_tokens += input_tokens;
@@ -319,48 +326,6 @@ pub fn evolution(action: &str) {
 		_ => {}
 	});
 }
-/// Non-usage diagnostics remain process-wide; session usage lives in SessionInfo.
-pub fn activity_snapshot() -> Option<serde_json::Value> {
-	let mut value = snapshot()?;
-	let fields = value
-		.as_object_mut()
-		.expect("supervisor snapshot is an object");
-	fields.retain(|key, _| {
-		!matches!(
-			key.as_str(),
-			"calls"
-				| "recall_calls"
-				| "gate_calls"
-				| "resolve_calls"
-				| "plan_calls"
-				| "distill_calls"
-				| "condense_calls"
-				| "authorize_calls"
-				| "evaluate_calls"
-				| "evaluate_input_tokens"
-				| "evaluate_cost"
-				| "input_tokens"
-				| "output_tokens"
-				| "api_time_ms"
-				| "tokens_per_second"
-				| "cost"
-		)
-	});
-	let seams = fields
-		.get_mut("evaluate")
-		.expect("supervisor snapshot includes evaluate")
-		.as_object_mut()
-		.expect("evaluation counters are an object");
-	for counters in seams.values_mut() {
-		counters
-			.as_object_mut()
-			.expect("seam counters are an object")
-			.remove("calls");
-	}
-	fields.insert("scope".into(), serde_json::json!("process"));
-	Some(value)
-}
-
 /// JSON snapshot for process diagnostics. Returns `None` when the supervisor did nothing,
 /// so the section is omitted entirely on idle sessions.
 pub fn snapshot() -> Option<serde_json::Value> {

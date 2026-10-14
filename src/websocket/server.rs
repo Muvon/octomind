@@ -1166,7 +1166,7 @@ async fn handle_command_message(
 				data: Some(command_output.to_json()),
 			})
 		}
-		CommandResult::Exit => {
+		CommandResult::Exit | CommandResult::SwitchSession(_) => {
 			log_info!("Session ended by command '{}'", slash_command);
 			let status = ServerMessage::command_status(
 				"Session ended".to_string(),

@@ -457,3 +457,82 @@ async fn info_throughput_counts_reasoning_tokens() {
 	);
 	assert_eq!(timing.last_turn_time_ms, 40_000);
 }
+
+#[tokio::test]
+async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
+	crate::supervisor::accounting::isolated(async {
+		use crate::session::context::{
+			cleanup_session, current_session_id, init_session_services, with_session_id,
+		};
+		use crate::supervisor::{
+			accounting,
+			stats::{record_call, CallKind},
+		};
+		let dir = tempfile::tempdir().unwrap();
+		let mut old = ChatSession::for_tests(Vec::new());
+		let old_id = uuid::Uuid::new_v4().to_string();
+		old.session.info.name = old_id.clone();
+		old.session.session_file = Some(dir.path().join("old.jsonl.zst"));
+		let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+		let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+		let extraction = tokio::spawn(accounting::run_background(
+			old_id.clone(),
+			old.session.session_file.clone(),
+			async move {
+				record_call(CallKind::Distill, 20, 5, 0, 10, 0.25);
+				started_tx.send(()).unwrap();
+				finish_rx.await.unwrap();
+				Ok(())
+			},
+		));
+		started_rx.await.unwrap();
+		let mut config = test_config();
+		let CommandResult::SwitchSession(new_id) =
+			with_session_id(old_id.clone(), dispatch(&mut old, &mut config, "/new"))
+				.await
+				.unwrap()
+		else {
+			panic!("new session switch");
+		};
+		assert_eq!(old.session.info.name, old_id);
+		old.save().unwrap();
+		let mut new = crate::session::Session::new(new_id.clone(), "model".into());
+		with_session_id(new_id.clone(), async {
+			init_session_services("assistant");
+			assert_eq!(current_session_id(), Some(new_id.clone()));
+			record_call(CallKind::Plan, 7, 2, 0, 3, 0.5);
+		})
+		.await;
+		// Even a caller still in the old scope must fold the receiver's own banks.
+		with_session_id(old_id.clone(), async {
+			new.fold_external_spend();
+		})
+		.await;
+		assert_eq!(
+			new.info.supervisor_accounting.kinds[&CallKind::Plan].calls,
+			1
+		);
+		finish_tx.send(()).unwrap();
+		extraction.await.unwrap().unwrap();
+		new.fold_external_spend();
+		assert!(new.info.supervisor_accounting.background_runs.is_empty());
+		old.session.fold_external_spend();
+		assert_eq!(
+			old.session.info.supervisor_accounting.kinds[&CallKind::Distill].cost,
+			0.25
+		);
+		assert_eq!(
+			old.session.info.supervisor_accounting.background_runs.len(),
+			1
+		);
+		assert_eq!(
+			crate::session::persistence::load_session(old.session.session_file.as_ref().unwrap())
+				.unwrap()
+				.info
+				.name,
+			old_id
+		);
+		cleanup_session(&new_id);
+	})
+	.await;
+}

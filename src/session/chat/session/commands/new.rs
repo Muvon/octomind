@@ -23,10 +23,6 @@ pub fn handle_new(session: &mut ChatSession, params: &[&str]) -> Result<CommandR
 	// YYMMDD-basename-HHMM-uuid4short
 	let new_session_name = generate_session_name();
 
-	// Set the session name so the main loop's Exit handler picks it up
-	// when initializing the new session via SessionInitParams::with_name().
-	session.session.info.name = new_session_name.clone();
-
 	// If a title argument was provided, set it as the display title for the
 	// new session — same mechanism as /rename.
 	if !params.is_empty() {
@@ -41,7 +37,5 @@ pub fn handle_new(session: &mut ChatSession, params: &[&str]) -> Result<CommandR
 		}
 	}
 
-	// Exit signals the main loop to save the current session and initialize
-	// a fresh one using the name we set above.
-	Ok(CommandResult::Exit)
+	Ok(CommandResult::SwitchSession(new_session_name))
 }

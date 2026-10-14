@@ -48,6 +48,7 @@ pub mod hindsight;
 pub mod learning;
 pub mod plan;
 pub mod recite;
+pub mod report;
 pub mod resolve;
 pub mod stats;
 pub mod workdir;

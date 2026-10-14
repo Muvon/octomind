@@ -74,3 +74,27 @@ async fn spend_is_folded_only_by_the_session_that_spent_it() {
 	let own = with_session_id("spend-a".to_string(), async { take() }).await;
 	assert_eq!(own, 0.75);
 }
+
+#[tokio::test]
+async fn receiving_session_identity_wins_over_ambient_scope() {
+	isolated(async {
+		use crate::session::context::with_session_id;
+		take();
+		let old = uuid::Uuid::new_v4().to_string();
+		let new = uuid::Uuid::new_v4().to_string();
+		with_session_id(old.clone(), async {
+			record(0.25);
+		})
+		.await;
+		with_session_id(new.clone(), async {
+			record(0.5);
+		})
+		.await;
+		with_session_id(old.clone(), async {
+			assert_eq!(take_for(&new), 0.5);
+			assert_eq!(take_for(&old), 0.25);
+		})
+		.await;
+	})
+	.await;
+}

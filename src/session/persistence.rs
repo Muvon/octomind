@@ -860,15 +860,7 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 		restore_session_info(final_messages, session_file)?
 	};
 	for (id, accounting) in parsed.background_supervisor {
-		if session
-			.info
-			.supervisor_accounting
-			.background_runs
-			.insert(id)
-		{
-			session.info.total_cost += accounting.totals().cost;
-			session.info.supervisor_accounting.add(&accounting);
-		}
+		session.info.apply_background_usage(id, &accounting);
 	}
 	Ok(session)
 }

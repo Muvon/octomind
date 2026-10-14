@@ -862,6 +862,11 @@ async fn prescreen_admits(
 		pending.len()
 	);
 	crate::supervisor::stats::evaluate_applied(Seam::Authorizer, 1);
+	crate::supervisor::accounting::record_outcome(
+		crate::supervisor::report::Mechanic::Authorize,
+		crate::supervisor::report::Outcome::SkippedJudge,
+		pending.len() as u64,
+	);
 	true
 }
 

@@ -540,58 +540,62 @@ fn command_status_carries_data_so_clients_finalize_the_turn() {
 #[tokio::test]
 #[serial_test::serial]
 async fn info_status_and_cost_frames_carry_the_same_session_supervisor_usage() {
-	use crate::session::{
-		chat::{
-			response::session_cost_payload,
-			session::{
-				commands::{process_command, CommandResult},
-				ChatSession,
+	crate::supervisor::accounting::isolated(async {
+		use crate::session::{
+			chat::{
+				response::session_cost_payload,
+				session::{
+					commands::{process_command, CommandResult},
+					ChatSession,
+				},
 			},
-		},
-		context::with_session_id,
-	};
-	use crate::supervisor::{
-		accounting,
-		stats::{record_call, CallKind},
-	};
-	accounting::take();
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
-	with_session_id("ws-info-accounting".into(), async {
-		let mut session = ChatSession::for_tests(Vec::new());
-		record_call(CallKind::Condense, 123, 45, 6, 700, 0.125);
-		let CommandResult::HandledWithOutput(output) = process_command(
-			&mut session,
-			"/info",
-			&mut config,
-			"assistant",
-			tokio::sync::watch::channel(false).1,
-		)
-		.await
-		.unwrap() else {
-			panic!("info output");
+			context::with_session_id,
 		};
-		let status = ServerMessage::Status(StatusPayload {
-			message: "info".into(),
-			session_id: Some("ws-info-accounting".into()),
-			data: Some(output.to_json()),
-		});
-		let status = serde_json::to_value(status).unwrap();
-		let cost = serde_json::to_value(ServerMessage::Cost(session_cost_payload(
-			&mut session,
-			"ws-info-accounting".into(),
-		)))
-		.unwrap();
-		assert_eq!(
-			status["data"]["supervisor_accounting"],
-			cost["supervisor_accounting"]
-		);
-		assert_eq!(
-			cost["supervisor_accounting"]["kinds"]["condense"]["api_time_ms"],
-			700
-		);
-		assert_eq!(cost["aux_output_tokens"], 51);
-		assert_eq!(cost["aux_cost"], 0.125);
+		use crate::supervisor::{
+			accounting,
+			stats::{record_call, CallKind},
+		};
+		accounting::take();
+		let mut config: crate::config::Config =
+			toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+		with_session_id("ws-info-accounting".into(), async {
+			let mut session = ChatSession::for_tests(Vec::new());
+			session.session.info.name = "ws-info-accounting".into();
+			record_call(CallKind::Condense, 123, 45, 6, 700, 0.125);
+			let CommandResult::HandledWithOutput(output) = process_command(
+				&mut session,
+				"/info",
+				&mut config,
+				"assistant",
+				tokio::sync::watch::channel(false).1,
+			)
+			.await
+			.unwrap() else {
+				panic!("info output");
+			};
+			let status = ServerMessage::Status(StatusPayload {
+				message: "info".into(),
+				session_id: Some("ws-info-accounting".into()),
+				data: Some(output.to_json()),
+			});
+			let status = serde_json::to_value(status).unwrap();
+			let cost = serde_json::to_value(ServerMessage::Cost(session_cost_payload(
+				&mut session,
+				"ws-info-accounting".into(),
+			)))
+			.unwrap();
+			assert_eq!(
+				status["data"]["supervisor_accounting"],
+				cost["supervisor_accounting"]
+			);
+			assert_eq!(
+				cost["supervisor_accounting"]["mechanics"]["condense"]["api_ms"],
+				700
+			);
+			assert_eq!(cost["aux_output_tokens"], 51);
+			assert_eq!(cost["aux_cost"], 0.125);
+		})
+		.await;
 	})
 	.await;
 }

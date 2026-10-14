@@ -1204,6 +1204,7 @@ async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 		Some(work.path()),
 		"wrapper-session".to_string(),
 		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		None,
 	)
 	.is_none());
 	extract_lessons_detached(
@@ -1213,6 +1214,7 @@ async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 		"wrapper-project".to_string(),
 		"wrapper-session".to_string(),
 		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		None,
 	)
 	.await
 	.unwrap();
@@ -1227,6 +1229,7 @@ async fn detached_and_snapshot_wrappers_honor_the_enabled_flag() {
 		Some(work.path()),
 		"wrapper-session".to_string(),
 		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		None,
 	)
 	.expect("enabled learning spawns extraction");
 	handle.await.unwrap();
@@ -1820,6 +1823,7 @@ async fn detached_extraction_reports_zero_without_learning_enabled() {
 		"project".to_string(),
 		"session".to_string(),
 		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		None,
 	);
 	handle.await.expect("detached task joins");
 	let stored = FileBackend
@@ -1841,6 +1845,7 @@ async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
 			None,
 			"session".to_string(),
 			crate::supervisor::learning::TrajectoryOutcome::Unknown,
+			None,
 		)
 		.is_none(),
 		"disabled learning must not spawn work"
@@ -1858,6 +1863,7 @@ async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
 		None,
 		"session".to_string(),
 		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+		None,
 	)
 	.expect("enabled learning spawns");
 	let _ = handle.await;

@@ -116,37 +116,6 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let cache_stats =
 		cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
-	let mut active_used_ids: Vec<String> = session.used_memory_ids.iter().cloned().collect();
-	active_used_ids.sort();
-	let learning_stats = serde_json::json!({
-		"packs": info.learning_stats.packs,
-		"items": info.learning_stats.items,
-		"tokens": info.learning_stats.tokens,
-		"used": info.learning_stats.used,
-		"credit_positive": info.learning_stats.credit_positive,
-		"credit_negative": info.learning_stats.credit_negative,
-		"used_without_verdict": info.learning_stats.used_without_verdict,
-		"active_items": session.recalled_refs.len(),
-		"active_tokens": session.active_memory_pack
-			.as_deref()
-			.map(crate::session::estimate_tokens)
-			.unwrap_or(0),
-		"active_used_ids": active_used_ids,
-		"outcome": session.learning_outcome.as_str(),
-		"extracted": session.learning_extracted,
-	});
-
-	let mut supervisor_stats = crate::supervisor::stats::activity_snapshot();
-	if info.authorization.initialized || info.authorization.blocked > 0 {
-		let stats = supervisor_stats.get_or_insert_with(|| serde_json::json!({}));
-		stats["authorizer"] = serde_json::json!({
-			"enabled": (config.supervisor.enabled && config.supervisor.authorizer.enabled) || info.authorization.parent.is_some(),
-			"checked": info.authorization.checked,
-			"blocked": info.authorization.blocked,
-			"cached": info.authorization.cached,
-			"unavailable": info.authorization.unavailable,
-		});
-	}
 	Ok(CommandResult::HandledWithOutput(Box::new(
 		CommandOutput::Info {
 			session_name: info.name.clone(),
@@ -172,9 +141,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 			cache_markers_content: cache_stats.content_markers as u64,
 			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
 			agents_stats: super::agents::get_agents_stats(),
-			supervisor_stats,
-			supervisor_accounting: info.supervisor_accounting.clone(),
-			learning_stats,
+			supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
 		},
 	)))
 }

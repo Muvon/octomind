@@ -570,8 +570,9 @@ fn test_render_info_full_and_minimal() {
 			"tokens_input": 50_000, "tokens_output": 4_000,
 			"tokens_cached": 30_000, "total_cost": 0.55
 		})),
-		supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting {
-			kinds: [(
+		supervisor_accounting: {
+			let mut info = crate::session::SessionInfo::default();
+			info.supervisor_accounting.kinds.insert(
 				crate::supervisor::stats::CallKind::Gate,
 				crate::supervisor::accounting::Usage {
 					calls: 2,
@@ -583,43 +584,23 @@ fn test_render_info_full_and_minimal() {
 					cost: 0.02,
 					..Default::default()
 				},
-			)]
-			.into(),
-			seams: [(
+			);
+			info.supervisor_accounting.seams.insert(
 				crate::supervisor::evaluate::Seam::Gate,
 				crate::supervisor::accounting::Usage {
 					calls: 1,
 					background_wall_time_ms: 100,
 					..Default::default()
 				},
-			)]
-			.into(),
-			..Default::default()
+			);
+			info.supervisor_accounting.turn_time = crate::supervisor::accounting::TurnTime {
+				completed: 3,
+				total_time_ms: 240_000,
+				main_api_time_ms: 180_000,
+				blocking_supervisor_time_ms: 20_000,
+			};
+			crate::supervisor::report::SupervisorReport::for_session(&info)
 		},
-		supervisor_stats: Some(json!({
-			"calls": 12, "recall_calls": 2, "gate_calls": 4, "resolve_calls": 1,
-			"distill_calls": 1, "condense_calls": 2,
-			"condensed_results": 3, "condense_saved_tokens": 4_000,
-			"input_tokens": 30_000, "output_tokens": 2_000,
-			"api_time_ms": 25_000, "tokens_per_second": 80.0, "cost": 0.12,
-			"gate_runs": 4, "gate_pass": 3, "gate_fail": 1,
-			"steers": 1, "steer_signals": {"loop": 1},
-			"evaluate_calls": 30, "evaluate_input_tokens": 146_000, "evaluate_cost": 0.006,
-			"evaluate_avoided_calls": 12, "evaluate_avoided_tokens": 163_000,
-			"evaluate_avoided_cost": 0.049,
-			"evaluate": {
-				"recall": {"calls": 2, "applied": 32, "unavailable": 0},
-				"authorizer": {"calls": 28, "applied": 10, "unavailable": 0, "avoided": 10},
-				"compression": {"calls": 1, "applied": 0, "unavailable": 0}
-			}
-		})),
-		learning_stats: json!({
-			"packs": 3, "items": 9, "tokens": 1400,
-			"used": 4, "credit_positive": 2, "credit_negative": 1,
-			"used_without_verdict": 1, "active_items": 2,
-			"active_tokens": 320, "active_used_ids": ["M2"],
-			"outcome": "verified", "extracted": false
-		}),
 	});
 
 	// Minimal: fresh session, nothing optional present
@@ -648,8 +629,6 @@ fn test_render_info_full_and_minimal() {
 		cache_non_cached_tokens: 0,
 		agents_stats: None,
 		supervisor_accounting: Default::default(),
-		supervisor_stats: None,
-		learning_stats: json!({}),
 	});
 }
 
@@ -1073,14 +1052,6 @@ fn test_render_info_partial_sections() {
 			"tokens_input": 10, "tokens_output": 2, "tokens_cached": 0, "total_cost": 0.01
 		})),
 		supervisor_accounting: Default::default(),
-		supervisor_stats: None,
-		learning_stats: json!({
-			"packs": 1, "items": 2, "tokens": 300,
-			"used": 1, "credit_positive": 0, "credit_negative": 1,
-			"used_without_verdict": 0, "active_items": 1,
-			"active_tokens": 120, "active_used_ids": [],
-			"outcome": "failed", "extracted": true
-		}),
 	});
 }
 
@@ -1206,4 +1177,214 @@ fn test_render_schedule_generic_error_close() {
 	display_schedule(&CommandOutput::Schedule {
 		data: json!({"subcommand": "remove", "is_error": true, "message": "no such entry"}),
 	});
+}
+
+#[test]
+fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background() {
+	use crate::supervisor::{
+		accounting::{TurnTime, Usage},
+		evaluate::Seam,
+		report::{Mechanic, Outcome, SupervisorReport},
+		stats::CallKind,
+	};
+	let mut info = crate::session::SessionInfo::default();
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Condense,
+		Usage {
+			blocking_wall_time_ms: 1_400,
+			outcome: [(Outcome::Condensed, 2), (Outcome::SavedTokens, 5_700)].into(),
+			..Default::default()
+		},
+	);
+	let decision = Usage {
+		calls: 2,
+		input_tokens: 31_900,
+		output_tokens: 2_300,
+		api_time_ms: 1_300,
+		cost: 0.0013,
+		blocking_wall_time_ms: 1_300,
+		..Default::default()
+	};
+	info.supervisor_accounting
+		.kinds
+		.insert(CallKind::Evaluate, decision.clone());
+	info.supervisor_accounting
+		.seams
+		.insert(Seam::Condense, decision);
+	info.supervisor_accounting
+		.kinds
+		.insert(CallKind::Resolve, Usage::default());
+	info.supervisor_accounting.turn_time = TurnTime {
+		completed: 1,
+		total_time_ms: 2_000,
+		main_api_time_ms: 100,
+		blocking_supervisor_time_ms: 1_400,
+	};
+	info.supervisor_accounting.blocking_wall_time_ms = 1_400;
+	let report = SupervisorReport::for_session(&info);
+	let table = supervisor_table(&report);
+	assert!(table.contains("chat"));
+	assert!(table.contains("decision"));
+	assert!(table.contains("1.4s"));
+	assert!(table.contains("1.3s"));
+	assert!(table.contains("2 condensed · saved 5.7K tok"));
+	assert!(!table.contains("evaluate"));
+	assert!(!table.contains("resolve"));
+	assert!(!table.contains("background"));
+	assert_eq!(
+		table
+			.lines()
+			.filter(|line| line.starts_with("condense"))
+			.count(),
+		1
+	);
+	assert_eq!(report.mechanics[&Mechanic::Condense].chat_calls, 0);
+	assert_eq!(report.mechanics[&Mechanic::Condense].decision_calls, 2);
+	let summary = supervisor_summary(&report);
+	assert!(summary.contains("blocking 1.4s of 2s turn time (70%)"));
+	assert!(summary.contains("main API 100ms · tools + runtime 500ms"));
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Distill,
+		Usage {
+			calls: 1,
+			background_wall_time_ms: 500,
+			..Default::default()
+		},
+	);
+	info.supervisor_accounting.background_wall_time_ms = Some(500);
+	assert!(supervisor_table(&SupervisorReport::for_session(&info)).contains("background"));
+}
+
+#[test]
+fn supervisor_wall_only_and_local_rows_explain_the_absence_of_api_usage() {
+	use crate::supervisor::{accounting::Usage, report::SupervisorReport, stats::CallKind};
+	let mut info = crate::session::SessionInfo::default();
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Condense,
+		Usage {
+			blocking_wall_time_ms: 1_400,
+			..Default::default()
+		},
+	);
+	info.supervisor_accounting.kinds.insert(
+		CallKind::Hindsight,
+		Usage {
+			calls: 2,
+			blocking_wall_time_ms: 800,
+			..Default::default()
+		},
+	);
+	let table = supervisor_table(&SupervisorReport::for_session(&info));
+	assert!(table
+		.lines()
+		.any(|line| line.starts_with("condense") && line.contains("no model usage")));
+	assert!(table.lines().any(|line| line.starts_with("hindsight")
+		&& line.contains("local")
+		&& line.contains("800ms")));
+}
+
+#[test]
+fn supervisor_sample_renders_one_session_table_and_one_timing_split() {
+	use crate::supervisor::{
+		accounting::{TurnTime, Usage},
+		evaluate::Seam,
+		report::{Outcome, SupervisorReport},
+		stats::CallKind,
+	};
+	let mut info = crate::session::SessionInfo::default();
+	for (kind, calls, input, output, wall, api, cost) in [
+		(CallKind::Gate, 4, 24_000, 1_600, 17_600, 12_000, 0.006),
+		(CallKind::Authorize, 1, 8_000, 200, 9_400, 2_400, 0.004),
+		(CallKind::Condense, 0, 0, 0, 1_400, 0, 0.0),
+		(CallKind::Recall, 1, 6_000, 300, 2_200, 1_000, 0.0003),
+		(CallKind::Resolve, 1, 200, 100, 1_300, 1_300, 0.0002),
+		(CallKind::Hindsight, 2, 0, 0, 800, 0, 0.0),
+	] {
+		info.supervisor_accounting.kinds.insert(
+			kind,
+			Usage {
+				calls,
+				input_tokens: input,
+				output_tokens: output,
+				blocking_wall_time_ms: wall,
+				api_time_ms: api,
+				cost,
+				..Default::default()
+			},
+		);
+	}
+	for (seam, calls, input, output, api, cost) in [
+		(Seam::Gate, 2, 4_400, 400, 2_900, 0.0007),
+		(Seam::Authorizer, 8, 37_100, 600, 3_200, 0.0012),
+		(Seam::Condense, 2, 31_900, 2_300, 1_300, 0.0013),
+		(Seam::Recall, 1, 2_000, 100, 200, 0.0001),
+		(Seam::Capabilities, 1, 500, 100, 1_600, 0.0),
+	] {
+		info.supervisor_accounting.seams.insert(
+			seam,
+			Usage {
+				calls,
+				input_tokens: input,
+				output_tokens: output,
+				api_time_ms: api,
+				blocking_wall_time_ms: api,
+				cost,
+				..Default::default()
+			},
+		);
+	}
+	info.supervisor_accounting
+		.kinds
+		.get_mut(&CallKind::Gate)
+		.unwrap()
+		.outcome = [
+		(Outcome::Runs, 2),
+		(Outcome::Fail, 1),
+		(Outcome::RefutedGaps, 2),
+	]
+	.into();
+	info.supervisor_accounting
+		.kinds
+		.get_mut(&CallKind::Authorize)
+		.unwrap()
+		.outcome
+		.insert(Outcome::SkippedJudge, 7);
+	info.supervisor_accounting
+		.kinds
+		.get_mut(&CallKind::Condense)
+		.unwrap()
+		.outcome = [(Outcome::Condensed, 2), (Outcome::SavedTokens, 5_700)].into();
+	info.supervisor_accounting
+		.kinds
+		.get_mut(&CallKind::Recall)
+		.unwrap()
+		.outcome
+		.insert(Outcome::Items, 9);
+	info.authorization.checked = 11;
+	info.supervisor_accounting.blocking_wall_time_ms = 34_300;
+	info.supervisor_accounting.turn_time = TurnTime {
+		completed: 1,
+		total_time_ms: 130_000,
+		main_api_time_ms: 90_000,
+		blocking_supervisor_time_ms: 34_300,
+	};
+	let report = SupervisorReport::for_session(&info);
+	assert_eq!(
+		(
+			report.totals.chat_calls,
+			report.totals.decision_calls,
+			report.totals.api_ms
+		),
+		(9, 14, 25_900)
+	);
+	assert_eq!(
+		(report.totals.input_tokens, report.totals.output_tokens),
+		(114_100, 5_700)
+	);
+	let table = supervisor_table(&report);
+	assert!(!table.contains("evaluate"));
+	assert!(!table.contains("background"));
+	assert!(table.contains("$0.0138"));
+	println!("supervisor · {}", supervisor_summary(&report));
+	println!("{}", table);
 }

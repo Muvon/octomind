@@ -116,11 +116,7 @@ pub enum CommandOutput {
 		cache_non_cached_tokens: u64,
 		/// Aggregated stats from all tap-offloaded agents this session.
 		agents_stats: Option<serde_json::Value>,
-		/// Additional process-wide activity counters and session authorizer state.
-		supervisor_stats: Option<serde_json::Value>,
-		supervisor_accounting: crate::supervisor::accounting::SupervisorAccounting,
-		/// Session-isolated learning usage and current active-pack state.
-		learning_stats: serde_json::Value,
+		supervisor_accounting: crate::supervisor::report::SupervisorReport,
 	},
 	Model {
 		old_model: Option<String>,
@@ -409,8 +405,9 @@ impl CommandOutput {
 pub enum CommandResult {
 	Handled,                               // Command was processed successfully, continue session
 	HandledWithOutput(Box<CommandOutput>), // Command was processed with typed output
-	Exit,                                  // Exit the session
-	TreatAsUserInput,                      // This input should be treated as user input, not a command
+	SwitchSession(String),
+	Exit,             // Exit the session
+	TreatAsUserInput, // This input should be treated as user input, not a command
 }
 
 // Process user commands

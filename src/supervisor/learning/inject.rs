@@ -71,12 +71,12 @@ pub async fn retrieve_and_format(
 	first_call: bool,
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (String, Vec<RecalledMemory>) {
-	let _timing =
-		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Recall);
 	let learning = &config.supervisor.learning;
 	if !learning.enabled {
 		return (String::new(), Vec::new());
 	}
+	let _timing =
+		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Recall);
 
 	let backend = FileBackend;
 	crate::log_debug!(

@@ -1043,10 +1043,11 @@ pub async fn process_response<S: OutputSink>(
 /// (the crashed turns of a long run were recorded as zero before).
 pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) -> CostPayload {
 	chat_session.session.fold_external_spend();
+	crate::supervisor::authorizer::sync(chat_session);
 	let info = &chat_session.session.info;
 	let total_tokens = info.total_tokens();
 	let compression = &info.compression_stats;
-	let supervisor = info.supervisor_accounting.totals();
+	let supervisor = crate::supervisor::report::SupervisorReport::for_session(info);
 	CostPayload {
 		session_tokens: total_tokens,
 		session_cost: info.total_cost,
@@ -1055,13 +1056,13 @@ pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) 
 		cache_read_tokens: info.cache_read_tokens,
 		cache_write_tokens: info.cache_write_tokens,
 		reasoning_tokens: info.reasoning_tokens,
-		aux_input_tokens: compression.input_tokens + supervisor.input_tokens,
+		aux_input_tokens: compression.input_tokens + supervisor.totals.input_tokens,
 		aux_output_tokens: compression.output_tokens
 			+ compression.reasoning_tokens
-			+ supervisor.output_tokens
-			+ supervisor.reasoning_tokens,
-		aux_cost: compression.cost + supervisor.cost,
-		supervisor_accounting: info.supervisor_accounting.clone(),
+			+ supervisor.totals.output_tokens
+			+ supervisor.totals.reasoning_tokens,
+		aux_cost: compression.cost + supervisor.totals.cost,
+		supervisor_accounting: supervisor,
 		session_id,
 		pending_work: crate::session::has_pending_handback(),
 	}

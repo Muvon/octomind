@@ -721,6 +721,63 @@ async fn initialize_mcp_for_role_with_callback_forwards_progress() {
 	);
 }
 
+/// Drop an executable `<workdir>/.agents/tools/<name>` script. Unix-only: local
+/// tool discovery requires the executable mode bit.
+#[cfg(unix)]
+fn write_local_tool(workdir: &std::path::Path, name: &str) {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = workdir.join(core::local_tool::TOOLS_DIR);
+	std::fs::create_dir_all(&dir).expect("create tools dir");
+	let path = dir.join(name);
+	std::fs::write(&path, "#!/bin/sh\n# @description Probe.\necho ok\n")
+		.expect("write tool script");
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+		.expect("chmod tool script");
+}
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn initialize_mcp_for_role_rejects_local_tool_shadowing_a_server_tool() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(tmp.path(), "tap");
+	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+	let config = with_role_map(config_with_servers(vec![McpServerConfig::builtin(
+		"orchestration",
+		30,
+		vec![],
+	)]));
+
+	let err = initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect_err("a local tool named like a server tool must fail bootstrap")
+		.to_string();
+	assert!(err.contains("'tap'"), "names the tool: {err}");
+	assert!(
+		err.contains("server 'orchestration'"),
+		"names the server: {err}"
+	);
+	assert!(err.contains("local tool"), "names the local script: {err}");
+}
+
+#[cfg(unix)]
+#[serial]
+#[tokio::test]
+async fn initialize_mcp_for_role_accepts_distinct_local_tool_names() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	write_local_tool(tmp.path(), "probe_tool");
+	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
+	let config = with_role_map(config_with_servers(vec![McpServerConfig::builtin(
+		"orchestration",
+		30,
+		vec![],
+	)]));
+
+	initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("distinct names must pass bootstrap");
+}
+
 // ---------------------------------------------------------------------------
 // Live external server (python fake over HTTP) + dispatch/log coverage.
 // ---------------------------------------------------------------------------

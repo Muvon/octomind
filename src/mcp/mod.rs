@@ -365,7 +365,47 @@ pub async fn initialize_mcp_for_role_with_callback(
 		// Continue anyway - will fall back to building tool map on each use
 	}
 
-	Ok(())
+	// Step 3: Refuse a tool surface the provider would reject
+	ensure_unique_tool_names(&config_for_role).await
+}
+
+/// Role servers and project-local `.agents/tools/` scripts share one tool
+/// namespace. A name advertised twice makes providers reject every request
+/// (Anthropic: "tools: Tool names must be unique"), and routing could only
+/// ever reach one of the two, so the clash fails at bootstrap with both
+/// sources named instead of on the first turn.
+async fn ensure_unique_tool_names(config: &crate::config::Config) -> Result<()> {
+	let mut sources: Vec<(String, String)> = Vec::new();
+	for server in &config.mcp.servers {
+		for function in server_functions_for(server, config).await {
+			sources.push((function.name, format!("server '{}'", server.name())));
+		}
+	}
+	let workdir = get_thread_working_directory();
+	for tool in core::local_tool::discover(&workdir) {
+		sources.push((tool.name, format!("local tool {}", tool.path.display())));
+	}
+
+	let mut owners: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+	let mut clashes = Vec::new();
+	for (name, source) in sources {
+		match owners.get(&name) {
+			Some(first) => clashes.push(format!(
+				"'{}' is provided by both {} and {}",
+				name, first, source
+			)),
+			None => {
+				owners.insert(name, source);
+			}
+		}
+	}
+	if clashes.is_empty() {
+		return Ok(());
+	}
+	anyhow::bail!(
+		"Duplicate tool names — rename or remove one source of each:\n  {}",
+		clashes.join("\n  ")
+	)
 }
 
 // Collect filtered functions for a single server. Returns an empty Vec for unknown/unavailable servers.

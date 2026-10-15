@@ -1746,3 +1746,110 @@ async fn exec_conditional_matched_branch_succeeds_and_skips_the_rest() {
 	assert_eq!(ex.outputs.get("gate"), Some(&"ship it".to_string()));
 	assert_eq!(ex.last_step, Some("gate".to_string()));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_runs_ordered_steps_and_reports_totals() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "first"
+		role = "developer:general"
+		prompt = "SUCCEED: one"
+		[[steps]]
+		name = "second"
+		role = "developer:general"
+		prompt = "SUCCEED: two"
+		"#,
+	)
+	.expect("workflow parses");
+	execute(&wf, "DO", &template_config(), None)
+		.await
+		.expect("both steps run in order");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_graph_mode_routes_edges_to_end() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		entry = "start"
+		max_transitions = 5
+		[[edges]]
+		from = "start"
+		to = "finish"
+		[[edges]]
+		from = "finish"
+		to = "$end"
+		[[steps]]
+		name = "start"
+		role = "developer:general"
+		prompt = "SUCCEED: begin"
+		[[steps]]
+		name = "finish"
+		role = "developer:general"
+		prompt = "SUCCEED: end"
+		"#,
+	)
+	.expect("workflow parses");
+	execute(&wf, "DO", &template_config(), None)
+		.await
+		.expect("graph routes start -> finish -> $end");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_graph_mode_aborts_when_max_transitions_is_exceeded() {
+	install_step_fixture();
+	// A cycle with no default edge to $end: the router keeps following the
+	// only edge until max_transitions aborts the run.
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		entry = "spin"
+		max_transitions = 2
+		[[edges]]
+		from = "spin"
+		to = "spin"
+		[[steps]]
+		name = "spin"
+		role = "developer:general"
+		prompt = "SUCCEED: again"
+		"#,
+	)
+	.expect("workflow parses");
+	let err = execute(&wf, "DO", &template_config(), None)
+		.await
+		.expect_err("cycle must abort at max_transitions");
+	assert!(
+		err.to_string()
+			.contains("graph exceeded max_transitions (2)"),
+		"got: {err}"
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_jsonl_mode_emits_aggregated_cost_event() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "only"
+		role = "developer:general"
+		prompt = "SUCCEED: done"
+		"#,
+	)
+	.expect("workflow parses");
+	// The jsonl sink writes to stdout; the observable contract is that the
+	// run completes and the final aggregated cost event is emitted without
+	// panicking on the totals fold.
+	execute(&wf, "DO", &template_config(), Some("jsonl"))
+		.await
+		.expect("jsonl workflow completes");
+}

@@ -357,8 +357,8 @@ pub fn authorizer_question_id(call_id: &str, noul: &str) -> String {
 	format!("{call_id}.{noul}")
 }
 
-/// Three Nouls per pending call, each naming the call it judges by id and
-/// tool so a batch of several calls is not scored as one.
+/// One Noul per [`AUTHORIZER_NOULS`] entry per pending call, each naming the
+/// call it judges by id and tool so a batch of several calls is not scored as one.
 pub fn authorizer_questions<'a>(
 	calls: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> BTreeMap<String, Question> {

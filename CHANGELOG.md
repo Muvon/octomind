@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.58.1] - 2026-10-15
+
+### 📋 Release Summary
+
+MCP background tasks can be surfaced and stopped, with session tasks running in the background and polling retried across timeouts and reconnects. Bootstrap rejects duplicate tool names.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: surface and stop background MCP tasks `30287d79`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: cover MCP task polling outcomes `db152734`
+
+### 🐛 Bug Fixes & Stability
+
+- **mcp**: retry task polling across timeouts and reconnects `c11c3279`
+- **mcp**: run session MCP tasks in the background `3ff889d8`
+- **mcp**: reject duplicate tool names at bootstrap `388469d4`
+
 ## [0.58.0] - 2026-10-14
 
 ### 📋 Release Summary

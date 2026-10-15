@@ -3489,3 +3489,150 @@ async fn user_turn_save_failure_is_reported_before_the_cost_frame() {
 
 	crate::session::context::cleanup_session(&session_id);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn start_binds_and_accepts_connections() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+
+	// Reserve then release a port so the real server can bind it.
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind probe");
+	let port_a = probe.local_addr().expect("probe addr").port();
+	drop(probe);
+
+	let server_a = WebSocketServer::new(
+		"127.0.0.1",
+		port_a,
+		ws_fake_config(),
+		"assistant".to_string(),
+		Vec::new(),
+	)
+	.expect("server without origins");
+	let addr_a = server_a.addr;
+	tokio::spawn(async move {
+		let _ = server_a.start().await;
+	});
+
+	// Wait for the listener, then a bare TCP probe: the accept loop spawns a
+	// handler whose handshake fails on the immediately-closed socket — the
+	// handler-failure log arm — without disturbing the server.
+	for _ in 0..100 {
+		if tokio::net::TcpStream::connect(addr_a).await.is_ok() {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+
+	let mut ws_a = connect_ws(addr_a).await;
+	let welcome_a = read_json(&mut ws_a).await;
+	assert_eq!(welcome_a["type"], "status", "got: {welcome_a}");
+	assert!(
+		welcome_a["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Connected to Octomind WebSocket server (role: assistant)"),
+		"got: {welcome_a}"
+	);
+
+	// Same for a server configured with an allowlisted origin: the print
+	// branch differs, and a native client (no Origin header) is still let in.
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind probe");
+	let port_b = probe.local_addr().expect("probe addr").port();
+	drop(probe);
+	let server_b = WebSocketServer::new(
+		"127.0.0.1",
+		port_b,
+		ws_fake_config(),
+		"assistant".to_string(),
+		vec!["http://localhost:3000".to_string()],
+	)
+	.expect("server with origins");
+	let addr_b = server_b.addr;
+	tokio::spawn(async move {
+		let _ = server_b.start().await;
+	});
+	for _ in 0..100 {
+		if tokio::net::TcpStream::connect(addr_b).await.is_ok() {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+
+	let mut ws_b = connect_ws(addr_b).await;
+	let welcome_b = read_json(&mut ws_b).await;
+	assert_eq!(welcome_b["type"], "status", "got: {welcome_b}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn pre_user_drain_reports_a_failing_injected_turn_and_still_runs_the_user_turn() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::with_status(vec![
+		(500, serde_json::json!({"error": {"message": "boom"}})),
+		(200, final_response("user reply")),
+	])
+	.await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	// Queue an inbox message behind the session lock so the background monitor
+	// parks and the foreground pre-user drain owns it.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "doomed injection".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hello"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	assert_eq!(injected["content"], "doomed injection", "got: {injected}");
+
+	// The injected turn hits the 500 stub and must be reported as failed…
+	let injected_error = read_until(&mut ws, |frame| {
+		frame["type"] == "error"
+			&& frame["message"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("Error processing injected message")
+	})
+	.await;
+	assert!(
+		injected_error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Error processing injected message"),
+		"got: {injected_error}"
+	);
+
+	// …but the client's own turn still runs to completion on the next response.
+	let assistant = read_until(&mut ws, |frame| frame["type"] == "assistant").await;
+	assert!(
+		assistant["content"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("user reply"),
+		"got: {assistant}"
+	);
+	let cost = read_until(&mut ws, |frame| frame["type"] == "cost").await;
+	assert_eq!(cost["type"], "cost");
+
+	crate::session::context::cleanup_session(&session_id);
+}

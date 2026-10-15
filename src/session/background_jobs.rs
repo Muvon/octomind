@@ -107,7 +107,8 @@ impl BackgroundJobManager {
 		} else {
 			format!(
 				"[Async agent '{}' completed]\n\n{}",
-				job.agent_name, job.output
+				job.agent_name,
+				crate::session::inbox::strip_invented_reminders(&job.output)
 			)
 		};
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {

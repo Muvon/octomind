@@ -307,7 +307,10 @@ fn workflow_handback(
 			}
 			(
 				TapJobStatus::Done,
-				format!("[Workflow '{name}' ({id}) completed]\n\n{}", run.output),
+				format!(
+					"[Workflow '{name}' ({id}) completed]\n\n{}",
+					crate::session::inbox::strip_invented_reminders(&run.output)
+				),
 			)
 		}
 		Some(Err(e)) => (
@@ -652,7 +655,10 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			let (terminal, content) = match outcome {
 				Ok(text) => (
 					TapJobStatus::Done,
-					format!("[Tap-run '{id_owned}' ({role_owned}) completed]\n\n{text}"),
+					format!(
+						"[Tap-run '{id_owned}' ({role_owned}) completed]\n\n{}",
+						crate::session::inbox::strip_invented_reminders(&text)
+					),
 				),
 				Err(e) if crate::session::cancellation::is_cancelled(&e) => (
 					TapJobStatus::Cancelled,

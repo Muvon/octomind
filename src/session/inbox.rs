@@ -249,6 +249,30 @@ pub fn push_inbox_message_for_session(session_id: &str, msg: InboxMessage) {
 	}
 }
 
+/// Cut `<system-reminder>` blocks out of another agent's output before it is
+/// handed back. Models mimic harness markup and close a reply with one they
+/// invented; passed on verbatim it would reach the parent as if the runtime
+/// had said it, and every client would show it. An unclosed block runs to
+/// the end.
+pub fn strip_invented_reminders(output: &str) -> String {
+	const OPEN: &str = "<system-reminder>";
+	const CLOSE: &str = "</system-reminder>";
+	if !output.contains(OPEN) {
+		return output.to_string();
+	}
+	let mut out = String::with_capacity(output.len());
+	let mut rest = output;
+	while let Some(at) = rest.find(OPEN) {
+		out.push_str(&rest[..at]);
+		rest = match rest[at..].find(CLOSE) {
+			Some(end) => &rest[at + end + CLOSE.len()..],
+			None => "",
+		};
+	}
+	out.push_str(rest);
+	out.trim_end().to_string()
+}
+
 /// Push a bounded monitor delivery, coalescing it with an already-pending
 /// delivery from the same monitor. A slow AI turn therefore cannot build an
 /// unbounded queue of periodic batches from a noisy script.

@@ -168,6 +168,9 @@ async fn run_round_with_spill_reader(
 ) {
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
+		// Spills persist under the session id across test runs, and an output
+		// already spilled counts as a recovery read that is never condensed.
+		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
 		initialize_tool_map(&empty)
@@ -381,6 +384,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
+		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
 		initialize_tool_map(&empty)
@@ -467,6 +471,7 @@ async fn reads_of_a_whole_task_target_are_left_in_full() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
+		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
 		initialize_tool_map(&empty)

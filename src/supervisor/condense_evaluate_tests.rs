@@ -453,6 +453,9 @@ async fn with_spill_reader<F: std::future::Future<Output = ()>>(
 ) {
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
+		// Spills persist under the session id across test runs, and an output
+		// already spilled counts as a recovery read that is never condensed.
+		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
 		crate::mcp::tool_map::initialize_tool_map(&empty)
@@ -464,6 +467,7 @@ async fn with_spill_reader<F: std::future::Future<Output = ()>>(
 			&["view".to_string()],
 		);
 		body.await;
+		crate::utils::spill::clear_current_session();
 	})
 	.await;
 	crate::session::context::cleanup_session(&session.to_string());

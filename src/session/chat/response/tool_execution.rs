@@ -838,16 +838,21 @@ async fn execute_tools_with_context(
 	Ok((tool_results, total_tool_time_ms))
 }
 
-/// The parent session's live task framing — durable goal, current user request
-/// and open plan items. Used by supervisor mechanics that must judge
-/// something against "what are we actually doing right now" (condense).
+/// The parent session's live task framing — the session's specialist brief,
+/// durable goal, current user request and open plan items. Used by supervisor
+/// mechanics that must judge something against "what are we actually doing
+/// right now" (condense).
 fn parent_task_context(chat_session: &ChatSession) -> String {
 	let mut task = String::new();
+	if let Some(brief) = specialist_brief(chat_session) {
+		task.push_str(&format!("Specialist brief:\n{brief}\n"));
+	}
+	let resolved = turn_resolution(chat_session);
 	let intent = chat_session.session.info.anchor.intent.trim();
 	if !intent.is_empty() {
 		task.push_str(&format!("Goal: {intent}\n"));
 	}
-	if let Some(resolved) = turn_resolution(chat_session) {
+	if let Some(resolved) = resolved {
 		// The resolved request spells out an elliptical follow-up ("do it");
 		// for a self-contained turn it is the request itself.
 		task.push_str(&format!("Current request: {}\n", resolved.resolved_request));
@@ -880,39 +885,13 @@ fn turn_resolution(
 		.filter(|resolved| resolved.original_request == request)
 }
 
-/// Trusted, durable context that controls what evidence matters. Deliberately
-/// excludes ordinary user/task messages (supplied separately) and synthetic
-/// notes. Skill injections are included only while that skill is active.
-fn parent_agent_context(chat_session: &ChatSession) -> String {
-	let active_skills: std::collections::HashSet<String> =
-		crate::session::context::current_session_id()
-			.map(|sid| crate::session::context::get_active_skills(&sid))
-			.unwrap_or_default()
-			.into_iter()
-			.collect();
-
+/// The compacted standing specialist context, when compaction produced one.
+fn specialist_brief(chat_session: &ChatSession) -> Option<&str> {
 	chat_session
-		.session
-		.messages
-		.iter()
-		.filter(|message| {
-			if message.role == "system" {
-				return true;
-			}
-			if message.role != "user" {
-				return false;
-			}
-			let trimmed = message.content.trim_start();
-			if trimmed.starts_with("<instructions>") {
-				return true;
-			}
-			crate::mcp::runtime::skill::extract_skill_name(&message.content)
-				.is_some_and(|name| active_skills.contains(name))
-		})
-		.map(|message| message.content.trim())
-		.filter(|content| !content.is_empty())
-		.collect::<Vec<_>>()
-		.join("\n\n")
+		.specialist_brief
+		.as_ref()
+		.map(|brief| brief.text.as_str())
+		.filter(|text| !text.is_empty())
 }
 
 async fn condense_main_results(
@@ -927,7 +906,13 @@ async fn condense_main_results(
 	let whole_targets = turn_resolution(chat_session)
 		.map(|resolved| resolved.whole_targets.as_slice())
 		.unwrap_or_default();
-	let agent_context = parent_agent_context(chat_session);
+	// The brief, already in `task`, is the compacted standing context; the raw
+	// standing messages are sent only when no brief exists.
+	let agent_context = if specialist_brief(chat_session).is_some() {
+		String::new()
+	} else {
+		crate::supervisor::specialist_context(&chat_session.session.messages)
+	};
 	crate::supervisor::condense::condense_round(
 		results,
 		calls,

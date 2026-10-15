@@ -74,6 +74,30 @@ fn role_context_caps_an_oversized_system_message_at_the_boundary() {
 }
 
 #[test]
+fn specialist_context_keeps_only_standing_specialist_messages() {
+	let message = |role: &str, content: &str| crate::session::Message {
+		role: role.to_string(),
+		content: content.to_string(),
+		..Default::default()
+	};
+	let messages = vec![
+		message("system", "  sys prompt  "),
+		message("user", "<instructions>\nbe careful\n</instructions>"),
+		message("user", "do the thing"),
+		message("assistant", "working on it"),
+		message("user", "<skill name=\"rust\">\ntips\n</skill>"),
+		message("user", "   "),
+	];
+	// System + <instructions> survive; plain user turns, assistant text,
+	// inactive skill injections and blank content are excluded. No session is
+	// active in this test, so every skill counts as inactive.
+	assert_eq!(
+		specialist_context(&messages),
+		"sys prompt\n\n<instructions>\nbe careful\n</instructions>"
+	);
+}
+
+#[test]
 fn notify_never_panics_outside_a_terminal() {
 	// Under the test harness stderr is piped, so notify takes its early
 	// return; the call itself is the behavior under test.

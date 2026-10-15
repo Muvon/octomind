@@ -520,6 +520,84 @@ async fn reads_of_a_whole_task_target_are_left_in_full() {
 	}
 }
 
+/// The specialist brief is compacted once per distinct standing context:
+/// repeat refreshes make no call, a changed context (a skill activated) is
+/// recompacted, and a failed compaction is remembered instead of retried on
+/// every API call.
+#[tokio::test]
+#[serial_test::serial]
+async fn the_specialist_brief_is_compacted_once_per_standing_context() {
+	let _guard = ENV_LOCK.lock().await;
+	let config = condense_config();
+	let message = |role: &str, content: &str| crate::session::Message {
+		role: role.to_string(),
+		content: content.to_string(),
+		..Default::default()
+	};
+	let mut messages = vec![
+		message("system", "You are a README architect."),
+		message("user", "polish our readme"),
+	];
+	let (_tx, rx) = tokio::sync::watch::channel(false);
+	let mut brief = None;
+
+	let url = spawn_stub(vec![
+		final_response("  README architect; README.md is the working material.  "),
+		final_response("README architect bound by the project instructions."),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
+	let first = brief.clone().expect("compacted");
+	assert_eq!(
+		first.text,
+		"README architect; README.md is the working material."
+	);
+
+	// Same standing context, a new user turn: no call, the brief is reused.
+	messages.push(message("user", "now the changelog"));
+	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
+	assert_eq!(brief.as_ref().expect("kept").text, first.text);
+
+	// The standing context changed: compacted again (second stub answer).
+	messages.push(message(
+		"user",
+		"<instructions>\nkeep docs short\n</instructions>",
+	));
+	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
+	assert_eq!(
+		brief.as_ref().expect("recompacted").text,
+		"README architect bound by the project instructions."
+	);
+
+	// A failed compaction leaves an empty brief and is not retried while the
+	// context is unchanged (the next stub answer would otherwise be taken).
+	messages.push(message(
+		"user",
+		"<instructions>\ncite sources\n</instructions>",
+	));
+	let url = spawn_stub_with_status(vec![
+		(500, serde_json::json!({"error": "down"})),
+		(200, serde_json::json!({"error": "unused"})),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
+	assert!(brief.as_ref().expect("failure remembered").text.is_empty());
+	let failed_source = brief.as_ref().map(|b| b.source);
+	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
+	assert_eq!(brief.as_ref().map(|b| b.source), failed_source);
+	assert!(brief.as_ref().expect("still remembered").text.is_empty());
+
+	// No condenser, no compaction.
+	let mut disabled = config.clone();
+	disabled.supervisor.condense.enabled = false;
+	let mut untouched = None;
+	refresh_specialist_brief(&mut untouched, &messages, &disabled, rx).await;
+	assert!(untouched.is_none());
+	std::env::remove_var("OLLAMA_API_URL");
+}
+
 /// Adaptive re-probe: when the raised threshold skips a result the baseline
 /// would have condensed, the threshold relaxes so the next round sees it.
 #[tokio::test]

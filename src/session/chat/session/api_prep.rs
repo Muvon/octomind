@@ -59,8 +59,17 @@ pub async fn prepare_for_api_call(
 			animation_manager
 				.set_phase("Resolving current task …")
 				.await;
-			let resolved =
-				crate::supervisor::resolve::resolve(config, &context, operation_rx.clone()).await;
+			// The condenser's specialist brief is independent of the resolution;
+			// compacting it alongside keeps the first turn from waiting twice.
+			let (resolved, ()) = tokio::join!(
+				crate::supervisor::resolve::resolve(config, &context, operation_rx.clone()),
+				crate::supervisor::condense::refresh_specialist_brief(
+					&mut chat_session.specialist_brief,
+					&chat_session.session.messages,
+					config,
+					operation_rx.clone(),
+				),
+			);
 			animation_manager.clear_phase();
 			let policy_changed = chat_session
 				.session
@@ -81,6 +90,16 @@ pub async fn prepare_for_api_call(
 			}
 		}
 	}
+	// Turns that skip resolution, and standing context that changed mid-turn
+	// (a skill activated), still get a current brief. A no-op while the
+	// compacted context is unchanged.
+	crate::supervisor::condense::refresh_specialist_brief(
+		&mut chat_session.specialist_brief,
+		&chat_session.session.messages,
+		config,
+		operation_rx.clone(),
+	)
+	.await;
 
 	// Run compression if max_session_tokens_threshold is exceeded
 	if let Err(e) = crate::session::chat::conversation_compression::check_and_compress_conversation(

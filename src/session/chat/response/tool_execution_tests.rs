@@ -378,8 +378,18 @@ fn test_parent_task_context_uses_the_live_turn_resolution() {
 	resolved.resolved_request = "polish the readme".to_string();
 	resolved.whole_targets = vec!["readme".to_string()];
 	session.gate_task = Some(resolved);
+	session.specialist_brief = Some(crate::supervisor::condense::SpecialistBrief {
+		source: 0,
+		text: "README architect; README.md is the working material.".to_string(),
+	});
 
 	let task = parent_task_context(&session);
+	assert!(
+		task.starts_with(
+			"Specialist brief:\nREADME architect; README.md is the working material.\n"
+		),
+		"the brief leads the task block: {task}"
+	);
 	assert!(
 		task.contains("Current request: polish the readme"),
 		"{task}"
@@ -397,27 +407,17 @@ fn test_parent_task_context_uses_the_live_turn_resolution() {
 		"{task}"
 	);
 	assert!(!task.contains("Works on as a whole"), "{task}");
-}
-
-#[test]
-fn test_parent_agent_context_filters_trusted_messages() {
-	let messages = vec![
-		message("system", "  sys prompt  "),
-		message("user", "<instructions>\nbe careful\n</instructions>"),
-		message("user", "do the thing"),
-		message("assistant", "working on it"),
-		message("user", "<skill name=\"rust\">\ntips\n</skill>"),
-		message("user", "   "),
-	];
-	let session = ChatSession::for_tests(messages);
-
-	// System + <instructions> survive; plain user turns, assistant text,
-	// inactive skill injections and blank content are excluded. No session is
-	// active in this test, so every skill counts as inactive.
-	assert_eq!(
-		parent_agent_context(&session),
-		"sys prompt\n\n<instructions>\nbe careful\n</instructions>"
+	assert!(
+		task.starts_with("Specialist brief:"),
+		"the session brief outlives the turn: {task}"
 	);
+
+	// A failed compaction leaves an empty brief, which is never rendered
+	session.specialist_brief = Some(crate::supervisor::condense::SpecialistBrief {
+		source: 0,
+		text: String::new(),
+	});
+	assert!(!parent_task_context(&session).contains("Specialist brief"));
 }
 
 #[tokio::test]

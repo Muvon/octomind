@@ -181,6 +181,39 @@ pub fn role_context(messages: &[crate::session::Message]) -> String {
 	}
 }
 
+/// Everything that defines the specialist beyond the current turn: the system
+/// message, `<instructions>` blocks, and skill injections while that skill is
+/// active. Ordinary user/task messages and synthetic notes are excluded — the
+/// turn is supplied separately. Unlike [`role_context`] this is uncapped; the
+/// caller bounds it for its own budget.
+pub fn specialist_context(messages: &[crate::session::Message]) -> String {
+	let active_skills: std::collections::HashSet<String> =
+		crate::session::context::current_session_id()
+			.map(|sid| crate::session::context::get_active_skills(&sid))
+			.unwrap_or_default()
+			.into_iter()
+			.collect();
+	messages
+		.iter()
+		.filter(|message| {
+			if message.role == "system" {
+				return true;
+			}
+			if message.role != "user" {
+				return false;
+			}
+			if message.content.trim_start().starts_with("<instructions>") {
+				return true;
+			}
+			crate::mcp::runtime::skill::extract_skill_name(&message.content)
+				.is_some_and(|name| active_skills.contains(name))
+		})
+		.map(|message| message.content.trim())
+		.filter(|content| !content.is_empty())
+		.collect::<Vec<_>>()
+		.join("\n\n")
+}
+
 /// Top-level supervisor configuration. Maps to the `[supervisor]` TOML section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorConfig {

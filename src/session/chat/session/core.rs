@@ -365,6 +365,9 @@ pub struct ChatSession {
 	/// Supervisor: stable turn-start task resolution. Reset on each genuine user
 	/// turn and cached across planning and completion-gate re-runs.
 	pub gate_task: Option<crate::supervisor::resolve::ResolvedTask>,
+	/// Supervisor: the standing specialist context compacted for the
+	/// condenser. Session-lived; recompacted only when that context changes.
+	pub specialist_brief: Option<crate::supervisor::condense::SpecialistBrief>,
 }
 
 /// Parameters for creating a new ChatSession
@@ -493,6 +496,7 @@ impl ChatSession {
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
+			specialist_brief: None,
 		}
 	}
 
@@ -707,6 +711,7 @@ impl ChatSession {
 						recalled_refs: Vec::new(),
 						evidence: restored_evidence,
 						gate_task: None,
+						specialist_brief: None,
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1602,6 +1607,7 @@ impl ChatSession {
 			recalled_refs: Vec::new(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
+			specialist_brief: None,
 		}
 	}
 }

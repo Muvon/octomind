@@ -2191,8 +2191,9 @@ async fn reconcile_pending_background_jobs(
 	reported_statuses.retain(|uri, _| pending_jobs.iter().any(|job| job.uri == *uri));
 	checked_jobs.retain(|uri| pending_jobs.iter().any(|job| job.uri == *uri));
 	for job in pending_jobs {
-		// A delivery already in flight will produce the real completion message.
-		if job.delivering {
+		// A delivery already in flight will produce the real completion message,
+		// and an MCP task's poller delivers its outcome itself.
+		if job.delivering || job.task {
 			continue;
 		}
 		checked_jobs.insert(job.uri.clone());
@@ -2245,7 +2246,7 @@ fn reconcile_delay(checked_jobs: &std::collections::HashSet<String>) -> std::tim
 	};
 	let unchecked = crate::session::shell_jobs::pending_resources_for_session(&session_id)
 		.iter()
-		.any(|job| !job.delivering && !checked_jobs.contains(&job.uri));
+		.any(|job| !job.delivering && !job.task && !checked_jobs.contains(&job.uri));
 	if unchecked {
 		std::time::Duration::ZERO
 	} else {

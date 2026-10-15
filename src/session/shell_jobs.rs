@@ -34,6 +34,10 @@
 //! completion is banked per session until the verify-gate folds it into that
 //! ledger line, following the same drain-at-next-owner pattern as
 //! `session::external_spend`.
+//!
+//! A tool call that a server answers with an MCP task (SEP-2663) is tracked the
+//! same way under `task_key(tool_id)`: there is no resource to read, the client
+//! polls the task itself (`mcp::client::background_task`) and delivers its result.
 
 use rmcp::model::{CallToolResult, ContentBlock};
 use std::collections::HashMap;
@@ -47,6 +51,8 @@ struct WatchedResource {
 	sequence: Option<u64>,
 	delivering: bool,
 	started_at: SystemTime,
+	/// An MCP task, not a resource: nothing to read, its poller delivers it.
+	task: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +75,7 @@ pub(crate) struct PendingResource {
 	pub label: String,
 	pub delivering: bool,
 	pub started_at: SystemTime,
+	pub task: bool,
 }
 
 // session id -> resources advertised but not yet delivered into the inbox.
@@ -144,19 +151,35 @@ pub fn note_watched_from_result(server_name: &str, result: &CallToolResult) {
 }
 
 pub fn register_for_session(session_id: &str, server_name: &str, uri: &str, label: &str) {
+	register(session_id, server_name, uri, label, false);
+}
+
+/// Registry key of the MCP task a tool call became. Keyed by the call, which is
+/// unique per session, so the launching round can attach its ledger sequence
+/// without knowing the server's task id.
+pub fn task_key(tool_id: &str) -> String {
+	format!("mcp-task:{tool_id}")
+}
+
+pub fn register_task_for_session(session_id: &str, server_name: &str, key: &str, label: &str) {
+	register(session_id, server_name, key, label, true);
+}
+
+fn register(session_id: &str, server_name: &str, key: &str, label: &str, task: bool) {
 	let mut guard = WATCHED.write().unwrap();
 	guard
 		.get_or_insert_with(HashMap::new)
 		.entry(session_id.to_string())
 		.or_default()
 		.insert(
-			uri.to_string(),
+			key.to_string(),
 			WatchedResource {
 				server_name: server_name.to_string(),
 				label: label.to_string(),
 				sequence: None,
 				delivering: false,
 				started_at: SystemTime::now(),
+				task,
 			},
 		);
 }
@@ -335,6 +358,7 @@ pub(crate) fn pending_resources_for_session(session_id: &str) -> Vec<PendingReso
 			label: resource.label.clone(),
 			delivering: resource.delivering,
 			started_at: resource.started_at,
+			task: resource.task,
 		})
 		.collect();
 	resources.sort_by(|a, b| a.uri.cmp(&b.uri));

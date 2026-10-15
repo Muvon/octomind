@@ -152,16 +152,22 @@ fn monitor_items(session_id: &crate::session::context::SessionId) -> Vec<serde_j
 
 async fn read_mcp_job(job: crate::session::shell_jobs::PendingResource) -> RenderedMcpJob {
 	let elapsed_secs = job.started_at.elapsed().unwrap_or_default().as_secs();
-	let resource_status = match tokio::time::timeout(
-		RESOURCE_READ_TIMEOUT,
-		crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
-	)
-	.await
-	{
-		Ok(Ok(text)) if text.trim().is_empty() => "resource returned no text status".to_string(),
-		Ok(Ok(text)) => bound_resource_status(&text),
-		Ok(Err(error)) => format!("status unavailable: {error}"),
-		Err(_) => "status read timed out".to_string(),
+	let resource_status = if job.task {
+		"MCP task: Octomind polls it and delivers its result".to_string()
+	} else {
+		match tokio::time::timeout(
+			RESOURCE_READ_TIMEOUT,
+			crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
+		)
+		.await
+		{
+			Ok(Ok(text)) if text.trim().is_empty() => {
+				"resource returned no text status".to_string()
+			}
+			Ok(Ok(text)) => bound_resource_status(&text),
+			Ok(Err(error)) => format!("status unavailable: {error}"),
+			Err(_) => "status read timed out".to_string(),
+		}
 	};
 
 	RenderedMcpJob {

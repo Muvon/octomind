@@ -34,7 +34,7 @@ use rmcp::model::{
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use serial_test::serial;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc as StdArc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -1721,6 +1721,157 @@ async fn task_get_wrong_response_type_fails_the_call() {
 		error.to_string().contains("tasks/get failed"),
 		"unexpected error: {error}"
 	);
+
+	responder.abort();
+	disconnect(&name);
+}
+
+fn working_task(id: &str) -> Task {
+	Task::new(
+		id,
+		TaskStatus::Working,
+		"2026-01-01T00:00:00Z",
+		"2026-01-01T00:00:00Z",
+	)
+	.with_status_message("shell: cargo test")
+	.with_poll_interval_ms(50)
+}
+
+async fn next_inbox_batch() -> Vec<crate::session::inbox::InboxMessage> {
+	tokio::time::timeout(WAIT, async {
+		loop {
+			let batch = crate::session::inbox::drain_inbox_batch();
+			if !batch.is_empty() {
+				return batch;
+			}
+			tokio::time::sleep(Duration::from_millis(20)).await;
+		}
+	})
+	.await
+	.expect("the task outcome must reach the inbox")
+}
+
+/// In a session a task does not hold the turn: the call returns at once, the
+/// task stays pending, and its result arrives in the inbox when it completes.
+#[serial]
+#[tokio::test]
+async fn session_task_runs_in_the_background_and_reaches_the_inbox() {
+	let name = unique_server("task-background");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let counter = StdArc::clone(&polls);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
+			CreateTaskResult::new(working_task("task-bg")),
+		)),
+		ClientRequest::GetTaskRequest(_) => {
+			let payload = if counter.fetch_add(1, Ordering::SeqCst) < 3 {
+				TaskPayload::Working
+			} else {
+				let result =
+					serde_json::to_value(CallToolResult::success(vec![ContentBlock::text(
+						"built",
+					)]))
+					.expect("serialize completed result");
+				TaskPayload::Completed {
+					result: result.as_object().expect("object").clone(),
+				}
+			};
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(
+				DetailedTask::new(working_task("task-bg"), payload),
+			)))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-bg-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		let result = tokio::time::timeout(WAIT, call_tool(&server, &tool_call("bg-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let notice = result.content[0]
+			.as_text()
+			.expect("text notice")
+			.text
+			.clone();
+		assert!(notice.contains("mcp-task:bg-1"), "{notice}");
+		assert!(notice.contains("shell: cargo test"), "{notice}");
+		assert!(crate::session::shell_jobs::has_pending_for_session(
+			&session_id
+		));
+
+		let batch = next_inbox_batch().await;
+		assert!(
+			batch[0]
+				.content
+				.starts_with("<background_job task=\"mcp-task:bg-1\">\nbuilt"),
+			"{}",
+			batch[0].content
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(
+			&session_id
+		));
+		let completed = crate::session::shell_jobs::take_completed_for_session(&session_id);
+		assert_eq!(completed.len(), 1);
+		assert_eq!(completed[0].body, "built");
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// Tearing the session down stops a background task on the server, and its
+/// outcome is not delivered to the gone session.
+#[serial]
+#[tokio::test]
+async fn session_teardown_cancels_a_background_task() {
+	let name = unique_server("task-teardown");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let saw_cancel = StdArc::new(AtomicBool::new(false));
+	let flag = StdArc::clone(&saw_cancel);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
+			CreateTaskResult::new(working_task("task-teardown")),
+		)),
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(
+			DetailedTask::new(working_task("task-teardown"), TaskPayload::Working),
+		))),
+		ClientRequest::CancelTaskRequest(_) => {
+			flag.store(true, Ordering::SeqCst);
+			Some(ServerResult::task_ack(()))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-teardown-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("teardown-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+
+		crate::session::shell_jobs::clear_for_session(&session_id);
+		tokio::time::timeout(WAIT, async {
+			while !saw_cancel.load(Ordering::SeqCst) {
+				tokio::time::sleep(Duration::from_millis(20)).await;
+			}
+		})
+		.await
+		.expect("teardown must send tasks/cancel");
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		assert!(crate::session::inbox::drain_inbox_batch().is_empty());
+	})
+	.await;
 
 	responder.abort();
 	disconnect(&name);

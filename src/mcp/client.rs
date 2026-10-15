@@ -1166,6 +1166,86 @@ async fn drive_task(
 	}
 }
 
+/// Run an MCP task (SEP-2663) detached from the tool call that created it, the
+/// way a detached shell job runs: register it as a pending background job, poll
+/// it on its own tokio task, and deliver its outcome to the session inbox, which
+/// wakes the model. Returns what the model sees for the call now. Session
+/// teardown reaches `drive_task` as a cancellation, which cancels the task on
+/// the server.
+fn background_task(
+	service: Arc<McpService>,
+	server: McpServerConfig,
+	task: rmcp::model::CreateTaskResult,
+	tool_id: &str,
+	session_id: String,
+) -> rmcp::model::CallToolResult {
+	use crate::session::shell_jobs::{self, WatchEvent};
+
+	let key = shell_jobs::task_key(tool_id);
+	let label = task
+		.task
+		.status_message
+		.clone()
+		.filter(|message| !message.is_empty())
+		.unwrap_or_else(|| format!("MCP task {}", task.task.task_id));
+	shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
+	let notice = format!(
+		"Still running as background task `{key}` ({label}). Its result arrives on its own when it \
+		 finishes. Do only work that doesn't need it; to wait for it, reply with a brief status and \
+		 no tool call."
+	);
+
+	// Subscribed before spawning so a teardown racing the spawn is not missed.
+	let mut events = shell_jobs::subscribe_events();
+	tokio::spawn(async move {
+		let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+		let mut cancellation_token = Some(stop_rx);
+		let drive = drive_task(&service, &server, task, &mut cancellation_token);
+		tokio::pin!(drive);
+		let outcome = loop {
+			tokio::select! {
+				outcome = &mut drive => break outcome,
+				event = events.recv() => {
+					if matches!(&event, Ok(WatchEvent::Cleared { session_id: s }) if *s == session_id) {
+						let _ = stop_tx.send(true);
+					}
+				}
+			}
+		};
+		let (body, is_error) = match outcome {
+			Ok(result) => (
+				result
+					.content
+					.iter()
+					.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+					.collect::<Vec<_>>()
+					.join("\n"),
+				result.is_error == Some(true),
+			),
+			Err(error) if crate::session::cancellation::is_cancelled(&error) => {
+				("the server cancelled the task".to_string(), true)
+			}
+			Err(error) => (format!("{error:#}"), true),
+		};
+		// False once the session was torn down: nobody is left to deliver to.
+		if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
+			return;
+		}
+		let error = if is_error { " is_error=\"true\"" } else { "" };
+		let content = format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
+		crate::session::inbox::push_inbox_message_for_session(
+			&session_id,
+			crate::session::inbox::InboxMessage {
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
+				content,
+			},
+		);
+		shell_jobs::complete_for_session(&session_id, &key, &body);
+	});
+
+	rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(notice)])
+}
+
 /// Open a `subscriptions/listen` stream (MCP 2026-07-28) for every resource
 /// link a tool result advertised, so the server delivers the job's completion
 /// on an acknowledged, contract-clean channel instead of an unsolicited push.
@@ -1272,7 +1352,7 @@ async fn watch_resource_links(
 }
 
 /// Execute a tool call with progress-resetting request timeouts, targeted
-/// cancellation, SEP-2322 MRTR follow-up rounds, and SEP-2663 task polling.
+/// cancellation, SEP-2322 MRTR follow-up rounds, and SEP-2663 tasks.
 pub async fn call_tool(
 	server: &McpServerConfig,
 	call: &McpToolCall,
@@ -1323,6 +1403,18 @@ pub async fn call_tool(
 				return Ok(result);
 			}
 			CallToolResponse::Task(task) => {
+				// In a session the task runs in the background like a detached shell
+				// job, so a long one never holds the turn. Outside one there is no
+				// inbox to deliver it to later, so the call waits for it.
+				if let Some(session_id) = crate::session::context::current_session_id() {
+					return Ok(background_task(
+						service,
+						server.clone(),
+						task,
+						&call.tool_id,
+						session_id.to_string(),
+					));
+				}
 				return drive_task(&service, server, task, &mut cancellation_token).await;
 			}
 			CallToolResponse::InputRequired(result) => {

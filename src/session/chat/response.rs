@@ -679,6 +679,11 @@ pub async fn process_response<S: OutputSink>(
 							{
 								crate::session::shell_jobs::attach_sequence(&uri, sequence);
 							}
+							// So is an MCP task the call became; a no-op for any other call.
+							crate::session::shell_jobs::attach_sequence(
+								&crate::session::shell_jobs::task_key(&call.tool_id),
+								sequence,
+							);
 						}
 						// Retained under the sequence the rendered ledger shows, so the
 						// verify-gate can ask for this exact call's output instead of

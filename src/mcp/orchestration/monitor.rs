@@ -17,6 +17,10 @@
 //! A monitor runs an inline shell command once and treats stdout as an event
 //! stream. Output is accumulated in a bounded buffer and injected into the
 //! session inbox no more often than the configured flush interval.
+//!
+//! `list` and `stop` also cover the session's background MCP tasks (a tool call
+//! a server turned into a task, `session::shell_jobs`): stopping one has its
+//! poller send `tasks/cancel`.
 
 use crate::mcp::{McpFunction, McpToolCall, McpToolResult};
 use crate::session::context::SessionId;
@@ -137,8 +141,8 @@ pub fn get_monitor_function() -> McpFunction {
 
 Actions:
 - start: launch one inline monitoring command. Required: command. Optional: description, working_directory, flush_interval_seconds, max_batch_bytes, timeout_ms, persistent.
-- list: show running monitors and their IDs.
-- stop: cancel one monitor by id.
+- list: show running monitors and background MCP tasks, with their IDs.
+- stop: cancel one monitor, or one background MCP task (id `mcp-task:...`), by id.
 
 The command runs through `sh -c` in the session working directory. It should remain running, write event text to stdout as events arrive, and use stderr for diagnostics. Empty intervals produce no turn. Output is capped per batch; excess bytes are reported as omitted rather than growing memory. A pending delivery from the same monitor is coalesced and bounded. Non-zero exit, I/O failure, or an unexpected clean exit is injected once as terminal status; monitors are never auto-restarted, preventing broken-command failure loops.
 
@@ -191,7 +195,7 @@ flush_interval_seconds defaults to 30 and is constrained to 5..3600 seconds. max
 				},
 				"id": {
 					"type": "string",
-					"description": "Monitor ID from start/list. Required for stop."
+					"description": "Monitor ID from start/list, or a background task ID (`mcp-task:...`) from list or the task's launch notice. Required for stop."
 				}
 			},
 			"required": ["action"],
@@ -313,9 +317,36 @@ fn handle_list(call: &McpToolCall) -> McpToolResult {
 			"monitor requires an active session context".to_string(),
 		);
 	};
-	let listing =
-		render_running_monitors(&session_id).unwrap_or_else(|| "No running monitors.".to_string());
+	let sections: Vec<String> = [
+		render_running_monitors(&session_id),
+		render_background_tasks(&session_id),
+	]
+	.into_iter()
+	.flatten()
+	.collect();
+	let listing = if sections.is_empty() {
+		"No running monitors or background tasks.".to_string()
+	} else {
+		sections.join("\n\n")
+	};
 	McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), listing)
+}
+
+/// The session's pending MCP tasks with the latest status their pollers saw.
+fn render_background_tasks(session_id: &SessionId) -> Option<String> {
+	let lines: Vec<String> = crate::session::shell_jobs::pending_resources_for_session(session_id)
+		.into_iter()
+		.filter(|job| job.task)
+		.map(|job| {
+			let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
+			let status = job
+				.status
+				.map(|status| format!("\n  Status: {status}"))
+				.unwrap_or_default();
+			format!("[{}] {} — running {elapsed}s{status}", job.uri, job.label)
+		})
+		.collect();
+	(!lines.is_empty()).then(|| format!("Background tasks:\n{}", lines.join("\n")))
 }
 
 /// Render every running monitor owned by a session in the same format
@@ -376,14 +407,21 @@ fn handle_stop(call: &McpToolCall) -> McpToolResult {
 		Ok(value) => value,
 		Err(message) => return tool_error(call, message),
 	};
-	if !cancel_monitor(&session_id, &id) {
-		return tool_error(call, format!("monitor '{id}' not found"));
+	if cancel_monitor(&session_id, &id) {
+		return McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Stopping monitor [{id}]."),
+		);
 	}
-	McpToolResult::success(
-		call.tool_name.clone(),
-		call.tool_id.clone(),
-		format!("Stopping monitor [{id}]."),
-	)
+	if crate::session::shell_jobs::stop_task_for_session(&session_id, &id) {
+		return McpToolResult::success(
+			call.tool_name.clone(),
+			call.tool_id.clone(),
+			format!("Stopping background task [{id}]; its outcome arrives when it ends."),
+		);
+	}
+	tool_error(call, format!("no monitor or background task '{id}' found"))
 }
 
 #[derive(Debug)]

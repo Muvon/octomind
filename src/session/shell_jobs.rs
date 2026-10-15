@@ -53,6 +53,11 @@ struct WatchedResource {
 	started_at: SystemTime,
 	/// An MCP task, not a resource: nothing to read, its poller delivers it.
 	task: bool,
+	/// Latest status message the task's poller saw.
+	status: Option<String>,
+	/// The task poller's stop signal. Sending stops the task; dropping the entry
+	/// (completion, session teardown) drops it, which also stops a running one.
+	stop: Option<std::sync::Arc<tokio::sync::watch::Sender<bool>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +81,7 @@ pub(crate) struct PendingResource {
 	pub delivering: bool,
 	pub started_at: SystemTime,
 	pub task: bool,
+	pub status: Option<String>,
 }
 
 // session id -> resources advertised but not yet delivered into the inbox.
@@ -151,7 +157,7 @@ pub fn note_watched_from_result(server_name: &str, result: &CallToolResult) {
 }
 
 pub fn register_for_session(session_id: &str, server_name: &str, uri: &str, label: &str) {
-	register(session_id, server_name, uri, label, false);
+	register(session_id, server_name, uri, label, None);
 }
 
 /// Registry key of the MCP task a tool call became. Keyed by the call, which is
@@ -161,11 +167,32 @@ pub fn task_key(tool_id: &str) -> String {
 	format!("mcp-task:{tool_id}")
 }
 
-pub fn register_task_for_session(session_id: &str, server_name: &str, key: &str, label: &str) {
-	register(session_id, server_name, key, label, true);
+/// Register an MCP task and return its stop signal for the poller: it turns
+/// true on `stop_task_for_session` and closes when the entry is dropped.
+pub fn register_task_for_session(
+	session_id: &str,
+	server_name: &str,
+	key: &str,
+	label: &str,
+) -> tokio::sync::watch::Receiver<bool> {
+	let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+	register(
+		session_id,
+		server_name,
+		key,
+		label,
+		Some(std::sync::Arc::new(stop_tx)),
+	);
+	stop_rx
 }
 
-fn register(session_id: &str, server_name: &str, key: &str, label: &str, task: bool) {
+fn register(
+	session_id: &str,
+	server_name: &str,
+	key: &str,
+	label: &str,
+	stop: Option<std::sync::Arc<tokio::sync::watch::Sender<bool>>>,
+) {
 	let mut guard = WATCHED.write().unwrap();
 	guard
 		.get_or_insert_with(HashMap::new)
@@ -179,9 +206,40 @@ fn register(session_id: &str, server_name: &str, key: &str, label: &str, task: b
 				sequence: None,
 				delivering: false,
 				started_at: SystemTime::now(),
-				task,
+				task: stop.is_some(),
+				status: None,
+				stop,
 			},
 		);
+}
+
+/// Record the latest status message a pending task's poller saw.
+pub fn set_task_status_for_session(session_id: &str, key: &str, status: &str) {
+	if let Some(resource) = WATCHED
+		.write()
+		.unwrap()
+		.as_mut()
+		.and_then(|registry| registry.get_mut(session_id))
+		.and_then(|jobs| jobs.get_mut(key))
+	{
+		resource.status = Some(status.to_string());
+	}
+}
+
+/// Ask a pending task's poller to stop it (it sends `tasks/cancel`). False when
+/// the session has no pending task under that key.
+pub fn stop_task_for_session(session_id: &str, key: &str) -> bool {
+	let guard = WATCHED.read().unwrap();
+	let Some(stop) = guard
+		.as_ref()
+		.and_then(|registry| registry.get(session_id))
+		.and_then(|jobs| jobs.get(key))
+		.and_then(|resource| resource.stop.as_ref())
+	else {
+		return false;
+	};
+	stop.send_replace(true);
+	true
 }
 
 pub fn attach_sequence_for_session(session_id: &str, uri: &str, sequence: u64) {
@@ -359,6 +417,7 @@ pub(crate) fn pending_resources_for_session(session_id: &str) -> Vec<PendingReso
 			delivering: resource.delivering,
 			started_at: resource.started_at,
 			task: resource.task,
+			status: resource.status.clone(),
 		})
 		.collect();
 	resources.sort_by(|a, b| a.uri.cmp(&b.uri));

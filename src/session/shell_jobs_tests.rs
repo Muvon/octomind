@@ -156,7 +156,7 @@ fn a_task_is_pending_under_its_call_key_and_banks_its_sequence() {
 	let key = task_key("toolu_1");
 	assert_eq!(key, "mcp-task:toolu_1");
 	clear_for_session(sid);
-	register_task_for_session(sid, "octofs", &key, "shell: cargo test");
+	let _stop = register_task_for_session(sid, "octofs", &key, "shell: cargo test");
 	register_for_session(sid, "octofs", "octofs://jobs/resource", "cargo check");
 
 	let pending = pending_resources_for_session(sid);
@@ -173,6 +173,43 @@ fn a_task_is_pending_under_its_call_key_and_banks_its_sequence() {
 	assert_eq!(completed[0].label, "shell: cargo test");
 	assert_eq!(completed[0].body, "built");
 	clear_for_session(sid);
+}
+
+#[test]
+fn a_task_records_its_status_and_is_stopped_through_its_entry() {
+	let sid = "shell-jobs-task-stop-session";
+	let key = task_key("toolu_stop");
+	let resource = "octofs://jobs/not-a-task";
+	clear_for_session(sid);
+	let mut stop = register_task_for_session(sid, "octofs", &key, "shell: cargo test");
+	register_for_session(sid, "octofs", resource, "cargo check");
+
+	set_task_status_for_session(sid, &key, "shell: cargo test · running 5s");
+	let pending = pending_resources_for_session(sid);
+	assert_eq!(
+		pending[0].status.as_deref(),
+		Some("shell: cargo test · running 5s")
+	);
+	assert_eq!(pending[1].status, None);
+
+	assert!(
+		!stop_task_for_session(sid, resource),
+		"a resource is not a task"
+	);
+	assert!(!stop_task_for_session(sid, "mcp-task:unknown"));
+	assert!(!*stop.borrow());
+	assert!(stop_task_for_session(sid, &key));
+	assert!(
+		*stop.borrow_and_update(),
+		"the poller sees the stop request"
+	);
+
+	// Teardown drops the entry and with it the signal, which also stops the poller.
+	clear_for_session(sid);
+	assert!(
+		stop.has_changed().is_err(),
+		"the stop signal closes on teardown"
+	);
 }
 
 /// Receive the next event for `session_id`, skipping events other parallel

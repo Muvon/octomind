@@ -152,8 +152,12 @@ fn monitor_items(session_id: &crate::session::context::SessionId) -> Vec<serde_j
 
 async fn read_mcp_job(job: crate::session::shell_jobs::PendingResource) -> RenderedMcpJob {
 	let elapsed_secs = job.started_at.elapsed().unwrap_or_default().as_secs();
+	// An MCP task has no resource to read; its poller keeps the latest status.
 	let resource_status = if job.task {
-		"MCP task: Octomind polls it and delivers its result".to_string()
+		job.status
+			.as_deref()
+			.map(bound_resource_status)
+			.unwrap_or_else(|| "the task has reported no status yet".to_string())
 	} else {
 		match tokio::time::timeout(
 			RESOURCE_READ_TIMEOUT,

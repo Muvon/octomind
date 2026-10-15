@@ -1964,3 +1964,94 @@ async fn session_task_errors_reach_the_inbox_flagged() {
 	responder.abort();
 	disconnect(&name);
 }
+
+/// The poller records each polled status message, and a stop request (what
+/// `monitor` stop sends) cancels the task on the server and still ends the job
+/// with a flagged outcome.
+#[serial]
+#[tokio::test]
+async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
+	let name = unique_server("task-stop");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let saw_cancel = StdArc::new(AtomicBool::new(false));
+	let flag = StdArc::clone(&saw_cancel);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
+			CreateTaskResult::new(working_task("task-stop")),
+		)),
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(
+			DetailedTask::new(
+				working_task("task-stop").with_status_message("shell: cargo test · running 3s"),
+				TaskPayload::Working,
+			),
+		))),
+		ClientRequest::CancelTaskRequest(_) => {
+			flag.store(true, Ordering::SeqCst);
+			Some(ServerResult::task_ack(()))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-stop-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+		let result = tokio::time::timeout(WAIT, call_tool(&server, &tool_call("stop-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let notice = result.content[0]
+			.as_text()
+			.expect("text notice")
+			.text
+			.clone();
+		assert!(
+			notice.contains("`monitor` with action `stop` and id `mcp-task:stop-1`"),
+			"{notice}"
+		);
+
+		let key = crate::session::shell_jobs::task_key("stop-1");
+		tokio::time::timeout(WAIT, async {
+			loop {
+				let status = crate::session::shell_jobs::pending_resources_for_session(&session_id)
+					.into_iter()
+					.find(|job| job.uri == key)
+					.and_then(|job| job.status);
+				if status.as_deref() == Some("shell: cargo test · running 3s") {
+					break;
+				}
+				tokio::time::sleep(Duration::from_millis(20)).await;
+			}
+		})
+		.await
+		.expect("the polled status message must be recorded");
+
+		assert!(crate::session::shell_jobs::stop_task_for_session(
+			&session_id,
+			&key
+		));
+		let batch = next_inbox_batch().await;
+		assert!(
+			batch[0].content.starts_with(
+				"<background_job task=\"mcp-task:stop-1\" is_error=\"true\">\n\
+				 stopped on request"
+			),
+			"{}",
+			batch[0].content
+		);
+		assert!(
+			saw_cancel.load(Ordering::SeqCst),
+			"tasks/cancel must be sent"
+		);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(
+			&session_id
+		));
+		crate::session::shell_jobs::clear_for_session(&session_id);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}

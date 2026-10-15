@@ -322,8 +322,7 @@ async fn deliver_resource_update(
 
 /// SEP-1724 extension telling a server that this client follows the resource
 /// links in tool results and surfaces their `resources/updated` to the model
-/// (`watch_resource_links` + `on_resource_updated`). octofs promises a background
-/// shell job's exit notification only to clients that declare it.
+/// (`watch_resource_links` + `on_resource_updated`).
 const WATCH_RESOURCE_LINKS_EXTENSION: &str = "io.muvon/watch-resource-links";
 
 /// Client identity + capabilities sent on every request (modern) or during
@@ -1080,11 +1079,14 @@ async fn sleep_or_cancel(
 	}
 }
 
+/// Poll an MCP task to its end. `on_status` sees the task's state on every
+/// `tasks/get`, so a caller can surface its status message while it runs.
 async fn drive_task(
 	service: &McpService,
 	server: &McpServerConfig,
 	task: rmcp::model::CreateTaskResult,
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
+	mut on_status: impl FnMut(&rmcp::model::Task),
 ) -> Result<rmcp::model::CallToolResult> {
 	let task_id = task.task.task_id.clone();
 	let mut poll_interval_ms = task.task.poll_interval_ms.unwrap_or(500).max(50);
@@ -1134,6 +1136,7 @@ async fn drive_task(
 			.poll_interval_ms
 			.unwrap_or(poll_interval_ms)
 			.max(50);
+		on_status(&state.task.task);
 		match state.task.payload {
 			TaskPayload::Working => {}
 			TaskPayload::InputRequired { input_requests } => {
@@ -1169,9 +1172,9 @@ async fn drive_task(
 /// Run an MCP task (SEP-2663) detached from the tool call that created it, the
 /// way a detached shell job runs: register it as a pending background job, poll
 /// it on its own tokio task, and deliver its outcome to the session inbox, which
-/// wakes the model. Returns what the model sees for the call now. Session
-/// teardown reaches `drive_task` as a cancellation, which cancels the task on
-/// the server.
+/// wakes the model. Returns what the model sees for the call now. The registry
+/// entry owns the poller's stop signal: `monitor` stop fires it, and session
+/// teardown drops it — either way `drive_task` cancels the task on the server.
 fn background_task(
 	service: Arc<McpService>,
 	server: McpServerConfig,
@@ -1179,7 +1182,7 @@ fn background_task(
 	tool_id: &str,
 	session_id: String,
 ) -> rmcp::model::CallToolResult {
-	use crate::session::shell_jobs::{self, WatchEvent};
+	use crate::session::shell_jobs;
 
 	let key = shell_jobs::task_key(tool_id);
 	let label = task
@@ -1188,30 +1191,24 @@ fn background_task(
 		.clone()
 		.filter(|message| !message.is_empty())
 		.unwrap_or_else(|| format!("MCP task {}", task.task.task_id));
-	shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
+	let stop = shell_jobs::register_task_for_session(&session_id, server.name(), &key, &label);
 	let notice = format!(
 		"Still running as background task `{key}` ({label}). Its result arrives on its own when it \
 		 finishes. Do only work that doesn't need it; to wait for it, reply with a brief status and \
-		 no tool call."
+		 no tool call. To stop it early, call `monitor` with action `stop` and id `{key}`."
 	);
 
-	// Subscribed before spawning so a teardown racing the spawn is not missed.
-	let mut events = shell_jobs::subscribe_events();
 	tokio::spawn(async move {
-		let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-		let mut cancellation_token = Some(stop_rx);
-		let drive = drive_task(&service, &server, task, &mut cancellation_token);
-		tokio::pin!(drive);
-		let outcome = loop {
-			tokio::select! {
-				outcome = &mut drive => break outcome,
-				event = events.recv() => {
-					if matches!(&event, Ok(WatchEvent::Cleared { session_id: s }) if *s == session_id) {
-						let _ = stop_tx.send(true);
-					}
-				}
+		let mut cancellation_token = Some(stop);
+		let outcome = drive_task(&service, &server, task, &mut cancellation_token, |state| {
+			if let Some(status) = state.status_message.as_deref() {
+				shell_jobs::set_task_status_for_session(&session_id, &key, status);
 			}
-		};
+		})
+		.await;
+		let stopped = cancellation_token
+			.as_ref()
+			.is_some_and(|stop| *stop.borrow());
 		let (body, is_error) = match outcome {
 			Ok(result) => (
 				result
@@ -1221,6 +1218,10 @@ fn background_task(
 					.collect::<Vec<_>>()
 					.join("\n"),
 				result.is_error == Some(true),
+			),
+			Err(_) if stopped => (
+				"stopped on request; the server was asked to cancel it".to_string(),
+				true,
 			),
 			Err(error) if crate::session::cancellation::is_cancelled(&error) => {
 				("the server cancelled the task".to_string(), true)
@@ -1415,7 +1416,7 @@ pub async fn call_tool(
 						session_id.to_string(),
 					));
 				}
-				return drive_task(&service, server, task, &mut cancellation_token).await;
+				return drive_task(&service, server, task, &mut cancellation_token, |_| {}).await;
 			}
 			CallToolResponse::InputRequired(result) => {
 				let had_requests = result

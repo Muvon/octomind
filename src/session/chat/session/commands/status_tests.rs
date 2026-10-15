@@ -49,11 +49,11 @@ async fn status_lists_pending_mcp_jobs_without_scheme_assumptions() {
 }
 
 #[tokio::test]
-async fn status_jobs_view_reports_a_task_without_reading_a_resource() {
+async fn status_jobs_view_reports_a_task_from_its_polled_status() {
 	let session_id = format!("status-command-task-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(session_id.clone(), async {
 		let key = crate::session::shell_jobs::task_key("toolu_status");
-		crate::session::shell_jobs::register_task_for_session(
+		let _stop = crate::session::shell_jobs::register_task_for_session(
 			&session_id,
 			"octofs-test",
 			&key,
@@ -64,7 +64,18 @@ async fn status_jobs_view_reports_a_task_without_reading_a_resource() {
 		assert_eq!(data["jobs"][0]["uri"], key);
 		assert_eq!(
 			data["jobs"][0]["resource_status"],
-			"MCP task: Octomind polls it and delivers its result"
+			"the task has reported no status yet"
+		);
+
+		crate::session::shell_jobs::set_task_status_for_session(
+			&session_id,
+			&key,
+			"shell: cargo test · running 30s",
+		);
+		let data = output_data(handle_status(&["jobs"]).await.expect("status command"));
+		assert_eq!(
+			data["jobs"][0]["resource_status"],
+			"shell: cargo test · running 30s"
 		);
 
 		crate::session::shell_jobs::clear_for_session(&session_id);

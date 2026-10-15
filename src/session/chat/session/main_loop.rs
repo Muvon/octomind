@@ -2191,24 +2191,34 @@ async fn reconcile_pending_background_jobs(
 	reported_statuses.retain(|uri, _| pending_jobs.iter().any(|job| job.uri == *uri));
 	checked_jobs.retain(|uri| pending_jobs.iter().any(|job| job.uri == *uri));
 	for job in pending_jobs {
-		// A delivery already in flight will produce the real completion message,
-		// and an MCP task's poller delivers its outcome itself.
-		if job.delivering || job.task {
+		// A delivery already in flight will produce the real completion message.
+		if job.delivering {
 			continue;
 		}
 		checked_jobs.insert(job.uri.clone());
-		let status = match tokio::time::timeout(
-			RESOURCE_READ_TIMEOUT,
-			crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
-		)
-		.await
-		{
-			Ok(Ok(text)) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
-			Ok(Ok(_)) => JobStatusRead::Unavailable("the resource reports no status".to_string()),
-			Ok(Err(error)) => {
-				JobStatusRead::Unavailable(format!("reading the resource failed: {error}"))
+		// An MCP task has no resource; its poller keeps the server's latest status
+		// message, which is what a stuck task is judged by.
+		let status = if job.task {
+			match job.status {
+				Some(status) if !status.trim().is_empty() => JobStatusRead::Snapshot(status),
+				_ => JobStatusRead::Unavailable("the task has reported no status yet".to_string()),
 			}
-			Err(_) => JobStatusRead::Unavailable("reading the resource timed out".to_string()),
+		} else {
+			match tokio::time::timeout(
+				RESOURCE_READ_TIMEOUT,
+				crate::mcp::client::read_resource_text(&job.server_name, &job.uri),
+			)
+			.await
+			{
+				Ok(Ok(text)) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
+				Ok(Ok(_)) => {
+					JobStatusRead::Unavailable("the resource reports no status".to_string())
+				}
+				Ok(Err(error)) => {
+					JobStatusRead::Unavailable(format!("reading the resource failed: {error}"))
+				}
+				Err(_) => JobStatusRead::Unavailable("reading the resource timed out".to_string()),
+			}
 		};
 		let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
 		let content = background_job_status_message(
@@ -2246,7 +2256,7 @@ fn reconcile_delay(checked_jobs: &std::collections::HashSet<String>) -> std::tim
 	};
 	let unchecked = crate::session::shell_jobs::pending_resources_for_session(&session_id)
 		.iter()
-		.any(|job| !job.delivering && !job.task && !checked_jobs.contains(&job.uri));
+		.any(|job| !job.delivering && !checked_jobs.contains(&job.uri));
 	if unchecked {
 		std::time::Duration::ZERO
 	} else {

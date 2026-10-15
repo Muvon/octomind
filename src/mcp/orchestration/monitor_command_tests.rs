@@ -370,6 +370,65 @@ async fn monitor_stop_cancels_a_running_monitor() {
 	crate::session::context::cleanup_session(&sid);
 }
 
+/// `list` and `stop` reach the session's background MCP tasks: stopping one
+/// fires its poller's stop signal, and an unknown id is an error.
+#[tokio::test]
+async fn monitor_lists_and_stops_a_background_task() {
+	let sid = format!("monitor-task-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(sid.clone(), async {
+		init_for_session();
+		let key = crate::session::shell_jobs::task_key("toolu_monitor");
+		let stop = crate::session::shell_jobs::register_task_for_session(
+			&sid,
+			"octofs",
+			&key,
+			"shell: cargo test",
+		);
+		crate::session::shell_jobs::set_task_status_for_session(
+			&sid,
+			&key,
+			"shell: cargo test · running 7s",
+		);
+
+		let listing = text_of(
+			&execute_monitor_tool(&monitor_call(serde_json::json!({"action": "list"})))
+				.await
+				.expect("dispatch"),
+		);
+		assert!(
+			listing.contains(&format!("[{key}] shell: cargo test")),
+			"{listing}"
+		);
+		assert!(
+			listing.contains("Status: shell: cargo test · running 7s"),
+			"{listing}"
+		);
+
+		let result = execute_monitor_tool(&monitor_call(
+			serde_json::json!({"action": "stop", "id": key}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(!is_err(&result), "stop failed: {}", text_of(&result));
+		assert!(
+			text_of(&result).contains("Stopping background task"),
+			"got: {}",
+			text_of(&result)
+		);
+		assert!(*stop.borrow(), "the task's poller is told to stop");
+
+		let missing = execute_monitor_tool(&monitor_call(
+			serde_json::json!({"action": "stop", "id": "mcp-task:none"}),
+		))
+		.await
+		.expect("dispatch");
+		assert!(is_err(&missing));
+		crate::session::shell_jobs::clear_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn monitor_timeout_kills_the_command_and_reports_it() {

@@ -255,27 +255,36 @@ async fn background_job_left_running_at_turn_end_is_checked_at_once() {
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
-/// An MCP task's poller delivers its outcome, so the reconcile pass neither
-/// reads it as a resource nor hurries a status check for it.
+/// An MCP task has no resource to read: its status check reports the latest
+/// status message its poller saw, and is due at once like any unchecked job.
 #[tokio::test]
-async fn background_task_is_left_to_its_poller() {
+async fn background_task_status_check_reports_the_polled_status() {
 	let session_id = "main-loop-background-task";
 	let key = crate::session::shell_jobs::task_key("toolu_task");
+	let status = "shell: cargo test · PID 42 (stop: kill -- -42) · running 30s · test a ... ok";
 	crate::session::shell_jobs::clear_for_session(session_id);
-	crate::session::shell_jobs::register_task_for_session(
+	let _stop = crate::session::shell_jobs::register_task_for_session(
 		session_id,
 		"custommcp",
 		&key,
 		"background task",
 	);
+	crate::session::shell_jobs::set_task_status_for_session(session_id, &key, status);
 
 	crate::session::context::with_session_id(session_id.to_string(), async {
+		crate::session::inbox::init_inbox_for_session();
 		let mut reported_statuses = std::collections::HashMap::new();
 		let mut checked_jobs = std::collections::HashSet::new();
-		assert_eq!(reconcile_delay(&checked_jobs), BACKGROUND_JOB_RECONCILE);
+		assert_eq!(reconcile_delay(&checked_jobs), std::time::Duration::ZERO);
 		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
-		assert!(checked_jobs.is_empty());
-		assert!(reported_statuses.is_empty());
+		assert!(checked_jobs.contains(&key));
+		assert_eq!(
+			reported_statuses.get(&key).map(String::as_str),
+			Some(status)
+		);
+		let batch = crate::session::inbox::drain_inbox_batch();
+		assert_eq!(batch.len(), 1);
+		assert!(batch[0].content.contains(status), "{}", batch[0].content);
 	})
 	.await;
 	assert!(crate::session::shell_jobs::has_pending_for_session(

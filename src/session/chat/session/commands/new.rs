@@ -39,3 +39,7 @@ pub fn handle_new(session: &mut ChatSession, params: &[&str]) -> Result<CommandR
 
 	Ok(CommandResult::SwitchSession(new_session_name))
 }
+
+#[cfg(test)]
+#[path = "new_tests.rs"]
+mod tests;

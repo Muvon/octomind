@@ -264,3 +264,7 @@ fn session_report(session: &ChatSession, config: &Config) -> Result<CommandResul
 		)))
 	}
 }
+
+#[cfg(test)]
+#[path = "report_tests.rs"]
+mod tests;

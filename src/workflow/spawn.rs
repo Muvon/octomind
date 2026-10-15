@@ -101,3 +101,7 @@ pub async fn run_tap_workflow(name: &str, input: &str) -> Result<RunOutcome> {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "spawn_tests.rs"]
+mod tests;

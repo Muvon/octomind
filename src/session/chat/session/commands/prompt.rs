@@ -99,3 +99,7 @@ fn process_prompt_template(template: &str, _config: &Config, _role: &str) -> Res
 	// Could support variables like {role}, {model}, {timestamp}, etc.
 	Ok(template.to_string())
 }
+
+#[cfg(test)]
+#[path = "prompt_tests.rs"]
+mod tests;

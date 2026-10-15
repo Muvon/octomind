@@ -1079,10 +1079,19 @@ async fn sleep_or_cancel(
 	}
 }
 
+/// Longest wait between `tasks/get` attempts while the server cannot be reached.
+const MAX_TASK_POLL_BACKOFF: Duration = Duration::from_secs(60);
+
 /// Poll an MCP task to its end. `on_status` sees the task's state on every
 /// `tasks/get`, so a caller can surface its status message while it runs.
+///
+/// Only the server ends a task: a terminal state, its id no longer known
+/// (`-32602`, e.g. after a restart), or another error it returns. A poll that
+/// times out or loses the transport says nothing about the task, so polling
+/// continues with backoff, reconnecting a closed connection; the caller's
+/// cancellation (`monitor` stop, session teardown) bounds the wait.
 async fn drive_task(
-	service: &McpService,
+	mut service: Arc<McpService>,
 	server: &McpServerConfig,
 	task: rmcp::model::CreateTaskResult,
 	cancellation_token: &mut Option<tokio::sync::watch::Receiver<bool>>,
@@ -1090,6 +1099,8 @@ async fn drive_task(
 ) -> Result<rmcp::model::CallToolResult> {
 	let task_id = task.task.task_id.clone();
 	let mut poll_interval_ms = task.task.poll_interval_ms.unwrap_or(500).max(50);
+	// Polls in a row that got no answer; the backoff grows with them.
+	let mut failed_polls = 0u32;
 	loop {
 		if cancellation_token.as_ref().is_some_and(|rx| *rx.borrow()) {
 			let _ = tokio::time::timeout(
@@ -1101,9 +1112,10 @@ async fn drive_task(
 			.await;
 			return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 		}
-		if let Err(error) =
-			sleep_or_cancel(Duration::from_millis(poll_interval_ms), cancellation_token).await
-		{
+		let delay =
+			Duration::from_millis(poll_interval_ms.saturating_mul(1u64 << failed_polls.min(10)))
+				.min(MAX_TASK_POLL_BACKOFF.max(Duration::from_millis(poll_interval_ms)));
+		if let Err(error) = sleep_or_cancel(delay, cancellation_token).await {
 			if crate::session::cancellation::is_cancelled(&error) {
 				let _ = tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
@@ -1115,13 +1127,11 @@ async fn drive_task(
 			}
 			return Err(error);
 		}
-		let state = tokio::select! {
+		let polled = tokio::select! {
 			result = tokio::time::timeout(
 				Duration::from_secs(server.timeout_seconds()),
 				service.peer().get_task(GetTaskParams::new(task_id.clone())),
-			) => result
-				.map_err(|_| anyhow!("tasks/get timed out for task '{task_id}'"))?
-				.map_err(|e| anyhow!("tasks/get failed for task '{task_id}': {e}"))?,
+			) => result,
 			_ = wait_cancelled(cancellation_token) => {
 				let _ = tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
@@ -1130,6 +1140,43 @@ async fn drive_task(
 				return Err(anyhow::Error::new(crate::session::cancellation::Cancelled));
 			}
 		};
+		let state = match polled {
+			Ok(Ok(state)) => state,
+			Ok(Err(ServiceError::McpError(error)))
+				if error.code == rmcp::model::ErrorCode::INVALID_PARAMS =>
+			{
+				return Err(anyhow!(
+					"the server no longer knows MCP task '{task_id}' (it may have restarted): {}",
+					error.message
+				));
+			}
+			Ok(Err(
+				ServiceError::TransportClosed
+				| ServiceError::TransportSend(_)
+				| ServiceError::Cancelled { .. },
+			)) => {
+				failed_polls += 1;
+				// A fresh connection may be a fresh server process; the next poll
+				// learns whether it still knows the task.
+				match get_or_connect(server).await {
+					Ok(fresh) => service = fresh,
+					Err(error) => {
+						crate::log_debug!(format!(
+							"reconnecting for MCP task '{task_id}' failed: {error}"
+						))
+					}
+				}
+				continue;
+			}
+			Ok(Err(ServiceError::Timeout { .. })) | Err(_) => {
+				failed_polls += 1;
+				continue;
+			}
+			Ok(Err(error)) => {
+				return Err(anyhow!("tasks/get failed for task '{task_id}': {error}"));
+			}
+		};
+		failed_polls = 0;
 		poll_interval_ms = state
 			.task
 			.task
@@ -1140,7 +1187,7 @@ async fn drive_task(
 		match state.task.payload {
 			TaskPayload::Working => {}
 			TaskPayload::InputRequired { input_requests } => {
-				let responses = fulfill_input_requests(service, input_requests).await?;
+				let responses = fulfill_input_requests(&service, input_requests).await?;
 				tokio::time::timeout(
 					Duration::from_secs(server.timeout_seconds()),
 					service
@@ -1198,51 +1245,58 @@ fn background_task(
 		 no tool call. To stop it early, call `monitor` with action `stop` and id `{key}`."
 	);
 
-	tokio::spawn(async move {
-		let mut cancellation_token = Some(stop);
-		let outcome = drive_task(&service, &server, task, &mut cancellation_token, |state| {
-			if let Some(status) = state.status_message.as_deref() {
-				shell_jobs::set_task_status_for_session(&session_id, &key, status);
+	// Task-locals do not cross `tokio::spawn`: re-enter the session so a reconnect
+	// while polling carries this session's context to the server.
+	let scope = session_id.clone();
+	tokio::spawn(crate::session::context::with_session_id(
+		scope,
+		async move {
+			let mut cancellation_token = Some(stop);
+			let outcome = drive_task(service, &server, task, &mut cancellation_token, |state| {
+				if let Some(status) = state.status_message.as_deref() {
+					shell_jobs::set_task_status_for_session(&session_id, &key, status);
+				}
+			})
+			.await;
+			let stopped = cancellation_token
+				.as_ref()
+				.is_some_and(|stop| *stop.borrow());
+			let (body, is_error) = match outcome {
+				Ok(result) => (
+					result
+						.content
+						.iter()
+						.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+						.collect::<Vec<_>>()
+						.join("\n"),
+					result.is_error == Some(true),
+				),
+				Err(_) if stopped => (
+					"stopped on request; the server was asked to cancel it".to_string(),
+					true,
+				),
+				Err(error) if crate::session::cancellation::is_cancelled(&error) => {
+					("the server cancelled the task".to_string(), true)
+				}
+				Err(error) => (format!("{error:#}"), true),
+			};
+			// False once the session was torn down: nobody is left to deliver to.
+			if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
+				return;
 			}
-		})
-		.await;
-		let stopped = cancellation_token
-			.as_ref()
-			.is_some_and(|stop| *stop.borrow());
-		let (body, is_error) = match outcome {
-			Ok(result) => (
-				result
-					.content
-					.iter()
-					.filter_map(|block| block.as_text().map(|text| text.text.as_str()))
-					.collect::<Vec<_>>()
-					.join("\n"),
-				result.is_error == Some(true),
-			),
-			Err(_) if stopped => (
-				"stopped on request; the server was asked to cancel it".to_string(),
-				true,
-			),
-			Err(error) if crate::session::cancellation::is_cancelled(&error) => {
-				("the server cancelled the task".to_string(), true)
-			}
-			Err(error) => (format!("{error:#}"), true),
-		};
-		// False once the session was torn down: nobody is left to deliver to.
-		if !shell_jobs::begin_delivery_for_session(&session_id, &key) {
-			return;
-		}
-		let error = if is_error { " is_error=\"true\"" } else { "" };
-		let content = format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
-		crate::session::inbox::push_inbox_message_for_session(
-			&session_id,
-			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
-				content,
-			},
-		);
-		shell_jobs::complete_for_session(&session_id, &key, &body);
-	});
+			let error = if is_error { " is_error=\"true\"" } else { "" };
+			let content =
+				format!("<background_job task=\"{key}\"{error}>\n{body}\n</background_job>");
+			crate::session::inbox::push_inbox_message_for_session(
+				&session_id,
+				crate::session::inbox::InboxMessage {
+					source: crate::session::inbox::InboxSource::BackgroundJob { id: key.clone() },
+					content,
+				},
+			);
+			shell_jobs::complete_for_session(&session_id, &key, &body);
+		},
+	));
 
 	rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(notice)])
 }
@@ -1416,7 +1470,7 @@ pub async fn call_tool(
 						session_id.to_string(),
 					));
 				}
-				return drive_task(&service, server, task, &mut cancellation_token, |_| {}).await;
+				return drive_task(service, server, task, &mut cancellation_token, |_| {}).await;
 			}
 			CallToolResponse::InputRequired(result) => {
 				let had_requests = result

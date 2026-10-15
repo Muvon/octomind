@@ -2055,3 +2055,149 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 	responder.abort();
 	disconnect(&name);
 }
+
+fn completed_task(id: &str, text: &str) -> ServerResult {
+	let result = serde_json::to_value(CallToolResult::success(vec![ContentBlock::text(text)]))
+		.expect("serialize completed result");
+	ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+		working_task(id),
+		TaskPayload::Completed {
+			result: result.as_object().expect("object").clone(),
+		},
+	)))
+}
+
+/// A `tasks/get` that times out says nothing about the task: polling goes on
+/// and the next answer completes the call.
+#[serial]
+#[tokio::test]
+async fn task_poll_keeps_going_after_a_timed_out_tasks_get() {
+	let name = unique_server("task-poll-timeout");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	// A 1s request timeout so the unanswered poll expires quickly.
+	let server = stdin_config(&name, "unused", Vec::new(), 1);
+
+	let polls = StdArc::new(AtomicUsize::new(0));
+	let counter = StdArc::clone(&polls);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
+			CreateTaskResult::new(working_task("task-slow")),
+		)),
+		// The first poll is never answered.
+		ClientRequest::GetTaskRequest(_) if counter.fetch_add(1, Ordering::SeqCst) == 0 => None,
+		ClientRequest::GetTaskRequest(_) => Some(completed_task("task-slow", "done")),
+		_ => None,
+	});
+
+	let result = tokio::time::timeout(WAIT, call_tool(&server, &tool_call("slow-1"), None))
+		.await
+		.expect("polling must not hang")
+		.expect("a timed-out poll must not fail the task");
+	assert_eq!(result.content[0].as_text().expect("text").text, "done");
+	assert!(polls.load(Ordering::SeqCst) >= 2);
+
+	responder.abort();
+	disconnect(&name);
+}
+
+/// Start a task on one in-memory connection, wait for its first poll, then
+/// replace the connection with a second one answered by `respond` and close
+/// the first, as a reconnect after a dropped transport would.
+async fn poll_across_a_reconnect(
+	tag: &str,
+	respond: impl Fn(rmcp::model::RequestId) -> RxJsonRpcMessage<RoleClient> + Send + 'static,
+) -> Result<CallToolResult> {
+	let name = unique_server(tag);
+	let first = serve_in_memory(&name);
+	register(&name, first.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let polled = StdArc::new(AtomicBool::new(false));
+	let flag = StdArc::clone(&polled);
+	let first_responder =
+		spawn_responder(
+			first.outgoing,
+			first.incoming,
+			move |request| match request {
+				ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
+					CreateTaskResult::new(working_task("task-moved")),
+				)),
+				ClientRequest::GetTaskRequest(_) => {
+					flag.store(true, Ordering::SeqCst);
+					Some(ServerResult::GetTaskResult(GetTaskResult::new(
+						DetailedTask::new(working_task("task-moved"), TaskPayload::Working),
+					)))
+				}
+				_ => None,
+			},
+		);
+	let call = tokio::spawn(async move { call_tool(&server, &tool_call("moved-1"), None).await });
+	tokio::time::timeout(WAIT, async {
+		while !polled.load(Ordering::SeqCst) {
+			tokio::time::sleep(Duration::from_millis(10)).await;
+		}
+	})
+	.await
+	.expect("the task must be polled on the first connection");
+
+	let second = serve_in_memory(&name);
+	register(&name, second.service);
+	let mut outgoing = second.outgoing;
+	let incoming = second.incoming;
+	let second_responder = tokio::spawn(async move {
+		while let Some(message) = outgoing.next().await {
+			if let JsonRpcMessage::Request(request) = message {
+				if matches!(request.request, ClientRequest::GetTaskRequest(_)) {
+					incoming
+						.unbounded_send(respond(request.id))
+						.expect("fake server channel must stay open");
+				}
+			}
+		}
+	});
+	// Dropping the first responder drops the first connection's transport.
+	first_responder.abort();
+
+	let outcome = tokio::time::timeout(WAIT, call)
+		.await
+		.expect("polling must not hang across a reconnect")
+		.expect("call task must not panic");
+	second_responder.abort();
+	disconnect(&name);
+	outcome
+}
+
+/// A closed connection is not the task's end: the poller reconnects and the
+/// server that still knows the task completes it.
+#[serial]
+#[tokio::test]
+async fn task_poll_reconnects_after_the_connection_closes() {
+	let result = poll_across_a_reconnect("task-reconnect", |id| {
+		JsonRpcMessage::response(completed_task("task-moved", "done"), id)
+	})
+	.await
+	.expect("the reconnected poll must complete the task");
+	assert_eq!(result.content[0].as_text().expect("text").text, "done");
+}
+
+/// After a reconnect to a server that no longer knows the task (a restarted
+/// process), the task is reported lost instead of polled forever.
+#[serial]
+#[tokio::test]
+async fn task_unknown_after_a_reconnect_is_reported_lost() {
+	let error = poll_across_a_reconnect("task-lost", |id| {
+		JsonRpcMessage::error(
+			rmcp::ErrorData::invalid_params("unknown task: task-moved", None),
+			Some(id),
+		)
+	})
+	.await
+	.expect_err("an unknown task must end the call");
+	assert!(
+		error
+			.to_string()
+			.contains("the server no longer knows MCP task 'task-moved'"),
+		"unexpected error: {error}"
+	);
+}

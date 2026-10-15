@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.58.4] - 2026-10-15
+
+### 📋 Release Summary
+
+Agent output no longer includes invented reminders, and parallel and conditional workflow execution now behaves correctly.
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update locked dependency versions `7a5fde97`
+- **websocket**: cover spending stops and monitor lifecycle `94ae58d3`
+- **workflow**: cover workflow execution modes `09a01c52`
+
+### 🐛 Bug Fixes & Stability
+
+- **session**: strip invented reminders from agent output `ec52bc0a`
+- **workflow**: fix parallel and conditional workflow execution `e6f88235`
+
 ## [0.58.3] - 2026-10-15
 
 ### 📋 Release Summary

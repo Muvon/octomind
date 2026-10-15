@@ -255,6 +255,35 @@ async fn background_job_left_running_at_turn_end_is_checked_at_once() {
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
+/// An MCP task's poller delivers its outcome, so the reconcile pass neither
+/// reads it as a resource nor hurries a status check for it.
+#[tokio::test]
+async fn background_task_is_left_to_its_poller() {
+	let session_id = "main-loop-background-task";
+	let key = crate::session::shell_jobs::task_key("toolu_task");
+	crate::session::shell_jobs::clear_for_session(session_id);
+	crate::session::shell_jobs::register_task_for_session(
+		session_id,
+		"custommcp",
+		&key,
+		"background task",
+	);
+
+	crate::session::context::with_session_id(session_id.to_string(), async {
+		let mut reported_statuses = std::collections::HashMap::new();
+		let mut checked_jobs = std::collections::HashSet::new();
+		assert_eq!(reconcile_delay(&checked_jobs), BACKGROUND_JOB_RECONCILE);
+		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
+		assert!(checked_jobs.is_empty());
+		assert!(reported_statuses.is_empty());
+	})
+	.await;
+	assert!(crate::session::shell_jobs::has_pending_for_session(
+		session_id
+	));
+	crate::session::shell_jobs::clear_for_session(session_id);
+}
+
 #[test]
 fn test_clipboard_image_refused_for_known_non_vision_model() {
 	use crate::session::chat::reedline_adapter::PendingClipboardItem;

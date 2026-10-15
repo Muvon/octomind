@@ -1876,3 +1876,91 @@ async fn session_teardown_cancels_a_background_task() {
 	responder.abort();
 	disconnect(&name);
 }
+
+/// A failed outcome still ends the job, flagged so the model reads it as a
+/// failure: a completed result with `isError`, or a task the server failed.
+#[serial]
+#[tokio::test]
+async fn session_task_errors_reach_the_inbox_flagged() {
+	let name = unique_server("task-errors");
+	let peer = serve_in_memory(&name);
+	register(&name, peer.service);
+	let server = stdin_config(&name, "unused", Vec::new(), 5);
+
+	let calls = StdArc::new(AtomicUsize::new(0));
+	let counter = StdArc::clone(&calls);
+	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => {
+			let id = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+				"task-err"
+			} else {
+				"task-fail"
+			};
+			Some(ServerResult::CreateTaskResult(CreateTaskResult::new(
+				working_task(id),
+			)))
+		}
+		ClientRequest::GetTaskRequest(request) => {
+			let id = request.params.task_id;
+			let payload = if id == "task-err" {
+				let result = serde_json::to_value(CallToolResult::error(vec![ContentBlock::text(
+					"Command failed with exit code 3",
+				)]))
+				.expect("serialize error result");
+				TaskPayload::Completed {
+					result: result.as_object().expect("object").clone(),
+				}
+			} else {
+				let error = serde_json::json!({"code": -32603, "message": "boom"});
+				TaskPayload::Failed {
+					error: error.as_object().expect("object").clone(),
+				}
+			};
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(
+				DetailedTask::new(working_task(&id), payload),
+			)))
+		}
+		_ => None,
+	});
+
+	let session_id = format!("cov-task-errors-{}", uuid::Uuid::new_v4());
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::inbox::init_inbox_for_session();
+
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("err-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let batch = next_inbox_batch().await;
+		assert!(
+			batch[0].content.starts_with(
+				"<background_job task=\"mcp-task:err-1\" is_error=\"true\">\n\
+				 Command failed with exit code 3"
+			),
+			"{}",
+			batch[0].content
+		);
+
+		tokio::time::timeout(WAIT, call_tool(&server, &tool_call("fail-1"), None))
+			.await
+			.expect("a session task must not hold the call")
+			.expect("the call must hand back a notice");
+		let batch = next_inbox_batch().await;
+		assert!(
+			batch[0]
+				.content
+				.starts_with("<background_job task=\"mcp-task:fail-1\" is_error=\"true\">"),
+			"{}",
+			batch[0].content
+		);
+		assert!(batch[0].content.contains("boom"), "{}", batch[0].content);
+		assert!(!crate::session::shell_jobs::has_pending_for_session(
+			&session_id
+		));
+		crate::session::shell_jobs::clear_for_session(&session_id);
+	})
+	.await;
+
+	responder.abort();
+	disconnect(&name);
+}

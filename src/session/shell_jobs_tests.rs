@@ -150,6 +150,31 @@ fn clear_drops_banked_completions() {
 	assert!(take_completed_for_session(sid).is_empty());
 }
 
+#[test]
+fn a_task_is_pending_under_its_call_key_and_banks_its_sequence() {
+	let sid = "shell-jobs-task-session";
+	let key = task_key("toolu_1");
+	assert_eq!(key, "mcp-task:toolu_1");
+	clear_for_session(sid);
+	register_task_for_session(sid, "octofs", &key, "shell: cargo test");
+	register_for_session(sid, "octofs", "octofs://jobs/resource", "cargo check");
+
+	let pending = pending_resources_for_session(sid);
+	assert_eq!(pending.len(), 2);
+	assert_eq!(pending[0].uri, key);
+	assert!(pending[0].task, "a task has no resource to read");
+	assert!(!pending[1].task, "a resource link stays a resource");
+
+	attach_sequence_for_session(sid, &key, 4);
+	assert!(complete_for_session(sid, &key, "built"));
+	let completed = take_completed_for_session(sid);
+	assert_eq!(completed.len(), 1);
+	assert_eq!(completed[0].sequence, Some(4));
+	assert_eq!(completed[0].label, "shell: cargo test");
+	assert_eq!(completed[0].body, "built");
+	clear_for_session(sid);
+}
+
 /// Receive the next event for `session_id`, skipping events other parallel
 /// tests publish for their own sessions (the channel is global).
 async fn next_event_for(

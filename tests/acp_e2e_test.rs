@@ -584,6 +584,9 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 	config.supervisor.model.model = Some("ollama:fake-model".into());
 	config.supervisor.learning.enabled = false;
 	config.supervisor.plan.enabled = false;
+	// Condense compacts a specialist brief concurrently with task resolution;
+	// that extra, unordered call would steal a scripted response.
+	config.supervisor.condense.enabled = false;
 	config.decision.model = None;
 	std::fs::write(path, toml::to_string(&config).unwrap()).unwrap();
 	let mut client = AcpClient::spawn(home.path(), &stub_url).await;

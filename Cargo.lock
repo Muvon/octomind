@@ -3289,6 +3289,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimad"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3682,9 +3692,9 @@ dependencies = [
 
 [[package]]
 name = "octolib"
-version = "0.41.16"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a8abc8aa1eab8a04d01371c725e39c0f0e1880be6edd587e12dbf5a4f0bfcf5"
+checksum = "8a3c13f25bfd8631cd9f0ab9eea4a40da9efbdf91e6c28ca1015ca30fd5179bd"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4524,6 +4534,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -5905,6 +5916,12 @@ dependencies = [
  "thiserror 1.0.69",
  "ug",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
 
 [[package]]
 name = "unicode-general-category"

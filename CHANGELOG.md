@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.58.3] - 2026-10-15
+
+### 📋 Release Summary
+
+Markdown link extraction now skips image targets and includes exclamation-prefixed links. MCP monitor listings no longer show elapsed time.
+
+### 🔧 Improvements & Optimizations
+
+- **acp**: disable condensation in usage test `c0fae3a9`
+
+### 🐛 Bug Fixes & Stability
+
+- **markdown-links**: skip image targets when extracting links `554265b0`
+- **markdown**: include exclamation-prefixed links `08382603`
+- **mcp-monitor**: remove elapsed time from monitor listings `54b6e38b`
+
 ## [0.58.2] - 2026-10-15
 
 ### 📋 Release Summary

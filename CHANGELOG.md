@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.58.2] - 2026-10-15
+
+### 📋 Release Summary
+
+Specialist briefs can now be reused across chat turns. Task condensation preserves whole-task targets and recovery content, while authorization handling is aligned with prohibited actions and scope conflicts.
+
+### ✨ New Features & Enhancements
+
+- **chat**: reuse specialist briefs across chat turns `ee4c453f`
+
+### 🔧 Improvements & Optimizations
+
+- **supervisor**: clear persisted spills between tests `ffd4b6a0`
+- **dependencies**: upgrade octolib to 0.42.0 `de0a1c6e`
+
+### 🐛 Bug Fixes & Stability
+
+- **condensation**: preserve whole-task targets during condensation `c4d544e9`
+- **supervisor**: preserve recovery content during condensation `7496afd4`
+- **supervisor**: correct authorizer question count comment `8a4a4be0`
+- **supervisor**: align authorization with prohibited and scope conflicts `1e2bded1`
+
+### 📚 Documentation & Examples
+
+- **readme**: refresh README documentation `df247a5f`
+
 ## [0.58.1] - 2026-10-15
 
 ### 📋 Release Summary

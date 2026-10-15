@@ -1353,3 +1353,396 @@ fn continued_steps_preserve_five_category_totals() {
 		}
 	}
 }
+
+// ---- Success-path executor tests (fixture subprocess) ----
+// Under `cargo test` the spawned step subprocess is the test binary itself,
+// which rejects `run --format jsonl` — every success-path arm of run_step
+// is unreachable with the real binary. These tests install the cfg(test)
+// exe override pointing run_step at a POSIX shell fixture whose behavior
+// is selected by the prompt it reads on stdin. Unix-only: the fixture is
+// an executable POSIX shell script (no shebang support on Windows).
+
+#[cfg(unix)]
+const FIXTURE_SCRIPT: &str = r#"#!/bin/sh
+# Behavior is selected by the prompt on stdin:
+#   *EMPTY*   → emits a cost frame but no assistant text (RunOutcome::Empty)
+#   *TIMEOUT* → sleeps past any step timeout (RunOutcome::Timeout)
+#   *FAIL*    → writes to stderr and exits 3 (RunOutcome::NonZero)
+#   otherwise → echoes the prompt as an assistant frame plus a cost frame
+prompt=$(cat)
+case "$prompt" in
+	*EMPTY*)
+		printf '%s\n' '{"type":"cost","session_tokens":10,"session_cost":0.001,"input_tokens":10,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"s"}'
+		;;
+	*TIMEOUT*)
+		sleep 30
+		;;
+	*FAIL*)
+		echo "fixture step failure" >&2
+		exit 3
+		;;
+	*)
+		printf '{"type":"assistant","content":"%s","session_id":"s"}\n' "$prompt"
+		printf '{"type":"cost","session_tokens":42,"session_cost":0.01,"input_tokens":40,"output_tokens":2,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"s"}\n'
+		;;
+esac
+"#;
+
+#[cfg(unix)]
+fn install_step_fixture() {
+	use std::os::unix::fs::PermissionsExt;
+	// Written once per process: rewriting the same temp file from parallel
+	// tests lets a concurrently-spawned subprocess execute a half-written
+	// script and fail with a bogus empty output.
+	static FIXTURE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+	let path = FIXTURE.get_or_init(|| {
+		let path = std::env::temp_dir().join("octomind-run-tests-step-fixture.sh");
+		std::fs::write(&path, FIXTURE_SCRIPT).expect("write fixture script");
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+			.expect("chmod fixture script");
+		path
+	});
+	crate::workflow::proc::set_test_step_exe(Some(path.clone()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_sequential_ok_returns_stats_and_folds_into_totals() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "ok"
+		role = "developer:general"
+		prompt = "SUCCEED: all good"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	let stats = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect("fixture step succeeds");
+	assert_eq!(stats.output, "SUCCEED: all good");
+	assert!((stats.cost - 0.01).abs() < 1e-9);
+	assert_eq!(stats.input_tokens, 40);
+	// The Ok arm folds the step into the running totals exactly once.
+	assert!((ex.totals.cost - 0.01).abs() < 1e-9);
+	assert_eq!(ex.totals.input_tokens, 40);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_sequential_continue_success_folds_second_turn_to_delta() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "cont"
+		role = "developer:general"
+		prompt = "SUCCEED: round one"
+		session = "continue"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("c", false);
+	let first = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect("first turn succeeds");
+	assert!((first.cost - 0.01).abs() < 1e-9);
+	assert_eq!(ex.used_continue.get("cont"), Some(&true));
+
+	// The fixture reports the same cumulative frame both turns, so the
+	// second turn's folded delta is zero — cumulative figures are not
+	// double-counted on session reuse.
+	let second = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect("second turn succeeds");
+	assert!(
+		second.cost.abs() < 1e-9,
+		"second turn delta must fold to zero, got {}",
+		second.cost
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_sequential_empty_output_fails_with_attempt_count() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "mute"
+		role = "developer:general"
+		prompt = "give EMPTY nothing"
+		retries = 1
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("empty output must fail the step");
+	let msg = err.to_string();
+	assert!(
+		msg.contains("produced no assistant output (attempt 2/2)"),
+		"got: {msg}"
+	);
+	assert!(msg.contains("failed after 2 attempts"), "got: {msg}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_sequential_timeout_reports_elapsed_seconds() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		name = "slow"
+		role = "developer:general"
+		prompt = "TIMEOUT: sleep forever"
+		timeout = 1
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Sequential(s) = &wf.steps[0] else {
+		panic!("expected a sequential step");
+	};
+	let mut ex = executor_for("wf", false);
+	let err = ex
+		.exec_sequential(s, "DO", "")
+		.await
+		.expect_err("timeout must fail the step");
+	let msg = err.to_string();
+	assert!(
+		msg.contains("timed out after 1s (attempt 1/1)"),
+		"got: {msg}"
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_loop_exits_when_condition_matches() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		loop = true
+		name = "refine"
+		max_iterations = 3
+		[steps.exit_when]
+		contains = "DONE"
+		[[steps.run]]
+		name = "worker"
+		role = "developer:general"
+		prompt = "SUCCEED: job DONE"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Loop(_) = &wf.steps[0] else {
+		panic!("expected a loop step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("loop exits on the first match");
+	assert_eq!(
+		ex.outputs.get("worker"),
+		Some(&"SUCCEED: job DONE".to_string())
+	);
+	// The loop's canonical output is the last sub-step's output.
+	assert_eq!(
+		ex.outputs.get("refine"),
+		Some(&"SUCCEED: job DONE".to_string())
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_loop_max_iterations_without_match_still_succeeds() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		loop = true
+		name = "refine"
+		max_iterations = 2
+		[steps.exit_when]
+		contains = "NEVER"
+		[[steps.run]]
+		name = "worker"
+		role = "developer:general"
+		prompt = "SUCCEED: plain"
+		"#,
+	)
+	.expect("workflow parses");
+	let Step::Loop(_) = &wf.steps[0] else {
+		panic!("expected a loop step");
+	};
+	let mut ex = executor_for("wf", false);
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("loop completes at max iterations");
+	assert_eq!(
+		ex.outputs.get("refine"),
+		Some(&"SUCCEED: plain".to_string())
+	);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_parallel_static_success_wires_each_substep_output() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		parallel = true
+		name = "fan"
+		[[steps.run]]
+		name = "a"
+		role = "developer:general"
+		prompt = "SUCCEED: alpha"
+		[[steps.run]]
+		name = "b"
+		role = "developer:general"
+		prompt = "SUCCEED: beta"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("both branches succeed");
+	assert_eq!(ex.outputs.get("a"), Some(&"SUCCEED: alpha".to_string()));
+	assert_eq!(ex.outputs.get("b"), Some(&"SUCCEED: beta".to_string()));
+	// Two sub-steps → the block's own output is the labeled join.
+	let fan = ex.outputs.get("fan").expect("block output stored");
+	assert!(fan.contains("── a ──"), "got: {fan}");
+	assert!(fan.contains("── b ──"), "got: {fan}");
+	assert_eq!(ex.last_step, Some("fan".to_string()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_parallel_dynamic_success_expands_one_branch_per_match() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		parallel = true
+		name = "fanout"
+		match = "(?s)<task>(.*?)</task>"
+		source = "tasks"
+		[[steps.run]]
+		name = "worker"
+		role = "developer:general"
+		prompt = "do {{fanout}}"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	ex.outputs.insert(
+		"tasks".to_string(),
+		"<task>SUCCEED: one</task><task>SUCCEED: two</task>".to_string(),
+	);
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("both matched items run");
+	// Each branch's prompt resolved the block name to its own item.
+	let worker = ex.outputs.get("worker").expect("sub-step output stored");
+	assert!(worker.contains("do SUCCEED: one"), "got: {worker}");
+	assert!(worker.contains("do SUCCEED: two"), "got: {worker}");
+	// Ordered mode: a dynamic block's last output is its expanded sub-step.
+	assert_eq!(ex.last_step, Some("worker".to_string()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_parallel_min_success_allows_partial_failure() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		parallel = true
+		name = "fan"
+		min_success = 1
+		[[steps.run]]
+		name = "good"
+		role = "developer:general"
+		prompt = "SUCCEED: alpha"
+		[[steps.run]]
+		name = "bad"
+		role = "developer:general"
+		prompt = "FAIL: beta"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", false);
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("one success meets min_success");
+	assert_eq!(ex.outputs.get("good"), Some(&"SUCCEED: alpha".to_string()));
+	// The failed branch contributes no output entry.
+	// The failed branch still gets an (empty) output entry so downstream
+	// references resolve instead of dangling.
+	assert_eq!(ex.outputs.get("bad"), Some(&String::new()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_conditional_matched_branch_succeeds_and_skips_the_rest() {
+	install_step_fixture();
+	let wf: WorkflowDef = toml::from_str(
+		r#"
+		name = "wf"
+		[[steps]]
+		conditional = true
+		name = "gate"
+		on_match = ["yes"]
+		on_no_match = ["nope"]
+		[steps.condition]
+		contains = "PASS"
+		output = "prev"
+		[[steps.run]]
+		name = "yes"
+		role = "developer:general"
+		prompt = "ship it"
+		[[steps.run]]
+		name = "nope"
+		role = "developer:general"
+		prompt = "fix it"
+		"#,
+	)
+	.expect("workflow parses");
+	let mut ex = executor_for("wf", true);
+	ex.outputs.insert("prev".to_string(), "PASS GO".to_string());
+	ex.exec_node(&wf.steps[0], "DO")
+		.await
+		.expect("the chosen branch runs");
+	assert_eq!(ex.outputs.get("yes"), Some(&"ship it".to_string()));
+	// The skipped branch resolves to an empty entry.
+	assert_eq!(ex.outputs.get("nope"), Some(&String::new()));
+	assert_eq!(ex.outputs.get("gate"), Some(&"ship it".to_string()));
+	assert_eq!(ex.last_step, Some("gate".to_string()));
+}

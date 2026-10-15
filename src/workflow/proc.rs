@@ -110,6 +110,24 @@ pub struct RunStepArgs {
 	pub prior_tools: u64,
 }
 
+// Test-only per-thread override for the executable `run_step` spawns.
+// Under `cargo test` `current_exe()` is the test binary, which rejects
+// `run --format jsonl` — success-path outcomes are unreachable without
+// pointing run_step at a fixture script. Thread-local so parallel tests
+// on separate threads never see each other's override.
+#[cfg(test)]
+thread_local! {
+	static TEST_STEP_EXE: std::cell::RefCell<Option<PathBuf>> =
+		const { std::cell::RefCell::new(None) };
+}
+
+/// Point this thread's `run_step` calls at `path` (None restores the real
+/// binary). Test-only seam; never compiled into production builds.
+#[cfg(test)]
+pub fn set_test_step_exe(path: Option<PathBuf>) {
+	TEST_STEP_EXE.with_borrow_mut(|slot| *slot = path);
+}
+
 /// Invoke `octomind run` with `prompt` on stdin, optional `--name` to
 /// resume or create a named session, and `--format jsonl`.
 ///
@@ -141,6 +159,10 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 			}
 		}
 	};
+	#[cfg(test)]
+	let exe = TEST_STEP_EXE
+		.with_borrow(|slot| slot.clone())
+		.unwrap_or(exe);
 
 	let mut cmd = Command::new(&exe);
 	cmd.arg("run")

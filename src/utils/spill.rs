@@ -56,18 +56,10 @@ fn session_spill_dir() -> Option<PathBuf> {
 /// file instead of accumulating duplicates (mirrors the truncation idempotency
 /// guarantee: same args → same output → same handle).
 pub fn write_spill(tool_name: &str, content: &str) -> Option<PathBuf> {
-	let dir = session_spill_dir()?;
-	if std::fs::create_dir_all(&dir).is_err() {
+	let path = spill_path(tool_name, content)?;
+	if std::fs::create_dir_all(path.parent()?).is_err() {
 		return None;
 	}
-	let mut h = DefaultHasher::new();
-	tool_name.hash(&mut h);
-	content.hash(&mut h);
-	let safe_tool: String = tool_name
-		.chars()
-		.map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-		.collect();
-	let path = dir.join(format!("{safe_tool}-{:016x}.txt", h.finish()));
 	match std::fs::write(&path, content) {
 		Ok(()) => Some(path),
 		Err(e) => {
@@ -78,6 +70,38 @@ pub fn write_spill(tool_name: &str, content: &str) -> Option<PathBuf> {
 			None
 		}
 	}
+}
+
+/// The handle `write_spill` uses for `(tool_name, content)` in the current
+/// session, whether or not it has been written yet.
+fn spill_path(tool_name: &str, content: &str) -> Option<PathBuf> {
+	let dir = session_spill_dir()?;
+	let mut h = DefaultHasher::new();
+	tool_name.hash(&mut h);
+	content.hash(&mut h);
+	let safe_tool: String = tool_name
+		.chars()
+		.map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+		.collect();
+	Some(dir.join(format!("{safe_tool}-{:016x}.txt", h.finish())))
+}
+
+/// Whether this exact `(tool_name, content)` was already spilled in the
+/// current session — the same output was cut once before.
+pub fn spill_exists(tool_name: &str, content: &str) -> bool {
+	spill_path(tool_name, content).is_some_and(|path| path.exists())
+}
+
+/// Whether tool arguments point into the current session's spill directory,
+/// i.e. the call reads back output a notice told the model to recover. The
+/// directory is compared in its JSON-escaped form so Windows separators match
+/// the serialized arguments.
+pub fn references_spill(arguments: &serde_json::Value) -> bool {
+	let Some(dir) = session_spill_dir() else {
+		return false;
+	};
+	let escaped = serde_json::Value::from(dir.to_string_lossy()).to_string();
+	arguments.to_string().contains(escaped.trim_matches('"'))
 }
 
 /// Remove the current session's spill directory. Called when a session starts

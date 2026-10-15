@@ -121,12 +121,12 @@ For very large outputs, numbered_output is a query/diagnostic-aware view sampled
 
 Per result, choose exactly one verdict:
 - "extract" — the expected verdict for a large output: give the line ranges that bear on the task, and the rest goes.
-- "keep" — preserved in full. Use it only when you can name the property that makes nearly every line load-bearing for THIS task: a failure report, a small dense config or table, a result the task queries end to end. "It is source code", "it looks related to the project", and "I am not sure" are not that property.
+- "keep" — preserved in full. Use it only when you can name the property that makes nearly every line load-bearing for THIS task: a failure report, a small dense config or table, a result the task queries end to end, a file or document the task is to rewrite, polish, review, translate or summarize as a whole. "It is source code", "it looks related to the project", and "I am not sure" are not that property.
 - "replace" — nothing in it advances the task (wrong target, irrelevant listing, pure noise). Never use this for status=error or when the numbered view is partial. Do not provide a message; the system creates a factual notice.
 
 Selection rules for "extract":
 - ALWAYS keep: error messages and stack traces; the exact data the tool call's arguments were querying for; explicit negative results (not found/zero matches); counts, totals, exit codes; the paths, line numbers and signatures the agent needs to locate what it must act on.
-- A file read is NOT automatically "all needed". Keep the regions the task concerns — the symbols, blocks and lines the task and the arguments point at — plus what makes them safe to act on: the enclosing signature, an import or type a kept block depends on, the header above a kept table. Drop unrelated functions, unrelated tests, licence and copyright headers, and long stretches the task never touches. That parts of a file interact is a reason to keep the interacting parts, not the whole file.
+- A file read is NOT automatically "all needed". Keep the regions the task concerns — the symbols, blocks and lines the task and the arguments point at — plus what makes them safe to act on: the enclosing signature, an import or type a kept block depends on, the header above a kept table. Drop unrelated functions, unrelated tests, licence and copyright headers, and long stretches the task never touches. That parts of a file interact is a reason to keep the interacting parts, not the whole file. The exception is a file the task works on as a whole (a document to rewrite or review end to end, not a localized change): every part of it is what the task touches, so "keep" it.
 - DROP: repeated boilerplate (keep one representative instance), progress/log noise, decorative separators, unrelated matches in overly-broad searches, verbose success chatter.
 - Uncertainty applies per span, not to the whole output: keep the spans you are unsure about, drop the spans you are sure are irrelevant. Several small precise ranges beat one range that swallows the result.
 - A status=error result's failing lines and their context are the payload — never let an error lose its error text.
@@ -347,7 +347,7 @@ pub async fn condense_round(
 	let sizes: Vec<usize> = results
 		.iter()
 		.map(|r| {
-			if is_plain_text_result(r) {
+			if is_plain_text_result(r) && !is_recovery_read(r, calls) {
 				estimate_tokens(&r.extract_content())
 			} else {
 				0
@@ -954,6 +954,26 @@ fn spill_reader_available() -> bool {
 	["view", "text_editor", "extract_lines", "shell"]
 		.iter()
 		.any(|tool| crate::mcp::tool_map::get_server_for_tool(tool).is_some())
+}
+
+/// A result the model fetched to see what an earlier condensation cut: a read
+/// of a spill file, or the byte-identical output of a call already condensed
+/// this session. Condensing it again returns the same cut, and the model loops
+/// on the recovery the notice told it to make.
+fn is_recovery_read(r: &McpToolResult, calls: &[McpToolCall]) -> bool {
+	let reads_spill = calls
+		.iter()
+		.find(|c| c.tool_id == r.tool_id)
+		.is_some_and(|c| crate::utils::spill::references_spill(&c.parameters));
+	let recovering =
+		reads_spill || crate::utils::spill::spill_exists(&r.tool_name, &r.extract_content());
+	if recovering {
+		crate::log_debug!(
+			"Condense: {} result recovers a condensed output, left in full",
+			r.tool_name
+		);
+	}
+	recovering
 }
 
 /// Applying a line verdict rebuilds the text payload. Do not feed rich MCP

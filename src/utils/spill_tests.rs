@@ -89,6 +89,32 @@ fn test_spill_without_session_context_is_none() {
 	assert!(write_spill("shell", "body").is_none());
 }
 
+#[tokio::test]
+#[serial_test::serial]
+async fn test_spill_exists_and_references_spill() {
+	crate::session::context::with_session_id("spill-recovery-session".to_string(), async {
+		assert!(!spill_exists("view", "cut once"));
+		let path = write_spill("view", "cut once").expect("spill");
+		assert!(spill_exists("view", "cut once"));
+		assert!(
+			!spill_exists("shell", "cut once"),
+			"the handle is keyed on the tool as well as the content"
+		);
+
+		let reading = serde_json::json!({"path": path.to_string_lossy(), "start": 1});
+		assert!(references_spill(&reading));
+		assert!(!references_spill(&serde_json::json!({"path": "README.md"})));
+		clear_current_session();
+	})
+	.await;
+}
+
+#[test]
+fn test_spill_recovery_checks_without_session_context_are_false() {
+	assert!(!spill_exists("view", "body"));
+	assert!(!references_spill(&serde_json::json!({"path": "/tmp/x"})));
+}
+
 #[test]
 fn test_read_text_files_utf8_boundary() {
 	let tmp = tempfile::tempdir().expect("tempdir");

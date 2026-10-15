@@ -357,6 +357,98 @@ async fn a_selection_that_cannot_shrink_the_result_is_left_inline() {
 	);
 }
 
+/// What the model fetches to recover a condensed output — a read of the spill
+/// file, or the identical output requested again — reaches it in full:
+/// condensing it again hands back the same cut and the model loops on it.
+#[tokio::test]
+#[serial_test::serial]
+async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
+	let _guard = ENV_LOCK.lock().await;
+	let config = condense_config();
+	let session = "__condense_e2e_recovery";
+	// The second verdict would cut both recovery reads if they reached the
+	// condenser at all.
+	let url = spawn_stub(vec![
+		final_response(&verdict_json(
+			r#"[{"id":"t1","verdict":"extract","lines":["10-20"]}]"#,
+		)),
+		final_response(&verdict_json(
+			r#"[{"id":"t2","verdict":"extract","lines":["1-5"]},{"id":"t3","verdict":"extract","lines":["1-5"]}]"#,
+		)),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	crate::mcp::tool_map::isolate_session_tool_map(session);
+	crate::session::context::with_session_id(session.to_string(), async {
+		let mut empty = config.clone();
+		empty.mcp.servers = Vec::new();
+		initialize_tool_map(&empty)
+			.await
+			.expect("tool map initializes empty");
+		crate::mcp::tool_map::register_dynamic_server_tools(
+			"spill-reader",
+			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
+			&["view".to_string()],
+		);
+
+		let mut first = vec![tool_result("t1", &big_body())];
+		run_round(&config, &mut first).await;
+		let notice = first[0].extract_content();
+		assert!(
+			notice.contains(CONDENSE_NOTICE_TAG),
+			"the first read is condensed"
+		);
+		let spill = notice
+			.lines()
+			.skip_while(|line| !line.contains("Full original output:"))
+			.nth(1)
+			.expect("the notice names the spill")
+			.trim()
+			.to_string();
+
+		let spill_body = big_body().replace("payload", "recovered");
+		let mut second = vec![
+			tool_result("t2", &big_body()),
+			tool_result("t3", &spill_body),
+		];
+		let calls = vec![
+			tool_call("t2"),
+			McpToolCall {
+				tool_name: "shell".to_string(),
+				parameters: serde_json::json!({"cmd": format!("cat {spill}")}),
+				tool_id: "t3".to_string(),
+			},
+		];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		condense_round(
+			&mut second,
+			&calls,
+			&config,
+			"inspect the payload",
+			"agent context",
+			"recovering what was cut",
+			rx,
+		)
+		.await;
+		assert_eq!(
+			second[0].extract_content(),
+			big_body(),
+			"the identical output re-requested stays in full"
+		);
+		assert_eq!(
+			second[1].extract_content(),
+			spill_body,
+			"a read of the spill file stays in full"
+		);
+	})
+	.await;
+	std::env::remove_var("OLLAMA_API_URL");
+	crate::session::context::cleanup_session(&session.to_string());
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("spill").join(session));
+	}
+}
+
 /// Adaptive re-probe: when the raised threshold skips a result the baseline
 /// would have condensed, the threshold relaxes so the next round sees it.
 #[tokio::test]

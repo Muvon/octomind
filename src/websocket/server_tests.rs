@@ -2936,3 +2936,556 @@ fn server_new_parses_the_address_and_stores_role_and_origins() {
 	);
 	assert!(bad.is_err(), "an unparseable address must be rejected");
 }
+
+// ---- batch-5: residual arms ----
+
+/// Remove the sessions directory so every append to a session file fails
+/// with ENOENT. Portable: works for any user (no chmod) on every OS, and
+/// nothing recreates the directory on the paths under test.
+fn break_session_persistence() {
+	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
+	std::fs::remove_dir_all(sessions_dir).expect("remove sessions dir");
+}
+
+/// Write one session-log entry as an independent zstd frame — the on-disk
+/// format is one complete frame per line.
+fn write_session_log_entry(path: &std::path::Path, line: &str) {
+	let file = std::fs::File::create(path).expect("create session log");
+	let mut encoder = zstd::stream::Encoder::new(file, 3).expect("zstd encoder");
+	std::io::Write::write_all(&mut encoder, line.as_bytes()).expect("write log line");
+	encoder.finish().expect("finish zstd frame");
+}
+
+/// An OLLAMA_API_URL stub that delays its response, so a test can intervene
+/// while a turn is in flight (kill the connection, break persistence, …).
+/// `arrived()` fires once the request body has been fully read — the signal
+/// that the turn has started and it is safe to sabotage the environment.
+struct SlowStubEnv {
+	arrived: Arc<tokio::sync::Notify>,
+	_guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl SlowStubEnv {
+	async fn new(delay: Duration) -> Self {
+		use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+		let guard = ENV_LOCK.lock().await;
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+			.await
+			.expect("bind slow stub listener");
+		let addr = listener.local_addr().expect("slow stub addr");
+		let arrived = Arc::new(tokio::sync::Notify::new());
+
+		let arrived_bg = arrived.clone();
+		tokio::spawn(async move {
+			while let Ok((mut sock, _)) = listener.accept().await {
+				let arrived = arrived_bg.clone();
+				tokio::spawn(async move {
+					// Same request framing as the scripted stub in test_support.
+					let mut buf = Vec::new();
+					let mut tmp = [0u8; 8192];
+					let header_end = loop {
+						let n = sock.read(&mut tmp).await.unwrap_or(0);
+						if n == 0 {
+							return;
+						}
+						buf.extend_from_slice(&tmp[..n]);
+						if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+							break pos + 4;
+						}
+					};
+					let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+					let content_length: usize = headers
+						.lines()
+						.find_map(|l| l.strip_prefix("content-length:"))
+						.and_then(|v| v.trim().parse().ok())
+						.unwrap_or(0);
+					while buf.len() < header_end + content_length {
+						let n = sock.read(&mut tmp).await.unwrap_or(0);
+						if n == 0 {
+							break;
+						}
+						buf.extend_from_slice(&tmp[..n]);
+					}
+
+					arrived.notify_one();
+					tokio::time::sleep(delay).await;
+
+					let body = serde_json::json!({
+						"choices": [{
+							"message": {"role": "assistant", "content": "SLOW-TURN"},
+							"finish_reason": "stop"
+						}],
+						"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+					})
+					.to_string();
+					let response = format!(
+						"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+						body.len(),
+						body
+					);
+					let _ = sock.write_all(response.as_bytes()).await;
+					let _ = sock.shutdown().await;
+				});
+			}
+		});
+
+		std::env::set_var(
+			"OLLAMA_API_URL",
+			format!("http://{addr}/v1/chat/completions"),
+		);
+		Self {
+			arrived,
+			_guard: guard,
+		}
+	}
+
+	fn arrived(&self) -> &tokio::sync::Notify {
+		&self.arrived
+	}
+}
+
+impl Drop for SlowStubEnv {
+	fn drop(&mut self) {
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn user_message_on_a_locked_session_is_reported_as_busy() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	// Hold the per-session lock as a concurrent client turn would.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let _guard = lock.lock().await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hi"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("is busy processing another request"),
+		"got: {error}"
+	);
+
+	drop(_guard);
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn unknown_command_is_refused_instead_of_treated_as_user_input() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": session_id.as_str(), "command": "frobnicate"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Unknown command: '/frobnicate'"),
+		"got: {error}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn session_resume_with_an_unresolvable_tap_role_reports_the_restore_failure() {
+	let _data = TestDataDirGuard::new();
+	// An unparseable taps.toml makes every tap lookup fail offline — no
+	// network fetch, no default-tap clone.
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	std::fs::write(data_dir.join("taps.toml"), "taps = [").expect("write invalid taps.toml");
+
+	// Forge a disk session whose recorded role is a tap tag no tap provides.
+	let sessions_dir = crate::session::get_sessions_dir().expect("sessions dir");
+	write_session_log_entry(
+		&sessions_dir.join("forged.jsonl.zst"),
+		r#"{"type":"SUMMARY","session_info":{"role":"ghost:agent","name":"forged"}}"#,
+	);
+
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "forged"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Failed to restore role 'ghost:agent'"),
+		"got: {error}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn failing_command_on_a_memory_session_reports_the_save_failure() {
+	let _data = TestDataDirGuard::new();
+	// /workflow (no args) enumerates taps; an unparseable taps.toml makes the
+	// command itself fail — offline and deterministic.
+	let data_dir = crate::directories::get_octomind_data_dir().expect("data dir");
+	std::fs::write(data_dir.join("taps.toml"), "taps = [").expect("write invalid taps.toml");
+
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	// Memory-only session: saving it must fail after the command errored.
+	server
+		.sessions
+		.lock()
+		.await
+		.insert("mem-only".to_string(), ChatSession::for_tests(Vec::new()));
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": "mem-only", "command": "workflow"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Failed to save session"),
+		"the command error must not mask the save failure: {error}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn exit_command_on_a_memory_session_reports_the_save_failure() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	server
+		.sessions
+		.lock()
+		.await
+		.insert("mem-exit".to_string(), ChatSession::for_tests(Vec::new()));
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": "mem-exit", "command": "exit"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Failed to save session"),
+		"an ended session that cannot be saved must say so: {error}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn done_command_on_a_persisted_session_reports_the_compression_failure() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::with_status(vec![
+		(200, final_response("first reply")),
+		(200, final_response("second reply")),
+		(500, serde_json::json!({"error": {"message": "boom"}})),
+	])
+	.await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	// Two exchanges give /done a compressible range.
+	for content in ["one", "two"] {
+		send_json(
+			&mut ws,
+			serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": content}),
+		)
+		.await;
+		let _ack = read_json(&mut ws).await;
+		read_until(&mut ws, |frame| frame["type"] == "cost").await;
+	}
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": session_id.as_str(), "command": "done"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Compression failed"),
+		"a persisted session saves fine, so the compression error itself is reported: {error}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn pre_user_drain_reports_inbox_and_user_persistence_failures() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	break_session_persistence();
+
+	// Queue an inbox message behind the session lock so the background monitor
+	// parks and the foreground pre-user drain owns it.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "unpersistable injection".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hello"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	assert_eq!(
+		injected["content"], "unpersistable injection",
+		"got: {injected}"
+	);
+
+	let inbox_error = read_until(&mut ws, |frame| {
+		frame["type"] == "error"
+			&& frame["message"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("Error processing injected message")
+	})
+	.await;
+	assert!(
+		inbox_error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Error processing injected message"),
+		"got: {inbox_error}"
+	);
+
+	let user_error = read_until(&mut ws, |frame| {
+		frame["type"] == "error"
+			&& frame["message"]
+				.as_str()
+				.unwrap_or_default()
+				.starts_with("Error:")
+	})
+	.await;
+	assert!(
+		user_error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.starts_with("Error:"),
+		"the user turn itself must also report the persistence failure: {user_error}"
+	);
+
+	assert!(
+		server.sessions.lock().await.contains_key(&session_id),
+		"the session is returned to the map on the error path"
+	);
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn monitor_swallows_an_inbox_batch_it_cannot_persist_and_keeps_the_session() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	// Let the monitor reach its parked wait state.
+	tokio::time::sleep(Duration::from_millis(200)).await;
+
+	break_session_persistence();
+
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "unpersistable monitor work".to_string(),
+		},
+	);
+
+	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	assert_eq!(
+		injected["content"], "unpersistable monitor work",
+		"got: {injected}"
+	);
+
+	// The batch cannot be persisted, so no AI turn may run.
+	let stray = tokio::time::timeout(Duration::from_millis(500), ws.next()).await;
+	assert!(
+		stray.is_err(),
+		"no frame may follow the failed batch, got: {stray:?}"
+	);
+
+	assert!(
+		!inbox_has_messages(&session_id).await,
+		"the batch was consumed even though persisting it failed"
+	);
+	assert!(
+		server.sessions.lock().await.contains_key(&session_id),
+		"the session must be returned to the map"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn monitor_finishing_a_turn_after_the_connection_closes_exits_cleanly() {
+	let _data = TestDataDirGuard::new();
+	let _env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let before = wait_for_inbox_monitors(0).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	tokio::time::sleep(Duration::from_millis(200)).await;
+
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "slow background work".to_string(),
+		},
+	);
+	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
+	assert_eq!(
+		injected["content"], "slow background work",
+		"got: {injected}"
+	);
+
+	// The turn is now blocked on the slow stub. Kill the connection and make
+	// the post-turn save fail while it runs.
+	_env.arrived().notified().await;
+	ws.close(None).await.ok();
+	drop(ws);
+	break_session_persistence();
+
+	assert_eq!(
+		wait_for_inbox_monitors(before).await,
+		before,
+		"the monitor must exit once its connection is gone instead of leaking"
+	);
+	assert!(
+		server.sessions.lock().await.contains_key(&session_id),
+		"the finished session must be returned to the map"
+	);
+	assert!(
+		!inbox_has_messages(&session_id).await,
+		"the turn consumed its inbox message"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn user_turn_save_failure_is_reported_before_the_cost_frame() {
+	let _data = TestDataDirGuard::new();
+	let _env = SlowStubEnv::new(Duration::from_secs(2)).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id.as_str(), "content": "hello"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+
+	// The user message is persisted at turn start; break persistence while the
+	// API call is in flight so only the post-turn save fails.
+	_env.arrived().notified().await;
+	break_session_persistence();
+
+	let assistant = read_until(&mut ws, |frame| frame["type"] == "assistant").await;
+	assert!(
+		assistant["content"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("SLOW-TURN"),
+		"got: {assistant}"
+	);
+
+	let save_error = read_until(&mut ws, |frame| {
+		frame["type"] == "error"
+			&& frame["message"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("Failed to save session")
+	})
+	.await;
+	assert!(
+		save_error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Failed to save session"),
+		"got: {save_error}"
+	);
+	let cost = read_until(&mut ws, |frame| frame["type"] == "cost").await;
+	assert_eq!(
+		cost["type"], "cost",
+		"the cost frame closes the turn even after a save failure"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}

@@ -50,7 +50,8 @@ pub(super) fn extract_links(
 		let address = base + start + whole.start();
 		let prefix = &source[..whole.start()];
 		if whole.start() < consumed
-			|| false || prefix.chars().rev().take_while(|c| *c == '\\').count() % 2 != 0
+			|| prefix.ends_with('!')
+			|| prefix.chars().rev().take_while(|c| *c == '\\').count() % 2 != 0
 			|| tags.iter().any(|tag| tag.contains(&address))
 			|| composite.compounds.iter().any(|compound| {
 				let start = compound.src.as_ptr() as usize;

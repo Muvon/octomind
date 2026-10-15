@@ -455,6 +455,7 @@ fn policy_update_unchanged_never_requires_evidence() {
 		answer_only: false,
 		conditions: Vec::new(),
 		operational_constraints: Vec::new(),
+		whole_targets: Vec::new(),
 	};
 	let ctx = context("a plain request");
 	verdict.validate_policy_update(&ctx);
@@ -678,4 +679,32 @@ async fn a_still_unusable_retry_fails_open() {
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
 	assert_eq!(resolved.resolved_request, "use the staging endpoint");
+}
+
+#[test]
+fn whole_targets_parse_and_ground_in_the_request() {
+	let verdict = parse_classifier(
+		r#"{"scope":"self_contained","answer_only":false,"conditions":[],"whole_targets":[" readme ",""]}"#,
+	);
+	assert_eq!(verdict.whole_targets, vec!["readme".to_string()]);
+	assert!(
+		parse_classifier(r#"{"scope":"self_contained"}"#)
+			.whole_targets
+			.is_empty(),
+		"an older reply without the field means no whole targets"
+	);
+
+	let request = "Lets polish our README and align it";
+	assert_eq!(
+		grounded_whole_targets(
+			request,
+			&[
+				"readme".to_string(),
+				"README".to_string(),
+				"CHANGELOG".to_string()
+			]
+		),
+		vec!["readme".to_string()],
+		"case-insensitive grounding, deduplicated, invented targets dropped"
+	);
 }

@@ -372,6 +372,34 @@ fn test_parent_task_context_goal_and_request() {
 }
 
 #[test]
+fn test_parent_task_context_uses_the_live_turn_resolution() {
+	let mut session = ChatSession::for_tests(vec![message("user", "do it")]);
+	let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained("do it");
+	resolved.resolved_request = "polish the readme".to_string();
+	resolved.whole_targets = vec!["readme".to_string()];
+	session.gate_task = Some(resolved);
+
+	let task = parent_task_context(&session);
+	assert!(
+		task.contains("Current request: polish the readme"),
+		"{task}"
+	);
+	assert!(task.contains("Works on as a whole: readme"), "{task}");
+
+	// A resolution left over from an earlier turn never frames this one
+	session
+		.session
+		.messages
+		.push(message("user", "fix the login bug"));
+	let task = parent_task_context(&session);
+	assert!(
+		task.contains("Current request: fix the login bug"),
+		"{task}"
+	);
+	assert!(!task.contains("Works on as a whole"), "{task}");
+}
+
+#[test]
 fn test_parent_agent_context_filters_trusted_messages() {
 	let messages = vec![
 		message("system", "  sys prompt  "),

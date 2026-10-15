@@ -847,7 +847,18 @@ fn parent_task_context(chat_session: &ChatSession) -> String {
 	if !intent.is_empty() {
 		task.push_str(&format!("Goal: {intent}\n"));
 	}
-	if let Some(req) = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+	if let Some(resolved) = turn_resolution(chat_session) {
+		// The resolved request spells out an elliptical follow-up ("do it");
+		// for a self-contained turn it is the request itself.
+		task.push_str(&format!("Current request: {}\n", resolved.resolved_request));
+		if !resolved.whole_targets.is_empty() {
+			task.push_str(&format!(
+				"Works on as a whole: {}\n",
+				resolved.whole_targets.join(", ")
+			));
+		}
+	} else if let Some(req) =
+		crate::session::latest_real_user_task_content(&chat_session.session.messages)
 	{
 		task.push_str(&format!("Current request: {req}\n"));
 	}
@@ -855,6 +866,18 @@ fn parent_task_context(chat_session: &ChatSession) -> String {
 		task.push_str(&plan);
 	}
 	task
+}
+
+/// The turn-admission resolution, only while it belongs to the live request:
+/// a stale one from an earlier turn would frame this turn's results wrongly.
+fn turn_resolution(
+	chat_session: &ChatSession,
+) -> Option<&crate::supervisor::resolve::ResolvedTask> {
+	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)?;
+	chat_session
+		.gate_task
+		.as_ref()
+		.filter(|resolved| resolved.original_request == request)
 }
 
 /// Trusted, durable context that controls what evidence matters. Deliberately
@@ -901,12 +924,16 @@ async fn condense_main_results(
 	operation_cancelled: tokio::sync::watch::Receiver<bool>,
 ) {
 	let task = parent_task_context(chat_session);
+	let whole_targets = turn_resolution(chat_session)
+		.map(|resolved| resolved.whole_targets.as_slice())
+		.unwrap_or_default();
 	let agent_context = parent_agent_context(chat_session);
 	crate::supervisor::condense::condense_round(
 		results,
 		calls,
 		config,
 		&task,
+		whole_targets,
 		&agent_context,
 		tool_round_intent,
 		operation_cancelled,

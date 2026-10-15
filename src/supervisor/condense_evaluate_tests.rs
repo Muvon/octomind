@@ -433,6 +433,7 @@ async fn run_round(config: &Config, results: &mut [McpToolResult], session: &str
 			&calls,
 			config,
 			"inspect the payload",
+			&[],
 			"agent context",
 			"reading big.txt",
 			rx,

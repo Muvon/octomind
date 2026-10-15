@@ -59,6 +59,7 @@ async fn run_round(config: &crate::config::Config, results: &mut [McpToolResult]
 		&calls,
 		config,
 		"inspect the payload",
+		&[],
 		"agent context",
 		"reading big.txt",
 		rx,
@@ -425,6 +426,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 			&calls,
 			&config,
 			"inspect the payload",
+			&[],
 			"agent context",
 			"recovering what was cut",
 			rx,
@@ -439,6 +441,75 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 			second[1].extract_content(),
 			spill_body,
 			"a read of the spill file stays in full"
+		);
+	})
+	.await;
+	std::env::remove_var("OLLAMA_API_URL");
+	crate::session::context::cleanup_session(&session.to_string());
+	if let Ok(sessions) = crate::directories::get_sessions_dir() {
+		let _ = std::fs::remove_dir_all(sessions.join("spill").join(session));
+	}
+}
+
+/// A read of an artifact the turn works on as a whole ("polish the readme")
+/// reaches the agent in full, while the same round's other outputs are still
+/// condensed.
+#[tokio::test]
+#[serial_test::serial]
+async fn reads_of_a_whole_task_target_are_left_in_full() {
+	let _guard = ENV_LOCK.lock().await;
+	let config = condense_config();
+	let session = "__condense_e2e_whole_target";
+	let url = spawn_stub(vec![final_response(&verdict_json(
+		r#"[{"id":"t1","verdict":"extract","lines":["1-5"]},{"id":"t2","verdict":"extract","lines":["1-5"]}]"#,
+	))])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	crate::mcp::tool_map::isolate_session_tool_map(session);
+	crate::session::context::with_session_id(session.to_string(), async {
+		let mut empty = config.clone();
+		empty.mcp.servers = Vec::new();
+		initialize_tool_map(&empty)
+			.await
+			.expect("tool map initializes empty");
+		crate::mcp::tool_map::register_dynamic_server_tools(
+			"spill-reader",
+			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
+			&["view".to_string()],
+		);
+
+		let mut results = vec![
+			tool_result("t1", &big_body()),
+			tool_result("t2", &big_body()),
+		];
+		let calls = vec![
+			McpToolCall {
+				tool_name: "shell".to_string(),
+				parameters: serde_json::json!({"cmd": "cat README.md"}),
+				tool_id: "t1".to_string(),
+			},
+			tool_call("t2"),
+		];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		condense_round(
+			&mut results,
+			&calls,
+			&config,
+			"polish our readme",
+			&["readme".to_string()],
+			"agent context",
+			"reading the readme in full",
+			rx,
+		)
+		.await;
+		assert_eq!(
+			results[0].extract_content(),
+			big_body(),
+			"the whole-task target stays in full"
+		);
+		assert!(
+			results[1].extract_content().contains(CONDENSE_NOTICE_TAG),
+			"an unrelated output in the same round is still condensed"
 		);
 	})
 	.await;

@@ -806,3 +806,51 @@ fn edge_truncation_shrinks_the_tail_until_the_combined_view_fits() {
 	let roomy = truncate_preserving_edges(&text, 40);
 	assert!(roomy.contains("line 120"), "the tail survives: {roomy}");
 }
+
+fn read_call(parameters: serde_json::Value) -> (McpToolResult, Vec<McpToolCall>) {
+	let result = McpToolResult::success("view".to_string(), "t1".to_string(), "body".to_string());
+	let call = McpToolCall {
+		tool_name: "view".to_string(),
+		parameters,
+		tool_id: "t1".to_string(),
+	};
+	(result, vec![call])
+}
+
+#[test]
+fn whole_targets_match_paths_and_commands_naming_them() {
+	let targets = specs(&["readme"]);
+	for parameters in [
+		serde_json::json!({"path": "README.md", "start": 1, "end": 200}),
+		serde_json::json!({"path": "/repo/doc/README.md"}),
+		serde_json::json!({"files": ["src/lib.rs", "./README.md"]}),
+		serde_json::json!({"command": "sed -n '1,80p' 'README.md'"}),
+	] {
+		let (result, calls) = read_call(parameters.clone());
+		assert!(
+			reads_whole_target(&result, &calls, &targets),
+			"{parameters}"
+		);
+	}
+
+	for parameters in [
+		serde_json::json!({"path": "src/readme_parser.rs"}),
+		serde_json::json!({"path": "CONTRIBUTING.md"}),
+	] {
+		let (result, calls) = read_call(parameters.clone());
+		assert!(
+			!reads_whole_target(&result, &calls, &targets),
+			"{parameters}"
+		);
+	}
+
+	let (result, calls) = read_call(serde_json::json!({"path": "docs\\setup.md"}));
+	assert!(
+		reads_whole_target(&result, &calls, &specs(&["docs/setup.md"])),
+		"Windows separators and a pathed target compare normalized"
+	);
+	assert!(
+		!reads_whole_target(&result, &calls, &[]),
+		"no whole targets, no exemption"
+	);
+}

@@ -136,8 +136,15 @@ user's exact words from current_user_request only — never from role_context, p
 or quoted text. Empty when the turn states none. Never include the task's deliverables,
 one-off actions, or prohibitions.
 
+Field "whole_targets": the artifacts this turn works on AS A WHOLE — a file or document whose
+entire content the deliverable depends on: rewriting, polishing, restructuring, translating,
+summarizing, or reviewing that artifact end to end. Copy each name exactly as the current turn
+writes it ("readme", "docs/setup.md", "CHANGELOG"). Empty when the work touches located parts
+of an artifact (fix one function, change one setting, add a test), when the turn names no
+artifact, or when the name appears only in pasted or quoted text.
+
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"operational_constraints":["..."]}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"operational_constraints":["..."],"whole_targets":["..."]}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -243,6 +250,10 @@ pub struct ResolvedTask {
 	/// never catch; recited per-turn and pinned by PACT alongside
 	/// prohibitions while this turn is the live task.
 	pub operational_constraints: Vec<String>,
+	/// Artifacts the turn works on as a whole ("polish the readme"), named as
+	/// the user wrote them and grounded in the request. Every line of such an
+	/// artifact is task data, so condensation leaves reads of it untouched.
+	pub whole_targets: Vec<String>,
 }
 
 impl ResolvedTask {
@@ -261,6 +272,7 @@ impl ResolvedTask {
 			answer_only: false,
 			evidence_conditions: Vec::new(),
 			operational_constraints: Vec::new(),
+			whole_targets: Vec::new(),
 		}
 	}
 
@@ -279,6 +291,7 @@ impl ResolvedTask {
 			answer_only: false,
 			evidence_conditions: Vec::new(),
 			operational_constraints: Vec::new(),
+			whole_targets: Vec::new(),
 		}
 	}
 }
@@ -363,6 +376,8 @@ struct ClassifierOutput {
 	conditions: Vec<String>,
 	#[serde(default)]
 	operational_constraints: Vec<String>,
+	#[serde(default)]
+	whole_targets: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -412,6 +427,7 @@ pub async fn resolve(
 		answer_only,
 		conditions,
 		operational_constraints,
+		whole_targets,
 	) = match classification {
 		Ok(response) => {
 			// One bounded retry on an unusable response before failing open.
@@ -455,6 +471,8 @@ pub async fn resolve(
 				&context.current_request,
 				&parsed.operational_constraints,
 			);
+			parsed.whole_targets =
+				grounded_whole_targets(&context.current_request, &parsed.whole_targets);
 			if !parsed.context_dependent {
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
@@ -463,6 +481,7 @@ pub async fn resolve(
 				resolved.answer_only = parsed.answer_only;
 				resolved.evidence_conditions = parsed.conditions;
 				resolved.operational_constraints = parsed.operational_constraints;
+				resolved.whole_targets = parsed.whole_targets;
 				return resolved;
 			}
 			(
@@ -471,6 +490,7 @@ pub async fn resolve(
 				parsed.answer_only,
 				parsed.conditions,
 				parsed.operational_constraints,
+				parsed.whole_targets,
 			)
 		}
 		Err(error) => {
@@ -512,6 +532,7 @@ pub async fn resolve(
 	// they remain the fulfillment checklist.
 	resolved.evidence_conditions = conditions;
 	resolved.operational_constraints = operational_constraints;
+	resolved.whole_targets = whole_targets;
 	resolved
 }
 
@@ -526,6 +547,7 @@ struct ClassifierVerdict {
 	answer_only: bool,
 	conditions: Vec<String>,
 	operational_constraints: Vec<String>,
+	whole_targets: Vec<String>,
 }
 
 fn classifier_fallback() -> ClassifierVerdict {
@@ -537,6 +559,7 @@ fn classifier_fallback() -> ClassifierVerdict {
 		answer_only: false,
 		conditions: Vec::new(),
 		operational_constraints: Vec::new(),
+		whole_targets: Vec::new(),
 	}
 }
 
@@ -608,6 +631,12 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 			.map(|c| c.trim().to_string())
 			.filter(|c| !c.is_empty())
 			.collect(),
+		whole_targets: parsed
+			.whole_targets
+			.into_iter()
+			.map(|t| t.trim().to_string())
+			.filter(|t| !t.is_empty())
+			.collect(),
 	})
 }
 
@@ -631,6 +660,26 @@ pub(crate) fn grounded_operational_constraints(
 			if grounded.len() == 4 {
 				break;
 			}
+		}
+	}
+	grounded
+}
+
+/// Model-named whole targets must occur in the current request (case-insensitive:
+/// "the README" names `readme` as well). A target the user never wrote cannot
+/// exempt anything from condensation.
+pub(crate) fn grounded_whole_targets(request: &str, candidates: &[String]) -> Vec<String> {
+	let request = request.to_lowercase();
+	let mut grounded: Vec<String> = Vec::new();
+	for candidate in candidates {
+		let target = candidate.trim();
+		if !target.is_empty()
+			&& request.contains(&target.to_lowercase())
+			&& !grounded
+				.iter()
+				.any(|existing| existing.eq_ignore_ascii_case(target))
+		{
+			grounded.push(target.to_string());
 		}
 	}
 	grounded
@@ -727,6 +776,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				answer_only: false,
 				evidence_conditions: Vec::new(),
 				operational_constraints: Vec::new(),
+				whole_targets: Vec::new(),
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),

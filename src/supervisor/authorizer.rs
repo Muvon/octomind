@@ -809,11 +809,13 @@ pub async fn check_batch(
 	admissions
 }
 
-/// Evaluation pre-screen: three calibrated Nouls per pending call decide
-/// whether the two-judge supervisor path needs to run at all. It can only
-/// admit; a block still requires the supervisor judgment and its verification.
-/// The state carries the instruction sources and the calls — never tool
-/// definitions, completed actions, or the wider judgment context.
+/// Evaluation pre-screen: one Noul per conflict kind the judge can block on,
+/// per pending call, decides whether the two-judge supervisor path needs to
+/// run at all. It can only admit; a block still requires the supervisor
+/// judgment and its verification. The state carries the instruction sources
+/// (marking the current user turn, which may lift an older prohibition) and
+/// the calls — never tool definitions, completed actions, or the wider
+/// judgment context.
 async fn prescreen_admits(
 	config: &Config,
 	sources: &[InstructionSource],
@@ -831,7 +833,7 @@ async fn prescreen_admits(
 		.map(|index| (index.to_string(), calls[*index].tool_name.as_str()))
 		.collect();
 	let state = json!({
-		"sources": sources.iter().map(|s| json!({"id": s.id, "kind": s.kind, "text": s.text})).collect::<Vec<_>>(),
+		"sources": sources.iter().map(|s| json!({"id": s.id, "kind": s.kind, "text": s.text, "current_user": s.current_user})).collect::<Vec<_>>(),
 		"calls": pending.iter().map(|index| json!({
 			"id": index.to_string(), "tool": calls[*index].tool_name,
 			"arguments": calls[*index].parameters, "generated_guards": generated_guards.get(*index),

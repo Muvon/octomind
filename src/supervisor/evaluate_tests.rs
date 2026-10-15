@@ -342,19 +342,14 @@ fn question_builders_use_stable_ids_and_documented_options() {
 	}
 
 	let authorizer = authorizer_questions([("0", "shell"), ("3", "write_file")]);
-	assert_eq!(authorizer.len(), 6);
-	for id in [
-		"0.prohibited",
-		"0.destructive",
-		"0.external",
-		"3.prohibited",
-	] {
+	assert_eq!(authorizer.len(), 4);
+	for id in ["0.prohibited", "0.scope", "3.prohibited", "3.scope"] {
 		assert!(
 			matches!(authorizer.get(id), Some(Question::Noul { .. })),
 			"missing {id}"
 		);
 	}
-	assert!(instructions(&authorizer["3.destructive"]).starts_with("Call 3 (write_file): "));
+	assert!(instructions(&authorizer["3.scope"]).starts_with("Call 3 (write_file): "));
 }
 
 // ---------------------------------------------------------------------------

@@ -563,11 +563,9 @@ fn prescreen_config() -> Config {
 async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
 		("0.prohibited", 0.1),
-		("0.destructive", 0.1),
-		("0.external", 0.1),
+		("0.scope", 0.1),
 		("1.prohibited", 0.1),
-		("1.destructive", 0.1),
-		("1.external", 0.1),
+		("1.scope", 0.1),
 	]))])
 	.await;
 	let (url, captured) =
@@ -576,6 +574,9 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	let config = prescreen_config();
 	let id = "authorizer-prescreen-admit";
 	let mut session = session(id);
+	session
+		.add_user_message("Also tidy the error message.")
+		.unwrap();
 	capture(&mut session, &config);
 	let applied = evaluate_counter(Seam::Authorizer, "applied");
 	let replaced = evaluate_counter(Seam::Authorizer, "avoided");
@@ -594,7 +595,7 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 	assert_eq!(evaluate_counter(Seam::Authorizer, "avoided"), replaced + 1);
 
 	let request = &fake.requests()[0];
-	assert_eq!(request.questions.len(), 6);
+	assert_eq!(request.questions.len(), 4);
 	let state = &request.state;
 	let mut keys: Vec<&String> = state.as_object().unwrap().keys().collect();
 	keys.sort();
@@ -608,6 +609,11 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 		state["sources"][0]["text"],
 		"Fix the bug. Do not run tests; I will test it."
 	);
+	assert_eq!(
+		state["sources"][0]["current_user"], false,
+		"an older turn is marked so a later turn can lift its prohibition"
+	);
+	assert_eq!(state["sources"][1]["current_user"], true);
 	assert_eq!(state["calls"][0]["tool"], "text_editor");
 	assert_eq!(state["calls"][1]["id"], "1");
 	assert_eq!(state["calls"][1]["arguments"]["command"], "cargo test");
@@ -618,42 +624,67 @@ async fn evaluate_prescreen_admits_an_unflagged_batch_without_the_supervisor() {
 
 #[tokio::test]
 async fn evaluate_prescreen_flag_hands_the_batch_to_the_supervisor_unchanged() {
-	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[
-		("0.prohibited", 0.93),
-		("0.destructive", 0.1),
-		("0.external", 0.1),
-	]))])
-	.await;
-	let url = spawn_stub(vec![final_response(&verdict("allow", "").to_string())]).await;
-	std::env::set_var("OLLAMA_API_URL", &url);
-	let config = prescreen_config();
-	let id = "authorizer-prescreen-flag";
-	let mut session = session(id);
-	capture(&mut session, &config);
-	let applied = evaluate_counter(Seam::Authorizer, "applied");
-	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let admissions = check_batch(id, &config, &[call()], &[vec![]], rx).await;
-	assert!(admissions[0].message.is_none());
-	sync(&mut session);
-	assert_eq!(session.session.info.authorization.checked, 1);
-	assert_eq!(
-		session.session.info.authorization.unavailable, 0,
-		"the supervisor judge answered through the stub"
-	);
-	assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied);
-	assert_eq!(fake.requests().len(), 1);
-	clear_for_session(id);
-	std::env::remove_var("OLLAMA_API_URL");
+	use crate::session::chat::test_support::spawn_recording_stub;
+	// Each blockable conflict kind flags on its own.
+	for flagged in ["0.prohibited", "0.scope"] {
+		let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(
+			&[("0.prohibited", 0.1), ("0.scope", 0.1)]
+				.map(|(noul, low)| (noul, if noul == flagged { 0.93 } else { low })),
+		))])
+		.await;
+		let (url, captured) =
+			spawn_recording_stub(vec![final_response(&verdict("allow", "").to_string())]).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let config = prescreen_config();
+		let id = format!("authorizer-prescreen-flag-{flagged}");
+		let mut session = session(&id);
+		capture(&mut session, &config);
+		let applied = evaluate_counter(Seam::Authorizer, "applied");
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let admissions = check_batch(&id, &config, &[call()], &[vec![]], rx).await;
+		assert!(admissions[0].message.is_none());
+		sync(&mut session);
+		assert_eq!(session.session.info.authorization.checked, 1);
+		assert_eq!(
+			session.session.info.authorization.unavailable, 0,
+			"the supervisor judge answered through the stub"
+		);
+		assert_eq!(
+			captured.lock().unwrap().len(),
+			1,
+			"{flagged} reached the judge"
+		);
+		assert_eq!(evaluate_counter(Seam::Authorizer, "applied"), applied);
+		assert_eq!(fake.requests().len(), 1);
+		clear_for_session(&id);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+/// A Noul for a property the judge cannot veto only buys a chat call that
+/// ends in allow, so the pre-screen asks exactly the judge's conflict kinds.
+#[test]
+fn prescreen_asks_one_noul_per_conflict_kind_the_judge_can_block_on() {
+	let schema = response_schema(&[], &[call()]);
+	let blockable = schema["properties"]["decisions"]["items"]["properties"]["conflict"]["enum"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.filter_map(Value::as_str)
+		.filter(|kind| *kind != "none")
+		.collect::<Vec<_>>();
+	let nouls = crate::supervisor::evaluate::AUTHORIZER_NOULS
+		.iter()
+		.map(|(noul, _)| *noul)
+		.collect::<Vec<_>>();
+	assert_eq!(blockable, ["prohibition", "scope"]);
+	assert_eq!(nouls, ["prohibited", "scope"]);
 }
 
 #[tokio::test]
 async fn evaluate_prescreen_runs_after_the_denial_cache() {
 	let fake = install_fake_evaluation(vec![
-		FakeEvaluationStep::Answers(nouls(&[
-			("0.prohibited", 0.93),
-			("0.destructive", 0.1),
-			("0.external", 0.1),
-		])),
+		FakeEvaluationStep::Answers(nouls(&[("0.prohibited", 0.93), ("0.scope", 0.1)])),
 		FakeEvaluationStep::Answers(nouls(&[("0", 0.9)])),
 	])
 	.await;
@@ -721,14 +752,11 @@ async fn decision_confirmation_unavailable_counts_only_proposed_decisions() {
 		let fake = install_fake_evaluation(vec![
 			FakeEvaluationStep::Answers(nouls(&[
 				("0.prohibited", 0.9),
-				("0.destructive", 0.1),
-				("0.external", 0.1),
+				("0.scope", 0.1),
 				("1.prohibited", 0.9),
-				("1.destructive", 0.1),
-				("1.external", 0.1),
+				("1.scope", 0.1),
 				("2.prohibited", 0.1),
-				("2.destructive", 0.1),
-				("2.external", 0.1),
+				("2.scope", 0.1),
 			])),
 			step,
 		])
@@ -799,11 +827,7 @@ async fn decision_confirmation_replaces_only_the_second_judge_and_fails_closed()
 		(3, FakeEvaluationStep::Answers(nouls(&[])), false),
 	] {
 		let fake = install_fake_evaluation(vec![
-			FakeEvaluationStep::Answers(nouls(&[
-				("0.prohibited", 0.9),
-				("0.destructive", 0.1),
-				("0.external", 0.1),
-			])),
+			FakeEvaluationStep::Answers(nouls(&[("0.prohibited", 0.9), ("0.scope", 0.1)])),
 			step,
 		])
 		.await;
@@ -900,11 +924,7 @@ async fn decision_confirmation_failure_preserves_native_guards() {
 		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
 	] {
 		let fake = install_fake_evaluation(vec![
-			FakeEvaluationStep::Answers(nouls(&[
-				("0.prohibited", 0.9),
-				("0.destructive", 0.1),
-				("0.external", 0.1),
-			])),
+			FakeEvaluationStep::Answers(nouls(&[("0.prohibited", 0.9), ("0.scope", 0.1)])),
 			step,
 		])
 		.await;

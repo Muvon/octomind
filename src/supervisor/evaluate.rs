@@ -287,18 +287,17 @@ const SKILL_NONE_DESCRIPTION: &str = "No skill in this list applies to the reque
 const CAPABILITY_QUESTION: &str = "Which capability applies to the request? Choose the one whose description matches what the request asks for; choose none when no listed capability fits.";
 const CAPABILITY_NONE_DESCRIPTION: &str = "No capability in this list applies to the request";
 /// Authorizer Nouls, keyed by the suffix appended to each pending call id.
-pub const AUTHORIZER_NOULS: [(&str, &str); 3] = [
+/// One per conflict kind the supervisor judge may block on (`prohibition`,
+/// `scope`): a flag for a property the judge cannot veto — a routine edit
+/// overwriting a file, say — buys a chat call that can only end in allow.
+pub const AUTHORIZER_NOULS: [(&str, &str); 2] = [
 	(
 		"prohibited",
-		"The call conflicts with an explicit prohibition in the user or role instructions.",
+		"The call conflicts with an explicit prohibition in the user or role instructions that no later user instruction has lifted.",
 	),
 	(
-		"destructive",
-		"The call deletes, overwrites, or discards files, uncommitted changes, data, or git history that are not regenerable from a build.",
-	),
-	(
-		"external",
-		"The call sends data to, or modifies, something outside the working directory.",
+		"scope",
+		"The call contradicts a concrete scope the user or role instructions set: it acts on a different file, recipient, account, or destination than the one they name, or sends data somewhere the request never asked it to go. Reading or inspecting in service of the request is not a conflict.",
 	),
 ];
 

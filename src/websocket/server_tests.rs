@@ -2717,3 +2717,222 @@ async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
 		crate::session::context::cleanup_session(&session_id);
 	}
 }
+// ---- spending stop: the front-end must distinguish a budget stop from a finished turn ----
+
+/// A tool-call turn whose result cost crosses `max_request_spending_threshold`
+/// must end with a "Stopped: request spending threshold reached" status BEFORE
+/// the cost frame — a driver reading only the cost frame would treat the stop
+/// as an ordinary finished turn.
+#[tokio::test]
+#[serial_test::serial]
+async fn user_turn_request_spending_stop_sends_the_stopped_status_before_cost() {
+	let _data = TestDataDirGuard::new();
+	// The tool-call response carries usage cost 0.002 — over the 0.0001
+	// threshold, so the post-tool-result spending check stops the request
+	// before any follow-up call is made.
+	let _env = StubEnv::new(vec![
+		crate::session::chat::test_support::tool_call_response(
+			"schedule",
+			serde_json::json!({"command": "list"}),
+		),
+	])
+	.await;
+	let mut config = ws_fake_config();
+	config.max_request_spending_threshold = 0.0001;
+	let server = LoopbackServer::start(Arc::new(config)).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "message", "session_id": session_id, "content": "list my schedules"
+		}),
+	)
+	.await;
+	let stopped = read_until(&mut ws, |v| {
+		v["type"] == "status"
+			&& v["message"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("Stopped:")
+	})
+	.await;
+	assert!(
+		stopped["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("request spending threshold"),
+		"got: {stopped}"
+	);
+	assert_eq!(stopped["session_id"], session_id);
+	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert_eq!(cost["session_id"], session_id);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// The inbox monitor drives its own turns; a budget stop there must produce the
+/// same "Stopped" status over the background channel, not just a cost frame.
+#[tokio::test]
+#[serial_test::serial]
+async fn monitor_inbox_turn_request_spending_stop_sends_the_stopped_status() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		crate::session::chat::test_support::tool_call_response(
+			"schedule",
+			serde_json::json!({"command": "list"}),
+		),
+	])
+	.await;
+	let mut config = ws_fake_config();
+	config.max_request_spending_threshold = 0.0001;
+	let server = LoopbackServer::start(Arc::new(config)).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "list my schedules".into(),
+		},
+	);
+	let _injected = read_until(&mut ws, |v| v["type"] == "injected").await;
+	let stopped = read_until(&mut ws, |v| {
+		v["type"] == "status"
+			&& v["message"]
+				.as_str()
+				.unwrap_or_default()
+				.contains("Stopped:")
+	})
+	.await;
+	assert!(
+		stopped["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("request spending threshold"),
+		"got: {stopped}"
+	);
+	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert_eq!(cost["session_id"], session_id);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+/// `cleanup_session` destroys the inbox while the connection's monitor is
+/// parked on it. The monitor must notice on its next wakeup and exit — a
+/// monitor that parks forever on a destroyed Notify is one leaked task per
+/// connection for the life of the process.
+#[tokio::test]
+#[serial_test::serial]
+async fn monitor_exits_when_cleanup_destroyed_the_inbox() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let before = wait_for_inbox_monitors(0).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	assert_eq!(live_inbox_monitors() - before, 1);
+	tokio::time::sleep(Duration::from_millis(200)).await;
+
+	// Capture the schedule Notify the parked monitor waits on, then destroy
+	// the session-scoped state. notify_one() stores a permit, so the wakeup
+	// lands whether the monitor has parked yet or not.
+	let notify = crate::session::context::get_schedule_notify(&session_id);
+	crate::session::context::cleanup_session(&session_id);
+	notify.notify_one();
+
+	assert_eq!(
+		wait_for_inbox_monitors(before).await,
+		before,
+		"the monitor must exit once the inbox is gone, not park forever"
+	);
+	assert!(
+		server.sessions.lock().await.contains_key(&session_id),
+		"cleanup of session-scoped state must not drop the live session"
+	);
+
+	ws.close(None).await.ok();
+}
+
+/// A handback queued BEFORE the connection closes must survive the close: the
+/// orphaned monitor wakes on `bg_tx.closed()` with a non-empty queue, passes
+/// the wakeup on to any live monitor parked on the same Notify, and exits
+/// WITHOUT draining the message into its dead channel.
+#[tokio::test]
+#[serial_test::serial]
+async fn monitor_passes_the_wakeup_on_when_a_handback_was_queued_before_the_close() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![]).await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let before = wait_for_inbox_monitors(0).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, None).await;
+	tokio::time::sleep(Duration::from_millis(200)).await;
+
+	// Queue a handback while the session lock is held: the monitor wakes,
+	// fails try_lock, and parks again with the message still queued.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::TapRun {
+				id: "tap-1".to_string(),
+				role: "assistant:researcher".to_string(),
+			},
+			content: "[Tap-run 'tap-1' completed]\n\nthe research".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	assert!(
+		inbox_has_messages(&session_id).await,
+		"precondition: the handback is queued behind the lock"
+	);
+
+	ws.close(None).await.ok();
+	drop(ws);
+	drop(guard);
+	assert_eq!(
+		wait_for_inbox_monitors(before).await,
+		before,
+		"the orphaned monitor must be reaped once its connection is gone"
+	);
+	assert!(
+		inbox_has_messages(&session_id).await,
+		"the queued handback must survive the close, not be drained into a dead channel"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+// ---- server construction ----
+
+#[test]
+fn server_new_parses_the_address_and_stores_role_and_origins() {
+	let server = WebSocketServer::new(
+		"127.0.0.1",
+		0,
+		ws_fake_config(),
+		"assistant".to_string(),
+		vec!["https://octomind.dev".to_string()],
+	)
+	.expect("a valid host:port must parse");
+	assert_eq!(server.addr.port(), 0);
+	assert_eq!(server.state.role, "assistant");
+	assert_eq!(server.state.allow_origins.len(), 1);
+
+	let bad = WebSocketServer::new(
+		"not a host",
+		1,
+		ws_fake_config(),
+		"assistant".to_string(),
+		Vec::new(),
+	);
+	assert!(bad.is_err(), "an unparseable address must be rejected");
+}

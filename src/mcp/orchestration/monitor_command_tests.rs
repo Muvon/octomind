@@ -387,7 +387,7 @@ async fn monitor_lists_and_stops_a_background_task() {
 		crate::session::shell_jobs::set_task_status_for_session(
 			&sid,
 			&key,
-			"shell: cargo test · running 7s",
+			"shell: cargo test · PID 7 (stop: kill -- -7)",
 		);
 
 		let listing = text_of(
@@ -395,12 +395,12 @@ async fn monitor_lists_and_stops_a_background_task() {
 				.await
 				.expect("dispatch"),
 		);
+		// No elapsed counter: an unchanged task must list identically on every
+		// call, or the loop detector never sees a repeated `list`.
 		assert!(
-			listing.contains(&format!("[{key}] shell: cargo test")),
-			"{listing}"
-		);
-		assert!(
-			listing.contains("Status: shell: cargo test · running 7s"),
+			listing.contains(&format!(
+				"[{key}] shell: cargo test\n  Status: shell: cargo test · PID 7 (stop: kill -- -7)"
+			)),
 			"{listing}"
 		);
 

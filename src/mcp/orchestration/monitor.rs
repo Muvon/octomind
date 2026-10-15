@@ -333,17 +333,19 @@ fn handle_list(call: &McpToolCall) -> McpToolResult {
 }
 
 /// The session's pending MCP tasks with the latest status their pollers saw.
+/// No elapsed time here or in monitor lines: a listing must read the same while
+/// nothing changed, or every repeated `list` looks novel to the loop detector
+/// and a polling model is never told that its results are delivered anyway.
 fn render_background_tasks(session_id: &SessionId) -> Option<String> {
 	let lines: Vec<String> = crate::session::shell_jobs::pending_resources_for_session(session_id)
 		.into_iter()
 		.filter(|job| job.task)
 		.map(|job| {
-			let elapsed = job.started_at.elapsed().unwrap_or_default().as_secs();
 			let status = job
 				.status
 				.map(|status| format!("\n  Status: {status}"))
 				.unwrap_or_default();
-			format!("[{}] {} — running {elapsed}s{status}", job.uri, job.label)
+			format!("[{}] {}{status}", job.uri, job.label)
 		})
 		.collect();
 	(!lines.is_empty()).then(|| format!("Background tasks:\n{}", lines.join("\n")))
@@ -362,16 +364,14 @@ pub fn render_running_monitors(session_id: &SessionId) -> Option<String> {
 	let lines = monitors
 		.into_iter()
 		.map(|monitor| {
-			let elapsed = monitor.started_at.elapsed().unwrap_or_default().as_secs();
 			let lifetime = monitor
 				.timeout_ms
 				.map(|timeout| format!("{}ms", timeout))
 				.unwrap_or_else(|| "persistent".to_string());
 			format!(
-				"[{}] {} — running {}s\n  Command: {}\n  Workdir: {}\n  Delivery: every {}s, max {} bytes\n  Lifetime: {}",
+				"[{}] {}\n  Command: {}\n  Workdir: {}\n  Delivery: every {}s, max {} bytes\n  Lifetime: {}",
 				monitor.id,
 				monitor.description,
-				elapsed,
 				monitor.command,
 				monitor.workdir,
 				monitor.flush_interval_secs,

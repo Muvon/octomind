@@ -19,6 +19,12 @@
   "os": "macOS ARM64",
   "request_spending_threshold_usd": 0.25,
   "gif_playback_speed": 1.5,
-  "gif_idle_limit_seconds": 1,
-  "recording_sha256": "519deacfbf4023fc89f1772c3cc84b93e4c16e6b4b87067756bbdae5a9738565"
+  "gif_idle_limit_seconds": 0.75,
+  "recording_sha256": "483654534dcd18e3dfaa4db23480b9d9c0f5421e6d856153a148cdc388607893",
+  "recording_mode": "interactive",
+  "interactive_prompt": "Read task.txt and complete that task.",
+  "ansi_color_sequences": 7327,
+  "gif_theme": "dracula",
+  "gif_font_size": 15,
+  "gif_fps_cap": 6
 }

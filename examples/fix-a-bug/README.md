@@ -5,11 +5,11 @@ Ask Octomind to repair the implementation, then independently rerun the tests an
 
 ![Octomind fixes the nested-range bug, passes all seven tests, and leaves the test file unchanged](demo.gif)
 
-The recording shows an observed run on macOS ARM64 with Octomind **0.58.4** and
+The recording shows an interactive terminal run on macOS ARM64 with Octomind **0.58.4** and
 **GPT-4.1 mini through OpenRouter**, on October 16, 2026. Only `merge_ranges.py` changed; all seven tests passed in the
 independent rerun. The original test file and task remained byte-for-byte unchanged.
 
-Playback runs at 1.5× speed and shortens idle periods to one second. The [original terminal recording](demo.cast) and
+Playback runs at 1.5× speed and shortens idle periods to 0.75 seconds. The [original terminal recording](demo.cast) and
 [verification summary](verification.json) are included. Model responses and costs can vary between runs.
 
 ## Run it yourself
@@ -46,9 +46,16 @@ octomind run developer:general \
   --model openrouter:openai/gpt-4.1-mini \
   --config 'supervisor.model.name="openrouter:openai/gpt-4.1-mini"' \
   --config 'compression.model.name="openrouter:openai/gpt-4.1-mini"' \
-  --config 'max_request_spending_threshold=0.25' \
-  --format plain < task.txt
+  --config 'max_request_spending_threshold=0.25'
 ```
+
+At the prompt, enter:
+
+```text
+Read task.txt and complete that task.
+```
+
+After the task finishes, enter `/exit` to return to your shell.
 
 The recording used these model profiles and spending threshold in an isolated config file. The command above sets them
 for this process. The threshold is in USD and is checked between model requests. The specialist's first run can fetch
@@ -78,3 +85,23 @@ The recorded run passes all seven tests. Its diff keeps the larger end when merg
 - [Install Octomind](https://octomind.run/docs/usage/01-installation)
 - [Use it in your terminal or scripts](https://octomind.run/docs/usage/02-quickstart)
 - [Star Octomind for release updates](https://github.com/muvon/octomind)
+
+## Record your own run
+
+From the temporary fixture copy, start asciinema in a terminal with colours enabled:
+
+```bash
+env -u NO_COLOR TERM=xterm-256color CLICOLOR_FORCE=1 \
+  asciinema rec --tty-size 100x30 --command "zsh -f" demo-color.cast
+```
+
+Repeat the steps above inside the recorded shell, then exit the shell to finish. Render the capture with `agg`:
+
+```bash
+agg --theme dracula --font-size 15 --fps-cap 6 \
+  --idle-time-limit 0.75 --speed 1.5 --last-frame-duration 4 \
+  demo-color.cast demo-color.gif
+```
+
+Keep the rendered GIF below the repository's 1000 KB file limit. When replacing a recording, refresh the still preview
+and verification summary from that same run.

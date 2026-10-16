@@ -544,3 +544,34 @@ fn test_upgrade_missing_config_errors_and_current_config_succeeds() {
 		.expect("seed current config");
 	execute(&a, template_config()).expect("upgrading a current config succeeds");
 }
+
+#[test]
+#[serial]
+fn test_local_api_key_status_when_set() {
+	let _env = EnvGuard::new(&["LOCAL_API_KEY", DATA_DIR_KEY]);
+	let dir = sandbox("localkey-set");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	std::env::set_var("LOCAL_API_KEY", "diagnostic-sentinel-secret");
+
+	let mut a = args();
+	a.show = true;
+	execute(&a, template_config()).expect("show succeeds with local api key set");
+}
+
+#[test]
+#[serial]
+fn test_local_api_key_status_when_unset_or_whitespace() {
+	let _env = EnvGuard::new(&["LOCAL_API_KEY", DATA_DIR_KEY]);
+	let dir = sandbox("localkey-unset");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+
+	// Case 1: unset
+	std::env::remove_var("LOCAL_API_KEY");
+	let mut a = args();
+	execute(&a, template_config()).expect("execute succeeds with unset local key");
+
+	// Case 2: whitespace only
+	std::env::set_var("LOCAL_API_KEY", "   \t\n  ");
+	a.show = true;
+	execute(&a, template_config()).expect("show succeeds with whitespace local key");
+}

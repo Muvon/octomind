@@ -63,6 +63,15 @@ and the main, supervisor, and compression models.
 
 ## Other Installation Methods
 
+### Homebrew (macOS)
+
+```bash
+brew install muvon/tap/octomind
+```
+
+The [Muvon tap](https://github.com/muvon/homebrew-tap) provides release binaries for Apple Silicon and Intel Macs.
+After installation, follow the sign-in and startup steps above.
+
 ### GitHub release archive
 
 Download the archive for your target from [GitHub Releases](https://github.com/muvon/octomind/releases). Release assets

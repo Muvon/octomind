@@ -1,0 +1,10 @@
+Fix the bug in merge_ranges.py. Change only that file.
+
+merge_ranges merges overlapping closed integer ranges. Ranges that share an
+endpoint overlap. A nested range must not shorten a containing range. Input
+ranges have start <= end, may be unsorted, and must remain unchanged.
+
+Read test_merge_ranges.py, run python3 -m unittest -v, repair the implementation,
+and rerun the tests. Keep test_merge_ranges.py and task.txt unchanged. Do not
+install dependencies, access the network, or use git. Report the change and
+the test result.

@@ -215,12 +215,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		chat_session.learning_injected = true;
 		chat_session.pending_recall = false;
 		crate::log_debug!("Learning injection triggered (first_call={})", first_call);
-		let current_dir = crate::mcp::get_thread_working_directory();
-		let project = current_dir
-			.file_name()
-			.and_then(|n| n.to_str())
-			.unwrap_or("unknown")
-			.to_string();
+		// Same scope key extraction stores under, or recall reads a different dir.
+		let project = crate::supervisor::learning::evolution::project_name(None);
 		// Most recent user message drives query-based scoped retrieval.
 		let user_input =
 			crate::session::latest_real_user_task_content(&chat_session.session.messages)
@@ -296,8 +292,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			live_task.map(crate::session::anchor::task_sig),
 			effective_verification_policy,
 		) {
-			chat_session.add_system_managed_user_message(&note)?;
-			crate::log_debug!("Supervisor recitation injected");
+			if crate::supervisor::recite::needs_recital(&chat_session.session.messages, &note) {
+				chat_session.add_system_managed_user_message(&note)?;
+				crate::log_debug!("Supervisor recitation injected");
+			}
 		}
 	}
 

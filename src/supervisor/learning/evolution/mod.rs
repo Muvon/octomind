@@ -288,16 +288,19 @@ const STORE_SYNTHESIS_STAMP: &str = "store-synthesis.stamp";
 /// Existing learning project identity: current working-directory basename.
 /// Keeping this in one function prevents evolution from inventing a parallel
 /// scope key while the broader learning store still uses this contract.
+/// Without an explicit dir it is the session's workdir — the one recall keys
+/// on — not the process cwd: an ACP/WebSocket daemon serves sessions rooted
+/// elsewhere, and storing under the daemon's cwd strands every lesson.
 pub fn project_name(current_dir: Option<&Path>) -> String {
 	let owned;
 	let dir = match current_dir {
-		Some(path) => Some(path),
+		Some(path) => path,
 		None => {
-			owned = std::env::current_dir().ok();
-			owned.as_deref()
+			owned = crate::mcp::get_thread_working_directory();
+			owned.as_path()
 		}
 	};
-	dir.and_then(Path::file_name)
+	dir.file_name()
 		.and_then(|name| name.to_str())
 		.map(String::from)
 		.unwrap_or_else(|| "unknown".to_string())

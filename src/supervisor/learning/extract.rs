@@ -156,6 +156,13 @@ pub async fn run_extraction(
 	if !learning.enabled {
 		return Ok(0);
 	}
+	// Scoped records land in `learning/{project}/{role}/`; without a role they
+	// fall into the project root, which recall never reads. Every session
+	// carries a role, so a missing one is a caller bug — refuse loudly.
+	anyhow::ensure!(
+		!role.trim().is_empty(),
+		"learning extraction needs the session role: role-less records are unreachable by recall"
+	);
 	let _timing = crate::supervisor::accounting::WallTimer::start(
 		crate::supervisor::stats::CallKind::Distill,
 	);

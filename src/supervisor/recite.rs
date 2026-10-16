@@ -39,6 +39,14 @@ const CONSTRAINT_LEN_MAX: usize = 200;
 /// the condition, the exception and the reason in one sentence. Prose keeps the
 /// strict cap; only explicitly listed items get the longer one.
 const LISTED_CONSTRAINT_LEN_MAX: usize = 400;
+/// Opening of every recitation; also how the previous one is found in history.
+const RECITE_HEADER: &str = "<pay-attention>\nRe-anchor on your task:\n";
+/// Context the model reads after an unchanged recitation before it is repeated.
+/// History is append-only (rewriting the earlier copy would void the cached
+/// prefix), so an identical copy every turn only stacks duplicates; once this
+/// much has landed on top, the copy has left the recency slot and earns a
+/// fresh one at the tail.
+const RECITE_REFRESH_TOKENS: usize = 8_000;
 
 /// Deterministically extract the request's binding requirements — both explicit
 /// prohibitions ("do not X", "never Y", "must not Z") and explicit acceptance
@@ -55,7 +63,7 @@ const LISTED_CONSTRAINT_LEN_MAX: usize = 400;
 /// but partial spec — it then satisfies the recited subset and stops.
 /// Rejoin a request into the lines its author meant, dropping the material that
 /// is never a directive (fenced code, blockquotes, transcript decoration,
-/// line-numbered excerpts).
+/// line-numbered excerpts, client-supplied `<untrusted>` data blocks).
 ///
 /// Requests are hard-wrapped, so a single criterion routinely spans several
 /// physical lines. Reading them one at a time truncates it at the wrap — a rule
@@ -66,11 +74,25 @@ fn logical_lines(task: &str) -> Vec<String> {
 	let mut lines: Vec<String> = Vec::new();
 	let mut current = String::new();
 	let mut in_fence = false;
+	let mut in_untrusted = false;
 	let mut in_item = false;
 	for raw in task.lines() {
 		let trimmed = raw.trim_start();
 		if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
 			in_fence = !in_fence;
+			continue;
+		}
+		// A client wraps runtime state it attaches to the user's words (browser
+		// tabs, page titles) in `<untrusted>`: data, never the requester's rule.
+		// It also breaks the logical line, or the closing tag's neighbour would be
+		// glued onto it.
+		if !in_fence && (in_untrusted || trimmed.starts_with("<untrusted")) {
+			in_untrusted = !trimmed.contains("</untrusted>");
+			if !current.trim().is_empty() {
+				lines.push(std::mem::take(&mut current));
+			}
+			current.clear();
+			in_item = false;
 			continue;
 		}
 		if in_fence || is_quoted_material(trimmed) {
@@ -196,7 +218,8 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 				continue;
 			}
 			let lower = unit.to_lowercase();
-			if MARKERS.iter().any(|m| lower.contains(m)) && !out.iter().any(|e| e == unit) {
+			if MARKERS.iter().any(|m| contains_marker(&lower, m)) && !out.iter().any(|e| e == unit)
+			{
 				out.push(unit.to_string());
 				if out.len() >= CONSTRAINTS_MAX {
 					return out;
@@ -205,6 +228,24 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		}
 	}
 	out
+}
+
+/// Markers match as whole words: a bare substring test read "whenever" as
+/// "never" and recited a client's plain reminder as the user's binding rule.
+/// A marker ending in a space already bounds its right edge.
+fn contains_marker(lower: &str, marker: &str) -> bool {
+	lower.match_indices(marker).any(|(at, _)| {
+		let left_bounded = !lower[..at]
+			.chars()
+			.next_back()
+			.is_some_and(char::is_alphanumeric);
+		let right_bounded = marker.ends_with(' ')
+			|| !lower[at + marker.len()..]
+				.chars()
+				.next()
+				.is_some_and(char::is_alphanumeric);
+		left_bounded && right_bounded
+	})
 }
 
 /// Constraints that belong to the active turn, not a union of every historic
@@ -330,7 +371,7 @@ pub fn recite_note(
 	{
 		return None;
 	}
-	let mut s = String::from("<pay-attention>\nRe-anchor on your task:\n");
+	let mut s = String::from(RECITE_HEADER);
 	if !intent.is_empty() {
 		s.push_str("Goal (fixed): <intent>");
 		s.push_str(&xml_text(intent.trim()));
@@ -371,6 +412,26 @@ pub fn recite_note(
 	}
 	s.push_str("</pay-attention>");
 	Some(s)
+}
+
+/// Whether `note` should be appended now: it differs from the latest
+/// recitation in history, none is left (compaction dropped it), or more than
+/// [`RECITE_REFRESH_TOKENS`] of context has landed since that copy.
+pub fn needs_recital(messages: &[crate::session::Message], note: &str) -> bool {
+	let Some(last) = messages
+		.iter()
+		.rposition(|message| message.role == "user" && message.content.starts_with(RECITE_HEADER))
+	else {
+		return true;
+	};
+	if messages[last].content != note {
+		return true;
+	}
+	let since: usize = messages[last + 1..]
+		.iter()
+		.map(|message| crate::session::estimate_tokens(&message.content))
+		.sum();
+	since > RECITE_REFRESH_TOKENS
 }
 
 #[cfg(test)]

@@ -31,8 +31,8 @@ pub struct DistillArgs {
 	#[arg(long, value_name = "PATH")]
 	pub session_file: Option<PathBuf>,
 
-	/// Role the session ran under.
-	#[arg(long, default_value = "")]
+	/// Role the session ran under. Required: scoped lessons are filed under it.
+	#[arg(long)]
 	pub role: String,
 
 	/// Project scope the lessons are stored under.

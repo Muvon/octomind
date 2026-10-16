@@ -1887,3 +1887,20 @@ async fn before_exit_extraction_gates_on_the_enabled_flag_and_spawns_a_child() {
 	let snapshot = std::env::temp_dir().join(format!("octomind-distill-{session_name}-{pid}.json"));
 	let _ = std::fs::remove_file(&snapshot);
 }
+
+#[tokio::test]
+async fn extraction_without_a_role_fails_loudly() {
+	let mut config = learning_config();
+	config.supervisor.learning.enabled = true;
+	let error = run_extraction(
+		&[message("user", "always draft first")],
+		&config,
+		"",
+		"project",
+		"roleless-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect_err("a role-less extraction would strand its records");
+	assert!(error.to_string().contains("session role"), "{error}");
+}

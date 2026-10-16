@@ -65,7 +65,8 @@ pub async fn handle_done(
 	// The process keeps living after /done, so dropping the handle is safe here
 	// (unlike the /exit and Ctrl+D paths, which must await it).
 	if config.supervisor.learning.enabled {
-		let role = crate::config::get_thread_role().unwrap_or_default();
+		// The session's own live role, the same key recall reads.
+		let role = session.role.clone();
 		if let Some((messages, session_name, outcome)) = learning_snapshot {
 			let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
 				messages,

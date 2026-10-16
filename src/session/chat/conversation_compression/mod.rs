@@ -738,7 +738,10 @@ async fn finish_fold(
 	.await?;
 
 	if let Some((messages, session_name, outcome)) = learning_snapshot {
-		let role = crate::config::get_thread_role().unwrap_or_default();
+		// The session's own live role (kept current by `/role`), the same key
+		// recall reads: a process registry lookup here once came back empty under
+		// ACP and filed every lesson role-less, where recall never looks.
+		let role = session.role.clone();
 		let _ = crate::supervisor::learning::extract::spawn_lesson_extraction_snapshot(
 			messages,
 			config,

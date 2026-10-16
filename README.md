@@ -83,6 +83,8 @@ You're now in a session with an agent that can read your code, run commands, and
 
 > `developer:general` comes from the default tap [`muvon/tap`](https://github.com/muvon/octomind-tap), not your local config. Plain `octomind run` starts the config's default role, `assistant:concierge`.
 
+Try the [recorded bug-fix demo](examples/fix-a-bug): two failing tests, an agent fix, and an independent test rerun.
+
 ## Benchmarks
 
 Measured on [octobench](https://github.com/Muvon/octobench) against **25 tasks harvested from merged pull requests** across Python, PHP, Rust, C++, and JavaScript. Each agent works in the pre-fix repo; held-out tests from the merged fix decide pass or fail. These are the published July 30, 2026 results, not a measurement of this checkout.

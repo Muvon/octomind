@@ -1,0 +1,24 @@
+{
+  "recorded_at": "2026-10-16",
+  "octomind_version": "0.58.4",
+  "model": "openrouter:openai/gpt-4.1-mini",
+  "baseline_tests": {
+    "total": 7,
+    "failed": 2
+  },
+  "after_tests": {
+    "total": 7,
+    "failed": 0
+  },
+  "test_file_sha256": "43da8846ee5c7ce8f8ea78146152f2f16a87baa64240d2a313dee03762fee4d4",
+  "test_file_unchanged": true,
+  "task_file_unchanged": true,
+  "changed_files": [
+    "merge_ranges.py"
+  ],
+  "os": "macOS ARM64",
+  "request_spending_threshold_usd": 0.25,
+  "gif_playback_speed": 1.5,
+  "gif_idle_limit_seconds": 1,
+  "recording_sha256": "519deacfbf4023fc89f1772c3cc84b93e4c16e6b4b87067756bbdae5a9738565"
+}

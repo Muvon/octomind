@@ -51,8 +51,14 @@ async fn resumed_session_with_compressions_gets_hint_appended() {
 	let first = &session.session.messages[0];
 	assert_eq!(first.role, "system");
 	assert!(first.content.starts_with("base prompt"));
-	assert!(first.content.contains("<context_compression"));
-	assert!(first.content.contains("compressions=\"1\""));
+	assert!(first.content.contains("<context_compression>"));
+
+	// Every resume re-runs setup on the persisted prompt; it must keep one block.
+	setup_system_prompt_and_cache(&mut session, &config, "assistant", false)
+		.await
+		.expect("setup");
+	let content = &session.session.messages[0].content;
+	assert_eq!(content.matches("<context_compression").count(), 1);
 }
 
 #[tokio::test]

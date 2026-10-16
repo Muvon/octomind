@@ -24,7 +24,7 @@ fn zero_compressions_leaves_prompt_unchanged() {
 }
 
 #[test]
-fn compression_hint_appends_xml_block_with_count() {
+fn compression_hint_appends_xml_block() {
 	let mut stats = CompressionStats::default();
 	stats.add_compression(CompressionKind::Conversation, 10, 5_000);
 	stats.add_compression(CompressionKind::Task, 4, 2_000);
@@ -33,19 +33,39 @@ fn compression_hint_appends_xml_block_with_count() {
 	add_compression_hints_to_prompt(&mut prompt, &stats);
 
 	assert!(prompt.starts_with("base prompt"));
-	assert!(prompt.contains("<context_compression"));
-	assert!(prompt.contains("</context_compression>"));
-	assert!(prompt.contains("status=\"active\""));
-	assert!(prompt.contains("compressions=\"2\""));
-	assert!(prompt.contains("tokens_saved=\"7000\""));
+	assert!(prompt.contains("<context_compression>"));
+	assert!(prompt.ends_with("</context_compression>"));
 }
 
 #[test]
-fn compression_hint_reports_reduction_percentage() {
+fn compression_hint_is_byte_stable_across_resumes() {
 	let mut stats = CompressionStats::default();
 	stats.add_compression(CompressionKind::Phase, 5, 10_000);
-	// avg_compression_ratio = 10_000 / (10_000 + 10_000) = 0.5 → "50.0%"
-	let mut prompt = String::new();
+	let mut prompt = "base prompt".to_string();
 	add_compression_hints_to_prompt(&mut prompt, &stats);
-	assert!(prompt.contains("reduction=\"50.0%\""));
+	let first = prompt.clone();
+
+	// A later resume after more compressions must not touch the cached prefix.
+	stats.add_compression(CompressionKind::Conversation, 8, 3_000);
+	add_compression_hints_to_prompt(&mut prompt, &stats);
+	add_compression_hints_to_prompt(&mut prompt, &stats);
+
+	assert_eq!(prompt, first);
+	assert_eq!(prompt.matches("<context_compression").count(), 1);
+}
+
+#[test]
+fn compression_hint_replaces_stacked_legacy_blocks() {
+	let mut stats = CompressionStats::default();
+	stats.add_compression(CompressionKind::Conversation, 10, 5_000);
+	let legacy = |n: u32| {
+		format!("\n\n<context_compression status=\"active\" compressions=\"{n}\" tokens_saved=\"1\" reduction=\"1.0%\">\nold\n</context_compression>")
+	};
+	let mut prompt = format!("base prompt{}{}{}", legacy(1), legacy(2), legacy(2));
+
+	add_compression_hints_to_prompt(&mut prompt, &stats);
+
+	let mut expected = "base prompt".to_string();
+	add_compression_hints_to_prompt(&mut expected, &stats);
+	assert_eq!(prompt, expected);
 }

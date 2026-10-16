@@ -95,24 +95,38 @@ pub async fn create_system_prompt(
 	prompt
 }
 
+/// Static on purpose: the system prompt heads every request's cached prefix, so
+/// per-compression counters would change its bytes — and void the cache — on
+/// each resume, while telling the model nothing it can act on.
+const COMPRESSION_HINT: &str = "\n\n<context_compression>\n\
+	Compressed turns appear as <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">. Their <analysis_findings> and <file_context> were extracted from real tool results and disk at compression time — treat them as current and accurate; do not re-read files or re-run searches to verify what they already state. Read files NOT in <file_context> normally. Use recent uncompressed messages for current intent, summaries for background.\n\
+	</context_compression>";
+const COMPRESSION_HINT_CLOSE: &str = "</context_compression>";
+
 /// Add compression context hints to system prompt for resumed sessions.
 /// Informs the AI about compression state to improve reasoning with compressed context.
+/// Idempotent: runs on every resume against the persisted system prompt, so it
+/// keeps exactly one hint block instead of stacking a copy per resume.
 pub fn add_compression_hints_to_prompt(
 	prompt: &mut String,
 	compression_stats: &crate::session::CompressionStats,
 ) {
-	if compression_stats.total_compressions() == 0 {
+	if compression_stats.total_compressions() == 0 || prompt.ends_with(COMPRESSION_HINT) {
 		return;
 	}
 
-	prompt.push_str(&format!(
-		"\n\n<context_compression status=\"active\" compressions=\"{}\" tokens_saved=\"{}\" reduction=\"{:.1}%\">\n\
-		Compressed turns appear as <conversation_summary id=\"…\">, <task_compressed id=\"…\">, <phase_compressed id=\"…\">, <project_compressed id=\"…\">. Their <analysis_findings> and <file_context> were extracted from real tool results and disk at compression time — treat them as current and accurate; do not re-read files or re-run searches to verify what they already state. Read files NOT in <file_context> normally. Use recent uncompressed messages for current intent, summaries for background.\n\
-		</context_compression>",
-		compression_stats.total_compressions(),
-		compression_stats.total_tokens_saved,
-		compression_stats.avg_compression_ratio() * 100.0
-	));
+	// Earlier builds appended a counter-stamped block on every resume, so a
+	// long-lived session can carry dozens; drop them all before the single append.
+	while let Some(start) = prompt.find("<context_compression") {
+		let Some(len) = prompt[start..].find(COMPRESSION_HINT_CLOSE) else {
+			break;
+		};
+		let end = start + len + COMPRESSION_HINT_CLOSE.len();
+		let start = prompt[..start].trim_end_matches('\n').len();
+		prompt.replace_range(start..end, "");
+	}
+
+	prompt.push_str(COMPRESSION_HINT);
 }
 
 #[cfg(test)]

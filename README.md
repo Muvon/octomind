@@ -54,6 +54,12 @@ Most coding agents assume a human is watching the screen. Octomind is built for 
 curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
 ```
 
+On macOS, you can also install with Homebrew:
+
+```bash
+brew install muvon/tap/octomind
+```
+
 **2. Get model access.** The fastest path is Octomind Cloud, which includes models and needs no configuration:
 
 ```bash
@@ -167,6 +173,7 @@ octomind tap yourteam/octomind-tap        # on another machine, after publishing
 | Method | Command |
 |---|---|
 | **Install script** (recommended) | `curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh \| bash` |
+| **Homebrew** (macOS) | `brew install muvon/tap/octomind` |
 | **Cargo** (Rust 1.95+) | `cargo install octomind` |
 | **Docker** | `docker run --rm ghcr.io/muvon/octomind --help` |
 | **From source** | `git clone https://github.com/muvon/octomind.git && cd octomind && cargo build --release` |

@@ -429,6 +429,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
 	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
 	render_octomind_cloud_row();
+	render_local_api_key_row();
 
 	// ── mcp ───────────────────────────────────────────────────────────
 	let dev_mcp_enabled = config
@@ -520,6 +521,30 @@ fn render_octomind_cloud_row() {
 	));
 }
 
+fn render_local_api_key_row() {
+	const ENV_VAR: &str = "LOCAL_API_KEY";
+	match std::env::var(ENV_VAR) {
+		Ok(value) if !value.trim().is_empty() => {
+			let tracker = octomind::config::get_env_tracker();
+			let source_desc = tracker.lock().unwrap().get_source_description(ENV_VAR);
+			block_row_text(&format!(
+				"{}  {} {}",
+				format!("{:<11}", "Local").bright_white(),
+				"✓".bright_green(),
+				format!("set via {}", source_desc).dimmed(),
+			));
+		}
+		_ => {
+			block_row_text(&format!(
+				"{}  {} {}",
+				format!("{:<11}", "Local").bright_white(),
+				"·".bright_black(),
+				"optional (not set)".dimmed(),
+			));
+		}
+	}
+}
+
 /// Render an env-var API key row under the current /config block.
 fn render_env_api_key_row(provider: &str, env_var: &str) {
 	match std::env::var(env_var) {
@@ -569,7 +594,7 @@ fn list_markdown_themes() {
 		),
 		(
 			"solarized",
-			"Based on the popular Solarized color scheme",
+			"Based on the popular Solarized scheme",
 			"Fans of the classic Solarized palette",
 		),
 		(
@@ -672,6 +697,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
 	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
 	render_octomind_cloud_row();
+	render_local_api_key_row();
 
 	// ── roles ─────────────────────────────────────────────────────────
 	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) =

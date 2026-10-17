@@ -460,6 +460,24 @@ pub async fn run_extraction(
 		.await;
 	}
 
+	// 3. User-wide is the widest claim a rule can make: it steers every project
+	//    and role. Grounding proves the quote says the rule, not that the rule
+	//    holds everywhere, so a global candidate passes the same user-wide check
+	//    recurrence promotion uses; otherwise it stays with this project.
+	let mut candidates = candidates;
+	for candidate in candidates
+		.iter_mut()
+		.filter(|candidate| candidate.lesson.scope == "global")
+	{
+		if !super::retention::verify_user_wide(config, &[&candidate.lesson]).await {
+			crate::log_debug!(
+				"Learning kept scoped (not confirmed user-wide): {}",
+				candidate.lesson.content
+			);
+			candidate.lesson.scope = "scoped".to_string();
+		}
+	}
+
 	// Store each. Identical content is skipped. A refinement or reversal deletes
 	// the lesson the model explicitly named via `supersedes`, so a correction to
 	// a previous correction wins instead of being silently dropped — and no

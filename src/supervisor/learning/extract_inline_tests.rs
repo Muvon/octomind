@@ -1034,6 +1034,77 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Grounding proves a quote says the rule, not that the rule holds in every
+/// project. Observed live: "never modify README.md, the docs team owns it" was
+/// stored user-wide and would have steered unrelated repositories.
+#[tokio::test]
+async fn global_claim_needs_user_wide_confirmation_or_stays_scoped() {
+	use crate::session::chat::test_support::{
+		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
+	};
+	let _guard = ENV_LOCK.lock().await;
+	let _data = TestDataDir::new();
+	let role = "__global_gate_role";
+	let project = "__global_gate_project";
+
+	let response = r#"<decision>LEARN</decision>
+<lesson scope="global" confidence="high" tags="docs" evidence="never modify README.md, the docs team owns it">Never modify README.md; the docs team owns it</lesson>
+<lesson scope="global" confidence="high" tags="workflow" evidence="I run the builds myself">Leave builds to the user, who runs them</lesson>"#;
+	// Extraction, the grounding verifier, then one user-wide verdict per
+	// global candidate in order.
+	let url = spawn_stub(vec![
+		final_response(response),
+		final_response(r#"{"unsupported":[]}"#),
+		final_response(r#"{"supported":false,"issues":["names one project's file and team"]}"#),
+		final_response(r#"{"supported":true,"issues":[]}"#),
+	])
+	.await;
+	std::env::set_var("OLLAMA_API_URL", &url);
+	let mut config = fake_provider_config();
+	config.supervisor.model.model = Some("ollama:fake-model".to_string());
+	config.supervisor.learning.evolution.enabled = false;
+
+	let messages = vec![
+		message(
+			"user",
+			"never modify README.md, the docs team owns it. I run the builds myself",
+		),
+		message("assistant", "understood"),
+	];
+	let stored = run_extraction(
+		&messages,
+		&config,
+		role,
+		project,
+		"global-gate-session",
+		crate::supervisor::learning::TrajectoryOutcome::Unknown,
+	)
+	.await
+	.expect("extraction succeeds");
+	std::env::remove_var("OLLAMA_API_URL");
+	assert_eq!(stored, 2);
+
+	let backend = FileBackend;
+	let scoped = backend.retrieve_all(role, project).await.unwrap();
+	assert!(
+		scoped.iter().any(
+			|memory| memory.content.starts_with("Never modify README.md")
+				&& memory.scope == "scoped"
+		),
+		"{scoped:?}"
+	);
+	let global = backend.retrieve_global().await.unwrap();
+	assert!(
+		global
+			.iter()
+			.any(|memory| memory.content.starts_with("Leave builds")),
+		"{global:?}"
+	);
+	assert!(!global
+		.iter()
+		.any(|memory| memory.content.contains("README")));
+}
+
 #[tokio::test]
 async fn learn_path_rejects_fabricated_evidence_entirely() {
 	use crate::session::chat::test_support::{

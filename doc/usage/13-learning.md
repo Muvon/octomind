@@ -34,7 +34,9 @@ Each lesson has a **scope** that decides where it lands and how it is retrieved:
 - **`scoped`** (the default) — tied to a single project and role. Stored under `learning/{project}/{role_base}/` and
   retrieved by relevance to what you're working on right now.
 - **`global`** — a durable, user-wide preference that applies in every project and role. Stored under `learning/_/` and
-  hot records are considered for every replacement pack by importance; cold records require lexical matches.
+  hot records are considered for every replacement pack by importance; cold records require lexical matches. A lesson
+  extracted as global must also pass the same user-wide check that promotes recurring rules; a rule tied to one
+  project's files, team, tools, or task is stored scoped instead.
 
 So scoped lessons are organized **project first, then role** (project knowledge stays within the project, the role
 filters it further), while global lessons deliberately cross both boundaries. See [Lesson Scope](#lesson-scope) for

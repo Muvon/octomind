@@ -594,7 +594,7 @@ fn list_markdown_themes() {
 		),
 		(
 			"solarized",
-			"Based on the popular Solarized scheme",
+			"Based on the popular Solarized color scheme",
 			"Fans of the classic Solarized palette",
 		),
 		(

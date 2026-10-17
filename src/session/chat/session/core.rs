@@ -368,6 +368,11 @@ pub struct ChatSession {
 	/// Supervisor: the standing specialist context compacted for the
 	/// condenser. Session-lived; recompacted only when that context changes.
 	pub specialist_brief: Option<crate::supervisor::condense::SpecialistBrief>,
+	/// Runtime-only, never persisted: the system prompt was built from the
+	/// current role config in this process. A prompt loaded from disk is a
+	/// snapshot of whatever build created the session, so the first setup after
+	/// a load rebuilds it once; later re-binds of the live session keep it.
+	pub system_prompt_built: bool,
 }
 
 /// Parameters for creating a new ChatSession
@@ -498,6 +503,7 @@ impl ChatSession {
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
 			specialist_brief: None,
+			system_prompt_built: false,
 		}
 	}
 
@@ -713,6 +719,7 @@ impl ChatSession {
 						evidence: restored_evidence,
 						gate_task: None,
 						specialist_brief: None,
+						system_prompt_built: false,
 					};
 					// Keep session.info.role in sync with the active role
 					chat_session.session.info.role = params.role.to_string();
@@ -1315,7 +1322,7 @@ impl ChatSession {
 		new_role: &str,
 		config: &crate::config::Config,
 	) -> anyhow::Result<()> {
-		use crate::session::create_system_prompt;
+		use super::prompt_setup::build_system_prompt;
 		use colored::Colorize;
 
 		// Get current directory for system prompt processing
@@ -1357,8 +1364,8 @@ impl ChatSession {
 
 		// Create new system prompt for the role (AFTER MCP servers are initialized)
 		// This ensures the tools definition reflects the new role's available tools
-		let new_system_prompt =
-			create_system_prompt(&current_dir, &config_for_role, new_role).await;
+		let new_system_prompt = build_system_prompt(&current_dir, &config_for_role, new_role).await;
+		self.system_prompt_built = true;
 
 		// Find and replace the first system message (should be index 0)
 		if let Some(first_msg) = self.session.messages.first_mut() {
@@ -1612,6 +1619,7 @@ impl ChatSession {
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			gate_task: None,
 			specialist_brief: None,
+			system_prompt_built: false,
 		}
 	}
 }

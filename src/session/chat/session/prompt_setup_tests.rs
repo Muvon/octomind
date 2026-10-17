@@ -50,7 +50,7 @@ async fn resumed_session_with_compressions_gets_hint_appended() {
 
 	let first = &session.session.messages[0];
 	assert_eq!(first.role, "system");
-	assert!(first.content.starts_with("base prompt"));
+	assert!(first.content.contains("<important>"));
 	assert!(first.content.contains("<context_compression>"));
 
 	// Every resume re-runs setup on the persisted prompt; it must keep one block.
@@ -61,16 +61,42 @@ async fn resumed_session_with_compressions_gets_hint_appended() {
 	assert_eq!(content.matches("<context_compression").count(), 1);
 }
 
+/// A prompt persisted by an older build keeps instructions that build has
+/// since dropped (and whose output it no longer strips); loading the session
+/// must replace it with the prompt the current config defines.
 #[tokio::test]
-async fn resumed_session_without_compressions_leaves_prompt_unchanged() {
+async fn resumed_session_gets_its_stale_system_prompt_rebuilt() {
 	let config = template_config();
-	let mut session = ChatSession::for_tests(vec![system_message("base prompt")]);
+	let stale = "old role prompt\n\nWrap facts in <evidence locator=\"src:loc\">…</evidence>.";
+	let mut session = ChatSession::for_tests(vec![system_message(stale)]);
 
 	setup_system_prompt_and_cache(&mut session, &config, "assistant", false)
 		.await
 		.expect("setup");
 
-	assert_eq!(session.session.messages[0].content, "base prompt");
+	let current_dir = crate::mcp::get_thread_working_directory();
+	let expected = build_system_prompt(&current_dir, &config, "assistant").await;
+	assert_eq!(session.session.messages[0].content, expected);
+	assert!(!session.session.messages[0].content.contains("<evidence"));
+	assert!(session.system_prompt_built);
+}
+
+/// Clients re-bind a live session ahead of every turn; only the first setup
+/// after a load rebuilds, so the cached prefix is not rewritten each turn.
+#[tokio::test]
+async fn rebinding_a_live_session_keeps_its_system_prompt() {
+	let config = template_config();
+	let mut session = ChatSession::for_tests(vec![system_message("stale")]);
+
+	setup_system_prompt_and_cache(&mut session, &config, "assistant", false)
+		.await
+		.expect("setup");
+	session.session.messages[0].content = "live prompt".to_string();
+	setup_system_prompt_and_cache(&mut session, &config, "assistant", false)
+		.await
+		.expect("setup");
+
+	assert_eq!(session.session.messages[0].content, "live prompt");
 }
 
 #[tokio::test]

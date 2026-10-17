@@ -23,6 +23,23 @@ use crate::session::model_supports_caching;
 use crate::{log_debug, log_info};
 use anyhow::Result;
 
+/// The system prompt for `role` as the current build and config define it.
+/// Every path that writes the system message goes through here, so a new
+/// session, a resumed one and a `/role` switch get the same text.
+pub async fn build_system_prompt(
+	current_dir: &std::path::Path,
+	config_for_role: &Config,
+	role: &str,
+) -> String {
+	let mut system_prompt = create_system_prompt(current_dir, config_for_role, role).await;
+	// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
+	if config_for_role.supervisor.enabled {
+		system_prompt.push_str("\n\n");
+		system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
+	}
+	system_prompt
+}
+
 // Helper function to setup system prompt and cache
 pub async fn setup_system_prompt_and_cache(
 	chat_session: &mut ChatSession,
@@ -39,13 +56,9 @@ pub async fn setup_system_prompt_and_cache(
 		// a previous run (truncation spill-to-disk lives in the OS temp dir).
 		crate::utils::spill::clear_current_session();
 		// Create system prompt based on role - use merged config for role
-		let mut system_prompt = create_system_prompt(&current_dir, config_for_role, role).await;
-		// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
-		if config_for_role.supervisor.enabled {
-			system_prompt.push_str("\n\n");
-			system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
-		}
+		let system_prompt = build_system_prompt(&current_dir, config_for_role, role).await;
 		chat_session.add_system_message(&system_prompt)?;
+		chat_session.system_prompt_built = true;
 
 		// CRITICAL FIX: Apply automatic cache markers for system messages AND tool definitions
 		// This ensures consistent caching behavior across all supported models
@@ -176,16 +189,31 @@ pub async fn setup_system_prompt_and_cache(
 		}
 	}
 
-	// Add compression hints to system prompt for resumed sessions
-	// This informs AI about compression state to improve reasoning
-	if !chat_session.session.messages.is_empty() {
+	// A session loaded from disk carries the system prompt of the build that
+	// created it — instructions since removed, a supervisor protocol it no longer
+	// parses, an outdated role prompt. Rebuild it once per load; re-binds of the
+	// live session keep the built prompt so the cached prefix stays stable.
+	if !chat_session.system_prompt_built {
 		if let Some(first_msg) = chat_session.session.messages.first_mut() {
 			if first_msg.role == "system" {
-				crate::session::add_compression_hints_to_prompt(
-					&mut first_msg.content,
-					&chat_session.session.info.compression_stats,
-				);
+				let rebuilt = build_system_prompt(&current_dir, config_for_role, role).await;
+				if !first_msg.content.starts_with(&rebuilt) {
+					log_debug!("Rebuilt stale system prompt of resumed session");
+					first_msg.content = rebuilt;
+				}
 			}
+		}
+		chat_session.system_prompt_built = true;
+	}
+
+	// Add compression hints to system prompt for resumed sessions
+	// This informs AI about compression state to improve reasoning
+	if let Some(first_msg) = chat_session.session.messages.first_mut() {
+		if first_msg.role == "system" {
+			crate::session::add_compression_hints_to_prompt(
+				&mut first_msg.content,
+				&chat_session.session.info.compression_stats,
+			);
 		}
 	}
 

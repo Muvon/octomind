@@ -210,7 +210,7 @@ octomind login --force
 
 ## Provider Reference
 
-The table reflects `octolib` 0.40.3, locked in `Cargo.lock`. Endpoint variables are optional overrides.
+The table reflects `octolib` 0.43.1, locked in `Cargo.lock`. Endpoint variables are optional overrides.
 
 | Provider | Prefix | Credential and routing variables | Endpoint override |
 |----------|--------|----------------------------------|-------------------|
@@ -241,6 +241,7 @@ The table reflects `octolib` 0.40.3, locked in `Cargo.lock`. Endpoint variables 
 | Inception Labs | `inception` | `INCEPTION_API_KEY` | `INCEPTION_API_URL` |
 | Tinker | `tinker` | `TINKER_API_KEY` | `TINKER_API_URL` |
 | OctoHub | `octohub` | `OCTOHUB_API_KEY` when required | `OCTOHUB_API_URL` |
+| WebWright | `webwright` | `WEBWRIGHT_API_KEY` | `WEBWRIGHT_API_URL` |
 | Ollama | `ollama` | `OLLAMA_API_KEY` is optional | `OLLAMA_API_URL` |
 | Local OpenAI-compatible endpoint | `local` | `LOCAL_API_KEY` is optional | `LOCAL_API_URL` |
 

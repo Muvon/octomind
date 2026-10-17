@@ -9,12 +9,19 @@ initialize handshake, list tools, and round-trip a tool call:
   notifications/initialized -> ignored (notification)
   tools/list            -> a single `echo` tool
   tools/call            -> returns the `msg` argument as text content
+                           (`spawn_child` starts a long-lived child process
+                           and returns "<server pid> <child pid>")
   ping                  -> empty result
 """
 
 import json
+import os
+import subprocess
 import sys
 import time
+
+# Children started by `spawn_child`, kept referenced for the server's lifetime.
+CHILDREN = []
 
 
 def send(obj):
@@ -71,6 +78,24 @@ def main():
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"content": [{"type": "text", "text": "overslept"}],
+                               "isError": False},
+                })
+                continue
+            if params.get("name") == "spawn_child":
+                # A grandchild of octomind, like `node` under `npx`. Its stdio
+                # is detached so only process-tree cleanup can end it.
+                child = subprocess.Popen(
+                    [sys.executable, "-c", "import time; time.sleep(300)"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                CHILDREN.append(child)
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"content": [{"type": "text",
+                                            "text": f"{os.getpid()} {child.pid}"}],
                                "isError": False},
                 })
                 continue

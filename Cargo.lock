@@ -3455,6 +3455,7 @@ dependencies = [
  "uuid",
  "viuer",
  "which",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 

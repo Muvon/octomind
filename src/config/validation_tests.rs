@@ -335,3 +335,96 @@ fn decision_rejects_unknown_keys_and_requires_the_section() {
 		.to_string()
 		.contains("decision"));
 }
+
+#[test]
+fn test_validate_clean_default_template_has_no_ignored_keys() {
+	let template = include_str!("../../config-templates/default.toml");
+	let value: toml::Value = toml::from_str(template).unwrap();
+	let mut ignored_keys = Vec::new();
+	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
+		ignored_keys.push(path.to_string());
+	})
+	.unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert!(
+		reports.is_empty(),
+		"expected 0 ignored keys, got: {reports:?}"
+	);
+	assert!(config.validate_ignored_keys().is_ok());
+}
+
+#[test]
+fn test_validate_reports_misspelled_key() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace("\n[model]\n", "\n[model]\nmax_tokns = 4096\n");
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let mut ignored_keys = Vec::new();
+	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
+		ignored_keys.push(path.to_string());
+	})
+	.unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert_eq!(reports.len(), 1);
+	assert_eq!(reports[0].path, "model.max_tokns");
+	assert!(reports[0].hint.is_none());
+	assert!(reports[0].format_warning().contains("model.max_tokns"));
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("model.max_tokns"));
+}
+
+#[test]
+fn test_validate_reports_scalar_after_table_with_hint() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace("\n[model]\n", "\n[model]\nsandbox = true\n");
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let mut ignored_keys = Vec::new();
+	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
+		ignored_keys.push(path.to_string());
+	})
+	.unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert_eq!(reports.len(), 1);
+	assert_eq!(reports[0].path, "model.sandbox");
+	assert!(reports[0].hint.is_some());
+	assert!(reports[0]
+		.hint
+		.as_ref()
+		.unwrap()
+		.contains("scalar placed after a [header]"));
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("model.sandbox"));
+}
+
+#[test]
+fn test_validate_reports_scalar_after_nested_table_with_hint() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace(
+		"\n[compression.attention]\n",
+		"\n[compression.attention]\nthreshold = 50000\n",
+	);
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let mut ignored_keys = Vec::new();
+	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
+		ignored_keys.push(path.to_string());
+	})
+	.unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert_eq!(reports.len(), 1);
+	assert_eq!(reports[0].path, "compression.attention.threshold");
+	assert!(reports[0].hint.is_some());
+	assert!(reports[0]
+		.hint
+		.as_ref()
+		.unwrap()
+		.contains("scalar placed after a [header]"));
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("compression.attention.threshold"));
+}

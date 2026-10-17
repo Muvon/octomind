@@ -48,7 +48,7 @@ All API keys are read from environment variables for security. **Never put API k
 config --api-key provider:key` command is intentionally rejected at runtime ("API keys can no longer be set in config
 file for security reasons") and tells you to export the matching environment variable instead.
 
-Provider authentication is delegated through [providers.rs](../../src/providers.rs) to the locked octolib 0.35.0
+Provider authentication is delegated through [providers.rs](../../src/providers.rs) to the locked octolib 0.43.1
 implementation. These names are explicit provider contracts, not a universal uppercase-prefix rule. Keys are read during
 provider credential checks and requests; URL overrides are read when requests are built, except CLI backend settings,
 which are captured when that backend is constructed.
@@ -87,6 +87,10 @@ Required unless the row says otherwise; unset credentials do not inherit from an
 | `OCTOHUB_API_KEY` | `octohub` | Gateway credential; `octomind login` writes it to the shared `.env` and current process. Account lookup also reads it for legacy migration. |
 | `OLLAMA_API_KEY` | `ollama` | Optional; omitted becomes an empty credential. |
 | `LOCAL_API_KEY` | `local` | Optional; omitted becomes an empty credential. |
+| `INCEPTION_API_KEY` | `inception` | Inception Labs credential. |
+| `META_API_KEY` | `meta` | Meta Model API credential; falls back to `MODEL_API_KEY` when absent. |
+| `TINKER_API_KEY` | `tinker` | Tinker credential. |
+| `WEBWRIGHT_API_KEY` | `webwright` | WebWright credential. |
 
 ```bash
 export OPENROUTER_API_KEY="YOUR_PROVIDER_KEY"
@@ -143,6 +147,10 @@ built-in endpoint. There is no generic `GOOGLE_API_URL` or universal `<PREFIX>_A
 | `OCTOHUB_API_URL` | OctoHub base URL. |
 | `OLLAMA_API_URL` | Ollama OpenAI-compatible chat endpoint. |
 | `LOCAL_API_URL` | Self-hosted OpenAI-compatible chat endpoint. |
+| `INCEPTION_API_URL` | Inception Labs request endpoint. |
+| `META_API_URL` | Meta Model API request endpoint. |
+| `TINKER_API_URL` | Tinker request endpoint. |
+| `WEBWRIGHT_API_URL` | WebWright request endpoint. |
 
 The locked DeepSeek, Moonshot, and Together adapters use fixed endpoints; their API URL variables are not read. For your
 running local service (replace the model with one it serves):
@@ -173,6 +181,18 @@ export CLI_CODEX_REASONING_EFFORT="high"
 octomind run --model cli:codex/gpt-5
 ```
 
+## Evaluation and hindsight variables
+
+Delegated to the locked octolib evaluation and hindsight modules. These are separate from the provider credentials above.
+
+| Variable | When read / effect |
+|---|---|
+| `TYPESAFE_API_KEY` | Required by the TypeSafe evaluation provider. |
+| `TYPESAFE_BASE_URL` | Optional TypeSafe API root; default `https://api.typesafe.ai`. |
+| `CLOUDFLARE_API_KEY` | Required by the Cloudflare evaluation provider, together with `CLOUDFLARE_ACCOUNT_ID`. |
+| `CLOUDFLARE_EVALUATION_API_URL` | Optional full override of the Cloudflare evaluation run URL; the default is constructed from `CLOUDFLARE_ACCOUNT_ID`. |
+| `HF_TOKEN` | Hugging Face token for loading a private hindsight model repository. Public repositories load without it. |
+
 ## Octomind Configuration
 
 | Variable | Description |
@@ -181,6 +201,7 @@ octomind run --model cli:codex/gpt-5
 | `OCTOMIND_CONFIG_PATH` | Read at startup to choose the primary config load/migration/save path. The value is the path to the primary config TOML; its parent directory becomes the config directory for multi-file merge (all `*.toml` files there are merged). Default file: `~/.local/share/octomind/config/config.toml` (Linux/macOS) or `%LOCALAPPDATA%\octomind\config\config.toml` (Windows). |
 | `OCTOMIND_SKILLS` | Comma-delimited **exact skill names** to preload at session start. No aliases, globs, or semantic lookup; unknown names fail individually. |
 | `OCTOMIND_CAPABILITIES` | Comma-delimited **exact installed capability names** to force-enable at session start. No provider/tool aliases or fuzzy matching; domain and required-environment gates still apply. |
+| `OCTOMIND_SERVER_TOKEN` | Shared secret every WebSocket handshake must present as `Authorization: Bearer <token>`. Environment only, so it never appears in `ps`; unset disables authentication. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `OCTOMIND_API_URL` | Read when making account/device-login or telemetry calls; default `https://api.octomind.run`. Overrides the control-plane base URL, not model routing. |
 | `OCTOMIND_PANEL_URL` | Read when constructing login links; replaces the prefix before `/app` with the configured panel URL. Unset, or URLs without `/app`, remain unchanged. |
 | `OCTOMIND_MEDIA_ROOT` | Read per attachment resolution; directory the WebSocket server searches for exactly one attachment file whose name starts with `<id>.`. Default: `/home/octo/.octomind/media`. See [WebSocket Server](../integration/01-websocket-server.md). |
@@ -445,12 +466,14 @@ export LEARNING_BENCH_REPORT=/tmp/octomind-learning-report.json
 
 Direct reads: [env_source.rs](../../src/config/env_source.rs), [loading.rs](../../src/config/loading.rs),
 [directories.rs](../../src/directories.rs), [account.rs](../../src/account.rs), [telemetry.rs](../../src/telemetry.rs),
-[client.rs](../../src/mcp/client.rs), [skill.rs](../../src/mcp/runtime/skill.rs),
+[client.rs](../../src/mcp/client.rs), [skill_auto.rs](../../src/mcp/runtime/skill_auto.rs) (`OCTOMIND_SKILLS`),
+[skill.rs](../../src/mcp/runtime/skill.rs) (skill `env(KEY)` predicates),
 [capability.rs](../../src/mcp/runtime/capability.rs). Provider delegation/preflight:
 [providers.rs](../../src/providers.rs), [setup.rs](../../src/session/chat/session/setup.rs). Provider names and
-variables were checked in the locked `octolib 0.35.0` source, `src/llm/factory.rs` and `src/llm/providers/*.rs`
-(including `cli/mod.rs`); model-cache behavior is in its `src/embedding/provider/huggingface/mod.rs` and
-`src/storage.rs`.
+variables were checked in the locked `octolib 0.43.1` source, `src/llm/factory.rs` and `src/llm/providers/*.rs`
+(including `cli/mod.rs`); evaluation variables in its `src/evaluation/providers/typesafe.rs` and
+`src/evaluation/providers/cloudflare.rs`; hindsight loading in its `src/hindsight/mod.rs`. Model-cache behavior is
+in its `src/embedding/provider/huggingface/mod.rs` and `src/storage.rs`.
 
 ## See also
 

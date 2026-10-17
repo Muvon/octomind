@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.58.5] - 2026-10-17
+
+### 📋 Release Summary
+
+Standing session rules can now persist across sessions. Session handling now validates globally scoped lessons, preserves standing rules during conflicting requests and verdicts with malformed revocations, enforces session roles, refreshes recitations, and makes compression hints idempotent when resuming.
+
+### ✨ New Features & Enhancements
+
+- **session-rules**: persist standing session rules across sessions `c744c5b6`
+
+### 🔧 Improvements & Optimizations
+
+- **dependencies**: update octolib to 0.43.0 `b05830fd`
+- **websocket**: cover startup and injected-turn failures `c31bf332`
+- **websocket**: expand websocket server failure coverage `603a6b9d`
+
+### 🐛 Bug Fixes & Stability
+
+- **learning**: validate globally scoped lessons `3068c42c`
+- **supervisor**: preserve standing rules on conflicting requests `e7719068`
+- **supervisor**: preserve verdicts with malformed revocations `57cd4e15`
+- enforce session roles and refresh recitations `a9832c46`
+- **session**: make compression hints idempotent on resume `0a70130c`
+
+### 📚 Documentation & Examples
+
+- record the bug-fix demo in interactive colour `1d03e127`
+- add a recorded bug-fix example `39de3d3f`
+- document Homebrew installation on macOS `13b33749`
+
 ## [0.58.4] - 2026-10-15
 
 ### 📋 Release Summary

@@ -116,6 +116,12 @@ octomind config --upgrade
 
 `--mcp-server name,key=value,...` — the first comma-separated token is the server name; the rest are `key=value` pairs:
 
+The server name must not be blank, and every option must contain `=`. Only the
+first `=` separates the key from its value, so URLs such as
+`url=http://localhost:9000/mcp?mode=read` and arguments such as `args=--mode=read`
+are preserved. Malformed options or blank names are reported without saving the
+configuration.
+
 | Key | Meaning |
 |-----|---------|
 | `type` | `http`, `stdio`, or `builtin` (default `http`). |

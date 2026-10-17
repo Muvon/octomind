@@ -246,6 +246,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			return Ok(());
 		}
 		let name = parts[0].trim().to_string();
+		if name.is_empty() {
+			block_open("config", None);
+			block_close_err("config", "mcp server name cannot be empty");
+			println!();
+			return Ok(());
+		}
 		let mut url: Option<String> = None;
 		let mut command: Option<String> = None;
 		let mut args_vec: Vec<String> = Vec::new();
@@ -254,38 +260,41 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		let mut warnings: Vec<String> = Vec::new();
 
 		for part in &parts[1..] {
-			let kv: Vec<&str> = part.split('=').collect();
-			if kv.len() == 2 {
-				let key = kv[0].trim();
-				let value = kv[1].trim();
-				match key {
-					"url" => url = Some(value.to_string()),
-					"command" => command = Some(value.to_string()),
-					"args" => {
-						args_vec = value
-							.split(' ')
-							.map(|s| s.trim().to_string())
-							.filter(|s| !s.is_empty())
-							.collect()
-					}
-					"type" => match value.to_lowercase().as_str() {
-						"http" => connection_type = McpConnectionType::Http,
-						"stdio" => connection_type = McpConnectionType::Stdin,
-						"builtin" => connection_type = McpConnectionType::Builtin,
-						_ => warnings.push(format!(
-							"unknown server type '{}', defaulting to HTTP",
-							value
-						)),
-					},
-					"timeout" | "timeout_seconds" => {
-						if let Ok(timeout) = value.parse::<u64>() {
-							timeout_seconds = timeout;
-						} else {
-							warnings.push(format!("invalid timeout '{}', using default", value));
-						}
-					}
-					_ => warnings.push(format!("unknown server config key '{}'", key)),
+			let Some((key, value)) = part.split_once('=') else {
+				block_open("config", None);
+				block_close_err("config", "mcp server option must use key=value");
+				println!();
+				return Ok(());
+			};
+			let key = key.trim();
+			let value = value.trim();
+			match key {
+				"url" => url = Some(value.to_string()),
+				"command" => command = Some(value.to_string()),
+				"args" => {
+					args_vec = value
+						.split(' ')
+						.map(|s| s.trim().to_string())
+						.filter(|s| !s.is_empty())
+						.collect()
 				}
+				"type" => match value.to_lowercase().as_str() {
+					"http" => connection_type = McpConnectionType::Http,
+					"stdio" => connection_type = McpConnectionType::Stdin,
+					"builtin" => connection_type = McpConnectionType::Builtin,
+					_ => warnings.push(format!(
+						"unknown server type '{}', defaulting to HTTP",
+						value
+					)),
+				},
+				"timeout" | "timeout_seconds" => {
+					if let Ok(timeout) = value.parse::<u64>() {
+						timeout_seconds = timeout;
+					} else {
+						warnings.push(format!("invalid timeout '{}', using default", value));
+					}
+				}
+				_ => warnings.push(format!("unknown server config key '{}'", key)),
 			}
 		}
 

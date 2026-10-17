@@ -412,10 +412,18 @@ async fn serve_connection(
 				let request_id = client_msg.request_id().map(ToOwned::to_owned);
 				// Process the message, still reading the socket meanwhile: `cancel`
 				// frames act at once, pings are answered, everything else waits its turn.
+				// A message or command runs a turn; if the client goes away mid-turn,
+				// that turn is stopped rather than left holding the session.
+				let turn_session = match &client_msg {
+					ClientMessage::Message(m) => Some(m.session_id.clone()),
+					ClientMessage::Command(c) => Some(c.session_id.clone()),
+					_ => None,
+				};
 				let processing =
 					process_client_message(client_msg, ws_sender, &ctx, &mut active_session_ids);
 				let result = read_while_processing(
 					processing,
+					turn_session.as_deref(),
 					ws_receiver,
 					ws_sender,
 					&ctx.server,
@@ -520,8 +528,15 @@ async fn accept_client_frame(
 /// point, since the frame it stops is the one running. Pings are answered so a
 /// keepalive never times out behind a long turn. Every other frame is deferred
 /// and processed afterwards in arrival order, exactly as if it had been read then.
+///
+/// If the client closes or drops the connection while the frame runs a turn
+/// (`turn_session`), the turn is cancelled: nobody is left to read it, and a
+/// turn running on would hold the session's lock against the client's next
+/// connection, which then sees only "busy".
+#[allow(clippy::too_many_arguments)]
 async fn read_while_processing(
 	processing: impl std::future::Future<Output = Result<()>>,
+	turn_session: Option<&str>,
 	ws_receiver: &mut WsReader,
 	ws_sender: &WsSender,
 	server: &ServerState,
@@ -529,6 +544,17 @@ async fn read_while_processing(
 	stream_ended: &mut bool,
 	peer_addr: SocketAddr,
 ) -> Result<()> {
+	let abandon = |stream_ended: &mut bool| {
+		*stream_ended = true;
+		if let Some(session_id) = turn_session {
+			log_info!(
+				"Client {} left mid-turn; cancelling session {}",
+				peer_addr,
+				session_id
+			);
+			cancel_session_turn(server, session_id);
+		}
+	};
 	tokio::pin!(processing);
 	loop {
 		tokio::select! {
@@ -546,19 +572,20 @@ async fn read_while_processing(
 					} else if let Some(ClientMessage::Cancel(cancel)) =
 						accept_client_frame(&text, ws_sender, peer_addr).await?
 					{
-						cancel_turn(server, &cancel);
+						cancel_session_turn(server, &cancel.session_id);
 					}
 				}
 				Some(Ok(Message::Ping(data))) => {
 					let _ = ws_sender.send(Message::Pong(data));
 				}
 				Some(Ok(Message::Pong(_))) => {}
+				Some(Ok(Message::Close(_))) => abandon(stream_ended),
 				Some(Ok(other)) => deferred.push_back(other),
 				Some(Err(e)) => {
 					log_error!("WebSocket protocol error from {}: {}", peer_addr, e);
-					*stream_ended = true;
+					abandon(stream_ended);
 				}
-				None => *stream_ended = true,
+				None => abandon(stream_ended),
 			},
 		}
 	}
@@ -567,24 +594,17 @@ async fn read_while_processing(
 /// Stop the session's running turn, wherever it runs: on this connection, on
 /// another one, or in the session's background inbox monitor.
 fn cancel_turn(server: &ServerState, cancel: &CancelMessage) {
-	let running = server
-		.turns
-		.lock()
-		.unwrap()
-		.get(&cancel.session_id)
-		.cloned();
+	cancel_session_turn(server, &cancel.session_id);
+}
+
+fn cancel_session_turn(server: &ServerState, session_id: &str) {
+	let running = server.turns.lock().unwrap().get(session_id).cloned();
 	match running {
 		Some(handle) => {
-			log_info!(
-				"Cancelling the running turn of session {}",
-				cancel.session_id
-			);
+			log_info!("Cancelling the running turn of session {}", session_id);
 			handle.cancel();
 		}
-		None => log_debug!(
-			"Cancel for session {} with no running turn",
-			cancel.session_id
-		),
+		None => log_debug!("Cancel for session {} with no running turn", session_id),
 	}
 }
 

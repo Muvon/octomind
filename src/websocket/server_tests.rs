@@ -3795,6 +3795,105 @@ async fn cancel_stops_the_running_turn_and_later_frames_still_run_in_order() {
 	drop(env);
 }
 
+/// Hangs on the first provider request, answers every later one at once.
+async fn spawn_hang_then_answer_stub(answer: &'static str) -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind stub");
+	let addr = listener.local_addr().expect("addr");
+	tokio::spawn(async move {
+		let mut first = true;
+		while let Ok((mut sock, _)) = listener.accept().await {
+			let hang = std::mem::replace(&mut first, false);
+			tokio::spawn(async move {
+				use tokio::io::{AsyncReadExt, AsyncWriteExt};
+				let mut buf = vec![0u8; 1 << 20];
+				let mut total = 0;
+				loop {
+					let n = sock.read(&mut buf[total..]).await.unwrap_or(0);
+					if n == 0 {
+						return;
+					}
+					total += n;
+					let text = String::from_utf8_lossy(&buf[..total]).to_lowercase();
+					let Some(head) = text.find("\r\n\r\n") else { continue };
+					let len: usize = text
+						.split("content-length:")
+						.nth(1)
+						.and_then(|s| s.split(['\r', '\n']).next())
+						.and_then(|s| s.trim().parse().ok())
+						.unwrap_or(0);
+					if total >= head + 4 + len {
+						break;
+					}
+				}
+				if hang {
+					tokio::time::sleep(Duration::from_secs(120)).await;
+					return;
+				}
+				let body = final_response(answer).to_string();
+				let response = format!(
+					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+					body.len(),
+					body
+				);
+				let _ = sock.write_all(response.as_bytes()).await;
+			});
+		}
+	});
+	format!("http://{}/v1/chat/completions", addr)
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
+	let _data = TestDataDirGuard::new();
+	let env = StubEnv {
+		_guard: ENV_LOCK.lock().await,
+	};
+	std::env::set_var("OLLAMA_API_URL", spawn_hang_then_answer_stub("SECOND-OK").await);
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+
+	let mut first = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut first).await;
+	let session_id = create_session(&mut first, Some("leave-1")).await;
+	send_json(
+		&mut first,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "hang"}),
+	)
+	.await;
+	let _ack = read_json(&mut first).await;
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	drop(first);
+
+	// The session's next client is served, not told it is busy.
+	let mut second = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut second).await;
+	let mut served = false;
+	for _ in 0..50 {
+		create_session(&mut second, Some("leave-1")).await;
+		send_json(
+			&mut second,
+			serde_json::json!({"type": "message", "session_id": session_id, "content": "again"}),
+		)
+		.await;
+		let _ack = read_json(&mut second).await;
+		let reply = read_until(&mut second, |v| {
+			v["type"] == "cost" || (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
+		})
+		.await;
+		if reply["type"] == "cost" {
+			served = true;
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(200)).await;
+	}
+	assert!(served, "the abandoned turn kept the session busy");
+
+	crate::session::context::cleanup_session(&session_id);
+	drop(env);
+}
+
 #[tokio::test]
 async fn cancel_without_a_running_turn_is_only_acknowledged() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;

@@ -235,6 +235,21 @@ fn test_mcp_server_without_config_parts_is_rejected() {
 
 #[test]
 #[serial]
+fn test_mcp_server_empty_name_is_rejected() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("mcpsrv-noname");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+	let mut a = args();
+	a.mcp_server = Some(",url=http://127.0.0.1:9/mcp".to_string());
+	execute(&a, template_config()).expect("rejected input is not a hard error");
+	assert!(
+		!saved_config_path(&dir).exists(),
+		"empty mcp server name must not save"
+	);
+}
+
+#[test]
+#[serial]
 fn test_http_mcp_server_without_url_is_rejected() {
 	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
 	let dir = sandbox("mcpsrv-nourl");
@@ -393,6 +408,29 @@ fn test_http_mcp_server_persists_with_timeout() {
 
 #[test]
 #[serial]
+fn test_http_mcp_server_persists_with_query_string_url() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("mcpsrv-query");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+
+	let mut a = args();
+	a.mcp_server = Some("web,url=http://host/mcp?token=abc&version=1.0,timeout=45".to_string());
+	execute(&a, template_config()).expect("add http server saves");
+
+	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
+	let srv = reloaded
+		.mcp
+		.servers
+		.iter()
+		.find(|s| s.name() == "web")
+		.expect("web saved");
+	assert!(matches!(srv, McpServerConfig::Http { .. }));
+	assert_eq!(srv.url(), Some("http://host/mcp?token=abc&version=1.0"));
+	assert_eq!(srv.timeout_seconds(), 45);
+}
+
+#[test]
+#[serial]
 fn test_stdio_mcp_server_persists_with_args() {
 	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
 	let dir = sandbox("mcpsrv-stdio");
@@ -472,6 +510,28 @@ fn test_mcp_server_unknown_keys_warn_but_save() {
 		DEFAULT_MCP_TIMEOUT_SECONDS,
 		"invalid timeout falls back"
 	);
+}
+
+#[test]
+#[serial]
+fn test_mcp_server_part_without_equals_warns_but_saves() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	let dir = sandbox("mcpsrv-noeq");
+	std::env::set_var(DATA_DIR_KEY, &dir);
+
+	let mut a = args();
+	a.mcp_server = Some("srv,url=http://127.0.0.1:9/mcp,not_a_key_value".to_string());
+	execute(&a, template_config()).expect("part without equals warns but still saves");
+
+	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
+	let srv = reloaded
+		.mcp
+		.servers
+		.iter()
+		.find(|s| s.name() == "srv")
+		.expect("saved");
+	assert!(matches!(srv, McpServerConfig::Http { .. }));
+	assert_eq!(srv.url(), Some("http://127.0.0.1:9/mcp"));
 }
 
 #[test]

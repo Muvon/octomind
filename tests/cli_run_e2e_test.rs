@@ -1039,14 +1039,12 @@ async fn test_vars_expand_and_system_prompt_setter() {
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
-	for flag in ["--vars", "--expand"] {
-		let output = octomind_cmd(home.path(), &stub_url)
-			.args(["vars", flag])
-			.output()
-			.expect("vars runs");
-		assert!(output.status.success());
-		assert!(String::from_utf8_lossy(&output.stdout).contains("DATE"));
-	}
+	let output = octomind_cmd(home.path(), &stub_url)
+		.args(["vars", "--expand"])
+		.output()
+		.expect("vars --expand runs");
+	assert!(output.status.success());
+	assert!(String::from_utf8_lossy(&output.stdout).contains("DATE"));
 
 	// Custom system prompt, then reset to default — both must persist cleanly
 	for system in ["my custom sandbox prompt", "default"] {

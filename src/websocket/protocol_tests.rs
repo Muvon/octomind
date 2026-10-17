@@ -320,8 +320,11 @@ fn test_session_ack_advertises_message_attachments() {
 		serde_json::from_str(r#"{"type":"session","request_id":"bind-1","session_id":"sess_123"}"#)
 			.unwrap();
 	let ack = ServerMessage::ack(&msg);
-	let json = serde_json::to_string(&ack).unwrap();
-	assert!(json.contains("\"capabilities\":[\"message_attachments_v1\"]"));
+	let json = serde_json::to_value(&ack).unwrap();
+	assert_eq!(
+		json["capabilities"],
+		serde_json::json!(["message_attachments_v1", "session_control_v1"])
+	);
 }
 
 #[test]

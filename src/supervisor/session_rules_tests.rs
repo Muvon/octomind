@@ -75,7 +75,10 @@ fn revocations_need_a_held_rule_and_user_evidence() {
 	.grounded("You can run cargo now.", &standing);
 	assert_eq!(
 		update.revoke,
-		vec![revocation("never run cargo locally", "You can run cargo now")]
+		vec![revocation(
+			"never run cargo locally",
+			"You can run cargo now"
+		)]
 	);
 }
 
@@ -84,7 +87,10 @@ fn apply_revokes_before_adding_and_reports_change() {
 	let mut rules = strings(&["never run cargo locally"]);
 	let replace = SessionRulesUpdate {
 		add: strings(&["run cargo only on the dev box"]),
-		revoke: vec![revocation("never run cargo locally", "run cargo only on the dev box")],
+		revoke: vec![revocation(
+			"never run cargo locally",
+			"run cargo only on the dev box",
+		)],
 	};
 	assert!(replace.apply(&mut rules));
 	assert_eq!(rules, strings(&["run cargo only on the dev box"]));

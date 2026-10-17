@@ -409,7 +409,9 @@ struct ClassifierOutput {
 	#[serde(default)]
 	session_rules_add: Vec<String>,
 	#[serde(default)]
-	session_rules_revoke: Vec<crate::supervisor::session_rules::Revocation>,
+	/// Read entry by entry: one malformed revocation must not void the whole
+	/// verdict and its conditions checklist. A dropped entry keeps its rule held.
+	session_rules_revoke: Vec<serde_json::Value>,
 	#[serde(default)]
 	whole_targets: Vec<String>,
 }
@@ -681,7 +683,17 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 			.collect(),
 		session_rules_update: crate::supervisor::session_rules::SessionRulesUpdate {
 			add: parsed.session_rules_add,
-			revoke: parsed.session_rules_revoke,
+			revoke: parsed
+				.session_rules_revoke
+				.into_iter()
+				.filter_map(|entry| match serde_json::from_value(entry) {
+					Ok(revocation) => Some(revocation),
+					Err(error) => {
+						crate::log_debug!("Classifier revocation malformed, rule kept: {}", error);
+						None
+					}
+				})
+				.collect(),
 		},
 	})
 }

@@ -559,6 +559,21 @@ async fn resolver_grounds_session_rule_delta_on_both_classification_branches() {
 }
 
 #[test]
+fn a_malformed_revocation_keeps_the_rest_of_the_verdict() {
+	let verdict = parse_classifier(
+		r#"{"scope":"self_contained","conditions":["the parser accepts empty input"],"session_rules_revoke":["never run cargo locally",{"rule":"never push to main","evidence":"push to main now"}]}"#,
+	);
+	assert_eq!(verdict.conditions, vec!["the parser accepts empty input"]);
+	assert_eq!(
+		verdict.session_rules_update.revoke,
+		vec![crate::supervisor::session_rules::Revocation {
+			rule: "never push to main".into(),
+			evidence: "push to main now".into(),
+		}]
+	);
+}
+
+#[test]
 fn classification_payload_carries_standing_session_rules() {
 	let mut ctx = context("Fix the parser");
 	ctx.session_rules = vec!["never push to main".into()];

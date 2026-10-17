@@ -1039,12 +1039,14 @@ async fn test_vars_expand_and_system_prompt_setter() {
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
-	let output = octomind_cmd(home.path(), &stub_url)
-		.args(["vars", "--expand"])
-		.output()
-		.expect("vars --expand runs");
-	assert!(output.status.success());
-	assert!(String::from_utf8_lossy(&output.stdout).contains("DATE"));
+	for flag in ["--vars", "--expand"] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(["vars", flag])
+			.output()
+			.expect("vars runs");
+		assert!(output.status.success());
+		assert!(String::from_utf8_lossy(&output.stdout).contains("DATE"));
+	}
 
 	// Custom system prompt, then reset to default — both must persist cleanly
 	for system in ["my custom sandbox prompt", "default"] {
@@ -1056,6 +1058,154 @@ async fn test_vars_expand_and_system_prompt_setter() {
 			output.status.success(),
 			"config --system {system} failed: {}",
 			String::from_utf8_lossy(&output.stderr)
+		);
+	}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_config_local_api_key_diagnostics() {
+	let stub_url = spawn_openai_stub().await;
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	// 1. Unset LOCAL_API_KEY
+	for args in [vec!["config"], vec!["config", "--show"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.env_remove("LOCAL_API_KEY")
+			.output()
+			.expect("octomind config runs");
+		assert!(output.status.success());
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("Local"),
+			"{args:?} missing Local row:\n{stdout}"
+		);
+		assert!(
+			stdout.contains("optional (not set)"),
+			"{args:?} missing optional (not set):\n{stdout}"
+		);
+		assert!(
+			!stdout.contains("not set (export LOCAL_API_KEY)"),
+			"{args:?} must not suggest exporting optional LOCAL_API_KEY:\n{stdout}"
+		);
+	}
+
+	// 2. Whitespace-only LOCAL_API_KEY
+	for args in [vec!["config"], vec!["config", "--show"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.env("LOCAL_API_KEY", "   \t  ")
+			.output()
+			.expect("octomind config runs");
+		assert!(output.status.success());
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("Local"),
+			"{args:?} missing Local row:\n{stdout}"
+		);
+		assert!(
+			stdout.contains("optional (not set)"),
+			"{args:?} whitespace key must be optional:\n{stdout}"
+		);
+	}
+
+	// 3. Set via system environment variable
+	let secret_env = "test-secret-env-key-999";
+	for args in [vec!["config"], vec!["config", "--show"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.env("LOCAL_API_KEY", secret_env)
+			.output()
+			.expect("octomind config runs");
+		assert!(output.status.success());
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("Local"),
+			"{args:?} missing Local row:\n{stdout}"
+		);
+		assert!(
+			stdout.contains("set via environment variable"),
+			"{args:?} missing env var source:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(secret_env),
+			"secret leaked in output:\n{stdout}"
+		);
+	}
+
+	// 4. Precedence: User-scope .env vs System environment
+	// User-scope .env is located at $OCTOMIND_DATA_DIR/config/.env
+	let config_dir = home.path().join(".local/share/octomind/config");
+	let user_secret = "test-user-env-secret-888";
+	std::fs::write(
+		config_dir.join(".env"),
+		format!("LOCAL_API_KEY={user_secret}\n"),
+	)
+	.expect("write user .env");
+
+	for args in [vec!["config"], vec!["config", "--show"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.env("LOCAL_API_KEY", secret_env)
+			.output()
+			.expect("octomind config runs");
+		assert!(output.status.success());
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("Local"),
+			"{args:?} missing Local row:\n{stdout}"
+		);
+		assert!(
+			stdout.contains("set via environment/.env file"),
+			"{args:?} missing user .env source:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(secret_env),
+			"system secret leaked:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(user_secret),
+			"user secret leaked:\n{stdout}"
+		);
+	}
+
+	// 5. Precedence: Project-local .env overrides User-scope .env and System env
+	// Project-local .env is located at cwd (home.path())
+	let project_secret = "test-project-env-secret-777";
+	std::fs::write(
+		home.path().join(".env"),
+		format!("LOCAL_API_KEY={project_secret}\n"),
+	)
+	.expect("write project .env");
+
+	for args in [vec!["config"], vec!["config", "--show"]] {
+		let output = octomind_cmd(home.path(), &stub_url)
+			.args(&args)
+			.env("LOCAL_API_KEY", secret_env)
+			.output()
+			.expect("octomind config runs");
+		assert!(output.status.success());
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("Local"),
+			"{args:?} missing Local row:\n{stdout}"
+		);
+		assert!(
+			stdout.contains("set via environment/.env file"),
+			"{args:?} missing project .env source:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(secret_env),
+			"system secret leaked:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(user_secret),
+			"user secret leaked:\n{stdout}"
+		);
+		assert!(
+			!stdout.contains(project_secret),
+			"project secret leaked:\n{stdout}"
 		);
 	}
 }

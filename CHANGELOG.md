@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.58.6] - 2026-10-17
+
+### 📋 Release Summary
+
+MCP sessions now expose context epochs, while WebSocket sessions support control, authenticated cancellation, and request-linked costs; CLI diagnostics report optional LOCAL_API_KEY status. Guardrail scripts are snapshotted at session start, stale system prompts are rebuilt during setup, disconnected-client turns are cancelled, and file-specific retention promotion is supported.
+
+### ✨ New Features & Enhancements
+
+- **mcp**: expose context epochs for MCP sessions `83c70e23`
+- **websocket**: support session control and request-linked costs `17bec070`
+- **config**: report optional LOCAL_API_KEY status in CLI diagnostics (#145) `2221b0eb`
+- **websocket**: support authenticated cancellable websocket sessions `f85cd4c8`
+
+### 🔧 Improvements & Optimizations
+
+- **github**: add issue templates `806531c9`
+- **websocket**: format server and test code `360cb00b`
+- **dependencies**: update octolib to 0.43.1 `9e8191a2`
+- **websocket**: format websocket server tests `06b4e986`
+- **config**: restore vars --expand e2e check `5e5615f8`
+- **config**: assert diagnostic output, precedence, and secret redaction (#145) `32da2718`
+
+### 🐛 Bug Fixes & Stability
+
+- **guardrails**: snapshot guardrail scripts at session start `1f02b5ef`
+- **session**: rebuild stale system prompts on setup `ab4dd776`
+- **websocket**: cancel turns abandoned by disconnected clients `285a6d05`
+- **supervisor**: allow file-specific retention promotion `bc997123`
+
 ## [0.58.5] - 2026-10-17
 
 ### 📋 Release Summary

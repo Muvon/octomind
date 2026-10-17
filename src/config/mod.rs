@@ -449,6 +449,9 @@ pub struct Config {
 	pub registry: crate::config::registry::RegistryConfig,
 
 	#[serde(skip)]
+	pub ignored_keys: Vec<String>,
+
+	#[serde(skip)]
 	config_path: Option<PathBuf>,
 }
 

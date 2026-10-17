@@ -90,19 +90,39 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	// If validation flag is set, just validate and exit
 	if args.validate {
 		block_open("config validate", None);
-		match config.validate() {
-			Ok(()) => {
-				block_line(&"Configuration is valid.".bright_green().to_string());
-				block_close_ok("config validate", Some("valid"));
-				println!();
-				return Ok(());
-			}
-			Err(e) => {
-				block_close_err("config validate", &e.to_string());
-				println!();
-				return Err(e);
+
+		let ignored_reports = config.check_ignored_keys();
+		for report in &ignored_reports {
+			block_line(&report.format_warning().bright_yellow().to_string());
+			if let Some(hint) = &report.hint {
+				block_line(&format!("  hint: {hint}").bright_cyan().to_string());
 			}
 		}
+
+		let validation_result = config.validate();
+
+		if let Err(e) = validation_result {
+			block_close_err("config validate", &e.to_string());
+			println!();
+			return Err(e);
+		}
+
+		if !ignored_reports.is_empty() {
+			let count = ignored_reports.len();
+			let err_msg = format!(
+				"Found {} unknown or ignored configuration key{}",
+				count,
+				if count == 1 { "" } else { "s" }
+			);
+			block_close_err("config validate", &err_msg);
+			println!();
+			anyhow::bail!("{err_msg}");
+		}
+
+		block_line(&"Configuration is valid.".bright_green().to_string());
+		block_close_ok("config validate", Some("valid"));
+		println!();
+		return Ok(());
 	}
 
 	// If upgrade flag is set, perform manual upgrade and exit

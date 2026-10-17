@@ -238,6 +238,189 @@ impl Config {
 
 		Ok(())
 	}
+
+	/// Check for any unknown/ignored keys captured during deserialization.
+	pub fn check_ignored_keys(&self) -> Vec<IgnoredKeyReport> {
+		self.ignored_keys
+			.iter()
+			.map(|path| IgnoredKeyReport {
+				path: path.clone(),
+				hint: detect_scalar_after_table_hint(path),
+			})
+			.collect()
+	}
+
+	/// Validates that no unknown or silently ignored keys exist.
+	pub fn validate_ignored_keys(&self) -> Result<()> {
+		let reports = self.check_ignored_keys();
+		if reports.is_empty() {
+			Ok(())
+		} else {
+			let paths: Vec<String> = reports.iter().map(|r| r.path.clone()).collect();
+			Err(anyhow!(
+				"Found {} unknown or ignored configuration key(s): {}",
+				reports.len(),
+				paths.join(", ")
+			))
+		}
+	}
+}
+
+/// Report for a configuration key ignored by serde during deserialization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoredKeyReport {
+	pub path: String,
+	pub hint: Option<String>,
+}
+
+impl IgnoredKeyReport {
+	pub fn format_warning(&self) -> String {
+		format!("warning: unknown configuration key `{}`", self.path)
+	}
+}
+
+const ROOT_FIELDS: &[&str] = &[
+	"version",
+	"log_level",
+	"model",
+	"default",
+	"mcp_response_tokens_threshold",
+	"max_session_tokens_threshold",
+	"cache_keepalive_enabled",
+	"cache_keepalive_max_idle_seconds",
+	"enable_markdown_rendering",
+	"markdown_theme",
+	"max_session_spending_threshold",
+	"max_request_spending_threshold",
+	"agents",
+	"roles",
+	"mcp",
+	"commands",
+	"layers",
+	"prompts",
+	"compression",
+	"decision",
+	"supervisor",
+	"system",
+	"sandbox",
+	"telemetry",
+	"capabilities",
+	"taps",
+	"auto_capabilities",
+	"skills",
+	"timing",
+	"hooks",
+	"registry",
+];
+
+const MODEL_FIELDS: &[&str] = &[
+	"name",
+	"model",
+	"reasoning_effort",
+	"max_tokens",
+	"temperature",
+	"top_p",
+	"top_k",
+	"max_retries",
+	"retry_timeout",
+	"request_timeout_seconds",
+];
+
+const COMPRESSION_FIELDS: &[&str] = &[
+	"threshold",
+	"model",
+	"knowledge_retention",
+	"analysis_findings_max_tokens",
+	"attention",
+];
+
+const COMPRESSION_ATTENTION_FIELDS: &[&str] = &["enabled", "validator", "telemetry", "governance"];
+
+const SUPERVISOR_FIELDS: &[&str] = &[
+	"enabled",
+	"model",
+	"learning",
+	"gate",
+	"authorizer",
+	"hindsight",
+	"plan",
+	"condense",
+];
+
+const SUPERVISOR_LEARNING_FIELDS: &[&str] = &["enabled", "evolution"];
+
+const SKILLS_FIELDS: &[&str] = &[
+	"auto_activation",
+	"auto_validation",
+	"activation_timeout",
+	"validation_timeout",
+	"max_retries",
+];
+
+const TIMING_FIELDS: &[&str] = &[
+	"think_overhead_min",
+	"deliberation_factor",
+	"attention_window_min",
+	"review_weight",
+	"wait_weight",
+	"switch_cost_dhe",
+];
+
+const DECISION_FIELDS: &[&str] = &[
+	"model",
+	"recall",
+	"skills",
+	"capabilities",
+	"compression",
+	"supervisor",
+];
+
+const MCP_FIELDS: &[&str] = &["allowed_tools", "servers", "aliases"];
+
+const ROLE_FIELDS: &[&str] = &["name", "system", "welcome", "mcp", "model"];
+
+fn section_has_field(section: &str, field: &str) -> bool {
+	let fields: &[&str] = match section {
+		"" => ROOT_FIELDS,
+		"model" => MODEL_FIELDS,
+		"compression" => COMPRESSION_FIELDS,
+		"compression.attention" => COMPRESSION_ATTENTION_FIELDS,
+		"supervisor" => SUPERVISOR_FIELDS,
+		"supervisor.learning" => SUPERVISOR_LEARNING_FIELDS,
+		"skills" => SKILLS_FIELDS,
+		"timing" => TIMING_FIELDS,
+		"decision" => DECISION_FIELDS,
+		"mcp" => MCP_FIELDS,
+		s if s == "roles" || s.starts_with("roles.") => ROLE_FIELDS,
+		_ => &[],
+	};
+	fields.contains(&field)
+}
+
+/// Detects if an ignored dotted path looks like a scalar placed after a table header.
+pub fn detect_scalar_after_table_hint(path: &str) -> Option<String> {
+	let parts: Vec<&str> = path.split('.').collect();
+	if parts.len() < 2 {
+		return None;
+	}
+	let key = parts[parts.len() - 1];
+
+	let mut matches_parent = false;
+	for i in (0..parts.len() - 1).rev() {
+		let ancestor = parts[..i].join(".");
+		if section_has_field(&ancestor, key) {
+			matches_parent = true;
+			break;
+		}
+	}
+
+	if matches_parent {
+		Some(
+			"in TOML, a scalar placed after a [header] becomes a field of that table; did you mean to place this in the parent section before the header?".to_string(),
+		)
+	} else {
+		None
+	}
 }
 
 #[cfg(test)]

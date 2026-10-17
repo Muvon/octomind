@@ -141,6 +141,20 @@ fn test_validate_invalid_config_returns_error() {
 	);
 }
 
+#[test]
+fn test_validate_config_with_ignored_keys_returns_error() {
+	let mut config = template_config();
+	config.ignored_keys = vec!["model.max_tokns".to_string()];
+	let mut a = args();
+	a.validate = true;
+	let err = execute(&a, config).expect_err("ignored keys must fail validation");
+	assert!(
+		err.to_string()
+			.contains("Found 1 unknown or ignored configuration key"),
+		"got: {err}"
+	);
+}
+
 // ── early-error branches (each returns before any save) ─────────────────────
 
 #[test]

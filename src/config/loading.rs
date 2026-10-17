@@ -443,10 +443,15 @@ impl Config {
 		merged_value: toml::Value,
 		config_path: std::path::PathBuf,
 	) -> Result<Self> {
-		// Convert to Config struct
-		let mut config: Config = merged_value.try_into().context(
+		// Convert to Config struct while tracking unknown/ignored keys
+		let mut ignored_keys = Vec::new();
+		let mut config: Config = serde_ignored::deserialize(merged_value, |path| {
+			ignored_keys.push(path.to_string());
+		})
+		.context(
 			"Failed to parse merged TOML configuration. All required fields must be present.",
 		)?;
+		config.ignored_keys = ignored_keys;
 
 		// Store the config path for future saves
 		config.config_path = Some(config_path);
@@ -510,9 +515,12 @@ impl Config {
 			// Load and merge all TOML files from directory
 			let merged_value = load_and_merge_toml_from_directory(path)?;
 
-			let mut config: Config = merged_value
-				.try_into()
-				.context("Failed to parse merged TOML configuration")?;
+			let mut ignored_keys = Vec::new();
+			let mut config: Config = serde_ignored::deserialize(merged_value, |p| {
+				ignored_keys.push(p.to_string());
+			})
+			.context("Failed to parse merged TOML configuration")?;
+			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.join("config.toml"));
 			config.initialize_config();
@@ -528,9 +536,12 @@ impl Config {
 				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
 			reject_legacy_evaluate(&value)?;
 			normalize_model_profile_syntax(&mut value);
-			let mut config: Config = value
-				.try_into()
-				.context("Failed to parse TOML configuration")?;
+			let mut ignored_keys = Vec::new();
+			let mut config: Config = serde_ignored::deserialize(value, |p| {
+				ignored_keys.push(p.to_string());
+			})
+			.context("Failed to parse TOML configuration")?;
+			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.to_path_buf());
 			config.initialize_config();

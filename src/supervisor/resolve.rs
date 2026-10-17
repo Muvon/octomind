@@ -150,10 +150,13 @@ Empty when the turn sets none.
 
 Field "session_rules_revoke": one object per standing rule the current turn explicitly cancels,
 relaxes, or replaces: "rule" copied exactly as written in session_rules, and "evidence" one
-short exact excerpt from current_user_request that cancels it. A replacement rule goes in
-session_rules_add and the rule it replaces here. Never revoke a rule because this turn does not
-mention it. A revocation without valid exact user evidence is discarded. Empty when nothing is
-revoked.
+short exact excerpt from current_user_request that cancels it. The evidence must speak about
+the rule itself ("you can edit README.md again", "drop the push rule", "that no longer
+applies"). A request whose work would break a standing rule is a conflict, not a revocation:
+the user may have forgotten the rule, so keep it and let the assistant raise the conflict.
+A replacement rule goes in session_rules_add and the rule it replaces here. Never revoke a rule
+because this turn does not mention it. A revocation without valid exact user evidence is
+discarded. Empty when nothing is revoked.
 
 Field "whole_targets": the artifacts this turn works on AS A WHOLE — a file or document whose
 entire content the deliverable depends on: rewriting, polishing, restructuring, translating,

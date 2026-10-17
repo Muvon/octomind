@@ -391,7 +391,8 @@ tokens.
 
 A rule you set for the rest of the session ("from now on, never push to main") is kept as a **standing session
 rule**: the turn classifier records your exact words, the rule is recited on every later turn and pinned through every
-compaction, and it survives `--resume`. It stays until you revoke or replace it ("you can push to main now"). An
+compaction, and it survives `--resume`. It stays until you revoke or replace it ("you can push to main now"); asking for work
+that would break it is not a revocation, so the agent flags the conflict instead. An
 addition or revocation the classifier cannot back with your exact words is discarded, and at most 8 are held at once (oldest first
 out). Per-turn prohibitions still come from the latest request only.
 

@@ -1518,7 +1518,7 @@ command = "./definitely-missing-pipe-script.sh"
 		error["message"]
 			.as_str()
 			.unwrap_or_default()
-			.contains("failed to spawn"),
+			.contains("was not found when the session started"),
 		"got: {error}"
 	);
 
@@ -1581,7 +1581,7 @@ command = "./definitely-missing-pipe-script.sh"
 		error["message"]
 			.as_str()
 			.unwrap_or_default()
-			.contains("failed to spawn"),
+			.contains("was not found when the session started"),
 		"the workspace's pipe must have run — got: {error}"
 	);
 

@@ -119,7 +119,12 @@ command = "definitely-missing-script-9f3a.sh"
 	let error = run_with_rules("spawn-fail", toml, "developer", "hello", false)
 		.await
 		.expect_err("a missing script must be an error");
-	assert!(error.to_string().contains("failed to spawn"));
+	assert!(
+		error
+			.to_string()
+			.contains("was not found when the session started"),
+		"got: {error}"
+	);
 }
 
 #[cfg(unix)]

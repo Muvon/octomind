@@ -147,15 +147,11 @@ fn save_input(key: &str, value: &str) -> Result<()> {
 ///
 /// In non-interactive scope (see `with_non_interactive`), blocks would
 /// deadlock the parent agent's tool dispatch — return a structured error
-/// instead so the caller can surface a remediation message.
-fn prompt_user(key: &str) -> Result<String> {
+/// instead so the caller can surface a remediation message. `remedy` says how
+/// to supply the value without a prompt; it differs for INPUT and ENV keys.
+fn prompt_user(key: &str, remedy: &str) -> Result<String> {
 	if is_non_interactive() {
-		anyhow::bail!(
-			"Missing required input '{key}' and this run is non-interactive. \
-			 Pre-populate it once by running the role interactively \
-			 (`octomind run <role>`) or store it directly in \
-			 `~/.local/share/octomind/inputs.toml`, then retry."
-		);
+		anyhow::bail!("Missing required value '{key}' and this run is non-interactive. {remedy}");
 	}
 
 	let stderr = io::stderr();
@@ -190,7 +186,12 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 		let value = if let Some(v) = stored.get(key) {
 			v.clone()
 		} else {
-			let v = prompt_user(key)?;
+			let v = prompt_user(
+				key,
+				"Pre-populate it once by running the role interactively \
+				 (`octomind run <role>`) or store it directly in \
+				 `~/.local/share/octomind/inputs.toml`, then retry.",
+			)?;
 			save_input(key, &v)?;
 			stored.insert(key.clone(), v.clone());
 			v
@@ -279,7 +280,11 @@ pub async fn resolve_env_vars(raw: &str) -> Result<String> {
 		let value = match std::env::var(key) {
 			Ok(v) => v,
 			Err(_) => {
-				let v = prompt_user(key)?;
+				let v = prompt_user(
+					key,
+					"It is read from the environment: set it where this process starts \
+					 (or in `./.env`), then retry.",
+				)?;
 				save_env_to_dotenv(key, &v)?;
 				// Also set in current process so the session can use it immediately.
 				std::env::set_var(key, &v);

@@ -125,6 +125,7 @@ async fn resolve_inputs_missing_key_fails_closed_when_non_interactive() {
 	let err = result.unwrap_err();
 	assert!(err.to_string().contains("non-interactive"), "{err}");
 	assert!(err.to_string().contains("MISSING_KEY"), "{err}");
+	assert!(err.to_string().contains("inputs.toml"), "{err}");
 }
 
 // --- resolve_env_vars ------------------------------------------------------------
@@ -175,6 +176,10 @@ async fn resolve_env_vars_missing_key_fails_closed_when_non_interactive() {
 	let err = result.unwrap_err();
 	assert!(err.to_string().contains("non-interactive"), "{err}");
 	assert!(err.to_string().contains(key), "{err}");
+	// An ENV key is never read from inputs.toml; pointing there sends the user
+	// (a cloud machine's owner, an ACP editor) to a file that changes nothing.
+	assert!(err.to_string().contains("environment"), "{err}");
+	assert!(!err.to_string().contains("inputs.toml"), "{err}");
 }
 
 #[tokio::test]

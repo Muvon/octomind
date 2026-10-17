@@ -339,6 +339,64 @@ fn load_from_workdir_degrades_to_default_on_a_bad_file() {
 }
 
 // ---------------------------------------------------------------------------
+// snapshot_scripts: rules run what was on disk when they were installed.
+// ---------------------------------------------------------------------------
+
+fn validator_rules(script: &str) -> Guardrails {
+	Guardrails::parse(&format!("[[validator]]\nname = \"v\"\nscript = \"{script}\"\n")).expect("parse")
+}
+
+fn snapshot_content(snapshot: &ScriptSnapshot) -> &[u8] {
+	match snapshot {
+		ScriptSnapshot::Taken { content, .. } => content,
+		other => panic!("expected a taken snapshot, got {other:?}"),
+	}
+}
+
+#[test]
+fn snapshot_captures_content_and_ignores_later_edits() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let script = tmp.path().join("check.sh");
+	std::fs::write(&script, "original").expect("write script");
+	let mut g = validator_rules("check.sh");
+	g.snapshot_scripts(tmp.path());
+
+	std::fs::write(&script, "edited").expect("edit script");
+	assert_eq!(snapshot_content(&g.validators[0].snapshot), b"original");
+	match &g.validators[0].snapshot {
+		ScriptSnapshot::Taken { source, .. } => assert_eq!(source, &script),
+		other => panic!("expected a taken snapshot, got {other:?}"),
+	}
+}
+
+#[test]
+fn snapshot_scripts_keeps_an_existing_snapshot() {
+	// Rules copied into a delegated agent's scope are re-snapshotted on merge;
+	// that must not pick up an edit made after session start.
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let script = tmp.path().join("check.sh");
+	std::fs::write(&script, "original").expect("write script");
+	let mut g = validator_rules("check.sh");
+	g.snapshot_scripts(tmp.path());
+
+	std::fs::write(&script, "edited").expect("edit script");
+	g.snapshot_scripts(tmp.path());
+	assert_eq!(snapshot_content(&g.validators[0].snapshot), b"original");
+}
+
+#[test]
+fn missing_and_untaken_scripts_never_fall_back_to_the_live_path() {
+	let tmp = tempfile::tempdir().expect("tempdir");
+	let mut g = validator_rules("late.sh");
+	g.snapshot_scripts(tmp.path());
+
+	// Created after session start: still not runnable this session.
+	std::fs::write(tmp.path().join("late.sh"), "created later").expect("write script");
+	assert!(g.validators[0].snapshot.command(tmp.path()).is_err());
+	assert!(ScriptSnapshot::default().command(tmp.path()).is_err());
+}
+
+// ---------------------------------------------------------------------------
 // parse(): loud rejection of malformed declarations.
 // ---------------------------------------------------------------------------
 

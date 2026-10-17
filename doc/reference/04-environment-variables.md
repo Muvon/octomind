@@ -336,6 +336,7 @@ These are child-process contracts set by Octomind, not startup configuration:
 | `OCTOMIND_TOOL_NAME` | Project-local tool name |
 | `OCTOMIND_PARAM_<NAME>` | One local-tool parameter, with the parameter name uppercased; complex values are JSON strings |
 | `OCTOMIND_WORKDIR` | Local tools, pipes, hooks, validators, and monitors; current session workdir |
+| `OCTOMIND_SCRIPT_DIR` | Guardrail pipes, hooks, and validators; directory of the original script, since `$0` is the session snapshot copy |
 | `OCTOMIND_ROLE` | Guardrail pipes and validators; current role |
 | `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT` | Guardrail `[[pipe]]` identity and per-session counters |
 | `OCTOMIND_CAPABILITY`, `OCTOMIND_TOOL`, `OCTOMIND_SUCCESS` | Guardrail `[[hook]]` call metadata; success is `1` or `0` |

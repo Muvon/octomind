@@ -23,7 +23,7 @@
 //! not a real result and should not trigger validators.
 
 use crate::config::guardrails::{
-	role_matches, target_matches, CompiledHook, CompiledValidator, HookOn,
+	role_matches, spawn_script, target_matches, CompiledHook, CompiledValidator, HookOn, ScriptSnapshot,
 };
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::context::SessionId;
@@ -32,7 +32,6 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 const HOOK_TIMEOUT_SECS: u64 = 300;
 
@@ -101,6 +100,7 @@ pub async fn run_hooks(
 				crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
 			}
 			let script = hook.script.clone();
+			let snapshot = hook.snapshot.clone();
 			let workdir = workdir.clone();
 			let call_clone = call.clone();
 			let result_text_clone = result_text.clone();
@@ -109,6 +109,7 @@ pub async fn run_hooks(
 			tasks.push(tokio::spawn(async move {
 				run_one_hook(
 					script,
+					snapshot,
 					workdir,
 					call_clone,
 					capability_clone,
@@ -155,17 +156,13 @@ fn hook_matches(
 /// when the script exits non-zero with non-empty stdout. `None` otherwise.
 async fn run_one_hook(
 	script: PathBuf,
+	snapshot: ScriptSnapshot,
 	workdir: std::path::PathBuf,
 	call: McpToolCall,
 	capability: Option<String>,
 	result_text: String,
 	success: bool,
 ) -> Option<InboxMessage> {
-	let script_path = if script.is_absolute() {
-		script.clone()
-	} else {
-		workdir.join(&script)
-	};
 	let script_display = script.display().to_string();
 
 	let payload = json!({
@@ -184,24 +181,28 @@ async fn run_one_hook(
 		}
 	};
 
-	let mut cmd = Command::new(&script_path);
-	cmd.current_dir(&workdir);
+	let mut cmd = match snapshot.command(&workdir) {
+		Ok(cmd) => cmd,
+		Err(e) => {
+			eprintln!("guardrail hook `{}`: {}", script_display, e);
+			return None;
+		}
+	};
 	cmd.env("OCTOMIND_CAPABILITY", capability.as_deref().unwrap_or(""));
 	cmd.env("OCTOMIND_TOOL", &call.tool_name);
 	cmd.env("OCTOMIND_SUCCESS", if success { "1" } else { "0" });
-	cmd.env("OCTOMIND_WORKDIR", workdir.display().to_string());
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
 	// Reap the child if we drop it on timeout; tokio does not kill on drop.
 	cmd.kill_on_drop(true);
 
-	let mut child = match cmd.spawn() {
+	let mut child = match spawn_script(&mut cmd).await {
 		Ok(c) => c,
 		Err(e) => {
 			eprintln!(
 				"guardrail hook: spawn `{}` failed: {}",
-				script_path.display(),
+				script_display,
 				e
 			);
 			return None;
@@ -340,13 +341,13 @@ pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_t
 			.collect();
 
 		let name = v.name.clone();
-		let script = v.script.clone();
+		let snapshot = v.snapshot.clone();
 		let workdir = workdir.clone();
 		let role = role.to_string();
 		let assistant_text = assistant_text.to_string();
 
 		tasks.push(tokio::spawn(async move {
-			run_one_validator(name, script, workdir, role, assistant_text, triggered_by).await
+			run_one_validator(name, snapshot, workdir, role, assistant_text, triggered_by).await
 		}));
 		advanced.push(v.name.clone());
 	}
@@ -384,18 +385,12 @@ fn when_satisfied(v: &CompiledValidator, slice: &[(Option<String>, serde_json::V
 
 async fn run_one_validator(
 	name: String,
-	script: PathBuf,
+	snapshot: ScriptSnapshot,
 	workdir: std::path::PathBuf,
 	role: String,
 	assistant_text: String,
 	triggered_by: Vec<serde_json::Value>,
 ) -> Option<InboxMessage> {
-	let script_path = if script.is_absolute() {
-		script.clone()
-	} else {
-		workdir.join(&script)
-	};
-
 	let payload = json!({
 		"validator": name,
 		"role": role,
@@ -410,26 +405,25 @@ async fn run_one_validator(
 		}
 	};
 
-	let mut cmd = Command::new(&script_path);
-	cmd.current_dir(&workdir);
+	let mut cmd = match snapshot.command(&workdir) {
+		Ok(cmd) => cmd,
+		Err(e) => {
+			eprintln!("validator `{}`: {}", name, e);
+			return None;
+		}
+	};
 	cmd.env("OCTOMIND_VALIDATOR", &name);
 	cmd.env("OCTOMIND_ROLE", &role);
-	cmd.env("OCTOMIND_WORKDIR", workdir.display().to_string());
 	cmd.stdin(std::process::Stdio::piped());
 	cmd.stdout(std::process::Stdio::piped());
 	cmd.stderr(std::process::Stdio::piped());
 	// Reap the child if we drop it on timeout; tokio does not kill on drop.
 	cmd.kill_on_drop(true);
 
-	let mut child = match cmd.spawn() {
+	let mut child = match spawn_script(&mut cmd).await {
 		Ok(c) => c,
 		Err(e) => {
-			eprintln!(
-				"validator `{}`: spawn `{}` failed: {}",
-				name,
-				script_path.display(),
-				e
-			);
+			eprintln!("validator `{}`: spawn failed: {}", name, e);
 			return None;
 		}
 	};

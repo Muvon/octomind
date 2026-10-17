@@ -39,14 +39,28 @@
 //!   when    = ["-filesystem-read"]            # + = used since session start
 //!   message = "Use view instead of ls."        # - = NOT used since session start
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub const FILE_PATH: &str = ".agents/guardrails.toml";
+
+/// A freshly written snapshot copy can briefly fail to exec with ETXTBSY while
+/// a child forked concurrently by another thread still holds its write fd (the
+/// fd closes when that child execs). Retry instead of losing the rule run.
+const SPAWN_BUSY_RETRIES: u32 = 5;
+const SPAWN_BUSY_BACKOFF: Duration = Duration::from_millis(20);
+
+/// Uniquifies temp names so concurrent runs never write the same temp file.
+static COPY_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(untagged)]
@@ -148,10 +162,120 @@ pub struct EvolutionBinding {
 	pub shadow: bool,
 }
 
+/// Script content captured when rules are installed for a session. Rules are a
+/// session snapshot, so the scripts they run must be too: `.agents/` lives in
+/// the sandbox-writable workdir, and running the file live would let an edit
+/// made mid-session (by the agent itself) silently change or disable a rule.
+/// Runs execute the captured bytes; edits apply on the next rules reload.
+#[derive(Debug, Clone, Default)]
+pub enum ScriptSnapshot {
+	/// Not installed for a session yet.
+	#[default]
+	Untaken,
+	/// Unreadable at install time. Never falls back to the live path, which
+	/// could by now hold a script created mid-session.
+	Missing(PathBuf),
+	Taken { source: PathBuf, content: Arc<[u8]> },
+}
+
+impl ScriptSnapshot {
+	fn take(source: PathBuf) -> Self {
+		match std::fs::read(&source) {
+			Ok(bytes) => Self::Taken {
+				source,
+				content: bytes.into(),
+			},
+			Err(_) => Self::Missing(source),
+		}
+	}
+
+	/// Build the command that runs the snapshot: a private content-addressed
+	/// copy outside the workdir, rewritten from memory whenever it no longer
+	/// matches. `cwd` stays the workdir; `OCTOMIND_SCRIPT_DIR` is the original
+	/// script's directory, since `$0` now points at the copy.
+	pub fn command(&self, workdir: &Path) -> Result<tokio::process::Command> {
+		let (source, content) = match self {
+			Self::Untaken => return Err(anyhow!("script was not snapshotted for this session")),
+			Self::Missing(source) => {
+				return Err(anyhow!(
+					"script `{}` was not found when the session started",
+					source.display()
+				))
+			}
+			Self::Taken { source, content } => (source, content),
+		};
+		let copy = materialize(source, content)?;
+		let mut cmd = tokio::process::Command::new(copy);
+		cmd.current_dir(workdir);
+		cmd.env("OCTOMIND_WORKDIR", workdir.display().to_string());
+		if let Some(dir) = source.parent() {
+			cmd.env("OCTOMIND_SCRIPT_DIR", dir);
+		}
+		Ok(cmd)
+	}
+}
+
+/// Ensure `<data>/guardrails/<sha256>.<ext>` holds `content` and return it.
+/// The extension is kept because Windows picks the runner (`.cmd`) from it.
+fn materialize(source: &Path, content: &[u8]) -> Result<PathBuf> {
+	let dir = crate::directories::get_guardrail_scripts_dir()?;
+	let hash = hex::encode(Sha256::digest(content));
+	let mut name = OsString::from(&hash);
+	if let Some(ext) = source.extension() {
+		name.push(".");
+		name.push(ext);
+	}
+	let copy = dir.join(name);
+	if std::fs::read(&copy).is_ok_and(|on_disk| on_disk == content) {
+		return Ok(copy);
+	}
+	// Write aside and rename into place so a concurrent run never execs a
+	// half-written copy.
+	let tmp = dir.join(format!(
+		"{}.{}.{}.tmp",
+		hash,
+		std::process::id(),
+		COPY_SEQ.fetch_add(1, Ordering::Relaxed)
+	));
+	std::fs::write(&tmp, content).with_context(|| format!("write script copy {}", tmp.display()))?;
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o700))
+			.with_context(|| format!("chmod script copy {}", tmp.display()))?;
+	}
+	std::fs::rename(&tmp, &copy).with_context(|| format!("install script copy {}", copy.display()))?;
+	Ok(copy)
+}
+
+/// Spawn a rule script, retrying the transient ETXTBSY of a fresh copy.
+pub async fn spawn_script(cmd: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
+	let mut attempt = 0;
+	loop {
+		match cmd.spawn() {
+			Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < SPAWN_BUSY_RETRIES => {
+				attempt += 1;
+				tokio::time::sleep(SPAWN_BUSY_BACKOFF * attempt).await;
+			}
+			result => return result,
+		}
+	}
+}
+
+/// Resolve a rule's script path against the session workdir.
+fn resolve_script(workdir: &Path, script: &Path) -> PathBuf {
+	if script.is_absolute() {
+		script.to_path_buf()
+	} else {
+		workdir.join(script)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct CompiledPipe {
 	pub name: String,
 	pub command: PathBuf,
+	pub snapshot: ScriptSnapshot,
 	/// Regex on user message text; `None` matches all messages.
 	pub match_regex: Option<Regex>,
 	/// `when = "first"` restricts to first message; `when = "any"` (default) applies to all.
@@ -187,6 +311,7 @@ pub struct CompiledHook {
 	pub result_regex: Option<Regex>,
 	pub on: HookOn,
 	pub script: PathBuf,
+	pub snapshot: ScriptSnapshot,
 	pub evolution: Option<EvolutionBinding>,
 }
 
@@ -201,6 +326,7 @@ pub struct CompiledValidator {
 	/// prefix (`developer` matches `developer:general` via `<name>:` check).
 	pub roles: Vec<String>,
 	pub script: PathBuf,
+	pub snapshot: ScriptSnapshot,
 	pub evolution: Option<EvolutionBinding>,
 }
 
@@ -218,6 +344,27 @@ impl Guardrails {
 		self.guards.extend(generated.guards);
 		self.hooks.extend(generated.hooks);
 		self.validators.extend(generated.validators);
+	}
+
+	/// Snapshot every pipe, hook and validator script not snapshotted yet.
+	/// Entries that already carry one keep it, so rules copied into a delegated
+	/// agent's scope cannot pick up a script edited after session start.
+	pub fn snapshot_scripts(&mut self, workdir: &Path) {
+		for p in &mut self.pipes {
+			if matches!(p.snapshot, ScriptSnapshot::Untaken) {
+				p.snapshot = ScriptSnapshot::take(resolve_script(workdir, &p.command));
+			}
+		}
+		for h in &mut self.hooks {
+			if matches!(h.snapshot, ScriptSnapshot::Untaken) {
+				h.snapshot = ScriptSnapshot::take(resolve_script(workdir, &h.script));
+			}
+		}
+		for v in &mut self.validators {
+			if matches!(v.snapshot, ScriptSnapshot::Untaken) {
+				v.snapshot = ScriptSnapshot::take(resolve_script(workdir, &v.script));
+			}
+		}
 	}
 
 	/// Append a generated native artifact after user-authored rules. The existing
@@ -296,6 +443,7 @@ impl Guardrails {
 			pipes.push(CompiledPipe {
 				name: p.name,
 				command: PathBuf::from(p.command),
+				snapshot: ScriptSnapshot::default(),
 				match_regex,
 				when: p.when,
 				roles: p.roles,
@@ -356,6 +504,7 @@ impl Guardrails {
 				result_regex,
 				on: h.on,
 				script: PathBuf::from(h.script),
+				snapshot: ScriptSnapshot::default(),
 				evolution: None,
 			});
 		}
@@ -413,6 +562,7 @@ impl Guardrails {
 				when_unused,
 				roles: v.roles,
 				script: PathBuf::from(v.script),
+				snapshot: ScriptSnapshot::default(),
 				evolution: None,
 			});
 		}

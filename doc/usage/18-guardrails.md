@@ -67,6 +67,16 @@ Rules and runtime history are session-scoped. Edits are not hot-reloaded. Start 
 history. `/done` also reloads authored/generated rules when learning is enabled, but does not reset the call log,
 validator cursors, pipe counts, or message counter.
 
+The scripts a rule runs are snapshotted together with the rules: their content is read when the rules load, and every
+run executes that content from a private copy in the Octomind data dir (`<data>/guardrails/`), not the file in the
+workdir. Editing a pipe, hook, or validator script mid-session therefore keeps the rule running unchanged; the edit
+applies on the next reload. This also stops the agent from changing or disabling a rule by rewriting its script. A
+script missing when the rules load is not picked up if it appears later in the session.
+
+Because `$0` points at the private copy, a script that loads files next to itself must use `$OCTOMIND_SCRIPT_DIR`
+(the original script's directory) instead of `dirname "$0"`. Paths relative to the workdir keep working: `cwd` is
+still the session workdir.
+
 ## Matching DSL
 
 Used inside `match` (guards, hooks) and inside `when` entries (guards, validators):
@@ -201,7 +211,7 @@ roles   = ["developer"]                    # optional: role filter
 |---|---|
 | **cwd** | session workdir |
 | **stdin** | raw user message text |
-| **env** | `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR`, `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT` |
+| **env** | `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR`, `OCTOMIND_SCRIPT_DIR`, `PIPE_NAME`, `PIPE_RUN_COUNT`, `SESSION_MESSAGE_COUNT` |
 | **stdout** | replaces the user message (used as-is, no trimming) |
 | **stderr** | logged at debug level; used in the rejection error on non-zero exit |
 | **exit 0** | stdout becomes the new user message |
@@ -214,6 +224,7 @@ roles   = ["developer"]                    # optional: role filter
 |---|---|
 | `OCTOMIND_ROLE` | current session role (e.g. `developer:general`) |
 | `OCTOMIND_WORKDIR` | session working directory path |
+| `OCTOMIND_SCRIPT_DIR` | directory of the original script (`$0` is the session snapshot copy) |
 | `PIPE_NAME` | the `name` field from the `[[pipe]]` entry |
 | `PIPE_RUN_COUNT` | number of times this pipe has been invoked in this session (starts at `1`) |
 | `SESSION_MESSAGE_COUNT` | number of entries through the pipe-processing path, including the current attempt even if no pipe matches or it is rejected; not a count of slash commands |
@@ -362,7 +373,7 @@ script = ".agents/hooks/cargo-summary.sh"   # required: path relative to workdir
 |---|---|
 | **cwd** | session workdir |
 | **stdin** | JSON `{capability, tool, tool_id, params, result, success}` (`capability` = resolved capability name, or `null` if the tool isn't owned by any capability) |
-| **env** | `OCTOMIND_CAPABILITY`, `OCTOMIND_TOOL`, `OCTOMIND_SUCCESS=1\|0`, `OCTOMIND_WORKDIR` |
+| **env** | `OCTOMIND_CAPABILITY`, `OCTOMIND_TOOL`, `OCTOMIND_SUCCESS=1\|0`, `OCTOMIND_WORKDIR`, `OCTOMIND_SCRIPT_DIR` |
 | **stdout** | pushed to the session inbox if exit ≠ 0; trimmed first |
 | **stderr** | debug-logged for non-zero exits, never injected; exit-0 stderr is not logged |
 | **exit 0** | no-op |
@@ -451,7 +462,7 @@ history window.
 |---|---|
 | **cwd** | session workdir |
 | **stdin** | JSON `{validator, role, assistant_text, triggered_by:[{capability,params}, …]}` |
-| **env** | `OCTOMIND_VALIDATOR`, `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR` |
+| **env** | `OCTOMIND_VALIDATOR`, `OCTOMIND_ROLE`, `OCTOMIND_WORKDIR`, `OCTOMIND_SCRIPT_DIR` |
 | **stdout** | trimmed, then wrapped + pushed to inbox if exit ≠ 0 |
 | **stderr** | debug-logged for non-zero exits; exit-0 stderr is not logged |
 | **exit 0** | no-op |

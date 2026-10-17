@@ -18,12 +18,11 @@
 //! before the model sees it. Non-zero exit is a hard stop — the message is
 //! not sent to the model.
 
-use crate::config::guardrails::{role_matches, CompiledPipe, PipeWhen};
+use crate::config::guardrails::{role_matches, spawn_script, CompiledPipe, PipeWhen};
 use crate::session::context::SessionId;
 use anyhow::{anyhow, Result};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 const PIPE_TIMEOUT_SECS: u64 = 300;
 
@@ -107,16 +106,11 @@ pub async fn run_pipe(
 		.or_else(|| std::env::current_dir().ok())
 		.unwrap_or_default();
 
-	let script_path = if pipe.command.is_absolute() {
-		pipe.command.clone()
-	} else {
-		workdir.join(&pipe.command)
-	};
-
-	let mut cmd = Command::new(&script_path);
-	cmd.current_dir(&workdir);
+	let mut cmd = pipe
+		.snapshot
+		.command(&workdir)
+		.map_err(|e| anyhow!("Pipe '{}' cannot run: {}", pipe.name, e))?;
 	cmd.env("OCTOMIND_ROLE", role);
-	cmd.env("OCTOMIND_WORKDIR", workdir.display().to_string());
 	cmd.env("PIPE_NAME", &pipe.name);
 	cmd.env("PIPE_RUN_COUNT", run_count.to_string());
 	cmd.env("SESSION_MESSAGE_COUNT", message_count.to_string());
@@ -126,13 +120,13 @@ pub async fn run_pipe(
 	// Reap the child if we drop it on timeout; tokio does not kill on drop.
 	cmd.kill_on_drop(true);
 
-	let mut child = match cmd.spawn() {
+	let mut child = match spawn_script(&mut cmd).await {
 		Ok(c) => c,
 		Err(e) => {
 			return Err(anyhow!(
 				"Pipe '{}' failed to spawn '{}': {}",
 				pipe.name,
-				script_path.display(),
+				pipe.command.display(),
 				e
 			));
 		}

@@ -241,6 +241,14 @@ pub fn get_cache_dir() -> Result<PathBuf> {
 	Ok(cache_dir)
 }
 
+/// Private copies of guardrail scripts snapshotted at session start. Kept in
+/// the data dir: outside the workdir, and writable under both sandbox backends.
+pub fn get_guardrail_scripts_dir() -> Result<PathBuf> {
+	let dir = get_octomind_data_dir()?.join("guardrails");
+	ensure_private_dir(&dir)?;
+	Ok(dir)
+}
+
 /// Get the learning directory for a project and role.
 /// Structure: `learning/{project}/{role_base}/` — project-first because learning
 /// is project-scoped, role is a secondary filter.

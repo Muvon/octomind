@@ -30,6 +30,7 @@ fn hook(on: HookOn, trigger: Option<Target>, result: Option<&str>) -> CompiledHo
 		result_regex: result.map(|r| Regex::new(r).expect("valid regex")),
 		on,
 		script: PathBuf::from("hook.sh"),
+		snapshot: ScriptSnapshot::default(),
 		evolution: None,
 	}
 }
@@ -147,6 +148,7 @@ fn validator(when_used: Vec<Target>, when_unused: Vec<Target>) -> CompiledValida
 		when_unused,
 		roles: Vec::new(),
 		script: PathBuf::from("v.sh"),
+		snapshot: ScriptSnapshot::default(),
 		evolution: None,
 	}
 }

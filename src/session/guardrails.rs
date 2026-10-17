@@ -74,7 +74,8 @@ pub fn init_for_session() {
 	let workdir = crate::session::context::get_current_workdir(&sid)
 		.or_else(|| std::env::current_dir().ok())
 		.unwrap_or_default();
-	let rules = Guardrails::load_from_workdir(&workdir);
+	let mut rules = Guardrails::load_from_workdir(&workdir);
+	rules.snapshot_scripts(&workdir);
 	let mut guard = RULES.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
 	registry.insert(sid, Arc::new(rules));
@@ -83,7 +84,11 @@ pub fn init_for_session() {
 /// Append generated rules after the already-loaded project authority. Invalid
 /// generated artifacts are rejected before this boundary, so they cannot make
 /// a valid project guardrail set disappear.
-pub fn merge_generated_for_session(session_id: &SessionId, generated: Guardrails) {
+pub fn merge_generated_for_session(session_id: &SessionId, mut generated: Guardrails) {
+	let workdir = crate::session::context::get_current_workdir(session_id)
+		.or_else(|| std::env::current_dir().ok())
+		.unwrap_or_default();
+	generated.snapshot_scripts(&workdir);
 	let mut guard = RULES.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
 	let current = registry.entry(session_id.clone()).or_default();

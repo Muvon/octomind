@@ -203,6 +203,34 @@ async fn test_turn_validator_injects_wrapped_output_into_inbox() {
 }
 
 #[tokio::test]
+async fn test_validator_runs_the_session_start_snapshot_after_an_edit() {
+	let sid = "__hooks_validator_snapshot".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let tmp = validator_workdir("");
+		crate::session::context::set_session_workdir(&sid, tmp.path().to_path_buf());
+		crate::session::guardrails::init_for_session();
+		crate::session::inbox::init_inbox_for_session();
+
+		// Mid-session edit of the check (e.g. by the agent): applies next session.
+		write_script(
+			tmp.path(),
+			&format!("validators/check.{SCRIPT_EXT}"),
+			"EDITED-CHECK",
+		);
+		crate::session::hooks::run_turn_validators(&sid, "developer", "shipped").await;
+
+		let msg = crate::session::inbox::try_pop_inbox_message()
+			.expect("validator must keep running after its script is edited");
+		assert!(msg.content.contains("RUN cargo test"), "snapshot not run: {}", msg.content);
+		assert!(!msg.content.contains("EDITED-CHECK"), "edit applied mid-session");
+
+		crate::session::inbox::clear_inbox_for_session(&sid);
+	})
+	.await;
+	crate::session::context::cleanup_session(&sid);
+}
+
+#[tokio::test]
 async fn test_validator_skips_on_match_or_role_miss() {
 	// match regex that does not hit the assistant text
 	let sid = "__hooks_validator_match".to_string();

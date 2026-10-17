@@ -48,10 +48,16 @@ Most coding agents assume a human is watching the screen. Octomind is built for 
 
 ## Quick Start
 
-**1. Install** (macOS, Linux; Windows via Git Bash or MSYS2):
+**1. Install** (macOS, Linux):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh | bash
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 | iex
 ```
 
 On macOS, you can also install with Homebrew:
@@ -175,12 +181,14 @@ octomind tap yourteam/octomind-tap        # on another machine, after publishing
 | Method | Command |
 |---|---|
 | **Install script** (recommended) | `curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh \| bash` |
+| **Install script** (Windows PowerShell) | `irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 \| iex` |
 | **Homebrew** (macOS) | `brew install muvon/tap/octomind` |
+| **Scoop** (Windows) | `scoop install https://raw.githubusercontent.com/muvon/octomind/master/scoop/octomind.json` |
 | **Cargo** (Rust 1.95+) | `cargo install octomind` |
 | **Docker** | `docker run --rm ghcr.io/muvon/octomind --help` |
 | **From source** | `git clone https://github.com/muvon/octomind.git && cd octomind && cargo build --release` |
 
-The install script detects your OS and architecture (Linux and macOS on x86_64/aarch64; Windows on x86_64/aarch64 via Git Bash or MSYS2) and installs to `~/.local/bin/`. Pass `--install-dir <DIR>` or set `OCTOMIND_INSTALL_DIR` to override.
+The install script detects your OS and architecture (Linux and macOS on x86_64/aarch64) and installs to `~/.local/bin/`. Pass `--install-dir <DIR>` or set `OCTOMIND_INSTALL_DIR` to override. On Windows (x86_64/aarch64), `install.ps1` installs to `%LOCALAPPDATA%\octomind\bin` and adds it to your user `PATH`; it honors `OCTOMIND_INSTALL_DIR` and `OCTOMIND_VERSION` too.
 
 **Command not found?** Add the install directory to your `PATH`:
 

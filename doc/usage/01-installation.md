@@ -15,6 +15,16 @@ The installer detects the current OS and architecture, downloads the matching Gi
 `~/.local/bin` by default. If that directory is not on `PATH`, the script prints the exact export to add to your shell
 profile.
 
+On Windows, run this in PowerShell instead:
+
+```powershell
+irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 | iex
+```
+
+`install.ps1` works in Windows PowerShell 5.1 and PowerShell 7, needs no administrator rights, installs
+`octomind.exe` in `%LOCALAPPDATA%\octomind\bin`, and adds that directory to your user `PATH`. Open a new terminal if
+other shells do not find `octomind` yet.
+
 ### 2. Sign in
 
 ```bash
@@ -37,8 +47,8 @@ uses `octohub:auto` for its main, supervisor, and compression model purposes.
 ## Installer Requirements and Targets
 
 The install script requires a Unix-style shell and `curl`, plus `tar` for Unix archives or `unzip` for Windows archives.
-On Windows, run it from Git Bash or MSYS2. The script recognizes these targets; the chosen release must contain the
-matching asset:
+On Windows, use `install.ps1` from PowerShell; it picks the x86_64 or ARM64 build from the system architecture. The
+scripts recognize these targets; the chosen release must contain the matching asset:
 
 | Platform | Target |
 |----------|--------|
@@ -72,6 +82,15 @@ brew install muvon/tap/octomind
 The [Muvon tap](https://github.com/muvon/homebrew-tap) provides release binaries for Apple Silicon and Intel Macs.
 After installation, follow the sign-in and startup steps above.
 
+### Scoop (Windows)
+
+```powershell
+scoop install https://raw.githubusercontent.com/muvon/octomind/master/scoop/octomind.json
+```
+
+The manifest covers x86_64 and ARM64 and is kept in this repository until Octomind has a Scoop bucket. It is bumped
+by hand for now, so it can lag the latest release; `install.ps1` always fetches the latest.
+
 ### GitHub release archive
 
 Download the archive for your target from [GitHub Releases](https://github.com/muvon/octomind/releases). Release assets
@@ -93,13 +112,13 @@ mkdir -p ~/.local/bin
 install -m 755 octomind ~/.local/bin/octomind
 ```
 
-For a Windows ZIP in Git Bash or MSYS2:
+For a Windows ZIP in PowerShell:
 
-```bash
-unzip "$OCTOMIND_ARCHIVE" octomind.exe
-mkdir -p ~/.local/bin
-cp octomind.exe ~/.local/bin/octomind.exe
+```powershell
+Expand-Archive $env:OCTOMIND_ARCHIVE -DestinationPath "$env:LOCALAPPDATA\octomind\bin" -Force
 ```
+
+Then add that directory to your user `PATH`.
 
 ### Cargo
 
@@ -112,7 +131,7 @@ Source](../dev/01-building-from-source.md) for the repository development setup.
 
 ## Automated Installation
 
-The installer accepts these environment variables:
+Both installers accept these environment variables:
 
 | Variable | Purpose |
 |----------|---------|
@@ -132,6 +151,13 @@ To pin a release, set `OCTOMIND_VERSION` to its exact release tag and run:
 
 ```bash
 curl -fsSL https://octomind.run/install.sh | bash -s -- --version "$OCTOMIND_VERSION"
+```
+
+`install.ps1` takes no flags; set the variables in PowerShell before running it:
+
+```powershell
+$env:OCTOMIND_VERSION = "<tag>"
+irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 | iex
 ```
 
 ## Shell Completions

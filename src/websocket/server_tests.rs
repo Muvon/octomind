@@ -3816,7 +3816,9 @@ async fn spawn_hang_then_answer_stub(answer: &'static str) -> String {
 					}
 					total += n;
 					let text = String::from_utf8_lossy(&buf[..total]).to_lowercase();
-					let Some(head) = text.find("\r\n\r\n") else { continue };
+					let Some(head) = text.find("\r\n\r\n") else {
+						continue;
+					};
 					let len: usize = text
 						.split("content-length:")
 						.nth(1)
@@ -3851,7 +3853,10 @@ async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
 	let env = StubEnv {
 		_guard: ENV_LOCK.lock().await,
 	};
-	std::env::set_var("OLLAMA_API_URL", spawn_hang_then_answer_stub("SECOND-OK").await);
+	std::env::set_var(
+		"OLLAMA_API_URL",
+		spawn_hang_then_answer_stub("SECOND-OK").await,
+	);
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 
 	let mut first = connect_ws(server.addr).await;
@@ -3879,7 +3884,8 @@ async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
 		.await;
 		let _ack = read_json(&mut second).await;
 		let reply = read_until(&mut second, |v| {
-			v["type"] == "cost" || (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
+			v["type"] == "cost"
+				|| (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
 		})
 		.await;
 		if reply["type"] == "cost" {

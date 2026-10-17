@@ -188,6 +188,37 @@ fn authorizer_user_evidence_and_parent_boundary_survive_actual_session_load() {
 }
 
 #[test]
+fn standing_session_rules_survive_session_load() {
+	let info = SessionInfo {
+		name: "session-rules-resume".into(),
+		session_rules: vec!["never push to main".into()],
+		..Default::default()
+	};
+	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info})
+		.to_string();
+	let file = write_session(&[&summary]);
+	let restored = load_session(&file.path().to_path_buf()).unwrap();
+	assert_eq!(restored.info.session_rules, vec!["never push to main"]);
+
+	// A session saved before the field existed loads with no rules.
+	let mut legacy_info = serde_json::to_value(SessionInfo {
+		name: "session-rules-legacy".into(),
+		..Default::default()
+	})
+	.unwrap();
+	legacy_info
+		.as_object_mut()
+		.expect("session info is an object")
+		.remove("session_rules");
+	let legacy =
+		serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":legacy_info})
+			.to_string();
+	let file = write_session(&[&legacy]);
+	let restored = load_session(&file.path().to_path_buf()).unwrap();
+	assert!(restored.info.session_rules.is_empty());
+}
+
+#[test]
 fn round_trip_without_compression_preserves_messages() {
 	let s = summary_line("round-trip", 1_700_000_000);
 	let m1 = serde_json::to_string(&msg("user", "hi")).unwrap();

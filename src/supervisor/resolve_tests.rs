@@ -35,6 +35,7 @@ fn context(request: &str) -> TaskContext {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	}
 }
 
@@ -125,14 +126,16 @@ fn capture_requires_a_real_user_turn() {
 		&[],
 		"",
 		None,
-		crate::supervisor::VerificationPolicy::Unspecified
+		crate::supervisor::VerificationPolicy::Unspecified,
+		&[]
 	)
 	.is_none());
 	assert!(TaskContext::capture(
 		&[message("assistant", "hi")],
 		"",
 		None,
-		crate::supervisor::VerificationPolicy::Unspecified
+		crate::supervisor::VerificationPolicy::Unspecified,
+		&[]
 	)
 	.is_none());
 }
@@ -414,6 +417,7 @@ async fn resolve_empty_request_short_circuits_without_a_model() {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	};
 	let (_tx, operation_rx) = tokio::sync::watch::channel(false);
 	let resolved = resolve(&config, &context, operation_rx).await;
@@ -456,6 +460,7 @@ fn policy_update_unchanged_never_requires_evidence() {
 		conditions: Vec::new(),
 		operational_constraints: Vec::new(),
 		whole_targets: Vec::new(),
+		session_rules_update: Default::default(),
 	};
 	let ctx = context("a plain request");
 	verdict.validate_policy_update(&ctx);
@@ -480,6 +485,7 @@ fn resolve_context(request: &str) -> TaskContext {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	}
 }
 
@@ -514,6 +520,51 @@ async fn resolver_filters_ungrounded_constraints_on_both_classification_branches
 		assert_eq!(result.operational_constraints, vec!["I run tests myself"]);
 		std::env::remove_var("OLLAMA_API_URL");
 	}
+}
+
+#[tokio::test]
+async fn resolver_grounds_session_rule_delta_on_both_classification_branches() {
+	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
+	let _guard = ENV_LOCK.lock().await;
+	for scope in ["self_contained", "context_dependent"] {
+		let classifier = serde_json::json!({
+			"scope": scope,
+			"session_rules_add": ["never push to main", "a rule the user never wrote"],
+			"session_rules_revoke": [
+				{"rule": "never run cargo locally", "evidence": "You may run cargo now"},
+				{"rule": "never run cargo locally", "evidence": "a quote the user never wrote"},
+				{"rule": "a rule that was never held", "evidence": "You may run cargo now"}
+			]
+		});
+		let mut replies = vec![final_response(&classifier.to_string())];
+		if scope == "context_dependent" {
+			replies.push(final_response(r#"{"scope":"ambiguous"}"#));
+		}
+		let url = spawn_stub(replies).await;
+		std::env::set_var("OLLAMA_API_URL", &url);
+		let mut ctx = resolve_context("You may run cargo now. From now on, never push to main.");
+		ctx.session_rules = vec!["never run cargo locally".into()];
+		let (_tx, rx) = tokio::sync::watch::channel(false);
+		let result = resolve(&resolve_config(), &ctx, rx).await;
+		assert_eq!(result.session_rules_update.add, vec!["never push to main"]);
+		assert_eq!(
+			result.session_rules_update.revoke,
+			vec![crate::supervisor::session_rules::Revocation {
+				rule: "never run cargo locally".into(),
+				evidence: "You may run cargo now".into(),
+			}]
+		);
+		std::env::remove_var("OLLAMA_API_URL");
+	}
+}
+
+#[test]
+fn classification_payload_carries_standing_session_rules() {
+	let mut ctx = context("Fix the parser");
+	ctx.session_rules = vec!["never push to main".into()];
+	let payload = ctx.render_classification_payload();
+	assert!(payload.contains("\"session_rules\""), "{payload}");
+	assert!(payload.contains("never push to main"), "{payload}");
 }
 
 #[tokio::test]

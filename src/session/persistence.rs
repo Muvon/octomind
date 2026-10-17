@@ -765,6 +765,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 		consecutive_compressions: 0,
 		learning_stats: crate::session::LearningSessionStats::default(),
 		verification_policy: crate::supervisor::VerificationPolicy::default(),
+		session_rules: Vec::new(),
 		authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 		evidence: crate::supervisor::gate::EvidenceLedger::default(),
 		interactive: false,

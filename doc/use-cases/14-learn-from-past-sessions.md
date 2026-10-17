@@ -33,7 +33,8 @@ finishes; `/done` schedules background work rather than waiting for every memory
 
 ### 1. Create a project with a stable identity
 
-Scoped learning uses the working directory's basename and the role base before `:`. Use this same directory and role
+Scoped learning uses the repository root's basename (the working directory's own basename outside a repository) and
+the role base before `:`. Use this same directory and role
 for both sessions. Do not put the rule in `AGENTS.md` during this exercise: that would also supply it at startup and
 make the recall experiment ambiguous.
 
@@ -227,7 +228,7 @@ rule, record that as an unsuccessful recall check even though storage succeeded.
 `[supervisor.learning].enabled` is true and that the conversation contains an explicit reusable user rule.
 The extractor and verifier may correctly reject a candidate; there is no guaranteed “save this sentence” operation.
 
-**The lesson exists but the next session ignores it.** Check the working-directory basename and role base.
+**The lesson exists but the next session ignores it.** Check the project key (repository root basename) and role base.
 Enable debug before a fresh related request and inspect the actual pack. Recall is limited by relevance and context;
 orientation records are working assumptions to verify, not established facts.
 

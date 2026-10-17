@@ -31,6 +31,7 @@ fn context(request: &str) -> TaskContext {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	}
 }
 
@@ -49,6 +50,7 @@ fn self_contained_classification_never_receives_historical_requirements() {
 			role_context: String::new(),
 			verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 			recent_user_policy_context: Vec::new(),
+			session_rules: Vec::new(),
 		};
 		let payload = context.render_classification_payload();
 		assert!(payload.contains(request));
@@ -70,6 +72,7 @@ fn scheduling_follow_up_resolves_subject_without_importing_immediate_action() {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	};
 	let resolved = parse_resolution(
 		&context,
@@ -87,6 +90,7 @@ fn scheduling_follow_up_resolves_subject_without_importing_immediate_action() {
 		role_context: String::new(),
 		verification_policy: crate::supervisor::VerificationPolicy::Unspecified,
 		recent_user_policy_context: Vec::new(),
+		session_rules: Vec::new(),
 	};
 	let resolved_now = parse_resolution(
 		&explicit_now,
@@ -200,6 +204,7 @@ fn capture_keeps_recent_real_turns_and_excludes_injections() {
 		"durable goal",
 		Some("live plan"),
 		crate::supervisor::VerificationPolicy::Unspecified,
+		&[],
 	)
 	.expect("current real turn");
 	assert_eq!(captured.current_request, "Schedule status checks");
@@ -224,6 +229,7 @@ fn legacy_policy_backfill_sees_answer_only_user_rule_not_synthetic_text() {
 		"",
 		None,
 		crate::supervisor::VerificationPolicy::Unspecified,
+		&[],
 	)
 	.expect("current real turn");
 	assert_eq!(
@@ -311,6 +317,7 @@ fn new_unrelated_request_keeps_old_goal_out_of_classification() {
 		"<intent>Implement the old websocket goal</intent>",
 		Some("Old websocket checklist"),
 		crate::supervisor::VerificationPolicy::Allowed,
+		&[],
 	)
 	.expect("current real turn");
 	let classification = captured.render_classification_payload();

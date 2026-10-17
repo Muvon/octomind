@@ -423,6 +423,11 @@ pub struct SessionInfo {
 	/// compression.
 	#[serde(default)]
 	pub verification_policy: crate::supervisor::VerificationPolicy,
+	/// Standing rules the user set for the rest of this session, as verbatim
+	/// excerpts. Updated from genuine user turns only; recited every turn and
+	/// pinned through compaction until the user revokes them.
+	#[serde(default)]
+	pub session_rules: Vec<String>,
 	/// User evidence and local authorizer outcomes, preserved across compaction/resume.
 	#[serde(default)]
 	pub authorization: crate::supervisor::authorizer::AuthorizationState,
@@ -607,6 +612,7 @@ impl Session {
 				consecutive_compressions: 0,
 				learning_stats: LearningSessionStats::default(),
 				verification_policy: crate::supervisor::VerificationPolicy::default(),
+				session_rules: Vec::new(),
 				authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 				evidence: crate::supervisor::gate::EvidenceLedger::default(),
 				interactive: false,

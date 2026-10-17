@@ -1888,6 +1888,43 @@ async fn verify_governance_rejects_a_request_rewritten_inside_the_fold_point() {
 	assert!(pact.verify_governance(&session, fold_point).is_err());
 }
 
+/// A rule the user set on an earlier turn is pinned through the fold although
+/// the latest request never mentions it. It cites no packet: the turn that set
+/// it may already be folded. Revoking it before commit changes governance.
+#[tokio::test]
+async fn standing_session_rules_are_pinned_and_governed() {
+	let mut session = ChatSession::for_tests(vec![
+		message("system", "system prompt"),
+		message("user", "From now on, never push to main."),
+		message("assistant", "Understood."),
+		message("user", "write the briefing"),
+		message("assistant", "drafted section one"),
+	]);
+	session.session.info.name = "gov-session-rules-unit".to_string();
+	session.session.info.session_rules = vec!["never push to main".to_string()];
+	let pact = build(&session, 1, 4, 2.0, false, false)
+		.await
+		.expect("pact context builds");
+	assert!(
+		pact.pinned
+			.constraints
+			.iter()
+			.any(|item| item.text == "never push to main" && item.source.is_none()),
+		"{:?}",
+		pact.pinned.constraints
+	);
+	let (pinned_band, _) = pact.render_live_bands(None, None);
+	assert!(
+		pinned_band.contains("constraint: never push to main"),
+		"{pinned_band}"
+	);
+
+	let fold_point = session.session.messages.len();
+	assert!(pact.verify_governance(&session, fold_point).is_ok());
+	session.session.info.session_rules.clear();
+	assert!(pact.verify_governance(&session, fold_point).is_err());
+}
+
 #[test]
 fn write_degraded_telemetry_records_fallback_without_archive() {
 	let pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));

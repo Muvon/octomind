@@ -278,7 +278,9 @@ global lessons go in the shared `_` directory:
 ```
 
 The role component is the **base part before `:`** — a lesson from role `developer:general` is stored under
-`developer/`, while the project component is the working directory’s basename.
+`developer/`, while the project component is the basename of the repository root containing the working directory
+(the nearest ancestor with `.git`, not searching at or above your home directory), or the working directory's own
+basename outside a repository. A session started in `repo/src` therefore shares lessons with one started in `repo`.
 
 On macOS and Linux the default data root is `~/.local/share/octomind`; on Windows it is `%LOCALAPPDATA%/octomind`.
 `OCTOMIND_DATA_DIR` overrides it, including config and learning storage:

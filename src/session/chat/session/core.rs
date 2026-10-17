@@ -427,6 +427,7 @@ impl ChatSession {
 			consecutive_compressions: 0,
 			learning_stats: crate::session::LearningSessionStats::default(),
 			verification_policy: crate::supervisor::VerificationPolicy::default(),
+			session_rules: Vec::new(),
 			authorization: crate::supervisor::authorizer::AuthorizationState::default(),
 			evidence: crate::supervisor::gate::EvidenceLedger::default(),
 			interactive: false,

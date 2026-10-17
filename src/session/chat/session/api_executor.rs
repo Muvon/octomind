@@ -289,6 +289,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			&chat_session.session.info.anchor,
 			plan_checklist.as_deref(),
 			&constraints,
+			&chat_session.session.info.session_rules,
 			live_task.map(crate::session::anchor::task_sig),
 			effective_verification_policy,
 		) {

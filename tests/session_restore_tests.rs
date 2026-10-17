@@ -116,6 +116,7 @@ mod session_restore_tests {
 			consecutive_compressions: 0,
 			learning_stats: Default::default(),
 			verification_policy: Default::default(),
+			session_rules: Vec::new(),
 			authorization: Default::default(),
 			evidence: Default::default(),
 			interactive: false,

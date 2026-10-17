@@ -389,6 +389,12 @@ prohibitions, and verification policy can be recited before the first compaction
 its task signature still matches the live request. No separate model call is needed, but the note consumes context
 tokens.
 
+A rule you set for the rest of the session ("from now on, never push to main") is kept as a **standing session
+rule**: the turn classifier records your exact words, the rule is recited on every later turn and pinned through every
+compaction, and it survives `--resume`. It stays until you revoke or replace it ("you can push to main now"). An
+addition or revocation the classifier cannot back with your exact words is discarded, and at most 8 are held at once (oldest first
+out). Per-turn prohibitions still come from the latest request only.
+
 ## Delegation
 
 The MCP `tap` action `run` and `agent_*` tools spawn a **context-isolated** child. Its prompt must supply the goal,

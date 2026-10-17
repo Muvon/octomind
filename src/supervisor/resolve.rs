@@ -45,6 +45,8 @@ The user message is one JSON object. Identify each field by its KEY, never by it
 - "verification_policy" — the persisted user policy before this turn.
 - "recent_user_policy_context" — optional bounded genuine-user turns, newest last. This exists
   only to backfill sessions saved before verification_policy existed; it is never task scope.
+- "session_rules" — standing rules the user set earlier in this session, verbatim, in force
+  until revoked.
 </input_format>
 
 Field "scope": return self_contained when the requested actions, objects, timing, and
@@ -136,6 +138,23 @@ user's exact words from current_user_request only — never from role_context, p
 or quoted text. Empty when the turn states none. Never include the task's deliverables,
 one-off actions, or prohibitions.
 
+Field "session_rules_add": copy short verbatim excerpts (each under 200 characters, at most 4)
+from current_user_request where the user sets a rule meant to hold BEYOND this turn — either
+explicitly ("from now on", "for the rest of this session", "always", "every time") or as a
+standing working agreement not tied to this turn's deliverable ("I run the builds myself, you
+never do", "all deploys go through the staging branch"). Never add this turn's deliverables or
+one-off actions, a prohibition scoped to this task ("don't touch the tests in this fix"), a
+blanket verification ban or permission (that is verification_policy_update), text from
+role_context, pasted logs, quoted or example material, or a rule already in session_rules.
+Empty when the turn sets none.
+
+Field "session_rules_revoke": one object per standing rule the current turn explicitly cancels,
+relaxes, or replaces: "rule" copied exactly as written in session_rules, and "evidence" one
+short exact excerpt from current_user_request that cancels it. A replacement rule goes in
+session_rules_add and the rule it replaces here. Never revoke a rule because this turn does not
+mention it. A revocation without valid exact user evidence is discarded. Empty when nothing is
+revoked.
+
 Field "whole_targets": the artifacts this turn works on AS A WHOLE — a file or document whose
 entire content the deliverable depends on: rewriting, polishing, restructuring, translating,
 summarizing, or reviewing that artifact end to end. Copy each name exactly as the current turn
@@ -144,7 +163,7 @@ of an artifact (fix one function, change one setting, add a test), when the turn
 artifact, or when the name appears only in pasted or quoted text.
 
 Return one JSON object and nothing else:
-{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"operational_constraints":["..."],"whole_targets":["..."]}"#;
+{"scope":"self_contained|context_dependent","forbids_verification":true|false,"verification_policy_update":"forbid|allow|unchanged","verification_policy_evidence":"exact user excerpt or empty","answer_only":true|false,"conditions":["..."],"operational_constraints":["..."],"session_rules_add":["..."],"session_rules_revoke":[{"rule":"...","evidence":"exact user excerpt"}],"whole_targets":["..."]}"#;
 
 const FOLLOWUP_PROMPT: &str = r#"Resolve ONE current user turn already classified as
 context-dependent. Do not judge whether work is complete and do not answer the request. Every
@@ -210,6 +229,9 @@ pub struct TaskContext {
 	/// only for one-time legacy backfill when that policy is unspecified.
 	pub verification_policy: crate::supervisor::VerificationPolicy,
 	pub recent_user_policy_context: Vec<String>,
+	/// Standing session rules before this turn, so the classifier can revoke
+	/// one by its exact text and never re-add one already held.
+	pub session_rules: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -254,6 +276,9 @@ pub struct ResolvedTask {
 	/// the user wrote them and grounded in the request. Every line of such an
 	/// artifact is task data, so condensation leaves reads of it untouched.
 	pub whole_targets: Vec<String>,
+	/// Delta to the session's standing rules, already grounded in the user's
+	/// words. Applied once when this turn is resolved.
+	pub session_rules_update: crate::supervisor::session_rules::SessionRulesUpdate,
 }
 
 impl ResolvedTask {
@@ -273,6 +298,7 @@ impl ResolvedTask {
 			evidence_conditions: Vec::new(),
 			operational_constraints: Vec::new(),
 			whole_targets: Vec::new(),
+			session_rules_update: Default::default(),
 		}
 	}
 
@@ -292,6 +318,7 @@ impl ResolvedTask {
 			evidence_conditions: Vec::new(),
 			operational_constraints: Vec::new(),
 			whole_targets: Vec::new(),
+			session_rules_update: Default::default(),
 		}
 	}
 }
@@ -316,6 +343,7 @@ impl TaskContext {
 		session_context: &str,
 		active_plan: Option<&str>,
 		verification_policy: crate::supervisor::VerificationPolicy,
+		session_rules: &[String],
 	) -> Option<Self> {
 		// Index and content resolve through the same helper pair, so after a
 		// compaction both land on the continuation wrapper instead of the
@@ -336,6 +364,7 @@ impl TaskContext {
 			} else {
 				Vec::new()
 			},
+			session_rules: session_rules.to_vec(),
 		})
 	}
 
@@ -345,6 +374,7 @@ impl TaskContext {
 			"role_context": self.role_context,
 			"verification_policy": self.verification_policy,
 			"recent_user_policy_context": self.recent_user_policy_context,
+			"session_rules": self.session_rules,
 		})
 		.to_string()
 	}
@@ -376,6 +406,10 @@ struct ClassifierOutput {
 	conditions: Vec<String>,
 	#[serde(default)]
 	operational_constraints: Vec<String>,
+	#[serde(default)]
+	session_rules_add: Vec<String>,
+	#[serde(default)]
+	session_rules_revoke: Vec<crate::supervisor::session_rules::Revocation>,
 	#[serde(default)]
 	whole_targets: Vec<String>,
 }
@@ -428,6 +462,7 @@ pub async fn resolve(
 		conditions,
 		operational_constraints,
 		whole_targets,
+		session_rules_update,
 	) = match classification {
 		Ok(response) => {
 			// One bounded retry on an unusable response before failing open.
@@ -473,6 +508,8 @@ pub async fn resolve(
 			);
 			parsed.whole_targets =
 				grounded_whole_targets(&context.current_request, &parsed.whole_targets);
+			parsed.session_rules_update = std::mem::take(&mut parsed.session_rules_update)
+				.grounded(&context.current_request, &context.session_rules);
 			if !parsed.context_dependent {
 				let mut resolved = ResolvedTask::self_contained(raw);
 				resolved.plan_at_turn_start = context.active_plan.clone();
@@ -482,6 +519,7 @@ pub async fn resolve(
 				resolved.evidence_conditions = parsed.conditions;
 				resolved.operational_constraints = parsed.operational_constraints;
 				resolved.whole_targets = parsed.whole_targets;
+				resolved.session_rules_update = parsed.session_rules_update;
 				return resolved;
 			}
 			(
@@ -491,6 +529,7 @@ pub async fn resolve(
 				parsed.conditions,
 				parsed.operational_constraints,
 				parsed.whole_targets,
+				parsed.session_rules_update,
 			)
 		}
 		Err(error) => {
@@ -533,6 +572,7 @@ pub async fn resolve(
 	resolved.evidence_conditions = conditions;
 	resolved.operational_constraints = operational_constraints;
 	resolved.whole_targets = whole_targets;
+	resolved.session_rules_update = session_rules_update;
 	resolved
 }
 
@@ -548,6 +588,7 @@ struct ClassifierVerdict {
 	conditions: Vec<String>,
 	operational_constraints: Vec<String>,
 	whole_targets: Vec<String>,
+	session_rules_update: crate::supervisor::session_rules::SessionRulesUpdate,
 }
 
 fn classifier_fallback() -> ClassifierVerdict {
@@ -560,6 +601,7 @@ fn classifier_fallback() -> ClassifierVerdict {
 		conditions: Vec::new(),
 		operational_constraints: Vec::new(),
 		whole_targets: Vec::new(),
+		session_rules_update: Default::default(),
 	}
 }
 
@@ -637,6 +679,10 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 			.map(|t| t.trim().to_string())
 			.filter(|t| !t.is_empty())
 			.collect(),
+		session_rules_update: crate::supervisor::session_rules::SessionRulesUpdate {
+			add: parsed.session_rules_add,
+			revoke: parsed.session_rules_revoke,
+		},
 	})
 }
 
@@ -777,6 +823,7 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 				evidence_conditions: Vec::new(),
 				operational_constraints: Vec::new(),
 				whole_targets: Vec::new(),
+				session_rules_update: Default::default(),
 			}
 		}
 		"ambiguous" => ResolvedTask::ambiguous(original, active_plan),

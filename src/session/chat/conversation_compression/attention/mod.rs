@@ -503,22 +503,37 @@ fn link_dependencies(packets: &mut [EvidencePacket]) {
 fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<PinnedItem> {
 	let literal_task = crate::session::latest_real_user_task_content(&session.session.messages)
 		.unwrap_or_default();
-	crate::supervisor::recite::active_constraints(
+	// Standing session rules pin first. The turn that set one may already be
+	// folded away, so they cite no packet rather than a false source.
+	let mut items: Vec<PinnedItem> = session
+		.session
+		.info
+		.session_rules
+		.iter()
+		.map(|rule| PinnedItem {
+			text: rule.clone(),
+			source: None,
+		})
+		.collect();
+	for text in crate::supervisor::recite::active_constraints(
 		&session.session.messages,
 		session.gate_task.as_ref(),
-	)
-	.into_iter()
-	.map(|text| PinnedItem {
-		// Cite the current real-user packet only when it contains the exact
-		// constraint. A contextual resolver may legitimately carry a constraint
-		// from its bounded evidence, but attributing that text to the literal
-		// "continue" packet would be false provenance.
-		source: task_source
-			.filter(|_| literal_task.contains(&text))
-			.map(str::to_string),
-		text,
-	})
-	.collect()
+	) {
+		if items.iter().any(|item| item.text == text) {
+			continue;
+		}
+		items.push(PinnedItem {
+			// Cite the current real-user packet only when it contains the exact
+			// constraint. A contextual resolver may legitimately carry a constraint
+			// from its bounded evidence, but attributing that text to the literal
+			// "continue" packet would be false provenance.
+			source: task_source
+				.filter(|_| literal_task.contains(&text))
+				.map(str::to_string),
+			text,
+		});
+	}
+	items
 }
 
 fn governance_hash(

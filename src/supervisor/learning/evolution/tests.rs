@@ -98,6 +98,29 @@ fn scope_dimensions_are_independent_and_exact() {
 }
 
 #[test]
+fn project_name_keys_on_the_repository_root() {
+	let root = tempfile::tempdir().unwrap();
+	let repo = root.path().join("repo");
+	let deep = repo.join("src").join("deep");
+	std::fs::create_dir_all(&deep).unwrap();
+	std::fs::create_dir(repo.join(".git")).unwrap();
+	assert_eq!(project_name(Some(&repo)), "repo");
+	assert_eq!(project_name(Some(&deep)), "repo");
+
+	// Worktrees and submodules mark their root with a `.git` file.
+	let worktree = root.path().join("worktree");
+	let nested = worktree.join("crate");
+	std::fs::create_dir_all(&nested).unwrap();
+	std::fs::write(worktree.join(".git"), "gitdir: elsewhere\n").unwrap();
+	assert_eq!(project_name(Some(&nested)), "worktree");
+
+	// Outside any repository the directory keeps its own name.
+	let plain = root.path().join("plain").join("sub");
+	std::fs::create_dir_all(&plain).unwrap();
+	assert_eq!(project_name(Some(&plain)), "sub");
+}
+
+#[test]
 fn role_variants_share_one_domain() {
 	assert_eq!(domain_name("developer:general"), "developer");
 	assert_eq!(domain_name("developer:rust"), "developer");

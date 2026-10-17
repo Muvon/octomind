@@ -50,6 +50,7 @@ pub mod plan;
 pub mod recite;
 pub mod report;
 pub mod resolve;
+pub mod session_rules;
 pub mod stats;
 pub mod workdir;
 

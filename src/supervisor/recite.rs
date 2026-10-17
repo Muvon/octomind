@@ -320,6 +320,8 @@ fn is_quoted_material(trimmed: &str) -> bool {
 /// prohibitions verbatim — the instructions models abandon first as attention
 /// decays — and fire from turn one: a constraint is most violated exactly
 /// while the raw request is still in context but no longer attended to.
+/// `session_rules` recite the standing rules the user set on earlier turns,
+/// which the latest-request `constraints` never carry and a summary may drop.
 /// `verification_policy` is a read-only projection of runtime state; it is
 /// explicitly labeled as an execution boundary so it cannot replace the task.
 /// Wrapped in `<pay-attention>` so
@@ -329,6 +331,7 @@ pub fn recite_note(
 	anchor: &Anchor,
 	plan_checklist: Option<&str>,
 	constraints: &[String],
+	session_rules: &[String],
 	current_task_sig: Option<u64>,
 	verification_policy: VerificationPolicy,
 ) -> Option<String> {
@@ -367,6 +370,7 @@ pub fn recite_note(
 		&& next_steps.is_empty()
 		&& plan_checklist.is_none()
 		&& constraints.is_empty()
+		&& session_rules.is_empty()
 		&& verification_policy == VerificationPolicy::Unspecified
 	{
 		return None;
@@ -393,6 +397,19 @@ pub fn recite_note(
 			}
 		}
 	}
+	if !session_rules.is_empty() {
+		s.push_str("Standing session rules — set by the user in this session, in force until the user revokes them:\n");
+		for rule in session_rules {
+			s.push_str("- ");
+			s.push_str(&xml_text(rule));
+			s.push('\n');
+		}
+	}
+	// The turn that sets a rule also yields it as a request excerpt; one copy.
+	let constraints: Vec<&String> = constraints
+		.iter()
+		.filter(|c| !session_rules.contains(c))
+		.collect();
 	if !constraints.is_empty() {
 		s.push_str("Selected request excerpts — context reminders, not additional requirements. Interpret them in the full current request; quoted examples and superseded rules are not instructions:\n");
 		for c in constraints {

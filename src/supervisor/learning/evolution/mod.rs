@@ -285,12 +285,15 @@ pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
 const STORE_SYNTHESIS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 const STORE_SYNTHESIS_STAMP: &str = "store-synthesis.stamp";
 
-/// Existing learning project identity: current working-directory basename.
-/// Keeping this in one function prevents evolution from inventing a parallel
+/// Existing learning project identity: the basename of the repository root that
+/// contains the working directory, else the directory's own basename. Keeping
+/// this in one function prevents evolution from inventing a parallel
 /// scope key while the broader learning store still uses this contract.
 /// Without an explicit dir it is the session's workdir — the one recall keys
 /// on — not the process cwd: an ACP/WebSocket daemon serves sessions rooted
 /// elsewhere, and storing under the daemon's cwd strands every lesson.
+/// A session started in a subdirectory (`repo/src`) keys on the repository, so
+/// its lessons are the repository's lessons rather than a store named `src`.
 pub fn project_name(current_dir: Option<&Path>) -> String {
 	let owned;
 	let dir = match current_dir {
@@ -300,10 +303,22 @@ pub fn project_name(current_dir: Option<&Path>) -> String {
 			owned.as_path()
 		}
 	};
-	dir.file_name()
+	project_root(dir)
+		.file_name()
 		.and_then(|name| name.to_str())
 		.map(String::from)
 		.unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Nearest ancestor holding `.git` (a directory, or the file a worktree or
+/// submodule uses). The walk stops below the home directory: a dotfiles
+/// repository at `~` must not fold every unversioned project into one key.
+fn project_root(dir: &Path) -> &Path {
+	let home = dirs::home_dir();
+	dir.ancestors()
+		.take_while(|ancestor| home.as_deref() != Some(*ancestor))
+		.find(|ancestor| ancestor.join(".git").exists())
+		.unwrap_or(dir)
 }
 
 pub fn domain_name(role: &str) -> String {

@@ -54,6 +54,7 @@ pub async fn prepare_for_api_call(
 			&session_context,
 			active_plan.as_deref(),
 			chat_session.session.info.verification_policy,
+			&chat_session.session.info.session_rules,
 		) {
 			let animation_manager = crate::session::chat::get_animation_manager();
 			animation_manager
@@ -76,13 +77,16 @@ pub async fn prepare_for_api_call(
 				.info
 				.verification_policy
 				.apply(resolved.verification_policy_update);
+			let rules_changed = resolved
+				.session_rules_update
+				.apply(&mut chat_session.session.info.session_rules);
 			chat_session.evidence.retain_history(resolved.scope);
 			chat_session.gate_task = Some(resolved);
-			if policy_changed {
+			if policy_changed || rules_changed {
 				// Persist at the ownership boundary. Most modes also save after the
 				// response, but cancellation and ACP monitor paths can return earlier.
 				if let Err(error) = chat_session.save() {
-					crate::log_debug!("Failed to persist verification policy update: {}", error);
+					crate::log_debug!("Failed to persist standing user policy update: {}", error);
 				}
 			}
 			if *operation_rx.borrow() {

@@ -617,12 +617,14 @@ fn run_dynamic_agent_in_process(
 				});
 
 				// Execute tool calls in parallel
-				let output_mode = crate::session::output::detect_output_mode(
-					agent_config
-						.runtime_output_mode
-						.as_deref()
-						.unwrap_or("plain"),
-				);
+				// Never probe stdin here: ACP keeps a read pending on it, and on Windows
+				// is_terminal() waits for that read. ACP/WebSocket also own stdout, so they
+				// get the same structured mode their parent turns run in.
+				let output_mode = if crate::logging::tracing_setup::is_structured_output_mode() {
+					crate::session::output::OutputMode::WebSocket
+				} else {
+					agent_config.output_mode()
+				};
 				let layer_tool_params =
 					crate::session::chat::response::tool_execution::LayerToolExecutionParams {
 						tool_calls: current_tool_calls,

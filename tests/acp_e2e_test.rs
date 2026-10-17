@@ -16,12 +16,6 @@
 //! real newline-delimited JSON-RPC protocol over its stdio — initialize,
 //! session/new, session/prompt — against the fake ollama provider. This is
 //! exactly how Zed and other ACP clients drive octomind.
-//!
-//! Not run on Windows: the spawned agent goes silent after `session/prompt`
-//! (no response, no notification, no stderr) and hangs there. Unreproducible
-//! without a Windows box, so the protocol coverage lives on Linux/macOS until
-//! someone can debug it there.
-#![cfg(not(windows))]
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -124,8 +118,7 @@ struct AcpClient {
 	reader: BufReader<tokio::process::ChildStdout>,
 	next_id: u64,
 	/// Rolling tail of the agent's stderr, drained by a background task.
-	/// On Windows the agent has stalled mid-turn with no visible diagnostics;
-	/// surfacing this buffer in the panic turns an undebuggable timeout into
+	/// Surfacing this buffer in the panic turns an undebuggable timeout into
 	/// log lines pointing at the stall.
 	stderr_tail: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
@@ -640,4 +633,171 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 		.unwrap()
 		.unwrap()
 		.success());
+}
+
+/// Serves the scripted assistant messages in order, one per provider call.
+async fn spawn_message_stub(messages: Vec<serde_json::Value>) -> String {
+	let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+		messages,
+	)));
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind stub");
+	let addr = listener.local_addr().expect("addr");
+	tokio::spawn(async move {
+		while let Ok((mut sock, _)) = listener.accept().await {
+			let script = std::sync::Arc::clone(&script);
+			tokio::spawn(async move {
+				let mut buf = Vec::new();
+				let mut tmp = [0u8; 8192];
+				let header_end = loop {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						return;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+						break pos + 4;
+					}
+				};
+				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+				let content_length: usize = headers
+					.lines()
+					.find_map(|l| l.strip_prefix("content-length:"))
+					.and_then(|v| v.trim().parse().ok())
+					.unwrap_or(0);
+				while buf.len() < header_end + content_length {
+					let n = sock.read(&mut tmp).await.unwrap_or(0);
+					if n == 0 {
+						break;
+					}
+					buf.extend_from_slice(&tmp[..n]);
+				}
+				let message = script
+					.lock()
+					.expect("script lock")
+					.pop_front()
+					.expect("unexpected provider call");
+				let finish_reason = if message.get("tool_calls").is_some() {
+					"tool_calls"
+				} else {
+					"stop"
+				};
+				let body = serde_json::json!({
+					"choices": [{"message": message, "finish_reason": finish_reason}],
+					"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+				})
+				.to_string();
+				let response = format!(
+					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+					body.len(),
+					body
+				);
+				let _ = sock.write_all(response.as_bytes()).await;
+				let _ = sock.shutdown().await;
+			});
+		}
+	});
+	format!("http://{}/v1/chat/completions", addr)
+}
+
+fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serde_json::Value {
+	serde_json::json!({
+		"role": "assistant",
+		"content": "",
+		"tool_calls": [{
+			"id": id,
+			"type": "function",
+			"function": {"name": name, "arguments": arguments.to_string()}
+		}]
+	})
+}
+
+/// An in-process `agent_*` sub-agent that runs its own tool round under ACP.
+/// That round used to pick its output mode by probing stdin, which blocks on
+/// Windows while ACP's stdin read is pending, and then printed tool headers to
+/// stdout — the JSON-RPC stream, where `request()` rejects any non-JSON line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_acp_sub_agent_tool_round() {
+	const SUB_AGENT_MARKER: &str = "ACP-SUB-AGENT-DONE";
+	let stub_url = spawn_message_stub(vec![
+		tool_call_message(
+			"call_add",
+			"agent",
+			serde_json::json!({
+				"action": "add",
+				"name": "probe",
+				"description": "Probe agent",
+				"system": "You list schedules.",
+				"server_refs": ["orchestration"]
+			}),
+		),
+		tool_call_message(
+			"call_enable",
+			"agent",
+			serde_json::json!({"action": "enable", "name": "probe"}),
+		),
+		tool_call_message(
+			"call_probe",
+			"agent_probe",
+			serde_json::json!({"task": "list my schedules"}),
+		),
+		// The sub-agent's own tool round — the code path under test.
+		tool_call_message(
+			"call_sub_schedule",
+			"schedule",
+			serde_json::json!({"action": "list"}),
+		),
+		serde_json::json!({"role": "assistant", "content": SUB_AGENT_MARKER}),
+		serde_json::json!({"role": "assistant", "content": format!("{MARKER}: sub-agent done")}),
+	])
+	.await;
+
+	let home = tempfile::tempdir().expect("temp home");
+	write_sandbox_config(home.path());
+
+	let mut client = AcpClient::spawn(home.path(), &stub_url).await;
+	client
+		.request(
+			"initialize",
+			serde_json::json!({"protocolVersion": 1, "clientCapabilities": {}}),
+		)
+		.await;
+	let cwd = home.path().to_string_lossy().to_string();
+	let (new_session, _) = client
+		.request(
+			"session/new",
+			serde_json::json!({"cwd": cwd, "mcpServers": []}),
+		)
+		.await;
+	let session_id = new_session["sessionId"].as_str().expect("id").to_string();
+
+	let (result, notifications) = client
+		.request(
+			"session/prompt",
+			serde_json::json!({
+				"sessionId": session_id,
+				"prompt": [{"type": "text", "text": "delegate listing my schedules to a sub-agent"}]
+			}),
+		)
+		.await;
+	assert_eq!(result["stopReason"].as_str(), Some("end_turn"));
+	let updates = serde_json::to_string(&notifications).expect("serialize");
+	assert!(
+		updates.contains(SUB_AGENT_MARKER),
+		"sub-agent result missing: {updates}"
+	);
+	assert!(updates.contains(MARKER), "final answer missing: {updates}");
+
+	let AcpClient {
+		mut child, stdin, ..
+	} = client;
+	drop(stdin);
+	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
+		Ok(status) => assert!(status.expect("wait").success()),
+		Err(_) => {
+			let _ = child.kill().await;
+			panic!("acp agent did not exit after stdin EOF");
+		}
+	}
 }

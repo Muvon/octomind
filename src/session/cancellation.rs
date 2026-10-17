@@ -194,6 +194,30 @@ impl SessionCancellation {
 	pub fn shutdown(&self) {
 		let _ = self.current_op_tx.lock().unwrap().send(true);
 	}
+
+	/// A cloneable trigger for this manager, for cancelling from another task
+	/// (a WebSocket `cancel` frame read while the turn runs). It shares the
+	/// swapped sender, so it always hits the operation that is current when it
+	/// fires — including one started by `new_operation()` after it was taken.
+	pub fn handle(&self) -> CancelHandle {
+		CancelHandle(self.current_op_tx.clone())
+	}
+}
+
+/// See [`SessionCancellation::handle`].
+#[derive(Clone)]
+pub struct CancelHandle(Arc<Mutex<watch::Sender<bool>>>);
+
+impl CancelHandle {
+	/// Cancel the operation that is current right now.
+	pub fn cancel(&self) {
+		let _ = self.0.lock().unwrap().send(true);
+	}
+
+	/// Whether both handles drive the same manager.
+	pub fn same_as(&self, other: &CancelHandle) -> bool {
+		Arc::ptr_eq(&self.0, &other.0)
+	}
 }
 
 /// Handle interrupt signal with double-Ctrl+C detection.

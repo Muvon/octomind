@@ -1307,6 +1307,7 @@ pub async fn execute(
 			supervisor_accounting: Default::default(),
 			session_id: String::new(),
 			pending_work: false,
+			cancelled: false,
 		}));
 	}
 

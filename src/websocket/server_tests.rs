@@ -15,14 +15,29 @@
 use super::*;
 
 fn handshake(origin: Option<&str>, allow_origins: &[&str]) -> Result<Response, Box<ErrorResponse>> {
+	handshake_with(origin, None, allow_origins, None)
+}
+
+fn handshake_with(
+	origin: Option<&str>,
+	authorization: Option<&str>,
+	allow_origins: &[&str],
+	token: Option<&str>,
+) -> Result<Response, Box<ErrorResponse>> {
 	let mut req = Request::builder().uri("/");
 	if let Some(origin) = origin {
 		req = req.header(ORIGIN, origin);
 	}
+	if let Some(authorization) = authorization {
+		req = req.header(AUTHORIZATION, authorization);
+	}
 	let allowlist = allow_origins.iter().map(|o| (*o).to_string()).collect();
-	OriginAllowlist(Arc::new(allowlist))
-		.on_request(&req.body(()).unwrap(), Response::new(()))
-		.map_err(Box::new)
+	HandshakeGuard {
+		origins: Arc::new(allowlist),
+		token: token.map(Arc::from),
+	}
+	.on_request(&req.body(()).unwrap(), Response::new(()))
+	.map_err(Box::new)
 }
 
 #[test]
@@ -48,6 +63,39 @@ fn empty_allowlist_refuses_every_browser() {
 	assert_eq!(err.status(), StatusCode::FORBIDDEN);
 }
 
+#[test]
+fn configured_token_must_be_presented_as_a_bearer() {
+	let token = Some("s3cret-token");
+	assert!(handshake_with(None, Some("Bearer s3cret-token"), &[], token).is_ok());
+
+	for presented in [
+		None,
+		Some("Bearer wrong"),
+		Some("s3cret-token"),
+		Some("Bearer "),
+	] {
+		let err = handshake_with(None, presented, &[], token).unwrap_err();
+		assert_eq!(err.status(), StatusCode::UNAUTHORIZED, "{presented:?}");
+	}
+
+	// The origin check still runs first: a refused browser never reaches the token.
+	let err = handshake_with(
+		Some("https://evil.example.com"),
+		Some("Bearer s3cret-token"),
+		&[],
+		token,
+	)
+	.unwrap_err();
+	assert_eq!(err.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn without_a_token_no_authorization_is_needed() {
+	assert!(handshake_with(None, Some("Bearer anything"), &[], None).is_ok());
+	assert!(!constant_time_eq(b"abc", b"abd"));
+	assert!(!constant_time_eq(b"abc", b"abcd"));
+	assert!(constant_time_eq(b"abc", b"abc"));
+}
 fn image_attachment() -> Attachment {
 	Attachment {
 		id: "AbCdEf0123456789GhIjKlMn".to_string(),
@@ -437,14 +485,22 @@ async fn connection_lifecycle_over_loopback() {
 		.unwrap_or_default()
 		.contains("Unsupported WebSocket message type"));
 
-	// 7. Close terminates the connection cleanly.
+	// 7. Close terminates the connection cleanly: the server answers with its
+	// own close frame (the closing handshake), then the stream ends.
 	ws.send(Message::Close(None)).await.expect("send close");
-	let ended = tokio::time::timeout(std::time::Duration::from_secs(10), ws.next())
-		.await
-		.expect("connection must end within the timeout");
+	let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+		loop {
+			match ws.next().await {
+				Some(Ok(Message::Close(_))) => continue,
+				other => break other,
+			}
+		}
+	})
+	.await
+	.expect("connection must end within the timeout");
 	assert!(
 		ended.is_none() || matches!(ended, Some(Err(_))),
-		"client stream must end after close"
+		"client stream must end after close, got {ended:?}"
 	);
 }
 
@@ -3635,4 +3691,336 @@ async fn pre_user_drain_reports_a_failing_injected_turn_and_still_runs_the_user_
 	assert_eq!(cost["type"], "cost");
 
 	crate::session::context::cleanup_session(&session_id);
+}
+
+// ---- cancel / close / role-on-bind ----
+
+/// A provider that accepts the request and never answers, so a turn stays in
+/// flight until it is cancelled.
+async fn spawn_hanging_stub() -> String {
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("bind hanging stub");
+	let addr = listener.local_addr().expect("addr");
+	tokio::spawn(async move {
+		while let Ok((sock, _)) = listener.accept().await {
+			tokio::spawn(async move {
+				tokio::time::sleep(Duration::from_secs(120)).await;
+				drop(sock);
+			});
+		}
+	});
+	format!("http://{}/v1/chat/completions", addr)
+}
+
+/// Reads every frame up to and including the first `cost`.
+async fn frames_through_cost(ws: &mut ClientWs) -> Vec<serde_json::Value> {
+	let mut frames = Vec::new();
+	for _ in 0..100 {
+		let value = read_json(ws).await;
+		let done = value["type"] == "cost";
+		frames.push(value);
+		if done {
+			return frames;
+		}
+	}
+	panic!("no cost frame within 100 frames: {frames:?}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn cancel_stops_the_running_turn_and_later_frames_still_run_in_order() {
+	let _data = TestDataDirGuard::new();
+	let env = StubEnv {
+		_guard: ENV_LOCK.lock().await,
+	};
+	std::env::set_var("OLLAMA_API_URL", spawn_hanging_stub().await);
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, Some("cancel-1")).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "hang", "request_id": "m1"}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["request_id"], "m1", "got: {ack}");
+	// Let the turn reach the in-flight provider call.
+	tokio::time::sleep(Duration::from_millis(300)).await;
+
+	// Sent while the turn runs: the command waits, the cancel acts at once.
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "command", "session_id": session_id, "command": "info", "request_id": "c1"}),
+	)
+	.await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "cancel", "session_id": session_id, "request_id": "x1"}),
+	)
+	.await;
+
+	let frames = tokio::time::timeout(Duration::from_secs(20), frames_through_cost(&mut ws))
+		.await
+		.expect("a cancelled turn must close promptly");
+	let cancel_ack = frames
+		.iter()
+		.position(|f| f["type"] == "ack" && f["request_id"] == "x1")
+		.unwrap_or_else(|| panic!("the cancel is acknowledged during the turn: {frames:?}"));
+	assert_eq!(frames[cancel_ack]["message_type"], "cancel");
+	assert!(
+		!frames.iter().any(|f| f["type"] == "error"),
+		"a requested stop is not an error: {frames:?}"
+	);
+	let cost = frames.last().unwrap();
+	assert_eq!(cost["cancelled"], true, "got: {cost}");
+	assert!(
+		!frames.iter().any(|f| f["request_id"] == "c1"),
+		"the queued command must not jump ahead of the running turn: {frames:?}"
+	);
+
+	// The deferred command runs right after, acknowledged in order.
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["request_id"], "c1", "got: {ack}");
+	let status = read_until(&mut ws, |v| v["type"] == "status").await;
+	assert!(status["data"].is_object(), "got: {status}");
+	assert!(
+		server.sessions.lock().await.contains_key(&session_id),
+		"a cancelled turn stores its session back"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+	drop(env);
+}
+
+#[tokio::test]
+async fn cancel_without_a_running_turn_is_only_acknowledged() {
+	let server = LoopbackServer::start(Arc::new(template_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "cancel", "session_id": "idle-zzz", "request_id": "x1"}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["type"], "ack");
+	assert_eq!(ack["message_type"], "cancel");
+
+	// Nothing else follows: the next frame answered is the next request's.
+	ws.send(Message::Ping(vec![7u8].into()))
+		.await
+		.expect("ping");
+	assert!(matches!(read_frame(&mut ws).await, Message::Pong(_)));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn close_unloads_the_session_and_a_later_bind_resumes_it_from_disk() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, Some("close-1")).await;
+	assert!(server.sessions.lock().await.contains_key(&session_id));
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "close", "session_id": session_id, "request_id": "k1"}),
+	)
+	.await;
+	let ack = read_json(&mut ws).await;
+	assert_eq!(ack["message_type"], "close", "got: {ack}");
+	let status = read_json(&mut ws).await;
+	assert_eq!(status["type"], "status", "got: {status}");
+	assert_eq!(status["data"]["command_type"], "close");
+	assert_eq!(status["data"]["was_loaded"], true);
+	assert!(
+		!server.sessions.lock().await.contains_key(&session_id),
+		"close takes the session out of memory"
+	);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": session_id}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let status = read_json(&mut ws).await;
+	assert!(
+		status["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Session resumed"),
+		"got: {status}"
+	);
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
+async fn close_of_a_busy_session_is_refused() {
+	let server = LoopbackServer::start(Arc::new(template_config())).await;
+	let lock = get_or_create_session_lock("busy-close", &server.session_locks).await;
+	let _held = lock.lock().await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "close", "session_id": "busy-close", "request_id": "k1"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error");
+	assert_eq!(error["request_id"], "k1");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("busy"),
+		"got: {error}"
+	);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn bind_with_a_role_creates_the_session_under_that_role_and_resume_keeps_it() {
+	let _data = TestDataDirGuard::new();
+	let script = ["mcp", "schedule"]
+		.into_iter()
+		.flat_map(|tool| {
+			[
+				crate::session::chat::test_support::tool_call_response(
+					tool,
+					if tool == "mcp" {
+						serde_json::json!({"action": "list"})
+					} else {
+						serde_json::json!({"command": "list"})
+					},
+				),
+				final_response("done"),
+			]
+		})
+		.collect();
+	let _env = StubEnv::new(script).await;
+	let config = two_role_config();
+	crate::mcp::initialize_mcp_for_role("assistant", &config)
+		.await
+		.expect("server MCP init");
+	let server = LoopbackServer::start(Arc::new(config)).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "role-on-bind", "role": "outbound"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let status = read_json(&mut ws).await;
+	assert_eq!(status["type"], "status", "got: {status}");
+	assert_eq!(
+		server.sessions.lock().await["role-on-bind"].role,
+		"outbound"
+	);
+
+	// The bound role's tools dispatch; the server role's do not.
+	let own = tool_turn(&mut ws, "role-on-bind", "mcp").await;
+	assert_eq!(own["success"], true, "bound role lost its tool: {own}");
+	assert_refused(&tool_turn(&mut ws, "role-on-bind", "schedule").await);
+
+	// A later bind naming another role resumes the session as it is.
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "session", "session_id": "role-on-bind", "role": "assistant"}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let _status = read_json(&mut ws).await;
+	assert_eq!(
+		server.sessions.lock().await["role-on-bind"].role,
+		"outbound"
+	);
+
+	crate::session::context::cleanup_session(&"role-on-bind".to_string());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn bind_with_an_unknown_tap_role_is_refused_without_creating_a_session() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+
+	send_json(
+		&mut ws,
+		serde_json::json!({
+			"type": "session", "session_id": "bad-role",
+			"role": "no-such-tap-zzz:nothing", "request_id": "b1"
+		}),
+	)
+	.await;
+	let _ack = read_json(&mut ws).await;
+	let error = read_json(&mut ws).await;
+	assert_eq!(error["type"], "error", "got: {error}");
+	assert_eq!(error["request_id"], "b1");
+	assert!(
+		error["message"]
+			.as_str()
+			.unwrap_or_default()
+			.contains("Failed to resolve role 'no-such-tap-zzz:nothing'"),
+		"got: {error}"
+	);
+	assert!(!server.sessions.lock().await.contains_key("bad-role"));
+	assert!(!crate::session::get_sessions_dir()
+		.unwrap()
+		.join("bad-role.jsonl.zst")
+		.exists());
+}
+
+#[tokio::test]
+async fn server_with_a_token_refuses_an_unauthenticated_client() {
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("probe");
+	let addr = probe.local_addr().expect("addr");
+	drop(probe);
+	let server = WebSocketServer::new(
+		"127.0.0.1",
+		addr.port(),
+		template_config(),
+		"assistant".to_string(),
+		Vec::new(),
+	)
+	.expect("server")
+	.with_token(Some("tok-123".to_string()));
+	tokio::spawn(async move {
+		let _ = server.start().await;
+	});
+	for _ in 0..100 {
+		if tokio::net::TcpStream::connect(addr).await.is_ok() {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+
+	let refused = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await;
+	assert!(refused.is_err(), "no token must be refused");
+
+	use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+	let mut request = format!("ws://{addr}/").into_client_request().unwrap();
+	request
+		.headers_mut()
+		.insert(AUTHORIZATION, "Bearer tok-123".parse().unwrap());
+	let (mut ws, _) = tokio_tungstenite::connect_async(request)
+		.await
+		.expect("the right token is accepted");
+	let welcome = read_json(&mut ws).await;
+	assert_eq!(welcome["type"], "status");
 }

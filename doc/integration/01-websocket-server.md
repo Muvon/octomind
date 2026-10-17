@@ -39,9 +39,31 @@ octomind server --host 127.0.0.1 --port 8080 --sandbox
 |------|---------|-------------|
 | `TAG` | `default` (`assistant:concierge`) | Agent tag (e.g. `developer:general`) or role name (e.g. `developer`) |
 | `--host` | `127.0.0.1` | Bind address |
-| `--port`, `-p` | `8080` | Port |
+| `--port`, `-p` | `8080` | Port. `0` picks a free port; the startup line `WebSocket server started on ws://<addr>` prints the bound address |
 | `--sandbox` | config `sandbox` (`false`) | Restrict all filesystem writes to the current working directory |
 | `--allow-origin` | none | Browser origin permitted to connect. Repeatable |
+
+| Environment | Description |
+|-------------|-------------|
+| `OCTOMIND_SERVER_TOKEN` | Shared secret every handshake must present as `Authorization: Bearer <token>`; unset = no authentication. Environment only, so it never shows in `ps` |
+| `OCTOMIND_MEDIA_ROOT` | Where `message` attachments are read from (default `/home/octo/.octomind/media`) |
+
+## Authentication
+
+An embedder that spawns the server for itself (a desktop app, an editor) should set `OCTOMIND_SERVER_TOKEN` to a
+per-run random secret and send it on every connection:
+
+```bash
+OCTOMIND_SERVER_TOKEN="$(openssl rand -hex 16)" octomind server --port 0
+```
+
+```
+GET / HTTP/1.1
+Authorization: Bearer <OCTOMIND_SERVER_TOKEN>
+```
+
+A handshake without the right token is refused with `HTTP 401` before the welcome frame. The `Origin` check below runs
+first, so a browser page is refused with `403` whatever it sends.
 
 ## Browser origins
 
@@ -113,7 +135,9 @@ Communication uses JSON messages over WebSocket.
 {
   "type": "session",
   "request_id": "req-004",
-  "session_id": "my-session"
+  "session_id": "my-session",
+  "cwd": "/home/me/projects/app",
+  "role": "developer:rust"
 }
 ```
 
@@ -121,6 +145,39 @@ Communication uses JSON messages over WebSocket.
 session at `sessions/<session_id>.jsonl.zst` under the data directory if it exists, otherwise it creates a new session
 with that name. The `status` reply distinguishes the two: `"Session created: <id>"` vs `"Session resumed: <id>"` (a
 `session` message never makes an AI call).
+
+`cwd` is optional: an existing absolute directory the session runs in. Everything octomind resolves from the working
+directory follows it — `AGENTS.md`, `.agents/` (guardrails, skills, tools), and the project id MCP servers scope their
+state by. It is not stored with the session, so send it on every bind. One server can host sessions in many
+directories at once; with `--sandbox`, writes stay confined to the server's own launch directory (plus the usual data
+and temp paths), so keep session directories under it.
+
+`role` is optional: an agent tag or role name a session **created** by this bind runs under, instead of the server's
+role. The tag is resolved (and its MCP servers started) for this session only, and pinned to it — a later resume keeps
+it. A resumed session keeps the role it already runs under whatever the bind says; switch it with the `role` command.
+A role that fails to resolve returns an `error` and creates nothing.
+
+**Cancel** — stop the session's running turn:
+
+```json
+{"type": "cancel", "request_id": "req-005", "session_id": "my-session"}
+```
+
+The server reads `cancel` frames while a turn runs, on any connection, and acknowledges them at once. The turn stops as
+it would on Ctrl+C and ends with its usual `cost` frame, which carries `"cancelled": true` (no `error` frame). It also
+stops a turn the session started by itself (a schedule, a delegated result). With no turn running, the ack is the only
+reply.
+
+**Close** — unload a session from server memory:
+
+```json
+{"type": "close", "request_id": "req-006", "session_id": "my-session"}
+```
+
+A long-running server keeps every bound session in memory. `close` drops the session and all of its session-scoped
+state (including its schedules and background work) and replies with a `status` whose `data` is
+`{"command_type": "close", "was_loaded": true|false}`. The session log stays on disk, so a later `session` bind resumes
+it. Refused with a busy `error` while the session runs a turn.
 
 `message` and `command` frames require an established session. Sending one for a `session_id` that is neither in memory
 nor on disk returns:
@@ -207,8 +264,10 @@ message:
 
 ### Concurrency
 
-The connection loop handles one client request at a time. Across connections, a per-session lock rejects a `message` or
-`command` while that session is processing another request or inbox work:
+One connection processes one client frame at a time; frames sent while one runs wait and run in order afterwards. The
+exception is `cancel`, which is read and applied while the running frame is still going — it is the frame it stops.
+Across connections, a per-session lock rejects a `message` or `command` while that session is processing another
+request or inbox work:
 
 ```json
 {
@@ -313,6 +372,9 @@ it.
   "session_id": "my-session"
 }
 ```
+
+`pending_work: true` says the turn left work that will stream a follow-up turn on its own; `cancelled: true` says a
+`cancel` frame stopped the turn. Both are omitted when false.
 
 **Status:**
 
@@ -516,8 +578,8 @@ asyncio.run(main())
 | Events arrive while the UI is idle | Inbox work produces unsolicited streams; keep receiving frames. |
 | Binary upload is rejected | Send JSON text frames; store media out of band and send attachment references. |
 
-The server has no built-in authentication or TLS. Use an authenticated TLS proxy for remote deployment and a process
-boundary per identity. An origin allowlist alone does not authenticate native clients.
+The server has no TLS. `OCTOMIND_SERVER_TOKEN` authenticates every client; without it, any local process can connect.
+Use an authenticated TLS proxy for remote deployment and a process boundary per identity.
 
 ## Validation
 
@@ -530,6 +592,9 @@ boundary per identity. An origin allowlist alone does not authenticate native cl
 - Attachment `id` must be exactly 24 ASCII alphanumeric characters
 - Commands must be non-empty strings (without leading `/`)
 - Command `args` is optional
+- `session.cwd`, when present, must be an absolute path to an existing directory
+- `session.role`, when present, must be non-empty
+- `cancel.session_id` and `close.session_id` must be non-empty
 
 A malformed JSON frame returns an `error` with a message starting `Invalid JSON:` and the connection **stays open** —
 the same is true for validation failures, so clients can recover and keep sending.
@@ -540,7 +605,9 @@ Separate from content validation, the transport layer enforces:
 
 - **Max frame and message size: 10MB.** Larger frames/messages are rejected by the WebSocket layer.
 - **Unmasked frames are rejected.** Per spec, client frames must be masked; standard clients do this automatically.
-- **Ping/Pong:** the server replies to client `Ping` frames with `Pong` to keep the connection alive.
+- **Ping/Pong:** the server replies to client `Ping` frames with `Pong` to keep the connection alive — also while a
+  turn is running.
+- **Close:** a client `Close` frame is answered with the server's own close frame before the socket ends.
 
 ## See also
 

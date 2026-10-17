@@ -50,6 +50,7 @@ fn test_session_roundtrip() {
 		request_id: None,
 		session_id: Some("my-session".to_string()),
 		cwd: None,
+		role: None,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"session\""));
@@ -408,12 +409,13 @@ fn test_server_message_cost_serialization() {
 		supervisor_accounting: Default::default(),
 		session_id: "sess_123".to_string(),
 		pending_work: false,
+		cancelled: false,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"cost\""));
 	assert!(json.contains("\"session_tokens\":1234"));
 	assert!(
-		!json.contains("pending_work"),
+		!json.contains("pending_work") && !json.contains("cancelled"),
 		"an idle turn's frame reads exactly as it always did"
 	);
 }
@@ -434,6 +436,7 @@ fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
 		supervisor_accounting: Default::default(),
 		session_id: "sess_123".to_string(),
 		pending_work: true,
+		cancelled: false,
 	});
 	let json = serde_json::to_value(&frame).unwrap();
 	assert_eq!(json["pending_work"], true);
@@ -442,7 +445,82 @@ fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
 	// driver keeps its one-turn behaviour against older machines.
 	let old = r#"{"type":"cost","session_tokens":10,"session_cost":0.08,"input_tokens":8,"output_tokens":2,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"sess_123"}"#;
 	match serde_json::from_str::<ServerMessage>(old).unwrap() {
-		ServerMessage::Cost(cost) => assert!(!cost.pending_work),
+		ServerMessage::Cost(cost) => assert!(!cost.pending_work && !cost.cancelled),
+		other => panic!("expected a cost frame, got {other:?}"),
+	}
+}
+
+#[test]
+fn cancel_and_close_frames_parse_validate_and_ack_with_their_own_type() {
+	for (frame, kind) in [
+		(
+			r#"{"type":"cancel","session_id":"s1","request_id":"r1"}"#,
+			"cancel",
+		),
+		(
+			r#"{"type":"close","session_id":"s1","request_id":"r1"}"#,
+			"close",
+		),
+	] {
+		let msg: ClientMessage = serde_json::from_str(frame).expect("frame parses");
+		msg.validate().expect("frame is valid");
+		assert_eq!(msg.message_type(), kind);
+		assert_eq!(msg.session_id(), Some("s1"));
+		assert_eq!(msg.request_id(), Some("r1"));
+		let ack = serde_json::to_value(ServerMessage::ack(&msg)).unwrap();
+		assert_eq!(ack["message_type"], kind);
+		assert!(
+			ack.get("capabilities").is_none(),
+			"only binds carry capabilities"
+		);
+	}
+
+	for frame in [
+		r#"{"type":"cancel","session_id":" "}"#,
+		r#"{"type":"close","session_id":""}"#,
+	] {
+		let msg: ClientMessage = serde_json::from_str(frame).expect("frame parses");
+		assert_eq!(
+			msg.validate().unwrap_err(),
+			"session_id cannot be empty",
+			"{frame}"
+		);
+	}
+}
+
+#[test]
+fn session_bind_carries_an_optional_role_that_must_not_be_blank() {
+	let msg: ClientMessage =
+		serde_json::from_str(r#"{"type":"session","session_id":"s","role":"octoweb:assistant"}"#)
+			.unwrap();
+	match &msg {
+		ClientMessage::Session(bind) => {
+			assert_eq!(bind.role.as_deref(), Some("octoweb:assistant"))
+		}
+		other => panic!("expected a session bind, got {other:?}"),
+	}
+	msg.validate().expect("a named role is valid");
+
+	let blank: ClientMessage = serde_json::from_str(r#"{"type":"session","role":"  "}"#).unwrap();
+	assert_eq!(
+		blank.validate().unwrap_err(),
+		"role cannot be empty when provided"
+	);
+
+	// Clients that predate the field send none; it serializes away when unset.
+	let bare: ClientMessage = serde_json::from_str(r#"{"type":"session"}"#).unwrap();
+	assert!(!serde_json::to_string(&bare).unwrap().contains("role"));
+}
+
+#[test]
+fn cancelled_cost_frame_says_so() {
+	let old = r#"{"type":"cost","session_tokens":1,"session_cost":0.0,"input_tokens":1,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0,"session_id":"s","cancelled":true}"#;
+	match serde_json::from_str::<ServerMessage>(old).unwrap() {
+		ServerMessage::Cost(cost) => {
+			assert!(cost.cancelled);
+			let json = serde_json::to_value(ServerMessage::Cost(cost)).unwrap();
+			assert_eq!(json["cancelled"], true);
+		}
 		other => panic!("expected a cost frame, got {other:?}"),
 	}
 }

@@ -31,6 +31,7 @@ mod setup;
 
 pub use api_executor::execute_api_call_and_process_response;
 pub use api_prep::prepare_for_api_call;
+pub(crate) use core::generate_session_name;
 pub use core::{ChatSession, SpendingStop, EXIT_SPENDING_STOP};
 pub use error_utils::{format_provider_error, handle_api_error, handle_followup_api_error};
 pub use layer_processor::run_pipe_if_enabled;

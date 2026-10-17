@@ -263,6 +263,7 @@ fn messages_without_an_acp_equivalent_are_dropped() {
 			supervisor_accounting: Default::default(),
 			session_id: "s".to_string(),
 			pending_work: false,
+			cancelled: false,
 		}))
 		.is_none()
 	);

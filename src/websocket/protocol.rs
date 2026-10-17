@@ -45,6 +45,13 @@ pub struct SessionMessage {
 	/// session, so a mid-turn `workdir` change does not outlive the turn.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub cwd: Option<String>,
+
+	/// Agent tag (e.g. `developer:rust`) or role name a session CREATED by this
+	/// bind runs under. Absent = the server's role. A resumed session keeps the
+	/// role it already runs under — switch it with the `role` command — so a
+	/// client may send the same bind every time without ever re-resolving.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
 }
 
 /// Send user input to an existing session and receive an AI response.
@@ -150,6 +157,35 @@ pub struct CommandMessage {
 	pub args: Vec<String>,
 }
 
+/// Stop the session's running turn (equivalent to Ctrl+C in the CLI).
+///
+/// Read while a turn runs, from any connection: the turn ends as it would on
+/// Ctrl+C and its `cost` frame carries `cancelled: true`. A session with no
+/// running turn is a no-op — the ack is the only reply either way.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CancelMessage {
+	/// Optional client-supplied correlation ID. Echoed by the server in the ack.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+
+	/// Session whose turn to stop.
+	pub session_id: String,
+}
+
+/// Unload an idle session from server memory. Its log stays on disk, so a
+/// later `session` bind resumes it. A long-running server holds every bound
+/// session otherwise; clients that create many short-lived sessions close
+/// them once done. Refused while the session runs a turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloseMessage {
+	/// Optional client-supplied correlation ID. Echoed by the server in the ack.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+
+	/// Session to unload.
+	pub session_id: String,
+}
+
 /// Incoming message from client to server.
 /// Internally tagged by `"type"` so each variant carries only its own fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +194,8 @@ pub enum ClientMessage {
 	Session(SessionMessage),
 	Message(UserMessage),
 	Command(CommandMessage),
+	Cancel(CancelMessage),
+	Close(CloseMessage),
 }
 
 impl ClientMessage {
@@ -179,15 +217,22 @@ impl ClientMessage {
 			ClientMessage::Session(m) => validate_request_id(&m.request_id)?,
 			ClientMessage::Message(m) => validate_request_id(&m.request_id)?,
 			ClientMessage::Command(c) => validate_request_id(&c.request_id)?,
+			ClientMessage::Cancel(c) => validate_request_id(&c.request_id)?,
+			ClientMessage::Close(c) => validate_request_id(&c.request_id)?,
 		}
 
 		match self {
-			ClientMessage::Session(m) => match &m.cwd {
-				Some(cwd) if !Path::new(cwd).is_absolute() => {
-					Err("cwd must be an absolute path".to_string())
+			ClientMessage::Session(m) => {
+				if let Some(cwd) = &m.cwd {
+					if !Path::new(cwd).is_absolute() {
+						return Err("cwd must be an absolute path".to_string());
+					}
 				}
-				_ => Ok(()),
-			},
+				if m.role.as_deref().is_some_and(|role| role.trim().is_empty()) {
+					return Err("role cannot be empty when provided".to_string());
+				}
+				Ok(())
+			}
 
 			ClientMessage::Message(m) => {
 				if m.session_id.trim().is_empty() {
@@ -214,6 +259,14 @@ impl ClientMessage {
 				}
 				Ok(())
 			}
+
+			ClientMessage::Cancel(CancelMessage { session_id, .. })
+			| ClientMessage::Close(CloseMessage { session_id, .. }) => {
+				if session_id.trim().is_empty() {
+					return Err("session_id cannot be empty".to_string());
+				}
+				Ok(())
+			}
 		}
 	}
 
@@ -222,6 +275,8 @@ impl ClientMessage {
 			ClientMessage::Session(m) => m.request_id.as_deref(),
 			ClientMessage::Message(m) => m.request_id.as_deref(),
 			ClientMessage::Command(c) => c.request_id.as_deref(),
+			ClientMessage::Cancel(c) => c.request_id.as_deref(),
+			ClientMessage::Close(c) => c.request_id.as_deref(),
 		}
 	}
 
@@ -230,6 +285,8 @@ impl ClientMessage {
 			ClientMessage::Session(_) => "session",
 			ClientMessage::Message(_) => "message",
 			ClientMessage::Command(_) => "command",
+			ClientMessage::Cancel(_) => "cancel",
+			ClientMessage::Close(_) => "close",
 		}
 	}
 
@@ -238,6 +295,8 @@ impl ClientMessage {
 			ClientMessage::Session(m) => m.session_id.as_deref(),
 			ClientMessage::Message(m) => Some(m.session_id.as_str()),
 			ClientMessage::Command(c) => Some(c.session_id.as_str()),
+			ClientMessage::Cancel(c) => Some(c.session_id.as_str()),
+			ClientMessage::Close(c) => Some(c.session_id.as_str()),
 		}
 	}
 }
@@ -313,6 +372,10 @@ pub struct CostPayload {
 	/// when false, so an idle turn's frame reads exactly as older agents' did.
 	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
 	pub pending_work: bool,
+	/// The turn this frame closes was stopped by a `cancel` frame. Omitted when
+	/// false, so a finished turn's frame reads exactly as older agents' did.
+	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
+	pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,7 +400,7 @@ pub struct AckPayload {
 	/// Echo of the client-supplied request_id, when present.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub request_id: Option<String>,
-	/// Client frame type being acknowledged: session, message, or command.
+	/// Client frame type being acknowledged: session, message, command, cancel or close.
 	pub message_type: String,
 	/// Session ID from the input frame when it is known.
 	#[serde(default, skip_serializing_if = "Option::is_none")]

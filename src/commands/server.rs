@@ -25,7 +25,8 @@ pub struct ServerArgs {
 	#[arg(long, default_value = "127.0.0.1")]
 	pub host: String,
 
-	/// Port to listen on
+	/// Port to listen on. `0` picks a free port; the bound address is printed
+	/// on the `WebSocket server started on ws://…` line.
 	#[arg(long, short, default_value = "8080")]
 	pub port: u16,
 
@@ -61,14 +62,16 @@ pub async fn execute(args: &ServerArgs, config: &octomind::Config) -> Result<(),
 
 	super::common::startup_mcp_only(&role, &resolved_config, true).await?;
 
-	// Create and start WebSocket server
+	// Create and start WebSocket server. The token comes from the environment
+	// only: a command-line flag would show it to every local user in `ps`.
 	let server = WebSocketServer::new(
 		&args.host,
 		args.port,
 		resolved_config,
 		role,
 		args.allow_origin.clone(),
-	)?;
+	)?
+	.with_token(std::env::var("OCTOMIND_SERVER_TOKEN").ok());
 	server.start().await?;
 
 	Ok(())

@@ -41,3 +41,19 @@ fn test_session_cancellation_lifecycle() {
 	assert!(!cancellation.is_cancelled());
 	assert!(*old_rx.borrow());
 }
+
+#[test]
+fn handle_cancels_the_operation_current_when_it_fires() {
+	let mut cancellation = SessionCancellation::new();
+	let handle = cancellation.handle();
+	assert!(handle.same_as(&cancellation.handle()));
+	assert!(!handle.same_as(&SessionCancellation::new().handle()));
+
+	// Taken before the operation started, it still reaches that operation.
+	let first = cancellation.new_operation();
+	let current = cancellation.new_operation();
+	handle.cancel();
+	assert!(*current.borrow(), "the current operation is cancelled");
+	assert!(!*first.borrow(), "a superseded operation is left alone");
+	assert!(cancellation.is_cancelled());
+}

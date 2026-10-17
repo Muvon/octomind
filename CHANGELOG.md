@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.58.7] - 2026-10-17
+
+### 📋 Release Summary
+
+Non-interactive input errors are clearer, and the agent now refuses prompts in server and ACP modes.
+
+### 🔧 Improvements & Optimizations
+
+- **tests**: update missing-script error expectations `3f3dbd66`
+
+### 🐛 Bug Fixes & Stability
+
+- **inputs**: clarify non-interactive value errors `6076eb69`
+- **agent**: refuse prompts in server and ACP modes `480c9277`
+
 ## [0.58.6] - 2026-10-17
 
 ### 📋 Release Summary

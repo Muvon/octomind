@@ -235,6 +235,42 @@ fn test_mcp_server_without_config_parts_is_rejected() {
 
 #[test]
 #[serial]
+fn test_mcp_server_blank_name_is_rejected() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	for (index, name) in ["", " \t "].iter().enumerate() {
+		let dir = sandbox(&format!("mcpsrv-blank-name-{index}"));
+		std::env::set_var(DATA_DIR_KEY, &dir);
+		let mut a = args();
+		a.mcp_server = Some(format!("{name},url=http://127.0.0.1:9/mcp"));
+
+		execute(&a, template_config()).expect("rejected input is not a hard error");
+		assert!(
+			!saved_config_path(&dir).exists(),
+			"a blank server name must not save"
+		);
+	}
+}
+
+#[test]
+#[serial]
+fn test_mcp_server_option_without_equals_is_rejected() {
+	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
+	for (index, part) in ["broken", ""].iter().enumerate() {
+		let dir = sandbox(&format!("mcpsrv-malformed-option-{index}"));
+		std::env::set_var(DATA_DIR_KEY, &dir);
+		let mut a = args();
+		a.mcp_server = Some(format!("web,url=http://127.0.0.1:9/mcp,{part}"));
+
+		execute(&a, template_config()).expect("rejected input is not a hard error");
+		assert!(
+			!saved_config_path(&dir).exists(),
+			"a malformed server option must not save a partial configuration"
+		);
+	}
+}
+
+#[test]
+#[serial]
 fn test_http_mcp_server_without_url_is_rejected() {
 	let _env = EnvGuard::new(&[DATA_DIR_KEY]);
 	let dir = sandbox("mcpsrv-nourl");
@@ -376,7 +412,8 @@ fn test_http_mcp_server_persists_with_timeout() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	let mut a = args();
-	a.mcp_server = Some("web,url=http://127.0.0.1:9/mcp,timeout=45".to_string());
+	a.mcp_server =
+		Some("web,url=http://127.0.0.1:9/mcp?token=abc==&mode=full,timeout=45".to_string());
 	execute(&a, template_config()).expect("add http server saves");
 
 	let reloaded = Config::load_from_path(&saved_config_path(&dir)).expect("reload");
@@ -387,7 +424,10 @@ fn test_http_mcp_server_persists_with_timeout() {
 		.find(|s| s.name() == "web")
 		.expect("web saved");
 	assert!(matches!(srv, McpServerConfig::Http { .. }));
-	assert_eq!(srv.url(), Some("http://127.0.0.1:9/mcp"));
+	assert_eq!(
+		srv.url(),
+		Some("http://127.0.0.1:9/mcp?token=abc==&mode=full")
+	);
 	assert_eq!(srv.timeout_seconds(), 45);
 }
 
@@ -400,7 +440,8 @@ fn test_stdio_mcp_server_persists_with_args() {
 
 	let mut a = args();
 	a.mcp_server = Some(
-		"local,type=stdio,command=node,args=server.js --verbose,timeout_seconds=20".to_string(),
+		"local,type=stdio,command=node,args=server.js --verbose --token=abc==,timeout_seconds=20"
+			.to_string(),
 	);
 	execute(&a, template_config()).expect("add stdio server saves");
 
@@ -417,7 +458,11 @@ fn test_stdio_mcp_server_persists_with_args() {
 	assert_eq!(command, "node");
 	assert_eq!(
 		args,
-		&vec!["server.js".to_string(), "--verbose".to_string()]
+		&vec![
+			"server.js".to_string(),
+			"--verbose".to_string(),
+			"--token=abc==".to_string()
+		]
 	);
 	assert_eq!(srv.timeout_seconds(), 20);
 }

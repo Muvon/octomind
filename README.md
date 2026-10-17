@@ -188,7 +188,7 @@ octomind tap yourteam/octomind-tap        # on another machine, after publishing
 | **Docker** | `docker run --rm ghcr.io/muvon/octomind --help` |
 | **From source** | `git clone https://github.com/muvon/octomind.git && cd octomind && cargo build --release` |
 
-The install script detects your OS and architecture (Linux and macOS on x86_64/aarch64) and installs to `~/.local/bin/`. Pass `--install-dir <DIR>` or set `OCTOMIND_INSTALL_DIR` to override. On Windows (x86_64/aarch64), `install.ps1` installs to `%LOCALAPPDATA%\octomind\bin` and adds it to your user `PATH`; it honors `OCTOMIND_INSTALL_DIR` and `OCTOMIND_VERSION` too.
+The install script detects your OS and architecture (Linux and macOS on x86_64/aarch64) and installs to `~/.local/bin/`. Pass `--install-dir <DIR>` or set `OCTOMIND_INSTALL_DIR` to override. On Windows (x86_64/aarch64), `install.ps1` installs to `%LOCALAPPDATA%\octomind\bin` and adds it to your user `PATH`; it honors `OCTOMIND_INSTALL_DIR` and `OCTOMIND_VERSION` too. `install.sh` still works from Git Bash or MSYS2.
 
 **Command not found?** Add the install directory to your `PATH`:
 

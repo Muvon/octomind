@@ -25,6 +25,9 @@ irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 | iex
 `octomind.exe` in `%LOCALAPPDATA%\octomind\bin`, and adds that directory to your user `PATH`. Open a new terminal if
 other shells do not find `octomind` yet.
 
+The Windows build needs the Microsoft Visual C++ Redistributable, which most systems already have; if `octomind` fails
+to start, the installer points you to the download.
+
 ### 2. Sign in
 
 ```bash
@@ -47,8 +50,9 @@ uses `octohub:auto` for its main, supervisor, and compression model purposes.
 ## Installer Requirements and Targets
 
 The install script requires a Unix-style shell and `curl`, plus `tar` for Unix archives or `unzip` for Windows archives.
-On Windows, use `install.ps1` from PowerShell; it picks the x86_64 or ARM64 build from the system architecture. The
-scripts recognize these targets; the chosen release must contain the matching asset:
+On Windows, use `install.ps1` from PowerShell; it picks the x86_64 or ARM64 build from the system architecture.
+`install.sh` also still runs from Git Bash or MSYS2. The scripts recognize these targets; the chosen release must
+contain the matching asset:
 
 | Platform | Target |
 |----------|--------|
@@ -115,6 +119,7 @@ install -m 755 octomind ~/.local/bin/octomind
 For a Windows ZIP in PowerShell:
 
 ```powershell
+$env:OCTOMIND_ARCHIVE = "$HOME\Downloads\octomind-<version>-x86_64-pc-windows-msvc.zip"
 Expand-Archive $env:OCTOMIND_ARCHIVE -DestinationPath "$env:LOCALAPPDATA\octomind\bin" -Force
 ```
 

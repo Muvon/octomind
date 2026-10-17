@@ -1846,7 +1846,10 @@ async fn handle_user_message(
 	}
 
 	if drain_stopped {
-		log_debug!("Message cancelled during the pre-user drain: {}", session_id);
+		log_debug!(
+			"Message cancelled during the pre-user drain: {}",
+			session_id
+		);
 		let save_result = chat_session.save();
 		let mut cost = crate::session::chat::response::session_cost_payload(
 			&mut chat_session,

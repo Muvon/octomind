@@ -3957,7 +3957,8 @@ async fn cancel_during_the_pre_user_drain_skips_the_user_turn_too() {
 	assert!(
 		!frames
 			.iter()
-			.any(|f| f["type"] == "assistant" && f["content"].as_str().unwrap_or("").contains("NEVER")),
+			.any(|f| f["type"] == "assistant"
+				&& f["content"].as_str().unwrap_or("").contains("NEVER")),
 		"the user turn ran after the stop: {frames:?}"
 	);
 	assert!(

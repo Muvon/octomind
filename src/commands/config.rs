@@ -246,6 +246,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			return Ok(());
 		}
 		let name = parts[0].trim().to_string();
+		if name.is_empty() {
+			block_open("config", None);
+			block_close_err("config", "mcp server name cannot be empty");
+			println!();
+			return Ok(());
+		}
 		let mut url: Option<String> = None;
 		let mut command: Option<String> = None;
 		let mut args_vec: Vec<String> = Vec::new();
@@ -254,10 +260,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		let mut warnings: Vec<String> = Vec::new();
 
 		for part in &parts[1..] {
-			let kv: Vec<&str> = part.split('=').collect();
-			if kv.len() == 2 {
-				let key = kv[0].trim();
-				let value = kv[1].trim();
+			let part = part.trim();
+			if let Some((raw_key, raw_val)) = part.split_once('=') {
+				let key = raw_key.trim();
+				let value = raw_val.trim();
 				match key {
 					"url" => url = Some(value.to_string()),
 					"command" => command = Some(value.to_string()),
@@ -286,6 +292,11 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					}
 					_ => warnings.push(format!("unknown server config key '{}'", key)),
 				}
+			} else {
+				warnings.push(format!(
+					"invalid server config part '{}', expected key=value",
+					part
+				));
 			}
 		}
 

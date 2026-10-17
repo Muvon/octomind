@@ -1449,7 +1449,8 @@ async fn handle_command_message(
 		if !args.is_empty() {
 			let instructions = args.join(" ");
 			let user_msg = crate::websocket::protocol::UserMessage {
-				request_id: None,
+				// The follow-up turn's cost closes this command frame.
+				request_id: msg.request_id.clone(),
 				session_id: session_id.clone(),
 				content: instructions,
 				attachments: Vec::new(),
@@ -1750,6 +1751,7 @@ async fn handle_user_message(
 	// (background agents, scheduled entries, skills) — each gets its own
 	// full AI turn so the model actually responds to them, not just sees them
 	// silently prepended to the conversation.
+	let mut drain_stopped = false;
 	{
 		// Flush due schedule entries first.
 		crate::mcp::orchestration::flush_due_to_inbox();
@@ -1818,6 +1820,12 @@ async fn handle_user_message(
 				}
 				send_message(ws_sender, &msg).await?;
 			}
+			// A `cancel` read while the drain runs stops this frame, not just the
+			// injected turn in flight: no further batch, and no user turn below.
+			if cancellation.is_cancelled() {
+				drain_stopped = true;
+				break;
+			}
 			if let Err(e) = result {
 				log_debug!("Error processing pre-user inbox message (websocket): {}", e);
 				send_message(
@@ -1825,8 +1833,40 @@ async fn handle_user_message(
 					&ServerMessage::error(format!("Error processing injected message: {}", e)),
 				)
 				.await?;
+				// A failed turn emits no cost of its own; close the injected turn
+				// here so clients see it end before the message's own turn starts.
+				let mut cost = crate::session::chat::response::session_cost_payload(
+					&mut chat_session,
+					session_id.clone(),
+				);
+				cost.pending_work = true;
+				send_message(ws_sender, &ServerMessage::Cost(cost)).await?;
 			}
 		}
+	}
+
+	if drain_stopped {
+		log_debug!("Message cancelled during the pre-user drain: {}", session_id);
+		let save_result = chat_session.save();
+		let mut cost = crate::session::chat::response::session_cost_payload(
+			&mut chat_session,
+			session_id.clone(),
+		);
+		cost.cancelled = true;
+		cost.request_id = msg.request_id.clone();
+		server
+			.sessions
+			.lock()
+			.await
+			.insert(session_id.clone(), chat_session);
+		if let Err(e) = save_result {
+			send_message(
+				ws_sender,
+				&ServerMessage::error(format!("Failed to save session: {}", e)),
+			)
+			.await?;
+		}
+		return send_message(ws_sender, &ServerMessage::Cost(cost)).await;
 	}
 
 	// Create the main call's cancellation receiver NOW — after the inbox drain,
@@ -1937,6 +1977,7 @@ async fn handle_user_message(
 	let mut cost =
 		crate::session::chat::response::session_cost_payload(&mut chat_session, session_id.clone());
 	cost.cancelled = cancelled;
+	cost.request_id = msg.request_id.clone();
 	let cost_msg = ServerMessage::Cost(cost);
 
 	// Clear the notification sender now that this request is done

@@ -410,6 +410,7 @@ fn test_server_message_cost_serialization() {
 		session_id: "sess_123".to_string(),
 		pending_work: false,
 		cancelled: false,
+		request_id: None,
 	});
 	let json = serde_json::to_string(&msg).unwrap();
 	assert!(json.contains("\"type\":\"cost\""));
@@ -437,6 +438,7 @@ fn cost_frame_says_when_delegated_work_will_stream_a_follow_up_turn() {
 		session_id: "sess_123".to_string(),
 		pending_work: true,
 		cancelled: false,
+		request_id: None,
 	});
 	let json = serde_json::to_value(&frame).unwrap();
 	assert_eq!(json["pending_work"], true);

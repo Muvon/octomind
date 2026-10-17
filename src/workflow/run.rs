@@ -1308,6 +1308,7 @@ pub async fn execute(
 			session_id: String::new(),
 			pending_work: false,
 			cancelled: false,
+			request_id: None,
 		}));
 	}
 

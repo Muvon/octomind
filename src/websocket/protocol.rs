@@ -19,6 +19,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub const MESSAGE_ATTACHMENTS_CAPABILITY: &str = "message_attachments_v1";
+/// The bind's session accepts `cancel`/`close` frames and a bind `role`, and
+/// echoes a request's `request_id` on the cost frame that closes its turn.
+pub const SESSION_CONTROL_CAPABILITY: &str = "session_control_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -376,6 +379,12 @@ pub struct CostPayload {
 	/// false, so a finished turn's frame reads exactly as older agents' did.
 	#[serde(default, skip_serializing_if = "std::ops::Not::not")]
 	pub cancelled: bool,
+	/// Echo of the `request_id` of the client frame whose turn this cost
+	/// closes. Absent on costs of turns the session ran by itself — injected
+	/// work drained ahead of a message, or a background inbox turn — so a
+	/// client can tell its own request's end from theirs without counting.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -526,7 +535,10 @@ impl ServerMessage {
 			session_id: client_msg.session_id().map(ToOwned::to_owned),
 			status: "received".to_string(),
 			capabilities: match client_msg {
-				ClientMessage::Session(_) => vec![MESSAGE_ATTACHMENTS_CAPABILITY.to_string()],
+				ClientMessage::Session(_) => vec![
+					MESSAGE_ATTACHMENTS_CAPABILITY.to_string(),
+					SESSION_CONTROL_CAPABILITY.to_string(),
+				],
 				_ => Vec::new(),
 			},
 		})

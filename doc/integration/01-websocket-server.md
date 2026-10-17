@@ -298,11 +298,14 @@ dispatching it. This confirms receipt, not successful execution:
 
 `request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do
 not produce `ack`; they produce an `error` frame instead. If a decoded frame fails protocol validation, its error echoes
-`request_id`. Some later errors, including busy-session and unknown-command errors, omit it. Response streams and
-completion frames do not echo request IDs.
+`request_id`. Some later errors, including busy-session and unknown-command errors, omit it. Response streams do not
+echo request IDs; the `cost` frame closing a `message` turn does (see Cost tracking).
 
-The `ack` for a `session` frame additionally carries `"capabilities": ["message_attachments_v1"]`, advertising that
-`message` frames may include `attachments`. It is omitted on other acks.
+The `ack` for a `session` frame additionally carries `capabilities`, omitted on other acks:
+
+- `message_attachments_v1` — `message` frames may include `attachments`.
+- `session_control_v1` — the server accepts `cancel` and `close` frames and a bind `role`, and echoes a request's
+  `request_id` on the cost frame that closes its turn.
 
 A successful AI turn arrives as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and
 `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
@@ -375,6 +378,11 @@ it.
 
 `pending_work: true` says the turn left work that will stream a follow-up turn on its own; `cancelled: true` says a
 `cancel` frame stopped the turn. Both are omitted when false.
+
+`request_id` echoes the id of the client frame whose turn this cost closes. Costs of turns the session runs by itself —
+injected work drained ahead of a `message`, or a background inbox turn — carry none, so a client matches its request's
+end exactly instead of counting cost frames. Every injected turn drained ahead of a message closes with its own cost,
+including one that failed.
 
 **Status:**
 

@@ -1071,6 +1071,7 @@ pub fn session_cost_payload(chat_session: &mut ChatSession, session_id: String) 
 		session_id,
 		pending_work: crate::session::has_pending_handback(),
 		cancelled: false,
+		request_id: None,
 	}
 }
 

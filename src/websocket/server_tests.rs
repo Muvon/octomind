@@ -3901,6 +3901,129 @@ async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn cancel_during_the_pre_user_drain_skips_the_user_turn_too() {
+	let _data = TestDataDirGuard::new();
+	let env = StubEnv {
+		_guard: ENV_LOCK.lock().await,
+	};
+	std::env::set_var("OLLAMA_API_URL", spawn_hang_then_answer_stub("NEVER").await);
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, Some("drain-cancel-1")).await;
+
+	// Queue an inbox message behind the session lock so the monitor parks and
+	// the message's pre-user drain owns it.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "slow injected work".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "USER-PROMPT-XYZ"}),
+	)
+	.await;
+	read_until(&mut ws, |v| v["type"] == "injected").await;
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "cancel", "session_id": session_id}),
+	)
+	.await;
+
+	// The frame closes with a cancelled cost; its user turn never runs.
+	let frames = tokio::time::timeout(Duration::from_secs(20), async {
+		let mut frames = Vec::new();
+		loop {
+			let v = read_json(&mut ws).await;
+			let done = v["type"] == "cost" && v["cancelled"] == true;
+			frames.push(v);
+			if done {
+				return frames;
+			}
+		}
+	})
+	.await
+	.expect("the stopped frame must close promptly");
+	assert!(
+		!frames
+			.iter()
+			.any(|f| f["type"] == "assistant" && f["content"].as_str().unwrap_or("").contains("NEVER")),
+		"the user turn ran after the stop: {frames:?}"
+	);
+	assert!(
+		!frames.iter().any(|f| f["type"] == "error"),
+		"a requested stop is not an error: {frames:?}"
+	);
+	let sessions = server.sessions.lock().await;
+	let stored = sessions.get(&session_id).expect("session stored back");
+	assert!(
+		!stored
+			.session
+			.messages
+			.iter()
+			.any(|m| m.content.contains("USER-PROMPT-XYZ")),
+		"the cancelled frame's user message must not run"
+	);
+	drop(sessions);
+
+	crate::session::context::cleanup_session(&session_id);
+	drop(env);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn only_the_requests_own_cost_echoes_its_request_id() {
+	let _data = TestDataDirGuard::new();
+	let _env = StubEnv::new(vec![
+		final_response("injected reply"),
+		final_response("user reply"),
+	])
+	.await;
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut ws = connect_ws(server.addr).await;
+	let _welcome = read_json(&mut ws).await;
+	let session_id = create_session(&mut ws, Some("rid-cost-1")).await;
+
+	// One injected message waits, so the request first drains it.
+	let lock = get_or_create_session_lock(&session_id, &server.session_locks).await;
+	let guard = lock.lock().await;
+	push_inbox_message_for_session(
+		&session_id,
+		InboxMessage {
+			source: InboxSource::Inject,
+			content: "queued work".to_string(),
+		},
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	drop(guard);
+
+	send_json(
+		&mut ws,
+		serde_json::json!({"type": "message", "session_id": session_id, "content": "hi", "request_id": "m-77"}),
+	)
+	.await;
+	let drained = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert!(
+		drained.get("request_id").is_none(),
+		"a drained turn's cost is not the request's: {drained}"
+	);
+	let own = read_until(&mut ws, |v| v["type"] == "cost").await;
+	assert_eq!(own["request_id"], "m-77", "got: {own}");
+
+	crate::session::context::cleanup_session(&session_id);
+}
+
+#[tokio::test]
 async fn cancel_without_a_running_turn_is_only_acknowledged() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;
 	let mut ws = connect_ws(server.addr).await;

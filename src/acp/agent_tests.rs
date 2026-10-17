@@ -264,6 +264,7 @@ fn messages_without_an_acp_equivalent_are_dropped() {
 			session_id: "s".to_string(),
 			pending_work: false,
 			cancelled: false,
+			request_id: None,
 		}))
 		.is_none()
 	);

@@ -61,9 +61,24 @@ where
 	NON_INTERACTIVE.scope(true, f).await
 }
 
-/// Returns `true` if the current async task is inside `with_non_interactive`.
+/// Set for the whole process by entry points that have no person at stdin:
+/// `octomind server` (stdin is nothing) and `octomind acp` (stdin is the
+/// protocol stream). A prompt there would read EOF or a protocol frame as the
+/// answer, and `resolve_env_vars` would save that into `./.env` — where, loaded
+/// with override on every later start, it shadows the real environment.
+static PROCESS_NON_INTERACTIVE: std::sync::atomic::AtomicBool =
+	std::sync::atomic::AtomicBool::new(false);
+
+/// Make every later `prompt_user` in this process fail instead of reading stdin.
+pub fn set_process_non_interactive() {
+	PROCESS_NON_INTERACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Returns `true` if prompts are refused here: the current async task is inside
+/// `with_non_interactive`, or the process was marked non-interactive.
 pub fn is_non_interactive() -> bool {
-	NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
+	PROCESS_NON_INTERACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+		|| NON_INTERACTIVE.try_with(|v| *v).unwrap_or(false)
 }
 
 /// Extract all unique `{{INPUT:KEY}}` keys from a raw string.

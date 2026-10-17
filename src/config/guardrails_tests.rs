@@ -343,7 +343,10 @@ fn load_from_workdir_degrades_to_default_on_a_bad_file() {
 // ---------------------------------------------------------------------------
 
 fn validator_rules(script: &str) -> Guardrails {
-	Guardrails::parse(&format!("[[validator]]\nname = \"v\"\nscript = \"{script}\"\n")).expect("parse")
+	Guardrails::parse(&format!(
+		"[[validator]]\nname = \"v\"\nscript = \"{script}\"\n"
+	))
+	.expect("parse")
 }
 
 fn snapshot_content(snapshot: &ScriptSnapshot) -> &[u8] {

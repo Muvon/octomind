@@ -221,8 +221,15 @@ async fn test_validator_runs_the_session_start_snapshot_after_an_edit() {
 
 		let msg = crate::session::inbox::try_pop_inbox_message()
 			.expect("validator must keep running after its script is edited");
-		assert!(msg.content.contains("RUN cargo test"), "snapshot not run: {}", msg.content);
-		assert!(!msg.content.contains("EDITED-CHECK"), "edit applied mid-session");
+		assert!(
+			msg.content.contains("RUN cargo test"),
+			"snapshot not run: {}",
+			msg.content
+		);
+		assert!(
+			!msg.content.contains("EDITED-CHECK"),
+			"edit applied mid-session"
+		);
 
 		crate::session::inbox::clear_inbox_for_session(&sid);
 	})

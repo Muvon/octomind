@@ -23,7 +23,8 @@
 //! not a real result and should not trigger validators.
 
 use crate::config::guardrails::{
-	role_matches, spawn_script, target_matches, CompiledHook, CompiledValidator, HookOn, ScriptSnapshot,
+	role_matches, spawn_script, target_matches, CompiledHook, CompiledValidator, HookOn,
+	ScriptSnapshot,
 };
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::context::SessionId;
@@ -200,11 +201,7 @@ async fn run_one_hook(
 	let mut child = match spawn_script(&mut cmd).await {
 		Ok(c) => c,
 		Err(e) => {
-			eprintln!(
-				"guardrail hook: spawn `{}` failed: {}",
-				script_display,
-				e
-			);
+			eprintln!("guardrail hook: spawn `{}` failed: {}", script_display, e);
 			return None;
 		}
 	};

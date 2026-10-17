@@ -151,10 +151,14 @@ async fn main() -> Result<(), anyhow::Error> {
 				None => "octomind-acp".to_string(),
 			};
 			octomind::proctitle::set_process_title(&title);
+			// stdin is the protocol stream: never read a prompt answer from it.
+			octomind::agent::inputs::set_process_non_interactive();
 		}
 		Commands::Server(_) => {
 			octomind::proctitle::set_process_title("octomind-server");
 			octomind::proctitle::set_terminal_title("octomind-server");
+			// A server has nobody at a terminal to answer a prompt.
+			octomind::agent::inputs::set_process_non_interactive();
 		}
 		_ => {}
 	}

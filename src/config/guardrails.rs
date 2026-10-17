@@ -175,7 +175,10 @@ pub enum ScriptSnapshot {
 	/// Unreadable at install time. Never falls back to the live path, which
 	/// could by now hold a script created mid-session.
 	Missing(PathBuf),
-	Taken { source: PathBuf, content: Arc<[u8]> },
+	Taken {
+		source: PathBuf,
+		content: Arc<[u8]>,
+	},
 }
 
 impl ScriptSnapshot {
@@ -237,23 +240,30 @@ fn materialize(source: &Path, content: &[u8]) -> Result<PathBuf> {
 		std::process::id(),
 		COPY_SEQ.fetch_add(1, Ordering::Relaxed)
 	));
-	std::fs::write(&tmp, content).with_context(|| format!("write script copy {}", tmp.display()))?;
+	std::fs::write(&tmp, content)
+		.with_context(|| format!("write script copy {}", tmp.display()))?;
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
 		std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o700))
 			.with_context(|| format!("chmod script copy {}", tmp.display()))?;
 	}
-	std::fs::rename(&tmp, &copy).with_context(|| format!("install script copy {}", copy.display()))?;
+	std::fs::rename(&tmp, &copy)
+		.with_context(|| format!("install script copy {}", copy.display()))?;
 	Ok(copy)
 }
 
 /// Spawn a rule script, retrying the transient ETXTBSY of a fresh copy.
-pub async fn spawn_script(cmd: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
+pub async fn spawn_script(
+	cmd: &mut tokio::process::Command,
+) -> std::io::Result<tokio::process::Child> {
 	let mut attempt = 0;
 	loop {
 		match cmd.spawn() {
-			Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < SPAWN_BUSY_RETRIES => {
+			Err(e)
+				if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+					&& attempt < SPAWN_BUSY_RETRIES =>
+			{
 				attempt += 1;
 				tokio::time::sleep(SPAWN_BUSY_BACKOFF * attempt).await;
 			}

@@ -479,6 +479,7 @@ Tool lists are cached per server (`FUNCTION_CACHE` in `src/mcp/server.rs`) until
 | `session_id` | Octomind session id; empty outside a session |
 | `workdir` | The session's anchor directory (absolute), not the current `workdir` override |
 | `git` | Whether `workdir` itself is a git repository root (not a parent repo) |
+| `context_epoch` | Generation of the session's model context (unsigned integer, modern connections only). It changes whenever the model loses tool results it was served: compaction, in-place trims, `/run` history rewrites, results discarded by a cancel, session (re)initialization. Values never repeat |
 
 Rules for server authors:
 
@@ -491,6 +492,9 @@ Rules for server authors:
   the server's own root.
 - If the tool list depends on the session (parameters or allowed values that differ per session), mark the
   `tools/list` result `cacheScope: private`. A public list is shown to every session.
+- If a result is answered relative to what the server returned before (octofs delta views: "unchanged since your
+  last view"), keep that state per `session_id` and drop it when `context_epoch` changes — the model may no longer
+  hold it. Without a `context_epoch` (legacy connections, other hosts) never answer relative to an earlier result.
 
 Octobrain (memory scope from `path_to_scope(workdir)`, private tool list naming the session's repos), octofs
 (per-session workdir and view cache) and octocode (each session's directory served like `mcp --auto`) follow these

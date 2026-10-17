@@ -60,6 +60,28 @@ fn test_workdir_anchor_and_override() {
 }
 
 #[tokio::test]
+async fn test_context_epoch_is_stable_until_bumped_and_never_repeats() {
+	let sid = unique("context-epoch");
+	with_session_id(sid.clone(), async {
+		let first = context_epoch();
+		assert_eq!(context_epoch(), first, "stable between bumps");
+
+		bump_context_epoch();
+		let bumped = context_epoch();
+		assert_ne!(bumped, first);
+
+		clear_context_epoch(&sid);
+		let fresh = context_epoch();
+		assert!(
+			fresh != first && fresh != bumped,
+			"a cleared session gets an unseen epoch"
+		);
+	})
+	.await;
+	clear_context_epoch(&sid);
+}
+
+#[tokio::test]
 async fn test_role_and_domain() {
 	let sid = unique("role");
 	assert!(get_session_role(&sid).is_none());

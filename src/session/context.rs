@@ -375,6 +375,70 @@ pub fn clear_task_start_index(session_id: &SessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// Session-keyed context epoch
+// ---------------------------------------------------------------------------
+
+/// Generation of each session's model context, sent to MCP servers as
+/// `experimental.session.context_epoch` (see `mcp/client.rs`). A server that
+/// answers relative to what it already returned (octofs delta views) must start
+/// over when the epoch changes, so it moves wherever the model loses content it
+/// was served.
+static CONTEXT_EPOCHS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(None);
+
+/// Epoch source shared by every session. Seeded from the clock so a value never
+/// repeats for a session id — not across sessions, re-initialization, or a
+/// restarted process talking to the same long-lived server.
+static NEXT_CONTEXT_EPOCH: std::sync::LazyLock<std::sync::atomic::AtomicU64> =
+	std::sync::LazyLock::new(|| {
+		let now = std::time::SystemTime::now()
+			.duration_since(std::time::UNIX_EPOCH)
+			.expect("system clock before UNIX epoch");
+		std::sync::atomic::AtomicU64::new(now.as_nanos() as u64)
+	});
+
+fn fresh_context_epoch() -> u64 {
+	NEXT_CONTEXT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Current context epoch of the calling session (empty id outside a session,
+/// matching the session context sent to MCP servers).
+pub fn context_epoch() -> u64 {
+	let session_id = current_session_id().unwrap_or_default();
+	let mut guard = CONTEXT_EPOCHS.write().unwrap();
+	*guard
+		.get_or_insert_with(HashMap::new)
+		.entry(session_id)
+		.or_insert_with(fresh_context_epoch)
+}
+
+/// Mark that the calling session's model context no longer holds everything MCP
+/// servers returned to it (compaction, in-place trims, history rewrites, results
+/// executed but never delivered).
+pub fn bump_context_epoch() {
+	let session_id = current_session_id().unwrap_or_default();
+	let epoch = fresh_context_epoch();
+	CONTEXT_EPOCHS
+		.write()
+		.unwrap()
+		.get_or_insert_with(HashMap::new)
+		.insert(session_id.clone(), epoch);
+	crate::log_debug!(
+		"Context epoch for session {} moved to {}",
+		session_id,
+		epoch
+	);
+}
+
+/// Forget the context epoch for a session.
+pub fn clear_context_epoch(session_id: &SessionId) {
+	if let Ok(mut guard) = CONTEXT_EPOCHS.write() {
+		if let Some(registry) = guard.as_mut() {
+			registry.remove(session_id);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Session-keyed schedule storage
 // ---------------------------------------------------------------------------
 use crate::mcp::orchestration::schedule::storage::ScheduleStore;
@@ -1089,6 +1153,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 	crate::mcp::server::clear_function_cache_for_session(session_id);
 	clear_plan_storage(session_id);
 	clear_task_start_index(session_id);
+	clear_context_epoch(session_id);
 	clear_schedule_storage(session_id);
 	clear_hints_for_session(session_id);
 	clear_dynamic_agents_for_session(session_id);
@@ -1122,6 +1187,8 @@ pub fn init_session_services(role: &str) {
 		);
 	}
 	set_session_role(&session_id, role);
+	// A (re)initialized session starts a context the servers have not served.
+	bump_context_epoch();
 	crate::supervisor::authorizer::init_for_session();
 	crate::session::inbox::init_inbox_for_session();
 	crate::mcp::orchestration::monitor::init_for_session();

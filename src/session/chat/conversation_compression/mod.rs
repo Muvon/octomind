@@ -274,6 +274,10 @@ fn trim_oversized_tool_results(session: &mut ChatSession, cap: usize) -> usize {
 			trimmed += 1;
 		}
 	}
+	if trimmed > 0 {
+		// The model no longer holds these results as servers returned them.
+		crate::session::context::bump_context_epoch();
+	}
 	trimmed
 }
 

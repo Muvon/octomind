@@ -1155,6 +1155,9 @@ impl ChatSession {
 		// truncate, manual summarize, future paths) gets it for free
 		// without needing to remember a separate cleanup call.
 		crate::session::dedup::clear_current_session();
+		// Same reason for MCP servers that answer relative to what they already
+		// returned (octofs delta views): the drained results are gone.
+		crate::session::context::bump_context_epoch();
 
 		crate::log_debug!(
 			"Compressed {} messages (range {}-{}), had_cached={}",

@@ -226,6 +226,7 @@ pub async fn execute_command_layer(
 
 			// Clear existing messages
 			chat_session.session.messages.clear();
+			crate::session::context::bump_context_epoch();
 
 			// Build final message list following /truncate pattern
 			let mut final_messages = Vec::new();
@@ -352,6 +353,7 @@ pub async fn execute_command_layer(
 
 			// Clear existing messages and replace with only the last command output
 			chat_session.session.messages.clear();
+			crate::session::context::bump_context_epoch();
 			if let Some(last_output) = result.outputs.last() {
 				chat_session
 					.session

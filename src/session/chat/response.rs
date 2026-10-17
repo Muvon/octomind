@@ -599,7 +599,9 @@ pub async fn process_response<S: OutputSink>(
 								|| *operation_cancelled_clone.borrow()
 							{
 								crate::log_debug!("Operation cancelled by user.");
-								// Don't add assistant message since tools weren't executed
+								// Don't add assistant message since tools weren't executed;
+								// any that did finish are discarded undelivered.
+								crate::session::context::bump_context_epoch();
 								return Ok(());
 							}
 							return Err(e);
@@ -883,7 +885,9 @@ pub async fn process_response<S: OutputSink>(
 					if params.mode.is_terminal_mode() {
 						println!("{}", "\nTool execution cancelled.".bright_yellow());
 					}
-					// Don't add assistant message since tools were cancelled
+					// Don't add assistant message since tools were cancelled; their
+					// results are discarded undelivered.
+					crate::session::context::bump_context_epoch();
 					return Ok(());
 				}
 

@@ -170,6 +170,31 @@ fn client_handler_legacy_retry_advertises_legacy_protocol() {
 	);
 }
 
+/// Only per-request capabilities can carry a live context epoch: a legacy
+/// handshake would pin the connect-time value, so it is not sent there.
+#[tokio::test]
+async fn context_epoch_rides_only_in_modern_session_context() {
+	let sid = "client-context-epoch-test".to_string();
+	crate::session::context::with_session_id(sid.clone(), async {
+		let session = |version| {
+			build_client_info(version)
+				.capabilities
+				.experimental
+				.expect("session context")
+				.remove("session")
+				.expect("session object")
+		};
+		let modern = session(ProtocolVersion::V_2026_07_28);
+		assert_eq!(
+			modern["context_epoch"].as_u64(),
+			Some(crate::session::context::context_epoch())
+		);
+		assert!(!session(ProtocolVersion::V_2025_03_26).contains_key("context_epoch"));
+	})
+	.await;
+	crate::session::context::clear_context_epoch(&sid);
+}
+
 #[test]
 fn lifecycle_probes_modern_with_legacy_fallback_version() {
 	match lifecycle() {

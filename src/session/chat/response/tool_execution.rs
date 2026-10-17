@@ -519,6 +519,8 @@ async fn execute_tools_with_context(
 				}
 			}
 
+			// Tools that finished before the cancel are discarded undelivered.
+			crate::session::context::bump_context_epoch();
 			return Ok((Vec::new(), total_tool_time_ms));
 		}
 	};

@@ -494,15 +494,17 @@ this shape:
         "project": "3f9a2c71d04b8e65",
         "session_id": "editor-session",
         "workdir": "/home/me/my-project",
-        "git": true
+        "git": true,
+        "context_epoch": 1760697600000000000
       }
     }
   }
 }
 ```
 
-`project` is the hashed `octolib::utils::path_to_id` of `workdir`, `workdir` is the session's anchor directory, and
-`git` says whether `workdir` itself is a git repository root. Field details and the rules servers follow are in
+`project` is the hashed `octolib::utils::path_to_id` of `workdir`, `workdir` is the session's anchor directory,
+`git` says whether `workdir` itself is a git repository root, and `context_epoch` (modern requests only) changes
+whenever the model loses tool results it was served. Field details and the rules servers follow are in
 [MCP Server Development](../dev/03-mcp-server-development.md#session-context-for-external-servers).
 
 ## See also

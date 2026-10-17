@@ -331,7 +331,7 @@ const WATCH_RESOURCE_LINKS_EXTENSION: &str = "io.muvon/watch-resource-links";
 fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 	let (role, spec, project, session_id, workdir) = super::process::get_session_context();
 	let git = octolib::utils::is_git_repo(std::path::Path::new(&workdir));
-	let session = serde_json::json!({
+	let mut session = serde_json::json!({
 		"role": role,
 		"spec": spec,
 		"project": project,
@@ -339,6 +339,11 @@ fn build_client_info(protocol_version: ProtocolVersion) -> ClientConfig {
 		"workdir": workdir,
 		"git": git,
 	});
+	// Only per-request capabilities can track the epoch: a legacy handshake
+	// would pin the value it had at connect time.
+	if protocol_version >= ProtocolVersion::V_2026_07_28 {
+		session["context_epoch"] = crate::session::context::context_epoch().into();
+	}
 
 	let mut capabilities = ClientCapabilities::default();
 	if let serde_json::Value::Object(map) = session {

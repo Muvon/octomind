@@ -160,9 +160,11 @@ fn handle_final_response(
 
 	// Display cost line only for non-interactive mode or specific scenarios
 	// Skip for interactive mode to avoid duplication before user input prompt
-	// Skip if using structured output (JSONL/WebSocket - handled by sink)
+	// Skip if using structured output (JSONL/WebSocket - handled by sink). Check the
+	// mode first: ACP keeps a read pending on stdin, and on Windows is_terminal()
+	// waits for that read to finish, so the turn would never complete.
 	use std::io::IsTerminal;
-	if !std::io::stdin().is_terminal() && mode.is_terminal_mode() {
+	if mode.is_terminal_mode() && !std::io::stdin().is_terminal() {
 		// Non-interactive mode - always show cost line
 		CostTracker::display_cost_line(chat_session);
 	}

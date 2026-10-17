@@ -16,12 +16,6 @@
 //! real newline-delimited JSON-RPC protocol over its stdio — initialize,
 //! session/new, session/prompt — against the fake ollama provider. This is
 //! exactly how Zed and other ACP clients drive octomind.
-//!
-//! Not run on Windows: the spawned agent goes silent after `session/prompt`
-//! (no response, no notification, no stderr) and hangs there. Unreproducible
-//! without a Windows box, so the protocol coverage lives on Linux/macOS until
-//! someone can debug it there.
-#![cfg(not(windows))]
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -124,8 +118,7 @@ struct AcpClient {
 	reader: BufReader<tokio::process::ChildStdout>,
 	next_id: u64,
 	/// Rolling tail of the agent's stderr, drained by a background task.
-	/// On Windows the agent has stalled mid-turn with no visible diagnostics;
-	/// surfacing this buffer in the panic turns an undebuggable timeout into
+	/// Surfacing this buffer in the panic turns an undebuggable timeout into
 	/// log lines pointing at the stall.
 	stderr_tail: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }

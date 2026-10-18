@@ -315,6 +315,8 @@ async fn test_get_all_server_functions_empty_and_builtin_rejected() {
 	assert!(err.to_string().contains("Built-in servers"), "got: {err}");
 }
 
+// Stops every server, which clears the whole function cache — see test_clear_function_cache_scopes.
+#[serial]
 #[test]
 fn test_cleanup_servers_succeeds() {
 	cleanup_servers().expect("cleanup must be idempotent without running servers");

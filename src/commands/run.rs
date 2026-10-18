@@ -40,7 +40,7 @@ pub struct RunArgs {
 
 	/// Output format: plain or jsonl. When set, runs non-interactively
 	/// (reads input from stdin).
-	#[arg(long = "format")]
+	#[arg(long = "format", value_parser = ["plain", "jsonl"])]
 	pub format: Option<String>,
 
 	/// Override the model for this session (e.g. `openrouter:anthropic/claude-sonnet-4`).

@@ -883,15 +883,15 @@ async fn test_tap_list_and_untap_unknown() {
 	assert!(!output.status.success(), "untap of unknown tap must fail");
 }
 
-/// The jsonl and json output formats drive their own sinks through the
-/// non-interactive loop; both must deliver the answer machine-readably.
+/// The jsonl and plain output formats both run through the non-interactive
+/// loop; each must deliver the answer on stdout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_run_jsonl_and_json_formats() {
+async fn test_run_jsonl_and_plain_formats() {
 	let stub_url = spawn_openai_stub().await;
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
-	for format in ["jsonl", "json"] {
+	for format in ["jsonl", "plain"] {
 		let mut child = octomind_cmd(home.path(), &stub_url)
 			.args(["run", "--format", format])
 			.stdin(Stdio::piped())

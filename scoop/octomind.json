@@ -1,5 +1,5 @@
 {
-  "version": "0.58.5",
+  "version": "0.58.7",
   "description": "Open-source AI coding agent and agent runtime",
   "homepage": "https://octomind.run",
   "license": "Apache-2.0",
@@ -8,12 +8,12 @@
   },
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Muvon/octomind/releases/download/0.58.5/octomind-0.58.5-x86_64-pc-windows-msvc.zip",
-      "hash": "027ae501e072a6e2f3accdde13706d5daf3e62dd36e4d25544f8609a772aa812"
+      "url": "https://github.com/Muvon/octomind/releases/download/0.58.7/octomind-0.58.7-x86_64-pc-windows-msvc.zip",
+      "hash": "f5919a5e932cb1449adea6770842222f17b4ce7d80ae242482555fe3d8b0fd6d"
     },
     "arm64": {
-      "url": "https://github.com/Muvon/octomind/releases/download/0.58.5/octomind-0.58.5-aarch64-pc-windows-msvc.zip",
-      "hash": "ba8831ec7ed486455c5995f3bfb7471fdd96d29e3240f8b37d7efbd9b27b5622"
+      "url": "https://github.com/Muvon/octomind/releases/download/0.58.7/octomind-0.58.7-aarch64-pc-windows-msvc.zip",
+      "hash": "42bb20f8e681451b93f32d8ad22d50643c76e537dbaf3a7b7e56ef9d1b5a8d24"
     }
   },
   "bin": "octomind.exe",

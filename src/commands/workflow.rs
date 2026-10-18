@@ -49,7 +49,7 @@ pub struct WorkflowArgs {
 	/// `assistant` event per step as it completes (the last is the final result)
 	/// plus a trailing aggregated `cost` event. Without it, stdout is empty
 	/// (except the `--dry-run` plan). Per-step progress always goes to stderr.
-	#[arg(long = "format")]
+	#[arg(long = "format", value_parser = ["plain", "jsonl"])]
 	pub format: Option<String>,
 }
 

@@ -340,11 +340,8 @@ fn decision_rejects_unknown_keys_and_requires_the_section() {
 fn test_validate_clean_default_template_has_no_ignored_keys() {
 	let template = include_str!("../../config-templates/default.toml");
 	let value: toml::Value = toml::from_str(template).unwrap();
-	let mut ignored_keys = Vec::new();
-	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
-		ignored_keys.push(path.to_string());
-	})
-	.unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -360,11 +357,8 @@ fn test_validate_reports_misspelled_key() {
 	let template = include_str!("../../config-templates/default.toml");
 	let raw = template.replace("\n[model]\n", "\n[model]\nmax_tokns = 4096\n");
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let mut ignored_keys = Vec::new();
-	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
-		ignored_keys.push(path.to_string());
-	})
-	.unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -381,11 +375,8 @@ fn test_validate_reports_scalar_after_table_with_hint() {
 	let template = include_str!("../../config-templates/default.toml");
 	let raw = template.replace("\n[model]\n", "\n[model]\nsandbox = true\n");
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let mut ignored_keys = Vec::new();
-	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
-		ignored_keys.push(path.to_string());
-	})
-	.unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -409,11 +400,8 @@ fn test_validate_reports_scalar_after_nested_table_with_hint() {
 		"\n[compression.attention]\nthreshold = 50000\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let mut ignored_keys = Vec::new();
-	let mut config: crate::config::Config = serde_ignored::deserialize(value, |path| {
-		ignored_keys.push(path.to_string());
-	})
-	.unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -427,4 +415,71 @@ fn test_validate_reports_scalar_after_nested_table_with_hint() {
 		.contains("scalar placed after a [header]"));
 	let err = config.validate_ignored_keys().unwrap_err().to_string();
 	assert!(err.contains("compression.attention.threshold"));
+}
+
+#[test]
+fn test_validate_reports_ignored_key_in_roles() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace(
+		"name = \"assistant\"\n",
+		"name = \"assistant\"\nunknown_role_key = \"bad\"\n",
+	);
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert!(
+		reports.iter().any(|r| r.path == "roles.0.unknown_role_key"),
+		"expected roles.0.unknown_role_key, got: {reports:?}"
+	);
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("roles.0.unknown_role_key"));
+}
+
+#[test]
+fn test_validate_reports_ignored_key_in_roles_model() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace(
+		"allowed_tools = [\"core:*\", \"orchestration:*\", \"runtime:*\", \"filesystem:*\", \"agent:*\"]\n",
+		"allowed_tools = [\"core:*\", \"orchestration:*\", \"runtime:*\", \"filesystem:*\", \"agent:*\"]\n\n[roles.model]\nunknown_model_key = \"bad\"\n",
+	);
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert!(
+		reports
+			.iter()
+			.any(|r| r.path == "roles.0.model.unknown_model_key"),
+		"expected roles.0.model.unknown_model_key, got: {reports:?}"
+	);
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("roles.0.model.unknown_model_key"));
+}
+
+#[test]
+fn test_validate_reports_ignored_key_in_mcp_servers() {
+	let template = include_str!("../../config-templates/default.toml");
+	let raw = template.replace(
+		"name = \"orchestration\"\n",
+		"name = \"orchestration\"\nunknown_mcp_key = \"bad\"\n",
+	);
+	let value: toml::Value = toml::from_str(&raw).unwrap();
+	let (mut config, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	config.ignored_keys = ignored_keys;
+
+	let reports = config.check_ignored_keys();
+	assert!(
+		reports
+			.iter()
+			.any(|r| r.path.starts_with("mcp.servers.") && r.path.ends_with(".unknown_mcp_key")),
+		"expected mcp.servers.*.unknown_mcp_key, got: {reports:?}"
+	);
+	let err = config.validate_ignored_keys().unwrap_err().to_string();
+	assert!(err.contains("unknown_mcp_key"));
 }

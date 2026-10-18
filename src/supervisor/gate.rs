@@ -1376,9 +1376,8 @@ async fn ask_verifier(
 
 /// Response schema for the JSON wire mode — field for field what the text
 /// protocol asks for in tags. What a schema cannot state (all four shapes
-/// present exactly once, a `settles` accompanying every found="yes", the
-/// condition numbering) stays where it already was: [`VerifierReport::verdict`]
-/// checks it for both encodings.
+/// present exactly once, the condition numbering) stays where it already was:
+/// [`VerifierReport::verdict`] checks it for both encodings.
 fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 	let sources = serde_json::json!({ "type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. Null when no output-visibility exemption is claimed." });
 	serde_json::json!({
@@ -1389,23 +1388,45 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 				"type": "array",
 				"maxItems": expected_conditions,
 				"items": {
-					"type": "object",
-					"additionalProperties": false,
-					"properties": {
-						"sources": sources,
-						"n": { "type": "integer", "description": "Condition number, 1-based." },
-						"status": { "type": "string", "enum": ["matched", "unmatched", "unknown"] },
-						"observation": {
-							"type": "string",
-							"description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."
+					"anyOf": [
+						{
+							"type": "object",
+							"additionalProperties": false,
+							"properties": {
+								"sources": sources,
+								"n": { "type": "integer", "description": "Condition number, 1-based." },
+								"status": { "type": "string", "enum": ["matched", "unknown"] },
+								"observation": {
+									"type": "string",
+									"description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."
+								},
+								"basis": {
+									"type": "null",
+									"description": "Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
+								}
+							},
+							"required": ["n", "status", "observation", "basis", "sources"]
 						},
-						"basis": {
-							"type": ["string", "null"],
-							"enum": [CONDITION_BASES[0], CONDITION_BASES[1], CONDITION_BASES[2], BASIS_INFERENCE, null],
-							"description": "Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
+						{
+							"type": "object",
+							"additionalProperties": false,
+							"properties": {
+								"sources": sources,
+								"n": { "type": "integer", "description": "Condition number, 1-based." },
+								"status": { "type": "string", "enum": ["unmatched"] },
+								"observation": {
+									"type": "string",
+									"description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."
+								},
+								"basis": {
+									"type": "string",
+									"enum": [CONDITION_BASES[0], CONDITION_BASES[1], CONDITION_BASES[2], BASIS_INFERENCE],
+									"description": "Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
+								}
+							},
+							"required": ["n", "status", "observation", "basis", "sources"]
 						}
-					},
-					"required": ["n", "status", "observation", "basis", "sources"]
+					]
 				},
 				"description": "One entry per numbered evidence condition, each exactly once. Empty when none were given."
 			},
@@ -1413,19 +1434,38 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 				"type": "array",
 				"maxItems": REQUIRED_SHAPES.len(),
 				"items": {
-					"type": "object",
-					"additionalProperties": false,
-					"properties": {
-						"sources": sources,
-						"name": { "type": "string", "enum": REQUIRED_SHAPES },
-						"found": { "type": "string", "enum": ["yes", "no", "unknown"] },
-						"reason": { "type": "string", "description": "One-line reason." },
-						"settles": {
-							"type": ["string", "null"],
-							"description": "Required when found is yes: the one observation that would clear it. Null otherwise."
+					"anyOf": [
+						{
+							"type": "object",
+							"additionalProperties": false,
+							"properties": {
+								"sources": sources,
+								"name": { "type": "string", "enum": REQUIRED_SHAPES },
+								"found": { "type": "string", "enum": ["no", "unknown"] },
+								"reason": { "type": "string", "description": "One-line reason." },
+								"settles": {
+									"type": "null",
+									"description": "Required when found is yes: the one observation that would clear it. Null otherwise."
+								}
+							},
+							"required": ["name", "found", "reason", "settles", "sources"]
+						},
+						{
+							"type": "object",
+							"additionalProperties": false,
+							"properties": {
+								"sources": sources,
+								"name": { "type": "string", "enum": REQUIRED_SHAPES },
+								"found": { "type": "string", "enum": ["yes"] },
+								"reason": { "type": "string", "description": "One-line reason." },
+								"settles": {
+									"type": "string",
+									"description": "Required when found is yes: the one observation that would clear it. Null otherwise."
+								}
+							},
+							"required": ["name", "found", "reason", "settles", "sources"]
 						}
-					},
-					"required": ["name", "found", "reason", "settles", "sources"]
+					]
 				},
 				"description": "All four evidence shapes, each exactly once, in every ruling answer."
 			},

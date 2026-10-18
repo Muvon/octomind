@@ -1101,10 +1101,12 @@ fn the_json_path_keeps_the_readback_round() {
 fn the_schema_asks_for_the_protocol_the_checklist_enforces() {
 	let schema = build_gate_schema(2);
 	let properties = &schema["properties"];
-	assert_eq!(
-		properties["shapes"]["items"]["properties"]["name"]["enum"],
-		serde_json::json!(REQUIRED_SHAPES)
-	);
+	for branch in properties["shapes"]["items"]["anyOf"].as_array().unwrap() {
+		assert_eq!(
+			branch["properties"]["name"]["enum"],
+			serde_json::json!(REQUIRED_SHAPES)
+		);
+	}
 	assert_eq!(properties["conditions"]["maxItems"].as_u64(), Some(2));
 	assert_eq!(
 		properties["readback"]["maxItems"].as_u64(),
@@ -1116,6 +1118,139 @@ fn the_schema_asks_for_the_protocol_the_checklist_enforces() {
 		schema["required"],
 		serde_json::json!(["conditions", "shapes", "gaps", "verdict", "readback"])
 	);
+}
+
+#[test]
+fn the_condition_schema_requires_a_basis_only_when_unmatched() {
+	let schema = build_gate_schema(2);
+	let items = &schema["properties"]["conditions"]["items"];
+	assert_eq!(items.as_object().unwrap().len(), 1);
+	let branches = items["anyOf"].as_array().unwrap();
+	assert_eq!(branches.len(), 2);
+	for (branch, statuses, basis_type) in [
+		(
+			&branches[0],
+			serde_json::json!(["matched", "unknown"]),
+			"null",
+		),
+		(&branches[1], serde_json::json!(["unmatched"]), "string"),
+	] {
+		assert_eq!(branch.as_object().unwrap().len(), 4);
+		assert_eq!(branch["type"], "object");
+		assert_eq!(branch["additionalProperties"], false);
+		assert_eq!(
+			branch["required"],
+			serde_json::json!(["n", "status", "observation", "basis", "sources"])
+		);
+		let properties = &branch["properties"];
+		assert_eq!(properties.as_object().unwrap().len(), 5);
+		assert_eq!(
+			properties["status"],
+			serde_json::json!({"type": "string", "enum": statuses})
+		);
+		assert_eq!(properties["basis"]["type"], basis_type);
+		assert_eq!(
+			properties["basis"]["description"],
+			"Required when status is unmatched: what the violation observation is — recorded_output, ground_truth, absent_action, or inference (your own reading of the code, reported but not charged). Null otherwise."
+		);
+		assert_eq!(
+			properties["n"],
+			serde_json::json!({"type": "integer", "description": "Condition number, 1-based."})
+		);
+		assert_eq!(
+			properties["observation"],
+			serde_json::json!({"type": "string", "description": "The observation that demonstrates it, the observation that shows the violation, or why the evidence cannot decide."})
+		);
+		assert_eq!(
+			properties["sources"],
+			serde_json::json!({"type": ["string", "null"], "description": "Comma-separated evidence references: output:N, omitted:N, ground_truth, absent_action. Null when no output-visibility exemption is claimed."})
+		);
+	}
+	// The only branch admitting unmatched requires a string from this enum;
+	// null is admitted only by the matched/unknown branch.
+	assert!(branches[0]["properties"]["basis"].get("enum").is_none());
+	assert_eq!(
+		branches[1]["properties"]["basis"]["enum"],
+		serde_json::json!([
+			"recorded_output",
+			"ground_truth",
+			"absent_action",
+			"inference"
+		])
+	);
+	assert_eq!(
+		octolib::llm::utils::normalize_strict_schema(&schema, octolib::llm::ResponseMode::Strict),
+		schema
+	);
+}
+
+#[test]
+fn the_json_parser_still_rejects_an_unmatched_condition_with_null_basis() {
+	let mut answer = serde_json::json!({
+		"conditions": [{"n": 1, "status": "unmatched", "observation": "no test ran", "basis": null, "sources": null}],
+		"shapes": clean_json_shapes(),
+		"gaps": [],
+		"verdict": "PASS",
+		"readback": []
+	});
+	assert_eq!(
+		json_report(&answer).verdict(1, &HashSet::new()),
+		GateVerdict::Indeterminate("condition 1 unmatched without basis".into())
+	);
+	answer["conditions"][0]["status"] = serde_json::json!("matched");
+	assert_eq!(
+		json_report(&answer).verdict(1, &HashSet::new()),
+		GateVerdict::Pass
+	);
+}
+
+#[test]
+fn the_shape_schema_requires_a_settling_observation_when_found() {
+	let schema = build_gate_schema(0);
+	let items = &schema["properties"]["shapes"]["items"];
+	assert_eq!(items.as_object().unwrap().len(), 1);
+	let branches = items["anyOf"].as_array().unwrap();
+	assert_eq!(branches.len(), 2);
+	for (branch, found, settles_type) in [
+		(&branches[0], serde_json::json!(["no", "unknown"]), "null"),
+		(&branches[1], serde_json::json!(["yes"]), "string"),
+	] {
+		assert_eq!(branch["type"], "object");
+		assert_eq!(branch["additionalProperties"], false);
+		assert_eq!(
+			branch["required"],
+			serde_json::json!(["name", "found", "reason", "settles", "sources"])
+		);
+		assert_eq!(branch["properties"].as_object().unwrap().len(), 5);
+		assert_eq!(
+			branch["properties"]["found"],
+			serde_json::json!({"type": "string", "enum": found})
+		);
+		assert_eq!(branch["properties"]["settles"]["type"], settles_type);
+	}
+	for field in ["name", "reason", "sources"] {
+		assert_eq!(
+			branches[0]["properties"][field],
+			branches[1]["properties"][field]
+		);
+	}
+	let mut answer = serde_json::json!({
+		"conditions": [],
+		"shapes": clean_json_shapes(),
+		"gaps": [],
+		"verdict": "GAPS",
+		"readback": []
+	});
+	answer["shapes"][0]["found"] = serde_json::json!("yes");
+	assert_eq!(
+		json_report(&answer).verdict(0, &HashSet::new()),
+		GateVerdict::Indeterminate("missing verdict markers".into())
+	);
+	answer["shapes"][0]["settles"] = serde_json::json!("independent expectation");
+	assert!(matches!(
+		json_report(&answer).verdict(0, &HashSet::new()),
+		GateVerdict::Gaps(_)
+	));
 }
 
 // ---------------------------------------------------------------------------

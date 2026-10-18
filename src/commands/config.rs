@@ -262,7 +262,10 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		for part in &parts[1..] {
 			let Some((key, value)) = part.split_once('=') else {
 				block_open("config", None);
-				block_close_err("config", "mcp server option must use key=value");
+				block_close_err(
+					"config",
+					&format!("mcp server option '{}' must use key=value", part),
+				);
 				println!();
 				return Ok(());
 			};

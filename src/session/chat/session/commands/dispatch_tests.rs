@@ -88,6 +88,19 @@ async fn test_exit_command() {
 }
 
 #[tokio::test]
+async fn test_help_alias_dispatches_as_help() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let result = dispatch(&mut session, &mut config, "/?")
+		.await
+		.expect("help alias dispatches");
+	assert!(matches!(
+		result,
+		CommandResult::HandledWithOutput(ref output) if matches!(**output, CommandOutput::Help { .. })
+	));
+}
+
+#[tokio::test]
 async fn test_loglevel_mutates_config() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();

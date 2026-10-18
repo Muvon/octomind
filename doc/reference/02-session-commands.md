@@ -23,7 +23,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 
 | Command | Purpose |
 |---------|---------|
-| `/?` | Autocomplete-only entry; not dispatched as help (see transport notes) |
+| `/?` | Alias for `/help` |
 | `/help` | Show the terminal help list plus custom `/run` commands |
 | `/exit` (`/quit`) | Exit the session |
 | `/clear` | Clear the terminal screen |
@@ -58,7 +58,7 @@ arguments. Do not paste shell comments after slash commands: they become argumen
 
 ## Transport support
 
-Every command in the summary except `/?` reaches the shared dispatcher through CLI input, ACP prompts or
+Every command in the summary reaches the shared dispatcher through CLI input, ACP prompts or
 `_octomind/command`, and WebSocket `type: "command"` messages. The table below lists exceptions to identical behavior;
 all remaining commands execute their shared handler on the server and return its typed output. The CLI renders that
 output as terminal text. ACP prompts send it as JSON text in an agent message; ACP extensions return `success`,
@@ -67,7 +67,6 @@ or `success: false`; inspect it, not just the transport envelope.
 
 | Commands | CLI | ACP | WebSocket command |
 |---|---|---|---|
-| `/?` | Falls through as model input, not help. | Unsupported-command reply / extension error. | Unknown-command error. |
 | `/exit`, `/quit` | Exit loop. | Exit request text / `{ "action": "exit" }`; session remains registered. | Save and remove session; connection stays open. |
 | `/new [TITLE]` | Reinitialize a fresh session. | Sets a new name and returns an exit request; use ACP session creation for a fresh conversation. | Sets a new name, saves, and removes session; create another session to continue. |
 | `/clear` | Renderer clears terminal. | Returns success; client decides how to clear UI. | Returns success; client decides how to clear UI. |
@@ -155,10 +154,7 @@ injection correctness can be inspected.
 
 ### `/help`
 
-Show 29 built-ins with descriptions plus custom `/run` commands. `/usage` and `/login` are valid commands but are absent
-from the terminal-rendered list.
-
-> **Note:** `/?` appears in autocomplete but is **not wired into the command dispatcher** — typing it falls through as user input in the CLI. Only `/help` shows help.
+Show 31 built-ins with descriptions plus custom `/run` commands.
 
 ```text
 /help

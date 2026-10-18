@@ -85,6 +85,8 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 				ANALYZE_COMMAND,
 				"Open this session in the web viewer (local-only)",
 			),
+			(USAGE_COMMAND, "Show account usage, quotas, and balance"),
+			(LOGIN_COMMAND, "Sign in to an Octomind account"),
 			(EXIT_COMMAND, "Exit the session"),
 		];
 

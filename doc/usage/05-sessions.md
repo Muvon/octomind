@@ -127,7 +127,7 @@ Reference](../reference/02-session-commands.md) for detailed arguments.
 | Tools and planning | `/mcp`, `/run`, `/plan`, `/skill`, `/schedule` |
 | Account, learning, and viewing | `/usage`, `/login`, `/learning list`, `/share`, `/analyze` |
 
-`/?` is registered for completion but is not dispatched as help; use `/help`.
+`/?` is an alias for `/help`.
 
 `/status` is the activity dashboard: the default view is concise and active-only across agents, MCP background jobs, and
 command monitors. Use `/status agents`, `/status monitors`, or `/status jobs` for the full category view. Status is

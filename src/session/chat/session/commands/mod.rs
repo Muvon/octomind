@@ -439,7 +439,7 @@ pub async fn process_command(
 			exit::handle_exit()?;
 			Ok(CommandResult::Exit)
 		}
-		HELP_COMMAND => help::handle_help(config, &current_role).await,
+		HELP_COMMAND | HELP_COMMAND_ALT => help::handle_help(config, &current_role).await,
 		COPY_COMMAND => copy::handle_copy(session, params),
 		REPLY_COMMAND => reply::handle_reply(session, params),
 		CLEAR_COMMAND => clear::handle_clear(),

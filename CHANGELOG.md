@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.58.8] - 2026-10-18
+
+### 📋 Release Summary
+
+Windows installation is now supported with an install script and Scoop manifest. Supervisor evidence schemas are enforced conditionally, while configuration errors include invalid options and MCP server options preserve equals signs.
+
+### ✨ New Features & Enhancements
+
+- add install.ps1 and a Scoop manifest for Windows `09b73007`
+
+### 🔧 Improvements & Optimizations
+
+- **mcp**: serialize cleanup server test execution `c309c9d0`
+- **workflows**: upgrade Rust toolchain to 1.99.1 `519c9e39`
+- **scoop**: use external Scoop bucket `62746e45`
+- **scoop**: update octomind to 0.58.7 `663028b0`
+
+### 🐛 Bug Fixes & Stability
+
+- **supervisor**: enforce conditional evidence schemas `82bc9744`
+- **config**: include invalid option in config errors `cd335c6f`
+- **config**: preserve equals in MCP server options `e9a83c08`
+
+### 📚 Documentation & Examples
+
+- note Git Bash still works and the Windows VC++ runtime `dc432978`
+- **environment-variables**: clarify evaluation environment variables `9e03a501`
+- **reference**: sync environment variables with octolib 0.43.1 `12eacc97`
+
 ## [0.58.7] - 2026-10-17
 
 ### 📋 Release Summary

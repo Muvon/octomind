@@ -89,11 +89,12 @@ After installation, follow the sign-in and startup steps above.
 ### Scoop (Windows)
 
 ```powershell
-scoop install https://raw.githubusercontent.com/muvon/octomind/master/scoop/octomind.json
+scoop bucket add muvon https://github.com/Muvon/scoop-bucket
+scoop install muvon/octomind
 ```
 
-The manifest covers x86_64 and ARM64 and is kept in this repository until Octomind has a Scoop bucket. It is bumped
-by hand for now, so it can lag the latest release; `install.ps1` always fetches the latest.
+The [Muvon bucket](https://github.com/Muvon/scoop-bucket) provides release binaries for x86_64 and ARM64 and is
+updated on every release. `scoop update octomind` upgrades it.
 
 ### GitHub release archive
 

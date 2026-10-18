@@ -183,7 +183,7 @@ octomind tap yourteam/octomind-tap        # on another machine, after publishing
 | **Install script** (recommended) | `curl -fsSL https://raw.githubusercontent.com/muvon/octomind/master/install.sh \| bash` |
 | **Install script** (Windows PowerShell) | `irm https://raw.githubusercontent.com/muvon/octomind/master/install.ps1 \| iex` |
 | **Homebrew** (macOS) | `brew install muvon/tap/octomind` |
-| **Scoop** (Windows) | `scoop install https://raw.githubusercontent.com/muvon/octomind/master/scoop/octomind.json` |
+| **Scoop** (Windows) | `scoop bucket add muvon https://github.com/Muvon/scoop-bucket` then `scoop install muvon/octomind` |
 | **Cargo** (Rust 1.95+) | `cargo install octomind` |
 | **Docker** | `docker run --rm ghcr.io/muvon/octomind --help` |
 | **From source** | `git clone https://github.com/muvon/octomind.git && cd octomind && cargo build --release` |

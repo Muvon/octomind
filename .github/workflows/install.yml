@@ -1,19 +1,18 @@
 name: Install
 
-# Installs the latest published release through install.ps1 and the Scoop
-# manifest, so changes to either are checked on a real Windows host.
+# Installs the latest published release through install.ps1, so changes to it
+# are checked on a real Windows host. The Scoop manifest is tested in
+# Muvon/scoop-bucket.
 on:
   push:
     branches: [ master, main, develop ]
     paths:
       - install.ps1
-      - scoop/**
       - .github/workflows/install.yml
   pull_request:
     branches: [ master, main, develop ]
     paths:
       - install.ps1
-      - scoop/**
       - .github/workflows/install.yml
 
 permissions:
@@ -54,30 +53,5 @@ jobs:
       run: |
         $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
         (Get-Command octomind).Source
-        octomind --version
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  scoop:
-    name: Scoop manifest
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Scoop
-      run: |
-        Invoke-RestMethod https://get.scoop.sh -OutFile install-scoop.ps1
-        # Hosted runners run as administrator, which Scoop refuses without -RunAsAdmin
-        ./install-scoop.ps1 -RunAsAdmin
-        Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\scoop\shims"
-
-    - name: scoop install from scoop/octomind.json
-      run: |
-        # A relative path reads as <bucket>/<app>; an absolute one is a local manifest
-        scoop install "$PWD\scoop\octomind.json"
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         octomind --version
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

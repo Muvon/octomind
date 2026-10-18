@@ -146,7 +146,7 @@ request_timeout_seconds = 300
 #   • DEEPSEEK_API_KEY - for DeepSeek (https://platform.deepseek.com/)
 #   • GOOGLE_APPLICATION_CREDENTIALS - path to Google Cloud credentials JSON
 #   • AWS_ACCESS_KEY_ID - for Amazon Bedrock
-#   • CLOUDFLARE_API_TOKEN - for Cloudflare Workers AI
+#   • CLOUDFLARE_API_KEY - for Cloudflare Workers AI
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROLE CONFIGURATIONS

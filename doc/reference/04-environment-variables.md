@@ -68,7 +68,7 @@ Required unless the row says otherwise; unset credentials do not inherit from an
 | `GOOGLE_APPLICATION_CREDENTIALS` | `google-vertex` | Fallback service-account JSON path. Also displayed by Octomind config inspection. |
 | `AWS_BEARER_TOKEN_BEDROCK` | `amazon` | Nonempty Bedrock bearer token; this adapter does not use SigV4 access keys. |
 | `AWS_ACCESS_KEY_ID` | Inspection only | Read by `octomind config` status rows; setting it does not authenticate the current Bedrock adapter. |
-| `CLOUDFLARE_API_TOKEN` | `cloudflare` | Workers AI token. |
+| `CLOUDFLARE_API_KEY` | `cloudflare` | Workers AI token. |
 | `CLOUDFLARE_ACCOUNT_ID` | `cloudflare` | Required account identifier when forming a request. |
 | `CEREBRAS_API_KEY` | `cerebras` | Cerebras credential. |
 | `GROQ_API_KEY` | `groq` | Groq credential. |
@@ -184,8 +184,8 @@ octomind run --model cli:codex/gpt-5
 ## Evaluation and hindsight variables
 
 The evaluation variables are read only by the evaluation model: `[decision] model` (default `cloudflare:typesafe/jev`)
-and `octomind evaluate`. Chat models never read them. The Cloudflare evaluation provider uses `CLOUDFLARE_API_KEY`,
-not the chat provider's `CLOUDFLARE_API_TOKEN`; the `octohub` evaluation provider reuses `OCTOHUB_API_KEY` and
+and `octomind evaluate`. Chat models never read them. The Cloudflare evaluation provider uses the same
+`CLOUDFLARE_API_KEY` as the chat provider; the `octohub` evaluation provider reuses `OCTOHUB_API_KEY` and
 `OCTOHUB_API_URL`. The optional `HF_TOKEN` is read when loading the `[supervisor.hindsight]` model.
 
 | Variable | When read / effect |

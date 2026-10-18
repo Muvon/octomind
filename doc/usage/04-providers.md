@@ -220,7 +220,7 @@ The table reflects `octolib` 0.43.1, locked in `Cargo.lock`. Endpoint variables 
 | Google Vertex AI | `google-vertex` | `GOOGLE_VERTEX_CREDENTIAL_FILE` or `GOOGLE_APPLICATION_CREDENTIALS`; optional `GOOGLE_VERTEX_PROJECT_ID`, `GOOGLE_VERTEX_LOCATION` | `GOOGLE_VERTEX_API_URL` |
 | Google AI Studio | `google-studio` | `GOOGLE_STUDIO_API_KEY` | `GOOGLE_STUDIO_API_URL` |
 | Amazon Bedrock | `amazon` | `AWS_BEARER_TOKEN_BEDROCK`; optional `AWS_BEDROCK_REGION` | `AWS_BEDROCK_API_URL` |
-| Cloudflare Workers AI | `cloudflare` | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `CLOUDFLARE_API_URL` |
+| Cloudflare Workers AI | `cloudflare` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` | `CLOUDFLARE_API_URL` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | — |
 | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `CEREBRAS_API_URL` |
 | Groq | `groq` | `GROQ_API_KEY` | `GROQ_API_URL` |

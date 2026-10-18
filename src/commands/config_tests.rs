@@ -106,6 +106,24 @@ fn test_validate_template_config() {
 }
 
 #[test]
+fn test_cloudflare_api_key_row_reads_the_provider_variable() {
+	let cloudflare = ENV_API_KEY_ROWS
+		.iter()
+		.find(|(provider, _)| *provider == "Cloudflare")
+		.expect("api keys must include a Cloudflare row");
+	assert_eq!(
+		cloudflare.1, "CLOUDFLARE_API_KEY",
+		"the Cloudflare provider reads CLOUDFLARE_API_KEY"
+	);
+	assert!(
+		!ENV_API_KEY_ROWS
+			.iter()
+			.any(|(_, env_var)| *env_var == "CLOUDFLARE_API_TOKEN"),
+		"no provider reads the retired CLOUDFLARE_API_TOKEN"
+	);
+}
+
+#[test]
 fn test_show_configuration_renders_external_servers() {
 	let mut config = template_config();
 	config.mcp.servers.push(McpServerConfig::http(

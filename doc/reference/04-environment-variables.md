@@ -84,13 +84,13 @@ Required unless the row says otherwise; unset credentials do not inherit from an
 | `FEATHERLESS_API_KEY` | `featherless` | Featherless credential. |
 | `HETZNER_API_KEY` | `hetzner` | Hetzner credential. |
 | `OPENCODE_API_KEY` | `opencode-zen`, `opencode-go` | Shared credential for both OpenCode adapters. |
-| `OCTOHUB_API_KEY` | `octohub` | Gateway credential; `octomind login` writes it to the shared `.env` and current process. Account lookup also reads it for legacy migration. |
-| `OLLAMA_API_KEY` | `ollama` | Optional; omitted becomes an empty credential. |
-| `LOCAL_API_KEY` | `local` | Optional; omitted becomes an empty credential. |
 | `INCEPTION_API_KEY` | `inception` | Inception Labs credential. |
 | `META_API_KEY` | `meta` | Meta Model API credential; falls back to `MODEL_API_KEY` when absent. |
 | `TINKER_API_KEY` | `tinker` | Tinker credential. |
 | `WEBWRIGHT_API_KEY` | `webwright` | WebWright credential. |
+| `OCTOHUB_API_KEY` | `octohub` | Gateway credential; `octomind login` writes it to the shared `.env` and current process. Account lookup also reads it for legacy migration. |
+| `OLLAMA_API_KEY` | `ollama` | Optional; omitted becomes an empty credential. |
+| `LOCAL_API_KEY` | `local` | Optional; omitted becomes an empty credential. |
 
 ```bash
 export OPENROUTER_API_KEY="YOUR_PROVIDER_KEY"
@@ -183,13 +183,16 @@ octomind run --model cli:codex/gpt-5
 
 ## Evaluation and hindsight variables
 
-Delegated to the locked octolib evaluation and hindsight modules. These are separate from the provider credentials above.
+The evaluation variables are read only by the evaluation model: `[decision] model` (default `cloudflare:typesafe/jev`)
+and `octomind evaluate`. Chat models never read them. The Cloudflare evaluation provider uses `CLOUDFLARE_API_KEY`,
+not the chat provider's `CLOUDFLARE_API_TOKEN`; the `octohub` evaluation provider reuses `OCTOHUB_API_KEY` and
+`OCTOHUB_API_URL`. The optional `HF_TOKEN` is read when loading the `[supervisor.hindsight]` model.
 
 | Variable | When read / effect |
 |---|---|
 | `TYPESAFE_API_KEY` | Required by the TypeSafe evaluation provider. |
 | `TYPESAFE_BASE_URL` | Optional TypeSafe API root; default `https://api.typesafe.ai`. |
-| `CLOUDFLARE_API_KEY` | Required by the Cloudflare evaluation provider, together with `CLOUDFLARE_ACCOUNT_ID`. |
+| `CLOUDFLARE_API_KEY` | Required by the Cloudflare evaluation provider, together with `CLOUDFLARE_ACCOUNT_ID` unless `CLOUDFLARE_EVALUATION_API_URL` is set. |
 | `CLOUDFLARE_EVALUATION_API_URL` | Optional full override of the Cloudflare evaluation run URL; the default is constructed from `CLOUDFLARE_ACCOUNT_ID`. |
 | `HF_TOKEN` | Hugging Face token for loading a private hindsight model repository. Public repositories load without it. |
 

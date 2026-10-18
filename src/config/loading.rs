@@ -510,7 +510,8 @@ impl Config {
 			let merged_value = load_and_merge_toml_from_directory(path)?;
 
 			let (mut config, ignored_keys) =
-				crate::config::validation::deserialize_with_ignored_keys(merged_value)?;
+				crate::config::validation::deserialize_with_ignored_keys(merged_value)
+					.context("Failed to parse merged TOML configuration")?;
 			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.join("config.toml"));

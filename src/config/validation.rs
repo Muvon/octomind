@@ -279,122 +279,169 @@ impl IgnoredKeyReport {
 	}
 }
 
-const ROOT_FIELDS: &[&str] = &[
-	"version",
-	"log_level",
-	"model",
-	"default",
-	"mcp_response_tokens_threshold",
-	"max_session_tokens_threshold",
-	"cache_keepalive_enabled",
-	"cache_keepalive_max_idle_seconds",
-	"enable_markdown_rendering",
-	"markdown_theme",
-	"max_session_spending_threshold",
-	"max_request_spending_threshold",
-	"agents",
-	"roles",
-	"mcp",
-	"commands",
-	"layers",
-	"prompts",
-	"compression",
-	"decision",
-	"supervisor",
-	"system",
-	"sandbox",
-	"telemetry",
-	"capabilities",
-	"taps",
-	"auto_capabilities",
-	"skills",
-	"timing",
-	"hooks",
-	"registry",
-];
-
-const MODEL_FIELDS: &[&str] = &[
-	"name",
-	"model",
-	"reasoning_effort",
-	"max_tokens",
-	"temperature",
-	"top_p",
-	"top_k",
-	"max_retries",
-	"retry_timeout",
-	"request_timeout_seconds",
-];
-
-const COMPRESSION_FIELDS: &[&str] = &[
-	"threshold",
-	"model",
-	"knowledge_retention",
-	"analysis_findings_max_tokens",
-	"attention",
-];
-
-const COMPRESSION_ATTENTION_FIELDS: &[&str] = &["enabled", "validator", "telemetry", "governance"];
-
-const SUPERVISOR_FIELDS: &[&str] = &[
-	"enabled",
-	"model",
-	"learning",
-	"gate",
-	"authorizer",
-	"hindsight",
-	"plan",
-	"condense",
-];
-
-const SUPERVISOR_LEARNING_FIELDS: &[&str] = &["enabled", "evolution"];
-
-const SKILLS_FIELDS: &[&str] = &[
-	"auto_activation",
-	"auto_validation",
-	"activation_timeout",
-	"validation_timeout",
-	"max_retries",
-];
-
-const TIMING_FIELDS: &[&str] = &[
-	"think_overhead_min",
-	"deliberation_factor",
-	"attention_window_min",
-	"review_weight",
-	"wait_weight",
-	"switch_cost_dhe",
-];
-
-const DECISION_FIELDS: &[&str] = &[
-	"model",
-	"recall",
-	"skills",
-	"capabilities",
-	"compression",
-	"supervisor",
-];
-
-const MCP_FIELDS: &[&str] = &["allowed_tools", "servers", "aliases"];
-
-const ROLE_FIELDS: &[&str] = &["name", "system", "welcome", "mcp", "model"];
+static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock::new(|| {
+	let template = include_str!("../../config-templates/default.toml");
+	toml::from_str(template).unwrap_or(toml::Value::Table(toml::map::Map::new()))
+});
 
 fn section_has_field(section: &str, field: &str) -> bool {
-	let fields: &[&str] = match section {
-		"" => ROOT_FIELDS,
-		"model" => MODEL_FIELDS,
-		"compression" => COMPRESSION_FIELDS,
-		"compression.attention" => COMPRESSION_ATTENTION_FIELDS,
-		"supervisor" => SUPERVISOR_FIELDS,
-		"supervisor.learning" => SUPERVISOR_LEARNING_FIELDS,
-		"skills" => SKILLS_FIELDS,
-		"timing" => TIMING_FIELDS,
-		"decision" => DECISION_FIELDS,
-		"mcp" => MCP_FIELDS,
-		s if s == "roles" || s.starts_with("roles.") => ROLE_FIELDS,
-		_ => &[],
-	};
-	fields.contains(&field)
+	let mut current: &toml::Value = &DEFAULT_TEMPLATE;
+	if !section.is_empty() {
+		for segment in section.split('.') {
+			if let Ok(idx) = segment.parse::<usize>() {
+				if let Some(arr) = current.as_array() {
+					if let Some(item) = arr.get(idx).or_else(|| arr.first()) {
+						current = item;
+						continue;
+					}
+				}
+				return false;
+			} else if let Some(next) = current.get(segment) {
+				current = next;
+			} else if let Some(arr) = current.as_array() {
+				if let Some(item) = arr.first().and_then(|v| v.get(segment)) {
+					current = item;
+				} else {
+					return false;
+				}
+			} else {
+				return false;
+			}
+		}
+	}
+
+	match current {
+		toml::Value::Table(table) => table.contains_key(field),
+		toml::Value::Array(arr) => arr
+			.iter()
+			.any(|v| v.as_table().map(|t| t.contains_key(field)).unwrap_or(false)),
+		_ => false,
+	}
+}
+
+/// Deserialize a TOML value into Config, capturing unknown/ignored keys across
+/// the root configuration, flattened `roles`, `roles.model`, and tagged `mcp.servers`.
+pub fn deserialize_with_ignored_keys(value: toml::Value) -> Result<(Config, Vec<String>)> {
+	let mut ignored_keys = Vec::new();
+
+	let config: Config = serde_ignored::deserialize(value.clone(), |path| {
+		ignored_keys.push(path.to_string());
+	})
+	.map_err(|e| anyhow!("Failed to parse TOML configuration: {e}"))?;
+
+	// Roles: serde_ignored cannot penetrate #[serde(flatten)] on Role,
+	// so re-run deserialization on each role table into RoleConfig.
+	if let Some(roles) = value.get("roles").and_then(toml::Value::as_array) {
+		for (i, role) in roles.iter().enumerate() {
+			if let Some(role_table) = role.as_table() {
+				let role_val = toml::Value::Table(role_table.clone());
+				let _: Result<crate::config::roles::RoleConfig, _> =
+					serde_ignored::deserialize(role_val, |path| {
+						let p = path.to_string();
+						if p == "name" || p == "mcp" || p.starts_with("mcp.") {
+							return;
+						}
+						ignored_keys.push(format!("roles.{i}.{p}"));
+					});
+				if let Some(mcp) = role_table.get("mcp") {
+					let _: Result<crate::config::mcp::RoleMcpConfig, _> =
+						serde_ignored::deserialize(mcp.clone(), |path| {
+							ignored_keys.push(format!("roles.{i}.mcp.{path}"));
+						});
+				}
+			}
+		}
+	}
+
+	// MCP Servers: serde_ignored cannot penetrate #[serde(tag = "type")] on McpServerConfig,
+	// so check each variant table individually.
+	if let Some(servers) = value
+		.get("mcp")
+		.and_then(|m| m.get("servers"))
+		.and_then(toml::Value::as_array)
+	{
+		for (i, server) in servers.iter().enumerate() {
+			if let Some(server_table) = server.as_table() {
+				let server_val = toml::Value::Table(server_table.clone());
+				let server_type = server_table.get("type").and_then(toml::Value::as_str);
+				match server_type {
+					Some("builtin") => {
+						#[derive(serde::Deserialize)]
+						struct BuiltinCheck {
+							#[allow(dead_code)]
+							r#type: String,
+							#[allow(dead_code)]
+							name: Option<String>,
+							#[allow(dead_code)]
+							timeout_seconds: Option<u64>,
+							#[allow(dead_code)]
+							tools: Option<Vec<String>>,
+							#[allow(dead_code)]
+							auto_bind: Option<Vec<String>>,
+						}
+						let _: Result<BuiltinCheck, _> =
+							serde_ignored::deserialize(server_val, |path| {
+								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
+							});
+					}
+					Some("http") => {
+						#[derive(serde::Deserialize)]
+						struct HttpCheck {
+							#[allow(dead_code)]
+							r#type: String,
+							#[allow(dead_code)]
+							name: Option<String>,
+							#[allow(dead_code)]
+							url: Option<String>,
+							#[allow(dead_code)]
+							timeout_seconds: Option<u64>,
+							#[allow(dead_code)]
+							tools: Option<Vec<String>>,
+							#[allow(dead_code)]
+							headers: Option<std::collections::HashMap<String, String>>,
+							#[allow(dead_code)]
+							auto_bind: Option<Vec<String>>,
+						}
+						let _: Result<HttpCheck, _> =
+							serde_ignored::deserialize(server_val, |path| {
+								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
+							});
+					}
+					Some("stdio") => {
+						#[derive(serde::Deserialize)]
+						struct StdioCheck {
+							#[allow(dead_code)]
+							r#type: String,
+							#[allow(dead_code)]
+							name: Option<String>,
+							#[allow(dead_code)]
+							command: Option<String>,
+							#[allow(dead_code)]
+							args: Option<Vec<String>>,
+							#[allow(dead_code)]
+							timeout_seconds: Option<u64>,
+							#[allow(dead_code)]
+							tools: Option<Vec<String>>,
+							#[allow(dead_code)]
+							env: Option<std::collections::HashMap<String, String>>,
+							#[allow(dead_code)]
+							auto_bind: Option<Vec<String>>,
+						}
+						let _: Result<StdioCheck, _> =
+							serde_ignored::deserialize(server_val, |path| {
+								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
+							});
+					}
+					_ => {}
+				}
+			}
+		}
+	}
+
+	let mut seen = std::collections::HashSet::new();
+	ignored_keys.retain(|k| seen.insert(k.clone()));
+
+	Ok((config, ignored_keys))
 }
 
 /// Detects if an ignored dotted path looks like a scalar placed after a table header.

@@ -567,25 +567,28 @@ const ENV_API_KEY_ROWS: [(&str, &str); 6] = [
 
 /// Render an env-var API key row under the current /config block.
 fn render_env_api_key_row(provider: &str, env_var: &str) {
+	block_row_text(&env_api_key_row(provider, env_var));
+}
+
+/// The api-keys row for one provider, as `octomind config` renders it.
+fn env_api_key_row(provider: &str, env_var: &str) -> String {
 	match std::env::var(env_var) {
 		Ok(value) if !value.trim().is_empty() => {
 			let tracker = octomind::config::get_env_tracker();
 			let source_desc = tracker.lock().unwrap().get_source_description(env_var);
-			block_row_text(&format!(
+			format!(
 				"{}  {} {}",
 				format!("{:<11}", provider).bright_white(),
 				"✓".bright_green(),
 				format!("set via {}", source_desc).dimmed(),
-			));
+			)
 		}
-		_ => {
-			block_row_text(&format!(
-				"{}  {} {}",
-				format!("{:<11}", provider).bright_white(),
-				"✗".bright_red(),
-				format!("not set (export {})", env_var).dimmed(),
-			));
-		}
+		_ => format!(
+			"{}  {} {}",
+			format!("{:<11}", provider).bright_white(),
+			"✗".bright_red(),
+			format!("not set (export {})", env_var).dimmed(),
+		),
 	}
 }
 

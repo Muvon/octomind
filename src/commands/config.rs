@@ -434,12 +434,9 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// ── env api keys ─────────────────────────────────────────────────
 	block_section("api keys");
-	render_env_api_key_row("OpenRouter", "OPENROUTER_API_KEY");
-	render_env_api_key_row("OpenAI", "OPENAI_API_KEY");
-	render_env_api_key_row("Anthropic", "ANTHROPIC_API_KEY");
-	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
-	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
-	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
+	for (provider, env_var) in ENV_API_KEY_ROWS {
+		render_env_api_key_row(provider, env_var);
+	}
 	render_octomind_cloud_row();
 	render_local_api_key_row();
 
@@ -556,6 +553,17 @@ fn render_local_api_key_row() {
 		}
 	}
 }
+
+/// Provider credential rows of the `octomind config` api-keys block: display name and the
+/// environment variable the provider actually reads (octolib 0.43.1).
+const ENV_API_KEY_ROWS: [(&str, &str); 6] = [
+	("OpenRouter", "OPENROUTER_API_KEY"),
+	("OpenAI", "OPENAI_API_KEY"),
+	("Anthropic", "ANTHROPIC_API_KEY"),
+	("Google", "GOOGLE_APPLICATION_CREDENTIALS"),
+	("Amazon", "AWS_ACCESS_KEY_ID"),
+	("Cloudflare", "CLOUDFLARE_API_KEY"),
+];
 
 /// Render an env-var API key row under the current /config block.
 fn render_env_api_key_row(provider: &str, env_var: &str) {
@@ -702,12 +710,9 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 
 	// ── api keys ──────────────────────────────────────────────────────
 	block_section("api keys");
-	render_env_api_key_row("OpenRouter", "OPENROUTER_API_KEY");
-	render_env_api_key_row("OpenAI", "OPENAI_API_KEY");
-	render_env_api_key_row("Anthropic", "ANTHROPIC_API_KEY");
-	render_env_api_key_row("Google", "GOOGLE_APPLICATION_CREDENTIALS");
-	render_env_api_key_row("Amazon", "AWS_ACCESS_KEY_ID");
-	render_env_api_key_row("Cloudflare", "CLOUDFLARE_API_TOKEN");
+	for (provider, env_var) in ENV_API_KEY_ROWS {
+		render_env_api_key_row(provider, env_var);
+	}
 	render_octomind_cloud_row();
 	render_local_api_key_row();
 

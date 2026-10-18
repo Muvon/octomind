@@ -71,7 +71,7 @@ For a provider authentication error, check the variables named in the shipped co
 | DeepSeek | `DEEPSEEK_API_KEY` |
 | Google | `GOOGLE_APPLICATION_CREDENTIALS` (credentials JSON path) |
 | Amazon | `AWS_ACCESS_KEY_ID` |
-| Cloudflare | `CLOUDFLARE_API_TOKEN` |
+| Cloudflare | `CLOUDFLARE_API_KEY` |
 
 For example, substitute your provider-issued key:
 

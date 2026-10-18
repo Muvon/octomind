@@ -106,7 +106,9 @@ fn test_validate_template_config() {
 }
 
 #[test]
+#[serial]
 fn test_cloudflare_api_key_row_reads_the_provider_variable() {
+	let _env = EnvGuard::new(&["CLOUDFLARE_API_KEY", "CLOUDFLARE_API_TOKEN"]);
 	let cloudflare = ENV_API_KEY_ROWS
 		.iter()
 		.find(|(provider, _)| *provider == "Cloudflare")
@@ -120,6 +122,23 @@ fn test_cloudflare_api_key_row_reads_the_provider_variable() {
 			.iter()
 			.any(|(_, env_var)| *env_var == "CLOUDFLARE_API_TOKEN"),
 		"no provider reads the retired CLOUDFLARE_API_TOKEN"
+	);
+
+	// The row both `config` and `config --show` render must report the provider's variable as
+	// set when only it is exported.
+	std::env::remove_var("CLOUDFLARE_API_TOKEN");
+	std::env::set_var("CLOUDFLARE_API_KEY", "test-key");
+	let row = env_api_key_row(cloudflare.0, cloudflare.1);
+	assert!(
+		row.contains("set via"),
+		"exporting only CLOUDFLARE_API_KEY must report Cloudflare as set, got: {row}"
+	);
+
+	std::env::remove_var("CLOUDFLARE_API_KEY");
+	let unset = env_api_key_row(cloudflare.0, cloudflare.1);
+	assert!(
+		unset.contains("export CLOUDFLARE_API_KEY") && !unset.contains("CLOUDFLARE_API_TOKEN"),
+		"the unset hint must name the variable the provider reads, got: {unset}"
 	);
 }
 

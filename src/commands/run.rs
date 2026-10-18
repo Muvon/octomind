@@ -192,3 +192,7 @@ fn read_input() -> Result<String> {
 		anyhow::bail!("--format requires input via stdin or piped data")
 	}
 }
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

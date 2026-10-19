@@ -11,7 +11,7 @@ Thank you for your interest in contributing. This document covers everything you
 - [Architecture Overview](#architecture-overview)
 - [Adding Features](#adding-features)
   - [New MCP Tool](#new-mcp-tool)
-  - [New Session Command](#new-session-command)
+  - [New Session Command](#new-session-command-name)
   - [New Config Field](#new-config-field)
   - [New Session-Scoped State](#new-session-scoped-state)
 - [Rust Patterns](#rust-patterns)

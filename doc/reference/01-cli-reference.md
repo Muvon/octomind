@@ -10,15 +10,16 @@ octomind [COMMAND]
 octomind COMMAND --help
 ```
 
-Options belong after their subcommand; there are no inherited application options. Boolean switches default to `false`,
-optional values to unset, and repeatable options to an empty list unless stated otherwise.
+Most options belong after their subcommand. The global `-c/--config` option can appear before or after a subcommand;
+Boolean switches default to `false`, optional values to unset, and repeatable options to an empty list unless stated
+otherwise.
 
 The subcommand is optional. Bare `octomind` behaves as `octomind run` with the configured default tag.
 
 | Command | Purpose |
 |---------|---------|
 | `run` | Start an interactive or non-interactive AI session (the main command). |
-| `login` | Sign in to an Octomind account and store the minted OctoHub key. |
+| `login` | Sign in to an Octomind account or a ChatGPT subscription. |
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
@@ -32,6 +33,18 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 | `complete` | Hidden: print cached completion candidates. |
 | `distill` | Hidden: extract memories from a disposable transcript snapshot. |
 | `help [COMMAND]...` | Clap-generated help, including nested commands such as `help tap init`. |
+
+### Global config overrides
+
+Use `-c/--config KEY=VALUE` to override an existing config value for one invocation. `KEY` is a dotted path, and the
+option can be repeated. Values are parsed as TOML values when possible; otherwise they are treated as strings. Unknown
+keys and paths through arrays are errors. Array indexes are not supported. Overrides are not saved to the config file,
+and they cannot be combined with the `config` subcommand.
+
+```bash
+octomind -c supervisor.enabled=false run
+octomind run -c supervisor.enabled=false -c log_level=debug
+```
 
 The global config file lives at `~/.local/share/octomind/config/config.toml` on macOS and Linux
 (`%LOCALAPPDATA%\octomind\config\config.toml` on Windows). Override the load path with `OCTOMIND_CONFIG_PATH`, or
@@ -65,6 +78,17 @@ Sign in through the browser-confirmed device flow and store the minted OctoHub k
 octomind login
 octomind login --force --no-browser
 ```
+
+Use `octomind login chatgpt` to sign in with a ChatGPT account. Models with the `chatgpt:` prefix use the signed-in
+account's ChatGPT plan:
+
+```bash
+octomind login chatgpt
+octomind run -m 'chatgpt:<model>'
+```
+
+Add `--force` to sign in again or `--no-browser` to print the authorization URL instead of opening it. See the
+[provider reference](../usage/04-providers.md#provider-reference) for the `chatgpt:` prefix.
 
 ## `octomind config [OPTIONS]`
 

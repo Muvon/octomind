@@ -145,8 +145,13 @@ In session mode both passes, and the verifier, also see which existing generated
 session: guidance whose rule was delivered and evolved skills that were injected. These are read from the markers
 delivery leaves in the transcript. Pipes, guards, hooks, and validators leave none and are not listed. A user's
 correction of what a live artifact made the agent do is the evidence that lets a candidate supersede it. A successful
-session never credits a live artifact, because only its trial measures that. Recall does not bring live artifacts back:
-loading behavior from memory would hand the control arm the treatment.
+session never credits a live artifact, because only its trial measures that.
+
+Each stored experience also keeps its **harness**: the IDs of the generated behavior live in the session that
+produced it (`artifacts` in the record frontmatter; consolidation keeps the union). When recall shows that experience,
+its card names the harness skills that are live in the recalling session as `skills=`, and the agent can load them
+with the skill tool. Skills in shadow or in a control arm are never named, because naming one would hand the control
+arm the treatment. Guidance is not named either: once delivered, it is already in context.
 
 The 2,000-token active-pack cap and its 512-token global-rule sub-cap are fixed constants, not knobs.
 

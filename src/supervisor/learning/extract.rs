@@ -264,7 +264,15 @@ pub async fn run_extraction(
 				}
 				None => None,
 			};
-			if let Some(experience) = validated {
+			if let Some(mut experience) = validated {
+				// Linked after validation: the repair path rebuilds the candidate.
+				experience.lesson.artifacts = match super::evolution::list_records() {
+					Ok(records) => super::evolution::live_in_session(messages, &records),
+					Err(error) => {
+						crate::log_debug!("Experience stored without its harness: {}", error);
+						Vec::new()
+					}
+				};
 				let id = experience.lesson.file_id();
 				if backend.store(&experience.lesson).await.is_ok() {
 					experience_id = Some(id);
@@ -860,6 +868,7 @@ fn parse_lessons_with_evidence(
 					created: now.clone(),
 					related: Vec::new(),
 					evidence: Vec::new(),
+					artifacts: Vec::new(),
 					outcome: super::TrajectoryOutcome::Unknown,
 					last_used: String::new(),
 					use_count: 0,
@@ -1108,6 +1117,7 @@ fn parse_orientation_tags(
 					created: now.clone(),
 					related: Vec::new(),
 					evidence,
+					artifacts: Vec::new(),
 					outcome: super::TrajectoryOutcome::Unknown,
 					last_used: String::new(),
 					use_count: 0,
@@ -1292,6 +1302,7 @@ fn parse_experience_tag(
 			created: chrono::Utc::now().to_rfc3339(),
 			related,
 			evidence,
+			artifacts: Vec::new(),
 			outcome,
 			last_used: String::new(),
 			use_count: 0,

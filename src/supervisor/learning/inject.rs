@@ -32,6 +32,8 @@ struct SelectedMemory {
 	lesson: crate::supervisor::learning::Lesson,
 	global: bool,
 	reference: Option<String>,
+	/// Evolved skills from the record's harness that are live here.
+	skills: Vec<String>,
 }
 
 const FILE_RETRIEVAL_PROMPT: &str = r#"# Task
@@ -160,11 +162,13 @@ pub async fn retrieve_and_format(
 		}
 		let id = format!("M{}", selected.len() + 1);
 		let reference = memory_reference(&lesson, global);
+		let skills = crate::supervisor::learning::evolution::applied_skill_names(&lesson.artifacts);
 		let item_tokens = crate::session::estimate_tokens(&render_item(
 			&id,
 			&lesson,
 			global,
 			reference.as_deref(),
+			&skills,
 		));
 		if global && global_tokens.saturating_add(item_tokens) > MAX_GLOBAL_PACK_TOKENS {
 			continue;
@@ -174,6 +178,7 @@ pub async fn retrieve_and_format(
 			lesson,
 			global,
 			reference,
+			skills,
 		});
 		let prospective = format_pack(&selected);
 		if crate::session::estimate_tokens(&prospective) > MAX_MEMORY_PACK_TOKENS {
@@ -270,6 +275,7 @@ fn render_item(
 	lesson: &crate::supervisor::learning::Lesson,
 	global: bool,
 	reference: Option<&str>,
+	skills: &[String],
 ) -> String {
 	let scope = if global { "global" } else { "scoped" };
 	let reference = reference
@@ -291,13 +297,20 @@ fn render_item(
 			} else {
 				String::new()
 			};
+		// The record's harness, limited to skills loadable in this session.
+		let skills = if skills.is_empty() {
+			String::new()
+		} else {
+			format!(" skills={}", crate::supervisor::escape_xml_text(&skills.join(",")))
+		};
 		format!(
-			"- [{id} scope={scope} experience outcome={} confidence={}{} related={} evidence={}] {}\n{}{}\n",
+			"- [{id} scope={scope} experience outcome={} confidence={}{} related={} evidence={}{}] {}\n{}{}\n",
 			lesson.outcome.as_str(),
 			crate::supervisor::escape_xml_text(&lesson.confidence),
 			reference,
 			crate::supervisor::escape_xml_text(&lesson.related.join(",")),
 			crate::supervisor::escape_xml_text(&lesson.evidence.join(",")),
+			skills,
 			crate::supervisor::escape_xml_text(&lesson.title),
 			crate::supervisor::escape_xml_text(&inline),
 			recovery
@@ -339,6 +352,7 @@ fn format_pack(selected: &[SelectedMemory]) -> String {
 			&item.lesson,
 			item.global,
 			item.reference.as_deref(),
+			&item.skills,
 		);
 		if item.lesson.memory_type == "orientation" {
 			orient_block.push_str(&rendered);
@@ -349,7 +363,7 @@ fn format_pack(selected: &[SelectedMemory]) -> String {
 		}
 	}
 	if !experience_block.is_empty() {
-		inner.push_str("<experiences>\nGrounded long-lived trajectories. Reuse only under matching conditions; verify mutable facts and inspect the referenced file when the card is insufficient.\n");
+		inner.push_str("<experiences>\nGrounded long-lived trajectories. Reuse only under matching conditions; verify mutable facts and inspect the referenced file when the card is insufficient. `skills=` names generated skills that ran in that trajectory and are available now through the skill tool.\n");
 		inner.push_str(&experience_block);
 		inner.push_str("</experiences>\n");
 	}

@@ -292,6 +292,25 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 }
 
 #[test]
+fn experience_card_names_only_the_live_skills_it_is_given() {
+	let experience = Lesson {
+		content: "body".to_string(),
+		title: "Schema migration".to_string(),
+		memory_type: "experience".to_string(),
+		artifacts: vec!["evo-schema".to_string()],
+		..Default::default()
+	};
+	let card = render_item("M1", &experience, false, None, &["evolved-schema".to_string()]);
+	assert!(card.contains(" skills=evolved-schema] Schema migration"));
+	assert!(!render_item("M1", &experience, false, None, &[]).contains("skills="));
+	// Outside a session nothing is applied, so a stored harness names nothing.
+	assert!(
+		crate::supervisor::learning::evolution::applied_skill_names(&experience.artifacts)
+			.is_empty()
+	);
+}
+
+#[test]
 fn retrieval_rewrite_validation_accepts_keywords_and_rejects_answers() {
 	let valid = validate_retrieval_patterns(
 		"oauth callback\npkce verifier\nstate parameter\nsession fixation\ncsrf protection",

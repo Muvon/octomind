@@ -675,6 +675,38 @@ fn unescape_preserves_unknown_escapes_and_trailing_backslash() {
 
 #[serial_test::serial]
 #[tokio::test]
+async fn experience_harness_survives_store_and_parse() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let mut experience = lesson_with("verified schema migration trajectory", &["schema"]);
+	experience.memory_type = "experience".to_string();
+	experience.role = "developer".to_string();
+	experience.project = "project".to_string();
+	experience.created = "2026-01-01T00:00:00Z".to_string();
+	experience.artifacts = vec!["evo-rule".to_string(), "evo-skill".to_string()];
+	FileBackend.store(&experience).await.unwrap();
+
+	let stored = FileBackend
+		.retrieve_all("developer", "project")
+		.await
+		.unwrap();
+	assert_eq!(stored.len(), 1);
+	assert_eq!(stored[0].artifacts, experience.artifacts);
+	// Records written before the field existed parse with no harness.
+	let legacy = FileBackend::parse_lesson_file("---\ncontent: \"x\"\n---\n").unwrap();
+	assert!(legacy.artifacts.is_empty());
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
+#[serial_test::serial]
+#[tokio::test]
 async fn store_retrieve_delete_and_has_lessons_across_scopes() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();

@@ -553,6 +553,7 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		created: chrono::Utc::now().to_rfc3339(),
 		related: Vec::new(),
 		evidence: vec![format!("session://{session_name}/message/1")],
+		artifacts: Vec::new(),
 		outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
 		last_used: String::new(),
 		use_count: 0,

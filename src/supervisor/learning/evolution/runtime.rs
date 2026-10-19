@@ -226,6 +226,22 @@ pub fn skill_binding(name: &str) -> Option<SkillBinding> {
 		.cloned()
 }
 
+/// Names of the evolved skills among `ids` that are live in the current
+/// session, sorted. Recall names only these beside a record: a shadow or
+/// control-arm skill cannot be loaded here, and naming it would hand the
+/// control arm the treatment. Guidance is already in context once delivered.
+pub fn applied_skill_names(ids: &[String]) -> Vec<String> {
+	let mut names = all_skill_bindings()
+		.into_iter()
+		.filter(|(_, binding)| {
+			ids.contains(&binding.id) && !binding_is_shadow(&binding.id, binding.shadow)
+		})
+		.map(|(name, _)| name)
+		.collect::<Vec<_>>();
+	names.sort();
+	names
+}
+
 /// Whether an artifact's behavior applies in this session. Active artifacts
 /// always apply; a trial randomizes each session into treatment or control so
 /// both arms run concurrently on the same population; everything else is

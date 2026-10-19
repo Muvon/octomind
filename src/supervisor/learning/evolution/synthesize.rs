@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-	ArtifactKind, ArtifactScope, EffectClass, EvolutionRecord, EvolutionState, GeneratedScript,
-	HistoryEvent, REGISTRY_SCHEMA_VERSION,
+	live_in_session, ArtifactKind, ArtifactScope, EffectClass, EvolutionRecord, EvolutionState,
+	GeneratedScript, HistoryEvent, REGISTRY_SCHEMA_VERSION,
 };
 use crate::mcp::runtime::skill::{parse_rule_line, parse_skill_meta, ActivateCheck};
 use crate::supervisor::learning::backend::FileBackend;
@@ -1241,30 +1241,6 @@ fn contains_secret_marker(value: &str) -> bool {
 	]
 	.iter()
 	.any(|marker| upper.contains(marker))
-}
-
-/// Existing artifacts applied in the evidence session, read from the markers
-/// their delivery leaves: a guidance note's per-rule tag, an evolved skill's
-/// injection. Shadow behavior is never delivered, so a marker means treatment.
-/// Pipes, guards, hooks, and validators leave no marker and are not listed.
-fn live_in_session(
-	messages: &[crate::session::Message],
-	records: &[EvolutionRecord],
-) -> Vec<String> {
-	records
-		.iter()
-		.filter(|record| {
-			let marker = match record.kind {
-				ArtifactKind::Guidance => format!("<guidance id=\"{}\">", record.id),
-				ArtifactKind::Skill => format!("<skill name=\"{}\"", record.name),
-				_ => return false,
-			};
-			messages
-				.iter()
-				.any(|message| message.role == "user" && message.content.contains(&marker))
-		})
-		.map(|record| record.id.clone())
-		.collect()
 }
 
 fn evidence_excerpt(messages: &[crate::session::Message]) -> Vec<serde_json::Value> {

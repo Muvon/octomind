@@ -499,6 +499,9 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 		let dirs = active_skill_dirs();
 		assert!(dirs.contains(&trial_binding.path));
 		assert!(!dirs.contains(&shadow_binding.path));
+		// Recall names a recorded harness only where it is live.
+		let harness = vec![shadow_id.to_string(), trial_id.to_string()];
+		assert_eq!(applied_skill_names(&harness), vec![format!("evolved-{trial_id}")]);
 		crate::session::context::cleanup_session(&session_id);
 	})
 	.await;
@@ -514,6 +517,8 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 		let trial_binding = skill_binding(&format!("evolved-{trial_id}")).expect("trial binding");
 		assert!(trial_binding.shadow);
 		assert!(!active_skill_dirs().contains(&trial_binding.path));
+		let harness = vec![shadow_id.to_string(), trial_id.to_string()];
+		assert!(applied_skill_names(&harness).is_empty());
 		crate::session::context::cleanup_session(&session_id);
 	})
 	.await;

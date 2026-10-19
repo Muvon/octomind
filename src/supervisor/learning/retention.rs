@@ -629,6 +629,12 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 		.collect();
 	evidence.sort();
 	evidence.dedup();
+	let mut artifacts: Vec<String> = sources
+		.iter()
+		.flat_map(|item| item.artifacts.clone())
+		.collect();
+	artifacts.sort();
+	artifacts.dedup();
 	let same_outcome = sources[0].outcome == sources[1].outcome;
 	Lesson {
 		content: content.to_string(),
@@ -656,6 +662,7 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 			.to_string(),
 		related,
 		evidence,
+		artifacts,
 		outcome: if same_outcome {
 			sources[0].outcome
 		} else {

@@ -64,6 +64,11 @@ pub struct Lesson {
 	/// Addressable provenance handles, currently `session://<name>/message/<n>`.
 	#[serde(default)]
 	pub evidence: Vec<String>,
+	/// Evolution record IDs of the generated behavior applied in the session
+	/// that produced this record: the harness it ran under. Recall names the
+	/// ones applied in the recalling session alongside the record.
+	#[serde(default)]
+	pub artifacts: Vec<String>,
 	/// Outcome of the trajectory that produced this record.
 	#[serde(default)]
 	pub outcome: TrajectoryOutcome,
@@ -144,6 +149,7 @@ impl Default for Lesson {
 			created: String::new(),
 			related: Vec::new(),
 			evidence: Vec::new(),
+			artifacts: Vec::new(),
 			outcome: TrajectoryOutcome::Unknown,
 			last_used: String::new(),
 			use_count: 0,

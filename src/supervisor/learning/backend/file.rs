@@ -156,6 +156,7 @@ impl FileBackend {
 				"created" => lesson.created = unescape(val),
 				"related" => lesson.related = parse_string_list(val),
 				"evidence" => lesson.evidence = parse_string_list(val),
+				"artifacts" => lesson.artifacts = parse_string_list(val),
 				"outcome" => {
 					lesson.outcome = val.parse().unwrap_or_default();
 				}
@@ -382,7 +383,7 @@ impl FileBackend {
 
 		let tags_str = lesson.tags.join(", ");
 		let content = format!(
-			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
+			"---\ntitle: \"{}\"\ncontent: \"{}\"\nmemory_type: {}\nimportance: {}\nconfidence: {}\ntags: [{}]\nsource: \"{}\"\nrole: \"{}\"\nproject: \"{}\"\nscope: {}\ncreated: \"{}\"\nrelated: {}\nevidence: {}\nartifacts: {}\noutcome: {}\nlast_used: \"{}\"\nuse_count: {}\n---\n",
 			escape(&lesson.title),
 			escape(&lesson.content),
 			lesson.memory_type,
@@ -396,6 +397,7 @@ impl FileBackend {
 			escape(&lesson.created),
 			serde_json::to_string(&lesson.related)?,
 			serde_json::to_string(&lesson.evidence)?,
+			serde_json::to_string(&lesson.artifacts)?,
 			lesson.outcome.as_str(),
 			escape(&lesson.last_used),
 			lesson.use_count,

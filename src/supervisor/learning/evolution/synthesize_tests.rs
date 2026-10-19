@@ -71,6 +71,7 @@ fn memory(scope: &str) -> Lesson {
 		created: chrono::Utc::now().to_rfc3339(),
 		related: Vec::new(),
 		evidence: vec!["session://session/message/1".to_string()],
+		artifacts: Vec::new(),
 		outcome: crate::supervisor::learning::TrajectoryOutcome::Verified,
 		last_used: String::new(),
 		use_count: 0,

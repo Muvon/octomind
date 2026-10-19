@@ -214,6 +214,7 @@ The table reflects `octolib` 0.43.1, locked in `Cargo.lock`. Endpoint variables 
 
 | Provider | Prefix | Credential and routing variables | Endpoint override |
 |----------|--------|----------------------------------|-------------------|
+| ChatGPT | `chatgpt` | Sign in with `octomind login chatgpt`; uses your ChatGPT plan | — |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_API_URL` |
 | OpenAI | `openai` | `OPENAI_API_KEY` | `OPENAI_API_URL` |
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_API_URL` |

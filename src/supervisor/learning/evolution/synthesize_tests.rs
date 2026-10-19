@@ -164,6 +164,41 @@ fn generated_skill_uses_native_parser_and_existing_rule_dsl() {
 }
 
 #[test]
+fn generated_guidance_is_bounded_scriptless_advisory_text() {
+	let scope = ArtifactScope {
+		project: Some("project".to_string()),
+		domain: Some("developer".to_string()),
+	};
+	let mut candidate = proposal("guidance");
+	candidate.body = "  Run the linter before reporting done.  ".to_string();
+	candidate.script_name = None;
+	candidate.script_content = None;
+	let (native, script, path) =
+		render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap();
+	assert_eq!(native, "Run the linter before reporting done.\n");
+	assert!(script.is_none());
+	assert_eq!(path, "GUIDANCE.md");
+	validate_native(ArtifactKind::Guidance, &native, None, EffectClass::Advisory, false).unwrap();
+	assert_eq!(
+		effective_class(ArtifactKind::Guidance, "effectful").unwrap(),
+		EffectClass::Advisory
+	);
+
+	candidate.body = "x".repeat(MAX_GUIDANCE_CHARS + 1);
+	let error =
+		render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
+	assert!(error.to_string().contains("belongs in a skill"));
+
+	candidate.body = "Cite session://s/message/3 first.".to_string();
+	assert!(render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").is_err());
+
+	let scripted = proposal("guidance");
+	let error =
+		render_native(&scripted, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
+	assert!(error.to_string().contains("no script"));
+}
+
+#[test]
 fn effectful_artifact_fails_closed_without_quote_backed_authorization() {
 	let error = validate_native(
 		ArtifactKind::Guard,
@@ -238,6 +273,7 @@ fn parse_kind_maps_every_supported_kind_and_rejects_unknown() {
 	assert_eq!(parse_kind("guard").unwrap(), ArtifactKind::Guard);
 	assert_eq!(parse_kind("hook").unwrap(), ArtifactKind::Hook);
 	assert_eq!(parse_kind("validator").unwrap(), ArtifactKind::Validator);
+	assert_eq!(parse_kind("guidance").unwrap(), ArtifactKind::Guidance);
 	let error = parse_kind("wizard").unwrap_err();
 	assert!(error
 		.to_string()

@@ -15,7 +15,7 @@
 //! Grounded behavior evolution.
 //!
 //! Learning remains the evidence authority. This module turns newly grounded
-//! memories into native skill or guardrail candidates, manages their
+//! memories into native skill, guardrail, or guidance candidates, manages their
 //! candidate/shadow/trial/active lifecycle, and exposes matching artifacts to
 //! the existing runtimes. Generated text is never executed directly.
 
@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 pub(crate) use registry::create_record;
 pub use registry::{get_record, list_records, mutate_record};
 pub use runtime::{
-	active_skill_dirs, all_skill_bindings, binding_is_shadow, clear_for_session,
+	active_skill_dirs, all_skill_bindings, binding_is_shadow, clear_for_session, deliver_guidance,
 	generated_guardrails, init_for_session, mark_behavior_used, mark_shadow_match,
 	mark_skill_activated, reinforce_session, skill_binding, SkillBinding, TurnVerdict,
 };
@@ -63,6 +63,10 @@ pub enum ArtifactKind {
 	Guard,
 	Hook,
 	Validator,
+	/// An always-on rule for its scope, delivered once per session: the
+	/// cheapest fix for a recurring misstep, which a triggered skill cannot
+	/// express because it has no separating trigger.
+	Guidance,
 }
 
 impl ArtifactKind {
@@ -73,6 +77,7 @@ impl ArtifactKind {
 			Self::Guard => "guard",
 			Self::Hook => "hook",
 			Self::Validator => "validator",
+			Self::Guidance => "guidance",
 		}
 	}
 }

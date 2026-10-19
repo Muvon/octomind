@@ -64,9 +64,16 @@ Learning does not own a separate model. Extraction, recall, verification, retent
 `[supervisor.model]`, which itself inherits omitted fields from `[model]`.
 
 `[supervisor.learning.evolution]` is off by default (`enabled = false`). When enabled, the detached learner may
-compile one highest-value grounded memory per extraction into a machine-local skill or guardrail candidate. Candidates
-move through shadow, bounded trial, active, and retired states; generated behavior never overwrites authored skills or
-`.agents/guardrails.toml`.
+compile one highest-value grounded memory per extraction into a machine-local skill, guidance, or guardrail candidate.
+Candidates move through shadow, bounded trial, active, and retired states; generated behavior never overwrites authored
+skills or `.agents/guardrails.toml`.
+
+**Guidance** is a rule of one or two sentences (at most 400 characters) that holds on every task in its scope: a
+tool-use correction, a project convention, a check that is always due. It has no trigger, so it skips the replay screen
+and is advisory text, never executed. A session in scope receives its live guidance once, as one `<learned-guidance>`
+note placed just before its first request, in the preamble that compaction keeps. In the control arm the note is
+withheld. A resumed session that already holds a rule is not sent it again. Like generated skills, guidance is
+delivered by the CLI activation pass.
 
 Promotion is measured against a concurrent counterfactual rather than by counting wins. While a candidate is in
 **shadow**, its trigger is evaluated but the behavior is not applied; after `min_samples` matched turns with a verify-gate
@@ -75,7 +82,8 @@ arm (behavior applied) and half to the **control** arm (trigger observed, behavi
 the same period, models, and task mix. The control arm restarts when the trial opens; the shadow screen proves only
 that the trigger fires. A generated skill stays loaded once its trigger activates it, so skill exposure is sticky in
 both arms: from a control skill's first trigger match, or a treatment skill's trigger activation, every later verdict in
-that session is a sample, together with the turn's API-call count. Neither arm depends on the model's own report of
+that session is a sample, together with the turn's API-call count. Guidance is exposed the same way from the session's
+first request, delivered in the treatment arm and withheld in the control arm. Neither arm depends on the model's own report of
 what helped. A verdict counts as a pass only when it is execution-verified (see [Supervisor](14-supervisor.md#verify-gate));
 a pass resting on the verifier's reading alone is not a sample. With `[decision] supervisor = true`, samples
 are graded (the probability the answer fulfils the request) and turns where the artifact does not apply are dropped;

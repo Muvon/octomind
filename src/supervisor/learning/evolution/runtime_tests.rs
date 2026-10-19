@@ -525,6 +525,94 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 	}
 }
 
+fn exposure(session_id: &str, id: &str) -> Option<bool> {
+	SESSION_SKILL_EXPOSURE
+		.read()
+		.unwrap()
+		.as_ref()?
+		.get(session_id)?
+		.get(id)
+		.copied()
+}
+
+fn guidance_notes(session: &crate::session::chat::session::ChatSession) -> usize {
+	session
+		.session
+		.messages
+		.iter()
+		.filter(|message| message.content.contains("<learned-guidance>"))
+		.count()
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn guidance_reaches_treated_sessions_once_and_is_withheld_from_control() {
+	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
+	let data = tempfile::tempdir().unwrap();
+	let project_dir = data.path().join("project");
+	std::fs::create_dir_all(&project_dir).unwrap();
+	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
+	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
+	let id = "evo-guidance-trial";
+	let mut trial = record(id, ArtifactKind::Guidance, EvolutionState::Trial);
+	trial.effect = EffectClass::Advisory;
+	trial.artifact_path = "GUIDANCE.md".to_string();
+	super::super::registry::create_record(trial, "Run the linter before reporting done.\n", None)
+		.unwrap();
+
+	let session_id = session_in_arm(&[id], true);
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::set_session_workdir(&session_id, project_dir.clone());
+		crate::session::context::set_session_role(&session_id, "developer:general");
+		crate::session::context::set_session_config(&session_id, &enabled_config());
+		crate::session::guardrails::init_for_session();
+		init_for_session("developer:general");
+		// Guidance is never parsed as a guardrail.
+		let rules = crate::session::guardrails::get_rules(&session_id).unwrap();
+		assert!(rules.guards.is_empty() && rules.pipes.is_empty());
+
+		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+		deliver_guidance(&mut session);
+		deliver_guidance(&mut session);
+		assert_eq!(guidance_notes(&session), 1);
+		let note = &session.session.messages[0].content;
+		assert!(note.contains("Run the linter before reporting done."));
+		assert!(crate::session::is_system_managed_user_content(note));
+		assert_eq!(exposure(&session_id, id), Some(true));
+
+		// A resumed session re-initializes but already holds the rule.
+		init_for_session("developer:general");
+		deliver_guidance(&mut session);
+		assert_eq!(guidance_notes(&session), 1);
+		assert_eq!(exposure(&session_id, id), Some(true));
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+
+	let session_id = session_in_arm(&[id], false);
+	crate::session::context::with_session_id(session_id.clone(), async {
+		crate::session::context::set_session_workdir(&session_id, project_dir);
+		crate::session::context::set_session_role(&session_id, "developer:general");
+		crate::session::context::set_session_config(&session_id, &enabled_config());
+		crate::session::guardrails::init_for_session();
+		init_for_session("developer:general");
+		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
+		deliver_guidance(&mut session);
+		assert_eq!(guidance_notes(&session), 0);
+		assert_eq!(exposure(&session_id, id), Some(false));
+		crate::session::context::cleanup_session(&session_id);
+	})
+	.await;
+	let stored = super::super::registry::get_record(id).unwrap().unwrap();
+	assert_eq!(stored.shadow_matches, 1);
+
+	if let Some(value) = previous {
+		std::env::set_var("OCTOMIND_DATA_DIR", value);
+	} else {
+		std::env::remove_var("OCTOMIND_DATA_DIR");
+	}
+}
+
 /// Per-turn API calls alternating one above and below `per_turn`, so the
 /// log-call test sees real variance: (sum, log sum, log sum of squares).
 fn calls(samples: u32, per_turn: u32) -> (u64, f64, f64) {

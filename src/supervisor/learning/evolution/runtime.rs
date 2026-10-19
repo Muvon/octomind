@@ -29,18 +29,30 @@ pub struct SkillBinding {
 	pub path: PathBuf,
 }
 
+/// Evolved guidance in the session's scope, captured at init.
+#[derive(Debug, Clone)]
+struct GuidanceBinding {
+	id: String,
+	shadow: bool,
+	path: PathBuf,
+}
+
 static SESSION_SKILLS: RwLock<Option<HashMap<String, HashMap<String, SkillBinding>>>> =
 	RwLock::new(None);
 static SESSION_BEHAVIORS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
 /// Shadow artifacts whose trigger matched since the last verdict — the
 /// control arm: the same situations, observed without the artifact applied.
 static SESSION_SHADOWS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
-/// Evolved skills exposed in the session, keyed by id: `true` once a live
-/// skill's trigger activated it, `false` once a shadow skill's trigger matched.
-/// A live skill stays loaded after activation, so exposure is sticky in both
-/// arms — every later verdict in the session is a sample, and neither arm is
-/// filtered by the model's own report of what helped.
+/// Evolved skills and guidance exposed in the session, keyed by id: `true` once
+/// a live skill's trigger activated it or live guidance was delivered, `false`
+/// once a shadow skill's trigger matched or shadow guidance was withheld. Both
+/// stay in context once delivered, so exposure is sticky in both arms — every
+/// later verdict in the session is a sample, and neither arm is filtered by the
+/// model's own report of what helped.
 static SESSION_SKILL_EXPOSURE: RwLock<Option<HashMap<String, HashMap<String, bool>>>> =
+	RwLock::new(None);
+/// Guidance awaiting the session's first activation pass, taken by delivery.
+static SESSION_GUIDANCE: RwLock<Option<HashMap<String, Vec<GuidanceBinding>>>> =
 	RwLock::new(None);
 
 pub fn init_for_session(role: &str) {
@@ -96,6 +108,23 @@ pub fn init_for_session(role: &str) {
 			);
 		}
 	}
+	let guidance = matching
+		.iter()
+		.filter(|record| record.kind == ArtifactKind::Guidance)
+		.filter_map(|record| {
+			Some(GuidanceBinding {
+				id: record.id.clone(),
+				shadow: !applied_in_session(record, &session_id),
+				path: record.native_path().ok()?,
+			})
+		})
+		.collect::<Vec<_>>();
+	{
+		let mut guard = SESSION_GUIDANCE.write().unwrap();
+		guard
+			.get_or_insert_with(HashMap::new)
+			.insert(session_id.clone(), guidance);
+	}
 	{
 		let mut guard = SESSION_SKILLS.write().unwrap();
 		guard
@@ -145,6 +174,11 @@ pub fn clear_for_session(session_id: &str) {
 		}
 	}
 	if let Ok(mut guard) = SESSION_SKILL_EXPOSURE.write() {
+		if let Some(entries) = guard.as_mut() {
+			entries.remove(session_id);
+		}
+	}
+	if let Ok(mut guard) = SESSION_GUIDANCE.write() {
 		if let Some(entries) = guard.as_mut() {
 			entries.remove(session_id);
 		}
@@ -231,6 +265,64 @@ pub fn binding_is_shadow(id: &str, compiled_shadow: bool) -> bool {
 			.is_none_or(|record| !record.state.affects_runtime())
 }
 
+/// Deliver the session's guidance on its first activation pass, before the
+/// first request joins the context, so the note sits in the preamble that
+/// compaction never drains. Live guidance joins the treatment arm, withheld
+/// shadow guidance the control arm, both sticky for the session. A rule a
+/// resumed session already holds is exposed without being sent again.
+pub fn deliver_guidance(session: &mut crate::session::chat::session::ChatSession) {
+	let Some(session_id) = crate::session::context::current_session_id() else {
+		return;
+	};
+	let pending = SESSION_GUIDANCE
+		.write()
+		.unwrap()
+		.as_mut()
+		.and_then(|entries| entries.remove(&session_id))
+		.unwrap_or_default();
+	let mut rules = Vec::new();
+	let mut treated = Vec::new();
+	for binding in pending {
+		if binding_is_shadow(&binding.id, binding.shadow) {
+			mark_shadow_match(&binding.id);
+			continue;
+		}
+		let tag = format!("<guidance id=\"{}\">", binding.id);
+		if !session
+			.session
+			.messages
+			.iter()
+			.any(|message| message.content.contains(&tag))
+		{
+			match std::fs::read_to_string(&binding.path) {
+				Ok(text) => rules.push(format!("{tag}\n{}\n</guidance>", text.trim())),
+				Err(error) => {
+					crate::log_error!(
+						"generated guidance '{}' could not be read: {}",
+						binding.id,
+						error
+					);
+					continue;
+				}
+			}
+		}
+		treated.push(binding.id);
+	}
+	if !rules.is_empty() {
+		let note = format!(
+			"<learned-guidance>\nRules learned from verified work in this scope. Follow them unless the request says otherwise.\n{}\n</learned-guidance>",
+			rules.join("\n")
+		);
+		if let Err(error) = session.add_system_managed_user_message(&note) {
+			crate::log_error!("generated guidance delivery failed: {}", error);
+			return;
+		}
+	}
+	for id in treated {
+		expose_skill(&session_id, &id, true);
+	}
+}
+
 pub fn generated_guardrails(
 	records: &[EvolutionRecord],
 	session_id: &str,
@@ -240,7 +332,7 @@ pub fn generated_guardrails(
 		.is_some_and(|rules| !rules.pipes.is_empty());
 	for record in records
 		.iter()
-		.filter(|record| record.kind != ArtifactKind::Skill)
+		.filter(|record| !matches!(record.kind, ArtifactKind::Skill | ArtifactKind::Guidance))
 	{
 		if record.kind == ArtifactKind::Pipe && user_has_pipe {
 			crate::log_debug!(
@@ -309,7 +401,7 @@ pub fn mark_shadow_match(id: &str) {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return;
 	};
-	if kind == ArtifactKind::Skill {
+	if matches!(kind, ArtifactKind::Skill | ArtifactKind::Guidance) {
 		expose_skill(&session_id, id, false);
 		return;
 	}

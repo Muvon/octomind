@@ -394,6 +394,10 @@ pub async fn run_activation(
 	workdir: &std::path::Path,
 	session: &mut crate::session::chat::session::ChatSession,
 ) {
+	// Evolution's own gate decides guidance, not the skill settings or this
+	// input's length; only the session's first pass delivers anything.
+	crate::supervisor::learning::evolution::deliver_guidance(session);
+
 	let skills_config = get_skills_config();
 
 	if !skills_config.auto_activation {

@@ -527,9 +527,13 @@ fn openai_structured_response(value: serde_json::Value) -> serde_json::Value {
 	})
 }
 
-#[serial_test::serial]
-#[tokio::test]
-async fn structured_models_create_verified_native_candidate_end_to_end() {
+/// Session synthesis against a scripted structured model. `script` turns the
+/// validator proposal the stub serves into the ordered responses; `check`
+/// sees the created ids and the captured requests while the data dir lives.
+async fn structured_synthesis(
+	script: impl FnOnce(serde_json::Value) -> Vec<serde_json::Value>,
+	check: impl FnOnce(Vec<String>, Vec<serde_json::Value>),
+) {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let data = tempfile::tempdir().unwrap();
 	let previous_data = std::env::var_os("OCTOMIND_DATA_DIR");
@@ -594,15 +598,12 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		],
 		"explicit_authorization":true
 	});
-	let verdict = serde_json::json!({"supported":true,"issues":[]});
-	let mut nothing = proposal.clone();
-	nothing["decision"] = serde_json::json!("none");
-	// Invariant pass proposes and is verified; the domain pass finds nothing.
-	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
-		openai_structured_response(proposal),
-		openai_structured_response(verdict),
-		openai_structured_response(nothing),
-	])
+	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(
+		script(proposal)
+			.into_iter()
+			.map(openai_structured_response)
+			.collect(),
+	)
 	.await;
 	std::env::set_var("OPENAI_API_URL", url);
 
@@ -635,29 +636,7 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 	)
 	.await
 	.unwrap();
-	assert_eq!(created.len(), 1, "one candidate across both passes");
-	let requests = requests.lock().unwrap().clone();
-	assert_eq!(requests.len(), 3);
-	assert!(requests[0]
-		.to_string()
-		.contains(r#"\"dimension\": \"invariant\""#));
-	assert!(requests[2]
-		.to_string()
-		.contains(r#"\"dimension\": \"domain\""#));
-	let stored = get_record(&created[0]).unwrap().unwrap();
-	assert_eq!(stored.kind, ArtifactKind::Validator);
-	assert_eq!(stored.state, EvolutionState::Shadow);
-	assert_eq!(stored.scope.project.as_deref(), Some("project"));
-	assert_eq!(stored.scope.domain.as_deref(), Some("developer"));
-	assert!(stored.explicit_authorization);
-	let native = std::fs::read_to_string(stored.native_path().unwrap()).unwrap();
-	let parsed = crate::config::guardrails::Guardrails::parse(&native).unwrap();
-	assert_eq!(parsed.validators.len(), 1);
-	assert!(stored
-		.artifact_dir()
-		.unwrap()
-		.join("schema-check.sh")
-		.exists());
+	check(created, requests.lock().unwrap().clone());
 
 	for (key, value) in [
 		("OCTOMIND_DATA_DIR", previous_data),
@@ -670,6 +649,96 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 			std::env::remove_var(key);
 		}
 	}
+}
+
+fn decided(proposal: &serde_json::Value, decision: &str) -> serde_json::Value {
+	let mut value = proposal.clone();
+	value["decision"] = serde_json::json!(decision);
+	value
+}
+
+fn verified() -> serde_json::Value {
+	serde_json::json!({"supported":true,"issues":[]})
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn structured_models_create_verified_native_candidate_end_to_end() {
+	// The invariant pass proposes; the domain pass, shown that proposal, finds
+	// nothing; with one candidate there is nothing to compose; it is verified.
+	structured_synthesis(
+		|proposal| vec![proposal.clone(), decided(&proposal, "none"), verified()],
+		|created, requests| {
+			assert_eq!(created.len(), 1, "one candidate across both passes");
+			assert_eq!(requests.len(), 3);
+			assert!(requests[0]
+				.to_string()
+				.contains(r#"\"dimension\": \"invariant\""#));
+			let domain_pass = requests[1].to_string();
+			assert!(domain_pass.contains(r#"\"dimension\": \"domain\""#));
+			assert!(domain_pass.contains(r#"\"other_pass_candidate\": {"#));
+			let stored = get_record(&created[0]).unwrap().unwrap();
+			assert_eq!(stored.kind, ArtifactKind::Validator);
+			assert_eq!(stored.state, EvolutionState::Shadow);
+			assert_eq!(stored.scope.project.as_deref(), Some("project"));
+			assert_eq!(stored.scope.domain.as_deref(), Some("developer"));
+			assert!(stored.explicit_authorization);
+			let native = std::fs::read_to_string(stored.native_path().unwrap()).unwrap();
+			let parsed = crate::config::guardrails::Guardrails::parse(&native).unwrap();
+			assert_eq!(parsed.validators.len(), 1);
+			assert!(stored
+				.artifact_dir()
+				.unwrap()
+				.join("schema-check.sh")
+				.exists());
+		},
+	)
+	.await;
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn same_kind_candidates_compose_into_one_verified_artifact() {
+	structured_synthesis(
+		|proposal| {
+			let mut merged = proposal.clone();
+			merged["name"] = serde_json::json!("schema check merged");
+			vec![proposal.clone(), proposal, merged, verified()]
+		},
+		|created, requests| {
+			assert_eq!(created.len(), 1, "the merge replaces both candidates");
+			assert_eq!(requests.len(), 4);
+			let compose = requests[2].to_string();
+			assert!(compose.contains("invariant_candidate") && compose.contains("domain_candidate"));
+			let stored = get_record(&created[0]).unwrap().unwrap();
+			assert!(stored.name.starts_with("evolved-schema-check-merged-"));
+			assert!(stored.history[0].detail.starts_with("composed candidate"));
+		},
+	)
+	.await;
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn declined_compose_keeps_both_candidates_apart() {
+	structured_synthesis(
+		|proposal| {
+			let mut domain = proposal.clone();
+			domain["name"] = serde_json::json!("schema check domain");
+			vec![
+				proposal.clone(),
+				domain,
+				decided(&proposal, "none"),
+				verified(),
+				verified(),
+			]
+		},
+		|created, requests| {
+			assert_eq!(requests.len(), 5);
+			assert_eq!(created.len(), 2, "both candidates admitted on their own");
+		},
+	)
+	.await;
 }
 
 #[serial_test::serial]

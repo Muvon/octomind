@@ -136,10 +136,16 @@ procedure.
 Each synthesis runs two proposal passes over the same memories. The **invariant** pass looks only at how the agent
 works whatever the subject (planning, tool use, verification, context handling, recovery after a failed step). The
 **domain** pass looks only at what the project or field requires (conventions, procedures, constraints, facts). The
-domain pass runs second and sees the invariant candidate, so it does not restate it. Each candidate is verified on its
-own and enters shadow on its own. Nothing merges them: the concurrent trial decides which earns its place. A pass that
-fails closed does not cost the other pass its candidate. The split follows Harness² (arXiv 2610.14224), which lost about
-three points per benchmark when one undirected proposal replaced the two passes.
+domain pass runs second and sees the invariant proposal, so it does not restate it.
+
+Then comes a **compose** step. When both passes propose the same kind for the same scope, one call may merge them
+into a single artifact. The merge cites the union of their memories, and its trigger and claims may be no broader
+than the two together. Without the merge, the two would queue for the one trial an overlapping scope allows. The
+compose call may also decline when the candidates conflict or read better apart. Every result, merged or not, is
+validated, verified, and put in shadow on its own, so a merge gains nothing the verifier and the trial do not confirm.
+A merge that fails its own checks falls back to the two originals, and a failed pass does not cost the other pass its
+candidate. The split and compose follow Harness² (arXiv 2610.14224), which lost about three points per benchmark
+when one undirected proposal replaced the two passes.
 
 In session mode both passes, and the verifier, also see which existing generated behavior was live in the evidence
 session: guidance whose rule was delivered and evolved skills that were injected. These are read from the markers

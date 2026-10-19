@@ -66,7 +66,7 @@ octomind config --validate
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `version` | u32 | `12` | Config version. Do not modify. Used for automatic upgrades. |
+| `version` | u32 | `22` | Config version. Do not modify. Used for automatic upgrades. |
 | `log_level` | string | `"info"` | Logging verbosity: `"none"`, `"info"`, `"debug"` |
 | `default` | string | `"assistant:concierge"` | Default tag for bare `run`, `acp`, and `server`. See note below. |
 | `sandbox` | bool | `false` | Restrict writes for `run`, `acp`, and `server`; those commands also accept `--sandbox`. |
@@ -75,7 +75,7 @@ octomind config --validate
 > **About the `default` value:** `"assistant:concierge"` is a **tap agent** addressed as `category:variant`, shipped by the built-in default tap `muvon/tap` (which resolves to the GitHub repo `github.com/muvon/octomind-tap`) — *not* a role defined in this config file. If you search this file for a `concierge` role you will not find one. A bare tag without a colon (e.g. `"developer"`) resolves against your local `[[roles]]`; a `category:variant` tag resolves against installed taps.
 
 ```toml
-version = 13
+version = 22
 log_level = "info"
 default = "assistant:concierge"
 sandbox = false
@@ -568,8 +568,8 @@ Model used for compression decisions and summary generation.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | `"octohub:auto"` | Compression model name |
-| `reasoning_effort` | enum | `"medium"` | Thinking effort override |
-| `max_tokens` | u32 | `16000` | Max tokens for decision + summary |
+| `reasoning_effort` | enum | `"none"` | Thinking effort override; compression produces summaries rather than decisions, so the shipped default disables reasoning where supported |
+| `max_tokens` | u32 | `32000` | Max tokens for decision + summary |
 | `temperature` | f32 | `0.3` | Lower = more consistent decisions |
 | `top_p` | f32 | `1.0` | Nucleus sampling |
 | `top_k` | u32 | `0` | Top-k (0 = disabled) |
@@ -585,14 +585,41 @@ threshold = 70000
 
 [compression.model]
 name = "octohub:auto"
-reasoning_effort = "medium"
-max_tokens = 16000
+reasoning_effort = "none"
+max_tokens = 32000
 temperature = 0.3
 top_p = 1.0
 top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
+```
+
+## `[decision]`
+
+Calibrated decisions use a provider-qualified model for selected routing and evaluation seams. The model gets one
+attempt with a five-second timeout and no retries. An absent or empty model disables this routing. If a decision answer
+is unavailable, supervisor decisions fail closed; writing still uses the shared `[supervisor.model]` profile. Configure
+the credential required by the selected provider: `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID`, `TYPESAFE_API_KEY`,
+or `OCTOHUB_API_KEY` (and optionally `OCTOHUB_API_URL`).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | optional string | `"cloudflare:typesafe/jev"` | Provider-qualified decision model; absent or empty disables routing. |
+| `recall` | bool | `false` | Filter recalled scoped lessons for relevance. If unavailable, keep the candidates. |
+| `skills` | bool | `false` | Choose an inactive skill when rules abstain. If unavailable, activate none. |
+| `capabilities` | bool | `false` | Confirm or promote capability selection. If unavailable, keep the cosine result. |
+| `compression` | bool | `false` | Demote unneeded summarize packets before a fold. If unavailable, keep the lanes. |
+| `supervisor` | bool | `false` | Route supervisor decisions and evolution grading through this model. |
+
+```toml
+[decision]
+model = "cloudflare:typesafe/jev"
+recall = false
+skills = false
+capabilities = false
+compression = false
+supervisor = false
 ```
 
 ## `[supervisor]`
@@ -626,6 +653,23 @@ entire block uses `[model]` unchanged.
 | `max_retries` | u32 | `1` | Retry attempts. |
 | `retry_timeout` | u64 | `30` | Backoff base in seconds. |
 | `request_timeout_seconds` | u64 | `300` | Per-request timeout; zero is unlimited. |
+
+### `[supervisor.hindsight]`
+
+An optional, local verifier scores the session event trace when the agent hands a turn back. It estimates whether the
+user's next turn will be a correction and, if so, its class. This is observe-only: scores are logged, shown in a
+supervisor notice, tallied in `/info`, and appended to `hindsight.jsonl` beside the verify-gate verdict.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable observe-only hindsight scoring. |
+| `model` | string | `"muvon/hindsight"` | Hugging Face repository containing files under `onnx/`, or a local export directory. Set `HF_TOKEN` for a private Hugging Face repository. |
+
+```toml
+[supervisor.hindsight]
+enabled = false
+model = "muvon/hindsight"
+```
 
 ### `[supervisor.learning]`
 
@@ -714,6 +758,10 @@ top_k = 0
 max_retries = 1
 retry_timeout = 30
 request_timeout_seconds = 300
+
+[supervisor.hindsight]
+enabled = false
+model = "muvon/hindsight"
 
 [supervisor.learning]
 enabled = true

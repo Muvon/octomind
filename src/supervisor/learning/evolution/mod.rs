@@ -337,9 +337,9 @@ pub async fn synthesize_after_extraction(
 	role: &str,
 	project: &str,
 	session_name: &str,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Vec<String>> {
 	if !config.supervisor.learning.evolution.enabled {
-		return Ok(None);
+		return Ok(Vec::new());
 	}
 	synthesize::synthesize(messages, config, role, project, session_name).await
 }
@@ -350,9 +350,9 @@ pub async fn synthesize_store_if_due(
 	config: &crate::config::Config,
 	role: &str,
 	project: &str,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Vec<String>> {
 	if !config.supervisor.learning.evolution.enabled {
-		return Ok(None);
+		return Ok(Vec::new());
 	}
 	let stamp = store_synthesis_stamp()?;
 	let fresh = std::fs::metadata(&stamp)
@@ -361,7 +361,7 @@ pub async fn synthesize_store_if_due(
 		.and_then(|modified| modified.elapsed().ok())
 		.is_some_and(|age| age < STORE_SYNTHESIS_INTERVAL);
 	if fresh {
-		return Ok(None);
+		return Ok(Vec::new());
 	}
 	std::fs::write(&stamp, chrono::Utc::now().to_rfc3339())?;
 	retire_stale()?;
@@ -403,7 +403,7 @@ pub async fn synthesize_store_now(
 	config: &crate::config::Config,
 	role: &str,
 	project: &str,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Vec<String>> {
 	if !config.supervisor.learning.evolution.enabled {
 		anyhow::bail!("[supervisor.learning.evolution] is disabled");
 	}

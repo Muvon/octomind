@@ -594,9 +594,13 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		"explicit_authorization":true
 	});
 	let verdict = serde_json::json!({"supported":true,"issues":[]});
-	let url = crate::session::chat::test_support::spawn_stub(vec![
+	let mut nothing = proposal.clone();
+	nothing["decision"] = serde_json::json!("none");
+	// Invariant pass proposes and is verified; the domain pass finds nothing.
+	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(vec![
 		openai_structured_response(proposal),
 		openai_structured_response(verdict),
+		openai_structured_response(nothing),
 	])
 	.await;
 	std::env::set_var("OPENAI_API_URL", url);
@@ -629,9 +633,17 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		session_name,
 	)
 	.await
-	.unwrap()
-	.expect("candidate created");
-	let stored = get_record(&created).unwrap().unwrap();
+	.unwrap();
+	assert_eq!(created.len(), 1, "one candidate across both passes");
+	let requests = requests.lock().unwrap().clone();
+	assert_eq!(requests.len(), 3);
+	assert!(requests[0]
+		.to_string()
+		.contains(r#"\"dimension\": \"invariant\""#));
+	assert!(requests[2]
+		.to_string()
+		.contains(r#"\"dimension\": \"domain\""#));
+	let stored = get_record(&created[0]).unwrap().unwrap();
 	assert_eq!(stored.kind, ArtifactKind::Validator);
 	assert_eq!(stored.state, EvolutionState::Shadow);
 	assert_eq!(stored.scope.project.as_deref(), Some("project"));
@@ -932,7 +944,7 @@ async fn store_synthesis_is_stamped_daily_and_bypassed_by_the_command() {
 		synthesize_store_if_due(&config, "developer:general", "project")
 			.await
 			.unwrap(),
-		None
+		Vec::<String>::new()
 	);
 	assert!(!stamp.exists(), "disabled evolution must not stamp");
 
@@ -941,7 +953,7 @@ async fn store_synthesis_is_stamped_daily_and_bypassed_by_the_command() {
 		synthesize_store_if_due(&config, "developer:general", "project")
 			.await
 			.unwrap(),
-		None
+		Vec::<String>::new()
 	);
 	let first = std::fs::read_to_string(&stamp).unwrap();
 	std::fs::write(&stamp, "earlier").unwrap();
@@ -949,14 +961,14 @@ async fn store_synthesis_is_stamped_daily_and_bypassed_by_the_command() {
 		synthesize_store_if_due(&config, "developer:general", "project")
 			.await
 			.unwrap(),
-		None
+		Vec::<String>::new()
 	);
 	assert_eq!(std::fs::read_to_string(&stamp).unwrap(), "earlier");
 	assert_eq!(
 		synthesize_store_now(&config, "developer:general", "project")
 			.await
 			.unwrap(),
-		None
+		Vec::<String>::new()
 	);
 	assert_ne!(std::fs::read_to_string(&stamp).unwrap(), "earlier");
 	assert!(first.starts_with("20"));

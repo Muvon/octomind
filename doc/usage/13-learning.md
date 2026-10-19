@@ -64,9 +64,9 @@ Learning does not own a separate model. Extraction, recall, verification, retent
 `[supervisor.model]`, which itself inherits omitted fields from `[model]`.
 
 `[supervisor.learning.evolution]` is off by default (`enabled = false`). When enabled, the detached learner may
-compile one highest-value grounded memory per extraction into a machine-local skill, guidance, or guardrail candidate.
-Candidates move through shadow, bounded trial, active, and retired states; generated behavior never overwrites authored
-skills or `.agents/guardrails.toml`.
+compile grounded memories from each extraction into machine-local skill, guidance, or guardrail candidates, at most one
+per proposal pass. Candidates move through shadow, bounded trial, active, and retired states; generated behavior never
+overwrites authored skills or `.agents/guardrails.toml`.
 
 **Guidance** is a rule of one or two sentences (at most 400 characters) that holds on every task in its scope: a
 tool-use correction, a project convention, a check that is always due. It has no trigger, so it skips the replay screen
@@ -125,13 +125,21 @@ Evolution needs `[supervisor.gate]` enabled: without verdicts no arm collects sa
 Two synthesis modes share that pipeline. **Session** mode runs after each extraction on the memories that session just
 stored, with the transcript as evidence. **Store** mode runs at most once per day (or on `/learning evolution distill`)
 over the whole hot store: short rules that were materially used or came from a direct correction, plus verified
-experiences, are clustered by wording and paraphrase, and the cluster that recurs across the most projects becomes one
-candidate. Its scope follows the recurrence: two or more projects make the project dimension global, two or more role
+experiences, are clustered by wording and paraphrase, and the cluster that recurs across the most projects becomes the
+source. Its scope follows the recurrence: two or more projects make the project dimension global, two or more role
 domains make the domain dimension global, so a rule you keep restating in every repository can become one skill that
 binds everywhere. Every generated skill must pass a deterministic trigger screen before the verifier runs: the
 proposal's replay cases are executed against the rendered activation rules, quoted arguments and `&&` are rejected,
 and a body that embeds session evidence handles or machine-local paths is rejected as an experience dump rather than a
 procedure.
+
+Each synthesis runs two proposal passes over the same memories. The **invariant** pass looks only at how the agent
+works whatever the subject (planning, tool use, verification, context handling, recovery after a failed step). The
+**domain** pass looks only at what the project or field requires (conventions, procedures, constraints, facts). The
+domain pass runs second and sees the invariant candidate, so it does not restate it. Each candidate is verified on its
+own and enters shadow on its own. Nothing merges them: the concurrent trial decides which earns its place. A pass that
+fails closed does not cost the other pass its candidate. The split follows Harness² (arXiv 2610.14224), which lost about
+three points per benchmark when one undirected proposal replaced the two passes.
 
 The 2,000-token active-pack cap and its 512-token global-rule sub-cap are fixed constants, not knobs.
 

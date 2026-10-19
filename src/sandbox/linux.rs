@@ -35,6 +35,7 @@ use landlock::{
 	make_bitflags, path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr,
 	RulesetStatus, ABI,
 };
+use std::env;
 
 pub fn apply(dir: &std::path::Path) -> Result<()> {
 	let abi = ABI::V3;
@@ -57,12 +58,27 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 	ruleset = ruleset.add_rules(path_beneath_rules(["/"], read_only))?;
 
 	// Read+write on cwd, XDG data home (MCP server logs/state) and octolib auth state.
-	let mut rw_paths: Vec<&std::path::Path> = vec![dir];
+	let tmp_dir = env::temp_dir();
+	let mut rw_paths: Vec<&std::path::Path> = vec![dir, tmp_dir.as_path()];
 	if xdg_data_home.exists() {
 		rw_paths.push(xdg_data_home.as_path());
 	}
 	if octolib_config.exists() {
 		rw_paths.push(octolib_config.as_path());
+	}
+	// Common device nodes needed for standard shell operations.
+	for dev in [
+		"/dev/null",
+		"/dev/zero",
+		"/dev/full",
+		"/dev/tty",
+		"/dev/pts",
+	] {
+		if let Ok(path) = std::path::Path::new(dev).canonicalize() {
+			ruleset = ruleset.add_rules(path_beneath_rules([path], all_access))?;
+		} else if std::path::Path::new(dev).exists() {
+			ruleset = ruleset.add_rules(path_beneath_rules([dev], all_access))?;
+		}
 	}
 	ruleset = ruleset.add_rules(path_beneath_rules(rw_paths, all_access))?;
 
@@ -90,3 +106,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "linux_tests.rs"]
+mod tests;

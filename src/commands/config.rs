@@ -555,8 +555,8 @@ fn render_local_api_key_row() {
 }
 
 /// Provider credential rows of the `octomind config` api-keys block: display name and the
-/// environment variable the provider actually reads (octolib 0.43.1).
-const ENV_API_KEY_ROWS: [(&str, &str); 6] = [
+/// environment variable the provider actually reads.
+const ENV_API_KEY_ROWS: &[(&str, &str)] = &[
 	("OpenRouter", "OPENROUTER_API_KEY"),
 	("OpenAI", "OPENAI_API_KEY"),
 	("Anthropic", "ANTHROPIC_API_KEY"),

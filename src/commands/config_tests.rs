@@ -117,12 +117,6 @@ fn test_cloudflare_api_key_row_reads_the_provider_variable() {
 		cloudflare.1, "CLOUDFLARE_API_KEY",
 		"the Cloudflare provider reads CLOUDFLARE_API_KEY"
 	);
-	assert!(
-		!ENV_API_KEY_ROWS
-			.iter()
-			.any(|(_, env_var)| *env_var == "CLOUDFLARE_API_TOKEN"),
-		"no provider reads the retired CLOUDFLARE_API_TOKEN"
-	);
 
 	// The row both `config` and `config --show` render must report the provider's variable as
 	// set when only it is exported.

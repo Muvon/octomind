@@ -243,6 +243,8 @@ async fn acp_tracing_failure_is_recorded_in_the_init_error_log() {
 	);
 }
 
+// unix-only: a read-only directory needs Unix permission bits; Windows ACLs
+// don't make a dir unwritable through `set_permissions`.
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn acp_unwritable_data_dir_still_serves_and_exits_cleanly() {

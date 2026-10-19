@@ -24,7 +24,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const MARKER: &str = "ACP-E2E-MARKER";
 
-async fn spawn_openai_stub(script: Option<Vec<&'static str>>) -> String {
+/// Serves the scripted assistant messages in order, one per provider call, or
+/// the default marker answer to every call when no script is given.
+async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> String {
 	let script = std::sync::Arc::new(std::sync::Mutex::new(
 		script.map(std::collections::VecDeque::from),
 	));
@@ -62,18 +64,17 @@ async fn spawn_openai_stub(script: Option<Vec<&'static str>>) -> String {
 					}
 					buf.extend_from_slice(&tmp[..n]);
 				}
-				let content = match script.lock().expect("script lock").as_mut() {
-					Some(responses) => responses
-						.pop_front()
-						.expect("unexpected provider call")
-						.to_owned(),
-					None => format!("{MARKER}: acp answer"),
+				let message = match script.lock().expect("script lock").as_mut() {
+					Some(messages) => messages.pop_front().expect("unexpected provider call"),
+					None => text_message(&format!("{MARKER}: acp answer")),
+				};
+				let finish_reason = if message.get("tool_calls").is_some() {
+					"tool_calls"
+				} else {
+					"stop"
 				};
 				let body = serde_json::json!({
-					"choices": [{
-						"message": {"role": "assistant", "content": content},
-						"finish_reason": "stop"
-					}],
+					"choices": [{"message": message, "finish_reason": finish_reason}],
 					"usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18, "cost": 0.0001}
 				})
 				.to_string();
@@ -89,6 +90,22 @@ async fn spawn_openai_stub(script: Option<Vec<&'static str>>) -> String {
 	});
 
 	format!("http://{}/v1/chat/completions", addr)
+}
+
+fn text_message(content: &str) -> serde_json::Value {
+	serde_json::json!({"role": "assistant", "content": content})
+}
+
+fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serde_json::Value {
+	serde_json::json!({
+		"role": "assistant",
+		"content": "",
+		"tool_calls": [{
+			"id": id,
+			"type": "function",
+			"function": {"name": name, "arguments": arguments.to_string()}
+		}]
+	})
 }
 
 fn write_sandbox_config(home: &std::path::Path) {
@@ -435,78 +452,15 @@ async fn test_acp_initialize_new_session_prompt() {
 /// translation paths only run when the model actually calls a tool.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_tool_round_updates() {
-	use std::sync::atomic::{AtomicUsize, Ordering};
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
-	let addr = listener.local_addr().expect("addr");
-	let counter = std::sync::Arc::new(AtomicUsize::new(0));
-	tokio::spawn(async move {
-		while let Ok((mut sock, _)) = listener.accept().await {
-			let counter = counter.clone();
-			tokio::spawn(async move {
-				let mut buf = Vec::new();
-				let mut tmp = [0u8; 8192];
-				let header_end = loop {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						return;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-						break pos + 4;
-					}
-				};
-				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
-				let content_length: usize = headers
-					.lines()
-					.find_map(|l| l.strip_prefix("content-length:"))
-					.and_then(|v| v.trim().parse().ok())
-					.unwrap_or(0);
-				while buf.len() < header_end + content_length {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						break;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-				}
-				let body = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
-					serde_json::json!({
-						"choices": [{
-							"message": {
-								"role": "assistant",
-								"content": "",
-								"tool_calls": [{
-									"id": "call_acp",
-									"type": "function",
-									"function": {"name": "schedule", "arguments": "{\"action\":\"list\"}"}
-								}]
-							},
-							"finish_reason": "tool_calls"
-						}],
-						"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-					})
-				} else {
-					serde_json::json!({
-						"choices": [{
-							"message": {"role": "assistant", "content": format!("{MARKER}: tool round done")},
-							"finish_reason": "stop"
-						}],
-						"usage": {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
-					})
-				}
-				.to_string();
-				let response = format!(
-					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-					body.len(),
-					body
-				);
-				let _ = sock.write_all(response.as_bytes()).await;
-				let _ = sock.shutdown().await;
-			});
-		}
-	});
-	let stub_url = format!("http://{}/v1/chat/completions", addr);
+	let stub_url = spawn_openai_stub(Some(vec![
+		tool_call_message(
+			"call_acp",
+			"schedule",
+			serde_json::json!({"action": "list"}),
+		),
+		text_message(&format!("{MARKER}: tool round done")),
+	]))
+	.await;
 
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
@@ -560,14 +514,19 @@ async fn test_acp_tool_round_updates() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 	let stub_url = spawn_openai_stub(Some(vec![
-		r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
-		"ACP-GATE-TIMING: finished",
-		r#"<shape name="circular" found="no">independent evidence</shape>
+		text_message(
+			r#"{"scope":"self_contained","forbids_verification":false,"verification_policy_update":"unchanged","verification_policy_evidence":"","answer_only":false,"conditions":[],"operational_constraints":[]}"#,
+		),
+		text_message("ACP-GATE-TIMING: finished"),
+		text_message(
+			r#"<shape name="circular" found="no">independent evidence</shape>
 <shape name="context-stripped" found="no">representative context</shape>
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="no">bounded scope</shape>
 <verdict>PASS</verdict>"#,
-	])).await;
+		),
+	]))
+	.await;
 	let home = tempfile::tempdir().expect("sandbox home");
 	write_sandbox_config(home.path());
 	let path = home.path().join(".local/share/octomind/config/config.toml");
@@ -635,84 +594,6 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 		.success());
 }
 
-/// Serves the scripted assistant messages in order, one per provider call.
-async fn spawn_message_stub(messages: Vec<serde_json::Value>) -> String {
-	let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
-		messages,
-	)));
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
-	let addr = listener.local_addr().expect("addr");
-	tokio::spawn(async move {
-		while let Ok((mut sock, _)) = listener.accept().await {
-			let script = std::sync::Arc::clone(&script);
-			tokio::spawn(async move {
-				let mut buf = Vec::new();
-				let mut tmp = [0u8; 8192];
-				let header_end = loop {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						return;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-					if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-						break pos + 4;
-					}
-				};
-				let headers = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
-				let content_length: usize = headers
-					.lines()
-					.find_map(|l| l.strip_prefix("content-length:"))
-					.and_then(|v| v.trim().parse().ok())
-					.unwrap_or(0);
-				while buf.len() < header_end + content_length {
-					let n = sock.read(&mut tmp).await.unwrap_or(0);
-					if n == 0 {
-						break;
-					}
-					buf.extend_from_slice(&tmp[..n]);
-				}
-				let message = script
-					.lock()
-					.expect("script lock")
-					.pop_front()
-					.expect("unexpected provider call");
-				let finish_reason = if message.get("tool_calls").is_some() {
-					"tool_calls"
-				} else {
-					"stop"
-				};
-				let body = serde_json::json!({
-					"choices": [{"message": message, "finish_reason": finish_reason}],
-					"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-				})
-				.to_string();
-				let response = format!(
-					"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-					body.len(),
-					body
-				);
-				let _ = sock.write_all(response.as_bytes()).await;
-				let _ = sock.shutdown().await;
-			});
-		}
-	});
-	format!("http://{}/v1/chat/completions", addr)
-}
-
-fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serde_json::Value {
-	serde_json::json!({
-		"role": "assistant",
-		"content": "",
-		"tool_calls": [{
-			"id": id,
-			"type": "function",
-			"function": {"name": name, "arguments": arguments.to_string()}
-		}]
-	})
-}
-
 /// An in-process `agent_*` sub-agent that runs its own tool round under ACP.
 /// That round used to pick its output mode by probing stdin, which blocks on
 /// Windows while ACP's stdin read is pending, and then printed tool headers to
@@ -720,7 +601,7 @@ fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serd
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_sub_agent_tool_round() {
 	const SUB_AGENT_MARKER: &str = "ACP-SUB-AGENT-DONE";
-	let stub_url = spawn_message_stub(vec![
+	let stub_url = spawn_openai_stub(Some(vec![
 		tool_call_message(
 			"call_add",
 			"agent",
@@ -748,9 +629,9 @@ async fn test_acp_sub_agent_tool_round() {
 			"schedule",
 			serde_json::json!({"action": "list"}),
 		),
-		serde_json::json!({"role": "assistant", "content": SUB_AGENT_MARKER}),
-		serde_json::json!({"role": "assistant", "content": format!("{MARKER}: sub-agent done")}),
-	])
+		text_message(SUB_AGENT_MARKER),
+		text_message(&format!("{MARKER}: sub-agent done")),
+	]))
 	.await;
 
 	let home = tempfile::tempdir().expect("temp home");

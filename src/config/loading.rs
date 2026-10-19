@@ -444,7 +444,9 @@ impl Config {
 		config_path: std::path::PathBuf,
 	) -> Result<Self> {
 		let (mut config, ignored_keys) =
-			crate::config::validation::deserialize_with_ignored_keys(merged_value)?;
+			crate::config::validation::deserialize_with_ignored_keys(merged_value).context(
+				"Failed to parse merged TOML configuration. All required fields must be present.",
+			)?;
 		config.ignored_keys = ignored_keys;
 
 		// Store the config path for future saves

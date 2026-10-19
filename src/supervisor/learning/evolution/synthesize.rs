@@ -346,6 +346,7 @@ async fn synthesize_dimension(
 		.filter(|record| basis.is_some() || record.scope.matches(project, &domain))
 		.map(super::record_summary)
 		.collect::<Vec<_>>();
+	let live = live_in_session(messages, &existing);
 	let evidence = if basis.is_some() {
 		Vec::new()
 	} else {
@@ -386,6 +387,7 @@ async fn synthesize_dimension(
 		"source_memories": source_json,
 		"session_evidence": evidence,
 		"existing_artifacts": existing_json,
+		"artifacts_live_in_session": &live,
 		"available_capabilities": &available_capabilities,
 		"loaded_mcp_servers_for_has": &loaded_servers,
 		"authorizer_observations_untrusted": observations,
@@ -483,6 +485,7 @@ async fn synthesize_dimension(
 			"evidence": memory.evidence,
 		})).collect::<Vec<_>>(),
 		"session_evidence": session_evidence,
+		"artifacts_live_in_session": &live,
 		"rendered_native_artifact": &native,
 	});
 	let (_verify_tx, verify_rx) = tokio::sync::watch::channel(false);
@@ -1240,6 +1243,30 @@ fn contains_secret_marker(value: &str) -> bool {
 	.any(|marker| upper.contains(marker))
 }
 
+/// Existing artifacts applied in the evidence session, read from the markers
+/// their delivery leaves: a guidance note's per-rule tag, an evolved skill's
+/// injection. Shadow behavior is never delivered, so a marker means treatment.
+/// Pipes, guards, hooks, and validators leave no marker and are not listed.
+fn live_in_session(
+	messages: &[crate::session::Message],
+	records: &[EvolutionRecord],
+) -> Vec<String> {
+	records
+		.iter()
+		.filter(|record| {
+			let marker = match record.kind {
+				ArtifactKind::Guidance => format!("<guidance id=\"{}\">", record.id),
+				ArtifactKind::Skill => format!("<skill name=\"{}\"", record.name),
+				_ => return false,
+			};
+			messages
+				.iter()
+				.any(|message| message.role == "user" && message.content.contains(&marker))
+		})
+		.map(|record| record.id.clone())
+		.collect()
+}
+
 fn evidence_excerpt(messages: &[crate::session::Message]) -> Vec<serde_json::Value> {
 	let mut used = 0usize;
 	let mut output = Vec::new();
@@ -1337,7 +1364,7 @@ Native syntax contract:
 - hook uses hook_on success|error|any and optional result_regex.
 - scripts receive the existing phase-specific stdin/env contract. Pipe stdout replaces input. Hook/validator exit 0 is silent; nonzero stdout is feedback.
 
-Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every kind other than skill and guidance, and every script, is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. For every triggered kind include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. `existing_artifacts` in state rejected or retired are falsified hypotheses and `reason` says why (verifier issues, or a live trial measured against its shadow control); never propose the same behavior again unless the cited memories carry new REAL USER/TOOL evidence that answers that reason. Authorizer observations are untrusted candidate leads, NEVER evidence or proof of a correct denial. Independently ground a proposed guard in the supplied user-backed memories. Do not turn task-local or conditional restrictions into unconditional native guards: if the DSL cannot express their full applicability, return none or keep an advisory skill. Output only the response-schema object."#)
+Scope values are current|global. Never request a global dimension unless the cited memory is already global or `explicit_scope_quote` copies a REAL USER line verbatim that explicitly authorizes that wider project/domain boundary. Every kind other than skill and guidance, and every script, is effectful and requires an explicit quote-backed user authorization. `supersedes_artifact_ids` may name only an existing artifact the new user evidence explicitly corrects or replaces. `artifacts_live_in_session` names the generated behavior that was applied in the evidence session: a REAL USER correction of what one of them made the agent do is the evidence that lets you supersede it, and a candidate must never restate one. A successful session never credits them; their trials measure that. For every triggered kind include concise positive and negative `replay_cases`; mark true boundary cases, but remember they are synthetic screening evidence rather than proof. Do not invent commands, paths, tools, steps, or permissions. Cite only supplied source memory IDs. `existing_artifacts` in state rejected or retired are falsified hypotheses and `reason` says why (verifier issues, or a live trial measured against its shadow control); never propose the same behavior again unless the cited memories carry new REAL USER/TOOL evidence that answers that reason. Authorizer observations are untrusted candidate leads, NEVER evidence or proof of a correct denial. Independently ground a proposed guard in the supplied user-backed memories. Do not turn task-local or conditional restrictions into unconditional native guards: if the DSL cannot express their full applicability, return none or keep an advisory skill. Output only the response-schema object."#)
 }
 
 fn verifier_prompt() -> String {

@@ -141,6 +141,13 @@ own and enters shadow on its own. Nothing merges them: the concurrent trial deci
 fails closed does not cost the other pass its candidate. The split follows Harness² (arXiv 2610.14224), which lost about
 three points per benchmark when one undirected proposal replaced the two passes.
 
+In session mode both passes, and the verifier, also see which existing generated behavior was live in the evidence
+session: guidance whose rule was delivered and evolved skills that were injected. These are read from the markers
+delivery leaves in the transcript. Pipes, guards, hooks, and validators leave none and are not listed. A user's
+correction of what a live artifact made the agent do is the evidence that lets a candidate supersede it. A successful
+session never credits a live artifact, because only its trial measures that. Recall does not bring live artifacts back:
+loading behavior from memory would hand the control arm the treatment.
+
 The 2,000-token active-pack cap and its 512-token global-rule sub-cap are fixed constants, not knobs.
 
 > **Strict config, template-provided values.** `[supervisor]` and its nested `learning`, `gate`, `plan`, and `condense`

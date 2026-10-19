@@ -498,6 +498,59 @@ fn authorizer_denials_are_never_real_tool_evidence_for_evolution() {
 	assert!(selected.iter().all(|entry| entry["role"] != "tool"));
 }
 
+fn stored_record(id: &str, name: &str, kind: &str) -> EvolutionRecord {
+	serde_json::from_value(json!({
+		"schema_version": REGISTRY_SCHEMA_VERSION,
+		"id": id,
+		"name": name,
+		"description": "test",
+		"kind": kind,
+		"scope": {"project": "project", "domain": "developer"},
+		"state": "active",
+		"effect": "advisory",
+		"explicit_authorization": false,
+		"source_memory_ids": [],
+		"evidence": [],
+		"artifact_version": 1,
+		"parent_version": null,
+		"superseded_ids": [],
+		"generator_model": "m",
+		"verifier_model": "m",
+		"artifact_path": "x",
+		"script_path": null,
+		"shadow_matches": 0,
+		"trial_uses": 0,
+		"successes": 0,
+		"failures": 0,
+		"false_triggers": 0,
+		"created": "",
+		"updated": "",
+		"promoted": null,
+		"last_used": null,
+		"retired": null,
+		"history": []
+	}))
+	.unwrap()
+}
+
+#[test]
+fn live_artifacts_are_read_from_delivery_markers_only() {
+	let records = vec![
+		stored_record("evo-rule", "evolved-rule", "guidance"),
+		stored_record("evo-skill", "evolved-skill", "skill"),
+		stored_record("evo-guard", "evolved-guard", "guard"),
+		stored_record("evo-absent", "evolved-absent", "skill"),
+	];
+	let messages = vec![
+		user_message("<system-note>\n<learned-guidance>\n<guidance id=\"evo-rule\">\nx\n</guidance>"),
+		user_message("<skill name=\"evolved-skill\">\nbody\n</skill>"),
+		// The guard's id in a real request is not a delivery marker.
+		user_message("why did evo-guard block me"),
+	];
+	assert_eq!(live_in_session(&messages, &records), vec!["evo-rule", "evo-skill"]);
+	assert!(live_in_session(&[], &records).is_empty());
+}
+
 #[test]
 fn validate_native_rejects_secrets_shebangless_scripts_and_broken_native() {
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"no\"\n";

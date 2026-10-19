@@ -249,21 +249,6 @@ impl Config {
 			})
 			.collect()
 	}
-
-	/// Validates that no unknown or silently ignored keys exist.
-	pub fn validate_ignored_keys(&self) -> Result<()> {
-		let reports = self.check_ignored_keys();
-		if reports.is_empty() {
-			Ok(())
-		} else {
-			let paths: Vec<String> = reports.iter().map(|r| r.path.clone()).collect();
-			Err(anyhow!(
-				"Found {} unknown or ignored configuration key(s): {}",
-				reports.len(),
-				paths.join(", ")
-			))
-		}
-	}
 }
 
 /// Report for a configuration key ignored by serde during deserialization.
@@ -281,8 +266,32 @@ impl IgnoredKeyReport {
 
 static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock::new(|| {
 	let template = include_str!("../../config-templates/default.toml");
-	toml::from_str(template).unwrap_or(toml::Value::Table(toml::map::Map::new()))
+	toml::from_str(template).expect("config-templates/default.toml must parse")
 });
+
+/// Field names of each `McpServerConfig` variant, `type` tag included.
+/// `test_validate_accepts_every_mcp_server_field` fails when these drift from the enum.
+const BUILTIN_SERVER_KEYS: &[&str] = &["type", "name", "timeout_seconds", "tools", "auto_bind"];
+const HTTP_SERVER_KEYS: &[&str] = &[
+	"type",
+	"name",
+	"url",
+	"timeout_seconds",
+	"tools",
+	"headers",
+	"auto_bind",
+];
+const STDIO_SERVER_KEYS: &[&str] = &[
+	"type",
+	"name",
+	"command",
+	"args",
+	"timeout_seconds",
+	"tools",
+	"env",
+	"cwd",
+	"auto_bind",
+];
 
 fn section_has_field(section: &str, field: &str) -> bool {
 	let mut current: &toml::Value = &DEFAULT_TEMPLATE;
@@ -354,87 +363,28 @@ pub fn deserialize_with_ignored_keys(value: toml::Value) -> Result<(Config, Vec<
 	}
 
 	// MCP Servers: serde_ignored cannot penetrate #[serde(tag = "type")] on McpServerConfig,
-	// so check each variant table individually.
+	// so compare each server table's keys against its variant's fields.
 	if let Some(servers) = value
 		.get("mcp")
 		.and_then(|m| m.get("servers"))
 		.and_then(toml::Value::as_array)
 	{
 		for (i, server) in servers.iter().enumerate() {
-			if let Some(server_table) = server.as_table() {
-				let server_val = toml::Value::Table(server_table.clone());
-				let server_type = server_table.get("type").and_then(toml::Value::as_str);
-				match server_type {
-					Some("builtin") => {
-						#[derive(serde::Deserialize)]
-						struct BuiltinCheck {
-							#[allow(dead_code)]
-							r#type: String,
-							#[allow(dead_code)]
-							name: Option<String>,
-							#[allow(dead_code)]
-							timeout_seconds: Option<u64>,
-							#[allow(dead_code)]
-							tools: Option<Vec<String>>,
-							#[allow(dead_code)]
-							auto_bind: Option<Vec<String>>,
-						}
-						let _: Result<BuiltinCheck, _> =
-							serde_ignored::deserialize(server_val, |path| {
-								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
-							});
-					}
-					Some("http") => {
-						#[derive(serde::Deserialize)]
-						struct HttpCheck {
-							#[allow(dead_code)]
-							r#type: String,
-							#[allow(dead_code)]
-							name: Option<String>,
-							#[allow(dead_code)]
-							url: Option<String>,
-							#[allow(dead_code)]
-							timeout_seconds: Option<u64>,
-							#[allow(dead_code)]
-							tools: Option<Vec<String>>,
-							#[allow(dead_code)]
-							headers: Option<std::collections::HashMap<String, String>>,
-							#[allow(dead_code)]
-							auto_bind: Option<Vec<String>>,
-						}
-						let _: Result<HttpCheck, _> =
-							serde_ignored::deserialize(server_val, |path| {
-								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
-							});
-					}
-					Some("stdio") => {
-						#[derive(serde::Deserialize)]
-						struct StdioCheck {
-							#[allow(dead_code)]
-							r#type: String,
-							#[allow(dead_code)]
-							name: Option<String>,
-							#[allow(dead_code)]
-							command: Option<String>,
-							#[allow(dead_code)]
-							args: Option<Vec<String>>,
-							#[allow(dead_code)]
-							timeout_seconds: Option<u64>,
-							#[allow(dead_code)]
-							tools: Option<Vec<String>>,
-							#[allow(dead_code)]
-							env: Option<std::collections::HashMap<String, String>>,
-							#[allow(dead_code)]
-							auto_bind: Option<Vec<String>>,
-						}
-						let _: Result<StdioCheck, _> =
-							serde_ignored::deserialize(server_val, |path| {
-								ignored_keys.push(format!("mcp.servers.{i}.{path}"));
-							});
-					}
-					_ => {}
-				}
-			}
+			let Some(server_table) = server.as_table() else {
+				continue;
+			};
+			let known = match server_table.get("type").and_then(toml::Value::as_str) {
+				Some("builtin") => BUILTIN_SERVER_KEYS,
+				Some("http") => HTTP_SERVER_KEYS,
+				Some("stdio") => STDIO_SERVER_KEYS,
+				_ => continue,
+			};
+			ignored_keys.extend(
+				server_table
+					.keys()
+					.filter(|key| !known.contains(&key.as_str()))
+					.map(|key| format!("mcp.servers.{i}.{key}")),
+			);
 		}
 	}
 
@@ -444,30 +394,14 @@ pub fn deserialize_with_ignored_keys(value: toml::Value) -> Result<(Config, Vec<
 	Ok((config, ignored_keys))
 }
 
-/// Detects if an ignored dotted path looks like a scalar placed after a table header.
+/// Detects if an ignored dotted path looks like a scalar placed after a table header:
+/// the key is unknown to its table but a field of the section enclosing that table.
 pub fn detect_scalar_after_table_hint(path: &str) -> Option<String> {
-	let parts: Vec<&str> = path.split('.').collect();
-	if parts.len() < 2 {
-		return None;
-	}
-	let key = parts[parts.len() - 1];
-
-	let mut matches_parent = false;
-	for i in (0..parts.len() - 1).rev() {
-		let ancestor = parts[..i].join(".");
-		if section_has_field(&ancestor, key) {
-			matches_parent = true;
-			break;
-		}
-	}
-
-	if matches_parent {
-		Some(
-			"in TOML, a scalar placed after a [header] becomes a field of that table; did you mean to place this in the parent section before the header?".to_string(),
-		)
-	} else {
-		None
-	}
+	let (table, key) = path.rsplit_once('.')?;
+	let parent = table.rsplit_once('.').map_or("", |(parent, _)| parent);
+	section_has_field(parent, key).then(|| {
+		"in TOML, a scalar placed after a [header] becomes a field of that table; did you mean to place this in the parent section before the header?".to_string()
+	})
 }
 
 #[cfg(test)]

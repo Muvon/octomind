@@ -349,7 +349,6 @@ fn test_validate_clean_default_template_has_no_ignored_keys() {
 		reports.is_empty(),
 		"expected 0 ignored keys, got: {reports:?}"
 	);
-	assert!(config.validate_ignored_keys().is_ok());
 }
 
 #[test]
@@ -366,8 +365,6 @@ fn test_validate_reports_misspelled_key() {
 	assert_eq!(reports[0].path, "model.max_tokns");
 	assert!(reports[0].hint.is_none());
 	assert!(reports[0].format_warning().contains("model.max_tokns"));
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("model.max_tokns"));
 }
 
 #[test]
@@ -388,8 +385,6 @@ fn test_validate_reports_scalar_after_table_with_hint() {
 		.as_ref()
 		.unwrap()
 		.contains("scalar placed after a [header]"));
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("model.sandbox"));
 }
 
 #[test]
@@ -413,8 +408,6 @@ fn test_validate_reports_scalar_after_nested_table_with_hint() {
 		.as_ref()
 		.unwrap()
 		.contains("scalar placed after a [header]"));
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("compression.attention.threshold"));
 }
 
 #[test]
@@ -434,8 +427,6 @@ fn test_validate_reports_ignored_key_in_roles() {
 		reports.iter().any(|r| r.path == "roles.0.unknown_role_key"),
 		"expected roles.0.unknown_role_key, got: {reports:?}"
 	);
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("roles.0.unknown_role_key"));
 }
 
 #[test]
@@ -457,8 +448,6 @@ fn test_validate_reports_ignored_key_in_roles_model() {
 			.any(|r| r.path == "roles.0.model.unknown_model_key"),
 		"expected roles.0.model.unknown_model_key, got: {reports:?}"
 	);
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("roles.0.model.unknown_model_key"));
 }
 
 #[test]
@@ -480,6 +469,55 @@ fn test_validate_reports_ignored_key_in_mcp_servers() {
 			.any(|r| r.path.starts_with("mcp.servers.") && r.path.ends_with(".unknown_mcp_key")),
 		"expected mcp.servers.*.unknown_mcp_key, got: {reports:?}"
 	);
-	let err = config.validate_ignored_keys().unwrap_err().to_string();
-	assert!(err.contains("unknown_mcp_key"));
+}
+
+#[test]
+fn test_validate_accepts_every_mcp_server_field() {
+	// Every variant fully populated. A field added to `McpServerConfig` has to be added
+	// here (struct literal), and this then fails until the matching `*_SERVER_KEYS` list in
+	// `validation.rs` knows it too.
+	let map = std::collections::HashMap::from([("KEY".to_string(), "value".to_string())]);
+	let servers = [
+		McpServerConfig::Builtin {
+			name: "drift_builtin".to_string(),
+			timeout_seconds: 30,
+			tools: vec!["tool".to_string()],
+			auto_bind: Some(vec!["developer".to_string()]),
+		},
+		McpServerConfig::Http {
+			name: "drift_http".to_string(),
+			url: "http://127.0.0.1:1".to_string(),
+			timeout_seconds: 30,
+			tools: vec!["tool".to_string()],
+			headers: map.clone(),
+			auto_bind: Some(vec!["developer".to_string()]),
+		},
+		McpServerConfig::Stdin {
+			name: "drift_stdio".to_string(),
+			command: "true".to_string(),
+			args: vec!["arg".to_string()],
+			timeout_seconds: 30,
+			tools: vec!["tool".to_string()],
+			env: map,
+			cwd: Some(".".to_string()),
+			auto_bind: Some(vec!["developer".to_string()]),
+		},
+	];
+	let template = include_str!("../../config-templates/default.toml");
+	let mut value: toml::Value = toml::from_str(template).unwrap();
+	let template_servers = value
+		.get_mut("mcp")
+		.and_then(|mcp| mcp.get_mut("servers"))
+		.and_then(toml::Value::as_array_mut)
+		.expect("template has [[mcp.servers]]");
+	for server in &servers {
+		template_servers.push(toml::Value::try_from(server).expect("server serializes"));
+	}
+
+	let (_, ignored_keys) =
+		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	assert!(
+		ignored_keys.is_empty(),
+		"every McpServerConfig field must be known, got: {ignored_keys:?}"
+	);
 }

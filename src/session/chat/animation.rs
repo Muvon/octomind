@@ -48,3 +48,7 @@ pub fn format_elapsed_time(elapsed: Duration) -> String {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "animation_tests.rs"]
+mod tests;

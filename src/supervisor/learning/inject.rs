@@ -301,7 +301,10 @@ fn render_item(
 		let skills = if skills.is_empty() {
 			String::new()
 		} else {
-			format!(" skills={}", crate::supervisor::escape_xml_text(&skills.join(",")))
+			format!(
+				" skills={}",
+				crate::supervisor::escape_xml_text(&skills.join(","))
+			)
 		};
 		format!(
 			"- [{id} scope={scope} experience outcome={} confidence={}{} related={} evidence={}{}] {}\n{}{}\n",

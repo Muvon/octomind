@@ -300,7 +300,13 @@ fn experience_card_names_only_the_live_skills_it_is_given() {
 		artifacts: vec!["evo-schema".to_string()],
 		..Default::default()
 	};
-	let card = render_item("M1", &experience, false, None, &["evolved-schema".to_string()]);
+	let card = render_item(
+		"M1",
+		&experience,
+		false,
+		None,
+		&["evolved-schema".to_string()],
+	);
 	assert!(card.contains(" skills=evolved-schema] Schema migration"));
 	assert!(!render_item("M1", &experience, false, None, &[]).contains("skills="));
 	// Outside a session nothing is applied, so a stored harness names nothing.

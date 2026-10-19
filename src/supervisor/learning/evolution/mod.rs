@@ -31,9 +31,9 @@ pub(crate) use registry::create_record;
 pub use registry::{get_record, list_records, mutate_record};
 pub use runtime::{
 	active_skill_dirs, all_skill_bindings, applied_skill_names, binding_is_shadow,
-	clear_for_session, deliver_guidance, generated_guardrails, init_for_session, mark_behavior_used,
-	mark_shadow_match, mark_skill_activated, reinforce_session, skill_binding, SkillBinding,
-	TurnVerdict,
+	clear_for_session, deliver_guidance, generated_guardrails, init_for_session,
+	mark_behavior_used, mark_shadow_match, mark_skill_activated, reinforce_session, skill_binding,
+	SkillBinding, TurnVerdict,
 };
 
 /// The only user-facing evolution knob. Models, evidence thresholds, trial

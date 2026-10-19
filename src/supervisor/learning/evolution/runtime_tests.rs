@@ -501,7 +501,10 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 		assert!(!dirs.contains(&shadow_binding.path));
 		// Recall names a recorded harness only where it is live.
 		let harness = vec![shadow_id.to_string(), trial_id.to_string()];
-		assert_eq!(applied_skill_names(&harness), vec![format!("evolved-{trial_id}")]);
+		assert_eq!(
+			applied_skill_names(&harness),
+			vec![format!("evolved-{trial_id}")]
+		);
 		crate::session::context::cleanup_session(&session_id);
 	})
 	.await;

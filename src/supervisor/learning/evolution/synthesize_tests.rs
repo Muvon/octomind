@@ -179,7 +179,14 @@ fn generated_guidance_is_bounded_scriptless_advisory_text() {
 	assert_eq!(native, "Run the linter before reporting done.\n");
 	assert!(script.is_none());
 	assert_eq!(path, "GUIDANCE.md");
-	validate_native(ArtifactKind::Guidance, &native, None, EffectClass::Advisory, false).unwrap();
+	validate_native(
+		ArtifactKind::Guidance,
+		&native,
+		None,
+		EffectClass::Advisory,
+		false,
+	)
+	.unwrap();
 	assert_eq!(
 		effective_class(ArtifactKind::Guidance, "effectful").unwrap(),
 		EffectClass::Advisory
@@ -194,8 +201,7 @@ fn generated_guidance_is_bounded_scriptless_advisory_text() {
 	assert!(render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").is_err());
 
 	let scripted = proposal("guidance");
-	let error =
-		render_native(&scripted, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
+	let error = render_native(&scripted, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
 	assert!(error.to_string().contains("no script"));
 }
 
@@ -543,12 +549,17 @@ fn live_artifacts_are_read_from_delivery_markers_only() {
 		stored_record("evo-absent", "evolved-absent", "skill"),
 	];
 	let messages = vec![
-		user_message("<system-note>\n<learned-guidance>\n<guidance id=\"evo-rule\">\nx\n</guidance>"),
+		user_message(
+			"<system-note>\n<learned-guidance>\n<guidance id=\"evo-rule\">\nx\n</guidance>",
+		),
 		user_message("<skill name=\"evolved-skill\">\nbody\n</skill>"),
 		// The guard's id in a real request is not a delivery marker.
 		user_message("why did evo-guard block me"),
 	];
-	assert_eq!(live_in_session(&messages, &records), vec!["evo-rule", "evo-skill"]);
+	assert_eq!(
+		live_in_session(&messages, &records),
+		vec!["evo-rule", "evo-skill"]
+	);
 	assert!(live_in_session(&[], &records).is_empty());
 }
 

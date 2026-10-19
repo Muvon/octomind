@@ -1079,10 +1079,17 @@ pub async fn run_interactive_session(
 					}
 				}
 
-				// Try to process as command
-				let command_result = chat_session
+				// Try to process as command; a failing command reports its error and keeps the session alive
+				let command_result = match chat_session
 					.process_command(&input, &mut current_config, &role, operation_rx.clone())
-					.await?;
+					.await
+				{
+					Ok(result) => result,
+					Err(e) => {
+						println!("{}: {:#}", "❌ Command failed".bright_red(), e);
+						continue;
+					}
+				};
 
 				match command_result {
 					CommandResult::TreatAsUserInput => {

@@ -214,10 +214,9 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 						Ok(ids) if ids.is_empty() => {
 							"evolution store distill: no recurring pattern qualified".to_string()
 						}
-						Ok(ids) => format!(
-							"evolution store distill: candidates {}",
-							ids.join(", ")
-						),
+						Ok(ids) => {
+							format!("evolution store distill: candidates {}", ids.join(", "))
+						}
 						Err(error) => format!("evolution store distill failed: {error}"),
 					};
 					crate::supervisor::notify(&notice);

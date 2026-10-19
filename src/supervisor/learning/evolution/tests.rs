@@ -709,7 +709,9 @@ async fn same_kind_candidates_compose_into_one_verified_artifact() {
 			assert_eq!(created.len(), 1, "the merge replaces both candidates");
 			assert_eq!(requests.len(), 4);
 			let compose = requests[2].to_string();
-			assert!(compose.contains("invariant_candidate") && compose.contains("domain_candidate"));
+			assert!(
+				compose.contains("invariant_candidate") && compose.contains("domain_candidate")
+			);
 			let stored = get_record(&created[0]).unwrap().unwrap();
 			assert!(stored.name.starts_with("evolved-schema-check-merged-"));
 			assert!(stored.history[0].detail.starts_with("composed candidate"));

@@ -52,8 +52,7 @@ static SESSION_SHADOWS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLoc
 static SESSION_SKILL_EXPOSURE: RwLock<Option<HashMap<String, HashMap<String, bool>>>> =
 	RwLock::new(None);
 /// Guidance awaiting the session's first activation pass, taken by delivery.
-static SESSION_GUIDANCE: RwLock<Option<HashMap<String, Vec<GuidanceBinding>>>> =
-	RwLock::new(None);
+static SESSION_GUIDANCE: RwLock<Option<HashMap<String, Vec<GuidanceBinding>>>> = RwLock::new(None);
 
 pub fn init_for_session(role: &str) {
 	let Some(session_id) = crate::session::context::current_session_id() else {

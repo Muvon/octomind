@@ -29,4 +29,7 @@ fn format_accepts_only_plain_and_jsonl() {
 	let args =
 		CliArgs::try_parse_from(["octomind", "run", "--format", "jsonl"]).expect("jsonl parses");
 	assert!(matches!(args.command, Some(Commands::Run(_))));
+	let args = CliArgs::try_parse_from(["octomind", "workflow", "x", "--format", "jsonl"])
+		.expect("jsonl parses");
+	assert!(matches!(args.command, Some(Commands::Workflow(_))));
 }

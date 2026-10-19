@@ -883,40 +883,39 @@ async fn test_tap_list_and_untap_unknown() {
 	assert!(!output.status.success(), "untap of unknown tap must fail");
 }
 
-/// The jsonl and plain output formats both run through the non-interactive
-/// loop; each must deliver the answer on stdout.
+/// The jsonl output format drives its own sink through the non-interactive
+/// loop; it must deliver the answer on stdout. Plain is covered by the other
+/// `run --format plain` tests.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_run_jsonl_and_plain_formats() {
+async fn test_run_jsonl_format() {
 	let stub_url = spawn_openai_stub().await;
 	let home = tempfile::tempdir().expect("temp home");
 	write_sandbox_config(home.path());
 
-	for format in ["jsonl", "plain"] {
-		let mut child = octomind_cmd(home.path(), &stub_url)
-			.args(["run", "--format", format])
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped())
-			.spawn()
-			.expect("spawn octomind run");
-		child
-			.stdin
-			.take()
-			.expect("stdin")
-			.write_all(b"answer with the marker\n")
-			.expect("write prompt");
-		let output = child.wait_with_output().expect("octomind exits");
-		let stdout = String::from_utf8_lossy(&output.stdout);
-		let stderr = String::from_utf8_lossy(&output.stderr);
-		assert!(
-			output.status.success(),
-			"--format {format} failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-		);
-		assert!(
-			stdout.contains(MARKER),
-			"--format {format} missing answer.\nstdout:\n{stdout}"
-		);
-	}
+	let mut child = octomind_cmd(home.path(), &stub_url)
+		.args(["run", "--format", "jsonl"])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.expect("spawn octomind run");
+	child
+		.stdin
+		.take()
+		.expect("stdin")
+		.write_all(b"answer with the marker\n")
+		.expect("write prompt");
+	let output = child.wait_with_output().expect("octomind exits");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		output.status.success(),
+		"--format jsonl failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+	);
+	assert!(
+		stdout.contains(MARKER),
+		"--format jsonl missing answer.\nstdout:\n{stdout}"
+	);
 }
 
 /// Remaining config surfaces: markdown setters persist, validate and

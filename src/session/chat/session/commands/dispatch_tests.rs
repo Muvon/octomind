@@ -185,6 +185,67 @@ async fn test_effort_set() {
 }
 
 #[tokio::test]
+async fn test_effort_same_level_is_a_noop() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	let result = dispatch(&mut session, &mut config, "/effort high")
+		.await
+		.expect("effort dispatches");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed effort output");
+	};
+	assert!(matches!(*output, CommandOutput::Effort { changed: true, .. }));
+
+	// Re-applying the current level must report no change and persist nothing.
+	let result = dispatch(&mut session, &mut config, "/effort high")
+		.await
+		.expect("repeated effort dispatches");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed effort output");
+	};
+	let CommandOutput::Effort {
+		old_effort,
+		new_effort,
+		changed,
+		saved,
+		save_error,
+	} = *output
+	else {
+		panic!("expected Effort output");
+	};
+	assert!(!changed, "same level must not report a change");
+	assert_eq!(old_effort, None);
+	assert_eq!(new_effort, "high");
+	assert_eq!(saved, None);
+	assert_eq!(save_error, None);
+
+	// A real change still goes through.
+	let result = dispatch(&mut session, &mut config, "/effort low")
+		.await
+		.expect("changed effort dispatches");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed effort output");
+	};
+	let CommandOutput::Effort {
+		old_effort,
+		new_effort,
+		changed,
+		..
+	} = *output
+	else {
+		panic!("expected Effort output");
+	};
+	assert!(changed);
+	assert_eq!(old_effort.as_deref(), Some("high"));
+	assert_eq!(new_effort, "low");
+	assert_eq!(
+		session.reasoning_effort,
+		Some(crate::config::ReasoningEffortConfig::Low)
+	);
+}
+
+#[tokio::test]
 async fn test_display_commands_run_without_panicking() {
 	// Populate the session so info/context/report have real content to render
 	let mut session = ChatSession::for_tests(Vec::new());

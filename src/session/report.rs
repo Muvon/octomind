@@ -45,21 +45,13 @@ pub struct SessionReport {
 /// Project of a generated session name `YYMMDD-<project>-HHMM-<id>` (see
 /// `generate_session_name`); a custom `--name` is its own project.
 pub fn project_of(name: &str) -> &str {
-	let digits =
-		|part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
+	let digits = |part: &str, len: usize| part.len() == len && part.bytes().all(|b| b.is_ascii_digit());
 	let parts = name
 		.split_once('-')
 		.and_then(|(date, rest)| rest.rsplit_once('-').map(|(rest, _id)| (date, rest)))
-		.and_then(|(date, rest)| {
-			rest.rsplit_once('-')
-				.map(|(project, time)| (date, project, time))
-		});
+		.and_then(|(date, rest)| rest.rsplit_once('-').map(|(project, time)| (date, project, time)));
 	match parts {
-		Some((date, project, time))
-			if digits(date, 6) && digits(time, 4) && !project.is_empty() =>
-		{
-			project
-		}
+		Some((date, project, time)) if digits(date, 6) && digits(time, 4) && !project.is_empty() => project,
 		_ => name,
 	}
 }
@@ -134,8 +126,7 @@ impl SessionReport {
 		// (see `log_compression_point`), so the same turn appears once per fold.
 		// A re-logged message keeps its role, timestamp and content — dedupe on
 		// those, or requests and their tool calls are counted many times over.
-		let mut seen_messages: std::collections::HashSet<(&str, u64, &str)> =
-			std::collections::HashSet::new();
+		let mut seen_messages: std::collections::HashSet<(&str, u64, &str)> = std::collections::HashSet::new();
 
 		// Process entries and track cost/time
 		for log_entry in all_entries.iter() {
@@ -144,31 +135,22 @@ impl SessionReport {
 			// them up alongside `{"type":"COMMAND",…}` entries. Without this, /report
 			// only ever shows slash commands and skips real chat turns.
 			let role = log_entry.get("role").and_then(|r| r.as_str()).unwrap_or("");
-			let content = log_entry
-				.get("content")
-				.and_then(|c| c.as_str())
-				.unwrap_or("");
-			let log_type = log_entry
-				.get("type")
-				.and_then(|t| t.as_str())
-				.unwrap_or_else(|| {
-					// Only a genuine user turn opens a new row. Skills, `<system-note>`,
-					// supervisor steers and continuation wrappers are injected with
-					// `role:"user"` too; counting them fills the table with generated
-					// requests and splits the real one's cost across dozens of rows.
-					if role == "user"
-						&& !content.trim().is_empty()
-						&& !crate::session::is_system_managed_user_content(content)
-					{
-						"USER"
-					} else {
-						""
-					}
-				});
-			let entry_timestamp = log_entry
-				.get("timestamp")
-				.and_then(|t| t.as_u64())
-				.unwrap_or(0);
+			let content = log_entry.get("content").and_then(|c| c.as_str()).unwrap_or("");
+			let log_type = log_entry.get("type").and_then(|t| t.as_str()).unwrap_or_else(|| {
+				// Only a genuine user turn opens a new row. Skills, `<system-note>`,
+				// supervisor steers and continuation wrappers are injected with
+				// `role:"user"` too; counting them fills the table with generated
+				// requests and splits the real one's cost across dozens of rows.
+				if role == "user"
+					&& !content.trim().is_empty()
+					&& !crate::session::is_system_managed_user_content(content)
+				{
+					"USER"
+				} else {
+					""
+				}
+			});
+			let entry_timestamp = log_entry.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
 
 			// Markers (SUMMARY, COMMAND, …) may legitimately repeat; only messages
 			// are re-appended verbatim by compression snapshots.
@@ -183,14 +165,10 @@ impl SessionReport {
 					if let Some(total_cost) = log_entry.get("total_cost").and_then(|c| c.as_f64()) {
 						last_total_cost = total_cost;
 					}
-					if let Some(total_api_time) =
-						log_entry.get("total_api_time_ms").and_then(|t| t.as_u64())
-					{
+					if let Some(total_api_time) = log_entry.get("total_api_time_ms").and_then(|t| t.as_u64()) {
 						last_total_api_time_ms = total_api_time;
 					}
-					if let Some(total_tool_time) =
-						log_entry.get("total_tool_time_ms").and_then(|t| t.as_u64())
-					{
+					if let Some(total_tool_time) = log_entry.get("total_tool_time_ms").and_then(|t| t.as_u64()) {
 						last_total_tool_time_ms = total_tool_time;
 					}
 				}
@@ -244,8 +222,7 @@ impl SessionReport {
 				"TOOL_CALL" => {
 					// Track tool usage (test-only log type)
 					if let Some(ref mut ctx) = current_context {
-						if let Some(tool_name) = log_entry.get("tool_name").and_then(|t| t.as_str())
-						{
+						if let Some(tool_name) = log_entry.get("tool_name").and_then(|t| t.as_str()) {
 							*ctx.tools.entry(tool_name.to_string()).or_insert(0) += 1;
 						}
 					}
@@ -254,12 +231,9 @@ impl SessionReport {
 					// Assistant messages with tool_calls embedded (production format)
 					if role == "assistant" {
 						if let Some(ref mut ctx) = current_context {
-							if let Some(tool_calls) =
-								log_entry.get("tool_calls").and_then(|tc| tc.as_array())
-							{
+							if let Some(tool_calls) = log_entry.get("tool_calls").and_then(|tc| tc.as_array()) {
 								for tc in tool_calls {
-									if let Some(tool_name) = tc.get("name").and_then(|n| n.as_str())
-									{
+									if let Some(tool_name) = tc.get("name").and_then(|n| n.as_str()) {
 										*ctx.tools.entry(tool_name.to_string()).or_insert(0) += 1;
 									}
 								}
@@ -284,21 +258,13 @@ impl SessionReport {
 					// boundary. Pull cost AND time here; without the time pulls,
 					// ai/processing read 0ms whenever a SUMMARY closes the window.
 					if let Some(session_info) = log_entry.get("session_info") {
-						if let Some(total_cost) =
-							session_info.get("total_cost").and_then(|c| c.as_f64())
-						{
+						if let Some(total_cost) = session_info.get("total_cost").and_then(|c| c.as_f64()) {
 							last_total_cost = total_cost;
 						}
-						if let Some(api_ms) = session_info
-							.get("total_api_time_ms")
-							.and_then(|t| t.as_u64())
-						{
+						if let Some(api_ms) = session_info.get("total_api_time_ms").and_then(|t| t.as_u64()) {
 							last_total_api_time_ms = api_ms;
 						}
-						if let Some(tool_ms) = session_info
-							.get("total_tool_time_ms")
-							.and_then(|t| t.as_u64())
-						{
+						if let Some(tool_ms) = session_info.get("total_tool_time_ms").and_then(|t| t.as_u64()) {
 							last_total_tool_time_ms = tool_ms;
 						}
 						if session_info.get("interactive").and_then(|i| i.as_bool()) == Some(true) {
@@ -439,11 +405,7 @@ impl SessionReport {
 			if !report.interactive {
 				continue;
 			}
-			let turns: Vec<Turn> = report
-				.turns
-				.into_iter()
-				.filter(|turn| turn.input_at >= since)
-				.collect();
+			let turns: Vec<Turn> = report.turns.into_iter().filter(|turn| turn.input_at >= since).collect();
 			if !turns.is_empty() {
 				sessions.push(SessionTurns {
 					name: name.to_string(),
@@ -499,8 +461,11 @@ impl SessionReport {
 		let mut markdown = String::new();
 
 		// Table header
-		markdown.push_str("| User Request | Cost ($) | Tool Calls | Tools Used | Task Time | AI Time | Processing Time |\n");
-		markdown.push_str("|--------------|----------|------------|------------|-----------|---------|----------------|\n");
+		markdown.push_str(
+			"| User Request | Cost ($) | Tool Calls | Tools Used | Task Time | AI Time | Processing Time |\n",
+		);
+		markdown
+			.push_str("|--------------|----------|------------|------------|-----------|---------|----------------|\n");
 
 		// Table rows
 		for entry in &self.entries {
@@ -532,9 +497,7 @@ impl SessionReport {
 
 	/// Escape markdown special characters in table cells
 	fn escape_markdown(&self, text: &str) -> String {
-		text.replace("|", "\\|")
-			.replace("\n", " ")
-			.replace("\r", "")
+		text.replace("|", "\\|").replace("\n", " ").replace("\r", "")
 	}
 
 	/// Display the report with summary information using markdown rendering

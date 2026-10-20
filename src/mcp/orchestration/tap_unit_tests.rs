@@ -49,17 +49,14 @@ async fn a_finished_workflow_banks_its_cost_on_the_session_that_ran_it() {
 			"got: {content}"
 		);
 		let banked = crate::session::external_spend::take();
-		assert!(
-			(banked - 0.42).abs() < 1e-9,
-			"expected 0.42 banked, got {banked}"
-		);
+		assert!((banked - 0.42).abs() < 1e-9, "expected 0.42 banked, got {banked}");
 	})
 	.await;
 }
 
 fn unit_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -121,11 +118,7 @@ fn schema_documents_every_parameter() {
 		.expect("properties object");
 	for key in ["role", "prompt", "session", "workdir", "intent"] {
 		let prop = props.get(key).unwrap_or_else(|| panic!("{key} missing"));
-		assert_eq!(
-			prop.get("type").and_then(|t| t.as_str()),
-			Some("string"),
-			"{key} type"
-		);
+		assert_eq!(prop.get("type").and_then(|t| t.as_str()), Some("string"), "{key} type");
 		assert!(
 			prop.get("description")
 				.and_then(|d| d.as_str())
@@ -134,10 +127,7 @@ fn schema_documents_every_parameter() {
 		);
 	}
 	assert_eq!(
-		function
-			.parameters
-			.get("required")
-			.and_then(|r| r.as_array()),
+		function.parameters.get("required").and_then(|r| r.as_array()),
 		Some(&vec![json!("action")])
 	);
 }
@@ -154,10 +144,7 @@ fn schema_description_documents_actions_and_resume_contract() {
 		"session",
 		"workdir",
 	] {
-		assert!(
-			function.description.contains(phrase),
-			"description missing '{phrase}'"
-		);
+		assert!(function.description.contains(phrase), "description missing '{phrase}'");
 	}
 }
 
@@ -176,12 +163,9 @@ async fn dispatch_trims_surrounding_whitespace_from_action() {
 
 #[tokio::test]
 async fn stop_with_non_string_session_is_error() {
-	let result = execute_tap_command(
-		&tap_call(json!({"action": "stop", "session": 123})),
-		&unit_config(),
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_tap_command(&tap_call(json!({"action": "stop", "session": 123})), &unit_config())
+		.await
+		.expect("dispatch");
 	assert!(result.is_error());
 	assert!(result
 		.extract_content()
@@ -213,10 +197,7 @@ async fn run_resume_while_busy_is_rejected() {
 	tap_runs::clear_for_session(&session_id);
 	assert!(result.is_error());
 	let content = result.extract_content();
-	assert!(
-		content.contains("busy with a previous turn"),
-		"content: {content}"
-	);
+	assert!(content.contains("busy with a previous turn"), "content: {content}");
 }
 
 // ---------------------------------------------------------------------------
@@ -234,12 +215,8 @@ async fn capability_with_low_signal_prompt_reports_no_match() {
 	.await
 	.expect("dispatch");
 	assert!(!result.is_error());
-	let payload: serde_json::Value =
-		serde_json::from_str(&result.extract_content()).expect("json payload");
-	assert_eq!(
-		payload["activated_capabilities"].as_array().map(Vec::len),
-		Some(0)
-	);
+	let payload: serde_json::Value = serde_json::from_str(&result.extract_content()).expect("json payload");
+	assert_eq!(payload["activated_capabilities"].as_array().map(Vec::len), Some(0));
 	assert_eq!(payload["message"], "No capability matched the prompt.");
 }
 
@@ -280,10 +257,7 @@ async fn discover_with_installed_agents_requires_embeddings() {
 	.expect("dispatch");
 	assert!(result.is_error());
 	let content = result.extract_content();
-	assert!(
-		content.contains("requires the embedding model"),
-		"content: {content}"
-	);
+	assert!(content.contains("requires the embedding model"), "content: {content}");
 }
 
 // ---------------------------------------------------------------------------
@@ -319,10 +293,7 @@ fn generate_id_formats_role_slug_with_hex_suffix() {
 	assert!(id.starts_with("tap-developer-general-"), "id: {id}");
 	let suffix = id.rsplit('-').next().expect("suffix");
 	assert_eq!(suffix.len(), 6, "id: {id}");
-	assert!(
-		suffix.chars().all(|c| c.is_ascii_hexdigit()),
-		"suffix: {suffix}"
-	);
+	assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()), "suffix: {suffix}");
 	// Consecutive calls differ: the counter is mixed through an odd
 	// multiplier, so distinct counters cannot collide in the low 24 bits.
 	assert_ne!(
@@ -374,17 +345,14 @@ async fn run_fresh_registers_job_and_reports_started_payload() {
 	.await;
 
 	assert!(!out.is_error(), "content: {}", out.extract_content());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
 	let id = payload["id"].as_str().expect("id").to_string();
 	assert!(id.starts_with("tap-developer-general-"), "id: {id}");
 	assert_eq!(payload["role"].as_str(), Some("developer:general"));
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
 
-	let status = crate::session::context::with_session_id(session_id.clone(), async {
-		wait_terminal_status(&id).await
-	})
-	.await;
+	let status =
+		crate::session::context::with_session_id(session_id.clone(), async { wait_terminal_status(&id).await }).await;
 	assert!(
 		matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
 		"status: {status:?}"
@@ -412,8 +380,7 @@ async fn run_resume_restarts_a_finished_job_with_its_original_role() {
 	.await;
 
 	assert!(!out.is_error(), "content: {}", out.extract_content());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("resume payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("resume payload is JSON");
 	// Resume reuses the registered job's role and workdir, not the caller's.
 	assert_eq!(payload["id"].as_str(), Some("tap-unit-resume"));
 	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
@@ -435,9 +402,7 @@ async fn run_resume_restarts_a_finished_job_with_its_original_role() {
 async fn run_without_workdir_defaults_to_thread_working_directory() {
 	let session_id = "__tapunit_cwd_default".to_string();
 	let (out, expected) = crate::session::context::with_session_id(session_id.clone(), async {
-		let expected = crate::mcp::get_thread_working_directory()
-			.to_string_lossy()
-			.to_string();
+		let expected = crate::mcp::get_thread_working_directory().to_string_lossy().to_string();
 		let out = execute_tap_command(
 			&tap_call(json!({
 				"action": "run",
@@ -453,15 +418,12 @@ async fn run_without_workdir_defaults_to_thread_working_directory() {
 	.await;
 
 	assert!(!out.is_error(), "content: {}", out.extract_content());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
 	assert_eq!(payload["workdir"].as_str(), Some(expected.as_str()));
 
 	let id = payload["id"].as_str().expect("id").to_string();
-	let status = crate::session::context::with_session_id(session_id.clone(), async {
-		wait_terminal_status(&id).await
-	})
-	.await;
+	let status =
+		crate::session::context::with_session_id(session_id.clone(), async { wait_terminal_status(&id).await }).await;
 	assert!(
 		matches!(status, TapJobStatus::Failed | TapJobStatus::Cancelled),
 		"status: {status:?}"
@@ -490,8 +452,7 @@ async fn run_outside_session_scope_still_starts_and_reports() {
 	.expect("dispatch");
 
 	assert!(!out.is_error(), "content: {}", out.extract_content());
-	let payload: serde_json::Value =
-		serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&out.extract_content()).expect("started payload is JSON");
 	assert!(payload["id"].as_str().is_some_and(|id| !id.is_empty()));
 	assert_eq!(payload["role"].as_str(), Some("lawyer:us"));
 	assert_eq!(payload["workdir"].as_str(), Some("/tmp"));
@@ -505,8 +466,7 @@ async fn discover_reports_tap_enumeration_failures() {
 	let guard = TempDataDir::new();
 	// A malformed taps.toml breaks tap loading; discover must surface the
 	// enumeration failure instead of reporting an empty catalog.
-	std::fs::write(guard.path().join("taps.toml"), "not [valid toml")
-		.expect("write malformed taps.toml");
+	std::fs::write(guard.path().join("taps.toml"), "not [valid toml").expect("write malformed taps.toml");
 
 	let result = execute_tap_command(
 		&tap_call(json!({"action": "discover", "intent": "debug a rust build"})),
@@ -516,10 +476,7 @@ async fn discover_reports_tap_enumeration_failures() {
 	.expect("dispatch");
 	assert!(result.is_error());
 	let content = result.extract_content();
-	assert!(
-		content.contains("Failed to enumerate tap agents"),
-		"content: {content}"
-	);
+	assert!(content.contains("Failed to enumerate tap agents"), "content: {content}");
 }
 
 // ---------------------------------------------------------------------------
@@ -549,19 +506,15 @@ async fn workflow_name_without_input_shows_definition_and_runs_nothing() {
 	.await
 	.expect("dispatch");
 	assert!(!result.is_error(), "{}", result.extract_content());
-	let body: serde_json::Value =
-		serde_json::from_str(&result.extract_content()).expect("json body");
+	let body: serde_json::Value = serde_json::from_str(&result.extract_content()).expect("json body");
 	assert_eq!(body["name"], "watch-page");
 	assert_eq!(body["source_tap"], "muvon/tap");
 	assert_eq!(body["definition"], toml);
 	assert_eq!(tap_runs::list_jobs().len(), before, "nothing was launched");
 
-	let missing = execute_tap_command(
-		&tap_call(json!({"action": "workflow", "name": "nope"})),
-		&unit_config(),
-	)
-	.await
-	.expect("dispatch");
+	let missing = execute_tap_command(&tap_call(json!({"action": "workflow", "name": "nope"})), &unit_config())
+		.await
+		.expect("dispatch");
 	assert!(missing.is_error());
 	assert!(missing.extract_content().contains("nope"));
 }

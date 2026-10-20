@@ -43,14 +43,12 @@ struct RenderedMcpJob {
 
 pub async fn handle_status(params: &[&str]) -> Result<CommandResult> {
 	let Some(session_id) = crate::session::context::current_session_id() else {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Status {
-				data: json!({
-					"subcommand": "error",
-					"message": "status requires an active session context",
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Status {
+			data: json!({
+				"subcommand": "error",
+				"message": "status requires an active session context",
+			}),
+		})));
 	};
 
 	let filter = params.first().map(|value| value.trim()).unwrap_or("");
@@ -67,9 +65,9 @@ pub async fn handle_status(params: &[&str]) -> Result<CommandResult> {
 		}),
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Status { data },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Status {
+		data,
+	})))
 }
 
 fn build_overview(session_id: &crate::session::context::SessionId) -> serde_json::Value {
@@ -165,9 +163,7 @@ async fn read_mcp_job(job: crate::session::shell_jobs::PendingResource) -> Rende
 		)
 		.await
 		{
-			Ok(Ok(text)) if text.trim().is_empty() => {
-				"resource returned no text status".to_string()
-			}
+			Ok(Ok(text)) if text.trim().is_empty() => "resource returned no text status".to_string(),
 			Ok(Ok(text)) => bound_resource_status(&text),
 			Ok(Err(error)) => format!("status unavailable: {error}"),
 			Err(_) => "status read timed out".to_string(),

@@ -47,10 +47,7 @@ mod session_restore_tests {
 
 	/// Helper to create a test message
 	fn create_message(role: &str, content: &str) -> Message {
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		Message {
 			role: role.to_string(),
@@ -76,10 +73,7 @@ mod session_restore_tests {
 	) -> PathBuf {
 		let session_file = temp_dir.path().join("test_session.jsonl.zst");
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// Write session info (SUMMARY)
 		let session_info = SessionInfo {
@@ -157,14 +151,9 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
-		assert_eq!(
-			loaded_session.messages.len(),
-			5,
-			"Should restore all 5 messages"
-		);
+		assert_eq!(loaded_session.messages.len(), 5, "Should restore all 5 messages");
 		assert_eq!(loaded_session.messages[0].role, "system");
 		assert_eq!(loaded_session.messages[1].content, "Hello");
 		assert_eq!(loaded_session.messages[4].content, "I'm doing well!");
@@ -185,10 +174,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 3 - incomplete"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// TRUNCATION_POINT indicates cleanup removed last 2 messages
 		let truncation_marker = serde_json::json!({
@@ -200,8 +186,7 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages, vec![truncation_marker]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		assert_eq!(
 			loaded_session.messages.len(),
@@ -225,10 +210,7 @@ mod session_restore_tests {
 			create_message("assistant", "Old response 2"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		let compression_marker = serde_json::json!({
 			"type": "COMPRESSION_POINT",
@@ -242,10 +224,7 @@ mod session_restore_tests {
 		let session_file = create_test_session_file(&temp_dir, messages_before_compression, vec![]);
 
 		// Append compression marker
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&compression_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&compression_marker).unwrap());
 
 		// Messages after compression (written AFTER the marker)
 		let messages_after_compression = vec![
@@ -258,8 +237,7 @@ mod session_restore_tests {
 			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
 		}
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// After COMPRESSION_POINT, old messages are cleared
 		// Only system + post-compression messages remain
@@ -282,10 +260,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 2"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		let restoration_marker = serde_json::json!({
 			"type": "RESTORATION_POINT",
@@ -297,10 +272,7 @@ mod session_restore_tests {
 		let session_file = create_test_session_file(&temp_dir, messages_before_done, vec![]);
 
 		// Append restoration marker
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&restoration_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&restoration_marker).unwrap());
 
 		// Messages after /done optimization (written AFTER the marker)
 		let messages_after_done = vec![create_message("user", "Optimized summary")];
@@ -309,8 +281,7 @@ mod session_restore_tests {
 			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
 		}
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// After RESTORATION_POINT, old messages are cleared
 		// Only system + optimized summary remain
@@ -335,10 +306,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 3"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// First Ctrl+C: truncate to 5 messages
 		let truncation1 = serde_json::json!({
@@ -360,8 +328,7 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages, markers);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// Last TRUNCATION_POINT wins
 		assert_eq!(
@@ -381,10 +348,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 1"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// Create session file with initial messages
 		let session_file = create_test_session_file(&temp_dir, messages, vec![]);
@@ -398,16 +362,10 @@ mod session_restore_tests {
 		});
 
 		// Append compression marker
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&compression_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&compression_marker).unwrap());
 
 		// Write messages after compression
-		let post_compression_messages = vec![
-			create_message("user", "Summary"),
-			create_message("user", "New message"),
-		];
+		let post_compression_messages = vec![create_message("user", "Summary"), create_message("user", "New message")];
 
 		for msg in &post_compression_messages {
 			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
@@ -421,13 +379,9 @@ mod session_restore_tests {
 			"reason": "ctrl_c_cleanup"
 		});
 
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&truncation_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&truncation_marker).unwrap());
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// Compression clears, then truncation applies to remaining messages
 		assert_eq!(
@@ -445,8 +399,7 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages, vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		assert_eq!(
 			loaded_session.messages.len(),
@@ -463,14 +416,9 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages, vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
-		assert_eq!(
-			loaded_session.messages.len(),
-			1,
-			"Should restore single system message"
-		);
+		assert_eq!(loaded_session.messages.len(), 1, "Should restore single system message");
 		assert_eq!(loaded_session.messages[0].role, "system");
 	}
 
@@ -484,10 +432,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 1"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// Edge case: truncate to 0 messages
 		let truncation_marker = serde_json::json!({
@@ -501,14 +446,9 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages, markers);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
-		assert_eq!(
-			loaded_session.messages.len(),
-			0,
-			"Should truncate to 0 messages"
-		);
+		assert_eq!(loaded_session.messages.len(), 0, "Should truncate to 0 messages");
 	}
 
 	#[test]
@@ -521,10 +461,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 1"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// Edge case: truncate to more messages than exist
 		let truncation_marker = serde_json::json!({
@@ -538,8 +475,7 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages.clone(), markers);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// Should keep all messages (truncate is no-op if target > current)
 		assert_eq!(
@@ -559,10 +495,7 @@ mod session_restore_tests {
 			create_message("assistant", "Response 1"),
 		];
 
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		// Create session file with initial messages
 		let session_file = create_test_session_file(&temp_dir, messages, vec![]);
@@ -574,16 +507,10 @@ mod session_restore_tests {
 		});
 
 		// Append restoration marker
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&restoration_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&restoration_marker).unwrap());
 
 		// Write messages after restoration
-		let post_restoration_messages = vec![
-			create_message("user", "Summary"),
-			create_message("user", "New message"),
-		];
+		let post_restoration_messages = vec![create_message("user", "Summary"), create_message("user", "New message")];
 
 		for msg in &post_restoration_messages {
 			write_zstd_line(&session_file, &serde_json::to_string(&msg).unwrap());
@@ -597,13 +524,9 @@ mod session_restore_tests {
 			"reason": "ctrl_c_cleanup"
 		});
 
-		write_zstd_line(
-			&session_file,
-			&serde_json::to_string(&truncation_marker).unwrap(),
-		);
+		write_zstd_line(&session_file, &serde_json::to_string(&truncation_marker).unwrap());
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// RESTORATION_POINT clears messages, then TRUNCATION_POINT applies to restoration_messages
 		assert_eq!(
@@ -627,22 +550,13 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		assert_eq!(loaded_session.messages.len(), messages.len());
 
 		for (i, msg) in loaded_session.messages.iter().enumerate() {
-			assert_eq!(
-				msg.role, messages[i].role,
-				"Message {} role should match",
-				i
-			);
-			assert_eq!(
-				msg.content, messages[i].content,
-				"Message {} content should match",
-				i
-			);
+			assert_eq!(msg.role, messages[i].role, "Message {} role should match", i);
+			assert_eq!(msg.content, messages[i].content, "Message {} content should match", i);
 		}
 	}
 
@@ -650,10 +564,7 @@ mod session_restore_tests {
 	fn test_restore_with_tool_calls() {
 		let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
-		let _timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let _timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		let mut assistant_msg = create_message("assistant", "Let me help with that");
 		assistant_msg.tool_calls = Some(serde_json::json!([
@@ -681,15 +592,11 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		assert_eq!(loaded_session.messages.len(), 5);
 		assert!(loaded_session.messages[2].tool_calls.is_some());
-		assert_eq!(
-			loaded_session.messages[3].tool_call_id,
-			Some("call_123".to_string())
-		);
+		assert_eq!(loaded_session.messages[3].tool_call_id, Some("call_123".to_string()));
 	}
 
 	/// Regression test: assistant's final response (no tool calls) must be persisted
@@ -711,8 +618,7 @@ mod session_restore_tests {
 
 		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// The final assistant message must be present after restore
 		assert_eq!(
@@ -739,10 +645,7 @@ mod session_restore_tests {
 		];
 
 		// Also add a SUMMARY marker after messages (simulates session save on close)
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 		let summary_marker = serde_json::json!({
 			"type": "SUMMARY",
 			"timestamp": timestamp,
@@ -778,11 +681,9 @@ mod session_restore_tests {
 			}
 		});
 
-		let session_file =
-			create_test_session_file(&temp_dir, messages.clone(), vec![summary_marker]);
+		let session_file = create_test_session_file(&temp_dir, messages.clone(), vec![summary_marker]);
 
-		let loaded_session =
-			octomind::session::load_session(&session_file).expect("Failed to load session");
+		let loaded_session = octomind::session::load_session(&session_file).expect("Failed to load session");
 
 		// The assistant's final response must survive even with a trailing SUMMARY marker
 		assert_eq!(
@@ -793,9 +694,6 @@ mod session_restore_tests {
 
 		let last_msg = &loaded_session.messages[4];
 		assert_eq!(last_msg.role, "assistant");
-		assert_eq!(
-			last_msg.content,
-			"Second answer — this was the last thing shown"
-		);
+		assert_eq!(last_msg.content, "Second answer — this was the last thing shown");
 	}
 }

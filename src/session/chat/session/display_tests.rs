@@ -19,9 +19,8 @@
 use super::*;
 
 fn test_config() -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: crate::config::Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -29,9 +28,7 @@ fn test_config() -> crate::config::Config {
 fn populated_session() -> ChatSession {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let config = test_config();
-	session
-		.add_user_message("please fix the parser")
-		.expect("user");
+	session.add_user_message("please fix the parser").expect("user");
 	session
 		.add_assistant_message("Looking into it now.", None, &config, "assistant")
 		.expect("assistant");
@@ -62,44 +59,33 @@ fn test_session_info_string_contains_core_facts() {
 	let session = populated_session();
 	let text = session.get_session_info_string();
 	assert!(text.contains("test"), "info string: {text}");
-	assert!(
-		text.contains("anthropic/claude-3-5-sonnet"),
-		"info string: {text}"
-	);
+	assert!(text.contains("anthropic/claude-3-5-sonnet"), "info string: {text}");
 }
 
 fn layered_session() -> ChatSession {
 	let mut session = populated_session();
-	session
-		.session
-		.info
-		.layer_stats
-		.push(crate::session::LayerStats {
-			layer_type: "reduce".to_string(),
-			model: "ollama:fake".to_string(),
-			input_tokens: 500,
-			output_tokens: 100,
-			cost: 0.01,
-			timestamp: 1_700_000_000,
-			api_time_ms: 1200,
-			tool_time_ms: 300,
-			total_time_ms: 1500,
-		});
-	session
-		.session
-		.info
-		.layer_stats
-		.push(crate::session::LayerStats {
-			layer_type: "reduce".to_string(),
-			model: "ollama:fake".to_string(),
-			input_tokens: 200,
-			output_tokens: 50,
-			cost: 0.002,
-			timestamp: 1_700_000_100,
-			api_time_ms: 400,
-			tool_time_ms: 0,
-			total_time_ms: 400,
-		});
+	session.session.info.layer_stats.push(crate::session::LayerStats {
+		layer_type: "reduce".to_string(),
+		model: "ollama:fake".to_string(),
+		input_tokens: 500,
+		output_tokens: 100,
+		cost: 0.01,
+		timestamp: 1_700_000_000,
+		api_time_ms: 1200,
+		tool_time_ms: 300,
+		total_time_ms: 1500,
+	});
+	session.session.info.layer_stats.push(crate::session::LayerStats {
+		layer_type: "reduce".to_string(),
+		model: "ollama:fake".to_string(),
+		input_tokens: 200,
+		output_tokens: 50,
+		cost: 0.002,
+		timestamp: 1_700_000_100,
+		api_time_ms: 400,
+		tool_time_ms: 0,
+		total_time_ms: 400,
+	});
 	session
 }
 
@@ -130,9 +116,7 @@ async fn test_display_session_context_all_filters() {
 	let config = test_config();
 	let mut session = populated_session();
 	for filter in ["all", "user", "assistant", "tool", "large"] {
-		session
-			.display_session_context_filtered(&config, filter)
-			.await;
+		session.display_session_context_filtered(&config, filter).await;
 	}
 	// Empty session renders too
 	let mut empty = ChatSession::for_tests(Vec::new());
@@ -158,8 +142,7 @@ fn session_text_json_and_cost_payload_agree_on_all_token_categories() {
 		let text = session.get_session_info_string();
 		assert!(text.contains(&format!("Total tokens: {total}\n")), "{text}");
 		assert!(text.contains(&format!("{reasoning} reasoning")), "{text}");
-		let payload =
-			crate::session::chat::response::session_cost_payload(&mut session, "test".into());
+		let payload = crate::session::chat::response::session_cost_payload(&mut session, "test".into());
 		assert_eq!(payload.session_tokens, total);
 		assert_eq!(payload.input_tokens, input);
 		assert_eq!(payload.cache_read_tokens, read);

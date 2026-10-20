@@ -43,11 +43,7 @@ pub fn get_session_log_path(session_name: &str) -> Result<PathBuf> {
 }
 
 /// Log restoration point for `/done` command — clears prior messages on reload.
-pub fn log_restoration_point(
-	session_name: &str,
-	user_message: &str,
-	assistant_response: &str,
-) -> Result<()> {
+pub fn log_restoration_point(session_name: &str, user_message: &str, assistant_response: &str) -> Result<()> {
 	let log_file = get_session_log_file(session_name)?;
 	let entry = serde_json::json!({
 		"type": "RESTORATION_POINT",
@@ -160,10 +156,7 @@ pub fn log_schedule_snapshot(session_name: &str, entries: &[ScheduleEntry]) -> R
 /// report `0.00000` and the whole session's spend piles onto whichever request
 /// happened to precede a save. `STATS` is merged monotonically on resume
 /// (see `parse_session_file`), so an extra checkpoint is never lossy.
-pub fn log_stats_checkpoint(
-	session_file: &std::path::Path,
-	info: &crate::session::SessionInfo,
-) -> Result<()> {
+pub fn log_stats_checkpoint(session_file: &std::path::Path, info: &crate::session::SessionInfo) -> Result<()> {
 	let entry = serde_json::json!({
 		"type": "STATS",
 		"timestamp": get_timestamp(),

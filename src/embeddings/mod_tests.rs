@@ -72,14 +72,8 @@ fn cache_keys_deterministic() {
 fn disk_cache_format_round_trip() {
 	// Build a synthetic snapshot.
 	let entries: Vec<(u64, Vec<f32>)> = vec![
-		(
-			0xDEAD_BEEF_u64,
-			(0..EMBED_DIM).map(|i| i as f32 * 0.01).collect(),
-		),
-		(
-			0xCAFE_F00D_u64,
-			(0..EMBED_DIM).map(|i| (i as f32).sin()).collect(),
-		),
+		(0xDEAD_BEEF_u64, (0..EMBED_DIM).map(|i| i as f32 * 0.01).collect()),
+		(0xCAFE_F00D_u64, (0..EMBED_DIM).map(|i| (i as f32).sin()).collect()),
 	];
 
 	// Encode using the same layout as `save_disk_cache_locked` so the
@@ -174,10 +168,7 @@ fn disk_cache_rejects_wrong_dim() {
 	r.read_exact(&mut mn).unwrap();
 	assert_eq!(std::str::from_utf8(&mn).unwrap(), MODEL_NAME);
 	let dim = read_u32(&mut r).unwrap() as usize;
-	assert_ne!(
-		dim, EMBED_DIM,
-		"loader must reject this file at the dim check"
-	);
+	assert_ne!(dim, EMBED_DIM, "loader must reject this file at the dim check");
 }
 
 /// End-to-end smoke test: actually loads `muvon/octomind-embed`
@@ -214,13 +205,11 @@ async fn embed_many_smoke() {
 	assert_ne!(vecs[0], vecs[1]);
 	assert_ne!(vecs[1], vecs[2]);
 	// Cosine should rank: same > different.
-	let same_q = embed("query a postgres database for slow queries")
-		.await
-		.unwrap();
+	let same_q = embed("query a postgres database for slow queries").await.unwrap();
 	let same_score = cosine(&same_q, &vecs[0]);
 	let diff_score = cosine(&same_q, &vecs[1]);
 	assert!(
-			same_score > diff_score,
-			"cosine should rank identical text higher than unrelated text (same={same_score:.3}, diff={diff_score:.3})"
-		);
+		same_score > diff_score,
+		"cosine should rank identical text higher than unrelated text (same={same_score:.3}, diff={diff_score:.3})"
+	);
 }

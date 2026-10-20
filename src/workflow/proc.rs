@@ -160,9 +160,7 @@ pub async fn run_step(args: RunStepArgs) -> RunOutcome {
 		}
 	};
 	#[cfg(test)]
-	let exe = TEST_STEP_EXE
-		.with_borrow(|slot| slot.clone())
-		.unwrap_or(exe);
+	let exe = TEST_STEP_EXE.with_borrow(|slot| slot.clone()).unwrap_or(exe);
 
 	let mut cmd = Command::new(&exe);
 	cmd.arg("run")

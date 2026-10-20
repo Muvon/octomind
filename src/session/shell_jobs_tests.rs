@@ -19,17 +19,11 @@ use rmcp::model::{CallToolResult, ContentBlock, Resource};
 fn extracts_resource_links_with_labels_and_ignores_plain_text() {
 	let launched = CallToolResult::success(vec![
 		ContentBlock::text("Started background job. Follow the linked resource."),
-		ContentBlock::resource_link(Resource::new(
-			"octofs://jobs/1234-7",
-			"shell: make reldebug",
-		)),
+		ContentBlock::resource_link(Resource::new("octofs://jobs/1234-7", "shell: make reldebug")),
 	]);
 	assert_eq!(
 		resource_links_in(&launched),
-		vec![(
-			"octofs://jobs/1234-7".to_string(),
-			"shell: make reldebug".to_string()
-		)]
+		vec![("octofs://jobs/1234-7".to_string(), "shell: make reldebug".to_string())]
 	);
 
 	// Recognition is not scheme-bound: any resource link is followed. An empty
@@ -40,10 +34,7 @@ fn extracts_resource_links_with_labels_and_ignores_plain_text() {
 	))]);
 	assert_eq!(
 		resource_links_in(&other),
-		vec![(
-			"custommcp://tasks/9".to_string(),
-			"custommcp://tasks/9".to_string()
-		)]
+		vec![("custommcp://tasks/9".to_string(), "custommcp://tasks/9".to_string())]
 	);
 
 	let plain = CallToolResult::success(vec![ContentBlock::text("just text, no resource")]);
@@ -81,10 +72,7 @@ fn watch_complete_pending_and_labels_roundtrip() {
 
 	assert!(complete_for_session(sid, a, "a complete"), "a was watched");
 	assert!(!is_watched_for_session(sid, a));
-	assert!(
-		has_pending_for_session(sid),
-		"b still keeps the session pending"
-	);
+	assert!(has_pending_for_session(sid), "b still keeps the session pending");
 	assert!(
 		!complete_for_session(sid, "octofs://jobs/unknown", "unknown"),
 		"completing an unwatched uri reports not-watched"
@@ -186,38 +174,23 @@ fn a_task_records_its_status_and_is_stopped_through_its_entry() {
 
 	set_task_status_for_session(sid, &key, "shell: cargo test · running 5s");
 	let pending = pending_resources_for_session(sid);
-	assert_eq!(
-		pending[0].status.as_deref(),
-		Some("shell: cargo test · running 5s")
-	);
+	assert_eq!(pending[0].status.as_deref(), Some("shell: cargo test · running 5s"));
 	assert_eq!(pending[1].status, None);
 
-	assert!(
-		!stop_task_for_session(sid, resource),
-		"a resource is not a task"
-	);
+	assert!(!stop_task_for_session(sid, resource), "a resource is not a task");
 	assert!(!stop_task_for_session(sid, "mcp-task:unknown"));
 	assert!(!*stop.borrow());
 	assert!(stop_task_for_session(sid, &key));
-	assert!(
-		*stop.borrow_and_update(),
-		"the poller sees the stop request"
-	);
+	assert!(*stop.borrow_and_update(), "the poller sees the stop request");
 
 	// Teardown drops the entry and with it the signal, which also stops the poller.
 	clear_for_session(sid);
-	assert!(
-		stop.has_changed().is_err(),
-		"the stop signal closes on teardown"
-	);
+	assert!(stop.has_changed().is_err(), "the stop signal closes on teardown");
 }
 
 /// Receive the next event for `session_id`, skipping events other parallel
 /// tests publish for their own sessions (the channel is global).
-async fn next_event_for(
-	events: &mut tokio::sync::broadcast::Receiver<WatchEvent>,
-	session_id: &str,
-) -> WatchEvent {
+async fn next_event_for(events: &mut tokio::sync::broadcast::Receiver<WatchEvent>, session_id: &str) -> WatchEvent {
 	loop {
 		let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
 			.await
@@ -236,10 +209,7 @@ async fn next_event_for(
 /// Assert no event for `session_id` is pending. Own-session events are
 /// published synchronously by the mutating call, so anything queued for us is
 /// already here; foreign events from parallel tests are drained and ignored.
-fn assert_no_event_for(
-	events: &mut tokio::sync::broadcast::Receiver<WatchEvent>,
-	session_id: &str,
-) {
+fn assert_no_event_for(events: &mut tokio::sync::broadcast::Receiver<WatchEvent>, session_id: &str) {
 	loop {
 		match events.try_recv() {
 			Ok(event) => {
@@ -277,11 +247,7 @@ async fn completing_a_watched_resource_publishes_an_event() {
 	}
 
 	// Unwatched completions publish nothing.
-	assert!(!complete_for_session(
-		sid,
-		"octofs://jobs/ev-1",
-		"duplicate"
-	));
+	assert!(!complete_for_session(sid, "octofs://jobs/ev-1", "duplicate"));
 	assert_no_event_for(&mut events, sid);
 	clear_for_session(sid);
 }

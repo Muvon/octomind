@@ -135,10 +135,7 @@ pub fn record_completed(id: &str, call: &McpToolCall, result: &crate::mcp::McpTo
 					.unwrap_or_else(crate::mcp::workdir::get_thread_working_directory)
 					.display()
 					.to_string(),
-				output_untrusted: crate::session::truncate_to_tokens(
-					&result.extract_content(),
-					750,
-				),
+				output_untrusted: crate::session::truncate_to_tokens(&result.extract_content(), 750),
 			});
 			if actions.len() > MAX_COMPLETED_ACTIONS {
 				actions.remove(0);
@@ -171,8 +168,7 @@ struct Runtime {
 }
 
 static SESSIONS: LazyLock<RwLock<HashMap<String, Runtime>>> = LazyLock::new(RwLock::default);
-static PIPE_INPUTS: LazyLock<RwLock<HashMap<String, (String, String)>>> =
-	LazyLock::new(RwLock::default);
+static PIPE_INPUTS: LazyLock<RwLock<HashMap<String, (String, String)>>> = LazyLock::new(RwLock::default);
 
 tokio::task_local! {
 	pub(crate) static EXTRACTION_OBSERVATIONS: Vec<Observation>;
@@ -220,10 +216,7 @@ pub fn note_pipe_input(id: &str, original: &str, transformed: &str) {
 	if let Ok(mut inputs) = PIPE_INPUTS.write() {
 		inputs.remove(id);
 		if enabled && original != transformed {
-			inputs.insert(
-				id.to_string(),
-				(original.to_string(), transformed.to_string()),
-			);
+			inputs.insert(id.to_string(), (original.to_string(), transformed.to_string()));
 		}
 	}
 }
@@ -246,9 +239,7 @@ pub fn record_user_input(session: &mut ChatSession, message: &crate::session::Me
 		}
 	}
 	session.session.info.authorization.record_user(&source);
-	if session.session.info.authorization.initialized
-		&& crate::session::is_real_user_task_message(&source)
-	{
+	if session.session.info.authorization.initialized && crate::session::is_real_user_task_message(&source) {
 		if let Some(user) = session.session.info.authorization.users.last_mut() {
 			user.transcript_key = message_key(message);
 		}
@@ -257,15 +248,15 @@ pub fn record_user_input(session: &mut ChatSession, message: &crate::session::Me
 
 /// Extraction keeps transcript addresses but restores the authentic user
 /// text where a pipe transformed it. This snapshot outlives runtime cleanup.
-pub fn grounded_messages(
-	id: &str,
-	mut messages: Vec<crate::session::Message>,
-) -> Vec<crate::session::Message> {
+pub fn grounded_messages(id: &str, mut messages: Vec<crate::session::Message>) -> Vec<crate::session::Message> {
 	if let Some(context) = context_for_session(id) {
 		if context.parent.is_some() {
 			for message in &mut messages {
 				if crate::session::is_real_user_task_message(message) {
-					message.content = format!("<system-note>\nDelegated task, not a real user instruction:\n{}\n</system-note>",message.content);
+					message.content = format!(
+						"<system-note>\nDelegated task, not a real user instruction:\n{}\n</system-note>",
+						message.content
+					);
 				}
 			}
 			return messages;
@@ -286,25 +277,16 @@ pub fn grounded_messages(
 pub fn capture(session: &mut ChatSession, config: &Config) {
 	let id = session.session.info.name.clone();
 	let state = &mut session.session.info.authorization;
-	if !(config.supervisor.enabled && config.supervisor.authorizer.enabled)
-		&& state.parent.is_none()
-	{
+	if !(config.supervisor.enabled && config.supervisor.authorizer.enabled) && state.parent.is_none() {
 		clear_for_session(&id);
 		state.initialized = false;
 		return;
 	}
-	if !state.initialized || context_for_session(&id).is_none_or(|context| context.users.is_empty())
-	{
+	if !state.initialized || context_for_session(&id).is_none_or(|context| context.users.is_empty()) {
 		state.initialized = true;
 		let last = state.users.last().map(|u| u.transcript_key.as_str());
 		let start = last
-			.and_then(|key| {
-				session
-					.session
-					.messages
-					.iter()
-					.rposition(|m| message_key(m) == key)
-			})
+			.and_then(|key| session.session.messages.iter().rposition(|m| message_key(m) == key))
 			.map_or(0, |index| index + 1);
 		for message in &session.session.messages[start..] {
 			state.record_user(message);
@@ -315,12 +297,7 @@ pub fn capture(session: &mut ChatSession, config: &Config) {
 		resolved_task: session
 			.gate_task
 			.as_ref()
-			.filter(|task| {
-				state
-					.users
-					.last()
-					.is_some_and(|u| u.text == task.original_request)
-			})
+			.filter(|task| state.users.last().is_some_and(|u| u.text == task.original_request))
 			.map(|task| task.resolved_request.clone()),
 		standing_instructions: session
 			.session
@@ -343,9 +320,7 @@ pub fn capture(session: &mut ChatSession, config: &Config) {
 		.ok()
 		.and_then(|sessions| {
 			sessions.get(&id).map(|r| {
-				r.context.users != context.users
-					|| r.context.parent != context.parent
-					|| r.persistence_error.is_some()
+				r.context.users != context.users || r.context.parent != context.parent || r.persistence_error.is_some()
 			})
 		})
 		.unwrap_or(true);
@@ -359,10 +334,7 @@ pub fn capture(session: &mut ChatSession, config: &Config) {
 		None
 	};
 	if let Some(error) = &persistence_error {
-		crate::log_debug!(
-			"Authorizer is using current in-memory instructions: {}",
-			error
-		);
+		crate::log_debug!("Authorizer is using current in-memory instructions: {}", error);
 	}
 	if let Ok(mut sessions) = SESSIONS.write() {
 		let runtime = sessions.entry(id).or_insert_with(|| Runtime {
@@ -375,11 +347,7 @@ pub fn capture(session: &mut ChatSession, config: &Config) {
 }
 
 pub fn context_for_session(id: &str) -> Option<AuthorizationContext> {
-	SESSIONS
-		.read()
-		.ok()?
-		.get(id)
-		.map(|runtime| runtime.context.clone())
+	SESSIONS.read().ok()?.get(id).map(|runtime| runtime.context.clone())
 }
 
 pub fn inherited_context() -> Option<AuthorizationContext> {
@@ -436,9 +404,7 @@ pub fn sync(session: &mut ChatSession) {
 		return;
 	};
 	let state = &mut session.session.info.authorization;
-	state
-		.completed_actions
-		.clone_from(&runtime.context.completed_actions);
+	state.completed_actions.clone_from(&runtime.context.completed_actions);
 	state.checked += std::mem::take(&mut runtime.checked);
 	state.blocked += std::mem::take(&mut runtime.blocked);
 	state.cached += std::mem::take(&mut runtime.cached);
@@ -453,9 +419,7 @@ pub fn sync(session: &mut ChatSession) {
 		}
 	}
 	if state.observations.len() > MAX_OBSERVATIONS {
-		state
-			.observations
-			.drain(..state.observations.len() - MAX_OBSERVATIONS);
+		state.observations.drain(..state.observations.len() - MAX_OBSERVATIONS);
 	}
 }
 
@@ -488,11 +452,7 @@ fn instruction_sources(context: &AuthorizationContext) -> Vec<InstructionSource>
 		for (index, user) in context.users.iter().enumerate() {
 			out.push(InstructionSource {
 				id: user_source_id(context, depth, index),
-				kind: if context.parent.is_some() {
-					"delegated"
-				} else {
-					"user"
-				},
+				kind: if context.parent.is_some() { "delegated" } else { "user" },
 				text: user.text.clone(),
 				current_user: context.parent.is_none() && index + 1 == context.users.len(),
 			});
@@ -583,17 +543,14 @@ pub async fn check_batch(
 	generated_guards: &[Vec<(String, String)>],
 	mut cancellation: tokio::sync::watch::Receiver<bool>,
 ) -> Vec<Admission> {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Authorize,
-	);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Authorize);
 	if calls.is_empty() {
 		return Vec::new();
 	}
-	let snapshot = SESSIONS.read().ok().and_then(|sessions| {
-		sessions
-			.get(id)
-			.map(|r| (r.context.clone(), r.denials.clone()))
-	});
+	let snapshot = SESSIONS
+		.read()
+		.ok()
+		.and_then(|sessions| sessions.get(id).map(|r| (r.context.clone(), r.denials.clone())));
 	let Some((context, cache)) = snapshot else {
 		return vec![Admission::default(); calls.len()];
 	};
@@ -645,23 +602,16 @@ pub async fn check_batch(
 			crate::supervisor::evaluate::avoided(
 				config,
 				crate::supervisor::evaluate::Seam::Authorizer,
-				crate::session::estimate_tokens(&payload.to_string())
-					+ crate::session::estimate_tokens(SYSTEM_PROMPT),
+				crate::session::estimate_tokens(&payload.to_string()) + crate::session::estimate_tokens(SYSTEM_PROMPT),
 			);
-			return Ok(pending
-				.iter()
-				.map(|index| Decision::allow(*index))
-				.collect());
+			return Ok(pending.iter().map(|index| Decision::allow(*index)).collect());
 		}
 		check_budget(&payload, SYSTEM_PROMPT, &response_schema(&sources, calls))?;
 		let value = tokio::time::timeout_at(
 			deadline,
 			crate::supervisor::learning::extract::call_supervisor_json(
 				config,
-				crate::supervisor::learning::extract::SupervisorPrompt::new(
-					SYSTEM_PROMPT.into(),
-					payload.to_string(),
-				),
+				crate::supervisor::learning::extract::SupervisorPrompt::new(SYSTEM_PROMPT.into(), payload.to_string()),
 				crate::supervisor::stats::CallKind::Authorize,
 				response_schema(&sources, calls),
 				model_cancellation.clone(),
@@ -709,8 +659,7 @@ pub async fn check_batch(
 					return Ok(proposed
 						.iter()
 						.filter(|decision| {
-							evaluate::probability(&answers, &decision.id)
-								>= evaluate::AUTHORIZER_CONFIRM_AT
+							evaluate::probability(&answers, &decision.id) >= evaluate::AUTHORIZER_CONFIRM_AT
 						})
 						.map(|decision| decision.id.clone())
 						.collect());
@@ -770,8 +719,7 @@ pub async fn check_batch(
 	match verdict {
 		Ok(decisions) => {
 			for ((index, key), decision) in pending.iter().zip(keys).zip(decisions) {
-				admissions[*index].overridden_guards =
-					decision.overridden_guards.iter().cloned().collect();
+				admissions[*index].overridden_guards = decision.overridden_guards.iter().cloned().collect();
 				let blocked = decision.decision == "block";
 				if blocked {
 					admissions[*index].message = Some(block_message(&decision, &sources));
@@ -786,9 +734,7 @@ pub async fn check_batch(
 							}
 							r.denials.insert(key, decision.clone());
 							// Role/delegated text must never turn into quote-first user learning.
-							if sources
-								.iter()
-								.any(|s| s.id == decision.source_id && s.kind == "user")
+							if sources.iter().any(|s| s.id == decision.source_id && s.kind == "user")
 								&& r.observations.len() < MAX_OBSERVATIONS
 							{
 								r.observations.push(Observation {
@@ -849,9 +795,9 @@ async fn prescreen_admits(
 	else {
 		return false;
 	};
-	let flagged = answers.values().any(|answer| {
-		matches!(answer, octolib::evaluation::Answer::Noul { noul } if *noul >= evaluate::AUTHORIZER_FLAG_AT)
-	});
+	let flagged = answers.values().any(
+		|answer| matches!(answer, octolib::evaluation::Answer::Noul { noul } if *noul >= evaluate::AUTHORIZER_FLAG_AT),
+	);
 	if flagged {
 		crate::log_debug!(
 			"evaluate authorizer: batch of {} flagged, supervisor judgment runs",
@@ -907,8 +853,13 @@ fn block_message(decision: &Decision, sources: &[InstructionSource]) -> String {
 	} else {
 		String::new()
 	};
-	format!("[authorizer] Tool not executed: {}. {} source {}{}. Continue within the role and user's request.",
-		decision.reason.trim().trim_end_matches(['.', ' ']), kind, decision.source_id, quote)
+	format!(
+		"[authorizer] Tool not executed: {}. {} source {}{}. Continue within the role and user's request.",
+		decision.reason.trim().trim_end_matches(['.', ' ']),
+		kind,
+		decision.source_id,
+		quote
+	)
 }
 
 /// Validate each entry independently. A malformed/ungrounded opinion cannot
@@ -920,8 +871,7 @@ fn validate(
 	calls: &[McpToolCall],
 	guards: &[Vec<(String, String)>],
 ) -> Result<Vec<Decision>> {
-	let response: Response =
-		serde_json::from_value(value).context("invalid authorization response")?;
+	let response: Response = serde_json::from_value(value).context("invalid authorization response")?;
 	Ok(indices
 		.iter()
 		.map(|index| {
@@ -945,9 +895,9 @@ fn validate(
 				// An ordinary allow does not require evidence. Ignore optional bad
 				// citations instead of converting permission into a false block.
 				let matched = guards.get(*index).cloned().unwrap_or_default();
-				decision.overridden_guards.retain(|id| {
-					source.is_some_and(|s| s.current_user) && matched.iter().any(|(g, _)| g == id)
-				});
+				decision
+					.overridden_guards
+					.retain(|id| source.is_some_and(|s| s.current_user) && matched.iter().any(|(g, _)| g == id));
 				return decision;
 			}
 			decision.overridden_guards.clear();
@@ -999,11 +949,7 @@ fn confirmed_ids(value: Value, proposed: &[Decision]) -> Result<HashSet<String>>
 			.filter(|v| v.get("id").and_then(Value::as_str) == Some(&proposal.id))
 			.collect::<Vec<_>>();
 		if entries.len() == 1 {
-			if let Ok(Confirmation {
-				id,
-				confirmed: true,
-			}) = serde_json::from_value(entries[0].clone())
-			{
+			if let Ok(Confirmation { id, confirmed: true }) = serde_json::from_value(entries[0].clone()) {
 				confirmed.insert(id);
 			}
 		}

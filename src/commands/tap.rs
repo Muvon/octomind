@@ -15,9 +15,7 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use octomind::agent::{tap_scaffold, taps};
-use octomind::session::chat::{
-	block_close_ok, block_line, block_open, block_row, block_section, key_width,
-};
+use octomind::session::chat::{block_close_ok, block_line, block_open, block_row, block_section, key_width};
 
 #[derive(Args, Debug)]
 #[command(args_conflicts_with_subcommands = true)]
@@ -66,27 +64,19 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 	use colored::Colorize;
 
 	if let Some(TapCommand::Init(init)) = &args.command {
-		let outcome =
-			tap_scaffold::init_tap(&init.tap, init.agent.as_deref(), init.dir.as_deref())?;
+		let outcome = tap_scaffold::init_tap(&init.tap, init.agent.as_deref(), init.dir.as_deref())?;
 		block_open("tap", Some("init"));
 		let kw = key_width(["name", "dir", "agent", "next"]);
 		block_row("name", &outcome.tap_id.bright_green().to_string(), kw);
 		block_row(
 			"dir",
-			&outcome
-				.dest
-				.display()
-				.to_string()
-				.bright_white()
-				.to_string(),
+			&outcome.dest.display().to_string().bright_white().to_string(),
 			kw,
 		);
 		block_row("agent", &outcome.agent_tag.bright_white().to_string(), kw);
 		block_row(
 			"next",
-			&format!("octomind run {}", outcome.agent_tag)
-				.bright_cyan()
-				.to_string(),
+			&format!("octomind run {}", outcome.agent_tag).bright_cyan().to_string(),
 			kw,
 		);
 		block_close_ok("tap", Some(&outcome.tap_id));
@@ -117,12 +107,7 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 				block_line(&"No user taps configured.".dimmed().to_string());
 			} else {
 				block_section("user");
-				let name_width = user_taps
-					.iter()
-					.map(|t| t.name.len())
-					.max()
-					.unwrap_or(0)
-					.min(40);
+				let name_width = user_taps.iter().map(|t| t.name.len()).max().unwrap_or(0).min(40);
 				for tap in &user_taps {
 					let suffix = tap
 						.local_path
@@ -138,10 +123,7 @@ pub fn execute(args: &TapArgs) -> Result<()> {
 				&"(always active)".dimmed().to_string(),
 				taps::DEFAULT_TAP.len(),
 			);
-			block_close_ok(
-				"tap",
-				Some(&format!("{} user + 1 built-in", user_taps.len())),
-			);
+			block_close_ok("tap", Some(&format!("{} user + 1 built-in", user_taps.len())));
 			println!();
 		}
 	}

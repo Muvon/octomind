@@ -18,8 +18,8 @@ use super::core::ChatSession;
 use super::utils::format_number;
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::tool_display::{
-	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text,
-	block_section, block_section_with, key_width,
+	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
+	block_section_with, key_width,
 };
 use colored::*;
 
@@ -82,20 +82,8 @@ impl ChatSession {
 
 		// ── session ────────────────────────────────────────────────────
 		block_section_with("session", &self.session.info.name);
-		let kw_sess = key_width([
-			"model",
-			"tokens",
-			"breakdown",
-			"cost",
-			"time",
-			"messages",
-			"tool calls",
-		]);
-		block_row(
-			"model",
-			&self.session.info.model.bright_white().to_string(),
-			kw_sess,
-		);
+		let kw_sess = key_width(["model", "tokens", "breakdown", "cost", "time", "messages", "tool calls"]);
+		block_row("model", &self.session.info.model.bright_white().to_string(), kw_sess);
 		let total_tokens = self.session.info.total_tokens();
 		block_row(
 			"tokens",
@@ -119,11 +107,7 @@ impl ChatSession {
 			),
 			kw_sess,
 		);
-		block_row(
-			"cost",
-			&format!("${:.5}", self.session.info.total_cost),
-			kw_sess,
-		);
+		block_row("cost", &format!("${:.5}", self.session.info.total_cost), kw_sess);
 
 		let total_time_ms = self.session.info.total_api_time_ms
 			+ self.session.info.total_tool_time_ms
@@ -144,21 +128,11 @@ impl ChatSession {
 				kw_sess,
 			);
 		}
-		block_row(
-			"messages",
-			&self.session.messages.len().to_string(),
-			kw_sess,
-		);
+		block_row("messages", &self.session.messages.len().to_string(), kw_sess);
 		if self.session.info.tool_calls > 0 {
 			block_row(
 				"tool calls",
-				&self
-					.session
-					.info
-					.tool_calls
-					.to_string()
-					.bright_cyan()
-					.to_string(),
+				&self.session.info.tool_calls.to_string().bright_cyan().to_string(),
 				kw_sess,
 			);
 		}
@@ -182,27 +156,21 @@ impl ChatSession {
 			if cs.task_compressions > 0 {
 				block_row(
 					"task",
-					&format_number(cs.task_compressions as u64)
-						.bright_white()
-						.to_string(),
+					&format_number(cs.task_compressions as u64).bright_white().to_string(),
 					kw,
 				);
 			}
 			if cs.phase_compressions > 0 {
 				block_row(
 					"phase",
-					&format_number(cs.phase_compressions as u64)
-						.bright_white()
-						.to_string(),
+					&format_number(cs.phase_compressions as u64).bright_white().to_string(),
 					kw,
 				);
 			}
 			if cs.project_compressions > 0 {
 				block_row(
 					"project",
-					&format_number(cs.project_compressions as u64)
-						.bright_white()
-						.to_string(),
+					&format_number(cs.project_compressions as u64).bright_white().to_string(),
 					kw,
 				);
 			}
@@ -224,9 +192,7 @@ impl ChatSession {
 			);
 			block_row(
 				"tokens saved",
-				&format_number(cs.total_tokens_saved)
-					.bright_green()
-					.to_string(),
+				&format_number(cs.total_tokens_saved).bright_green().to_string(),
 				kw,
 			);
 			let avg_ratio = cs.avg_compression_ratio() * 100.0;
@@ -247,30 +213,20 @@ impl ChatSession {
 			}
 			if cs.api_time_ms > 0 && cs.output_tokens + cs.reasoning_tokens > 0 {
 				// Reasoning tokens are generated in the same request window.
-				let tps = (cs.output_tokens + cs.reasoning_tokens) as f64
-					/ (cs.api_time_ms as f64 / 1000.0);
+				let tps = (cs.output_tokens + cs.reasoning_tokens) as f64 / (cs.api_time_ms as f64 / 1000.0);
 				block_row("throughput", &format!("{:.1} tok/s", tps), kw);
 			}
 			if cs.cost > 0.0 {
-				block_row(
-					"cost",
-					&format!("${:.5}", cs.cost).bright_yellow().to_string(),
-					kw,
-				);
+				block_row("cost", &format!("${:.5}", cs.cost).bright_yellow().to_string(), kw);
 			}
 		}
 
 		// ── layers ─────────────────────────────────────────────────────
 		if !self.session.info.layer_stats.is_empty() {
-			let mut layer_stats: std::collections::HashMap<
-				String,
-				Vec<&crate::session::LayerStats>,
-			> = std::collections::HashMap::new();
+			let mut layer_stats: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> =
+				std::collections::HashMap::new();
 			for stat in &self.session.info.layer_stats {
-				layer_stats
-					.entry(stat.layer_type.clone())
-					.or_default()
-					.push(stat);
+				layer_stats.entry(stat.layer_type.clone()).or_default().push(stat);
 			}
 			let mut command_layers = Vec::new();
 			let mut regular_layers = Vec::new();
@@ -294,9 +250,7 @@ impl ChatSession {
 				}
 			}
 			for (layer_type, stats) in command_layers.iter() {
-				let name = layer_type
-					.strip_prefix("command:")
-					.unwrap_or(layer_type.as_str());
+				let name = layer_type.strip_prefix("command:").unwrap_or(layer_type.as_str());
 				block_section_with("command", name);
 				render_layer_stats(stats.as_slice());
 				block_line(
@@ -306,11 +260,7 @@ impl ChatSession {
 				);
 			}
 		} else {
-			block_line(
-				&"No layer-specific statistics available."
-					.bright_yellow()
-					.to_string(),
-			);
+			block_line(&"No layer-specific statistics available.".bright_yellow().to_string());
 		}
 
 		block_close_ok("/info", Some(&self.session.info.name));
@@ -320,16 +270,11 @@ impl ChatSession {
 	// Get session information as structured JSON (for WebSocket/API use)
 	pub fn get_session_info_json(&self) -> serde_json::Value {
 		// Group layer stats
-		let mut layer_stats_map: std::collections::HashMap<
-			String,
-			Vec<&crate::session::LayerStats>,
-		> = std::collections::HashMap::new();
+		let mut layer_stats_map: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> =
+			std::collections::HashMap::new();
 
 		for stat in &self.session.info.layer_stats {
-			layer_stats_map
-				.entry(stat.layer_type.clone())
-				.or_default()
-				.push(stat);
+			layer_stats_map.entry(stat.layer_type.clone()).or_default().push(stat);
 		}
 
 		// Separate command layers from regular layers
@@ -461,10 +406,7 @@ impl ChatSession {
 		));
 
 		// Cost information
-		output.push_str(&format!(
-			"Total cost: ${:.5}\n",
-			self.session.info.total_cost
-		));
+		output.push_str(&format!("Total cost: ${:.5}\n", self.session.info.total_cost));
 		let cs = &self.session.info.compression_stats;
 		if cs.total_compressions() > 0 || cs.cost > 0.0 {
 			output.push_str(&format!(
@@ -512,16 +454,11 @@ impl ChatSession {
 			output.push_str("\n─── Layer Statistics ───\n");
 
 			// Group by layer type
-			let mut layer_stats: std::collections::HashMap<
-				String,
-				Vec<&crate::session::LayerStats>,
-			> = std::collections::HashMap::new();
+			let mut layer_stats: std::collections::HashMap<String, Vec<&crate::session::LayerStats>> =
+				std::collections::HashMap::new();
 
 			for stat in &self.session.info.layer_stats {
-				layer_stats
-					.entry(stat.layer_type.clone())
-					.or_default()
-					.push(stat);
+				layer_stats.entry(stat.layer_type.clone()).or_default().push(stat);
 			}
 
 			// Separate command layers from regular layers
@@ -601,11 +538,7 @@ impl ChatSession {
 	}
 
 	// Display current session context with filtering options
-	pub async fn display_session_context_filtered(
-		&mut self,
-		config: &crate::config::Config,
-		filter: &str,
-	) {
+	pub async fn display_session_context_filtered(&mut self, config: &crate::config::Config, filter: &str) {
 		// Check if debug mode is enabled
 		let is_debug = config.log_level.is_debug_enabled();
 
@@ -642,9 +575,7 @@ impl ChatSession {
 				.messages
 				.iter()
 				.enumerate()
-				.filter(|(_, msg)| {
-					msg.role == "tool" || msg.tool_calls.is_some() || msg.tool_call_id.is_some()
-				})
+				.filter(|(_, msg)| msg.role == "tool" || msg.tool_calls.is_some() || msg.tool_call_id.is_some())
 				.collect(),
 			"large" => {
 				// Calculate median and standard deviation for robust outlier detection
@@ -661,9 +592,7 @@ impl ChatSession {
 					// Calculate median
 					token_counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
 					let median = if token_counts.len().is_multiple_of(2) {
-						(token_counts[token_counts.len() / 2 - 1]
-							+ token_counts[token_counts.len() / 2])
-							/ 2.0
+						(token_counts[token_counts.len() / 2 - 1] + token_counts[token_counts.len() / 2]) / 2.0
 					} else {
 						token_counts[token_counts.len() / 2]
 					};
@@ -674,8 +603,7 @@ impl ChatSession {
 						.messages
 						.iter()
 						.map(|msg| {
-							let tokens =
-								crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+							let tokens = crate::session::token_counter::estimate_tokens(&msg.content) as f64;
 							(tokens - median).powi(2)
 						})
 						.sum::<f64>() / self.session.messages.len() as f64;
@@ -688,8 +616,7 @@ impl ChatSession {
 						.iter()
 						.enumerate()
 						.filter(|(_, msg)| {
-							let msg_tokens =
-								crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+							let msg_tokens = crate::session::token_counter::estimate_tokens(&msg.content) as f64;
 							msg_tokens > threshold
 						})
 						.collect()
@@ -721,11 +648,7 @@ impl ChatSession {
 		// Header section — session + model + filter summary, all on the rail.
 		block_section_with("session", &self.session.info.name);
 		let head_kw = key_width(["model", "messages"]);
-		block_row(
-			"model",
-			&self.session.info.model.bright_white().to_string(),
-			head_kw,
-		);
+		block_row("model", &self.session.info.model.bright_white().to_string(), head_kw);
 		block_row(
 			"messages",
 			&format!(
@@ -751,8 +674,7 @@ impl ChatSession {
 				.collect();
 			token_counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
 			let median = if token_counts.len().is_multiple_of(2) {
-				(token_counts[token_counts.len() / 2 - 1] + token_counts[token_counts.len() / 2])
-					/ 2.0
+				(token_counts[token_counts.len() / 2 - 1] + token_counts[token_counts.len() / 2]) / 2.0
 			} else {
 				token_counts[token_counts.len() / 2]
 			};
@@ -761,8 +683,7 @@ impl ChatSession {
 					.messages
 					.iter()
 					.map(|msg| {
-						let tokens =
-							crate::session::token_counter::estimate_tokens(&msg.content) as f64;
+						let tokens = crate::session::token_counter::estimate_tokens(&msg.content) as f64;
 						(tokens - median).powi(2)
 					})
 					.sum::<f64>() / self.session.messages.len() as f64;
@@ -773,11 +694,7 @@ impl ChatSession {
 			let kw = key_width(["median", "std dev", "threshold"]);
 			block_row("median", &format!("{:.0}", median), kw);
 			block_row("std dev", &format!("{:.0}", std_dev), kw);
-			block_row(
-				"threshold",
-				&format!("{:.0} tokens (median + 2σ)", threshold),
-				kw,
-			);
+			block_row("threshold", &format!("{:.0} tokens (median + 2σ)", threshold), kw);
 		}
 
 		// Per-message sections — each as `│ #N · ROLE` + indented rows / content.
@@ -841,11 +758,7 @@ impl ChatSession {
 			if let Some(ref images) = message.images {
 				block_row("images", &format!("{} attachment(s)", images.len()), kw);
 				for (i, image) in images.iter().enumerate() {
-					block_row_text(
-						&format!("  {}. type: {}", i + 1, image.media_type)
-							.dimmed()
-							.to_string(),
-					);
+					block_row_text(&format!("  {}. type: {}", i + 1, image.media_type).dimmed().to_string());
 				}
 			}
 
@@ -876,8 +789,7 @@ impl ChatSession {
 
 			if let Some(ref tool_calls) = message.tool_calls {
 				block_row("tool calls", "", kw);
-				let json = serde_json::to_string_pretty(tool_calls)
-					.unwrap_or_else(|_| "Invalid JSON".to_string());
+				let json = serde_json::to_string_pretty(tool_calls).unwrap_or_else(|_| "Invalid JSON".to_string());
 				for line in json.lines() {
 					block_row_text(line);
 				}

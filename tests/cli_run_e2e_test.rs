@@ -29,9 +29,7 @@ const MARKER: &str = "E2E-OK-MARKER";
 /// Minimal always-answers OpenAI-compatible stub. Every request gets the
 /// same final response carrying MARKER.
 async fn spawn_openai_stub() -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
@@ -88,8 +86,7 @@ async fn spawn_openai_stub() -> String {
 /// every network/model-heavy subsystem off.
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.supervisor.enabled = false;
@@ -214,9 +211,7 @@ async fn test_config_show_against_sandbox() {
 /// binary through a full tool round.
 async fn spawn_tool_round_stub() -> String {
 	use std::sync::atomic::{AtomicUsize, Ordering};
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 	let counter = std::sync::Arc::new(AtomicUsize::new(0));
 
@@ -476,11 +471,7 @@ async fn test_workflow_dry_run_prints_plan() {
 	.expect("write workflow");
 
 	let output = octomind_cmd(home.path(), &stub_url)
-		.args([
-			"workflow",
-			workflow_path.to_str().expect("utf8"),
-			"--dry-run",
-		])
+		.args(["workflow", workflow_path.to_str().expect("utf8"), "--dry-run"])
 		.output()
 		.expect("dry run executes");
 	assert!(
@@ -502,8 +493,7 @@ async fn test_run_with_supervisor_enabled_survives_garbage_verdicts() {
 	let home = tempfile::tempdir().expect("temp home");
 	{
 		let mut config: octomind::config::Config =
-			toml::from_str(include_str!("../config-templates/default.toml"))
-				.expect("parse default config template");
+			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
 		config.supervisor.enabled = true;
@@ -590,9 +580,7 @@ async fn test_named_session_resume_roundtrip() {
 /// Stub that answers call N with `bodies[N]` (clamped to the last entry).
 async fn spawn_scripted_stub(bodies: Vec<String>) -> String {
 	use std::sync::atomic::{AtomicUsize, Ordering};
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 	let counter = std::sync::Arc::new(AtomicUsize::new(0));
 	let bodies = std::sync::Arc::new(bodies);
@@ -663,13 +651,7 @@ async fn test_config_setters_roundtrip() {
 	write_sandbox_config(home.path());
 
 	let output = octomind_cmd(home.path(), &stub_url)
-		.args([
-			"config",
-			"--model",
-			"ollama:cfg-model",
-			"--log-level",
-			"debug",
-		])
+		.args(["config", "--model", "ollama:cfg-model", "--log-level", "debug"])
 		.output()
 		.expect("config setters run");
 	assert!(
@@ -753,8 +735,7 @@ async fn test_distill_stores_lessons() {
 	let home = tempfile::tempdir().expect("temp home");
 	{
 		let mut config: octomind::config::Config =
-			toml::from_str(include_str!("../config-templates/default.toml"))
-				.expect("parse default config template");
+			toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 		config.model = "ollama:fake-model".to_string();
 		config.default = "assistant".to_string();
 		config.supervisor.enabled = false;
@@ -812,9 +793,7 @@ async fn test_distill_stores_lessons() {
 	);
 
 	// Lesson + orientation landed in the scoped learning store
-	let learning_dir = home
-		.path()
-		.join(".local/share/octomind/learning/e2eproj/assistant");
+	let learning_dir = home.path().join(".local/share/octomind/learning/e2eproj/assistant");
 	let mut stored = String::new();
 	for entry in std::fs::read_dir(&learning_dir).expect("learning dir exists") {
 		let path = entry.expect("dir entry").path();
@@ -852,10 +831,7 @@ async fn test_send_to_unknown_session_fails() {
 		.args(["send", "-n", "no-such-session-e2e", "hello?"])
 		.output()
 		.expect("send runs");
-	assert!(
-		!output.status.success(),
-		"send to missing session must fail"
-	);
+	assert!(!output.status.success(), "send to missing session must fail");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -927,13 +903,7 @@ async fn test_config_markdown_validate_upgrade() {
 	write_sandbox_config(home.path());
 
 	let output = octomind_cmd(home.path(), &stub_url)
-		.args([
-			"config",
-			"--markdown-enable",
-			"true",
-			"--markdown-theme",
-			"dark",
-		])
+		.args(["config", "--markdown-enable", "true", "--markdown-theme", "dark"])
 		.output()
 		.expect("markdown setters run");
 	assert!(
@@ -1014,10 +984,7 @@ async fn test_completion_generation_and_api_key_setter() {
 			.output()
 			.expect("completion runs");
 		assert!(output.status.success(), "completion {shell} failed");
-		assert!(
-			!output.stdout.is_empty(),
-			"completion {shell} produced nothing"
-		);
+		assert!(!output.stdout.is_empty(), "completion {shell} produced nothing");
 	}
 
 	// API key setter writes into the sandbox config only
@@ -1074,10 +1041,7 @@ async fn test_config_local_api_key_diagnostics() {
 			.expect("octomind config runs");
 		assert!(output.status.success());
 		let stdout = String::from_utf8_lossy(&output.stdout);
-		assert!(
-			stdout.contains("Local"),
-			"{args:?} missing Local row:\n{stdout}"
-		);
+		assert!(stdout.contains("Local"), "{args:?} missing Local row:\n{stdout}");
 		assert!(
 			stdout.contains("optional (not set)"),
 			"{args:?} missing optional (not set):\n{stdout}"
@@ -1097,10 +1061,7 @@ async fn test_config_local_api_key_diagnostics() {
 			.expect("octomind config runs");
 		assert!(output.status.success());
 		let stdout = String::from_utf8_lossy(&output.stdout);
-		assert!(
-			stdout.contains("Local"),
-			"{args:?} missing Local row:\n{stdout}"
-		);
+		assert!(stdout.contains("Local"), "{args:?} missing Local row:\n{stdout}");
 		assert!(
 			stdout.contains("optional (not set)"),
 			"{args:?} whitespace key must be optional:\n{stdout}"
@@ -1117,29 +1078,19 @@ async fn test_config_local_api_key_diagnostics() {
 			.expect("octomind config runs");
 		assert!(output.status.success());
 		let stdout = String::from_utf8_lossy(&output.stdout);
-		assert!(
-			stdout.contains("Local"),
-			"{args:?} missing Local row:\n{stdout}"
-		);
+		assert!(stdout.contains("Local"), "{args:?} missing Local row:\n{stdout}");
 		assert!(
 			stdout.contains("set via environment variable"),
 			"{args:?} missing env var source:\n{stdout}"
 		);
-		assert!(
-			!stdout.contains(secret_env),
-			"secret leaked in output:\n{stdout}"
-		);
+		assert!(!stdout.contains(secret_env), "secret leaked in output:\n{stdout}");
 	}
 
 	// 4. Precedence: User-scope .env vs System environment
 	// User-scope .env is located at $OCTOMIND_DATA_DIR/config/.env
 	let config_dir = home.path().join(".local/share/octomind/config");
 	let user_secret = "test-user-env-secret-888";
-	std::fs::write(
-		config_dir.join(".env"),
-		format!("LOCAL_API_KEY={user_secret}\n"),
-	)
-	.expect("write user .env");
+	std::fs::write(config_dir.join(".env"), format!("LOCAL_API_KEY={user_secret}\n")).expect("write user .env");
 
 	for args in [vec!["config"], vec!["config", "--show"]] {
 		let output = octomind_cmd(home.path(), &stub_url)
@@ -1149,32 +1100,19 @@ async fn test_config_local_api_key_diagnostics() {
 			.expect("octomind config runs");
 		assert!(output.status.success());
 		let stdout = String::from_utf8_lossy(&output.stdout);
-		assert!(
-			stdout.contains("Local"),
-			"{args:?} missing Local row:\n{stdout}"
-		);
+		assert!(stdout.contains("Local"), "{args:?} missing Local row:\n{stdout}");
 		assert!(
 			stdout.contains("set via environment/.env file"),
 			"{args:?} missing user .env source:\n{stdout}"
 		);
-		assert!(
-			!stdout.contains(secret_env),
-			"system secret leaked:\n{stdout}"
-		);
-		assert!(
-			!stdout.contains(user_secret),
-			"user secret leaked:\n{stdout}"
-		);
+		assert!(!stdout.contains(secret_env), "system secret leaked:\n{stdout}");
+		assert!(!stdout.contains(user_secret), "user secret leaked:\n{stdout}");
 	}
 
 	// 5. Precedence: Project-local .env overrides User-scope .env and System env
 	// Project-local .env is located at cwd (home.path())
 	let project_secret = "test-project-env-secret-777";
-	std::fs::write(
-		home.path().join(".env"),
-		format!("LOCAL_API_KEY={project_secret}\n"),
-	)
-	.expect("write project .env");
+	std::fs::write(home.path().join(".env"), format!("LOCAL_API_KEY={project_secret}\n")).expect("write project .env");
 
 	for args in [vec!["config"], vec!["config", "--show"]] {
 		let output = octomind_cmd(home.path(), &stub_url)
@@ -1184,25 +1122,13 @@ async fn test_config_local_api_key_diagnostics() {
 			.expect("octomind config runs");
 		assert!(output.status.success());
 		let stdout = String::from_utf8_lossy(&output.stdout);
-		assert!(
-			stdout.contains("Local"),
-			"{args:?} missing Local row:\n{stdout}"
-		);
+		assert!(stdout.contains("Local"), "{args:?} missing Local row:\n{stdout}");
 		assert!(
 			stdout.contains("set via environment/.env file"),
 			"{args:?} missing project .env source:\n{stdout}"
 		);
-		assert!(
-			!stdout.contains(secret_env),
-			"system secret leaked:\n{stdout}"
-		);
-		assert!(
-			!stdout.contains(user_secret),
-			"user secret leaked:\n{stdout}"
-		);
-		assert!(
-			!stdout.contains(project_secret),
-			"project secret leaked:\n{stdout}"
-		);
+		assert!(!stdout.contains(secret_env), "system secret leaked:\n{stdout}");
+		assert!(!stdout.contains(user_secret), "user secret leaked:\n{stdout}");
+		assert!(!stdout.contains(project_secret), "project secret leaked:\n{stdout}");
 	}
 }

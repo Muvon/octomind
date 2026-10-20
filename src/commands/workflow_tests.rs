@@ -55,8 +55,8 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -337,10 +337,7 @@ prompt = "p"
 	assert!(matches!(&wf.steps[0], Step::Sequential(_)));
 	assert!(matches!(&wf.steps[1], Step::Parallel(ParallelStep { .. })));
 	assert!(matches!(&wf.steps[2], Step::Loop(LoopStep { .. })));
-	assert!(matches!(
-		&wf.steps[3],
-		Step::Conditional(ConditionalStep { .. })
-	));
+	assert!(matches!(&wf.steps[3], Step::Conditional(ConditionalStep { .. })));
 }
 
 // ── execute: local files (no env, no network) ───────────────────────────────
@@ -379,24 +376,15 @@ async fn missing_toml_path_errors() {
 	)
 	.await
 	.expect_err("missing *.toml path must error");
-	assert!(
-		err.to_string().contains("workflow file not found"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("workflow file not found"), "got: {err}");
 }
 
 #[tokio::test]
 async fn missing_nested_path_errors() {
-	let err = execute(
-		&wf_args(Some("no/such/dir/x.toml"), true),
-		&template_config(),
-	)
-	.await
-	.expect_err("missing nested path must error");
-	assert!(
-		err.to_string().contains("workflow file not found"),
-		"got: {err}"
-	);
+	let err = execute(&wf_args(Some("no/such/dir/x.toml"), true), &template_config())
+		.await
+		.expect_err("missing nested path must error");
+	assert!(err.to_string().contains("workflow file not found"), "got: {err}");
 }
 
 #[tokio::test]
@@ -452,10 +440,7 @@ prompt = "q"
 	)
 	.await
 	.expect_err("duplicate names must error");
-	assert!(
-		err.to_string().contains("duplicate step name"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("duplicate step name"), "got: {err}");
 }
 
 #[tokio::test]
@@ -505,30 +490,13 @@ async fn listing_enumerates_tap_workflows_first_tap_wins() {
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
 	// A user tap plus the built-in default tap, both with workflows.
-	std::fs::write(dir.join("taps.toml"), "[[taps]]\nname = \"acme/lib\"\n")
-		.expect("write taps.toml");
-	let user_wf = dir
-		.join("taps")
-		.join("acme")
-		.join("octomind-lib")
-		.join("workflows");
+	std::fs::write(dir.join("taps.toml"), "[[taps]]\nname = \"acme/lib\"\n").expect("write taps.toml");
+	let user_wf = dir.join("taps").join("acme").join("octomind-lib").join("workflows");
 	std::fs::create_dir_all(&user_wf).expect("user workflows dir");
-	std::fs::write(
-		user_wf.join("alpha.toml"),
-		"description = \"user tap wins\"\n",
-	)
-	.expect("user workflow");
-	let default_wf = dir
-		.join("taps")
-		.join("muvon")
-		.join("octomind-tap")
-		.join("workflows");
+	std::fs::write(user_wf.join("alpha.toml"), "description = \"user tap wins\"\n").expect("user workflow");
+	let default_wf = dir.join("taps").join("muvon").join("octomind-tap").join("workflows");
 	std::fs::create_dir_all(&default_wf).expect("default workflows dir");
-	std::fs::write(
-		default_wf.join("alpha.toml"),
-		"description = \"shadowed\"\n",
-	)
-	.expect("shadowed workflow");
+	std::fs::write(default_wf.join("alpha.toml"), "description = \"shadowed\"\n").expect("shadowed workflow");
 	std::fs::write(default_wf.join("beta.toml"), "name = \"beta\"\n").expect("no-description");
 	std::fs::write(default_wf.join("notes.txt"), "not a workflow\n").expect("non-toml");
 	std::fs::write(default_wf.join("broken.toml"), "description = \n").expect("broken toml");
@@ -544,10 +512,7 @@ async fn listing_enumerates_tap_workflows_first_tap_wins() {
 	assert_eq!(alpha.source_tap, "acme/lib", "user taps shadow the default");
 	assert_eq!(alpha.description, "user tap wins");
 	assert_eq!(workflows[1].source_tap, "muvon/tap");
-	assert_eq!(
-		workflows[1].description, "",
-		"missing description renders empty"
-	);
+	assert_eq!(workflows[1].description, "", "missing description renders empty");
 
 	execute(&wf_args(None, false), &template_config())
 		.await
@@ -571,13 +536,8 @@ prompt = "do {{input}}"
 /// Install a user tap (`acme/lib`) shipping one workflow, plus the built-in
 /// default tap directory so tap loading never reaches for git.
 fn install_tap_workflow(dir: &std::path::Path, body: &str) {
-	std::fs::write(dir.join("taps.toml"), "[[taps]]\nname = \"acme/lib\"\n")
-		.expect("write taps.toml");
-	let workflows = dir
-		.join("taps")
-		.join("acme")
-		.join("octomind-lib")
-		.join("workflows");
+	std::fs::write(dir.join("taps.toml"), "[[taps]]\nname = \"acme/lib\"\n").expect("write taps.toml");
+	let workflows = dir.join("taps").join("acme").join("octomind-lib").join("workflows");
 	std::fs::create_dir_all(&workflows).expect("tap workflows dir");
 	std::fs::write(workflows.join("alpha.toml"), body).expect("tap workflow");
 	let default_tap = dir.join("taps").join("muvon").join("octomind-tap");
@@ -619,10 +579,7 @@ async fn tap_workflow_with_non_public_role_errors() {
 	let err = execute(&wf_args(Some("alpha"), true), &template_config())
 		.await
 		.expect_err("a non-public role must fail");
-	assert!(
-		err.to_string().contains("is not a public tap role"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("is not a public tap role"), "got: {err}");
 }
 
 // fd redirection via libc is Unix-only; the stdin-required logic itself is
@@ -655,8 +612,5 @@ async fn local_workflow_requires_input_via_stdin() {
 		libc::close(saved);
 	}
 	let err = result.expect_err("empty stdin must be rejected");
-	assert!(
-		err.to_string().contains("requires input via stdin"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("requires input via stdin"), "got: {err}");
 }

@@ -100,11 +100,7 @@ fn deferral_stands_only_while_the_same_step_is_open() {
 
 	// Reasons that never assert a running step are refuted by construction,
 	// even with the same step still open.
-	for reason in [
-		DeferReason::None,
-		DeferReason::Stuck,
-		DeferReason::TranscriptMinimal,
-	] {
+	for reason in [DeferReason::None, DeferReason::Stuck, DeferReason::TranscriptMinimal] {
 		assert!(
 			!deferral(reason, Some(1)).stands_against(Some(1), false),
 			"{reason:?} must never stand"

@@ -93,8 +93,8 @@ fn install_default_tap_agent(data_dir: &std::path::Path, manifest: &str) {
 }
 
 fn base_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -115,12 +115,7 @@ async fn resolve_config_and_role_merges_tap_manifest_end_to_end() {
 	let (merged, role) = resolve_config_and_role(
 		Some("ztest:zz"),
 		&base_config(),
-		Some(&|status| {
-			statuses
-				.lock()
-				.expect("statuses lock")
-				.push(status.to_string())
-		}),
+		Some(&|status| statuses.lock().expect("statuses lock").push(status.to_string())),
 	)
 	.await
 	.expect("tag resolves end to end");
@@ -152,12 +147,7 @@ async fn resolve_config_and_role_merges_tap_manifest_end_to_end() {
 	);
 	// The manifest is cached for future runs.
 	assert!(
-		guard
-			.path()
-			.join("agents")
-			.join("ztest")
-			.join("zz.toml")
-			.exists(),
+		guard.path().join("agents").join("ztest").join("zz.toml").exists(),
 		"manifest cached under <data>/agents"
 	);
 }
@@ -172,9 +162,7 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 	);
 
 	let mut config = base_config();
-	config
-		.taps
-		.insert("ztest:zz".to_string(), "openai:gpt-4o".to_string());
+	config.taps.insert("ztest:zz".to_string(), "openai:gpt-4o".to_string());
 
 	let (merged, role) = resolve_config_and_role(Some("ztest:zz"), &config, None)
 		.await
@@ -184,20 +172,11 @@ async fn resolve_config_and_role_applies_tap_model_override() {
 		merged.model, "openai:gpt-4o",
 		"[taps] model override must win for this tag"
 	);
-	assert_eq!(
-		merged.model_profile.temperature,
-		config.model_profile.temperature
-	);
+	assert_eq!(merged.model_profile.temperature, config.model_profile.temperature);
 	assert_eq!(merged.model_profile.top_p, config.model_profile.top_p);
 	assert_eq!(merged.model_profile.top_k, config.model_profile.top_k);
-	assert_eq!(
-		merged.model_profile.max_tokens,
-		config.model_profile.max_tokens
-	);
-	assert_eq!(
-		merged.model_profile.max_retries,
-		config.model_profile.max_retries
-	);
+	assert_eq!(merged.model_profile.max_tokens, config.model_profile.max_tokens);
+	assert_eq!(merged.model_profile.max_retries, config.model_profile.max_retries);
 }
 
 #[tokio::test]
@@ -210,8 +189,7 @@ async fn resolve_config_and_role_rejects_manifest_without_new_role() {
 		.await
 		.expect_err("manifest without [[roles]] must fail");
 	assert!(
-		err.to_string()
-			.contains("must define at least one new [[roles]] entry"),
+		err.to_string().contains("must define at least one new [[roles]] entry"),
 		"got: {err:#}"
 	);
 }

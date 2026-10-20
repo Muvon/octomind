@@ -78,10 +78,7 @@ impl RoleMcpConfig {
 	}
 
 	/// Create a new RoleMcpConfig with server references and allowed tools
-	pub fn with_server_refs_and_tools(
-		server_refs: Vec<String>,
-		allowed_tools: Vec<String>,
-	) -> Self {
+	pub fn with_server_refs_and_tools(server_refs: Vec<String>, allowed_tools: Vec<String>) -> Self {
 		Self {
 			server_refs,
 			allowed_tools,

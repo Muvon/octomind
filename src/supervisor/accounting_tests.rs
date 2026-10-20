@@ -24,10 +24,7 @@ async fn concurrent_sessions_fold_only_their_own_usage_once() {
 	for (id, cost) in [("accounting-a", 0.25), ("accounting-b", 0.75)] {
 		let banks = Arc::clone(&banks);
 		let bank = Arc::new(Mutex::new(Bank::default()));
-		banks
-			.lock()
-			.unwrap()
-			.insert(Some(id.into()), Arc::clone(&bank));
+		banks.lock().unwrap().insert(Some(id.into()), Arc::clone(&bank));
 		let barrier = Arc::clone(&barrier);
 		tasks.push(tokio::spawn(with_session_id(
 			id.to_owned(),
@@ -85,10 +82,7 @@ async fn nested_timers_count_blocking_union_and_background_separately() {
 				drop(outer);
 				usage.add(&bank.lock().unwrap().take());
 				assert!(usage.blocking_wall_time_ms <= usage.totals().blocking_wall_time_ms);
-				assert!(
-					usage.blocking_wall_time_ms
-						>= usage.kinds[&CallKind::Gate].blocking_wall_time_ms
-				);
+				assert!(usage.blocking_wall_time_ms >= usage.kinds[&CallKind::Gate].blocking_wall_time_ms);
 				background(async {
 					tokio::spawn(TEST_PENDING.scope(
 						TEST_PENDING.with(Arc::clone),
@@ -176,15 +170,8 @@ async fn detached_evolution_keeps_explicit_owner_while_other_session_folds() {
 		let mut receiver = Session::new(other.clone(), "model".into());
 		for _ in 0..10 {
 			receiver.fold_external_spend();
-			assert!(receiver
-				.info
-				.supervisor_accounting
-				.background_runs
-				.is_empty());
-			assert!(
-				take_completed(&owner).is_empty(),
-				"a running job cannot be live-folded"
-			);
+			assert!(receiver.info.supervisor_accounting.background_runs.is_empty());
+			assert!(take_completed(&owner).is_empty(), "a running job cannot be live-folded");
 		}
 		finish_tx.send(()).unwrap();
 		task.await.unwrap().unwrap();
@@ -209,27 +196,20 @@ async fn detached_completion_after_last_save_survives_resume_and_live_fold_once(
 		session.save().unwrap();
 		let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
 		let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
-		let task = tokio::spawn(run_background(
-			owner.clone(),
-			Some(file.clone()),
-			async move {
-				let _timer = WallTimer::start(CallKind::Distill);
-				super::super::stats::record_call(CallKind::Distill, 100, 20, 3, 50, 0.25);
-				ready_tx.send(()).unwrap();
-				finish_rx.await.unwrap();
-				Ok(())
-			},
-		));
+		let task = tokio::spawn(run_background(owner.clone(), Some(file.clone()), async move {
+			let _timer = WallTimer::start(CallKind::Distill);
+			super::super::stats::record_call(CallKind::Distill, 100, 20, 3, 50, 0.25);
+			ready_tx.send(()).unwrap();
+			finish_rx.await.unwrap();
+			Ok(())
+		}));
 		ready_rx.await.unwrap();
 		session.fold_external_spend();
 		session.save().unwrap();
 		finish_tx.send(()).unwrap();
 		task.await.unwrap().unwrap();
 		let mut resumed = crate::session::persistence::load_session(&file).unwrap();
-		assert_eq!(
-			resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
-			1
-		);
+		assert_eq!(resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls, 1);
 		let saved = resumed.info.supervisor_accounting.clone();
 		let cost = resumed.info.total_cost;
 		resumed.fold_external_spend();
@@ -237,10 +217,7 @@ async fn detached_completion_after_last_save_survives_resume_and_live_fold_once(
 			resumed.info.supervisor_accounting.background_runs,
 			saved.background_runs
 		);
-		assert_eq!(
-			resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
-			1
-		);
+		assert_eq!(resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls, 1);
 		assert_eq!(resumed.info.total_cost, cost);
 		resumed.save().unwrap();
 		assert_eq!(
@@ -260,10 +237,7 @@ fn fold_keeps_a_bank_already_acquired_by_a_recorder() {
 	let bank = Arc::new(Mutex::new(Bank::default()));
 	let mut banks = Banks::new();
 	banks.insert(owner.clone(), Arc::clone(&bank));
-	assert_eq!(
-		take_from(&mut banks, owner.clone()),
-		SupervisorAccounting::default()
-	);
+	assert_eq!(take_from(&mut banks, owner.clone()), SupervisorAccounting::default());
 	bank.lock().unwrap().usage.kinds.insert(
 		CallKind::Gate,
 		Usage {
@@ -273,10 +247,7 @@ fn fold_keeps_a_bank_already_acquired_by_a_recorder() {
 		},
 	);
 	drop(bank);
-	assert_eq!(
-		take_from(&mut banks, owner).kinds[&CallKind::Gate].cost,
-		0.25
-	);
+	assert_eq!(take_from(&mut banks, owner).kinds[&CallKind::Gate].cost, 0.25);
 	assert!(banks.is_empty());
 }
 
@@ -287,11 +258,7 @@ fn mechanic_and_total_wall_time_are_unions_of_nested_and_parallel_intervals() {
 	let mut usage = SupervisorAccounting::default();
 	clock.enter(Mechanic::Gate, false, start);
 	clock.tick(start + std::time::Duration::from_millis(5), &mut usage);
-	clock.enter(
-		Mechanic::Gate,
-		false,
-		start + std::time::Duration::from_millis(5),
-	);
+	clock.enter(Mechanic::Gate, false, start + std::time::Duration::from_millis(5));
 	clock.tick(start + std::time::Duration::from_millis(10), &mut usage);
 	clock.leave(Mechanic::Gate, false);
 	clock.tick(start + std::time::Duration::from_millis(20), &mut usage);
@@ -302,11 +269,7 @@ fn mechanic_and_total_wall_time_are_unions_of_nested_and_parallel_intervals() {
 	let mut b = SupervisorAccounting::default();
 	clock.enter(Mechanic::Distill, true, start);
 	clock.tick(start + std::time::Duration::from_millis(5), &mut b);
-	clock.enter(
-		Mechanic::Distill,
-		true,
-		start + std::time::Duration::from_millis(5),
-	);
+	clock.enter(Mechanic::Distill, true, start + std::time::Duration::from_millis(5));
 	clock.tick(start + std::time::Duration::from_millis(10), &mut a);
 	clock.leave(Mechanic::Distill, true);
 	clock.tick(start + std::time::Duration::from_millis(20), &mut b);
@@ -345,8 +308,7 @@ async fn outcome_counters_are_isolated_between_sessions_and_survive_fold() {
 			assert_eq!(outcome[&Outcome::Pass], 1);
 			assert!(!outcome.contains_key(&Outcome::RefutedGaps));
 			assert_eq!(
-				session.info.supervisor_accounting.kinds[&CallKind::Condense].outcome
-					[&Outcome::SavedTokens],
+				session.info.supervisor_accounting.kinds[&CallKind::Condense].outcome[&Outcome::SavedTokens],
 				5_700
 			);
 		});
@@ -366,19 +328,15 @@ async fn shutdown_between_paid_detached_calls_resumes_without_loss_or_double_cou
 			session.session_file = Some(file.clone());
 			session.save().unwrap();
 			let (paid_tx, paid_rx) = tokio::sync::oneshot::channel();
-			let task = tokio::spawn(run_background(
-				owner.clone(),
-				Some(file.clone()),
-				async move {
-					super::super::stats::record_call(CallKind::Distill, 100, 20, 3, 50, 0.25);
-					checkpoint().unwrap();
-					paid_tx.send(()).unwrap();
-					std::future::pending::<()>().await;
-					super::super::stats::record_call(CallKind::Distill, 200, 40, 6, 100, 0.5);
-					checkpoint().unwrap();
-					Ok(())
-				},
-			));
+			let task = tokio::spawn(run_background(owner.clone(), Some(file.clone()), async move {
+				super::super::stats::record_call(CallKind::Distill, 100, 20, 3, 50, 0.25);
+				checkpoint().unwrap();
+				paid_tx.send(()).unwrap();
+				std::future::pending::<()>().await;
+				super::super::stats::record_call(CallKind::Distill, 200, 40, 6, 100, 0.5);
+				checkpoint().unwrap();
+				Ok(())
+			}));
 			paid_rx.await.unwrap();
 			if fold_before_shutdown {
 				session.fold_external_spend();
@@ -391,10 +349,7 @@ async fn shutdown_between_paid_detached_calls_resumes_without_loss_or_double_cou
 			take_completed(&owner);
 			let mut resumed = crate::session::persistence::load_session(&file).unwrap();
 			assert_eq!(resumed.info.total_cost, 0.25);
-			assert_eq!(
-				resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
-				1
-			);
+			assert_eq!(resumed.info.supervisor_accounting.kinds[&CallKind::Distill].calls, 1);
 			assert_eq!(
 				resumed.info.supervisor_accounting.kinds[&CallKind::Distill].input_tokens,
 				100
@@ -424,17 +379,11 @@ async fn shutdown_between_paid_detached_calls_resumes_without_loss_or_double_cou
 			resumed.fold_external_spend();
 			assert_eq!(resumed.info.total_cost, 0.75);
 			assert_eq!(resumed.info.supervisor_accounting.totals().calls, 2);
-			assert_eq!(
-				resumed.info.supervisor_accounting.seams[&Seam::Distill].calls,
-				1
-			);
+			assert_eq!(resumed.info.supervisor_accounting.seams[&Seam::Distill].calls, 1);
 			resumed.save().unwrap();
 			let reloaded = crate::session::persistence::load_session(&file).unwrap();
 			assert_eq!(reloaded.info.total_cost, 0.75);
-			assert_eq!(
-				reloaded.info.supervisor_accounting,
-				resumed.info.supervisor_accounting
-			);
+			assert_eq!(reloaded.info.supervisor_accounting, resumed.info.supervisor_accounting);
 		}
 	})
 	.await;

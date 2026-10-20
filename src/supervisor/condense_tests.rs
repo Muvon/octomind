@@ -128,8 +128,7 @@ fn reconstruct_counts_capped_tail_the_model_never_saw() {
 
 #[test]
 fn response_parses_fenced_and_bare_json() {
-	let fenced =
-		"rationale line\n```json\n{\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}\n```";
+	let fenced = "rationale line\n```json\n{\"results\":[{\"id\":\"t1\",\"verdict\":\"keep\"}]}\n```";
 	let p = parse_response(fenced).unwrap();
 	assert_eq!(p.results[0].id, "t1");
 	assert_eq!(p.results[0].verdict, "keep");
@@ -142,10 +141,7 @@ fn response_parses_fenced_and_bare_json() {
 
 #[test]
 fn full_numbered_view_aligns_width() {
-	let text = (0..10)
-		.map(|i| i.to_string())
-		.collect::<Vec<_>>()
-		.join("\n");
+	let text = (0..10).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
 	let view = build_numbered_view(&text, 1_000, "");
 	assert!(!view.partial);
 	assert_eq!(view.visible_ranges, vec![(1, 10)]);
@@ -155,25 +151,15 @@ fn full_numbered_view_aligns_width() {
 
 #[test]
 fn sampled_view_finds_middle_focus_and_tail_diagnostics() {
-	let mut lines = (1..=1_000)
-		.map(|i| format!("ordinary output {i}"))
-		.collect::<Vec<_>>();
+	let mut lines = (1..=1_000).map(|i| format!("ordinary output {i}")).collect::<Vec<_>>();
 	lines[499] = "needle_symbol exact declaration".into();
 	lines[998] = "fatal: build failed with exit code 9".into();
 	let view = build_numbered_view(&lines.join("\n"), 500, "needle_symbol");
 	assert!(view.partial);
 	assert!(view.body.contains("500| needle_symbol exact declaration"));
-	assert!(view
-		.body
-		.contains("999| fatal: build failed with exit code 9"));
-	assert!(view
-		.visible_ranges
-		.iter()
-		.any(|(s, e)| *s <= 500 && *e >= 500));
-	assert!(view
-		.visible_ranges
-		.iter()
-		.any(|(s, e)| *s <= 999 && *e >= 999));
+	assert!(view.body.contains("999| fatal: build failed with exit code 9"));
+	assert!(view.visible_ranges.iter().any(|(s, e)| *s <= 500 && *e >= 500));
+	assert!(view.visible_ranges.iter().any(|(s, e)| *s <= 999 && *e >= 999));
 }
 
 #[test]
@@ -231,9 +217,7 @@ async fn one_bad_verdict_does_not_cost_the_other_results() {
 		// Each of these leaves ITS OWN result inline; the valid one above still
 		// applied. Previously any single one of them voided the whole round.
 		assert!(apply_verdict(&entry("keep", &[]), &ok, &original, &partial).is_none());
-		assert!(
-			apply_verdict(&entry("extract", &["1", "junk"]), &ok, &original, &partial).is_none()
-		);
+		assert!(apply_verdict(&entry("extract", &["1", "junk"]), &ok, &original, &partial).is_none());
 		assert!(apply_verdict(&entry("extract", &["3-4"]), &ok, &original, &partial).is_none());
 		assert!(apply_verdict(&entry("nonsense", &[]), &ok, &original, &partial).is_none());
 		// Nothing was inspected outside the islands, so "none of it matters" is
@@ -322,9 +306,7 @@ fn build_log() -> String {
 	lines.push("   --> src/supervisor/condense.rs:412:17".into());
 	lines.push("    |".into());
 	lines.push("412 |         let kept: usize = ranges.len() as u64;".into());
-	lines.push(
-		"    |                   -----   ^^^^^^^^^^^^^^^^^^^ expected `usize`, found `u64`".into(),
-	);
+	lines.push("    |                   -----   ^^^^^^^^^^^^^^^^^^^ expected `usize`, found `u64`".into());
 	lines.push("error: could not compile `octomind` (lib) due to 1 previous error".into());
 	lines.join("\n")
 }
@@ -408,22 +390,18 @@ async fn live_condense_eval() {
 		.await
 		.unwrap_or_else(|e| panic!("[{}] condense call failed: {e}", scenario.name));
 
-		let parsed = parse_response(&response)
-			.unwrap_or_else(|| panic!("[{}] unparseable: {response}", scenario.name));
+		let parsed = parse_response(&response).unwrap_or_else(|| panic!("[{}] unparseable: {response}", scenario.name));
 		let entries = unambiguous_entries(&parsed);
 		let entry = entries
 			.get("t1")
 			.unwrap_or_else(|| panic!("[{}] no verdict for t1", scenario.name));
-		let condensed =
-			crate::session::context::with_session_id("condense-live-eval".into(), async {
-				apply_verdict(entry, &result, &scenario.output, &candidates[0].view)
-			})
-			.await;
+		let condensed = crate::session::context::with_session_id("condense-live-eval".into(), async {
+			apply_verdict(entry, &result, &scenario.output, &candidates[0].view)
+		})
+		.await;
 
 		let before = sizes[0];
-		let after = condensed
-			.as_ref()
-			.map_or(before, |content| estimate_tokens(content));
+		let after = condensed.as_ref().map_or(before, |content| estimate_tokens(content));
 		let body = condensed.as_deref().unwrap_or(&scenario.output);
 		for needle in scenario.must_keep {
 			assert!(

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::super::{
-	ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig, EvolutionRecord, EvolutionState,
-	Measure, REGISTRY_SCHEMA_VERSION,
+	ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig, EvolutionRecord, EvolutionState, Measure,
+	REGISTRY_SCHEMA_VERSION,
 };
 use super::*;
 
@@ -183,33 +183,17 @@ async fn generated_guardrails_skip_unreadable_and_unparsable_artifacts() {
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
-	let valid = record(
-		"evo-guard-valid",
-		ArtifactKind::Guard,
-		EvolutionState::Trial,
-	);
+	let valid = record("evo-guard-valid", ArtifactKind::Guard, EvolutionState::Trial);
 	super::super::registry::create_record(valid.clone(), native, None).unwrap();
-	let unreadable = record(
-		"evo-guard-unreadable",
-		ArtifactKind::Guard,
-		EvolutionState::Trial,
-	);
+	let unreadable = record("evo-guard-unreadable", ArtifactKind::Guard, EvolutionState::Trial);
 	super::super::registry::create_record(unreadable.clone(), native, None).unwrap();
 	std::fs::remove_file(unreadable.native_path().unwrap()).unwrap();
-	let unparsable = record(
-		"evo-guard-unparsable",
-		ArtifactKind::Guard,
-		EvolutionState::Trial,
-	);
+	let unparsable = record("evo-guard-unparsable", ArtifactKind::Guard, EvolutionState::Trial);
 	super::super::registry::create_record(unparsable.clone(), native, None).unwrap();
 	std::fs::write(unparsable.native_path().unwrap(), "not toml {{{").unwrap();
 
 	let valid_id = valid.id.clone();
-	let generated = generated_guardrails(
-		&[valid, unreadable, unparsable],
-		"evolution-guardrails-session",
-	)
-	.unwrap();
+	let generated = generated_guardrails(&[valid, unreadable, unparsable], "evolution-guardrails-session").unwrap();
 	assert_eq!(generated.guards.len(), 1);
 	assert_eq!(generated.guards[0].evolution.as_ref().unwrap().id, valid_id);
 
@@ -258,17 +242,12 @@ fn session_in_arm(ids: &[&str], treated: bool) -> String {
 
 #[test]
 fn trial_sessions_split_evenly_and_stably_between_arms() {
-	let sessions = (0..2_000)
-		.map(|index| format!("session-{index}"))
-		.collect::<Vec<_>>();
+	let sessions = (0..2_000).map(|index| format!("session-{index}")).collect::<Vec<_>>();
 	let treated = sessions
 		.iter()
 		.filter(|session| treatment_arm("evo-split", session))
 		.count();
-	assert!(
-		(900..=1_100).contains(&treated),
-		"{treated} of 2000 treated"
-	);
+	assert!((900..=1_100).contains(&treated), "{treated} of 2000 treated");
 	// A session keeps its arm for the whole trial.
 	assert!(sessions
 		.iter()
@@ -276,10 +255,7 @@ fn trial_sessions_split_evenly_and_stably_between_arms() {
 	// Only a trial is randomized: active applies everywhere, shadow nowhere.
 	let session = &sessions[0];
 	let trial = record("evo-split", ArtifactKind::Guard, EvolutionState::Trial);
-	assert_eq!(
-		applied_in_session(&trial, session),
-		treatment_arm("evo-split", session)
-	);
+	assert_eq!(applied_in_session(&trial, session), treatment_arm("evo-split", session));
 	let active = record("evo-split", ArtifactKind::Guard, EvolutionState::Active);
 	assert!(applied_in_session(&active, session));
 	let shadow = record("evo-split", ArtifactKind::Guard, EvolutionState::Shadow);
@@ -332,12 +308,7 @@ async fn unauthorized_effectful_shadow_stays_shadow_past_threshold() {
 	let mut item = record(id, ArtifactKind::Guard, EvolutionState::Shadow);
 	item.effect = EffectClass::Effectful;
 	item.explicit_authorization = false;
-	super::super::registry::create_record(
-		item,
-		"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
-		None,
-	)
-	.unwrap();
+	super::super::registry::create_record(item, "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n", None).unwrap();
 
 	mark_shadow_match(id);
 	mark_shadow_match(id);
@@ -375,10 +346,7 @@ async fn trial_without_successes_retires_at_use_limit() {
 	let stored = super::super::registry::get_record(id).unwrap().unwrap();
 	assert_eq!(stored.state, EvolutionState::Retired);
 	assert_eq!(stored.trial_uses, policy.max_trial_uses);
-	assert!(stored
-		.history
-		.iter()
-		.any(|event| event.event == "trial_inconclusive"));
+	assert!(stored.history.iter().any(|event| event.event == "trial_inconclusive"));
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
@@ -416,14 +384,10 @@ async fn promotion_retires_superseded_artifacts_and_notifies_session() {
 			mark_behavior_used(&session_id, successor_id);
 			reinforce_session(&session_id, &verdict(0.05, 1), &supervisor()).await;
 		}
-		let promoted = super::super::registry::get_record(successor_id)
-			.unwrap()
-			.unwrap();
+		let promoted = super::super::registry::get_record(successor_id).unwrap().unwrap();
 		assert_eq!(promoted.state, EvolutionState::Active);
 		assert!(promoted.promoted.is_some());
-		let retired = super::super::registry::get_record(predecessor_id)
-			.unwrap()
-			.unwrap();
+		let retired = super::super::registry::get_record(predecessor_id).unwrap().unwrap();
 		assert_eq!(retired.state, EvolutionState::Retired);
 		assert!(retired.history.iter().any(|event| event.event == "retired"));
 	})
@@ -464,9 +428,7 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let native = |name: &str| {
-		format!(
-			"---\nname: {name}\ndescription: test\ndomains: developer\nrules:\n  - content(schema)\n---\nbody\n"
-		)
+		format!("---\nname: {name}\ndescription: test\ndomains: developer\nrules:\n  - content(schema)\n---\nbody\n")
 	};
 	let shadow_id = "evo-availability-shadow";
 	let trial_id = "evo-availability-trial";
@@ -494,17 +456,13 @@ async fn only_live_skill_dirs_are_exposed_to_the_runtime() {
 		// Bindings exist for both skills, but only the trial skill's directory
 		// is exposed to the runtime — shadow skills stay observational.
 		let trial_binding = skill_binding(&format!("evolved-{trial_id}")).expect("trial binding");
-		let shadow_binding =
-			skill_binding(&format!("evolved-{shadow_id}")).expect("shadow binding");
+		let shadow_binding = skill_binding(&format!("evolved-{shadow_id}")).expect("shadow binding");
 		let dirs = active_skill_dirs();
 		assert!(dirs.contains(&trial_binding.path));
 		assert!(!dirs.contains(&shadow_binding.path));
 		// Recall names a recorded harness only where it is live.
 		let harness = vec![shadow_id.to_string(), trial_id.to_string()];
-		assert_eq!(
-			applied_skill_names(&harness),
-			vec![format!("evolved-{trial_id}")]
-		);
+		assert_eq!(applied_skill_names(&harness), vec![format!("evolved-{trial_id}")]);
 		crate::session::context::cleanup_session(&session_id);
 	})
 	.await;
@@ -565,8 +523,7 @@ async fn guidance_reaches_treated_sessions_once_and_is_withheld_from_control() {
 	let mut trial = record(id, ArtifactKind::Guidance, EvolutionState::Trial);
 	trial.effect = EffectClass::Advisory;
 	trial.artifact_path = "GUIDANCE.md".to_string();
-	super::super::registry::create_record(trial, "Run the linter before reporting done.\n", None)
-		.unwrap();
+	super::super::registry::create_record(trial, "Run the linter before reporting done.\n", None).unwrap();
 
 	let session_id = session_in_arm(&[id], true);
 	crate::session::context::with_session_id(session_id.clone(), async {
@@ -626,11 +583,7 @@ async fn guidance_reaches_treated_sessions_once_and_is_withheld_from_control() {
 fn calls(samples: u32, per_turn: u32) -> (u64, f64, f64) {
 	let (mut sum, mut log_sum, mut log_sq) = (0_u64, 0.0, 0.0);
 	for index in 0..samples {
-		let turn = if index % 2 == 0 {
-			per_turn + 1
-		} else {
-			per_turn - 1
-		};
+		let turn = if index % 2 == 0 { per_turn + 1 } else { per_turn - 1 };
 		sum += u64::from(turn);
 		add_log_calls(&mut log_sum, &mut log_sq, turn);
 	}
@@ -641,11 +594,7 @@ fn calls(samples: u32, per_turn: u32) -> (u64, f64, f64) {
 fn measured(control: (u32, u32, u32), treatment: (u32, u32, u32)) -> EvolutionRecord {
 	let mut item = record("evo-measured", ArtifactKind::Skill, EvolutionState::Trial);
 	(item.control_successes, item.control_failures) = (control.0, control.1);
-	(
-		item.control_calls,
-		item.control_log_calls,
-		item.control_log_calls_sq,
-	) = calls(control.0 + control.1, control.2);
+	(item.control_calls, item.control_log_calls, item.control_log_calls_sq) = calls(control.0 + control.1, control.2);
 	(item.successes, item.failures) = (treatment.0, treatment.1);
 	(
 		item.treatment_calls,
@@ -683,10 +632,7 @@ fn admission_requires_a_significant_gain_paid_for_by_cost() {
 	// samples hold the pass rate within the margin at the same confidence.
 	let few = evidence(&measured((n, 0, 12), (n, 0, 6)), &policy).unwrap();
 	assert!(few.saving_z >= DECISION_Z, "{few:?}");
-	assert!(
-		!admits(few, &policy),
-		"non-inferiority is not shown yet: {few:?}"
-	);
+	assert!(!admits(few, &policy), "non-inferiority is not shown yet: {few:?}");
 	let many = 4 * n;
 	let cheaper = evidence(&measured((many, 0, 12), (many, 0, 6)), &policy).unwrap();
 	assert!(admits(cheaper, &policy), "{cheaper:?}");
@@ -747,17 +693,8 @@ impl Rng {
 /// One randomized trial through the runtime's own decision functions: every
 /// session lands in either arm with p = 0.5, and the arms are compared after
 /// each treatment sample, as `reinforce_session` does. True when promoted.
-fn trial_promotes(
-	rng: &mut Rng,
-	policy: &EvolutionConfig,
-	control_pass: f64,
-	treatment_pass: f64,
-) -> bool {
-	let mut item = record(
-		"evo-calibration",
-		ArtifactKind::Skill,
-		EvolutionState::Trial,
-	);
+fn trial_promotes(rng: &mut Rng, policy: &EvolutionConfig, control_pass: f64, treatment_pass: f64) -> bool {
+	let mut item = record("evo-calibration", ArtifactKind::Skill, EvolutionState::Trial);
 	while item.successes + item.failures < policy.max_trial_uses {
 		let turn_calls = rng.calls();
 		if rng.chance(0.5) {
@@ -787,11 +724,7 @@ fn trial_promotes(
 				item.control_failures += 1;
 			}
 			item.control_calls += u64::from(turn_calls);
-			add_log_calls(
-				&mut item.control_log_calls,
-				&mut item.control_log_calls_sq,
-				turn_calls,
-			);
+			add_log_calls(&mut item.control_log_calls, &mut item.control_log_calls_sq, turn_calls);
 		}
 	}
 	false
@@ -817,10 +750,7 @@ fn no_effect_behavior_rarely_promotes() {
 		);
 	}
 	let harmful = promotion_rate(&policy, 0.85, 0.70);
-	assert!(
-		harmful < 0.01,
-		"harmful behavior promoted in {harmful:.3} of trials"
-	);
+	assert!(harmful < 0.01, "harmful behavior promoted in {harmful:.3} of trials");
 	let helpful = promotion_rate(&policy, 0.60, 0.85);
 	assert!(
 		helpful > 0.5,
@@ -840,12 +770,7 @@ async fn trial_below_control_retires_as_regressed() {
 	let mut item = record(id, ArtifactKind::Guard, EvolutionState::Trial);
 	item.control_successes = policy.min_samples;
 	item.control_calls = policy.min_samples as u64;
-	super::super::registry::create_record(
-		item,
-		"[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n",
-		None,
-	)
-	.unwrap();
+	super::super::registry::create_record(item, "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n", None).unwrap();
 
 	for _ in 0..policy.min_samples {
 		mark_behavior_used("session", id);
@@ -853,10 +778,7 @@ async fn trial_below_control_retires_as_regressed() {
 	}
 	let stored = super::super::registry::get_record(id).unwrap().unwrap();
 	assert_eq!(stored.state, EvolutionState::Retired);
-	assert!(stored
-		.history
-		.iter()
-		.any(|event| event.event == "regressed"));
+	assert!(stored.history.iter().any(|event| event.event == "regressed"));
 
 	if let Some(value) = previous {
 		std::env::set_var("OCTOMIND_DATA_DIR", value);
@@ -893,18 +815,10 @@ async fn overlapping_shadows_open_one_trial_at_a_time() {
 		}
 		let states = ids
 			.iter()
-			.map(|id| {
-				super::super::registry::get_record(id)
-					.unwrap()
-					.unwrap()
-					.state
-			})
+			.map(|id| super::super::registry::get_record(id).unwrap().unwrap().state)
 			.collect::<Vec<_>>();
 		assert_eq!(
-			states
-				.iter()
-				.filter(|state| **state == EvolutionState::Trial)
-				.count(),
+			states.iter().filter(|state| **state == EvolutionState::Trial).count(),
 			1,
 			"{states:?}"
 		);
@@ -963,10 +877,10 @@ async fn skill_exposure_is_sticky_in_both_arms() {
 		assert_eq!(trial.state, EvolutionState::Trial);
 		// Opening the trial restarts the control arm on concurrent samples.
 		assert_eq!(trial.control_failures, 0);
-		assert!(trial.history.iter().any(|event| event.event == "trial"
-			&& event
-				.detail
-				.contains(&format!("{} samples", policy.min_samples))));
+		assert!(trial
+			.history
+			.iter()
+			.any(|event| event.event == "trial" && event.detail.contains(&format!("{} samples", policy.min_samples))));
 
 		// Activation by the trigger makes the same skill treatment from then on.
 		mark_skill_activated(&session_id, id);
@@ -1035,16 +949,12 @@ async fn graded_samples_use_evaluation_outcome_and_drop_inapplicable_turns() {
 
 	// Turn 1 counts at the graded outcome, turn 2 is inapplicable, turn 3
 	// has no evaluation answer (the fake has no step left): both dropped.
-	let graded = super::super::registry::get_record(graded_id)
-		.unwrap()
-		.unwrap();
+	let graded = super::super::registry::get_record(graded_id).unwrap().unwrap();
 	assert_eq!(graded.measure, Some(Measure::Graded));
 	assert_eq!(graded.control_successes, 1);
 	assert!((graded.control_score - 0.3).abs() < 1e-9);
 	assert_eq!(graded.false_triggers, 1);
-	let locked = super::super::registry::get_record(verdict_id)
-		.unwrap()
-		.unwrap();
+	let locked = super::super::registry::get_record(verdict_id).unwrap().unwrap();
 	assert_eq!(locked.measure, Some(Measure::Verdict));
 	// Prior samples + 2 plain verdicts reach the screen and open the trial,
 	// which restarts control; turn 3 is its first concurrent control sample.

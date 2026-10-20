@@ -25,14 +25,12 @@ pub async fn handle_analyze(session: &ChatSession) -> Result<CommandResult> {
 	let session_file = match session.session.session_file.as_ref() {
 		Some(p) => p.clone(),
 		None => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: "No session file available to analyze.".to_string(),
-					context: Some(serde_json::json!({
-						"hint": "Sessions are auto-saved after each interaction. Send a message first."
-					})),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: "No session file available to analyze.".to_string(),
+				context: Some(serde_json::json!({
+					"hint": "Sessions are auto-saved after each interaction. Send a message first."
+				})),
+			})));
 		}
 	};
 
@@ -40,27 +38,18 @@ pub async fn handle_analyze(session: &ChatSession) -> Result<CommandResult> {
 		Ok(info) => {
 			let host = share::web_host();
 			let bridge = format!("127.0.0.1:{}", info.port);
-			let url = format!(
-				"{}/analyze?b={}&t={}",
-				host.trim_end_matches('/'),
-				bridge,
-				info.token
-			);
-			Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Analyze {
-					url,
-					port: info.port,
-					token: info.token,
-				},
-			)))
+			let url = format!("{}/analyze?b={}&t={}", host.trim_end_matches('/'), bridge, info.token);
+			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Analyze {
+				url,
+				port: info.port,
+				token: info.token,
+			})))
 		}
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Failed to start analyze bridge: {}", e),
-				context: Some(serde_json::json!({
-					"hint": "Most likely a port-binding issue. Try again."
-				})),
-			},
-		))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Failed to start analyze bridge: {}", e),
+			context: Some(serde_json::json!({
+				"hint": "Most likely a port-binding issue. Try again."
+			})),
+		}))),
 	}
 }

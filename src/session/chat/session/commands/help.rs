@@ -65,7 +65,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 		}
 	}
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Help { commands },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Help {
+		commands,
+	})))
 }

@@ -15,8 +15,8 @@
 use super::*;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -48,20 +48,11 @@ fn test_command_help_names_every_command() {
 #[tokio::test]
 async fn test_execute_unknown_command_errors() {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let result = execute_command_layer(
-		"no-such-command",
-		"input",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await;
+	let result = execute_command_layer("no-such-command", "input", &mut session, &config, "assistant", rx).await;
 	let err = result.expect_err("unknown command must error");
 	assert!(err.to_string().contains("not found"), "{err}");
 }
@@ -164,8 +155,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"sessionId":"fake-session","sto
 	)
 	.expect("write fake ACP server script");
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-		.expect("make fake ACP server executable");
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("make fake ACP server executable");
 	script
 }
 
@@ -194,10 +184,7 @@ fn config_with_command(mode: &str, command: &str) -> Config {
 #[cfg(unix)]
 fn session_with_file(
 	messages: Vec<crate::session::Message>,
-) -> (
-	crate::session::chat::session::ChatSession,
-	tempfile::TempDir,
-) {
+) -> (crate::session::chat::session::ChatSession, tempfile::TempDir) {
 	let dir = tempfile::tempdir().unwrap();
 	let mut session = crate::session::chat::session::ChatSession::for_tests(messages);
 	session.session.session_file = Some(dir.path().join("session.jsonl"));
@@ -224,16 +211,9 @@ async fn test_execute_command_layer_output_mode_none_leaves_session_untouched() 
 	let before = session.session.messages.len();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let output = execute_command_layer(
-		"fakecmd",
-		"do the thing",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await
-	.expect("fake ACP command must succeed");
+	let output = execute_command_layer("fakecmd", "do the thing", &mut session, &config, "assistant", rx)
+		.await
+		.expect("fake ACP command must succeed");
 
 	assert_eq!(output, "FAKE LAYER OUTPUT");
 	assert_eq!(
@@ -254,16 +234,9 @@ async fn test_execute_command_layer_output_mode_append_persists_message() {
 	let session_file = session.session.session_file.clone().unwrap();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let output = execute_command_layer(
-		"fakecmd",
-		"do the thing",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await
-	.expect("fake ACP command must succeed");
+	let output = execute_command_layer("fakecmd", "do the thing", &mut session, &config, "assistant", rx)
+		.await
+		.expect("fake ACP command must succeed");
 
 	assert_eq!(output, "FAKE LAYER OUTPUT");
 	assert_eq!(session.session.messages.len(), 2, "append adds one message");
@@ -290,22 +263,13 @@ async fn test_execute_command_layer_output_mode_replace_rebuilds_session() {
 	let script = write_fake_acp_server(dir.path());
 	let config = config_with_command("replace", &format!("/bin/sh {}", script.display()));
 
-	let (mut session, _keep) = session_with_file(vec![
-		message("system", "sys-prompt"),
-		message("user", "old-question"),
-	]);
+	let (mut session, _keep) =
+		session_with_file(vec![message("system", "sys-prompt"), message("user", "old-question")]);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let output = execute_command_layer(
-		"fakecmd",
-		"do the thing",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await
-	.expect("fake ACP command must succeed");
+	let output = execute_command_layer("fakecmd", "do the thing", &mut session, &config, "assistant", rx)
+		.await
+		.expect("fake ACP command must succeed");
 
 	assert_eq!(output, "FAKE LAYER OUTPUT");
 	// System message survives the rebuild, the old user message does not,
@@ -324,11 +288,7 @@ async fn test_execute_command_layer_output_mode_replace_rebuilds_session() {
 		Some("FAKE LAYER OUTPUT")
 	);
 	assert!(
-		!session
-			.session
-			.messages
-			.iter()
-			.any(|m| m.content == "old-question"),
+		!session.session.messages.iter().any(|m| m.content == "old-question"),
 		"replace must drop prior non-system messages"
 	);
 }
@@ -343,23 +303,12 @@ async fn test_execute_command_layer_output_mode_last_appends_single_message() {
 	let (mut session, _keep) = session_with_file(vec![message("user", "question")]);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let output = execute_command_layer(
-		"fakecmd",
-		"do the thing",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await
-	.expect("fake ACP command must succeed");
+	let output = execute_command_layer("fakecmd", "do the thing", &mut session, &config, "assistant", rx)
+		.await
+		.expect("fake ACP command must succeed");
 
 	assert_eq!(output, "FAKE LAYER OUTPUT");
-	assert_eq!(
-		session.session.messages.len(),
-		2,
-		"last appends one message"
-	);
+	assert_eq!(session.session.messages.len(), 2, "last appends one message");
 	let last = session.session.messages.last().unwrap();
 	assert_eq!(last.role, "assistant");
 	assert_eq!(last.content, "FAKE LAYER OUTPUT");
@@ -372,22 +321,13 @@ async fn test_execute_command_layer_output_mode_restart_clears_history() {
 	let script = write_fake_acp_server(dir.path());
 	let config = config_with_command("restart", &format!("/bin/sh {}", script.display()));
 
-	let (mut session, _keep) = session_with_file(vec![
-		message("system", "sys-prompt"),
-		message("user", "old-question"),
-	]);
+	let (mut session, _keep) =
+		session_with_file(vec![message("system", "sys-prompt"), message("user", "old-question")]);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let output = execute_command_layer(
-		"fakecmd",
-		"do the thing",
-		&mut session,
-		&config,
-		"assistant",
-		rx,
-	)
-	.await
-	.expect("fake ACP command must succeed");
+	let output = execute_command_layer("fakecmd", "do the thing", &mut session, &config, "assistant", rx)
+		.await
+		.expect("fake ACP command must succeed");
 
 	assert_eq!(output, "FAKE LAYER OUTPUT");
 	assert_eq!(
@@ -412,8 +352,7 @@ async fn test_execute_command_layer_missing_program_errors() {
 	let session_file = session.session.session_file.clone().unwrap();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
-	let result =
-		execute_command_layer("fakecmd", "input", &mut session, &config, "assistant", rx).await;
+	let result = execute_command_layer("fakecmd", "input", &mut session, &config, "assistant", rx).await;
 
 	let err = result.expect_err("missing program must error");
 	assert!(

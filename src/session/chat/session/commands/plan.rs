@@ -23,25 +23,19 @@ pub async fn handle_plan(session: &ChatSession) -> Result<CommandResult> {
 
 	match crate::mcp::core::plan::core::get_current_plan_display().await {
 		Ok(plan_display) => {
-			let plan_json = crate::mcp::core::plan::core::get_current_plan_json()
-				.await
-				.ok();
-			Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Plan {
-					has_plan: true,
-					plan: plan_json,
-					display: Some(plan_display),
-					knowledge,
-				},
-			)))
-		}
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Plan {
-				has_plan: false,
-				plan: None,
-				display: Some(e.to_string()),
+			let plan_json = crate::mcp::core::plan::core::get_current_plan_json().await.ok();
+			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Plan {
+				has_plan: true,
+				plan: plan_json,
+				display: Some(plan_display),
 				knowledge,
-			},
-		))),
+			})))
+		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Plan {
+			has_plan: false,
+			plan: None,
+			display: Some(e.to_string()),
+			knowledge,
+		}))),
 	}
 }

@@ -24,10 +24,7 @@ fn tree_nests_directories_and_marks_them_with_a_slash() {
 fn tree_is_sorted_and_deduplicates_shared_directories() {
 	let tree = ProjectContext::build_tree_structure("b/2.rs\na/1.rs\nb/1.rs\n");
 	let lines: Vec<&str> = tree.lines().collect();
-	assert_eq!(
-		lines,
-		vec!["├─ a/", "│  └─ 1.rs", "└─ b/", "   ├─ 1.rs", "   └─ 2.rs",]
-	);
+	assert_eq!(lines, vec!["├─ a/", "│  └─ 1.rs", "└─ b/", "   ├─ 1.rs", "   └─ 2.rs",]);
 }
 
 #[test]

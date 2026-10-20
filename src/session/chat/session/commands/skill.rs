@@ -36,12 +36,10 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	// Numeric argument → page number
 	if let Ok(page) = arg.parse::<usize>() {
 		return if page == 0 {
-			Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: "Page number must be a positive integer".to_string(),
-					context: None,
-				},
-			)))
+			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: "Page number must be a positive integer".to_string(),
+				context: None,
+			})))
 		} else {
 			handle_list(None, page)
 		};
@@ -56,9 +54,9 @@ pub async fn handle_skill(session: &mut ChatSession, params: &[&str]) -> Result<
 	let all_skills = crate::mcp::runtime::skill::find_all_skills_with_details();
 	if !all_skills.iter().any(|(m, _)| m.name == arg) {
 		let data = json!({"subcommand": "error", "message": format!("Skill '{}' not found.", arg)});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Skill { data },
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+			data,
+		})));
 	}
 
 	let session_id = crate::session::context::current_session_id();
@@ -125,26 +123,19 @@ fn handle_list(pattern: Option<&str>, page: usize) -> Result<CommandResult> {
 
 	let total = entries.len();
 	let active_count = entries.iter().filter(|(_, active)| *active).count();
-	let total_pages = if total == 0 {
-		0
-	} else {
-		total.div_ceil(SKILLS_PER_PAGE)
-	};
+	let total_pages = if total == 0 { 0 } else { total.div_ceil(SKILLS_PER_PAGE) };
 
 	if page > total_pages && total > 0 {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Page {} not found. Total pages: {}", page, total_pages),
-				context: Some(json!({"page": page, "total_pages": total_pages})),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Page {} not found. Total pages: {}", page, total_pages),
+			context: Some(json!({"page": page, "total_pages": total_pages})),
+		})));
 	}
 
 	// Paginate
 	let start = (page - 1) * SKILLS_PER_PAGE;
 	let end = std::cmp::min(start + SKILLS_PER_PAGE, total);
-	let page_skills: Vec<serde_json::Value> =
-		entries[start..end].iter().map(|(v, _)| v.clone()).collect();
+	let page_skills: Vec<serde_json::Value> = entries[start..end].iter().map(|(v, _)| v.clone()).collect();
 
 	let data = json!({
 		"subcommand": "list",
@@ -155,9 +146,9 @@ fn handle_list(pattern: Option<&str>, page: usize) -> Result<CommandResult> {
 		"total_pages": total_pages,
 		"pattern": pattern,
 	});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Skill { data },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+		data,
+	})))
 }
 
 /// Simple glob matching: `*` matches any sequence of characters.
@@ -214,31 +205,32 @@ async fn handle_use(session: &mut ChatSession, name: &str) -> Result<CommandResu
 				// Injection failure means the skill's instructions never reached the
 				// session — do not report success, surface it.
 				if let Err(e) = session.add_system_managed_user_message(&content) {
-					let data = json!({"subcommand": "error", "message": format!("Failed to inject skill '{name}': {e}")});
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Skill { data },
-					)));
+					let data =
+						json!({"subcommand": "error", "message": format!("Failed to inject skill '{name}': {e}")});
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+						data,
+					})));
 				}
 			}
 			// Emit structured lifecycle event for JSONL/WebSocket consumers
 			if let Some(sid) = crate::session::context::current_session_id() {
-				crate::mcp::process::send_notification_message(
-					crate::websocket::ServerMessage::skill("use", name, None, sid),
-				);
+				crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
+					"use", name, None, sid,
+				));
 			}
 		}
 		Err(e) => {
 			let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Skill { data },
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+				data,
+			})));
 		}
 	}
 
 	let data = json!({"subcommand": "use", "name": name});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Skill { data },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+		data,
+	})))
 }
 
 async fn handle_forget(name: &str) -> Result<CommandResult> {
@@ -250,15 +242,15 @@ async fn handle_forget(name: &str) -> Result<CommandResult> {
 
 	if let Err(e) = crate::mcp::runtime::skill::execute_skill_tool(&call).await {
 		let data = json!({"subcommand": "error", "message": format!("Error: {}", e)});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Skill { data },
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+			data,
+		})));
 	}
 
 	let data = json!({"subcommand": "forget", "name": name});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Skill { data },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Skill {
+		data,
+	})))
 }
 
 #[cfg(test)]

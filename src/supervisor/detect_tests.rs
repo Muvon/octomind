@@ -21,27 +21,12 @@ use serde_json::json;
 
 #[test]
 fn from_token_accepts_aliases_case_and_whitespace() {
-	assert_eq!(
-		SelfReport::from_token("exploring"),
-		Some(SelfReport::Exploring)
-	);
-	assert_eq!(
-		SelfReport::from_token("PROGRESSING"),
-		Some(SelfReport::Progressing)
-	);
+	assert_eq!(SelfReport::from_token("exploring"), Some(SelfReport::Exploring));
+	assert_eq!(SelfReport::from_token("PROGRESSING"), Some(SelfReport::Progressing));
 	assert_eq!(SelfReport::from_token("  Done  "), Some(SelfReport::Done));
-	assert_eq!(
-		SelfReport::from_token("need_input"),
-		Some(SelfReport::NeedInput)
-	);
-	assert_eq!(
-		SelfReport::from_token("need-input"),
-		Some(SelfReport::NeedInput)
-	);
-	assert_eq!(
-		SelfReport::from_token("needinput"),
-		Some(SelfReport::NeedInput)
-	);
+	assert_eq!(SelfReport::from_token("need_input"), Some(SelfReport::NeedInput));
+	assert_eq!(SelfReport::from_token("need-input"), Some(SelfReport::NeedInput));
+	assert_eq!(SelfReport::from_token("needinput"), Some(SelfReport::NeedInput));
 	assert_eq!(SelfReport::from_token("blocked"), Some(SelfReport::Blocked));
 	for unknown in ["finished", "", "state", "done now"] {
 		assert_eq!(SelfReport::from_token(unknown), None);
@@ -84,8 +69,7 @@ fn handoff_uses_the_last_sup_token() {
 fn handoff_rejects_unknown_state_and_unknown_fields() {
 	let unknown_state = r#"<sup>{"state":"finished","focus":"f","next":null,"carry":[]}</sup>"#;
 	assert!(parse_self_report_handoff(unknown_state).is_none());
-	let extra_field =
-		r#"<sup>{"state":"done","focus":"f","next":null,"carry":[],"surprise":1}</sup>"#;
+	let extra_field = r#"<sup>{"state":"done","focus":"f","next":null,"carry":[],"surprise":1}</sup>"#;
 	assert!(parse_self_report_handoff(extra_field).is_none());
 }
 
@@ -101,15 +85,10 @@ fn handoff_trims_focus_and_drops_empty_carry_entries() {
 #[test]
 fn handoff_parses_phase_complete_and_reassess_plan_signals() {
 	for (wire, expected) in [
-		(
-			"phase_complete",
-			crate::supervisor::plan::PlanSignal::PhaseComplete,
-		),
+		("phase_complete", crate::supervisor::plan::PlanSignal::PhaseComplete),
 		("reassess", crate::supervisor::plan::PlanSignal::Reassess),
 	] {
-		let text = format!(
-			r#"<sup>{{"state":"progressing","focus":"f","next":"n","carry":[],"plan":"{wire}"}}</sup>"#
-		);
+		let text = format!(r#"<sup>{{"state":"progressing","focus":"f","next":"n","carry":[],"plan":"{wire}"}}</sup>"#);
 		let parsed = parse_self_report_handoff(&text).expect("parses");
 		assert_eq!(parsed.plan, Some(expected));
 	}
@@ -117,18 +96,14 @@ fn handoff_parses_phase_complete_and_reassess_plan_signals() {
 
 #[test]
 fn legacy_parse_tolerates_whitespace_and_pipe_separator() {
-	let (state, reason) =
-		parse_self_report("<sup> blocked | waiting on creds </sup>").expect("parses");
+	let (state, reason) = parse_self_report("<sup> blocked | waiting on creds </sup>").expect("parses");
 	assert_eq!(state, SelfReport::Blocked);
 	assert_eq!(reason.as_deref(), Some("waiting on creds"));
 }
 
 #[test]
 fn strip_removes_every_report_token_and_keeps_surrounding_text() {
-	assert_eq!(
-		strip_self_report("a<sup>done</sup>b<sup>exploring · why</sup>c"),
-		"abc"
-	);
+	assert_eq!(strip_self_report("a<sup>done</sup>b<sup>exploring · why</sup>c"), "abc");
 	// Interior whitespace survives; only the tail is trimmed.
 	assert_eq!(strip_self_report("a <sup>done</sup>\n\nb"), "a \n\nb");
 }
@@ -158,31 +133,13 @@ fn should_steer_decision_table() {
 	}
 	// `done` always defers to the verify-gate.
 	assert!(!should_steer(DetectorSignal::Loop, Some(SelfReport::Done)));
-	assert!(!should_steer(
-		DetectorSignal::Recovery,
-		Some(SelfReport::Done)
-	));
+	assert!(!should_steer(DetectorSignal::Recovery, Some(SelfReport::Done)));
 	// No-progress is legitimate only while exploring.
-	assert!(!should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::Exploring)
-	));
-	assert!(!should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::Blocked)
-	));
-	assert!(!should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::NeedInput)
-	));
-	assert!(should_steer(
-		DetectorSignal::Loop,
-		Some(SelfReport::Exploring)
-	));
-	assert!(should_steer(
-		DetectorSignal::Recovery,
-		Some(SelfReport::Exploring)
-	));
+	assert!(!should_steer(DetectorSignal::NoProgress, Some(SelfReport::Exploring)));
+	assert!(!should_steer(DetectorSignal::NoProgress, Some(SelfReport::Blocked)));
+	assert!(!should_steer(DetectorSignal::NoProgress, Some(SelfReport::NeedInput)));
+	assert!(should_steer(DetectorSignal::Loop, Some(SelfReport::Exploring)));
+	assert!(should_steer(DetectorSignal::Recovery, Some(SelfReport::Exploring)));
 	assert!(should_steer(DetectorSignal::Loop, None));
 	assert!(should_steer(DetectorSignal::Recovery, None));
 }
@@ -231,10 +188,7 @@ fn note_call_novelty_rules() {
 	let (_, mutating) = d.note_call("t", &serde_json::json!({}), "r", true, true);
 	assert!(mutating, "a new error receipt is information");
 	let (_, repeated_error) = d.note_call("t", &json!({}), "r", true, true);
-	assert!(
-		!repeated_error,
-		"failed mutation intent is not proof of progress"
-	);
+	assert!(!repeated_error, "failed mutation intent is not proof of progress");
 }
 
 #[test]
@@ -254,10 +208,7 @@ fn identical_receipts_for_different_targets_are_not_a_loop() {
 				mutation,
 			);
 			assert!(novel, "each target supplies its own observation");
-			assert_eq!(
-				d.record_round_signals(&[identity], novel, 3, 5),
-				DetectorSignal::None
-			);
+			assert_eq!(d.record_round_signals(&[identity], novel, 3, 5), DetectorSignal::None);
 		}
 	}
 }
@@ -302,10 +253,7 @@ fn successful_mutations_do_not_trigger_loop_even_with_identical_receipts() {
 	let mut d = Detectors::default();
 	for _ in 0..10 {
 		let (identity, novel) = d.note_call("append", &json!({"path": "out"}), "OK", false, true);
-		assert_eq!(
-			d.record_round_signals(&[identity], novel, 3, 5),
-			DetectorSignal::None
-		);
+		assert_eq!(d.record_round_signals(&[identity], novel, 3, 5), DetectorSignal::None);
 	}
 }
 
@@ -314,10 +262,7 @@ fn an_exact_repeat_of_a_runner_command_guessed_as_a_write_is_not_progress() {
 	let runner = "detectTestsRepeatRunner";
 	register_tool_command_shape(runner, true);
 	let call = json!({"command": "php -r 'echo bin2hex(SetCookie::fromString(\"a=b; Path=;\")->getPath());'"});
-	assert!(
-		is_mutation_call(runner, &call),
-		"`SetCookie` reads as a write verb"
-	);
+	assert!(is_mutation_call(runner, &call), "`SetCookie` reads as a write verb");
 	let mut d = Detectors::default();
 	let signals: Vec<_> = (0..4)
 		.map(|_| {
@@ -411,10 +356,7 @@ fn exploratory_command_errors_are_receipts_not_failed_verification() {
 	let key = command_key(runner, &call).expect("command receipt identity");
 	assert_ne!(
 		Some(key),
-		command_key(
-			runner,
-			&json!({"command": "cat optional.conf", "workdir": "/b"})
-		)
+		command_key(runner, &json!({"command": "cat optional.conf", "workdir": "/b"}))
 	);
 	let mut d = Detectors::default();
 	for _ in 0..2 {
@@ -425,63 +367,36 @@ fn exploratory_command_errors_are_receipts_not_failed_verification() {
 	}
 	let signal = d.record_round_command_outcomes(&[(key, false)], 3);
 	assert_eq!(signal, DetectorSignal::Recovery);
-	assert_eq!(
-		signal_description(signal),
-		"several command executions returned errors"
-	);
+	assert_eq!(signal_description(signal), "several command executions returned errors");
 	assert!(steer_note(signal).contains("expected probes"));
 	assert!(steer_note(signal).contains("does not require rerunning a command"));
 	assert!(
 		!d.needs_verification(None),
 		"error hints do not arm completion rejection"
 	);
-	assert_eq!(
-		d.record_round_command_outcomes(&[(key, true)], 3),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(key, true)], 3), DetectorSignal::None);
 	assert!(d.failed_commands.is_empty());
 }
 
 #[test]
 fn parallel_batch_is_one_round_for_loop_detection() {
 	let mut d = Detectors::default();
-	let h = d
-		.note_call("grep", &serde_json::json!({}), "same", false, false)
-		.0;
+	let h = d.note_call("grep", &serde_json::json!({}), "same", false, false).0;
 	// Three identical calls inside ONE round are a single window entry.
-	assert_eq!(
-		d.record_round_signals(&[h, h, h], false, 3, 9),
-		DetectorSignal::None
-	);
-	assert_eq!(
-		d.record_round_signals(&[h, h, h], false, 3, 9),
-		DetectorSignal::None
-	);
-	assert_eq!(
-		d.record_round_signals(&[h, h, h], false, 3, 9),
-		DetectorSignal::Loop
-	);
+	assert_eq!(d.record_round_signals(&[h, h, h], false, 3, 9), DetectorSignal::None);
+	assert_eq!(d.record_round_signals(&[h, h, h], false, 3, 9), DetectorSignal::None);
+	assert_eq!(d.record_round_signals(&[h, h, h], false, 3, 9), DetectorSignal::Loop);
 }
 
 #[test]
 fn loop_window_resets_on_a_new_result() {
 	let mut d = Detectors::default();
-	let a = d
-		.note_call("grep", &serde_json::json!({}), "a", false, false)
-		.0;
-	let b = d
-		.note_call("grep", &serde_json::json!({}), "b", false, false)
-		.0;
+	let a = d.note_call("grep", &serde_json::json!({}), "a", false, false).0;
+	let b = d.note_call("grep", &serde_json::json!({}), "b", false, false).0;
 	d.record_round_signals(&[a], true, 3, 9);
 	d.record_round_signals(&[a], false, 3, 9);
-	assert_eq!(
-		d.record_round_signals(&[b], true, 3, 9),
-		DetectorSignal::None
-	);
-	assert_eq!(
-		d.record_round_signals(&[a], false, 3, 9),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_signals(&[b], true, 3, 9), DetectorSignal::None);
+	assert_eq!(d.record_round_signals(&[a], false, 3, 9), DetectorSignal::None);
 }
 
 #[test]
@@ -492,21 +407,13 @@ fn zero_thresholds_disable_their_signals() {
 		let h = d
 			.note_call("t", &serde_json::json!({}), &format!("r{i}"), false, false)
 			.0;
-		assert_eq!(
-			d.record_round_signals(&[h], true, 0, 9),
-			DetectorSignal::None
-		);
+		assert_eq!(d.record_round_signals(&[h], true, 0, 9), DetectorSignal::None);
 	}
 	// no_progress_window 0: repeated stale rounds never fire NoProgress.
 	let mut stale = Detectors::default();
-	let h = stale
-		.note_call("t", &serde_json::json!({}), "r", false, false)
-		.0;
+	let h = stale.note_call("t", &serde_json::json!({}), "r", false, false).0;
 	for _ in 0..6 {
-		assert_eq!(
-			stale.record_round_signals(&[h], false, 9, 0),
-			DetectorSignal::None
-		);
+		assert_eq!(stale.record_round_signals(&[h], false, 9, 0), DetectorSignal::None);
 	}
 }
 
@@ -521,8 +428,7 @@ fn mutated_paths_dedupe_and_cap() {
 	}
 	assert_eq!(d.mutated_paths.len(), 32, "capped at MUTATED_PATHS_CAP");
 	assert!(
-		!d.mutated_paths
-			.contains(&"zz_detect_tests/a.md".to_string()),
+		!d.mutated_paths.contains(&"zz_detect_tests/a.md".to_string()),
 		"oldest evicted"
 	);
 }
@@ -534,11 +440,7 @@ fn command_key_is_shape_gated_and_stable() {
 	assert_eq!(Some(key), command_key("detect_tests_runner", &params));
 	assert_ne!(
 		key,
-		command_key(
-			"detect_tests_runner",
-			&json!({"command": "cargo test -p other"})
-		)
-		.expect("different command")
+		command_key("detect_tests_runner", &json!({"command": "cargo test -p other"})).expect("different command")
 	);
 	assert_eq!(command_key("view", &json!({"path": "a.rs"})), None);
 	assert_eq!(
@@ -555,14 +457,8 @@ fn mutation_intent_normalizes_camel_case_and_separators() {
 		"camelCase splits into intent words"
 	);
 	assert!(is_mutation_call("createFile", &json!({})));
-	assert!(is_mutation_call(
-		"runner",
-		&json!({"command": "git-push release"})
-	));
-	assert!(!is_mutation_call(
-		"runner",
-		&json!({"command": "cat notes.txt"})
-	));
+	assert!(is_mutation_call("runner", &json!({"command": "git-push release"})));
+	assert!(!is_mutation_call("runner", &json!({"command": "cat notes.txt"})));
 	assert!(!is_mutation_call("statusLookup", &json!({})));
 }
 
@@ -577,10 +473,7 @@ fn needs_verification_stands_down_when_tree_reverts() {
 	let mut d = Detectors::default();
 	d.note_round_verification(Some(10), Some(11), false, false, true, false, true);
 	assert!(d.needs_verification(Some(11)));
-	assert!(
-		!d.needs_verification(Some(10)),
-		"back at the verified baseline"
-	);
+	assert!(!d.needs_verification(Some(10)), "back at the verified baseline");
 }
 
 #[test]
@@ -605,39 +498,24 @@ fn cleared_by_readback_only_tracks_evidence_kind() {
 #[test]
 fn recovery_zero_threshold_and_empty_outcomes_are_inert() {
 	let mut d = Detectors::default();
-	assert_eq!(
-		d.record_round_command_outcomes(&[], 3),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[], 3), DetectorSignal::None);
 	for _ in 0..5 {
-		assert_eq!(
-			d.record_round_command_outcomes(&[(9, false)], 0),
-			DetectorSignal::None
-		);
+		assert_eq!(d.record_round_command_outcomes(&[(9, false)], 0), DetectorSignal::None);
 	}
 }
 
 #[test]
 fn recovery_emission_resets_the_counter_not_the_ledger() {
 	let mut d = Detectors::default();
-	assert_eq!(
-		d.record_round_command_outcomes(&[(1, false)], 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(1, false)], 2), DetectorSignal::None);
 	assert_eq!(
 		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::Recovery
 	);
 	// Counter restarted: one more failing round is below the threshold again…
-	assert_eq!(
-		d.record_round_command_outcomes(&[(1, false)], 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(1, false)], 2), DetectorSignal::None);
 	// …but the debt is still recorded: an unrelated success cannot discharge it.
-	assert_eq!(
-		d.record_round_command_outcomes(&[(2, true)], 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(2, true)], 2), DetectorSignal::None);
 	assert_eq!(
 		d.record_round_command_outcomes(&[(1, false)], 2),
 		DetectorSignal::Recovery
@@ -722,14 +600,8 @@ fn mutating_command_output_remains_verification_evidence() {
 	] {
 		let call = json!({"command": command});
 		assert!(is_mutation_call(runner, &call), "heuristic matches: {command}");
-		assert!(
-			!is_verifier_shaped(runner, &call),
-			"no automatic verification credit"
-		);
-		assert!(
-			is_command_execution(runner, &call),
-			"retain evidence: {command}"
-		);
+		assert!(!is_verifier_shaped(runner, &call), "no automatic verification credit");
+		assert!(is_command_execution(runner, &call), "retain evidence: {command}");
 	}
 	assert!(!is_command_execution(runner, &json!({"command": "  "})));
 	assert!(!is_command_execution(runner, &json!({"command": 42})));

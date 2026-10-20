@@ -28,10 +28,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -78,10 +75,7 @@ fn session_log_file_ends_in_jsonl_zst() {
 #[serial_test::serial]
 fn session_log_path_alias_matches_log_file() {
 	let _guard = DataDirGuard::new();
-	assert_eq!(
-		get_session_log_path("s").unwrap(),
-		get_session_log_file("s").unwrap()
-	);
+	assert_eq!(get_session_log_path("s").unwrap(), get_session_log_file("s").unwrap());
 }
 
 #[test]

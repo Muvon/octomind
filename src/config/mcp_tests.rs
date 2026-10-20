@@ -25,8 +25,7 @@ fn bound(server: McpServerConfig, roles: &[&str]) -> McpServerConfig {
 }
 
 fn template_config() -> crate::config::Config {
-	toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("default template must deserialize")
+	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }
 
 #[test]
@@ -65,10 +64,7 @@ cwd = "/opt/plugin"
 	.expect("stdio config must deserialize");
 	assert_eq!(server.command(), Some("node"));
 	assert_eq!(
-		server
-			.env()
-			.and_then(|env| env.get("TOKEN"))
-			.map(String::as_str),
+		server.env().and_then(|env| env.get("TOKEN")).map(String::as_str),
 		Some("{{ENV:MY_TOKEN}}")
 	);
 	match &server {
@@ -87,17 +83,13 @@ fn stdin_is_not_a_wire_type_the_tag_is_stdio() {
 	let wrong: Result<McpServerConfig, _> = toml::from_str(
 		"type = \"stdin\"\nname = \"s\"\ncommand = \"c\"\nargs = []\ntimeout_seconds = 30\ntools = []\n",
 	);
-	assert!(
-		wrong.is_err(),
-		"\"stdin\" must not be accepted as a server type"
-	);
+	assert!(wrong.is_err(), "\"stdin\" must not be accepted as a server type");
 }
 
 #[test]
 fn unknown_server_types_are_rejected() {
-	let parsed: Result<McpServerConfig, _> = toml::from_str(
-		"type = \"websocket\"\nname = \"s\"\nurl = \"wss://x\"\ntimeout_seconds = 30\ntools = []\n",
-	);
+	let parsed: Result<McpServerConfig, _> =
+		toml::from_str("type = \"websocket\"\nname = \"s\"\nurl = \"wss://x\"\ntimeout_seconds = 30\ntools = []\n");
 	assert!(parsed.is_err(), "only builtin/http/stdio are wire types");
 }
 
@@ -131,17 +123,13 @@ fn serde_roundtrips_every_variant() {
 
 #[test]
 fn auto_bind_is_skipped_in_serialization_when_absent() {
-	let text = toml::to_string(&McpServerConfig::builtin("core", 30, vec![]))
-		.expect("builtin must serialize");
+	let text = toml::to_string(&McpServerConfig::builtin("core", 30, vec![])).expect("builtin must serialize");
 	assert!(!text.contains("auto_bind"));
 }
 
 #[test]
 fn auto_bind_matches_exactly_not_by_prefix() {
-	let server = bound(
-		McpServerConfig::builtin("dev-only", 30, vec![]),
-		&["developer:general"],
-	);
+	let server = bound(McpServerConfig::builtin("dev-only", 30, vec![]), &["developer:general"]);
 	assert!(!server.auto_binds_to("developer"));
 	assert!(server.auto_binds_to("developer:general"));
 	assert!(!server.auto_binds_to("general"));
@@ -263,18 +251,10 @@ tools = []
 		.iter()
 		.filter(|server| server.name() == "core")
 		.collect();
-	assert_eq!(
-		core_servers.len(),
-		1,
-		"duplicate server names must be skipped"
-	);
+	assert_eq!(core_servers.len(), 1, "duplicate server names must be skipped");
 	// The duplicate is dropped whole — the base "core" keeps its own timeout.
 	assert_eq!(core_servers[0].timeout_seconds(), 30);
-	assert!(merged
-		.mcp
-		.servers
-		.iter()
-		.any(|server| server.name() == "agent-extra"));
+	assert!(merged.mcp.servers.iter().any(|server| server.name() == "agent-extra"));
 	assert_eq!(merged.mcp.servers.len(), before + 1);
 }
 
@@ -308,11 +288,7 @@ mcp = { server_refs = [], allowed_tools = [] }
 	.expect("agent manifest must merge");
 	assert_eq!(merged.model, "openai:agent-model");
 	assert!(merged.roles.iter().any(|role| role.name == "agent-role"));
-	let assistants: Vec<_> = merged
-		.roles
-		.iter()
-		.filter(|role| role.name == "assistant")
-		.collect();
+	let assistants: Vec<_> = merged.roles.iter().filter(|role| role.name == "assistant").collect();
 	assert_eq!(assistants.len(), 1, "duplicate role names must be skipped");
 	assert_ne!(assistants[0].config.system, "OVERRIDE", "base role wins");
 }

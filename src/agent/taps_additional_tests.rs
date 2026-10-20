@@ -32,10 +32,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -126,14 +123,8 @@ fn tap_directory_helpers_reject_invalid_names() {
 			local_path: None,
 		};
 		assert!(tap.local_dir().is_err(), "{name:?} must be rejected");
-		assert!(
-			tap.agents_dir().is_err(),
-			"{name:?} agents dir must fail too"
-		);
-		assert!(
-			tap.workflows_dir().is_err(),
-			"{name:?} workflows dir must fail too"
-		);
+		assert!(tap.agents_dir().is_err(), "{name:?} agents dir must fail too");
+		assert!(tap.workflows_dir().is_err(), "{name:?} workflows dir must fail too");
 	}
 }
 
@@ -235,10 +226,7 @@ fn add_tap_local_symlinks_and_persists() {
 	let listed = list_taps().unwrap();
 	assert_eq!(listed.len(), 1);
 	assert_eq!(listed[0].name, "alice/tools");
-	assert_eq!(
-		listed[0].local_path.as_deref(),
-		Some(src.path().to_str().unwrap())
-	);
+	assert_eq!(listed[0].local_path.as_deref(), Some(src.path().to_str().unwrap()));
 }
 
 #[serial]
@@ -292,10 +280,7 @@ fn remove_tap_local_removes_symlink_but_keeps_source() {
 
 	remove_tap("alice/tools").expect("remove local tap");
 	assert!(list_taps().unwrap().is_empty());
-	assert!(
-		dir.symlink_metadata().is_err(),
-		"symlink must be removed with the tap"
-	);
+	assert!(dir.symlink_metadata().is_err(), "symlink must be removed with the tap");
 	assert!(src.path().exists(), "source directory must survive");
 }
 
@@ -334,10 +319,7 @@ fn list_agent_tags_discovers_sorts_and_skips_non_toml() {
 	add_tap(&format!("alice/tools {}", src.path().display())).unwrap();
 
 	let tags = list_agent_tags().unwrap();
-	assert_eq!(
-		tags,
-		vec!["developer:extra", "developer:general", "reviewer:main"]
-	);
+	assert_eq!(tags, vec!["developer:extra", "developer:general", "reviewer:main"]);
 }
 
 #[serial]
@@ -505,15 +487,14 @@ fn list_agent_tags_skips_unreadable_and_non_utf8_entries() {
 	#[cfg(target_os = "linux")]
 	{
 		use std::os::unix::ffi::OsStringExt;
-		let non_utf8_category =
-			agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
+		let non_utf8_category = agents.join(std::ffi::OsString::from_vec(vec![0xff, b's', b'.', b'x']));
 		fs::create_dir_all(&non_utf8_category).expect("create non-utf8 category");
 		fs::write(non_utf8_category.join("var.toml"), "x").expect("write agent");
 
 		fs::create_dir_all(agents.join("cat2")).expect("create cat2");
-		let non_utf8_variant = agents.join("cat2").join(std::ffi::OsString::from_vec(vec![
-			0xfe, b'.', b't', b'o', b'm', b'l',
-		]));
+		let non_utf8_variant = agents
+			.join("cat2")
+			.join(std::ffi::OsString::from_vec(vec![0xfe, b'.', b't', b'o', b'm', b'l']));
 		fs::write(&non_utf8_variant, "x").expect("write non-utf8 variant");
 	}
 
@@ -535,11 +516,7 @@ fn fetch_workflow_falls_back_past_a_tap_with_invalid_name() {
 	let default_tap = create_default_tap();
 	let workflows = default_tap.join("workflows");
 	fs::create_dir_all(&workflows).expect("create workflows dir");
-	fs::write(
-		workflows.join("probe.toml"),
-		"description = \"probe workflow\"\n",
-	)
-	.expect("write workflow");
+	fs::write(workflows.join("probe.toml"), "description = \"probe workflow\"\n").expect("write workflow");
 
 	// A tap whose name is not `user/repo` cannot resolve a workflows dir and
 	// must be skipped so later taps still answer.
@@ -580,8 +557,8 @@ fn add_tap_local_errors_when_parent_dir_cannot_be_created() {
 	fs::write(&parent, "not a directory").expect("write blocker file");
 
 	let target = tempfile::tempdir().expect("local tap source");
-	let err = add_tap(&format!("probe/blocked {}", target.path().display()))
-		.expect_err("unwritable tap parent must fail");
+	let err =
+		add_tap(&format!("probe/blocked {}", target.path().display())).expect_err("unwritable tap parent must fail");
 	assert!(
 		err.to_string().contains("Failed to create tap parent dir"),
 		"got: {err:#}"
@@ -600,11 +577,9 @@ fn add_tap_local_errors_when_existing_tap_path_cannot_be_removed() {
 	fs::write(tap_dir.join("payload").join("keep.txt"), "x").expect("write payload");
 
 	let target = tempfile::tempdir().expect("local tap source");
-	let err = add_tap(&format!("probe/occupied {}", target.path().display()))
-		.expect_err("occupied tap path must fail");
+	let err = add_tap(&format!("probe/occupied {}", target.path().display())).expect_err("occupied tap path must fail");
 	assert!(
-		err.to_string()
-			.contains("Failed to remove existing tap path"),
+		err.to_string().contains("Failed to remove existing tap path"),
 		"got: {err:#}"
 	);
 }
@@ -623,12 +598,9 @@ fn add_tap_local_errors_when_symlink_cannot_be_created() {
 	chmod(&parent, 0o555);
 
 	let target = tempfile::tempdir().expect("local tap source");
-	let err = add_tap(&format!("probe/readonly {}", target.path().display()))
-		.expect_err("read-only tap parent must fail");
-	assert!(
-		err.to_string().contains("Failed to create symlink"),
-		"got: {err:#}"
-	);
+	let err =
+		add_tap(&format!("probe/readonly {}", target.path().display())).expect_err("read-only tap parent must fail");
+	assert!(err.to_string().contains("Failed to create symlink"), "got: {err:#}");
 
 	chmod(&parent, 0o755);
 }
@@ -640,20 +612,13 @@ fn add_tap_github_clone_failure_surfaces_git_error() {
 	create_default_tap();
 	let _prompt = EnvVarGuard::set("GIT_TERMINAL_PROMPT", "0");
 	let _count = EnvVarGuard::set("GIT_CONFIG_COUNT", "1");
-	let _key = EnvVarGuard::set(
-		"GIT_CONFIG_KEY_0",
-		"url.file:///octomind-test-missing-root/.insteadOf",
-	);
+	let _key = EnvVarGuard::set("GIT_CONFIG_KEY_0", "url.file:///octomind-test-missing-root/.insteadOf");
 	let _value = EnvVarGuard::set("GIT_CONFIG_VALUE_0", "https://github.com/");
 
 	// Rewrite GitHub to a guaranteed-missing local root: this exercises the
 	// clone-error branch without network or an interactive credential prompt.
-	let err = add_tap("octomind-probe/nonexistent-tap-repo")
-		.expect_err("clone of a nonexistent repo must fail");
-	assert!(
-		err.to_string().contains("Failed to clone tap from"),
-		"got: {err:#}"
-	);
+	let err = add_tap("octomind-probe/nonexistent-tap-repo").expect_err("clone of a nonexistent repo must fail");
+	assert!(err.to_string().contains("Failed to clone tap from"), "got: {err:#}");
 }
 
 #[test]
@@ -687,10 +652,7 @@ fn remove_tap_deletes_the_local_tap_symlink() {
 	assert!(tap_dir.is_symlink(), "local tap is a symlink");
 
 	remove_tap("probe/local").expect("tap removed");
-	assert!(
-		!tap_dir.symlink_metadata().is_ok(),
-		"symlink removed with the tap"
-	);
+	assert!(!tap_dir.symlink_metadata().is_ok(), "symlink removed with the tap");
 	assert!(
 		target.path().join("marker.txt").exists(),
 		"the local target directory is untouched"

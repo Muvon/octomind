@@ -24,8 +24,8 @@ use super::CommandOutput;
 use crate::config::Config;
 use crate::session::chat::formatting::format_duration;
 use crate::session::chat::tool_display::{
-	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
-	block_row_text, block_section, block_section_with, key_width,
+	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
+	block_section_with, key_width,
 };
 use crate::session::timing::{BREAK_MIN, MIN_PER_HOUR};
 use colored::Colorize;
@@ -40,21 +40,12 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 		// (command_with_args, description) for the built-in command listing.
 		let builtins: &[(&str, &str)] = &[
 			(HELP_COMMAND, "Show this help message"),
-			(
-				COPY_COMMAND,
-				"Copy last response, or scope: last|assistant|user|all",
-			),
-			(
-				REPLY_COMMAND,
-				"Quote a reply into the prompt: [N|words], Tab picks",
-			),
+			(COPY_COMMAND, "Copy last response, or scope: last|assistant|user|all"),
+			(REPLY_COMMAND, "Quote a reply into the prompt: [N|words], Tab picks"),
 			(CLEAR_COMMAND, "Clear the screen"),
 			(LIST_COMMAND, "List all available sessions"),
 			(NEW_COMMAND, "Start a fresh session (optional title)"),
-			(
-				RENAME_COMMAND,
-				"Set a display title for this session (no arg clears)",
-			),
+			(RENAME_COMMAND, "Set a display title for this session (no arg clears)"),
 			(INFO_COMMAND, "Detailed token and cost breakdown"),
 			(DONE_COMMAND, "Finalize task with memorize/summarize/commit"),
 			(LOGLEVEL_COMMAND, "Set logging level: none, info, debug"),
@@ -71,20 +62,14 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			(SKILL_COMMAND, "List skills or toggle by name"),
 			(SCHEDULE_COMMAND, "Schedule a message to be injected later"),
 			(WORKFLOW_COMMAND, "List tap workflows or run one"),
-			(
-				STATUS_COMMAND,
-				"Show active agents, MCP jobs, and command monitors",
-			),
+			(STATUS_COMMAND, "Show active agents, MCP jobs, and command monitors"),
 			(LEARNING_COMMAND, "Manage role/project lessons"),
 			(
 				REPORT_COMMAND,
 				"Usage report with human time and energy ([day|week|month] [here])",
 			),
 			(SHARE_COMMAND, "Upload session and print shareable URL"),
-			(
-				ANALYZE_COMMAND,
-				"Open this session in the web viewer (local-only)",
-			),
+			(ANALYZE_COMMAND, "Open this session in the web viewer (local-only)"),
 			(USAGE_COMMAND, "Show account usage, quotas, and balance"),
 			(LOGIN_COMMAND, "Sign in to an Octomind account"),
 			(EXIT_COMMAND, "Exit the session"),
@@ -147,16 +132,8 @@ pub fn display_loglevel(output: &CommandOutput) {
 		} else if let Some(current) = current_level {
 			let kw = key_width(["current", "available"]);
 			block_row("current", &current.bright_white().to_string(), kw);
-			block_row(
-				"available",
-				&available_levels.join(", ").dimmed().to_string(),
-				kw,
-			);
-			block_line(
-				&"Usage: /loglevel <level> (e.g., /loglevel debug)"
-					.dimmed()
-					.to_string(),
-			);
+			block_row("available", &available_levels.join(", ").dimmed().to_string(), kw);
+			block_line(&"Usage: /loglevel <level> (e.g., /loglevel debug)".dimmed().to_string());
 			block_close_ok("/loglevel", Some(current));
 		} else {
 			block_close_ok("/loglevel", None);
@@ -240,16 +217,8 @@ pub fn display_effort(output: &CommandOutput) {
 		} else {
 			let kw = key_width(["current", "available"]);
 			block_row("current", &new_effort.bright_white().to_string(), kw);
-			block_row(
-				"available",
-				&"low, medium, high, xhigh, max".dimmed().to_string(),
-				kw,
-			);
-			block_line(
-				&"Usage: /effort <level> (e.g., /effort high)"
-					.dimmed()
-					.to_string(),
-			);
+			block_row("available", &"low, medium, high, xhigh, max".dimmed().to_string(), kw);
+			block_line(&"Usage: /effort <level> (e.g., /effort high)".dimmed().to_string());
 			block_close_ok("/effort", Some(new_effort));
 		}
 		println!();
@@ -409,17 +378,8 @@ pub fn display_info(output: &CommandOutput) {
 
 		// ── session ────────────────────────────────────────────────────
 		block_section_with("session", session_name);
-		let kw_sess = key_width([
-			"title",
-			"model",
-			"tokens",
-			"breakdown",
-			"cost",
-			"throughput",
-		]);
-		if let Some(title) =
-			crate::session::titles::get_session_meta(session_name).and_then(|m| m.title)
-		{
+		let kw_sess = key_width(["title", "model", "tokens", "breakdown", "cost", "throughput"]);
+		if let Some(title) = crate::session::titles::get_session_meta(session_name).and_then(|m| m.title) {
 			block_row("title", &title.bright_white().to_string(), kw_sess);
 		}
 		block_row("model", &model.bright_white().to_string(), kw_sess);
@@ -469,11 +429,7 @@ pub fn display_info(output: &CommandOutput) {
 		}
 		if *tokens_per_second > 0.0 {
 			let model_time = if timing.model_time_ms > 0 {
-				format!(
-					" {} {} model time",
-					dot,
-					format_duration(timing.model_time_ms)
-				)
+				format!(" {} {} model time", dot, format_duration(timing.model_time_ms))
 			} else {
 				String::new()
 			};
@@ -508,28 +464,19 @@ pub fn display_info(output: &CommandOutput) {
 		if *avg_tokens_per_tool > 0.0 {
 			avg_rows.push((
 				"output / tool",
-				format!(
-					"{} tok",
-					format_number(*avg_tokens_per_tool as u64).bright_white()
-				),
+				format!("{} tok", format_number(*avg_tokens_per_tool as u64).bright_white()),
 			));
 		}
 		if *avg_tokens_per_response > 0.0 {
 			avg_rows.push((
 				"output / response",
-				format!(
-					"{} tok",
-					format_number(*avg_tokens_per_response as u64).bright_white()
-				),
+				format!("{} tok", format_number(*avg_tokens_per_response as u64).bright_white()),
 			));
 		}
 		if *avg_input_tokens > 0.0 {
 			avg_rows.push((
 				"input / request",
-				format!(
-					"{} tok",
-					format_number(*avg_input_tokens as u64).bright_white()
-				),
+				format!("{} tok", format_number(*avg_input_tokens as u64).bright_white()),
 			));
 		}
 		if !avg_rows.is_empty() {
@@ -592,9 +539,7 @@ pub fn display_info(output: &CommandOutput) {
 			if stats.total_tokens_saved > 0 {
 				block_row(
 					"tokens saved",
-					&format_number(stats.total_tokens_saved)
-						.bright_green()
-						.to_string(),
+					&format_number(stats.total_tokens_saved).bright_green().to_string(),
 					kw,
 				);
 			}
@@ -617,8 +562,7 @@ pub fn display_info(output: &CommandOutput) {
 			}
 			if stats.api_time_ms > 0 && stats.output_tokens + stats.reasoning_tokens > 0 {
 				// Reasoning tokens are generated in the same request window.
-				let tps = (stats.output_tokens + stats.reasoning_tokens) as f64
-					/ (stats.api_time_ms as f64 / 1000.0);
+				let tps = (stats.output_tokens + stats.reasoning_tokens) as f64 / (stats.api_time_ms as f64 / 1000.0);
 				block_row(
 					"throughput",
 					&format!(
@@ -631,11 +575,7 @@ pub fn display_info(output: &CommandOutput) {
 				);
 			}
 			if stats.cost > 0.0 {
-				block_row(
-					"cost",
-					&format!("${:.5}", stats.cost).bright_yellow().to_string(),
-					kw,
-				);
+				block_row("cost", &format!("${:.5}", stats.cost).bright_yellow().to_string(), kw);
 			}
 		}
 
@@ -664,9 +604,7 @@ pub fn display_info(output: &CommandOutput) {
 		);
 		block_row(
 			"non-cached",
-			&format_number(*cache_non_cached_tokens)
-				.bright_white()
-				.to_string(),
+			&format_number(*cache_non_cached_tokens).bright_white().to_string(),
 			kw,
 		);
 
@@ -711,11 +649,7 @@ pub fn display_info(output: &CommandOutput) {
 				);
 			}
 			if ag_cost > 0.0 {
-				block_row(
-					"cost",
-					&format!("${:.5}", ag_cost).bright_yellow().to_string(),
-					kw_ag,
-				);
+				block_row("cost", &format!("${:.5}", ag_cost).bright_yellow().to_string(), kw_ag);
 			}
 		}
 
@@ -770,9 +704,7 @@ fn info_timing_rows(timing: &super::InfoTiming) -> Vec<(&'static str, String)> {
 		rows.extend([
 			(
 				"main API",
-				format_duration(timing.turn_model_time_ms)
-					.bright_white()
-					.to_string(),
+				format_duration(timing.turn_model_time_ms).bright_white().to_string(),
 			),
 			(
 				"supervisor",
@@ -785,9 +717,7 @@ fn info_timing_rows(timing: &super::InfoTiming) -> Vec<(&'static str, String)> {
 			),
 			(
 				"tools + runtime",
-				format_duration(timing.tools_runtime_time_ms)
-					.bright_white()
-					.to_string(),
+				format_duration(timing.tools_runtime_time_ms).bright_white().to_string(),
 			),
 		]);
 	}
@@ -806,8 +736,7 @@ fn supervisor_outcome(
 			continue;
 		}
 		let counted = |label: &str| format!("{count} {label}");
-		let plural =
-			|singular: &str, plural: &str| counted(if count == 1 { singular } else { plural });
+		let plural = |singular: &str, plural: &str| counted(if count == 1 { singular } else { plural });
 		let text = match outcome {
 			Outcome::Runs => plural("run", "runs"),
 			Outcome::Pass => plural("pass", "passes"),
@@ -844,10 +773,7 @@ fn supervisor_outcome(
 	parts.join(" · ")
 }
 
-fn supervisor_table(
-	report: &crate::supervisor::report::SupervisorReport,
-	terminal_width: usize,
-) -> String {
+fn supervisor_table(report: &crate::supervisor::report::SupervisorReport, terminal_width: usize) -> String {
 	use crate::session::chat::session::utils::format_number;
 	use crate::supervisor::report::Mechanic;
 	const W_RAIL: usize = 4;
@@ -856,25 +782,12 @@ fn supervisor_table(
 	if report.mechanics.is_empty() {
 		return String::new();
 	}
-	let background = report
-		.mechanics
-		.values()
-		.any(|usage| usage.wall_background_ms > 0);
-	let mut headers = vec![
-		"".to_owned(),
-		"chat".into(),
-		"decision".into(),
-		"wall".into(),
-	];
+	let background = report.mechanics.values().any(|usage| usage.wall_background_ms > 0);
+	let mut headers = vec!["".to_owned(), "chat".into(), "decision".into(), "wall".into()];
 	if background {
 		headers.push("background".into());
 	}
-	headers.extend([
-		"API".into(),
-		"tokens in/out".into(),
-		"cost".into(),
-		"outcome".into(),
-	]);
+	headers.extend(["API".into(), "tokens in/out".into(), "cost".into(), "outcome".into()]);
 	let mut rows = vec![headers];
 	for (&mechanic, usage) in &report.mechanics {
 		let chat = if matches!(
@@ -885,10 +798,7 @@ fn supervisor_table(
 		} else {
 			usage.chat_calls.to_string()
 		};
-		let decision = if matches!(
-			mechanic,
-			Mechanic::Resolve | Mechanic::Hindsight | Mechanic::Retention
-		) {
+		let decision = if matches!(mechanic, Mechanic::Resolve | Mechanic::Hindsight | Mechanic::Retention) {
 			"–".into()
 		} else {
 			usage.decision_calls.to_string()
@@ -958,11 +868,7 @@ fn supervisor_table(
 	let table_width = widths[..outcome_column].iter().sum::<usize>() + W_GAP * (outcome_column - 1);
 	let stacked = W_RAIL + table_width > terminal_width;
 	let inline_outcome = W_RAIL + table_width + W_GAP + widths[outcome_column] <= terminal_width;
-	let visible_columns = if inline_outcome {
-		widths.len()
-	} else {
-		outcome_column
-	};
+	let visible_columns = if inline_outcome { widths.len() } else { outcome_column };
 	let gap = " ".repeat(W_GAP);
 	let stacked_key_width = key_width(rows[0][1..outcome_column].iter());
 	let mut lines = Vec::new();
@@ -996,9 +902,7 @@ fn supervisor_table(
 				} else if column == outcome_column {
 					padded.dimmed().to_string()
 				} else if column == token_column {
-					let (input, output) = padded
-						.split_once(" / ")
-						.expect("supervisor tokens in / out");
+					let (input, output) = padded.split_once(" / ").expect("supervisor tokens in / out");
 					format!(
 						"{} {} {}",
 						input.bright_blue(),
@@ -1018,8 +922,7 @@ fn supervisor_table(
 				lines.push(format!(
 					"{}{}  {}",
 					" ".repeat(W_OUTCOME_INDENT),
-					format!("{:<width$}", rows[0][column], width = stacked_key_width)
-						.bright_black(),
+					format!("{:<width$}", rows[0][column], width = stacked_key_width).bright_black(),
 					cells[column]
 				));
 			}
@@ -1030,9 +933,7 @@ fn supervisor_table(
 			let mut line = " ".repeat(W_OUTCOME_INDENT);
 			for part in row[outcome_column].split(" · ") {
 				if line.chars().count() > W_OUTCOME_INDENT {
-					if W_RAIL + line.chars().count() + " · ".chars().count() + part.chars().count()
-						> terminal_width
-					{
+					if W_RAIL + line.chars().count() + " · ".chars().count() + part.chars().count() > terminal_width {
 						lines.push(line.dimmed().to_string());
 						line = " ".repeat(W_OUTCOME_INDENT);
 					} else {
@@ -1047,16 +948,10 @@ fn supervisor_table(
 	lines.join("\n")
 }
 
-pub async fn display_context(
-	output: &CommandOutput,
-	session: &mut super::super::core::ChatSession,
-	config: &Config,
-) {
+pub async fn display_context(output: &CommandOutput, session: &mut super::super::core::ChatSession, config: &Config) {
 	if let CommandOutput::Context { filter, .. } = output {
 		// Display current session context with filtering (CLI output only)
-		session
-			.display_session_context_filtered(config, filter)
-			.await;
+		session.display_session_context_filtered(config, filter).await;
 	}
 }
 
@@ -1074,11 +969,7 @@ pub fn display_image(output: &CommandOutput) {
 				let display_path = if p == "clipboard" { "clipboard" } else { p };
 				block_row("path", &display_path.bright_white().to_string(), kw);
 			}
-			block_row(
-				"note",
-				&"will be attached to next message".dimmed().to_string(),
-				kw,
-			);
+			block_row("note", &"will be attached to next message".dimmed().to_string(), kw);
 			block_close_ok("/image", Some("attached"));
 		} else if let Some(err) = error {
 			block_close_err("/image", err);
@@ -1093,11 +984,7 @@ pub fn display_image(output: &CommandOutput) {
 			] {
 				block_row_text(&ex.dimmed().to_string());
 			}
-			block_line(
-				&"Formats: PNG, JPEG, GIF, WebP — or clipboard"
-					.dimmed()
-					.to_string(),
-			);
+			block_line(&"Formats: PNG, JPEG, GIF, WebP — or clipboard".dimmed().to_string());
 			block_close_ok("/image", Some("usage"));
 		}
 		println!();
@@ -1117,11 +1004,7 @@ pub fn display_video(output: &CommandOutput) {
 			if let Some(p) = path {
 				block_row("path", &p.bright_white().to_string(), kw);
 			}
-			block_row(
-				"note",
-				&"will be attached to next message".dimmed().to_string(),
-				kw,
-			);
+			block_row("note", &"will be attached to next message".dimmed().to_string(), kw);
 			block_close_ok("/video", Some("attached"));
 		} else if let Some(err) = error {
 			block_close_err("/video", err);
@@ -1155,16 +1038,8 @@ pub fn display_prompt(output: &CommandOutput) {
 					if let Some(prompts) = data.get("prompts").and_then(|v| v.as_array()) {
 						block_open("/prompt", None);
 						if prompts.is_empty() {
-							block_line(
-								&"No prompt templates configured."
-									.bright_yellow()
-									.to_string(),
-							);
-							block_line(
-								&"Define in the [[prompts]] section of your config."
-									.dimmed()
-									.to_string(),
-							);
+							block_line(&"No prompt templates configured.".bright_yellow().to_string());
+							block_line(&"Define in the [[prompts]] section of your config.".dimmed().to_string());
 							block_close_ok("/prompt", Some("empty"));
 						} else {
 							block_section("templates");
@@ -1176,19 +1051,12 @@ pub fn display_prompt(output: &CommandOutput) {
 								.unwrap_or(0)
 								.min(20);
 							for prompt in prompts {
-								let name =
-									prompt.get("name").and_then(|v| v.as_str()).unwrap_or("");
-								let description = prompt
-									.get("description")
-									.and_then(|v| v.as_str())
-									.unwrap_or("");
+								let name = prompt.get("name").and_then(|v| v.as_str()).unwrap_or("");
+								let description = prompt.get("description").and_then(|v| v.as_str()).unwrap_or("");
 								block_row(name, &description.dimmed().to_string(), name_width);
 							}
 							block_line(&"Usage: /prompt <template_name>".dimmed().to_string());
-							block_close_ok(
-								"/prompt",
-								Some(&format!("{} template(s)", prompts.len())),
-							);
+							block_close_ok("/prompt", Some(&format!("{} template(s)", prompts.len())));
 						}
 						println!();
 					}
@@ -1204,9 +1072,7 @@ pub fn display_prompt(output: &CommandOutput) {
 							block_close_ok("/prompt", None);
 						}
 					} else if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
-						if let Some(available) =
-							data.get("available_prompts").and_then(|v| v.as_array())
-						{
+						if let Some(available) = data.get("available_prompts").and_then(|v| v.as_array()) {
 							if !available.is_empty() {
 								block_section("available");
 								for prompt in available {
@@ -1246,11 +1112,7 @@ pub fn display_done(output: &CommandOutput) {
 			if let Some(true) = saved {
 				block_row("saved", &"session written to disk".dimmed().to_string(), kw);
 			}
-			block_line(
-				&"Layered processing reset for next task."
-					.bright_cyan()
-					.to_string(),
-			);
+			block_line(&"Layered processing reset for next task.".bright_cyan().to_string());
 			block_close_ok("/done", Some("task finalized"));
 		}
 		println!();
@@ -1271,9 +1133,7 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 					if let Some(commands) = data.get("commands").and_then(|v| v.as_array()) {
 						block_open("/run", None);
 						if commands.is_empty() {
-							block_line(
-								&"No command layers configured.".bright_yellow().to_string(),
-							);
+							block_line(&"No command layers configured.".bright_yellow().to_string());
 							block_line(
 								&"Define in the global [[commands]] section of your config."
 									.dimmed()
@@ -1284,11 +1144,7 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 							block_section("commands");
 							for cmd in commands {
 								if let Some(name) = cmd.as_str() {
-									block_row_text(&format!(
-										"{} {}",
-										"/run".cyan(),
-										name.bright_yellow()
-									));
+									block_row_text(&format!("{} {}", "/run".cyan(), name.bright_yellow()));
 								}
 							}
 							block_line(&"Usage: /run <command_name>".dimmed().to_string());
@@ -1300,9 +1156,7 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 				"execute" => {
 					if let Some(false) = data.get("success").and_then(|v| v.as_bool()) {
 						block_open("/run", None);
-						if let Some(available) =
-							data.get("available_commands").and_then(|v| v.as_array())
-						{
+						if let Some(available) = data.get("available_commands").and_then(|v| v.as_array()) {
 							if !available.is_empty() {
 								block_section("available");
 								for cmd in available {
@@ -1312,10 +1166,7 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 								}
 							}
 						}
-						let error = data
-							.get("error")
-							.and_then(|v| v.as_str())
-							.unwrap_or("unknown error");
+						let error = data.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
 						block_close_err("/run", error);
 						println!();
 					} else if let Some(true) = data.get("success").and_then(|v| v.as_bool()) {
@@ -1335,10 +1186,7 @@ pub fn display_run(output: &CommandOutput, config: &Config, role: &str) {
 
 pub fn display_mcp(output: &CommandOutput) {
 	if let CommandOutput::Mcp { data, .. } = output {
-		let subcommand = data
-			.get("subcommand")
-			.and_then(|v| v.as_str())
-			.unwrap_or("");
+		let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
 
 		match subcommand {
 			"list" => display_mcp_list(data),
@@ -1398,11 +1246,7 @@ fn display_mcp_list(data: &serde_json::Value) {
 			);
 			block_close_ok(
 				"/mcp list",
-				Some(&format!(
-					"{} server(s) · {} tool(s)",
-					servers.len(),
-					total_tools
-				)),
+				Some(&format!("{} server(s) · {} tool(s)", servers.len(), total_tools)),
 			);
 		}
 	} else {
@@ -1431,26 +1275,14 @@ fn display_mcp_info(data: &serde_json::Value) {
 		block_section("servers");
 		if let Some(servers) = data.get("servers").and_then(|v| v.as_array()) {
 			for server in servers {
-				let name = server
-					.get("name")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown");
-				let health = server
-					.get("health")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown");
+				let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+				let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("unknown");
 				let conn_type = server
 					.get("connection_type")
 					.and_then(|v| v.as_str())
 					.unwrap_or("unknown");
-				let restart_count = server
-					.get("restart_count")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
-				let consecutive_failures = server
-					.get("consecutive_failures")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
+				let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
+				let consecutive_failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
 
 				block_row_text(&format!(
 					"{}  {}  {}{}",
@@ -1458,12 +1290,9 @@ fn display_mcp_info(data: &serde_json::Value) {
 					mcp_health_display(health),
 					format!("({})", conn_type).dimmed(),
 					if restart_count > 0 {
-						format!(
-							" · restarts: {} · failures: {}",
-							restart_count, consecutive_failures
-						)
-						.dimmed()
-						.to_string()
+						format!(" · restarts: {} · failures: {}", restart_count, consecutive_failures)
+							.dimmed()
+							.to_string()
 					} else {
 						String::new()
 					},
@@ -1471,11 +1300,7 @@ fn display_mcp_info(data: &serde_json::Value) {
 				if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
 					let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
 					if !tool_names.is_empty() {
-						block_row_text(
-							&format!("  configured: {}", tool_names.join(", "))
-								.dimmed()
-								.to_string(),
-						);
+						block_row_text(&format!("  configured: {}", tool_names.join(", ")).dimmed().to_string());
 					}
 				}
 			}
@@ -1500,14 +1325,8 @@ fn display_mcp_info(data: &serde_json::Value) {
 						.unwrap_or(0)
 						.min(24);
 					for tool in tool_array {
-						let name = tool
-							.get("name")
-							.and_then(|v| v.as_str())
-							.unwrap_or("unknown");
-						let desc = tool
-							.get("description")
-							.and_then(|v| v.as_str())
-							.unwrap_or("");
+						let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+						let desc = tool.get("description").and_then(|v| v.as_str()).unwrap_or("");
 						block_row(name, &desc.dimmed().to_string(), name_width);
 						total_tools += 1;
 					}
@@ -1523,10 +1342,7 @@ fn display_mcp_info(data: &serde_json::Value) {
 	);
 	block_close_ok(
 		"/mcp info",
-		Some(&format!(
-			"{} server(s) · {} tool(s)",
-			server_count, total_tools
-		)),
+		Some(&format!("{} server(s) · {} tool(s)", server_count, total_tools)),
 	);
 	println!();
 }
@@ -1553,18 +1369,9 @@ fn display_mcp_full(data: &serde_json::Value) {
 			for server in servers {
 				let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("");
 				let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("");
-				let conn_type = server
-					.get("connection_type")
-					.and_then(|v| v.as_str())
-					.unwrap_or("");
-				let restart_count = server
-					.get("restart_count")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
-				let failures = server
-					.get("consecutive_failures")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
+				let conn_type = server.get("connection_type").and_then(|v| v.as_str()).unwrap_or("");
+				let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
+				let failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
 
 				block_row_text(&format!(
 					"{}  {}  {}{}",
@@ -1582,11 +1389,7 @@ fn display_mcp_full(data: &serde_json::Value) {
 				if let Some(tools) = server.get("tools").and_then(|v| v.as_array()) {
 					let tool_names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
 					if !tool_names.is_empty() {
-						block_row_text(
-							&format!("  configured: {}", tool_names.join(", "))
-								.dimmed()
-								.to_string(),
-						);
+						block_row_text(&format!("  configured: {}", tool_names.join(", ")).dimmed().to_string());
 					}
 				}
 			}
@@ -1605,27 +1408,19 @@ fn display_mcp_full(data: &serde_json::Value) {
 				if let Some(tools_arr) = tools.as_array() {
 					for tool in tools_arr {
 						let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
-						let desc = tool
-							.get("description")
-							.and_then(|v| v.as_str())
-							.unwrap_or("");
+						let desc = tool.get("description").and_then(|v| v.as_str()).unwrap_or("");
 						block_row_text(&name.bright_white().bold().to_string());
 						if !desc.is_empty() {
 							block_row_text(&format!("  {}", desc.dimmed()));
 						}
 						if let Some(params) = tool.get("parameters") {
-							if let Some(props) =
-								params.get("properties").and_then(|v| v.as_object())
-							{
+							if let Some(props) = params.get("properties").and_then(|v| v.as_object()) {
 								if !props.is_empty() {
 									let required: std::collections::HashSet<String> = params
 										.get("required")
 										.and_then(|r| r.as_array())
 										.map(|arr| {
-											arr.iter()
-												.filter_map(|v| v.as_str())
-												.map(|s| s.to_string())
-												.collect()
+											arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect()
 										})
 										.unwrap_or_default();
 									for (param_name, param_info) in props {
@@ -1634,14 +1429,9 @@ fn display_mcp_full(data: &serde_json::Value) {
 										} else {
 											" ".normal().to_string()
 										};
-										let ptype = param_info
-											.get("type")
-											.and_then(|v| v.as_str())
-											.unwrap_or("any");
-										let pdesc = param_info
-											.get("description")
-											.and_then(|v| v.as_str())
-											.unwrap_or("");
+										let ptype = param_info.get("type").and_then(|v| v.as_str()).unwrap_or("any");
+										let pdesc =
+											param_info.get("description").and_then(|v| v.as_str()).unwrap_or("");
 										let suffix = if !pdesc.is_empty() {
 											format!(" — {}", pdesc).dimmed().to_string()
 										} else {
@@ -1654,13 +1444,8 @@ fn display_mcp_full(data: &serde_json::Value) {
 											ptype.yellow(),
 											suffix,
 										));
-										if let Some(enum_vals) =
-											param_info.get("enum").and_then(|v| v.as_array())
-										{
-											let vals: Vec<&str> = enum_vals
-												.iter()
-												.filter_map(|v| v.as_str())
-												.collect();
+										if let Some(enum_vals) = param_info.get("enum").and_then(|v| v.as_array()) {
+											let vals: Vec<&str> = enum_vals.iter().filter_map(|v| v.as_str()).collect();
 											if !vals.is_empty() {
 												block_row_text(&format!(
 													"      options: {}",
@@ -1677,10 +1462,7 @@ fn display_mcp_full(data: &serde_json::Value) {
 									}
 								}
 							} else if *params != serde_json::json!({}) {
-								block_row_text(&format!(
-									"  schema: {}",
-									params.to_string().dimmed()
-								));
+								block_row_text(&format!("  schema: {}", params.to_string().dimmed()));
 							}
 						}
 						total_tools += 1;
@@ -1698,10 +1480,7 @@ fn display_mcp_full(data: &serde_json::Value) {
 
 	block_close_ok(
 		"/mcp full",
-		Some(&format!(
-			"{} server(s) · {} tool(s)",
-			server_count, total_tools
-		)),
+		Some(&format!("{} server(s) · {} tool(s)", server_count, total_tools)),
 	);
 	println!();
 }
@@ -1716,10 +1495,7 @@ fn display_mcp_health(data: &serde_json::Value) {
 		return;
 	}
 
-	let monitor_running = data
-		.get("monitor_running")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let monitor_running = data.get("monitor_running").and_then(|v| v.as_bool()).unwrap_or(false);
 	let kw = key_width(["monitor"]);
 	block_row(
 		"monitor",
@@ -1744,14 +1520,8 @@ fn display_mcp_health(data: &serde_json::Value) {
 			for server in servers {
 				let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("");
 				let health = server.get("health").and_then(|v| v.as_str()).unwrap_or("");
-				let restart_count = server
-					.get("restart_count")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
-				let failures = server
-					.get("consecutive_failures")
-					.and_then(|v| v.as_u64())
-					.unwrap_or(0);
+				let restart_count = server.get("restart_count").and_then(|v| v.as_u64()).unwrap_or(0);
+				let failures = server.get("consecutive_failures").and_then(|v| v.as_u64()).unwrap_or(0);
 				let last = server.get("last_checked_secs_ago").and_then(|v| v.as_u64());
 
 				let mut extras = Vec::new();
@@ -1846,15 +1616,9 @@ fn display_mcp_validate(data: &serde_json::Value) {
 		}
 	}
 
-	let all_valid = data
-		.get("all_valid")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let all_valid = data.get("all_valid").and_then(|v| v.as_bool()).unwrap_or(false);
 	if all_valid {
-		block_close_ok(
-			"/mcp validate",
-			Some(&format!("all {} schema(s) valid", valid_count)),
-		);
+		block_close_ok("/mcp validate", Some(&format!("all {} schema(s) valid", valid_count)));
 	} else {
 		block_close_err(
 			"/mcp validate",
@@ -1904,10 +1668,7 @@ fn is_set(value: &serde_json::Value, key: &str) -> bool {
 }
 
 fn timing_sessions(timing: &serde_json::Value) -> &[serde_json::Value] {
-	timing["sessions"]
-		.as_array()
-		.map(Vec::as_slice)
-		.unwrap_or_default()
+	timing["sessions"].as_array().map(Vec::as_slice).unwrap_or_default()
 }
 
 /// Share of the changed lines whose reading time was spent; `–` when nothing
@@ -1923,11 +1684,7 @@ fn read_cell(value: &serde_json::Value) -> String {
 
 fn lines_summary(lines: f64, lines_read: f64) -> String {
 	if lines > 0.0 {
-		format!(
-			"{} lines changed, {:.0}% read",
-			lines,
-			100.0 * lines_read / lines
-		)
+		format!("{} lines changed, {:.0}% read", lines, 100.0 * lines_read / lines)
 	} else {
 		"no code changed".to_string()
 	}
@@ -2040,10 +1797,7 @@ fn display_period_summary(days: &[serde_json::Value]) {
 	}
 	let over_budget = days_with("over_budget");
 	if over_budget > 0 {
-		flags.push(format!(
-			"energy over the daily budget on {} day(s)",
-			over_budget
-		));
+		flags.push(format!("energy over the daily budget on {} day(s)", over_budget));
 	}
 	display_flags(flags);
 }
@@ -2107,19 +1861,11 @@ fn display_day_sessions(day: &serde_json::Value) {
 	.to_string();
 	block_line(&divider);
 
-	let names = day["sessions"]
-		.as_array()
-		.map(Vec::as_slice)
-		.unwrap_or_default();
+	let names = day["sessions"].as_array().map(Vec::as_slice).unwrap_or_default();
 	let timings = timing_sessions(&day["timing"]);
 	for (i, (name, session)) in names.iter().zip(timings).enumerate() {
 		let turns = session["turns"].as_array().map_or(0, Vec::len);
-		let name: String = name
-			.as_str()
-			.unwrap_or_default()
-			.chars()
-			.take(W_SESSION)
-			.collect();
+		let name: String = name.as_str().unwrap_or_default().chars().take(W_SESSION).collect();
 		block_line(&format!(
 			"{}  {:<W_SESSION$}  {:>W_TURNS$}  {}",
 			format!("{:>W_NUM$}", i + 1).bright_white(),
@@ -2167,12 +1913,7 @@ fn display_day_rows(days: &[serde_json::Value]) {
 		} else {
 			format!("{:<W_DATE$}", date).normal()
 		};
-		block_line(&format!(
-			"{}  {}  {}",
-			date,
-			time_cells(timing),
-			projects.dimmed(),
-		));
+		block_line(&format!("{}  {}  {}", date, time_cells(timing), projects.dimmed(),));
 	}
 	block_line(&divider);
 }
@@ -2233,14 +1974,8 @@ pub fn display_report_period(output: &CommandOutput) {
 		display_period_summary(days);
 	}
 
-	let minutes: f64 = days
-		.iter()
-		.map(|day| number(&day["timing"], "time_min"))
-		.sum();
-	block_close_ok(
-		"/report",
-		Some(&format!("{} · {}", scope, format_minutes(minutes))),
-	);
+	let minutes: f64 = days.iter().map(|day| number(&day["timing"], "time_min")).sum();
+	block_close_ok("/report", Some(&format!("{} · {}", scope, format_minutes(minutes))));
 	println!();
 }
 
@@ -2261,13 +1996,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 	fn cell_text(s: &str, max: usize) -> String {
 		let flat: String = s
 			.chars()
-			.map(|c| {
-				if c == '\n' || c == '\r' || c == '\t' {
-					' '
-				} else {
-					c
-				}
-			})
+			.map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
 			.collect();
 		// Collapse runs of whitespace.
 		let mut compact = String::with_capacity(flat.len());
@@ -2350,27 +2079,12 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 
 		// Data rows.
 		for (i, entry) in entries.iter().enumerate() {
-			let user_request = entry
-				.get("user_request")
-				.and_then(|v| v.as_str())
-				.unwrap_or("");
+			let user_request = entry.get("user_request").and_then(|v| v.as_str()).unwrap_or("");
 			let cost = entry.get("cost").and_then(|v| v.as_str()).unwrap_or("$0");
-			let tool_calls = entry
-				.get("tool_calls")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
-			let task_time = entry
-				.get("task_time")
-				.and_then(|v| v.as_str())
-				.unwrap_or("0ms");
-			let ai_time = entry
-				.get("ai_time")
-				.and_then(|v| v.as_str())
-				.unwrap_or("0ms");
-			let processing_time = entry
-				.get("processing_time")
-				.and_then(|v| v.as_str())
-				.unwrap_or("0ms");
+			let tool_calls = entry.get("tool_calls").and_then(|v| v.as_u64()).unwrap_or(0);
+			let task_time = entry.get("task_time").and_then(|v| v.as_str()).unwrap_or("0ms");
+			let ai_time = entry.get("ai_time").and_then(|v| v.as_str()).unwrap_or("0ms");
+			let processing_time = entry.get("processing_time").and_then(|v| v.as_str()).unwrap_or("0ms");
 
 			let human = entry
 				.get("human_time_min")
@@ -2400,10 +2114,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 				pad_right(processing_time, W_PROC),
 				pad_right(&human, W_TIME).bright_cyan(),
 				pad_right(&energy, W_ENERGY).bright_magenta(),
-				pad_right(
-					&lines.map_or_else(|| "-".to_string(), |l| l.to_string()),
-					W_LINES
-				),
+				pad_right(&lines.map_or_else(|| "-".to_string(), |l| l.to_string()), W_LINES),
 				pad_right(&read, W_READ),
 			);
 			if entry.get("rubber_stamp").and_then(|v| v.as_bool()) == Some(true) {
@@ -2415,22 +2126,10 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 		// Footer divider + Σ row.
 		block_line(&divider.bright_black().to_string());
 
-		let total_cost = totals
-			.get("total_cost")
-			.and_then(|v| v.as_f64())
-			.unwrap_or(0.0);
-		let total_tool_calls = totals
-			.get("total_tool_calls")
-			.and_then(|v| v.as_u64())
-			.unwrap_or(0);
-		let total_task = totals
-			.get("total_task_time_ms")
-			.and_then(|v| v.as_u64())
-			.unwrap_or(0);
-		let total_ai = totals
-			.get("total_ai_time_ms")
-			.and_then(|v| v.as_u64())
-			.unwrap_or(0);
+		let total_cost = totals.get("total_cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+		let total_tool_calls = totals.get("total_tool_calls").and_then(|v| v.as_u64()).unwrap_or(0);
+		let total_task = totals.get("total_task_time_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+		let total_ai = totals.get("total_ai_time_ms").and_then(|v| v.as_u64()).unwrap_or(0);
 		let total_proc = totals
 			.get("total_processing_time_ms")
 			.and_then(|v| v.as_u64())
@@ -2455,11 +2154,7 @@ pub fn display_report(output: &CommandOutput, _config: &Config) {
 
 		block_close_ok(
 			"/report",
-			Some(&format!(
-				"{} request(s) · ${:.5}",
-				entries.len(),
-				total_cost
-			)),
+			Some(&format!("{} request(s) · ${:.5}", entries.len(), total_cost)),
 		);
 		println!();
 	}
@@ -2550,10 +2245,7 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 			let model_full = entry.get("model").and_then(|v| v.as_str()).unwrap_or("");
 			let tokens = entry.get("tokens").and_then(|v| v.as_u64()).unwrap_or(0);
 			let cost = entry.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
-			let is_current = entry
-				.get("is_current")
-				.and_then(|v| v.as_bool())
-				.unwrap_or(false);
+			let is_current = entry.get("is_current").and_then(|v| v.as_bool()).unwrap_or(false);
 
 			// Strip provider prefix from model name for display: openrouter:anthropic/claude-X → claude-X
 			let model_short = model_full
@@ -2626,18 +2318,12 @@ pub fn display_list(output: &CommandOutput, _config: &Config) {
 
 pub(super) fn display_schedule(output: &CommandOutput) {
 	if let CommandOutput::Schedule { data } = output {
-		let subcommand = data
-			.get("subcommand")
-			.and_then(|v| v.as_str())
-			.unwrap_or("");
+		let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
 
 		match subcommand {
 			"error" => {
 				block_open("/schedule", None);
-				let msg = data
-					.get("message")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown error");
+				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
 				block_close_err("/schedule", msg);
 				println!();
 			}
@@ -2649,17 +2335,9 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					("/schedule list", "list pending entries"),
 					("/schedule remove <id>", "cancel an entry"),
 					("/schedule add when=… message=…", "add a new entry"),
-					(
-						"/schedule edit <id> [when=…] [message=…]",
-						"update an entry",
-					),
+					("/schedule edit <id> [when=…] [message=…]", "update an entry"),
 				];
-				let cmd_width = entries
-					.iter()
-					.map(|(c, _)| c.len())
-					.max()
-					.unwrap_or(0)
-					.min(40);
+				let cmd_width = entries.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
 				for (cmd, desc) in entries {
 					block_row(cmd, &desc.dimmed().to_string(), cmd_width);
 				}
@@ -2670,10 +2348,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 						"\"now\"; \"in 5m\", \"in 1h30m\"; \"15:30\", \"9am\"; \"2026-03-22 15:30\"",
 					),
 					("message", "text injected verbatim when timer fires"),
-					(
-						"every",
-						"repeat interval — \"10m\", \"1h\", \"1h30m\"; \"none\" clears",
-					),
+					("every", "repeat interval — \"10m\", \"1h\", \"1h30m\"; \"none\" clears"),
 					("description", "short label shown in list output"),
 				];
 				let key_w = key_width(kws.iter().map(|(k, _)| *k));
@@ -2689,10 +2364,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 				println!();
 			}
 			"list" => {
-				let is_error = data
-					.get("is_error")
-					.and_then(|v| v.as_bool())
-					.unwrap_or(false);
+				let is_error = data.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
 				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
 				if is_error {
 					block_open("/schedule", None);
@@ -2709,7 +2381,10 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					block_blank();
 					block_section("examples");
 					let eg: &[(&str, &str)] = &[
-						("/schedule add when=\"in 5m\" message=\"check build\"", "one-shot in 5 minutes"),
+						(
+							"/schedule add when=\"in 5m\" message=\"check build\"",
+							"one-shot in 5 minutes",
+						),
 						(
 							"/schedule add when=\"9am\" message=\"run tests\" every=\"1h\" description=\"hourly\"",
 							"repeating every hour",
@@ -2727,10 +2402,7 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 					let mg: &[(&str, &str)] = &[
 						("/schedule list", "show pending entries"),
 						("/schedule remove <id>", "cancel an entry"),
-						(
-							"/schedule edit <id> when=\"…\" message=\"…\"",
-							"update an entry",
-						),
+						("/schedule edit <id> when=\"…\" message=\"…\"", "update an entry"),
 						("/schedule help", "full reference"),
 					];
 					let mg_w = mg.iter().map(|(c, _)| c.len()).max().unwrap_or(0).min(40);
@@ -2756,18 +2428,12 @@ pub(super) fn display_schedule(output: &CommandOutput) {
 							.dimmed()
 							.to_string(),
 					);
-					block_close_ok(
-						"/schedule",
-						Some(&format!("{} scheduled", count.unwrap_or(0))),
-					);
+					block_close_ok("/schedule", Some(&format!("{} scheduled", count.unwrap_or(0))));
 					println!();
 				}
 			}
 			_ => {
-				let is_error = data
-					.get("is_error")
-					.and_then(|v| v.as_bool())
-					.unwrap_or(false);
+				let is_error = data.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
 				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
 				block_open("/schedule", None);
 				for line in msg.lines() {
@@ -2811,20 +2477,13 @@ pub(super) fn display_status(output: &CommandOutput) {
 
 fn display_status_overview(data: &serde_json::Value) {
 	use crate::utils::time::format_duration_short;
-	let active = data
-		.get("active")
-		.and_then(|value| value.as_u64())
-		.unwrap_or(0);
+	let active = data.get("active").and_then(|value| value.as_u64()).unwrap_or(0);
 	let agents = data.get("agents").and_then(|value| value.as_array());
 	let jobs = data.get("jobs").and_then(|value| value.as_array());
 	let monitors = data.get("monitors").and_then(|value| value.as_array());
 	block_open("/status", Some(&format!("{} active", active)));
 	if active == 0 {
-		block_line(
-			&"No active agents, MCP jobs, or command monitors."
-				.dimmed()
-				.to_string(),
-		);
+		block_line(&"No active agents, MCP jobs, or command monitors.".dimmed().to_string());
 	} else {
 		if let Some(agents) = agents.filter(|items| !items.is_empty()) {
 			block_section("agents");
@@ -2833,9 +2492,7 @@ fn display_status_overview(data: &serde_json::Value) {
 				let id = status_str(agent, "id", "?");
 				let elapsed = status_u64(agent, "elapsed_secs");
 				let cost = agent.get("cost").and_then(|value| value.as_f64());
-				let cost = cost
-					.map(|value| format!(" · ${value:.4}"))
-					.unwrap_or_default();
+				let cost = cost.map(|value| format!(" · ${value:.4}")).unwrap_or_default();
 				block_row_text(&format!(
 					"{} {} · {}{}",
 					agent_status_icon("running"),
@@ -2921,10 +2578,7 @@ fn display_status_monitors(data: &serde_json::Value) {
 		.and_then(|value| value.as_array())
 		.map(Vec::as_slice)
 		.unwrap_or(&[]);
-	block_open(
-		"/status monitors",
-		Some(&format!("{} active", monitors.len())),
-	);
+	block_open("/status monitors", Some(&format!("{} active", monitors.len())));
 	if monitors.is_empty() {
 		block_line(&"No active command monitors.".dimmed().to_string());
 	}
@@ -2953,18 +2607,12 @@ fn display_status_monitors(data: &serde_json::Value) {
 			.unwrap_or_else(|| "persistent".to_string());
 		block_row("lifetime", &lifetime, kw);
 	}
-	block_close_ok(
-		"/status monitors",
-		Some(&format!("{} active", monitors.len())),
-	);
+	block_close_ok("/status monitors", Some(&format!("{} active", monitors.len())));
 	println!();
 }
 
 fn status_str<'a>(value: &'a serde_json::Value, key: &str, default: &'a str) -> &'a str {
-	value
-		.get(key)
-		.and_then(|item| item.as_str())
-		.unwrap_or(default)
+	value.get(key).and_then(|item| item.as_str()).unwrap_or(default)
 }
 
 fn status_u64(value: &serde_json::Value, key: &str) -> u64 {
@@ -2975,10 +2623,7 @@ pub(super) fn display_workflow(output: &CommandOutput) {
 	let CommandOutput::Workflow { data } = output else {
 		return;
 	};
-	let subcommand = data
-		.get("subcommand")
-		.and_then(|v| v.as_str())
-		.unwrap_or("");
+	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
 	match subcommand {
 		"list" => {
 			let workflows = data
@@ -3010,10 +2655,7 @@ pub(super) fn display_workflow(output: &CommandOutput) {
 		}
 		"show" => {
 			let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
-			let source = data
-				.get("source_tap")
-				.and_then(|v| v.as_str())
-				.unwrap_or("");
+			let source = data.get("source_tap").and_then(|v| v.as_str()).unwrap_or("");
 			block_open("/workflow", Some(name));
 			if let Some(text) = data.get("definition").and_then(|v| v.as_str()) {
 				for line in text.lines() {
@@ -3031,19 +2673,13 @@ pub(super) fn display_workflow(output: &CommandOutput) {
 					block_line(line);
 				}
 			}
-			let cost = data
-				.get("cost")
-				.and_then(|v| v.as_f64())
-				.map(|c| format!("${c:.4}"));
+			let cost = data.get("cost").and_then(|v| v.as_f64()).map(|c| format!("${c:.4}"));
 			block_close_ok("/workflow", cost.as_deref());
 			println!();
 		}
 		"error" => {
 			block_open("/workflow", None);
-			let msg = data
-				.get("message")
-				.and_then(|v| v.as_str())
-				.unwrap_or("unknown error");
+			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
 			block_close_err("/workflow", msg);
 			println!();
 		}
@@ -3053,10 +2689,7 @@ pub(super) fn display_workflow(output: &CommandOutput) {
 
 pub(super) fn display_skill(output: &CommandOutput) {
 	if let CommandOutput::Skill { data } = output {
-		let subcommand = data
-			.get("subcommand")
-			.and_then(|v| v.as_str())
-			.unwrap_or("");
+		let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
 
 		match subcommand {
 			"list" => display_skill_list(data),
@@ -3080,10 +2713,7 @@ pub(super) fn display_skill(output: &CommandOutput) {
 			}
 			"error" => {
 				block_open("/skill", None);
-				let msg = data
-					.get("message")
-					.and_then(|v| v.as_str())
-					.unwrap_or("unknown error");
+				let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
 				block_close_err("/skill", msg);
 				println!();
 			}
@@ -3094,24 +2724,15 @@ pub(super) fn display_skill(output: &CommandOutput) {
 
 fn display_skill_list(data: &serde_json::Value) {
 	let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-	let active_count = data
-		.get("active_count")
-		.and_then(|v| v.as_u64())
-		.unwrap_or(0);
+	let active_count = data.get("active_count").and_then(|v| v.as_u64()).unwrap_or(0);
 	let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
-	let total_pages = data
-		.get("total_pages")
-		.and_then(|v| v.as_u64())
-		.unwrap_or(1);
+	let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(1);
 	let pattern = data.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
 
 	let subtitle = if pattern.is_empty() {
 		format!("{} available · {} active", total, active_count)
 	} else {
-		format!(
-			"filter '{}' · {} found · {} active",
-			pattern, total, active_count
-		)
+		format!("filter '{}' · {} found · {} active", pattern, total, active_count)
 	};
 	block_open("/skill", Some(&subtitle));
 
@@ -3127,43 +2748,22 @@ fn display_skill_list(data: &serde_json::Value) {
 
 	for skill in skills {
 		let name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-		let desc = skill
-			.get("description")
-			.and_then(|v| v.as_str())
-			.unwrap_or("");
-		let is_active = skill
-			.get("active")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
+		let desc = skill.get("description").and_then(|v| v.as_str()).unwrap_or("");
+		let is_active = skill.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
 		let capabilities = skill
 			.get("capabilities")
 			.and_then(|v| v.as_array())
-			.map(|a| {
-				a.iter()
-					.filter_map(|v| v.as_str())
-					.collect::<Vec<_>>()
-					.join(", ")
-			})
+			.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
 			.unwrap_or_default();
 		let domains = skill
 			.get("domains")
 			.and_then(|v| v.as_array())
-			.map(|a| {
-				a.iter()
-					.filter_map(|v| v.as_str())
-					.collect::<Vec<_>>()
-					.join(", ")
-			})
+			.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
 			.unwrap_or_default();
 		let scripts = skill
 			.get("scripts")
 			.and_then(|v| v.as_array())
-			.map(|a| {
-				a.iter()
-					.filter_map(|v| v.as_str())
-					.collect::<Vec<_>>()
-					.join(" ")
-			})
+			.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
 			.unwrap_or_default();
 
 		// Section header: `name` (with active marker as suffix value).
@@ -3217,10 +2817,7 @@ fn display_skill_list(data: &serde_json::Value) {
 			.dimmed()
 			.to_string(),
 	);
-	block_close_ok(
-		"/skill",
-		Some(&format!("{} skill(s) · {} active", total, active_count)),
-	);
+	block_close_ok("/skill", Some(&format!("{} skill(s) · {} active", total, active_count)));
 	println!();
 }
 
@@ -3230,10 +2827,7 @@ pub fn display_learning(output: &CommandOutput) {
 		_ => return,
 	};
 
-	let subcommand = data
-		.get("subcommand")
-		.and_then(|v| v.as_str())
-		.unwrap_or("");
+	let subcommand = data.get("subcommand").and_then(|v| v.as_str()).unwrap_or("");
 
 	match subcommand {
 		"list" => {
@@ -3241,10 +2835,7 @@ pub fn display_learning(output: &CommandOutput) {
 			let project = data.get("project").and_then(|v| v.as_str()).unwrap_or("?");
 			let total = data.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 			let page = data.get("page").and_then(|v| v.as_u64()).unwrap_or(1);
-			let total_pages = data
-				.get("total_pages")
-				.and_then(|v| v.as_u64())
-				.unwrap_or(0);
+			let total_pages = data.get("total_pages").and_then(|v| v.as_u64()).unwrap_or(0);
 			let pattern = data.get("pattern").and_then(|v| v.as_str());
 
 			let subtitle = if let Some(pat) = pattern {
@@ -3254,12 +2845,7 @@ pub fn display_learning(output: &CommandOutput) {
 			};
 			block_open("/learning", Some(&subtitle));
 			if let Some(storage) = data.get("storage") {
-				let number = |key| {
-					storage
-						.get(key)
-						.and_then(|value| value.as_u64())
-						.unwrap_or(0)
-				};
+				let number = |key| storage.get(key).and_then(|value| value.as_u64()).unwrap_or(0);
 				block_row_text(
 					&format!(
 						"hot: {} item(s) / {} tok · cold: {} item(s) / {} tok · scope: {} local + {} global",
@@ -3280,14 +2866,8 @@ pub fn display_learning(output: &CommandOutput) {
 							format!(
 								"{} {}/{}",
 								name,
-								counts
-									.get("hot")
-									.and_then(|value| value.as_u64())
-									.unwrap_or(0),
-								counts
-									.get("cold")
-									.and_then(|value| value.as_u64())
-									.unwrap_or(0)
+								counts.get("hot").and_then(|value| value.as_u64()).unwrap_or(0),
+								counts.get("cold").and_then(|value| value.as_u64()).unwrap_or(0)
 							)
 						})
 						.collect::<Vec<_>>()
@@ -3312,42 +2892,19 @@ pub fn display_learning(output: &CommandOutput) {
 				let index = lesson.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
 				let content = lesson.get("content").and_then(|v| v.as_str()).unwrap_or("");
 				let title = lesson.get("title").and_then(|v| v.as_str()).unwrap_or("");
-				let memory_type = lesson
-					.get("memory_type")
-					.and_then(|v| v.as_str())
-					.unwrap_or("learning");
-				let importance = lesson
-					.get("importance")
-					.and_then(|v| v.as_f64())
-					.unwrap_or(0.5);
-				let confidence = lesson
-					.get("confidence")
-					.and_then(|v| v.as_str())
-					.unwrap_or("");
-				let scope = lesson
-					.get("scope")
-					.and_then(|v| v.as_str())
-					.unwrap_or("scoped");
+				let memory_type = lesson.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
+				let importance = lesson.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.5);
+				let confidence = lesson.get("confidence").and_then(|v| v.as_str()).unwrap_or("");
+				let scope = lesson.get("scope").and_then(|v| v.as_str()).unwrap_or("scoped");
 				let tags = lesson
 					.get("tags")
 					.and_then(|v| v.as_array())
-					.map(|a| {
-						a.iter()
-							.filter_map(|v| v.as_str())
-							.collect::<Vec<_>>()
-							.join(", ")
-					})
+					.map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
 					.unwrap_or_default();
 				let created = lesson.get("created").and_then(|v| v.as_str()).unwrap_or("");
 				let outcome = lesson.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
-				let related = lesson
-					.get("related")
-					.and_then(|v| v.as_array())
-					.map_or(0, Vec::len);
-				let evidence = lesson
-					.get("evidence")
-					.and_then(|v| v.as_array())
-					.map_or(0, Vec::len);
+				let related = lesson.get("related").and_then(|v| v.as_array()).map_or(0, Vec::len);
+				let evidence = lesson.get("evidence").and_then(|v| v.as_array()).map_or(0, Vec::len);
 
 				let imp_indicator = if importance >= 0.7 {
 					"[high]".bright_yellow().to_string()
@@ -3373,10 +2930,7 @@ pub fn display_learning(output: &CommandOutput) {
 				} else {
 					String::new()
 				};
-				block_section(&format!(
-					"#{} {}{} ({})",
-					index, imp_indicator, scope_tag, memory_type
-				));
+				block_section(&format!("#{} {}{} ({})", index, imp_indicator, scope_tag, memory_type));
 				block_row_text(&content_display.bright_white().to_string());
 
 				let mut meta = Vec::new();
@@ -3428,16 +2982,10 @@ pub fn display_learning(output: &CommandOutput) {
 		}
 		"show" => {
 			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-			let memory_type = data
-				.get("memory_type")
-				.and_then(|v| v.as_str())
-				.unwrap_or("learning");
+			let memory_type = data.get("memory_type").and_then(|v| v.as_str()).unwrap_or("learning");
 			let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
 			let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("");
-			block_open(
-				"/learning",
-				Some(&format!("#{} · {} · {}", index, memory_type, title)),
-			);
+			block_open("/learning", Some(&format!("#{} · {} · {}", index, memory_type, title)));
 			for line in content.lines() {
 				block_row_text(line);
 			}
@@ -3493,17 +3041,12 @@ pub fn display_learning(output: &CommandOutput) {
 		}
 		"delete" => {
 			let index = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
-			let preview = data
-				.get("content_preview")
-				.and_then(|v| v.as_str())
-				.unwrap_or("");
+			let preview = data.get("content_preview").and_then(|v| v.as_str()).unwrap_or("");
 			block_open("/learning", None);
 			let kw = key_width(["deleted"]);
 			block_row(
 				"deleted",
-				&format!("#{}: {}…", index, preview)
-					.bright_green()
-					.to_string(),
+				&format!("#{}: {}…", index, preview).bright_green().to_string(),
 				kw,
 			);
 			block_close_ok("/learning", Some(&format!("deleted #{}", index)));
@@ -3530,9 +3073,7 @@ pub fn display_learning(output: &CommandOutput) {
 				if errors > 0 {
 					block_row(
 						"warnings",
-						&format!("{} file(s) could not be removed", errors)
-							.yellow()
-							.to_string(),
+						&format!("{} file(s) could not be removed", errors).yellow().to_string(),
 						kw,
 					);
 				}
@@ -3566,10 +3107,7 @@ pub fn display_learning(output: &CommandOutput) {
 					.dimmed()
 					.to_string(),
 			);
-			block_close_ok(
-				"/learning evolution",
-				Some(&format!("{} artifact(s)", records.len())),
-			);
+			block_close_ok("/learning evolution", Some(&format!("{} artifact(s)", records.len())));
 			println!();
 		}
 		"evolution_show" => {
@@ -3586,27 +3124,17 @@ pub fn display_learning(output: &CommandOutput) {
 			println!();
 		}
 		"evolution_action" => {
-			let action = data
-				.get("action")
-				.and_then(|v| v.as_str())
-				.unwrap_or("updated");
+			let action = data.get("action").and_then(|v| v.as_str()).unwrap_or("updated");
 			let record = data.get("record").cloned().unwrap_or_default();
 			let name = record.get("name").and_then(|v| v.as_str()).unwrap_or("?");
 			let state = record.get("state").and_then(|v| v.as_str()).unwrap_or("?");
 			block_open("/learning evolution", None);
-			block_row_text(
-				&format!("{action}: {name} -> {state}")
-					.bright_green()
-					.to_string(),
-			);
+			block_row_text(&format!("{action}: {name} -> {state}").bright_green().to_string());
 			block_close_ok("/learning evolution", Some(action));
 			println!();
 		}
 		"error" => {
-			let msg = data
-				.get("message")
-				.and_then(|v| v.as_str())
-				.unwrap_or("unknown error");
+			let msg = data.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
 			block_open("/learning", None);
 			block_close_err("/learning", msg);
 			println!();
@@ -3672,22 +3200,14 @@ pub fn display_usage(output: &CommandOutput) {
 	block_open("/usage", None);
 	if !signed_in {
 		block_line(&"Not signed in to Octomind.".yellow().to_string());
-		block_line(
-			&"Run `octomind login` to see your allowances."
-				.dimmed()
-				.to_string(),
-		);
+		block_line(&"Run `octomind login` to see your allowances.".dimmed().to_string());
 		block_close_ok("/usage", Some("signed out"));
 		println!();
 		return;
 	}
 
 	if let Some(a) = account {
-		block_row(
-			"account",
-			&a.bright_green().to_string(),
-			key_width(["account"]),
-		);
+		block_row("account", &a.bright_green().to_string(), key_width(["account"]));
 	}
 
 	block_section("spend");
@@ -3703,17 +3223,9 @@ pub fn display_usage(output: &CommandOutput) {
 	}
 	block_section("resources");
 	let kw = key_width(["balance", "storage", "network"]);
-	block_row(
-		"balance",
-		&format!("${balance_usd:.2}").bright_cyan().to_string(),
-		kw,
-	);
+	block_row("balance", &format!("${balance_usd:.2}").bright_cyan().to_string(), kw);
 	block_row("storage", &gb_bar(*storage_gb, *storage_quota_gb), kw);
-	block_row(
-		"network",
-		&gb_bar(*network_used_gb, *network_included_gb),
-		kw,
-	);
+	block_row("network", &gb_bar(*network_used_gb, *network_included_gb), kw);
 
 	// Summarise on committed (spent + reserved) — what actually bounds new work.
 	// Still a max over the list rather than windows[0]: one window today, but a
@@ -3723,10 +3235,7 @@ pub fn display_usage(output: &CommandOutput) {
 		.filter(|w| w.allowance_usd > 0.0)
 		.map(|w| (w.spent_usd + w.reserved_usd.unwrap_or(0.0)) / w.allowance_usd)
 		.fold(0.0_f64, f64::max);
-	block_close_ok(
-		"/usage",
-		Some(&format!("{:.0}% of allowance", peak * 100.0)),
-	);
+	block_close_ok("/usage", Some(&format!("{:.0}% of allowance", peak * 100.0)));
 	println!();
 }
 
@@ -3744,11 +3253,7 @@ pub fn display_login(output: &CommandOutput) {
 	block_open("/login", Some("octomind account"));
 	if *already_signed_in {
 		if let Some(a) = account {
-			block_row(
-				"account",
-				&a.bright_green().to_string(),
-				key_width(["account"]),
-			);
+			block_row("account", &a.bright_green().to_string(), key_width(["account"]));
 		}
 		block_close_ok("/login", Some("already signed in"));
 		println!();
@@ -3779,11 +3284,7 @@ pub fn display_share(output: &CommandOutput) {
 			|| url.starts_with("http://127.0.0.1")
 			|| url.starts_with("http://0.0.0.0")
 		{
-			block_line(
-				&"⚠  Local share — visible only from this machine."
-					.yellow()
-					.to_string(),
-			);
+			block_line(&"⚠  Local share — visible only from this machine.".yellow().to_string());
 			block_line(
 				&"   Unset OCTOMIND_SHARE_URL (or set to https://octomind.run) to share publicly."
 					.dimmed()
@@ -3802,9 +3303,7 @@ pub fn display_analyze(output: &CommandOutput) {
 		block_row("url", &url.bright_cyan().underline().to_string(), kw);
 		block_row(
 			"port",
-			&format!("127.0.0.1:{} (loopback only)", port)
-				.dimmed()
-				.to_string(),
+			&format!("127.0.0.1:{} (loopback only)", port).dimmed().to_string(),
 			kw,
 		);
 		block_close_ok("/analyze", Some(&format!(":{}", port)));
@@ -3847,10 +3346,7 @@ fn display_agent_status(data: &serde_json::Value) {
 		.map(Vec::as_slice)
 		.unwrap_or(&[]);
 	let detail = data.get("detail").filter(|value| !value.is_null());
-	let total = data
-		.get("total")
-		.and_then(|value| value.as_u64())
-		.unwrap_or(0);
+	let total = data.get("total").and_then(|value| value.as_u64()).unwrap_or(0);
 
 	// Detail card: /status agents <id>
 	if let Some(d) = detail {
@@ -3864,11 +3360,7 @@ fn display_agent_status(data: &serde_json::Value) {
 		if let Some(source) = get_str("source") {
 			block_row("source", &source.dimmed().to_string(), kw);
 		}
-		block_row(
-			"role",
-			&get_str("role").unwrap_or("?").bright_white().to_string(),
-			kw,
-		);
+		block_row("role", &get_str("role").unwrap_or("?").bright_white().to_string(), kw);
 		let elapsed = d.get("elapsed_secs").and_then(|v| v.as_u64()).unwrap_or(0);
 		block_row(
 			"status",
@@ -3902,11 +3394,7 @@ fn display_agent_status(data: &serde_json::Value) {
 			);
 		}
 		if let Some(cost) = d.get("cost").and_then(|v| v.as_f64()) {
-			block_row(
-				"cost",
-				&format!("${:.4}", cost).bright_green().to_string(),
-				kw,
-			);
+			block_row("cost", &format!("${:.4}", cost).bright_green().to_string(), kw);
 		} else if let Some(pricing) = get_str("pricing_status") {
 			block_row("pricing", &pricing.dimmed().to_string(), kw);
 		}

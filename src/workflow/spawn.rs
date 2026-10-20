@@ -35,8 +35,7 @@ pub struct RunOutcome {
 
 /// Every public workflow installed across taps, as `{name, description, source_tap}`.
 pub fn list_tap_workflows() -> Result<Vec<Value>> {
-	let workflows = crate::agent::registry::list_all_tap_workflows()
-		.context("failed to enumerate tap workflows")?;
+	let workflows = crate::agent::registry::list_all_tap_workflows().context("failed to enumerate tap workflows")?;
 	Ok(workflows
 		.iter()
 		.map(|w| {
@@ -66,10 +65,7 @@ pub async fn run_tap_workflow(name: &str, input: &str) -> Result<RunOutcome> {
 			.context("failed to feed workflow input")?;
 		// Dropping stdin closes it — the workflow reads stdin to EOF.
 	}
-	let out = child
-		.wait_with_output()
-		.await
-		.context("workflow process failed")?;
+	let out = child.wait_with_output().await.context("workflow process failed")?;
 
 	let mut last_text: Option<String> = None;
 	let mut cost: Option<f64> = None;
@@ -79,10 +75,7 @@ pub async fn run_tap_workflow(name: &str, input: &str) -> Result<RunOutcome> {
 		};
 		match ev.get("type").and_then(Value::as_str) {
 			Some("assistant") => {
-				last_text = ev
-					.get("content")
-					.and_then(Value::as_str)
-					.map(str::to_string);
+				last_text = ev.get("content").and_then(Value::as_str).map(str::to_string);
 			}
 			Some("cost") => cost = ev.get("session_cost").and_then(Value::as_f64),
 			_ => {}

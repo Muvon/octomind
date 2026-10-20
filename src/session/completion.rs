@@ -16,9 +16,7 @@
 
 use crate::config::Config;
 use crate::providers::{ChatCompletionParams, ProviderFactory, ProviderResponse};
-use crate::session::token_counter::{
-	estimate_sent_full_context_tokens, estimate_sent_session_tokens,
-};
+use crate::session::token_counter::{estimate_sent_full_context_tokens, estimate_sent_session_tokens};
 use crate::session::Message;
 use anyhow::Result;
 use tokio::sync::watch;
@@ -109,11 +107,7 @@ impl<'a> ChatCompletionWithValidationParams<'a> {
 	}
 
 	/// Construct a request from one fully resolved model profile.
-	pub fn from_profile(
-		messages: &'a [Message],
-		profile: &'a crate::config::ModelProfile,
-		config: &'a Config,
-	) -> Self {
+	pub fn from_profile(messages: &'a [Message], profile: &'a crate::config::ModelProfile, config: &'a Config) -> Self {
 		Self {
 			messages,
 			model: &profile.model,
@@ -223,9 +217,7 @@ fn is_empty_completion(
 	tool_calls: Option<&Vec<crate::mcp::McpToolCall>>,
 	structured_output: Option<&serde_json::Value>,
 ) -> bool {
-	content.trim().is_empty()
-		&& tool_calls.is_none_or(|c| c.is_empty())
-		&& structured_output.is_none()
+	content.trim().is_empty() && tool_calls.is_none_or(|c| c.is_empty()) && structured_output.is_none()
 }
 
 /// A successful HTTP response that carried no content, tool calls or structured
@@ -376,15 +368,10 @@ pub async fn chat_completion_with_validation(
 		if attempt > 0 {
 			if let Some(ref token) = cancellation_token {
 				if *token.borrow() {
-					return Err(anyhow::anyhow!(
-						"Request cancelled during empty-completion retry"
-					));
+					return Err(anyhow::anyhow!("Request cancelled during empty-completion retry"));
 				}
 			}
-			tokio::time::sleep(std::time::Duration::from_millis(
-				EMPTY_COMPLETION_RETRY_DELAY_MS,
-			))
-			.await;
+			tokio::time::sleep(std::time::Duration::from_millis(EMPTY_COMPLETION_RETRY_DELAY_MS)).await;
 		}
 		let octolib_params = chat_params
 			.to_octolib_params()
@@ -439,9 +426,7 @@ pub async fn chat_completion_with_validation(
 
 /// High-level function to send a chat completion using the provider abstraction.
 /// Handles model parsing and provider selection automatically.
-pub async fn chat_completion_with_provider(
-	params: ChatCompletionProviderParams<'_>,
-) -> Result<ProviderResponse> {
+pub async fn chat_completion_with_provider(params: ChatCompletionProviderParams<'_>) -> Result<ProviderResponse> {
 	// Parse the model string and get the appropriate provider
 	let (provider, actual_model) = ProviderFactory::get_provider_for_model(params.model)?;
 
@@ -480,9 +465,7 @@ pub async fn chat_completion_with_provider(
 	let octolib_response = provider.chat_completion(octolib_params).await?;
 
 	// Convert response back to Octomind format
-	Ok(crate::providers::convert_response_from_octolib(
-		octolib_response,
-	))
+	Ok(crate::providers::convert_response_from_octolib(octolib_response))
 }
 
 /// Validate that the provider for `model` can enforce structured output (JSON
@@ -505,10 +488,9 @@ pub fn ensure_structured_output_support(model: &str) -> Result<()> {
 /// shape usable for structured output. Finer schema errors surface via the
 /// provider's strict-mode validation at request time.
 pub fn load_structured_output_schema(path: &str) -> Result<serde_json::Value> {
-	let raw = std::fs::read_to_string(path)
-		.map_err(|e| anyhow::anyhow!("Failed to read schema file '{path}': {e}"))?;
-	let schema: serde_json::Value = serde_json::from_str(&raw)
-		.map_err(|e| anyhow::anyhow!("Invalid JSON in schema file '{path}': {e}"))?;
+	let raw = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("Failed to read schema file '{path}': {e}"))?;
+	let schema: serde_json::Value =
+		serde_json::from_str(&raw).map_err(|e| anyhow::anyhow!("Invalid JSON in schema file '{path}': {e}"))?;
 	if !schema.is_object() {
 		return Err(anyhow::anyhow!(
 			"Schema file '{path}' must contain a JSON object (a JSON Schema document)"

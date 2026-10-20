@@ -71,8 +71,7 @@ fn later_override_wins_field_by_field() {
 #[test]
 fn optional_owner_blocks_inherit_the_complete_main_profile() {
 	let mut value: toml::Value =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("default template parses");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
 	value["supervisor"].as_table_mut().unwrap().remove("model");
 	value["compression"].as_table_mut().unwrap().remove("model");
 	value["roles"].as_array_mut().unwrap()[0]
@@ -84,32 +83,23 @@ fn optional_owner_blocks_inherit_the_complete_main_profile() {
 	config.build_role_map();
 	assert_eq!(config.get_supervisor_model_profile(), config.model_profile);
 	assert_eq!(config.get_compression_model_profile(), config.model_profile);
-	assert_eq!(
-		config.get_model_profile_for_role("assistant"),
-		config.model_profile
-	);
+	assert_eq!(config.get_model_profile_for_role("assistant"), config.model_profile);
 }
 
 #[test]
 fn main_model_profile_is_required_and_complete() {
 	let mut value: toml::Value =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("default template parses");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
 	value.as_table_mut().unwrap().remove("model");
 	let parsed: Result<crate::config::Config, _> = value.try_into();
-	let error = parsed
-		.expect_err("main model table must be required")
-		.to_string();
+	let error = parsed.expect_err("main model table must be required").to_string();
 	assert!(error.contains("missing field `model`"), "got: {error}");
 
 	let mut value: toml::Value =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("default template parses");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template parses");
 	value["model"].as_table_mut().unwrap().remove("top_p");
 	let parsed: Result<crate::config::Config, _> = value.try_into();
-	let error = parsed
-		.expect_err("main model fields must be required")
-		.to_string();
+	let error = parsed.expect_err("main model fields must be required").to_string();
 	assert!(error.contains("missing field `top_p`"), "got: {error}");
 }
 
@@ -117,11 +107,7 @@ fn main_model_profile_is_required_and_complete() {
 fn role_can_override_any_subset_of_the_main_profile() {
 	let mut config: crate::config::Config =
 		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
-	let role = config
-		.roles
-		.iter_mut()
-		.find(|role| role.name == "assistant")
-		.unwrap();
+	let role = config.roles.iter_mut().find(|role| role.name == "assistant").unwrap();
 	role.config.model = ModelProfileOverride {
 		model: Some("openai:gpt-5".into()),
 		reasoning_effort: Some(ReasoningEffortConfig::High),

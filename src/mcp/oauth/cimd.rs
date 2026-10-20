@@ -110,15 +110,9 @@ async fn start_cimd_server(callback_url: &str, scopes: &[String]) -> Result<Stri
 
 	// Find a free port for the CIMD server
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-	let cimd_port = listener
-		.local_addr()
-		.context("Failed to get CIMD server port")?
-		.port();
+	let cimd_port = listener.local_addr().context("Failed to get CIMD server port")?.port();
 
-	let client_id_url = format!(
-		"http://localhost:{}/.well-known/oauth-client.json",
-		cimd_port
-	);
+	let client_id_url = format!("http://localhost:{}/.well-known/oauth-client.json", cimd_port);
 
 	crate::log_debug!("Starting CIMD server at {} (client_id URL)", client_id_url);
 
@@ -254,19 +248,12 @@ async fn register_via_dcr(
 		.json(&client_metadata)
 		.send()
 		.await
-		.context(format!(
-			"Failed to register client at {}",
-			registration_endpoint
-		))?;
+		.context(format!("Failed to register client at {}", registration_endpoint))?;
 
 	if !response.status().is_success() {
 		let status = response.status();
 		let body = response.text().await.unwrap_or_default();
-		return Err(anyhow!(
-			"DCR registration failed with status {}: {}",
-			status,
-			body
-		));
+		return Err(anyhow!("DCR registration failed with status {}: {}", status, body));
 	}
 
 	let dcr_response: DcrRegistrationResponse = response
@@ -274,10 +261,7 @@ async fn register_via_dcr(
 		.await
 		.context("Failed to parse DCR registration response")?;
 
-	crate::log_debug!(
-		"DCR registration successful: client_id={}",
-		dcr_response.client_id
-	);
+	crate::log_debug!("DCR registration successful: client_id={}", dcr_response.client_id);
 
 	Ok(dcr_response)
 }
@@ -297,15 +281,9 @@ async fn register_via_dcr(
 /// # Returns
 /// * `Ok(OAuthConfig)` - Config with resolved client_id
 /// * `Err` - If neither CIMD nor DCR is available
-pub async fn resolve_client_id(
-	oauth_config: OAuthConfig,
-	auth_metadata: &AuthServerMetadata,
-) -> Result<OAuthConfig> {
+pub async fn resolve_client_id(oauth_config: OAuthConfig, auth_metadata: &AuthServerMetadata) -> Result<OAuthConfig> {
 	// Strategy 1: CIMD — if auth server supports it, use metadata document URL as client_id
-	if auth_metadata
-		.client_id_metadata_document_supported
-		.unwrap_or(false)
-	{
+	if auth_metadata.client_id_metadata_document_supported.unwrap_or(false) {
 		crate::log_debug!("Auth server supports CIMD, starting local metadata server...");
 
 		match start_cimd_server(&oauth_config.callback_url, &oauth_config.scopes).await {
@@ -317,10 +295,7 @@ pub async fn resolve_client_id(
 				});
 			}
 			Err(e) => {
-				crate::log_debug!(
-					"CIMD server failed: {}, falling back to DCR if available",
-					e
-				);
+				crate::log_debug!("CIMD server failed: {}, falling back to DCR if available", e);
 				// Fall through to DCR
 			}
 		}
@@ -328,18 +303,9 @@ pub async fn resolve_client_id(
 
 	// Strategy 2: DCR — register client via registration_endpoint
 	if let Some(ref registration_endpoint) = auth_metadata.registration_endpoint {
-		crate::log_debug!(
-			"Auth server provides DCR endpoint: {}",
-			registration_endpoint
-		);
+		crate::log_debug!("Auth server provides DCR endpoint: {}", registration_endpoint);
 
-		match register_via_dcr(
-			registration_endpoint,
-			&oauth_config.callback_url,
-			&oauth_config.scopes,
-		)
-		.await
-		{
+		match register_via_dcr(registration_endpoint, &oauth_config.callback_url, &oauth_config.scopes).await {
 			Ok(dcr_response) => {
 				return Ok(OAuthConfig {
 					client_id: dcr_response.client_id,

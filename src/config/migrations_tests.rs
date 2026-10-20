@@ -37,9 +37,7 @@ fn user_document(content: &str) -> toml_edit::DocumentMut {
 }
 
 fn template_document() -> toml_edit::DocumentMut {
-	DEFAULT_CONFIG_TEMPLATE
-		.parse()
-		.expect("embedded template must parse")
+	DEFAULT_CONFIG_TEMPLATE.parse().expect("embedded template must parse")
 }
 
 #[test]
@@ -55,15 +53,9 @@ fn v12_authorizer_migration_defaults_off_and_preserves_explicit_choice() {
 		}
 		let migrated = migrate_once(&document.to_string());
 		let config: crate::config::Config = toml::from_str(&migrated).unwrap();
-		assert_eq!(
-			config.supervisor.authorizer.enabled,
-			choice.unwrap_or(false)
-		);
+		assert_eq!(config.supervisor.authorizer.enabled, choice.unwrap_or(false));
 		assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-		assert!(plan()
-			.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.is_none());
+		assert!(plan().migrate(&migrated, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
 	}
 }
 
@@ -85,10 +77,7 @@ fn migrating_the_output_of_a_migration_is_a_noop() {
 	] {
 		let once = migrate_once(fixture);
 		assert!(
-			plan()
-				.migrate(&once, DEFAULT_CONFIG_TEMPLATE)
-				.unwrap()
-				.is_none(),
+			plan().migrate(&once, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none(),
 			"migrated output must already be current, got: {once}"
 		);
 	}
@@ -181,10 +170,7 @@ retry_timeout = 30
 	let migrated = parse(&migrate_once(old));
 	assert_eq!(migrated["model"]["name"].as_str(), Some("openai:main"));
 	assert_eq!(migrated["model"]["reasoning_effort"].as_str(), Some("high"));
-	assert_eq!(
-		migrated["roles"][0]["model"]["name"].as_str(),
-		Some("anthropic:worker")
-	);
+	assert_eq!(migrated["roles"][0]["model"]["name"].as_str(), Some("anthropic:worker"));
 	assert_eq!(
 		migrated["supervisor"]["model"]["name"].as_str(),
 		Some("google:supervisor")
@@ -194,9 +180,7 @@ retry_timeout = 30
 		Some("openai:compression")
 	);
 	assert!(migrated["supervisor"]["learning"].get("model").is_none());
-	assert!(migrated["supervisor"]["gate"]
-		.get("verifier_model")
-		.is_none());
+	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
 	assert!(migrated["supervisor"]["plan"].get("model").is_none());
 	assert!(migrated["supervisor"]["condense"].get("model").is_none());
 }
@@ -208,10 +192,7 @@ fn an_empty_document_migrates_to_the_template_supervisor_defaults() {
 		migrated["version"].as_integer(),
 		Some(i64::from(CURRENT_CONFIG_VERSION))
 	);
-	assert_eq!(
-		migrated["supervisor"]["model"]["max_tokens"].as_integer(),
-		Some(8192)
-	);
+	assert_eq!(migrated["supervisor"]["model"]["max_tokens"].as_integer(), Some(8192));
 }
 
 #[test]
@@ -237,9 +218,8 @@ fn add_v9_adaptive_condense_creates_condense_inside_an_existing_supervisor() {
 #[test]
 fn collapse_pressure_levels_carries_a_single_level_threshold() {
 	let template = template_document();
-	let mut document = user_document(
-		"[compression]\n\n[[compression.pressure_levels]]\nthreshold = 45000\ntarget_ratio = 2.0\n",
-	);
+	let mut document =
+		user_document("[compression]\n\n[[compression.pressure_levels]]\nthreshold = 45000\ntarget_ratio = 2.0\n");
 	collapse_pressure_levels(&mut document, &template).unwrap();
 	let compression = parse(&document.to_string())["compression"].clone();
 	assert_eq!(compression["threshold"].as_integer(), Some(45000));
@@ -275,8 +255,7 @@ fn check_and_upgrade_leaves_an_up_to_date_file_untouched() {
 
 #[test]
 fn check_and_upgrade_errors_on_a_missing_file() {
-	let missing =
-		std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
+	let missing = std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
 	assert!(check_and_upgrade_config(&missing).is_err());
 }
 
@@ -291,11 +270,7 @@ fn force_upgrade_stamps_an_outdated_file_and_is_quiet_on_current_ones() {
 		Some(i64::from(CURRENT_CONFIG_VERSION))
 	);
 	assert_eq!(upgraded["supervisor"]["enabled"].as_bool(), Some(true));
-	assert_eq!(
-		bak_files(dir.path()).len(),
-		1,
-		"exactly one backup expected"
-	);
+	assert_eq!(bak_files(dir.path()).len(), 1, "exactly one backup expected");
 
 	// A second force run reports success without rewriting the file.
 	let stamped = fs::read_to_string(&path).unwrap();
@@ -317,10 +292,7 @@ fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert_eq!(
-		config.decision.model.as_deref(),
-		Some("cloudflare:typesafe/jev")
-	);
+	assert_eq!(config.decision.model.as_deref(), Some("cloudflare:typesafe/jev"));
 	assert!(!config.decision.recall);
 	assert!(!config.decision.skills);
 	assert!(!config.decision.supervisor);
@@ -330,15 +302,11 @@ fn v13_evaluate_migration_inserts_seams_off_and_preserves_supervisor_values() {
 		Some("openai:custom-supervisor")
 	);
 	assert!(config.supervisor.authorizer.enabled);
-	assert!(plan()
-		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.is_none());
+	assert!(plan().migrate(&migrated, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
 }
 
 #[test]
-fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserves_evaluate_values()
-{
+fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserves_evaluate_values() {
 	let mut document = template_document();
 	document["version"] = toml_edit::value(14);
 	document.remove("decision");
@@ -353,17 +321,11 @@ fn v14_evaluate_seams_migration_inserts_condense_and_compression_off_and_preserv
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
 	assert!(!config.decision.compression);
-	assert_eq!(
-		config.decision.model.as_deref(),
-		Some("typesafe:jev-latest")
-	);
+	assert_eq!(config.decision.model.as_deref(), Some("typesafe:jev-latest"));
 	assert!(config.decision.recall);
 	assert!(!config.decision.skills);
 	assert!(config.decision.supervisor);
-	assert!(plan()
-		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.is_none());
+	assert!(plan().migrate(&migrated, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
 }
 
 #[test]
@@ -382,18 +344,12 @@ fn v15_evaluate_seams_migration_inserts_distill_plan_and_gate_off_and_preserves_
 	let migrated = migrate_once(&document.to_string());
 	let config: crate::config::Config = toml::from_str(&migrated).unwrap();
 	assert_eq!(config.version, CURRENT_CONFIG_VERSION);
-	assert_eq!(
-		config.decision.model.as_deref(),
-		Some("typesafe:jev-latest")
-	);
+	assert_eq!(config.decision.model.as_deref(), Some("typesafe:jev-latest"));
 	assert!(config.decision.recall);
 	assert!(config.decision.supervisor);
 	assert!(!config.decision.skills);
 	assert!(!config.decision.compression);
-	assert!(plan()
-		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.is_none());
+	assert!(plan().migrate(&migrated, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
 }
 
 #[test]
@@ -413,10 +369,7 @@ fn v16_evaluate_seams_migration_inserts_capabilities_off_and_preserves_evaluate_
 	assert!(config.decision.skills);
 	assert!(config.decision.supervisor);
 	assert!(!config.decision.recall);
-	assert!(plan()
-		.migrate(&migrated, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.is_none());
+	assert!(plan().migrate(&migrated, DEFAULT_CONFIG_TEMPLATE).unwrap().is_none());
 }
 
 #[test]
@@ -433,7 +386,6 @@ fn v19_timing_migration_adds_the_section_and_keeps_calibrated_values() {
 	assert_eq!(config.timing.review_weight, 3.0);
 
 	document.remove("timing");
-	let config: crate::config::Config =
-		toml::from_str(&migrate_once(&document.to_string())).unwrap();
+	let config: crate::config::Config = toml::from_str(&migrate_once(&document.to_string())).unwrap();
 	assert_eq!(config.timing.review_weight, 2.0);
 }

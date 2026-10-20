@@ -19,9 +19,8 @@
 use super::*;
 
 fn template_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -107,10 +106,7 @@ async fn test_list_with_no_servers_reports_zero_tools() {
 	let (_, data) = run(&config, &["list"]).await;
 	assert_eq!(data["subcommand"], "list");
 	assert_eq!(data["total_tools"], 0);
-	assert_eq!(
-		data["servers"].as_object().map(serde_json::Map::len),
-		Some(0)
-	);
+	assert_eq!(data["servers"].as_object().map(serde_json::Map::len), Some(0));
 }
 
 #[tokio::test]
@@ -165,17 +161,11 @@ async fn test_info_reports_builtin_servers_as_running() {
 		.filter_map(|s| s.get("name").and_then(|v| v.as_str()))
 		.collect();
 	for expected in ["core", "runtime", "agent", "orchestration"] {
-		assert!(
-			names.contains(&expected),
-			"missing server {expected}: {data}"
-		);
+		assert!(names.contains(&expected), "missing server {expected}: {data}");
 	}
 	for server in servers {
 		if server["connection_type"] == "builtin" {
-			assert_eq!(
-				server["health"], "running",
-				"builtin must be running: {server}"
-			);
+			assert_eq!(server["health"], "running", "builtin must be running: {server}");
 		}
 	}
 	assert!(
@@ -200,10 +190,7 @@ async fn test_full_includes_parameter_schemas() {
 	for (_server, entries) in tools {
 		for entry in entries.as_array().expect("tool entries") {
 			assert!(entry.get("parameters").is_some(), "missing schema: {entry}");
-			assert!(
-				entry.get("description").is_some(),
-				"missing description: {entry}"
-			);
+			assert!(entry.get("description").is_some(), "missing description: {entry}");
 		}
 	}
 }
@@ -219,11 +206,7 @@ async fn test_validate_builtin_schemas_are_well_formed() {
 	for tool in tools {
 		let valid = tool["valid"].as_bool().expect("valid flag");
 		let issues = tool["issues"].as_array().expect("issues array");
-		assert_eq!(
-			valid,
-			issues.is_empty(),
-			"valid flag disagrees with issues: {tool}"
-		);
+		assert_eq!(valid, issues.is_empty(), "valid flag disagrees with issues: {tool}");
 	}
 	assert_eq!(data["all_valid"], true, "builtin schemas regressed: {data}");
 }
@@ -303,10 +286,7 @@ async fn test_info_marks_unstarted_stdio_server_dead() {
 async fn test_health_reports_dead_and_failed_states() {
 	use crate::mcp::process::{ServerHealth, ServerRestartInfo, SERVER_RESTART_INFO};
 
-	let config = config_with_only_servers(vec![
-		stdio_server("cov-health-dead"),
-		stdio_server("cov-health-failed"),
-	]);
+	let config = config_with_only_servers(vec![stdio_server("cov-health-dead"), stdio_server("cov-health-failed")]);
 
 	// Seed the global restart registry:
 	// - "dead": a recent restart attempt puts it inside the 30s cooldown, so
@@ -413,8 +393,7 @@ async fn test_local_tools_surface_as_local_server() {
 		"#!/bin/sh\n# @description Coverage local tool\n# @param input The input text\nexit 0\n",
 	)
 	.expect("write local tool");
-	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-		.expect("make tool executable");
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("make tool executable");
 
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(workdir.clone());

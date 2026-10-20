@@ -22,18 +22,14 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 // Match <system>...</system> (multiline, lazy) including surrounding blank lines.
-static SYSTEM_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"(?is)\s*<system>.*?</system>\s*").expect("valid system-tag regex")
-});
+static SYSTEM_TAG_REGEX: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?is)\s*<system>.*?</system>\s*").expect("valid system-tag regex"));
 
 /// Strip `<system>...</system>` blocks (and surrounding blank lines) from
 /// content intended for user-facing display. Used for welcome messages that
 /// embed AI-only context inside `<system>` tags.
 pub fn strip_system_tags(content: &str) -> String {
-	SYSTEM_TAG_REGEX
-		.replace_all(content, "\n")
-		.trim()
-		.to_string()
+	SYSTEM_TAG_REGEX.replace_all(content, "\n").trim().to_string()
 }
 
 /// Check if assistant content was already displayed in thinking block
@@ -63,12 +59,7 @@ pub fn get_content_to_display(content: &str, thinking: &Option<ThinkingBlock>) -
 }
 
 // Helper function to print content with optional markdown rendering
-pub fn print_assistant_response(
-	content: &str,
-	config: &Config,
-	_role: &str,
-	thinking: &Option<ThinkingBlock>,
-) {
+pub fn print_assistant_response(content: &str, config: &Config, _role: &str, thinking: &Option<ThinkingBlock>) {
 	let content_to_display = get_content_to_display(content, thinking);
 
 	if content_to_display.is_empty() {

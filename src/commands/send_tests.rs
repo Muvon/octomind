@@ -55,8 +55,7 @@ struct Cli {
 
 #[test]
 fn send_args_parse_name_short_flag_and_message() {
-	let cli = Cli::try_parse_from(["octomind", "-n", "work", "hello there"])
-		.expect("name + message parse");
+	let cli = Cli::try_parse_from(["octomind", "-n", "work", "hello there"]).expect("name + message parse");
 	assert_eq!(cli.args.name, "work");
 	assert_eq!(cli.args.message.as_deref(), Some("hello there"));
 
@@ -64,10 +63,7 @@ fn send_args_parse_name_short_flag_and_message() {
 	assert_eq!(cli.args.name, "work");
 	assert!(cli.args.message.is_none());
 
-	assert!(
-		Cli::try_parse_from(["octomind", "hello"]).is_err(),
-		"name is required"
-	);
+	assert!(Cli::try_parse_from(["octomind", "hello"]).is_err(), "name is required");
 }
 
 #[tokio::test]
@@ -84,10 +80,7 @@ async fn read_response_accepts_ok_and_rejects_anything_else() {
 	let err = read_response(&mut busy, "sess")
 		.await
 		.expect_err("non-ok surfaces the reply");
-	assert!(
-		err.to_string().contains("session 'sess' returned: busy"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("session 'sess' returned: busy"), "{err}");
 }
 
 #[tokio::test]
@@ -98,10 +91,7 @@ async fn execute_rejects_an_empty_message_argument() {
 	})
 	.await
 	.expect_err("blank message bails");
-	assert!(
-		err.to_string().contains("message must not be empty"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("message must not be empty"), "{err}");
 }
 
 #[tokio::test]
@@ -114,19 +104,13 @@ async fn execute_rejects_a_missing_message_without_stdin_data() {
 	})
 	.await
 	.expect_err("no message bails");
-	assert!(
-		err.to_string().contains("message must not be empty"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("message must not be empty"), "{err}");
 }
 
 /// Bind a one-shot Unix-socket peer at the session's inject path and echo
 /// `reply` back. Returns the received message via the join handle.
 #[cfg(unix)]
-async fn socket_peer(
-	name: &str,
-	reply: &'static str,
-) -> (std::path::PathBuf, tokio::task::JoinHandle<String>) {
+async fn socket_peer(name: &str, reply: &'static str) -> (std::path::PathBuf, tokio::task::JoinHandle<String>) {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 	let path = octomind::directories::session_socket_path(name).expect("socket path");
@@ -134,9 +118,7 @@ async fn socket_peer(
 	let task = tokio::spawn(async move {
 		let (mut sock, _) = listener.accept().await.expect("accept");
 		let mut received = String::new();
-		sock.read_to_string(&mut received)
-			.await
-			.expect("read message");
+		sock.read_to_string(&mut received).await.expect("read message");
 		sock.write_all(reply.as_bytes()).await.expect("write reply");
 		let _ = sock.shutdown().await;
 		received
@@ -197,8 +179,7 @@ async fn execute_fails_when_no_session_socket_exists() {
 	.await
 	.expect_err("missing socket bails");
 	assert!(
-		err.to_string()
-			.contains(&format!("no running session named '{name}'")),
+		err.to_string().contains(&format!("no running session named '{name}'")),
 		"{err}"
 	);
 }

@@ -33,10 +33,7 @@ impl TestDataDir {
 		let dir = tempfile::tempdir().expect("temporary data dir");
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -111,11 +108,7 @@ async fn test_learning_list_and_delete_lifecycle() {
 
 	// Bare /learning lists both (global-tier entries from the machine may
 	// follow ours, so assert containment, not exact counts).
-	let data = learning_data(
-		handle_learning(&mut session, &[])
-			.await
-			.expect("list dispatches"),
-	);
+	let data = learning_data(handle_learning(&mut session, &[]).await.expect("list dispatches"));
 	assert_eq!(data["subcommand"], "list");
 	assert_eq!(data["storage"]["hot_items"], 2);
 	assert_eq!(data["storage"]["cold_items"], 0);
@@ -129,13 +122,8 @@ async fn test_learning_list_and_delete_lifecycle() {
 			.expect("show dispatches"),
 	);
 	assert_eq!(shown["subcommand"], "show");
-	assert!(shown["content"]
-		.as_str()
-		.unwrap_or_default()
-		.contains("learning-cmd"));
-	assert!(shown["path"]
-		.as_str()
-		.is_some_and(|path| path.ends_with(".md")));
+	assert!(shown["content"].as_str().unwrap_or_default().contains("learning-cmd"));
+	assert!(shown["path"].as_str().is_some_and(|path| path.ends_with(".md")));
 
 	// Glob filter narrows to the matching lesson
 	let data = learning_data(
@@ -155,11 +143,7 @@ async fn test_learning_list_and_delete_lifecycle() {
 	);
 	assert_eq!(data["subcommand"], "delete", "delete failed: {data}");
 
-	let data = learning_data(
-		handle_learning(&mut session, &[])
-			.await
-			.expect("list after delete"),
-	);
+	let data = learning_data(handle_learning(&mut session, &[]).await.expect("list after delete"));
 	// Listing order is retrieval-ranked, not insertion order — index 1 was
 	// one of the two, so exactly one must survive.
 	let listed = data["lessons"].to_string();
@@ -202,11 +186,7 @@ async fn test_learning_error_arms() {
 	let mut session = test_session();
 
 	// delete without an index → usage error
-	let data = learning_data(
-		handle_learning(&mut session, &["delete"])
-			.await
-			.expect("dispatches"),
-	);
+	let data = learning_data(handle_learning(&mut session, &["delete"]).await.expect("dispatches"));
 	assert_eq!(data["subcommand"], "error");
 
 	// non-numeric and zero indices → validation error
@@ -331,11 +311,7 @@ async fn test_learning_evolution_command_lifecycle() {
 	assert_eq!(listed["total"], 1);
 	assert_eq!(listed["records"][0]["id"], id);
 
-	let shown = learning_data(
-		handle_learning(&mut session, &["evolution", "show", id])
-			.await
-			.unwrap(),
-	);
+	let shown = learning_data(handle_learning(&mut session, &["evolution", "show", id]).await.unwrap());
 	assert_eq!(shown["subcommand"], "evolution_show");
 	assert!(shown["native_artifact"]
 		.as_str()

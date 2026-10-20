@@ -102,10 +102,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -129,10 +126,7 @@ fn write_named_session(name: &str, lines: &[String]) -> PathBuf {
 }
 
 fn set_mtime(path: &Path, secs: u64) {
-	let file = std::fs::File::options()
-		.write(true)
-		.open(path)
-		.expect("open for mtime");
+	let file = std::fs::File::options().write(true).open(path).expect("open for mtime");
 	file.set_times(
 		std::fs::FileTimes::new()
 			.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs)),
@@ -245,10 +239,7 @@ fn clean_interrupted_tool_calls_inserts_synthetic_response() {
 	assert_eq!(messages.len(), 4);
 	let synthetic = &messages[2]; // directly after the assistant message
 	assert_eq!(synthetic.role, "tool");
-	assert_eq!(
-		synthetic.content,
-		"[Tool execution was interrupted by user]"
-	);
+	assert_eq!(synthetic.content, "[Tool execution was interrupted by user]");
 	assert_eq!(synthetic.tool_call_id.as_deref(), Some("call_1"));
 	assert_eq!(synthetic.name.as_deref(), Some("view"));
 	assert!(synthetic.tool_calls.is_none());
@@ -265,14 +256,8 @@ fn clean_interrupted_tool_calls_patches_every_missing_call_in_order() {
 	assert_eq!(messages.len(), 3);
 	assert_eq!(messages[1].tool_call_id.as_deref(), Some("call_2"));
 	assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_1"));
-	assert_eq!(
-		messages[1].content,
-		"[Tool execution was interrupted by user]"
-	);
-	assert_eq!(
-		messages[2].content,
-		"[Tool execution was interrupted by user]"
-	);
+	assert_eq!(messages[1].content, "[Tool execution was interrupted by user]");
+	assert_eq!(messages[2].content, "[Tool execution was interrupted by user]");
 }
 
 #[test]
@@ -348,10 +333,7 @@ fn parse_log_lines_legacy_summary_prefix_populates_session_info() {
 	let info = test_session_info("legacy-summary");
 	let line = format!("SUMMARY: {}", serde_json::to_string(&info).unwrap());
 	let parsed = parse(&[line]);
-	assert_eq!(
-		parsed.session_info.expect("session info").name,
-		"legacy-summary"
-	);
+	assert_eq!(parsed.session_info.expect("session info").name, "legacy-summary");
 }
 
 #[test]
@@ -380,10 +362,7 @@ fn parse_log_lines_restoration_point_routes_subsequent_messages() {
 		msg_json_line("user", "after"),
 	]);
 	assert!(parsed.restoration_point_found);
-	assert!(
-		parsed.messages.is_empty(),
-		"pre-restoration messages are dropped"
-	);
+	assert!(parsed.messages.is_empty(), "pre-restoration messages are dropped");
 	assert_eq!(parsed.restoration_messages.len(), 1);
 	assert_eq!(parsed.restoration_messages[0].content, "after");
 }
@@ -419,11 +398,7 @@ fn parse_log_lines_truncation_point_without_count_is_noop() {
 		msg_json_line("assistant", "b"),
 		json!({"type": "TRUNCATION_POINT"}).to_string(),
 	]);
-	assert_eq!(
-		parsed.messages.len(),
-		2,
-		"no message_count → nothing truncated"
-	);
+	assert_eq!(parsed.messages.len(), 2, "no message_count → nothing truncated");
 }
 
 #[test]
@@ -484,10 +459,7 @@ fn parse_log_lines_stats_before_any_summary_are_ignored() {
 		"input_tokens": 10u64,
 	})
 	.to_string()]);
-	assert!(
-		parsed.session_info.is_none(),
-		"no SUMMARY → nothing to update"
-	);
+	assert!(parsed.session_info.is_none(), "no SUMMARY → nothing to update");
 }
 
 #[test]
@@ -558,11 +530,7 @@ fn parse_log_lines_tool_call_markers_reconstruct_assistant_message() {
 		json!({"type": "TOOL_CALL", "tool_name": "shell", "tool_id": "c1", "parameters": {"cmd": "ls"}}).to_string(),
 		serde_json::to_string(&tool_msg("c1", "shell")).unwrap(),
 	]);
-	assert_eq!(
-		parsed.messages.len(),
-		3,
-		"user + reconstructed assistant + tool"
-	);
+	assert_eq!(parsed.messages.len(), 3, "user + reconstructed assistant + tool");
 	let assistant = &parsed.messages[1];
 	assert_eq!(assistant.role, "assistant");
 	let calls = assistant
@@ -587,11 +555,7 @@ fn parse_log_lines_tool_call_marker_without_id_is_not_collected() {
 		json!({"type": "TOOL_CALL", "tool_name": "shell", "parameters": {}}).to_string(),
 		serde_json::to_string(&tool_msg("c1", "shell")).unwrap(),
 	]);
-	assert_eq!(
-		parsed.messages.len(),
-		1,
-		"no reconstruction without a tool_id"
-	);
+	assert_eq!(parsed.messages.len(), 1, "no reconstruction without a tool_id");
 	assert_eq!(parsed.messages[0].role, "tool");
 }
 
@@ -600,8 +564,7 @@ fn parse_log_lines_tool_call_reconstruction_skipped_when_assistant_already_logge
 	let assistant = assistant_with_tool_calls(json!([call("c1", "shell")]));
 	let parsed = parse(&[
 		serde_json::to_string(&assistant).unwrap(),
-		json!({"type": "TOOL_CALL", "tool_name": "shell", "tool_id": "c1", "parameters": {}})
-			.to_string(),
+		json!({"type": "TOOL_CALL", "tool_name": "shell", "tool_id": "c1", "parameters": {}}).to_string(),
 		serde_json::to_string(&tool_msg("c1", "shell")).unwrap(),
 	]);
 	assert_eq!(
@@ -615,10 +578,8 @@ fn parse_log_lines_tool_call_reconstruction_skipped_when_assistant_already_logge
 #[test]
 fn parse_log_lines_consecutive_tool_call_markers_share_one_assistant_message() {
 	let parsed = parse(&[
-		json!({"type": "TOOL_CALL", "tool_name": "shell", "tool_id": "c1", "parameters": {}})
-			.to_string(),
-		json!({"type": "TOOL_CALL", "tool_name": "view", "tool_id": "c2", "parameters": {}})
-			.to_string(),
+		json!({"type": "TOOL_CALL", "tool_name": "shell", "tool_id": "c1", "parameters": {}}).to_string(),
+		json!({"type": "TOOL_CALL", "tool_name": "view", "tool_id": "c2", "parameters": {}}).to_string(),
 		serde_json::to_string(&tool_msg("c1", "shell")).unwrap(),
 		serde_json::to_string(&tool_msg("c2", "view")).unwrap(),
 	]);
@@ -675,10 +636,7 @@ fn list_available_sessions_collects_json_and_legacy_summaries_newest_first() {
 	older.created_at = 1_000;
 	write_named_session(
 		"s-legacy",
-		&[format!(
-			"SUMMARY: {}",
-			serde_json::to_string(&older).unwrap()
-		)],
+		&[format!("SUMMARY: {}", serde_json::to_string(&older).unwrap())],
 	);
 
 	// A .zst file without a SUMMARY in the first 10 lines is not a session.
@@ -796,10 +754,7 @@ fn load_session_without_summary_synthesizes_default_info() {
 	append_to_session_file(&path, &msg_json_line("user", "hello")).expect("append");
 
 	let session = load_session(&path).expect("load session");
-	assert_eq!(
-		session.info.name, "fallback",
-		"name derives from the file stem"
-	);
+	assert_eq!(session.info.name, "fallback", "name derives from the file stem");
 	assert_eq!(session.info.model, "openrouter:anthropic/claude-sonnet-4");
 	assert_eq!(session.messages.len(), 1);
 	assert_eq!(session.messages[0].content, "hello");
@@ -821,11 +776,7 @@ fn load_session_without_summary_recovers_stats_entries() {
 		.to_string(),
 	)
 	.expect("append");
-	append_to_session_file(
-		&path,
-		&json!({"type": "STATS", "input_tokens": 9u64}).to_string(),
-	)
-	.expect("append");
+	append_to_session_file(&path, &json!({"type": "STATS", "input_tokens": 9u64}).to_string()).expect("append");
 
 	let session = load_session(&path).expect("load session");
 	assert_eq!(session.info.input_tokens, 9, "last STATS wins in recovery");
@@ -853,10 +804,7 @@ fn resume_role_prefers_logged_role_command_over_summary() {
 			json!({"type": "COMMAND", "command": "/role developer:general"}).to_string(),
 		],
 	);
-	assert_eq!(
-		resume_role("role-cmd"),
-		Some("developer:general".to_string())
-	);
+	assert_eq!(resume_role("role-cmd"), Some("developer:general".to_string()));
 }
 
 #[test]
@@ -924,16 +872,8 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 		.insert(crate::supervisor::report::Outcome::Runs, 2);
 	let mut later = info.supervisor_accounting.clone();
 	later.kinds.get_mut(&CallKind::Resolve).unwrap().calls = 3;
-	later
-		.kinds
-		.get_mut(&CallKind::Resolve)
-		.unwrap()
-		.input_tokens = 50;
-	later
-		.kinds
-		.get_mut(&CallKind::Resolve)
-		.unwrap()
-		.blocking_wall_time_ms = 150;
+	later.kinds.get_mut(&CallKind::Resolve).unwrap().input_tokens = 50;
+	later.kinds.get_mut(&CallKind::Resolve).unwrap().blocking_wall_time_ms = 150;
 	later.blocking_wall_time_ms = 150;
 	later
 		.kinds
@@ -954,15 +894,11 @@ fn supervisor_accounting_resume_merges_stats_monotonically_and_defaults_old_sess
 	assert_eq!(restored.supervisor_accounting.seams[&Seam::Plan].calls, 1);
 	assert_eq!(restored.supervisor_accounting.blocking_wall_time_ms, 150);
 	assert_eq!(
-		restored.supervisor_accounting.kinds[&CallKind::Resolve].outcome
-			[&crate::supervisor::report::Outcome::Runs],
+		restored.supervisor_accounting.kinds[&CallKind::Resolve].outcome[&crate::supervisor::report::Outcome::Runs],
 		3
 	);
 	let mut legacy = serde_json::to_value(&info).unwrap();
-	legacy
-		.as_object_mut()
-		.unwrap()
-		.remove("supervisor_accounting");
+	legacy.as_object_mut().unwrap().remove("supervisor_accounting");
 	let legacy: SessionInfo = serde_json::from_value(legacy).unwrap();
 	assert!(legacy.supervisor_accounting.kinds.is_empty());
 }
@@ -1003,10 +939,7 @@ fn detached_supervisor_usage_survives_resume_and_is_not_replayed_after_save() {
 	resumed.save().unwrap();
 	let twice = load_session(&file).unwrap();
 	assert_eq!(twice.info.total_cost, 0.25);
-	assert_eq!(
-		twice.info.supervisor_accounting.kinds[&CallKind::Distill].calls,
-		2
-	);
+	assert_eq!(twice.info.supervisor_accounting.kinds[&CallKind::Distill].calls, 2);
 }
 
 #[test]
@@ -1021,11 +954,7 @@ fn concurrent_background_and_summary_writers_keep_journal_frames_intact() {
 			scope.spawn(move || {
 				barrier.wait();
 				for index in 0..20 {
-					append_to_session_file(
-						file,
-						&json!({"writer": writer, "index": index}).to_string(),
-					)
-					.unwrap();
+					append_to_session_file(file, &json!({"writer": writer, "index": index}).to_string()).unwrap();
 				}
 			});
 		}
@@ -1034,10 +963,7 @@ fn concurrent_background_and_summary_writers_keep_journal_frames_intact() {
 	let mut entries = std::collections::HashSet::new();
 	for line in reader.lines() {
 		let value: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
-		assert!(entries.insert((
-			value["writer"].as_u64().unwrap(),
-			value["index"].as_u64().unwrap()
-		)));
+		assert!(entries.insert((value["writer"].as_u64().unwrap(), value["index"].as_u64().unwrap())));
 	}
 	assert_eq!(entries.len(), 40);
 }

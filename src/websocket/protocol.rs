@@ -121,9 +121,7 @@ impl Attachment {
 
 		let mut matches = Vec::new();
 		for entry in entries {
-			let entry = entry.map_err(|error| {
-				format!("attachment '{}' could not be located: {}", self.id, error)
-			})?;
+			let entry = entry.map_err(|error| format!("attachment '{}' could not be located: {}", self.id, error))?;
 			if entry.file_name().to_string_lossy().starts_with(&prefix) {
 				matches.push(entry.path());
 			}
@@ -522,10 +520,7 @@ impl ServerMessage {
 	}
 
 	pub fn error_for_request(message: String, request_id: Option<String>) -> Self {
-		ServerMessage::Error(ErrorPayload {
-			message,
-			request_id,
-		})
+		ServerMessage::Error(ErrorPayload { message, request_id })
 	}
 
 	pub fn ack(client_msg: &ClientMessage) -> Self {

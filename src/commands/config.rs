@@ -19,8 +19,8 @@ use octomind::config::validation::default_model;
 use octomind::config::{Config, McpConnectionType, McpServerConfig, DEFAULT_MCP_TIMEOUT_SECONDS};
 use octomind::directories;
 use octomind::session::chat::{
-	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text,
-	block_section, block_section_with, key_width,
+	block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
+	block_section_with, key_width,
 };
 
 #[derive(Args)]
@@ -215,12 +215,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		config.enable_markdown_rendering = enable_markdown;
 		changes.push((
 			"markdown".to_string(),
-			if enable_markdown {
-				"enabled"
-			} else {
-				"disabled"
-			}
-			.to_string(),
+			if enable_markdown { "enabled" } else { "disabled" }.to_string(),
 		));
 	}
 
@@ -233,11 +228,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 			block_open("config", None);
 			block_close_err(
 				"config",
-				&format!(
-					"invalid theme '{}' (valid: {})",
-					theme,
-					valid_themes.join(", ")
-				),
+				&format!("invalid theme '{}' (valid: {})", theme, valid_themes.join(", ")),
 			);
 			println!();
 			return Ok(());
@@ -245,13 +236,11 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	}
 
 	if let Some(providers) = &args.mcp_providers {
-		let server_names: Vec<String> =
-			providers.split(',').map(|s| s.trim().to_string()).collect();
+		let server_names: Vec<String> = providers.split(',').map(|s| s.trim().to_string()).collect();
 		config.mcp.servers.clear();
 		for server_name in &server_names {
 			if !config.mcp.servers.iter().any(|s| s.name() == *server_name) {
-				let server =
-					McpServerConfig::builtin(server_name, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new());
+				let server = McpServerConfig::builtin(server_name, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new());
 				config.mcp.servers.push(server);
 			}
 		}
@@ -283,10 +272,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		for part in &parts[1..] {
 			let Some((key, value)) = part.split_once('=') else {
 				block_open("config", None);
-				block_close_err(
-					"config",
-					&format!("mcp server option '{}' must use key=value", part),
-				);
+				block_close_err("config", &format!("mcp server option '{}' must use key=value", part));
 				println!();
 				return Ok(());
 			};
@@ -306,10 +292,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 					"http" => connection_type = McpConnectionType::Http,
 					"stdio" => connection_type = McpConnectionType::Stdin,
 					"builtin" => connection_type = McpConnectionType::Builtin,
-					_ => warnings.push(format!(
-						"unknown server type '{}', defaulting to HTTP",
-						value
-					)),
+					_ => warnings.push(format!("unknown server type '{}', defaulting to HTTP", value)),
 				},
 				"timeout" | "timeout_seconds" => {
 					if let Ok(timeout) = value.parse::<u64>() {
@@ -323,9 +306,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 
 		let server = match connection_type {
-			McpConnectionType::Builtin => {
-				McpServerConfig::builtin(&name, timeout_seconds, Vec::new())
-			}
+			McpConnectionType::Builtin => McpServerConfig::builtin(&name, timeout_seconds, Vec::new()),
 			McpConnectionType::Http => match url {
 				Some(url) => McpServerConfig::http(&name, &url, timeout_seconds, Vec::new()),
 				None => {
@@ -339,9 +320,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 				}
 			},
 			McpConnectionType::Stdin => match command {
-				Some(command) => {
-					McpServerConfig::stdin(&name, &command, args_vec, timeout_seconds, Vec::new())
-				}
+				Some(command) => McpServerConfig::stdin(&name, &command, args_vec, timeout_seconds, Vec::new()),
 				None => {
 					block_open("config", None);
 					for w in &warnings {
@@ -389,11 +368,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		}
 		block_section("status");
 		let kw = key_width(["saved"]);
-		block_row(
-			"saved",
-			&"configuration written".bright_green().to_string(),
-			kw,
-		);
+		block_row("saved", &"configuration written".bright_green().to_string(), kw);
 	} else {
 		let config_path = directories::get_config_file_path()?;
 		block_section("status");
@@ -401,9 +376,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 		if config_path.exists() {
 			block_row(
 				"config file",
-				&format!("{} (no changes)", config_path.display())
-					.dimmed()
-					.to_string(),
+				&format!("{} (no changes)", config_path.display()).dimmed().to_string(),
 				kw,
 			);
 		} else {
@@ -420,13 +393,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 
 	// ── current state ─────────────────────────────────────────────────
 	block_section("current");
-	let cur_kw = key_width([
-		"root model",
-		"log level",
-		"markdown",
-		"theme",
-		"system prompt",
-	]);
+	let cur_kw = key_width(["root model", "log level", "markdown", "theme", "system prompt"]);
 	block_row(
 		"root model",
 		&config.get_effective_model().bright_white().to_string(),
@@ -445,11 +412,7 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	block_row("theme", &config.markdown_theme, cur_kw);
 	block_row(
 		"system prompt",
-		if config.system.is_some() {
-			"custom"
-		} else {
-			"default"
-		},
+		if config.system.is_some() { "custom" } else { "default" },
 		cur_kw,
 	);
 
@@ -476,20 +439,12 @@ pub fn execute(args: &ConfigArgs, mut config: Config) -> Result<(), anyhow::Erro
 	let mcp_kw = key_width(["developer", "assistant"]);
 	block_row(
 		"developer",
-		if dev_mcp_enabled {
-			"enabled"
-		} else {
-			"disabled"
-		},
+		if dev_mcp_enabled { "enabled" } else { "disabled" },
 		mcp_kw,
 	);
 	block_row(
 		"assistant",
-		if ass_mcp_enabled {
-			"enabled"
-		} else {
-			"disabled"
-		},
+		if ass_mcp_enabled { "enabled" } else { "disabled" },
 		mcp_kw,
 	);
 
@@ -671,15 +626,8 @@ fn list_markdown_themes() {
 			.dimmed()
 			.to_string(),
 	);
-	block_row_text(
-		&"View current theme: octomind config --show"
-			.dimmed()
-			.to_string(),
-	);
-	block_close_ok(
-		"config list-themes",
-		Some(&format!("{} theme(s)", themes.len())),
-	);
+	block_row_text(&"View current theme: octomind config --show".dimmed().to_string());
+	block_close_ok("config list-themes", Some(&format!("{} theme(s)", themes.len())));
 	println!();
 }
 
@@ -705,11 +653,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	// ── system-wide ───────────────────────────────────────────────────
 	block_section("system");
 	let kw = key_width(["root model", "log level", "markdown", "theme", "max tokens"]);
-	block_row(
-		"root model",
-		&format_root_model(config).bright_white().to_string(),
-		kw,
-	);
+	block_row("root model", &format_root_model(config).bright_white().to_string(), kw);
 	block_row("log level", &format!("{:?}", config.log_level), kw);
 	block_row(
 		"markdown",
@@ -744,10 +688,8 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	render_local_api_key_row();
 
 	// ── roles ─────────────────────────────────────────────────────────
-	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) =
-		config.get_role_config("developer");
-	let (_ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) =
-		config.get_role_config("assistant");
+	let (_dev_config, dev_mcp, _dev_layers, _dev_commands, dev_system) = config.get_role_config("developer");
+	let (_ass_config, ass_mcp, _ass_layers, _ass_commands, ass_system) = config.get_role_config("assistant");
 
 	block_section("roles");
 	let role_kw = key_width(["developer", "assistant"]);
@@ -775,11 +717,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	// ── mcp ───────────────────────────────────────────────────────────
 	block_section("mcp");
 	let mcp_kw = key_width(["registry", "developer", "assistant"]);
-	block_row(
-		"registry",
-		&format!("{} server(s)", config.mcp.servers.len()),
-		mcp_kw,
-	);
+	block_row("registry", &format!("{} server(s)", config.mcp.servers.len()), mcp_kw);
 	block_row(
 		"developer",
 		&if dev_mcp.server_refs.is_empty() {
@@ -825,18 +763,10 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 			};
 			block_row_text(&format!("{}  {}", name.bright_white(), detail));
 			if server.timeout_seconds() != DEFAULT_MCP_TIMEOUT_SECONDS {
-				block_row_text(
-					&format!("  timeout: {}s", server.timeout_seconds())
-						.dimmed()
-						.to_string(),
-				);
+				block_row_text(&format!("  timeout: {}s", server.timeout_seconds()).dimmed().to_string());
 			}
 			if !server.tools().is_empty() {
-				block_row_text(
-					&format!("  tools: {}", server.tools().join(", "))
-						.dimmed()
-						.to_string(),
-				);
+				block_row_text(&format!("  tools: {}", server.tools().join(", ")).dimmed().to_string());
 			}
 		}
 	}

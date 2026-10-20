@@ -131,10 +131,7 @@ mod verification_policy_tests;
 /// Escape untrusted text before embedding it inside supervisor-owned XML-like
 /// control blocks. This preserves field boundaries against literal closing tags.
 pub(crate) fn escape_xml_text(value: &str) -> String {
-	value
-		.replace('&', "&amp;")
-		.replace('<', "&lt;")
-		.replace('>', "&gt;")
+	value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Out-of-band notice (`· Supervisor: …`) so the user sees what the control
@@ -151,12 +148,7 @@ pub fn notify(message: &str) {
 	use colored::Colorize;
 	for (i, line) in message.lines().enumerate() {
 		if i == 0 {
-			eprintln!(
-				"{} {} {}",
-				"·".bright_black(),
-				"Supervisor:".dimmed(),
-				line.dimmed()
-			);
+			eprintln!("{} {} {}", "·".bright_black(), "Supervisor:".dimmed(), line.dimmed());
 		} else {
 			eprintln!("  {}", line.dimmed());
 		}
@@ -188,12 +180,11 @@ pub fn role_context(messages: &[crate::session::Message]) -> String {
 /// turn is supplied separately. Unlike [`role_context`] this is uncapped; the
 /// caller bounds it for its own budget.
 pub fn specialist_context(messages: &[crate::session::Message]) -> String {
-	let active_skills: std::collections::HashSet<String> =
-		crate::session::context::current_session_id()
-			.map(|sid| crate::session::context::get_active_skills(&sid))
-			.unwrap_or_default()
-			.into_iter()
-			.collect();
+	let active_skills: std::collections::HashSet<String> = crate::session::context::current_session_id()
+		.map(|sid| crate::session::context::get_active_skills(&sid))
+		.unwrap_or_default()
+		.into_iter()
+		.collect();
 	messages
 		.iter()
 		.filter(|message| {

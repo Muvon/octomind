@@ -68,12 +68,7 @@ fn configured_token_must_be_presented_as_a_bearer() {
 	let token = Some("s3cret-token");
 	assert!(handshake_with(None, Some("Bearer s3cret-token"), &[], token).is_ok());
 
-	for presented in [
-		None,
-		Some("Bearer wrong"),
-		Some("s3cret-token"),
-		Some("Bearer "),
-	] {
+	for presented in [None, Some("Bearer wrong"), Some("s3cret-token"), Some("Bearer ")] {
 		let err = handshake_with(None, presented, &[], token).unwrap_err();
 		assert_eq!(err.status(), StatusCode::UNAUTHORIZED, "{presented:?}");
 	}
@@ -126,14 +121,11 @@ fn prefixed_websocket_image_is_attached_to_empty_user_turn() {
 	// The writer stores media as `<id>.<ext>`; resolve_path locates it by
 	// prefix, so the fixture must be laid out the same way.
 	let media_path = tmp.path().join(format!("{}.png", attachment.id));
-	image::RgbImage::new(4, 4)
-		.save(&media_path)
-		.expect("save test image");
+	image::RgbImage::new(4, 4).save(&media_path).expect("save test image");
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.model = "openrouter:vendor/unknown-vision-model".to_string();
-	let loaded = load_message_attachments(&session, &[attachment], tmp.path())
-		.expect("load websocket attachment");
+	let loaded = load_message_attachments(&session, &[attachment], tmp.path()).expect("load websocket attachment");
 	session
 		.add_user_message_with_attachments("", loaded.images, loaded.videos)
 		.expect("add attachment-only user turn");
@@ -167,28 +159,21 @@ async fn session_lock_is_reused_per_session_id() {
 	assert!(Arc::ptr_eq(&a, &b), "same session must share one lock");
 
 	let other = get_or_create_session_lock("other", &locks).await;
-	assert!(
-		!Arc::ptr_eq(&a, &other),
-		"different sessions must not share"
-	);
+	assert!(!Arc::ptr_eq(&a, &other), "different sessions must not share");
 }
 
 // ---- lookup_session ----
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
 
 #[tokio::test]
 async fn lookup_session_returns_the_memory_copy_and_removes_it() {
-	let state = ServerState::new(
-		Arc::new(template_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(template_config()), "assistant".to_string(), Vec::new());
 	state
 		.sessions
 		.lock()
@@ -210,23 +195,13 @@ async fn lookup_session_returns_the_memory_copy_and_removes_it() {
 
 #[tokio::test]
 async fn lookup_session_never_auto_creates_a_missing_session() {
-	let state = ServerState::new(
-		Arc::new(template_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(template_config()), "assistant".to_string(), Vec::new());
 	let error = lookup_session("no-such-session-zzz", &state)
 		.await
 		.err()
 		.expect("a session that exists nowhere must be an error");
-	assert!(
-		error.contains("Session not found: no-such-session-zzz"),
-		"{error}"
-	);
-	assert!(
-		state.sessions.lock().await.is_empty(),
-		"nothing may be auto-created"
-	);
+	assert!(error.contains("Session not found: no-such-session-zzz"), "{error}");
+	assert!(state.sessions.lock().await.is_empty(), "nothing may be auto-created");
 }
 
 // ---- attachment hardening ----
@@ -257,10 +232,7 @@ fn video_attachment_on_non_video_model_is_refused_before_file_access() {
 		missing_root,
 	)
 	.expect_err("known non-video model must refuse before resolving the file");
-	assert!(
-		error.to_string().contains("does not support video"),
-		"got: {error}"
-	);
+	assert!(error.to_string().contains("does not support video"), "got: {error}");
 }
 
 #[test]
@@ -277,10 +249,7 @@ fn attachment_pointing_at_a_directory_is_rejected() {
 		tmp.path(),
 	)
 	.expect_err("a directory must never be treated as media");
-	assert!(
-		error.to_string().contains("must be a regular file"),
-		"got: {error}"
-	);
+	assert!(error.to_string().contains("must be a regular file"), "got: {error}");
 }
 
 #[test]
@@ -299,10 +268,7 @@ fn ambiguous_attachment_prefix_is_rejected() {
 		tmp.path(),
 	)
 	.expect_err("two matching files are ambiguous");
-	assert!(
-		error.to_string().contains("multiple matching files"),
-		"got: {error}"
-	);
+	assert!(error.to_string().contains("multiple matching files"), "got: {error}");
 }
 
 #[cfg(unix)]
@@ -360,9 +326,7 @@ fn corrupt_image_file_reports_a_load_failure() {
 	)
 	.expect_err("garbage bytes must fail the image decoder");
 	assert!(
-		error
-			.to_string()
-			.contains("Failed to load image attachment"),
+		error.to_string().contains("Failed to load image attachment"),
 		"got: {error}"
 	);
 }
@@ -391,11 +355,7 @@ async fn connection_lifecycle_over_loopback() {
 		.expect("bind loopback listener");
 	let addr = listener.local_addr().expect("local addr");
 
-	let state = ServerState::new(
-		Arc::new(template_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(template_config()), "assistant".to_string(), Vec::new());
 
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
@@ -419,15 +379,10 @@ async fn connection_lifecycle_over_loopback() {
 	);
 
 	// 2. Invalid JSON is reported but does not kill the connection.
-	ws.send(Message::text("{not json"))
-		.await
-		.expect("send invalid json");
+	ws.send(Message::text("{not json")).await.expect("send invalid json");
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
-	assert!(error["message"]
-		.as_str()
-		.unwrap_or_default()
-		.contains("Invalid JSON"));
+	assert!(error["message"].as_str().unwrap_or_default().contains("Invalid JSON"));
 
 	// 3. Validation failures echo the client's request_id.
 	ws.send(Message::text(
@@ -475,9 +430,7 @@ async fn connection_lifecycle_over_loopback() {
 		.contains("Session not found"));
 
 	// 6. Binary frames are refused with a protocol hint.
-	ws.send(Message::binary(vec![0u8]))
-		.await
-		.expect("send binary");
+	ws.send(Message::binary(vec![0u8])).await.expect("send binary");
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
 	assert!(error["message"]
@@ -508,9 +461,7 @@ async fn connection_lifecycle_over_loopback() {
 
 use std::time::Duration;
 
-use crate::session::chat::test_support::{
-	fake_provider_config, final_response, spawn_stub_with_status, ENV_LOCK,
-};
+use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub_with_status, ENV_LOCK};
 use crate::session::inbox::{push_inbox_message_for_session, InboxMessage, InboxSource};
 
 /// Points OCTOMIND_DATA_DIR at a unique temp dir and restores the previous
@@ -537,10 +488,7 @@ impl TestDataDirGuard {
 	fn at(path: &std::path::Path) -> Self {
 		let previous = std::env::var("OCTOMIND_DATA_DIR").ok();
 		std::env::set_var("OCTOMIND_DATA_DIR", path);
-		Self {
-			previous,
-			_dir: None,
-		}
+		Self { previous, _dir: None }
 	}
 }
 
@@ -660,8 +608,7 @@ impl LoopbackServer {
 	}
 }
 
-type ClientWs =
-	tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type ClientWs = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect_ws(addr: std::net::SocketAddr) -> ClientWs {
 	let (ws, _response) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
@@ -671,9 +618,7 @@ async fn connect_ws(addr: std::net::SocketAddr) -> ClientWs {
 }
 
 async fn send_json(ws: &mut ClientWs, value: serde_json::Value) {
-	ws.send(Message::text(value.to_string()))
-		.await
-		.expect("send frame");
+	ws.send(Message::text(value.to_string())).await.expect("send frame");
 }
 
 async fn read_frame(ws: &mut ClientWs) -> Message {
@@ -687,10 +632,7 @@ async fn read_frame(ws: &mut ClientWs) -> Message {
 /// Reads frames until one satisfies the predicate, skipping unrelated
 /// streaming frames (thinking, tool use, …). Bounded so a missing frame
 /// fails instead of hanging.
-async fn read_until(
-	ws: &mut ClientWs,
-	predicate: impl Fn(&serde_json::Value) -> bool,
-) -> serde_json::Value {
+async fn read_until(ws: &mut ClientWs, predicate: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
 	for _ in 0..100 {
 		let value = read_json(ws).await;
 		if predicate(&value) {
@@ -749,9 +691,7 @@ async fn ping_frames_are_answered_with_a_matching_pong() {
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 
-	ws.send(Message::Ping(vec![1u8, 2, 3].into()))
-		.await
-		.expect("send ping");
+	ws.send(Message::Ping(vec![1u8, 2, 3].into())).await.expect("send ping");
 	let frame = read_frame(&mut ws).await;
 	match frame {
 		Message::Pong(data) => {
@@ -767,20 +707,13 @@ async fn pong_frames_are_ignored_and_the_connection_stays_usable() {
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 
-	ws.send(Message::Pong(vec![9u8].into()))
-		.await
-		.expect("send pong");
+	ws.send(Message::Pong(vec![9u8].into())).await.expect("send pong");
 	// The read loop must have continued past the Pong arm: a subsequent
 	// invalid frame still gets its protocol error.
-	ws.send(Message::text("{not json"))
-		.await
-		.expect("send junk");
+	ws.send(Message::text("{not json")).await.expect("send junk");
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
-	assert!(error["message"]
-		.as_str()
-		.unwrap_or_default()
-		.contains("Invalid JSON"));
+	assert!(error["message"].as_str().unwrap_or_default().contains("Invalid JSON"));
 }
 
 #[tokio::test]
@@ -815,15 +748,9 @@ async fn oversized_frame_terminates_the_connection() {
 
 #[tokio::test]
 async fn abrupt_disconnect_without_close_ends_the_handler_cleanly() {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let state = ServerState::new(
-		Arc::new(template_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(template_config()), "assistant".to_string(), Vec::new());
 	let handle = tokio::spawn(async move {
 		// Accept inside the task: the client only connects after this spawn,
 		// so awaiting accept on the main task would deadlock.
@@ -913,15 +840,9 @@ async fn named_session_resumes_from_disk_on_a_fresh_connection() {
 
 	// Connection 2 with a FRESH in-memory map: the same name must resume
 	// from disk, not create a second session.
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let state = ServerState::new(
-		Arc::new(ws_fake_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(ws_fake_config()), "assistant".to_string(), Vec::new());
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
 			let _ = handle_connection(stream, peer, state).await;
@@ -969,21 +890,19 @@ fn two_role_config() -> Config {
 /// Registers and enables an in-memory agent owned by `session_id` alone.
 async fn register_session_agent(session_id: &str, name: &str) {
 	crate::session::context::with_session_id(session_id.to_string(), async {
-		crate::mcp::runtime::dynamic_agents::register_agent(
-			crate::mcp::runtime::dynamic_agents::DynamicAgentConfig {
-				name: name.to_string(),
-				description: "session-owned probe".to_string(),
-				system: "probe".to_string(),
-				welcome: String::new(),
-				model: None,
-				temperature: None,
-				top_p: None,
-				top_k: None,
-				server_refs: Vec::new(),
-				allowed_tools: Vec::new(),
-				workdir: ".".to_string(),
-			},
-		)
+		crate::mcp::runtime::dynamic_agents::register_agent(crate::mcp::runtime::dynamic_agents::DynamicAgentConfig {
+			name: name.to_string(),
+			description: "session-owned probe".to_string(),
+			system: "probe".to_string(),
+			welcome: String::new(),
+			model: None,
+			temperature: None,
+			top_p: None,
+			top_k: None,
+			server_refs: Vec::new(),
+			allowed_tools: Vec::new(),
+			workdir: ".".to_string(),
+		})
 		.expect("register agent");
 		crate::mcp::runtime::dynamic_agents::enable_agent(name).expect("enable agent");
 	})
@@ -1006,10 +925,7 @@ async fn tool_turn(ws: &mut ClientWs, session_id: &str, tool: &str) -> serde_jso
 fn assert_refused(frame: &serde_json::Value) {
 	assert_eq!(frame["success"], false, "got: {frame}");
 	assert!(
-		frame["content"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("not found"),
+		frame["content"].as_str().unwrap_or_default().contains("not found"),
 		"got: {frame}"
 	);
 }
@@ -1055,22 +971,13 @@ async fn role_switch_binds_each_session_to_its_own_tools() {
 	)
 	.await;
 	let status = read_until(&mut ws, |v| v["type"] == "status").await;
-	assert!(
-		status["data"].to_string().contains("outbound"),
-		"got: {status}"
-	);
+	assert!(status["data"].to_string().contains("outbound"), "got: {status}");
 
 	// Each session dispatches the tools of its own role...
 	let own = tool_turn(&mut ws, &switched, "mcp").await;
-	assert_eq!(
-		own["success"], true,
-		"switched session lost its role tool: {own}"
-	);
+	assert_eq!(own["success"], true, "switched session lost its role tool: {own}");
 	let own = tool_turn(&mut ws, &default, "schedule").await;
-	assert_eq!(
-		own["success"], true,
-		"default session lost its role tool: {own}"
-	);
+	assert_eq!(own["success"], true, "default session lost its role tool: {own}");
 
 	// ...and never the other role's.
 	assert_refused(&tool_turn(&mut ws, &default, "mcp").await);
@@ -1091,43 +998,22 @@ async fn role_switch_binds_each_session_to_its_own_tools() {
 async fn role_switch_keeps_the_servers_other_sessions_use_running() {
 	const STUB: &str = "ws-role-shared-stub";
 	let _data = TestDataDirGuard::new();
-	let echo = || {
-		crate::session::chat::test_support::tool_call_response(
-			"echo",
-			serde_json::json!({"msg": "hi"}),
-		)
-	};
-	let _env = StubEnv::new(vec![
-		echo(),
-		final_response("done"),
-		echo(),
-		final_response("done"),
-	])
-	.await;
+	let echo = || crate::session::chat::test_support::tool_call_response("echo", serde_json::json!({"msg": "hi"}));
+	let _env = StubEnv::new(vec![echo(), final_response("done"), echo(), final_response("done")]).await;
 	// Only the server role references the stdio server, so the switch away from
 	// that role must leave it to the session still on it.
 	let mut config = two_role_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::Stdin {
-			name: STUB.to_string(),
-			command: "python3".to_string(),
-			args: vec![concat!(
-				env!("CARGO_MANIFEST_DIR"),
-				"/tests/fixtures/mcp_stub_server.py"
-			)
-			.to_string()],
-			timeout_seconds: 10,
-			tools: vec![],
-			env: HashMap::new(),
-			cwd: None,
-			auto_bind: None,
-		});
-	let assistant = config
-		.role_map
-		.get_mut("assistant")
-		.expect("assistant role");
+	config.mcp.servers.push(crate::config::McpServerConfig::Stdin {
+		name: STUB.to_string(),
+		command: "python3".to_string(),
+		args: vec![concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_stub_server.py").to_string()],
+		timeout_seconds: 10,
+		tools: vec![],
+		env: HashMap::new(),
+		cwd: None,
+		auto_bind: None,
+	});
+	let assistant = config.role_map.get_mut("assistant").expect("assistant role");
 	assistant.mcp.server_refs.push(STUB.to_string());
 	assistant.mcp.allowed_tools.push(format!("{STUB}:*"));
 	crate::mcp::initialize_mcp_for_role("assistant", &config)
@@ -1151,10 +1037,7 @@ async fn role_switch_keeps_the_servers_other_sessions_use_running() {
 	)
 	.await;
 	let status = read_until(&mut ws, |v| v["type"] == "status").await;
-	assert!(
-		status["data"].to_string().contains("outbound"),
-		"got: {status}"
-	);
+	assert!(status["data"].to_string().contains("outbound"), "got: {status}");
 
 	// The very connection the user session's calls ride on — a restarted server
 	// would be a new one, and every call in flight at the switch would be lost.
@@ -1176,10 +1059,7 @@ async fn restarted_server_resumes_a_switched_session_under_its_own_role() {
 	let script = (0..2)
 		.flat_map(|_| {
 			[
-				crate::session::chat::test_support::tool_call_response(
-					"mcp",
-					serde_json::json!({"action": "list"}),
-				),
+				crate::session::chat::test_support::tool_call_response("mcp", serde_json::json!({"action": "list"})),
 				final_response("done"),
 			]
 		})
@@ -1203,10 +1083,7 @@ async fn restarted_server_resumes_a_switched_session_under_its_own_role() {
 		)
 		.await;
 		let status = read_until(&mut ws, |v| v["type"] == "status").await;
-		assert!(
-			status["data"].to_string().contains("outbound"),
-			"got: {status}"
-		);
+		assert!(status["data"].to_string().contains("outbound"), "got: {status}");
 		session
 	};
 
@@ -1247,15 +1124,9 @@ async fn user_message_resumes_a_disk_session_without_a_session_handshake() {
 
 	// A fresh map + connection: a user message alone must resume from disk
 	// and run the turn.
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
 	let addr = listener.local_addr().expect("addr");
-	let state = ServerState::new(
-		Arc::new(ws_fake_config()),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let state = ServerState::new(Arc::new(ws_fake_config()), "assistant".to_string(), Vec::new());
 	tokio::spawn(async move {
 		if let Ok((stream, peer)) = listener.accept().await {
 			let _ = handle_connection(stream, peer, state).await;
@@ -1308,16 +1179,10 @@ async fn a_finished_turn_sends_exactly_one_cost_frame() {
 	read_until(&mut ws, |v| v["type"] == "cost").await;
 
 	// Whatever the turn still sends arrives right behind its cost.
-	while let Ok(Some(Ok(frame))) =
-		tokio::time::timeout(Duration::from_millis(1500), ws.next()).await
-	{
+	while let Ok(Some(Ok(frame))) = tokio::time::timeout(Duration::from_millis(1500), ws.next()).await {
 		if let Message::Text(text) = frame {
-			let value: serde_json::Value =
-				serde_json::from_str(&text).expect("server frames are JSON");
-			assert_ne!(
-				value["type"], "cost",
-				"a second cost frame for one turn: {value}"
-			);
+			let value: serde_json::Value = serde_json::from_str(&text).expect("server frames are JSON");
+			assert_ne!(value["type"], "cost", "a second cost frame for one turn: {value}");
 		}
 	}
 
@@ -1342,10 +1207,7 @@ async fn session_initialization_failure_is_reported_to_the_client() {
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
 	assert!(
-		error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("Internal error"),
+		error["message"].as_str().unwrap_or_default().contains("Internal error"),
 		"got: {error}"
 	);
 }
@@ -1378,10 +1240,7 @@ async fn user_message_runs_a_full_turn_and_streams_assistant_and_cost() {
 
 	let assistant = read_until(&mut ws, |v| v["type"] == "assistant").await;
 	assert!(
-		assistant["content"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("WS-TURN-OK"),
+		assistant["content"].as_str().unwrap_or_default().contains("WS-TURN-OK"),
 		"got: {assistant}"
 	);
 	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
@@ -1397,15 +1256,11 @@ async fn user_message_runs_a_full_turn_and_streams_assistant_and_cost() {
 #[tokio::test]
 async fn attachment_failure_returns_a_request_scoped_error() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;
-	server
-		.sessions
-		.lock()
-		.await
-		.insert("vision-1".to_string(), {
-			let mut session = ChatSession::for_tests(Vec::new());
-			session.model = "openai:gpt-3.5-turbo".to_string();
-			session
-		});
+	server.sessions.lock().await.insert("vision-1".to_string(), {
+		let mut session = ChatSession::for_tests(Vec::new());
+		session.model = "openai:gpt-3.5-turbo".to_string();
+		session
+	});
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 
@@ -1463,10 +1318,7 @@ async fn api_failure_surfaces_as_an_error_frame() {
 	let _ack = read_json(&mut ws).await;
 	let error = read_until(&mut ws, |v| v["type"] == "error").await;
 	assert!(
-		error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.starts_with("Error:"),
+		error["message"].as_str().unwrap_or_default().starts_with("Error:"),
 		"got: {error}"
 	);
 
@@ -1622,11 +1474,7 @@ async fn session_cwd_that_is_not_a_directory_is_refused() {
 		"got: {error}"
 	);
 	assert!(
-		!server
-			.sessions
-			.lock()
-			.await
-			.contains_key("octo-cwd-missing"),
+		!server.sessions.lock().await.contains_key("octo-cwd-missing"),
 		"a refused bind must not create the session"
 	);
 }
@@ -1644,10 +1492,7 @@ impl MediaRootGuard {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let previous = std::env::var("OCTOMIND_MEDIA_ROOT").ok();
 		std::env::set_var("OCTOMIND_MEDIA_ROOT", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -1667,8 +1512,7 @@ async fn video_attachment_loads_and_the_turn_reaches_prepare() {
 	let _media = MediaRootGuard::new();
 	let id = "VideoLoad0123456789AbCdE";
 	std::fs::write(
-		std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root"))
-			.join(format!("{id}.mp4")),
+		std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root")).join(format!("{id}.mp4")),
 		b"fake-mp4-bytes",
 	)
 	.expect("video fixture");
@@ -1706,10 +1550,7 @@ async fn video_attachment_loads_and_the_turn_reaches_prepare() {
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
 	assert!(
-		error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("ceiling"),
+		error["message"].as_str().unwrap_or_default().contains("ceiling"),
 		"the turn must fail at the context ceiling, after attachments loaded: {error}"
 	);
 }
@@ -1721,8 +1562,7 @@ async fn unsupported_video_media_type_is_rejected() {
 	let _media = MediaRootGuard::new();
 	let id = "VideoBadM0123456789AbCdE";
 	std::fs::write(
-		std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root"))
-			.join(format!("{id}.flv")),
+		std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root")).join(format!("{id}.flv")),
 		b"fake-flv-bytes",
 	)
 	.expect("video fixture");
@@ -1771,11 +1611,10 @@ async fn unreadable_audio_attachment_is_reported() {
 	let _data = TestDataDirGuard::new();
 	let _media = MediaRootGuard::new();
 	let id = "AudioBad0123456789AbCdEf";
-	let path = std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root"))
-		.join(format!("{id}.mp3"));
+	let path =
+		std::path::Path::new(&std::env::var("OCTOMIND_MEDIA_ROOT").expect("media root")).join(format!("{id}.mp3"));
 	std::fs::write(&path, b"fake-audio-bytes").expect("audio fixture");
-	std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o000))
-		.expect("chmod 000");
+	std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o000)).expect("chmod 000");
 
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	server
@@ -1967,10 +1806,7 @@ async fn done_command_with_args_runs_the_instructions_as_a_user_turn() {
 	// The trailing instructions run as a full user turn.
 	let assistant = read_until(&mut ws, |v| v["type"] == "assistant").await;
 	assert!(
-		assistant["content"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("AFTER-DONE"),
+		assistant["content"].as_str().unwrap_or_default().contains("AFTER-DONE"),
 		"got: {assistant}"
 	);
 	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
@@ -2033,10 +1869,7 @@ async fn failing_command_reports_the_error_and_keeps_the_session() {
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error");
 	assert!(
-		error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("Command failed"),
+		error["message"].as_str().unwrap_or_default().contains("Command failed"),
 		"got: {error}"
 	);
 	assert!(
@@ -2050,10 +1883,11 @@ async fn failing_command_reports_the_error_and_keeps_the_session() {
 #[tokio::test]
 async fn command_save_failure_is_reported_for_memory_only_sessions() {
 	let server = LoopbackServer::start(Arc::new(template_config())).await;
-	server.sessions.lock().await.insert(
-		"save-fail-1".to_string(),
-		ChatSession::for_tests(Vec::new()),
-	);
+	server
+		.sessions
+		.lock()
+		.await
+		.insert("save-fail-1".to_string(), ChatSession::for_tests(Vec::new()));
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 
@@ -2208,8 +2042,7 @@ async fn inbox_monitor_processes_messages_in_the_background() {
 				.await
 				.get(&session_id)
 				.and_then(|s| s.session.messages.last().cloned());
-			if matches!(&last, Some(m) if m.role == "assistant" && m.content.contains("MONITOR-TURN"))
-			{
+			if matches!(&last, Some(m) if m.role == "assistant" && m.content.contains("MONITOR-TURN")) {
 				break;
 			}
 			tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2335,10 +2168,7 @@ async fn monitor_defers_when_the_inbox_is_emptied_by_another_consumer() {
 		server.sessions.lock().await.contains_key(&session_id),
 		"the session must stay in the map untouched"
 	);
-	assert!(
-		!inbox_has_messages(&session_id).await,
-		"nothing may be requeued"
-	);
+	assert!(!inbox_has_messages(&session_id).await, "nothing may be requeued");
 
 	crate::session::context::cleanup_session(&session_id);
 }
@@ -2405,20 +2235,12 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 		match frame["type"].as_str().unwrap_or_default() {
 			"injected" => {
 				assert!(
-					frame["content"]
-						.as_str()
-						.unwrap_or_default()
-						.contains("the research"),
+					frame["content"].as_str().unwrap_or_default().contains("the research"),
 					"got: {frame}"
 				);
 				injected = true;
 			}
-			"assistant"
-				if frame["content"]
-					.as_str()
-					.unwrap_or_default()
-					.contains("HANDBACK-TURN") =>
-			{
+			"assistant" if frame["content"].as_str().unwrap_or_default().contains("HANDBACK-TURN") => {
 				answered = true;
 			}
 			_ => {}
@@ -2444,19 +2266,13 @@ async fn a_handback_landing_after_the_socket_closed_survives_for_the_next_connec
 #[serial_test::serial]
 async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 	let _data = TestDataDirGuard::new();
-	let _env = StubEnv::new(vec![
-		final_response("ON-IT"),
-		final_response("NOTHING-LEFT"),
-	])
-	.await;
+	let _env = StubEnv::new(vec![final_response("ON-IT"), final_response("NOTHING-LEFT")]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 	let session_id = create_session(&mut ws, None).await;
 
-	let status = Arc::new(std::sync::RwLock::new(
-		crate::session::tap_runs::TapJobStatus::Running,
-	));
+	let status = Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running));
 	let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(false);
 	let job = crate::session::tap_runs::TapJob {
 		id: "tap-researcher-000001".to_string(),
@@ -2465,9 +2281,7 @@ async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 		started_at: std::time::SystemTime::now(),
 		status: Arc::clone(&status),
 		cancel_tx,
-		live: Arc::new(std::sync::RwLock::new(
-			crate::session::tap_runs::TapLiveState::default(),
-		)),
+		live: Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapLiveState::default())),
 	};
 	crate::session::context::with_session_id(session_id.clone(), async move {
 		crate::session::tap_runs::register_job(job);
@@ -2489,11 +2303,7 @@ async fn a_turn_that_leaves_a_tap_run_going_says_so_on_its_cost_frame() {
 	)
 	.await;
 	read_until(&mut ws, |v| {
-		v["type"] == "assistant"
-			&& v["content"]
-				.as_str()
-				.unwrap_or_default()
-				.contains("NOTHING-LEFT")
+		v["type"] == "assistant" && v["content"].as_str().unwrap_or_default().contains("NOTHING-LEFT")
 	})
 	.await;
 	let cost = read_until(&mut ws, |v| v["type"] == "cost").await;
@@ -2571,11 +2381,7 @@ async fn a_handback_parked_behind_a_client_frame_runs_once_that_frame_lets_go() 
 #[serial_test::serial]
 async fn a_handback_answered_ahead_of_a_message_does_not_end_that_message_turn() {
 	let _data = TestDataDirGuard::new();
-	let _env = StubEnv::new(vec![
-		final_response("HANDBACK-FIRST"),
-		final_response("REPLY-SECOND"),
-	])
-	.await;
+	let _env = StubEnv::new(vec![final_response("HANDBACK-FIRST"), final_response("REPLY-SECOND")]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
@@ -2593,11 +2399,7 @@ async fn a_handback_answered_ahead_of_a_message_does_not_end_that_message_turn()
 		"the message's own turn is still to come: {handback}"
 	);
 	read_until(&mut ws, |v| {
-		v["type"] == "assistant"
-			&& v["content"]
-				.as_str()
-				.unwrap_or_default()
-				.contains("REPLY-SECOND")
+		v["type"] == "assistant" && v["content"].as_str().unwrap_or_default().contains("REPLY-SECOND")
 	})
 	.await;
 	let reply = read_until(&mut ws, |v| v["type"] == "cost").await;
@@ -2732,12 +2534,13 @@ async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
 				},
 			);
 		} else {
-			send_json(&mut ws, serde_json::json!({"type":"message", "session_id":session_id, "content":"Explain what this session does."})).await;
+			send_json(
+				&mut ws,
+				serde_json::json!({"type":"message", "session_id":session_id, "content":"Explain what this session does."}),
+			)
+			.await;
 		}
-		let cost = read_until(&mut ws, |frame| {
-			frame["type"] == "cost" || frame["type"] == "error"
-		})
-		.await;
+		let cost = read_until(&mut ws, |frame| frame["type"] == "cost" || frame["type"] == "error").await;
 		assert_eq!(cost["type"], "cost", "{cost}");
 		assert!(
 			cost["supervisor_accounting"]["mechanics"]["gate"]["chat_calls"]
@@ -2755,10 +2558,7 @@ async fn completed_gate_turn_final_cost_matches_info_on_user_and_inbox_paths() {
 		.await;
 		let info = loop {
 			let frame = read_json(&mut ws).await;
-			assert_ne!(
-				frame["type"], "cost",
-				"only one completion frame per turn: {frame}"
-			);
+			assert_ne!(frame["type"], "cost", "only one completion frame per turn: {frame}");
 			assert_ne!(frame["type"], "error", "{frame}");
 			if frame["type"] == "status" && frame["data"].is_object() {
 				break frame["data"].clone();
@@ -2786,12 +2586,10 @@ async fn user_turn_request_spending_stop_sends_the_stopped_status_before_cost() 
 	// The tool-call response carries usage cost 0.002 — over the 0.0001
 	// threshold, so the post-tool-result spending check stops the request
 	// before any follow-up call is made.
-	let _env = StubEnv::new(vec![
-		crate::session::chat::test_support::tool_call_response(
-			"schedule",
-			serde_json::json!({"command": "list"}),
-		),
-	])
+	let _env = StubEnv::new(vec![crate::session::chat::test_support::tool_call_response(
+		"schedule",
+		serde_json::json!({"command": "list"}),
+	)])
 	.await;
 	let mut config = ws_fake_config();
 	config.max_request_spending_threshold = 0.0001;
@@ -2808,11 +2606,7 @@ async fn user_turn_request_spending_stop_sends_the_stopped_status_before_cost() 
 	)
 	.await;
 	let stopped = read_until(&mut ws, |v| {
-		v["type"] == "status"
-			&& v["message"]
-				.as_str()
-				.unwrap_or_default()
-				.contains("Stopped:")
+		v["type"] == "status" && v["message"].as_str().unwrap_or_default().contains("Stopped:")
 	})
 	.await;
 	assert!(
@@ -2835,12 +2629,10 @@ async fn user_turn_request_spending_stop_sends_the_stopped_status_before_cost() 
 #[serial_test::serial]
 async fn monitor_inbox_turn_request_spending_stop_sends_the_stopped_status() {
 	let _data = TestDataDirGuard::new();
-	let _env = StubEnv::new(vec![
-		crate::session::chat::test_support::tool_call_response(
-			"schedule",
-			serde_json::json!({"command": "list"}),
-		),
-	])
+	let _env = StubEnv::new(vec![crate::session::chat::test_support::tool_call_response(
+		"schedule",
+		serde_json::json!({"command": "list"}),
+	)])
 	.await;
 	let mut config = ws_fake_config();
 	config.max_request_spending_threshold = 0.0001;
@@ -2858,11 +2650,7 @@ async fn monitor_inbox_turn_request_spending_stop_sends_the_stopped_status() {
 	);
 	let _injected = read_until(&mut ws, |v| v["type"] == "injected").await;
 	let stopped = read_until(&mut ws, |v| {
-		v["type"] == "status"
-			&& v["message"]
-				.as_str()
-				.unwrap_or_default()
-				.contains("Stopped:")
+		v["type"] == "status" && v["message"].as_str().unwrap_or_default().contains("Stopped:")
 	})
 	.await;
 	assert!(
@@ -2983,13 +2771,7 @@ fn server_new_parses_the_address_and_stores_role_and_origins() {
 	assert_eq!(server.state.role, "assistant");
 	assert_eq!(server.state.allow_origins.len(), 1);
 
-	let bad = WebSocketServer::new(
-		"not a host",
-		1,
-		ws_fake_config(),
-		"assistant".to_string(),
-		Vec::new(),
-	);
+	let bad = WebSocketServer::new("not a host", 1, ws_fake_config(), "assistant".to_string(), Vec::new());
 	assert!(bad.is_err(), "an unparseable address must be rejected");
 }
 
@@ -3086,14 +2868,8 @@ impl SlowStubEnv {
 			}
 		});
 
-		std::env::set_var(
-			"OLLAMA_API_URL",
-			format!("http://{addr}/v1/chat/completions"),
-		);
-		Self {
-			arrived,
-			_guard: guard,
-		}
+		std::env::set_var("OLLAMA_API_URL", format!("http://{addr}/v1/chat/completions"));
+		Self { arrived, _guard: guard }
 	}
 
 	fn arrived(&self) -> &tokio::sync::Notify {
@@ -3190,11 +2966,7 @@ async fn session_resume_with_an_unresolvable_tap_role_reports_the_restore_failur
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
 
-	send_json(
-		&mut ws,
-		serde_json::json!({"type": "session", "session_id": "forged"}),
-	)
-	.await;
+	send_json(&mut ws, serde_json::json!({"type": "session", "session_id": "forged"})).await;
 	let _ack = read_json(&mut ws).await;
 	let error = read_json(&mut ws).await;
 	assert_eq!(error["type"], "error", "got: {error}");
@@ -3351,10 +3123,7 @@ async fn pre_user_drain_reports_inbox_and_user_persistence_failures() {
 	.await;
 	let _ack = read_json(&mut ws).await;
 	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
-	assert_eq!(
-		injected["content"], "unpersistable injection",
-		"got: {injected}"
-	);
+	assert_eq!(injected["content"], "unpersistable injection", "got: {injected}");
 
 	let inbox_error = read_until(&mut ws, |frame| {
 		frame["type"] == "error"
@@ -3373,18 +3142,11 @@ async fn pre_user_drain_reports_inbox_and_user_persistence_failures() {
 	);
 
 	let user_error = read_until(&mut ws, |frame| {
-		frame["type"] == "error"
-			&& frame["message"]
-				.as_str()
-				.unwrap_or_default()
-				.starts_with("Error:")
+		frame["type"] == "error" && frame["message"].as_str().unwrap_or_default().starts_with("Error:")
 	})
 	.await;
 	assert!(
-		user_error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.starts_with("Error:"),
+		user_error["message"].as_str().unwrap_or_default().starts_with("Error:"),
 		"the user turn itself must also report the persistence failure: {user_error}"
 	);
 
@@ -3418,17 +3180,11 @@ async fn monitor_swallows_an_inbox_batch_it_cannot_persist_and_keeps_the_session
 	);
 
 	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
-	assert_eq!(
-		injected["content"], "unpersistable monitor work",
-		"got: {injected}"
-	);
+	assert_eq!(injected["content"], "unpersistable monitor work", "got: {injected}");
 
 	// The batch cannot be persisted, so no AI turn may run.
 	let stray = tokio::time::timeout(Duration::from_millis(500), ws.next()).await;
-	assert!(
-		stray.is_err(),
-		"no frame may follow the failed batch, got: {stray:?}"
-	);
+	assert!(stray.is_err(), "no frame may follow the failed batch, got: {stray:?}");
 
 	assert!(
 		!inbox_has_messages(&session_id).await,
@@ -3462,10 +3218,7 @@ async fn monitor_finishing_a_turn_after_the_connection_closes_exits_cleanly() {
 		},
 	);
 	let injected = read_until(&mut ws, |frame| frame["type"] == "injected").await;
-	assert_eq!(
-		injected["content"], "slow background work",
-		"got: {injected}"
-	);
+	assert_eq!(injected["content"], "slow background work", "got: {injected}");
 
 	// The turn is now blocked on the slow stub. Kill the connection and make
 	// the post-turn save fail while it runs.
@@ -3515,10 +3268,7 @@ async fn user_turn_save_failure_is_reported_before_the_cost_frame() {
 
 	let assistant = read_until(&mut ws, |frame| frame["type"] == "assistant").await;
 	assert!(
-		assistant["content"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("SLOW-TURN"),
+		assistant["content"].as_str().unwrap_or_default().contains("SLOW-TURN"),
 		"got: {assistant}"
 	);
 
@@ -3553,9 +3303,7 @@ async fn start_binds_and_accepts_connections() {
 	let _env = StubEnv::new(vec![]).await;
 
 	// Reserve then release a port so the real server can bind it.
-	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind probe");
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind probe");
 	let port_a = probe.local_addr().expect("probe addr").port();
 	drop(probe);
 
@@ -3595,9 +3343,7 @@ async fn start_binds_and_accepts_connections() {
 
 	// Same for a server configured with an allowlisted origin: the print
 	// branch differs, and a native client (no Origin header) is still let in.
-	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind probe");
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind probe");
 	let port_b = probe.local_addr().expect("probe addr").port();
 	drop(probe);
 	let server_b = WebSocketServer::new(
@@ -3681,10 +3427,7 @@ async fn pre_user_drain_reports_a_failing_injected_turn_and_still_runs_the_user_
 	// …but the client's own turn still runs to completion on the next response.
 	let assistant = read_until(&mut ws, |frame| frame["type"] == "assistant").await;
 	assert!(
-		assistant["content"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("user reply"),
+		assistant["content"].as_str().unwrap_or_default().contains("user reply"),
 		"got: {assistant}"
 	);
 	let cost = read_until(&mut ws, |frame| frame["type"] == "cost").await;
@@ -3797,9 +3540,7 @@ async fn cancel_stops_the_running_turn_and_later_frames_still_run_in_order() {
 
 /// Hangs on the first provider request, answers every later one at once.
 async fn spawn_hang_then_answer_stub(answer: &'static str) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 	tokio::spawn(async move {
 		let mut first = true;
@@ -3853,10 +3594,7 @@ async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
 	let env = StubEnv {
 		_guard: ENV_LOCK.lock().await,
 	};
-	std::env::set_var(
-		"OLLAMA_API_URL",
-		spawn_hang_then_answer_stub("SECOND-OK").await,
-	);
+	std::env::set_var("OLLAMA_API_URL", spawn_hang_then_answer_stub("SECOND-OK").await);
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 
 	let mut first = connect_ws(server.addr).await;
@@ -3884,8 +3622,7 @@ async fn a_client_that_leaves_mid_turn_cancels_it_and_frees_the_session() {
 		.await;
 		let _ack = read_json(&mut second).await;
 		let reply = read_until(&mut second, |v| {
-			v["type"] == "cost"
-				|| (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
+			v["type"] == "cost" || (v["type"] == "error" && v["message"].as_str().unwrap_or("").contains("busy"))
 		})
 		.await;
 		if reply["type"] == "cost" {
@@ -3934,11 +3671,7 @@ async fn cancel_during_the_pre_user_drain_skips_the_user_turn_too() {
 	.await;
 	read_until(&mut ws, |v| v["type"] == "injected").await;
 	tokio::time::sleep(Duration::from_millis(300)).await;
-	send_json(
-		&mut ws,
-		serde_json::json!({"type": "cancel", "session_id": session_id}),
-	)
-	.await;
+	send_json(&mut ws, serde_json::json!({"type": "cancel", "session_id": session_id})).await;
 
 	// The frame closes with a cancelled cost; its user turn never runs.
 	let frames = tokio::time::timeout(Duration::from_secs(20), async {
@@ -3957,8 +3690,7 @@ async fn cancel_during_the_pre_user_drain_skips_the_user_turn_too() {
 	assert!(
 		!frames
 			.iter()
-			.any(|f| f["type"] == "assistant"
-				&& f["content"].as_str().unwrap_or("").contains("NEVER")),
+			.any(|f| f["type"] == "assistant" && f["content"].as_str().unwrap_or("").contains("NEVER")),
 		"the user turn ran after the stop: {frames:?}"
 	);
 	assert!(
@@ -3985,11 +3717,7 @@ async fn cancel_during_the_pre_user_drain_skips_the_user_turn_too() {
 #[serial_test::serial]
 async fn only_the_requests_own_cost_echoes_its_request_id() {
 	let _data = TestDataDirGuard::new();
-	let _env = StubEnv::new(vec![
-		final_response("injected reply"),
-		final_response("user reply"),
-	])
-	.await;
+	let _env = StubEnv::new(vec![final_response("injected reply"), final_response("user reply")]).await;
 	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
 	let mut ws = connect_ws(server.addr).await;
 	let _welcome = read_json(&mut ws).await;
@@ -4040,9 +3768,7 @@ async fn cancel_without_a_running_turn_is_only_acknowledged() {
 	assert_eq!(ack["message_type"], "cancel");
 
 	// Nothing else follows: the next frame answered is the next request's.
-	ws.send(Message::Ping(vec![7u8].into()))
-		.await
-		.expect("ping");
+	ws.send(Message::Ping(vec![7u8].into())).await.expect("ping");
 	assert!(matches!(read_frame(&mut ws).await, Message::Pong(_)));
 }
 
@@ -4108,10 +3834,7 @@ async fn close_of_a_busy_session_is_refused() {
 	assert_eq!(error["type"], "error");
 	assert_eq!(error["request_id"], "k1");
 	assert!(
-		error["message"]
-			.as_str()
-			.unwrap_or_default()
-			.contains("busy"),
+		error["message"].as_str().unwrap_or_default().contains("busy"),
 		"got: {error}"
 	);
 }
@@ -4153,10 +3876,7 @@ async fn bind_with_a_role_creates_the_session_under_that_role_and_resume_keeps_i
 	let _ack = read_json(&mut ws).await;
 	let status = read_json(&mut ws).await;
 	assert_eq!(status["type"], "status", "got: {status}");
-	assert_eq!(
-		server.sessions.lock().await["role-on-bind"].role,
-		"outbound"
-	);
+	assert_eq!(server.sessions.lock().await["role-on-bind"].role, "outbound");
 
 	// The bound role's tools dispatch; the server role's do not.
 	let own = tool_turn(&mut ws, "role-on-bind", "mcp").await;
@@ -4171,10 +3891,7 @@ async fn bind_with_a_role_creates_the_session_under_that_role_and_resume_keeps_i
 	.await;
 	let _ack = read_json(&mut ws).await;
 	let _status = read_json(&mut ws).await;
-	assert_eq!(
-		server.sessions.lock().await["role-on-bind"].role,
-		"outbound"
-	);
+	assert_eq!(server.sessions.lock().await["role-on-bind"].role, "outbound");
 
 	crate::session::context::cleanup_session(&"role-on-bind".to_string());
 }
@@ -4215,9 +3932,7 @@ async fn bind_with_an_unknown_tap_role_is_refused_without_creating_a_session() {
 
 #[tokio::test]
 async fn server_with_a_token_refuses_an_unauthenticated_client() {
-	let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("probe");
+	let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("probe");
 	let addr = probe.local_addr().expect("addr");
 	drop(probe);
 	let server = WebSocketServer::new(

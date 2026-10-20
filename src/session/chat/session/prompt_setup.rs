@@ -26,11 +26,7 @@ use anyhow::Result;
 /// The system prompt for `role` as the current build and config define it.
 /// Every path that writes the system message goes through here, so a new
 /// session, a resumed one and a `/role` switch get the same text.
-pub async fn build_system_prompt(
-	current_dir: &std::path::Path,
-	config_for_role: &Config,
-	role: &str,
-) -> String {
+pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role: &Config, role: &str) -> String {
 	let mut system_prompt = create_system_prompt(current_dir, config_for_role, role).await;
 	// Supervisor: make the agent self-annotate each turn (parsed + stripped later).
 	if config_for_role.supervisor.enabled {
@@ -67,11 +63,7 @@ pub async fn setup_system_prompt_and_cache(
 
 		if supports_caching {
 			let cache_manager = CacheManager::new();
-			cache_manager.add_automatic_cache_markers(
-				&mut chat_session.session.messages,
-				has_tools,
-				supports_caching,
-			);
+			cache_manager.add_automatic_cache_markers(&mut chat_session.session.messages, has_tools, supports_caching);
 
 			log_info!("System prompt has been automatically marked for caching to save tokens in future interactions.");
 			// Save the session to ensure the cached status is persisted
@@ -80,24 +72,16 @@ pub async fn setup_system_prompt_and_cache(
 			}
 		} else {
 			// Don't show warning for models that don't support caching
-			log_info!(
-				"Note: This model doesn't support caching, but system prompt is still optimized."
-			);
+			log_info!("Note: This model doesn't support caching, but system prompt is still optimized.");
 		}
 
 		if is_interactive {
 			// Add initial messages (welcome + instructions) using centralized function
-			let initial_messages =
-				super::utils::get_initial_messages(config_for_role, role, &current_dir).await?;
+			let initial_messages = super::utils::get_initial_messages(config_for_role, role, &current_dir).await?;
 			for msg in initial_messages {
 				match msg.role.as_str() {
 					"assistant" => {
-						chat_session.add_assistant_message(
-							&msg.content,
-							None,
-							config_for_role,
-							role,
-						)?;
+						chat_session.add_assistant_message(&msg.content, None, config_for_role, role)?;
 					}
 					"user" => {
 						chat_session.add_system_managed_user_message(&msg.content)?;
@@ -118,12 +102,8 @@ pub async fn setup_system_prompt_and_cache(
 		} else {
 			// Non-interactive mode: Add assistant welcome message
 			let role_config = config_for_role.get_role_config_struct(role);
-			let welcome_message = process_placeholders_async_with_role(
-				&role_config.welcome,
-				&current_dir,
-				Some(role),
-			)
-			.await;
+			let welcome_message =
+				process_placeholders_async_with_role(&role_config.welcome, &current_dir, Some(role)).await;
 
 			chat_session.add_assistant_message(&welcome_message, None, config_for_role, role)?;
 
@@ -138,8 +118,7 @@ pub async fn setup_system_prompt_and_cache(
 			}
 
 			// Check for AGENTS.md instructions file
-			let instructions_path =
-				current_dir.join(crate::session::chat::session::utils::AGENTS_FILE);
+			let instructions_path = current_dir.join(crate::session::chat::session::utils::AGENTS_FILE);
 			if instructions_path.exists() {
 				match std::fs::read_to_string(&instructions_path) {
 					Ok(instructions_content) => {
@@ -149,17 +128,11 @@ pub async fn setup_system_prompt_and_cache(
 								crate::session::chat::session::utils::AGENTS_FILE
 							);
 						} else {
-							let processed_instructions = process_placeholders_async_with_role(
-								&instructions_content,
-								&current_dir,
-								Some(role),
-							)
-							.await;
+							let processed_instructions =
+								process_placeholders_async_with_role(&instructions_content, &current_dir, Some(role))
+									.await;
 
-							let wrapped = format!(
-								"<instructions>\n{}\n</instructions>",
-								processed_instructions
-							);
+							let wrapped = format!("<instructions>\n{}\n</instructions>", processed_instructions);
 							chat_session.add_system_managed_user_message(&wrapped)?;
 
 							if supports_caching {

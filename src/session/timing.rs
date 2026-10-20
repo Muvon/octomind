@@ -215,9 +215,7 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 				session: s,
 				turn: turns.len() - 1,
 				start: done_at,
-				end: done_at
-					+ last.words_out as f64 / READ_WORDS_PER_MIN
-					+ config.think_overhead_min,
+				end: done_at + last.words_out as f64 / READ_WORDS_PER_MIN + config.think_overhead_min,
 				weight: OTHER_WEIGHT,
 				code_share: 0.0,
 			});
@@ -272,9 +270,7 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 	active.sort_by(|a, b| a.start.total_cmp(&b.start));
 	let switches = active
 		.windows(2)
-		.filter(|pair| {
-			pair[0].session != pair[1].session && pair[1].start - pair[0].end < BREAK_MIN
-		})
+		.filter(|pair| pair[0].session != pair[1].session && pair[1].start - pair[0].end < BREAK_MIN)
 		.count();
 	let mut longest_block_min: f64 = 0.0;
 	if let Some(first) = active.first() {
@@ -290,8 +286,7 @@ pub fn compute(sessions: &[SessionTurns], config: &TimingConfig) -> Timing {
 		longest_block_min = longest_block_min.max(block_end - block_start);
 	}
 
-	let energy_dhe =
-		result.iter().map(|s| s.energy_dhe).sum::<f64>() + switches as f64 * config.switch_cost_dhe;
+	let energy_dhe = result.iter().map(|s| s.energy_dhe).sum::<f64>() + switches as f64 * config.switch_cost_dhe;
 	Timing {
 		time_min: result.iter().map(|s| s.time_min).sum(),
 		code_min: result.iter().map(|s| s.code_min).sum(),

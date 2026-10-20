@@ -34,10 +34,7 @@ fn new_initializes_fields_with_defaults() {
 	let config = valid_config();
 	assert_eq!(config.client_id, "client-123");
 	assert!(config.client_secret.is_empty());
-	assert_eq!(
-		config.authorization_url,
-		"https://auth.example.com/oauth/authorize"
-	);
+	assert_eq!(config.authorization_url, "https://auth.example.com/oauth/authorize");
 	assert_eq!(config.token_url, "https://auth.example.com/oauth/token");
 	assert_eq!(config.callback_url, "http://localhost:34567/oauth/callback");
 	assert_eq!(config.scopes, vec!["mcp:read", "mcp:write"]);

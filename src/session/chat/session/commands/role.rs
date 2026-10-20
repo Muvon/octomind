@@ -32,26 +32,20 @@ use anyhow::Result;
 ///
 /// Accepts either a plain role name defined in `config.roles` or a tap agent
 /// tag (`domain:spec`) that is resolved via the same path as `octomind run`.
-pub async fn handle_role(
-	session: &mut ChatSession,
-	config: &mut Config,
-	params: &[&str],
-) -> Result<CommandResult> {
+pub async fn handle_role(session: &mut ChatSession, config: &mut Config, params: &[&str]) -> Result<CommandResult> {
 	if params.is_empty() {
 		// Show current role and available roles
 		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Role {
-				old_role: None,
-				new_role: session.role.clone(),
-				current_role: Some(session.role.clone()),
-				available_roles: Some(available_roles),
-				changed: false,
-				saved: None,
-				save_error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Role {
+			old_role: None,
+			new_role: session.role.clone(),
+			current_role: Some(session.role.clone()),
+			available_roles: Some(available_roles),
+			changed: false,
+			saved: None,
+			save_error: None,
+		})));
 	}
 
 	let new_role_arg = params[0];
@@ -63,29 +57,25 @@ pub async fn handle_role(
 	if !is_tap_tag && !config.roles.iter().any(|r| r.name == new_role_arg) {
 		let available_roles: Vec<String> = config.roles.iter().map(|r| r.name.clone()).collect();
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Invalid role: {}", new_role_arg),
-				context: Some(serde_json::json!({
-					"available_roles": available_roles
-				})),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Invalid role: {}", new_role_arg),
+			context: Some(serde_json::json!({
+				"available_roles": available_roles
+			})),
+		})));
 	}
 
 	// Don't switch if already using this role
 	if session.role == new_role_arg {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Role {
-				old_role: None,
-				new_role: new_role_arg.to_string(),
-				current_role: Some(new_role_arg.to_string()),
-				available_roles: None,
-				changed: false,
-				saved: None,
-				save_error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Role {
+			old_role: None,
+			new_role: new_role_arg.to_string(),
+			current_role: Some(new_role_arg.to_string()),
+			available_roles: None,
+			changed: false,
+			saved: None,
+			save_error: None,
+		})));
 	}
 
 	// Snapshot for revert on failure
@@ -101,12 +91,10 @@ pub async fn handle_role(
 		match resolver::resolve_config_and_role(Some(new_role_arg), config, None).await {
 			Ok(v) => v,
 			Err(e) => {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Error {
-						error: format!("Failed to resolve role '{}': {}", new_role_arg, e),
-						context: None,
-					},
-				)));
+				return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+					error: format!("Failed to resolve role '{}': {}", new_role_arg, e),
+					context: None,
+				})));
 			}
 		};
 
@@ -155,22 +143,18 @@ pub async fn handle_role(
 			);
 		}
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Failed to switch role: {}", e),
-				context: Some(serde_json::json!({
-					"reverted": true
-				})),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Failed to switch role: {}", e),
+			context: Some(serde_json::json!({
+				"reverted": true
+			})),
+		})));
 	}
 
 	// Log the role change for session restoration
 	if let Some(_session_file) = &session.session.session_file {
 		let command_line = format!("/role {}", new_role_arg);
-		if let Err(e) =
-			crate::session::logger::log_session_command(&session.session.info.name, &command_line)
-		{
+		if let Err(e) = crate::session::logger::log_session_command(&session.session.info.name, &command_line) {
 			crate::log_debug!("Warning: Failed to log role change: {}", e);
 		}
 	}
@@ -181,17 +165,15 @@ pub async fn handle_role(
 		Err(e) => (Some(false), Some(e.to_string())),
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Role {
-			old_role: Some(old_role),
-			new_role: target_role,
-			current_role: None,
-			available_roles: None,
-			changed: true,
-			saved,
-			save_error,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Role {
+		old_role: Some(old_role),
+		new_role: target_role,
+		current_role: None,
+		available_roles: None,
+		changed: true,
+		saved,
+		save_error,
+	})))
 }
 
 #[cfg(test)]

@@ -98,10 +98,7 @@ pub async fn execute_command(
 		} else {
 			let c = SessionCancellation::new();
 			cancellations.insert(request.session_id.clone(), c);
-			cancellations
-				.get_mut(&request.session_id)
-				.unwrap()
-				.new_operation()
+			cancellations.get_mut(&request.session_id).unwrap().new_operation()
 		}
 	};
 
@@ -118,13 +115,7 @@ pub async fn execute_command(
 	// Execute the command
 	let result = crate::session::context::with_session_id(
 		chat_session.session.info.name.clone(),
-		process_command(
-			&mut chat_session,
-			&full_command,
-			&mut config_clone,
-			role,
-			operation_rx,
-		),
+		process_command(&mut chat_session, &full_command, &mut config_clone, role, operation_rx),
 	)
 	.await;
 

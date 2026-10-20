@@ -40,10 +40,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -158,10 +155,7 @@ async fn load_env_skills_noop_when_env_unset_or_blank() {
 
 	std::env::set_var("OCTOMIND_SKILLS", "  ,  ");
 	load_env_skills(&mut session).await;
-	assert!(
-		session.session.messages.is_empty(),
-		"blank entries are filtered"
-	);
+	assert!(session.session.messages.is_empty(), "blank entries are filtered");
 }
 
 #[tokio::test]
@@ -269,8 +263,7 @@ async fn run_activation_disabled_in_config_activates_nothing() {
 
 	let sid = "__skillauto_disabled".to_string();
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.skills.auto_activation = false;
 	set_session_config(&sid, &config);
 
@@ -283,12 +276,7 @@ async fn run_activation_disabled_in_config_activates_nothing() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -373,12 +361,7 @@ async fn run_activation_without_pool_is_noop() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -408,12 +391,7 @@ async fn run_activation_deterministic_match_injects_skill() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -443,12 +421,7 @@ async fn run_activation_no_matching_rule_is_silent() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -476,19 +449,11 @@ async fn run_activation_skips_already_active_skills() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
-	assert!(
-		session.session.messages.is_empty(),
-		"active skills are not re-injected"
-	);
+	assert!(session.session.messages.is_empty(), "active skills are not re-injected");
 	cleanup_session(&sid);
 	clear_pool();
 }
@@ -519,12 +484,7 @@ async fn run_activation_multiple_deterministic_matches_all_activate() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -573,8 +533,7 @@ fn init_pool_collects_domain_matching_skills_with_descriptions() {
 async fn skills_config_reads_session_override() {
 	let sid = "__skillauto_cfg".to_string();
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.skills.validation_timeout = 123;
 	config.skills.max_retries = 7;
 	set_session_config(&sid, &config);
@@ -623,12 +582,7 @@ async fn run_activation_skips_shadow_bound_skills() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -682,10 +636,7 @@ async fn init_pool_skips_malformed_tap_entries() {
 	init_pool("developer");
 
 	let names = pool_names("__default__");
-	assert!(
-		names.is_empty(),
-		"malformed entries must be skipped: {names:?}"
-	);
+	assert!(names.is_empty(), "malformed entries must be skipped: {names:?}");
 
 	clear_pool();
 }
@@ -748,9 +699,7 @@ fn init_pool_reads_universal_skill_dirs() {
 	);
 
 	clear_pool();
-	crate::mcp::workdir::set_session_working_directory(
-		std::env::current_dir().expect("restore cwd"),
-	);
+	crate::mcp::workdir::set_session_working_directory(std::env::current_dir().expect("restore cwd"));
 	match prev_home {
 		Some(v) => std::env::set_var("HOME", v),
 		None => std::env::remove_var("HOME"),
@@ -812,8 +761,7 @@ async fn init_pool_includes_evolution_generated_skills() {
 	);
 
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.supervisor.learning.evolution.enabled = true;
 
 	let sid = "__skillauto_evo".to_string();
@@ -845,21 +793,14 @@ async fn run_activation_with_empty_pool_entries_returns_early() {
 	let sid = "__skillauto_emptyentries".to_string();
 	// A pool for the session that exists but holds no entries: activation
 	// must return before any matching work.
-	get_pool().write().expect("pool lock").insert(
-		sid.clone(),
-		SkillPool {
-			entries: Vec::new(),
-		},
-	);
+	get_pool()
+		.write()
+		.expect("pool lock")
+		.insert(sid.clone(), SkillPool { entries: Vec::new() });
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -881,8 +822,7 @@ async fn load_env_skills_injection_failure_leaves_history_untouched() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	// Point the session file at an unwritable path: appending the injected
 	// skill content must fail, be logged, and skip injection.
-	session.session.session_file =
-		Some(PathBuf::from("/nonexistent-octomind-test-dir/session.json"));
+	session.session.session_file = Some(PathBuf::from("/nonexistent-octomind-test-dir/session.json"));
 
 	with_session_id(sid.clone(), async {
 		load_env_skills(&mut session).await;
@@ -902,11 +842,8 @@ fn write_validate_script(skill_dir: &Path, body: &str) {
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(
-			skill_dir.join("validate"),
-			std::fs::Permissions::from_mode(0o755),
-		)
-		.expect("chmod validate");
+		std::fs::set_permissions(skill_dir.join("validate"), std::fs::Permissions::from_mode(0o755))
+			.expect("chmod validate");
 	}
 }
 
@@ -919,20 +856,11 @@ async fn run_validators_end_to_end_reports_failures_and_skips_bad_skills() {
 
 	// Failing validator with stderr output.
 	let fail_dir = tap.join("skills").join("val-fail");
-	write_file(
-		&fail_dir.join("SKILL.md"),
-		&skill_md("val-fail", "developer", &[]),
-	);
-	write_validate_script(
-		&fail_dir,
-		"#!/bin/sh\necho 'val-fail: broken' >&2\nexit 1\n",
-	);
+	write_file(&fail_dir.join("SKILL.md"), &skill_md("val-fail", "developer", &[]));
+	write_validate_script(&fail_dir, "#!/bin/sh\necho 'val-fail: broken' >&2\nexit 1\n");
 	// Existing but non-executable validator: spawn fails.
 	let noexec_dir = tap.join("skills").join("val-noexec");
-	write_file(
-		&noexec_dir.join("SKILL.md"),
-		&skill_md("val-noexec", "developer", &[]),
-	);
+	write_file(&noexec_dir.join("SKILL.md"), &skill_md("val-noexec", "developer", &[]));
 	write_file(&noexec_dir.join("validate"), "#!/bin/sh\nexit 0\n");
 	// Skill dir without any validate script.
 	write_file(
@@ -990,10 +918,7 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	let capped_dir = tap.join("skills").join("val-capped");
-	write_file(
-		&capped_dir.join("SKILL.md"),
-		&skill_md("val-capped", "developer", &[]),
-	);
+	write_file(&capped_dir.join("SKILL.md"), &skill_md("val-capped", "developer", &[]));
 	write_validate_script(&capped_dir, "#!/bin/sh\necho 'still failing' >&2\nexit 1\n");
 
 	let sid = "__skillauto_val_cap".to_string();
@@ -1006,10 +931,7 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 			.expect("retry lock")
 			.insert("val-capped".to_string(), max);
 		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
-		assert!(
-			failures.is_empty(),
-			"capped validator must be skipped: {failures:?}"
-		);
+		assert!(failures.is_empty(), "capped validator must be skipped: {failures:?}");
 		max
 	})
 	.await;
@@ -1020,10 +942,7 @@ async fn run_validators_skips_retry_capped_skills_and_broken_taps() {
 	std::fs::write(data.join("taps.toml"), "not valid toml [[[").expect("broken taps.toml");
 	with_session_id(sid.clone(), async {
 		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
-		assert!(
-			failures.is_empty(),
-			"broken taps must degrade to no validators"
-		);
+		assert!(failures.is_empty(), "broken taps must degrade to no validators");
 	})
 	.await;
 
@@ -1038,15 +957,11 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
 	let pass_dir = tap.join("skills").join("val-pass");
-	write_file(
-		&pass_dir.join("SKILL.md"),
-		&skill_md("val-pass", "developer", &[]),
-	);
+	write_file(&pass_dir.join("SKILL.md"), &skill_md("val-pass", "developer", &[]));
 	write_validate_script(&pass_dir, "#!/bin/sh\nexit 0\n");
 
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	// The template ships auto_validation = false; this test needs validators
 	// ON, with the 0 (effectively unlimited) timeout branch.
 	config.skills.auto_validation = true;
@@ -1062,19 +977,13 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 	with_session_id(sid.clone(), async {
 		add_active_skill(&sid, "val-pass");
 		let failures = run_validators("assistant output", &std::env::temp_dir()).await;
-		assert!(
-			failures.is_empty(),
-			"passing validator reports nothing: {failures:?}"
-		);
+		assert!(failures.is_empty(), "passing validator reports nothing: {failures:?}");
 	})
 	.await;
 
 	// A passing validation resets the retry counter.
 	assert!(
-		!get_retry_tracker()
-			.read()
-			.expect("retry lock")
-			.contains_key("val-pass"),
+		!get_retry_tracker().read().expect("retry lock").contains_key("val-pass"),
 		"pass must reset retries"
 	);
 
@@ -1088,15 +997,12 @@ async fn run_validators_timeout_zero_passes_and_resets_retries() {
 // ENV_LOCK itself, so these tests do not lock it again.
 // ---------------------------------------------------------------------------
 
-use crate::session::chat::test_support::{
-	choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep,
-};
+use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
 use crate::supervisor::evaluate::{Seam, SKILL_QUESTION_ID};
 
 fn evaluate_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.supervisor.enabled = true;
 	config.decision.skills = true;
 	config
@@ -1154,10 +1060,7 @@ async fn run_activation_evaluate_chooses_a_skill_when_rules_abstain() {
 	assert_eq!(evaluate_counter(Seam::Skills, "applied"), applied + 1);
 
 	let request = &fake.requests()[0];
-	assert_eq!(
-		request.state,
-		serde_json::Value::String(message.to_string())
-	);
+	assert_eq!(request.state, serde_json::Value::String(message.to_string()));
 	match &request.questions[SKILL_QUESTION_ID] {
 		octolib::evaluation::Question::Choice { criteria, .. } => {
 			assert_eq!(
@@ -1197,31 +1100,18 @@ async fn run_activation_evaluate_activation_floor_is_inclusive_and_none_is_inert
 
 	let sid = "__skillauto_evaluate_floor".to_string();
 	set_session_config(&sid, &evaluate_config());
-	set_pool(vec![rule_less(
-		"markup-landing-page",
-		"Landing page markup",
-	)]);
+	set_pool(vec![rule_less("markup-landing-page", "Landing page markup")]);
 	let calls = evaluate_counter(Seam::Skills, "calls");
 	let applied = evaluate_counter(Seam::Skills, "applied");
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
 		for _ in 0..2 {
-			run_activation(
-				"hmm let me think about the layout",
-				Path::new("/tmp"),
-				&mut session,
-			)
-			.await;
+			run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
 			assert!(session.session.messages.is_empty());
 			assert!(!has_active_skill(&sid, "markup-landing-page"));
 		}
-		run_activation(
-			"hmm let me think about the layout",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("hmm let me think about the layout", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -1261,21 +1151,13 @@ async fn run_activation_deterministic_match_makes_no_evaluation_call() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
 	assert!(has_active_skill(&sid, "rust-helper"));
 	assert!(!has_active_skill(&sid, "other"));
-	assert!(
-		fake.requests().is_empty(),
-		"rules decided; no evaluation call"
-	);
+	assert!(fake.requests().is_empty(), "rules decided; no evaluation call");
 	cleanup_session(&sid);
 	clear_pool();
 }
@@ -1308,12 +1190,7 @@ async fn run_activation_evaluate_choice_respects_shadow_bindings() {
 
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 
@@ -1339,27 +1216,15 @@ async fn run_activation_evaluate_roster_cap_and_seam_switch() {
 	// 255 inactive entries: above the 254 cap, no call, one unavailable.
 	let sid = "__skillauto_evaluate_roster".to_string();
 	set_session_config(&sid, &evaluate_config());
-	set_pool(
-		(0..255)
-			.map(|i| rule_less(&format!("skill-{i}"), "x"))
-			.collect(),
-	);
+	set_pool((0..255).map(|i| rule_less(&format!("skill-{i}"), "x")).collect());
 	let unavailable = evaluate_counter(Seam::Skills, "unavailable");
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 	assert!(fake.requests().is_empty());
-	assert_eq!(
-		evaluate_counter(Seam::Skills, "unavailable"),
-		unavailable + 1
-	);
+	assert_eq!(evaluate_counter(Seam::Skills, "unavailable"), unavailable + 1);
 	assert!(session.session.messages.is_empty());
 	cleanup_session(&sid);
 
@@ -1371,12 +1236,7 @@ async fn run_activation_evaluate_roster_cap_and_seam_switch() {
 	set_pool(vec![rule_less("skill-0", "x")]);
 	let mut session = ChatSession::for_tests(Vec::new());
 	with_session_id(sid.clone(), async {
-		run_activation(
-			"please help with rust development",
-			Path::new("/tmp"),
-			&mut session,
-		)
-		.await;
+		run_activation("please help with rust development", Path::new("/tmp"), &mut session).await;
 	})
 	.await;
 	assert!(fake.requests().is_empty());

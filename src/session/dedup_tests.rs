@@ -128,14 +128,8 @@ fn clear_session_removes_unrelated_only() {
 
 #[test]
 fn content_hash_is_deterministic_and_sensitive_to_tool_name() {
-	assert_eq!(
-		content_hash("view", "{}", "body"),
-		content_hash("view", "{}", "body")
-	);
-	assert_ne!(
-		content_hash("view", "{}", "body"),
-		content_hash("shell", "{}", "body")
-	);
+	assert_eq!(content_hash("view", "{}", "body"), content_hash("view", "{}", "body"));
+	assert_ne!(content_hash("view", "{}", "body"), content_hash("shell", "{}", "body"));
 }
 
 #[test]
@@ -162,11 +156,7 @@ fn snippet_trims_surrounding_whitespace() {
 #[test]
 fn snippet_keeps_short_lines_verbatim() {
 	let exact: String = "x".repeat(SNIPPET_CHARS);
-	assert_eq!(
-		snippet(&exact),
-		exact,
-		"line at exactly SNIPPET_CHARS is not cut"
-	);
+	assert_eq!(snippet(&exact), exact, "line at exactly SNIPPET_CHARS is not cut");
 	assert_eq!(snippet("short"), "short");
 }
 
@@ -174,11 +164,7 @@ fn snippet_keeps_short_lines_verbatim() {
 fn snippet_truncates_long_lines_at_char_boundary() {
 	let line: String = "y".repeat(SNIPPET_CHARS + 50);
 	let cut = snippet(&line);
-	assert_eq!(
-		cut.chars().count(),
-		SNIPPET_CHARS + 1,
-		"120 chars + ellipsis"
-	);
+	assert_eq!(cut.chars().count(), SNIPPET_CHARS + 1, "120 chars + ellipsis");
 	assert!(cut.ends_with('…'));
 	assert!(cut.starts_with(&"y".repeat(SNIPPET_CHARS)));
 }
@@ -204,10 +190,7 @@ fn placeholder_skips_blank_lines_when_fingerprinting() {
 	let s = placeholder("view", content, false);
 	assert!(s.contains("first real line"));
 	assert!(s.contains("last real line"));
-	assert!(
-		s.contains("and ends"),
-		"distinct first/last must both be quoted"
-	);
+	assert!(s.contains("and ends"), "distinct first/last must both be quoted");
 }
 
 #[test]
@@ -215,10 +198,7 @@ fn placeholder_whitespace_only_content_quotes_a_single_empty_fingerprint() {
 	let s = placeholder("view", "\n   \n\n", false);
 	assert!(s.contains(DEDUP_NOTICE_TAG));
 	assert!(s.contains("it begins:"));
-	assert!(
-		!s.contains("and ends"),
-		"first == last must collapse to one quote"
-	);
+	assert!(!s.contains("and ends"), "first == last must collapse to one quote");
 }
 
 #[test]

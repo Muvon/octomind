@@ -29,9 +29,7 @@ use serde_json::{json, Value};
 pub async fn handle_workflow(input: &str, params: &[&str]) -> Result<CommandResult> {
 	let Some(name) = params.first() else {
 		let workflows = crate::workflow::spawn::list_tap_workflows()?;
-		return Ok(output(
-			json!({ "subcommand": "list", "workflows": workflows }),
-		));
+		return Ok(output(json!({ "subcommand": "list", "workflows": workflows })));
 	};
 	let Some(wf_input) = split_input(input) else {
 		return Ok(match crate::agent::taps::fetch_workflow(name) {

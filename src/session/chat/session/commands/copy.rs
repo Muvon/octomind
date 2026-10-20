@@ -30,12 +30,7 @@ pub enum CopyScope {
 
 impl CopyScope {
 	/// Every accepted scope, in the order `/copy` documents them.
-	pub const ALL: [CopyScope; 4] = [
-		CopyScope::Last,
-		CopyScope::Assistant,
-		CopyScope::User,
-		CopyScope::All,
-	];
+	pub const ALL: [CopyScope; 4] = [CopyScope::Last, CopyScope::Assistant, CopyScope::User, CopyScope::All];
 
 	pub fn parse(raw: &str) -> Option<Self> {
 		match raw.to_ascii_lowercase().as_str() {
@@ -75,12 +70,7 @@ pub fn build_payload(session: &ChatSession, scope: CopyScope) -> Option<String> 
 	for message in &session.session.messages {
 		let label = match message.role.as_str() {
 			"assistant" if scope != CopyScope::User => "Assistant",
-			"user"
-				if scope != CopyScope::Assistant
-					&& crate::session::is_real_user_task_message(message) =>
-			{
-				"User"
-			}
+			"user" if scope != CopyScope::Assistant && crate::session::is_real_user_task_message(message) => "User",
 			_ => continue,
 		};
 		let content = message.content.trim();
@@ -99,40 +89,34 @@ pub fn handle_copy(session: &ChatSession, params: &[&str]) -> Result<CommandResu
 		Some(raw) => match CopyScope::parse(raw) {
 			Some(scope) => scope,
 			None => {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Error {
-						error: format!("Unknown /copy scope '{}'.", raw),
-						context: Some(serde_json::json!({
-							"valid_scopes": CopyScope::ALL.map(CopyScope::name),
-							"hint": "Use /copy [scope]; the default is 'last'.",
-						})),
-					},
-				)));
+				return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+					error: format!("Unknown /copy scope '{}'.", raw),
+					context: Some(serde_json::json!({
+						"valid_scopes": CopyScope::ALL.map(CopyScope::name),
+						"hint": "Use /copy [scope]; the default is 'last'.",
+					})),
+				})));
 			}
 		},
 	};
 
 	let Some(payload) = build_payload(session, scope) else {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Copy {
-				copied: false,
-				length: None,
-				scope: scope.name().to_string(),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Copy {
+			copied: false,
+			length: None,
+			scope: scope.name().to_string(),
+		})));
 	};
 
 	let copied = Clipboard::new()
 		.and_then(|mut clipboard| clipboard.set_text(&payload))
 		.is_ok();
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Copy {
-			copied,
-			length: copied.then_some(payload.len()),
-			scope: scope.name().to_string(),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Copy {
+		copied,
+		length: copied.then_some(payload.len()),
+		scope: scope.name().to_string(),
+	})))
 }
 
 #[cfg(test)]

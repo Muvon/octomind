@@ -103,9 +103,7 @@ async fn test_cached_functions_returned_without_connecting() {
 	// HTTP config whose URL is never contacted: the cache is checked first.
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9", 5, vec![]);
 
-	let functions = get_server_functions_cached(&server)
-		.await
-		.expect("cache hit");
+	let functions = get_server_functions_cached(&server).await.expect("cache hit");
 	assert_eq!(functions.len(), 1);
 	assert_eq!(functions[0].name, "cached_tool");
 
@@ -135,18 +133,14 @@ async fn test_private_tool_lists_are_cached_per_session() {
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9", 5, vec![]);
 
 	let first = with_session_id("srvtest-first".to_string(), async {
-		get_server_functions_cached(&server)
-			.await
-			.expect("cache hit")
+		get_server_functions_cached(&server).await.expect("cache hit")
 	})
 	.await;
 	assert_eq!(first.len(), 1);
 	assert_eq!(first[0].name, "first_tool");
 
 	let second = with_session_id("srvtest-second".to_string(), async {
-		get_server_functions_cached(&server)
-			.await
-			.expect("dispatch")
+		get_server_functions_cached(&server).await.expect("dispatch")
 	})
 	.await;
 	assert!(second.is_empty(), "another session's list was served");
@@ -167,20 +161,13 @@ async fn test_cached_functions_skip_unavailable_servers() {
 	// Stdio server with no live connection → empty, and NOT cached (a cached
 	// empty list would freeze the server at zero tools forever).
 	let server = McpServerConfig::stdin("srvtest-skip-stdio", "echo", vec![], 5, vec![]);
-	let functions = get_server_functions_cached(&server)
-		.await
-		.expect("dispatch");
+	let functions = get_server_functions_cached(&server).await.expect("dispatch");
 	assert!(functions.is_empty());
-	assert!(!FUNCTION_CACHE
-		.read()
-		.unwrap()
-		.contains_key("srvtest-skip-stdio"));
+	assert!(!FUNCTION_CACHE.read().unwrap().contains_key("srvtest-skip-stdio"));
 
 	// Builtin servers never fetch through this path.
 	let server = McpServerConfig::builtin("srvtest-skip-builtin", 30, vec![]);
-	let functions = get_server_functions_cached(&server)
-		.await
-		.expect("dispatch");
+	let functions = get_server_functions_cached(&server).await.expect("dispatch");
 	assert!(functions.is_empty());
 }
 
@@ -295,15 +282,12 @@ async fn test_execute_tool_call_rejects_builtin() {
 
 #[tokio::test]
 async fn test_get_all_server_functions_empty_and_builtin_rejected() {
-	let mut config: Config =
-		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse config");
+	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse config");
 	config.build_role_map();
 
 	// No servers → empty map, no error.
 	config.mcp.servers.clear();
-	let functions = get_all_server_functions(&config)
-		.await
-		.expect("empty config");
+	let functions = get_all_server_functions(&config).await.expect("empty config");
 	assert!(functions.is_empty());
 
 	// A builtin server propagates get_server_functions's rejection.
@@ -333,10 +317,7 @@ fn test_status_report_wrappers_track_and_reset() {
 		.restart_count = 2;
 	seed_health(NAME, process::ServerHealth::Restarting);
 
-	assert_eq!(
-		get_server_health_status(NAME),
-		process::ServerHealth::Restarting
-	);
+	assert_eq!(get_server_health_status(NAME), process::ServerHealth::Restarting);
 	assert_eq!(get_server_restart_info(NAME).restart_count, 2);
 
 	let report = get_server_status_report();
@@ -515,8 +496,7 @@ for line in sys.stdin:
 "#;
 
 fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
-	let path =
-		std::env::temp_dir().join(format!("octomind-test-srv-{tag}-{}.py", std::process::id()));
+	let path = std::env::temp_dir().join(format!("octomind-test-srv-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, body).expect("write fake server script");
 	path
 }
@@ -583,10 +563,7 @@ async fn test_get_server_functions_lists_tools_from_live_http_server() {
 	let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
 	assert!(names.contains(&"echo"), "functions: {names:?}");
 	assert!(names.contains(&"extra_tool"), "functions: {names:?}");
-	let echo = functions
-		.iter()
-		.find(|f| f.name == "echo")
-		.expect("echo fn");
+	let echo = functions.iter().find(|f| f.name == "echo").expect("echo fn");
 	assert_eq!(echo.description, "echo over http");
 
 	let _ = child.kill().await;
@@ -729,10 +706,7 @@ async fn test_execute_tool_call_restarts_dead_stdio_server_and_executes() {
 	assert!(!result.is_error(), "{}", result.extract_content());
 	assert!(result.extract_content().contains("round-trip"));
 
-	assert_eq!(
-		process::get_server_health(NAME),
-		process::ServerHealth::Running
-	);
+	assert_eq!(process::get_server_health(NAME), process::ServerHealth::Running);
 	crate::mcp::client::disconnect(NAME);
 	process::cleanup_server_process(NAME).ok();
 	clear_health(NAME);
@@ -805,8 +779,8 @@ async fn test_execute_tool_with_cancellation_rejects_precancelled_token() {
 async fn test_get_all_server_functions_includes_live_http_server() {
 	const NAME: &str = "srv-all-functions";
 	let (url, mut child) = spawn_fake_http_server("allfns", "modern").await;
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.mcp.servers = vec![McpServerConfig::http(NAME, &url, 10, vec![])];
 
 	let functions = get_all_server_functions(&config)

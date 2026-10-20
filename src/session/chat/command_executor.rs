@@ -74,10 +74,7 @@ pub async fn execute_command_layer(
 				"input_mode": command_config.input_mode.as_str()
 			}
 		});
-		if let Err(e) = crate::session::append_to_session_file(
-			session_file,
-			&serde_json::to_string(&log_entry)?,
-		) {
+		if let Err(e) = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?) {
 			crate::log_debug!("session log append failed: {}", e);
 		}
 	}
@@ -100,22 +97,14 @@ pub async fn execute_command_layer(
 			"input_length": processed_input.len(),
 			"input_mode": command_config.input_mode.as_str()
 		});
-		if let Err(e) = crate::session::append_to_session_file(
-			session_file,
-			&serde_json::to_string(&log_entry)?,
-		) {
+		if let Err(e) = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?) {
 			crate::log_debug!("session log append failed: {}", e);
 		}
 	}
 
 	// Execute the layer without affecting the session
 	let result = command_layer
-		.process(
-			&processed_input,
-			&chat_session.session,
-			config,
-			operation_cancelled,
-		)
+		.process(&processed_input, &chat_session.session, config, operation_cancelled)
 		.await?;
 
 	// Log the command result
@@ -129,10 +118,7 @@ pub async fn execute_command_layer(
 			"command": command_name,
 			"output_length": result.outputs.iter().map(|s| s.len()).sum::<usize>(),
 		});
-		if let Err(e) = crate::session::append_to_session_file(
-			session_file,
-			&serde_json::to_string(&log_entry)?,
-		) {
+		if let Err(e) = crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?) {
 			crate::log_debug!("session log append failed: {}", e);
 		}
 	}
@@ -142,17 +128,11 @@ pub async fn execute_command_layer(
 	match command_config.output_mode {
 		OutputMode::None => {
 			// Command output is returned but doesn't modify session (default behavior)
-			println!(
-				"{}",
-				"Output mode: none (command output only)".bright_cyan()
-			);
+			println!("{}", "Output mode: none (command output only)".bright_cyan());
 		}
 		OutputMode::Append => {
 			// Add command output as new assistant message to session
-			println!(
-				"{}",
-				"Output mode: append (adding to session)".bright_cyan()
-			);
+			println!("{}", "Output mode: append (adding to session)".bright_cyan());
 			// Add all command outputs as messages with configured role, persisting each
 			// so they are restored on reload. OUTPUT_MODE_APPEND does not clear, so these
 			// lines are read back as-is.
@@ -176,10 +156,9 @@ pub async fn execute_command_layer(
 					"command": command_name,
 					"content_length": result.outputs.iter().map(|s| s.len()).sum::<usize>()
 				});
-				if let Err(e) = crate::session::append_to_session_file(
-					session_file,
-					&serde_json::to_string(&log_entry)?,
-				) {
+				if let Err(e) =
+					crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?)
+				{
 					crate::log_debug!("session log append failed: {}", e);
 				}
 			}
@@ -191,10 +170,7 @@ pub async fn execute_command_layer(
 		}
 		OutputMode::Replace => {
 			// Replace entire session with this command's output
-			println!(
-				"{}",
-				"Output mode: replace (replacing session content)".bright_cyan()
-			);
+			println!("{}", "Output mode: replace (replacing session content)".bright_cyan());
 
 			// Log the replace operation for session restoration
 			if let Some(session_file) = &chat_session.session.session_file {
@@ -208,10 +184,9 @@ pub async fn execute_command_layer(
 					"previous_message_count": chat_session.session.messages.len(),
 					"content_length": result.outputs.iter().map(|s| s.len()).sum::<usize>()
 				});
-				if let Err(e) = crate::session::append_to_session_file(
-					session_file,
-					&serde_json::to_string(&log_entry)?,
-				) {
+				if let Err(e) =
+					crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?)
+				{
 					crate::log_debug!("session log append failed: {}", e);
 				}
 			}
@@ -239,8 +214,7 @@ pub async fn execute_command_layer(
 			// Use thread-local if set (ACP/WebSocket), otherwise process cwd
 			let current_dir = crate::mcp::get_thread_working_directory();
 			if let Ok(initial_messages) =
-				crate::session::chat::session::get_initial_messages(config, role, &current_dir)
-					.await
+				crate::session::chat::session::get_initial_messages(config, role, &current_dir).await
 			{
 				final_messages.extend(initial_messages);
 			}
@@ -310,10 +284,9 @@ pub async fn execute_command_layer(
 					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
 					"total_outputs": result.outputs.len()
 				});
-				if let Err(e) = crate::session::append_to_session_file(
-					session_file,
-					&serde_json::to_string(&log_entry)?,
-				) {
+				if let Err(e) =
+					crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?)
+				{
 					crate::log_debug!("session log append failed: {}", e);
 				}
 			}
@@ -343,10 +316,9 @@ pub async fn execute_command_layer(
 					"content_length": result.outputs.last().map(|s| s.len()).unwrap_or(0),
 					"total_outputs": result.outputs.len()
 				});
-				if let Err(e) = crate::session::append_to_session_file(
-					session_file,
-					&serde_json::to_string(&log_entry)?,
-				) {
+				if let Err(e) =
+					crate::session::append_to_session_file(session_file, &serde_json::to_string(&log_entry)?)
+				{
 					crate::log_debug!("session log append failed: {}", e);
 				}
 			}
@@ -406,10 +378,7 @@ pub fn get_command_help(config: &Config, role: &str) -> String {
 		} else {
 			let mut help_text = String::from("Available command layers:\n");
 			for command in commands {
-				help_text.push_str(&format!(
-					"  /run {} - {}\n",
-					command.name, command.description
-				));
+				help_text.push_str(&format!("  /run {} - {}\n", command.name, command.description));
 			}
 			help_text.push_str("\nUsage: /run <command_name>\nExample: /run reduce");
 			help_text

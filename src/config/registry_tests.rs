@@ -27,16 +27,13 @@ fn registry_config_default_has_24h_ttl() {
 
 #[test]
 fn missing_ttl_deserializes_to_24() {
-	let config: RegistryConfig =
-		toml::from_str("").expect("failed to deserialize RegistryConfig from empty TOML");
+	let config: RegistryConfig = toml::from_str("").expect("failed to deserialize RegistryConfig from empty TOML");
 	assert_eq!(config.cache_ttl_hours, 24);
 }
 
 #[test]
 fn serialization_round_trip() {
-	let config = RegistryConfig {
-		cache_ttl_hours: 48,
-	};
+	let config = RegistryConfig { cache_ttl_hours: 48 };
 	let serialized = toml::to_string(&config).expect("failed to serialize RegistryConfig");
 	let deserialized: RegistryConfig =
 		toml::from_str(&serialized).expect("failed to deserialize RegistryConfig round-trip");

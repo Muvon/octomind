@@ -108,14 +108,9 @@ async fn webhook_listener_processes_post() {
 		inbox::init_inbox_for_session();
 
 		// Start the listener (bind to port 0 = OS picks a free port)
-		let guard = start_webhook_listener(
-			session_name,
-			&hook,
-			"127.0.0.1:0".parse().unwrap(),
-			script_path,
-		)
-		.await
-		.unwrap();
+		let guard = start_webhook_listener(session_name, &hook, "127.0.0.1:0".parse().unwrap(), script_path)
+			.await
+			.unwrap();
 
 		// We need the actual bound port. The listener binds inside start_webhook_listener.
 		// Since we bind to port 0, we need a different approach — let's bind ourselves.

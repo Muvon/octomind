@@ -52,11 +52,7 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 	let write_init_error = |msg: String| {
 		if let Ok(logs_dir) = crate::directories::get_logs_dir() {
 			let log_file = logs_dir.join("acp-init-errors.log");
-			if let Ok(mut file) = std::fs::OpenOptions::new()
-				.create(true)
-				.append(true)
-				.open(&log_file)
-			{
+			if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
 				use std::io::Write;
 				let _ = writeln!(file, "{msg}");
 			}
@@ -65,10 +61,9 @@ pub async fn run(config: Config, role: String, options: AcpRunOptions) -> Result
 
 	// Initialize tracing for ACP mode - logs to file, not stdout/stderr
 	let log_level = config.log_level.as_str();
-	if let Err(e) = crate::logging::tracing_setup::init_tracing(
-		crate::logging::tracing_setup::LoggingMode::Acp,
-		log_level,
-	) {
+	if let Err(e) =
+		crate::logging::tracing_setup::init_tracing(crate::logging::tracing_setup::LoggingMode::Acp, log_level)
+	{
 		write_init_error(format!("Failed to initialize tracing: {e}"));
 	}
 

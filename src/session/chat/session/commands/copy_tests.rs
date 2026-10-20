@@ -66,10 +66,7 @@ fn scope_names_round_trip() {
 #[test]
 fn last_is_byte_identical_to_the_raw_response() {
 	let session = transcript();
-	assert_eq!(
-		build_payload(&session, CopyScope::Last).as_deref(),
-		Some("Tests pass.")
-	);
+	assert_eq!(build_payload(&session, CopyScope::Last).as_deref(), Some("Tests pass."));
 }
 
 #[test]
@@ -132,8 +129,7 @@ fn assistant_prose_riding_tool_calls_is_kept() {
 #[tokio::test]
 async fn unknown_scope_reports_the_valid_ones() {
 	let session = transcript();
-	let result =
-		handle_copy(&session, &["everything"]).expect("unknown scope is handled, not an error");
+	let result = handle_copy(&session, &["everything"]).expect("unknown scope is handled, not an error");
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected typed output");
 	};
@@ -144,8 +140,5 @@ async fn unknown_scope_reports_the_valid_ones() {
 	let scopes = context
 		.and_then(|ctx| ctx.get("valid_scopes").cloned())
 		.expect("valid_scopes listed");
-	assert_eq!(
-		scopes,
-		serde_json::json!(["last", "assistant", "user", "all"])
-	);
+	assert_eq!(scopes, serde_json::json!(["last", "assistant", "user", "all"]));
 }

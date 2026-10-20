@@ -27,12 +27,8 @@ const MARKER: &str = "ACP-E2E-MARKER";
 /// Serves the scripted assistant messages in order, one per provider call, or
 /// the default marker answer to every call when no script is given.
 async fn spawn_openai_stub(script: Option<Vec<serde_json::Value>>) -> String {
-	let script = std::sync::Arc::new(std::sync::Mutex::new(
-		script.map(std::collections::VecDeque::from),
-	));
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let script = std::sync::Arc::new(std::sync::Mutex::new(script.map(std::collections::VecDeque::from)));
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
@@ -110,8 +106,7 @@ fn tool_call_message(id: &str, name: &str, arguments: serde_json::Value) -> serd
 
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.supervisor.enabled = false;
@@ -220,16 +215,15 @@ impl AcpClient {
 		let mut notifications = Vec::new();
 		loop {
 			let mut buf = String::new();
-			let read =
-				tokio::time::timeout(Duration::from_secs(60), self.reader.read_line(&mut buf))
-					.await
-					.unwrap_or_else(|_| {
-						panic!(
-							"timeout waiting for response to {method}; agent stderr tail:\n{}",
-							self.stderr_dump()
-						)
-					})
-					.expect("read line");
+			let read = tokio::time::timeout(Duration::from_secs(60), self.reader.read_line(&mut buf))
+				.await
+				.unwrap_or_else(|_| {
+					panic!(
+						"timeout waiting for response to {method}; agent stderr tail:\n{}",
+						self.stderr_dump()
+					)
+				})
+				.expect("read line");
 			assert!(
 				read > 0,
 				"agent closed stdout while awaiting {method}; agent stderr tail:\n{}",
@@ -269,22 +263,13 @@ async fn test_acp_initialize_new_session_prompt() {
 			}),
 		)
 		.await;
-	assert!(
-		init.get("protocolVersion").is_some(),
-		"initialize result: {init}"
-	);
-	assert!(
-		init.get("agentCapabilities").is_some(),
-		"initialize result: {init}"
-	);
+	assert!(init.get("protocolVersion").is_some(), "initialize result: {init}");
+	assert!(init.get("agentCapabilities").is_some(), "initialize result: {init}");
 
 	// session/new
 	let cwd = home.path().to_string_lossy().to_string();
 	let (new_session, _) = client
-		.request(
-			"session/new",
-			serde_json::json!({"cwd": cwd, "mcpServers": []}),
-		)
+		.request("session/new", serde_json::json!({"cwd": cwd, "mcpServers": []}))
 		.await;
 	let session_id = new_session["sessionId"]
 		.as_str()
@@ -414,9 +399,7 @@ async fn test_acp_initialize_new_session_prompt() {
 		.await;
 	assert_eq!(loaded_result["stopReason"].as_str(), Some("end_turn"));
 
-	let AcpClient {
-		mut child, stdin, ..
-	} = client2;
+	let AcpClient { mut child, stdin, .. } = client2;
 	drop(stdin);
 	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
 		Ok(status) => {
@@ -432,9 +415,7 @@ async fn test_acp_initialize_new_session_prompt() {
 	// Graceful shutdown: closing stdin fires the agent's EOF disconnect and
 	// the process must exit cleanly on its own (this is also what lets the
 	// instrumented child flush its coverage profile — kill() would drop it).
-	let AcpClient {
-		mut child, stdin, ..
-	} = client;
+	let AcpClient { mut child, stdin, .. } = client;
 	drop(stdin);
 	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
 		Ok(status) => {
@@ -453,11 +434,7 @@ async fn test_acp_initialize_new_session_prompt() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_acp_tool_round_updates() {
 	let stub_url = spawn_openai_stub(Some(vec![
-		tool_call_message(
-			"call_acp",
-			"schedule",
-			serde_json::json!({"action": "list"}),
-		),
+		tool_call_message("call_acp", "schedule", serde_json::json!({"action": "list"})),
 		text_message(&format!("{MARKER}: tool round done")),
 	]))
 	.await;
@@ -474,10 +451,7 @@ async fn test_acp_tool_round_updates() {
 		.await;
 	let cwd = home.path().to_string_lossy().to_string();
 	let (new_session, _) = client
-		.request(
-			"session/new",
-			serde_json::json!({"cwd": cwd, "mcpServers": []}),
-		)
+		.request("session/new", serde_json::json!({"cwd": cwd, "mcpServers": []}))
 		.await;
 	let session_id = new_session["sessionId"].as_str().expect("id").to_string();
 
@@ -498,9 +472,7 @@ async fn test_acp_tool_round_updates() {
 	);
 	assert!(updates.contains(MARKER), "final answer missing: {updates}");
 
-	let AcpClient {
-		mut child, stdin, ..
-	} = client;
+	let AcpClient { mut child, stdin, .. } = client;
 	drop(stdin);
 	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
 		Ok(status) => assert!(status.expect("wait").success()),
@@ -530,8 +502,7 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 	let home = tempfile::tempdir().expect("sandbox home");
 	write_sandbox_config(home.path());
 	let path = home.path().join(".local/share/octomind/config/config.toml");
-	let mut config: octomind::config::Config =
-		toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+	let mut config: octomind::config::Config = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 	config.supervisor.enabled = true;
 	config.supervisor.model.model = Some("ollama:fake-model".into());
 	config.supervisor.learning.enabled = false;
@@ -549,13 +520,15 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 		)
 		.await;
 	let (created, _) = client
-		.request(
-			"session/new",
-			serde_json::json!({"cwd":home.path(),"mcpServers":[]}),
-		)
+		.request("session/new", serde_json::json!({"cwd":home.path(),"mcpServers":[]}))
 		.await;
 	let id = created["sessionId"].as_str().unwrap();
-	let (_, notifications) = client.request("session/prompt", serde_json::json!({"sessionId":id,"prompt":[{"type":"text","text":"Answer with ACP-GATE-TIMING"}]})).await;
+	let (_, notifications) = client
+		.request(
+			"session/prompt",
+			serde_json::json!({"sessionId":id,"prompt":[{"type":"text","text":"Answer with ACP-GATE-TIMING"}]}),
+		)
+		.await;
 	let usage = notifications
 		.iter()
 		.filter_map(|message| message["params"]["_meta"].get("octomind.usage"))
@@ -578,14 +551,9 @@ async fn final_usage_notification_matches_info_after_a_nonzero_gate() {
 			serde_json::json!({"session_id":id,"command":"/info","args":[]}),
 		)
 		.await;
-	assert_eq!(
-		usage["supervisor_accounting"],
-		info["output"]["supervisor_accounting"]
-	);
+	assert_eq!(usage["supervisor_accounting"], info["output"]["supervisor_accounting"]);
 	assert_eq!(usage["session_cost"], info["output"]["total_cost"]);
-	let AcpClient {
-		mut child, stdin, ..
-	} = client;
+	let AcpClient { mut child, stdin, .. } = client;
 	drop(stdin);
 	assert!(tokio::time::timeout(Duration::from_secs(30), child.wait())
 		.await
@@ -624,11 +592,7 @@ async fn test_acp_sub_agent_tool_round() {
 			serde_json::json!({"task": "list my schedules"}),
 		),
 		// The sub-agent's own tool round — the code path under test.
-		tool_call_message(
-			"call_sub_schedule",
-			"schedule",
-			serde_json::json!({"action": "list"}),
-		),
+		tool_call_message("call_sub_schedule", "schedule", serde_json::json!({"action": "list"})),
 		text_message(SUB_AGENT_MARKER),
 		text_message(&format!("{MARKER}: sub-agent done")),
 	]))
@@ -646,10 +610,7 @@ async fn test_acp_sub_agent_tool_round() {
 		.await;
 	let cwd = home.path().to_string_lossy().to_string();
 	let (new_session, _) = client
-		.request(
-			"session/new",
-			serde_json::json!({"cwd": cwd, "mcpServers": []}),
-		)
+		.request("session/new", serde_json::json!({"cwd": cwd, "mcpServers": []}))
 		.await;
 	let session_id = new_session["sessionId"].as_str().expect("id").to_string();
 
@@ -670,9 +631,7 @@ async fn test_acp_sub_agent_tool_round() {
 	);
 	assert!(updates.contains(MARKER), "final answer missing: {updates}");
 
-	let AcpClient {
-		mut child, stdin, ..
-	} = client;
+	let AcpClient { mut child, stdin, .. } = client;
 	drop(stdin);
 	match tokio::time::timeout(Duration::from_secs(30), child.wait()).await {
 		Ok(status) => assert!(status.expect("wait").success()),

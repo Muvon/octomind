@@ -104,8 +104,7 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 		octolib_config = octolib_config_str,
 	);
 
-	let profile_cstr = CString::new(profile)
-		.map_err(|_| anyhow::anyhow!("sandbox: profile contains null byte"))?;
+	let profile_cstr = CString::new(profile).map_err(|_| anyhow::anyhow!("sandbox: profile contains null byte"))?;
 
 	let mut errorbuf: *mut c_char = std::ptr::null_mut();
 
@@ -115,19 +114,14 @@ pub fn apply(dir: &std::path::Path) -> Result<()> {
 		let msg = if errorbuf.is_null() {
 			"unknown error".to_string()
 		} else {
-			let s = unsafe { CStr::from_ptr(errorbuf) }
-				.to_string_lossy()
-				.into_owned();
+			let s = unsafe { CStr::from_ptr(errorbuf) }.to_string_lossy().into_owned();
 			unsafe { sandbox_free_error(errorbuf) };
 			s
 		};
 		bail!("sandbox_init failed: {}", msg);
 	}
 
-	crate::log_info!(
-		"Sandbox active (Seatbelt): writes locked to {}",
-		dir.display()
-	);
+	crate::log_info!("Sandbox active (Seatbelt): writes locked to {}", dir.display());
 	Ok(())
 }
 

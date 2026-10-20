@@ -62,10 +62,7 @@ fn untap_args_require_a_name() {
 	let cli = Cli::try_parse_from(["octomind", "myorg/repo"]).expect("name parses");
 	assert_eq!(cli.args.name, "myorg/repo");
 
-	assert!(
-		Cli::try_parse_from(["octomind"]).is_err(),
-		"the tap name is required"
-	);
+	assert!(Cli::try_parse_from(["octomind"]).is_err(), "the tap name is required");
 }
 
 #[test]
@@ -84,10 +81,7 @@ fn execute_removes_an_added_tap_and_its_symlink() {
 	})
 	.expect("untap succeeds");
 
-	assert!(
-		taps::list_taps().expect("list taps").is_empty(),
-		"tap list drained"
-	);
+	assert!(taps::list_taps().expect("list taps").is_empty(), "tap list drained");
 	assert!(
 		tap_dir.symlink_metadata().is_err(),
 		"local tap symlink removed with the entry"

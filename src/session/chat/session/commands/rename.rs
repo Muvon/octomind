@@ -34,17 +34,13 @@ pub fn handle_rename(session: &mut ChatSession, params: &[&str]) -> Result<Comma
 		Some(&session.role),
 		Some(&session.session.info.model),
 	) {
-		Ok(applied) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Rename {
-				session_name,
-				title: applied,
-			},
-		))),
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Failed to rename session: {}", e),
-				context: None,
-			},
-		))),
+		Ok(applied) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Rename {
+			session_name,
+			title: applied,
+		}))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Failed to rename session: {}", e),
+			context: None,
+		}))),
 	}
 }

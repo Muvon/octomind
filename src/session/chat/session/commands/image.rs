@@ -21,52 +21,42 @@ use anyhow::Result;
 pub async fn handle_image(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Handle /image command for attaching images
 	if let Err(error) = session.ensure_model_supports_vision() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Image {
-				image_attached: false,
-				path: None,
-				error: Some(error.to_string()),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Image {
+			image_attached: false,
+			path: None,
+			error: Some(error.to_string()),
+		})));
 	}
 
 	if params.is_empty() {
 		// Check clipboard for images
 		if let Ok(true) = session.try_attach_from_clipboard().await {
 			// Image was found and attached from clipboard
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Image {
-					image_attached: true,
-					path: Some("clipboard".to_string()),
-					error: None,
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Image {
+				image_attached: true,
+				path: Some("clipboard".to_string()),
+				error: None,
+			})));
 		}
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Image {
-				image_attached: false,
-				path: None,
-				error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Image {
+			image_attached: false,
+			path: None,
+			error: None,
+		})));
 	}
 
 	let image_path = params.join(" ");
 	match session.attach_image_from_path(&image_path).await {
-		Ok(_) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Image {
-				image_attached: true,
-				path: Some(image_path),
-				error: None,
-			},
-		))),
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Image {
-				image_attached: false,
-				path: Some(image_path),
-				error: Some(format!("Failed to attach image: {}", e)),
-			},
-		))),
+		Ok(_) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Image {
+			image_attached: true,
+			path: Some(image_path),
+			error: None,
+		}))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Image {
+			image_attached: false,
+			path: Some(image_path),
+			error: Some(format!("Failed to attach image: {}", e)),
+		}))),
 	}
 }

@@ -94,12 +94,7 @@ impl EmacsWithShortcutHelp {
 				// Pad with `rows` newlines so reedline's prompt redraw scrolls
 				// past the rendered image instead of overwriting it.
 				let pad = "\n".repeat(rows as usize);
-				format!(
-					"\x1b[36m{}\x1b[0m\n{}{}",
-					label,
-					esc.trim_end_matches('\n'),
-					pad
-				)
+				format!("\x1b[36m{}\x1b[0m\n{}{}", label, esc.trim_end_matches('\n'), pad)
 			}
 			None => format!("\x1b[36m{}\x1b[0m", label),
 		};
@@ -229,10 +224,7 @@ fn format_video_label(att: &crate::session::video::VideoAttachment) -> String {
 			.unwrap_or_default(),
 		_ => String::new(),
 	};
-	format!(
-		"🎬 Video attached{} ({}{}) — keep typing",
-		name, dims, suffix
-	)
+	format!("🎬 Video attached{} ({}{}) — keep typing", name, dims, suffix)
 }
 
 fn format_size(bytes: u64) -> String {
@@ -274,10 +266,7 @@ impl EditMode for EmacsWithShortcutHelp {
 			// reedline will insert the text as-is.
 		}
 
-		if let Event::Key(KeyEvent {
-			code, modifiers, ..
-		}) = event
-		{
+		if let Event::Key(KeyEvent { code, modifiers, .. }) = event {
 			// Esc arms the meta prefix and also closes an open completion menu —
 			// with persistent menus nothing else dismisses one short of accepting.
 			if modifiers == KeyModifiers::NONE && code == KeyCode::Esc {
@@ -294,14 +283,10 @@ impl EditMode for EmacsWithShortcutHelp {
 						return ReedlineEvent::Edit(vec![reedline::EditCommand::CutWordRight]);
 					}
 					KeyCode::Char('b') | KeyCode::Char('B') => {
-						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft {
-							select: false,
-						}]);
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft { select: false }]);
 					}
 					KeyCode::Char('f') | KeyCode::Char('F') => {
-						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight {
-							select: false,
-						}]);
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight { select: false }]);
 					}
 					_ => {}
 				}
@@ -315,22 +300,16 @@ impl EditMode for EmacsWithShortcutHelp {
 						return ReedlineEvent::Edit(vec![reedline::EditCommand::CutWordRight]);
 					}
 					KeyCode::Char('b') | KeyCode::Char('B') => {
-						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft {
-							select: false,
-						}]);
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordLeft { select: false }]);
 					}
 					KeyCode::Char('f') | KeyCode::Char('F') => {
-						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight {
-							select: false,
-						}]);
+						return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveWordRight { select: false }]);
 					}
 					_ => {}
 				}
 			}
 			if code == KeyCode::Char('a') && modifiers == KeyModifiers::CONTROL {
-				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineStart {
-					select: false,
-				}]);
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineStart { select: false }]);
 			}
 			if code == KeyCode::Char('e') && modifiers == KeyModifiers::CONTROL {
 				if self.reverse_search_active.load(Ordering::SeqCst) {
@@ -339,9 +318,7 @@ impl EditMode for EmacsWithShortcutHelp {
 				if self.hint_available.load(Ordering::SeqCst) {
 					return ReedlineEvent::HistoryHintComplete;
 				}
-				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineEnd {
-					select: false,
-				}]);
+				return ReedlineEvent::Edit(vec![reedline::EditCommand::MoveToLineEnd { select: false }]);
 			}
 			if code == KeyCode::Char('u') && modifiers == KeyModifiers::CONTROL {
 				let state = self.line_state.lock().ok();
@@ -350,19 +327,14 @@ impl EditMode for EmacsWithShortcutHelp {
 						&state.buffer,
 						state.cursor.min(state.buffer.len()),
 					);
-					let line_start = state.buffer[..cursor]
-						.rfind('\n')
-						.map(|idx| idx + 1)
-						.unwrap_or(0);
+					let line_start = state.buffer[..cursor].rfind('\n').map(|idx| idx + 1).unwrap_or(0);
 					if cursor == line_start && line_start > 0 {
 						return ReedlineEvent::Edit(vec![reedline::EditCommand::Backspace]);
 					}
 				}
 				return ReedlineEvent::Edit(vec![reedline::EditCommand::CutFromLineStart]);
 			}
-			if code == KeyCode::Char('?')
-				&& modifiers == KeyModifiers::NONE
-				&& self.buffer_empty.load(Ordering::SeqCst)
+			if code == KeyCode::Char('?') && modifiers == KeyModifiers::NONE && self.buffer_empty.load(Ordering::SeqCst)
 			{
 				return ReedlineEvent::ExecuteHostCommand("__show_shortcuts__".to_string());
 			}

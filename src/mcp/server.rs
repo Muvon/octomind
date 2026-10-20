@@ -90,9 +90,7 @@ pub async fn get_server_functions(server: &McpServerConfig) -> Result<Vec<McpFun
 			let list = super::client::list_tools(server).await?;
 			Ok(tools_to_functions(&list.tools))
 		}
-		McpConnectionType::Builtin => Err(anyhow::anyhow!(
-			"Built-in servers should not use get_server_functions"
-		)),
+		McpConnectionType::Builtin => Err(anyhow::anyhow!("Built-in servers should not use get_server_functions")),
 	}
 }
 
@@ -161,21 +159,13 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 				{
 					let mut cache = FUNCTION_CACHE.write().unwrap();
 					if !list.session_scoped {
-						cache.insert(
-							server_id.to_string(),
-							CachedFunctions::Shared(functions.clone()),
-						);
-					} else if let Some(CachedFunctions::PerSession(sessions)) =
-						cache.get_mut(server_id)
-					{
+						cache.insert(server_id.to_string(), CachedFunctions::Shared(functions.clone()));
+					} else if let Some(CachedFunctions::PerSession(sessions)) = cache.get_mut(server_id) {
 						sessions.insert(session_id, functions.clone());
 					} else {
 						cache.insert(
 							server_id.to_string(),
-							CachedFunctions::PerSession(HashMap::from([(
-								session_id,
-								functions.clone(),
-							)])),
+							CachedFunctions::PerSession(HashMap::from([(session_id, functions.clone())])),
 						);
 					}
 				}
@@ -203,10 +193,7 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 		// (e.g. `*`, `text_*`), not real tool names — fabricating functions
 		// from them leaks invalid names (failing `^[a-zA-Z0-9_-]{1,128}$`) to
 		// the provider. If the server didn't start, expose none of its tools.
-		crate::log_debug!(
-			"Server '{}' is not running - exposing no tools (skipping)",
-			server_id
-		);
+		crate::log_debug!("Server '{}' is not running - exposing no tools (skipping)", server_id);
 		Ok(Vec::new())
 	}
 }
@@ -215,10 +202,7 @@ pub async fn get_server_functions_cached(server: &McpServerConfig) -> Result<Vec
 pub fn clear_function_cache_for_server(server_name: &str) {
 	let mut cache = FUNCTION_CACHE.write().unwrap();
 	if cache.remove(server_name).is_some() {
-		crate::log_debug!(
-			"Cleared function cache for server '{}' due to restart",
-			server_name
-		);
+		crate::log_debug!("Cleared function cache for server '{}' due to restart", server_name);
 	}
 }
 
@@ -250,9 +234,7 @@ pub fn is_server_already_running_with_config(server: &crate::config::McpServerCo
 			// Internal servers are always considered running since they're built-in
 			{
 				let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
-				let info = restart_info_guard
-					.entry(server.name().to_string())
-					.or_default();
+				let info = restart_info_guard.entry(server.name().to_string()).or_default();
 				info.health_status = process::ServerHealth::Running;
 				info.last_health_check = Some(std::time::SystemTime::now());
 			}
@@ -314,11 +296,7 @@ pub async fn execute_tool_call(
 					call.tool_name
 				);
 				if let Err(e) = process::ensure_server_running(server).await {
-					return Err(anyhow::anyhow!(
-						"Server '{}' failed to restart: {}",
-						server.name(),
-						e
-					));
+					return Err(anyhow::anyhow!("Server '{}' failed to restart: {}", server.name(), e));
 				}
 			}
 		}
@@ -372,17 +350,13 @@ async fn execute_tool_with_cancellation(
 		}
 		McpConnectionType::Builtin => {
 			// Built-in servers should not use this function
-			Err(anyhow::anyhow!(
-				"Built-in servers should not use execute_tool_call"
-			))
+			Err(anyhow::anyhow!("Built-in servers should not use execute_tool_call"))
 		}
 	}
 }
 
 // Get all available functions from all configured servers
-pub async fn get_all_server_functions(
-	config: &Config,
-) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
+pub async fn get_all_server_functions(config: &Config) -> Result<HashMap<String, (McpFunction, McpServerConfig)>> {
 	let mut functions = HashMap::new();
 
 	// Only proceed if MCP has any servers configured
@@ -430,8 +404,7 @@ pub fn reset_server_failure_state(server_name: &str) -> Result<()> {
 }
 
 // Perform health check on all servers
-pub async fn perform_health_check_all_servers(
-) -> std::collections::HashMap<String, process::ServerHealth> {
+pub async fn perform_health_check_all_servers() -> std::collections::HashMap<String, process::ServerHealth> {
 	process::perform_health_check_all_servers().await
 }
 

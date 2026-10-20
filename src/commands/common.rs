@@ -31,11 +31,7 @@ use std::time::Duration;
 ///
 /// Interactive mode: shows an animated spinner with live status messages.
 /// Non-interactive mode: silent (errors still propagate).
-pub async fn startup(
-	tag: Option<&str>,
-	config: &Config,
-	is_interactive: bool,
-) -> Result<(Config, String)> {
+pub async fn startup(tag: Option<&str>, config: &Config, is_interactive: bool) -> Result<(Config, String)> {
 	if is_interactive {
 		let spinner = make_spinner();
 
@@ -121,11 +117,7 @@ async fn mcp_init_with_spinner(role: &str, config: &Config, spinner: &ProgressBa
 				spinner.set_message("Starting MCP...".to_string());
 			} else {
 				*pending.lock().unwrap() = servers.clone();
-				spinner.set_message(format!(
-					"Starting MCP: {} [0/{}]",
-					servers.join(", "),
-					servers.len()
-				));
+				spinner.set_message(format!("Starting MCP: {} [0/{}]", servers.join(", "), servers.len()));
 			}
 		}
 		McpInitProgress::Completed { server, .. } => {

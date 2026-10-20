@@ -23,10 +23,7 @@ fn exchange_with_response(response: serde_json::Value) -> ProviderExchange {
 fn test_extract_original_tool_calls_unified_format() {
 	let calls = json!([{"tool_name": "shell", "parameters": {"cmd": "ls"}, "tool_id": "id1"}]);
 	let exchange = exchange_with_response(json!({ "tool_calls": calls }));
-	assert_eq!(
-		MessageHandler::extract_original_tool_calls(&exchange),
-		Some(calls)
-	);
+	assert_eq!(MessageHandler::extract_original_tool_calls(&exchange), Some(calls));
 }
 
 #[test]
@@ -35,12 +32,7 @@ fn test_extract_original_tool_calls_absent() {
 	assert!(MessageHandler::extract_original_tool_calls(&exchange).is_none());
 }
 
-fn usage(
-	input_tokens: u64,
-	output_tokens: u64,
-	cost: f64,
-	request_time_ms: u64,
-) -> crate::providers::TokenUsage {
+fn usage(input_tokens: u64, output_tokens: u64, cost: f64, request_time_ms: u64) -> crate::providers::TokenUsage {
 	crate::providers::TokenUsage {
 		input_tokens,
 		cache_read_tokens: 3,
@@ -120,13 +112,8 @@ fn test_add_assistant_message_without_file_or_usage_skips_persist_and_tracking()
 
 	let exchange = ProviderExchange::new(json!({}), json!({"content": "plain"}), None, "test");
 
-	MessageHandler::add_assistant_message_with_tool_calls(
-		&mut session,
-		"no tools here",
-		&exchange,
-		None,
-	)
-	.expect("add assistant message");
+	MessageHandler::add_assistant_message_with_tool_calls(&mut session, "no tools here", &exchange, None)
+		.expect("add assistant message");
 
 	assert_eq!(session.session.messages.len(), 1);
 	assert!(session.session.messages[0].tool_calls.is_none());

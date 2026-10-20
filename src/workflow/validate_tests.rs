@@ -112,10 +112,7 @@ fn expansion_fields_rejected_outside_parallel() {
 			"#,
 	);
 	let err = validate(&wf).expect_err("count on a sequential step must fail");
-	assert!(
-		err.to_string().contains("only valid on parallel"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("only valid on parallel"), "got: {err}");
 }
 
 #[test]
@@ -283,10 +280,7 @@ fn dynamic_parallel_invalid_regex_fails() {
 			"#,
 	);
 	let err = validate(&wf).expect_err("invalid match regex must fail");
-	assert!(
-		err.to_string().contains("invalid match regex"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("invalid match regex"), "got: {err}");
 }
 
 #[test]
@@ -490,9 +484,7 @@ fn basic_template_validates() {
 
 #[test]
 fn research_template_validates() {
-	let wf = parse(include_str!(
-		"../../config-templates/workflow-research.toml"
-	));
+	let wf = parse(include_str!("../../config-templates/workflow-research.toml"));
 	validate(&wf).expect("shipped research template should validate");
 }
 
@@ -517,10 +509,7 @@ fn max_transitions_zero_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("max_transitions = 0 must fail");
-	assert!(
-		err.to_string().contains("max_transitions must be >= 1"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("max_transitions must be >= 1"), "got: {err}");
 }
 
 #[test]
@@ -536,10 +525,7 @@ fn max_transitions_requires_graph_mode() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("max_transitions outside graph mode must fail");
-	assert!(
-		err.to_string().contains("requires graph mode"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("requires graph mode"), "got: {err}");
 }
 
 // ── graph validation ────────────────────────────────────────────────────────
@@ -558,10 +544,7 @@ fn graph_without_edges_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("graph without edges must fail");
-	assert!(
-		err.to_string().contains("at least one [[edges]]"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("at least one [[edges]]"), "got: {err}");
 }
 
 #[test]
@@ -581,10 +564,7 @@ fn graph_entry_must_reference_a_top_level_step() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("unknown entry must fail");
-	assert!(
-		err.to_string().contains("entry references unknown"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("entry references unknown"), "got: {err}");
 }
 
 #[test]
@@ -635,10 +615,7 @@ fn graph_edge_endpoints_must_reference_known_steps() {
 		"#,
 	);
 	let err = validate(&bad_from).expect_err("unknown edge.from must fail");
-	assert!(
-		err.to_string().contains("edge.from references unknown"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("edge.from references unknown"), "got: {err}");
 
 	let bad_to = parse(
 		r#"
@@ -658,10 +635,7 @@ fn graph_edge_endpoints_must_reference_known_steps() {
 		"#,
 	);
 	let err = validate(&bad_to).expect_err("unknown edge.to must fail");
-	assert!(
-		err.to_string().contains("edge.to references unknown"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("edge.to references unknown"), "got: {err}");
 }
 
 #[test]
@@ -693,8 +667,7 @@ fn graph_edge_condition_output_must_be_a_known_step() {
 	);
 	let err = validate(&bad).expect_err("unknown condition output must fail");
 	assert!(
-		err.to_string()
-			.contains("condition references unknown output"),
+		err.to_string().contains("condition references unknown output"),
 		"got: {err}"
 	);
 
@@ -747,10 +720,7 @@ fn graph_node_without_outgoing_route_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("orphan node must fail");
-	assert!(
-		err.to_string().contains("has no outgoing route"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("has no outgoing route"), "got: {err}");
 }
 
 #[test]
@@ -802,10 +772,7 @@ fn graph_unreachable_steps_are_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("unreachable node must fail");
-	assert!(
-		err.to_string().contains("unreachable top-level steps: b"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("unreachable top-level steps: b"), "got: {err}");
 }
 
 #[test]
@@ -832,10 +799,7 @@ fn graph_without_end_route_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("cycle without $end must fail");
-	assert!(
-		err.to_string().contains("no reachable route to $end"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("no reachable route to $end"), "got: {err}");
 }
 
 // ── conditions ──────────────────────────────────────────────────────────────
@@ -861,11 +825,7 @@ fn condition_requires_contains_or_matches() {
 
 #[test]
 fn reserved_and_empty_step_names_are_rejected() {
-	for (name, needle) in [
-		("input", "reserved"),
-		("$end", "reserved"),
-		("", "non-empty"),
-	] {
+	for (name, needle) in [("input", "reserved"), ("$end", "reserved"), ("", "non-empty")] {
 		let wf = parse(&format!(
 			r#"
 		name = "wf"
@@ -904,10 +864,7 @@ fn dynamic_parallel_min_success_zero_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("min_success = 0 must fail");
-	assert!(
-		err.to_string().contains("min_success must be >= 1"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("min_success must be >= 1"), "got: {err}");
 }
 
 #[test]
@@ -930,10 +887,7 @@ fn static_parallel_source_requires_match() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("source without match must fail");
-	assert!(
-		err.to_string().contains("source requires match"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("source requires match"), "got: {err}");
 }
 
 #[test]
@@ -951,10 +905,7 @@ fn static_parallel_requires_two_sub_steps() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("single sub-step must fail");
-	assert!(
-		err.to_string().contains("at least 2 sub-steps"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("at least 2 sub-steps"), "got: {err}");
 }
 
 #[test]
@@ -977,10 +928,7 @@ fn parallel_max_parallel_zero_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("max_parallel = 0 must fail");
-	assert!(
-		err.to_string().contains("max_parallel must be >= 1"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("max_parallel must be >= 1"), "got: {err}");
 }
 
 #[test]
@@ -997,10 +945,7 @@ fn loop_without_sub_steps_is_rejected() {
 		"#,
 	);
 	let err = validate(&wf).expect_err("empty loop body must fail");
-	assert!(
-		err.to_string().contains("at least 1 sub-step"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("at least 1 sub-step"), "got: {err}");
 }
 
 #[test]
@@ -1034,10 +979,7 @@ fn empty_model_and_workdir_are_rejected() {
 		"#,
 	);
 	let err = validate(&bad_model).expect_err("empty model must fail");
-	assert!(
-		err.to_string().contains("model must not be empty"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("model must not be empty"), "got: {err}");
 
 	let bad_workdir = parse(
 		r#"
@@ -1050,10 +992,7 @@ fn empty_model_and_workdir_are_rejected() {
 		"#,
 	);
 	let err = validate(&bad_workdir).expect_err("empty workdir must fail");
-	assert!(
-		err.to_string().contains("workdir must not be empty"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("workdir must not be empty"), "got: {err}");
 }
 
 #[test]
@@ -1127,8 +1066,7 @@ fn conditional_without_any_branch_is_rejected() {
 	);
 	let err = validate(&wf).expect_err("branchless conditional must fail");
 	assert!(
-		err.to_string()
-			.contains("requires on_match and/or on_no_match"),
+		err.to_string().contains("requires on_match and/or on_no_match"),
 		"got: {err}"
 	);
 }
@@ -1152,8 +1090,7 @@ fn conditional_branch_must_reference_a_sub_step() {
 	);
 	let err = validate(&wf).expect_err("unknown branch name must fail");
 	assert!(
-		err.to_string()
-			.contains("branch references unknown sub-step"),
+		err.to_string().contains("branch references unknown sub-step"),
 		"got: {err}"
 	);
 }
@@ -1182,8 +1119,7 @@ fn dynamic_parallel_source_must_already_be_available() {
 	);
 	let err = validate(&wf).expect_err("forward source must fail in ordered mode");
 	assert!(
-		err.to_string()
-			.contains("source references unavailable output"),
+		err.to_string().contains("source references unavailable output"),
 		"got: {err}"
 	);
 }
@@ -1207,8 +1143,7 @@ fn loop_exit_when_output_must_be_a_known_step() {
 	);
 	let err = validate(&wf).expect_err("unknown exit_when output must fail");
 	assert!(
-		err.to_string()
-			.contains("exit_when.output references unknown step"),
+		err.to_string().contains("exit_when.output references unknown step"),
 		"got: {err}"
 	);
 }
@@ -1257,8 +1192,7 @@ fn conditional_condition_output_must_be_available() {
 	);
 	let err = validate(&wf).expect_err("unknown condition output must fail");
 	assert!(
-		err.to_string()
-			.contains("condition.output references unknown step"),
+		err.to_string().contains("condition.output references unknown step"),
 		"got: {err}"
 	);
 }
@@ -1367,8 +1301,5 @@ fn public_role_validation_covers_every_step_kind() {
 
 	let none: HashSet<String> = HashSet::new();
 	let err = validate_public_roles(&wf, &none).expect_err("unknown role must fail");
-	assert!(
-		err.to_string().contains("is not a public tap role"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("is not a public tap role"), "got: {err}");
 }

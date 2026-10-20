@@ -152,10 +152,7 @@ fn persist_plan_cleared() {
 	}
 }
 
-fn sidecar_tasks(
-	tasks: &[crate::supervisor::plan::PlanTaskDirective],
-	minimum: usize,
-) -> Result<Vec<TaskData>> {
+fn sidecar_tasks(tasks: &[crate::supervisor::plan::PlanTaskDirective], minimum: usize) -> Result<Vec<TaskData>> {
 	if tasks.len() < minimum {
 		anyhow::bail!("A sidecar plan needs at least {minimum} meaningful task(s)");
 	}
@@ -181,10 +178,7 @@ fn sidecar_tasks(
 }
 
 /// Start a runtime-owned plan without a tool result or compression side effect.
-pub fn sidecar_start(
-	title: &str,
-	tasks: &[crate::supervisor::plan::PlanTaskDirective],
-) -> Result<()> {
+pub fn sidecar_start(title: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
 	let title = title.trim();
 	if title.is_empty() {
 		anyhow::bail!("Plan title must be non-empty");
@@ -223,10 +217,7 @@ pub fn sidecar_advance(summary: &str) -> Result<()> {
 }
 
 /// Revise only the open tail after new evidence invalidates the route.
-pub fn sidecar_revise(
-	reason: &str,
-	tasks: &[crate::supervisor::plan::PlanTaskDirective],
-) -> Result<()> {
+pub fn sidecar_revise(reason: &str, tasks: &[crate::supervisor::plan::PlanTaskDirective]) -> Result<()> {
 	if reason.trim().is_empty() {
 		anyhow::bail!("Plan revision reason must be non-empty");
 	}
@@ -314,8 +305,7 @@ pub fn restore_plan_for_session(session_name: &str) {
 		match t {
 			"PLAN_SNAPSHOT" => {
 				if let Some(plan_val) = val.get("plan") {
-					match serde_json::from_value::<super::storage::ExecutionPlan>(plan_val.clone())
-					{
+					match serde_json::from_value::<super::storage::ExecutionPlan>(plan_val.clone()) {
 						Ok(plan) => latest_plan = Some(plan),
 						Err(e) => {
 							crate::log_debug!("restore_plan_for_session: deserialize failed: {}", e)
@@ -355,10 +345,7 @@ pub fn render_plan_checklist() -> Option<String> {
 	if task_list.is_empty() {
 		return None;
 	}
-	let current = storage
-		.get_current_task_info()
-		.map(|(c, _, _, _)| c)
-		.unwrap_or(0);
+	let current = storage.get_current_task_info().map(|(c, _, _, _)| c).unwrap_or(0);
 	let completed = task_list
 		.iter()
 		.filter(|(_, _, status)| matches!(status, TaskStatus::Completed))
@@ -466,11 +453,7 @@ fn check_condition(cond: &str) -> Option<bool> {
 	match path.try_exists() {
 		Ok(present) => Some(present == expect_present),
 		Err(error) => {
-			crate::log_debug!(
-				"Plan condition unavailable for {}: {}",
-				path.display(),
-				error
-			);
+			crate::log_debug!("Plan condition unavailable for {}: {}", path.display(), error);
 			None
 		}
 	}
@@ -513,13 +496,12 @@ pub async fn get_current_plan_display() -> Result<String> {
 		return Err(anyhow::anyhow!("No active plan. Complex plans are created automatically by the external planner; focused work remains plan-free."));
 	}
 
-	let plan_title = storage
-		.get_plan_title()
-		.unwrap_or_else(|_| "Unknown Plan".to_string());
+	let plan_title = storage.get_plan_title().unwrap_or_else(|_| "Unknown Plan".to_string());
 	let task_list = storage.get_task_list().unwrap_or_else(|_| Vec::new());
-	let (current, total, current_task_title, current_task_description) = storage
-		.get_current_task_info()
-		.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
+	let (current, total, current_task_title, current_task_description) =
+		storage
+			.get_current_task_info()
+			.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
 
 	let mut response = format!("PLAN: {plan_title}\n\nTASKS:\n");
 
@@ -542,9 +524,7 @@ pub async fn get_current_plan_display() -> Result<String> {
 			"" // Both completed and pending tasks show no additional text
 		};
 
-		response.push_str(&format!(
-			"{status_icon} {task_num}. {task_title}{status_text}\n"
-		));
+		response.push_str(&format!("{status_icon} {task_num}. {task_title}{status_text}\n"));
 		let description_lines: Vec<&str> = task_description.lines().collect();
 		for line in description_lines {
 			response.push_str(&format!("   📝 {}\n", line));
@@ -571,13 +551,12 @@ pub async fn get_current_plan_json() -> Result<serde_json::Value> {
 		return Err(anyhow::anyhow!("No active plan"));
 	}
 
-	let plan_title = storage
-		.get_plan_title()
-		.unwrap_or_else(|_| "Unknown Plan".to_string());
+	let plan_title = storage.get_plan_title().unwrap_or_else(|_| "Unknown Plan".to_string());
 	let task_list = storage.get_task_list().unwrap_or_else(|_| Vec::new());
-	let (current, total, current_task_title, current_task_description) = storage
-		.get_current_task_info()
-		.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
+	let (current, total, current_task_title, current_task_description) =
+		storage
+			.get_current_task_info()
+			.unwrap_or((0, 0, "Unknown".to_string(), "No description".to_string()));
 
 	Ok(serde_json::json!({
 		"plan_title": plan_title,

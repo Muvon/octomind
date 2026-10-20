@@ -87,10 +87,7 @@ impl CostTracker {
 				latency
 			);
 		} else {
-			log_debug!(
-				"Provider usage: provider={}, usage unavailable",
-				exchange.provider
-			);
+			log_debug!("Provider usage: provider={}, usage unavailable", exchange.provider);
 		}
 
 		Ok(())
@@ -164,9 +161,7 @@ impl CostTracker {
 	pub fn display_session_usage(chat_session: &ChatSession) {
 		use crate::session::chat::format_number;
 		use crate::session::chat::formatting::format_duration;
-		use crate::session::chat::tool_display::{
-			block_close_ok, block_open, block_row, key_width,
-		};
+		use crate::session::chat::tool_display::{block_close_ok, block_open, block_row, key_width};
 		use colored::Colorize;
 
 		println!();
@@ -192,11 +187,7 @@ impl CostTracker {
 		]);
 		let dot = "·".bright_black();
 
-		block_row(
-			"tokens",
-			&format!("{} total", format_number(total).bright_white()),
-			kw,
-		);
+		block_row("tokens", &format!("{} total", format_number(total).bright_white()), kw);
 		block_row(
 			"prompt",
 			&format!(
@@ -206,24 +197,12 @@ impl CostTracker {
 			),
 			kw,
 		);
-		block_row(
-			"completion",
-			&format_number(completion).bright_green().to_string(),
-			kw,
-		);
+		block_row("completion", &format_number(completion).bright_green().to_string(), kw);
 		if cache_write > 0 {
-			block_row(
-				"cache write",
-				&format_number(cache_write).bright_cyan().to_string(),
-				kw,
-			);
+			block_row("cache write", &format_number(cache_write).bright_cyan().to_string(), kw);
 		}
 		if reasoning > 0 {
-			block_row(
-				"reasoning",
-				&format_number(reasoning).white().to_string(),
-				kw,
-			);
+			block_row("reasoning", &format_number(reasoning).white().to_string(), kw);
 		}
 		if cache_read > 0 && total_prompt > 0 {
 			let saving_pct = (cache_read as f64 / total_prompt as f64) * 100.0;
@@ -240,14 +219,11 @@ impl CostTracker {
 		}
 		block_row(
 			"cost",
-			&format!("${:.5}", info.total_cost)
-				.bright_yellow()
-				.to_string(),
+			&format!("${:.5}", info.total_cost).bright_yellow().to_string(),
 			kw,
 		);
 
-		let total_time_ms =
-			info.total_api_time_ms + info.total_tool_time_ms + info.total_layer_time_ms;
+		let total_time_ms = info.total_api_time_ms + info.total_tool_time_ms + info.total_layer_time_ms;
 		if total_time_ms > 0 {
 			block_row(
 				"time",
@@ -297,11 +273,7 @@ impl CostTracker {
 		// Strip provider prefix ("anthropic:claude-opus-4-7" -> "claude-opus-4-7").
 		// get_reference_pricing tolerates either form, but stripping makes the match
 		// path predictable across providers.
-		let model_for_lookup = info
-			.model
-			.split_once(':')
-			.map(|(_, m)| m)
-			.unwrap_or(&info.model);
+		let model_for_lookup = info.model.split_once(':').map(|(_, m)| m).unwrap_or(&info.model);
 
 		let pricing = octolib::llm::reference_pricing::get_reference_pricing(model_for_lookup);
 
@@ -350,11 +322,8 @@ impl CostTracker {
 
 		// Genuine savings: what cache reads would have cost at the full input rate
 		// minus what they actually cost at the cache-read rate.
-		let cache_savings = per_million(
-			cache_read,
-			pricing.input_price_per_1m - pricing.cache_read_price_per_1m,
-		)
-		.max(0.0);
+		let cache_savings =
+			per_million(cache_read, pricing.input_price_per_1m - pricing.cache_read_price_per_1m).max(0.0);
 
 		// Compact breakdown: `· $0.48 total · input $0.05 · output $0.22 …`
 		// Each part separated by middle dots; no parens, no commas.

@@ -55,8 +55,7 @@ fn test_extract_content_variants() {
 #[test]
 fn test_tool_results_to_messages() {
 	let config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 
 	let results = vec![
 		McpToolResult::success("shell".to_string(), "id1".to_string(), "out".to_string()),
@@ -90,7 +89,5 @@ fn tool_response_images_survive_text_truncation() {
 	assert!(messages[0].content.contains("TRUNCATED"));
 	let images = messages[0].images.as_ref().unwrap();
 	assert_eq!(images.len(), 1);
-	assert!(
-		matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U=")
-	);
+	assert!(matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U="));
 }

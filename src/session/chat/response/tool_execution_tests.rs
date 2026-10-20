@@ -54,9 +54,8 @@ fn test_error_messages() {
 /// the error text most.
 #[tokio::test]
 async fn test_truncation_preserves_error_flag() {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.mcp_response_tokens_threshold = 10;
 
 	let big = "line of output\n".repeat(500);
@@ -82,9 +81,8 @@ async fn test_truncation_preserves_error_flag() {
 /// would discard resource/image/structured-content semantics.
 #[tokio::test]
 async fn test_rich_results_bypass_truncation() {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.mcp_response_tokens_threshold = 10;
 
 	let big = "line of output\n".repeat(500);
@@ -102,8 +100,7 @@ async fn test_rich_results_bypass_truncation() {
 }
 
 fn template_config() -> Config {
-	toml::from_str(include_str!("../../../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default config template")
 }
 
 #[tokio::test]
@@ -132,10 +129,7 @@ async fn authorizer_uncertainty_allows_inline_capability_calls() {
 		crate::session::guardrails::get_call_log(&session.session.info.name).len(),
 		1
 	);
-	assert_eq!(
-		session.session.info.authorization.completed_actions.len(),
-		1
-	);
+	assert_eq!(session.session.info.authorization.completed_actions.len(), 1);
 	crate::session::context::cleanup_session(&session.session.info.name);
 }
 
@@ -143,9 +137,7 @@ async fn authorizer_uncertainty_allows_inline_capability_calls() {
 #[serial_test::serial]
 #[cfg(unix)]
 async fn authorizer_mixed_batch_executes_only_allowed_tool_and_skips_denied_hook() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let tmp = tempfile::tempdir().unwrap();
 	write_local_tool(
@@ -271,10 +263,9 @@ async fn test_execute_tools_in_context_empty_batch_returns_empty() {
 		layer_name: "reviewer".to_string(),
 	};
 
-	let (results, total_ms) =
-		execute_tools_in_context(Vec::new(), &mut context, &config, None, OutputMode::Jsonl)
-			.await
-			.expect("empty batch");
+	let (results, total_ms) = execute_tools_in_context(Vec::new(), &mut context, &config, None, OutputMode::Jsonl)
+		.await
+		.expect("empty batch");
 	assert!(results.is_empty());
 	assert_eq!(total_ms, 0);
 }
@@ -300,10 +291,9 @@ async fn test_execute_tools_in_context_unknown_tool_layer_error_result() {
 		},
 	];
 
-	let (results, _total_ms) =
-		execute_tools_in_context(calls, &mut context, &config, None, OutputMode::Jsonl)
-			.await
-			.expect("unknown tools produce error results, not Err");
+	let (results, _total_ms) = execute_tools_in_context(calls, &mut context, &config, None, OutputMode::Jsonl)
+		.await
+		.expect("unknown tools produce error results, not Err");
 
 	// Parallel batch preserves order and identity
 	assert_eq!(results.len(), 2);
@@ -334,18 +324,14 @@ async fn test_execute_tools_in_context_error_tracker_attempts_and_loop() {
 			parameters: serde_json::json!({"attempt": attempt}),
 			tool_id: format!("id{attempt}"),
 		};
-		let (results, _) =
-			execute_tools_in_context(vec![call], &mut context, &config, None, OutputMode::Jsonl)
-				.await
-				.expect("error results, not Err");
+		let (results, _) = execute_tools_in_context(vec![call], &mut context, &config, None, OutputMode::Jsonl)
+			.await
+			.expect("error results, not Err");
 		assert_eq!(results.len(), 1);
 		let content = results[0].extract_content();
 		assert!(results[0].is_error(), "{content}");
 		if attempt < 3 {
-			assert!(
-				content.contains(&format!("attempt {attempt}/3")),
-				"{content}"
-			);
+			assert!(content.contains(&format!("attempt {attempt}/3")), "{content}");
 		} else {
 			assert!(content.contains("LOOP DETECTED"), "{content}");
 		}
@@ -359,10 +345,7 @@ fn test_parent_task_context_goal_and_request() {
 
 	let task = parent_task_context(&session);
 	assert!(task.contains("Goal: Ship the refactor"), "{task}");
-	assert!(
-		task.contains("Current request: fix the login bug"),
-		"{task}"
-	);
+	assert!(task.contains("Current request: fix the login bug"), "{task}");
 
 	// No anchor and no real user turn: neither segment appears
 	let bare = ChatSession::for_tests(Vec::new());
@@ -385,27 +368,16 @@ fn test_parent_task_context_uses_the_live_turn_resolution() {
 
 	let task = parent_task_context(&session);
 	assert!(
-		task.starts_with(
-			"Specialist brief:\nREADME architect; README.md is the working material.\n"
-		),
+		task.starts_with("Specialist brief:\nREADME architect; README.md is the working material.\n"),
 		"the brief leads the task block: {task}"
 	);
-	assert!(
-		task.contains("Current request: polish the readme"),
-		"{task}"
-	);
+	assert!(task.contains("Current request: polish the readme"), "{task}");
 	assert!(task.contains("Works on as a whole: readme"), "{task}");
 
 	// A resolution left over from an earlier turn never frames this one
-	session
-		.session
-		.messages
-		.push(message("user", "fix the login bug"));
+	session.session.messages.push(message("user", "fix the login bug"));
 	let task = parent_task_context(&session);
-	assert!(
-		task.contains("Current request: fix the login bug"),
-		"{task}"
-	);
+	assert!(task.contains("Current request: fix the login bug"), "{task}");
 	assert!(!task.contains("Works on as a whole"), "{task}");
 	assert!(
 		task.starts_with("Specialist brief:"),
@@ -432,9 +404,7 @@ async fn test_execute_tap_capability_inline_missing_prompt() {
 
 	let (result, _elapsed_ms) = execute_tap_capability_inline(&call, &mut session, &config).await;
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("Missing required parameter 'prompt'"));
+	assert!(result.extract_content().contains("Missing required parameter 'prompt'"));
 }
 
 #[tokio::test]
@@ -458,8 +428,7 @@ async fn test_handle_large_tool_results_short_content_untouched() {
 #[cfg(unix)]
 fn make_executable(path: &std::path::Path) {
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-		.expect("chmod +x fixture");
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod +x fixture");
 }
 
 /// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
@@ -508,10 +477,7 @@ async fn test_execute_tap_capability_inline_short_prompt_reports_no_match() {
 	let parsed: serde_json::Value = serde_json::from_str(&content).expect("json payload");
 	assert_eq!(parsed["activated_skills"], serde_json::json!([]));
 	assert_eq!(parsed["activated_capabilities"], serde_json::json!([]));
-	assert_eq!(
-		parsed["message"],
-		"No skill or capability matched the prompt."
-	);
+	assert_eq!(parsed["message"], "No skill or capability matched the prompt.");
 }
 
 #[tokio::test]
@@ -539,9 +505,7 @@ async fn test_execute_tools_parallel_routes_single_tap_capability_inline() {
 
 	assert_eq!(results.len(), 1);
 	assert!(!results[0].is_error(), "{}", results[0].extract_content());
-	assert!(results[0]
-		.extract_content()
-		.contains("No skill or capability matched"));
+	assert!(results[0].extract_content().contains("No skill or capability matched"));
 	// The inline path counts the call itself
 	assert_eq!(session.session.info.tool_calls, 1);
 }

@@ -56,8 +56,8 @@ pub fn web_host() -> String {
 /// Upload the given session log file to the share API. Reads the file, gzips,
 /// POSTs, returns the share URL.
 pub async fn share_session(session_file: &Path) -> Result<ShareResult> {
-	let compressed = fs::read(session_file)
-		.with_context(|| format!("failed to read session file {}", session_file.display()))?;
+	let compressed =
+		fs::read(session_file).with_context(|| format!("failed to read session file {}", session_file.display()))?;
 	if compressed.is_empty() {
 		anyhow::bail!("session file is empty — nothing to share");
 	}
@@ -89,25 +89,14 @@ pub async fn share_session(session_file: &Path) -> Result<ShareResult> {
 		let trimmed: String = t.chars().take(200).collect();
 		req = req.header("X-Title", trimmed);
 	}
-	let res = req
-		.body(gzipped)
-		.send()
-		.await
-		.context("share upload failed")?;
+	let res = req.body(gzipped).send().await.context("share upload failed")?;
 
 	let status = res.status();
 	if !status.is_success() {
 		let body = res.text().await.unwrap_or_default();
-		anyhow::bail!(
-			"share API rejected upload: HTTP {} — {}",
-			status,
-			body.trim()
-		);
+		anyhow::bail!("share API rejected upload: HTTP {} — {}", status, body.trim());
 	}
-	let parsed: ShareResult = res
-		.json()
-		.await
-		.context("share API returned malformed JSON")?;
+	let parsed: ShareResult = res.json().await.context("share API returned malformed JSON")?;
 	Ok(parsed)
 }
 
@@ -147,13 +136,7 @@ fn extract_title(raw: &[u8]) -> Option<String> {
 			continue;
 		}
 		// First conversational user message — that's the title.
-		let single_line: String = stripped
-			.lines()
-			.next()
-			.unwrap_or(stripped)
-			.chars()
-			.take(200)
-			.collect();
+		let single_line: String = stripped.lines().next().unwrap_or(stripped).chars().take(200).collect();
 		return Some(single_line);
 	}
 	None

@@ -10,15 +10,16 @@ octomind [COMMAND]
 octomind COMMAND --help
 ```
 
-Options belong after their subcommand; there are no inherited application options. Boolean switches default to `false`,
-optional values to unset, and repeatable options to an empty list unless stated otherwise.
+Most options belong after their subcommand. The global `-c/--config` option can appear before or after a subcommand;
+Boolean switches default to `false`, optional values to unset, and repeatable options to an empty list unless stated
+otherwise.
 
 The subcommand is optional. Bare `octomind` behaves as `octomind run` with the configured default tag.
 
 | Command | Purpose |
 |---------|---------|
 | `run` | Start an interactive or non-interactive AI session (the main command). |
-| `login` | Sign in to an Octomind account and store the minted OctoHub key. |
+| `login` | Sign in to an Octomind account or a ChatGPT subscription. |
 | `server` | Start a WebSocket server for remote sessions. See [WebSocket Server](../integration/01-websocket-server.md). |
 | `acp` | Run as an Agent Client Protocol agent over stdio for editor integration. See [ACP Protocol](../integration/02-acp-protocol.md). |
 | `config` | Create, validate, display, or upgrade configuration. See [Config Reference](03-config-reference.md). |
@@ -32,6 +33,18 @@ The subcommand is optional. Bare `octomind` behaves as `octomind run` with the c
 | `complete` | Hidden: print cached completion candidates. |
 | `distill` | Hidden: extract memories from a disposable transcript snapshot. |
 | `help [COMMAND]...` | Clap-generated help, including nested commands such as `help tap init`. |
+
+### Global config overrides
+
+Use `-c/--config KEY=VALUE` to override an existing config value for one invocation. `KEY` is a dotted path, and the
+option can be repeated. Values are parsed as TOML values when possible; otherwise they are treated as strings. Unknown
+keys and paths through arrays are errors. Array indexes are not supported. Overrides are not saved to the config file,
+and they cannot be combined with the `config` subcommand.
+
+```bash
+octomind -c supervisor.enabled=false run
+octomind run -c supervisor.enabled=false -c log_level=debug
+```
 
 The global config file lives at `~/.local/share/octomind/config/config.toml` on macOS and Linux
 (`%LOCALAPPDATA%\octomind\config\config.toml` on Windows). Override the load path with `OCTOMIND_CONFIG_PATH`, or
@@ -49,8 +62,8 @@ path differences.
 Model resolution priority, highest first: explicit runtime override > role profile > tap name mapping > the required
 main `[model]`.
 
-Only `run` and `workflow` accept `--format`; neither restricts its value through clap. `jsonl` selects JSON Lines; other
-strings use the ordinary output path.
+Only `run` and `workflow` accept `--format`. Both accept only `plain` or `jsonl`; clap rejects any
+other value.
 
 ## `octomind login`
 
@@ -65,6 +78,17 @@ Sign in through the browser-confirmed device flow and store the minted OctoHub k
 octomind login
 octomind login --force --no-browser
 ```
+
+Use `octomind login chatgpt` to sign in with a ChatGPT account. Models with the `chatgpt:` prefix use the signed-in
+account's ChatGPT plan:
+
+```bash
+octomind login chatgpt
+octomind run -m 'chatgpt:<model>'
+```
+
+Add `--force` to sign in again or `--no-browser` to print the authorization URL instead of opening it. See the
+[provider reference](../usage/04-providers.md#provider-reference) for the `chatgpt:` prefix.
 
 ## `octomind config [OPTIONS]`
 
@@ -161,7 +185,7 @@ Start an interactive or non-interactive AI session.
 | `--name NAME` | `-n` | Create a named session, or resume it if it already exists. |
 | `--resume [SESSION]` | `-r` | Resume by name; in an interactive TTY, bare `--resume` opens the recent-session picker |
 | `--resume-recent` | | Resume the most recent session for the current directory |
-| `--format FORMAT` | | Output mode: use `plain` or `jsonl`. Unset by default; non-`jsonl` strings take the plain path. |
+| `--format FORMAT` | | Output mode: `plain` or `jsonl` only; other values are rejected. Unset by default, resolving to `plain`. |
 | `--model MODEL` | `-m` | Override model (`provider:model` format) |
 | `--daemon` | | Keep the session alive for injected messages. Pair with `--format jsonl` for headless use; TTY use remains interactive-capable. |
 | `--sandbox` | | Restrict filesystem writes to the working directory. See [Sandbox](#sandbox). |
@@ -409,7 +433,7 @@ Run a multi-step workflow defined in a TOML file.
 |------|-------|-------------|
 | `NAME|FILE` | | Tap workflow name or local TOML path. Omit to list available tap workflows. |
 | `--dry-run` | | Validate and print the execution plan without running any steps |
-| `--format <FORMAT>` | | `jsonl` streams one `assistant` event per step + a final aggregated `cost` event to stdout |
+| `--format <FORMAT>` | | `plain` or `jsonl` only; other values are rejected. `jsonl` streams one `assistant` event per step + a final aggregated `cost` event to stdout |
 
 Running a workflow reads input from stdin; listing workflows and `--dry-run` do not. Public tap workflows may reference
 only public tap roles; local files are not subject to that restriction. Per-step assistant responses, progress, cost,
@@ -477,7 +501,8 @@ prints nothing. `distill` reads and deletes its snapshot before parsing and extr
 |---|---|---|
 | `complete SUBCOMMAND` | Required | `run` lists agent tags and configured roles; `workflow` lists public workflows. |
 | `distill --messages PATH` | Required | JSON array of session messages; consumed and deleted. |
-| `distill --role ROLE` | `""` | Originating role. |
+| `distill --session-file PATH` | Optional | Owning session journal for background usage; omit for standalone extraction. |
+| `distill --role ROLE` | Required | Originating role. |
 | `distill --project PROJECT` | `""` | Project storage scope. |
 | `distill --session SESSION` | `""` | Originating session name. |
 | `distill --outcome OUTCOME` | `unknown` | `verified`, `failed`, or `unknown` completion evidence. |

@@ -56,10 +56,7 @@ fn smart_value_summarises_multiline_strings() {
 fn smart_value_collapses_big_arrays_and_objects() {
 	assert_eq!(format_parameter_value_smart(&json!([])), "[]");
 	assert_eq!(format_parameter_value_smart(&json!([1, 2, 3])), "[1, 2, 3]");
-	assert_eq!(
-		format_parameter_value_smart(&json!([1, 2, 3, 4])),
-		"[4 items]"
-	);
+	assert_eq!(format_parameter_value_smart(&json!([1, 2, 3, 4])), "[4 items]");
 	assert_eq!(format_parameter_value_smart(&json!({})), "{}");
 
 	let big = json!({ "k": "v".repeat(200) });

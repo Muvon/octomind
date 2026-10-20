@@ -26,9 +26,8 @@ use super::*;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use rmcp::model::{
-	CallToolResult, ClientRequest, ContentBlock, CreateTaskResult, DetailedTask, GetTaskResult,
-	InputRequiredResult, JsonRpcMessage, ListToolsResult, Resource, ServerResult, Task,
-	TaskPayload, TaskStatus,
+	CallToolResult, ClientRequest, ContentBlock, CreateTaskResult, DetailedTask, GetTaskResult, InputRequiredResult,
+	JsonRpcMessage, ListToolsResult, Resource, ServerResult, Task, TaskPayload, TaskStatus,
 };
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use serial_test::serial;
@@ -54,8 +53,7 @@ struct InMemoryPeer {
 fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
-	let service =
-		rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
+	let service = rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
 	InMemoryPeer {
 		service,
 		incoming: in_tx,
@@ -63,12 +61,7 @@ fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	}
 }
 
-fn stdin_config(
-	name: &str,
-	command: &str,
-	args: Vec<String>,
-	timeout_seconds: u64,
-) -> McpServerConfig {
+fn stdin_config(name: &str, command: &str, args: Vec<String>, timeout_seconds: u64) -> McpServerConfig {
 	McpServerConfig::Stdin {
 		name: name.to_string(),
 		// For registered in-memory services the command is never spawned.
@@ -125,10 +118,7 @@ async fn connect_stdio_reports_spawn_failure_from_both_lifecycle_attempts() {
 		.err()
 		.expect("missing binary must fail both attempts");
 	let msg = error.to_string();
-	assert!(
-		msg.contains("Failed to start MCP server"),
-		"unexpected error: {msg}"
-	);
+	assert!(msg.contains("Failed to start MCP server"), "unexpected error: {msg}");
 	assert!(
 		msg.contains("modern:") && msg.contains("legacy:"),
 		"combined error must include both attempts: {msg}"
@@ -184,11 +174,7 @@ async fn connect_stdio_times_out_against_silent_stub_and_caps_stderr() {
 	.await;
 	assert!(capped.is_ok(), "stderr buffer must cap at 50 lines");
 	assert!(
-		buffer
-			.lock()
-			.expect("stderr lock")
-			.iter()
-			.any(|line| line == "60"),
+		buffer.lock().expect("stderr lock").iter().any(|line| line == "60"),
 		"the newest lines must survive the cap"
 	);
 
@@ -213,10 +199,7 @@ async fn connect_http_fails_fast_against_refused_loopback_endpoint() {
 		headers.insert("Authorization".to_string(), "Bearer static".to_string());
 	}
 
-	let error = connect_http(&server)
-		.await
-		.err()
-		.expect("refused endpoint must fail");
+	let error = connect_http(&server).await.err().expect("refused endpoint must fail");
 	let msg = error.to_string();
 	assert!(
 		msg.contains("Failed to initialize MCP server"),
@@ -263,10 +246,7 @@ async fn get_or_connect_discards_closed_http_connection_and_reconnects() {
 	let peer = serve_in_memory(&name);
 	let registered = register(&name, peer.service);
 	registered.cancellation_token().cancel();
-	assert!(
-		!is_connected(&name),
-		"cancelled service must read as closed"
-	);
+	assert!(!is_connected(&name), "cancelled service must read as closed");
 
 	// 10s per-attempt timeout: see connect_http_fails_fast_against_refused_loopback_endpoint.
 	let mut server = McpServerConfig::http(&name, "http://127.0.0.1:1/mcp", 10, Vec::new());
@@ -278,9 +258,7 @@ async fn get_or_connect_discards_closed_http_connection_and_reconnects() {
 		.err()
 		.expect("reconnect against a refused endpoint must fail");
 	assert!(
-		error
-			.to_string()
-			.contains("Failed to initialize MCP server"),
+		error.to_string().contains("Failed to initialize MCP server"),
 		"unexpected error: {error}"
 	);
 	assert!(get(&name).is_none(), "stale connection must be discarded");
@@ -337,9 +315,9 @@ async fn list_tools_returns_the_advertised_tool_list() {
 	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
 
 	let responder = spawn_responder(outgoing, incoming, |request| match request {
-		ClientRequest::ListToolsRequest(_) => Some(ServerResult::ListToolsResult(
-			ListToolsResult::with_all_items(Vec::new()),
-		)),
+		ClientRequest::ListToolsRequest(_) => Some(ServerResult::ListToolsResult(ListToolsResult::with_all_items(
+			Vec::new(),
+		))),
 		_ => None,
 	});
 	let list = list_tools(&server).await.expect("tools/list must succeed");
@@ -371,13 +349,12 @@ async fn list_tools_sends_the_calling_session_and_reports_private_lists() {
 		ClientRequest::ListToolsRequest(list) => {
 			let wire = serde_json::to_value(&list).expect("serialize tools/list");
 			seen.lock().unwrap().push(
-				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
-					["experimental"]["session"]["session_id"]
+				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["experimental"]["session"]
+					["session_id"]
 					.clone(),
 			);
 			Some(ServerResult::ListToolsResult(
-				ListToolsResult::with_all_items(Vec::new())
-					.with_cache_scope(rmcp::model::CacheScope::Private),
+				ListToolsResult::with_all_items(Vec::new()).with_cache_scope(rmcp::model::CacheScope::Private),
 			))
 		}
 		_ => None,
@@ -387,10 +364,7 @@ async fn list_tools_sends_the_calling_session_and_reports_private_lists() {
 	})
 	.await;
 	assert!(list.session_scoped);
-	assert_eq!(
-		*sessions.lock().unwrap(),
-		vec![serde_json::json!("list-session-a")]
-	);
+	assert_eq!(*sessions.lock().unwrap(), vec![serde_json::json!("list-session-a")]);
 
 	responder.abort();
 	disconnect(&name);
@@ -404,9 +378,7 @@ async fn list_tools_times_out_when_the_server_stays_silent() {
 	register(&name, peer.service);
 	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 1);
 
-	let error = list_tools(&server)
-		.await
-		.expect_err("silent server must time out");
+	let error = list_tools(&server).await.expect_err("silent server must time out");
 	assert!(
 		error.to_string().contains("tools/list timed out"),
 		"unexpected error: {error}"
@@ -434,14 +406,8 @@ async fn call_tool_maps_idle_timeout_to_the_actionable_error() {
 		.expect("idle timeout must fire within the harness wait")
 		.expect_err("silent server must fail the round");
 	let msg = error.to_string();
-	assert!(
-		msg.contains("timed out after PT1S idle"),
-		"unexpected error: {msg}"
-	);
-	assert!(
-		msg.contains("check for side effects"),
-		"unexpected error: {msg}"
-	);
+	assert!(msg.contains("timed out after PT1S idle"), "unexpected error: {msg}");
+	assert!(msg.contains("check for side effects"), "unexpected error: {msg}");
 
 	disconnect(&name);
 }
@@ -459,18 +425,16 @@ async fn call_tool_rejects_input_required_without_requests_or_state() {
 	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
 
 	let responder = spawn_responder(outgoing, incoming, |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::InputRequiredResult(
-			InputRequiredResult::new(None, None),
-		)),
+		ClientRequest::CallToolRequest(_) => {
+			Some(ServerResult::InputRequiredResult(InputRequiredResult::new(None, None)))
+		}
 		_ => None,
 	});
 	let error = call_tool(&server, &tool_call("call-bare"), None)
 		.await
 		.expect_err("bare input_required must fail");
 	assert!(
-		error
-			.to_string()
-			.contains("without inputRequests or requestState"),
+		error.to_string().contains("without inputRequests or requestState"),
 		"unexpected error: {error}"
 	);
 
@@ -526,18 +490,14 @@ async fn call_tool_rejects_unexpected_tools_call_response_type() {
 	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
 
 	let responder = spawn_responder(outgoing, incoming, |request| match request {
-		ClientRequest::CallToolRequest(_) => {
-			Some(ServerResult::ListToolsResult(ListToolsResult::default()))
-		}
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::ListToolsResult(ListToolsResult::default())),
 		_ => None,
 	});
 	let error = call_tool(&server, &tool_call("call-wrong"), None)
 		.await
 		.expect_err("wrong response shape must fail");
 	assert!(
-		error
-			.to_string()
-			.contains("Unexpected response type for tools/call"),
+		error.to_string().contains("Unexpected response type for tools/call"),
 		"unexpected error: {error}"
 	);
 
@@ -590,12 +550,7 @@ async fn drive_task_surfaces_failed_and_cancelled_task_payloads() {
 				(TaskStatus::Cancelled, TaskPayload::Cancelled)
 			};
 			let task = DetailedTask::new(
-				Task::new(
-					"task-f1",
-					status,
-					"2026-01-01T00:00:00Z",
-					"2026-01-01T00:00:01Z",
-				),
+				Task::new("task-f1", status, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"),
 				payload,
 			);
 			Some(ServerResult::GetTaskResult(GetTaskResult::new(task)))
@@ -653,13 +608,10 @@ async fn drive_task_cancels_the_server_task_when_the_call_is_cancelled() {
 
 	let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 	cancel_tx.send(true).expect("cancel send must succeed");
-	let error = tokio::time::timeout(
-		WAIT * 4,
-		call_tool(&server, &tool_call("call-ct"), Some(cancel_rx)),
-	)
-	.await
-	.expect("upfront cancellation must not hang")
-	.expect_err("cancelled task call must fail");
+	let error = tokio::time::timeout(WAIT * 4, call_tool(&server, &tool_call("call-ct"), Some(cancel_rx)))
+		.await
+		.expect("upfront cancellation must not hang")
+		.expect_err("cancelled task call must fail");
 	assert!(
 		crate::session::cancellation::is_cancelled(&error),
 		"unexpected error: {error}"
@@ -686,14 +638,9 @@ async fn completed_result_with_resource_links_is_returned_outside_sessions() {
 	let server = stdin_config(&name, "unused-in-memory", Vec::new(), 5);
 
 	let responder = spawn_responder(outgoing, incoming, |request| match request {
-		ClientRequest::CallToolRequest(_) => {
-			Some(ServerResult::CallToolResult(CallToolResult::success(vec![
-				ContentBlock::resource_link(Resource::new(
-					"octofs://jobs/link-1",
-					"shell: make test",
-				)),
-			])))
-		}
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CallToolResult(CallToolResult::success(vec![
+			ContentBlock::resource_link(Resource::new("octofs://jobs/link-1", "shell: make test")),
+		]))),
 		_ => None,
 	});
 	let result = call_tool(&server, &tool_call("call-link"), None)

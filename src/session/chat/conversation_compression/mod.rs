@@ -47,9 +47,9 @@ mod schema;
 pub(crate) use ai::extract_json_lenient;
 use apply::{apply_compression, collect_preserved_skills, collect_recent_recall_context};
 use decision::{
-	adaptive_fire_line, at_turn_boundary, autonomous_runway, ceiling_reached, compression_depth,
-	context_ceiling, expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics,
-	MAX_COMPRESSION_RATIO, MIN_COMPRESSION_RATIO,
+	adaptive_fire_line, at_turn_boundary, autonomous_runway, ceiling_reached, compression_depth, context_ceiling,
+	expected_remaining_calls, fold_decision, measured_growth_rate, FoldEconomics, MAX_COMPRESSION_RATIO,
+	MIN_COMPRESSION_RATIO,
 };
 use range::{calculate_range_tokens, find_compression_range_preserving_turn};
 // The model's deferral crosses module boundaries: recorded on the session,
@@ -160,14 +160,13 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 	// ADAPTIVE DEPTH: pick the post-compression target from measured dynamics.
 	// Pure math over the drain range — no API cost, so it runs before the cost
 	// gate and its derived ratio feeds the pricing analysis.
-	let (start_idx, end_idx) =
-		match find_compression_range_preserving_turn(&session.session.messages, false, true) {
-			Ok(range) => range,
-			Err(e) => {
-				log_debug!("Failed to find compression range: {}", e);
-				return (false, MIN_COMPRESSION_RATIO);
-			}
-		};
+	let (start_idx, end_idx) = match find_compression_range_preserving_turn(&session.session.messages, false, true) {
+		Ok(range) => range,
+		Err(e) => {
+			log_debug!("Failed to find compression range: {}", e);
+			return (false, MIN_COMPRESSION_RATIO);
+		}
+	};
 
 	if start_idx >= end_idx {
 		log_debug!(
@@ -187,13 +186,7 @@ pub async fn should_check_compression(session: &mut ChatSession, config: &Config
 		}
 	};
 
-	let Some(adjusted_ratio) = compression_depth(
-		current_tokens,
-		compressible_tokens,
-		fire_line,
-		growth,
-		runway,
-	) else {
+	let Some(adjusted_ratio) = compression_depth(current_tokens, compressible_tokens, fire_line, growth, runway) else {
 		// Even the deepest fold cannot land usefully below the fire line. This is
 		// local math (no paid call), so leave the exact compression watermark intact.
 		log_debug!(
@@ -267,8 +260,7 @@ fn trim_oversized_tool_results(session: &mut ChatSession, cap: usize) -> usize {
 			continue;
 		}
 		let tool = message.name.as_deref().unwrap_or_default();
-		let (cut, was_truncated) =
-			crate::utils::truncation::truncate_mcp_response_global(&message.content, cap, tool);
+		let (cut, was_truncated) = crate::utils::truncation::truncate_mcp_response_global(&message.content, cap, tool);
 		if was_truncated {
 			message.content = cut;
 			trimmed += 1;
@@ -287,10 +279,7 @@ fn trim_oversized_tool_results(session: &mut ChatSession, cap: usize) -> usize {
 /// example, an enormous protected current turn): retrying compression would
 /// destroy fresh summaries, while sending the request would violate the model
 /// window.
-pub async fn ensure_context_within_ceiling(
-	session: &mut ChatSession,
-	config: &Config,
-) -> Result<()> {
+pub async fn ensure_context_within_ceiling(session: &mut ChatSession, config: &Config) -> Result<()> {
 	let ceiling = context_ceiling(session, config);
 	let mut current_tokens = session.get_full_context_tokens(config).await;
 	if current_tokens > ceiling {
@@ -324,7 +313,9 @@ pub async fn ensure_context_within_ceiling(
 						session.fold_job.is_some()
 					)
 				}
-				Ok(_) => "no eligible compression range while preserving the current exchange and task boundary".to_string(),
+				Ok(_) => {
+					"no eligible compression range while preserving the current exchange and task boundary".to_string()
+				}
 				Err(error) => format!("compression range selection failed: {error:#}"),
 			}
 		};
@@ -371,12 +362,7 @@ pub(super) fn is_synthetic_user_message(content: &str) -> bool {
 /// (mid-turn mutations only append, but this makes the invariant checked, not
 /// assumed).
 pub struct FoldJob {
-	handle: tokio::task::JoinHandle<
-		Result<(
-			schema::CompressionSummary,
-			Option<crate::providers::TokenUsage>,
-		)>,
-	>,
+	handle: tokio::task::JoinHandle<Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>>,
 	ctx: FoldContext,
 	/// The fold request's cancellation channel, owned by the job. The
 	/// per-operation receiver is the wrong token here: octolib treats a dropped
@@ -502,8 +488,7 @@ pub async fn collect_fold_before_exit(session: &mut ChatSession, config: &Config
 	} = job;
 	let profile = config.get_compression_model_profile();
 	let attempts = profile.max_retries as u64 + 1;
-	let budget_secs = profile.request_timeout_seconds * attempts
-		+ profile.retry_timeout * profile.max_retries as u64;
+	let budget_secs = profile.request_timeout_seconds * attempts + profile.retry_timeout * profile.max_retries as u64;
 	log_info!(
 		"Run ending with a background fold in flight — waiting for it (≤{}s) so the saved session is compacted",
 		budget_secs
@@ -534,10 +519,7 @@ async fn apply_fold_outcome(
 	config: &Config,
 	ctx: FoldContext,
 	joined: std::result::Result<
-		Result<(
-			schema::CompressionSummary,
-			Option<crate::providers::TokenUsage>,
-		)>,
+		Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>,
 		tokio::task::JoinError,
 	>,
 	force: bool,
@@ -557,18 +539,14 @@ async fn apply_fold_outcome(
 			if crate::session::cancellation::is_cancelled(&error) {
 				crate::log_error!("Background fold cancelled before compression could be applied");
 			} else {
-				crate::log_error!(
-					"Background fold call failed, continuing session: {:#}",
-					error
-				);
+				crate::log_error!("Background fold call failed, continuing session: {:#}", error);
 			}
 			note_fold_failure(session);
 			return Ok(false);
 		}
 	};
 	if ctx.fold_point > session.session.messages.len()
-		|| fold_fingerprint(&session.session.messages, ctx.start_idx, ctx.end_idx)
-			!= ctx.fingerprint
+		|| fold_fingerprint(&session.session.messages, ctx.start_idx, ctx.end_idx) != ctx.fingerprint
 	{
 		ai::record_decision_usage(session, usage.as_ref());
 		crate::log_error!(
@@ -663,10 +641,7 @@ async fn finish_fold(
 					Some(attention::ValidationReport {
 						attribution_valid: false,
 						fallback_reason: Some(fallback_reason),
-						valid_units: post_fallback
-							.as_ref()
-							.map(|report| report.valid_units)
-							.unwrap_or(0),
+						valid_units: post_fallback.as_ref().map(|report| report.valid_units).unwrap_or(0),
 						referenced_blocks: post_fallback
 							.as_ref()
 							.map(|report| report.referenced_blocks)
@@ -783,10 +758,7 @@ async fn finish_fold(
 /// measured) for a summary the next turn's boundary check would produce
 /// again anyway.
 pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> Result<bool> {
-	let finished = session
-		.fold_job
-		.as_ref()
-		.is_some_and(|job| job.handle.is_finished());
+	let finished = session.fold_job.as_ref().is_some_and(|job| job.handle.is_finished());
 	if !finished {
 		return Ok(false);
 	}
@@ -805,11 +777,7 @@ pub async fn settle_pending_fold(session: &mut ChatSession, config: &Config) -> 
 /// every round is the crawl this replaces.
 pub async fn within_ceiling_margin(session: &mut ChatSession, config: &Config) -> bool {
 	let current = session.get_full_context_tokens(config).await;
-	ceiling_reached(
-		&session.session.info,
-		current,
-		context_ceiling(session, config),
-	)
+	ceiling_reached(&session.session.info, current, context_ceiling(session, config))
 }
 
 pub async fn check_and_compress_conversation(
@@ -839,10 +807,7 @@ async fn check_and_compress_conversation_inner(
 	// trigger cannot wait), otherwise leave it running and skip fresh checks —
 	// one fold at a time.
 	if session.fold_job.is_some() {
-		let finished = session
-			.fold_job
-			.as_ref()
-			.is_some_and(|job| job.handle.is_finished());
+		let finished = session.fold_job.as_ref().is_some_and(|job| job.handle.is_finished());
 		// Never run detached NEAR the window: within a few calls of the
 		// ceiling, block on the in-flight fold rather than risk the next round
 		// overshooting the model window. `ensure_context_within_ceiling` stays
@@ -879,8 +844,7 @@ async fn check_and_compress_conversation_inner(
 	// proceeds without a veto. Force skips the judgment: `/done` and the
 	// ceiling margin fold now, inline.
 	let current_step = crate::mcp::core::plan::active_step_index();
-	let agent_blocked =
-		session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
+	let agent_blocked = session.last_self_report == Some(crate::supervisor::detect::SelfReport::Blocked);
 	let overruled = match session.fold_deferral {
 		Some(deferral) if !force && deferral.stands_against(current_step, agent_blocked) => {
 			// Corroborated: hold without paying for a fold call. The deferral
@@ -949,9 +913,7 @@ async fn check_and_compress_conversation_inner(
 	// Surface the phase on the spinner — compression can take several seconds
 	// (decision model + summary call). RAII guard guarantees clear_phase
 	// runs on every exit path (success, `return`, or `?` propagation).
-	animation_manager
-		.set_phase("Compressing conversation…")
-		.await;
+	animation_manager.set_phase("Compressing conversation…").await;
 	struct PhaseGuard<'a>(&'a crate::session::chat::animation_manager::AnimationManager);
 	impl Drop for PhaseGuard<'_> {
 		fn drop(&mut self) {
@@ -965,11 +927,8 @@ async fn check_and_compress_conversation_inner(
 	// OPTIMIZATION: Do semantic chunking BEFORE AI call (local, no API cost)
 	// This allows us to send context chunks to AI in the same call as decision
 	let preserve_recent_user_bridge = !force_done;
-	let (start_idx, end_idx) = find_compression_range_preserving_turn(
-		&session.session.messages,
-		force,
-		preserve_recent_user_bridge,
-	)?;
+	let (start_idx, end_idx) =
+		find_compression_range_preserving_turn(&session.session.messages, force, preserve_recent_user_bridge)?;
 
 	// end_idx is already safe from find_compression_range
 
@@ -1038,11 +997,9 @@ async fn check_and_compress_conversation_inner(
 	//     (`apply::is_continuation_message`) — they're conversation
 	//     plumbing, not real user asks. Including them would let the
 	//     "Please continue."-style degradation chain reappear.
-	let user_msg_filter =
-		|m: &&crate::session::Message| -> bool { crate::session::is_real_user_task_message(m) };
+	let user_msg_filter = |m: &&crate::session::Message| -> bool { crate::session::is_real_user_task_message(m) };
 
-	let all_user_msgs: Vec<&crate::session::Message> = session.session.messages
-		[start_idx + 1..=end_idx]
+	let all_user_msgs: Vec<&crate::session::Message> = session.session.messages[start_idx + 1..=end_idx]
 		.iter()
 		.filter(user_msg_filter)
 		.collect();
@@ -1095,9 +1052,7 @@ async fn check_and_compress_conversation_inner(
 			session.session.messages[start_idx + 1..=end_idx]
 				.iter()
 				.rev()
-				.find(|message| {
-					message.role == "user" && apply::is_continuation_message(&message.content)
-				})
+				.find(|message| message.role == "user" && apply::is_continuation_message(&message.content))
 				.and_then(|message| apply::extract_previous_assistant_response(&message.content))
 		});
 
@@ -1140,8 +1095,7 @@ async fn check_and_compress_conversation_inner(
 	// wrapper avoids confusing the summarizer with meta-instructions and
 	// prevents recursive "continuation of continuation" phrasing in the
 	// new summary text.
-	let messages_to_compress: Vec<crate::session::Message> = session.session.messages
-		[start_idx + 1..=end_idx]
+	let messages_to_compress: Vec<crate::session::Message> = session.session.messages[start_idx + 1..=end_idx]
 		.iter()
 		.filter(|m| !(m.role == "user" && is_synthetic_user_message(&m.content)))
 		.cloned()
@@ -1153,9 +1107,7 @@ async fn check_and_compress_conversation_inner(
 	// excluded structurally by the packet builder and preserved through their
 	// existing dedicated paths.
 	let pact_started = std::time::Instant::now();
-	let mut pact = if config.compression.attention.enabled
-		|| config.compression.attention.governance.enabled
-	{
+	let mut pact = if config.compression.attention.enabled || config.compression.attention.governance.enabled {
 		Some(
 			attention::build(
 				session,
@@ -1236,11 +1188,7 @@ async fn check_and_compress_conversation_inner(
 			)
 			.await
 		});
-		session.fold_job = Some(FoldJob {
-			handle,
-			ctx,
-			cancel,
-		});
+		session.fold_job = Some(FoldJob { handle, ctx, cancel });
 		crate::supervisor::notify("compaction started in background");
 		log_debug!("Compression decision spawned in background");
 		return Ok(false);

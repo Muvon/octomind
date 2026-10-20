@@ -37,7 +37,7 @@ octomind server --host 127.0.0.1 --port 8080 --sandbox
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `TAG` | `default` (`assistant:concierge`) | Agent tag (e.g. `developer:general`) or role name (e.g. `developer`) |
+| `TAG` | `default` (`assistant:concierge`) | Agent tag (e.g. `developer:general`) or role name (e.g. `assistant`) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port`, `-p` | `8080` | Port. `0` picks a free port; the startup line `WebSocket server started on ws://<addr>` prints the bound address |
 | `--sandbox` | config `sandbox` (`false`) | Restrict all filesystem writes to the current working directory |
@@ -265,7 +265,8 @@ message:
 ### Concurrency
 
 One connection processes one client frame at a time; frames sent while one runs wait and run in order afterwards. The
-exception is `cancel`, which is read and applied while the running frame is still going — it is the frame it stops.
+exceptions are `cancel` and `run_log`: both are read and answered immediately, even during a running frame.
+`run_log` does not acquire the parent session lock.
 Across connections, a per-session lock rejects a `message` or `command` while that session is processing another
 request or inbox work:
 
@@ -297,8 +298,8 @@ dispatching it. This confirms receipt, not successful execution:
 ```
 
 `request_id` and `session_id` are omitted when the input did not include them. Malformed JSON and validation failures do
-not produce `ack`; they produce an `error` frame instead. If a decoded frame fails protocol validation, its error echoes
-`request_id`. Some later errors, including busy-session and unknown-command errors, omit it. Response streams do not
+not produce `ack`; they produce an `error` frame instead, except decoded `run_log` requests, whose validation failures
+use a `run_log` reply with an `error` field. If a decoded frame fails protocol validation, its error echoes `request_id`. Some later errors, including busy-session and unknown-command errors, omit it. Response streams do not
 echo request IDs; the `cost` frame closing a `message` turn does (see Cost tracking).
 
 The `ack` for a `session` frame additionally carries `capabilities`, omitted on other acks:
@@ -306,6 +307,7 @@ The `ack` for a `session` frame additionally carries `capabilities`, omitted on 
 - `message_attachments_v1` — `message` frames may include `attachments`.
 - `session_control_v1` — the server accepts `cancel` and `close` frames and a bind `role`, and echoes a request's
   `request_id` on the cost frame that closes its turn.
+- `run_events_v1` — delegated `tap` runs have their own live event stream and `run_log` replay.
 
 A successful AI turn arrives as a **stream** of frames: zero or more `thinking`, `tool_use`, `tool_result`, and
 `assistant` frames, terminated by a final `cost` frame that marks the end of the turn.
@@ -332,6 +334,79 @@ it.
   "session_id": "my-session"
 }
 ```
+
+**Delegated specialist runs (`run_events_v1`):**
+
+After binding the parent with a `session` frame, every connection bound to it receives `run_event` frames for
+`tap(action="run")` specialists. These arrive immediately, both during parent turns and between them, including after
+`cost` with `pending_work: true`. Disconnected clients do not stop recording; reconnect, bind, and request a replay.
+Tap child thinking, text, and tools no longer arrive as plain parent `thinking`, `assistant`, `tool_use`, or
+`tool_result` frames. The parent's own output and the specialist's eventual inbox handback keep their existing shapes.
+CLI, JSONL, and ACP tap output are unchanged.
+
+```json
+{"type":"run_event","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","role":"developer:cto","seq":17,"event":{"kind":"assistant","content":"Checking the implementation…"}}
+```
+
+`seq` starts at 1 for each run ID and increments for every emitted event. Resuming the same run ID continues its
+sequence. `event` has one of these shapes:
+
+```json
+{"kind":"prompt","content":"Review the implementation"}
+{"kind":"assistant","content":"Response chunk"}
+{"kind":"thinking","content":"Reasoning chunk"}
+{"kind":"tool_use","tool":"read","tool_id":"call-1","params":{"path":"src/main.rs"}}
+{"kind":"tool_result","tool_id":"call-1","content":"File contents","success":true}
+{"kind":"usage","cost":0.12,"input_tokens":1200,"output_tokens":300}
+{"kind":"status","status":"running"}
+{"kind":"status","status":"failed","error":"Failure details"}
+```
+
+Status is `running` at launch and `done`, `failed`, or `cancelled` at termination. `error` is optional. Prompt events
+contain the task sent to the child on the initial and every resumed turn. Tool results include only terminal updates.
+Usage reflects the child's cumulative `octomind.usage` metadata. An update that cannot be mapped to a run event is
+logged and skipped; it does not stop the specialist or prevent subsequent events from streaming.
+
+Request replay without waiting for a parent turn to finish:
+
+```json
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","request_id":"log-1"}
+```
+
+A valid request receives the usual `ack`, then:
+
+```json
+{"type":"run_log","session_id":"my-session","run_id":"tap-developer-cto-a3f1c2","role":"developer:cto","status":"running","source":"live","seq":3,"truncated":false,"events":[{"kind":"status","status":"running"},{"kind":"prompt","content":"Review the implementation"},{"kind":"assistant","content":"Checking…"}],"request_id":"log-1"}
+```
+
+While the run is running in this parent's registry, `source` is `live`. Consecutive assistant or thinking chunks are
+coalesced in the snapshot. Its content buffer is capped at 4 MiB per run; oldest events are dropped when necessary and
+`truncated` becomes `true`. A terminal event frees the live buffer. A resume starts a fresh buffer for that turn.
+
+The live snapshot and its `seq` are captured atomically with event emission. While replay is outstanding, buffer
+incoming `run_event` frames for that run. Install the snapshot, discard buffered/live frames with `seq <=` the reply's
+`seq`, then apply frames with larger sequence numbers in order. This avoids gaps and duplicate chunks even if events
+arrive before the reply. With `truncated: true`, the snapshot explicitly omits older content.
+
+Otherwise, `source` is `disk`: the existing session loader reads `<sessions dir>/<run_id>.jsonl.zst`. Stored user,
+assistant, thinking, tool-call, and tool-result messages map to the corresponding events; system messages and markers
+are skipped. Disk replay reflects the loader's restored conversation (including compression/restoration boundaries).
+Persisted tool messages currently have no success field, so disk `tool_result` events omit `success`; clients must not
+interpret absence as success. `truncated` is `false`. Status comes from the parent's registry when known, otherwise
+`unknown`; `role` is omitted when unknown. `seq` is the last observed sequence for a retained run record, or 0 without
+one. `request_id` is echoed when supplied.
+
+Run IDs must match the generated `tap-<role-slug>-<6 lowercase hex digits>` form. Validation and replay failures use a
+`run_log` reply with an `error` field, never a turn-level `error` frame. Invalid IDs are rejected without an `ack`;
+valid requests receive an `ack` before replay. Failed replies echo the session ID, run ID, and optional request ID,
+omit `role`, and have this shape:
+
+```json
+{"type":"run_log","session_id":"my-session","run_id":"tap-missing-000000","status":"unknown","source":"disk","seq":0,"truncated":false,"events":[],"error":"run not found: tap-missing-000000","request_id":"log-1"}
+```
+
+Successful replies omit `error`. When neither live data nor a session file exists, the error message is
+`run not found: <id>`. Replay failures do not mark an open parent turn as failed.
 
 **Tool execution:**
 
@@ -602,7 +677,8 @@ Use an authenticated TLS proxy for remote deployment and a process boundary per 
 - Command `args` is optional
 - `session.cwd`, when present, must be an absolute path to an existing directory
 - `session.role`, when present, must be non-empty
-- `cancel.session_id` and `close.session_id` must be non-empty
+- `cancel.session_id`, `close.session_id`, and `run_log.session_id` must be non-empty
+- `run_log.run_id` must be a generated tap run ID
 
 A malformed JSON frame returns an `error` with a message starting `Invalid JSON:` and the connection **stays open** —
 the same is true for validation failures, so clients can recover and keep sending.

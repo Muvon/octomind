@@ -61,9 +61,7 @@ fn env_err(code: &str) -> String {
 
 /// One-shot-per-connection HTTP stub serving raw bodies in order.
 async fn spawn_api(bodies: Vec<String>) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("stub addr");
 	let queue = std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from(bodies)));
 
@@ -234,10 +232,7 @@ async fn execute_surfaces_a_failed_login_start() {
 	})
 	.await
 	.expect_err("start failure propagates");
-	assert!(
-		err.to_string().contains("could not start login: boom"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("could not start login: boom"), "{err}");
 }
 
 #[tokio::test]
@@ -254,12 +249,9 @@ async fn saved_chatgpt_account_requires_successful_validation() {
 #[tokio::test]
 async fn rejected_chatgpt_session_does_not_report_signed_in() {
 	let account = chatgpt::Account { email: None };
-	let error = validated_chatgpt_account(
-		Some(account),
-		std::future::ready(Err(anyhow::anyhow!("invalid_grant"))),
-	)
-	.await
-	.expect_err("saved credentials alone are not a valid session");
+	let error = validated_chatgpt_account(Some(account), std::future::ready(Err(anyhow::anyhow!("invalid_grant"))))
+		.await
+		.expect_err("saved credentials alone are not a valid session");
 	assert!(error.to_string().contains("octomind login chatgpt --force"));
 	assert!(format!("{error:#}").contains("invalid_grant"));
 }

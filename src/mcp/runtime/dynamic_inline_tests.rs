@@ -39,22 +39,15 @@ async fn test_persist_enabled_server_stores_auto_bind() {
 	crate::config::set_thread_role("developer");
 
 	// Register a stdio server
-	let server = crate::config::McpServerConfig::stdin(
-		"__test_persist_autobind",
-		"echo",
-		vec!["hello".to_string()],
-		60,
-		vec![],
-	);
+	let server =
+		crate::config::McpServerConfig::stdin("__test_persist_autobind", "echo", vec!["hello".to_string()], 60, vec![]);
 	register_server(server).unwrap();
 
 	// Manually mark it as enabled (skip actual connection)
 	{
 		let manager = get_manager();
 		let mut state = manager.write().unwrap();
-		state
-			.enabled
-			.insert("__test_persist_autobind".to_string(), true);
+		state.enabled.insert("__test_persist_autobind".to_string(), true);
 	}
 
 	// Persist — should include auto_bind = ["developer"]
@@ -93,22 +86,13 @@ async fn test_persist_disabled_server_clears_auto_bind() {
 	crate::config::set_thread_role("developer");
 
 	// Register but do NOT enable
-	let server = crate::config::McpServerConfig::stdin(
-		"__test_persist_disabled",
-		"echo",
-		vec![],
-		60,
-		vec![],
-	);
+	let server = crate::config::McpServerConfig::stdin("__test_persist_disabled", "echo", vec![], 60, vec![]);
 	register_server(server).unwrap();
 
 	// Persist while disabled — auto_bind should be None
 	let result = persist_server("__test_persist_disabled", None).unwrap();
 
-	assert_eq!(
-		result.auto_bind, None,
-		"auto_bind should be None for disabled server"
-	);
+	assert_eq!(result.auto_bind, None, "auto_bind should be None for disabled server");
 
 	// Verify the file does NOT contain auto_bind
 	let content = std::fs::read_to_string(&result.path).unwrap();
@@ -135,10 +119,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -152,8 +133,7 @@ impl Drop for DataDirGuard {
 }
 
 fn template_config() -> crate::config::Config {
-	toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template")
 }
 
 #[test]
@@ -161,14 +141,8 @@ fn template_config() -> crate::config::Config {
 fn test_register_server_validation() {
 	clear_all();
 
-	let err = register_server(crate::config::McpServerConfig::stdin(
-		"",
-		"echo",
-		vec![],
-		30,
-		vec![],
-	))
-	.expect_err("blank name must bail");
+	let err = register_server(crate::config::McpServerConfig::stdin("", "echo", vec![], 30, vec![]))
+		.expect_err("blank name must bail");
 	assert!(err.to_string().contains("name cannot be empty"));
 
 	let err = register_server(crate::config::McpServerConfig::stdin(
@@ -211,10 +185,7 @@ async fn test_is_persisted_tracks_file_and_unpersist_missing_is_ok() {
 	))
 	.unwrap();
 	let result = persist_server("__dyn_persist_probe", None).expect("persist");
-	assert!(
-		result.path.is_file(),
-		"persist result must name the written file"
-	);
+	assert!(result.path.is_file(), "persist result must name the written file");
 	assert!(is_persisted("__dyn_persist_probe"));
 
 	unpersist_server("__dyn_persist_probe").expect("unpersist");
@@ -234,27 +205,21 @@ async fn test_persist_server_config_fallback_and_not_found() {
 	crate::config::set_thread_role("developer");
 
 	let mut config = template_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"__dyn_cfgpersist_srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"__dyn_cfgpersist_srv",
+		30,
+		vec![],
+	));
 
 	// Not registered dynamically, but present in the config: treated as
 	// enabled and persisted with the current role's auto_bind.
-	let result =
-		persist_server("__dyn_cfgpersist_srv", Some(&config)).expect("persist config server");
+	let result = persist_server("__dyn_cfgpersist_srv", Some(&config)).expect("persist config server");
 	assert_eq!(result.auto_bind, Some(vec!["developer".to_string()]));
 	assert!(is_persisted("__dyn_cfgpersist_srv"));
 	let _ = std::fs::remove_file(&result.path);
 
 	// Unknown everywhere: hard error.
-	let err = persist_server("__dyn_nope", Some(&config))
-		.err()
-		.expect("must bail");
+	let err = persist_server("__dyn_nope", Some(&config)).err().expect("must bail");
 	assert!(err.to_string().contains("not found"));
 
 	clear_all();
@@ -266,14 +231,11 @@ async fn test_disable_server_tools_config_fallback_and_not_found() {
 	clear_all();
 
 	let mut config = template_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"__dyn_cfgdisable_srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"__dyn_cfgdisable_srv",
+		30,
+		vec![],
+	));
 
 	// Config-loaded server disabled in CLI mode: registered into the global
 	// singleton as a disabled shadow entry.
@@ -282,11 +244,7 @@ async fn test_disable_server_tools_config_fallback_and_not_found() {
 		let manager = get_manager();
 		let state = manager.read().unwrap();
 		assert!(state.servers.contains_key("__dyn_cfgdisable_srv"));
-		assert!(!state
-			.enabled
-			.get("__dyn_cfgdisable_srv")
-			.copied()
-			.unwrap_or(true));
+		assert!(!state.enabled.get("__dyn_cfgdisable_srv").copied().unwrap_or(true));
 	}
 
 	// kill_server=false in CLI mode only strips tools — always Ok.

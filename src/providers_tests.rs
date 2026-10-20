@@ -41,8 +41,7 @@ fn test_thinking_block_conversion() {
 	println!("Serialized: {}", json_value);
 
 	// Deserialize back (simulating loading from session)
-	let deserialized: ThinkingBlock =
-		serde_json::from_value(json_value).expect("Failed to deserialize");
+	let deserialized: ThinkingBlock = serde_json::from_value(json_value).expect("Failed to deserialize");
 	println!("Deserialized: {:?}", deserialized);
 
 	assert_eq!(deserialized.content, "Test thinking content");
@@ -106,8 +105,7 @@ fn test_openai_format_preserves_root_meta_when_present() {
 			"meta": {"origin": "session"}
 		}
 	]);
-	let calls =
-		convert_to_generic_tool_calls(&with_meta).expect("OpenAI format with meta must convert");
+	let calls = convert_to_generic_tool_calls(&with_meta).expect("OpenAI format with meta must convert");
 	assert_eq!(calls.len(), 1);
 	let expected_meta: serde_json::Map<String, serde_json::Value> =
 		serde_json::from_value(with_meta[0]["meta"].clone()).unwrap();
@@ -121,8 +119,7 @@ fn test_openai_format_preserves_root_meta_when_present() {
 			"function": {"name": "read", "arguments": "{}"}
 		}
 	]);
-	let calls = convert_to_generic_tool_calls(&without_meta)
-		.expect("OpenAI format without meta must convert");
+	let calls = convert_to_generic_tool_calls(&without_meta).expect("OpenAI format without meta must convert");
 	assert!(calls[0].meta.is_none());
 }
 
@@ -136,8 +133,7 @@ fn test_openai_format_blank_arguments_become_empty_object() {
 				"function": {"name": "ping", "arguments": args}
 			}
 		]);
-		let calls = convert_to_generic_tool_calls(&value)
-			.expect("blank arguments must convert to an empty object");
+		let calls = convert_to_generic_tool_calls(&value).expect("blank arguments must convert to an empty object");
 		assert_eq!(calls[0].arguments, serde_json::json!({}), "args = {args:?}");
 	}
 }
@@ -164,10 +160,9 @@ fn test_openai_format_missing_id_name_or_arguments_errors() {
 	]);
 	let err = convert_to_generic_tool_calls(&value).expect_err("missing id must fail");
 	match err {
-		octolib::MessageError::MissingToolField { field } => assert_eq!(
-			field, "function.{id|name|arguments}",
-			"unexpected field name: {field}"
-		),
+		octolib::MessageError::MissingToolField { field } => {
+			assert_eq!(field, "function.{id|name|arguments}", "unexpected field name: {field}")
+		}
 		other => panic!("expected MissingToolField, got {other:?}"),
 	}
 }
@@ -204,8 +199,7 @@ fn test_non_array_tool_calls_root_errors() {
 
 #[test]
 fn test_empty_tool_calls_array_returns_empty_vec() {
-	let calls = convert_to_generic_tool_calls(&serde_json::json!([]))
-		.expect("empty array is valid unified format");
+	let calls = convert_to_generic_tool_calls(&serde_json::json!([])).expect("empty array is valid unified format");
 	assert!(calls.is_empty());
 }
 
@@ -231,8 +225,8 @@ fn msg(role: &str, content: &str) -> Message {
 #[test]
 fn test_convert_preserves_role_content_and_timestamp() {
 	for role in ["user", "assistant", "system"] {
-		let converted = convert_message_to_octolib(&msg(role, "hello"))
-			.unwrap_or_else(|e| panic!("{role} must convert: {e:?}"));
+		let converted =
+			convert_message_to_octolib(&msg(role, "hello")).unwrap_or_else(|e| panic!("{role} must convert: {e:?}"));
 		assert_eq!(converted.role, role);
 		assert_eq!(converted.content, "hello");
 		assert_eq!(converted.timestamp, 1_700_000_000);
@@ -245,8 +239,7 @@ fn test_convert_tool_message_requires_call_id_and_name() {
 		name: Some("tool_a".to_string()),
 		..msg("tool", "result")
 	};
-	let err = convert_message_to_octolib(&missing_id)
-		.expect_err("tool message without tool_call_id must fail");
+	let err = convert_message_to_octolib(&missing_id).expect_err("tool message without tool_call_id must fail");
 	match err {
 		octolib::MessageError::MissingToolField { field } => {
 			assert_eq!(field, "tool_call_id")
@@ -258,8 +251,7 @@ fn test_convert_tool_message_requires_call_id_and_name() {
 		tool_call_id: Some("call_1".to_string()),
 		..msg("tool", "result")
 	};
-	let err =
-		convert_message_to_octolib(&missing_name).expect_err("tool message without name must fail");
+	let err = convert_message_to_octolib(&missing_name).expect_err("tool message without name must fail");
 	match err {
 		octolib::MessageError::MissingToolField { field } => {
 			assert_eq!(field, "name")
@@ -275,8 +267,7 @@ fn test_convert_complete_tool_message() {
 		name: Some("tool_a".to_string()),
 		..msg("tool", "result")
 	};
-	let converted =
-		convert_message_to_octolib(&message).expect("complete tool message must convert");
+	let converted = convert_message_to_octolib(&message).expect("complete tool message must convert");
 	assert_eq!(converted.role, "tool");
 	assert_eq!(converted.tool_call_id.as_deref(), Some("call_1"));
 	assert_eq!(converted.name.as_deref(), Some("tool_a"));
@@ -306,11 +297,10 @@ fn test_convert_assistant_tool_calls_become_generic() {
 		])),
 		..msg("assistant", "")
 	};
-	let converted =
-		convert_message_to_octolib(&message).expect("assistant with tool calls must convert");
+	let converted = convert_message_to_octolib(&message).expect("assistant with tool calls must convert");
 	let raw = converted.tool_calls.expect("tool_calls must be set");
-	let calls: Vec<octolib::llm::GenericToolCall> = serde_json::from_value(raw)
-		.expect("stored tool_calls must be unified GenericToolCall JSON");
+	let calls: Vec<octolib::llm::GenericToolCall> =
+		serde_json::from_value(raw).expect("stored tool_calls must be unified GenericToolCall JSON");
 	assert_eq!(calls.len(), 1);
 	assert_eq!(calls[0].name, "shell");
 	assert_eq!(calls[0].arguments, serde_json::json!({"cmd": "ls"}));
@@ -346,10 +336,7 @@ fn test_convert_cache_marker_and_ttl() {
 	};
 	let converted = convert_message_to_octolib(&uncached).expect("uncached message must convert");
 	assert!(!converted.cached);
-	assert_eq!(
-		converted.cache_ttl, None,
-		"TTL must not apply without the marker"
-	);
+	assert_eq!(converted.cache_ttl, None, "TTL must not apply without the marker");
 }
 
 #[test]
@@ -380,12 +367,8 @@ fn test_convert_invalid_thinking_json_is_dropped_not_fatal() {
 		thinking: Some(serde_json::json!("not a thinking block")),
 		..msg("assistant", "answer")
 	};
-	let converted = convert_message_to_octolib(&message)
-		.expect("invalid thinking must not fail the conversion");
-	assert!(
-		converted.thinking.is_none(),
-		"invalid thinking must be dropped"
-	);
+	let converted = convert_message_to_octolib(&message).expect("invalid thinking must not fail the conversion");
+	assert!(converted.thinking.is_none(), "invalid thinking must be dropped");
 }
 
 #[test]
@@ -394,9 +377,7 @@ fn test_convert_images_and_videos() {
 		images: Some(vec![crate::session::image::ImageAttachment {
 			data: crate::session::image::ImageData::Base64("aGVsbG8=".to_string()),
 			media_type: "image/png".to_string(),
-			source_type: crate::session::image::SourceType::File(std::path::PathBuf::from(
-				"/tmp/x.png",
-			)),
+			source_type: crate::session::image::SourceType::File(std::path::PathBuf::from("/tmp/x.png")),
 			dimensions: Some((800, 600)),
 			size_bytes: Some(1024),
 		}]),
@@ -434,26 +415,16 @@ fn test_convert_images_and_videos() {
 		&videos[0].data,
 		octolib::llm::VideoData::Url(u) if u == "https://example.test/v.mp4"
 	));
-	assert!(matches!(
-		videos[0].source_type,
-		octolib::llm::SourceType::Url
-	));
+	assert!(matches!(videos[0].source_type, octolib::llm::SourceType::Url));
 }
 
 // ── convert_response_from_octolib ──────────────────────────────
 
-fn octolib_response(
-	tool_calls: Option<Vec<octolib::llm::ToolCall>>,
-) -> octolib::llm::ProviderResponse {
+fn octolib_response(tool_calls: Option<Vec<octolib::llm::ToolCall>>) -> octolib::llm::ProviderResponse {
 	octolib::llm::ProviderResponse {
 		content: "done".to_string(),
 		thinking: Some(ThinkingBlock::with_tokens("reasoning", 12)),
-		exchange: ProviderExchange::new(
-			serde_json::json!({"q": 1}),
-			serde_json::json!({"a": 2}),
-			None,
-			"test",
-		),
+		exchange: ProviderExchange::new(serde_json::json!({"q": 1}), serde_json::json!({"a": 2}), None, "test"),
 		tool_calls,
 		finish_reason: Some("stop".to_string()),
 		structured_output: Some(serde_json::json!({"ok": true})),
@@ -483,10 +454,7 @@ fn test_convert_response_passes_fields_through() {
 	assert!(converted.tool_calls.is_none());
 	assert_eq!(converted.finish_reason.as_deref(), Some("stop"));
 	assert_eq!(converted.response_id.as_deref(), Some("resp_1"));
-	assert_eq!(
-		converted.structured_output,
-		Some(serde_json::json!({"ok": true}))
-	);
+	assert_eq!(converted.structured_output, Some(serde_json::json!({"ok": true})));
 	assert_eq!(converted.thinking.as_ref().expect("thinking").tokens, 12);
 	assert_eq!(converted.exchange.provider, "test");
 }
@@ -494,8 +462,8 @@ fn test_convert_response_passes_fields_through() {
 // ── ChatCompletionParams::to_octolib_params ────────────────────
 
 fn test_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	// Keep the conversion offline: no MCP servers → no tool fetching.
 	config.mcp.servers.clear();
 	config
@@ -506,10 +474,7 @@ async fn test_octolib_params_defaults_and_passthrough() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "test-model", 0.5, 0.9, 7, 1234, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 
 	assert_eq!(octo.model, "test-model");
 	assert_eq!(octo.temperature, 0.5);
@@ -519,10 +484,7 @@ async fn test_octolib_params_defaults_and_passthrough() {
 	// Defaults come from the config template: max_retries=1, retry_timeout=30s.
 	assert_eq!(octo.max_retries, 1);
 	assert_eq!(octo.retry_timeout, std::time::Duration::from_secs(30));
-	assert_eq!(
-		octo.request_timeout,
-		Some(std::time::Duration::from_secs(300))
-	);
+	assert_eq!(octo.request_timeout, Some(std::time::Duration::from_secs(300)));
 	assert!(octo.use_long_cache, "long cache is always enabled");
 	assert!(octo.tools.is_none(), "no MCP servers → no tools attached");
 	assert_eq!(octo.messages.len(), 1);
@@ -533,12 +495,8 @@ async fn test_octolib_params_defaults_and_passthrough() {
 async fn test_octolib_params_builder_overrides() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params =
-		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_max_retries(7);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_max_retries(7);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(octo.max_retries, 7);
 }
 
@@ -547,16 +505,10 @@ async fn test_octolib_params_key_prompt_cache_by_session() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let outside = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let outside = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(outside.prompt_cache_key, None);
 	let inside = crate::session::context::with_session_id("s-1".to_string(), async {
-		params
-			.to_octolib_params()
-			.await
-			.expect("conversion succeeds")
+		params.to_octolib_params().await.expect("conversion succeeds")
 	})
 	.await;
 	assert_eq!(inside.prompt_cache_key.as_deref(), Some("s-1"));
@@ -573,10 +525,7 @@ async fn test_octolib_params_cached_system_message_gets_one_hour_ttl() {
 		msg("user", "hi"),
 	];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(octo.messages[0].role, "system");
 	assert!(octo.messages[0].cached);
 	assert_eq!(octo.messages[0].cache_ttl.as_deref(), Some("1h"));
@@ -587,15 +536,8 @@ async fn test_octolib_params_appends_synthetic_user_after_assistant() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi"), msg("assistant", "hello")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	assert_eq!(
-		octo.messages.len(),
-		3,
-		"synthetic continuation must be appended"
-	);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	assert_eq!(octo.messages.len(), 3, "synthetic continuation must be appended");
 	let last = octo.messages.last().expect("non-empty");
 	assert_eq!(last.role, "user");
 	assert_eq!(last.content, "Please continue.");
@@ -612,10 +554,7 @@ async fn test_octolib_params_no_synthetic_user_after_user_message() {
 		msg("user", "hi"),
 	];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(octo.messages.len(), 2, "no synthetic message expected");
 	assert_eq!(octo.messages.last().expect("non-empty").role, "user");
 }
@@ -625,15 +564,8 @@ async fn test_octolib_params_system_only_messages_get_no_synthetic_user() {
 	let config = test_config();
 	let messages = vec![msg("system", "sysprompt")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	assert_eq!(
-		octo.messages.len(),
-		1,
-		"no non-system message → no synthetic append"
-	);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	assert_eq!(octo.messages.len(), 1, "no non-system message → no synthetic append");
 }
 
 #[tokio::test]
@@ -642,28 +574,18 @@ async fn test_octolib_params_purpose_header_sent_on_every_request() {
 	let messages = vec![msg("user", "hi")];
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(
-		octo.extra_headers
-			.as_ref()
-			.and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
+		octo.extra_headers.as_ref().and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
 		Some(&"main".to_string()),
 		"untagged calls are MAIN traffic"
 	);
 
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
-		.with_purpose(ModelPurpose::Compression);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let params =
+		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_purpose(ModelPurpose::Compression);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert_eq!(
-		octo.extra_headers
-			.as_ref()
-			.and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
+		octo.extra_headers.as_ref().and_then(|h| h.get(MODEL_PURPOSE_HEADER)),
 		Some(&"compression".to_string())
 	);
 }
@@ -674,26 +596,14 @@ async fn test_octolib_params_reasoning_effort_override_beats_config() {
 	let messages = vec![msg("user", "hi")];
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	// Config template default is "medium".
-	assert_eq!(
-		octo.reasoning_effort,
-		Some(octolib::llm::ReasoningEffort::Medium)
-	);
+	assert_eq!(octo.reasoning_effort, Some(octolib::llm::ReasoningEffort::Medium));
 
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
 		.with_reasoning_effort(crate::config::ReasoningEffortConfig::High);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	assert_eq!(
-		octo.reasoning_effort,
-		Some(octolib::llm::ReasoningEffort::High)
-	);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	assert_eq!(octo.reasoning_effort, Some(octolib::llm::ReasoningEffort::High));
 }
 
 #[tokio::test]
@@ -705,15 +615,9 @@ async fn test_octolib_params_schema_becomes_strict_structured_output() {
 		"properties": {"answer": {"type": "string"}},
 		"required": ["answer"]
 	});
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
-		.with_schema(schema.clone());
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	let rf = octo
-		.response_format
-		.expect("schema must set response_format");
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_schema(schema.clone());
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	let rf = octo.response_format.expect("schema must set response_format");
 	assert!(matches!(rf.format, octolib::llm::OutputFormat::JsonSchema));
 	assert!(matches!(rf.mode, octolib::llm::ResponseMode::Strict));
 	assert_eq!(rf.schema, Some(schema));
@@ -725,14 +629,8 @@ async fn test_octolib_params_zero_request_timeout_disables_deadline() {
 	config.request_timeout_seconds = 0;
 	let messages = vec![msg("user", "hi")];
 	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	assert_eq!(
-		octo.request_timeout, None,
-		"0 must mean no per-request timeout"
-	);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	assert_eq!(octo.request_timeout, None, "0 must mean no per-request timeout");
 }
 
 #[tokio::test]
@@ -740,12 +638,8 @@ async fn test_octolib_params_cancellation_token_attached() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
 	let (_tx, rx) = watch::channel(false);
-	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config)
-		.with_cancellation_token(rx);
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).with_cancellation_token(rx);
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
 	assert!(octo.cancellation_token.is_some(), "token must be forwarded");
 }
 
@@ -753,16 +647,9 @@ async fn test_octolib_params_cancellation_token_attached() {
 async fn test_octolib_params_without_tools_keeps_tools_empty() {
 	let config = test_config();
 	let messages = vec![msg("user", "hi")];
-	let params =
-		ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).without_tools();
-	let octo = params
-		.to_octolib_params()
-		.await
-		.expect("conversion succeeds");
-	assert!(
-		octo.tools.is_none(),
-		"text-only calls must not attach tools"
-	);
+	let params = ChatCompletionParams::new(&messages, "m", 0.1, 1.0, 0, 10, &config).without_tools();
+	let octo = params.to_octolib_params().await.expect("conversion succeeds");
+	assert!(octo.tools.is_none(), "text-only calls must not attach tools");
 }
 
 #[tokio::test]
@@ -829,9 +716,7 @@ fn tool_and_prompt_images_convert_without_losing_payload_or_association() {
 			let images = converted.images.unwrap();
 			assert_eq!(images.len(), 1);
 			assert_eq!(images[0].media_type, "image/png");
-			assert!(
-				matches!(&images[0].data, octolib::llm::ImageData::Base64(data) if data == "aW1hZ2U=")
-			);
+			assert!(matches!(&images[0].data, octolib::llm::ImageData::Base64(data) if data == "aW1hZ2U="));
 		}
 	}
 }

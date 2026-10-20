@@ -241,24 +241,14 @@ pub fn render_summary(summary: &CompressionSummary) -> String {
 		out.push('\n');
 	}
 	push_text(&mut out, "progress", &summary.progress);
-	push_list(
-		&mut out,
-		"analysis_findings",
-		"finding",
-		&summary.analysis_findings,
-	);
+	push_list(&mut out, "analysis_findings", "finding", &summary.analysis_findings);
 	push_list(
 		&mut out,
 		"errors_and_corrections",
 		"entry",
 		&summary.errors_and_corrections,
 	);
-	push_list(
-		&mut out,
-		"recent_exchanges",
-		"exchange",
-		&summary.recent_exchanges,
-	);
+	push_list(&mut out, "recent_exchanges", "exchange", &summary.recent_exchanges);
 
 	let ke = &summary.key_entities;
 	if !ke.files.is_empty() || !ke.names.is_empty() || !ke.decisions.is_empty() {
@@ -577,18 +567,14 @@ pub fn build_compression_schema(no_veto: bool, pact: bool) -> serde_json::Value 
 			property.insert("maxItems".into(), 0.into());
 			property.insert(
 				"description".into(),
-				"PACT wire-compatibility field. Return []; only source-attributed folded_units are committed."
-					.into(),
+				"PACT wire-compatibility field. Return []; only source-attributed folded_units are committed.".into(),
 			);
 		}
 		for field in ["files", "names", "decisions"] {
 			properties["key_entities"]["properties"][field]["maxItems"] = 0.into();
 		}
 	} else {
-		if let Some(properties) = schema
-			.get_mut("properties")
-			.and_then(serde_json::Value::as_object_mut)
-		{
+		if let Some(properties) = schema.get_mut("properties").and_then(serde_json::Value::as_object_mut) {
 			properties.remove("folded_units");
 		}
 		if let Some(required) = schema.get_mut("required").and_then(|v| v.as_array_mut()) {
@@ -747,10 +733,8 @@ fn extract_file_context(body: &str) -> Result<Vec<FileContextEntry>> {
 		return Ok(Vec::new());
 	};
 
-	let re = regex::Regex::new(
-		r#"(?s)<range\s+filepath="([^"]*)"\s+start_line="(\d+)"\s+end_line="(\d+)"\s*/?>"#,
-	)
-	.expect("static regex compiles");
+	let re = regex::Regex::new(r#"(?s)<range\s+filepath="([^"]*)"\s+start_line="(\d+)"\s+end_line="(\d+)"\s*/?>"#)
+		.expect("static regex compiles");
 
 	let mut entries = Vec::new();
 	for caps in re.captures_iter(&inner) {
@@ -764,9 +748,7 @@ fn extract_file_context(body: &str) -> Result<Vec<FileContextEntry>> {
 		let end_line: usize = caps[3]
 			.parse()
 			.map_err(|e| anyhow!("compression XML: invalid end_line: {e}"))?;
-		if !(1..=FILE_CONTEXT_LINE_MAX).contains(&start_line)
-			|| !(1..=FILE_CONTEXT_LINE_MAX).contains(&end_line)
-		{
+		if !(1..=FILE_CONTEXT_LINE_MAX).contains(&start_line) || !(1..=FILE_CONTEXT_LINE_MAX).contains(&end_line) {
 			return Err(anyhow!(
 				"compression XML: line numbers out of range (1..={FILE_CONTEXT_LINE_MAX}) for {filepath}: {start_line}-{end_line}"
 			));

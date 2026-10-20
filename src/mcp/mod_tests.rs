@@ -30,8 +30,8 @@ use serial_test::serial;
 /// Parse the shipped default template and replace the MCP server list.
 /// Builtin-only servers keep every test offline: no stdio spawn, no HTTP.
 fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.mcp.servers = servers;
 	config
 }
@@ -143,16 +143,12 @@ fn filter_tools_by_patterns_passes_all_when_empty_and_filters_otherwise() {
 #[test]
 fn filtered_server_functions_cache_hits_and_clear() {
 	clear_function_cache();
-	let first =
-		get_filtered_server_functions("cache-probe", &[], || vec![fn_def("one"), fn_def("two")]);
+	let first = get_filtered_server_functions("cache-probe", &[], || vec![fn_def("one"), fn_def("two")]);
 	assert_eq!(names_of(&first), vec!["one".to_string(), "two".to_string()]);
 
 	// Same cache key → the cached copy wins even when the producer changes.
 	let cached = get_filtered_server_functions("cache-probe", &[], || vec![fn_def("three")]);
-	assert_eq!(
-		names_of(&cached),
-		vec!["one".to_string(), "two".to_string()]
-	);
+	assert_eq!(names_of(&cached), vec!["one".to_string(), "two".to_string()]);
 
 	// A non-empty filter is a different cache key → producer runs again.
 	let filtered = get_filtered_server_functions("cache-probe", &["tw*".to_string()], || {
@@ -190,14 +186,10 @@ async fn available_functions_cover_each_builtin_server_arm() {
 		assert!(names.contains(&expected.to_string()), "runtime: {names:?}");
 	}
 
-	let orchestration_cfg =
-		config_with_servers(vec![McpServerConfig::builtin("orchestration", 30, vec![])]);
+	let orchestration_cfg = config_with_servers(vec![McpServerConfig::builtin("orchestration", 30, vec![])]);
 	let names = names_of(&get_available_functions(&orchestration_cfg).await);
 	for expected in ["tap", "schedule", "monitor"] {
-		assert!(
-			names.contains(&expected.to_string()),
-			"orchestration: {names:?}"
-		);
+		assert!(names.contains(&expected.to_string()), "orchestration: {names:?}");
 	}
 
 	let mut agent_cfg = config_with_servers(vec![McpServerConfig::builtin("agent", 30, vec![])]);
@@ -208,10 +200,7 @@ async fn available_functions_cover_each_builtin_server_arm() {
 		workdir: ".".to_string(),
 	});
 	let names = names_of(&get_available_functions(&agent_cfg).await);
-	assert!(
-		names.contains(&"agent_probe_agent".to_string()),
-		"agent: {names:?}"
-	);
+	assert!(names.contains(&"agent_probe_agent".to_string()), "agent: {names:?}");
 
 	clear_function_cache();
 }
@@ -221,19 +210,11 @@ async fn available_functions_cover_each_builtin_server_arm() {
 async fn available_functions_honor_static_filters_and_unknown_builtins() {
 	clear_function_cache();
 	let mut filtered = core_server_config();
-	filtered.mcp.servers[0] =
-		McpServerConfig::builtin("core", 30, vec!["no_such_tool".to_string()]);
+	filtered.mcp.servers[0] = McpServerConfig::builtin("core", 30, vec!["no_such_tool".to_string()]);
 	let fns = get_available_functions(&filtered).await;
-	assert!(
-		!fns.iter().any(|f| f.name == "recall"),
-		"filter must drop recall"
-	);
+	assert!(!fns.iter().any(|f| f.name == "recall"), "filter must drop recall");
 
-	let unknown = config_with_servers(vec![McpServerConfig::builtin(
-		"no-such-builtin",
-		30,
-		vec![],
-	)]);
+	let unknown = config_with_servers(vec![McpServerConfig::builtin("no-such-builtin", 30, vec![])]);
 	let fns = get_available_functions(&unknown).await;
 	assert!(!fns.iter().any(|f| f.name == "recall"));
 	clear_function_cache();
@@ -300,9 +281,7 @@ async fn execute_tool_call_rejects_precancelled_token() {
 async fn execute_tool_call_routes_core_tool_through_tool_map() {
 	clear_function_cache();
 	let config = core_server_config();
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
 	// `recall` without ids → soft error from the tool, but routing succeeded.
 	let (result, _elapsed_ms) = execute_tool_call(&tool_call("recall", json!({})), &config, None)
@@ -322,8 +301,7 @@ async fn execute_tool_call_routes_core_tool_through_tool_map() {
 		.await
 		.unwrap_err();
 	assert!(
-		err.to_string()
-			.contains("not found in any configured MCP server"),
+		err.to_string().contains("not found in any configured MCP server"),
 		"{err}"
 	);
 	assert!(err.to_string().contains("recall"), "{err}");
@@ -335,37 +313,27 @@ async fn execute_tool_call_routes_core_tool_through_tool_map() {
 async fn session_ownership_rejects_tools_from_foreign_servers() {
 	clear_function_cache();
 	let config = core_server_config();
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
 	// A config that does NOT include the `core` server the tool map routes to.
 	let other = config_with_servers(vec![McpServerConfig::builtin("runtime", 30, vec![])]);
-	crate::session::context::with_session_id(
-		format!("ownership-{}", uuid::Uuid::new_v4()),
-		async {
-			let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &other, None)
-				.await
-				.expect("ownership rejection is a soft error");
-			assert!(result.is_error());
-			assert!(result
-				.extract_content()
-				.contains("belongs to another session"));
-		},
-	)
+	crate::session::context::with_session_id(format!("ownership-{}", uuid::Uuid::new_v4()), async {
+		let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &other, None)
+			.await
+			.expect("ownership rejection is a soft error");
+		assert!(result.is_error());
+		assert!(result.extract_content().contains("belongs to another session"));
+	})
 	.await;
 
 	// Same session context, but the config DOES define the server → allowed.
-	crate::session::context::with_session_id(
-		format!("ownership-ok-{}", uuid::Uuid::new_v4()),
-		async {
-			let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &config, None)
-				.await
-				.expect("config-defined server must route");
-			assert!(result.is_error()); // recall validation error, not ownership
-			assert!(!result.extract_content().contains("another session"));
-		},
-	)
+	crate::session::context::with_session_id(format!("ownership-ok-{}", uuid::Uuid::new_v4()), async {
+		let (result, _) = execute_tool_call(&tool_call("recall", json!({})), &config, None)
+			.await
+			.expect("config-defined server must route");
+		assert!(result.is_error()); // recall validation error, not ownership
+		assert!(!result.extract_content().contains("another session"));
+	})
 	.await;
 	clear_function_cache();
 }
@@ -375,27 +343,20 @@ async fn session_ownership_rejects_tools_from_foreign_servers() {
 async fn session_ownership_rejects_foreign_dynamic_agent_tools() {
 	clear_function_cache();
 	let config = core_server_config();
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 	tool_map::register_dynamic_agent_tool("foreign_probe_agent");
 
-	crate::session::context::with_session_id(
-		format!("ownership-agent-{}", uuid::Uuid::new_v4()),
-		async {
-			let (result, _) = execute_tool_call(
-				&tool_call("agent_foreign_probe_agent", json!({"task": "x"})),
-				&config, // config defines no such agent
-				None,
-			)
-			.await
-			.expect("ownership rejection is a soft error");
-			assert!(result.is_error());
-			assert!(result
-				.extract_content()
-				.contains("belongs to another session"));
-		},
-	)
+	crate::session::context::with_session_id(format!("ownership-agent-{}", uuid::Uuid::new_v4()), async {
+		let (result, _) = execute_tool_call(
+			&tool_call("agent_foreign_probe_agent", json!({"task": "x"})),
+			&config, // config defines no such agent
+			None,
+		)
+		.await
+		.expect("ownership rejection is a soft error");
+		assert!(result.is_error());
+		assert!(result.extract_content().contains("belongs to another session"));
+	})
 	.await;
 
 	tool_map::unregister_dynamic_agent_tool("foreign_probe_agent");
@@ -407,13 +368,8 @@ async fn session_ownership_rejects_foreign_dynamic_agent_tools() {
 async fn execute_tool_calls_collects_results_in_order() {
 	clear_function_cache();
 	let config = core_server_config();
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
-	let calls = vec![
-		tool_call("recall", json!({})),
-		tool_call("no_such_tool", json!({})),
-	];
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
+	let calls = vec![tool_call("recall", json!({})), tool_call("no_such_tool", json!({}))];
 	let results = execute_tool_calls(&calls, &config).await;
 	assert_eq!(results.len(), 2);
 	assert!(results[0].is_ok());
@@ -424,11 +380,9 @@ async fn execute_tool_calls_collects_results_in_order() {
 #[tokio::test]
 async fn layer_tool_call_delegates_to_execute_tool_call() {
 	let config = config_with_servers(vec![]);
-	assert!(
-		execute_layer_tool_call(&tool_call("x", json!({})), &config, None)
-			.await
-			.is_err()
-	);
+	assert!(execute_layer_tool_call(&tool_call("x", json!({})), &config, None)
+		.await
+		.is_err());
 }
 
 // ------------------------------------------------------------------
@@ -441,26 +395,17 @@ fn route_config() -> Config {
 
 #[tokio::test]
 async fn route_core_unknown_tool_is_hard_error() {
-	let err =
-		super::route_builtin_tool(&tool_call("nope", json!({})), "core", &route_config(), None)
-			.await
-			.unwrap_err();
-	assert!(
-		err.to_string().contains("not implemented in core server"),
-		"{err}"
-	);
+	let err = super::route_builtin_tool(&tool_call("nope", json!({})), "core", &route_config(), None)
+		.await
+		.unwrap_err();
+	assert!(err.to_string().contains("not implemented in core server"), "{err}");
 }
 
 #[tokio::test]
 async fn route_core_recall_maps_failure_to_soft_error() {
-	let result = super::route_builtin_tool(
-		&tool_call("recall", json!({})),
-		"core",
-		&route_config(),
-		None,
-	)
-	.await
-	.expect("recall failures are soft errors");
+	let result = super::route_builtin_tool(&tool_call("recall", json!({})), "core", &route_config(), None)
+		.await
+		.expect("recall failures are soft errors");
 	assert_eq!(result.tool_id, "id-recall");
 	assert!(result.is_error());
 	assert!(
@@ -472,17 +417,11 @@ async fn route_core_recall_maps_failure_to_soft_error() {
 
 #[tokio::test]
 async fn route_orchestration_unknown_tool_is_hard_error() {
-	let err = super::route_builtin_tool(
-		&tool_call("nope", json!({})),
-		"orchestration",
-		&route_config(),
-		None,
-	)
-	.await
-	.unwrap_err();
+	let err = super::route_builtin_tool(&tool_call("nope", json!({})), "orchestration", &route_config(), None)
+		.await
+		.unwrap_err();
 	assert!(
-		err.to_string()
-			.contains("not implemented in orchestration server"),
+		err.to_string().contains("not implemented in orchestration server"),
 		"{err}"
 	);
 }
@@ -497,10 +436,9 @@ async fn route_orchestration_tools_map_failures_to_soft_errors() {
 		("schedule", json!({})),
 		("monitor", json!({"action": "bogus"})),
 	] {
-		let result =
-			super::route_builtin_tool(&tool_call(tool, params), "orchestration", &config, None)
-				.await
-				.unwrap_or_else(|_| panic!("{tool} failures must be soft errors, not Err"));
+		let result = super::route_builtin_tool(&tool_call(tool, params), "orchestration", &config, None)
+			.await
+			.unwrap_or_else(|_| panic!("{tool} failures must be soft errors, not Err"));
 		assert_eq!(result.tool_id, format!("id-{tool}"));
 		assert!(result.is_error(), "{tool} should report a parameter error");
 	}
@@ -508,31 +446,20 @@ async fn route_orchestration_tools_map_failures_to_soft_errors() {
 
 #[tokio::test]
 async fn route_runtime_unknown_tool_is_soft_error() {
-	let result = super::route_builtin_tool(
-		&tool_call("nope", json!({})),
-		"runtime",
-		&route_config(),
-		None,
-	)
-	.await
-	.expect("runtime maps unknown tools to soft errors");
+	let result = super::route_builtin_tool(&tool_call("nope", json!({})), "runtime", &route_config(), None)
+		.await
+		.expect("runtime maps unknown tools to soft errors");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("not implemented in runtime server"));
+	assert!(result.extract_content().contains("not implemented in runtime server"));
 	assert_eq!(result.tool_id, "id-nope");
 }
 
 #[tokio::test]
 async fn route_agent_rejects_non_agent_prefixed_names() {
-	let err =
-		super::route_builtin_tool(&tool_call("tap", json!({})), "agent", &route_config(), None)
-			.await
-			.unwrap_err();
-	assert!(
-		err.to_string().contains("not implemented in agent server"),
-		"{err}"
-	);
+	let err = super::route_builtin_tool(&tool_call("tap", json!({})), "agent", &route_config(), None)
+		.await
+		.unwrap_err();
+	assert!(err.to_string().contains("not implemented in agent server"), "{err}");
 }
 
 #[tokio::test]
@@ -546,9 +473,7 @@ async fn route_agent_unconfigured_agent_is_soft_error() {
 	.await
 	.expect("unconfigured agent is a soft error");
 	assert!(result.is_error());
-	assert!(result
-		.extract_content()
-		.contains("not configured or not enabled"));
+	assert!(result.extract_content().contains("not configured or not enabled"));
 	assert_eq!(result.tool_id, "id-agent_ghost");
 }
 
@@ -574,14 +499,9 @@ async fn route_local_missing_tool_is_soft_error() {
 
 #[tokio::test]
 async fn route_unknown_builtin_server_is_hard_error() {
-	let err = super::route_builtin_tool(
-		&tool_call("x", json!({})),
-		"no-such-server",
-		&route_config(),
-		None,
-	)
-	.await
-	.unwrap_err();
+	let err = super::route_builtin_tool(&tool_call("x", json!({})), "no-such-server", &route_config(), None)
+		.await
+		.unwrap_err();
 	assert!(err.to_string().contains("Unknown builtin server"), "{err}");
 }
 
@@ -592,9 +512,7 @@ async fn route_unknown_builtin_server_is_hard_error() {
 #[tokio::test]
 async fn initialize_servers_with_no_servers_is_ok() {
 	let config = config_with_servers(vec![]);
-	initialize_servers_for_role(&config)
-		.await
-		.expect("no servers → Ok");
+	initialize_servers_for_role(&config).await.expect("no servers → Ok");
 }
 
 #[serial]
@@ -624,10 +542,7 @@ async fn initialize_servers_builtin_only_starts_nothing_external() {
 async fn initialize_servers_skips_servers_with_unset_env_placeholders() {
 	let mut server = McpServerConfig::stdin("env-gated", "some-command", vec![], 1, vec![]);
 	if let McpServerConfig::Stdin { env, .. } = &mut server {
-		env.insert(
-			"TOKEN".to_string(),
-			"{{ENV:OCTOMIND_TEST_UNSET_VAR_XYZ}}".to_string(),
-		);
+		env.insert("TOKEN".to_string(), "{{ENV:OCTOMIND_TEST_UNSET_VAR_XYZ}}".to_string());
 	}
 	let config = config_with_servers(vec![server]);
 	let started: std::sync::Mutex<Vec<Vec<String>>> = std::sync::Mutex::new(Vec::new());
@@ -668,10 +583,7 @@ async fn initialize_servers_reports_failed_external_server() {
 				function_count,
 			} = p
 			{
-				events
-					.lock()
-					.unwrap()
-					.push((server, success, function_count));
+				events.lock().unwrap().push((server, success, function_count));
 			}
 		}),
 	)
@@ -698,11 +610,7 @@ async fn initialize_mcp_for_role_initializes_servers_and_tool_map() {
 #[serial]
 #[tokio::test]
 async fn initialize_mcp_for_role_with_callback_forwards_progress() {
-	let config = with_role_map(config_with_servers(vec![McpServerConfig::builtin(
-		"core",
-		30,
-		vec![],
-	)]));
+	let config = with_role_map(config_with_servers(vec![McpServerConfig::builtin("core", 30, vec![])]));
 	let saw_start = std::sync::atomic::AtomicBool::new(false);
 	initialize_mcp_for_role_with_callback(
 		"assistant",
@@ -729,10 +637,8 @@ fn write_local_tool(workdir: &std::path::Path, name: &str) {
 	let dir = workdir.join(core::local_tool::TOOLS_DIR);
 	std::fs::create_dir_all(&dir).expect("create tools dir");
 	let path = dir.join(name);
-	std::fs::write(&path, "#!/bin/sh\n# @description Probe.\necho ok\n")
-		.expect("write tool script");
-	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-		.expect("chmod tool script");
+	std::fs::write(&path, "#!/bin/sh\n# @description Probe.\necho ok\n").expect("write tool script");
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod tool script");
 }
 
 #[cfg(unix)]
@@ -753,10 +659,7 @@ async fn initialize_mcp_for_role_rejects_local_tool_shadowing_a_server_tool() {
 		.expect_err("a local tool named like a server tool must fail bootstrap")
 		.to_string();
 	assert!(err.contains("'tap'"), "names the tool: {err}");
-	assert!(
-		err.contains("server 'orchestration'"),
-		"names the server: {err}"
-	);
+	assert!(err.contains("server 'orchestration'"), "names the server: {err}");
 	assert!(err.contains("local tool"), "names the local script: {err}");
 }
 
@@ -860,8 +763,7 @@ server.serve_forever()
 "#;
 
 async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
-	let path =
-		std::env::temp_dir().join(format!("octomind-test-mod-{tag}-{}.py", std::process::id()));
+	let path = std::env::temp_dir().join(format!("octomind-test-mod-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, FAKE_HTTP_SERVER).expect("write fake server script");
 	let mut child = tokio::process::Command::new("python3")
 		.arg(&path)
@@ -891,8 +793,8 @@ async fn spawn_fake_http_server(tag: &str) -> (String, tokio::process::Child) {
 }
 
 fn enable_debug_logging() {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.log_level = crate::config::LogLevel::Debug;
 	crate::config::set_thread_config(&config);
 }
@@ -941,10 +843,7 @@ async fn initialize_servers_external_http_reports_success() {
 				function_count,
 			} = p
 			{
-				events
-					.lock()
-					.unwrap()
-					.push((server, success, function_count));
+				events.lock().unwrap().push((server, success, function_count));
 			}
 		}),
 	)
@@ -977,12 +876,7 @@ async fn available_functions_merge_capability_overlay_extras() {
 	const NAME: &str = "mod-overlay-http";
 	let (url, mut child) = spawn_fake_http_server("overlay").await;
 	// Restrictive filter: only `echo` is statically allowed.
-	let config = config_with_servers(vec![McpServerConfig::http(
-		NAME,
-		&url,
-		10,
-		vec!["echo".to_string()],
-	)]);
+	let config = config_with_servers(vec![McpServerConfig::http(NAME, &url, 10, vec!["echo".to_string()])]);
 
 	let mut extras = std::collections::HashMap::new();
 	extras.insert(NAME.to_string(), vec!["extra_tool".to_string()]);
@@ -1016,20 +910,17 @@ async fn available_functions_skip_disabled_dynamic_servers() {
 	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
 	let config = config_with_servers(vec![server.clone()]);
 
-	crate::session::context::with_session_id(
-		format!("mod-disabled-{}", uuid::Uuid::new_v4()),
-		async {
-			crate::session::context::register_dynamic_server_for_session(
-				&crate::session::context::current_session_id().expect("session id"),
-				server,
-			);
-			let names = names_of(&get_available_functions(&config).await);
-			assert!(
-				names.is_empty(),
-				"disabled dynamic server must contribute nothing: {names:?}"
-			);
-		},
-	)
+	crate::session::context::with_session_id(format!("mod-disabled-{}", uuid::Uuid::new_v4()), async {
+		crate::session::context::register_dynamic_server_for_session(
+			&crate::session::context::current_session_id().expect("session id"),
+			server,
+		);
+		let names = names_of(&get_available_functions(&config).await);
+		assert!(
+			names.is_empty(),
+			"disabled dynamic server must contribute nothing: {names:?}"
+		);
+	})
 	.await;
 
 	let _ = child.kill().await;
@@ -1048,14 +939,11 @@ async fn external_tool_routes_through_tool_map_and_executes() {
 	const NAME: &str = "mod-route-http";
 	let (url, mut child) = spawn_fake_http_server("route").await;
 	let config = config_with_servers(vec![McpServerConfig::http(NAME, &url, 10, vec![])]);
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
-	let (result, _elapsed) =
-		execute_tool_call(&tool_call("echo", json!({"text": "routed"})), &config, None)
-			.await
-			.expect("external routing must succeed");
+	let (result, _elapsed) = execute_tool_call(&tool_call("echo", json!({"text": "routed"})), &config, None)
+		.await
+		.expect("external routing must succeed");
 	assert!(!result.is_error(), "{}", result.extract_content());
 	assert_eq!(result.tool_id, "id-echo");
 	assert!(result.extract_content().contains("routed"));
@@ -1076,33 +964,20 @@ async fn dynamic_server_tool_execution_succeeds_in_owning_session() {
 	let (url, mut child) = spawn_fake_http_server("dynamic").await;
 	let server = McpServerConfig::http(NAME, &url, 10, vec![]);
 	let config = config_with_servers(vec![server.clone()]);
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
-	crate::session::context::with_session_id(
-		format!("mod-dynamic-{}", uuid::Uuid::new_v4()),
-		async {
-			let sid = crate::session::context::current_session_id().expect("session id");
-			crate::session::context::register_dynamic_server_for_session(&sid, server);
-			let enabled = crate::session::context::enable_dynamic_server_for_session(
-				&sid,
-				NAME,
-				vec![fn_def("echo")],
-			);
-			assert!(enabled, "enabling a registered dynamic server must succeed");
+	crate::session::context::with_session_id(format!("mod-dynamic-{}", uuid::Uuid::new_v4()), async {
+		let sid = crate::session::context::current_session_id().expect("session id");
+		crate::session::context::register_dynamic_server_for_session(&sid, server);
+		let enabled = crate::session::context::enable_dynamic_server_for_session(&sid, NAME, vec![fn_def("echo")]);
+		assert!(enabled, "enabling a registered dynamic server must succeed");
 
-			let (result, _) = execute_tool_call(
-				&tool_call("echo", json!({"text": "dynamic"})),
-				&config,
-				None,
-			)
+		let (result, _) = execute_tool_call(&tool_call("echo", json!({"text": "dynamic"})), &config, None)
 			.await
 			.expect("dynamic tool must execute");
-			assert!(!result.is_error(), "{}", result.extract_content());
-			assert!(result.extract_content().contains("dynamic"));
-		},
-	)
+		assert!(!result.is_error(), "{}", result.extract_content());
+		assert!(result.extract_content().contains("dynamic"));
+	})
 	.await;
 
 	let _ = child.kill().await;
@@ -1115,13 +990,9 @@ async fn dynamic_server_tool_execution_succeeds_in_owning_session() {
 /// before touching any tool.
 #[tokio::test]
 async fn try_execute_tool_call_guards_empty_config_and_cancellation() {
-	let err = try_execute_tool_call(
-		&tool_call("x", json!({})),
-		&config_with_servers(vec![]),
-		None,
-	)
-	.await
-	.expect_err("empty config must be rejected");
+	let err = try_execute_tool_call(&tool_call("x", json!({})), &config_with_servers(vec![]), None)
+		.await
+		.expect_err("empty config must be rejected");
 	assert!(err.to_string().contains("no servers configured"), "{err}");
 
 	let config = config_with_servers(vec![McpServerConfig::builtin("core", 30, vec![])]);
@@ -1140,15 +1011,12 @@ async fn dispatch_log_covers_small_and_truncated_params() {
 	enable_debug_logging();
 	clear_function_cache();
 	let config = core_server_config();
-	tool_map::initialize_tool_map(&config)
-		.await
-		.expect("init tool map");
+	tool_map::initialize_tool_map(&config).await.expect("init tool map");
 
 	// Small params → plain serialization branch.
-	let (small, _) =
-		execute_tool_call(&tool_call("recall", json!({"ids": ["b:1"]})), &config, None)
-			.await
-			.expect("small-params dispatch must route");
+	let (small, _) = execute_tool_call(&tool_call("recall", json!({"ids": ["b:1"]})), &config, None)
+		.await
+		.expect("small-params dispatch must route");
 	assert!(small.is_error(), "recall without an archive errors softly");
 
 	// >200 tokens of params → truncation branch.
@@ -1184,16 +1052,12 @@ fn extract_images_preserves_mixed_and_image_only_payloads() {
 			(&images[0], "aW1hZ2Ux", "image/png"),
 			(&images[1], "aW1hZ2Uy", "image/jpeg"),
 		] {
-			assert!(
-				matches!(&image.data, crate::session::image::ImageData::Base64(value) if value == data)
-			);
+			assert!(matches!(&image.data, crate::session::image::ImageData::Base64(value) if value == data));
 			assert_eq!(image.media_type, mime);
 		}
 		assert!(!crate::supervisor::condense::is_plain_text_result(&result));
 	}
-	assert!(
-		McpToolResult::success("view".into(), "call-text".into(), "body".into())
-			.extract_images()
-			.is_empty()
-	);
+	assert!(McpToolResult::success("view".into(), "call-text".into(), "body".into())
+		.extract_images()
+		.is_empty());
 }

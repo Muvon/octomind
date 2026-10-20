@@ -47,18 +47,9 @@ fn compression_markers_keep_anchor_and_end_after_skill_and_note_reinjection() {
 
 	assert_eq!(content_marker_indices(&messages), vec![1, 5]);
 	assert_eq!(messages[1].cache_ttl.as_deref(), Some("1h"));
-	assert!(
-		!messages[2].cached,
-		"re-injected skill is between boundaries"
-	);
-	assert!(
-		!messages[3].cached,
-		"summary is covered by the final boundary"
-	);
-	assert!(
-		!messages[4].cached,
-		"stale pre-reinjection end marker is cleared"
-	);
+	assert!(!messages[2].cached, "re-injected skill is between boundaries");
+	assert!(!messages[3].cached, "summary is covered by the final boundary");
+	assert!(!messages[4].cached, "stale pre-reinjection end marker is cleared");
 	assert!(messages[5].cached, "final current state gets marker #2");
 }
 
@@ -69,10 +60,8 @@ fn auto_cache_advance_after_align_keeps_the_anchor_watermark() {
 	// request (tool_result_processor / api_executor). The advance must be a
 	// no-op — historically it marked the uncached skill behind the frontier
 	// and evicted the anchor before its 1h entry was ever written.
-	let mut session = crate::session::Session::new(
-		"align-advance".to_string(),
-		"anthropic:claude-sonnet-4-6".to_string(),
-	);
+	let mut session =
+		crate::session::Session::new("align-advance".to_string(), "anthropic:claude-sonnet-4-6".to_string());
 	session.messages = vec![
 		cache_message("system", "system", true),
 		cache_message("assistant", "unchanged welcome anchor", false),
@@ -159,17 +148,15 @@ fn built_wrapper_round_trips_through_the_extractor() {
 fn pact_continuation_separates_contextual_request_from_validated_frontier() {
 	let summary = CompressionSummary {
 		folded_units: vec![super::super::schema::FoldedUnit {
-				text: "Continue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running."
-					.to_string(),
-				kind: "next_action".to_string(),
-				status: "tentative".to_string(),
-				refs: vec!["b:frontier".to_string()],
-			}],
+			text: "Continue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running.".to_string(),
+			kind: "next_action".to_string(),
+			status: "tentative".to_string(),
+			refs: vec!["b:frontier".to_string()],
+		}],
 		..Default::default()
 	};
 	let action = select_continuation_action(&summary, true);
-	let wrapper =
-		build_continuation_content(None, Some("Should work now"), action.as_deref(), false);
+	let wrapper = build_continuation_content(None, Some("Should work now"), action.as_deref(), false);
 
 	assert_eq!(
 		extract_continuation_task(&wrapper).as_deref(),
@@ -177,8 +164,8 @@ fn pact_continuation_separates_contextual_request_from_validated_frontier() {
 		"runtime task identity must remain the exact user request"
 	);
 	assert!(wrapper.contains(
-			"<task>\nContinue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running.\n</task>"
-		));
+		"<task>\nContinue monitoring the 50-case benchmark; monitor mon-debabfb8 is already running.\n</task>"
+	));
 	assert!(!wrapper.contains("<task>\nShould work now\n</task>"));
 }
 
@@ -202,11 +189,9 @@ fn pact_continuation_falls_back_to_pending_open_loop_over_completed_request() {
 		..Default::default()
 	};
 	let action = select_continuation_action(&summary, true);
-	let wrapper =
-		build_continuation_content(None, Some("disable plan also"), action.as_deref(), false);
+	let wrapper = build_continuation_content(None, Some("disable plan also"), action.as_deref(), false);
 
-	assert!(wrapper
-		.contains("<task>\nProposed fix pending approval: catch the validation error.\n</task>"));
+	assert!(wrapper.contains("<task>\nProposed fix pending approval: catch the validation error.\n</task>"));
 	assert!(!wrapper.contains("<task>\ndisable plan also\n</task>"));
 }
 
@@ -225,15 +210,9 @@ fn extract_returns_none_for_non_wrappers_and_malformed_tags() {
 	// Wrapper without a task block.
 	assert_eq!(extract_continuation_task("<continuation>\nno task"), None);
 	// Unclosed task block.
-	assert_eq!(
-		extract_continuation_task("<continuation>\n<task>\nhalf"),
-		None
-	);
+	assert_eq!(extract_continuation_task("<continuation>\n<task>\nhalf"), None);
 	// Empty task block.
-	assert_eq!(
-		extract_continuation_task("<continuation>\n<task></task>"),
-		None
-	);
+	assert_eq!(extract_continuation_task("<continuation>\n<task></task>"), None);
 }
 
 #[test]
@@ -258,16 +237,8 @@ fn continuation_round_trips_exact_previous_assistant_response() {
 	let request = "  exact follow-up\nwith trailing space ";
 	// A distinct validated frontier keeps `<request>` and `<task>` separate, so
 	// this exercises the full three-block shape.
-	let wrapper = build_continuation_content(
-		Some(previous),
-		Some(request),
-		Some("resume the upload"),
-		false,
-	);
-	assert_eq!(
-		extract_previous_assistant_response(&wrapper).as_deref(),
-		Some(previous)
-	);
+	let wrapper = build_continuation_content(Some(previous), Some(request), Some("resume the upload"), false);
+	assert_eq!(extract_previous_assistant_response(&wrapper).as_deref(), Some(previous));
 	assert!(wrapper.contains(&format!("<request>{request}</request>")));
 }
 
@@ -282,16 +253,12 @@ fn continuation_does_not_duplicate_the_request_when_it_is_the_task() {
 	// `<request>` tag, so assert on the emitted block, not the bare tag name.)
 	assert_eq!(wrapper.matches(request).count(), 1);
 	assert!(!wrapper.contains(&format!("<request>{request}</request>")));
-	assert_eq!(
-		extract_continuation_task(&wrapper).as_deref(),
-		Some(request)
-	);
+	assert_eq!(extract_continuation_task(&wrapper).as_deref(), Some(request));
 }
 
 fn default_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config");
+		toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default config");
 	config.build_role_map();
 	config
 }
@@ -457,9 +424,7 @@ async fn apply_compression_pins_recalled_context_into_the_summary() {
 
 	let summary_message = &session.session.messages[1];
 	assert!(summary_message.content.contains("<recalled_context>"));
-	assert!(summary_message
-		.content
-		.contains("archived block b:1a2b verbatim"));
+	assert!(summary_message.content.contains("archived block b:1a2b verbatim"));
 
 	// Empty pin set injects no section at all.
 	let mut plain = drained_session("apply-recall-empty-unit");
@@ -484,9 +449,7 @@ async fn apply_compression_pins_recalled_context_into_the_summary() {
 	)
 	.await
 	.expect("apply compression without recalled context");
-	assert!(!plain.session.messages[1]
-		.content
-		.contains("<recalled_context>"));
+	assert!(!plain.session.messages[1].content.contains("<recalled_context>"));
 }
 
 fn drained_session(name: &str) -> ChatSession {
@@ -625,10 +588,7 @@ async fn apply_compression_pact_live_renders_pact_entry_and_skips_legacy_folds()
 	.await
 	.expect("apply pact compression");
 	let summary_message = &session.session.messages[1];
-	assert_eq!(
-		summary_message.name.as_deref(),
-		Some(COMPRESSION_MESSAGE_NAME)
-	);
+	assert_eq!(summary_message.name.as_deref(), Some(COMPRESSION_MESSAGE_NAME));
 	assert!(summary_message.content.contains("controller=\"pact-v"));
 	assert!(session
 		.session
@@ -644,10 +604,7 @@ async fn apply_compression_pact_live_renders_pact_entry_and_skips_legacy_folds()
 async fn apply_compression_reinserts_preserved_skills_between_anchor_and_summary() {
 	let config = default_config();
 	let mut session = drained_session("apply-skills-unit");
-	let mut skill = plain_message(
-		"user",
-		"<skill name=\"rust\">follow rust conventions</skill>",
-	);
+	let mut skill = plain_message("user", "<skill name=\"rust\">follow rust conventions</skill>");
 	skill.cached = true;
 	skill.cache_ttl = Some("stale".to_string());
 	let summary = CompressionSummary {
@@ -683,10 +640,7 @@ async fn apply_compression_reinserts_preserved_skills_between_anchor_and_summary
 	assert!(!messages[1].cached);
 	assert!(messages[1].cache_ttl.is_none());
 	assert_eq!(messages[2].name.as_deref(), Some(COMPRESSION_MESSAGE_NAME));
-	assert!(messages[3]
-		.content
-		.trim_start()
-		.starts_with(CONTINUATION_TAG_OPEN));
+	assert!(messages[3].content.trim_start().starts_with(CONTINUATION_TAG_OPEN));
 }
 
 #[tokio::test]
@@ -789,10 +743,7 @@ async fn apply_compression_seeds_intent_from_anchor_request_or_free_form_fallbac
 	)
 	.await
 	.expect("apply free-form");
-	assert_eq!(
-		session.session.info.anchor.intent,
-		"Free-form conversation session"
-	);
+	assert_eq!(session.session.info.anchor.intent, "Free-form conversation session");
 }
 
 #[tokio::test]
@@ -886,11 +837,7 @@ fn oversized_request() -> String {
 /// normalize, apply) and return the post-fold session. `bridge` keeps the
 /// request live as the preserved [assistant, request] tail; otherwise it is
 /// drained and carried by the continuation wrapper.
-async fn fold_oversized_request(
-	name: &str,
-	attention: bool,
-	bridge: bool,
-) -> (ChatSession, String) {
+async fn fold_oversized_request(name: &str, attention: bool, bridge: bool) -> (ChatSession, String) {
 	let mut config = default_config();
 	config.compression.attention.enabled = attention;
 	let request = oversized_request();
@@ -965,8 +912,7 @@ async fn pact_fold_into_continuation_keeps_one_copy_of_the_request() {
 	// Attempt 1 of the failed run: the request was drained and carried by the
 	// continuation wrapper, while the summary's pinned band rendered it again —
 	// the fold grew the context 135k -> 195k tokens.
-	let (session, request) =
-		fold_oversized_request("apply-request-once-wrapper-unit", true, false).await;
+	let (session, request) = fold_oversized_request("apply-request-once-wrapper-unit", true, false).await;
 	assert!(session
 		.session
 		.messages
@@ -979,8 +925,7 @@ async fn pact_fold_into_continuation_keeps_one_copy_of_the_request() {
 async fn pact_fold_with_preserved_bridge_keeps_one_copy_of_the_request() {
 	// Attempt 2 of the failed run: the request stayed live as the preserved
 	// [assistant, request] bridge and the pinned band repeated it above.
-	let (session, request) =
-		fold_oversized_request("apply-request-once-bridge-unit", true, true).await;
+	let (session, request) = fold_oversized_request("apply-request-once-bridge-unit", true, true).await;
 	assert_eq!(
 		session.session.messages.last().map(|m| m.content.as_str()),
 		Some(request.as_str())
@@ -993,8 +938,7 @@ async fn governance_only_fold_keeps_one_copy_of_the_request() {
 	// Default config (attention off, governance on): normalize_summary copies
 	// the pinned task into <original_request> and <current_task>, which the
 	// legacy body rendered beside the pinned band and the wrapper — four copies.
-	let (session, request) =
-		fold_oversized_request("apply-request-once-governance-unit", false, false).await;
+	let (session, request) = fold_oversized_request("apply-request-once-governance-unit", false, false).await;
 	assert_eq!(live_copies(&session, &request), 1);
 }
 
@@ -1020,12 +964,7 @@ fn select_continuation_action_is_disabled_without_pact() {
 async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 	let config = default_config();
 	let session_id = "apply-jobs-unit".to_string();
-	crate::session::shell_jobs::register_for_session(
-		&session_id,
-		"test-mcp",
-		"file:///tmp/watched",
-		"watch the build",
-	);
+	crate::session::shell_jobs::register_for_session(&session_id, "test-mcp", "file:///tmp/watched", "watch the build");
 	let mut session = drained_session(&session_id);
 	let summary = CompressionSummary {
 		should_compress: true,
@@ -1041,13 +980,9 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 			role: "developer:general".to_string(),
 			workdir: ".".to_string(),
 			started_at: std::time::SystemTime::now(),
-			status: std::sync::Arc::new(std::sync::RwLock::new(
-				crate::session::tap_runs::TapJobStatus::Running,
-			)),
+			status: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running)),
 			cancel_tx,
-			live: std::sync::Arc::new(std::sync::RwLock::new(
-				crate::session::tap_runs::TapLiveState::default(),
-			)),
+			live: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapLiveState::default())),
 		});
 		apply_compression(
 			&mut session,
@@ -1079,9 +1014,7 @@ async fn apply_compression_surfaces_pending_jobs_and_tap_runs_in_wrapper() {
 		.find(|m| m.content.trim_start().starts_with(CONTINUATION_TAG_OPEN))
 		.expect("continuation wrapper");
 	assert!(wrapper.content.contains("<background_jobs_running>"));
-	assert!(wrapper
-		.content
-		.contains("watch the build (file:///tmp/watched)"));
+	assert!(wrapper.content.contains("watch the build (file:///tmp/watched)"));
 	assert!(wrapper.content.contains(concat!(
 		"Their output comes back to you as a message the moment each finishes — do NOT relaunch them, ",
 		"launch variants of them, poll them, or wait on them by hand. Continue only with work that does not need ",

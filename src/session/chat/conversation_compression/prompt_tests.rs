@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::super::schema::{
-	build_compression_schema, DEFER_REASON_FORCED_RULE, DEFER_REASON_RULE,
-	SHOULD_COMPRESS_FORCED_RULE, SHOULD_COMPRESS_RULE,
+	build_compression_schema, DEFER_REASON_FORCED_RULE, DEFER_REASON_RULE, SHOULD_COMPRESS_FORCED_RULE,
+	SHOULD_COMPRESS_RULE,
 };
 use super::*;
 
@@ -78,14 +78,12 @@ fn legacy_transcript_includes_assistant_thinking() {
 		..Default::default()
 	};
 
-	let (system, transcript) =
-		build_compression_prompt_json(&session, &[message], None, false, 2.0);
+	let (system, transcript) = build_compression_prompt_json(&session, &[message], None, false, 2.0);
 
 	assert!(system.contains("[ASSISTANT THINKING]"));
 	assert!(system.contains("untrusted assistant self-report"));
 	assert!(transcript.contains("[ASSISTANT]: I will use the narrow fix."));
-	assert!(transcript
-		.contains("[ASSISTANT THINKING]: The broad rewrite would violate the user's scope."));
+	assert!(transcript.contains("[ASSISTANT THINKING]: The broad rewrite would violate the user's scope."));
 	assert!(!transcript.contains("\"tokens\":11"));
 }
 
@@ -229,11 +227,7 @@ fn transcript_renders_user_thinking_and_tool_roles_with_recency() {
 	thinking.thinking = Some(serde_json::json!({"content": "plan the narrow fix", "tokens": 5}));
 	let mut tool = role_message("tool", "tool body");
 	tool.name = Some("search".to_string());
-	let messages = vec![
-		role_message("user", "please fix the parser"),
-		thinking,
-		tool,
-	];
+	let messages = vec![role_message("user", "please fix the parser"), thinking, tool];
 	// Ratio 1.0 keeps the whole transcript inside the recent budget.
 	let (_, user) = build_compression_prompt_json(&session, &messages, None, false, 1.0);
 	assert!(user.contains("[RECENT] [USER]: please fix the parser"));
@@ -353,13 +347,8 @@ async fn pact_mode_swaps_transcript_for_evidence_set_and_durable_rule() {
 	let pact = super::super::attention::build(&session, 1, 2, 2.0, true, false)
 		.await
 		.expect("pact context builds");
-	let (system, user) = build_compression_prompt_json(
-		&session,
-		&session.session.messages[1..=2],
-		Some(&pact),
-		false,
-		2.0,
-	);
+	let (system, user) =
+		build_compression_prompt_json(&session, &session.session.messages[1..=2], Some(&pact), false, 2.0);
 	assert!(user.contains("<evidence_set>"));
 	assert!(user.contains("</evidence_set>"));
 	assert!(user.contains("<pinned_state>"));
@@ -373,13 +362,7 @@ async fn pact_mode_swaps_transcript_for_evidence_set_and_durable_rule() {
 async fn legacy_mode_keeps_transcript_and_critical_knowledge_rule() {
 	let messages = vec![role_message("user", "fix the parser")];
 	let session = ChatSession::for_tests(messages);
-	let (system, user) = build_compression_prompt_json(
-		&session,
-		&session.session.messages.clone(),
-		None,
-		false,
-		2.0,
-	);
+	let (system, user) = build_compression_prompt_json(&session, &session.session.messages.clone(), None, false, 2.0);
 	assert!(user.contains("<transcript>\n"));
 	assert!(user.contains("[USER]: fix the parser"));
 	assert!(system.contains("Preserve durable protocol in critical_knowledge"));

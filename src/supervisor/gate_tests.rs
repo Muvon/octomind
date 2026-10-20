@@ -19,11 +19,9 @@
 
 use super::*;
 
-static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> =
-	std::sync::LazyLock::new(RenderedEvidence::default);
+static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(RenderedEvidence::default);
 
-static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> =
-	std::sync::LazyLock::new(EvidenceLedger::default);
+static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
 
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
@@ -39,7 +37,8 @@ fn zero_conditions_omit_the_condition_contract_in_both_encodings() {
 		assert!(!prompt.contains("one entry per numbered evidence condition"));
 		assert!(!prompt.contains("Every condition gets"));
 	}
-	let extra = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"matched\">invented</condition><verdict>PASS</verdict>");
+	let extra =
+		format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"matched\">invented</condition><verdict>PASS</verdict>");
 	assert!(matches!(
 		text_report(&extra).verdict(0, &HashSet::new()),
 		GateVerdict::Indeterminate(_)
@@ -51,9 +50,7 @@ fn nonempty_checklists_preserve_the_original_text_contract_byte_for_byte() {
 	use sha2::{Digest, Sha256};
 	for count in [1, 3] {
 		let prompt = render_gate_prompt(Encoding::Text, count);
-		let original = prompt
-			.strip_suffix(&format!("\n{OUTPUT_VISIBILITY_PROMPT}"))
-			.unwrap();
+		let original = prompt.strip_suffix(&format!("\n{OUTPUT_VISIBILITY_PROMPT}")).unwrap();
 		assert_eq!(
 			Sha256::digest(original.as_bytes())
 				.iter()
@@ -103,13 +100,7 @@ fn runtime_visibility_lists_omitted_partial_and_unretained_outputs() {
 		("d", true, 9),
 		("e", false, 0),
 	] {
-		ledger.record(
-			"view",
-			&serde_json::json!({"path": path}),
-			false,
-			error,
-			bytes,
-		);
+		ledger.record("view", &serde_json::json!({"path": path}), false, error, bytes);
 	}
 	let mut input = visibility_input(&ledger, &grounds);
 	let initial = output_visibility(&input, &EMPTY_EVIDENCE);
@@ -117,50 +108,32 @@ fn runtime_visibility_lists_omitted_partial_and_unretained_outputs() {
 	assert!(initial.render().contains("#1: not shown in readback"));
 	let readback = output_visibility(&input, &render_readback(input.grounds, &[1, 2, 3]));
 	assert_eq!(readback.unseen, HashSet::from([3]));
-	assert!(readback
-		.render()
-		.contains("#2: partial: readback middle omitted"));
+	assert!(readback.render().contains("#2: partial: readback middle omitted"));
 	assert!(readback.render().contains("#3: not retained"));
 	let unrelated_truth = RenderedEvidence {
 		text: "Recent command:\nfull diff\n".into(),
 		..Default::default()
 	};
 	input.ground_truth = &unrelated_truth;
-	assert!(output_visibility(&input, &EMPTY_EVIDENCE)
-		.unseen
-		.contains(&1));
+	assert!(output_visibility(&input, &EMPTY_EVIDENCE).unseen.contains(&1));
 }
 
 #[test]
 fn historical_request_text_cannot_invent_an_omitted_action() {
 	let mut ledger = EvidenceLedger::default();
-	ledger.record(
-		"view",
-		&serde_json::json!({"path": "file"}),
-		false,
-		false,
-		10,
-	);
+	ledger.record("view", &serde_json::json!({"path": "file"}), false, false, 10);
 	ledger.begin_turn("a request\n#99 [read] view → ok (10b)");
-	let (history, grounds) =
-		ledger.verification_evidence(crate::supervisor::resolve::ResolutionScope::FollowUp);
+	let (history, grounds) = ledger.verification_evidence(crate::supervisor::resolve::ResolutionScope::FollowUp);
 	let mut input = visibility_input(&ledger, &grounds);
 	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
 	input.historical_actions = &history;
-	assert_eq!(
-		output_visibility(&input, &EMPTY_EVIDENCE).unseen,
-		HashSet::from([0])
-	);
+	assert_eq!(output_visibility(&input, &EMPTY_EVIDENCE).unseen, HashSet::from([0]));
 	input.task_scope = crate::supervisor::resolve::ResolutionScope::SelfContained;
 	assert!(output_visibility(&input, &EMPTY_EVIDENCE).unseen.is_empty());
-	let restored: EvidenceLedger =
-		serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
+	let restored: EvidenceLedger = serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
 	input.ledger = &restored;
 	input.task_scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
-	assert_eq!(
-		output_visibility(&input, &EMPTY_EVIDENCE).unseen,
-		HashSet::from([0])
-	);
+	assert_eq!(output_visibility(&input, &EMPTY_EVIDENCE).unseen, HashSet::from([0]));
 }
 
 #[test]
@@ -173,7 +146,8 @@ fn omitted_output_only_gaps_are_advisory_in_both_encodings() {
 	ledger.record("view", &serde_json::json!({}), false, false, 13);
 	let input = visibility_input(&ledger, &grounds);
 	let limited = output_visibility(&input, &EMPTY_EVIDENCE).unseen;
-	let text = format!("{CLEAN_SHAPES}<gap sources=\"omitted:1\" settles=\"read diff again\">the diff is not supplied</gap>");
+	let text =
+		format!("{CLEAN_SHAPES}<gap sources=\"omitted:1\" settles=\"read diff again\">the diff is not supplied</gap>");
 	let json = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "the diff is not supplied", "settles": "read diff again", "sources": "omitted:1"}], "verdict": "GAPS"});
 	for report in [text_report(&text), json_report(&json)] {
 		assert_eq!(report.verdict(0, &limited), GateVerdict::Pass);
@@ -199,13 +173,7 @@ fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
 		next_sequence: 1,
 		..Default::default()
 	};
-	ledger.record(
-		"view",
-		&serde_json::json!({}),
-		false,
-		false,
-		grounds[0].1.len(),
-	);
+	ledger.record("view", &serde_json::json!({}), false, false, grounds[0].1.len());
 	let input = visibility_input(&ledger, &grounds);
 	let limited = output_visibility(&input, &render_readback(input.grounds, &[1])).unseen;
 	for sources in [
@@ -219,10 +187,7 @@ fn visible_contradictions_absent_actions_and_ground_truth_still_block() {
 	] {
 		let response = format!("{CLEAN_SHAPES}<gap sources=\"{sources}\" settles=\"fix the defect\">the visible head contradicts the claim</gap>");
 		assert!(
-			matches!(
-				text_report(&response).verdict(0, &limited),
-				GateVerdict::Gaps(_)
-			),
+			matches!(text_report(&response).verdict(0, &limited), GateVerdict::Gaps(_)),
 			"{sources}"
 		);
 	}
@@ -289,17 +254,17 @@ fn command_tail_contradictions_block_without_readback_before_and_after_eviction(
 		input.ground_truth = &ground_truth;
 		let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
 		assert!(!visibility.unseen.contains(&seq));
-		assert!(visibility
-			.render()
-			.contains("#0: excerpt visible in ground truth"));
+		assert!(visibility.render().contains("#0: excerpt visible in ground truth"));
 		let shapes = CLEAN_SHAPES.replace(
 			"name=\"circular\" found=\"no\">independent expectation",
 			"name=\"circular\" found=\"yes\" sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION",
 		);
-		let gap = format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION</gap>");
+		let gap =
+			format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION</gap>");
 		let condition = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unmatched\" basis=\"recorded_output\" sources=\"omitted:0\">VISIBLE VIOLATION</condition><verdict>PASS</verdict>");
 		let json_gap = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"}], "verdict": "GAPS"});
-		let mut json_shape = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [], "verdict": "GAPS"});
+		let mut json_shape =
+			serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [], "verdict": "GAPS"});
 		json_shape["shapes"][0] = serde_json::json!({"name": "circular", "found": "yes", "reason": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"});
 		let json_condition = serde_json::json!({"conditions": [{"n": 1, "status": "unmatched", "basis": "recorded_output", "observation": "VISIBLE VIOLATION", "sources": "omitted:0"}], "shapes": clean_json_shapes(), "gaps": [], "verdict": "PASS"});
 		for (report, count) in [
@@ -363,17 +328,20 @@ fn legacy_snapshot_contradictions_block_before_and_after_retention_eviction() {
 		assert!(truth.has_unknown_output_provenance);
 		let mut input = visibility_input(&ledger, ledger.grounds());
 		input.ground_truth = &truth;
-		for readback in [
-			RenderedEvidence::default(),
-			render_readback(input.grounds, &[1]),
-		] {
+		for readback in [RenderedEvidence::default(), render_readback(input.grounds, &[1])] {
 			let visibility = output_visibility(&input, &readback);
 			assert!(visibility.unseen.is_empty());
-			let gap = format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION</gap>");
-			let shapes = CLEAN_SHAPES.replace("name=\"circular\" found=\"no\">independent expectation", "name=\"circular\" found=\"yes\" sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION");
+			let gap = format!(
+				"{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION</gap>"
+			);
+			let shapes = CLEAN_SHAPES.replace(
+				"name=\"circular\" found=\"no\">independent expectation",
+				"name=\"circular\" found=\"yes\" sources=\"omitted:0\" settles=\"fix the violation\">VISIBLE VIOLATION",
+			);
 			let condition = format!("{CLEAN_SHAPES}<condition n=\"1\" status=\"unmatched\" basis=\"recorded_output\" sources=\"omitted:0\">VISIBLE VIOLATION</condition><verdict>PASS</verdict>");
 			let json_gap = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [{"gap": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"}], "verdict": "GAPS"});
-			let mut json_shape = serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [], "verdict": "GAPS"});
+			let mut json_shape =
+				serde_json::json!({"conditions": [], "shapes": clean_json_shapes(), "gaps": [], "verdict": "GAPS"});
 			json_shape["shapes"][0] = serde_json::json!({"name": "circular", "found": "yes", "reason": "VISIBLE VIOLATION", "settles": "fix the violation", "sources": "omitted:0"});
 			let json_condition = serde_json::json!({"conditions": [{"n": 1, "status": "unmatched", "basis": "recorded_output", "observation": "VISIBLE VIOLATION", "sources": "omitted:0"}], "shapes": clean_json_shapes(), "gaps": [], "verdict": "PASS"});
 			for (report, count) in [
@@ -414,27 +382,20 @@ fn ground_truth_visibility_tracks_only_output_bytes_surviving_final_truncation()
 	for provenance in [Some(seq), None] {
 		ledger.recent_commands[0].2 = provenance;
 		for (surviving_bytes, visible) in [(0, false), (3, false), (5, false), (6, true)] {
-			ledger.recent_commands[0].0 = format!(
-				"check{}",
-				"x".repeat(GT_TOTAL_MAX - tail_start - surviving_bytes)
-			);
+			ledger.recent_commands[0].0 = format!("check{}", "x".repeat(GT_TOTAL_MAX - tail_start - surviving_bytes));
 			let truth = render_ground_truth(&ledger);
 			assert!(truth.text.contains("(ground truth truncated)"));
 			assert_eq!(truth.text.contains('界'), visible);
-			assert_eq!(
-				truth.has_unknown_output_provenance,
-				provenance.is_none() && visible
-			);
+			assert_eq!(truth.has_unknown_output_provenance, provenance.is_none() && visible);
 			let mut input = visibility_input(&ledger, ledger.grounds());
 			input.ground_truth = &truth;
 			let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
 			assert_eq!(visibility.unseen.contains(&seq), !visible);
-			let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
+			let answer = format!(
+				"{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>"
+			);
 			assert_eq!(
-				matches!(
-					text_report(&answer).verdict(0, &visibility.unseen),
-					GateVerdict::Pass
-				),
+				matches!(text_report(&answer).verdict(0, &visibility.unseen), GateVerdict::Pass),
 				!visible
 			);
 			let readback = render_readback(input.grounds, &[seq]);
@@ -448,13 +409,7 @@ fn identical_text_does_not_give_an_unseen_sequence_an_excerpt() {
 	let mut ledger = EvidenceLedger::default();
 	let unseen = ledger.record("view", &serde_json::json!({}), false, false, 9);
 	ledger.record_ground(unseen, "same text");
-	let visible = ledger.record(
-		"shell",
-		&serde_json::json!({"command": "check"}),
-		false,
-		false,
-		9,
-	);
+	let visible = ledger.record("shell", &serde_json::json!({"command": "check"}), false, false, 9);
 	ledger.record_ground(visible, "same text");
 	ledger.record_command_output("check", "same text");
 	let truth = render_ground_truth(&ledger);
@@ -463,7 +418,8 @@ fn identical_text_does_not_give_an_unseen_sequence_an_excerpt() {
 	input.ground_truth = &truth;
 	let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
 	assert_eq!(visibility.unseen, HashSet::from([unseen]));
-	let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{unseen}\" settles=\"read output\">output unavailable</gap>");
+	let answer =
+		format!("{CLEAN_SHAPES}<gap sources=\"omitted:{unseen}\" settles=\"read output\">output unavailable</gap>");
 	let report = text_report(&answer);
 	assert_eq!(report.verdict(0, &visibility.unseen), GateVerdict::Pass);
 	assert_eq!(report.reported_findings(&visibility.unseen).len(), 1);
@@ -481,38 +437,27 @@ fn empty_unaddressable_command_output_keeps_unseen_outputs_exemptable() {
 	input.ground_truth = &truth;
 	let visibility = output_visibility(&input, &EMPTY_EVIDENCE);
 	assert_eq!(visibility.unseen, HashSet::from([seq]));
-	let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
-	assert_eq!(
-		text_report(&answer).verdict(0, &visibility.unseen),
-		GateVerdict::Pass
-	);
+	let answer =
+		format!("{CLEAN_SHAPES}<gap sources=\"omitted:{seq}\" settles=\"read output\">output unavailable</gap>");
+	assert_eq!(text_report(&answer).verdict(0, &visibility.unseen), GateVerdict::Pass);
 }
 
 #[test]
 fn command_tail_provenance_survives_resume_and_detached_completion() {
 	let mut ledger = EvidenceLedger::default();
-	let launch = ledger.record(
-		"shell",
-		&serde_json::json!({"command": "check"}),
-		false,
-		false,
-		9,
-	);
+	let launch = ledger.record("shell", &serde_json::json!({"command": "check"}), false, false, 9);
 	ledger.record("view", &serde_json::json!({}), false, false, 9);
 	ledger.fold_job_completion(Some(launch), "check", "completed");
 	ledger.fold_job_completion(None, "unknown legacy job", "other result");
-	let restored: EvidenceLedger =
-		serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
+	let restored: EvidenceLedger = serde_json::from_value(serde_json::to_value(&ledger).unwrap()).unwrap();
 	let truth = render_ground_truth(&restored);
 	assert_eq!(truth.output_sequences, HashSet::from([launch]));
 	assert!(truth.has_unknown_output_provenance);
 	let mut input = visibility_input(&restored, &[]);
 	input.ground_truth = &truth;
 	assert!(output_visibility(&input, &EMPTY_EVIDENCE).unseen.is_empty());
-	let legacy: EvidenceLedger = serde_json::from_value(
-		serde_json::json!({"recent_commands": [["check", "legacy output"]]}),
-	)
-	.unwrap();
+	let legacy: EvidenceLedger =
+		serde_json::from_value(serde_json::json!({"recent_commands": [["check", "legacy output"]]})).unwrap();
 	let truth = render_ground_truth(&legacy);
 	assert!(truth.text.contains("legacy output"));
 	assert!(truth.output_sequences.is_empty());
@@ -555,7 +500,9 @@ fn collapsed_calls_keep_latest_output_size_after_retention_eviction() {
 		let input = visibility_input(&ledger, ledger.grounds());
 		let unseen = output_visibility(&input, &EMPTY_EVIDENCE).unseen;
 		assert_eq!(unseen.contains(&latest_seq), !latest.is_empty());
-		let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:{latest_seq}\" settles=\"read output\">output unavailable</gap>");
+		let answer = format!(
+			"{CLEAN_SHAPES}<gap sources=\"omitted:{latest_seq}\" settles=\"read output\">output unavailable</gap>"
+		);
 		assert_eq!(
 			matches!(text_report(&answer).verdict(0, &unseen), GateVerdict::Pass),
 			!latest.is_empty()
@@ -634,8 +581,7 @@ fn a_readback_request_is_a_response_mode_of_its_own() {
 
 	// A reply that already ruled has spent its round; readback tags inside it
 	// are narrative, not a request.
-	let ruled =
-		format!("{CLEAN_SHAPES}\n<readback seq=\"3\">ignored</readback>\n<verdict>PASS</verdict>");
+	let ruled = format!("{CLEAN_SHAPES}\n<readback seq=\"3\">ignored</readback>\n<verdict>PASS</verdict>");
 	assert!(text_report(&ruled).readback_request().is_empty());
 }
 
@@ -673,10 +619,7 @@ fn an_unsettled_shape_reports_without_blocking() {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="unknown">the search ran but its output is not in my input</shape>
 <verdict>PASS</verdict>"#;
-	assert_eq!(
-		text_report(response).verdict(0, &HashSet::new()),
-		GateVerdict::Pass
-	);
+	assert_eq!(text_report(response).verdict(0, &HashSet::new()), GateVerdict::Pass);
 	let reported = text_report(response).reported_findings(&HashSet::new());
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].starts_with("unenumerated-category unsettled"));
@@ -728,8 +671,7 @@ fn an_inference_only_unmatched_condition_reports_without_blocking() {
 	let report = text_report(&response);
 	assert_eq!(report.verdict(1, &HashSet::new()), GateVerdict::Pass);
 	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
-	assert!(report.reported_findings(&HashSet::new())[0]
-		.contains("condition 1 suspected by inference only"));
+	assert!(report.reported_findings(&HashSet::new())[0].contains("condition 1 suspected by inference only"));
 }
 
 /// A violation the verifier was shown — here the absence of a called-for check
@@ -787,8 +729,7 @@ fn the_json_path_reports_an_inference_only_unmatched_condition_without_blocking(
 	let report = json_report(&answer);
 	assert_eq!(report.verdict(2, &HashSet::new()), GateVerdict::Pass);
 	assert_eq!(report.reported_findings(&HashSet::new()).len(), 1);
-	assert!(report.reported_findings(&HashSet::new())[0]
-		.contains("condition 2 suspected by inference only"));
+	assert!(report.reported_findings(&HashSet::new())[0].contains("condition 2 suspected by inference only"));
 }
 
 /// The refutation pass can only remove findings: one the second verifier marks
@@ -826,10 +767,7 @@ fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 <shape name="acceptance-only" found="no">not applicable</shape>
 <shape name="unenumerated-category" found="yes">the set is not bounded</shape>
 <verdict>PASS</verdict>"#;
-	assert_eq!(
-		text_report(response).verdict(0, &HashSet::new()),
-		GateVerdict::Pass
-	);
+	assert_eq!(text_report(response).verdict(0, &HashSet::new()), GateVerdict::Pass);
 	let reported = text_report(response).reported_findings(&HashSet::new());
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].contains("names no closing observation"));
@@ -839,8 +777,7 @@ fn a_finding_with_no_settling_observation_is_reported_not_charged() {
 /// still enter the repair loop through the one channel the shapes do not cover.
 #[test]
 fn a_free_form_gap_answers_to_the_same_rule() {
-	let unanswerable =
-		format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
+	let unanswerable = format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
 	assert_eq!(
 		text_report(&unanswerable).verdict(0, &HashSet::new()),
 		GateVerdict::Pass
@@ -849,19 +786,12 @@ fn a_free_form_gap_answers_to_the_same_rule() {
 	assert_eq!(reported.len(), 1);
 	assert!(reported[0].contains("gap names no closing observation"));
 
-	let answerable = format!(
-		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
-	);
+	let answerable = format!("{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>");
 	let GateVerdict::Gaps(gaps) = text_report(&answerable).verdict(0, &HashSet::new()) else {
 		panic!("a gap naming its observation is charged");
 	};
-	assert_eq!(
-		gaps,
-		["the counter is unverified — clear it by: a read of stats.rs"]
-	);
-	assert!(text_report(&answerable)
-		.reported_findings(&HashSet::new())
-		.is_empty());
+	assert_eq!(gaps, ["the counter is unverified — clear it by: a read of stats.rs"]);
+	assert!(text_report(&answerable).reported_findings(&HashSet::new()).is_empty());
 }
 
 #[test]
@@ -922,13 +852,7 @@ fn the_ledger_measures_what_a_re_run_added() {
 	assert_eq!(ledger.actions_since_gate(), 1);
 	ledger.mark_gate_checkpoint();
 	assert_eq!(ledger.actions_since_gate(), 0);
-	ledger.record(
-		"search",
-		&serde_json::json!({"pattern":"b"}),
-		false,
-		false,
-		8,
-	);
+	ledger.record("search", &serde_json::json!({"pattern":"b"}), false, false, 8);
 	assert_eq!(ledger.actions_since_gate(), 1);
 	ledger.reset();
 	assert_eq!(ledger.actions_since_gate(), 0);
@@ -1028,9 +952,7 @@ fn the_json_path_rejects_a_missing_evidence_shape() {
 /// provider's wire format is not allowed to change what the gate concludes.
 #[test]
 fn both_encodings_reach_the_same_verdict() {
-	let charged_text = format!(
-		"{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>"
-	);
+	let charged_text = format!("{CLEAN_SHAPES}\n<gap settles=\"a read of stats.rs\">the counter is unverified</gap>");
 	let charged_json = serde_json::json!({
 		"conditions": [],
 		"shapes": clean_json_shapes(),
@@ -1045,8 +967,7 @@ fn both_encodings_reach_the_same_verdict() {
 
 	// And a finding that names no closing observation is reported, not charged,
 	// on both paths.
-	let unactionable_text =
-		format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
+	let unactionable_text = format!("{CLEAN_SHAPES}\n<gap>the set is not bounded</gap>\n<verdict>PASS</verdict>");
 	let unactionable_json = serde_json::json!({
 		"conditions": [],
 		"shapes": clean_json_shapes(),
@@ -1102,16 +1023,10 @@ fn the_schema_asks_for_the_protocol_the_checklist_enforces() {
 	let schema = build_gate_schema(2);
 	let properties = &schema["properties"];
 	for branch in properties["shapes"]["items"]["anyOf"].as_array().unwrap() {
-		assert_eq!(
-			branch["properties"]["name"]["enum"],
-			serde_json::json!(REQUIRED_SHAPES)
-		);
+		assert_eq!(branch["properties"]["name"]["enum"], serde_json::json!(REQUIRED_SHAPES));
 	}
 	assert_eq!(properties["conditions"]["maxItems"].as_u64(), Some(2));
-	assert_eq!(
-		properties["readback"]["maxItems"].as_u64(),
-		Some(READBACK_MAX as u64)
-	);
+	assert_eq!(properties["readback"]["maxItems"].as_u64(), Some(READBACK_MAX as u64));
 	// Strict mode rejects a partial object: every field is required, so an
 	// enforced answer can never omit the checklist.
 	assert_eq!(
@@ -1128,11 +1043,7 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 	let branches = items["anyOf"].as_array().unwrap();
 	assert_eq!(branches.len(), 2);
 	for (branch, statuses, basis_type) in [
-		(
-			&branches[0],
-			serde_json::json!(["matched", "unknown"]),
-			"null",
-		),
+		(&branches[0], serde_json::json!(["matched", "unknown"]), "null"),
 		(&branches[1], serde_json::json!(["unmatched"]), "string"),
 	] {
 		assert_eq!(branch.as_object().unwrap().len(), 4);
@@ -1171,12 +1082,7 @@ fn the_condition_schema_requires_a_basis_only_when_unmatched() {
 	assert!(branches[0]["properties"]["basis"].get("enum").is_none());
 	assert_eq!(
 		branches[1]["properties"]["basis"]["enum"],
-		serde_json::json!([
-			"recorded_output",
-			"ground_truth",
-			"absent_action",
-			"inference"
-		])
+		serde_json::json!(["recorded_output", "ground_truth", "absent_action", "inference"])
 	);
 	assert_eq!(
 		octolib::llm::utils::normalize_strict_schema(&schema, octolib::llm::ResponseMode::Strict),
@@ -1198,10 +1104,7 @@ fn the_json_parser_still_rejects_an_unmatched_condition_with_null_basis() {
 		GateVerdict::Indeterminate("condition 1 unmatched without basis".into())
 	);
 	answer["conditions"][0]["status"] = serde_json::json!("matched");
-	assert_eq!(
-		json_report(&answer).verdict(1, &HashSet::new()),
-		GateVerdict::Pass
-	);
+	assert_eq!(json_report(&answer).verdict(1, &HashSet::new()), GateVerdict::Pass);
 }
 
 #[test]
@@ -1229,10 +1132,7 @@ fn the_shape_schema_requires_a_settling_observation_when_found() {
 		assert_eq!(branch["properties"]["settles"]["type"], settles_type);
 	}
 	for field in ["name", "reason", "sources"] {
-		assert_eq!(
-			branches[0]["properties"][field],
-			branches[1]["properties"][field]
-		);
+		assert_eq!(branches[0]["properties"][field], branches[1]["properties"][field]);
 	}
 	let mut answer = serde_json::json!({
 		"conditions": [],
@@ -1286,11 +1186,7 @@ fn record_ground_evicts_the_oldest_once_the_total_exceeds_the_cap() {
 	ledger.record_ground(1, &three_quarters);
 	ledger.record_ground(2, &three_quarters);
 	let grounds = ledger.grounds();
-	assert_eq!(
-		grounds.len(),
-		1,
-		"the oldest ground is evicted, not the newest"
-	);
+	assert_eq!(grounds.len(), 1, "the oldest ground is evicted, not the newest");
 	assert_eq!(grounds[0].0, 2);
 }
 
@@ -1342,9 +1238,7 @@ fn a_shape_without_a_name_is_indeterminate() {
 
 #[test]
 fn a_condition_without_a_numeric_index_is_indeterminate() {
-	let resp = format!(
-		r#"{CLEAN_SHAPES}<condition status="matched">ok</condition><verdict>PASS</verdict>"#
-	);
+	let resp = format!(r#"{CLEAN_SHAPES}<condition status="matched">ok</condition><verdict>PASS</verdict>"#);
 	assert!(matches!(
 		text_report(&resp).verdict(1, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition without numeric index")
@@ -1364,9 +1258,7 @@ fn a_duplicate_condition_index_is_indeterminate() {
 
 #[test]
 fn a_condition_status_outside_the_contract_is_indeterminate() {
-	let resp = format!(
-		r#"{CLEAN_SHAPES}<condition n="1" status="bogus">x</condition><verdict>PASS</verdict>"#
-	);
+	let resp = format!(r#"{CLEAN_SHAPES}<condition n="1" status="bogus">x</condition><verdict>PASS</verdict>"#);
 	assert!(matches!(
 		text_report(&resp).verdict(1, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason.contains("condition 1 has invalid status")
@@ -1375,9 +1267,8 @@ fn a_condition_status_outside_the_contract_is_indeterminate() {
 
 #[test]
 fn a_condition_checklist_mismatch_is_indeterminate() {
-	let resp = format!(
-		r#"{CLEAN_SHAPES}<condition n="1" status="matched">only one</condition><verdict>PASS</verdict>"#
-	);
+	let resp =
+		format!(r#"{CLEAN_SHAPES}<condition n="1" status="matched">only one</condition><verdict>PASS</verdict>"#);
 	assert!(matches!(
 		text_report(&resp).verdict(2, &HashSet::new()),
 		GateVerdict::Indeterminate(reason) if reason
@@ -1555,10 +1446,7 @@ mod verify_round_trip {
 		}
 	}
 
-	fn rx() -> (
-		tokio::sync::watch::Sender<bool>,
-		tokio::sync::watch::Receiver<bool>,
-	) {
+	fn rx() -> (tokio::sync::watch::Sender<bool>, tokio::sync::watch::Receiver<bool>) {
 		tokio::sync::watch::channel(false)
 	}
 
@@ -1609,7 +1497,8 @@ mod verify_round_trip {
 	#[tokio::test]
 	async fn unseen_output_advisory_reaches_noninteractive_cost_frame() {
 		let _guard = ENV_LOCK.lock().await;
-		let answer = format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"read output\">the diff is not supplied</gap>");
+		let answer =
+			format!("{CLEAN_SHAPES}<gap sources=\"omitted:0\" settles=\"read output\">the diff is not supplied</gap>");
 		let url = spawn_stub(vec![final_response(&answer)]).await;
 		std::env::set_var("OLLAMA_API_URL", &url);
 		let owner = "gate-advisory-jsonl";
@@ -1633,12 +1522,8 @@ mod verify_round_trip {
 				let (_tx, rx) = rx();
 				assert_eq!(verify(&config, gate_input, rx).await, GateVerdict::Pass);
 				crate::supervisor::stats::gate_pass();
-				let payload = crate::session::chat::response::session_cost_payload(
-					&mut session,
-					owner.to_string(),
-				);
-				let frame =
-					serde_json::to_value(crate::websocket::ServerMessage::Cost(payload)).unwrap();
+				let payload = crate::session::chat::response::session_cost_payload(&mut session, owner.to_string());
+				let frame = serde_json::to_value(crate::websocket::ServerMessage::Cost(payload)).unwrap();
 				let gate = &frame["supervisor_accounting"]["mechanics"]["gate"];
 				assert_eq!(gate["outcome"]["pass"], 1);
 				assert_eq!(
@@ -1676,10 +1561,7 @@ mod verify_round_trip {
 	async fn a_readback_round_that_cannot_be_answered_is_indeterminate() {
 		let _guard = ENV_LOCK.lock().await;
 		let url = spawn_stub_with_status(vec![
-			(
-				200,
-				final_response(r#"<readback seq="1">need the output</readback>"#),
-			),
+			(200, final_response(r#"<readback seq="1">need the output</readback>"#)),
 			(500, serde_json::json!({"error": "verifier unavailable"})),
 		])
 		.await;
@@ -1735,9 +1617,7 @@ mod verify_round_trip {
 			final_response(&format!(
 				r#"{CLEAN_SHAPES}<gap settles="run the suite">no test run demonstrates the fix</gap>"#
 			)),
-			final_response(
-				r#"<finding n="1" verdict="refuted">the ledger records the suite passing</finding>"#,
-			),
+			final_response(r#"<finding n="1" verdict="refuted">the ledger records the suite passing</finding>"#),
 		])
 		.await;
 		std::env::set_var("OLLAMA_API_URL", &url);
@@ -1805,13 +1685,7 @@ mod verify_round_trip {
 fn follow_up_evidence_survives_confirmation_turns_without_becoming_current() {
 	use crate::supervisor::resolve::ResolutionScope::{FollowUp, SelfContained};
 	let mut ledger = EvidenceLedger::default();
-	let audit = ledger.record(
-		"view",
-		&serde_json::json!({"path":"providers"}),
-		false,
-		false,
-		32,
-	);
+	let audit = ledger.record("view", &serde_json::json!({"path":"providers"}), false, false, 32);
 	ledger.record_ground(audit, "anthropic.rs\nopenai.rs\noctohub.rs");
 	ledger.record_command_output("cargo test", "12 passed");
 	ledger.begin_turn("audit every provider");
@@ -1827,17 +1701,9 @@ fn follow_up_evidence_survives_confirmation_turns_without_becoming_current() {
 	let (history, grounds) = ledger.verification_evidence(FollowUp);
 	assert!(history.contains("audit every provider"));
 	assert!(history.contains(&format!("#{audit}")));
-	assert!(render_readback(&grounds, &[audit])
-		.text
-		.contains("anthropic.rs"));
+	assert!(render_readback(&grounds, &[audit]).text.contains("anthropic.rs"));
 
-	let current = ledger.record(
-		"text_editor",
-		&serde_json::json!({"path":"new.rs"}),
-		true,
-		false,
-		8,
-	);
+	let current = ledger.record("text_editor", &serde_json::json!({"path":"new.rs"}), true, false, 8);
 	ledger.record_ground(current, "new content");
 	assert_ne!(audit, current);
 	assert_eq!(ledger.actions_since_gate(), 1);
@@ -1847,12 +1713,8 @@ fn follow_up_evidence_survives_confirmation_turns_without_becoming_current() {
 		"old test success is not fresh verification"
 	);
 	let (_, grounds) = ledger.verification_evidence(FollowUp);
-	assert!(render_readback(&grounds, &[audit])
-		.text
-		.contains("anthropic.rs"));
-	assert!(render_readback(&grounds, &[current])
-		.text
-		.contains("new content"));
+	assert!(render_readback(&grounds, &[audit]).text.contains("anthropic.rs"));
+	assert!(render_readback(&grounds, &[current]).text.contains("new content"));
 	let (history, grounds) = ledger.verification_evidence(SelfContained);
 	assert!(history.is_empty());
 	assert_eq!(grounds, ledger.grounds());
@@ -1868,10 +1730,7 @@ fn unrelated_or_ambiguous_turns_break_the_evidence_chain() {
 		ledger.begin_turn("old request");
 		ledger.retain_history(scope);
 		ledger.begin_turn("unrelated request");
-		assert_eq!(
-			ledger.verification_evidence(FollowUp),
-			(String::new(), Vec::new())
-		);
+		assert_eq!(ledger.verification_evidence(FollowUp), (String::new(), Vec::new()));
 	}
 }
 
@@ -1887,8 +1746,7 @@ fn historical_evidence_is_bounded_and_survives_resume() {
 	assert_eq!(ledger.history.len(), HISTORY_TURNS_KEPT);
 	let (history, _) = ledger.verification_evidence(FollowUp);
 	assert!(!history.contains("request 0"));
-	let restored: EvidenceLedger =
-		serde_json::from_str(&serde_json::to_string(&ledger).unwrap()).unwrap();
+	let restored: EvidenceLedger = serde_json::from_str(&serde_json::to_string(&ledger).unwrap()).unwrap();
 	assert_eq!(
 		restored.verification_evidence(FollowUp),
 		ledger.verification_evidence(FollowUp)

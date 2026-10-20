@@ -49,8 +49,7 @@ use anyhow::Result;
 fn is_synthetic_summary(m: &crate::session::Message) -> bool {
 	m.role == "assistant"
 		&& (m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
-			|| m.content
-				.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
+			|| m.content.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
 }
 
 /// True when a message can state or restate "what the user wants": a real user
@@ -80,10 +79,7 @@ fn states_task(m: &crate::session::Message) -> bool {
 /// stating message, no preamble to anchor on, too few conversational messages,
 /// or the anchor is already at the tail).
 #[cfg(test)]
-pub(super) fn find_compression_range(
-	messages: &[crate::session::Message],
-	force: bool,
-) -> Result<(usize, usize)> {
+pub(super) fn find_compression_range(messages: &[crate::session::Message], force: bool) -> Result<(usize, usize)> {
 	find_compression_range_preserving_turn(messages, force, false)
 }
 
@@ -144,9 +140,10 @@ pub(super) fn find_compression_range_preserving_turn(
 		// fresh request's bridge, and keeping it kept the unanswered copy too —
 		// on a [summary, step, request, request] tail only the summary was left
 		// to drain and force wedged. Drain through the unanswered request.
-		match messages[..tail_idx].iter().rposition(|message| {
-			message.role == "assistant" && !(force && is_synthetic_summary(message))
-		}) {
+		match messages[..tail_idx]
+			.iter()
+			.rposition(|message| message.role == "assistant" && !(force && is_synthetic_summary(message)))
+		{
 			Some(previous_assistant_idx) => {
 				let unanswered = messages[previous_assistant_idx + 1..tail_idx]
 					.iter()
@@ -197,11 +194,7 @@ pub(super) fn find_compression_range_preserving_turn(
 /// CRITICAL: The range [start_idx, end_idx] must match the messages that will
 /// actually be removed. In compression, remove_messages_in_range drains
 /// start_idx+1..=end_idx, so callers should pass (start_idx+1, end_idx).
-pub(super) fn calculate_range_tokens(
-	session: &ChatSession,
-	start_idx: usize,
-	end_idx: usize,
-) -> Result<u64> {
+pub(super) fn calculate_range_tokens(session: &ChatSession, start_idx: usize, end_idx: usize) -> Result<u64> {
 	let mut total_tokens = 0u64;
 
 	if start_idx >= session.session.messages.len() {
@@ -214,8 +207,7 @@ pub(super) fn calculate_range_tokens(
 
 	for i in start_idx..=end_idx {
 		if let Some(message) = session.session.messages.get(i) {
-			let tokens =
-				crate::session::estimate_sent_message_tokens(message, &session.model) as u64;
+			let tokens = crate::session::estimate_sent_message_tokens(message, &session.model) as u64;
 			total_tokens += tokens;
 		}
 	}

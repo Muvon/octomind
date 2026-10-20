@@ -43,8 +43,8 @@ impl Drop for EnvGuard {
 }
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -84,10 +84,7 @@ fn server_args_default_host_port_and_parse_overrides() {
 	assert!(cli.args.sandbox);
 	assert_eq!(
 		cli.args.allow_origin,
-		vec![
-			"http://localhost:3000".to_string(),
-			"https://panel.example".to_string()
-		]
+		vec!["http://localhost:3000".to_string(), "https://panel.example".to_string()]
 	);
 }
 
@@ -101,8 +98,7 @@ async fn execute_rejects_an_unknown_tap_tag() {
 		name: octomind::agent::taps::DEFAULT_TAP.to_string(),
 		local_path: None,
 	};
-	std::fs::create_dir_all(default_tap.local_dir().expect("default tap dir"))
-		.expect("create empty default tap");
+	std::fs::create_dir_all(default_tap.local_dir().expect("default tap dir")).expect("create empty default tap");
 
 	let config = template_config();
 	let args = ServerArgs {
@@ -115,10 +111,7 @@ async fn execute_rejects_an_unknown_tap_tag() {
 	let err = execute(&args, &config)
 		.await
 		.expect_err("unknown tap tag fails resolution");
-	assert!(
-		err.to_string().contains("Failed to fetch agent manifest"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("Failed to fetch agent manifest"), "{err}");
 }
 
 #[tokio::test]

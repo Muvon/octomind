@@ -28,43 +28,22 @@ fn test_runtime_state_replays_commands_across_restoration_point() {
 	let tmp = tempfile::NamedTempFile::new().expect("tmp");
 	let path = tmp.path().to_path_buf();
 
-	append(
-		&path,
-		json!({"type": "COMMAND", "command": "/model openrouter:before"}),
-	);
-	append(
-		&path,
-		json!({"type": "COMMAND", "command": "/role developer"}),
-	);
+	append(&path, json!({"type": "COMMAND", "command": "/model openrouter:before"}));
+	append(&path, json!({"type": "COMMAND", "command": "/role developer"}));
 	append(&path, json!({"type": "COMMAND", "command": "/effort high"}));
-	append(
-		&path,
-		json!({"type": "KNOWLEDGE_ENTRY", "content": "stale knowledge"}),
-	);
+	append(&path, json!({"type": "KNOWLEDGE_ENTRY", "content": "stale knowledge"}));
 	// A restoration point wipes everything recorded before it
 	append(&path, json!({"type": "RESTORATION_POINT"}));
-	append(
-		&path,
-		json!({"type": "COMMAND", "command": "/model ollama:after"}),
-	);
-	append(
-		&path,
-		json!({"type": "KNOWLEDGE_ENTRY", "content": "fresh knowledge"}),
-	);
+	append(&path, json!({"type": "COMMAND", "command": "/model ollama:after"}));
+	append(&path, json!({"type": "KNOWLEDGE_ENTRY", "content": "fresh knowledge"}));
 	// Unknown commands are ignored, not errors
-	append(
-		&path,
-		json!({"type": "COMMAND", "command": "/definitely-unknown x"}),
-	);
+	append(&path, json!({"type": "COMMAND", "command": "/definitely-unknown x"}));
 
 	let state = extract_runtime_state_from_log(&path).expect("extract state");
 	assert_eq!(state.model.as_deref(), Some("ollama:after"));
 	assert_eq!(state.role, None, "role predates the restoration point");
 	assert_eq!(state.reasoning_effort, None);
-	assert_eq!(
-		state.critical_knowledge,
-		vec!["fresh knowledge".to_string()]
-	);
+	assert_eq!(state.critical_knowledge, vec!["fresh knowledge".to_string()]);
 }
 
 #[test]
@@ -89,17 +68,10 @@ fn test_load_session_restoration_then_truncation() {
 	append(&path, msg_line("user", "after restoration", 3));
 	append(&path, msg_line("assistant", "new answer", 4));
 	// Ctrl+C cleanup marker: only the first post-restoration message survives
-	append(
-		&path,
-		json!({"type": "TRUNCATION_POINT", "message_count": 1}),
-	);
+	append(&path, json!({"type": "TRUNCATION_POINT", "message_count": 1}));
 
 	let session = load_session(&path).expect("load session");
-	let contents: Vec<&str> = session
-		.messages
-		.iter()
-		.map(|m| m.content.as_str())
-		.collect();
+	let contents: Vec<&str> = session.messages.iter().map(|m| m.content.as_str()).collect();
 	assert_eq!(contents, vec!["after restoration"], "{contents:?}");
 }
 
@@ -134,10 +106,7 @@ fn test_load_session_compression_point_and_tool_call_reconstruction() {
 		"compressed prefix must be gone and the tool_calls message reconstructed"
 	);
 	let reconstructed = &session.messages[1];
-	let calls = reconstructed
-		.tool_calls
-		.as_ref()
-		.expect("reconstructed tool_calls");
+	let calls = reconstructed.tool_calls.as_ref().expect("reconstructed tool_calls");
 	assert!(calls.to_string().contains("shell"));
 	assert_eq!(session.messages[2].tool_call_id.as_deref(), Some("c1"));
 }

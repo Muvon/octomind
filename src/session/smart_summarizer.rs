@@ -47,8 +47,7 @@ impl SmartSummarizer {
 					continue;
 				}
 				"user" => {
-					conversation_flow
-						.push(format!("User: {}", self.extract_key_points(&msg.content)));
+					conversation_flow.push(format!("User: {}", self.extract_key_points(&msg.content)));
 
 					// Extract technical keywords and context
 					if self.contains_technical_content(&msg.content) {
@@ -56,10 +55,7 @@ impl SmartSummarizer {
 					}
 				}
 				"assistant" => {
-					conversation_flow.push(format!(
-						"Assistant: {}",
-						self.extract_key_points(&msg.content)
-					));
+					conversation_flow.push(format!("Assistant: {}", self.extract_key_points(&msg.content)));
 
 					// Extract file modification mentions
 					if self.contains_file_modifications(&msg.content) {
@@ -76,11 +72,7 @@ impl SmartSummarizer {
 					tool_usage.push(self.extract_tool_summary(&msg.content));
 				}
 				_ => {
-					conversation_flow.push(format!(
-						"{}: {}",
-						msg.role,
-						self.extract_key_points(&msg.content)
-					));
+					conversation_flow.push(format!("{}: {}", msg.role, self.extract_key_points(&msg.content)));
 				}
 			}
 		}
@@ -196,9 +188,7 @@ impl SmartSummarizer {
 		];
 
 		let content_lower = content.to_lowercase();
-		technical_keywords
-			.iter()
-			.any(|keyword| content_lower.contains(keyword))
+		technical_keywords.iter().any(|keyword| content_lower.contains(keyword))
 	}
 
 	/// Check if content contains file modification information
@@ -231,9 +221,7 @@ impl SmartSummarizer {
 		];
 
 		let content_lower = content.to_lowercase();
-		file_keywords
-			.iter()
-			.any(|keyword| content_lower.contains(keyword))
+		file_keywords.iter().any(|keyword| content_lower.contains(keyword))
 	}
 
 	/// Check if content contains decisions or solutions
@@ -259,9 +247,7 @@ impl SmartSummarizer {
 		];
 
 		let content_lower = content.to_lowercase();
-		decision_keywords
-			.iter()
-			.any(|keyword| content_lower.contains(keyword))
+		decision_keywords.iter().any(|keyword| content_lower.contains(keyword))
 	}
 
 	/// Extract key points from content (first sentence or up to 150 characters)

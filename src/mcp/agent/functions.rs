@@ -35,9 +35,7 @@ static JOB_MANAGER: OnceLock<Arc<BackgroundJobManager>> = OnceLock::new();
 
 /// Get reasonable max concurrent jobs based on CPU cores (minimum 4)
 fn get_max_concurrent_jobs() -> usize {
-	std::thread::available_parallelism()
-		.map(|p| p.get())
-		.unwrap_or(4)
+	std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4)
 }
 
 /// Initialize the job manager at session start.
@@ -183,9 +181,7 @@ pub async fn execute_agent_command(
 			Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!(
-					"Agent '{agent_name}' exists in both config and dynamic agents - ambiguous"
-				),
+				format!("Agent '{agent_name}' exists in both config and dynamic agents - ambiguous"),
 			))
 		}
 	}
@@ -198,11 +194,7 @@ async fn execute_config_agent(
 	task: &str,
 	_config: &crate::config::Config,
 ) -> Result<McpToolResult> {
-	let run_async = call
-		.parameters
-		.get("async")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let run_async = call.parameters.get("async").and_then(|v| v.as_bool()).unwrap_or(false);
 
 	let session_workdir = crate::mcp::get_thread_working_directory();
 	let workdir = agent_config.get_resolved_workdir(&session_workdir);
@@ -223,7 +215,10 @@ async fn execute_config_agent(
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
-				format!("Async job limit reached ({active}/{} active). Wait for existing jobs to complete.", get_max_concurrent_jobs()),
+				format!(
+					"Async job limit reached ({active}/{} active). Wait for existing jobs to complete.",
+					get_max_concurrent_jobs()
+				),
 			));
 		}
 
@@ -249,20 +244,11 @@ async fn execute_config_agent(
 				let mut parts = command.split_whitespace();
 				let program = parts.next().unwrap_or("");
 				let args: Vec<&str> = parts.collect();
-				let output = match run_acp_command(
-					program,
-					&args,
-					&task_owned,
-					&workdir_owned,
-					cancel_rx,
-					None,
-					true,
-				)
-				.await
-				{
-					Ok(text) => text,
-					Err(e) => format!("ERROR: {e:#}"),
-				};
+				let output =
+					match run_acp_command(program, &args, &task_owned, &workdir_owned, cancel_rx, None, true).await {
+						Ok(text) => text,
+						Err(e) => format!("ERROR: {e:#}"),
+					};
 				mgr.release_registered(
 					&completion_job_id,
 					CompletedJob {
@@ -301,17 +287,7 @@ async fn execute_config_agent(
 	let mut parts = agent_config.command.split_whitespace();
 	let program = parts.next().unwrap_or("");
 	let args: Vec<&str> = parts.collect();
-	match run_acp_command(
-		program,
-		&args,
-		task,
-		&workdir,
-		watch::channel(false).1,
-		None,
-		true,
-	)
-	.await
-	{
+	match run_acp_command(program, &args, task, &workdir, watch::channel(false).1, None, true).await {
 		Ok(output) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -336,11 +312,7 @@ async fn execute_dynamic_agent(
 	task: &str,
 	config: &crate::config::Config,
 ) -> Result<McpToolResult> {
-	let run_async = call
-		.parameters
-		.get("async")
-		.and_then(|v| v.as_bool())
-		.unwrap_or(false);
+	let run_async = call.parameters.get("async").and_then(|v| v.as_bool()).unwrap_or(false);
 
 	// Build the merged config for this agent (resolve server_refs from static + dynamic registries)
 	let agent_config_owned = agent_config.clone();
@@ -386,17 +358,13 @@ async fn execute_dynamic_agent(
 
 		let handle = tokio::spawn(async move {
 			let run = async move {
-				let output = match run_dynamic_agent_in_process(
-					&agent_config_owned,
-					&task_owned,
-					&merged_config,
-					cancel_rx,
-				)
-				.await
-				{
-					Ok(text) => text,
-					Err(e) => format!("ERROR: {e:#}"),
-				};
+				let output =
+					match run_dynamic_agent_in_process(&agent_config_owned, &task_owned, &merged_config, cancel_rx)
+						.await
+					{
+						Ok(text) => text,
+						Err(e) => format!("ERROR: {e:#}"),
+					};
 				mgr.release_registered(&completion_job_id, CompletedJob { agent_name, output });
 			};
 			let run = crate::supervisor::accounting::background(run);
@@ -428,9 +396,7 @@ async fn execute_dynamic_agent(
 	// Synchronous path — keep cancel_tx alive so the watch channel stays open.
 	// Dropping it immediately closes the channel, which octolib treats as cancellation.
 	let (_cancel_tx, cancel_rx) = watch::channel(false);
-	match run_dynamic_agent_in_process(&agent_config_owned, &task_owned, &merged_config, cancel_rx)
-		.await
-	{
+	match run_dynamic_agent_in_process(&agent_config_owned, &task_owned, &merged_config, cancel_rx).await {
 		Ok(output) => Ok(McpToolResult::success(tool_name, tool_id, output)),
 		Err(e) => Ok(McpToolResult::error(
 			tool_name,
@@ -512,8 +478,7 @@ fn run_dynamic_agent_in_process(
 		let task = task.as_str();
 		let agent_config = &agent_config;
 		use crate::session::{ChatCompletionWithValidationParams, Message};
-		let authorization_scope =
-			crate::supervisor::authorizer::DelegationScope::new(task, &agent.system);
+		let authorization_scope = crate::supervisor::authorizer::DelegationScope::new(task, &agent.system);
 		if let Some(parent_id) = crate::session::context::current_session_id() {
 			if let Some(rules) = crate::session::guardrails::get_rules(&parent_id) {
 				crate::session::guardrails::merge_generated_for_session(
@@ -527,10 +492,7 @@ fn run_dynamic_agent_in_process(
 			anyhow::bail!(crate::session::cancellation::Cancelled);
 		}
 
-		let effective_model = agent
-			.model
-			.clone()
-			.unwrap_or_else(|| agent_config.model.clone());
+		let effective_model = agent.model.clone().unwrap_or_else(|| agent_config.model.clone());
 
 		let should_cache = crate::session::model_supports_caching(&effective_model);
 
@@ -601,9 +563,7 @@ fn run_dynamic_agent_in_process(
 
 				// Add assistant message with tool calls preserved
 				let original_tool_calls =
-					crate::session::chat::MessageHandler::extract_original_tool_calls(
-						&current_exchange,
-					);
+					crate::session::chat::MessageHandler::extract_original_tool_calls(&current_exchange);
 				conv_messages.push(Message {
 					role: "assistant".to_string(),
 					content: current_content.clone(),
@@ -625,20 +585,19 @@ fn run_dynamic_agent_in_process(
 				} else {
 					agent_config.output_mode()
 				};
-				let layer_tool_params =
-					crate::session::chat::response::tool_execution::LayerToolExecutionParams {
-						tool_calls: current_tool_calls,
-						session_name: authorization_scope.id.clone(),
-						layer_name: format!("agent_{}", agent.name),
-						operation_cancelled: Some(operation_cancelled.clone()),
-						mode: output_mode,
-					};
+				let layer_tool_params = crate::session::chat::response::tool_execution::LayerToolExecutionParams {
+					tool_calls: current_tool_calls,
+					session_name: authorization_scope.id.clone(),
+					layer_name: format!("agent_{}", agent.name),
+					operation_cancelled: Some(operation_cancelled.clone()),
+					mode: output_mode,
+				};
 				let (tool_results, _tool_time) =
-				crate::session::chat::response::tool_execution::execute_layer_tool_calls_parallel(
-					agent_config,
-					layer_tool_params,
-				)
-						.await?;
+					crate::session::chat::response::tool_execution::execute_layer_tool_calls_parallel(
+						agent_config,
+						layer_tool_params,
+					)
+					.await?;
 
 				if *operation_cancelled.borrow() {
 					anyhow::bail!(crate::session::cancellation::Cancelled);
@@ -691,14 +650,14 @@ fn run_dynamic_agent_in_process(
 							anyhow::bail!(crate::session::cancellation::Cancelled);
 						}
 
-						let has_tool_calls =
-							follow_up.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
+						let has_tool_calls = follow_up.tool_calls.as_ref().is_some_and(|c| !c.is_empty());
 
-						let should_continue = crate::session::chat::response::tool_result_processor::check_should_continue(
-						&follow_up,
-						agent_config,
-						has_tool_calls,
-					);
+						let should_continue =
+							crate::session::chat::response::tool_result_processor::check_should_continue(
+								&follow_up,
+								agent_config,
+								has_tool_calls,
+							);
 
 						current_content = follow_up.content;
 						current_exchange = follow_up.exchange;
@@ -709,11 +668,7 @@ fn run_dynamic_agent_in_process(
 						}
 					}
 					Err(e) => {
-						crate::log_error!(
-							"Dynamic agent '{}' follow-up API call failed: {}",
-							agent.name,
-							e
-						);
+						crate::log_error!("Dynamic agent '{}' follow-up API call failed: {}", agent.name, e);
 						return Err(e);
 					}
 				}
@@ -760,6 +715,7 @@ pub async fn run_acp_command(
 	tap_run_id: Option<&str>,
 	handback: bool,
 ) -> Result<String> {
+	let websocket_tap = tap_run_id.is_some() && crate::session::tap_runs::with_run_events(|_, _| ()).is_some();
 	// Reported on drop so every exit path — success, prompt error, cancellation,
 	// a child that dies mid-stream — lands in the parent's tally exactly once.
 	// A run that never reports stays `false`: unverified is the safe default.
@@ -791,23 +747,13 @@ pub async fn run_acp_command(
 	command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
 	let mut child = command.spawn()?;
 
-	let mut stdin = Some(
-		child
-			.stdin
-			.take()
-			.ok_or_else(|| anyhow::anyhow!("No stdin"))?,
-	);
-	let stdout = child
-		.stdout
-		.take()
-		.ok_or_else(|| anyhow::anyhow!("No stdout"))?;
+	let mut stdin = Some(child.stdin.take().ok_or_else(|| anyhow::anyhow!("No stdin"))?);
+	let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("No stdout"))?;
 	let mut lines = BufReader::new(stdout).lines();
 
 	// 1. initialize
 	write_acp_request(
-		stdin
-			.as_mut()
-			.expect("child stdin is open during initialize"),
+		stdin.as_mut().expect("child stdin is open during initialize"),
 		json!({
 			"jsonrpc": "2.0",
 			"id": 1,
@@ -816,18 +762,14 @@ pub async fn run_acp_command(
 		}),
 	)
 	.await?;
-	if let Err(error) =
-		wait_for_response(&mut lines, 1, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await
-	{
+	if let Err(error) = wait_for_response(&mut lines, 1, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
 		terminate_acp_child(&mut child).await;
 		return Err(error);
 	}
 
 	// 2. session/new
 	write_acp_request(
-		stdin
-			.as_mut()
-			.expect("child stdin is open during session creation"),
+		stdin.as_mut().expect("child stdin is open during session creation"),
 		json!({
 			"jsonrpc": "2.0",
 			"id": 2,
@@ -837,14 +779,13 @@ pub async fn run_acp_command(
 	)
 	.await?;
 
-	let session_resp =
-		match wait_for_response(&mut lines, 2, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
-			Ok(response) => response,
-			Err(error) => {
-				terminate_acp_child(&mut child).await;
-				return Err(error);
-			}
-		};
+	let session_resp = match wait_for_response(&mut lines, 2, &mut cancel_rx, ACP_HANDSHAKE_TIMEOUT).await {
+		Ok(response) => response,
+		Err(error) => {
+			terminate_acp_child(&mut child).await;
+			return Err(error);
+		}
+	};
 	if crate::supervisor::authorizer::inherited_context().is_some()
 		&& session_resp.pointer("/result/_meta/octomind.authorization") != Some(&Value::Bool(true))
 	{
@@ -872,6 +813,18 @@ pub async fn run_acp_command(
 		}),
 	)
 	.await?;
+
+	if websocket_tap {
+		crate::session::tap_runs::with_run_events(|events, parent| {
+			events.emit(
+				parent,
+				tap_run_id.expect("websocket tap ID"),
+				crate::websocket::protocol::RunEvent::Prompt {
+					content: task.to_string(),
+				},
+			);
+		});
+	}
 
 	let mut output = String::new();
 	// Captured prompt-response error: if the subprocess returns
@@ -948,8 +901,7 @@ pub async fn run_acp_command(
 		// response, so it is always in hand by the time this loop breaks.
 		if let (Some(g), Some(v)) = (
 			handback_guard.as_mut(),
-			msg.pointer("/params/_meta/octomind.verified")
-				.and_then(|x| x.as_bool()),
+			msg.pointer("/params/_meta/octomind.verified").and_then(|x| x.as_bool()),
 		) {
 			g.verified = v;
 		}
@@ -966,16 +918,11 @@ pub async fn run_acp_command(
 			child_cost = cost;
 		}
 
-		// Forward session/update notifications to the parent's notification
-		// sink so the user sees thinking, tool calls, and tool results
-		// streamed live — the same shape the parent renders for its own
-		// in-process tool calls.
+		// WebSocket tap runs have their own stream, independent of the parent's turn.
+		// Other subprocesses and transports retain the parent notification sink.
 		if msg.get("method").and_then(|m| m.as_str()) == Some("session/update") {
-			if let Some(run_id) = tap_run_id {
-				record_tap_live(run_id, &msg);
-			}
+			route_child_update(&msg, tap_run_id, websocket_tap);
 			if let Some(update) = msg.pointer("/params/update") {
-				forward_session_update_to_parent(update);
 				let update_kind = update.get("sessionUpdate").and_then(|u| u.as_str());
 				if update_kind == Some("user_message_chunk")
 					&& prompt_response_received
@@ -1002,9 +949,7 @@ pub async fn run_acp_command(
 			}
 			drop(stdin.take());
 			if !pending_work {
-				shutdown_deadline = Some(Box::pin(tokio::time::sleep(
-					std::time::Duration::from_secs(5),
-				)));
+				shutdown_deadline = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(5))));
 			}
 		}
 	}
@@ -1038,16 +983,8 @@ pub async fn run_acp_command(
 		// fixed JSON-RPC text ("Internal error") and only `data` names what broke.
 		let detail = err
 			.get("data")
-			.map(|d| {
-				d.as_str()
-					.map(str::to_string)
-					.unwrap_or_else(|| d.to_string())
-			})
-			.or_else(|| {
-				err.get("message")
-					.and_then(|m| m.as_str())
-					.map(str::to_string)
-			})
+			.map(|d| d.as_str().map(str::to_string).unwrap_or_else(|| d.to_string()))
+			.or_else(|| err.get("message").and_then(|m| m.as_str()).map(str::to_string))
 			.unwrap_or_else(|| err.to_string());
 		if trimmed.is_empty() {
 			return Err(anyhow::anyhow!("ACP prompt failed: {detail}"));
@@ -1060,6 +997,30 @@ pub async fn run_acp_command(
 	Ok(output.trim().to_string())
 }
 
+pub(crate) fn route_child_update(msg: &Value, tap_run_id: Option<&str>, websocket_tap: bool) {
+	if let Some(run_id) = tap_run_id {
+		record_tap_live(run_id, msg);
+		if websocket_tap {
+			let updates = match crate::websocket::run_events::acp_events(msg) {
+				Ok(updates) => updates,
+				Err(error) => {
+					crate::log_error!("Tap run {}: skipping unmappable child update: {}", run_id, error);
+					return;
+				}
+			};
+			crate::session::tap_runs::with_run_events(|events, parent| {
+				for event in updates {
+					events.emit(parent, run_id, event);
+				}
+			});
+			return;
+		}
+	}
+	if let Some(update) = msg.pointer("/params/update") {
+		forward_session_update_to_parent(update);
+	}
+}
+
 /// Convert an ACP `session/update` notification into a `ServerMessage` and
 /// push it through the parent's notification sender. Lets `agent_*`, `tap`,
 /// and layer subprocess events render on the parent's output sink (CLI
@@ -1069,15 +1030,11 @@ fn forward_session_update_to_parent(update: &Value) {
 		Some(k) => k,
 		None => return,
 	};
-	let session_id =
-		crate::session::context::current_session_id().unwrap_or_else(|| String::from("acp"));
+	let session_id = crate::session::context::current_session_id().unwrap_or_else(|| String::from("acp"));
 
 	let msg = match kind {
 		"agent_message_chunk" => {
-			let text = update
-				.pointer("/content/text")
-				.and_then(|t| t.as_str())
-				.unwrap_or("");
+			let text = update.pointer("/content/text").and_then(|t| t.as_str()).unwrap_or("");
 			if text.is_empty() {
 				return;
 			}
@@ -1088,10 +1045,7 @@ fn forward_session_update_to_parent(update: &Value) {
 			})
 		}
 		"agent_thought_chunk" => {
-			let text = update
-				.pointer("/content/text")
-				.and_then(|t| t.as_str())
-				.unwrap_or("");
+			let text = update.pointer("/content/text").and_then(|t| t.as_str()).unwrap_or("");
 			if text.is_empty() {
 				return;
 			}
@@ -1106,15 +1060,8 @@ fn forward_session_update_to_parent(update: &Value) {
 				.and_then(|s| s.as_str())
 				.unwrap_or("")
 				.to_string();
-			let title = update
-				.get("title")
-				.and_then(|s| s.as_str())
-				.unwrap_or("")
-				.to_string();
-			let raw_input = update
-				.get("rawInput")
-				.cloned()
-				.unwrap_or(serde_json::Value::Null);
+			let title = update.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string();
+			let raw_input = update.get("rawInput").cloned().unwrap_or(serde_json::Value::Null);
 			crate::websocket::ServerMessage::ToolUse(crate::websocket::ToolUsePayload {
 				tool: title,
 				tool_id,
@@ -1171,10 +1118,7 @@ fn record_tap_live(run_id: &str, msg: &Value) {
 				input_tokens: n("input_tokens"),
 				output_tokens: n("output_tokens"),
 				cache_read_tokens: n("cache_read_tokens"),
-				cost: usage
-					.get("session_cost")
-					.and_then(|v| v.as_f64())
-					.unwrap_or(0.0),
+				cost: usage.get("session_cost").and_then(|v| v.as_f64()).unwrap_or(0.0),
 			},
 		);
 		return;
@@ -1229,16 +1173,7 @@ fn tool_arg_hint(args: &Value) -> Option<String> {
 	None
 }
 
-/// Single-line, length-capped (ellipsis on overflow).
-fn truncate_action(s: &str, max: usize) -> String {
-	let s = s.replace(['\n', '\r'], " ");
-	if s.chars().count() <= max {
-		s
-	} else {
-		let head: String = s.chars().take(max.saturating_sub(1)).collect();
-		format!("{head}…")
-	}
-}
+use crate::utils::text::truncate as truncate_action;
 
 /// Outgoing ACP request params, kept as functions so tests can validate them
 /// against the `agent-client-protocol` schema types the octomind ACP server

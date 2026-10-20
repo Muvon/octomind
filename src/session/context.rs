@@ -67,12 +67,7 @@ impl SessionContext {
 	pub fn for_session(session_id: &str, role: &str) -> Self {
 		let project_id = crate::mcp::process::derive_project_id();
 		let workdir = std::env::current_dir().unwrap_or_default();
-		Self::new(
-			session_id.to_string(),
-			role.to_string(),
-			project_id,
-			workdir,
-		)
+		Self::new(session_id.to_string(), role.to_string(), project_id, workdir)
 	}
 }
 
@@ -121,8 +116,7 @@ pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<crate::websocke
 
 /// Registry for notification senders, keyed by session ID.
 /// Each session gets its own channel for MCP notifications.
-static NOTIFICATION_SENDERS: RwLock<Option<HashMap<SessionId, NotificationSender>>> =
-	RwLock::new(None);
+static NOTIFICATION_SENDERS: RwLock<Option<HashMap<SessionId, NotificationSender>>> = RwLock::new(None);
 
 /// Initialize the notification registry (call once at startup).
 pub fn init_notification_registry() {
@@ -308,8 +302,7 @@ use crate::mcp::core::plan::memory_storage::MemoryPlanStorage;
 
 /// Registry for plan storage, keyed by session ID.
 /// Each session has its own plan state.
-static PLAN_REGISTRIES: RwLock<Option<HashMap<SessionId, Arc<Mutex<MemoryPlanStorage>>>>> =
-	RwLock::new(None);
+static PLAN_REGISTRIES: RwLock<Option<HashMap<SessionId, Arc<Mutex<MemoryPlanStorage>>>>> = RwLock::new(None);
 
 /// Get or create plan storage for a session.
 pub fn get_plan_storage(session_id: &SessionId) -> Arc<Mutex<MemoryPlanStorage>> {
@@ -351,11 +344,7 @@ pub fn set_task_start_index(session_id: &SessionId, index: usize) {
 	let mut guard = TASK_START_INDICES.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
 	registry.insert(session_id.clone(), index);
-	crate::log_debug!(
-		"Plan task start index set to: {} for session: {}",
-		index,
-		session_id
-	);
+	crate::log_debug!("Plan task start index set to: {} for session: {}", index, session_id);
 }
 
 /// Get the task start index for a session.
@@ -388,13 +377,12 @@ static CONTEXT_EPOCHS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(Non
 /// Epoch source shared by every session. Seeded from the clock so a value never
 /// repeats for a session id — not across sessions, re-initialization, or a
 /// restarted process talking to the same long-lived server.
-static NEXT_CONTEXT_EPOCH: std::sync::LazyLock<std::sync::atomic::AtomicU64> =
-	std::sync::LazyLock::new(|| {
-		let now = std::time::SystemTime::now()
-			.duration_since(std::time::UNIX_EPOCH)
-			.expect("system clock before UNIX epoch");
-		std::sync::atomic::AtomicU64::new(now.as_nanos() as u64)
-	});
+static NEXT_CONTEXT_EPOCH: std::sync::LazyLock<std::sync::atomic::AtomicU64> = std::sync::LazyLock::new(|| {
+	let now = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.expect("system clock before UNIX epoch");
+	std::sync::atomic::AtomicU64::new(now.as_nanos() as u64)
+});
 
 fn fresh_context_epoch() -> u64 {
 	NEXT_CONTEXT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -422,11 +410,7 @@ pub fn bump_context_epoch() {
 		.unwrap()
 		.get_or_insert_with(HashMap::new)
 		.insert(session_id.clone(), epoch);
-	crate::log_debug!(
-		"Context epoch for session {} moved to {}",
-		session_id,
-		epoch
-	);
+	crate::log_debug!("Context epoch for session {} moved to {}", session_id, epoch);
 }
 
 /// Forget the context epoch for a session.
@@ -444,8 +428,7 @@ pub fn clear_context_epoch(session_id: &SessionId) {
 use crate::mcp::orchestration::schedule::storage::ScheduleStore;
 
 /// Registry for schedule storage, keyed by session ID.
-static SCHEDULE_REGISTRIES: RwLock<Option<HashMap<SessionId, Arc<Mutex<ScheduleStore>>>>> =
-	RwLock::new(None);
+static SCHEDULE_REGISTRIES: RwLock<Option<HashMap<SessionId, Arc<Mutex<ScheduleStore>>>>> = RwLock::new(None);
 
 /// Get or create schedule storage for a session.
 pub fn get_schedule_storage(session_id: &SessionId) -> Arc<Mutex<ScheduleStore>> {
@@ -580,8 +563,7 @@ use crate::mcp::runtime::dynamic_agents::DynamicAgentConfig;
 /// Type alias for a session's dynamic agent state (agents map, enabled map).
 type DynamicAgentState = (HashMap<String, DynamicAgentConfig>, HashMap<String, bool>);
 
-static DYNAMIC_AGENT_REGISTRIES: RwLock<Option<HashMap<SessionId, DynamicAgentState>>> =
-	RwLock::new(None);
+static DYNAMIC_AGENT_REGISTRIES: RwLock<Option<HashMap<SessionId, DynamicAgentState>>> = RwLock::new(None);
 
 pub fn register_dynamic_agent_for_session(session_id: &SessionId, agent: DynamicAgentConfig) {
 	let agent_name = agent.name.clone();
@@ -623,10 +605,7 @@ pub fn disable_dynamic_agent_for_session(session_id: &SessionId, agent_name: &st
 }
 
 /// Remove a dynamic agent for a session.
-pub fn remove_dynamic_agent_for_session(
-	session_id: &SessionId,
-	agent_name: &str,
-) -> Option<DynamicAgentConfig> {
+pub fn remove_dynamic_agent_for_session(session_id: &SessionId, agent_name: &str) -> Option<DynamicAgentConfig> {
 	let mut guard = DYNAMIC_AGENT_REGISTRIES.write().unwrap();
 	if let Some(registry) = guard.as_mut() {
 		if let Some((agents, enabled)) = registry.get_mut(session_id) {
@@ -638,9 +617,7 @@ pub fn remove_dynamic_agent_for_session(
 }
 
 /// Get all dynamic agents for a session.
-pub fn get_dynamic_agents_for_session(
-	session_id: &SessionId,
-) -> Vec<(String, DynamicAgentConfig, bool)> {
+pub fn get_dynamic_agents_for_session(session_id: &SessionId) -> Vec<(String, DynamicAgentConfig, bool)> {
 	let guard = DYNAMIC_AGENT_REGISTRIES.read().unwrap();
 	if let Some(registry) = guard.as_ref() {
 		if let Some((agents, enabled)) = registry.get(session_id) {
@@ -701,8 +678,7 @@ type DynamicServerState = (
 	HashMap<String, bool>,
 );
 
-static DYNAMIC_SERVER_REGISTRIES: RwLock<Option<HashMap<SessionId, DynamicServerState>>> =
-	RwLock::new(None);
+static DYNAMIC_SERVER_REGISTRIES: RwLock<Option<HashMap<SessionId, DynamicServerState>>> = RwLock::new(None);
 
 pub fn register_dynamic_server_for_session(session_id: &SessionId, server: McpServerConfig) {
 	let server_name = server.name().to_string();
@@ -722,18 +698,13 @@ pub fn register_dynamic_server_for_session(session_id: &SessionId, server: McpSe
 /// server with disjoint tool filters — overwriting would erase the first
 /// cap's tool record when the second one activates. Dedup is by `name`:
 /// a function already present is skipped, not duplicated.
-pub fn enable_dynamic_server_for_session(
-	session_id: &SessionId,
-	server_name: &str,
-	funcs: Vec<McpFunction>,
-) -> bool {
+pub fn enable_dynamic_server_for_session(session_id: &SessionId, server_name: &str, funcs: Vec<McpFunction>) -> bool {
 	let mut guard = DYNAMIC_SERVER_REGISTRIES.write().unwrap();
 	if let Some(registry) = guard.as_mut() {
 		if let Some((servers, functions, enabled)) = registry.get_mut(session_id) {
 			if servers.contains_key(server_name) {
 				let entry = functions.entry(server_name.to_string()).or_default();
-				let known: std::collections::HashSet<String> =
-					entry.iter().map(|f| f.name.clone()).collect();
+				let known: std::collections::HashSet<String> = entry.iter().map(|f| f.name.clone()).collect();
 				for f in funcs {
 					if !known.contains(&f.name) {
 						entry.push(f);
@@ -763,10 +734,7 @@ pub fn disable_dynamic_server_for_session(session_id: &SessionId, server_name: &
 }
 
 /// Remove a dynamic MCP server for a session.
-pub fn remove_dynamic_server_for_session(
-	session_id: &SessionId,
-	server_name: &str,
-) -> Option<McpServerConfig> {
+pub fn remove_dynamic_server_for_session(session_id: &SessionId, server_name: &str) -> Option<McpServerConfig> {
 	let mut guard = DYNAMIC_SERVER_REGISTRIES.write().unwrap();
 	if let Some(registry) = guard.as_mut() {
 		if let Some((servers, functions, enabled)) = registry.get_mut(session_id) {
@@ -797,10 +765,7 @@ pub fn get_dynamic_servers_for_session(session_id: &SessionId) -> Vec<(String, V
 }
 
 /// Get functions for a dynamic MCP server for a session.
-pub fn get_dynamic_server_functions_for_session(
-	session_id: &SessionId,
-	server_name: &str,
-) -> Option<Vec<McpFunction>> {
+pub fn get_dynamic_server_functions_for_session(session_id: &SessionId, server_name: &str) -> Option<Vec<McpFunction>> {
 	let guard = DYNAMIC_SERVER_REGISTRIES.read().unwrap();
 	if let Some(registry) = guard.as_ref() {
 		if let Some((_, functions, _)) = registry.get(session_id) {
@@ -880,10 +845,7 @@ pub fn get_dynamic_server_name_by_tool(session_id: &SessionId, tool_name: &str) 
 }
 
 /// Get a specific dynamic server config and its enabled status for a session.
-pub fn get_dynamic_server_for_session(
-	session_id: &SessionId,
-	server_name: &str,
-) -> Option<(McpServerConfig, bool)> {
+pub fn get_dynamic_server_for_session(session_id: &SessionId, server_name: &str) -> Option<(McpServerConfig, bool)> {
 	let guard = DYNAMIC_SERVER_REGISTRIES.read().unwrap();
 	if let Some(registry) = guard.as_ref() {
 		if let Some((servers, _, enabled)) = registry.get(session_id) {
@@ -913,14 +875,11 @@ use crate::session::background_jobs::BackgroundJobManager;
 
 /// Registry for session background job managers.
 /// Each session has its own job manager for async agent jobs.
-static JOB_MANAGERS: RwLock<Option<HashMap<SessionId, Arc<BackgroundJobManager>>>> =
-	RwLock::new(None);
+static JOB_MANAGERS: RwLock<Option<HashMap<SessionId, Arc<BackgroundJobManager>>>> = RwLock::new(None);
 
 /// Initialize a job manager for a session.
 pub fn init_job_manager_for_session(session_id: &SessionId) {
-	let max_concurrent = std::thread::available_parallelism()
-		.map(|p| p.get())
-		.unwrap_or(4);
+	let max_concurrent = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
 	let manager = BackgroundJobManager::new(max_concurrent);
 	let mut guard = JOB_MANAGERS.write().unwrap();
 	let registry = guard.get_or_insert_with(HashMap::new);
@@ -1057,8 +1016,7 @@ type SkillServerMap = HashMap<SessionId, HashMap<String, Vec<String>>>;
 
 /// Refcount per MCP server name: how many active skills loaded this server via capabilities.
 /// When the count reaches 0 on skill forget, the server is disabled + removed.
-static CAPABILITY_REFCOUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> =
-	RwLock::new(None);
+static CAPABILITY_REFCOUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> = RwLock::new(None);
 
 /// Which MCP servers each skill loaded via capabilities.
 /// Used by `execute_forget` to know which servers to decrement.
@@ -1094,11 +1052,7 @@ pub fn decrement_capability_refcount(session_id: &SessionId, server_name: &str) 
 }
 
 /// Record which servers a skill loaded via capabilities.
-pub fn set_skill_capability_servers(
-	session_id: &SessionId,
-	skill_name: &str,
-	servers: Vec<String>,
-) {
+pub fn set_skill_capability_servers(session_id: &SessionId, skill_name: &str, servers: Vec<String>) {
 	if servers.is_empty() {
 		return;
 	}
@@ -1181,10 +1135,7 @@ pub fn cleanup_session(session_id: &SessionId) {
 pub fn init_session_services(role: &str) {
 	let session_id = expect_session_id();
 	if get_session_workdir_anchor(&session_id).is_none() {
-		set_session_workdir(
-			&session_id,
-			crate::mcp::get_thread_original_working_directory(),
-		);
+		set_session_workdir(&session_id, crate::mcp::get_thread_original_working_directory());
 	}
 	set_session_role(&session_id, role);
 	// A (re)initialized session starts a context the servers have not served.

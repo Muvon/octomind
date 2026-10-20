@@ -23,9 +23,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// Which supervisor mechanic made a model call — so `/info` can break the count
 /// down instead of showing one opaque total.
-#[derive(
-	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallKind {
 	/// Recall keyword/query preparation.
@@ -320,9 +318,7 @@ pub fn evolution(action: &str) {
 		"trial" => stats.evolution_trials += 1,
 		"promoted" => stats.evolution_promoted += 1,
 		"rollback" => stats.evolution_rollbacks += 1,
-		"retired" | "trial_inconclusive" | "regressed" | "pruned" | "stale" => {
-			stats.evolution_retired += 1
-		}
+		"retired" | "trial_inconclusive" | "regressed" | "pruned" | "stale" => stats.evolution_retired += 1,
 		_ => {}
 	});
 }
@@ -357,30 +353,29 @@ pub fn snapshot() -> Option<serde_json::Value> {
 	}
 	// Per-seam evaluation counters, only for seams that did anything, so an
 	// install with every seam off shows no evaluate section at all.
-	let evaluate: serde_json::Map<String, serde_json::Value> =
-		crate::supervisor::evaluate::Seam::ALL
-			.into_iter()
-			.filter(|seam| {
-				let i = seam.index();
-				s.evaluate_seam_calls[i]
-					+ s.evaluate_seam_unavailable[i]
-					+ s.evaluate_seam_applied[i]
-					+ s.evaluate_seam_avoided[i]
-					> 0
-			})
-			.map(|seam| {
-				let i = seam.index();
-				(
-					seam.name().to_string(),
-					serde_json::json!({
-						"calls": s.evaluate_seam_calls[i],
-						"unavailable": s.evaluate_seam_unavailable[i],
-						"applied": s.evaluate_seam_applied[i],
-						"avoided": s.evaluate_seam_avoided[i],
-					}),
-				)
-			})
-			.collect();
+	let evaluate: serde_json::Map<String, serde_json::Value> = crate::supervisor::evaluate::Seam::ALL
+		.into_iter()
+		.filter(|seam| {
+			let i = seam.index();
+			s.evaluate_seam_calls[i]
+				+ s.evaluate_seam_unavailable[i]
+				+ s.evaluate_seam_applied[i]
+				+ s.evaluate_seam_avoided[i]
+				> 0
+		})
+		.map(|seam| {
+			let i = seam.index();
+			(
+				seam.name().to_string(),
+				serde_json::json!({
+					"calls": s.evaluate_seam_calls[i],
+					"unavailable": s.evaluate_seam_unavailable[i],
+					"applied": s.evaluate_seam_applied[i],
+					"avoided": s.evaluate_seam_avoided[i],
+				}),
+			)
+		})
+		.collect();
 	// Steer breakdown by signal — ordered, non-zero only, so display stays generic.
 	let steer_signals: Vec<serde_json::Value> = [
 		("loop", s.steer_loop),

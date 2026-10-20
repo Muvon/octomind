@@ -120,10 +120,7 @@ impl Sim {
 				Step::User(tokens) => {
 					self.info.note_turn_start();
 					self.info.consecutive_compressions = 0;
-					self.messages.push(Msg {
-						tokens,
-						tool: false,
-					});
+					self.messages.push(Msg { tokens, tool: false });
 				}
 				Step::Call { assistant, tool } => {
 					self.maybe_fold();
@@ -162,11 +159,7 @@ impl Sim {
 			return;
 		}
 		if self.policy.free_tier {
-			for msg in self
-				.messages
-				.iter_mut()
-				.filter(|m| m.tool && m.tokens > TOOL_CAP)
-			{
+			for msg in self.messages.iter_mut().filter(|m| m.tool && m.tokens > TOOL_CAP) {
 				msg.tokens = TOOL_CAP;
 				self.m.free_trims += 1;
 			}

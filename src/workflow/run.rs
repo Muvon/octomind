@@ -29,8 +29,7 @@ use uuid::Uuid;
 
 use super::proc::{run_step, send_done, RunOutcome, RunStepArgs, StepStats};
 use super::schema::{
-	Condition, ConditionalStep, Edge, LoopStep, ParallelStep, Sequential, SessionMode, Step,
-	WorkflowDef, END_NODE,
+	Condition, ConditionalStep, Edge, LoopStep, ParallelStep, Sequential, SessionMode, Step, WorkflowDef, END_NODE,
 };
 use super::validate;
 use crate::config::Config;
@@ -250,15 +249,9 @@ impl Executor {
 		// Pass the step's role so `{{ROLE}}` resolves to the actual role rather
 		// than "unknown" — the step subprocess runs under this role.
 		let after_placeholders =
-			crate::session::helper_functions::process_placeholders_async_with_role(
-				&after_wf,
-				&project_dir,
-				Some(role),
-			)
-			.await;
-		Ok(crate::utils::file_renderer::expand_context_blocks(
-			&after_placeholders,
-		))
+			crate::session::helper_functions::process_placeholders_async_with_role(&after_wf, &project_dir, Some(role))
+				.await;
+		Ok(crate::utils::file_renderer::expand_context_blocks(&after_placeholders))
 	}
 
 	/// Drive one sequential step with retries / session handling.
@@ -267,12 +260,7 @@ impl Executor {
 	/// title and `╰ ✓ name` close — empty for top-level, `"  [i/max]
 	/// loop-name"` inside a loop, etc. The block is opened with
 	/// [`box_open`] and closed via [`box_close_ok`] / [`box_close_err`].
-	async fn exec_sequential(
-		&mut self,
-		s: &Sequential,
-		input: &str,
-		header_suffix: &str,
-	) -> Result<StepStats> {
+	async fn exec_sequential(&mut self, s: &Sequential, input: &str, header_suffix: &str) -> Result<StepStats> {
 		let templated_prompt = self.substitute(&s.prompt, input, &s.role).await?;
 		let workdir = resolve_workdir(&s.name, s.workdir.as_deref())?;
 		let max_attempts = s.retries + 1;
@@ -280,10 +268,7 @@ impl Executor {
 
 		for attempt in 1..=max_attempts {
 			let attempt_tag = if max_attempts > 1 {
-				format!(
-					"  {}",
-					format!("(attempt {attempt}/{max_attempts})").bright_black()
-				)
+				format!("  {}", format!("(attempt {attempt}/{max_attempts})").bright_black())
 			} else {
 				String::new()
 			};
@@ -311,9 +296,7 @@ impl Executor {
 					let id = self
 						.session_ids
 						.entry(s.name.clone())
-						.or_insert_with(|| {
-							format!("wf-{}-{}-{}", sanitize(&self.wf_name), s.name, short_uuid())
-						})
+						.or_insert_with(|| format!("wf-{}-{}-{}", sanitize(&self.wf_name), s.name, short_uuid()))
 						.clone();
 					// If this session has been used before, compress it with /done first.
 					if *self.used_continue.get(&s.name).unwrap_or(&false) {
@@ -330,17 +313,16 @@ impl Executor {
 			//     the most recent prior step's output as a nudge to drive the next
 			//     turn. This matches the GAN-style refine pattern where the only
 			//     thing that needs to change between rounds is the reviewer's verdict.
-			let prompt_for_run = if s.session == SessionMode::Continue
-				&& *self.used_continue.get(&s.name).unwrap_or(&false)
-			{
-				self.last_step
-					.as_ref()
-					.and_then(|n| self.outputs.get(n))
-					.cloned()
-					.unwrap_or_else(|| templated_prompt.clone())
-			} else {
-				templated_prompt.clone()
-			};
+			let prompt_for_run =
+				if s.session == SessionMode::Continue && *self.used_continue.get(&s.name).unwrap_or(&false) {
+					self.last_step
+						.as_ref()
+						.and_then(|n| self.outputs.get(n))
+						.cloned()
+						.unwrap_or_else(|| templated_prompt.clone())
+				} else {
+					templated_prompt.clone()
+				};
 
 			let event_prefix = format!("{} ", "│".bright_black());
 			let spinner = if self.interactive {
@@ -369,11 +351,7 @@ impl Executor {
 				skills: s.skills.clone(),
 				capabilities: s.capabilities.clone(),
 				timeout_secs: s.timeout,
-				event_prefix: if has_spinner {
-					None
-				} else {
-					Some(event_prefix)
-				},
+				event_prefix: if has_spinner { None } else { Some(event_prefix) },
 				spinner,
 				wf_start: self.started,
 				prior_cost: self.totals.cost,
@@ -422,18 +400,12 @@ impl Executor {
 						elapsed.as_secs()
 					));
 				}
-				RunOutcome::SpawnError {
-					source: e,
-					stderr_tail,
-				} => {
+				RunOutcome::SpawnError { source: e, stderr_tail } => {
 					last_err = Some(with_stderr(format!("spawn error: {e}"), &stderr_tail));
 				}
 			}
 
-			box_close_err(
-				&s.name.bright_white(),
-				last_err.as_deref().unwrap_or("failed"),
-			);
+			box_close_err(&s.name.bright_white(), last_err.as_deref().unwrap_or("failed"));
 			eprintln!();
 		}
 
@@ -463,10 +435,7 @@ impl Executor {
 		if let Some(pattern) = &p.match_pattern {
 			// Pre-flight guarantees exactly one sub-step and a non-first step.
 			let template = &p.run[0];
-			let source_name = p
-				.source
-				.as_ref()
-				.expect("validation requires dynamic fan-out source");
+			let source_name = p.source.as_ref().expect("validation requires dynamic fan-out source");
 			let source = self.outputs.get(source_name).ok_or_else(|| {
 				anyhow::anyhow!(
 					"dynamic parallel '{}' source output '{}' is unavailable on the current route",
@@ -474,9 +443,8 @@ impl Executor {
 					source_name
 				)
 			})?;
-			let re = Regex::new(pattern).map_err(|e| {
-				anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {e}", p.name)
-			})?;
+			let re = Regex::new(pattern)
+				.map_err(|e| anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {e}", p.name))?;
 			let items = extract_items(&re, source);
 			if items.is_empty() {
 				bail!(
@@ -492,9 +460,7 @@ impl Executor {
 				// resolves to the one task. The branch's output is collected and
 				// accumulated under the sub-step's name once all branches finish.
 				self.outputs.insert(p.name.clone(), item.clone());
-				let prompt = self
-					.substitute(&template.prompt, input, &template.role)
-					.await?;
+				let prompt = self.substitute(&template.prompt, input, &template.role).await?;
 				// One replica per match. `count` on the dynamic template is
 				// ignored — the number of replicas is exactly the number of
 				// matches, which is the user's knob for fan-out. Labels stay
@@ -566,16 +532,11 @@ impl Executor {
 							}
 						}
 						RunOutcome::Empty(_) => {
-							last_err =
-								Some(format!("empty output (attempt {attempt}/{max_attempts})"));
+							last_err = Some(format!("empty output (attempt {attempt}/{max_attempts})"));
 						}
-						RunOutcome::NonZero {
-							code, stderr_tail, ..
-						} => {
+						RunOutcome::NonZero { code, stderr_tail, .. } => {
 							last_err = Some(with_stderr(
-								format!(
-									"non-zero exit {code:?} (attempt {attempt}/{max_attempts})"
-								),
+								format!("non-zero exit {code:?} (attempt {attempt}/{max_attempts})"),
 								&stderr_tail,
 							));
 						}
@@ -585,10 +546,7 @@ impl Executor {
 								e.as_secs()
 							));
 						}
-						RunOutcome::SpawnError {
-							source: e,
-							stderr_tail,
-						} => {
+						RunOutcome::SpawnError { source: e, stderr_tail } => {
 							last_err = Some(with_stderr(format!("spawn error: {e}"), &stderr_tail));
 						}
 					}
@@ -618,12 +576,7 @@ impl Executor {
 		// replicas aggregate together and the block aggregates bases in order.
 		let mut by_base: Vec<(String, Vec<(String, String)>)> =
 			p.run.iter().map(|s| (s.name.clone(), Vec::new())).collect();
-		let idx_of: HashMap<&str, usize> = p
-			.run
-			.iter()
-			.enumerate()
-			.map(|(i, s)| (s.name.as_str(), i))
-			.collect();
+		let idx_of: HashMap<&str, usize> = p.run.iter().enumerate().map(|(i, s)| (s.name.as_str(), i)).collect();
 
 		let mut succeeded = 0usize;
 		for res in futures::future::join_all(handles).await {
@@ -641,9 +594,7 @@ impl Executor {
 					));
 					self.totals.add(&stats);
 					succeeded += 1;
-					by_base[idx_of[res.base.as_str()]]
-						.1
-						.push((res.label, stats.output));
+					by_base[idx_of[res.base.as_str()]].1.push((res.label, stats.output));
 				}
 				Err(msg) => {
 					box_line(&format!(
@@ -673,10 +624,7 @@ impl Executor {
 				threshold,
 			);
 		}
-		box_close_ok(
-			&p.name.bright_white(),
-			&format!("{succeeded}/{total} succeeded"),
-		);
+		box_close_ok(&p.name.bright_white(), &format!("{succeeded}/{total} succeeded"));
 
 		// Wire outputs. Each sub-step's OUTPUT is stored under its OWN name:
 		// replicas (`count`, or dynamic `match` items) accumulate with
@@ -732,10 +680,7 @@ impl Executor {
 		let max = l.max_iterations;
 		for i in 1..=max {
 			for sub in &l.run {
-				let suffix = format!(
-					"  {tag}",
-					tag = format!("[{i}/{max}] {}", l.name).bright_magenta(),
-				);
+				let suffix = format!("  {tag}", tag = format!("[{i}/{max}] {}", l.name).bright_magenta(),);
 				let stats = self.exec_sequential(sub, input, &suffix).await?;
 				self.outputs.insert(sub.name.clone(), stats.output);
 				self.last_step = Some(sub.name.clone());
@@ -764,10 +709,7 @@ impl Executor {
 				)
 			})?;
 			if condition_matches(exit_when, value) {
-				info_line(&format!(
-					"loop '{name}' exit at iteration {i}",
-					name = l.name
-				));
+				info_line(&format!("loop '{name}' exit at iteration {i}", name = l.name));
 				eprintln!();
 				let canonical = self
 					.last_step
@@ -807,10 +749,7 @@ impl Executor {
 			Some(n) => n.clone(),
 			None => match &self.last_step {
 				Some(n) => n.clone(),
-				None => bail!(
-					"conditional step '{}': no prior step output to test",
-					c.name
-				),
+				None => bail!("conditional step '{}': no prior step output to test", c.name),
 			},
 		};
 		// Skipped-branch steps resolve to empty entries (inserted below), so a
@@ -829,11 +768,7 @@ impl Executor {
 		info_line(&format!(
 			"{name}: condition {res} → [{branch}]",
 			name = c.name.bright_white(),
-			res = if matched {
-				"true".green()
-			} else {
-				"false".yellow()
-			},
+			res = if matched { "true".green() } else { "false".yellow() },
 			branch = branch_names.join(", "),
 		));
 
@@ -901,11 +836,7 @@ fn resolve_workdir(step_name: &str, workdir: Option<&str>) -> Result<Option<Path
 		std::env::current_dir()?.join(p)
 	};
 	if !abs.is_dir() {
-		bail!(
-			"step '{}': workdir '{}' is not a directory",
-			step_name,
-			abs.display()
-		);
+		bail!("step '{}': workdir '{}' is not a directory", step_name, abs.display());
 	}
 	Ok(Some(abs))
 }
@@ -989,15 +920,9 @@ fn continue_delta(base: &mut StepStats, current: &StepStats) -> StepStats {
 		cost: (current.cost - base.cost).max(0.0),
 		input_tokens: current.input_tokens.saturating_sub(base.input_tokens),
 		output_tokens: current.output_tokens.saturating_sub(base.output_tokens),
-		cache_read_tokens: current
-			.cache_read_tokens
-			.saturating_sub(base.cache_read_tokens),
-		cache_write_tokens: current
-			.cache_write_tokens
-			.saturating_sub(base.cache_write_tokens),
-		reasoning_tokens: current
-			.reasoning_tokens
-			.saturating_sub(base.reasoning_tokens),
+		cache_read_tokens: current.cache_read_tokens.saturating_sub(base.cache_read_tokens),
+		cache_write_tokens: current.cache_write_tokens.saturating_sub(base.cache_write_tokens),
+		reasoning_tokens: current.reasoning_tokens.saturating_sub(base.reasoning_tokens),
 		tool_count: current.tool_count,
 		tool_failed: current.tool_failed,
 	};
@@ -1021,11 +946,7 @@ fn condition_matches(cond: &Condition, value: &str) -> bool {
 	false
 }
 
-fn select_graph_edge(
-	edges: &[Edge],
-	outputs: &HashMap<String, String>,
-	current: &str,
-) -> Result<String> {
+fn select_graph_edge(edges: &[Edge], outputs: &HashMap<String, String>, current: &str) -> Result<String> {
 	for edge in edges.iter().filter(|edge| edge.from == current) {
 		let selected = match &edge.when {
 			None => true,
@@ -1072,13 +993,7 @@ fn short_uuid() -> String {
 
 fn sanitize(s: &str) -> String {
 	s.chars()
-		.map(|c| {
-			if c.is_ascii_alphanumeric() || c == '-' {
-				c
-			} else {
-				'-'
-			}
-		})
+		.map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
 		.collect()
 }
 
@@ -1090,24 +1005,12 @@ fn box_open(title: &str) {
 
 /// Close a step block with `╰ ✓ name  stats` on success.
 fn box_close_ok(name_colored: &str, stats: &str) {
-	eprintln!(
-		"{} {} {}  {}",
-		"╰".bright_black(),
-		"✓".green(),
-		name_colored,
-		stats,
-	);
+	eprintln!("{} {} {}  {}", "╰".bright_black(), "✓".green(), name_colored, stats,);
 }
 
 /// Close a step block with `╰ ✗ name  msg` on failure.
 fn box_close_err(name_colored: &str, msg: &str) {
-	eprintln!(
-		"{} {} {}  {}",
-		"╰".bright_black(),
-		"✗".red(),
-		name_colored,
-		msg.red(),
-	);
+	eprintln!("{} {} {}  {}", "╰".bright_black(), "✗".red(), name_colored, msg.red(),);
 }
 
 /// Print one line inside an open step block — `│ text`. Used for
@@ -1207,12 +1110,7 @@ fn workflow_output_names(wf: &WorkflowDef) -> HashSet<String> {
 /// Each step's last assistant message is already printed (with markdown
 /// rendering when enabled) as it completes, so the workflow produces no
 /// stdout — callers consume per-step output from stderr instead.
-pub async fn execute(
-	wf: &WorkflowDef,
-	input: &str,
-	config: &Config,
-	format: Option<&str>,
-) -> Result<()> {
+pub async fn execute(wf: &WorkflowDef, input: &str, config: &Config, format: Option<&str>) -> Result<()> {
 	let jsonl = matches!(format, Some("jsonl"));
 	let mut ex = Executor::new(
 		wf.name.clone(),
@@ -1245,10 +1143,7 @@ pub async fn execute(
 	eprintln!();
 
 	if wf.is_graph() {
-		let mut current = wf
-			.entry
-			.clone()
-			.expect("validated graph workflows set entry");
+		let mut current = wf.entry.clone().expect("validated graph workflows set entry");
 		let max = wf.graph_max_transitions();
 		let mut transitions = 0u32;
 		loop {

@@ -67,9 +67,7 @@ pub fn flush_due_to_inbox() {
 			}
 		}
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::Schedule {
-				id: entry.id.clone(),
-			},
+			source: crate::session::inbox::InboxSource::Schedule { id: entry.id.clone() },
 			content: entry.message,
 		});
 	}
@@ -121,9 +119,7 @@ pub fn flush_idle_to_inbox() {
 			store.lock().unwrap().add(next);
 		}
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::Schedule {
-				id: entry.id.clone(),
-			},
+			source: crate::session::inbox::InboxSource::Schedule { id: entry.id.clone() },
 			content: entry.message,
 		});
 	}
@@ -164,10 +160,7 @@ pub fn restore_schedule_for_session(session_name: &str) {
 	let log_file = match crate::session::logger::get_session_log_path(session_name) {
 		Ok(p) => p,
 		Err(e) => {
-			crate::log_debug!(
-				"restore_schedule_for_session: cannot resolve log file: {}",
-				e
-			);
+			crate::log_debug!("restore_schedule_for_session: cannot resolve log file: {}", e);
 			return;
 		}
 	};
@@ -220,11 +213,7 @@ pub fn restore_schedule_for_session(session_name: &str) {
 	let session_id = session_name.to_string();
 	let storage = crate::session::context::get_schedule_storage(&session_id);
 	storage.lock().unwrap().seed_entries(entries);
-	crate::log_debug!(
-		"Restored {} scheduled entries for session '{}'",
-		count,
-		session_name
-	);
+	crate::log_debug!("Restored {} scheduled entries for session '{}'", count, session_name);
 }
 
 /// Returns true if there are any pending scheduled entries.
@@ -373,15 +362,11 @@ pub async fn execute_schedule_tool(call: &McpToolCall) -> Result<McpToolResult> 
 
 /// Format interval_secs as a human-readable string, e.g. "1h 30m", "10m", "45s".
 fn format_interval(secs: i64) -> String {
-	let parts: Vec<String> = [
-		(secs / 3600, 'h'),
-		((secs % 3600) / 60, 'm'),
-		(secs % 60, 's'),
-	]
-	.into_iter()
-	.filter(|(v, _)| *v > 0)
-	.map(|(v, unit)| format!("{v}{unit}"))
-	.collect();
+	let parts: Vec<String> = [(secs / 3600, 'h'), ((secs % 3600) / 60, 'm'), (secs % 60, 's')]
+		.into_iter()
+		.filter(|(v, _)| *v > 0)
+		.map(|(v, unit)| format!("{v}{unit}"))
+		.collect();
 	if parts.is_empty() {
 		return format!("{}s", secs);
 	}
@@ -729,11 +714,7 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		_ => None,
 	};
 
-	if new_when.is_none()
-		&& new_message.is_none()
-		&& new_description.is_none()
-		&& new_interval.is_none()
-	{
+	if new_when.is_none() && new_message.is_none() && new_description.is_none() && new_interval.is_none() {
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -741,11 +722,10 @@ fn handle_edit(call: &McpToolCall) -> Result<McpToolResult> {
 		));
 	}
 	let store = get_store();
-	let updated =
-		store
-			.lock()
-			.unwrap()
-			.edit(&id, new_description, new_message, new_when, new_interval);
+	let updated = store
+		.lock()
+		.unwrap()
+		.edit(&id, new_description, new_message, new_when, new_interval);
 
 	if updated {
 		persist_schedule_snapshot();

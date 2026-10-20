@@ -38,11 +38,7 @@ fn test_logging_mode_tracking() {
 		mode.is_none()
 			|| matches!(
 				mode,
-				Some(
-					LoggingMode::Cli
-						| LoggingMode::Acp | LoggingMode::WebSocket
-						| LoggingMode::Silent
-				)
+				Some(LoggingMode::Cli | LoggingMode::Acp | LoggingMode::WebSocket | LoggingMode::Silent)
 			)
 	);
 }

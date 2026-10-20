@@ -7,9 +7,7 @@ use super::knowledge::{
 	select_findings_with_vectors, select_newest_with_budget, strip_regrown_sections,
 };
 use super::range::{find_compression_range, find_compression_range_preserving_turn};
-use super::schema::{
-	is_summary_substantive, render_summary, CompressionSummary, DeferReason, KeyEntities,
-};
+use super::schema::{is_summary_substantive, render_summary, CompressionSummary, DeferReason, KeyEntities};
 use super::{preserves_active_skills, CompressionTrigger};
 use crate::session::Message;
 use serde_json::json;
@@ -66,15 +64,13 @@ fn fresh_user_turn_preserves_exact_previous_assistant_bridge() {
 		latest.clone(),
 	];
 
-	let (start_idx, end_idx) =
-		find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	let (start_idx, end_idx) = find_compression_range_preserving_turn(&messages, false, true).unwrap();
 	assert_eq!(start_idx, 1);
 	assert_eq!(end_idx, 6);
 	assert_eq!(messages[end_idx + 1].content, previous.content);
 	assert_eq!(messages[end_idx + 2].content, latest.content);
 
-	let (_, unprotected_end) =
-		find_compression_range_preserving_turn(&messages, false, false).unwrap();
+	let (_, unprotected_end) = find_compression_range_preserving_turn(&messages, false, false).unwrap();
 	assert_eq!(unprotected_end, messages.len() - 1);
 }
 
@@ -104,18 +100,10 @@ fn force_redrains_a_prior_summary_that_would_otherwise_wedge_the_ceiling() {
 
 	// Force must be able to re-fold the summary: the drain covers it, the
 	// continuation, and the fresh request (carried forward by the new wrapper).
-	let (start_idx, end_idx) =
-		find_compression_range_preserving_turn(&messages, true, true).unwrap();
+	let (start_idx, end_idx) = find_compression_range_preserving_turn(&messages, true, true).unwrap();
 	assert_eq!(start_idx, 0, "anchor is the system preamble");
-	assert_eq!(
-		end_idx,
-		messages.len() - 1,
-		"the summary is drainable again"
-	);
-	assert!(
-		start_idx < end_idx,
-		"force yields a non-empty range, not 0..=0"
-	);
+	assert_eq!(end_idx, messages.len() - 1, "the summary is drainable again");
+	assert!(start_idx < end_idx, "force yields a non-empty range, not 0..=0");
 }
 
 #[test]
@@ -146,8 +134,7 @@ fn force_drains_a_request_left_unanswered_before_the_fresh_one() {
 		(0, 0)
 	);
 
-	let (start_idx, end_idx) =
-		find_compression_range_preserving_turn(&messages, true, true).unwrap();
+	let (start_idx, end_idx) = find_compression_range_preserving_turn(&messages, true, true).unwrap();
 	assert_eq!(start_idx, 1, "anchor stays before the prior summary");
 	assert_eq!(end_idx, 5, "the drain runs through the unanswered request");
 }
@@ -173,14 +160,10 @@ fn mid_task_fold_keeps_the_live_exchange_verbatim() {
 		live_result.clone(),
 	];
 
-	let (start_idx, end_idx) =
-		find_compression_range_preserving_turn(&messages, false, true).unwrap();
+	let (start_idx, end_idx) = find_compression_range_preserving_turn(&messages, false, true).unwrap();
 	// The drain stops before the live assistant step, so it and its tool
 	// traffic survive byte-exact.
-	assert!(
-		end_idx < 7,
-		"live step must not be folded (end_idx={end_idx})"
-	);
+	assert!(end_idx < 7, "live step must not be folded (end_idx={end_idx})");
 	assert_eq!(messages[end_idx + 1].content, live_step.content);
 	assert_eq!(messages[end_idx + 2].content, live_result.content);
 	assert!(start_idx < end_idx);
@@ -247,9 +230,7 @@ fn synthetic_user_messages_excluded_from_tasks() {
 		"<pay-attention>\nYou are deep in this session — re-anchor on your goal:\nGoal (fixed): <intent>x</intent>\n</pay-attention>"
 	));
 	// Recalled lessons.
-	assert!(is_synthetic_user_message(
-		"<recall>\n<lessons>...</lessons>\n</recall>"
-	));
+	assert!(is_synthetic_user_message("<recall>\n<lessons>...</lessons>\n</recall>"));
 	// Custom instructions file content.
 	assert!(is_synthetic_user_message(
 		"<instructions>\nFollow project conventions.\n</instructions>"
@@ -267,12 +248,8 @@ fn synthetic_user_messages_excluded_from_tasks() {
 		"<system-note>\nCheck the current status now.\n</system-note>"
 	));
 	// Genuine user requests — kept.
-	assert!(!is_synthetic_user_message(
-		"fix the dedup steering bug in response.rs"
-	));
-	assert!(!is_synthetic_user_message(
-		"why does compression drop the summary?"
-	));
+	assert!(!is_synthetic_user_message("fix the dedup steering bug in response.rs"));
+	assert!(!is_synthetic_user_message("why does compression drop the summary?"));
 }
 
 #[test]
@@ -333,18 +310,12 @@ fn preserves_active_skill_in_drain_range() {
 	let active = vec!["programming-rust".to_string()];
 	let preserved = collect_preserved_skills(&messages, start_idx + 1, end_idx, &active);
 	assert_eq!(preserved.len(), 1);
-	assert!(preserved[0]
-		.content
-		.contains("<skill name=\"programming-rust\""));
+	assert!(preserved[0].content.contains("<skill name=\"programming-rust\""));
 
 	// Use the REAL predicate (not a mirror) so this test breaks if the filter drifts.
 	let user_tasks: Vec<String> = messages[start_idx + 1..=end_idx]
 		.iter()
-		.filter(|m| {
-			m.role == "user"
-				&& !m.content.trim().is_empty()
-				&& !super::is_synthetic_user_message(&m.content)
-		})
+		.filter(|m| m.role == "user" && !m.content.trim().is_empty() && !super::is_synthetic_user_message(&m.content))
 		.map(|m| m.content.clone())
 		.collect();
 
@@ -387,10 +358,7 @@ fn preserves_active_skill_in_drain_range() {
 	// Expected post-compression layout:
 	// [system, welcome, instructions(anchor), skill, SUMMARY, user_req3]
 	assert_eq!(messages.len(), 6);
-	assert_eq!(
-		messages[2].content,
-		"<instructions>\nproject rules\n</instructions>"
-	);
+	assert_eq!(messages[2].content, "<instructions>\nproject rules\n</instructions>");
 	assert!(
 		crate::mcp::runtime::skill::is_skill_message(&messages[3].content),
 		"skill comes right after anchor"
@@ -419,11 +387,9 @@ fn drops_forgotten_skill_from_preservation() {
 fn dedupes_duplicate_skill_keeping_latest() {
 	// Same skill injected twice in range — keep the second (latest) copy.
 	let mut first = skill_msg("programming-rust");
-	first.content =
-		"<skill name=\"programming-rust\" description=\"v1\">\nold body\n</skill>".to_string();
+	first.content = "<skill name=\"programming-rust\" description=\"v1\">\nold body\n</skill>".to_string();
 	let mut second = skill_msg("programming-rust");
-	second.content =
-		"<skill name=\"programming-rust\" description=\"v2\">\nnew body\n</skill>".to_string();
+	second.content = "<skill name=\"programming-rust\" description=\"v2\">\nnew body\n</skill>".to_string();
 
 	let messages = vec![
 		msg("system"),
@@ -461,8 +427,7 @@ fn skips_a_drained_skill_whose_exact_copy_survives_the_fold() {
 	assert!(collect_preserved_skills(&messages, 2, 6, &active).is_empty());
 
 	// A changed body is not a copy: the drained version is still carried.
-	messages[4].content =
-		"<skill name=\"content-voice\" description=\"v2\">\nnew body\n</skill>".to_string();
+	messages[4].content = "<skill name=\"content-voice\" description=\"v2\">\nnew body\n</skill>".to_string();
 	let preserved = collect_preserved_skills(&messages, 2, 6, &active);
 	assert_eq!(preserved.len(), 1);
 	assert!(preserved[0].content.contains("new body"));
@@ -519,10 +484,7 @@ fn extends_range_to_include_tool_results() {
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert_eq!(end_idx, 9, "compress-all: end_idx = last message");
 }
 
@@ -552,10 +514,7 @@ fn extends_when_ending_on_assistant_with_tools() {
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert_eq!(end_idx, 9, "compress-all: end_idx = last message");
 }
 
@@ -597,10 +556,7 @@ fn handles_multiple_assistants_with_tools() {
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	// Compress-all: end_idx = last message, no preserved zone
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert_eq!(end_idx, 10, "compress-all: end_idx = last message");
 }
 
@@ -635,10 +591,7 @@ fn start_boundary_must_not_orphan_initial_tool_sequence() {
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
 	assert_eq!(start_idx, 2, "anchor = message before the first user turn");
-	assert!(
-		end_idx >= 4,
-		"compression range must include messages after anchor"
-	);
+	assert!(end_idx >= 4, "compression range must include messages after anchor");
 }
 
 #[test]
@@ -720,10 +673,7 @@ fn anchor_when_first_user_precedes_tool_calls_assistant() {
 
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
 
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert!(end_idx > start_idx, "must have valid range");
 	assert!(end_idx >= 3, "drain must include tool result at idx 3");
 }
@@ -1061,10 +1011,7 @@ fn bug_proof_insufficient_compression_triggers_loop() {
 	let compressible_tokens = 3_000u64;
 	let compression_ratio = 2.0;
 
-	assert_eq!(
-		full_context_tokens,
-		non_compressible_tokens + compressible_tokens
-	);
+	assert_eq!(full_context_tokens, non_compressible_tokens + compressible_tokens);
 
 	// After compression
 	let compressed_tokens = (compressible_tokens as f64 / compression_ratio) as u64;
@@ -1172,8 +1119,8 @@ fn test_cooldown_default_allows_first_compression() {
 	let current_tokens: usize = 60_000;
 
 	// When context_tokens_after_last_compression is 0, cooldown is inactive
-	let cooldown_active = tokens_after_compression > 0
-		&& current_tokens < (tokens_after_compression as f64 * 1.1) as usize;
+	let cooldown_active =
+		tokens_after_compression > 0 && current_tokens < (tokens_after_compression as f64 * 1.1) as usize;
 	assert!(
 		!cooldown_active,
 		"First compression should be allowed when watermark is 0"
@@ -1246,18 +1193,12 @@ fn test_estimate_symmetry_is_api_calls_so_far() {
 
 	// symmetry < ceiling → symmetry wins (session likely winding down)
 	let estimate = physical_ceiling.min(api_calls);
-	assert_eq!(
-		estimate, api_calls,
-		"symmetry wins when smaller than ceiling"
-	);
+	assert_eq!(estimate, api_calls, "symmetry wins when smaller than ceiling");
 
 	// ceiling < symmetry → ceiling wins (context budget is the constraint)
 	let api_calls_large = 50.0_f64;
 	let estimate2 = physical_ceiling.min(api_calls_large);
-	assert_eq!(
-		estimate2, physical_ceiling,
-		"ceiling wins when smaller than symmetry"
-	);
+	assert_eq!(estimate2, physical_ceiling, "ceiling wins when smaller than symmetry");
 }
 
 #[test]
@@ -1291,10 +1232,7 @@ fn test_estimate_growth_rate_from_measured_output() {
 	];
 	for (api_calls, output_tokens, expected) in cases {
 		let rate = (output_tokens / api_calls.max(1.0)).max(1.0);
-		assert_eq!(
-			rate, expected,
-			"api_calls={api_calls}, output={output_tokens}"
-		);
+		assert_eq!(rate, expected, "api_calls={api_calls}, output={output_tokens}");
 	}
 }
 
@@ -1396,10 +1334,7 @@ fn test_estimate_incremental_growth_rate_after_compression() {
 
 	// Lifetime (stale — what the old code used)
 	let lifetime_rate = (total_output_tokens as f64 / total_api_calls as f64).max(1.0); // 8_400
-	assert_eq!(
-		lifetime_rate, 8_400.0,
-		"lifetime rate is inflated by heavy early phase"
-	);
+	assert_eq!(lifetime_rate, 8_400.0, "lifetime rate is inflated by heavy early phase");
 
 	// Incremental gives a higher physical ceiling → less aggressive re-compression
 	let current_tokens = 100_000.0_f64;
@@ -1429,18 +1364,14 @@ fn test_estimate_growth_rate_falls_back_to_lifetime_before_first_compression() {
 
 	let growth_rate = if compressions > 0 {
 		let calls_since = (total_api_calls - api_calls_at_last_compression).max(1) as f64;
-		let output_since =
-			total_output_tokens.saturating_sub(output_tokens_at_last_compression) as f64;
+		let output_since = total_output_tokens.saturating_sub(output_tokens_at_last_compression) as f64;
 		(output_since / calls_since).max(1.0)
 	} else {
 		(total_output_tokens as f64 / total_api_calls.max(1) as f64).max(1.0)
 	};
 
 	// With no prior compression, lifetime = incremental (same data window)
-	assert_eq!(
-		growth_rate, 5_000.0,
-		"lifetime fallback: 50k / 10 calls = 5k/call"
-	);
+	assert_eq!(growth_rate, 5_000.0, "lifetime fallback: 50k / 10 calls = 5k/call");
 }
 
 #[test]
@@ -1455,10 +1386,7 @@ fn test_estimate_incremental_rate_single_call_since_compression() {
 	let calls_since = (total_api_calls - api_calls_at_last_compression).max(1) as f64; // 1
 	let output_since = total_output_tokens.saturating_sub(output_tokens_at_last_compression) as f64; // 5_000
 	let rate = (output_since / calls_since).max(1.0);
-	assert_eq!(
-		rate, 5_000.0,
-		"single post-compression call measured correctly"
-	);
+	assert_eq!(rate, 5_000.0, "single post-compression call measured correctly");
 }
 
 #[test]
@@ -1494,10 +1422,7 @@ fn anchor_stable_across_repeated_compressions() {
 
 	// First compression
 	let (start1, end1) = find_compression_range(&messages, false).unwrap();
-	assert_eq!(
-		start1, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start1, 0, "anchor = preamble end; first user turn is drained");
 	assert!(end1 >= 4);
 
 	// Simulate post-compression state: anchor at 1, summary at 2, preserved tail
@@ -1549,9 +1474,7 @@ fn old_compressed_summary_is_recompressed_on_next_cycle() {
 	// messages_to_compress includes the old summary
 	let to_compress = &messages[start_idx + 1..=end_idx];
 	assert!(
-		to_compress
-			.iter()
-			.any(|m| m.content.contains("OLD_SUMMARY_V1")),
+		to_compress.iter().any(|m| m.content.contains("OLD_SUMMARY_V1")),
 		"Old summary must be included in messages sent to AI for re-compression"
 	);
 }
@@ -1884,14 +1807,9 @@ fn test_mmr_keeps_new_correction_over_stale_similar_finding() {
 	// A sentence embedder commonly places a claim and its negation close
 	// together. Similarity must penalize redundant coverage, never declare the
 	// newer correction equivalent and discard it.
-	let vectors = vec![
-		vec![1.0, 0.0, 0.0],
-		vec![1.0, 0.0, 0.0],
-		vec![0.0, 1.0, 0.0],
-	];
+	let vectors = vec![vec![1.0, 0.0, 0.0], vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
 	let budget = analysis_findings_tokens(&[findings[1].clone()]);
-	let selected =
-		select_findings_with_vectors(&findings, &vectors, Some(&[1.0, 0.0, 0.0]), budget);
+	let selected = select_findings_with_vectors(&findings, &vectors, Some(&[1.0, 0.0, 0.0]), budget);
 
 	assert!(selected.contains(&findings[1]));
 	assert!(!selected.contains(&findings[0]));
@@ -1924,8 +1842,7 @@ fn test_latest_summary_restores_findings_but_never_resurrects_older_state() {
 
 	let mut empty_latest = msg("assistant");
 	empty_latest.content =
-		"<conversation_summary id=\"empty\"><progress>done</progress></conversation_summary>"
-			.to_string();
+		"<conversation_summary id=\"empty\"><progress>done</progress></conversation_summary>".to_string();
 	assert!(latest_analysis_findings(&[old, empty_latest]).is_empty());
 }
 
@@ -1961,16 +1878,14 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 	let (s1, e1) = find_compression_range(&messages, false).unwrap();
 	assert_eq!(s1, 0, "Cycle 1: start must be anchor (0)");
 	assert!(e1 > s1, "Cycle 1: end must be after anchor");
-	assert!(
-		e1 < messages.len(),
-		"Cycle 1: end must leave RECENT messages"
-	);
+	assert!(e1 < messages.len(), "Cycle 1: end must leave RECENT messages");
 
 	// Simulate applying compression: drain s1+1..=e1, insert summary at s1+1
 	let drained: Vec<Message> = messages.drain(s1 + 1..=e1).collect();
 	assert!(!drained.is_empty(), "Cycle 1: must drain something");
 	let mut summary1 = msg("assistant");
-	summary1.content = "<conversation_summary id=\"c1\"><progress>Cycle 1 summary.</progress></conversation_summary>".to_string();
+	summary1.content =
+		"<conversation_summary id=\"c1\"><progress>Cycle 1 summary.</progress></conversation_summary>".to_string();
 	messages.insert(s1 + 1, summary1);
 
 	// ── Cycle 2: grow then compress again ────────────────────────────────
@@ -1985,7 +1900,8 @@ fn test_multiple_compression_cycles_anchor_never_moves() {
 	let drained2: Vec<Message> = messages.drain(s2 + 1..=e2).collect();
 	assert!(!drained2.is_empty(), "Cycle 2: must drain something");
 	let mut summary2 = msg("assistant");
-	summary2.content = "<conversation_summary id=\"c2\"><progress>Cycle 2 summary.</progress></conversation_summary>".to_string();
+	summary2.content =
+		"<conversation_summary id=\"c2\"><progress>Cycle 2 summary.</progress></conversation_summary>".to_string();
 	messages.insert(s2 + 1, summary2);
 
 	// ── Cycle 3: grow then compress again ────────────────────────────────
@@ -2015,10 +1931,7 @@ fn compress_all_includes_last_message() {
 	messages.push(msg("user")); // 22
 
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert_eq!(end_idx, 22, "compress-all: end_idx must be last message");
 }
 
@@ -2055,10 +1968,7 @@ fn test_recent_window_capped_at_8_for_large_session() {
 	// This mirrors the formula: (total / 4).max(4).min(8)
 	let total_msgs: usize = 100;
 	let recent_count = (total_msgs / 4).clamp(4, 8);
-	assert_eq!(
-		recent_count, 8,
-		"RECENT window must be capped at 8 for large sessions"
-	);
+	assert_eq!(recent_count, 8, "RECENT window must be capped at 8 for large sessions");
 
 	// For a 12-message session, RECENT count is 3 → clamped to 4
 	let small = 12usize;
@@ -2087,10 +1997,7 @@ fn compress_all_with_tool_cycles() {
 	];
 
 	let (start_idx, end_idx) = find_compression_range(&messages, false).unwrap();
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 	assert_eq!(end_idx, 8, "compress-all: end_idx = last message");
 
 	// Simulate compress-all + user extraction: drain, insert summary, re-inject users
@@ -2165,10 +2072,7 @@ fn tool_loop_only_one_user_message_still_compresses() {
 	);
 
 	// Tool-loop: single user message, no instructions → anchor = first user (idx 1).
-	assert_eq!(
-		start_idx, 0,
-		"anchor = preamble end; first user turn is drained"
-	);
+	assert_eq!(start_idx, 0, "anchor = preamble end; first user turn is drained");
 
 	// compress-all: end_idx = last message
 	assert_eq!(
@@ -2216,8 +2120,9 @@ fn test_triple_compression_only_one_summary_in_drain() {
 		// Apply compression
 		let _drained: Vec<Message> = messages.drain(s + 1..=e).collect();
 		let mut summary = msg("assistant");
-		summary.content =
-			format!("<conversation_summary id=\"c{cycle}\"><progress>Cycle {cycle} summary.</progress></conversation_summary>");
+		summary.content = format!(
+			"<conversation_summary id=\"c{cycle}\"><progress>Cycle {cycle} summary.</progress></conversation_summary>"
+		);
 		messages.insert(s + 1, summary);
 	}
 }
@@ -2331,8 +2236,7 @@ fn bug_proof_invalid_range_must_set_cooldown() {
 	}
 
 	// Now the cooldown check should block the next attempt
-	let min_tokens_for_recompression =
-		(context_tokens_after_last_compression as f64 * 1.1) as usize;
+	let min_tokens_for_recompression = (context_tokens_after_last_compression as f64 * 1.1) as usize;
 	assert!(
 			current_tokens < min_tokens_for_recompression,
 			"After setting cooldown to current_tokens={}, next check at same token count must be blocked (need {} for recompression)",
@@ -2481,9 +2385,7 @@ fn render_includes_original_request_when_set() {
 	s.original_request = "Build a session-based AI dev assistant.".to_string();
 	let rendered = render_summary(&s);
 	assert!(
-		rendered.contains(
-			"<original_request>Build a session-based AI dev assistant.</original_request>"
-		),
+		rendered.contains("<original_request>Build a session-based AI dev assistant.</original_request>"),
 		"original_request must be rendered verbatim: {}",
 		rendered
 	);
@@ -2620,10 +2522,9 @@ fn resolve_task_intent_falls_back_to_latest_real_user_in_messages() {
 fn depth_hot_session_compresses_deeper_than_cold() {
 	// Same context, same band — a session predicted to keep growing hard must
 	// free more room than one that is winding down.
-	let hot = compression_depth(100_000, 80_000, 90_000, 3_000.0, 50.0)
-		.expect("hot session must be compressible");
-	let cold = compression_depth(100_000, 80_000, 90_000, 500.0, MIN_RUNWAY_TURNS)
-		.expect("cold session must be compressible");
+	let hot = compression_depth(100_000, 80_000, 90_000, 3_000.0, 50.0).expect("hot session must be compressible");
+	let cold =
+		compression_depth(100_000, 80_000, 90_000, 500.0, MIN_RUNWAY_TURNS).expect("cold session must be compressible");
 	assert!(
 		hot > cold,
 		"hot ({hot:.2}x) must compress deeper than cold ({cold:.2}x)"
@@ -2640,8 +2541,7 @@ fn depth_hot_session_compresses_deeper_than_cold() {
 fn depth_extreme_pressure_clamps_at_deepest() {
 	// Predicted growth exceeds everything compression can free: clamp at the
 	// deepest achievable ratio instead of chasing an impossible target.
-	let ratio = compression_depth(100_000, 80_000, 90_000, 3_000.0, 60.0)
-		.expect("must still be compressible");
+	let ratio = compression_depth(100_000, 80_000, 90_000, 3_000.0, 60.0).expect("must still be compressible");
 	assert!(
 		(ratio - MAX_COMPRESSION_RATIO).abs() < 1e-9,
 		"expected deepest ratio, got {ratio:.2}x"
@@ -2688,10 +2588,7 @@ fn depth_nothing_compressible_is_infeasible() {
 fn continuation_msg(task: &str) -> Message {
 	Message {
 		role: "user".to_string(),
-		content: format!(
-			"<continuation>\nresume\n<task>\n{}\n</task>\n</continuation>",
-			task
-		),
+		content: format!("<continuation>\nresume\n<task>\n{}\n</task>\n</continuation>", task),
 		..Default::default()
 	}
 }
@@ -2699,10 +2596,7 @@ fn continuation_msg(task: &str) -> Message {
 fn summary_msg(body: &str) -> Message {
 	Message {
 		role: "assistant".to_string(),
-		content: format!(
-			"<conversation_summary id=\"c1\">\n{}</conversation_summary>",
-			body
-		),
+		content: format!("<conversation_summary id=\"c1\">\n{}</conversation_summary>", body),
 		name: Some(super::apply::COMPRESSION_MESSAGE_NAME.to_string()),
 		..Default::default()
 	}
@@ -2877,9 +2771,7 @@ async fn should_check_compression_ceiling_forces_deepest_ratio() {
 	config.max_session_tokens_threshold = 8;
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 	session.model = "notaprovider:no-such-model".to_string();
-	session
-		.add_user_message(&"word ".repeat(200))
-		.expect("user message");
+	session.add_user_message(&"word ".repeat(200)).expect("user message");
 	let (should, ratio) = super::should_check_compression(&mut session, &config).await;
 	assert!(should);
 	assert_eq!(ratio, MAX_COMPRESSION_RATIO);
@@ -2928,10 +2820,7 @@ async fn should_check_compression_trims_oversized_tool_results_before_paying_for
 	assert!(session.get_full_context_tokens(&config).await > config.compression.threshold);
 
 	let (should, _) = super::should_check_compression(&mut session, &config).await;
-	assert!(
-		!should,
-		"the free cut must satisfy the line without a paid fold"
-	);
+	assert!(!should, "the free cut must satisfy the line without a paid fold");
 	assert!(session.get_full_context_tokens(&config).await < config.compression.threshold);
 	assert!(session.session.messages[5]
 		.content
@@ -2977,9 +2866,7 @@ async fn ensure_context_within_ceiling_cuts_oversized_tool_results_instead_of_fa
 		crate::session::estimate_tokens(&cut.content) <= 500,
 		"the stored result must respect the same cap the ingest path applies"
 	);
-	assert!(cut
-		.content
-		.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
+	assert!(cut.content.contains(crate::utils::truncation::TRUNCATION_NOTICE_TAG));
 }
 
 /// The cap is the only thing that gets to shrink a stored result: with
@@ -3012,9 +2899,7 @@ async fn ensure_context_within_ceiling_rejects_oversized_context() {
 	config.max_session_tokens_threshold = 8;
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 	session.model = "notaprovider:no-such-model".to_string();
-	session
-		.add_user_message(&"word ".repeat(200))
-		.expect("user message");
+	session.add_user_message(&"word ".repeat(200)).expect("user message");
 	assert!(super::ensure_context_within_ceiling(&mut session, &config)
 		.await
 		.is_err());
@@ -3053,9 +2938,8 @@ async fn collect_fold_job_join_error_discards_and_sets_cooldown() {
 		fold_message("user", "task"),
 		fold_message("assistant", "work"),
 	]);
-	let handle: tokio::task::JoinHandle<
-		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
-	> = tokio::spawn(async { panic!("fold task crashed") });
+	let handle: tokio::task::JoinHandle<anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>> =
+		tokio::spawn(async { panic!("fold task crashed") });
 	let applied = super::collect_fold_job(
 		&mut session,
 		&config,
@@ -3082,9 +2966,8 @@ async fn collect_fold_job_cancelled_fold_sets_cooldown_without_applying() {
 		fold_message("user", "task"),
 		fold_message("assistant", "work"),
 	]);
-	let handle: tokio::task::JoinHandle<
-		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
-	> = tokio::spawn(async { Err(anyhow::Error::new(crate::session::cancellation::Cancelled)) });
+	let handle: tokio::task::JoinHandle<anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>> =
+		tokio::spawn(async { Err(anyhow::Error::new(crate::session::cancellation::Cancelled)) });
 	let applied = super::collect_fold_job(
 		&mut session,
 		&config,
@@ -3117,9 +3000,8 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 		progress: "done".to_string(),
 		..Default::default()
 	};
-	let handle: tokio::task::JoinHandle<
-		anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>,
-	> = tokio::spawn(async move { Ok((summary, None)) });
+	let handle: tokio::task::JoinHandle<anyhow::Result<(CompressionSummary, Option<crate::providers::TokenUsage>)>> =
+		tokio::spawn(async move { Ok((summary, None)) });
 	// Fingerprint 42 matches nothing: the mid-turn mutation guard discards.
 	let applied = super::collect_fold_job(
 		&mut session,
@@ -3142,12 +3024,7 @@ async fn collect_fold_job_discards_when_range_fingerprint_changed() {
 /// A governance-pinned background fold over `write the briefing`, parked the
 /// way production parks it: fold point at the transcript end, the request as
 /// its last user message, the recent-user bridge preserved.
-async fn parked_briefing_fold(
-	session_name: &str,
-) -> (
-	crate::session::chat::session::ChatSession,
-	super::FoldContext,
-) {
+async fn parked_briefing_fold(session_name: &str) -> (crate::session::chat::session::ChatSession, super::FoldContext) {
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "system prompt"),
 		fold_message("user", "write the briefing"),
@@ -3156,8 +3033,7 @@ async fn parked_briefing_fold(
 	]);
 	session.session.info.name = session_name.to_string();
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, true, false)
-			.expect("compressible range");
+		find_compression_range_preserving_turn(&session.session.messages, true, false).expect("compressible range");
 	let pact = super::attention::build(&session, start + 1, end, 1.0, false, false)
 		.await
 		.expect("governance-only pact context builds");
@@ -3210,10 +3086,9 @@ async fn collect_fold_job_applies_a_fold_that_outlived_its_turn() {
 		.add_user_message("please continue briefing")
 		.expect("user message");
 
-	let applied =
-		super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
-			.await
-			.expect("a fold that outlived its turn commits");
+	let applied = super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
+		.await
+		.expect("a fold that outlived its turn commits");
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	assert!(applied);
@@ -3241,10 +3116,9 @@ async fn collect_fold_job_discards_a_fold_whose_fold_point_changed() {
 	let (mut session, ctx) = parked_briefing_fold("fold-point-changed-unit").await;
 	session.session.messages[0].content.push_str(" rewritten");
 
-	let applied =
-		super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
-			.await
-			.expect("a stale background fold is not a compression failure");
+	let applied = super::collect_fold_job(&mut session, &config, briefing_fold_job(ctx), false, false)
+		.await
+		.expect("a stale background fold is not a compression failure");
 
 	assert!(!applied);
 	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
@@ -3283,10 +3157,7 @@ async fn finish_fold_veto_records_a_deferral_without_a_cooldown() {
 	.expect("finish veto");
 	assert!(!applied);
 	assert_eq!(session.session.info.consecutive_compressions, 1);
-	assert_eq!(
-		session.fold_cooldown_until_call, 0,
-		"a veto is not a failure"
-	);
+	assert_eq!(session.fold_cooldown_until_call, 0, "a veto is not a failure");
 	assert_eq!(session.session.messages.len(), 3);
 	assert_eq!(
 		session.fold_deferral,
@@ -3334,10 +3205,7 @@ async fn finish_fold_records_the_models_defer_reason_against_the_spawn_step() {
 		"the reason survives the round trip, paired with the step the call was prepared against"
 	);
 	assert_eq!(session.session.info.consecutive_compressions, 1);
-	assert_eq!(
-		session.fold_cooldown_until_call, 0,
-		"a veto is not a failure"
-	);
+	assert_eq!(session.fold_cooldown_until_call, 0, "a veto is not a failure");
 	assert_eq!(session.session.messages.len(), 3);
 }
 
@@ -3354,8 +3222,7 @@ async fn finish_fold_no_veto_overrides_a_refusal_and_records_nothing() {
 		fold_message("assistant", "found the race"),
 	]);
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, true, false)
-			.expect("compressible range");
+		find_compression_range_preserving_turn(&session.session.messages, true, false).expect("compressible range");
 	let summary = CompressionSummary {
 		should_compress: false,
 		defer_reason: DeferReason::MidDerivation,
@@ -3392,8 +3259,7 @@ async fn finish_fold_landing_spends_a_pending_deferral() {
 		step: Some(0),
 	});
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, true, false)
-			.expect("compressible range");
+		find_compression_range_preserving_turn(&session.session.messages, true, false).expect("compressible range");
 	let summary = CompressionSummary {
 		should_compress: true,
 		current_task: "stabilise the deploy pipeline".to_string(),
@@ -3429,8 +3295,7 @@ async fn finish_fold_forced_with_pact_applies_compacted_state() {
 	]);
 	session.session.info.name = "finish-fold-pact-unit".to_string();
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, true, false)
-			.expect("compressible range");
+		find_compression_range_preserving_turn(&session.session.messages, true, false).expect("compressible range");
 	let pact = super::attention::build(&session, start + 1, end, 2.0, true, false)
 		.await
 		.expect("pact context builds");
@@ -3489,8 +3354,7 @@ async fn finish_fold_governance_only_applies_with_populated_evidence() {
 	]);
 	session.session.info.name = "finish-fold-governance-unit".to_string();
 	let (start, end) =
-		find_compression_range_preserving_turn(&session.session.messages, true, false)
-			.expect("compressible range");
+		find_compression_range_preserving_turn(&session.session.messages, true, false).expect("compressible range");
 	let pact = super::attention::build(&session, start + 1, end, 1.0, false, false)
 		.await
 		.expect("governance-only pact context builds");
@@ -3528,8 +3392,7 @@ async fn finish_fold_governance_only_applies_with_populated_evidence() {
 		.iter()
 		.any(|m| m.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)));
 	if let Ok(sessions) = crate::directories::get_sessions_dir() {
-		let _ =
-			std::fs::remove_dir_all(sessions.join("archive").join("finish-fold-governance-unit"));
+		let _ = std::fs::remove_dir_all(sessions.join("archive").join("finish-fold-governance-unit"));
 	}
 }
 
@@ -3543,10 +3406,9 @@ async fn done_trigger_with_no_compressible_range_is_a_noop() {
 	]);
 	session.session.info.name = "done-noop-unit".to_string();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		super::check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done)
-			.await
-			.expect("done noop");
+	let compressed = super::check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done)
+		.await
+		.expect("done noop");
 	assert!(!compressed);
 	assert_eq!(session.session.messages.len(), 3);
 }
@@ -3563,55 +3425,28 @@ async fn regression_first_fold_triggers_after_crossing_threshold_without_a_water
 	config.compression.attention.governance.verify_hash = true;
 	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![
 		fold_message("system", "Preserve the user's constraints."),
-		fold_message(
-			"user",
-			"Compare the observations and explain the conclusion.",
-		),
+		fold_message("user", "Compare the observations and explain the conclusion."),
 	]);
 	session.model = "alibaba:glm-5.1".to_string();
 	session.max_tokens = 32_000;
 	session.cached_tools = Some(Vec::new());
 	assert_eq!(super::decision::context_ceiling(&session, &config), 168_000);
-	assert!(
-		!super::should_check_compression(&mut session, &config)
-			.await
-			.0
-	);
+	assert!(!super::should_check_compression(&mut session, &config).await.0);
 
 	while session.get_full_context_tokens(&config).await < config.compression.threshold {
 		let mut assistant = fold_message("assistant", "Reviewing the next observation.");
 		assistant.thinking = Some(serde_json::json!({"content": "observation ".repeat(3_000)}));
 		session.session.messages.push(assistant);
-		session
-			.session
-			.messages
-			.push(fold_message("tool", "Observed result."));
+		session.session.messages.push(fold_message("tool", "Observed result."));
 		session.session.info.total_api_calls += 1;
 	}
 	let current = session.get_full_context_tokens(&config).await;
 	assert!(current < super::decision::context_ceiling(&session, &config));
-	assert_eq!(
-		session.session.info.context_tokens_after_last_compression,
-		0
-	);
-	assert_eq!(
-		session
-			.session
-			.info
-			.compression_stats
-			.conversation_compressions,
-		0
-	);
+	assert_eq!(session.session.info.context_tokens_after_last_compression, 0);
+	assert_eq!(session.session.info.compression_stats.conversation_compressions, 0);
 	assert!(!super::within_ceiling_margin(&mut session, &config).await);
-	assert!(
-		super::should_check_compression(&mut session, &config)
-			.await
-			.0
-	);
-	assert_eq!(
-		session.session.info.context_tokens_after_last_compression,
-		0
-	);
+	assert!(super::should_check_compression(&mut session, &config).await.0);
+	assert_eq!(session.session.info.context_tokens_after_last_compression, 0);
 }
 
 #[tokio::test]
@@ -3636,27 +3471,17 @@ async fn regression_forced_empty_range_reports_why_the_hard_ceiling_still_aborts
 		(true, MAX_COMPRESSION_RATIO)
 	);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let error = super::check_and_compress_conversation(
-		&mut session,
-		&config,
-		rx,
-		CompressionTrigger::Automatic,
-	)
-	.await
-	.expect_err("an impossible forced fold must report its reason");
-	assert!(error
-		.to_string()
-		.contains("forced compression has no eligible history"));
+	let error = super::check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect_err("an impossible forced fold must report its reason");
+	assert!(error.to_string().contains("forced compression has no eligible history"));
 	let error = super::ensure_context_within_ceiling(&mut session, &config)
 		.await
 		.expect_err("an uncompressible request must never cross the ceiling");
 	let error = error.to_string();
 	assert!(error.contains(&format!("{current} > 168000 tokens")));
 	assert!(error.contains("no eligible compression range"));
-	assert_eq!(
-		serde_json::to_value(&session.session.messages).unwrap(),
-		before
-	);
+	assert_eq!(serde_json::to_value(&session.session.messages).unwrap(), before);
 
 	config.compression.threshold = 0;
 	let error = super::ensure_context_within_ceiling(&mut session, &config)
@@ -3677,25 +3502,12 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 			.env(CHILD_ENV, "1")
 			.output()
 			.expect("run isolated JSONL logging regression");
-		assert!(
-			output.status.success(),
-			"{}",
-			String::from_utf8_lossy(&output.stdout)
-		);
+		assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
 		let stderr = String::from_utf8_lossy(&output.stderr);
-		assert!(
-			stderr.contains("Conversation compression failed:"),
-			"{stderr}"
-		);
-		assert!(
-			stderr.contains("unsupported-compression-provider"),
-			"{stderr}"
-		);
+		assert!(stderr.contains("Conversation compression failed:"), "{stderr}");
+		assert!(stderr.contains("unsupported-compression-provider"), "{stderr}");
 		assert!(stderr.contains("Background fold call failed"), "{stderr}");
-		assert!(
-			stderr.contains("scripted compression transport failure"),
-			"{stderr}"
-		);
+		assert!(stderr.contains("scripted compression transport failure"), "{stderr}");
 		assert!(
 			stderr.contains("Compression not applied: decision model deferred the fold"),
 			"{stderr}"
@@ -3718,43 +3530,26 @@ async fn regression_compression_failures_reach_stderr_in_jsonl_mode() {
 	]);
 	session.cached_tools = Some(Vec::new());
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	super::check_and_compress_conversation(
-		&mut session,
-		&config,
-		rx,
-		CompressionTrigger::Automatic,
-	)
-	.await
-	.expect_err("preparation failure must propagate");
+	super::check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect_err("preparation failure must propagate");
 	let error = super::ensure_context_within_ceiling(&mut session, &config)
 		.await
 		.expect_err("failed compaction must not disable the ceiling");
 	assert!(error.to_string().contains("eligible history remains"));
 	assert!(error.to_string().contains("applied folds=0"));
 
-	let ctx = fold_ctx(
-		0,
-		3,
-		super::fold_fingerprint(&session.session.messages, 0, 3),
-	);
+	let ctx = fold_ctx(0, 3, super::fold_fingerprint(&session.session.messages, 0, 3));
 	let job = super::FoldJob {
 		cancel: tokio::sync::watch::channel(false).0,
-		handle: tokio::spawn(async {
-			Err(anyhow::anyhow!("scripted compression transport failure"))
-		}),
+		handle: tokio::spawn(async { Err(anyhow::anyhow!("scripted compression transport failure")) }),
 		ctx,
 	};
-	assert!(
-		!super::collect_fold_job(&mut session, &config, job, false, false)
-			.await
-			.unwrap()
-	);
+	assert!(!super::collect_fold_job(&mut session, &config, job, false, false)
+		.await
+		.unwrap());
 	assert!(session.fold_cooldown_until_call > session.session.info.total_api_calls);
-	let ctx = fold_ctx(
-		0,
-		3,
-		super::fold_fingerprint(&session.session.messages, 0, 3),
-	);
+	let ctx = fold_ctx(0, 3, super::fold_fingerprint(&session.session.messages, 0, 3));
 	assert!(!super::finish_fold(
 		&mut session,
 		&config,

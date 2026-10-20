@@ -46,8 +46,7 @@ struct SkillPool {
 	entries: Vec<PoolEntry>,
 }
 
-static SKILL_POOLS: OnceLock<Arc<RwLock<std::collections::HashMap<String, SkillPool>>>> =
-	OnceLock::new();
+static SKILL_POOLS: OnceLock<Arc<RwLock<std::collections::HashMap<String, SkillPool>>>> = OnceLock::new();
 
 fn get_pool() -> &'static Arc<RwLock<std::collections::HashMap<String, SkillPool>>> {
 	SKILL_POOLS.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
@@ -75,11 +74,7 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 		_ => return,
 	};
 
-	let skill_names: Vec<&str> = env_val
-		.split(',')
-		.map(|s| s.trim())
-		.filter(|s| !s.is_empty())
-		.collect();
+	let skill_names: Vec<&str> = env_val.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 	if skill_names.is_empty() {
 		return;
 	}
@@ -132,24 +127,18 @@ pub async fn load_env_skills(session: &mut crate::session::chat::session::ChatSe
 					// Don't silently mark the skill active if its instructions never
 					// made it into the session — at least surface the failure.
 					if let Err(e) = session.add_system_managed_user_message(&content) {
-						crate::log_error!(
-							"Failed to inject auto-activated skill '{}': {}",
-							name_str,
-							e
-						);
+						crate::log_error!("Failed to inject auto-activated skill '{}': {}", name_str, e);
 						continue;
 					}
 				}
 				// Emit structured event for JSONL/WebSocket consumers
 				if let Some(sid) = &session_id {
-					crate::mcp::process::send_notification_message(
-						crate::websocket::ServerMessage::skill(
-							"activate",
-							&name_str,
-							Some("env(OCTOMIND_SKILLS)".to_string()),
-							sid.clone(),
-						),
-					);
+					crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
+						"activate",
+						&name_str,
+						Some("env(OCTOMIND_SKILLS)".to_string()),
+						sid.clone(),
+					));
 				}
 			}
 			Err(e) => {
@@ -503,11 +492,7 @@ pub async fn run_activation(
 				continue;
 			}
 
-			let trigger = group
-				.iter()
-				.map(|c| c.to_string())
-				.collect::<Vec<_>>()
-				.join(" ");
+			let trigger = group.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(" ");
 
 			let has_semantic = group
 				.iter()
@@ -528,11 +513,7 @@ pub async fn run_activation(
 				})
 				.fold(f32::NEG_INFINITY, f32::max);
 
-			let group_score = if group_score.is_finite() {
-				group_score
-			} else {
-				0.0
-			};
+			let group_score = if group_score.is_finite() { group_score } else { 0.0 };
 
 			match &sem_best {
 				Some((best, _)) if group_score <= *best => {}
@@ -551,10 +532,7 @@ pub async fn run_activation(
 
 	for (name, trigger, evolution) in &deterministic {
 		if let Some(binding) = evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(
-				&binding.id,
-				binding.shadow,
-			) {
+			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
 				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
 				continue;
 			}
@@ -580,10 +558,7 @@ pub async fn run_activation(
 				top2
 			);
 			if let Some(binding) = evolution.filter(|binding| {
-				crate::supervisor::learning::evolution::binding_is_shadow(
-					&binding.id,
-					binding.shadow,
-				)
+				crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow)
 			}) {
 				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
 			} else {
@@ -619,8 +594,8 @@ async fn run_evaluation_choice(
 ) {
 	use crate::supervisor::evaluate::{self, Seam};
 
-	let Some(config) = crate::session::context::current_session_id()
-		.and_then(|sid| crate::session::context::get_session_config(&sid))
+	let Some(config) =
+		crate::session::context::current_session_id().and_then(|sid| crate::session::context::get_session_config(&sid))
 	else {
 		return;
 	};
@@ -643,8 +618,7 @@ async fn run_evaluation_choice(
 			.iter()
 			.map(|entry| (entry.name.as_str(), entry.description.as_str())),
 	);
-	let questions =
-		std::collections::BTreeMap::from([(evaluate::SKILL_QUESTION_ID.to_string(), question)]);
+	let questions = std::collections::BTreeMap::from([(evaluate::SKILL_QUESTION_ID.to_string(), question)]);
 	let Some(answers) = evaluate::run(
 		&config,
 		Seam::Skills,
@@ -656,9 +630,7 @@ async fn run_evaluation_choice(
 		return;
 	};
 	let Some(octolib::evaluation::Answer::Choice {
-		choice,
-		probabilities,
-		..
+		choice, probabilities, ..
 	}) = answers.get(evaluate::SKILL_QUESTION_ID)
 	else {
 		return;
@@ -764,11 +736,7 @@ async fn compute_semantic_scores(
 }
 
 /// Auto-activate a skill: register + load capabilities + inject content into session.
-async fn auto_activate_skill(
-	name: &str,
-	trigger: &str,
-	session: &mut crate::session::chat::session::ChatSession,
-) {
+async fn auto_activate_skill(name: &str, trigger: &str, session: &mut crate::session::chat::session::ChatSession) {
 	let call = crate::mcp::McpToolCall {
 		tool_name: "skill".to_string(),
 		tool_id: format!("auto_{}", name),
@@ -791,14 +759,12 @@ async fn auto_activate_skill(
 				if let Some(binding) = crate::supervisor::learning::evolution::skill_binding(name) {
 					crate::supervisor::learning::evolution::mark_skill_activated(&sid, &binding.id);
 				}
-				crate::mcp::process::send_notification_message(
-					crate::websocket::ServerMessage::skill(
-						"activate",
-						name,
-						Some(trigger.to_string()),
-						sid,
-					),
-				);
+				crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
+					"activate",
+					name,
+					Some(trigger.to_string()),
+					sid,
+				));
 			}
 
 			// Plain-text print: only when not suppressing CLI output (i.e. skip for jsonl/websocket)
@@ -824,8 +790,7 @@ async fn auto_activate_skill(
 
 /// Track validator retry counts per skill. Reset when validation passes,
 /// when a skill is deactivated, or when a new session pool is initialized.
-static VALIDATOR_RETRIES: OnceLock<Arc<RwLock<std::collections::HashMap<String, u32>>>> =
-	OnceLock::new();
+static VALIDATOR_RETRIES: OnceLock<Arc<RwLock<std::collections::HashMap<String, u32>>>> = OnceLock::new();
 
 fn get_retry_tracker() -> &'static Arc<RwLock<std::collections::HashMap<String, u32>>> {
 	VALIDATOR_RETRIES.get_or_init(|| Arc::new(RwLock::new(std::collections::HashMap::new())))
@@ -911,8 +876,7 @@ pub async fn run_validators(content: &str, workdir: &std::path::Path) -> Vec<(St
 			scheduled_names.push(skill_name.clone());
 
 			tasks.push(tokio::spawn(async move {
-				let result =
-					run_validate_script(&validate_script, &content, &workdir, timeout).await;
+				let result = run_validate_script(&validate_script, &content, &workdir, timeout).await;
 				(name, result)
 			}));
 

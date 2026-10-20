@@ -162,15 +162,12 @@ fn authorizer_user_evidence_and_parent_boundary_survive_actual_session_load() {
 			text: "Inspect only; do not modify files".into(),
 			..Default::default()
 		});
-	info.authorization.parent = Some(Box::new(
-		crate::supervisor::authorizer::AuthorizationContext {
-			users: info.authorization.users.clone(),
-			..Default::default()
-		},
-	));
+	info.authorization.parent = Some(Box::new(crate::supervisor::authorizer::AuthorizationContext {
+		users: info.authorization.users.clone(),
+		..Default::default()
+	}));
 	info.authorization.blocked = 3;
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info})
-		.to_string();
+	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
 	let user = serde_json::to_string(&Message {
 		role: "user".into(),
 		content: "continue".into(),
@@ -194,8 +191,7 @@ fn standing_session_rules_survive_session_load() {
 		session_rules: vec!["never push to main".into()],
 		..Default::default()
 	};
-	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info})
-		.to_string();
+	let summary = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":info}).to_string();
 	let file = write_session(&[&summary]);
 	let restored = load_session(&file.path().to_path_buf()).unwrap();
 	assert_eq!(restored.info.session_rules, vec!["never push to main"]);
@@ -210,9 +206,7 @@ fn standing_session_rules_survive_session_load() {
 		.as_object_mut()
 		.expect("session info is an object")
 		.remove("session_rules");
-	let legacy =
-		serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":legacy_info})
-			.to_string();
+	let legacy = serde_json::json!({"type":"SUMMARY","timestamp":1700000000,"session_info":legacy_info}).to_string();
 	let file = write_session(&[&legacy]);
 	let restored = load_session(&file.path().to_path_buf()).unwrap();
 	assert!(restored.info.session_rules.is_empty());
@@ -276,23 +270,11 @@ fn compression_as_last_action_preserves_post_state() {
 	let post_tail = serde_json::to_string(&msg("assistant", "a2")).unwrap();
 
 	// Note: NO messages after the snapshot — this is the critical scenario.
-	let file = write_session(&[
-		&s,
-		&pre1,
-		&pre2,
-		&pre3,
-		&pre4,
-		&cp,
-		&post_summary,
-		&post_tail,
-	]);
+	let file = write_session(&[&s, &pre1, &pre2, &pre3, &pre4, &cp, &post_summary, &post_tail]);
 	let session = load_session(&file.path().to_path_buf()).expect("load");
 
 	// Must NOT be empty — this was the bug.
-	assert!(
-		!session.messages.is_empty(),
-		"resume lost post-compression snapshot"
-	);
+	assert!(!session.messages.is_empty(), "resume lost post-compression snapshot");
 	assert_eq!(session.messages.len(), 2);
 	assert_eq!(session.messages[0].content, "[COMPRESSED]");
 	assert_eq!(session.messages[1].content, "a2");
@@ -383,8 +365,7 @@ fn tool_calls_survive_round_trip_when_embedded_in_message() {
 			"arguments": "{\"dir\":\".\"}"
 		}
 	}]);
-	let assistant =
-		serde_json::to_string(&assistant_with_tool_calls("", tool_calls_value)).unwrap();
+	let assistant = serde_json::to_string(&assistant_with_tool_calls("", tool_calls_value)).unwrap();
 	let tool = serde_json::to_string(&tool_response("call_1", "list_files", "a.txt")).unwrap();
 	let final_asst = serde_json::to_string(&msg("assistant", "done")).unwrap();
 

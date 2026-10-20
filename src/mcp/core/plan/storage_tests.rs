@@ -60,20 +60,13 @@ fn plan_status_serialization_roundtrip() {
 		let json = serde_json::to_string(&status).expect("serialize PlanStatus");
 		let back: PlanStatus = serde_json::from_str(&json).expect("deserialize PlanStatus");
 		match (status, back) {
-			(PlanStatus::Active, PlanStatus::Active)
-			| (PlanStatus::Completed, PlanStatus::Completed) => {}
+			(PlanStatus::Active, PlanStatus::Active) | (PlanStatus::Completed, PlanStatus::Completed) => {}
 			_ => panic!("round-trip mismatch for {json}"),
 		}
 	}
 
-	assert_eq!(
-		serde_json::to_string(&PlanStatus::Active).unwrap(),
-		"\"Active\""
-	);
-	assert_eq!(
-		serde_json::to_string(&PlanStatus::Completed).unwrap(),
-		"\"Completed\""
-	);
+	assert_eq!(serde_json::to_string(&PlanStatus::Active).unwrap(), "\"Active\"");
+	assert_eq!(serde_json::to_string(&PlanStatus::Completed).unwrap(), "\"Completed\"");
 }
 
 #[test]
@@ -82,8 +75,7 @@ fn task_status_serialization_roundtrip() {
 		let json = serde_json::to_string(&status).expect("serialize TaskStatus");
 		let back: TaskStatus = serde_json::from_str(&json).expect("deserialize TaskStatus");
 		match (status, back) {
-			(TaskStatus::InProgress, TaskStatus::InProgress)
-			| (TaskStatus::Completed, TaskStatus::Completed) => {}
+			(TaskStatus::InProgress, TaskStatus::InProgress) | (TaskStatus::Completed, TaskStatus::Completed) => {}
 			_ => panic!("round-trip mismatch for {json}"),
 		}
 	}
@@ -92,10 +84,7 @@ fn task_status_serialization_roundtrip() {
 		serde_json::to_string(&TaskStatus::InProgress).unwrap(),
 		"\"InProgress\""
 	);
-	assert_eq!(
-		serde_json::to_string(&TaskStatus::Completed).unwrap(),
-		"\"Completed\""
-	);
+	assert_eq!(serde_json::to_string(&TaskStatus::Completed).unwrap(), "\"Completed\"");
 }
 
 #[test]

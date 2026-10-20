@@ -42,12 +42,9 @@ mod tool_processor;
 pub use animation::format_elapsed_time;
 pub use animation_manager::{get_animation_manager, AnimationManager};
 pub use assistant_output::print_assistant_response;
-pub use command_executor::{
-	command_exists, execute_command_layer, get_command_help, list_available_commands,
-};
+pub use command_executor::{command_exists, execute_command_layer, get_command_help, list_available_commands};
 pub use commands::{
-	CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND, QUIT_COMMAND,
-	RUN_COMMAND,
+	CLEAR_COMMAND, COMMANDS, COPY_COMMAND, DONE_COMMAND, EXIT_COMMAND, HELP_COMMAND, QUIT_COMMAND, RUN_COMMAND,
 };
 pub use cost_tracker::CostTracker;
 pub use edit_mode::EmacsWithShortcutHelp;
@@ -57,15 +54,12 @@ pub use markdown::{is_markdown_content, MarkdownRenderer, MarkdownTheme};
 pub use message_handler::MessageHandler;
 pub use prompt::ChatPrompt;
 pub use response::process_response;
-pub use session::{
-	format_number, run_interactive_session, run_interactive_session_with_input, ChatSession,
-};
+pub use session::{format_number, run_interactive_session, run_interactive_session_with_input, ChatSession};
 pub use thinking_display::display_thinking;
 pub use tool_display::{
-	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row,
-	block_row_text, block_section, block_section_with, display_individual_tool_header_with_context,
-	display_individual_tool_header_with_params, display_tool_output_smart,
-	display_tool_parameters_full, key_width,
+	block_blank, block_close_err, block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
+	block_section_with, display_individual_tool_header_with_context, display_individual_tool_header_with_params,
+	display_tool_output_smart, display_tool_parameters_full, key_width,
 };
 pub use tool_processor::ToolProcessor;
 

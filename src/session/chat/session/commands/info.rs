@@ -31,8 +31,7 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	// request wall time. Reasoning tokens are produced inside the same request
 	// window, so excluding them understates thinking models by their share.
 	let tokens_per_second = if info.total_api_time_ms > 0 {
-		(info.output_tokens + info.reasoning_tokens) as f64
-			/ (info.total_api_time_ms as f64 / 1000.0)
+		(info.output_tokens + info.reasoning_tokens) as f64 / (info.total_api_time_ms as f64 / 1000.0)
 	} else {
 		0.0
 	};
@@ -41,20 +40,13 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 		turn_model_time_ms: info.supervisor_accounting.turn_time.main_api_time_ms,
 		split_turns: info.supervisor_accounting.turn_time.completed,
 		split_time_ms: info.supervisor_accounting.turn_time.total_time_ms,
-		supervisor_blocking_time_ms: info
-			.supervisor_accounting
-			.turn_time
-			.blocking_supervisor_time_ms,
+		supervisor_blocking_time_ms: info.supervisor_accounting.turn_time.blocking_supervisor_time_ms,
 		tools_runtime_time_ms: info
 			.supervisor_accounting
 			.turn_time
 			.total_time_ms
 			.saturating_sub(info.supervisor_accounting.turn_time.main_api_time_ms)
-			.saturating_sub(
-				info.supervisor_accounting
-					.turn_time
-					.blocking_supervisor_time_ms,
-			),
+			.saturating_sub(info.supervisor_accounting.turn_time.blocking_supervisor_time_ms),
 		requests: info.total_api_calls,
 		avg_request_time_ms: if info.total_api_calls > 0 {
 			info.total_api_time_ms / info.total_api_calls as u64
@@ -91,57 +83,52 @@ pub fn handle_info(session: &mut ChatSession, config: &Config) -> Result<Command
 	// Estimate cache savings: approximate cost of cache_read_tokens if they had been
 	// charged at the full input rate. The 3x weight for output tokens reflects typical
 	// provider pricing (output tokens cost ~3x input tokens).
-	let cache_savings =
-		if info.cache_read_tokens > 0 && info.input_tokens > 0 && info.total_cost > 0.0 {
-			let total_weighted = (info.input_tokens as f64) + (info.output_tokens as f64 * 3.0);
-			if total_weighted > 0.0 {
-				let estimated_input_rate = info.total_cost / total_weighted;
-				info.cache_read_tokens as f64 * estimated_input_rate
-			} else {
-				0.0
-			}
+	let cache_savings = if info.cache_read_tokens > 0 && info.input_tokens > 0 && info.total_cost > 0.0 {
+		let total_weighted = (info.input_tokens as f64) + (info.output_tokens as f64 * 3.0);
+		if total_weighted > 0.0 {
+			let estimated_input_rate = info.total_cost / total_weighted;
+			info.cache_read_tokens as f64 * estimated_input_rate
 		} else {
 			0.0
-		};
-
-	let compression_stats = if info.compression_stats.total_compressions() > 0
-		|| info.compression_stats.input_tokens > 0
-	{
-		Some(info.compression_stats.clone())
+		}
 	} else {
-		None
+		0.0
 	};
+
+	let compression_stats =
+		if info.compression_stats.total_compressions() > 0 || info.compression_stats.input_tokens > 0 {
+			Some(info.compression_stats.clone())
+		} else {
+			None
+		};
 
 	// Collect cache marker stats
 	let cache_manager = crate::session::cache::CacheManager::new();
-	let cache_stats =
-		cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Info {
-			session_name: info.name.clone(),
-			model: info.model.clone(),
-			role: session.role.clone(),
-			tokens_input: info.input_tokens,
-			tokens_output: info.output_tokens,
-			tokens_used,
-			tokens_cached: info.cache_read_tokens,
-			tokens_cache_write: info.cache_write_tokens,
-			tokens_reasoning: info.reasoning_tokens,
-			total_cost: info.total_cost,
-			cache_savings,
-			tokens_per_second,
-			timing,
-			avg_tokens_per_compression,
-			avg_tokens_per_tool,
-			avg_tokens_per_response,
-			avg_input_tokens,
-			compression_stats,
-			cache_markers_system: cache_stats.system_markers as u64,
-			cache_markers_tool: cache_stats.tool_markers as u64,
-			cache_markers_content: cache_stats.content_markers as u64,
-			cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
-			agents_stats: super::agents::get_agents_stats(),
-			supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
-		},
-	)))
+	let cache_stats = cache_manager.get_cache_statistics_with_config(&session.session, Some(config));
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Info {
+		session_name: info.name.clone(),
+		model: info.model.clone(),
+		role: session.role.clone(),
+		tokens_input: info.input_tokens,
+		tokens_output: info.output_tokens,
+		tokens_used,
+		tokens_cached: info.cache_read_tokens,
+		tokens_cache_write: info.cache_write_tokens,
+		tokens_reasoning: info.reasoning_tokens,
+		total_cost: info.total_cost,
+		cache_savings,
+		tokens_per_second,
+		timing,
+		avg_tokens_per_compression,
+		avg_tokens_per_tool,
+		avg_tokens_per_response,
+		avg_input_tokens,
+		compression_stats,
+		cache_markers_system: cache_stats.system_markers as u64,
+		cache_markers_tool: cache_stats.tool_markers as u64,
+		cache_markers_content: cache_stats.content_markers as u64,
+		cache_non_cached_tokens: cache_stats.current_non_cached_tokens,
+		agents_stats: super::agents::get_agents_stats(),
+		supervisor_accounting: crate::supervisor::report::SupervisorReport::for_session(info),
+	})))
 }

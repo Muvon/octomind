@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-	domain_name, project_name, ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig,
-	EvolutionRecord, EvolutionState, Measure,
+	domain_name, project_name, ArtifactKind, ArtifactScope, EffectClass, EvolutionConfig, EvolutionRecord,
+	EvolutionState, Measure,
 };
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -37,8 +37,7 @@ struct GuidanceBinding {
 	path: PathBuf,
 }
 
-static SESSION_SKILLS: RwLock<Option<HashMap<String, HashMap<String, SkillBinding>>>> =
-	RwLock::new(None);
+static SESSION_SKILLS: RwLock<Option<HashMap<String, HashMap<String, SkillBinding>>>> = RwLock::new(None);
 static SESSION_BEHAVIORS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLock::new(None);
 /// Shadow artifacts whose trigger matched since the last verdict — the
 /// control arm: the same situations, observed without the artifact applied.
@@ -49,8 +48,7 @@ static SESSION_SHADOWS: RwLock<Option<HashMap<String, HashSet<String>>>> = RwLoc
 /// stay in context once delivered, so exposure is sticky in both arms — every
 /// later verdict in the session is a sample, and neither arm is filtered by the
 /// model's own report of what helped.
-static SESSION_SKILL_EXPOSURE: RwLock<Option<HashMap<String, HashMap<String, bool>>>> =
-	RwLock::new(None);
+static SESSION_SKILL_EXPOSURE: RwLock<Option<HashMap<String, HashMap<String, bool>>>> = RwLock::new(None);
 /// Guidance awaiting the session's first activation pass, taken by delivery.
 static SESSION_GUIDANCE: RwLock<Option<HashMap<String, Vec<GuidanceBinding>>>> = RwLock::new(None);
 
@@ -64,18 +62,14 @@ pub fn init_for_session(role: &str) {
 		clear_for_session(&session_id);
 		return;
 	}
-	let workdir = crate::session::context::get_current_workdir(&session_id)
-		.or_else(|| std::env::current_dir().ok());
+	let workdir = crate::session::context::get_current_workdir(&session_id).or_else(|| std::env::current_dir().ok());
 	let project = project_name(workdir.as_deref());
 	let domain = domain_name(role);
 
 	let records = match super::registry::list_records() {
 		Ok(records) => records,
 		Err(error) => {
-			crate::log_error!(
-				"evolution registry unavailable; generated behavior disabled: {}",
-				error
-			);
+			crate::log_error!("evolution registry unavailable; generated behavior disabled: {}", error);
 			clear_for_session(&session_id);
 			return;
 		}
@@ -92,10 +86,7 @@ pub fn init_for_session(role: &str) {
 		.collect::<Vec<_>>();
 
 	let mut skills = HashMap::new();
-	for record in matching
-		.iter()
-		.filter(|record| record.kind == ArtifactKind::Skill)
-	{
+	for record in matching.iter().filter(|record| record.kind == ArtifactKind::Skill) {
 		if let Ok(path) = record.artifact_dir() {
 			skills.insert(
 				record.name.clone(),
@@ -146,9 +137,7 @@ pub fn init_for_session(role: &str) {
 	}
 
 	match generated_guardrails(&matching, &session_id) {
-		Ok(generated) => {
-			crate::session::guardrails::merge_generated_for_session(&session_id, generated)
-		}
+		Ok(generated) => crate::session::guardrails::merge_generated_for_session(&session_id, generated),
 		Err(error) => crate::log_error!(
 			"generated guardrails unavailable; project guardrails preserved: {}",
 			error
@@ -232,9 +221,7 @@ pub fn skill_binding(name: &str) -> Option<SkillBinding> {
 pub fn applied_skill_names(ids: &[String]) -> Vec<String> {
 	let mut names = all_skill_bindings()
 		.into_iter()
-		.filter(|(_, binding)| {
-			ids.contains(&binding.id) && !binding_is_shadow(&binding.id, binding.shadow)
-		})
+		.filter(|(_, binding)| ids.contains(&binding.id) && !binding_is_shadow(&binding.id, binding.shadow))
 		.map(|(name, _)| name)
 		.collect::<Vec<_>>();
 	names.sort();
@@ -312,11 +299,7 @@ pub fn deliver_guidance(session: &mut crate::session::chat::session::ChatSession
 			match std::fs::read_to_string(&binding.path) {
 				Ok(text) => rules.push(format!("{tag}\n{}\n</guidance>", text.trim())),
 				Err(error) => {
-					crate::log_error!(
-						"generated guidance '{}' could not be read: {}",
-						binding.id,
-						error
-					);
+					crate::log_error!("generated guidance '{}' could not be read: {}", binding.id, error);
 					continue;
 				}
 			}
@@ -343,8 +326,8 @@ pub fn generated_guardrails(
 	session_id: &str,
 ) -> Result<crate::config::guardrails::Guardrails> {
 	let mut output = crate::config::guardrails::Guardrails::default();
-	let user_has_pipe = crate::session::guardrails::get_rules(&session_id.to_string())
-		.is_some_and(|rules| !rules.pipes.is_empty());
+	let user_has_pipe =
+		crate::session::guardrails::get_rules(&session_id.to_string()).is_some_and(|rules| !rules.pipes.is_empty());
 	for record in records
 		.iter()
 		.filter(|record| !matches!(record.kind, ArtifactKind::Skill | ArtifactKind::Guidance))
@@ -366,22 +349,14 @@ pub fn generated_guardrails(
 		let content = match std::fs::read_to_string(&path) {
 			Ok(content) => content,
 			Err(error) => {
-				crate::log_error!(
-					"generated artifact '{}' could not be read: {}",
-					record.id,
-					error
-				);
+				crate::log_error!("generated artifact '{}' could not be read: {}", record.id, error);
 				continue;
 			}
 		};
 		let parsed = match crate::config::guardrails::Guardrails::parse(&content) {
 			Ok(parsed) => parsed,
 			Err(error) => {
-				crate::log_error!(
-					"generated artifact '{}' failed native parsing: {}",
-					record.id,
-					error
-				);
+				crate::log_error!("generated artifact '{}' failed native parsing: {}", record.id, error);
 				continue;
 			}
 		};
@@ -470,10 +445,7 @@ fn posterior(measure: Option<Measure>, successes: u32, failures: u32, score: f64
 	let alpha = hits + 1.0;
 	let beta = (successes + failures) as f64 - hits + 1.0;
 	let total = alpha + beta;
-	(
-		alpha / total,
-		alpha * beta / (total * total * (total + 1.0)),
-	)
+	(alpha / total, alpha * beta / (total * total * (total + 1.0)))
 }
 
 /// Mean and sample variance of ln(API calls) over `samples` turns. One sample
@@ -511,8 +483,7 @@ pub(crate) struct Evidence {
 pub(crate) fn evidence(record: &EvolutionRecord, policy: &EvolutionConfig) -> Option<Evidence> {
 	let treated = record.successes + record.failures;
 	let control = record.control_successes + record.control_failures;
-	if treated < policy.min_samples || control < policy.min_samples || treated == 0 || control == 0
-	{
+	if treated < policy.min_samples || control < policy.min_samples || treated == 0 || control == 0 {
 		return None;
 	}
 	// A turn costs at least one call; flooring the baseline keeps the ratio finite.
@@ -530,16 +501,10 @@ pub(crate) fn evidence(record: &EvolutionRecord, policy: &EvolutionConfig) -> Op
 		record.control_failures,
 		record.control_score,
 	);
-	let (treated_log, treated_log_var) = log_call_moments(
-		record.treatment_log_calls,
-		record.treatment_log_calls_sq,
-		treated,
-	);
-	let (control_log, control_log_var) = log_call_moments(
-		record.control_log_calls,
-		record.control_log_calls_sq,
-		control,
-	);
+	let (treated_log, treated_log_var) =
+		log_call_moments(record.treatment_log_calls, record.treatment_log_calls_sq, treated);
+	let (control_log, control_log_var) =
+		log_call_moments(record.control_log_calls, record.control_log_calls_sq, control);
 	let log_se = (treated_log_var / treated as f64 + control_log_var / control as f64).sqrt();
 	Some(Evidence {
 		gain: treated_rate - control_rate,
@@ -575,8 +540,7 @@ pub(crate) fn regresses(evidence: Evidence) -> bool {
 /// once active, an artifact stays while it still beats its control at all, so
 /// one unlucky verdict near the promotion edge does not flap it out.
 pub(crate) fn sustains(evidence: Evidence, policy: &EvolutionConfig) -> bool {
-	(evidence.gain > 0.0
-		&& evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
+	(evidence.gain > 0.0 && evidence.cost <= policy.cost_allowance + policy.cost_per_gain * evidence.gain)
 		|| (evidence.gain >= -policy.noise_margin && evidence.cost < -policy.cost_allowance)
 }
 
@@ -610,14 +574,8 @@ struct TurnGrade {
 /// verdict otherwise (and always for artifacts that already hold ungraded
 /// samples). A graded artifact skips turns the evaluation could not answer
 /// and turns where it judged the artifact inapplicable.
-fn sample_score(
-	record: &mut EvolutionRecord,
-	passed: bool,
-	seam_on: bool,
-	grade: Option<&TurnGrade>,
-) -> Option<f64> {
-	let sampled =
-		record.successes + record.failures + record.control_successes + record.control_failures;
+fn sample_score(record: &mut EvolutionRecord, passed: bool, seam_on: bool, grade: Option<&TurnGrade>) -> Option<f64> {
+	let sampled = record.successes + record.failures + record.control_successes + record.control_failures;
 	let measure = *record.measure.get_or_insert(if seam_on && sampled == 0 {
 		Measure::Graded
 	} else {
@@ -638,11 +596,7 @@ fn sample_score(
 
 /// One evaluation call per verdict turn that touched an artifact which is, or
 /// will become, graded. `None` keeps graded artifacts from sampling this turn.
-async fn grade_turn(
-	config: &crate::config::Config,
-	turn: &TurnVerdict<'_>,
-	ids: &[&String],
-) -> Option<TurnGrade> {
+async fn grade_turn(config: &crate::config::Config, turn: &TurnVerdict<'_>, ids: &[&String]) -> Option<TurnGrade> {
 	use crate::supervisor::evaluate::{self, Seam};
 	let records = super::registry::list_records().ok()?;
 	let touched = ids
@@ -651,10 +605,7 @@ async fn grade_turn(
 		.filter(|record| {
 			record.measure == Some(Measure::Graded)
 				|| (record.measure.is_none()
-					&& record.successes
-						+ record.failures + record.control_successes
-						+ record.control_failures
-						== 0)
+					&& record.successes + record.failures + record.control_successes + record.control_failures == 0)
 		})
 		.collect::<Vec<_>>();
 	if touched.is_empty() {
@@ -701,11 +652,7 @@ async fn grade_turn(
 /// artifacts are the treatment arm, matched shadow artifacts (and trials in
 /// sessions randomized to control) the control arm, and exposed evolved skills
 /// join their arm on every verdict turn.
-pub async fn reinforce_session(
-	session_id: &str,
-	turn: &TurnVerdict<'_>,
-	config: &crate::config::Config,
-) {
+pub async fn reinforce_session(session_id: &str, turn: &TurnVerdict<'_>, config: &crate::config::Config) {
 	let policy = &config.supervisor.learning.evolution;
 	let mut used = {
 		let mut guard = SESSION_BEHAVIORS.write().unwrap();
@@ -744,8 +691,7 @@ pub async fn reinforce_session(
 			}
 		}
 	}
-	let seam_on =
-		crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Evolution);
+	let seam_on = crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Evolution);
 	let grade = match passed {
 		Some(_) if seam_on && !(used.is_empty() && shadowed.is_empty()) => {
 			let ids = used.iter().chain(shadowed.iter()).collect::<Vec<_>>();
@@ -754,14 +700,7 @@ pub async fn reinforce_session(
 		_ => None,
 	};
 	if let Some(passed) = passed {
-		record_control(
-			shadowed,
-			passed,
-			turn.api_calls,
-			policy,
-			seam_on,
-			grade.as_ref(),
-		);
+		record_control(shadowed, passed, turn.api_calls, policy, seam_on, grade.as_ref());
 	}
 	for id in used {
 		let result = super::registry::mutate_record(&id, |record| {
@@ -777,8 +716,7 @@ pub async fn reinforce_session(
 						record.failures = record.failures.saturating_add(1);
 					}
 					record.treatment_score += score;
-					record.treatment_calls =
-						record.treatment_calls.saturating_add(turn.api_calls as u64);
+					record.treatment_calls = record.treatment_calls.saturating_add(turn.api_calls as u64);
 					add_log_calls(
 						&mut record.treatment_log_calls,
 						&mut record.treatment_log_calls_sq,
@@ -813,17 +751,14 @@ pub async fn reinforce_session(
 						super::registry::append_history(
 							record,
 							"trial_inconclusive",
-							measured.map_or_else(
-								|| "bounded trial ended without enough verdicts".to_string(),
-								describe,
-							),
+							measured
+								.map_or_else(|| "bounded trial ended without enough verdicts".to_string(), describe),
 						);
 					}
 					_ => {}
 				},
 				EvolutionState::Active => {
-					if let Some(evidence) = measured.filter(|evidence| !sustains(*evidence, policy))
-					{
+					if let Some(evidence) = measured.filter(|evidence| !sustains(*evidence, policy)) {
 						record.state = EvolutionState::Retired;
 						record.retired = Some(chrono::Utc::now().to_rfc3339());
 						super::registry::append_history(record, "pruned", describe(evidence));
@@ -849,9 +784,7 @@ pub async fn reinforce_session(
 					});
 				}
 			}
-			if let Some(action @ ("promoted" | "regressed" | "pruned" | "trial_inconclusive")) =
-				event
-			{
+			if let Some(action @ ("promoted" | "regressed" | "pruned" | "trial_inconclusive")) = event {
 				emit_lifecycle(&record, action);
 			}
 		}
@@ -883,10 +816,7 @@ fn record_control(
 			.map(|record| record.scope)
 			.collect(),
 		Err(error) => {
-			crate::log_error!(
-				"evolution registry unavailable; control verdict dropped: {}",
-				error
-			);
+			crate::log_error!("evolution registry unavailable; control verdict dropped: {}", error);
 			return;
 		}
 	};
@@ -915,9 +845,7 @@ fn record_control(
 			if record.state == EvolutionState::Shadow
 				&& control >= policy.min_samples
 				&& (record.effect != EffectClass::Effectful || record.explicit_authorization)
-				&& !open_trials
-					.iter()
-					.any(|scope| scope.overlaps(&record.scope))
+				&& !open_trials.iter().any(|scope| scope.overlaps(&record.scope))
 			{
 				record.state = EvolutionState::Trial;
 				opened = true;

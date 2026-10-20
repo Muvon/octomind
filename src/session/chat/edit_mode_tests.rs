@@ -42,8 +42,7 @@ fn mk() -> (
 }
 
 fn key(code: KeyCode, mods: KeyModifiers) -> ReedlineRawEvent {
-	ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, mods)))
-		.expect("key event is convertible")
+	ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, mods))).expect("key event is convertible")
 }
 
 #[test]
@@ -51,10 +50,7 @@ fn test_esc_meta_sequences() {
 	let (mut h, ..) = mk();
 
 	// Esc arms the meta prefix and closes any open completion menu
-	assert_eq!(
-		h.parse_event(key(KeyCode::Esc, KeyModifiers::NONE)),
-		ReedlineEvent::Esc
-	);
+	assert_eq!(h.parse_event(key(KeyCode::Esc, KeyModifiers::NONE)), ReedlineEvent::Esc);
 	// Esc+b → word left
 	assert_eq!(
 		h.parse_event(key(KeyCode::Char('b'), KeyModifiers::NONE)),
@@ -122,15 +118,9 @@ fn test_gt_opens_reply_picker_only_at_line_start() {
 
 	// Empty buffer, and the start of a later line, with or without SHIFT
 	set("", 0);
-	assert_eq!(
-		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::NONE)),
-		picker
-	);
+	assert_eq!(h.parse_event(key(KeyCode::Char('>'), KeyModifiers::NONE)), picker);
 	set("answer\n", 7);
-	assert_eq!(
-		h.parse_event(key(KeyCode::Char('>'), KeyModifiers::SHIFT)),
-		picker
-	);
+	assert_eq!(h.parse_event(key(KeyCode::Char('>'), KeyModifiers::SHIFT)), picker);
 
 	// Mid-line `>` (`->`, `a > b`) is plain text
 	set("a -", 3);
@@ -251,8 +241,7 @@ fn test_paste_wrapping() {
 	let (mut h, ..) = mk();
 
 	// 3+ lines → wrapped in <pasted_content> tags
-	let raw = ReedlineRawEvent::try_from(Event::Paste("a\nb\nc".to_string()))
-		.expect("paste event is convertible");
+	let raw = ReedlineRawEvent::try_from(Event::Paste("a\nb\nc".to_string())).expect("paste event is convertible");
 	assert_eq!(
 		h.parse_event(raw),
 		ReedlineEvent::Edit(vec![EditCommand::InsertString(
@@ -261,8 +250,7 @@ fn test_paste_wrapping() {
 	);
 
 	// Short paste falls through unwrapped
-	let raw = ReedlineRawEvent::try_from(Event::Paste("a\nb".to_string()))
-		.expect("paste event is convertible");
+	let raw = ReedlineRawEvent::try_from(Event::Paste("a\nb".to_string())).expect("paste event is convertible");
 	match h.parse_event(raw) {
 		ReedlineEvent::Edit(cmds) => {
 			assert_eq!(cmds, vec![EditCommand::InsertString("a\nb".to_string())]);
@@ -278,10 +266,7 @@ fn test_format_size() {
 	assert_eq!(format_size(0), "0 KB");
 }
 
-fn image_attachment(
-	dims: Option<(u32, u32)>,
-	size: Option<u64>,
-) -> crate::session::image::ImageAttachment {
+fn image_attachment(dims: Option<(u32, u32)>, size: Option<u64>) -> crate::session::image::ImageAttachment {
 	crate::session::image::ImageAttachment {
 		data: crate::session::image::ImageData::Base64("x".to_string()),
 		media_type: "image/png".to_string(),
@@ -295,9 +280,7 @@ fn video_attachment_file() -> crate::session::video::VideoAttachment {
 	crate::session::video::VideoAttachment {
 		data: crate::session::video::VideoData::Base64("x".to_string()),
 		media_type: "video/mp4".to_string(),
-		source_type: crate::session::video::SourceType::File(std::path::PathBuf::from(
-			"/tmp/clip.mp4",
-		)),
+		source_type: crate::session::video::SourceType::File(std::path::PathBuf::from("/tmp/clip.mp4")),
 		dimensions: Some((1920, 1080)),
 		size_bytes: Some(1536 * 1024),
 		duration_secs: None,
@@ -341,10 +324,7 @@ fn test_attach_and_notify_queues_blob_and_prints_label() {
 	h.attach_and_notify(PendingClipboardItem::Video(video_attachment_file()));
 	let state = state.lock().expect("line state");
 	assert_eq!(state.pending_clipboard.len(), 1);
-	assert!(matches!(
-		state.pending_clipboard[0],
-		PendingClipboardItem::Video(_)
-	));
+	assert!(matches!(state.pending_clipboard[0], PendingClipboardItem::Video(_)));
 }
 
 #[test]

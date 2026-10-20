@@ -34,10 +34,7 @@ mod compression_tests {
 
 	/// Helper to create a test Session with N message pairs
 	fn create_test_messages(message_count: usize) -> Vec<Message> {
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		let mut messages = vec![Message {
 			role: "system".to_string(),
@@ -210,16 +207,10 @@ mod compression_tests {
 		let fixed_end_index = len - 1;
 
 		// Verify the bug would be caught
-		assert!(
-			buggy_end_index >= len,
-			"Buggy end_index should fail validation"
-		);
+		assert!(buggy_end_index >= len, "Buggy end_index should fail validation");
 
 		// Verify the fix is valid
-		assert!(
-			fixed_end_index < len,
-			"Fixed end_index should pass validation"
-		);
+		assert!(fixed_end_index < len, "Fixed end_index should pass validation");
 
 		// Calculate messages to remove with fix
 		let messages_to_remove = fixed_end_index - start_index; // 92 - 10 = 82
@@ -283,10 +274,7 @@ mod adaptive_compression_tests {
 
 	/// Helper to create a test session with N message pairs
 	fn create_test_session(message_count: usize) -> Session {
-		let timestamp = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.unwrap()
-			.as_secs();
+		let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 		let mut messages = vec![Message {
 			role: "system".to_string(),

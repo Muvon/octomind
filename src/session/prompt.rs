@@ -16,18 +16,12 @@
 
 use std::path::Path;
 
-pub async fn create_system_prompt(
-	project_dir: &Path,
-	config: &crate::config::Config,
-	mode: &str,
-) -> String {
+pub async fn create_system_prompt(project_dir: &Path, config: &crate::config::Config, mode: &str) -> String {
 	// Get mode-specific configuration
 	let (_, mcp_config, _, _, system_prompt) = config.get_role_config(mode);
 
 	// For developer role, process placeholders to add project context
-	let mut prompt =
-		crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir)
-			.await;
+	let mut prompt = crate::session::helper_functions::process_placeholders_async(system_prompt, project_dir).await;
 
 	// Tool names and descriptions reach the model once, as the request's tool
 	// definitions (see providers.rs); listing them here again doubled that
@@ -107,10 +101,7 @@ const COMPRESSION_HINT_CLOSE: &str = "</context_compression>";
 /// Informs the AI about compression state to improve reasoning with compressed context.
 /// Idempotent: runs on every resume against the persisted system prompt, so it
 /// keeps exactly one hint block instead of stacking a copy per resume.
-pub fn add_compression_hints_to_prompt(
-	prompt: &mut String,
-	compression_stats: &crate::session::CompressionStats,
-) {
+pub fn add_compression_hints_to_prompt(prompt: &mut String, compression_stats: &crate::session::CompressionStats) {
 	if compression_stats.total_compressions() == 0 || prompt.ends_with(COMPRESSION_HINT) {
 		return;
 	}

@@ -28,10 +28,7 @@ const PYTHON: &str = "python";
 const PYTHON: &str = "python3";
 
 fn stub_server(name: &str) -> McpServerConfig {
-	let script = concat!(
-		env!("CARGO_MANIFEST_DIR"),
-		"/tests/fixtures/mcp_stub_server.py"
-	);
+	let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_stub_server.py");
 	McpServerConfig::stdin(name, PYTHON, vec![script.to_string()], 30, Vec::new())
 }
 
@@ -47,11 +44,7 @@ async fn stub_stdio_server_end_to_end() {
 	assert!(
 		tools.tools.iter().any(|t| t.name == "echo"),
 		"stub must advertise the echo tool, got: {:?}",
-		tools
-			.tools
-			.iter()
-			.map(|t| t.name.clone())
-			.collect::<Vec<_>>()
+		tools.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
 	);
 
 	// The handshake stored the negotiated server info + instructions
@@ -109,10 +102,7 @@ async fn stub_stdio_server_end_to_end() {
 #[tokio::test]
 async fn stub_stdio_server_call_timeout() {
 	let name = "stub_timeout";
-	let script = concat!(
-		env!("CARGO_MANIFEST_DIR"),
-		"/tests/fixtures/mcp_stub_server.py"
-	);
+	let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp_stub_server.py");
 	let server = McpServerConfig::stdin(name, PYTHON, vec![script.to_string()], 2, Vec::new());
 
 	let call = McpToolCall {

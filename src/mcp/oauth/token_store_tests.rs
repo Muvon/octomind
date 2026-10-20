@@ -87,9 +87,7 @@ async fn get_valid_token_expired_token_is_none() {
 async fn get_valid_token_buffer_can_expire_a_future_token() {
 	let server = "get-valid-buffer";
 	let expires_at = now_secs() + 10;
-	save_token(server, &meta_for(server, expires_at))
-		.await
-		.unwrap();
+	save_token(server, &meta_for(server, expires_at)).await.unwrap();
 	// The refresh buffer pushes the token past its expiry window…
 	assert_eq!(get_valid_token(server, 60).await.unwrap(), None);
 	// …but without a buffer it is still valid.

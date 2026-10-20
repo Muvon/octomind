@@ -32,9 +32,7 @@ fn test_mcp_truncation_under_limit() {
 
 #[test]
 fn test_mcp_truncation_over_limit() {
-	let content =
-		"This is a very long content that should be truncated when it exceeds the token limit. "
-			.repeat(100);
+	let content = "This is a very long content that should be truncated when it exceeds the token limit. ".repeat(100);
 	let (result, was_truncated) = truncate_mcp_response_global(&content, 50, "shell");
 	assert!(result.contains(TRUNCATION_NOTICE_TAG));
 	// Notice carries the tool-specific hint (shell → grep/head/tail).
@@ -72,11 +70,7 @@ fn test_mcp_truncation_is_idempotent_under_a_cap_smaller_than_the_notice() {
 	let (twice, t2) = truncate_mcp_response_global(&once, 50, "shell");
 	assert!(!t2);
 	assert_eq!(once, twice, "a second pass must not stack a second notice");
-	assert_eq!(
-		once.matches(TRUNCATION_NOTICE_TAG).count(),
-		1,
-		"exactly one notice"
-	);
+	assert_eq!(once.matches(TRUNCATION_NOTICE_TAG).count(), 1, "exactly one notice");
 }
 
 /// Reserving a fixed 400 tokens out of a 50-token budget left one token of
@@ -169,20 +163,11 @@ fn test_format_content_range_full_and_clamped() {
 	let all = "1: L0\n2: L1\n3: L2\n4: L3\n5: L4\n6: L5\n7: L6\n8: L7\n9: L8\n10: L9";
 
 	// end = -1 means "to the end"
-	assert_eq!(
-		format_content_with_line_numbers(&lines, 1, Some((3, -1))),
-		all
-	);
+	assert_eq!(format_content_with_line_numbers(&lines, 1, Some((3, -1))), all);
 	// end beyond the content clamps to the last line
-	assert_eq!(
-		format_content_with_line_numbers(&lines, 1, Some((2, 100))),
-		all
-	);
+	assert_eq!(format_content_with_line_numbers(&lines, 1, Some((2, 100))), all);
 	// start = 0 is treated like line 1
-	assert_eq!(
-		format_content_with_line_numbers(&lines, 1, Some((0, 10))),
-		all
-	);
+	assert_eq!(format_content_with_line_numbers(&lines, 1, Some((0, 10))), all);
 }
 
 #[test]
@@ -212,9 +197,9 @@ fn test_format_content_elides_both_sides() {
 	let owned: Vec<String> = (0..20).map(|i| format!("L{i}")).collect();
 	let lines: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
 	assert_eq!(
-			format_content_with_line_numbers(&lines, 1, Some((10, 12))),
-			"1: L0\n2: L1\n[...7 lines more]\n10: L9\n11: L10\n12: L11\n[...6 lines more]\n19: L18\n20: L19"
-		);
+		format_content_with_line_numbers(&lines, 1, Some((10, 12))),
+		"1: L0\n2: L1\n[...7 lines more]\n10: L9\n11: L10\n12: L11\n[...6 lines more]\n19: L18\n20: L19"
+	);
 }
 
 #[test]
@@ -303,10 +288,7 @@ fn test_format_extracted_defaults_to_fifty_lines() {
 fn test_format_extracted_max_one_degenerates_to_marker_only() {
 	let lines = ["a", "b"];
 	// max = 1: floor(2/3·1)=0 head and 0 tail lines, leaving only the marker
-	assert_eq!(
-		format_extracted_content_smart(&lines, 1, Some(1)),
-		"[...2 lines more]"
-	);
+	assert_eq!(format_extracted_content_smart(&lines, 1, Some(1)), "[...2 lines more]");
 }
 
 #[test]
@@ -372,10 +354,7 @@ fn test_truncation_hint_matches_each_tool_family() {
 	assert!(truncation_hint("ast_grep").contains("pattern"));
 	// Substring match catches search-like tools whatever they are called
 	for tool in ["semantic_search", "find_references", "graphrag"] {
-		assert!(
-			truncation_hint(tool).contains("more specific query"),
-			"{tool}"
-		);
+		assert!(truncation_hint(tool).contains("more specific query"), "{tool}");
 	}
 	// Everything else gets the generic advice
 	assert!(truncation_hint("plan").contains("narrow the request"));
@@ -418,8 +397,6 @@ fn test_mcp_truncation_unicode_keeps_valid_prefix() {
 	assert!(result.contains(TRUNCATION_NOTICE_TAG));
 	// The kept body must be a byte prefix of the original — cutting a
 	// multibyte payload must never corrupt a codepoint
-	let sep = result
-		.find("\n\n──────────\n")
-		.expect("notice separator present");
+	let sep = result.find("\n\n──────────\n").expect("notice separator present");
 	assert!(content.starts_with(&result[..sep]));
 }

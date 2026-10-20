@@ -62,14 +62,13 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 	// Resolve source: an existing local file vs. a tap workflow name.
 	let path = PathBuf::from(target);
 	let (raw, from_tap) = if path.exists() {
-		let raw = std::fs::read_to_string(&path)
-			.with_context(|| format!("failed to read {}", path.display()))?;
+		let raw = std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
 		(raw, false)
 	} else if looks_like_path(target) {
 		bail!("workflow file not found: {}", path.display());
 	} else {
-		let (raw, source_tap) = taps::fetch_workflow(target)
-			.with_context(|| format!("failed to fetch workflow '{target}' from taps"))?;
+		let (raw, source_tap) =
+			taps::fetch_workflow(target).with_context(|| format!("failed to fetch workflow '{target}' from taps"))?;
 		eprintln!(
 			"{} {} {} {}",
 			"workflow".bright_black(),
@@ -80,8 +79,7 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 		(raw, true)
 	};
 
-	let wf: WorkflowDef =
-		toml::from_str(&raw).with_context(|| format!("failed to parse workflow '{target}'"))?;
+	let wf: WorkflowDef = toml::from_str(&raw).with_context(|| format!("failed to parse workflow '{target}'"))?;
 
 	validate::validate(&wf)?;
 
@@ -104,9 +102,7 @@ pub async fn execute(args: &WorkflowArgs, config: &Config) -> Result<()> {
 		bail!("workflow requires input via stdin");
 	}
 	let mut input = String::new();
-	io::stdin()
-		.read_to_string(&mut input)
-		.context("failed to read stdin")?;
+	io::stdin().read_to_string(&mut input).context("failed to read stdin")?;
 	let input = input.trim().to_string();
 	if input.is_empty() {
 		bail!("workflow requires input via stdin");
@@ -124,8 +120,7 @@ fn looks_like_path(arg: &str) -> bool {
 
 /// `octomind workflow` with no argument — list public workflows from taps.
 fn list_workflows() -> Result<()> {
-	let workflows =
-		registry::list_all_tap_workflows().context("failed to enumerate tap workflows")?;
+	let workflows = registry::list_all_tap_workflows().context("failed to enumerate tap workflows")?;
 	if workflows.is_empty() {
 		println!(
 			"{}",
@@ -134,12 +129,7 @@ fn list_workflows() -> Result<()> {
 		return Ok(());
 	}
 	println!("{}", "available workflows".bright_black());
-	let name_width = workflows
-		.iter()
-		.map(|w| w.name.len())
-		.max()
-		.unwrap_or(0)
-		.min(40);
+	let name_width = workflows.iter().map(|w| w.name.len()).max().unwrap_or(0).min(40);
 	for w in &workflows {
 		// Pad the plain name before coloring so ANSI codes don't break alignment.
 		let padded = format!("{:<width$}", w.name, width = name_width);
@@ -173,11 +163,7 @@ fn print_plan(wf: &WorkflowDef) {
 			"entry:".bright_black(),
 			wf.entry.as_deref().expect("validated graph entry")
 		);
-		println!(
-			"  {} {}",
-			"max_transitions:".bright_black(),
-			wf.graph_max_transitions()
-		);
+		println!("  {} {}", "max_transitions:".bright_black(), wf.graph_max_transitions());
 	}
 	println!();
 
@@ -311,23 +297,11 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	if let Some(c) = s.count {
 		meta = format!("{meta}  count={c}");
 	}
-	println!(
-		"{indent}{idx}. {name}  {meta}",
-		idx = idx,
-		name = s.name.bright_white(),
-	);
+	println!("{indent}{idx}. {name}  {meta}", idx = idx, name = s.name.bright_white(),);
 	println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 }
 
-fn truncate(s: &str, n: usize) -> String {
-	let one_line = s.replace('\n', " ");
-	if one_line.chars().count() <= n {
-		one_line
-	} else {
-		let head: String = one_line.chars().take(n).collect();
-		format!("{head}…")
-	}
-}
+use octomind::utils::text::truncate;
 
 #[cfg(test)]
 #[path = "workflow_tests.rs"]

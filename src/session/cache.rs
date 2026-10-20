@@ -52,9 +52,7 @@ pub struct CacheManager {
 
 impl Default for CacheManager {
 	fn default() -> Self {
-		Self {
-			max_content_markers: 2,
-		}
+		Self { max_content_markers: 2 }
 	}
 }
 
@@ -67,12 +65,7 @@ impl CacheManager {
 	/// This should be called when preparing messages for API requests
 	/// CRITICAL FIX: This method should only be called during session initialization,
 	/// NOT during every API request conversion
-	pub fn add_automatic_cache_markers(
-		&self,
-		messages: &mut [Message],
-		has_tools: bool,
-		supports_caching: bool,
-	) {
+	pub fn add_automatic_cache_markers(&self, messages: &mut [Message], has_tools: bool, supports_caching: bool) {
 		if !supports_caching {
 			return;
 		}
@@ -138,11 +131,7 @@ impl CacheManager {
 		// continuation wrapper) — marking one of those would evict the anchor
 		// watermark before its 1h cache entry is ever written, and a breakpoint
 		// behind the frontier is a strict prefix of an existing one anyway.
-		let start = session
-			.messages
-			.iter()
-			.rposition(|msg| msg.cached)
-			.map_or(0, |i| i + 1);
+		let start = session.messages.iter().rposition(|msg| msg.cached).map_or(0, |i| i + 1);
 		let target_index = session.messages[start..]
 			.iter()
 			.rposition(|msg| msg.role == "tool" || msg.role == "user")
@@ -202,8 +191,7 @@ impl CacheManager {
 		for msg in &session.messages {
 			// Accurate token counting of what the provider receives (tool_calls,
 			// images, replayed thinking only).
-			let message_tokens =
-				crate::session::estimate_sent_message_tokens(msg, &session.info.model) as u64;
+			let message_tokens = crate::session::estimate_sent_message_tokens(msg, &session.info.model) as u64;
 
 			total_tokens += message_tokens;
 
@@ -328,10 +316,7 @@ impl CacheManager {
 
 		// Check if message exists
 		if message_index >= session.messages.len() {
-			return Err(anyhow::anyhow!(
-				"Message index {} is out of bounds",
-				message_index
-			));
+			return Err(anyhow::anyhow!("Message index {} is out of bounds", message_index));
 		}
 
 		// Check if already cached
@@ -435,12 +420,8 @@ impl CacheStatistics {
 				format_number(self.total_input_tokens).bright_blue(),
 				format_number(self.total_cache_read_tokens).bright_magenta(),
 				format_number(self.total_cache_write_tokens).bright_yellow(),
-				format_number(
-					self.total_input_tokens
-						- self.total_cache_read_tokens
-						- self.total_cache_write_tokens
-				)
-				.bright_cyan()
+				format_number(self.total_input_tokens - self.total_cache_read_tokens - self.total_cache_write_tokens)
+					.bright_cyan()
 			));
 			output.push_str(&format!(
 				"Total output tokens: {} (not cacheable)\n",
@@ -451,16 +432,12 @@ impl CacheStatistics {
 				self.cache_efficiency.to_string().bright_green()
 			));
 		} else {
-			output.push_str(&format!(
-				"{}\n",
-				"No cached tokens recorded yet".bright_black()
-			));
+			output.push_str(&format!("{}\n", "No cached tokens recorded yet".bright_black()));
 		}
 
 		// Show session-wide cache efficiency in a clearer way
 		if self.total_input_tokens > 0 {
-			let session_cached_pct =
-				(self.total_cache_read_tokens as f64 / self.total_input_tokens as f64) * 100.0;
+			let session_cached_pct = (self.total_cache_read_tokens as f64 / self.total_input_tokens as f64) * 100.0;
 			let session_processed_pct = 100.0 - session_cached_pct;
 			output.push_str(&format!(
 				"Session totals: {:.1}% cache read, {:.1}% processed ({}/{} total input tokens)\n",

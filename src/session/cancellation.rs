@@ -224,10 +224,7 @@ impl CancelHandle {
 ///
 /// Takes `Arc<Mutex<watch::Sender<bool>>>` so it always sends on the
 /// **current** operation's channel (swapped by `new_operation()`/`reset()`).
-fn handle_interrupt(
-	first_interrupt: &Arc<AtomicBool>,
-	op_tx: &Arc<Mutex<watch::Sender<bool>>>,
-) -> bool {
+fn handle_interrupt(first_interrupt: &Arc<AtomicBool>, op_tx: &Arc<Mutex<watch::Sender<bool>>>) -> bool {
 	if first_interrupt.load(Ordering::SeqCst) {
 		// Second Ctrl+C - force exit (always visible)
 		// Use std::println! directly to avoid with_suspended_spinner which could deadlock

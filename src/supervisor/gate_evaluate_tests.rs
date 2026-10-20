@@ -21,16 +21,14 @@
 
 use super::*;
 use crate::session::chat::test_support::{
-	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls,
-	spawn_recording_stub, FakeEvaluationStep,
+	evaluate_counter, fake_provider_config, final_response, install_fake_evaluation, nouls, spawn_recording_stub,
+	FakeEvaluationStep,
 };
 use crate::supervisor::evaluate::{gate_question_id, Seam};
 use octolib::evaluation::Question;
 
-static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> =
-	std::sync::LazyLock::new(EvidenceLedger::default);
-static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> =
-	std::sync::LazyLock::new(RenderedEvidence::default);
+static EMPTY_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(EvidenceLedger::default);
+static EMPTY_EVIDENCE: std::sync::LazyLock<RenderedEvidence> = std::sync::LazyLock::new(RenderedEvidence::default);
 
 const CLEAN_SHAPES: &str = r#"<shape name="circular" found="no">independent expectation</shape>
 <shape name="context-stripped" found="no">representative context</shape>
@@ -95,12 +93,7 @@ fn gate_chat_calls() -> u64 {
 		.unwrap_or(0)
 }
 
-async fn run(
-	config: &Config,
-	actions: &str,
-	grounds: &[(u64, String)],
-	stub: Vec<serde_json::Value>,
-) -> GateVerdict {
+async fn run(config: &Config, actions: &str, grounds: &[(u64, String)], stub: Vec<serde_json::Value>) -> GateVerdict {
 	let expected_calls = stub.len();
 	let (url, captured) = spawn_recording_stub(stub).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -156,13 +149,7 @@ async fn findings_at_the_threshold_are_refuted_and_the_rest_stand() {
 async fn every_finding_refuted_is_a_pass() {
 	let _fake = install_fake_evaluation(vec![answers(&[0.88])]).await;
 	let calls = gate_chat_calls();
-	let verdict = run(
-		&config(true),
-		ACTIONS,
-		&[],
-		vec![final_response(&gaps(&[TEST_GAP]))],
-	)
-	.await;
+	let verdict = run(&config(true), ACTIONS, &[], vec![final_response(&gaps(&[TEST_GAP]))]).await;
 	assert_eq!(verdict, GateVerdict::Pass);
 	assert_eq!(gate_chat_calls() - calls, 1);
 }
@@ -171,30 +158,17 @@ async fn every_finding_refuted_is_a_pass() {
 async fn a_finding_below_the_threshold_stands() {
 	let _fake = install_fake_evaluation(vec![answers(&[0.79])]).await;
 	let calls = gate_chat_calls();
-	let verdict = run(
-		&config(true),
-		ACTIONS,
-		&[],
-		vec![final_response(&gaps(&[TEST_GAP]))],
-	)
-	.await;
+	let verdict = run(&config(true), ACTIONS, &[], vec![final_response(&gaps(&[TEST_GAP]))]).await;
 	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
 	assert_eq!(gate_chat_calls() - calls, 1);
 }
 
 #[tokio::test]
 async fn an_unavailable_evaluation_leaves_all_findings_standing_without_chat_refutation() {
-	let fake =
-		install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY")]).await;
 	let calls = gate_chat_calls();
 	let unavailable = evaluate_counter(Seam::Gate, "unavailable");
-	let verdict = run(
-		&config(true),
-		ACTIONS,
-		&[],
-		vec![final_response(&gaps(&[TEST_GAP]))],
-	)
-	.await;
+	let verdict = run(&config(true), ACTIONS, &[], vec![final_response(&gaps(&[TEST_GAP]))]).await;
 	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
 	assert_eq!(gate_chat_calls() - calls, 1, "verifier only");
 	assert_eq!(evaluate_counter(Seam::Gate, "unavailable") - unavailable, 1);
@@ -208,20 +182,11 @@ async fn evidence_over_the_state_cap_leaves_all_findings_standing() {
 	let unavailable = evaluate_counter(Seam::Gate, "unavailable");
 	let huge = "#1 [read] shell cargo test → ok, every crate compiled and linked\n".repeat(3_000);
 	assert!(crate::session::estimate_tokens(&huge) > crate::supervisor::evaluate::MAX_STATE_TOKENS);
-	let verdict = run(
-		&config(true),
-		&huge,
-		&[],
-		vec![final_response(&gaps(&[TEST_GAP]))],
-	)
-	.await;
+	let verdict = run(&config(true), &huge, &[], vec![final_response(&gaps(&[TEST_GAP]))]).await;
 	assert_eq!(verdict, GateVerdict::Gaps(vec![TEST_FINDING.to_string()]));
 	assert_eq!(gate_chat_calls() - calls, 1);
 	assert_eq!(evaluate_counter(Seam::Gate, "unavailable") - unavailable, 1);
-	assert!(
-		fake.requests().is_empty(),
-		"an oversized state is never sent"
-	);
+	assert!(fake.requests().is_empty(), "an oversized state is never sent");
 }
 
 #[tokio::test]

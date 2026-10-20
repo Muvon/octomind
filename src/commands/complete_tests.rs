@@ -51,8 +51,8 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn template_config() -> Config {
-	let config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config
 }
 
@@ -91,16 +91,11 @@ fn workflow_subcommand_lists_tap_workflows() {
 	let dir = sandbox("workflow");
 	std::env::set_var(DATA_DIR_KEY, &dir);
 
-	let workflows = dir
-		.join("taps")
-		.join("muvon")
-		.join("octomind-tap")
-		.join("workflows");
+	let workflows = dir.join("taps").join("muvon").join("octomind-tap").join("workflows");
 	std::fs::create_dir_all(&workflows).expect("workflows dir");
 	std::fs::write(workflows.join("alpha.toml"), "description = \"a\"\n").expect("workflow");
 
-	execute(&complete_args("workflow"), &template_config())
-		.expect("workflow completion is read-only");
+	execute(&complete_args("workflow"), &template_config()).expect("workflow completion is read-only");
 }
 
 #[test]
@@ -124,6 +119,5 @@ fn untap_subcommand_lists_installed_taps() {
 
 #[test]
 fn unknown_subcommand_is_silent_success() {
-	execute(&complete_args("bogus"), &template_config())
-		.expect("unknown subcommands fall back to file completion");
+	execute(&complete_args("bogus"), &template_config()).expect("unknown subcommands fall back to file completion");
 }

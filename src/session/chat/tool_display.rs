@@ -45,8 +45,7 @@ pub async fn display_individual_tool_header_with_context(
 	_tool_index: usize,
 	execution_context: Option<&str>, // e.g., "layer_name" or "agent_context_gatherer"
 ) {
-	let server_name =
-		crate::session::chat::response::get_tool_server_name_async(tool_name, config).await;
+	let server_name = crate::session::chat::response::get_tool_server_name_async(tool_name, config).await;
 
 	let corner = "╭".bright_cyan();
 	let sep = "·".bright_black();
@@ -108,17 +107,12 @@ pub fn display_tool_output_smart(output_str: &str) {
 
 /// Display tool parameters in full detail (for info/debug modes)
 pub fn display_tool_parameters_full(tool_call: &crate::mcp::McpToolCall, config: &Config) {
-	if let Ok(params_obj) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
-		tool_call.parameters.clone(),
-	) {
+	if let Ok(params_obj) =
+		serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(tool_call.parameters.clone())
+	{
 		if !params_obj.is_empty() {
 			// Find the longest key for column alignment (max 20 chars to prevent excessive spacing)
-			let max_key_length = params_obj
-				.keys()
-				.map(|k| k.len())
-				.max()
-				.unwrap_or(0)
-				.min(20);
+			let max_key_length = params_obj.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
 
 			let rail = "│".bright_black();
 			for (key, value) in params_obj.iter() {
@@ -175,11 +169,7 @@ fn format_parameter_value_smart(value: &serde_json::Value) -> String {
 						lines.len().saturating_sub(1)
 					)
 				} else if lines.len() > 1 {
-					format!(
-						"\"{}\" [+{} lines]",
-						first_line,
-						lines.len().saturating_sub(1)
-					)
+					format!("\"{}\" [+{} lines]", first_line, lines.len().saturating_sub(1))
 				} else {
 					format!("\"{}\"", first_line)
 				}

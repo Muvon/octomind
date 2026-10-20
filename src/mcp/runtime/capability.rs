@@ -179,10 +179,7 @@ pub(crate) type ServerToolGroups = Vec<(String, Vec<String>)>;
 type DisablePlanEntry = (String, Vec<String>, bool);
 
 fn select_lru_in(map: &mut HashMap<String, CapState>) -> Option<(String, ServerToolGroups)> {
-	let lru_name = map
-		.iter()
-		.min_by_key(|(_, st)| st.last_used)
-		.map(|(n, _)| n.clone())?;
+	let lru_name = map.iter().min_by_key(|(_, st)| st.last_used).map(|(n, _)| n.clone())?;
 	let st = map.remove(&lru_name)?;
 	Some((lru_name, st.server_tools))
 }
@@ -238,9 +235,7 @@ fn evict_lru_if_full(config: &Config) {
 
 		let server_count = entries.len();
 		for (srv, tools, kill) in &entries {
-			if let Err(e) =
-				crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
-			{
+			if let Err(e) = crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config)) {
 				crate::log_debug!(
 					"capability LRU evict: failed to disable tools for server '{}' (kill={}, {} tools): {}",
 					srv,
@@ -326,10 +321,7 @@ fn cap_in_current_domain(domains: &[String]) -> bool {
 	crate::agent::registry::cap_available_in_domain(domains, cur_ref)
 }
 
-pub async fn execute_capability_command(
-	call: &McpToolCall,
-	config: &Config,
-) -> Result<McpToolResult> {
+pub async fn execute_capability_command(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let action = match call.parameters.get("action").and_then(|v| v.as_str()) {
 		Some(a) if !a.trim().is_empty() => a.trim().to_string(),
 		_ => {
@@ -425,10 +417,7 @@ fn triggers_preview(triggers: &[String]) -> String {
 	let suffix = if triggers.len() > 3 { ", …" } else { "" };
 	format!(
 		"{}{}",
-		take.iter()
-			.map(|t| format!("\"{t}\""))
-			.collect::<Vec<_>>()
-			.join(", "),
+		take.iter().map(|t| format!("\"{t}\"")).collect::<Vec<_>>().join(", "),
 		suffix
 	)
 }
@@ -453,8 +442,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 		));
 	}
 
-	let resolved = match crate::agent::registry::parse_capability_toml(&name, &config.capabilities)
-	{
+	let resolved = match crate::agent::registry::parse_capability_toml(&name, &config.capabilities) {
 		Ok(r) => r,
 		Err(e) => {
 			return Ok(McpToolResult::error(
@@ -486,8 +474,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// directly, the auto-activator routed here, or `OCTOMIND_CAPABILITIES`
 	// env-loaded it at boot. Hard-bound — no bypass.
 	if !cap_in_current_domain(&resolved.domains) {
-		let current = crate::session::context::current_session_domain()
-			.unwrap_or_else(|| "<unknown>".to_string());
+		let current = crate::session::context::current_session_domain().unwrap_or_else(|| "<unknown>".to_string());
 		return Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
@@ -495,11 +482,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 				"Capability '{name}' is bound to domains {:?}; current domain is '{current}'. \
 				 Run the matching role (e.g. `octomind run {}:general`) to access it.",
 				resolved.domains,
-				resolved
-					.domains
-					.first()
-					.map(String::as_str)
-					.unwrap_or("<domain>"),
+				resolved.domains.first().map(String::as_str).unwrap_or("<domain>"),
 			),
 		));
 	}
@@ -518,9 +501,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			));
 		}
 		evict_lru_if_full(config);
-		if let Err(e) =
-			crate::agent::deps::run_dep_entries(&resolved.deps, &resolved.tap_root, None).await
-		{
+		if let Err(e) = crate::agent::deps::run_dep_entries(&resolved.deps, &resolved.tap_root, None).await {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
@@ -556,8 +537,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	// that are already in the role's static config get an overlay entry —
 	// fully-dynamic servers are surfaced through `dynamic::get_all_functions`
 	// and don't need overlay extras to be visible.
-	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> =
-		std::collections::HashMap::new();
+	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
@@ -599,11 +579,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 			// dispatcher can route a call like `octofs:shell` even though
 			// the role's static filter never listed it.
 			if !bare_names.is_empty() {
-				crate::mcp::tool_map::register_dynamic_server_tools(
-					&server_name,
-					server_config,
-					&bare_names,
-				);
+				crate::mcp::tool_map::register_dynamic_server_tools(&server_name, server_config, &bare_names);
 				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
@@ -620,9 +596,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					format!(
-						"Failed to register server '{server_name}' for capability '{name}': {e}"
-					),
+					format!("Failed to register server '{server_name}' for capability '{name}': {e}"),
 				));
 			}
 		}
@@ -659,8 +633,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 	let tools_summary = if !any_filter_applied {
 		"all tools the server exposes (list populates on first use if empty now)".to_string()
 	} else if activated_tools.is_empty() {
-		"none — the configured allowed_tools filter excluded every tool the server reported"
-			.to_string()
+		"none — the configured allowed_tools filter excluded every tool the server reported".to_string()
 	} else {
 		activated_tools.join(", ")
 	};
@@ -680,9 +653,7 @@ async fn handle_enable(call: &McpToolCall, config: &Config) -> Result<McpToolRes
 
 async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolResult> {
 	let name = match call.parameters.get("name").and_then(|v| v.as_str()) {
-		Some(n) if !n.trim().is_empty() => {
-			crate::agent::registry::capability_bare_name(n.trim()).to_string()
-		}
+		Some(n) if !n.trim().is_empty() => crate::agent::registry::capability_bare_name(n.trim()).to_string(),
 		_ => {
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
@@ -756,17 +727,12 @@ async fn handle_disable(call: &McpToolCall, config: &Config) -> Result<McpToolRe
 		// `kill=false` selects the strip-only path inside
 		// `disable_server_tools`; static servers reach this branch via the
 		// `static_owned` rule above.
-		if let Err(e) =
-			crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config))
-		{
+		if let Err(e) = crate::mcp::runtime::dynamic::disable_server_tools(srv, tools, *kill, Some(config)) {
 			// Re-insert the cap so the user can retry. Fail closed — partial
 			// disable is worse than reporting the error. Partially stripped
 			// servers are restored by the user retrying enable (enable
 			// re-applies overlay + tools).
-			registry()
-				.write()
-				.unwrap()
-				.insert(name.clone(), original_state);
+			registry().write().unwrap().insert(name.clone(), original_state);
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
@@ -860,11 +826,7 @@ const AUTO_ACTIVATE_TOP_K: usize = 3;
 /// candidate, top2 is treated as 0.0. Sort is stable (Timsort) so ties
 /// preserve insertion order. Pure helper, separated from the embedding-
 /// driven path so threshold/margin behavior is unit-testable.
-fn select_with_margin<T>(
-	mut scored: Vec<(f32, T)>,
-	threshold: f32,
-	margin: f32,
-) -> Option<(f32, T)> {
+fn select_with_margin<T>(mut scored: Vec<(f32, T)>, threshold: f32, margin: f32) -> Option<(f32, T)> {
 	if scored.is_empty() {
 		return None;
 	}
@@ -927,10 +889,7 @@ pub enum EnvCapabilityProgress {
 /// Failures are logged and skipped (never abort the session). Already-active
 /// capabilities are no-ops. Use this from CLI / CI / non-interactive runs
 /// that need a deterministic tool surface (e.g., `OCTOMIND_CAPABILITIES=cron,docker octomind run -r ...`).
-pub async fn load_env_capabilities(
-	config: &Config,
-	progress: Option<&(dyn Fn(EnvCapabilityProgress) + Send + Sync)>,
-) {
+pub async fn load_env_capabilities(config: &Config, progress: Option<&(dyn Fn(EnvCapabilityProgress) + Send + Sync)>) {
 	let env_val = match std::env::var("OCTOMIND_CAPABILITIES") {
 		Ok(v) if !v.trim().is_empty() => v,
 		_ => return,
@@ -975,11 +934,7 @@ pub async fn load_env_capabilities(
 				if !suppress {
 					eprintln!("OCTOMIND_CAPABILITIES: capability '{name}' failed: {msg}");
 				} else {
-					crate::log_debug!(
-						"OCTOMIND_CAPABILITIES: capability '{}' failed: {}",
-						name,
-						msg
-					);
+					crate::log_debug!("OCTOMIND_CAPABILITIES: capability '{}' failed: {}", name, msg);
 				}
 				false
 			}
@@ -991,11 +946,7 @@ pub async fn load_env_capabilities(
 				if !suppress {
 					eprintln!("OCTOMIND_CAPABILITIES: capability '{name}' failed: {e:#}");
 				} else {
-					crate::log_debug!(
-						"OCTOMIND_CAPABILITIES: capability '{}' failed: {:#}",
-						name,
-						e
-					);
+					crate::log_debug!("OCTOMIND_CAPABILITIES: capability '{}' failed: {:#}", name, e);
 				}
 				false
 			}
@@ -1021,10 +972,7 @@ pub fn list_active_names() -> Vec<String> {
 /// Designed to run before every API request from `prepare_for_api_call`.
 /// Does not block the hot path on model warmup — `is_ready` is consulted
 /// first and skips silently while the model is still downloading.
-pub async fn auto_activate_capabilities(
-	session: &mut crate::session::chat::session::ChatSession,
-	config: &Config,
-) {
+pub async fn auto_activate_capabilities(session: &mut crate::session::chat::session::ChatSession, config: &Config) {
 	// Fire only on a fresh user message. Tool-loop iterations are skipped.
 	let intent = match session.session.messages.last() {
 		Some(m) if crate::session::is_real_user_task_message(m) => m.content.clone(),
@@ -1066,9 +1014,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 	}
 
 	if !crate::embeddings::is_ready() {
-		crate::log_debug!(
-			"capability auto-activate: embedding model not ready yet, skipping this turn"
-		);
+		crate::log_debug!("capability auto-activate: embedding model not ready yet, skipping this turn");
 		return Vec::new();
 	}
 
@@ -1162,23 +1108,13 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 		preview.join(", ")
 	);
 
-	let top = select_with_margin(
-		scored.clone(),
-		AUTO_ACTIVATE_THRESHOLD,
-		AUTO_ACTIVATE_MARGIN,
-	);
+	let top = select_with_margin(scored.clone(), AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
 	if top.is_none() {
 		let top1 = scored.first().map(|x| x.0).unwrap_or(0.0);
 		let top2 = scored.get(1).map(|x| x.0).unwrap_or(0.0);
-		let top1_name = scored
-			.first()
-			.map(|x| x.1.name.as_str())
-			.unwrap_or("<none>");
+		let top1_name = scored.first().map(|x| x.1.name.as_str()).unwrap_or("<none>");
 		let reason = if top1 < AUTO_ACTIVATE_THRESHOLD {
-			format!(
-				"top1 {top1:.3} below threshold {:.3}",
-				AUTO_ACTIVATE_THRESHOLD
-			)
+			format!("top1 {top1:.3} below threshold {:.3}", AUTO_ACTIVATE_THRESHOLD)
 		} else {
 			format!(
 				"margin {:.3} below required {:.3} (top1={top1:.3} top2={top2:.3})",
@@ -1206,11 +1142,7 @@ pub async fn auto_activate_capabilities_for_intent(intent: &str, config: &Config
 				return vec![cap.name.clone()];
 			}
 			Err(e) => {
-				crate::log_debug!(
-					"capability auto-activate: failed to enable '{}' ({})",
-					cap.name,
-					e
-				);
+				crate::log_debug!("capability auto-activate: failed to enable '{}' ({})", cap.name, e);
 			}
 		}
 	}
@@ -1241,10 +1173,7 @@ async fn evaluate_pick<'a>(
 			.iter()
 			.map(|(_, cap)| (cap.name.as_str(), cap.description.as_str())),
 	);
-	let questions = std::collections::BTreeMap::from([(
-		evaluate::CAPABILITY_QUESTION_ID.to_string(),
-		question,
-	)]);
+	let questions = std::collections::BTreeMap::from([(evaluate::CAPABILITY_QUESTION_ID.to_string(), question)]);
 	let Some(answers) = evaluate::run(
 		config,
 		Seam::Capabilities,
@@ -1256,18 +1185,13 @@ async fn evaluate_pick<'a>(
 		return cosine;
 	};
 	let Some(octolib::evaluation::Answer::Choice {
-		choice,
-		probabilities,
-		..
+		choice, probabilities, ..
 	}) = answers.get(evaluate::CAPABILITY_QUESTION_ID)
 	else {
 		return cosine;
 	};
 	let cosine_name = cosine.map(|(_, cap)| cap.name.as_str());
-	let names: Vec<&str> = candidates
-		.iter()
-		.map(|(_, cap)| cap.name.as_str())
-		.collect();
+	let names: Vec<&str> = candidates.iter().map(|(_, cap)| cap.name.as_str()).collect();
 	let verdict = match apply_capability_answer(cosine_name, &names, choice, probabilities) {
 		Ok(verdict) => verdict,
 		Err(reason) => {
@@ -1307,9 +1231,7 @@ fn apply_capability_answer<'a>(
 	choice: &str,
 	probabilities: &std::collections::BTreeMap<String, f64>,
 ) -> Result<Option<&'a str>, &'static str> {
-	use crate::supervisor::evaluate::{
-		CAPABILITY_ACTIVATE_AT, CAPABILITY_CONFIRM_AT, CAPABILITY_NONE,
-	};
+	use crate::supervisor::evaluate::{CAPABILITY_ACTIVATE_AT, CAPABILITY_CONFIRM_AT, CAPABILITY_NONE};
 
 	let probability = |name: &str| probabilities.get(name).copied().unwrap_or(0.0);
 	if choice != CAPABILITY_NONE && !candidates.contains(&choice) {
@@ -1386,9 +1308,7 @@ async fn static_server_grant(
 	let mut unfiltered = server.clone();
 	unfiltered.tools_mut().clear();
 	for function in crate::mcp::server_functions_for(&unfiltered, config).await {
-		if !names.contains(&function.name)
-			&& crate::mcp::is_tool_allowed_by_patterns(&function.name, &globs)
-		{
+		if !names.contains(&function.name) && crate::mcp::is_tool_allowed_by_patterns(&function.name, &globs) {
 			names.push(function.name);
 		}
 	}
@@ -1450,8 +1370,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 
 	let mut activated_servers: Vec<String> = Vec::new();
 	let mut activated_server_tools: Vec<(String, Vec<String>)> = Vec::new();
-	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> =
-		std::collections::HashMap::new();
+	let mut overlay_per_server: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 	for server in &resolved.mcp_servers {
 		let server_name = server.name().to_string();
 		let filter = filter_for_server(&resolved.allowed_tools, &server_name);
@@ -1464,11 +1383,7 @@ async fn activate_capability_inline(name: &str, config: &Config) -> Result<Vec<S
 		if let Some(server_config) = config.mcp.servers.iter().find(|s| s.name() == server_name) {
 			let bare_names = static_server_grant(server_config, filter, config).await;
 			if !bare_names.is_empty() {
-				crate::mcp::tool_map::register_dynamic_server_tools(
-					&server_name,
-					server_config,
-					&bare_names,
-				);
+				crate::mcp::tool_map::register_dynamic_server_tools(&server_name, server_config, &bare_names);
 				crate::mcp::server::clear_function_cache_for_server(&server_name);
 				overlay_per_server.insert(server_name.clone(), bare_names.clone());
 			}
@@ -1554,11 +1469,7 @@ async fn handle_discover(call: &McpToolCall, config: &Config) -> Result<McpToolR
 
 	let mut output = format!("Capabilities matching '{intent}':\n");
 	for (score, cap) in top {
-		let marker = if is_active(&cap.name) {
-			"[active] "
-		} else {
-			""
-		};
+		let marker = if is_active(&cap.name) { "[active] " } else { "" };
 		output.push_str(&format!(
 			"- {}{} (score {:.2}) — {}\n",
 			marker,

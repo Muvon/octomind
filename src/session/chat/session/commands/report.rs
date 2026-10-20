@@ -24,11 +24,7 @@ use chrono::{Datelike, Local, NaiveDate, NaiveTime};
 
 const USAGE: &str = "Usage: /report [day|week|month] [here]";
 
-pub fn handle_report(
-	session: &ChatSession,
-	config: &Config,
-	params: &[&str],
-) -> Result<CommandResult> {
+pub fn handle_report(session: &ChatSession, config: &Config, params: &[&str]) -> Result<CommandResult> {
 	let (period, here) = match params {
 		[] => return session_report(session, config),
 		[period] => (*period, false),
@@ -72,10 +68,7 @@ fn period_report(
 	today: NaiveDate,
 	here: bool,
 ) -> Result<CommandResult> {
-	let mut sessions = SessionReport::turns_since(
-		&crate::directories::get_sessions_dir()?,
-		local_midnight(first_day),
-	)?;
+	let mut sessions = SessionReport::turns_since(&crate::directories::get_sessions_dir()?, local_midnight(first_day))?;
 	// The same basename `generate_session_name` puts into new session names.
 	let project = here.then(|| {
 		crate::mcp::get_thread_working_directory()
@@ -157,10 +150,7 @@ fn by_project(sessions: &[SessionTurns], timing: &Timing) -> Vec<ProjectTime> {
 }
 
 fn add_project(projects: &mut Vec<ProjectTime>, entry: ProjectTime) {
-	match projects
-		.iter_mut()
-		.find(|project| project.project == entry.project)
-	{
+	match projects.iter_mut().find(|project| project.project == entry.project) {
 		Some(project) => {
 			project.time_min += entry.time_min;
 			project.code_min += entry.code_min;
@@ -193,9 +183,7 @@ fn session_report(session: &ChatSession, config: &Config) -> Result<CommandResul
 	if let Some(ref session_file) = session.session.session_file {
 		// Close the in-flight request's window so the last row shows its real
 		// cost instead of 0 — the report reads the log, not live state.
-		if let Err(error) =
-			crate::session::logger::log_stats_checkpoint(session_file, &session.session.info)
-		{
+		if let Err(error) = crate::session::logger::log_stats_checkpoint(session_file, &session.session.info) {
 			crate::log_debug!("Stats checkpoint before report failed: {}", error);
 		}
 		let session_file_str = session_file.to_string_lossy();
@@ -240,28 +228,25 @@ fn session_report(session: &ChatSession, config: &Config) -> Result<CommandResul
 					"timing": timing
 				});
 
-				Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Report { entries, totals },
-				)))
+				Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Report {
+					entries,
+					totals,
+				})))
 			}
-			Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: format!("Failed to generate report: {}", e),
-					context: Some(serde_json::json!({
-						"hint": "Make sure the session log file exists and is readable."
-					})),
-				},
-			))),
+			Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: format!("Failed to generate report: {}", e),
+				context: Some(serde_json::json!({
+					"hint": "Make sure the session log file exists and is readable."
+				})),
+			}))),
 		}
 	} else {
-		Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: "No session file available for report generation.".to_string(),
-				context: Some(serde_json::json!({
-					"hint": "No session file found. Sessions are auto-saved after each interaction."
-				})),
-			},
-		)))
+		Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: "No session file available for report generation.".to_string(),
+			context: Some(serde_json::json!({
+				"hint": "No session file found. Sessions are auto-saved after each interaction."
+			})),
+		})))
 	}
 }
 

@@ -91,10 +91,7 @@ pub enum ActivateCheck {
 	/// content(rust) — word-boundary match against user message content
 	Content(String),
 	/// grep(pattern) or grep(pattern, path_glob) — search inside files
-	Grep {
-		pattern: String,
-		path: Option<String>,
-	},
+	Grep { pattern: String, path: Option<String> },
 	/// env(VAR) — environment variable is set and non-empty
 	/// env(VAR=val) — environment variable equals value
 	Env { var: String, value: Option<String> },
@@ -222,9 +219,7 @@ impl ActivateCheck {
 				.map(|re| re.is_match(content))
 				.unwrap_or(false),
 			Self::Bin(name) => which::which(name).is_ok(),
-			Self::Session(pattern) => session_name
-				.to_lowercase()
-				.contains(&pattern.to_lowercase()),
+			Self::Session(pattern) => session_name.to_lowercase().contains(&pattern.to_lowercase()),
 			Self::Workdir(pattern) => workdir
 				.to_string_lossy()
 				.to_lowercase()
@@ -276,10 +271,7 @@ fn match_word_pattern(pattern: &str, text: &str) -> bool {
 
 /// Search file contents in workdir for pattern, respecting .gitignore.
 fn grep_workdir(pattern: &str, path_filter: Option<&str>, workdir: &std::path::Path) -> bool {
-	let walker = ignore::WalkBuilder::new(workdir)
-		.hidden(true)
-		.git_ignore(true)
-		.build();
+	let walker = ignore::WalkBuilder::new(workdir).hidden(true).git_ignore(true).build();
 
 	let re = regex::Regex::new(pattern).ok();
 
@@ -290,10 +282,7 @@ fn grep_workdir(pattern: &str, path_filter: Option<&str>, workdir: &std::path::P
 		// Apply path filter if specified
 		if let Some(filter) = path_filter {
 			let fname = entry.file_name().to_string_lossy();
-			if !glob::Pattern::new(filter)
-				.map(|p| p.matches(&fname))
-				.unwrap_or(false)
-			{
+			if !glob::Pattern::new(filter).map(|p| p.matches(&fname)).unwrap_or(false) {
 				continue;
 			}
 		}
@@ -458,11 +447,7 @@ pub(crate) fn parse_skill_meta(content: &str) -> Option<SkillMeta> {
 		// Regular key: value line
 		if let Some((key, value)) = line.split_once(':') {
 			let key = key.trim();
-			let value = value
-				.trim()
-				.trim_matches('"')
-				.trim_matches('\'')
-				.to_string();
+			let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
 			match key {
 				"name" => name = Some(value),
 				"description" => description = Some(value),
@@ -895,10 +880,7 @@ pub async fn execute_skill_tool(call: &McpToolCall) -> Result<McpToolResult, Str
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"unknown action '{}'. Valid actions: list, use, forget",
-				other
-			),
+			format!("unknown action '{}'. Valid actions: list, use, forget", other),
 		)),
 	}
 }
@@ -962,11 +944,7 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 	let mut lines = vec![format!(
 		"Found {} skill(s){}:",
 		total,
-		if pattern.is_some() {
-			" matching pattern"
-		} else {
-			""
-		}
+		if pattern.is_some() { " matching pattern" } else { "" }
 	)];
 	lines.push(String::new());
 
@@ -983,10 +961,7 @@ fn execute_list(call: &McpToolCall) -> Result<McpToolResult, String> {
 		} else {
 			format!(" ⚠️ [missing tools: {}]", unavailable.join(", "))
 		};
-		lines.push(format!(
-			"**{}**{}{}",
-			meta.name, active_marker, compat_marker
-		));
+		lines.push(format!("**{}**{}{}", meta.name, active_marker, compat_marker));
 		lines.push(format!("  {}", meta.description));
 		if let Some(ref compat) = meta.compatibility {
 			lines.push(format!("  Compatibility: {}", compat));
@@ -1054,12 +1029,7 @@ async fn enable_skill_server(
 			Some(server_name)
 		}
 		Err(e) => {
-			crate::log_debug!(
-				"skill: {} server '{}' enable failed: {}",
-				origin,
-				server_name,
-				e
-			);
+			crate::log_debug!("skill: {} server '{}' enable failed: {}", origin, server_name, e);
 			None
 		}
 	}
@@ -1129,18 +1099,12 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Uses refcounting so shared capabilities are only offloaded when the last skill forgets.
 	let mut cap_messages = Vec::new();
 	let mut servers_loaded_by_this_skill = Vec::new();
-	let session_config = crate::session::context::current_session_id()
-		.and_then(|sid| crate::session::context::get_session_config(&sid));
+	let session_config =
+		crate::session::context::current_session_id().and_then(|sid| crate::session::context::get_session_config(&sid));
 	// Collect config-level server names to avoid touching domain-owned servers
 	let config_server_names: std::collections::HashSet<String> = session_config
 		.as_ref()
-		.map(|cfg| {
-			cfg.mcp
-				.servers
-				.iter()
-				.map(|s| s.name().to_string())
-				.collect()
-		})
+		.map(|cfg| cfg.mcp.servers.iter().map(|s| s.name().to_string()).collect())
 		.unwrap_or_default();
 	if !meta.capabilities.is_empty() {
 		let overrides = session_config
@@ -1154,9 +1118,9 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 					// Env readiness gate: skip capabilities whose required env
 					// vars are not set. The skill still activates but without
 					// the unconfigured capability.
-					if let Err(missing) = crate::mcp::runtime::capability::check_env_readiness(
-						&resolved.required_env_keys,
-					) {
+					if let Err(missing) =
+						crate::mcp::runtime::capability::check_env_readiness(&resolved.required_env_keys)
+					{
 						crate::log_debug!(
 							"skill: skipping capability '{}' — missing env vars: {}",
 							cap_name,
@@ -1226,11 +1190,7 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	}
 
 	// Record which servers this skill loaded for proper offloading on forget
-	crate::session::context::set_skill_capability_servers(
-		&session_id,
-		&name,
-		servers_loaded_by_this_skill,
-	);
+	crate::session::context::set_skill_capability_servers(&session_id, &name, servers_loaded_by_this_skill);
 
 	// Tool compatibility: warn if required tools are still missing after capability loading
 	let unavailable = missing_tools(&meta.allowed_tools);
@@ -1249,10 +1209,7 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 	// Inject skill body wrapped in tags for detection on session resume.
 	let body = strip_frontmatter(&content);
 	let description = meta.description.replace('"', "&quot;");
-	let mut injection_content = format!(
-		"<skill name=\"{}\" description=\"{}\">\n{}",
-		name, description, body
-	);
+	let mut injection_content = format!("<skill name=\"{}\" description=\"{}\">\n{}", name, description, body);
 	if !resources.is_empty() {
 		injection_content.push_str(&resources);
 	}
@@ -1265,11 +1222,7 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 		LAST_SKILL_CONTENT.with(|cell| {
 			*cell.borrow_mut() = Some(injection_content);
 		});
-		crate::log_debug!(
-			"skill: silently activated '{}' in session {}",
-			name,
-			session_id
-		);
+		crate::log_debug!("skill: silently activated '{}' in session {}", name, session_id);
 		// Note: silent callers (skill_auto::auto_activate_skill, load_env_skills,
 		// /skill command handler) emit their own structured event since they know
 		// the context (auto-activation vs explicit command vs env load).
@@ -1279,11 +1232,7 @@ async fn execute_use(call: &McpToolCall, silent: bool) -> Result<McpToolResult, 
 			source: crate::session::inbox::InboxSource::Skill { name: name.clone() },
 			content: injection_content,
 		});
-		crate::log_debug!(
-			"skill: queued '{}' for injection in session {}",
-			name,
-			session_id
-		);
+		crate::log_debug!("skill: queued '{}' for injection in session {}", name, session_id);
 
 		// Emit structured lifecycle event for JSONL/WebSocket consumers
 		crate::mcp::process::send_notification_message(crate::websocket::ServerMessage::skill(
@@ -1357,8 +1306,7 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 	let servers = crate::session::context::take_skill_capability_servers(&session_id, &name);
 	let mut offloaded = Vec::new();
 	for server_name in &servers {
-		let remaining =
-			crate::session::context::decrement_capability_refcount(&session_id, server_name);
+		let remaining = crate::session::context::decrement_capability_refcount(&session_id, server_name);
 		if remaining == 0 {
 			if let Err(e) = crate::mcp::runtime::dynamic::disable_server(server_name, None) {
 				crate::log_debug!("skill: offload disable '{}': {}", server_name, e);
@@ -1368,11 +1316,7 @@ fn execute_forget(call: &McpToolCall) -> Result<McpToolResult, String> {
 		}
 	}
 	if !offloaded.is_empty() {
-		crate::log_debug!(
-			"skill: forgot '{}' — offloaded servers: {}",
-			name,
-			offloaded.join(", ")
-		);
+		crate::log_debug!("skill: forgot '{}' — offloaded servers: {}", name, offloaded.join(", "));
 	}
 
 	crate::log_debug!("skill: forgot '{}' from session {}", name, session_id);

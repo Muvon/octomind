@@ -16,8 +16,7 @@ use super::*;
 
 #[test]
 fn run_collects_repeated_config_overrides_in_order() {
-	let args = CliArgs::try_parse_from(["octomind", "run", "-c", "a=b", "-c", "c=d"])
-		.expect("config overrides parse");
+	let args = CliArgs::try_parse_from(["octomind", "run", "-c", "a=b", "-c", "c=d"]).expect("config overrides parse");
 	assert_eq!(args.config_overrides, ["a=b", "c=d"]);
 	assert!(matches!(args.command, Some(Commands::Run(_))));
 }
@@ -67,10 +66,8 @@ fn untap_zsh_positional_is_rebound_to_the_dynamic_completer() {
 fn format_accepts_only_plain_and_jsonl() {
 	assert!(CliArgs::try_parse_from(["octomind", "run", "--format", "json"]).is_err());
 	assert!(CliArgs::try_parse_from(["octomind", "workflow", "x", "--format", "json"]).is_err());
-	let args =
-		CliArgs::try_parse_from(["octomind", "run", "--format", "jsonl"]).expect("jsonl parses");
+	let args = CliArgs::try_parse_from(["octomind", "run", "--format", "jsonl"]).expect("jsonl parses");
 	assert!(matches!(args.command, Some(Commands::Run(_))));
-	let args = CliArgs::try_parse_from(["octomind", "workflow", "x", "--format", "jsonl"])
-		.expect("jsonl parses");
+	let args = CliArgs::try_parse_from(["octomind", "workflow", "x", "--format", "jsonl"]).expect("jsonl parses");
 	assert!(matches!(args.command, Some(Commands::Workflow(_))));
 }

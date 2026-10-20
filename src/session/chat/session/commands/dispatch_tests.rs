@@ -141,6 +141,42 @@ async fn test_model_show_and_set() {
 }
 
 #[tokio::test]
+async fn test_model_rejects_value_without_provider() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let before = session.model.clone();
+
+	// `/model gpt5` has no provider prefix: reject it and leave the session
+	// untouched. Without the guard the value was saved and the next request
+	// failed with no way back.
+	let result = dispatch_rendered(&mut session, &mut config, "/model gpt5")
+		.await
+		.expect("invalid model is handled, not an error");
+	let CommandResult::HandledWithOutput(output) = result else {
+		panic!("expected typed output for invalid model");
+	};
+	assert!(
+		matches!(*output, CommandOutput::Error { .. }),
+		"invalid model must report CommandOutput::Error, got {output:?}"
+	);
+	assert_eq!(session.model, before, "rejected model must not be saved");
+	assert_eq!(session.session.info.model, before);
+}
+
+#[tokio::test]
+async fn test_model_accepts_provider_qualified_value() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	let result = dispatch(&mut session, &mut config, "/model openrouter:some/model")
+		.await
+		.expect("valid model dispatches");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+	assert_eq!(session.model, "openrouter:some/model");
+	assert_eq!(session.session.info.model, "openrouter:some/model");
+}
+
+#[tokio::test]
 async fn test_effort_set() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();

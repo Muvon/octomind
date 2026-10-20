@@ -564,6 +564,11 @@ impl Config {
 		self.hooks.iter().find(|h| h.name == name)
 	}
 
+	/// Returns the default root model configured in `config-templates/default.toml`.
+	pub fn default_model() -> &'static str {
+		validation::default_model()
+	}
+
 	/// Get the effective model to use - uses root config model (now always required)
 	pub fn get_effective_model(&self) -> String {
 		// Model is now always required in config, no fallback needed

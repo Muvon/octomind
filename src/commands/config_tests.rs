@@ -99,6 +99,28 @@ fn test_show_configuration_renders() {
 }
 
 #[test]
+fn test_show_configuration_root_model_labels_default() {
+	let mut config = template_config();
+	let default_display = format_root_model(&config);
+	assert!(
+		default_display.contains("(default)"),
+		"template config root model should be labelled with (default), got: {default_display}"
+	);
+	assert!(
+		default_display.starts_with(Config::default_model()),
+		"template config root model should start with default model name, got: {default_display}"
+	);
+
+	config.model = "openrouter:anthropic/claude-3.5-haiku".to_string();
+	let custom_display = format_root_model(&config);
+	assert!(
+		!custom_display.contains("(default)"),
+		"custom model should not be labelled with (default), got: {custom_display}"
+	);
+	assert_eq!(custom_display, "openrouter:anthropic/claude-3.5-haiku");
+}
+
+#[test]
 fn test_validate_template_config() {
 	let mut a = args();
 	a.validate = true;

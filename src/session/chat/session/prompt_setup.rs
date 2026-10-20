@@ -33,7 +33,27 @@ pub async fn build_system_prompt(current_dir: &std::path::Path, config_for_role:
 		system_prompt.push_str("\n\n");
 		system_prompt.push_str(crate::supervisor::detect::SELF_REPORT_INSTRUCTION);
 	}
+	push_mcp_server_instructions(&mut system_prompt, config_for_role);
 	system_prompt
+}
+
+/// MCP `initialize` instructions are the server's own guidance on using its
+/// tools; MCP clients surface them to the model. Config order keeps the
+/// cached prefix stable. Servers not connected yet contribute nothing.
+fn push_mcp_server_instructions(system_prompt: &mut String, config: &Config) {
+	for server in &config.mcp.servers {
+		let name = server.name();
+		let Some(instructions) = crate::mcp::process::get_server_instructions(name) else {
+			continue;
+		};
+		let instructions = instructions.trim();
+		if instructions.is_empty() {
+			continue;
+		}
+		system_prompt.push_str(&format!(
+			"\n\n<mcp_server_instructions server=\"{name}\">\n{instructions}\n</mcp_server_instructions>"
+		));
+	}
 }
 
 // Helper function to setup system prompt and cache

@@ -153,6 +153,8 @@ fn parse_tap_arg_trims_local_path_whitespace() {
 	// yields an empty name and must be rejected.
 	assert!(parse_tap_arg(" user/repo").is_err());
 	assert!(parse_tap_arg("a/b/c /path").is_err());
+	assert!(parse_tap_arg("foo/").is_err());
+	assert!(parse_tap_arg("/repo ./dir").is_err());
 	assert!(parse_tap_arg("").is_err());
 }
 

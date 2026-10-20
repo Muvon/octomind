@@ -127,8 +127,7 @@ fn hooks_collect_every_occurrence() {
 
 #[test]
 fn name_and_model_short_flags_parse() {
-	let cli =
-		Cli::try_parse_from(["octomind", "-n", "sess", "-m", "openrouter:x"]).expect("-n/-m parse");
+	let cli = Cli::try_parse_from(["octomind", "-n", "sess", "-m", "openrouter:x"]).expect("-n/-m parse");
 	assert_eq!(cli.args.name.as_deref(), Some("sess"));
 	assert_eq!(cli.args.model.as_deref(), Some("openrouter:x"));
 }

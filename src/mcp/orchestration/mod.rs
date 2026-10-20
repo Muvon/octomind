@@ -30,8 +30,8 @@ pub mod tap;
 
 pub use monitor::{execute_monitor_tool, has_running_monitors};
 pub use schedule::{
-	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules,
-	has_pending_schedules, is_session_idle, next_schedule_sleep,
+	execute_schedule_tool, flush_due_to_inbox, flush_idle_to_inbox, has_pending_idle_schedules, has_pending_schedules,
+	is_session_idle, next_schedule_sleep,
 };
 pub use tap::execute_tap_command;
 

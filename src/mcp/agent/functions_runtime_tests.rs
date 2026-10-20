@@ -22,8 +22,7 @@ use serial_test::serial;
 
 fn runtime_test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -93,10 +92,7 @@ fn build_agent_config_clears_mcp_without_server_refs_and_applies_model() {
 		..probe_dynamic_agent()
 	};
 	let base = runtime_test_config();
-	assert!(
-		!base.mcp.servers.is_empty(),
-		"default template ships MCP servers"
-	);
+	assert!(!base.mcp.servers.is_empty(), "default template ships MCP servers");
 
 	let merged = build_agent_config(&agent, &base);
 	assert!(
@@ -171,16 +167,11 @@ async fn run_dynamic_agent_in_process_cancelled_before_start_fails_fast() {
 #[tokio::test]
 #[serial]
 async fn dynamic_async_without_job_manager_is_a_tool_error() {
-	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent())
-		.expect("register probe agent");
-	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn")
-		.expect("enable probe agent");
+	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
+	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
 
 	let result = execute_agent_command(
-		&agent_call(
-			"agent_octo-probe-dyn",
-			serde_json::json!({"task": "x", "async": true}),
-		),
+		&agent_call("agent_octo-probe-dyn", serde_json::json!({"task": "x", "async": true})),
 		&runtime_test_config(),
 		None,
 	)
@@ -193,17 +184,14 @@ async fn dynamic_async_without_job_manager_is_a_tool_error() {
 		text_of(&result)
 	);
 
-	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn")
-		.expect("clean up probe agent");
+	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn").expect("clean up probe agent");
 }
 
 #[tokio::test]
 #[serial]
 async fn dynamic_sync_api_failure_is_a_tool_error() {
-	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent())
-		.expect("register probe agent");
-	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn")
-		.expect("enable probe agent");
+	crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
+	crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
 
 	// The default template has no provider credentials, so the model call must
 	// fail — bounded so a hung provider still fails the test quickly.
@@ -226,8 +214,7 @@ async fn dynamic_sync_api_failure_is_a_tool_error() {
 		text_of(&result)
 	);
 
-	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn")
-		.expect("clean up probe agent");
+	crate::mcp::runtime::dynamic_agents::remove_agent("octo-probe-dyn").expect("clean up probe agent");
 }
 
 #[tokio::test]
@@ -239,16 +226,11 @@ async fn dynamic_async_failure_releases_error_to_session_inbox() {
 	crate::session::context::with_session_id(sid.clone(), async {
 		init_job_manager();
 		crate::session::inbox::init_inbox_for_session();
-		crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent())
-			.expect("register probe agent");
-		crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn")
-			.expect("enable probe agent");
+		crate::mcp::runtime::dynamic_agents::register_agent(probe_dynamic_agent()).expect("register probe agent");
+		crate::mcp::runtime::dynamic_agents::enable_agent("octo-probe-dyn").expect("enable probe agent");
 
 		let result = execute_agent_command(
-			&agent_call(
-				"agent_octo-probe-dyn",
-				serde_json::json!({"task": "x", "async": true}),
-			),
+			&agent_call("agent_octo-probe-dyn", serde_json::json!({"task": "x", "async": true})),
 			&runtime_test_config(),
 			None,
 		)
@@ -262,17 +244,14 @@ async fn dynamic_async_failure_releases_error_to_session_inbox() {
 		);
 
 		let manager = get_job_manager().expect("session job manager");
-		let completed =
-			tokio::time::timeout(std::time::Duration::from_secs(60), manager.wait_all())
-				.await
-				.expect("background job must finish");
+		let completed = tokio::time::timeout(std::time::Duration::from_secs(60), manager.wait_all())
+			.await
+			.expect("background job must finish");
 		assert_eq!(completed, 1, "the background job completed");
 
 		let message = next_inbox_message().await;
 		assert!(
-			message
-				.content
-				.contains("[Async agent 'octo-probe-dyn' failed]"),
+			message.content.contains("[Async agent 'octo-probe-dyn' failed]"),
 			"content: {}",
 			message.content
 		);
@@ -315,10 +294,7 @@ async fn config_agent_async_failure_releases_error_to_session_inbox() {
 		crate::session::inbox::init_inbox_for_session();
 
 		let result = execute_agent_command(
-			&agent_call(
-				"agent_scripted",
-				serde_json::json!({"task": "x", "async": true}),
-			),
+			&agent_call("agent_scripted", serde_json::json!({"task": "x", "async": true})),
 			&config,
 			None,
 		)
@@ -327,10 +303,9 @@ async fn config_agent_async_failure_releases_error_to_session_inbox() {
 		assert!(!is_err(&result), "content: {}", text_of(&result));
 
 		let manager = get_job_manager().expect("session job manager");
-		let completed =
-			tokio::time::timeout(std::time::Duration::from_secs(30), manager.wait_all())
-				.await
-				.expect("background job must finish");
+		let completed = tokio::time::timeout(std::time::Duration::from_secs(30), manager.wait_all())
+			.await
+			.expect("background job must finish");
 		assert_eq!(completed, 1);
 
 		let message = next_inbox_message().await;
@@ -413,10 +388,7 @@ async fn acp_prompt_error_without_output_omits_partial_trailer() {
 	.await
 	.expect_err("prompt error must fail the run");
 	let message = format!("{err:#}");
-	assert!(
-		message.contains("ACP prompt failed: boom"),
-		"got: {message}"
-	);
+	assert!(message.contains("ACP prompt failed: boom"), "got: {message}");
 	assert!(
 		!message.contains("Partial output"),
 		"no chunks were streamed: {message}"
@@ -464,18 +436,10 @@ async fn wait_for_response_cancelled_before_read_is_cancellation() {
 	_keep_tx.send(true).expect("pre-set cancellation");
 	let mut lines = BufReader::new(reader).lines();
 
-	let err = wait_for_response(
-		&mut lines,
-		1,
-		&mut cancel_rx,
-		std::time::Duration::from_secs(5),
-	)
-	.await
-	.expect_err("pre-set cancellation must fail the wait");
-	assert!(
-		crate::session::cancellation::is_cancelled(&err),
-		"got: {err:#}"
-	);
+	let err = wait_for_response(&mut lines, 1, &mut cancel_rx, std::time::Duration::from_secs(5))
+		.await
+		.expect_err("pre-set cancellation must fail the wait");
+	assert!(crate::session::cancellation::is_cancelled(&err), "got: {err:#}");
 	let _ = writer.shutdown().await;
 }
 
@@ -496,18 +460,10 @@ async fn wait_for_response_ignores_spurious_false_notifications() {
 		.await
 		.expect("write response");
 
-	let response = wait_for_response(
-		&mut lines,
-		7,
-		&mut cancel_rx,
-		std::time::Duration::from_secs(5),
-	)
-	.await
-	.expect("a false notification must not cancel the wait");
-	assert_eq!(
-		response.pointer("/result/ok").and_then(|v| v.as_bool()),
-		Some(true)
-	);
+	let response = wait_for_response(&mut lines, 7, &mut cancel_rx, std::time::Duration::from_secs(5))
+		.await
+		.expect("a false notification must not cancel the wait");
+	assert_eq!(response.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
 	let _ = writer.shutdown().await;
 }
 
@@ -525,9 +481,7 @@ async fn record_tap_live_ignores_messages_without_tool_or_usage_updates() {
 			role: "probe:agent".to_string(),
 			workdir: ".".to_string(),
 			started_at: std::time::SystemTime::now(),
-			status: std::sync::Arc::new(std::sync::RwLock::new(
-				crate::session::tap_runs::TapJobStatus::Running,
-			)),
+			status: std::sync::Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapJobStatus::Running)),
 			cancel_tx,
 			live: std::sync::Arc::new(std::sync::RwLock::new(Default::default())),
 		});

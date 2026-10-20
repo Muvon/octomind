@@ -140,9 +140,7 @@ pub async fn execute_tap_command(call: &McpToolCall, config: &Config) -> Result<
 		other => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"Unknown action '{other}'. Use run, list, stop, discover, capability, or workflow."
-			),
+			format!("Unknown action '{other}'. Use run, list, stop, discover, capability, or workflow."),
 		)),
 	}
 }
@@ -212,19 +210,13 @@ async fn handle_workflow(call: &McpToolCall) -> Result<McpToolResult> {
 				})
 				.to_string(),
 			),
-			Err(e) => McpToolResult::error(
-				call.tool_name.clone(),
-				call.tool_id.clone(),
-				format!("{e:#}"),
-			),
+			Err(e) => McpToolResult::error(call.tool_name.clone(), call.tool_id.clone(), format!("{e:#}")),
 		});
 	};
 
 	let role = format!("workflow:{name}");
 	let id = tap_runs::generate_id(&role);
-	let workdir = crate::mcp::get_thread_working_directory()
-		.to_string_lossy()
-		.to_string();
+	let workdir = crate::mcp::get_thread_working_directory().to_string_lossy().to_string();
 	let status = Arc::new(RwLock::new(TapJobStatus::Running));
 	let (cancel_tx, mut cancel_rx) = watch::channel(false);
 	tap_runs::register_job(TapJob {
@@ -317,10 +309,7 @@ fn workflow_handback(
 			TapJobStatus::Failed,
 			format!("[Workflow '{name}' ({id}) failed]\n\n{e:#}"),
 		),
-		None => (
-			TapJobStatus::Cancelled,
-			format!("[Workflow '{name}' ({id}) cancelled]"),
-		),
+		None => (TapJobStatus::Cancelled, format!("[Workflow '{name}' ({id}) cancelled]")),
 	}
 }
 
@@ -466,9 +455,7 @@ async fn handle_capability(call: &McpToolCall, config: &Config) -> Result<McpToo
 		}
 	};
 
-	let activated =
-		crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config)
-			.await;
+	let activated = crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
 
 	let content = if activated.is_empty() {
 		json!({
@@ -524,9 +511,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	// session working directory (not the process cwd, which is wrong under the
 	// server/daemon where all sessions share one process). Resolved early so
 	// resume picks up the original workdir from the existing job.
-	let cwd_default = crate::mcp::get_thread_working_directory()
-		.to_string_lossy()
-		.to_string();
+	let cwd_default = crate::mcp::get_thread_working_directory().to_string_lossy().to_string();
 
 	// Resolve (id, role, workdir, status, cancel_rx) for resume vs. fresh.
 	// Conversation history is persisted on disk by the ACP subprocess under
@@ -607,16 +592,19 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 		(id, role, workdir, status, cancel_rx)
 	};
 
+	crate::session::tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role));
+
 	// Resolve the path to the currently-running octomind binary so the
 	// subprocess uses the same code, regardless of $PATH.
 	let exe = match std::env::current_exe() {
 		Ok(p) => p.to_string_lossy().to_string(),
 		Err(e) => {
-			if let Ok(mut s) = status.write() {
-				if *s == TapJobStatus::Running {
-					*s = TapJobStatus::Failed;
-				}
-			}
+			tap_runs::finish_run(
+				&id,
+				&status,
+				TapJobStatus::Failed,
+				Some(format!("Failed to locate octomind binary: {e:#}")),
+			);
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
@@ -627,12 +615,7 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	// `--name <id>` creates a fresh session if `<id>.jsonl` doesn't exist
 	// and resumes it if it does — works for both the first call and
 	// every subsequent turn against the same tap-run id.
-	let acp_args: Vec<String> = vec![
-		"acp".to_string(),
-		role.clone(),
-		"--name".to_string(),
-		id.clone(),
-	];
+	let acp_args: Vec<String> = vec!["acp".to_string(), role.clone(), "--name".to_string(), id.clone()];
 	let workdir_path = std::path::PathBuf::from(&workdir);
 
 	let id_owned = id.clone();
@@ -652,6 +635,11 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 				true,
 			)
 			.await;
+			let error = outcome
+				.as_ref()
+				.err()
+				.filter(|e| !crate::session::cancellation::is_cancelled(e))
+				.map(|e| format!("{e:#}"));
 			let (terminal, content) = match outcome {
 				Ok(text) => (
 					TapJobStatus::Done,
@@ -671,18 +659,14 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			};
 			crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
 				source: crate::session::inbox::InboxSource::TapRun {
-					id: id_owned,
+					id: id_owned.clone(),
 					role: role_owned,
 				},
 				content,
 			});
 			// Queue the handback before clearing Running. Graceful session shutdown
 			// can therefore never observe neither the job nor its result.
-			if let Ok(mut s) = status_bg.write() {
-				if *s == TapJobStatus::Running {
-					*s = terminal;
-				}
-			}
+			tap_runs::finish_run(&id_owned, &status_bg, terminal, error);
 		};
 		if let Some(sid) = session_id {
 			crate::session::context::with_session_id(sid, run).await;

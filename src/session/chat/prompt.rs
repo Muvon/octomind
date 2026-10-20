@@ -57,10 +57,7 @@ impl Prompt for ChatPrompt {
 		Cow::Owned(self.multiline.clone())
 	}
 
-	fn render_prompt_history_search_indicator(
-		&self,
-		history_search: PromptHistorySearch,
-	) -> Cow<'_, str> {
+	fn render_prompt_history_search_indicator(&self, history_search: PromptHistorySearch) -> Cow<'_, str> {
 		self.reverse_search_active.store(true, Ordering::SeqCst);
 		Cow::Owned(format!("(search: {}) ", history_search.term))
 	}

@@ -97,13 +97,8 @@ async fn get_access_token_expired_token_falls_through_to_flow() {
 
 	// Flow starts (no valid token) and aborts on the invalid config —
 	// proving the expired token was NOT returned.
-	let err = get_access_token(&invalid_config(), &server, false)
-		.await
-		.unwrap_err();
-	assert!(
-		err.to_string().contains("OAuth config validation failed"),
-		"{err}"
-	);
+	let err = get_access_token(&invalid_config(), &server, false).await.unwrap_err();
+	assert!(err.to_string().contains("OAuth config validation failed"), "{err}");
 
 	clear_token(&server, false, None, None, None).await.unwrap();
 }
@@ -116,13 +111,8 @@ async fn get_access_token_force_refresh_skips_valid_stored_token() {
 
 	// force_refresh bypasses the token check and goes straight to the flow,
 	// which aborts on the invalid config instead of returning the token.
-	let err = get_access_token(&invalid_config(), &server, true)
-		.await
-		.unwrap_err();
-	assert!(
-		err.to_string().contains("OAuth config validation failed"),
-		"{err}"
-	);
+	let err = get_access_token(&invalid_config(), &server, true).await.unwrap_err();
+	assert!(err.to_string().contains("OAuth config validation failed"), "{err}");
 
 	clear_token(&server, false, None, None, None).await.unwrap();
 }
@@ -132,13 +122,8 @@ async fn get_access_token_force_refresh_skips_valid_stored_token() {
 async fn get_access_token_missing_token_starts_flow() {
 	let server = unique_server("oauth-missing");
 
-	let err = get_access_token(&invalid_config(), &server, false)
-		.await
-		.unwrap_err();
-	assert!(
-		err.to_string().contains("OAuth config validation failed"),
-		"{err}"
-	);
+	let err = get_access_token(&invalid_config(), &server, false).await.unwrap_err();
+	assert!(err.to_string().contains("OAuth config validation failed"), "{err}");
 }
 
 // ------------------------------------------------------------------
@@ -147,9 +132,7 @@ async fn get_access_token_missing_token_starts_flow() {
 
 #[tokio::test]
 async fn start_oauth_flow_rejects_invalid_config_before_binding() {
-	let err = start_oauth_flow(&invalid_config(), "never-started")
-		.await
-		.unwrap_err();
+	let err = start_oauth_flow(&invalid_config(), "never-started").await.unwrap_err();
 	let msg = err.to_string();
 	assert!(msg.contains("OAuth config validation failed"), "{msg}");
 	assert!(msg.contains("client_id"), "{msg}");

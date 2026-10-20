@@ -182,9 +182,7 @@ fn parse_legacy_self_report_inner(inner: &str) -> Option<(SelfReport, Option<Str
 		}
 		None => return None,
 	};
-	let reason = after
-		.trim_start_matches([' ', '·', '|', ':', '-', '\t'])
-		.trim();
+	let reason = after.trim_start_matches([' ', '·', '|', ':', '-', '\t']).trim();
 	Some((state, (!reason.is_empty()).then(|| reason.to_string())))
 }
 
@@ -288,10 +286,7 @@ pub fn is_command_execution(tool: &str, parameters: &serde_json::Value) -> bool 
 		return false;
 	}
 	match crate::mcp::tool_map::get_tool_server_name(tool) {
-		Some(server) => !matches!(
-			server.as_str(),
-			"core" | "runtime" | "orchestration" | "agent"
-		),
+		Some(server) => !matches!(server.as_str(), "core" | "runtime" | "orchestration" | "agent"),
 		// Unregistered command tool: retain the output as possible evidence.
 		None => true,
 	}
@@ -403,14 +398,11 @@ fn contains_mutation_intent(value: &str) -> bool {
 		}
 	}
 	let intents = [
-		"write", "edit", "create", "replace", "apply", "insert", "delete", "remove", "patch",
-		"mkdir", "rename", "move", "update", "set", "send", "publish", "post", "upload",
-		"schedule", "book", "approve", "reject", "cancel", "deploy", "install", "commit", "push",
-		"merge",
+		"write", "edit", "create", "replace", "apply", "insert", "delete", "remove", "patch", "mkdir", "rename",
+		"move", "update", "set", "send", "publish", "post", "upload", "schedule", "book", "approve", "reject",
+		"cancel", "deploy", "install", "commit", "push", "merge",
 	];
-	normalized
-		.split_whitespace()
-		.any(|token| intents.contains(&token))
+	normalized.split_whitespace().any(|token| intents.contains(&token))
 }
 
 fn tool_read_only_hints() -> &'static std::sync::RwLock<std::collections::HashMap<String, bool>> {
@@ -484,9 +476,7 @@ pub fn command_param_is_free_form(schema: &serde_json::Value) -> bool {
 		match node.get("type") {
 			Some(serde_json::Value::String(t)) => t == "string",
 			// Nullable/union declarations render the type as a list.
-			Some(serde_json::Value::Array(types)) => {
-				types.iter().any(|t| t.as_str() == Some("string"))
-			}
+			Some(serde_json::Value::Array(types)) => types.iter().any(|t| t.as_str() == Some("string")),
 			_ => false,
 		}
 	}
@@ -745,11 +735,7 @@ impl Detectors {
 	/// After `threshold` rounds with errors, nominate one advisory hint and
 	/// restart its counter. This does not establish a failed behavior or require
 	/// recovery. `threshold == 0` disables the signal.
-	pub fn record_round_command_outcomes(
-		&mut self,
-		outcomes: &[(u64, bool)],
-		threshold: usize,
-	) -> DetectorSignal {
+	pub fn record_round_command_outcomes(&mut self, outcomes: &[(u64, bool)], threshold: usize) -> DetectorSignal {
 		if outcomes.is_empty() {
 			return DetectorSignal::None;
 		}
@@ -771,9 +757,7 @@ impl Detectors {
 		if !failed.is_empty() {
 			self.failed_command_rounds = self.failed_command_rounds.saturating_add(1);
 			for key in failed {
-				if self.failed_commands.len() < FAILED_COMMANDS_CAP
-					|| self.failed_commands.contains(&key)
-				{
+				if self.failed_commands.len() < FAILED_COMMANDS_CAP || self.failed_commands.contains(&key) {
 					self.failed_commands.insert(key);
 				}
 			}
@@ -796,12 +780,7 @@ impl Detectors {
 	/// the agent changed), never tool names or file types. Command-verifiable
 	/// work still prefers the stronger signal — a check run — but a read-back
 	/// is evidence of artifact inspection and must count as such.
-	pub fn is_readback_call(
-		&self,
-		parameters: &serde_json::Value,
-		is_mutation: bool,
-		is_error: bool,
-	) -> bool {
+	pub fn is_readback_call(&self, parameters: &serde_json::Value, is_mutation: bool, is_error: bool) -> bool {
 		if is_mutation || is_error || self.mutated_paths.is_empty() {
 			return false;
 		}

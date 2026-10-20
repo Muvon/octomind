@@ -35,8 +35,7 @@ fn adapter_with_replies(
 	Arc<Mutex<LineState>>,
 ) {
 	let config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	let buffer_empty = Arc::new(AtomicBool::new(true));
 	let hint_available = Arc::new(AtomicBool::new(false));
 	let line_state = Arc::new(Mutex::new(LineState::default()));
@@ -212,10 +211,7 @@ fn test_quote_picker_lists_distinct_lines_newest_first() {
 
 	// `>` on a later line of the buffer: the span covers only that line
 	let buffer = "first line\n>";
-	let lines = adapter
-		.complete(buffer, buffer.len())
-		.suggestions()
-		.to_vec();
+	let lines = adapter.complete(buffer, buffer.len()).suggestions().to_vec();
 	let values: Vec<&str> = lines.iter().map(|s| s.value.as_str()).collect();
 	// Blank lines and lone fences are skipped; the repeated line appears once
 	assert_eq!(
@@ -227,10 +223,7 @@ fn test_quote_picker_lists_distinct_lines_newest_first() {
 			"> fn parse() {}\n",
 		]
 	);
-	assert_eq!(
-		lines[0].display_override.as_deref(),
-		Some("2m ago    Tests pass.")
-	);
+	assert_eq!(lines[0].display_override.as_deref(), Some("2m ago    Tests pass."));
 	assert_eq!(
 		lines[2].display_override.as_deref(),
 		Some("15m ago   Done — parser fixed.")
@@ -240,10 +233,7 @@ fn test_quote_picker_lists_distinct_lines_newest_first() {
 	// Every typed word must appear in the line, in any case and order
 	let filtered = adapter.complete("> FIX parser", 12).suggestions().to_vec();
 	let values: Vec<&str> = filtered.iter().map(|s| s.value.as_str()).collect();
-	assert_eq!(
-		values,
-		["> The parser fix holds.\n", "> Done — parser fixed.\n"]
-	);
+	assert_eq!(values, ["> The parser fix holds.\n", "> Done — parser fixed.\n"]);
 }
 
 #[test]
@@ -264,10 +254,7 @@ fn test_highlighter_dims_quoted_lines() {
 		.iter()
 		.map(|(style, text)| (style.is_dimmed, text.as_str()))
 		.collect();
-	assert_eq!(
-		segments,
-		[(true, "> quoted\n"), (false, "my answer\n"), (true, ">")]
-	);
+	assert_eq!(segments, [(true, "> quoted\n"), (false, "my answer\n"), (true, ">")]);
 }
 
 #[test]
@@ -275,9 +262,7 @@ fn test_quote_buffers_get_no_history_hint() {
 	let (mut adapter, ..) = adapter();
 	let mut history = reedline::FileBackedHistory::new(10).expect("history");
 	history
-		.save(reedline::HistoryItem::from_command_line(
-			"> old quote\nanswer",
-		))
+		.save(reedline::HistoryItem::from_command_line("> old quote\nanswer"))
 		.expect("save");
 	history
 		.save(reedline::HistoryItem::from_command_line("hello world"))
@@ -285,8 +270,5 @@ fn test_quote_buffers_get_no_history_hint() {
 
 	assert!(adapter.handle(">", 1, &history, false, "/tmp").is_empty());
 	// Ordinary text still completes from history
-	assert_eq!(
-		adapter.handle("hello", 5, &history, false, "/tmp"),
-		" world"
-	);
+	assert_eq!(adapter.handle("hello", 5, &history, false, "/tmp"), " world");
 }

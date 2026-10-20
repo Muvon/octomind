@@ -63,12 +63,7 @@ pub async fn execute(args: &SendArgs) -> Result<()> {
 	block_row("session", &args.name.bright_green().to_string(), kw);
 	block_row(
 		"chars",
-		&message
-			.chars()
-			.count()
-			.to_string()
-			.bright_white()
-			.to_string(),
+		&message.chars().count().to_string().bright_white().to_string(),
 		kw,
 	);
 	block_close_ok("send", Some(&args.name));
@@ -80,8 +75,8 @@ pub async fn execute(args: &SendArgs) -> Result<()> {
 async fn send_message(session_name: &str, message: &str) -> Result<()> {
 	use tokio::net::UnixStream;
 
-	let sock_path = octomind::directories::session_socket_path(session_name)
-		.context("failed to resolve session socket path")?;
+	let sock_path =
+		octomind::directories::session_socket_path(session_name).context("failed to resolve session socket path")?;
 
 	if !sock_path.exists() {
 		bail!(
@@ -99,10 +94,7 @@ async fn send_message(session_name: &str, message: &str) -> Result<()> {
 		.write_all(message.as_bytes())
 		.await
 		.context("failed to send message")?;
-	stream
-		.shutdown()
-		.await
-		.context("failed to shut down write half")?;
+	stream.shutdown().await.context("failed to shut down write half")?;
 
 	read_response(&mut stream, session_name).await
 }
@@ -133,8 +125,7 @@ async fn send_message(session_name: &str, message: &str) -> Result<()> {
 				);
 			}
 			Err(e) => {
-				return Err(e)
-					.with_context(|| format!("failed to connect to session '{}'", session_name));
+				return Err(e).with_context(|| format!("failed to connect to session '{}'", session_name));
 			}
 		}
 	};
@@ -143,10 +134,7 @@ async fn send_message(session_name: &str, message: &str) -> Result<()> {
 		.write_all(message.as_bytes())
 		.await
 		.context("failed to send message")?;
-	client
-		.shutdown()
-		.await
-		.context("failed to shut down write half")?;
+	client.shutdown().await.context("failed to shut down write half")?;
 
 	read_response(&mut client, session_name).await
 }

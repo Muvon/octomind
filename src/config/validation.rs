@@ -51,12 +51,7 @@ impl Config {
 	/// are on. An absent or empty model deliberately disables decision routing.
 	pub(super) fn validate_evaluate_model(&self) -> Result<()> {
 		use octolib::evaluation::EvaluationProviderFactory;
-		let Some(model) = self
-			.decision
-			.model
-			.as_deref()
-			.filter(|model| !model.is_empty())
-		else {
+		let Some(model) = self.decision.model.as_deref().filter(|model| !model.is_empty()) else {
 			return Ok(());
 		};
 		EvaluationProviderFactory::get_provider_for_model(model)
@@ -81,8 +76,7 @@ impl Config {
 			self.get_supervisor_model_profile().validate("supervisor")?;
 		}
 		if self.compression.threshold != 0 {
-			self.get_compression_model_profile()
-				.validate("compression.model")?;
+			self.get_compression_model_profile().validate("compression.model")?;
 		}
 		Ok(())
 	}
@@ -185,10 +179,7 @@ impl Config {
 			}
 
 			// Validate external server configuration
-			if matches!(
-				server_config.connection_type(),
-				crate::config::McpConnectionType::Http
-			) {
+			if matches!(server_config.connection_type(), crate::config::McpConnectionType::Http) {
 				if server_config.url().is_none() && server_config.command().is_none() {
 					return Err(anyhow!(
 						"External server '{}' must have either 'url' or 'command' specified",
@@ -269,6 +260,15 @@ static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock:
 	toml::from_str(template).expect("config-templates/default.toml must parse")
 });
 
+/// Root `[model].name` shipped in `config-templates/default.toml`.
+pub fn default_model() -> &'static str {
+	DEFAULT_TEMPLATE
+		.get("model")
+		.and_then(|m| m.get("name"))
+		.and_then(|n| n.as_str())
+		.expect("config-templates/default.toml must define [model].name")
+}
+
 /// Field names of each `McpServerConfig` variant, `type` tag included.
 /// `test_validate_accepts_every_mcp_server_field` fails when these drift from the enum.
 const BUILTIN_SERVER_KEYS: &[&str] = &["type", "name", "timeout_seconds", "tools", "auto_bind"];
@@ -344,14 +344,13 @@ pub fn deserialize_with_ignored_keys(value: toml::Value) -> Result<(Config, Vec<
 		for (i, role) in roles.iter().enumerate() {
 			if let Some(role_table) = role.as_table() {
 				let role_val = toml::Value::Table(role_table.clone());
-				let _: Result<crate::config::roles::RoleConfig, _> =
-					serde_ignored::deserialize(role_val, |path| {
-						let p = path.to_string();
-						if p == "name" || p == "mcp" || p.starts_with("mcp.") {
-							return;
-						}
-						ignored_keys.push(format!("roles.{i}.{p}"));
-					});
+				let _: Result<crate::config::roles::RoleConfig, _> = serde_ignored::deserialize(role_val, |path| {
+					let p = path.to_string();
+					if p == "name" || p == "mcp" || p.starts_with("mcp.") {
+						return;
+					}
+					ignored_keys.push(format!("roles.{i}.{p}"));
+				});
 				if let Some(mcp) = role_table.get("mcp") {
 					let _: Result<crate::config::mcp::RoleMcpConfig, _> =
 						serde_ignored::deserialize(mcp.clone(), |path| {

@@ -26,8 +26,7 @@ use std::time::Instant;
 
 const PER_TYPE: usize = 5;
 const REFERENCE_DATASET_REVISION: &str = "98d7416c24c778c2fee6e6f3006e7a073259d48f";
-const REFERENCE_DATASET_SHA256: &str =
-	"821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c";
+const REFERENCE_DATASET_SHA256: &str = "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c";
 const TYPES: &[&str] = &[
 	"temporal-reasoning",
 	"multi-session",
@@ -126,8 +125,7 @@ async fn rewrite(
 ) -> Vec<String> {
 	let key = format!("longmemeval\n{model}\n{question_id}\n{query}");
 	if let Some(patterns) = cache.get(&key) {
-		match crate::supervisor::learning::inject::validate_retrieval_patterns(&patterns.join("\n"))
-		{
+		match crate::supervisor::learning::inject::validate_retrieval_patterns(&patterns.join("\n")) {
 			Ok(patterns) => {
 				stats.cache_hits += 1;
 				return patterns;
@@ -141,8 +139,7 @@ async fn rewrite(
 
 	let started = Instant::now();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let result =
-		crate::supervisor::learning::inject::prepare_retrieval_query(config, query, rx).await;
+	let result = crate::supervisor::learning::inject::prepare_retrieval_query(config, query, rx).await;
 	stats.latency_ms += started.elapsed().as_millis();
 	stats.calls += 1;
 	match result {
@@ -166,59 +163,34 @@ async fn rewrite(
 }
 
 fn rank_production(keyword: &[usize], dense: &[usize], lessons: &[Lesson]) -> Vec<usize> {
-	let keyword_weight = if dense.is_empty() {
-		1.0
-	} else {
-		KEYWORD_RRF_WEIGHT
-	};
-	let mut fused =
-		weighted_reciprocal_rank_fusion(lessons.len(), &[(keyword, keyword_weight), (dense, 1.0)]);
+	let keyword_weight = if dense.is_empty() { 1.0 } else { KEYWORD_RRF_WEIGHT };
+	let mut fused = weighted_reciprocal_rank_fusion(lessons.len(), &[(keyword, keyword_weight), (dense, 1.0)]);
 	for (score, index) in &mut fused {
 		*score *= importance_factor(lessons[*index].importance);
 	}
-	fused.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	fused.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	promote_sparse_rescue(&mut fused, keyword, lessons);
 	fused.into_iter().map(|(_, index)| index).collect()
 }
 
 fn rank_adaptive(keyword: &[usize], dense: &[usize], lessons: &[Lesson]) -> Vec<usize> {
-	let keyword_weight = if keyword
-		.iter()
-		.take(3)
-		.any(|index| lessons[*index].importance < 0.4)
-	{
+	let keyword_weight = if keyword.iter().take(3).any(|index| lessons[*index].importance < 0.4) {
 		KEYWORD_RRF_WEIGHT
 	} else {
 		1.0
 	};
-	let mut fused =
-		weighted_reciprocal_rank_fusion(lessons.len(), &[(keyword, keyword_weight), (dense, 1.0)]);
+	let mut fused = weighted_reciprocal_rank_fusion(lessons.len(), &[(keyword, keyword_weight), (dense, 1.0)]);
 	for (score, index) in &mut fused {
 		*score *= importance_factor(lessons[*index].importance);
 	}
-	fused.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	fused.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	promote_sparse_rescue(&mut fused, keyword, lessons);
 	fused.into_iter().map(|(_, index)| index).collect()
 }
 
 fn rank_equal(keyword: &[usize], dense: &[usize], lessons: &[Lesson]) -> Vec<usize> {
 	let mut fused = reciprocal_rank_fusion(lessons.len(), &[keyword, dense]);
-	fused.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	fused.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	fused.into_iter().map(|(_, index)| index).collect()
 }
 
@@ -244,27 +216,20 @@ async fn compact_longmemeval_oracle_retrieval() {
 		.unwrap()
 		.load_dotenv_override()
 		.expect("load server credentials");
-	let data_path = PathBuf::from(
-		std::env::var_os("LONGMEMEVAL_ORACLE_JSON").expect("set LONGMEMEVAL_ORACLE_JSON"),
-	);
+	let data_path = PathBuf::from(std::env::var_os("LONGMEMEVAL_ORACLE_JSON").expect("set LONGMEMEVAL_ORACLE_JSON"));
 	let data_bytes = std::fs::read(&data_path).expect("read LongMemEval oracle JSON");
 	let dataset_sha256 = hex::encode(Sha256::digest(&data_bytes));
-	let expected_sha256 = std::env::var("LONGMEMEVAL_EXPECTED_SHA256")
-		.unwrap_or_else(|_| REFERENCE_DATASET_SHA256.to_string());
+	let expected_sha256 =
+		std::env::var("LONGMEMEVAL_EXPECTED_SHA256").unwrap_or_else(|_| REFERENCE_DATASET_SHA256.to_string());
 	assert_eq!(
 		dataset_sha256, expected_sha256,
 		"LongMemEval dataset drift: use the pinned revision or explicitly set LONGMEMEVAL_EXPECTED_SHA256"
 	);
-	let data: Vec<PublicItem> =
-		serde_json::from_slice(&data_bytes).expect("parse LongMemEval oracle JSON");
+	let data: Vec<PublicItem> = serde_json::from_slice(&data_bytes).expect("parse LongMemEval oracle JSON");
 	let mut counts: HashMap<&str, usize> = HashMap::new();
 	let mut selected = Vec::new();
 	for item in data {
-		let Some(kind) = TYPES
-			.iter()
-			.copied()
-			.find(|kind| *kind == item.question_type)
-		else {
+		let Some(kind) = TYPES.iter().copied().find(|kind| *kind == item.question_type) else {
 			continue;
 		};
 		let count = counts.entry(kind).or_default();
@@ -277,11 +242,7 @@ async fn compact_longmemeval_oracle_retrieval() {
 
 	let mut sessions = BTreeMap::new();
 	for item in &selected {
-		for (id, messages) in item
-			.haystack_session_ids
-			.iter()
-			.zip(&item.haystack_sessions)
-		{
+		for (id, messages) in item.haystack_session_ids.iter().zip(&item.haystack_sessions) {
 			let content = messages
 				.iter()
 				.map(|message| format!("{}: {}", message.role, message.content))
@@ -298,8 +259,7 @@ async fn compact_longmemeval_oracle_retrieval() {
 	}
 	let lessons: Vec<Lesson> = sessions.into_values().collect();
 	let mut config = crate::config::Config::load().expect("real config loads");
-	let model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	let model = std::env::var("LEARNING_BENCH_MODEL").unwrap_or_else(|_| config.get_supervisor_model_profile().model);
 	config.supervisor.model.model = Some(model.clone());
 	let cache_path = PathBuf::from("target/learning-benchmark/longmemeval-rewrite-cache.json");
 	let mut cache = load_cache(&cache_path);
@@ -389,10 +349,7 @@ async fn compact_longmemeval_oracle_retrieval() {
 	std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
 	println!("LONGMEMEVAL_REPORT={}\n{report}", report_path.display());
 
-	assert_eq!(
-		report["rewrite"]["failures"].as_u64().unwrap_or(u64::MAX),
-		0
-	);
+	assert_eq!(report["rewrite"]["failures"].as_u64().unwrap_or(u64::MAX), 0);
 	assert!(
 		report["modes"]["production"]["recall_at_5"]
 			.as_f64()

@@ -49,9 +49,7 @@ fn pkce_pair_has_cryptographic_verifier() {
 	let pair = generate_pkce_pair();
 	// 64 random bytes, base64url without padding → 86 chars
 	assert_eq!(pair.code_verifier.len(), 86);
-	let decoded = URL_SAFE_NO_PAD
-		.decode(pair.code_verifier.as_bytes())
-		.unwrap();
+	let decoded = URL_SAFE_NO_PAD.decode(pair.code_verifier.as_bytes()).unwrap();
 	assert_eq!(decoded.len(), PKCE_CODE_VERIFIER_LENGTH);
 	// Verifier must be URL-safe (RFC 7636 unreserved charset)
 	assert!(pair
@@ -65,9 +63,7 @@ fn pkce_challenge_is_s256_of_verifier() {
 	let pair = generate_pkce_pair();
 	// SHA-256 digest is 32 bytes → 43 base64url chars
 	assert_eq!(pair.code_challenge.len(), 43);
-	let decoded = URL_SAFE_NO_PAD
-		.decode(pair.code_challenge.as_bytes())
-		.unwrap();
+	let decoded = URL_SAFE_NO_PAD.decode(pair.code_challenge.as_bytes()).unwrap();
 	assert_eq!(decoded.len(), 32);
 	assert_eq!(
 		pair.code_challenge,
@@ -121,10 +117,7 @@ fn build_authorization_url_contains_required_params() {
 	assert_eq!(params.get("state").unwrap(), "test-state");
 	// Scopes are joined with spaces
 	assert_eq!(params.get("scope").unwrap(), "read write");
-	assert!(
-		!params.contains_key("resource"),
-		"resource omitted when unset"
-	);
+	assert!(!params.contains_key("resource"), "resource omitted when unset");
 }
 
 #[test]
@@ -144,10 +137,7 @@ fn build_authorization_url_appends_resource_when_set() {
 fn is_token_expired_past_and_future() {
 	let now = now_secs();
 	assert!(is_token_expired(now - 3600, 0), "past expiry is expired");
-	assert!(
-		is_token_expired(now, 0),
-		"expiring now counts as expired (>=)"
-	);
+	assert!(is_token_expired(now, 0), "expiring now counts as expired (>=)");
 	assert!(
 		!is_token_expired(now + 3600, 60),
 		"future expiry with small buffer is valid"
@@ -181,17 +171,14 @@ fn seconds_until_expiry_future_and_elapsed() {
 #[test]
 fn token_response_parses_standard_json() {
 	let response: OAuthTokenResponse = serde_json::from_str(
-			r#"{"access_token":"at","token_type":"Bearer","expires_in":3600,"refresh_token":"rt","scope":["read","write"]}"#,
-		)
-		.unwrap();
+		r#"{"access_token":"at","token_type":"Bearer","expires_in":3600,"refresh_token":"rt","scope":["read","write"]}"#,
+	)
+	.unwrap();
 	assert_eq!(response.access_token, "at");
 	assert_eq!(response.token_type, "Bearer");
 	assert_eq!(response.expires_in, 3600);
 	assert_eq!(response.refresh_token.as_deref(), Some("rt"));
-	assert_eq!(
-		response.scope,
-		Some(vec!["read".to_string(), "write".to_string()])
-	);
+	assert_eq!(response.scope, Some(vec!["read".to_string(), "write".to_string()]));
 }
 
 #[test]
@@ -203,10 +190,7 @@ fn token_response_parses_github_style_defaults() {
 	assert_eq!(response.token_type, "");
 	assert_eq!(response.expires_in, 0);
 	assert_eq!(response.refresh_token, None);
-	assert_eq!(
-		response.scope,
-		Some(vec!["repo".to_string(), "user".to_string()])
-	);
+	assert_eq!(response.scope, Some(vec!["repo".to_string(), "user".to_string()]));
 }
 
 #[test]
@@ -216,18 +200,15 @@ fn token_response_scope_edge_cases() {
 	assert_eq!(absent.scope, None);
 
 	// Explicit null → None
-	let null: OAuthTokenResponse =
-		serde_json::from_str(r#"{"access_token":"at","scope":null}"#).unwrap();
+	let null: OAuthTokenResponse = serde_json::from_str(r#"{"access_token":"at","scope":null}"#).unwrap();
 	assert_eq!(null.scope, None);
 
 	// Comma string: whitespace trimmed, empty segments dropped
-	let messy: OAuthTokenResponse =
-		serde_json::from_str(r#"{"access_token":"at","scope":" a , ,b "}"#).unwrap();
+	let messy: OAuthTokenResponse = serde_json::from_str(r#"{"access_token":"at","scope":" a , ,b "}"#).unwrap();
 	assert_eq!(messy.scope, Some(vec!["a".to_string(), "b".to_string()]));
 
 	// Array with non-string entries: only strings kept
-	let mixed: OAuthTokenResponse =
-		serde_json::from_str(r#"{"access_token":"at","scope":["read", 42]}"#).unwrap();
+	let mixed: OAuthTokenResponse = serde_json::from_str(r#"{"access_token":"at","scope":["read", 42]}"#).unwrap();
 	assert_eq!(mixed.scope, Some(vec!["read".to_string()]));
 }
 
@@ -243,7 +224,6 @@ fn oauth_error_response_deserializes() {
 	assert_eq!(minimal.error_description, None);
 
 	let full: OAuthErrorResponse =
-		serde_json::from_str(r#"{"error":"invalid_grant","error_description":"code expired"}"#)
-			.unwrap();
+		serde_json::from_str(r#"{"error":"invalid_grant","error_description":"code expired"}"#).unwrap();
 	assert_eq!(full.error_description.as_deref(), Some("code expired"));
 }

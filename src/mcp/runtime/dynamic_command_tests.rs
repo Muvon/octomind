@@ -31,8 +31,7 @@ fn call(params: serde_json::Value) -> crate::mcp::McpToolCall {
 
 fn test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -86,12 +85,9 @@ async fn test_add_validation_arms() {
 	assert!(text_of(&result).contains("name"));
 
 	// Missing server_type
-	let result = execute_mcp_command(
-		&call(serde_json::json!({"action": "add", "name": "x"})),
-		&config,
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_mcp_command(&call(serde_json::json!({"action": "add", "name": "x"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("server_type"));
 
@@ -143,12 +139,9 @@ async fn test_add_list_remove_lifecycle() {
 	assert!(listing.contains(name), "dynamic server missing:\n{listing}");
 
 	// remove returns it and it disappears from the registry
-	let result = execute_mcp_command(
-		&call(serde_json::json!({"action": "remove", "name": name})),
-		&config,
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_mcp_command(&call(serde_json::json!({"action": "remove", "name": name})), &config)
+		.await
+		.expect("dispatch");
 	assert!(!is_err(&result), "remove failed: {}", text_of(&result));
 	assert!(!is_dynamic(name));
 
@@ -193,9 +186,7 @@ async fn test_add_parameter_validation_arms() {
 		serde_json::json!({"action": "add", "name": "   ", "server_type": "stdio", "command": "echo"}),
 		serde_json::json!({"action": "add", "server_type": "stdio", "command": "echo"}),
 	] {
-		let result = execute_mcp_command(&call(params), &config)
-			.await
-			.expect("dispatch");
+		let result = execute_mcp_command(&call(params), &config).await.expect("dispatch");
 		assert!(is_err(&result), "must reject: {}", text_of(&result));
 		assert!(text_of(&result).contains("name"));
 	}
@@ -259,9 +250,7 @@ async fn test_add_duplicate_server_rejected() {
 		.expect("dispatch");
 	assert!(!is_err(&first), "first add failed: {}", text_of(&first));
 
-	let second = execute_mcp_command(&call(params), &config)
-		.await
-		.expect("dispatch");
+	let second = execute_mcp_command(&call(params), &config).await.expect("dispatch");
 	assert!(is_err(&second));
 	assert!(text_of(&second).contains("already registered"));
 
@@ -302,9 +291,7 @@ async fn test_disable_via_command_flips_enabled_and_empties_functions() {
 			parameters: serde_json::json!({}),
 		}],
 	);
-	assert!(get_all_configs()
-		.iter()
-		.any(|s| s.name() == "__dyntest_disable"));
+	assert!(get_all_configs().iter().any(|s| s.name() == "__dyntest_disable"));
 
 	let result = execute_mcp_command(
 		&call(serde_json::json!({"action": "disable", "name": "__dyntest_disable"})),
@@ -317,12 +304,8 @@ async fn test_disable_via_command_flips_enabled_and_empties_functions() {
 
 	// Still registered, but disabled: no configs, no functions.
 	assert!(is_dynamic("__dyntest_disable"));
-	assert!(list_servers()
-		.iter()
-		.any(|(n, _, e)| n == "__dyntest_disable" && !e));
-	assert!(!get_all_configs()
-		.iter()
-		.any(|s| s.name() == "__dyntest_disable"));
+	assert!(list_servers().iter().any(|(n, _, e)| n == "__dyntest_disable" && !e));
+	assert!(!get_all_configs().iter().any(|s| s.name() == "__dyntest_disable"));
 	assert!(get_functions("__dyntest_disable").is_none());
 
 	clear_all();
@@ -371,15 +354,9 @@ async fn test_persist_unpersist_round_trip_via_command() {
 	assert!(!is_err(&result), "persist failed: {}", text_of(&result));
 	let msg = text_of(&result);
 	assert!(msg.contains("persisted to"), "got: {msg}");
-	assert!(
-		msg.contains("Auto-bind set to role 'developer'"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("Auto-bind set to role 'developer'"), "got: {msg}");
 	assert!(is_persisted("__dyntest_persist"));
-	assert!(dir
-		.join("config")
-		.join("mcp-__dyntest_persist.toml")
-		.exists());
+	assert!(dir.join("config").join("mcp-__dyntest_persist.toml").exists());
 
 	// list marks persisted servers.
 	let result = execute_mcp_command(&call(serde_json::json!({"action": "list"})), &config)
@@ -450,9 +427,7 @@ async fn test_session_scoped_registry_branches() {
 		.expect("dispatch");
 		assert!(!is_err(&result), "add failed: {}", text_of(&result));
 		assert!(is_dynamic("__dyntest_sess_srv"));
-		assert!(list_servers()
-			.iter()
-			.any(|(n, _, e)| n == "__dyntest_sess_srv" && !e));
+		assert!(list_servers().iter().any(|(n, _, e)| n == "__dyntest_sess_srv" && !e));
 		// Registered but not enabled: no functions, no configs, no tool hits.
 		assert!(get_functions("__dyntest_sess_srv").is_none());
 		assert!(get_all_functions().is_empty());
@@ -487,14 +462,7 @@ async fn test_session_scoped_registry_branches() {
 #[serial]
 async fn test_tool_name_lookups_in_cli_mode() {
 	clear_all();
-	register_server(McpServerConfig::stdin(
-		"__dyntest_lookup",
-		"echo",
-		vec![],
-		5,
-		vec![],
-	))
-	.expect("register");
+	register_server(McpServerConfig::stdin("__dyntest_lookup", "echo", vec![], 5, vec![])).expect("register");
 	get_manager().write().unwrap().functions.insert(
 		"__dyntest_lookup".to_string(),
 		vec![McpFunction {
@@ -550,10 +518,7 @@ async fn test_list_output_sections() {
 		.expect("dispatch");
 	let msg = text_of(&result);
 	assert!(msg.contains("Configured servers:"), "got: {msg}");
-	assert!(
-		msg.contains("__dyntest_cfg_srv [builtin] ✓ active"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("__dyntest_cfg_srv [builtin] ✓ active"), "got: {msg}");
 	assert!(msg.contains("tool_one"), "got: {msg}");
 
 	// Dynamic section: disabled marker, all-tools hint.
@@ -641,11 +606,7 @@ async fn test_action_name_validation_arms() {
 			"{action} without a name must error, got: {}",
 			text_of(&result)
 		);
-		assert!(
-			text_of(&result).contains("name"),
-			"{action}: {}",
-			text_of(&result)
-		);
+		assert!(text_of(&result).contains("name"), "{action}: {}", text_of(&result));
 	}
 }
 
@@ -657,11 +618,7 @@ async fn test_disable_config_server_in_session_registers_shadow() {
 	config
 		.mcp
 		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"__cmdtest_cfg_srv",
-			30,
-			vec![],
-		));
+		.push(crate::config::McpServerConfig::builtin("__cmdtest_cfg_srv", 30, vec![]));
 
 	crate::session::context::with_session_id(sid.clone(), async {
 		// Not in the session dynamic registry — the disable falls back to the
@@ -674,8 +631,7 @@ async fn test_disable_config_server_in_session_registers_shadow() {
 		.expect("dispatch");
 		assert!(!is_err(&result), "disable failed: {}", text_of(&result));
 
-		let shadow =
-			crate::session::context::get_dynamic_server_for_session(&sid, "__cmdtest_cfg_srv");
+		let shadow = crate::session::context::get_dynamic_server_for_session(&sid, "__cmdtest_cfg_srv");
 		let (_, enabled) = shadow.expect("shadow entry registered");
 		assert!(!enabled);
 	})

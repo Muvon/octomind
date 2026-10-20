@@ -117,10 +117,7 @@ fn expected_calls_follow_the_session_pace() {
 fn turn_bookkeeping_caps_history_and_skips_empty_turns() {
 	let mut info = SessionInfo::default();
 	info.note_turn_start();
-	assert!(
-		info.turn_call_counts.is_empty(),
-		"a turn with no calls is no signal"
-	);
+	assert!(info.turn_call_counts.is_empty(), "a turn with no calls is no signal");
 	for n in 1..=(TURN_HISTORY + 4) {
 		info.total_api_calls += n;
 		info.note_turn_start();
@@ -136,16 +133,10 @@ fn turn_bookkeeping_caps_history_and_skips_empty_turns() {
 
 #[test]
 fn unknown_pricing_uses_default_ratios_never_a_skip() {
-	assert_eq!(
-		FoldEconomics::from_pricing(None, None),
-		FoldEconomics::DEFAULT
-	);
+	assert_eq!(FoldEconomics::from_pricing(None, None), FoldEconomics::DEFAULT);
 	// Zero-priced session model (local): defaults, not division by zero.
 	let free = pricing(0.0, 0.0, 0.0, 0.0);
-	assert_eq!(
-		FoldEconomics::from_pricing(Some(&free), None),
-		FoldEconomics::DEFAULT
-	);
+	assert_eq!(FoldEconomics::from_pricing(Some(&free), None), FoldEconomics::DEFAULT);
 	// A priced session model with an unpriced folder still yields ratios.
 	let agent = pricing(4.0, 20.0, 5.0, 0.40);
 	let econ = FoldEconomics::from_pricing(Some(&agent), None);

@@ -37,19 +37,13 @@ fn provider_failures_bucket_by_condition_not_by_wording() {
 		"rate_limit"
 	);
 	assert_eq!(kind("Overloaded: upstream capacity"), "overloaded");
-	assert_eq!(
-		kind("maximum context length is 200000 tokens"),
-		"context_length"
-	);
+	assert_eq!(kind("maximum context length is 200000 tokens"), "context_length");
 	assert_eq!(kind("API error 401 unauthorized"), "auth");
 	assert_eq!(
 		kind("Not signed in with ChatGPT (no credentials at /tmp/auth.json)"),
 		"auth"
 	);
-	assert_eq!(
-		kind("Refreshing the ChatGPT session failed; sign in again"),
-		"auth"
-	);
+	assert_eq!(kind("Refreshing the ChatGPT session failed; sign in again"), "auth");
 	assert_eq!(kind("API error 503 <unknown status code>"), "server");
 	// Unrecognised text falls through to the transport classification, and in
 	// no case does any of the message itself become the bucket.
@@ -163,8 +157,7 @@ fn install_source_detects_a_cargo_test_binary() {
 }
 
 fn template_config() -> crate::config::Config {
-	toml::from_str(include_str!("../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template")
 }
 
 #[test]
@@ -222,21 +215,14 @@ fn init_arms_with_identity_and_honours_every_opt_out() {
 #[tokio::test]
 #[serial_test::serial]
 async fn flush_ships_buffered_events_and_disarms() {
-	let _env = EnvGuard::new(&[
-		"OCTOMIND_DATA_DIR",
-		DNT_ENV,
-		TELEMETRY_ENV,
-		crate::account::API_URL_ENV,
-	]);
+	let _env = EnvGuard::new(&["OCTOMIND_DATA_DIR", DNT_ENV, TELEMETRY_ENV, crate::account::API_URL_ENV]);
 	let tmp = tempfile::tempdir().unwrap();
 	std::env::set_var("OCTOMIND_DATA_DIR", tmp.path());
 	std::env::remove_var(DNT_ENV);
 	std::env::remove_var(TELEMETRY_ENV);
 
 	// Capture stub for the control-plane endpoint
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
 	let addr = listener.local_addr().expect("addr");
 	let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
 	let sink = captured.clone();

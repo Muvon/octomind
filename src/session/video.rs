@@ -62,23 +62,12 @@ impl VideoProcessor {
 	/// Load video from an opaque extensionless media path using the transport's
 	/// declared media type. The same size, encoding, and metadata pipeline as
 	/// normal path loading is retained.
-	pub fn load_from_path_with_media_type(
-		path: &Path,
-		media_type: &str,
-	) -> Result<VideoAttachment> {
+	pub fn load_from_path_with_media_type(path: &Path, media_type: &str) -> Result<VideoAttachment> {
 		if !matches!(
 			media_type,
-			"video/mp4"
-				| "video/quicktime"
-				| "video/x-msvideo"
-				| "video/webm"
-				| "video/x-matroska"
-				| "video/3gpp"
+			"video/mp4" | "video/quicktime" | "video/x-msvideo" | "video/webm" | "video/x-matroska" | "video/3gpp"
 		) {
-			return Err(anyhow::anyhow!(
-				"Unsupported video media type: {}",
-				media_type
-			));
+			return Err(anyhow::anyhow!("Unsupported video media type: {}", media_type));
 		}
 
 		// Check file exists and size
@@ -128,17 +117,10 @@ impl VideoProcessor {
 
 		// Download the video
 		let client = Client::new();
-		let response = client
-			.get(url)
-			.header("User-Agent", "Octomind/1.0")
-			.send()
-			.await?;
+		let response = client.get(url).header("User-Agent", "Octomind/1.0").send().await?;
 
 		if !response.status().is_success() {
-			return Err(anyhow::anyhow!(
-				"Failed to download video: HTTP {}",
-				response.status()
-			));
+			return Err(anyhow::anyhow!("Failed to download video: HTTP {}", response.status()));
 		}
 
 		// Check content type

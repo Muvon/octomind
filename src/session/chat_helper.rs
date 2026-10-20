@@ -48,8 +48,7 @@ impl MediaKind {
 			// Wider than the model's accepted image set: the user may type these,
 			// and attach-time validation reports the real support.
 			Self::Image => &[
-				"png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "ico", "svg", "avif", "heic",
-				"heif",
+				"png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "ico", "svg", "avif", "heic", "heif",
 			],
 			Self::Video => crate::session::video::VideoProcessor::supported_extensions(),
 		}
@@ -64,15 +63,8 @@ pub(crate) struct CommandCompleter<'a> {
 
 impl<'a> CommandCompleter<'a> {
 	pub(crate) fn new(config: &'a crate::config::Config, role: &'a str) -> Self {
-		let commands = crate::session::chat::COMMANDS
-			.iter()
-			.map(|&s| s.to_string())
-			.collect();
-		Self {
-			commands,
-			config,
-			role,
-		}
+		let commands = crate::session::chat::COMMANDS.iter().map(|&s| s.to_string()).collect();
+		Self { commands, config, role }
 	}
 
 	/// Get available context filters for /context command
@@ -166,10 +158,7 @@ impl<'a> CommandCompleter<'a> {
 			return false;
 		};
 		let extension = extension.to_lowercase();
-		media
-			.extensions()
-			.iter()
-			.any(|supported| *supported == extension)
+		media.extensions().iter().any(|supported| *supported == extension)
 	}
 
 	/// Expand tilde (~) to home directory
@@ -211,11 +200,7 @@ impl<'a> CommandCompleter<'a> {
 		let matcher = SkimMatcherV2::default();
 		let mut scored: Vec<(i64, &str)> = files
 			.iter()
-			.filter_map(|path| {
-				matcher
-					.fuzzy_match(path, query)
-					.map(|score| (score, path.as_str()))
-			})
+			.filter_map(|path| matcher.fuzzy_match(path, query).map(|score| (score, path.as_str())))
 			.collect();
 
 		scored.sort_by_key(|b| std::cmp::Reverse(b.0));
@@ -269,9 +254,7 @@ impl<'a> CommandCompleter<'a> {
 		candidates.sort_by(|a, b| {
 			let a_is_dir = a.replacement.ends_with('/');
 			let b_is_dir = b.replacement.ends_with('/');
-			b_is_dir
-				.cmp(&a_is_dir)
-				.then_with(|| a.replacement.cmp(&b.replacement))
+			b_is_dir.cmp(&a_is_dir).then_with(|| a.replacement.cmp(&b.replacement))
 		});
 		candidates.truncate(10);
 		candidates
@@ -321,16 +304,9 @@ impl<'a> CommandCompleter<'a> {
 		let (parent_dir, filename_part) = if let Some(parent) = expanded_path.parent() {
 			let parent_str = parent.to_str().unwrap_or(".");
 			// If parent is empty string (for relative paths without ./), use current directory
-			let actual_parent = if parent_str.is_empty() {
-				"."
-			} else {
-				parent_str
-			};
+			let actual_parent = if parent_str.is_empty() { "." } else { parent_str };
 
-			let filename_part = expanded_path
-				.file_name()
-				.and_then(|n| n.to_str())
-				.unwrap_or("");
+			let filename_part = expanded_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
 			(actual_parent, filename_part)
 		} else {
@@ -359,8 +335,7 @@ impl<'a> CommandCompleter<'a> {
 			if file_part.starts_with("~/") {
 				// Convert back to tilde notation
 				if let Some(home) = dirs::home_dir() {
-					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(&home)
-					{
+					if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(&home) {
 						candidate.replacement = format!("~/{}", relative.to_string_lossy());
 						if is_directory && !candidate.replacement.ends_with('/') {
 							candidate.replacement.push('/');
@@ -372,17 +347,15 @@ impl<'a> CommandCompleter<'a> {
 				// candidate.replacement is already correct
 				// For relative paths, make sure we maintain the relative nature
 				// Use thread-local if set (ACP/WebSocket), otherwise process cwd
-				if let Ok(relative) = PathBuf::from(&candidate.replacement)
-					.strip_prefix(crate::mcp::get_thread_working_directory())
+				if let Ok(relative) =
+					PathBuf::from(&candidate.replacement).strip_prefix(crate::mcp::get_thread_working_directory())
 				{
 					candidate.replacement = relative.to_string_lossy().to_string();
 					if is_directory && !candidate.replacement.ends_with('/') {
 						candidate.replacement.push('/');
 					}
 				}
-			} else if let Ok(relative) =
-				PathBuf::from(&candidate.replacement).strip_prefix(Path::new("."))
-			{
+			} else if let Ok(relative) = PathBuf::from(&candidate.replacement).strip_prefix(Path::new(".")) {
 				candidate.replacement = relative.to_string_lossy().to_string();
 				if is_directory && !candidate.replacement.ends_with('/') {
 					candidate.replacement.push('/');
@@ -404,10 +377,7 @@ impl<'a> CommandCompleter<'a> {
 
 				if path.is_dir() {
 					// Add directory with trailing slash
-					let display = format!(
-						"{}/",
-						path.file_name().and_then(|n| n.to_str()).unwrap_or("")
-					);
+					let display = format!("{}/", path.file_name().and_then(|n| n.to_str()).unwrap_or(""));
 					candidates.push(Pair {
 						display: display.clone(),
 						replacement: format!("{}/", path_str),
@@ -509,11 +479,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = image_prefix.len();
 
 			// Extract the file path part up to cursor position
-			let file_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let file_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			// Use our custom file completion that handles absolute paths and tilde expansion
 			let candidates = Self::complete_file_path(file_part, MediaKind::Image);
@@ -525,11 +491,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /video command with file completion, video formats only
 			let prefix_len = "/video ".len();
 
-			let file_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let file_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates = Self::complete_file_path(file_part, MediaKind::Video);
 			let filtered_candidates = Self::filter_and_limit_candidates(candidates, file_part);
@@ -539,11 +501,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /copy command with clipboard-scope completion
 			let prefix_len = "/copy ".len();
 
-			let scope_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let scope_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = CopyScope::ALL
 				.iter()
@@ -560,11 +518,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /effort command with reasoning-level completion
 			let prefix_len = "/effort ".len();
 
-			let level_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let level_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = ReasoningEffortConfig::ALL
 				.iter()
@@ -581,11 +535,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /status command with view completion
 			let prefix_len = "/status ".len();
 
-			let view_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let view_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_status_filters()
 				.iter()
@@ -601,11 +551,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /schedule command with subcommand completion
 			let prefix_len = "/schedule ".len();
 
-			let subcommand_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let subcommand_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_schedule_subcommands()
 				.iter()
@@ -621,11 +567,7 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /learning command with subcommand completion
 			let prefix_len = "/learning ".len();
 
-			let subcommand_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let subcommand_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_learning_subcommands()
 				.iter()
@@ -641,23 +583,14 @@ impl<'a> CommandCompleter<'a> {
 			// Handle /workflow command with tap-workflow name completion
 			let prefix_len = "/workflow ".len();
 
-			let name_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let name_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			// A registry that cannot be read yields no candidates here; the
 			// command itself reports the failure when it runs.
 			let candidates: Vec<Pair> = crate::workflow::spawn::list_tap_workflows()
 				.unwrap_or_default()
 				.into_iter()
-				.filter_map(|workflow| {
-					workflow
-						.get("name")
-						.and_then(|name| name.as_str())
-						.map(str::to_string)
-				})
+				.filter_map(|workflow| workflow.get("name").and_then(|name| name.as_str()).map(str::to_string))
 				.filter(|name| name.starts_with(name_part))
 				.map(|name| Pair {
 					display: name.clone(),
@@ -672,11 +605,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = prompt_prefix.len();
 
 			// Extract the template name part up to cursor position
-			let template_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let template_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			// Get available prompt templates from config
 			let candidates: Vec<Pair> = self
@@ -701,15 +630,10 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = run_prefix.len();
 
 			// Extract the command name part up to cursor position
-			let command_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let command_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			// Get available commands for this role
-			let available_commands =
-				crate::session::chat::list_available_commands(self.config, self.role);
+			let available_commands = crate::session::chat::list_available_commands(self.config, self.role);
 			let candidates: Vec<Pair> = available_commands
 				.iter()
 				.filter(|cmd| cmd.starts_with(command_part))
@@ -726,11 +650,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = context_prefix.len();
 
 			// Extract the filter part up to cursor position
-			let filter_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let filter_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_context_filters()
 				.iter()
@@ -748,11 +668,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = mcp_prefix.len();
 
 			// Extract the subcommand part up to cursor position
-			let subcommand_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let subcommand_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_mcp_subcommands()
 				.iter()
@@ -767,11 +683,7 @@ impl<'a> CommandCompleter<'a> {
 		} else if line.starts_with("/skill ") {
 			let skill_prefix = "/skill ";
 			let prefix_len = skill_prefix.len();
-			let subcommand_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let subcommand_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_skill_names()
 				.iter()
@@ -789,11 +701,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = loglevel_prefix.len();
 
 			// Extract the level part up to cursor position
-			let level_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let level_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = Self::get_log_levels()
 				.iter()
@@ -811,11 +719,7 @@ impl<'a> CommandCompleter<'a> {
 			let prefix_len = role_prefix.len();
 
 			// Extract the role part up to cursor position
-			let role_part = if pos > prefix_len {
-				&line[prefix_len..pos]
-			} else {
-				""
-			};
+			let role_part = if pos > prefix_len { &line[prefix_len..pos] } else { "" };
 
 			let candidates: Vec<Pair> = self
 				.get_available_roles()
@@ -910,10 +814,7 @@ impl<'a> CommandCompleter<'a> {
 
 		// Special hint for /copy command
 		if line == "/copy" {
-			return Some(format!(
-				" [{}]",
-				CopyScope::ALL.map(CopyScope::name).join("|")
-			));
+			return Some(format!(" [{}]", CopyScope::ALL.map(CopyScope::name).join("|")));
 		}
 
 		// Special hint for /reply command
@@ -930,9 +831,7 @@ impl<'a> CommandCompleter<'a> {
 		if line == "/effort" {
 			return Some(format!(
 				" [{}]",
-				ReasoningEffortConfig::ALL
-					.map(|level| level.as_str())
-					.join("|")
+				ReasoningEffortConfig::ALL.map(|level| level.as_str()).join("|")
 			));
 		}
 
@@ -1053,11 +952,7 @@ impl<'a> CommandCompleter<'a> {
 
 		if let Some(rest) = line.strip_prefix("/effort ") {
 			if rest.is_empty() {
-				return Some(
-					ReasoningEffortConfig::ALL
-						.map(|level| level.as_str())
-						.join("|"),
-				);
+				return Some(ReasoningEffortConfig::ALL.map(|level| level.as_str()).join("|"));
 			}
 			return None; // Let the completer handle this
 		}

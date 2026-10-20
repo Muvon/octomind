@@ -29,28 +29,23 @@ use std::sync::LazyLock;
 
 // Fast context block detection regex - compiled once for performance
 // Uses (?s) flag to match across newlines
-static CONTEXT_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"(?s)<context>.*?</context>").expect("Failed to compile context block regex")
-});
+static CONTEXT_BLOCK_REGEX: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?s)<context>.*?</context>").expect("Failed to compile context block regex"));
 
 // Reference-parsing patterns, compiled once (parse_file_references is called
 // per rendered file-context block, so per-call compilation was pure waste).
 static CONTEXT_TAG_PATTERN: LazyLock<Regex> =
 	LazyLock::new(|| Regex::new(r"(?s)<context>(.*?)</context>").expect("valid context-tag regex"));
 static CODE_BLOCK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"```(?:\w+)?\s*\n((?:[^\n`]+:[0-9]+:[0-9]+\s*\n?)+)\s*```")
-		.expect("valid code-block regex")
+	Regex::new(r"```(?:\w+)?\s*\n((?:[^\n`]+:[0-9]+:[0-9]+\s*\n?)+)\s*```").expect("valid code-block regex")
 });
-static FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"^([A-Za-z]:[^\n]+|[^\n]+):(\d+):(\d+)\s*$").expect("valid file-ref regex")
-});
+static FILE_PATTERN: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"^([A-Za-z]:[^\n]+|[^\n]+):(\d+):(\d+)\s*$").expect("valid file-ref regex"));
 static GENERAL_FILE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"(?:^|\s|-)([A-Za-z]:[^\s\n:]+|[^\s\n:]+):(\d+):(\d+)")
-		.expect("valid general file-ref regex")
+	Regex::new(r"(?:^|\s|-)([A-Za-z]:[^\s\n:]+|[^\s\n:]+):(\d+):(\d+)").expect("valid general file-ref regex")
 });
-static FALLBACK_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"([A-Za-z]:[^\s:]+|[^\s:]+):(\d+):(\d+)").expect("valid fallback file-ref regex")
-});
+static FALLBACK_PATTERN: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"([A-Za-z]:[^\s:]+|[^\s:]+):(\d+):(\d+)").expect("valid fallback file-ref regex"));
 
 /// Extremely fast detection of context blocks in text
 /// Returns true if any complete <context>...</context> blocks are found
@@ -108,10 +103,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 				}
 				if let Some(captures) = FILE_PATTERN.captures(line) {
 					if let Some((filepath, range)) = extract_file_range(&captures) {
-						file_refs
-							.entry(filepath)
-							.or_insert_with(Vec::new)
-							.push(range);
+						file_refs.entry(filepath).or_insert_with(Vec::new).push(range);
 					}
 				}
 			}
@@ -127,10 +119,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 					let line = line.trim();
 					if let Some(captures) = FILE_PATTERN.captures(line) {
 						if let Some((filepath, range)) = extract_file_range(&captures) {
-							file_refs
-								.entry(filepath)
-								.or_insert_with(Vec::new)
-								.push(range);
+							file_refs.entry(filepath).or_insert_with(Vec::new).push(range);
 						}
 					}
 				}
@@ -148,19 +137,14 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 			let content_after_header = &content[section_start..];
 
 			// Find the end of this section (next ## header or end of text)
-			let section_end = content_after_header
-				.find("\n## ")
-				.unwrap_or(content_after_header.len());
+			let section_end = content_after_header.find("\n## ").unwrap_or(content_after_header.len());
 
 			let section_content = &content_after_header[..section_end];
 
 			// More flexible pattern for general text (handles paths with spaces/special chars)
 			for captures in GENERAL_FILE_PATTERN.captures_iter(section_content) {
 				if let Some((filepath, range)) = extract_file_range(&captures) {
-					file_refs
-						.entry(filepath)
-						.or_insert_with(Vec::new)
-						.push(range);
+					file_refs.entry(filepath).or_insert_with(Vec::new).push(range);
 				}
 			}
 		}
@@ -170,10 +154,7 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 	if file_refs.is_empty() {
 		for captures in FALLBACK_PATTERN.captures_iter(content) {
 			if let Some((filepath, range)) = extract_file_range(&captures) {
-				file_refs
-					.entry(filepath)
-					.or_insert_with(Vec::new)
-					.push(range);
+				file_refs.entry(filepath).or_insert_with(Vec::new).push(range);
 			}
 		}
 	}
@@ -192,13 +173,9 @@ pub fn parse_file_references(content: &str) -> HashMap<String, Vec<LineRange>> {
 
 /// Extract file path and line range from regex captures
 fn extract_file_range(captures: &regex::Captures) -> Option<(String, LineRange)> {
-	if let (Some(filename), Some(start_str), Some(end_str)) =
-		(captures.get(1), captures.get(2), captures.get(3))
-	{
-		if let (Ok(start_line), Ok(end_line)) = (
-			start_str.as_str().parse::<usize>(),
-			end_str.as_str().parse::<usize>(),
-		) {
+	if let (Some(filename), Some(start_str), Some(end_str)) = (captures.get(1), captures.get(2), captures.get(3)) {
+		if let (Ok(start_line), Ok(end_line)) = (start_str.as_str().parse::<usize>(), end_str.as_str().parse::<usize>())
+		{
 			let filename = filename.as_str().trim().to_string();
 
 			if !filename.is_empty() {
@@ -249,8 +226,7 @@ pub fn read_file_lines(filepath: &str, range: &LineRange) -> FileContent {
 
 /// Read file lines for a specific range
 fn read_file_lines_with_range(filepath: &str, range: &LineRange) -> Result<Vec<String>> {
-	let file =
-		fs::File::open(filepath).with_context(|| format!("Failed to open file: {}", filepath))?;
+	let file = fs::File::open(filepath).with_context(|| format!("Failed to open file: {}", filepath))?;
 
 	let reader = BufReader::new(file);
 	let mut lines = Vec::new();
@@ -282,9 +258,7 @@ fn read_file_lines_with_range(filepath: &str, range: &LineRange) -> Result<Vec<S
 /// Read multiple files with their line ranges
 ///
 /// Returns a HashMap mapping file paths to their FileContent
-pub fn read_multiple_files(
-	file_refs: &HashMap<String, Vec<LineRange>>,
-) -> HashMap<String, Vec<FileContent>> {
+pub fn read_multiple_files(file_refs: &HashMap<String, Vec<LineRange>>) -> HashMap<String, Vec<FileContent>> {
 	let mut results = HashMap::new();
 
 	for (filepath, ranges) in file_refs {

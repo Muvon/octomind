@@ -54,10 +54,7 @@ fn unconditional_block() {
 	)
 	.unwrap();
 	let p = json!({ "command": "rm -rf /tmp/x" });
-	assert_eq!(
-		check(&g, Some("shell"), &p, &[], &loaded(&[])).as_deref(),
-		Some("no"),
-	);
+	assert_eq!(check(&g, Some("shell"), &p, &[], &loaded(&[])).as_deref(), Some("no"),);
 	let p_ok = json!({ "command": "ls -lt" });
 	assert!(check(&g, Some("shell"), &p_ok, &[], &loaded(&[])).is_none());
 }
@@ -163,10 +160,7 @@ fn when_unused_lifts_after_use() {
 	// Empty log → unused condition holds → block.
 	assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_some());
 	// Any filesystem call in history → unused fails → allow.
-	let log: Vec<CallRecord> = vec![(
-		Some("filesystem".to_string()),
-		json!({ "path": "src/main.rs" }),
-	)];
+	let log: Vec<CallRecord> = vec![(Some("filesystem".to_string()), json!({ "path": "src/main.rs" }))];
 	assert!(check(&g, Some("shell"), &p, &log, &loaded(&[])).is_none());
 }
 
@@ -187,10 +181,7 @@ fn when_used_requires_history() {
 	// Empty log → `+` condition unmet → rule doesn't fire → allow.
 	assert!(check(&g, Some("shell"), &p, &[], &loaded(&[])).is_none());
 	// History contains git status → `+` met → rule fires → block.
-	let log: Vec<CallRecord> = vec![(
-		Some("shell".to_string()),
-		json!({ "command": "git status" }),
-	)];
+	let log: Vec<CallRecord> = vec![(Some("shell".to_string()), json!({ "command": "git status" }))];
 	assert!(check(&g, Some("shell"), &p, &log, &loaded(&[])).is_some());
 }
 
@@ -263,10 +254,7 @@ fn role_filter_matches_exact_and_domain_prefix() {
 	assert!(!role_matches(&filter, "developerx"));
 	assert!(!role_matches(&filter, "assistant"));
 	// Prefix direction matters: the filter must not match a shorter role.
-	assert!(!role_matches(
-		&["developer:general".to_string()],
-		"developer"
-	));
+	assert!(!role_matches(&["developer:general".to_string()], "developer"));
 }
 
 #[test]
@@ -343,10 +331,7 @@ fn load_from_workdir_degrades_to_default_on_a_bad_file() {
 // ---------------------------------------------------------------------------
 
 fn validator_rules(script: &str) -> Guardrails {
-	Guardrails::parse(&format!(
-		"[[validator]]\nname = \"v\"\nscript = \"{script}\"\n"
-	))
-	.expect("parse")
+	Guardrails::parse(&format!("[[validator]]\nname = \"v\"\nscript = \"{script}\"\n")).expect("parse")
 }
 
 fn snapshot_content(snapshot: &ScriptSnapshot) -> &[u8] {
@@ -417,9 +402,7 @@ fn a_pipe_without_a_command_is_rejected() {
 
 #[test]
 fn a_pipe_with_an_invalid_match_regex_is_rejected() {
-	let err =
-		Guardrails::parse("[[pipe]]\nname = \"x\"\ncommand = \"a.sh\"\nmatch = \"([unclosed\"\n")
-			.unwrap_err();
+	let err = Guardrails::parse("[[pipe]]\nname = \"x\"\ncommand = \"a.sh\"\nmatch = \"([unclosed\"\n").unwrap_err();
 	assert!(err.to_string().contains("invalid match regex"), "{err}");
 }
 
@@ -434,10 +417,7 @@ fn a_guard_when_entry_without_a_sign_is_rejected() {
 			"#,
 	)
 	.unwrap_err();
-	assert!(
-		err.to_string().contains("must start with `+` or `-`"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("must start with `+` or `-`"), "{err}");
 }
 
 #[test]
@@ -471,8 +451,7 @@ fn a_hook_without_a_script_is_rejected() {
 
 #[test]
 fn a_hook_with_an_invalid_match_target_is_rejected() {
-	let err =
-		Guardrails::parse("[[hook]]\nmatch = \"shell([bad\"\nscript = \"a.sh\"\n").unwrap_err();
+	let err = Guardrails::parse("[[hook]]\nmatch = \"shell([bad\"\nscript = \"a.sh\"\n").unwrap_err();
 	assert!(err.to_string().contains("invalid match"), "{err}");
 }
 
@@ -490,9 +469,7 @@ fn a_validator_without_a_script_is_rejected() {
 
 #[test]
 fn a_validator_with_an_invalid_match_regex_is_rejected() {
-	let err =
-		Guardrails::parse("[[validator]]\nname = \"v\"\nscript = \"a.sh\"\nmatch = \"([bad\"\n")
-			.unwrap_err();
+	let err = Guardrails::parse("[[validator]]\nname = \"v\"\nscript = \"a.sh\"\nmatch = \"([bad\"\n").unwrap_err();
 	assert!(err.to_string().contains("invalid match regex"), "{err}");
 }
 
@@ -518,10 +495,7 @@ fn validator_when_entries_accept_both_signs_and_reject_none() {
 			"#,
 	)
 	.unwrap_err();
-	assert!(
-		err.to_string().contains("must start with `+` or `-`"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("must start with `+` or `-`"), "{err}");
 }
 
 // ---------------------------------------------------------------------------
@@ -533,20 +507,14 @@ fn parse_target_rejects_empty_and_malformed_forms() {
 	assert!(parse_target("").is_err());
 	assert!(parse_target("   ").is_err());
 	let unclosed = parse_target("shell(rm").unwrap_err();
-	assert!(
-		unclosed.to_string().contains("missing closing"),
-		"{unclosed}"
-	);
+	assert!(unclosed.to_string().contains("missing closing"), "{unclosed}");
 	let no_capability = parse_target("(rm)").unwrap_err();
 	assert!(
 		no_capability.to_string().contains("empty capability"),
 		"{no_capability}"
 	);
 	let bad_regex = parse_target("shell([bad)").unwrap_err();
-	assert!(
-		bad_regex.to_string().contains("invalid regex"),
-		"{bad_regex}"
-	);
+	assert!(bad_regex.to_string().contains("invalid regex"), "{bad_regex}");
 }
 
 #[test]

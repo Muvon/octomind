@@ -246,11 +246,7 @@ fn truncate_edges_to_tokens(text: &str, max_tokens: usize) -> String {
 	}
 }
 
-fn render_phase_trajectory(
-	messages: &[crate::session::Message],
-	start_index: usize,
-	max_tokens: usize,
-) -> String {
+fn render_phase_trajectory(messages: &[crate::session::Message], start_index: usize, max_tokens: usize) -> String {
 	if max_tokens == 0 || messages.is_empty() {
 		return String::new();
 	}
@@ -290,17 +286,13 @@ fn render_phase_trajectory(
 			break;
 		}
 	}
-	truncate_edges_to_tokens(
-		&selected.into_iter().collect::<Vec<_>>().join("\n\n"),
-		max_tokens,
-	)
+	truncate_edges_to_tokens(&selected.into_iter().collect::<Vec<_>>().join("\n\n"), max_tokens)
 }
 
 fn request_context(chat_session: &ChatSession, current_request: &str) -> serde_json::Value {
 	match chat_session.gate_task.as_ref() {
 		Some(task) => {
-			let working_request = (task.scope
-				== crate::supervisor::resolve::ResolutionScope::FollowUp
+			let working_request = (task.scope == crate::supervisor::resolve::ResolutionScope::FollowUp
 				&& task.resolved_request.trim() != current_request.trim())
 			.then_some(task.resolved_request.as_str());
 			serde_json::json!({
@@ -335,8 +327,7 @@ fn render_specialist_context(
 		.find(|message| message.role == "system")
 		.map(|message| message.content.as_str())
 		.unwrap_or_default();
-	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)
-		.unwrap_or_default();
+	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages).unwrap_or_default();
 	let capabilities = chat_session
 		.cached_tools
 		.as_deref()
@@ -365,11 +356,7 @@ fn render_specialist_context(
 	.filter(|index| *index <= chat_session.session.messages.len())
 	.or_else(|| crate::session::latest_task_turn_index(&chat_session.session.messages))
 	.unwrap_or(0);
-	let trajectory = render_phase_trajectory(
-		&chat_session.session.messages,
-		phase_start,
-		trajectory_max_tokens,
-	);
+	let trajectory = render_phase_trajectory(&chat_session.session.messages, phase_start, trajectory_max_tokens);
 	let handoff = chat_session
 		.last_self_report_handoff
 		.as_ref()
@@ -472,8 +459,7 @@ async fn prescreen(
 	evaluate::avoided(
 		config,
 		Seam::Plan,
-		crate::session::estimate_tokens(&payload.to_string())
-			+ crate::session::estimate_tokens(PLANNER_PROMPT),
+		crate::session::estimate_tokens(&payload.to_string()) + crate::session::estimate_tokens(PLANNER_PROMPT),
 	);
 	Ok(true)
 }
@@ -499,16 +485,8 @@ fn xml_feedback(text: &str) -> String {
 	xml_text(&concise_text(text)).chars().take(600).collect()
 }
 
-fn note_planner_failure(
-	chat_session: &mut ChatSession,
-	signal: PlanSignal,
-	detail: &str,
-) -> Result<()> {
-	crate::log_info!(
-		"External planner could not reconcile {:?}: {}",
-		signal,
-		detail
-	);
+fn note_planner_failure(chat_session: &mut ChatSession, signal: PlanSignal, detail: &str) -> Result<()> {
+	crate::log_info!("External planner could not reconcile {:?}: {}", signal, detail);
 	// Set the per-turn failure latch so a subsequent signal from the same turn
 	// is consumed without another planner call — prevents an unbounded
 	// re-emit/fail/inject loop when the planner is broken or indecisive.
@@ -559,8 +537,7 @@ pub async fn reconcile_after_actions(
 	if !config.supervisor.enabled || !config.supervisor.plan.enabled {
 		return Ok(());
 	}
-	let _timing =
-		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Plan);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Plan);
 
 	// Per-turn failure latch: if the planner already failed for this genuine
 	// user turn, consume the signal silently without another planner call.
@@ -592,9 +569,7 @@ pub async fn reconcile_after_actions(
 			return Ok(());
 		}
 		if !plan_request_allowed(chat_session) {
-			crate::log_debug!(
-				"External plan request declined: current turn has one answer-only deliverable"
-			);
+			crate::log_debug!("External plan request declined: current turn has one answer-only deliverable");
 			record_outcome(Mechanic::Plan, Outcome::Skips, 1);
 			return Ok(());
 		}
@@ -649,10 +624,7 @@ pub async fn reconcile_after_actions(
 		match (signal, decision) {
 			(PlanSignal::Request, PlanDecision::Create { title, tasks }) => {
 				crate::mcp::core::plan::sidecar_start(&title, &tasks)?;
-				crate::supervisor::notify(&format!(
-					"external plan created with {} phase(s)",
-					tasks.len()
-				));
+				crate::supervisor::notify(&format!("external plan created with {} phase(s)", tasks.len()));
 				Ok(Transition::Created)
 			}
 			(PlanSignal::Request, PlanDecision::NoPlan { reason }) => {
@@ -666,10 +638,7 @@ pub async fn reconcile_after_actions(
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Revise { reason, tasks }) => {
 				crate::mcp::core::plan::sidecar_revise(&reason, &tasks)?;
-				crate::supervisor::notify(&format!(
-					"external plan revised: {}",
-					concise_text(&reason)
-				));
+				crate::supervisor::notify(&format!("external plan revised: {}", concise_text(&reason)));
 				Ok(Transition::Revised)
 			}
 			(PlanSignal::PhaseComplete, PlanDecision::Hold { reason }) => {
@@ -678,10 +647,7 @@ pub async fn reconcile_after_actions(
 			}
 			(PlanSignal::Reassess, PlanDecision::Revise { reason, tasks }) => {
 				crate::mcp::core::plan::sidecar_revise(&reason, &tasks)?;
-				crate::supervisor::notify(&format!(
-					"external plan revised: {}",
-					concise_text(&reason)
-				));
+				crate::supervisor::notify(&format!("external plan revised: {}", concise_text(&reason)));
 				Ok(Transition::Revised)
 			}
 			(PlanSignal::Reassess, PlanDecision::Hold { reason }) => {

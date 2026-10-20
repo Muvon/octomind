@@ -111,8 +111,8 @@ pub struct AuthServerMetadata {
 /// * `Err` - If header format is invalid or URL not found
 pub fn parse_www_authenticate_header(header_value: &str) -> Result<String> {
 	// Pattern: resource_metadata="<URL>"
-	let re = Regex::new(r#"resource_metadata="([^"]+)""#)
-		.context("Failed to compile regex for WWW-Authenticate parsing")?;
+	let re =
+		Regex::new(r#"resource_metadata="([^"]+)""#).context("Failed to compile regex for WWW-Authenticate parsing")?;
 
 	let captures = re.captures(header_value).ok_or_else(|| {
 		anyhow!(
@@ -139,13 +139,8 @@ pub fn parse_www_authenticate_header(header_value: &str) -> Result<String> {
 /// # Returns
 /// * `Ok(ProtectedResourceMetadata)` - Parsed metadata
 /// * `Err` - If request fails or JSON parsing fails
-pub async fn fetch_protected_resource_metadata(
-	metadata_url: &str,
-) -> Result<ProtectedResourceMetadata> {
-	crate::log_debug!(
-		"Fetching Protected Resource Metadata from: {}",
-		metadata_url
-	);
+pub async fn fetch_protected_resource_metadata(metadata_url: &str) -> Result<ProtectedResourceMetadata> {
+	crate::log_debug!("Fetching Protected Resource Metadata from: {}", metadata_url);
 
 	let client = reqwest::Client::builder()
 		.timeout(Duration::from_secs(10))
@@ -195,10 +190,7 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
 	// {issuer}/.well-known/oauth-authorization-server
 	let metadata_url = format!("{}/.well-known/oauth-authorization-server", issuer_trimmed);
 
-	crate::log_debug!(
-		"Fetching Authorization Server Metadata from: {}",
-		metadata_url
-	);
+	crate::log_debug!("Fetching Authorization Server Metadata from: {}", metadata_url);
 
 	let client = reqwest::Client::builder()
 		.timeout(Duration::from_secs(10))
@@ -294,10 +286,7 @@ pub fn build_oauth_config_from_metadata(
 /// # Returns
 /// * `Ok(OAuthConfig)` - Discovered OAuth configuration (from cache or fresh discovery)
 /// * `Err` - If discovery fails at any step
-pub async fn discover_oauth_from_mcp_server(
-	server_url: &str,
-	server_name: &str,
-) -> Result<OAuthConfig> {
+pub async fn discover_oauth_from_mcp_server(server_url: &str, server_name: &str) -> Result<OAuthConfig> {
 	// Check cache first to avoid repeated discovery
 	{
 		let cache = DISCOVERED_OAUTH_CACHE.read().unwrap();
@@ -325,10 +314,7 @@ pub async fn discover_oauth_from_mcp_server(
 	// Step 1: Try pre-discovery via .well-known endpoint
 	// RFC 9728: Protected resource metadata may be available without auth
 	let server_url_trimmed = server_url.trim_end_matches('/');
-	let pre_discovery_url = format!(
-		"{}/.well-known/oauth-protected-resource",
-		server_url_trimmed
-	);
+	let pre_discovery_url = format!("{}/.well-known/oauth-protected-resource", server_url_trimmed);
 
 	crate::log_debug!("Trying pre-discovery at: {}", pre_discovery_url);
 
@@ -396,8 +382,8 @@ pub async fn discover_oauth_from_mcp_server(
 			crate::log_debug!("WWW-Authenticate header: {}", www_auth_header);
 
 			// Parse resource_metadata URL
-			let resource_metadata_url = parse_www_authenticate_header(www_auth_header)
-				.context("Failed to parse WWW-Authenticate header")?;
+			let resource_metadata_url =
+				parse_www_authenticate_header(www_auth_header).context("Failed to parse WWW-Authenticate header")?;
 
 			// Fetch Protected Resource Metadata
 			fetch_protected_resource_metadata(&resource_metadata_url)

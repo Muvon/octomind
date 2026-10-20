@@ -71,12 +71,7 @@ pub struct TaskData {
 }
 
 impl TaskData {
-	pub fn new(
-		title: String,
-		description: String,
-		phase: Option<String>,
-		valid_if: Option<String>,
-	) -> Self {
+	pub fn new(title: String, description: String, phase: Option<String>, valid_if: Option<String>) -> Self {
 		Self {
 			title,
 			description,
@@ -122,11 +117,7 @@ pub trait PlanStorage {
 	fn get_plan_title(&self) -> Result<String>;
 
 	/// Set message range for current task (for compression tracking)
-	fn set_current_task_message_range(
-		&mut self,
-		start_index: usize,
-		end_index: usize,
-	) -> Result<()>;
+	fn set_current_task_message_range(&mut self, start_index: usize, end_index: usize) -> Result<()>;
 
 	/// Get the completed task with its message range (for compression)
 	fn get_last_completed_task(&self) -> Result<Option<PlanTask>>;

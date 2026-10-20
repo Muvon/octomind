@@ -119,8 +119,7 @@ fn read_taps_file() -> Result<TapsFile> {
 	if !path.exists() {
 		return Ok(TapsFile::default());
 	}
-	let content = fs::read_to_string(&path)
-		.context(format!("Failed to read taps file: {}", path.display()))?;
+	let content = fs::read_to_string(&path).context(format!("Failed to read taps file: {}", path.display()))?;
 	toml::from_str(&content).context("Failed to parse taps.toml")
 }
 
@@ -150,10 +149,8 @@ fn parse_tap_arg(arg: &str) -> Result<Tap> {
 	let parts: Vec<&str> = arg.splitn(2, ' ').collect();
 	let name = parts[0].trim().to_string();
 
-	// Validate name format
-	if !name.contains('/') || name.split('/').count() != 2 {
-		anyhow::bail!("Tap name must be in 'user/repo' format, got: {}", name);
-	}
+	// Same `user/repo` rule as `tap init`, so the two commands accept the same names.
+	super::tap_scaffold::split_tap_id(&name)?;
 
 	let local_path = if parts.len() == 2 {
 		Some(parts[1].trim().to_string())
@@ -340,17 +337,12 @@ pub fn add_tap(arg: &str) -> Result<()> {
 		}
 		// Create parent dirs (e.g. ~/.local/share/octomind/taps/user/)
 		if let Some(parent) = tap_dir.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create tap parent dir: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create tap parent dir: {}", parent.display()))?;
 		}
 		// Remove stale symlink/dir if it already exists at the target path
 		if tap_dir.exists() || tap_dir.symlink_metadata().is_ok() {
-			remove_local_tap_link(&tap_dir).context(format!(
-				"Failed to remove existing tap path: {}",
-				tap_dir.display()
-			))?;
+			remove_local_tap_link(&tap_dir)
+				.context(format!("Failed to remove existing tap path: {}", tap_dir.display()))?;
 		}
 		#[cfg(unix)]
 		std::os::unix::fs::symlink(&target, &tap_dir).context(format!(
@@ -387,20 +379,12 @@ pub fn remove_tap(name: &str) -> Result<()> {
 	let name = name.trim().to_string();
 
 	if name == DEFAULT_TAP {
-		anyhow::bail!(
-			"'{}' is the built-in default tap and cannot be removed",
-			name
-		);
+		anyhow::bail!("'{}' is the built-in default tap and cannot be removed", name);
 	}
 
 	let mut file = read_taps_file()?;
 	let before = file.taps.len();
-	let removed: Vec<Tap> = file
-		.taps
-		.iter()
-		.filter(|t| t.name == name)
-		.cloned()
-		.collect();
+	let removed: Vec<Tap> = file.taps.iter().filter(|t| t.name == name).cloned().collect();
 	file.taps.retain(|t| t.name != name);
 	if file.taps.len() == before {
 		anyhow::bail!("Tap '{}' is not in your tap list", name);

@@ -57,27 +57,23 @@ pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Resu
 			let index_str = match params.get(1) {
 				Some(s) => *s,
 				None => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Learning {
-							data: json!({
-								"subcommand": "error",
-								"message": "usage: /learning delete <index>",
-							}),
-						},
-					)))
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+						data: json!({
+							"subcommand": "error",
+							"message": "usage: /learning delete <index>",
+						}),
+					})))
 				}
 			};
 			let index: usize = match index_str.parse() {
 				Ok(n) if n > 0 => n,
 				_ => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Learning {
-							data: json!({
-								"subcommand": "error",
-								"message": format!("invalid index '{}' — must be a positive integer", index_str),
-							}),
-						},
-					)))
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+						data: json!({
+							"subcommand": "error",
+							"message": format!("invalid index '{}' — must be a positive integer", index_str),
+						}),
+					})))
 				}
 			};
 			handle_delete(session, index).await
@@ -89,25 +85,21 @@ pub async fn handle_learning(session: &mut ChatSession, params: &[&str]) -> Resu
 				.filter(|value| *value > 0);
 			match index {
 				Some(index) => handle_show(session, index).await,
-				None => Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Learning {
-						data: json!({
-							"subcommand": "error",
-							"message": "usage: /learning show <index>",
-						}),
-					},
-				))),
+				None => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+					data: json!({
+						"subcommand": "error",
+						"message": "usage: /learning show <index>",
+					}),
+				}))),
 			}
 		}
 		Some("clear") => handle_clear(session).await,
-		Some(other) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": format!("unknown subcommand '{}' — use: list, show, delete, clear, evolution", other),
-				}),
-			},
-		))),
+		Some(other) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("unknown subcommand '{}' — use: list, show, delete, clear, evolution", other),
+			}),
+		}))),
 	}
 }
 
@@ -199,29 +191,22 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 			let session_file = session.session.session_file.clone();
 			let role = role.clone();
 			let project = project.clone();
-			tokio::spawn(crate::session::context::with_session_id(
-				owner.clone(),
-				async move {
-					let result = crate::supervisor::accounting::run_background(
-						owner,
-						session_file,
-						crate::supervisor::learning::evolution::synthesize_store_now(
-							&config, &role, &project,
-						),
-					)
-					.await;
-					let notice = match result {
-						Ok(ids) if ids.is_empty() => {
-							"evolution store distill: no recurring pattern qualified".to_string()
-						}
-						Ok(ids) => {
-							format!("evolution store distill: candidates {}", ids.join(", "))
-						}
-						Err(error) => format!("evolution store distill failed: {error}"),
-					};
-					crate::supervisor::notify(&notice);
-				},
-			));
+			tokio::spawn(crate::session::context::with_session_id(owner.clone(), async move {
+				let result = crate::supervisor::accounting::run_background(
+					owner,
+					session_file,
+					crate::supervisor::learning::evolution::synthesize_store_now(&config, &role, &project),
+				)
+				.await;
+				let notice = match result {
+					Ok(ids) if ids.is_empty() => "evolution store distill: no recurring pattern qualified".to_string(),
+					Ok(ids) => {
+						format!("evolution store distill: candidates {}", ids.join(", "))
+					}
+					Err(error) => format!("evolution store distill failed: {error}"),
+				};
+				crate::supervisor::notify(&notice);
+			}));
 			json!({
 				"subcommand":"evolution_action",
 				"action":"distill",
@@ -233,74 +218,60 @@ fn handle_evolution(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 			"message":"usage: /learning evolution [list|show <id>|approve <id>|reject <id>|rollback <id>|distill]"
 		}),
 	};
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Learning { data: output },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+		data: output,
+	})))
 }
 
 async fn handle_show(session: &ChatSession, index: usize) -> Result<CommandResult> {
 	let (role, project) = role_and_project(session);
 	let all = all_lessons(&role, &project).await?;
 	let Some(memory) = all.get(index - 1) else {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": format!("index {} out of range — {} memory item(s) total", index, all.len()),
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("index {} out of range — {} memory item(s) total", index, all.len()),
+			}),
+		})));
 	};
 	let dir = if memory.scope == "global" {
 		crate::directories::get_global_learning_dir().ok()
 	} else {
 		crate::directories::get_learning_dir(&memory.role, &memory.project).ok()
 	};
-	let path = dir.map(|dir| {
-		dir.join(format!("{}.md", memory.file_id()))
-			.display()
-			.to_string()
-	});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Learning {
-			data: json!({
-				"subcommand": "show",
-				"index": index,
-				"id": memory.file_id(),
-				"title": memory.title,
-				"content": memory.content,
-				"memory_type": memory.memory_type,
-				"scope": memory.scope,
-				"confidence": memory.confidence,
-				"importance": memory.importance,
-				"tags": memory.tags,
-				"source": memory.source,
-				"created": memory.created,
-				"related": memory.related,
-				"evidence": memory.evidence,
-				"outcome": memory.outcome.as_str(),
-				"last_used": memory.last_used,
-				"use_count": memory.use_count,
-				"path": path,
-			}),
-		},
-	)))
+	let path = dir.map(|dir| dir.join(format!("{}.md", memory.file_id())).display().to_string());
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+		data: json!({
+			"subcommand": "show",
+			"index": index,
+			"id": memory.file_id(),
+			"title": memory.title,
+			"content": memory.content,
+			"memory_type": memory.memory_type,
+			"scope": memory.scope,
+			"confidence": memory.confidence,
+			"importance": memory.importance,
+			"tags": memory.tags,
+			"source": memory.source,
+			"created": memory.created,
+			"related": memory.related,
+			"evidence": memory.evidence,
+			"outcome": memory.outcome.as_str(),
+			"last_used": memory.last_used,
+			"use_count": memory.use_count,
+			"path": path,
+		}),
+	})))
 }
 
-async fn handle_list(
-	session: &ChatSession,
-	pattern: Option<&str>,
-	page: usize,
-) -> Result<CommandResult> {
+async fn handle_list(session: &ChatSession, pattern: Option<&str>, page: usize) -> Result<CommandResult> {
 	if page == 0 {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": "page number must be a positive integer",
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": "page number must be a positive integer",
+			}),
+		})));
 	}
 
 	let (role, project) = role_and_project(session);
@@ -311,9 +282,7 @@ async fn handle_list(
 	let filtered: Vec<_> = if let Some(pat) = pattern {
 		all.into_iter()
 			.filter(|l| {
-				glob_match(pat, &l.content)
-					|| glob_match(pat, &l.title)
-					|| l.tags.iter().any(|t| glob_match(pat, t))
+				glob_match(pat, &l.content) || glob_match(pat, &l.title) || l.tags.iter().any(|t| glob_match(pat, t))
 			})
 			.collect()
 	} else {
@@ -328,14 +297,12 @@ async fn handle_list(
 	};
 
 	if page > total_pages && total > 0 {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": format!("page {} not found — total pages: {}", page, total_pages),
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("page {} not found — total pages: {}", page, total_pages),
+			}),
+		})));
 	}
 
 	let start = (page - 1) * LESSONS_PER_PAGE;
@@ -365,21 +332,19 @@ async fn handle_list(
 		})
 		.collect();
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Learning {
-			data: json!({
-				"subcommand": "list",
-				"role": role,
-				"project": project,
-				"lessons": lessons,
-				"total": total,
-				"page": page,
-				"total_pages": total_pages,
-				"pattern": pattern,
-				"storage": storage,
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+		data: json!({
+			"subcommand": "list",
+			"role": role,
+			"project": project,
+			"lessons": lessons,
+			"total": total,
+			"page": page,
+			"total_pages": total_pages,
+			"pattern": pattern,
+			"storage": storage,
+		}),
+	})))
 }
 
 async fn handle_delete(session: &ChatSession, index: usize) -> Result<CommandResult> {
@@ -388,14 +353,12 @@ async fn handle_delete(session: &ChatSession, index: usize) -> Result<CommandRes
 	let all = all_lessons(&role, &project).await?;
 
 	if index > all.len() || all.is_empty() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": format!("index {} out of range — {} lesson(s) total", index, all.len()),
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("index {} out of range — {} lesson(s) total", index, all.len()),
+			}),
+		})));
 	}
 
 	let lesson = &all[index - 1];
@@ -403,24 +366,20 @@ async fn handle_delete(session: &ChatSession, index: usize) -> Result<CommandRes
 	let content_preview: String = lesson.content.chars().take(60).collect();
 
 	match backend.delete(&id, &role, &project).await {
-		Ok(()) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "delete",
-					"index": index,
-					"id": id,
-					"content_preview": content_preview,
-				}),
-			},
-		))),
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Learning {
-				data: json!({
-					"subcommand": "error",
-					"message": format!("delete failed: {}", e),
-				}),
-			},
-		))),
+		Ok(()) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "delete",
+				"index": index,
+				"id": id,
+				"content_preview": content_preview,
+			}),
+		}))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("delete failed: {}", e),
+			}),
+		}))),
 	}
 }
 
@@ -453,23 +412,21 @@ async fn handle_clear(session: &ChatSession) -> Result<CommandResult> {
 		}
 	}
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Learning {
-			data: json!({
-				"subcommand": "clear",
-				"deleted": deleted,
-				"total": total,
-				"archived_cleared": archived_cleared,
-				"errors": errors,
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Learning {
+		data: json!({
+			"subcommand": "clear",
+			"deleted": deleted,
+			"total": total,
+			"archived_cleared": archived_cleared,
+			"errors": errors,
+		}),
+	})))
 }
 
 fn role_and_project(session: &ChatSession) -> (String, String) {
 	let role = session.role.clone();
-	let workdir = crate::session::context::current_session_id()
-		.and_then(|id| crate::session::context::get_current_workdir(&id));
+	let workdir =
+		crate::session::context::current_session_id().and_then(|id| crate::session::context::get_current_workdir(&id));
 	let project = crate::supervisor::learning::evolution::project_name(workdir.as_deref());
 	(role, project)
 }
@@ -477,10 +434,7 @@ fn role_and_project(session: &ChatSession) -> (String, String) {
 /// All lessons the `/learning` command operates on: scoped (current
 /// role+project) followed by global (user-wide). Stable order so list/delete
 /// indices stay aligned across calls.
-async fn all_lessons(
-	role: &str,
-	project: &str,
-) -> Result<Vec<crate::supervisor::learning::Lesson>> {
+async fn all_lessons(role: &str, project: &str) -> Result<Vec<crate::supervisor::learning::Lesson>> {
 	let backend = crate::supervisor::learning::backend::FileBackend;
 	let mut all = backend.retrieve_all(role, project).await?;
 	all.extend(backend.retrieve_global().await?);
@@ -507,11 +461,7 @@ fn learning_storage_summary(
 		.into_iter()
 		.map(|(memory_type, (hot, cold))| (memory_type, json!({"hot": hot, "cold": cold})))
 		.collect::<serde_json::Map<_, _>>();
-	let cold_tokens: usize = scoped_cold
-		.iter()
-		.chain(&global_cold)
-		.map(learning_memory_tokens)
-		.sum();
+	let cold_tokens: usize = scoped_cold.iter().chain(&global_cold).map(learning_memory_tokens).sum();
 	Ok(json!({
 		"hot_items": hot.len(),
 		"hot_tokens": hot.iter().map(learning_memory_tokens).sum::<usize>(),

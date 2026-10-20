@@ -43,7 +43,7 @@ enum Commands {
 	Config(commands::ConfigArgs),
 
 	/// Run an agent or start an interactive session.
-	/// TAG can be a registry agent (e.g. `developer:general`) or a role name (e.g. `developer`).
+	/// TAG can be a registry agent (e.g. `developer:general`) or a role name (e.g. `assistant`).
 	/// Use --format to run non-interactively.
 	/// Default when no subcommand is given.
 	Run(commands::RunArgs),
@@ -234,8 +234,7 @@ fn used_flags(command: &str) -> Vec<String> {
 	let Some(sub) = app.find_subcommand(command) else {
 		return Vec::new();
 	};
-	let known: std::collections::HashSet<&str> =
-		sub.get_arguments().filter_map(|a| a.get_long()).collect();
+	let known: std::collections::HashSet<&str> = sub.get_arguments().filter_map(|a| a.get_long()).collect();
 	let mut flags: Vec<String> = std::env::args()
 		.skip(2)
 		.filter_map(|a| {
@@ -292,9 +291,7 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 			print!("{patched}");
 		}
 		Commands::Complete(complete_args) => commands::complete::execute(&complete_args, &config)?,
-		Commands::Distill(distill_args) => {
-			commands::distill::execute(&distill_args, &config).await?
-		}
+		Commands::Distill(distill_args) => commands::distill::execute(&distill_args, &config).await?,
 	}
 
 	Ok(())
@@ -368,13 +365,7 @@ fn patch_bash(script: &str, sub: &str, value_name: &str) -> String {
 		),
 	);
 
-	format!(
-		"{}{}{}{}",
-		&script[..run_pos],
-		marker,
-		block,
-		&script[block_end..]
-	)
+	format!("{}{}{}{}", &script[..run_pos], marker, block, &script[block_end..])
 }
 
 /// Zsh: inject a helper function and replace the `_default` completer on the

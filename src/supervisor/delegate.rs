@@ -46,9 +46,8 @@ struct Handback {
 	verified: usize,
 }
 
-static HANDBACK: std::sync::RwLock<
-	Option<std::collections::HashMap<crate::session::context::SessionId, Handback>>,
-> = std::sync::RwLock::new(None);
+static HANDBACK: std::sync::RwLock<Option<std::collections::HashMap<crate::session::context::SessionId, Handback>>> =
+	std::sync::RwLock::new(None);
 
 /// Record how one finished subagent run ended. `verified` is the child's own
 /// end-of-turn verdict, reported over the ACP `_meta` channel. A run that

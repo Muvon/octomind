@@ -130,10 +130,7 @@ fn plugin_with_mcp(tmp: &Path, servers_json: &str) -> (Plugin, PathBuf) {
 	write(&root.join("plugin.json"), &manifest("p"));
 	write(
 		&root.join("mcp.json"),
-		&format!(
-			r#"{{"$schema": "{}", "mcpServers": {}}}"#,
-			MCP_SCHEMA, servers_json
-		),
+		&format!(r#"{{"$schema": "{}", "mcpServers": {}}}"#, MCP_SCHEMA, servers_json),
 	);
 	let data = tmp.join("data");
 	(
@@ -227,17 +224,15 @@ fn cwd_forms_are_enforced() {
 	let by_name: HashMap<&str, &McpServerConfig> = servers.iter().map(|s| (s.name(), s)).collect();
 	assert_eq!(servers.len(), 2);
 	match by_name["rel"] {
-		McpServerConfig::Stdin { cwd, .. } => assert_eq!(
-			cwd.as_deref(),
-			Some(plugin.root.join("sub").to_string_lossy().as_ref())
-		),
+		McpServerConfig::Stdin { cwd, .. } => {
+			assert_eq!(cwd.as_deref(), Some(plugin.root.join("sub").to_string_lossy().as_ref()))
+		}
 		_ => unreachable!(),
 	}
 	match by_name["data"] {
-		McpServerConfig::Stdin { cwd, .. } => assert_eq!(
-			cwd.as_deref(),
-			Some(data.join("work").to_string_lossy().as_ref())
-		),
+		McpServerConfig::Stdin { cwd, .. } => {
+			assert_eq!(cwd.as_deref(), Some(data.join("work").to_string_lossy().as_ref()))
+		}
 		_ => unreachable!(),
 	}
 }

@@ -47,10 +47,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 				if let Ok(decoder) = ZstdDecoder::new(file) {
 					let reader = BufReader::new(decoder);
 					// file_stem() gives "name.jsonl" for "name.jsonl.zst"; strip the .jsonl suffix
-					let stem = path
-						.file_stem()
-						.and_then(|s| s.to_str())
-						.unwrap_or_default();
+					let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
 					let name = stem.strip_suffix(".jsonl").unwrap_or(stem).to_string();
 
 					for line in reader.lines().take(10) {
@@ -60,9 +57,8 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 						if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
 							if json_value.get("type").and_then(|t| t.as_str()) == Some("SUMMARY") {
 								if let Some(session_info_value) = json_value.get("session_info") {
-									if let Ok(info) = serde_json::from_value::<SessionInfo>(
-										session_info_value.clone(),
-									) {
+									if let Ok(info) = serde_json::from_value::<SessionInfo>(session_info_value.clone())
+									{
 										sessions.push((name.clone(), info));
 										break;
 									}
@@ -89,9 +85,7 @@ pub fn list_available_sessions() -> Result<Vec<(String, SessionInfo)>, anyhow::E
 
 // Find the most recent session for a specific project directory
 // This works by checking the session name which includes the project basename
-pub fn find_most_recent_session_for_project(
-	project_dir: &Path,
-) -> Result<Option<String>, anyhow::Error> {
+pub fn find_most_recent_session_for_project(project_dir: &Path) -> Result<Option<String>, anyhow::Error> {
 	let sessions_dir = get_sessions_dir()?;
 
 	if !sessions_dir.exists() {
@@ -99,10 +93,7 @@ pub fn find_most_recent_session_for_project(
 	}
 
 	// Get the basename of the current project directory
-	let project_basename = project_dir
-		.file_name()
-		.and_then(|n| n.to_str())
-		.unwrap_or("");
+	let project_basename = project_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
 	if project_basename.is_empty() {
 		return Ok(None);
@@ -116,10 +107,7 @@ pub fn find_most_recent_session_for_project(
 
 		if path.is_file() && path.extension().is_some_and(|ext| ext == "zst") {
 			// file_stem() gives "name.jsonl" for "name.jsonl.zst"; strip the .jsonl suffix
-			let stem = path
-				.file_stem()
-				.and_then(|s| s.to_str())
-				.unwrap_or_default();
+			let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
 			let name = stem.strip_suffix(".jsonl").unwrap_or(stem);
 
 			// Session name format: YYMMDD-HHMMSS-basename-uuid. Match the basename
@@ -129,9 +117,7 @@ pub fn find_most_recent_session_for_project(
 				// Get file modification time for sorting
 				if let Ok(metadata) = std_fs::metadata(&path) {
 					if let Ok(modified) = metadata.modified() {
-						if let Ok(duration) =
-							modified.duration_since(std::time::SystemTime::UNIX_EPOCH)
-						{
+						if let Ok(duration) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH) {
 							matching_sessions.push((name.to_string(), duration.as_secs()));
 						}
 					}
@@ -162,16 +148,13 @@ pub(crate) fn has_incomplete_tool_calls(messages: &[Message]) -> bool {
 		if msg.role == "assistant" && msg.tool_calls.is_some() {
 			if let Some(tool_calls_value) = &msg.tool_calls {
 				// Parse the tool calls to get their IDs
-				if let Ok(tool_calls) =
-					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
-				{
+				if let Ok(tool_calls) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
 					for tool_call in tool_calls {
 						if let Some(call_id) = tool_call.get("id").and_then(|id| id.as_str()) {
 							// Look for a tool message with this call_id AFTER the assistant message
 							let has_response = messages.iter().skip(i + 1).any(|response_msg| {
 								response_msg.role == "tool"
-									&& response_msg.tool_call_id.as_ref()
-										== Some(&call_id.to_string())
+									&& response_msg.tool_call_id.as_ref() == Some(&call_id.to_string())
 							});
 
 							if !has_response {
@@ -204,15 +187,9 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 	for (i, msg) in messages.iter().enumerate() {
 		if msg.role == "assistant" && msg.tool_calls.is_some() {
 			if let Some(tool_calls_value) = &msg.tool_calls {
-				if let Ok(tool_calls) =
-					serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone())
-				{
+				if let Ok(tool_calls) = serde_json::from_value::<Vec<serde_json::Value>>(tool_calls_value.clone()) {
 					for tool_call in tool_calls {
-						let call_id = tool_call
-							.get("id")
-							.and_then(|id| id.as_str())
-							.unwrap_or("")
-							.to_string();
+						let call_id = tool_call.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string();
 						if call_id.is_empty() {
 							continue;
 						}
@@ -224,8 +201,7 @@ pub fn clean_interrupted_tool_calls(messages: &mut Vec<Message>, context: &str) 
 							.to_string();
 
 						let has_response = messages.iter().skip(i + 1).any(|response_msg| {
-							response_msg.role == "tool"
-								&& response_msg.tool_call_id.as_ref() == Some(&call_id)
+							response_msg.role == "tool" && response_msg.tool_call_id.as_ref() == Some(&call_id)
 						});
 
 						if !has_response {
@@ -330,13 +306,9 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						// Extract session info from JSON log entry
 						// SUMMARY is the source of truth - it contains complete session state
 						if let Some(session_info_value) = json_value.get("session_info") {
-							session_info =
-								Some(serde_json::from_value(session_info_value.clone())?);
+							session_info = Some(serde_json::from_value(session_info_value.clone())?);
 							// Track SUMMARY timestamp to ignore older STATS entries
-							last_summary_timestamp = json_value
-								.get("timestamp")
-								.and_then(|t| t.as_u64())
-								.unwrap_or(0);
+							last_summary_timestamp = json_value.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
 						}
 					}
 					"RESTORATION_POINT" => {
@@ -371,9 +343,7 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 					"TRUNCATION_POINT" => {
 						// Found a truncation point - this means messages were removed due to Ctrl+C cleanup
 						// Truncate to the specified message count to reflect the cleaned state
-						if let Some(message_count) =
-							json_value.get("message_count").and_then(|m| m.as_u64())
-						{
+						if let Some(message_count) = json_value.get("message_count").and_then(|m| m.as_u64()) {
 							let target_count = message_count as usize;
 							if restoration_point_found {
 								restoration_messages.truncate(target_count);
@@ -407,11 +377,7 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						pending_tool_calls.clear(); // Clear stale tool calls from before replace
 
 						if let Some(command) = json_value.get("command").and_then(|c| c.as_str()) {
-							crate::log_debug!(
-								"Session restoration: Found {} from command '{}'",
-								log_type,
-								command
-							);
+							crate::log_debug!("Session restoration: Found {} from command '{}'", log_type, command);
 						}
 					}
 					// Append and Last only add messages; the appended message lines follow
@@ -421,10 +387,7 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 						// STATS entries provide incremental updates during a session
 						// BUT: Only apply STATS that are NEWER than the last SUMMARY
 						// This ensures SUMMARY (written on save/exit) is the source of truth
-						let stats_timestamp = json_value
-							.get("timestamp")
-							.and_then(|t| t.as_u64())
-							.unwrap_or(0);
+						let stats_timestamp = json_value.get("timestamp").and_then(|t| t.as_u64()).unwrap_or(0);
 
 						// Only apply STATS if it's newer than the last SUMMARY
 						// This prevents old STATS from overwriting fresh SUMMARY data on resume
@@ -437,23 +400,17 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 								// CRITICAL FIX: Only apply STATS values if they're greater than current values
 								// This prevents cached-only requests (where non-cached tokens = 0) from
 								// overwriting the accumulated token counts from the SUMMARY
-								if let Some(total_cost) =
-									json_value.get("total_cost").and_then(|c| c.as_f64())
-								{
+								if let Some(total_cost) = json_value.get("total_cost").and_then(|c| c.as_f64()) {
 									if total_cost > info.total_cost {
 										info.total_cost = total_cost;
 									}
 								}
-								if let Some(input_tokens) =
-									json_value.get("input_tokens").and_then(|t| t.as_u64())
-								{
+								if let Some(input_tokens) = json_value.get("input_tokens").and_then(|t| t.as_u64()) {
 									if input_tokens > info.input_tokens {
 										info.input_tokens = input_tokens;
 									}
 								}
-								if let Some(output_tokens) =
-									json_value.get("output_tokens").and_then(|t| t.as_u64())
-								{
+								if let Some(output_tokens) = json_value.get("output_tokens").and_then(|t| t.as_u64()) {
 									if output_tokens > info.output_tokens {
 										info.output_tokens = output_tokens;
 									}
@@ -465,9 +422,8 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 										info.cache_read_tokens = cache_read_tokens;
 									}
 								}
-								if let Some(cache_write_tokens) = json_value
-									.get("cache_write_tokens")
-									.and_then(|t| t.as_u64())
+								if let Some(cache_write_tokens) =
+									json_value.get("cache_write_tokens").and_then(|t| t.as_u64())
 								{
 									if cache_write_tokens > info.cache_write_tokens {
 										info.cache_write_tokens = cache_write_tokens;
@@ -476,35 +432,25 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 								if let Some(reasoning_tokens) =
 									json_value.get("reasoning_tokens").and_then(|t| t.as_u64())
 								{
-									info.reasoning_tokens =
-										info.reasoning_tokens.max(reasoning_tokens);
+									info.reasoning_tokens = info.reasoning_tokens.max(reasoning_tokens);
 								}
 
-								if let Some(tool_calls) =
-									json_value.get("tool_calls").and_then(|t| t.as_u64())
-								{
+								if let Some(tool_calls) = json_value.get("tool_calls").and_then(|t| t.as_u64()) {
 									if tool_calls > info.tool_calls {
 										info.tool_calls = tool_calls;
 									}
 								}
-								if let Some(api_time) =
-									json_value.get("total_api_time_ms").and_then(|t| t.as_u64())
-								{
+								if let Some(api_time) = json_value.get("total_api_time_ms").and_then(|t| t.as_u64()) {
 									if api_time > info.total_api_time_ms {
 										info.total_api_time_ms = api_time;
 									}
 								}
-								if let Some(tool_time) = json_value
-									.get("total_tool_time_ms")
-									.and_then(|t| t.as_u64())
-								{
+								if let Some(tool_time) = json_value.get("total_tool_time_ms").and_then(|t| t.as_u64()) {
 									if tool_time > info.total_tool_time_ms {
 										info.total_tool_time_ms = tool_time;
 									}
 								}
-								if let Some(layer_time) = json_value
-									.get("total_layer_time_ms")
-									.and_then(|t| t.as_u64())
+								if let Some(layer_time) = json_value.get("total_layer_time_ms").and_then(|t| t.as_u64())
 								{
 									if layer_time > info.total_layer_time_ms {
 										info.total_layer_time_ms = layer_time;
@@ -565,9 +511,7 @@ fn parse_log_lines<R: BufRead>(reader: R) -> Result<ParsedLogLines> {
 							let assistant_with_tool_calls = Message {
 								role: "assistant".to_string(),
 								content: "".to_string(), // Empty content for tool call messages
-								tool_calls: Some(serde_json::Value::Array(
-									pending_tool_calls.clone(),
-								)),
+								tool_calls: Some(serde_json::Value::Array(pending_tool_calls.clone())),
 								timestamp: message.timestamp,
 								cached: false,
 								..Default::default()
@@ -708,21 +652,14 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 	// file_stem() on "name.jsonl.zst" yields "name.jsonl" — strip the residual
 	// .jsonl so the session name matches what the logger writes under. Leaving it
 	// forks all subsequent log writes to a differently-named file.
-	let stem = session_file
-		.file_stem()
-		.and_then(|s| s.to_str())
-		.unwrap_or("unknown");
+	let stem = session_file.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
 	let session_name = stem.strip_suffix(".jsonl").unwrap_or(stem).to_string();
 
 	let default_model = "openrouter:anthropic/claude-sonnet-4".to_string();
 
 	let created_at = session_file
 		.metadata()
-		.and_then(|meta| {
-			meta.created()
-				.ok()
-				.ok_or(std::io::Error::other("No creation time"))
-		})
+		.and_then(|meta| meta.created().ok().ok_or(std::io::Error::other("No creation time")))
 		.and_then(|time| {
 			time.duration_since(std::time::UNIX_EPOCH)
 				.ok()
@@ -799,10 +736,7 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 				if let Some(v) = json_value.get("cache_read_tokens").and_then(|t| t.as_u64()) {
 					info.cache_read_tokens = v;
 				}
-				if let Some(v) = json_value
-					.get("cache_write_tokens")
-					.and_then(|t| t.as_u64())
-				{
+				if let Some(v) = json_value.get("cache_write_tokens").and_then(|t| t.as_u64()) {
 					info.cache_write_tokens = v;
 				}
 				if let Some(v) = json_value.get("reasoning_tokens").and_then(|t| t.as_u64()) {
@@ -814,16 +748,10 @@ fn restore_session_info(final_messages: Vec<Message>, session_file: &PathBuf) ->
 				if let Some(v) = json_value.get("total_api_time_ms").and_then(|t| t.as_u64()) {
 					info.total_api_time_ms = v;
 				}
-				if let Some(v) = json_value
-					.get("total_tool_time_ms")
-					.and_then(|t| t.as_u64())
-				{
+				if let Some(v) = json_value.get("total_tool_time_ms").and_then(|t| t.as_u64()) {
 					info.total_tool_time_ms = v;
 				}
-				if let Some(v) = json_value
-					.get("total_layer_time_ms")
-					.and_then(|t| t.as_u64())
-				{
+				if let Some(v) = json_value.get("total_layer_time_ms").and_then(|t| t.as_u64()) {
 					info.total_layer_time_ms = v;
 				}
 			}
@@ -848,12 +776,11 @@ pub fn load_session(session_file: &PathBuf) -> Result<Session, anyhow::Error> {
 	let reader = BufReader::new(ZstdDecoder::new(&file)?);
 	let parsed = parse_log_lines(reader)?;
 
-	let final_messages =
-		if parsed.restoration_point_found && !parsed.restoration_messages.is_empty() {
-			parsed.restoration_messages
-		} else {
-			parsed.messages
-		};
+	let final_messages = if parsed.restoration_point_found && !parsed.restoration_messages.is_empty() {
+		parsed.restoration_messages
+	} else {
+		parsed.messages
+	};
 
 	let mut session = if let Some(info) = parsed.session_info {
 		reconstruct_messages(info, final_messages, session_file)?
@@ -922,9 +849,7 @@ pub fn extract_runtime_state_from_log(session_file: &PathBuf) -> Result<SessionR
 /// `None` when the session file is missing, unreadable, or records no role, in
 /// which case the caller keeps its own default.
 pub fn resume_role(session_name: &str) -> Option<String> {
-	let session_file = get_sessions_dir()
-		.ok()?
-		.join(format!("{}.jsonl.zst", session_name));
+	let session_file = get_sessions_dir().ok()?.join(format!("{}.jsonl.zst", session_name));
 	if !session_file.exists() {
 		return None;
 	}

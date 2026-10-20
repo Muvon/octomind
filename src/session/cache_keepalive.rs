@@ -132,10 +132,7 @@ async fn run(
 	loop {
 		// Stop if max_idle has elapsed (cheap session-abandoned guard).
 		if max_idle_enabled && Instant::now() >= idle_deadline {
-			crate::log_debug!(
-				"Cache keepalive: max_idle ({:?}) reached, stopping",
-				max_idle
-			);
+			crate::log_debug!("Cache keepalive: max_idle ({:?}) reached, stopping", max_idle);
 			break;
 		}
 
@@ -172,10 +169,7 @@ async fn run(
 		// keepalive is non-essential and must never abort the session.
 		match send_ping(&messages, &model, &config, cancel_rx.clone()).await {
 			Ok(exchange) => {
-				crate::log_debug!(
-					"Cache keepalive ping ok ({}s elapsed)",
-					started.elapsed().as_secs()
-				);
+				crate::log_debug!("Cache keepalive ping ok ({}s elapsed)", started.elapsed().as_secs());
 				exchanges.push(exchange);
 			}
 			Err(e) => {

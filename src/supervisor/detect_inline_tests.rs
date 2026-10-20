@@ -28,8 +28,7 @@ impl Detectors {
 		loop_threshold: usize,
 		no_progress_window: usize,
 	) -> DetectorSignal {
-		let (rhash, novel) =
-			self.note_call(tool, &serde_json::json!({}), result, is_error, is_mutation);
+		let (rhash, novel) = self.note_call(tool, &serde_json::json!({}), result, is_error, is_mutation);
 		self.record_round_signals(&[rhash], novel, loop_threshold, no_progress_window)
 	}
 }
@@ -45,10 +44,7 @@ fn parses_state_only() {
 #[test]
 fn parses_state_with_reason() {
 	let r = parse_self_report("x <sup>progressing · editing api</sup> y");
-	assert_eq!(
-		r,
-		Some((SelfReport::Progressing, Some("editing api".into())))
-	);
+	assert_eq!(r, Some((SelfReport::Progressing, Some("editing api".into()))));
 }
 
 #[test]
@@ -58,10 +54,7 @@ fn parses_structured_handoff_and_strips_it() {
 	let parsed = parse_self_report_handoff(text).expect("structured report");
 	assert_eq!(parsed.state, SelfReport::Progressing);
 	assert_eq!(parsed.handoff.focus, "inspect the active state");
-	assert_eq!(
-		parsed.handoff.next,
-		"continue from the last verified checkpoint"
-	);
+	assert_eq!(parsed.handoff.next, "continue from the last verified checkpoint");
 	assert_eq!(parsed.handoff.carry.len(), 2);
 	assert_eq!(parsed.plan, None);
 	assert!(parsed.used_memories.is_empty());
@@ -89,10 +82,7 @@ fn accepts_and_ignores_legacy_behavior_ids() {
 fn parses_external_plan_signal_without_plan_content() {
 	let text = r#"<sup>{"state":"progressing","focus":"surveying sources","next":"compare findings","carry":[],"plan":"request"}</sup>"#;
 	let parsed = parse_self_report_handoff(text).expect("structured report");
-	assert_eq!(
-		parsed.plan,
-		Some(crate::supervisor::plan::PlanSignal::Request)
-	);
+	assert_eq!(parsed.plan, Some(crate::supervisor::plan::PlanSignal::Request));
 }
 
 #[test]
@@ -134,19 +124,13 @@ fn strips_and_parses_real_multiword_reason() {
 	assert_eq!(strip_self_report(s), "answer");
 	let (st, reason) = parse_self_report(s).unwrap();
 	assert_eq!(st, SelfReport::NeedInput);
-	assert_eq!(
-		reason.as_deref(),
-		Some("Phase 1 complete, awaiting user direction")
-	);
+	assert_eq!(reason.as_deref(), Some("Phase 1 complete, awaiting user direction"));
 }
 
 #[test]
 fn handles_non_dot_separators() {
 	assert_eq!(strip_self_report("x <sup>done: all good</sup>"), "x");
-	assert_eq!(
-		strip_self_report("x <sup>blocked - cannot proceed</sup>"),
-		"x"
-	);
+	assert_eq!(strip_self_report("x <sup>blocked - cannot proceed</sup>"), "x");
 	assert_eq!(
 		parse_self_report("<sup>done: all good</sup>").map(|(s, _)| s),
 		Some(SelfReport::Done)
@@ -158,20 +142,14 @@ fn keeps_legitimate_superscript() {
 	// `<sup>2</sup>` (x squared) is not a state token — keep it verbatim.
 	assert_eq!(strip_self_report("x<sup>2</sup> + 1"), "x<sup>2</sup> + 1");
 	// A short non-state superscript with no separator stays too.
-	assert_eq!(
-		strip_self_report("the 5<sup>th</sup>"),
-		"the 5<sup>th</sup>"
-	);
+	assert_eq!(strip_self_report("the 5<sup>th</sup>"), "the 5<sup>th</sup>");
 }
 
 #[test]
 fn strips_echoed_state_placeholder() {
 	// The reported leak: a model copies the literal `STATE` placeholder.
 	// It must never reach the screen, and we recover the intended state.
-	assert_eq!(
-		strip_self_report("answer\n<sup>STATE · done</sup>"),
-		"answer"
-	);
+	assert_eq!(strip_self_report("answer\n<sup>STATE · done</sup>"), "answer");
 	assert_eq!(
 		parse_self_report("answer\n<sup>STATE · done</sup>"),
 		Some((SelfReport::Done, None))
@@ -183,10 +161,7 @@ fn strips_echoed_state_placeholder() {
 #[test]
 fn strips_report_with_unknown_lead_but_separator() {
 	// Even a malformed state word can't leak once the `·` separator is present.
-	assert_eq!(
-		strip_self_report("ok\n<sup>finished · all good</sup>"),
-		"ok"
-	);
+	assert_eq!(strip_self_report("ok\n<sup>finished · all good</sup>"), "ok");
 }
 
 #[test]
@@ -197,10 +172,7 @@ fn prose_sup_mention_before_report_still_strips_report() {
 	let text = r#"The `<sup>` token is hidden from the user.
 
 <sup>{"state":"done","focus":"f","next":null,"carry":[]}</sup>"#;
-	assert_eq!(
-		strip_self_report(text),
-		"The `<sup>` token is hidden from the user."
-	);
+	assert_eq!(strip_self_report(text), "The `<sup>` token is hidden from the user.");
 }
 
 #[test]
@@ -253,10 +225,7 @@ fn mutation_counts_as_progress() {
 	d.record_action("read", "same", false, false, 9, 2);
 	d.record_action("read", "same", false, false, 9, 2);
 	// An edit always advances state → breaks the stall.
-	assert_eq!(
-		d.record_action("edit", "ok", false, true, 9, 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_action("edit", "ok", false, true, 9, 2), DetectorSignal::None);
 }
 
 #[test]
@@ -357,11 +326,7 @@ fn readback_of_mutated_path_verifies_artifact_work() {
 	assert!(d.needs_verification(Some(11)));
 	// Round 2: agent re-reads the exact artifact it changed — that IS the
 	// verification for work with no command to run.
-	let readback = d.is_readback_call(
-		&json!({"path": "blog/post/index.md", "start": 85}),
-		false,
-		false,
-	);
+	let readback = d.is_readback_call(&json!({"path": "blog/post/index.md", "start": 85}), false, false);
 	assert!(readback);
 	d.note_round_verification(Some(11), Some(11), false, readback, false, false, false);
 	assert!(!d.needs_verification(Some(11)));
@@ -404,10 +369,7 @@ fn verifier_shape_requires_command_string_param() {
 	use serde_json::json;
 	// Command-string param → candidate (tool_map is empty in unit tests, so
 	// the control-plane exclusion is exercised in integration, not here).
-	assert!(is_verifier_shaped(
-		"shell",
-		&json!({"command": "cargo test"})
-	));
+	assert!(is_verifier_shaped("shell", &json!({"command": "cargo test"})));
 	assert!(!is_verifier_shaped("view", &json!({"path": "a.rs"})));
 	assert!(!is_verifier_shaped("shell", &json!({"command": 42})));
 	assert!(!is_verifier_shaped("shell", &json!({})));
@@ -436,23 +398,14 @@ fn verifier_shape_is_domain_agnostic() {
 		"shell",
 		&json!({"command": "python check_booking.py --ref ABC123"})
 	));
-	assert!(!is_verifier_shaped(
-		"text_editor",
-		&json!({"command": "str_replace"})
-	));
+	assert!(!is_verifier_shaped("text_editor", &json!({"command": "str_replace"})));
 }
 
 #[test]
 fn mutation_classification_uses_call_intent_and_mcp_hint() {
 	use serde_json::json;
-	assert!(is_mutation_call(
-		"text_editor",
-		&json!({"command":"str_replace"})
-	));
-	assert!(is_mutation_call(
-		"generic_runner",
-		&json!({"command":"deploy release"})
-	));
+	assert!(is_mutation_call("text_editor", &json!({"command":"str_replace"})));
+	assert!(is_mutation_call("generic_runner", &json!({"command":"deploy release"})));
 	assert!(!is_mutation_call(
 		"generic_runner",
 		&json!({"command":"check booking status"})
@@ -475,27 +428,15 @@ fn reset_streak_clears_previous_task_verification_latch() {
 
 #[test]
 fn steer_defers_to_gate_on_done() {
-	assert!(!should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::Done)
-	));
+	assert!(!should_steer(DetectorSignal::NoProgress, Some(SelfReport::Done)));
 	assert!(!should_steer(DetectorSignal::Loop, Some(SelfReport::Done)));
 }
 
 #[test]
 fn steer_waits_while_exploring_but_fires_on_loop() {
-	assert!(!should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::Exploring)
-	));
-	assert!(should_steer(
-		DetectorSignal::Loop,
-		Some(SelfReport::Exploring)
-	));
-	assert!(should_steer(
-		DetectorSignal::NoProgress,
-		Some(SelfReport::Progressing)
-	));
+	assert!(!should_steer(DetectorSignal::NoProgress, Some(SelfReport::Exploring)));
+	assert!(should_steer(DetectorSignal::Loop, Some(SelfReport::Exploring)));
+	assert!(should_steer(DetectorSignal::NoProgress, Some(SelfReport::Progressing)));
 }
 
 #[test]
@@ -558,15 +499,9 @@ fn conflicting_parallel_verifier_outcomes_do_not_clear_failure() {
 #[test]
 fn user_turn_reset_clears_failed_verifier_recovery() {
 	let mut d = Detectors::default();
-	assert_eq!(
-		d.record_round_command_outcomes(&[(11, false)], 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(11, false)], 2), DetectorSignal::None);
 	d.reset_streak();
-	assert_eq!(
-		d.record_round_command_outcomes(&[(11, false)], 2),
-		DetectorSignal::None
-	);
+	assert_eq!(d.record_round_command_outcomes(&[(11, false)], 2), DetectorSignal::None);
 }
 
 #[test]
@@ -605,9 +540,7 @@ fn recurring_polling_never_becomes_a_required_strategy_change() {
 			assert!(note.contains("arrives on its own as your next message"));
 			assert!(note.contains("reply with a brief status and no tool call"));
 			assert!(note.contains("If the tool registered automatic background-result delivery"));
-			assert!(
-				note.contains("polling may be necessary when no automatic delivery was registered")
-			);
+			assert!(note.contains("polling may be necessary when no automatic delivery was registered"));
 			assert!(note.contains("Repeated receipts alone do not prove that state is unchanged"));
 			assert!(note.contains("does not require extra work or a blocked handback"));
 		}

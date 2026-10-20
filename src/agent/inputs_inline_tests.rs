@@ -41,10 +41,7 @@ fn test_restore_basic() {
 fn test_protect_hides_from_substitution() {
 	// protect must replace {{ so a naive str.replace("{{CWD}}") won't match
 	let protected = protect_escaped_braces("{{{{CWD}}}}");
-	assert!(
-		!protected.contains("{{"),
-		"sentinel must not contain {{: {protected}"
-	);
+	assert!(!protected.contains("{{"), "sentinel must not contain {{: {protected}");
 }
 
 #[test]
@@ -69,9 +66,7 @@ async fn test_escaped_placeholder_survives_substitution() {
 	// {{{{CWD}}}} must not be replaced by the real CWD — it should become {{CWD}}
 	let prompt = "Example: {{{{CWD}}}}";
 	let dir = std::path::Path::new("/tmp");
-	let result =
-		crate::session::helper_functions::process_placeholders_async_with_role(prompt, dir, None)
-			.await;
+	let result = crate::session::helper_functions::process_placeholders_async_with_role(prompt, dir, None).await;
 	assert_eq!(result, "Example: {{CWD}}");
 }
 
@@ -80,9 +75,7 @@ async fn test_real_and_escaped_placeholder_together() {
 	// {{CWD}} gets replaced, {{{{CWD}}}} becomes literal {{CWD}}
 	let prompt = "Real: {{CWD}}, Escaped: {{{{CWD}}}}";
 	let dir = std::path::Path::new("/tmp");
-	let result =
-		crate::session::helper_functions::process_placeholders_async_with_role(prompt, dir, None)
-			.await;
+	let result = crate::session::helper_functions::process_placeholders_async_with_role(prompt, dir, None).await;
 	assert_eq!(result, "Real: /tmp, Escaped: {{CWD}}");
 }
 

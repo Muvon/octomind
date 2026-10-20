@@ -182,12 +182,7 @@ pub fn clear_current_session() {
 /// Number of distinct tool results recorded in the given session (testing/observability).
 #[cfg(test)]
 fn session_size(session_id: &str) -> usize {
-	state()
-		.read()
-		.unwrap()
-		.get(session_id)
-		.map(|s| s.len())
-		.unwrap_or(0)
+	state().read().unwrap().get(session_id).map(|s| s.len()).unwrap_or(0)
 }
 
 #[cfg(test)]

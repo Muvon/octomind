@@ -54,11 +54,7 @@ pub fn generate_file_context_content(file_contexts: &[(String, usize, usize)]) -
 
 /// Extract file references from tool call arguments
 /// Returns raw refs (path or path:start:end) that need merging
-pub fn extract_file_refs_from_args(
-	tool_name: &str,
-	args: &serde_json::Value,
-	refs: &mut Vec<String>,
-) {
+pub fn extract_file_refs_from_args(tool_name: &str, args: &serde_json::Value, refs: &mut Vec<String>) {
 	let file_read_tools = ["view", "text_editor", "batch_edit", "extract_lines"];
 
 	if !file_read_tools.contains(&tool_name) {
@@ -128,10 +124,7 @@ pub fn merge_file_refs(refs: &[String]) -> Vec<String> {
 			}
 			3 => {
 				if let (Ok(start), Ok(end)) = (parts[1].parse::<u64>(), parts[2].parse::<u64>()) {
-					by_file
-						.entry(parts[0].to_string())
-						.or_default()
-						.push((start, end));
+					by_file.entry(parts[0].to_string()).or_default().push((start, end));
 				}
 			}
 			_ => {}

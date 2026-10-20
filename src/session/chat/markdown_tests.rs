@@ -81,10 +81,7 @@ fn test_set_theme_switches_in_place() {
 	assert_eq!(renderer.get_theme().as_str(), "default");
 	renderer.set_theme(MarkdownTheme::Monokai);
 	assert_eq!(renderer.get_theme().as_str(), "monokai");
-	assert!(renderer
-		.render("**bold**")
-		.expect("render")
-		.contains("bold"));
+	assert!(renderer.render("**bold**").expect("render").contains("bold"));
 }
 
 #[test]
@@ -95,9 +92,7 @@ fn test_render_plain_and_empty_inputs() {
 	let plain = renderer.render("just words").expect("plain renders");
 	assert!(plain.contains("just words"));
 	// Unclosed fence must not panic or lose content
-	let unclosed = renderer
-		.render("```rust\nlet x = 1;")
-		.expect("unclosed fence renders");
+	let unclosed = renderer.render("```rust\nlet x = 1;").expect("unclosed fence renders");
 	assert!(unclosed.contains("let x = 1;"));
 }
 
@@ -105,9 +100,7 @@ fn test_render_plain_and_empty_inputs() {
 fn test_printed_document_keeps_code_and_prose_on_separate_lines() {
 	let renderer = MarkdownRenderer::new();
 	let rendered = renderer
-		.render_with_syntax_highlighting(
-			"## Diagram\n\n```text\n┌────┐\n└────┘\n```\n\nAfter the diagram.",
-		)
+		.render_with_syntax_highlighting("## Diagram\n\n```text\n┌────┐\n└────┘\n```\n\nAfter the diagram.")
 		.expect("printable Markdown renders");
 	let plain = regex::Regex::new(r"\x1b\[[0-9;]*m")
 		.expect("valid ANSI style regex")

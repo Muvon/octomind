@@ -51,8 +51,8 @@ threshold = 70000
 
 [compression.model]
 name = "openai:gpt-5.6-luna"
-reasoning_effort = "medium"
-max_tokens = 16000
+reasoning_effort = "none"
+max_tokens = 32000
 temperature = 0.3
 top_p = 1.0
 top_k = 0

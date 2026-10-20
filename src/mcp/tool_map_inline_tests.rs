@@ -18,8 +18,8 @@ use serial_test::serial;
 /// Parse the shipped default template and replace the MCP server list.
 /// Builtin-only servers keep every test offline: no stdio spawn, no HTTP.
 fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.mcp.servers = servers;
 	config
 }
@@ -27,11 +27,7 @@ fn config_with_servers(servers: Vec<McpServerConfig>) -> Config {
 /// Single builtin server whose name no branch in `build_tool_server_map_impl`
 /// recognizes — initializes to a deterministic, empty tool map.
 fn empty_map_config() -> Config {
-	config_with_servers(vec![McpServerConfig::builtin(
-		"no-such-builtin",
-		30,
-		vec![],
-	)])
+	config_with_servers(vec![McpServerConfig::builtin("no-such-builtin", 30, vec![])])
 }
 
 /// The `core` builtin server with attention enabled, so
@@ -158,9 +154,7 @@ async fn reinit_with_changed_config_rebuilds_and_drops_dynamic_tools() {
 #[tokio::test]
 async fn register_dynamic_agent_tool_maps_agent_prefixed_name() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 
 	register_dynamic_agent_tool("reviewer");
 
@@ -168,14 +162,8 @@ async fn register_dynamic_agent_tool_maps_agent_prefixed_name() {
 	assert_eq!(server.name(), "agent");
 	assert_eq!(server.tools().to_vec(), vec!["agent_reviewer".to_string()]);
 	assert_eq!(server.connection_type(), McpConnectionType::Builtin);
-	assert_eq!(
-		get_tool_server_name("agent_reviewer").as_deref(),
-		Some("agent")
-	);
-	assert_eq!(
-		get_tools_for_server("agent"),
-		vec!["agent_reviewer".to_string()]
-	);
+	assert_eq!(get_tool_server_name("agent_reviewer").as_deref(), Some("agent"));
+	assert_eq!(get_tools_for_server("agent"), vec!["agent_reviewer".to_string()]);
 	assert!(get_all_server_names().contains("agent"));
 	// Other agent names never resolve.
 	assert_eq!(get_server_for_tool("agent_unknown"), None);
@@ -187,9 +175,7 @@ async fn register_dynamic_agent_tool_maps_agent_prefixed_name() {
 #[tokio::test]
 async fn unregister_dynamic_agent_tool_removes_mapping() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 	register_dynamic_agent_tool("reviewer");
 	assert!(get_server_for_tool("agent_reviewer").is_some());
 
@@ -205,16 +191,10 @@ async fn unregister_dynamic_agent_tool_removes_mapping() {
 #[tokio::test]
 async fn register_dynamic_server_tools_maps_each_tool() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 	let server = McpServerConfig::http("dyn-remote", "http://127.0.0.1:1/mcp", 30, vec![]);
 
-	register_dynamic_server_tools(
-		"dyn-remote",
-		&server,
-		&["alpha".to_string(), "beta".to_string()],
-	);
+	register_dynamic_server_tools("dyn-remote", &server, &["alpha".to_string(), "beta".to_string()]);
 
 	for tool in ["alpha", "beta"] {
 		let resolved = get_server_for_tool(tool).expect("dynamic tool must resolve");
@@ -235,15 +215,9 @@ async fn register_dynamic_server_tools_maps_each_tool() {
 #[tokio::test]
 async fn unregister_dynamic_server_tools_removes_only_listed_tools() {
 	reset_tool_map();
-	initialize_tool_map(&empty_map_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&empty_map_config()).await.expect("init");
 	let server = McpServerConfig::builtin("dyn-local", 30, vec![]);
-	register_dynamic_server_tools(
-		"dyn-local",
-		&server,
-		&["alpha".to_string(), "beta".to_string()],
-	);
+	register_dynamic_server_tools("dyn-local", &server, &["alpha".to_string(), "beta".to_string()]);
 	register_dynamic_agent_tool("reviewer");
 
 	unregister_dynamic_server_tools("dyn-local", &["alpha".to_string()]);
@@ -259,9 +233,7 @@ async fn unregister_dynamic_server_tools_removes_only_listed_tools() {
 #[tokio::test]
 async fn unregister_dynamic_server_tools_never_evicts_static_tools() {
 	reset_tool_map();
-	initialize_tool_map(&core_server_config())
-		.await
-		.expect("init");
+	initialize_tool_map(&core_server_config()).await.expect("init");
 	let static_tool = get_all_tool_names()
 		.first()
 		.expect("core config must expose at least one static tool")
@@ -271,8 +243,7 @@ async fn unregister_dynamic_server_tools_never_evicts_static_tools() {
 	// config, so unregistering it as "dynamic" must be refused.
 	unregister_dynamic_server_tools("core", std::slice::from_ref(&static_tool));
 
-	let server = get_server_for_tool(&static_tool)
-		.expect("static role-owned tool must survive dynamic unregister");
+	let server = get_server_for_tool(&static_tool).expect("static role-owned tool must survive dynamic unregister");
 	assert_eq!(server.name(), "core");
 
 	reset_tool_map();
@@ -290,11 +261,7 @@ fn config_hash_is_stable_for_identical_configs() {
 fn config_hash_tracks_server_name_tools_and_connection_type() {
 	let base = config_with_servers(vec![McpServerConfig::builtin("core", 30, vec![])]);
 	let renamed = config_with_servers(vec![McpServerConfig::builtin("runtime", 30, vec![])]);
-	let with_tools = config_with_servers(vec![McpServerConfig::builtin(
-		"core",
-		30,
-		vec!["plan".to_string()],
-	)]);
+	let with_tools = config_with_servers(vec![McpServerConfig::builtin("core", 30, vec!["plan".to_string()])]);
 	let http_variant = config_with_servers(vec![McpServerConfig::http(
 		"core",
 		"http://127.0.0.1:1/mcp",

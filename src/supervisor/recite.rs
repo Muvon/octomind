@@ -99,9 +99,9 @@ fn logical_lines(task: &str) -> Vec<String> {
 			continue;
 		}
 		let starts_item = trimmed.starts_with(['-', '*', '•'])
-			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
-				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())
-			});
+			|| trimmed
+				.split_once(['.', ')'])
+				.is_some_and(|(head, _)| !head.is_empty() && head.chars().all(|c| c.is_ascii_digit()));
 		// A list item's continuation is indented under it. Unindented text after
 		// an item is new prose, not part of the item — joining it would carry the
 		// item's laxer length budget onto a paragraph that never earned it.
@@ -178,9 +178,9 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 		let line = line.as_str();
 		let trimmed = line.trim_start();
 		let listed = trimmed.starts_with(['-', '*', '•'])
-			|| trimmed.split_once(['.', ')']).is_some_and(|(head, _)| {
-				!head.is_empty() && head.chars().all(|c| c.is_ascii_digit())
-			});
+			|| trimmed
+				.split_once(['.', ')'])
+				.is_some_and(|(head, _)| !head.is_empty() && head.chars().all(|c| c.is_ascii_digit()));
 		let len_max = if listed {
 			LISTED_CONSTRAINT_LEN_MAX
 		} else {
@@ -218,8 +218,7 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 				continue;
 			}
 			let lower = unit.to_lowercase();
-			if MARKERS.iter().any(|m| contains_marker(&lower, m)) && !out.iter().any(|e| e == unit)
-			{
+			if MARKERS.iter().any(|m| contains_marker(&lower, m)) && !out.iter().any(|e| e == unit) {
 				out.push(unit.to_string());
 				if out.len() >= CONSTRAINTS_MAX {
 					return out;
@@ -235,10 +234,7 @@ pub fn extract_constraints(task: &str) -> Vec<String> {
 /// A marker ending in a space already bounds its right edge.
 fn contains_marker(lower: &str, marker: &str) -> bool {
 	lower.match_indices(marker).any(|(at, _)| {
-		let left_bounded = !lower[..at]
-			.chars()
-			.next_back()
-			.is_some_and(char::is_alphanumeric);
+		let left_bounded = !lower[..at].chars().next_back().is_some_and(char::is_alphanumeric);
 		let right_bounded = marker.ends_with(' ')
 			|| !lower[at + marker.len()..]
 				.chars()
@@ -270,9 +266,10 @@ pub fn active_constraints(
 	let original = crate::session::latest_real_user_task_content(messages)
 		.or_else(|| resolved.map(|task| task.original_request.as_str()))
 		.unwrap_or_default();
-	for fact in resolved.into_iter().flat_map(|task| {
-		super::resolve::grounded_operational_constraints(original, &task.operational_constraints)
-	}) {
+	for fact in resolved
+		.into_iter()
+		.flat_map(|task| super::resolve::grounded_operational_constraints(original, &task.operational_constraints))
+	{
 		let fact = fact.trim();
 		if !fact.is_empty()
 			&& constraints.len() < CONSTRAINTS_MAX
@@ -291,8 +288,7 @@ fn is_quoted_material(trimmed: &str) -> bool {
 	let Some(first) = trimmed.chars().next() else {
 		return false;
 	};
-	if first == '>' || matches!(first, '│' | '╭' | '╰' | '├' | '└' | '┃' | '▸' | '┆' | '║')
-	{
+	if first == '>' || matches!(first, '│' | '╭' | '╰' | '├' | '└' | '┃' | '▸' | '┆' | '║') {
 		return true;
 	}
 	// A markdown heading names a section or restates a symptom ("# Code blocks
@@ -355,17 +351,9 @@ pub fn recite_note(
 		// No user turn resolvable this turn: nothing to contradict.
 		(_, None) => true,
 	};
-	let intent = if goal_is_live {
-		anchor.intent.as_str()
-	} else {
-		""
-	};
+	let intent = if goal_is_live { anchor.intent.as_str() } else { "" };
 	// next_steps were recorded against that goal, so they go stale with it.
-	let next_steps: &[String] = if goal_is_live {
-		&anchor.next_steps
-	} else {
-		&[]
-	};
+	let next_steps: &[String] = if goal_is_live { &anchor.next_steps } else { &[] };
 	if intent.is_empty()
 		&& next_steps.is_empty()
 		&& plan_checklist.is_none()
@@ -406,10 +394,7 @@ pub fn recite_note(
 		}
 	}
 	// The turn that sets a rule also yields it as a request excerpt; one copy.
-	let constraints: Vec<&String> = constraints
-		.iter()
-		.filter(|c| !session_rules.contains(c))
-		.collect();
+	let constraints: Vec<&String> = constraints.iter().filter(|c| !session_rules.contains(c)).collect();
 	if !constraints.is_empty() {
 		s.push_str("Selected request excerpts — context reminders, not additional requirements. Interpret them in the full current request; quoted examples and superseded rules are not instructions:\n");
 		for c in constraints {

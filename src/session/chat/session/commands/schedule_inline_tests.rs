@@ -44,10 +44,7 @@ fn test_tokenize_unterminated_quote() {
 
 #[test]
 fn test_slice_after_token() {
-	assert_eq!(
-		slice_after_token("/schedule add when=5m", "add"),
-		Some(" when=5m")
-	);
+	assert_eq!(slice_after_token("/schedule add when=5m", "add"), Some(" when=5m"));
 	assert_eq!(
 		slice_after_token("/schedule edit abc when=5m", "edit"),
 		Some(" abc when=5m")
@@ -59,12 +56,7 @@ fn test_slice_after_token() {
 #[test]
 fn test_parse_kv_add() {
 	let mut params = Map::new();
-	parse_kv_args(
-		r#" when="in 5m" message="hi" every="10m""#,
-		"add",
-		&mut params,
-	)
-	.unwrap();
+	parse_kv_args(r#" when="in 5m" message="hi" every="10m""#, "add", &mut params).unwrap();
 	assert_eq!(params.get("when").and_then(|v| v.as_str()), Some("in 5m"));
 	assert_eq!(params.get("message").and_then(|v| v.as_str()), Some("hi"));
 	assert_eq!(params.get("every").and_then(|v| v.as_str()), Some("10m"));

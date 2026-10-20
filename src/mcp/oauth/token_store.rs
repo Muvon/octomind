@@ -97,8 +97,7 @@ fn write_all(path: &Path, tokens: &HashMap<String, TokenMetadata>) -> Result<()>
 	file.write_all(json.as_bytes())?;
 	file.sync_all()?;
 	drop(file);
-	std::fs::rename(&tmp, path)
-		.with_context(|| format!("failed to replace keystore {}", path.display()))?;
+	std::fs::rename(&tmp, path).with_context(|| format!("failed to replace keystore {}", path.display()))?;
 	Ok(())
 }
 
@@ -195,12 +194,7 @@ fn build_form_body(params: &[(&str, &str)]) -> String {
 		.join("&")
 }
 
-async fn revoke_token(
-	token_url: &str,
-	client_id: &str,
-	client_secret: &str,
-	token: &str,
-) -> Result<()> {
+async fn revoke_token(token_url: &str, client_id: &str, client_secret: &str, token: &str) -> Result<()> {
 	let client = reqwest::Client::new();
 
 	let params = [
@@ -213,10 +207,7 @@ async fn revoke_token(
 
 	let response = client
 		.post(token_url)
-		.header(
-			reqwest::header::CONTENT_TYPE,
-			"application/x-www-form-urlencoded",
-		)
+		.header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
 		.body(body)
 		.send()
 		.await;

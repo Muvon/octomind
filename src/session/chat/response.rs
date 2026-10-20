@@ -30,8 +30,7 @@ use colored::Colorize;
 
 use crate::session::output::{OutputMode, OutputSink};
 use crate::websocket::{
-	AssistantPayload, CostPayload, ServerMessage, ThinkingPayload, ToolResultPayload,
-	ToolUsePayload,
+	AssistantPayload, CostPayload, ServerMessage, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
 
 // Response processing parameters struct
@@ -131,10 +130,7 @@ fn handle_final_response(
 		id: response_id, // CRITICAL: Set the response_id for conversation continuity
 	};
 
-	chat_session
-		.session
-		.messages
-		.push(assistant_message.clone());
+	chat_session.session.messages.push(assistant_message.clone());
 	chat_session.last_response = content.to_string();
 	// Turn-answer ledger: a final (no tool calls) joins the turn's deliverable.
 	if !content.trim().is_empty() {
@@ -214,10 +210,7 @@ fn preview_value(v: &serde_json::Value) -> String {
 		serde_json::Value::String(s) => {
 			let cleaned = s.replace('\n', " ");
 			if cleaned.chars().count() > MAX_STR {
-				format!(
-					"\"{}…\"",
-					cleaned.chars().take(MAX_STR - 1).collect::<String>()
-				)
+				format!("\"{}…\"", cleaned.chars().take(MAX_STR - 1).collect::<String>())
 			} else {
 				format!("\"{}\"", cleaned)
 			}
@@ -228,12 +221,9 @@ fn preview_value(v: &serde_json::Value) -> String {
 			} else if a.len() == 1 {
 				format!("[{}]", preview_value(&a[0]))
 			} else if a.len() == 2
-				&& a.iter().all(|e| {
-					matches!(
-						e,
-						serde_json::Value::Number(_) | serde_json::Value::String(_)
-					)
-				}) {
+				&& a.iter()
+					.all(|e| matches!(e, serde_json::Value::Number(_) | serde_json::Value::String(_)))
+			{
 				// Compact range-like pairs (e.g. lines [1, 150]) — show both values
 				format!("[{}, {}]", preview_value(&a[0]), preview_value(&a[1]))
 			} else {
@@ -283,21 +273,16 @@ async fn display_tool_preview(config: &Config, tool_calls: &[crate::mcp::McpTool
 			sep,
 			server_name.bright_blue(),
 		);
-		if let Ok(params) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
-			call.parameters.clone(),
-		) {
+		if let Ok(params) =
+			serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(call.parameters.clone())
+		{
 			let key_width = params.keys().map(|k| k.len()).max().unwrap_or(0).min(20);
 			for (k, v) in params.iter() {
 				print_preview_param(&param_prefix, k, key_width, v);
 			}
 		}
 	}
-	println!(
-		"{} {} {}",
-		"╰".bright_cyan(),
-		tool_calls.len(),
-		"queued".bright_black(),
-	);
+	println!("{} {} {}", "╰".bright_cyan(), tool_calls.len(), "queued".bright_black(),);
 	println!();
 }
 
@@ -339,9 +324,7 @@ fn add_assistant_message_with_tool_calls(
 	let original_tool_calls = MessageHandler::extract_original_tool_calls(current_exchange);
 
 	// Create the assistant message directly with tool_calls preserved from the exchange
-	let thinking_value = thinking
-		.as_ref()
-		.and_then(|block| serde_json::to_value(block).ok());
+	let thinking_value = thinking.as_ref().and_then(|block| serde_json::to_value(block).ok());
 
 	let assistant_message = crate::session::Message {
 		role: "assistant".to_string(),
@@ -395,30 +378,23 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 		let parsed = crate::supervisor::detect::parse_self_report_handoff(content);
 		if let Some(report) = parsed.as_ref() {
 			for id in &report.used_memories {
-				if chat_session
-					.recalled_refs
-					.iter()
-					.any(|(known, _, _, _)| known == id)
-				{
+				if chat_session.recalled_refs.iter().any(|(known, _, _, _)| known == id) {
 					chat_session.used_memory_ids.insert(id.clone());
 				}
 			}
 		}
 		chat_session.pending_plan_signal = parsed.as_ref().and_then(|report| report.plan);
 		chat_session.last_self_report = parsed.as_ref().map(|report| report.state);
-		chat_session.last_self_report_reason = parsed.as_ref().and_then(|report| {
-			(!report.handoff.focus.is_empty()).then(|| report.handoff.focus.clone())
-		});
+		chat_session.last_self_report_reason = parsed
+			.as_ref()
+			.and_then(|report| (!report.handoff.focus.is_empty()).then(|| report.handoff.focus.clone()));
 		chat_session.last_self_report_handoff = parsed.map(|report| report.handoff);
 
 		// Surface the agent's own "what I'm doing" on the spinner instead of
 		// the generic "Working …" — free feedback already paid for by the
 		// self-report token. Sticky until the next report or turn boundary.
 		use crate::supervisor::detect::SelfReport;
-		let label = match (
-			chat_session.last_self_report,
-			&chat_session.last_self_report_reason,
-		) {
+		let label = match (chat_session.last_self_report, &chat_session.last_self_report_reason) {
 			(Some(SelfReport::Blocked), Some(r)) => Some(format!("blocked · {} …", r)),
 			(Some(_), Some(r)) => Some(format!("{} …", r)),
 			_ => None,
@@ -438,9 +414,7 @@ fn capture_self_report(chat_session: &mut ChatSession, config: &Config, content:
 }
 
 // Function to process response, handling tool calls recursively
-pub async fn process_response<S: OutputSink>(
-	mut params: ResponseProcessingParams<'_, S>,
-) -> Result<()> {
+pub async fn process_response<S: OutputSink>(mut params: ResponseProcessingParams<'_, S>) -> Result<()> {
 	// Check if operation has been cancelled at the very start
 	check_cancellation(&params.operation_cancelled)?;
 
@@ -490,15 +464,13 @@ pub async fn process_response<S: OutputSink>(
 		// Check for tool calls if MCP has any servers configured
 		if !params.config.mcp.servers.is_empty() {
 			// Resolve current tool calls for this iteration
-			let current_tool_calls =
-				resolve_tool_calls(&mut current_tool_calls_param, &current_content);
+			let current_tool_calls = resolve_tool_calls(&mut current_tool_calls_param, &current_content);
 
 			if !current_tool_calls.is_empty() {
 				let session_id = params.chat_session.session.info.name.clone();
 				if params.mode.should_suppress_cli_output() {
 					if let Some(ref thinking_block) = current_thinking {
-						if last_emitted_thinking.as_deref() != Some(thinking_block.content.as_str())
-						{
+						if last_emitted_thinking.as_deref() != Some(thinking_block.content.as_str()) {
 							emit_thinking_event(&params, thinking_block, &session_id);
 							last_emitted_thinking = Some(thinking_block.content.clone());
 						}
@@ -516,12 +488,7 @@ pub async fn process_response<S: OutputSink>(
 				// Display the content to the user FIRST (before adding to session) - ONLY in interactive mode
 				// Skip if using structured output (JSONL/WebSocket - handled by sink)
 				if params.mode.is_interactive() {
-					print_assistant_response(
-						&current_content,
-						params.config,
-						params.role,
-						&current_thinking,
-					);
+					print_assistant_response(&current_content, params.config, params.role, &current_thinking);
 				}
 
 				// Upfront preview: full `╭ tool · server` block + params per tool
@@ -557,8 +524,7 @@ pub async fn process_response<S: OutputSink>(
 				// unconditionally, so "tree_unchanged" was trivially true and a round
 				// that both edited and looked verifier-shaped marked its own mutation
 				// as verified — losing the distinction between changes and checks.
-				let track_verification =
-					params.config.supervisor.enabled && params.config.supervisor.gate.enabled;
+				let track_verification = params.config.supervisor.enabled && params.config.supervisor.gate.enabled;
 				let fp_before = if track_verification {
 					crate::supervisor::workdir::fingerprint()
 				} else {
@@ -571,8 +537,7 @@ pub async fn process_response<S: OutputSink>(
 				// can register the tool call ID before the result arrives.
 				if params.mode.should_suppress_cli_output() {
 					for call in &current_tool_calls {
-						let server =
-							get_tool_server_name_async(&call.tool_name, params.config).await;
+						let server = get_tool_server_name_async(&call.tool_name, params.config).await;
 						params.emit(ServerMessage::ToolUse(ToolUsePayload {
 							tool: call.tool_name.clone(),
 							tool_id: call.tool_id.clone(),
@@ -582,33 +547,30 @@ pub async fn process_response<S: OutputSink>(
 						}));
 					}
 				}
-				let (tool_results, total_tool_time_ms) =
-					match tool_execution::execute_tools_parallel(
-						current_tool_calls.clone(),
-						&current_content,
-						params.chat_session,
-						params.config,
-						&mut tool_processor,
-						operation_cancelled_clone.clone(),
-						params.mode,
-					)
-					.await
-					{
-						Ok(results) => results,
-						Err(e) => {
-							// Check if this was a cancellation
-							if crate::session::cancellation::is_cancelled(&e)
-								|| *operation_cancelled_clone.borrow()
-							{
-								crate::log_debug!("Operation cancelled by user.");
-								// Don't add assistant message since tools weren't executed;
-								// any that did finish are discarded undelivered.
-								crate::session::context::bump_context_epoch();
-								return Ok(());
-							}
-							return Err(e);
+				let (tool_results, total_tool_time_ms) = match tool_execution::execute_tools_parallel(
+					current_tool_calls.clone(),
+					&current_content,
+					params.chat_session,
+					params.config,
+					&mut tool_processor,
+					operation_cancelled_clone.clone(),
+					params.mode,
+				)
+				.await
+				{
+					Ok(results) => results,
+					Err(e) => {
+						// Check if this was a cancellation
+						if crate::session::cancellation::is_cancelled(&e) || *operation_cancelled_clone.borrow() {
+							crate::log_debug!("Operation cancelled by user.");
+							// Don't add assistant message since tools weren't executed;
+							// any that did finish are discarded undelivered.
+							crate::session::context::bump_context_epoch();
+							return Ok(());
 						}
-					};
+						return Err(e);
+					}
+				};
 
 				// Emit tool results through sink (WebSocket/JSONL)
 				let session_id = params.chat_session.session.info.name.clone();
@@ -662,10 +624,8 @@ pub async fn process_response<S: OutputSink>(
 						let tr = tool_results.iter().find(|r| r.tool_id == call.tool_id);
 						let result_content = tr.map(|r| r.extract_content()).unwrap_or_default();
 						let is_error = tr.map(|r| r.is_error()).unwrap_or(true);
-						let is_mutation = crate::supervisor::detect::is_mutation_call(
-							&call.tool_name,
-							&call.parameters,
-						);
+						let is_mutation =
+							crate::supervisor::detect::is_mutation_call(&call.tool_name, &call.parameters);
 						// Verify-gate evidence ledger: record what actually executed —
 						// completion claims are checked against this, not the narrative.
 						let sequence = params.chat_session.evidence.record(
@@ -678,9 +638,7 @@ pub async fn process_response<S: OutputSink>(
 						if let Some(tr) = tr {
 							// A linked resource is detached work whose real output arrives
 							// later; this key returns it to the call that launched it.
-							for (uri, _) in
-								crate::session::shell_jobs::resource_links_in(&tr.result)
-							{
+							for (uri, _) in crate::session::shell_jobs::resource_links_in(&tr.result) {
 								crate::session::shell_jobs::attach_sequence(&uri, sequence);
 							}
 							// So is an MCP task the call became; a no-op for any other call.
@@ -692,24 +650,14 @@ pub async fn process_response<S: OutputSink>(
 						// Retained under the sequence the rendered ledger shows, so the
 						// verify-gate can ask for this exact call's output instead of
 						// ruling on a line that names the call but not what it returned.
-						params
-							.chat_session
-							.evidence
-							.record_ground(sequence, &result_content);
+						params.chat_session.evidence.record_ground(sequence, &result_content);
 						// Retain command evidence independently of verification credit:
 						// a smoke test can mutate state and still demonstrate behavior.
-						let command_execution = crate::supervisor::detect::is_command_execution(
-							&call.tool_name,
-							&call.parameters,
-						);
-						let verifier_shaped = crate::supervisor::detect::is_verifier_shaped(
-							&call.tool_name,
-							&call.parameters,
-						);
-						if let Some(key) = crate::supervisor::detect::command_key(
-							&call.tool_name,
-							&call.parameters,
-						) {
+						let command_execution =
+							crate::supervisor::detect::is_command_execution(&call.tool_name, &call.parameters);
+						let verifier_shaped =
+							crate::supervisor::detect::is_verifier_shaped(&call.tool_name, &call.parameters);
+						if let Some(key) = crate::supervisor::detect::command_key(&call.tool_name, &call.parameters) {
 							round_command_outcomes.push((key, !is_error));
 						}
 						if command_execution && !is_error {
@@ -718,10 +666,7 @@ pub async fn process_response<S: OutputSink>(
 								.get("command")
 								.and_then(|v| v.as_str())
 								.unwrap_or_default();
-							params
-								.chat_session
-								.evidence
-								.record_command_output(cmd, &result_content);
+							params.chat_session.evidence.record_command_output(cmd, &result_content);
 						}
 						// Fold this call's per-result state in; aggregate the rest for the round.
 						let (rhash, novel) = params.chat_session.detectors.note_call(
@@ -738,11 +683,11 @@ pub async fn process_response<S: OutputSink>(
 						// verification for work with no command to run (docs, config,
 						// prose). Checked BEFORE this call's own mutation is recorded so
 						// a call never reads back its own write.
-						round_readback |= params.chat_session.detectors.is_readback_call(
-							&call.parameters,
-							is_mutation,
-							is_error,
-						);
+						round_readback |=
+							params
+								.chat_session
+								.detectors
+								.is_readback_call(&call.parameters, is_mutation, is_error);
 						// Write-capability for the verification fold: a mutation-shaped
 						// call or a command execution could have moved the tree — errored
 						// ones included, a command may write before failing. A round of
@@ -751,10 +696,7 @@ pub async fn process_response<S: OutputSink>(
 						if !is_error {
 							round_mutation |= is_mutation;
 							if is_mutation {
-								params
-									.chat_session
-									.detectors
-									.note_mutated_paths(&call.parameters);
+								params.chat_session.detectors.note_mutated_paths(&call.parameters);
 							}
 							round_verifier |= verifier_shaped;
 						}
@@ -772,10 +714,8 @@ pub async fn process_response<S: OutputSink>(
 						// verified: one unverified specialist in a multi-agent round is
 						// an unchecked change, and the round is not clean because a
 						// sibling happened to check its own work.
-						let (delegated_runs, delegated_verified) =
-							crate::supervisor::delegate::take_handback();
-						let delegated_ok =
-							delegated_runs > 0 && delegated_verified == delegated_runs;
+						let (delegated_runs, delegated_verified) = crate::supervisor::delegate::take_handback();
+						let delegated_ok = delegated_runs > 0 && delegated_verified == delegated_runs;
 						crate::log_debug!(
 							"round fold: fp_before={:?} fp_after={:?} verifier={} readback={} mutation={} write_capable={} delegated={}/{}",
 							fp_before,
@@ -821,32 +761,26 @@ pub async fn process_response<S: OutputSink>(
 
 					// At most one advisory per round. A recurring signal never proves
 					// non-compliance or justifies stronger instructions.
-					if crate::supervisor::detect::should_steer(
-						round_signal,
-						params.chat_session.last_self_report,
-					) {
+					if crate::supervisor::detect::should_steer(round_signal, params.chat_session.last_self_report) {
 						// Count recurrence only to throttle hints. A different signal
 						// starts a fresh advisory sequence.
 						if round_signal == params.chat_session.steer_last_signal {
-							params.chat_session.steer_attempt =
-								params.chat_session.steer_attempt.saturating_add(1);
+							params.chat_session.steer_attempt = params.chat_session.steer_attempt.saturating_add(1);
 						} else {
 							params.chat_session.steer_attempt = 0;
 							params.chat_session.steer_last_signal = round_signal;
 							params.chat_session.last_steered_calls = None;
 						}
 						let attempt = params.chat_session.steer_attempt;
-						let calls_hash =
-							crate::supervisor::detect::call_set_hash(&current_tool_calls);
+						let calls_hash = crate::supervisor::detect::call_set_hash(&current_tool_calls);
 						// Repeated polling is legitimate; back off duplicate hints without
 						// treating their recurrence as evidence that the agent ignored us.
 						let repeated = Some(calls_hash) == params.chat_session.last_steered_calls;
 						let emit = !repeated || attempt.saturating_add(1).is_power_of_two();
 
 						if emit {
-							params.chat_session.steer_pending = Some(
-								crate::supervisor::detect::steer_note(round_signal).to_string(),
-							);
+							params.chat_session.steer_pending =
+								Some(crate::supervisor::detect::steer_note(round_signal).to_string());
 							params.chat_session.last_steered_calls = Some(calls_hash);
 							crate::supervisor::stats::steer(round_signal);
 							crate::supervisor::notify(&format!(
@@ -872,12 +806,9 @@ pub async fn process_response<S: OutputSink>(
 						round_steered = true;
 					}
 					// A genuine breakout (no signal fired) resets all steer state.
-					if !round_steered
-						&& round_signal == crate::supervisor::detect::DetectorSignal::None
-					{
+					if !round_steered && round_signal == crate::supervisor::detect::DetectorSignal::None {
 						params.chat_session.steer_attempt = 0;
-						params.chat_session.steer_last_signal =
-							crate::supervisor::detect::DetectorSignal::None;
+						params.chat_session.steer_last_signal = crate::supervisor::detect::DetectorSignal::None;
 						params.chat_session.last_steered_calls = None;
 					}
 				}
@@ -907,28 +838,19 @@ pub async fn process_response<S: OutputSink>(
 				// Process tool results if any exist
 				if !tool_results.is_empty() {
 					// Process tool results and handle follow-up API calls using the new module
-					if let Some((
-						new_content,
-						new_exchange,
-						new_tool_calls,
-						new_response_id,
-						new_thinking,
-					)) = tool_result_processor::process_tool_results(
-						tool_results,
-						total_tool_time_ms,
-						params.chat_session,
-						params.config,
-						params.role,
-						operation_cancelled_clone.clone(),
-					)
-					.await?
+					if let Some((new_content, new_exchange, new_tool_calls, new_response_id, new_thinking)) =
+						tool_result_processor::process_tool_results(
+							tool_results,
+							total_tool_time_ms,
+							params.chat_session,
+							params.config,
+							params.role,
+							operation_cancelled_clone.clone(),
+						)
+						.await?
 					{
 						// Update current content for next iteration
-						current_content = capture_self_report(
-							&mut *params.chat_session,
-							params.config,
-							&new_content,
-						);
+						current_content = capture_self_report(&mut *params.chat_session, params.config, &new_content);
 						current_exchange = new_exchange;
 						current_tool_calls_param = new_tool_calls;
 						current_response_id = new_response_id; // Update response_id from follow-up response
@@ -939,8 +861,7 @@ pub async fn process_response<S: OutputSink>(
 						// Continue when the follow-up surfaced more structured tool_calls;
 						// otherwise the loop is done. (The earlier text-parse fallback never
 						// returned anything, so no inline-content branch is needed.)
-						if current_tool_calls_param.is_some()
-							&& !current_tool_calls_param.as_ref().unwrap().is_empty()
+						if current_tool_calls_param.is_some() && !current_tool_calls_param.as_ref().unwrap().is_empty()
 						{
 							continue;
 						} else {
@@ -1006,8 +927,7 @@ pub async fn process_response<S: OutputSink>(
 	// for user input.
 	{
 		let workdir = crate::mcp::get_thread_working_directory();
-		let failures =
-			crate::mcp::runtime::skill_auto::run_validators(&current_content, &workdir).await;
+		let failures = crate::mcp::runtime::skill_auto::run_validators(&current_content, &workdir).await;
 		for (skill_name, error) in &failures {
 			// Wrap in <validation> tags so skill auto-activation (strip_xml_blocks)
 			// ignores this injected message — it must not match user-intent skills.

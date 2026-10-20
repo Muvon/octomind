@@ -56,10 +56,7 @@ fn dotenv_source_detected_for_new_variable() {
 	let mut tracker = EnvTracker::new();
 	env::set_var("OCTOMIND_TEST_DOTENV_NEW", "from-file");
 	tracker.dotenv_loaded = true;
-	assert_eq!(
-		tracker.get_source("OCTOMIND_TEST_DOTENV_NEW"),
-		EnvSource::DotEnv
-	);
+	assert_eq!(tracker.get_source("OCTOMIND_TEST_DOTENV_NEW"), EnvSource::DotEnv);
 	assert_eq!(
 		tracker.get_source_description("OCTOMIND_TEST_DOTENV_NEW"),
 		"environment/.env file"
@@ -73,10 +70,7 @@ fn unchanged_pre_existing_variable_stays_system_even_with_dotenv() {
 	env::set_var("OCTOMIND_TEST_DOTENV_SAME", "value");
 	let mut tracker = EnvTracker::new();
 	tracker.dotenv_loaded = true;
-	assert_eq!(
-		tracker.get_source("OCTOMIND_TEST_DOTENV_SAME"),
-		EnvSource::System
-	);
+	assert_eq!(tracker.get_source("OCTOMIND_TEST_DOTENV_SAME"), EnvSource::System);
 	env::remove_var("OCTOMIND_TEST_DOTENV_SAME");
 }
 
@@ -87,10 +81,7 @@ fn changed_pre_existing_variable_becomes_dotenv() {
 	let mut tracker = EnvTracker::new();
 	env::set_var("OCTOMIND_TEST_DOTENV_CHANGED", "after");
 	tracker.dotenv_loaded = true;
-	assert_eq!(
-		tracker.get_source("OCTOMIND_TEST_DOTENV_CHANGED"),
-		EnvSource::DotEnv
-	);
+	assert_eq!(tracker.get_source("OCTOMIND_TEST_DOTENV_CHANGED"), EnvSource::DotEnv);
 	env::remove_var("OCTOMIND_TEST_DOTENV_CHANGED");
 }
 
@@ -99,9 +90,6 @@ fn changed_pre_existing_variable_becomes_dotenv() {
 fn empty_value_is_not_found_even_when_set() {
 	env::set_var("OCTOMIND_TEST_DOTENV_EMPTY", "  ");
 	let tracker = EnvTracker::new();
-	assert_eq!(
-		tracker.get_source("OCTOMIND_TEST_DOTENV_EMPTY"),
-		EnvSource::NotFound
-	);
+	assert_eq!(tracker.get_source("OCTOMIND_TEST_DOTENV_EMPTY"), EnvSource::NotFound);
 	env::remove_var("OCTOMIND_TEST_DOTENV_EMPTY");
 }

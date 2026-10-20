@@ -18,9 +18,7 @@ use serial_test::serial;
 #[test]
 fn intent_gate_rejects_short_acknowledgments() {
 	// Common chatter that should never drive auto-activation.
-	for short in [
-		"", " ", "try", "ok", "yes", "no", "hmm", "do it", "thanks!", "what?",
-	] {
+	for short in ["", " ", "try", "ok", "yes", "no", "hmm", "do it", "thanks!", "what?"] {
 		assert!(
 			!intent_has_enough_signal(short),
 			"expected {short:?} to be rejected by intent gate"
@@ -39,10 +37,7 @@ fn intent_gate_accepts_two_word_intents() {
 		"show me logs",
 		"explain this code to me",
 	] {
-		assert!(
-			intent_has_enough_signal(ok),
-			"expected {ok:?} to pass intent gate"
-		);
+		assert!(intent_has_enough_signal(ok), "expected {ok:?} to pass intent gate");
 	}
 }
 
@@ -110,10 +105,7 @@ fn strip_xml_removes_multiple_disjoint_blocks() {
 #[test]
 fn strip_xml_removes_outer_block_with_nested_inner_tags() {
 	// The outer <a> block swallows the nested <b> block entirely.
-	assert_eq!(
-		strip_xml_blocks("keep <a>x<b>y</b>z</a> tail"),
-		"keep  tail"
-	);
+	assert_eq!(strip_xml_blocks("keep <a>x<b>y</b>z</a> tail"), "keep  tail");
 }
 
 #[test]
@@ -207,18 +199,14 @@ async fn semantic_scores_absent_when_no_semantic_checks() {
 		evolution: None,
 	}];
 	// Returns before ever touching the embedding model.
-	assert!(compute_semantic_scores("deploy the app", &entries, &[])
-		.await
-		.is_none());
+	assert!(compute_semantic_scores("deploy the app", &entries, &[]).await.is_none());
 }
 
 #[tokio::test]
 async fn semantic_scores_absent_when_semantic_skills_already_active() {
 	let entries = vec![semantic_entry("sem", "deploying")];
 	let active = vec!["sem".to_string()];
-	assert!(compute_semantic_scores("deploy", &entries, &active)
-		.await
-		.is_none());
+	assert!(compute_semantic_scores("deploy", &entries, &active).await.is_none());
 }
 
 #[tokio::test]
@@ -230,9 +218,7 @@ async fn semantic_scores_absent_when_embedding_model_not_ready() {
 		return;
 	}
 	let entries = vec![semantic_entry("sem", "deploying")];
-	assert!(compute_semantic_scores("deploy", &entries, &[])
-		.await
-		.is_none());
+	assert!(compute_semantic_scores("deploy", &entries, &[]).await.is_none());
 }
 
 // -------------------------------------------------------------------------
@@ -250,8 +236,7 @@ async fn validators_return_empty_without_session() {
 async fn validators_return_empty_when_auto_validation_disabled() {
 	let sid = "__skillauto_no_validation".to_string();
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.skills.auto_validation = false;
 	crate::session::context::set_session_config(&sid, &config);
 
@@ -310,10 +295,7 @@ fn write_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 		.arg(body)
 		.status()
 		.expect("spawn validate script writer");
-	assert!(
-		status.success(),
-		"write executable validate script: {status}"
-	);
+	assert!(status.success(), "write executable validate script: {status}");
 	path
 }
 
@@ -322,10 +304,9 @@ fn write_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
 async fn validate_script_exit_zero_with_no_output_is_ok() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\nexit 0\n");
-	let (code, output) =
-		run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
-			.await
-			.expect("script runs");
+	let (code, output) = run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	assert_eq!(code, 0);
 	assert_eq!(output, "");
 }
@@ -335,10 +316,9 @@ async fn validate_script_exit_zero_with_no_output_is_ok() {
 async fn validate_script_failure_captures_stderr() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\necho 'boom' >&2\nexit 1\n");
-	let (code, output) =
-		run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
-			.await
-			.expect("script runs");
+	let (code, output) = run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	assert_eq!(code, 1);
 	assert_eq!(output, "boom\n");
 }
@@ -348,10 +328,9 @@ async fn validate_script_failure_captures_stderr() {
 async fn validate_script_uses_stdout_when_stderr_empty() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\necho 'stdout noise'\nexit 2\n");
-	let (code, output) =
-		run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
-			.await
-			.expect("script runs");
+	let (code, output) = run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	assert_eq!(code, 2);
 	assert_eq!(output, "stdout noise\n");
 }
@@ -361,14 +340,9 @@ async fn validate_script_uses_stdout_when_stderr_empty() {
 async fn validate_script_receives_content_on_stdin() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\ncat >&2\nexit 1\n");
-	let (code, output) = run_validate_script(
-		&script,
-		"ASSISTANT-BODY",
-		dir.path(),
-		Duration::from_secs(10),
-	)
-	.await
-	.expect("script runs");
+	let (code, output) = run_validate_script(&script, "ASSISTANT-BODY", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	assert_eq!(code, 1);
 	assert_eq!(output, "ASSISTANT-BODY");
 }
@@ -378,10 +352,9 @@ async fn validate_script_receives_content_on_stdin() {
 async fn validate_script_receives_assistant_role_arg() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\necho \"$1\" >&2\nexit 3\n");
-	let (code, output) =
-		run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
-			.await
-			.expect("script runs");
+	let (code, output) = run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	assert_eq!(code, 3);
 	assert_eq!(output, "assistant\n");
 }
@@ -391,10 +364,9 @@ async fn validate_script_receives_assistant_role_arg() {
 async fn validate_script_runs_in_workdir() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let script = write_script(dir.path(), "#!/bin/sh\npwd >&2\nexit 1\n");
-	let (_code, output) =
-		run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
-			.await
-			.expect("script runs");
+	let (_code, output) = run_validate_script(&script, "content", dir.path(), Duration::from_secs(10))
+		.await
+		.expect("script runs");
 	// `pwd` reports the physical path; canonicalize the tempdir to match.
 	let canonical = std::fs::canonicalize(dir.path()).expect("canonicalize workdir");
 	assert_eq!(output.trim(), canonical.to_str().expect("utf8 workdir"));
@@ -433,14 +405,8 @@ async fn validate_script_missing_script_is_error() {
 fn retry_tracker_counts_and_resets() {
 	let tracker = get_retry_tracker();
 	tracker.write().unwrap().clear();
-	tracker
-		.write()
-		.unwrap()
-		.insert("__skillauto_retry".to_string(), 2);
-	assert_eq!(
-		tracker.read().unwrap().get("__skillauto_retry").copied(),
-		Some(2)
-	);
+	tracker.write().unwrap().insert("__skillauto_retry".to_string(), 2);
+	assert_eq!(tracker.read().unwrap().get("__skillauto_retry").copied(), Some(2));
 	tracker.write().unwrap().remove("__skillauto_retry");
 	assert!(tracker.read().unwrap().get("__skillauto_retry").is_none());
 	tracker.write().unwrap().clear();
@@ -458,10 +424,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -490,17 +453,10 @@ fn init_pool_with_fresh_data_dir_yields_empty_pool_and_clears_retries() {
 	{
 		let pool = get_pool().read().unwrap();
 		let pool = pool.get("__default__").expect("pool initialized");
-		assert!(
-			pool.entries.is_empty(),
-			"no taps in the fresh data dir, so no entries"
-		);
+		assert!(pool.entries.is_empty(), "no taps in the fresh data dir, so no entries");
 	}
 	assert!(
-		get_retry_tracker()
-			.read()
-			.unwrap()
-			.get("__skillauto_stale")
-			.is_none(),
+		get_retry_tracker().read().unwrap().get("__skillauto_stale").is_none(),
 		"init_pool resets retry counters"
 	);
 
@@ -515,18 +471,8 @@ fn clear_pool_for_session_drops_only_that_session() {
 	let b = "__skillauto_pool_b".to_string();
 	{
 		let mut pool = get_pool().write().unwrap();
-		pool.insert(
-			a.clone(),
-			SkillPool {
-				entries: Vec::new(),
-			},
-		);
-		pool.insert(
-			b.clone(),
-			SkillPool {
-				entries: Vec::new(),
-			},
-		);
+		pool.insert(a.clone(), SkillPool { entries: Vec::new() });
+		pool.insert(b.clone(), SkillPool { entries: Vec::new() });
 	}
 
 	clear_pool_for_session(&a);
@@ -556,8 +502,7 @@ async fn validators_report_failure_then_cap_after_max_retries() {
 
 	// The template disables auto_validation — flip it on for this session.
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.skills.auto_validation = true;
 	config.skills.validation_timeout = 10;
 	crate::session::context::set_session_config(&sid, &config);
@@ -570,17 +515,9 @@ async fn validators_report_failure_then_cap_after_max_retries() {
 	.await;
 	assert_eq!(failures.len(), 1, "{failures:?}");
 	assert!(failures[0].0 == "skillauto-failing");
-	assert!(
-		failures[0].1.contains("SKILLAUTO-BROKEN"),
-		"{}",
-		failures[0].1
-	);
+	assert!(failures[0].1.contains("SKILLAUTO-BROKEN"), "{}", failures[0].1);
 	assert_eq!(
-		get_retry_tracker()
-			.read()
-			.unwrap()
-			.get("skillauto-failing")
-			.copied(),
+		get_retry_tracker().read().unwrap().get("skillauto-failing").copied(),
 		Some(1)
 	);
 
@@ -591,11 +528,7 @@ async fn validators_report_failure_then_cap_after_max_retries() {
 	.await;
 	assert_eq!(failures.len(), 1, "still failing below the cap");
 	assert_eq!(
-		get_retry_tracker()
-			.read()
-			.unwrap()
-			.get("skillauto-failing")
-			.copied(),
+		get_retry_tracker().read().unwrap().get("skillauto-failing").copied(),
 		Some(2)
 	);
 
@@ -608,10 +541,7 @@ async fn validators_report_failure_then_cap_after_max_retries() {
 		run_validators("assistant output", std::path::Path::new("/tmp")).await
 	})
 	.await;
-	assert!(
-		failures.is_empty(),
-		"capped validator must be skipped: {failures:?}"
-	);
+	assert!(failures.is_empty(), "capped validator must be skipped: {failures:?}");
 
 	get_retry_tracker().write().unwrap().clear();
 	crate::session::context::cleanup_session(&sid);

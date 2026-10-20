@@ -50,10 +50,7 @@ fn decode_jsonl_recovers_verbatim_content_with_escapes() {
 	// A quote containing `"`, `\` and newlines is JSON-escaped on disk;
 	// evidence matching needs the decoded original, not the raw JSONL.
 	let content = "let s = \"a\\nb\";\nsecond line";
-	let raw = format!(
-		"{}\n",
-		serde_json::to_string(&msg("tool", content)).unwrap()
-	);
+	let raw = format!("{}\n", serde_json::to_string(&msg("tool", content)).unwrap());
 	let decoded = decode_jsonl_contents(&[raw]);
 	assert_eq!(decoded, vec![content]);
 	// A cap-truncated trailing line is skipped, not an error.
@@ -70,8 +67,7 @@ fn archive_pointer_names_the_path_and_recall_guidance() {
 
 #[test]
 fn pact_sidecar_roundtrip_recovers_atomic_packet() {
-	let dir =
-		std::env::temp_dir().join(format!("octomind-pact-archive-test-{}", std::process::id()));
+	let dir = std::env::temp_dir().join(format!("octomind-pact-archive-test-{}", std::process::id()));
 	let messages = vec![msg("assistant", "issued call"), msg("tool", "exact result")];
 	let packet_id = "b:test".to_string();
 	let packet = super::super::attention::EvidencePacket {
@@ -88,15 +84,11 @@ fn pact_sidecar_roundtrip_recovers_atomic_packet() {
 		exact_spans: Vec::new(),
 		descriptor: "tool interaction".into(),
 	};
-	let bundle = write_archive_with_index_to(&dir, "pact", &messages, &[packet])
-		.expect("archive and sidecar write");
+	let bundle = write_archive_with_index_to(&dir, "pact", &messages, &[packet]).expect("archive and sidecar write");
 	let recovered = read_blocks(&bundle.index_path, &[packet_id]).expect("stable ID resolves");
 	assert_eq!(recovered.len(), 2);
 	assert_eq!(recovered[1].content, "exact result");
-	let corrupted = vec![
-		msg("assistant", "issued call"),
-		msg("tool", "changed result"),
-	];
+	let corrupted = vec![msg("assistant", "issued call"), msg("tool", "changed result")];
 	write_archive_to(&dir, "pact", &corrupted).expect("corrupt fixture writes");
 	let error = read_blocks(&bundle.index_path, &["b:test".into()]).unwrap_err();
 	assert!(error.to_string().contains("content-address verification"));
@@ -139,8 +131,7 @@ fn compression_archive_keeps_image_payload_and_tool_call_id() {
 		size_bytes: None,
 	}]);
 	let path = write_archive_to(dir.path(), "images", std::slice::from_ref(&message)).unwrap();
-	let restored: Message =
-		serde_json::from_str(std::fs::read_to_string(path).unwrap().trim()).unwrap();
+	let restored: Message = serde_json::from_str(std::fs::read_to_string(path).unwrap().trim()).unwrap();
 	assert_eq!(
 		serde_json::to_value(restored).unwrap(),
 		serde_json::to_value(message).unwrap()

@@ -50,10 +50,7 @@ fn media_type_helpers_cover_every_supported_extension() {
 		("a.mkv", "video/x-matroska"),
 		("a.3gp", "video/3gpp"),
 	] {
-		assert_eq!(
-			VideoProcessor::get_media_type(Path::new(name)).unwrap(),
-			media
-		);
+		assert_eq!(VideoProcessor::get_media_type(Path::new(name)).unwrap(), media);
 		assert!(VideoProcessor::is_supported_video_by_name(name));
 	}
 	assert!(VideoProcessor::get_media_type(Path::new("a.bin")).is_err());
@@ -75,10 +72,7 @@ fn file_loading_encodes_bytes_and_rejects_bad_media_types() {
 	assert_eq!(attachment.size_bytes, Some(15));
 	match attachment.data {
 		VideoData::Base64(data) => {
-			assert_eq!(
-				general_purpose::STANDARD.decode(data).unwrap(),
-				b"fake-video-data"
-			)
+			assert_eq!(general_purpose::STANDARD.decode(data).unwrap(), b"fake-video-data")
 		}
 		VideoData::Url(_) => panic!("file load must encode data"),
 	}
@@ -97,9 +91,9 @@ async fn video_server(status: &str, content_type: &str, body: Vec<u8>) -> String
 		let mut request = [0_u8; 2048];
 		let _ = socket.read(&mut request).await;
 		let headers = format!(
-				"HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-				body.len()
-			);
+			"HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+			body.len()
+		);
 		socket.write_all(headers.as_bytes()).await.unwrap();
 		socket.write_all(&body).await.unwrap();
 	});
@@ -117,11 +111,9 @@ async fn url_loading_covers_success_and_rejections() {
 	let url = video_server("404 Not Found", "video/mp4", Vec::new()).await;
 	assert!(VideoProcessor::load_from_url(&url).await.is_err());
 	assert!(VideoProcessor::load_from_url("not a url").await.is_err());
-	assert!(
-		VideoProcessor::load_from_url("https://example.com/file.txt")
-			.await
-			.is_err()
-	);
+	assert!(VideoProcessor::load_from_url("https://example.com/file.txt")
+		.await
+		.is_err());
 }
 
 #[test]
@@ -162,9 +154,7 @@ fn junk_video_file_loads_and_previews_without_ffprobe() {
 
 #[test]
 fn predicate_edge_cases() {
-	assert!(!VideoProcessor::is_supported_video(std::path::Path::new(
-		"noext"
-	)));
+	assert!(!VideoProcessor::is_supported_video(std::path::Path::new("noext")));
 	assert!(!VideoProcessor::is_supported_video_by_name("noext"));
 	assert!(VideoProcessor::guess_media_type_from_url("no-dot").is_none());
 }

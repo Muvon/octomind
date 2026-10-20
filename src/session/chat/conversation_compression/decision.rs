@@ -59,11 +59,8 @@ impl FoldEconomics {
 		let unit = session.input_price_per_1m;
 		Self {
 			cache_read: session.cache_read_price_per_1m / unit,
-			folder_input: folder
-				.map_or(Self::DEFAULT.folder_input, |f| f.input_price_per_1m / unit),
-			folder_output: folder.map_or(Self::DEFAULT.folder_output, |f| {
-				f.output_price_per_1m / unit
-			}),
+			folder_input: folder.map_or(Self::DEFAULT.folder_input, |f| f.input_price_per_1m / unit),
+			folder_output: folder.map_or(Self::DEFAULT.folder_output, |f| f.output_price_per_1m / unit),
 			cache_write: session.cache_write_price_per_1m / unit,
 		}
 	}
@@ -102,9 +99,7 @@ pub(super) fn at_turn_boundary(info: &crate::session::SessionInfo) -> bool {
 /// already made this turn, so a long tool loop qualifies as it accumulates
 /// calls while a session with no history stays conservative.
 pub(super) fn expected_remaining_calls(info: &crate::session::SessionInfo) -> f64 {
-	let this_turn = info
-		.total_api_calls
-		.saturating_sub(info.api_calls_at_turn_start) as f64;
+	let this_turn = info.total_api_calls.saturating_sub(info.api_calls_at_turn_start) as f64;
 	let mut counts = info.turn_call_counts.clone();
 	if counts.is_empty() {
 		return this_turn.max(1.0);
@@ -154,10 +149,7 @@ pub(super) fn get_model_pricing(
 	// and splitting on all of them wrongly rejected such ids, silently disabling
 	// compression for tagged local models.
 	let Some((provider_name, model_name)) = model.split_once(':') else {
-		log_debug!(
-			"Invalid model format: '{}' (expected 'provider:model')",
-			model
-		);
+		log_debug!("Invalid model format: '{}' (expected 'provider:model')", model);
 		return None;
 	};
 
@@ -243,14 +235,8 @@ pub(super) fn veto_checkable(current_step: Option<usize>, agent_blocked: bool) -
 /// since the last fold (or session start) the per-call rate is one or two
 /// samples — a 40k system prompt on call one reads as 40k/call — so only the
 /// bare ceiling applies until the pace is real.
-pub(super) fn ceiling_reached(
-	info: &crate::session::SessionInfo,
-	current_tokens: usize,
-	ceiling: usize,
-) -> bool {
-	let calls_measured = info
-		.total_api_calls
-		.saturating_sub(info.api_calls_at_last_compression);
+pub(super) fn ceiling_reached(info: &crate::session::SessionInfo, current_tokens: usize, ceiling: usize) -> bool {
+	let calls_measured = info.total_api_calls.saturating_sub(info.api_calls_at_last_compression);
 	if (calls_measured as f64) < MIN_RUNWAY_TURNS {
 		return current_tokens >= ceiling;
 	}
@@ -285,14 +271,10 @@ pub(super) fn context_ceiling(session: &ChatSession, config: &crate::config::Con
 /// missed tool-result growth (the dominant source in agent sessions),
 /// underestimated growth by an order of magnitude, and made every
 /// runway/safety margin a sliver that re-fired within a call or two.
-pub(super) fn measured_growth_rate(
-	info: &crate::session::SessionInfo,
-	current_tokens: usize,
-) -> f64 {
+pub(super) fn measured_growth_rate(info: &crate::session::SessionInfo, current_tokens: usize) -> f64 {
 	if info.context_tokens_after_last_compression > 0 {
 		let calls_since = (info.total_api_calls - info.api_calls_at_last_compression).max(1) as f64;
-		let context_growth =
-			current_tokens.saturating_sub(info.context_tokens_after_last_compression) as f64;
+		let context_growth = current_tokens.saturating_sub(info.context_tokens_after_last_compression) as f64;
 		(context_growth / calls_since).max(1.0)
 	} else {
 		let full_rate = (current_tokens as f64 / (info.total_api_calls as f64).max(1.0)).max(1.0);
@@ -341,9 +323,7 @@ pub(super) fn adaptive_fire_line(
 	let safe_ceiling = ceiling.saturating_sub(safety_tokens);
 	let level = consecutive_compressions.min(16);
 	let ladder = configured_threshold.saturating_mul(1usize << level);
-	ladder
-		.max(post_tokens.saturating_add(safety_tokens))
-		.min(safe_ceiling)
+	ladder.max(post_tokens.saturating_add(safety_tokens)).min(safe_ceiling)
 }
 
 /// Compute the compression ratio from measured session dynamics — the ladder

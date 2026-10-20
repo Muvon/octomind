@@ -15,9 +15,7 @@
 // Main session loop - orchestrates all session operations
 
 use super::super::commands::{MODEL_COMMAND, ROLE_COMMAND};
-use super::super::input::{
-	calculate_current_context_tokens, read_user_input, InputResult, ReplyInput,
-};
+use super::super::input::{calculate_current_context_tokens, read_user_input, InputResult, ReplyInput};
 use super::super::CostTracker;
 use super::api_executor::execute_api_call_and_process_response;
 use super::api_prep::prepare_for_api_call;
@@ -73,11 +71,8 @@ async fn init_session_runtime(
 ) -> Result<SessionRuntimeGuards> {
 	crate::session::context::init_session_services(role);
 	crate::mcp::core::plan::core::restore_plan_for_session(&chat_session.session.info.name);
-	crate::mcp::orchestration::schedule::core::restore_schedule_for_session(
-		&chat_session.session.info.name,
-	);
-	let inject =
-		crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
+	crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&chat_session.session.info.name);
+	let inject = crate::session::inject_listener::start_inject_listener(&chat_session.session.info.name);
 	let webhooks = start_webhook_guards(args, config, &chat_session.session.info.name).await?;
 	Ok(SessionRuntimeGuards {
 		_inject: inject,
@@ -109,11 +104,7 @@ async fn drain_keepalive_into_session(
 	} else {
 		("into session cost", "Failed to track keepalive cost")
 	};
-	log_debug!(
-		"Cache keepalive: folding {} ping(s) {}",
-		exchanges.len(),
-		where_msg
-	);
+	log_debug!("Cache keepalive: folding {} ping(s) {}", exchanges.len(), where_msg);
 	for exchange in &exchanges {
 		if let Err(e) = CostTracker::track_exchange_cost(chat_session, exchange, config) {
 			log_debug!("{}: {}", err_msg, e);
@@ -173,11 +164,7 @@ fn apply_clipboard_items(
 }
 
 // Helper function to print command output in CLI context
-async fn print_command_output(
-	output: &mut super::commands::CommandOutput,
-	session: &mut ChatSession,
-	config: &Config,
-) {
+async fn print_command_output(output: &mut super::commands::CommandOutput, session: &mut ChatSession, config: &Config) {
 	if config.output_mode() == OutputMode::Jsonl {
 		println!("{}", output.to_json());
 	} else {
@@ -194,31 +181,20 @@ async fn start_webhook_guards(
 ) -> Result<Vec<crate::session::webhook_listener::WebhookListenerGuard>> {
 	let mut guards = Vec::with_capacity(args.hooks.len());
 	for hook_name in &args.hooks {
-		let hook_config = config.get_hook_by_name(hook_name).ok_or_else(|| {
-			anyhow::anyhow!(
-				"Hook '{}' not found in config. Define it in [[hooks]].",
-				hook_name
-			)
-		})?;
+		let hook_config = config
+			.get_hook_by_name(hook_name)
+			.ok_or_else(|| anyhow::anyhow!("Hook '{}' not found in config. Define it in [[hooks]].", hook_name))?;
 		let (addr, script_path) = crate::session::webhook_listener::validate_hook(hook_config)?;
 		guards.push(
-			crate::session::webhook_listener::start_webhook_listener(
-				session_name,
-				hook_config,
-				addr,
-				script_path,
-			)
-			.await?,
+			crate::session::webhook_listener::start_webhook_listener(session_name, hook_config, addr, script_path)
+				.await?,
 		);
 	}
 	Ok(guards)
 }
 
 // Run an interactive session
-pub async fn run_interactive_session(
-	args: &super::params::GenericSessionArgs,
-	config: &Config,
-) -> Result<()> {
+pub async fn run_interactive_session(args: &super::params::GenericSessionArgs, config: &Config) -> Result<()> {
 	// Suppress the tty driver's `^C` echo for the lifetime of the session.
 	// Otherwise the spinner's last drawn row gets stranded in scrollback when
 	// the echoed `^C` auto-wraps off the indicatif-padded line and our clear
@@ -238,11 +214,7 @@ pub async fn run_interactive_session(
 
 	// Record role/model in the titles sidecar so the picker and /list can
 	// show and restore them even without an explicit /rename.
-	crate::session::titles::record_session_meta(
-		&session_id,
-		&role,
-		&chat_session.session.info.model,
-	);
+	crate::session::titles::record_session_meta(&session_id, &role, &chat_session.session.info.model);
 
 	// Now that the session ID is known, set the process & terminal title so
 	// `ps`/htop and the terminal tab show which run/role/session this is.
@@ -271,11 +243,7 @@ pub async fn run_interactive_session(
 						*total.lock().unwrap() = servers.len();
 						*pending.lock().unwrap() = servers.clone();
 						if !servers.is_empty() {
-							sp.set_message(format!(
-								"Starting MCP: {} [0/{}]",
-								servers.join(", "),
-								servers.len()
-							));
+							sp.set_message(format!("Starting MCP: {} [0/{}]", servers.join(", "), servers.len()));
 						}
 					}
 					crate::mcp::McpInitProgress::Completed { server, .. } => {
@@ -286,18 +254,12 @@ pub async fn run_interactive_session(
 						if pg.is_empty() {
 							sp.set_message(format!("MCP ready [{}/{}]", done, tc));
 						} else {
-							sp.set_message(format!(
-								"Starting MCP: {} [{}/{}]",
-								pg.join(", "),
-								done,
-								tc
-							));
+							sp.set_message(format!("Starting MCP: {} [{}/{}]", pg.join(", "), done, tc));
 						}
 					}
 				}
 			};
-			crate::mcp::initialize_mcp_for_role_with_callback(&role, &config_for_role, Some(&cb))
-				.await?;
+			crate::mcp::initialize_mcp_for_role_with_callback(&role, &config_for_role, Some(&cb)).await?;
 		}
 
 		let mut runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
@@ -322,9 +284,7 @@ pub async fn run_interactive_session(
 			let cb = move |progress: crate::mcp::runtime::capability::EnvCapabilityProgress| {
 				let Some(sp) = sp_ref.as_ref() else { return };
 				match progress {
-					crate::mcp::runtime::capability::EnvCapabilityProgress::Starting {
-						capabilities,
-					} => {
+					crate::mcp::runtime::capability::EnvCapabilityProgress::Starting { capabilities } => {
 						*total.lock().unwrap() = capabilities.len();
 						*pending.lock().unwrap() = capabilities.clone();
 						if !capabilities.is_empty() {
@@ -335,10 +295,7 @@ pub async fn run_interactive_session(
 							));
 						}
 					}
-					crate::mcp::runtime::capability::EnvCapabilityProgress::Completed {
-						capability,
-						..
-					} => {
+					crate::mcp::runtime::capability::EnvCapabilityProgress::Completed { capability, .. } => {
 						let mut pg = pending.lock().unwrap();
 						pg.retain(|s| s != &capability);
 						let done = *total.lock().unwrap() - pg.len();
@@ -346,18 +303,12 @@ pub async fn run_interactive_session(
 						if pg.is_empty() {
 							sp.set_message(format!("Capabilities ready [{}/{}]", done, tc));
 						} else {
-							sp.set_message(format!(
-								"Loading capabilities: {} [{}/{}]",
-								pg.join(", "),
-								done,
-								tc
-							));
+							sp.set_message(format!("Loading capabilities: {} [{}/{}]", pg.join(", "), done, tc));
 						}
 					}
 				}
 			};
-			crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, Some(&cb))
-				.await;
+			crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, Some(&cb)).await;
 		}
 
 		// Done initializing — clear spinner, print skills
@@ -373,19 +324,11 @@ pub async fn run_interactive_session(
 				if let Some(sid) = crate::session::context::current_session_id() {
 					let active = crate::session::context::get_active_skills(&sid);
 					for name in &active {
-						sp.println(format!(
-							"{} {}",
-							"Using skill:".dimmed(),
-							name.bright_cyan()
-						));
+						sp.println(format!("{} {}", "Using skill:".dimmed(), name.bright_cyan()));
 					}
 				}
 				for name in crate::mcp::runtime::capability::list_active_names() {
-					sp.println(format!(
-						"{} {}",
-						"Using capability:".dimmed(),
-						name.bright_magenta()
-					));
+					sp.println(format!("{} {}", "Using capability:".dimmed(), name.bright_magenta()));
 				}
 			}
 			sp.disable_steady_tick();
@@ -398,18 +341,11 @@ pub async fn run_interactive_session(
 		// Print the last few messages for context with colors if terminal supports them (for resumed sessions)
 		// Only show context for truly resumed sessions, not new sessions
 		if chat_session.was_resumed {
-			let last_messages = chat_session
-				.session
-				.messages
-				.iter()
-				.rev()
-				.take(3)
-				.collect::<Vec<_>>();
+			let last_messages = chat_session.session.messages.iter().rev().take(3).collect::<Vec<_>>();
 
 			for msg in last_messages.iter().rev() {
 				if msg.role == "assistant" {
-					let visible =
-						crate::session::chat::assistant_output::strip_system_tags(&msg.content);
+					let visible = crate::session::chat::assistant_output::strip_system_tags(&msg.content);
 					if !visible.is_empty() {
 						crate::session::chat::assistant_output::print_assistant_response(
 							&visible,
@@ -428,14 +364,8 @@ pub async fn run_interactive_session(
 			// New interactive session: print the welcome message (assistant) as
 			// user-facing AI output, stripping any <system>...</system> AI-only
 			// blocks and rendering markdown when applicable.
-			if let Some(welcome_msg) = chat_session
-				.session
-				.messages
-				.iter()
-				.find(|m| m.role == "assistant")
-			{
-				let visible =
-					crate::session::chat::assistant_output::strip_system_tags(&welcome_msg.content);
+			if let Some(welcome_msg) = chat_session.session.messages.iter().find(|m| m.role == "assistant") {
+				let visible = crate::session::chat::assistant_output::strip_system_tags(&welcome_msg.content);
 				if !visible.is_empty() {
 					crate::session::chat::assistant_output::print_assistant_response(
 						&visible,
@@ -509,983 +439,945 @@ pub async fn run_interactive_session(
 			let switched = crate::session::context::with_session_id(chat_session.session.info.name.clone(), async {
 				let mut switched = false;
 				loop {
-			// SMART CANCELLATION: Handle cancellation with surgical cleanup
-			// CRITICAL: Check cancellation BEFORE resetting processing state
-			// This ensures cleanup logic sees the correct state (e.g., CallingAPI)
-			if cancellation.is_cancelled() {
-				log_debug!("Ctrl+C detected - performing smart cleanup based on operation state");
+					// SMART CANCELLATION: Handle cancellation with surgical cleanup
+					// CRITICAL: Check cancellation BEFORE resetting processing state
+					// This ensures cleanup logic sees the correct state (e.g., CallingAPI)
+					if cancellation.is_cancelled() {
+						log_debug!("Ctrl+C detected - performing smart cleanup based on operation state");
 
-				// CRITICAL FIX: Stop animation IMMEDIATELY before any cleanup
-				// This ensures the spinner stops instantly and user sees clean prompt
-				use crate::session::chat::get_animation_manager;
-				let animation_manager = get_animation_manager();
-				animation_manager.stop_current().await;
+						// CRITICAL FIX: Stop animation IMMEDIATELY before any cleanup
+						// This ensures the spinner stops instantly and user sees clean prompt
+						use crate::session::chat::get_animation_manager;
+						let animation_manager = get_animation_manager();
+						animation_manager.stop_current().await;
 
-				// CRITICAL FIX: Use suspend to prevent ghost lines
-				// This ensures spinner is properly hidden before cost display
-				animation_manager.with_suspended_spinner(|| {
-					// Display cost information before cleanup
-					// This ensures users see the cost spent before cancellation
-					// Skip in JSONL mode
-					if !current_config.output_mode().should_suppress_cli_output() {
-						CostTracker::display_cost_line(&chat_session);
-					}
-				});
-
-				let current_state = processing_state.lock().unwrap().clone();
-				let operation = current_operation.lock().unwrap().clone();
-
-				match current_state {
-					ProcessingState::Idle | ProcessingState::ReadingInput => {
-						// Nothing to clean up - just reset and continue
-						log_debug!("Cancelled during idle state - no cleanup needed");
-					}
-					ProcessingState::CallingAPI => {
-						// API call was interrupted - determine if we're in multi-turn conversation
-						// Multi-turn = tools were already executed and we're processing follow-up response
-						// Check: Are there ANY tool messages in the current operation's context?
-						if let Some(op) = operation {
-							match interrupted_call_truncation(
-								&chat_session.session.messages,
-								op.user_message_index,
-							) {
-								Some(user_idx) => {
-									// FIRST CALL: No tools executed yet — remove the user
-									// message (and assistant if added) for a clean retry.
-									chat_session.session.messages.truncate(user_idx);
-									log_debug!("Ctrl+C during first API call - removed user message for clean retry");
-								}
-								None => {
-									// MULTI-TURN: Tools were executed, conversation state is
-									// valid — keep user message, assistant message, tool results.
-									log_debug!("Ctrl+C during multi-turn (tools executed) - preserving all conversation state");
-								}
+						// CRITICAL FIX: Use suspend to prevent ghost lines
+						// This ensures spinner is properly hidden before cost display
+						animation_manager.with_suspended_spinner(|| {
+							// Display cost information before cleanup
+							// This ensures users see the cost spent before cancellation
+							// Skip in JSONL mode
+							if !current_config.output_mode().should_suppress_cli_output() {
+								CostTracker::display_cost_line(&chat_session);
 							}
-						}
-					}
-					ProcessingState::CompletedWithResults => {
-						// Operation completed successfully - nothing to clean up
-						log_debug!("Cancelled after completion - all work preserved");
-					}
-				}
+						});
 
-				// Save the session after cleanup to persist changes
-				// PHASE 4: Robust save with retry and error reporting
-				// CRITICAL FIX: Write TRUNCATION_POINT marker to session file
-				// This tells the loader to discard messages after this point on resume
-				if let Some(session_file) = &chat_session.session.session_file {
-					let truncation_entry = serde_json::json!({
-						"type": "TRUNCATION_POINT",
-						"timestamp": std::time::SystemTime::now()
-							.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs(),
-						"message_count": chat_session.session.messages.len(),
-						"reason": "ctrl_c_cleanup"
-					});
-					if let Err(e) = crate::session::append_to_session_file(
-						session_file,
-						&serde_json::to_string(&truncation_entry).unwrap_or_default(),
-					) {
-						log_debug!("Failed to write TRUNCATION_POINT: {}", e);
-					}
-				}
+						let current_state = processing_state.lock().unwrap().clone();
+						let operation = current_operation.lock().unwrap().clone();
 
-				if let Err(e) = chat_session.save() {
-					use colored::*;
-					if !crate::logging::tracing_setup::is_structured_output_mode() {
-						eprintln!();
-						eprintln!(
-							"{}",
-							"⚠️  CRITICAL: Failed to save session after cleanup"
-								.bright_red()
-								.bold()
-						);
-						eprintln!("{} {}", "Error:".bright_yellow(), e);
-						eprintln!(
-							"{}",
-							"Session state may be inconsistent on resume.".bright_yellow()
-						);
-						eprintln!();
-					} else {
-						crate::log_error!("CRITICAL: Failed to save session after cleanup: {}", e);
-					}
-
-					// Attempt one retry
-					log_debug!("Retrying session save after failure...");
-					if let Err(retry_err) = chat_session.save() {
-						if !crate::logging::tracing_setup::is_structured_output_mode() {
-							eprintln!(
-								"{}",
-								"⚠️  Retry failed. Session may be corrupted.".bright_red()
-							);
-						} else {
-							crate::log_error!("Retry save failed: {}", retry_err);
-						}
-						log_debug!("Retry save failed: {}", retry_err);
-					} else if !crate::logging::tracing_setup::is_structured_output_mode() {
-						eprintln!("{}", "✓ Retry succeeded - session saved.".bright_green());
-					}
-				}
-
-				// Clear operation context
-				*current_operation.lock().unwrap() = None;
-
-				// CRITICAL FIX: Reset cancellation state BEFORE continuing
-				// This prevents infinite loop where cancellation is always true
-				cancellation.reset();
-				log_debug!("Cancellation state reset - ready for new operation");
-
-				continue;
-			}
-
-			// CRITICAL: Reset processing state to Idle AFTER cancellation cleanup
-			// This ensures cleanup logic sees the correct state during cancellation
-			*processing_state.lock().unwrap() = ProcessingState::Idle;
-
-			// Set state to reading input
-			*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
-
-			// Stop any in-flight cache keepalive from the previous turn and fold
-			// its accumulated cost into the session before we read new input.
-			// Done early so the next read_user_input runs with no background
-			// pings competing for the network or rate-limit budget.
-			drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, false)
-				.await;
-
-			// Flush any due schedule entries into the inbox so all injection sources
-			// are unified — the loop only needs to drain the inbox from here on.
-			crate::mcp::orchestration::flush_due_to_inbox();
-			// Now that the response loop is back to idle, fire any idle-mode entries
-			// (only if no taps / background jobs are still running).
-			crate::mcp::orchestration::flush_idle_to_inbox();
-
-			// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
-			// If one is ready, skip user input entirely and process it immediately.
-			let pending_msg = crate::session::inbox::try_pop_inbox_message();
-			let mut injected_source = pending_msg.as_ref().map(|msg| msg.source.clone());
-
-			// Get a new operation token for this iteration
-			let operation_rx = cancellation.new_operation();
-
-			// Calculate current context tokens for display
-			let current_context_tokens = calculate_current_context_tokens(
-				&chat_session.session.messages,
-				&current_config,
-				&chat_session.model,
-			)
-			.await;
-
-			// Suspend animation before going idle at the prompt. This is the one
-			// unconditional teardown point: it covers every `continue` path that
-			// skips the turn-boundary stop_current (cancel-mid-API, follow-up retry)
-			// AND sets the suspended flag so a racing/background start_animation
-			// (e.g. a dropped API future's tool_result restart) can't repaint the
-			// spinner over reedline. Resumed once input is in hand, before the
-			// turn's animation legitimately starts.
-			crate::session::chat::get_animation_manager()
-				.suspend()
-				.await;
-
-			let input_result = if let Some(inbox_msg) = pending_msg {
-				// An inbox message is ready — inject it without waiting for user input.
-				log_debug!("Processing inbox message from {:?}", inbox_msg.source);
-				crate::session::inbox::display_injected_input(&inbox_msg);
-				InputResult::Text(inbox_msg.content, Vec::new())
-			} else {
-				// Reedline blocks for user input. A shared slot lets the
-				// inbox-notification thread (inside read_user_input) flip
-				// `break_signal` and auto-fire scheduled / background messages
-				// without requiring the user to press Enter.
-				let inbox_pending: Arc<std::sync::Mutex<Option<String>>> =
-					Arc::new(std::sync::Mutex::new(None));
-
-				// Spawn a task that races schedule timers against inbox notifications.
-				// Whichever fires first, we flush due schedules, then publish a preview
-				// to the slot watched by the input thread. Wrapped in `with_session_id`
-				// because `tokio::spawn` does not propagate task-local context, and
-				// both `flush_due_to_inbox` and `next_schedule_sleep` need the session
-				// id to find the session-scoped schedule store.
-				let inbox_notify = crate::session::inbox::get_inbox_notify();
-				let slot_for_notify = inbox_pending.clone();
-				let session_name_for_peek = chat_session.session.info.name.clone();
-				let session_id_for_task = chat_session.session.info.name.clone();
-				let notify_task = tokio::spawn(async move {
-					crate::session::context::with_session_id(session_id_for_task, async move {
-						loop {
-							// Wait for any event that might make the inbox non-empty:
-							// a schedule timer fires, or someone pushed to the inbox.
-							tokio::select! {
-								_ = crate::mcp::orchestration::next_schedule_sleep() => {}
-								_ = async {
-									if let Some(ref notify) = inbox_notify {
-										notify.notified().await;
-									} else {
-										std::future::pending::<()>().await;
-									}
-								} => {}
+						match current_state {
+							ProcessingState::Idle | ProcessingState::ReadingInput => {
+								// Nothing to clean up - just reset and continue
+								log_debug!("Cancelled during idle state - no cleanup needed");
 							}
-							// Flush any due schedule entries into the inbox.
-							crate::mcp::orchestration::flush_due_to_inbox();
-							// Publish a preview if the inbox now has a message.
-							if let Some(preview) =
-								crate::session::inbox::peek_inbox_preview(&session_name_for_peek)
-							{
-								if let Ok(mut guard) = slot_for_notify.lock() {
-									*guard = Some(preview);
-								}
-								break;
-							}
-							// Stale wakeup — loop and wait for the next event.
-						}
-					})
-					.await;
-				});
-
-				let estimated_cost = chat_session.estimated_cost;
-				let config_clone = current_config.clone();
-				let role_clone = role.clone();
-				let session_name = chat_session.session.info.name.clone();
-				let inbox_pending_clone = inbox_pending.clone();
-				let reply = ReplyInput {
-					replies: assistant_replies(&chat_session),
-					prefill: reply_prefill.take(),
-				};
-
-				let result = tokio::task::spawn_blocking(move || {
-					read_user_input(
-						estimated_cost,
-						&config_clone,
-						&role_clone,
-						current_context_tokens,
-						&session_name,
-						inbox_pending_clone,
-						reply,
-					)
-				})
-				.await
-				.unwrap_or_else(|e| {
-					log_debug!("Input thread panicked: {}", e);
-					Ok(InputResult::Text(String::new(), Vec::new()))
-				})?;
-
-				// Clean up the notify watcher — no longer needed this iteration.
-				notify_task.abort();
-
-				result
-			};
-
-			// Input is in hand — allow the turn's animation to start again.
-			crate::session::chat::get_animation_manager().resume();
-
-			// Handle the input result with proper error recovery
-			let mut input = match input_result {
-				InputResult::Text(text, clipboard_items) => {
-					apply_clipboard_items(&mut chat_session, clipboard_items);
-					text
-				}
-				InputResult::AddWithoutSending(text, clipboard_items) => {
-					// Ctrl+G with EMPTY input + a previously failed request → retry that request.
-					// This lets the user resend the last failed prompt without retyping after
-					// a transient API error (e.g. "error decoding response body").
-					if text.trim().is_empty() {
-						// Follow-up retry: a transient error hit the post-tool-execution API
-						// call. History is in a valid state (assistant tool_calls + tool_results
-						// already recorded). Re-issue the API call against current state — no
-						// user message to add, no layers/compression to re-run.
-						if last_failed_followup {
-							apply_clipboard_items(&mut chat_session, clipboard_items);
-							last_failed_followup = false;
-							println!("{}", "↻ Retrying last failed request...".bright_cyan());
-
-							let operation_rx_retry = cancellation.new_operation();
-							*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
-
-							match prepare_for_api_call(
-								&mut chat_session,
-								&current_config,
-								operation_rx_retry.clone(),
-							)
-							.await
-							{
-								Ok(()) => {}
-								Err(e) if crate::session::cancellation::is_cancelled(&e) => {
-									continue;
-								}
-								Err(e) => {
-									// Same as the initial call, minus the rollback: the
-									// tool results already in history stay valid, so
-									// report without truncating and keep the retry
-									// buffer armed.
-									let model_for_error = chat_session.model.clone();
-									handle_followup_api_error(
-										&model_for_error,
-										&e,
-										OutputMode::Interactive,
-									);
-									last_failed_followup = true;
-									continue;
-								}
-							}
-
-							let retry_result = tokio::select! {
-								result = execute_api_call_and_process_response(
-									&mut chat_session,
-									&current_config,
-									&role,
-									operation_rx_retry.clone(),
-									OutputMode::Interactive,
-									SilentSink,
-								) => result,
-								_ = async {
-									let mut cancel_rx = cancellation.operation_receiver();
-									while !*cancel_rx.borrow() {
-										if cancel_rx.changed().await.is_err() {
-											break;
+							ProcessingState::CallingAPI => {
+								// API call was interrupted - determine if we're in multi-turn conversation
+								// Multi-turn = tools were already executed and we're processing follow-up response
+								// Check: Are there ANY tool messages in the current operation's context?
+								if let Some(op) = operation {
+									match interrupted_call_truncation(
+										&chat_session.session.messages,
+										op.user_message_index,
+									) {
+										Some(user_idx) => {
+											// FIRST CALL: No tools executed yet — remove the user
+											// message (and assistant if added) for a clean retry.
+											chat_session.session.messages.truncate(user_idx);
+											log_debug!(
+												"Ctrl+C during first API call - removed user message for clean retry"
+											);
+										}
+										None => {
+											// MULTI-TURN: Tools were executed, conversation state is
+											// valid — keep user message, assistant message, tool results.
+											log_debug!("Ctrl+C during multi-turn (tools executed) - preserving all conversation state");
 										}
 									}
-								} => {
-									use crate::session::chat::get_animation_manager;
-									get_animation_manager().stop_current().await;
-									log_debug!("Follow-up retry cancelled by user");
-									continue;
-								}
-							};
-
-							match retry_result {
-								Ok(_) => {
-									// Successful retry — clear both retry buffers.
-									last_failed_input = None;
-									last_failed_followup = false;
-								}
-								Err(e) => {
-									handle_followup_api_error(
-										&chat_session.model,
-										&e,
-										OutputMode::Interactive,
-									);
-									last_failed_followup = true;
-									println!(
-										"{}",
-										"💡 Press Ctrl+G with empty input to retry the last failed request."
-											.dimmed()
-									);
 								}
 							}
-							continue;
+							ProcessingState::CompletedWithResults => {
+								// Operation completed successfully - nothing to clean up
+								log_debug!("Cancelled after completion - all work preserved");
+							}
 						}
 
-						if let Some(prev_input) = last_failed_input.take() {
-							apply_clipboard_items(&mut chat_session, clipboard_items);
-							println!("{}", "↻ Retrying last failed request...".bright_cyan());
-							prev_input
-						} else {
-							continue;
+						// Save the session after cleanup to persist changes
+						// PHASE 4: Robust save with retry and error reporting
+						// CRITICAL FIX: Write TRUNCATION_POINT marker to session file
+						// This tells the loader to discard messages after this point on resume
+						if let Some(session_file) = &chat_session.session.session_file {
+							let truncation_entry = serde_json::json!({
+								"type": "TRUNCATION_POINT",
+								"timestamp": std::time::SystemTime::now()
+									.duration_since(std::time::UNIX_EPOCH)
+									.unwrap_or_default()
+									.as_secs(),
+								"message_count": chat_session.session.messages.len(),
+								"reason": "ctrl_c_cleanup"
+							});
+							if let Err(e) = crate::session::append_to_session_file(
+								session_file,
+								&serde_json::to_string(&truncation_entry).unwrap_or_default(),
+							) {
+								log_debug!("Failed to write TRUNCATION_POINT: {}", e);
+							}
 						}
-					} else {
-						// Ctrl+G with non-empty input — add to context without sending.
-						apply_clipboard_items(&mut chat_session, clipboard_items);
 
-						// Add the message to session context, with @file
-						// mentions injected as rendered file content.
-						chat_session.add_user_message(
-							&crate::utils::file_renderer::expand_at_file_refs(&text),
-						)?;
-
-						// Save the session to persist the added message
 						if let Err(e) = chat_session.save() {
-							log_debug!(
-								"Warning: Failed to save session after adding message: {}",
-								e
-							);
+							use colored::*;
+							if !crate::logging::tracing_setup::is_structured_output_mode() {
+								eprintln!();
+								eprintln!(
+									"{}",
+									"⚠️  CRITICAL: Failed to save session after cleanup".bright_red().bold()
+								);
+								eprintln!("{} {}", "Error:".bright_yellow(), e);
+								eprintln!("{}", "Session state may be inconsistent on resume.".bright_yellow());
+								eprintln!();
+							} else {
+								crate::log_error!("CRITICAL: Failed to save session after cleanup: {}", e);
+							}
+
+							// Attempt one retry
+							log_debug!("Retrying session save after failure...");
+							if let Err(retry_err) = chat_session.save() {
+								if !crate::logging::tracing_setup::is_structured_output_mode() {
+									eprintln!("{}", "⚠️  Retry failed. Session may be corrupted.".bright_red());
+								} else {
+									crate::log_error!("Retry save failed: {}", retry_err);
+								}
+								log_debug!("Retry save failed: {}", retry_err);
+							} else if !crate::logging::tracing_setup::is_structured_output_mode() {
+								eprintln!("{}", "✓ Retry succeeded - session saved.".bright_green());
+							}
 						}
 
-						// Provide feedback to user
-						println!("{}", "✓ Message added to context".bright_cyan());
+						// Clear operation context
+						*current_operation.lock().unwrap() = None;
 
-						// Continue to next input without sending to API
+						// CRITICAL FIX: Reset cancellation state BEFORE continuing
+						// This prevents infinite loop where cancellation is always true
+						cancellation.reset();
+						log_debug!("Cancellation state reset - ready for new operation");
+
 						continue;
 					}
-				}
-				InputResult::Cancelled => {
-					// Ctrl+C pressed during input
-					log_debug!("Input cancelled by user - cleaning up");
 
-					// Kill any running async jobs
-					crate::mcp::agent::functions::kill_all_jobs();
+					// CRITICAL: Reset processing state to Idle AFTER cancellation cleanup
+					// This ensures cleanup logic sees the correct state during cancellation
+					*processing_state.lock().unwrap() = ProcessingState::Idle;
 
-					// Ensure session is saved
-					if let Err(e) = chat_session.save() {
-						log_debug!("Warning: Failed to save session after cancellation: {}", e);
-					}
-					continue;
-				}
-				InputResult::Exit => {
-					// Ctrl+D is an explicit request to quit: exit now. Any detached
-					// background job dies with the process (octofs is killed on
-					// shutdown), so there is nothing to wait for — an interactive
-					// user asking to leave must not be held on a build. (A one-shot
-					// `--format` run is different: there the model is mid-task
-					// waiting for a job it launched, so that loop does wait.)
-					// Ctrl+D pressed - graceful exit handled in input.rs
-					// Learning extraction on exit (skip if /done already extracted).
-					// Handed to a detached child process: the runtime dies with this
-					// loop, so an in-process task would be aborted, and awaiting one
-					// held the terminal for a whole LLM round-trip.
-					if current_config.supervisor.learning.enabled
-						&& !chat_session.learning_extracted
-					{
-						crate::supervisor::learning::extract::extract_lessons_before_exit(
-							&chat_session,
-							&current_config,
-							role.clone(),
-							Some(&current_dir),
-						);
-					}
-					// Kill any running async jobs
-					crate::mcp::agent::functions::kill_all_jobs();
-					// Ensure session is saved
-					if let Err(e) = chat_session.save() {
-						log_debug!("Warning: Failed to save session: {}", e);
-					}
-					break;
-				}
-			};
+					// Set state to reading input
+					*processing_state.lock().unwrap() = ProcessingState::ReadingInput;
 
-			// Check if the input is an exit command
-			if input == "/exit" || input == "/quit" {
-				// Learning extraction on exit (skip if /done already extracted).
-				// Detached child process — see the Ctrl+D path above.
-				if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
-					crate::supervisor::learning::extract::extract_lessons_before_exit(
-						&chat_session,
+					// Stop any in-flight cache keepalive from the previous turn and fold
+					// its accumulated cost into the session before we read new input.
+					// Done early so the next read_user_input runs with no background
+					// pings competing for the network or rate-limit budget.
+					drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, false).await;
+
+					// Flush any due schedule entries into the inbox so all injection sources
+					// are unified — the loop only needs to drain the inbox from here on.
+					crate::mcp::orchestration::flush_due_to_inbox();
+					// Now that the response loop is back to idle, fire any idle-mode entries
+					// (only if no taps / background jobs are still running).
+					crate::mcp::orchestration::flush_idle_to_inbox();
+
+					// Pop the first pending inbox message (background agent, schedule, skill, /prompt).
+					// If one is ready, skip user input entirely and process it immediately.
+					let pending_msg = crate::session::inbox::try_pop_inbox_message();
+					let mut injected_source = pending_msg.as_ref().map(|msg| msg.source.clone());
+
+					// Get a new operation token for this iteration
+					let operation_rx = cancellation.new_operation();
+
+					// Calculate current context tokens for display
+					let current_context_tokens = calculate_current_context_tokens(
+						&chat_session.session.messages,
 						&current_config,
-						role.clone(),
-						Some(&current_dir),
-					);
-				}
-				// Kill any running async jobs before exiting
-				crate::mcp::agent::functions::kill_all_jobs();
-				// Show resume command with session ID
-				let resume_cmd =
-					format!("octomind run --resume {}", chat_session.session.info.name)
-						.bright_cyan();
-				println!("\nTo continue this session, run: {}", resume_cmd);
-				break;
-			}
+						&chat_session.model,
+					)
+					.await;
 
-			// Skip if input is empty — unless an inbox message is waiting.
-			if input.trim().is_empty() {
-				// User pressed Enter on empty prompt. Check if an inbox
-				// message arrived while they were at the prompt.
-				crate::mcp::orchestration::flush_due_to_inbox();
-				if crate::session::inbox::has_inbox_messages() {
-					if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
-						log_debug!("Processing inbox message from {:?}", msg.source);
-						crate::session::inbox::display_injected_input(&msg);
-						injected_source = Some(msg.source.clone());
-						input = msg.content;
-					}
-				}
-				if input.trim().is_empty() {
-					continue;
-				}
-			}
+					// Suspend animation before going idle at the prompt. This is the one
+					// unconditional teardown point: it covers every `continue` path that
+					// skips the turn-boundary stop_current (cancel-mid-API, follow-up retry)
+					// AND sets the suspended flag so a racing/background start_animation
+					// (e.g. a dropped API future's tool_result restart) can't repaint the
+					// spinner over reedline. Resumed once input is in hand, before the
+					// turn's animation legitimately starts.
+					crate::session::chat::get_animation_manager().suspend().await;
 
-			// Initialize request spending tracking at the start of each request
-			chat_session.start_request_spending_tracking();
+					let input_result = if let Some(inbox_msg) = pending_msg {
+						// An inbox message is ready — inject it without waiting for user input.
+						log_debug!("Processing inbox message from {:?}", inbox_msg.source);
+						crate::session::inbox::display_injected_input(&inbox_msg);
+						InputResult::Text(inbox_msg.content, Vec::new())
+					} else {
+						// Reedline blocks for user input. A shared slot lets the
+						// inbox-notification thread (inside read_user_input) flip
+						// `break_signal` and auto-fire scheduled / background messages
+						// without requiring the user to press Enter.
+						let inbox_pending: Arc<std::sync::Mutex<Option<String>>> =
+							Arc::new(std::sync::Mutex::new(None));
 
-			// Immediate feedback - show that we received the input
-			// This reduces perceived latency by giving instant visual feedback
-			if !input.starts_with('/') {
-				// Flush stdout to ensure prompt is cleared immediately
-				print!("\r\x1B[K");
-				std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
-			}
+						// Spawn a task that races schedule timers against inbox notifications.
+						// Whichever fires first, we flush due schedules, then publish a preview
+						// to the slot watched by the input thread. Wrapped in `with_session_id`
+						// because `tokio::spawn` does not propagate task-local context, and
+						// both `flush_due_to_inbox` and `next_schedule_sleep` need the session
+						// id to find the session-scoped schedule store.
+						let inbox_notify = crate::session::inbox::get_inbox_notify();
+						let slot_for_notify = inbox_pending.clone();
+						let session_name_for_peek = chat_session.session.info.name.clone();
+						let session_id_for_task = chat_session.session.info.name.clone();
+						let notify_task = tokio::spawn(async move {
+							crate::session::context::with_session_id(session_id_for_task, async move {
+								loop {
+									// Wait for any event that might make the inbox non-empty:
+									// a schedule timer fires, or someone pushed to the inbox.
+									tokio::select! {
+										_ = crate::mcp::orchestration::next_schedule_sleep() => {}
+										_ = async {
+											if let Some(ref notify) = inbox_notify {
+												notify.notified().await;
+											} else {
+												std::future::pending::<()>().await;
+											}
+										} => {}
+									}
+									// Flush any due schedule entries into the inbox.
+									crate::mcp::orchestration::flush_due_to_inbox();
+									// Publish a preview if the inbox now has a message.
+									if let Some(preview) =
+										crate::session::inbox::peek_inbox_preview(&session_name_for_peek)
+									{
+										if let Ok(mut guard) = slot_for_notify.lock() {
+											*guard = Some(preview);
+										}
+										break;
+									}
+									// Stale wakeup — loop and wait for the next event.
+								}
+							})
+							.await;
+						});
 
-			// Check if this is a command
-			if input.starts_with('/') {
-				// Handle special /done command separately
-				if input.trim_start().starts_with("/done") {
-					// Extract any trailing instructions after "/done"
-					let done_instructions = input
-						.trim()
-						.strip_prefix("/done")
-						.map(|s| s.trim())
-						.filter(|s| !s.is_empty())
-						.map(|s| s.to_owned());
+						let estimated_cost = chat_session.estimated_cost;
+						let config_clone = current_config.clone();
+						let role_clone = role.clone();
+						let session_name = chat_session.session.info.name.clone();
+						let inbox_pending_clone = inbox_pending.clone();
+						let reply = ReplyInput {
+							replies: assistant_replies(&chat_session),
+							prefill: reply_prefill.take(),
+						};
 
-					// Wire cancellation to spinner so the watcher inside
-					// AnimationManager auto-clears on Ctrl+C, and race the
-					// handle_done future against operation_rx so a cancellation
-					// returns control to the prompt instantly.
-					use crate::session::chat::get_animation_manager;
-					let animation_manager = get_animation_manager();
-					animation_manager.set_cancel_receiver(operation_rx.clone());
+						let result = tokio::task::spawn_blocking(move || {
+							read_user_input(
+								estimated_cost,
+								&config_clone,
+								&role_clone,
+								current_context_tokens,
+								&session_name,
+								inbox_pending_clone,
+								reply,
+							)
+						})
+						.await
+						.unwrap_or_else(|e| {
+							log_debug!("Input thread panicked: {}", e);
+							Ok(InputResult::Text(String::new(), Vec::new()))
+						})?;
 
-					let mut cancel_rx = operation_rx.clone();
-					let done_result = tokio::select! {
-						biased;
-						_ = async {
-							// Resolve as soon as the watch flips to true.
-							if *cancel_rx.borrow() { return; }
-							let _ = cancel_rx.changed().await;
-						} => {
-							log_debug!("/done cancelled by user");
-							None
-						}
-						r = super::commands::handle_done(
-							&mut chat_session,
-							&current_config,
-							operation_rx.clone(),
-						) => Some(r),
+						// Clean up the notify watcher — no longer needed this iteration.
+						notify_task.abort();
+
+						result
 					};
 
-					// Always tear down the spinner before returning to the
-					// prompt — `continue` below skips the regular stop_current
-					// at the bottom of the loop.
-					animation_manager.stop_current().await;
+					// Input is in hand — allow the turn's animation to start again.
+					crate::session::chat::get_animation_manager().resume();
 
-					match done_result {
-						Some(Ok(outcome)) => {
-							use crate::session::chat::session::commands::DoneOutcome;
-							match outcome {
-								DoneOutcome::Compressed => {
-									println!("{}", "✅ Conversation compressed.".bright_green());
+					// Handle the input result with proper error recovery
+					let mut input = match input_result {
+						InputResult::Text(text, clipboard_items) => {
+							apply_clipboard_items(&mut chat_session, clipboard_items);
+							text
+						}
+						InputResult::AddWithoutSending(text, clipboard_items) => {
+							// Ctrl+G with EMPTY input + a previously failed request → retry that request.
+							// This lets the user resend the last failed prompt without retyping after
+							// a transient API error (e.g. "error decoding response body").
+							if text.trim().is_empty() {
+								// Follow-up retry: a transient error hit the post-tool-execution API
+								// call. History is in a valid state (assistant tool_calls + tool_results
+								// already recorded). Re-issue the API call against current state — no
+								// user message to add, no layers/compression to re-run.
+								if last_failed_followup {
+									apply_clipboard_items(&mut chat_session, clipboard_items);
+									last_failed_followup = false;
+									println!("{}", "↻ Retrying last failed request...".bright_cyan());
+
+									let operation_rx_retry = cancellation.new_operation();
+									*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
+
+									match prepare_for_api_call(
+										&mut chat_session,
+										&current_config,
+										operation_rx_retry.clone(),
+									)
+									.await
+									{
+										Ok(()) => {}
+										Err(e) if crate::session::cancellation::is_cancelled(&e) => {
+											continue;
+										}
+										Err(e) => {
+											// Same as the initial call, minus the rollback: the
+											// tool results already in history stay valid, so
+											// report without truncating and keep the retry
+											// buffer armed.
+											let model_for_error = chat_session.model.clone();
+											handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
+											last_failed_followup = true;
+											continue;
+										}
+									}
+
+									let retry_result = tokio::select! {
+										result = execute_api_call_and_process_response(
+											&mut chat_session,
+											&current_config,
+											&role,
+											operation_rx_retry.clone(),
+											OutputMode::Interactive,
+											SilentSink,
+										) => result,
+										_ = async {
+											let mut cancel_rx = cancellation.operation_receiver();
+											while !*cancel_rx.borrow() {
+												if cancel_rx.changed().await.is_err() {
+													break;
+												}
+											}
+										} => {
+											use crate::session::chat::get_animation_manager;
+											get_animation_manager().stop_current().await;
+											log_debug!("Follow-up retry cancelled by user");
+											continue;
+										}
+									};
+
+									match retry_result {
+										Ok(_) => {
+											// Successful retry — clear both retry buffers.
+											last_failed_input = None;
+											last_failed_followup = false;
+										}
+										Err(e) => {
+											handle_followup_api_error(&chat_session.model, &e, OutputMode::Interactive);
+											last_failed_followup = true;
+											println!(
+												"{}",
+												"💡 Press Ctrl+G with empty input to retry the last failed request."
+													.dimmed()
+											);
+										}
+									}
+									continue;
 								}
-								DoneOutcome::NothingToCompress => {
-									println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+
+								if let Some(prev_input) = last_failed_input.take() {
+									apply_clipboard_items(&mut chat_session, clipboard_items);
+									println!("{}", "↻ Retrying last failed request...".bright_cyan());
+									prev_input
+								} else {
+									continue;
 								}
-								DoneOutcome::Failed(e) => {
-									println!("{}: {}", "❌ Compression failed".bright_red(), e);
+							} else {
+								// Ctrl+G with non-empty input — add to context without sending.
+								apply_clipboard_items(&mut chat_session, clipboard_items);
+
+								// Add the message to session context, with @file
+								// mentions injected as rendered file content.
+								chat_session
+									.add_user_message(&crate::utils::file_renderer::expand_at_file_refs(&text))?;
+
+								// Save the session to persist the added message
+								if let Err(e) = chat_session.save() {
+									log_debug!("Warning: Failed to save session after adding message: {}", e);
 								}
+
+								// Provide feedback to user
+								println!("{}", "✓ Message added to context".bright_cyan());
+
+								// Continue to next input without sending to API
+								continue;
 							}
 						}
-						Some(Err(e)) => {
-							println!("{}: {}", "❌ /done command failed".bright_red(), e);
-						}
-						None => {
-							// Cancelled — message already logged.
-						}
-					}
+						InputResult::Cancelled => {
+							// Ctrl+C pressed during input
+							log_debug!("Input cancelled by user - cleaning up");
 
-					// If the user appended instructions, treat them as new user input
-					// so the model picks up the shifted focus immediately after compression.
-					if let Some(instructions) = done_instructions {
-						input = instructions;
-						// Fall through to normal user-input processing below.
-					} else {
-						continue;
-					}
-				}
+							// Kill any running async jobs
+							crate::mcp::agent::functions::kill_all_jobs();
 
-				// Try to process as command; a failing command reports its error and keeps the session alive
-				let command_result = match chat_session
-					.process_command(&input, &mut current_config, &role, operation_rx.clone())
-					.await
-				{
-					Ok(result) => result,
-					Err(e) => {
-						println!("{}: {:#}", "❌ Command failed".bright_red(), e);
-						continue;
-					}
-				};
-
-				match command_result {
-					CommandResult::TreatAsUserInput => {
-						// This input should be treated as user input, fall through to normal processing
-					}
-					CommandResult::SwitchSession(new_session_name) => {
-						chat_session.save()?;
-						runtime_guards.shutdown().await?;
-						let workdir = crate::mcp::get_thread_working_directory();
-						let (new_session, new_guards) = crate::session::context::with_session_id(new_session_name.clone(), async {
-							crate::config::set_thread_config(&current_config);
-							crate::config::set_thread_role(&role);
-							crate::session::context::set_session_workdir(&new_session_name, workdir);
-							let session_params = SessionInitParams::new(&current_config, &role)
-								.with_name(new_session_name)
-								.with_max_retries(current_config.max_retries);
-							let mut new_session = ChatSession::initialize(session_params).await?;
-							new_session.session.info.interactive = true;
-							crate::mcp::initialize_mcp_for_role(&role, &current_config).await?;
-							let guards = init_session_runtime(args, &current_config, &new_session, &role).await?;
-							setup_system_prompt_and_cache(&mut new_session, &current_config, &role, true).await?;
-							crate::mcp::runtime::skill_auto::load_env_skills(&mut new_session).await;
-							crate::mcp::runtime::capability::load_env_capabilities(&current_config, None).await;
-							Ok::<_, anyhow::Error>((new_session, guards))
-						}).await?;
-						chat_session = new_session;
-						runtime_guards = new_guards;
-						first_message_processed = !chat_session.session.messages.is_empty();
-						println!("{}", format!("Starting new session: {}", chat_session.session.info.name).bright_green());
-						switched = true;
-						break;
-					}
-					CommandResult::Exit => {
-						if input.starts_with(MODEL_COMMAND)
-							|| input.starts_with(ROLE_COMMAND)
-						{
-							// This is a command that requires config reload
-							// Reload the configuration
-							match crate::config::Config::load() {
-								Ok(updated_config) => {
-									// Update our current config with the new role-specific config
-									current_config =
-										updated_config.get_merged_config_for_role(&role);
-									// Update thread config for logging macros
-									crate::config::set_thread_config(&current_config);
-									crate::config::set_thread_role(&role);
-								}
-								Err(e) => {
-									log_info!("Error reloading configuration: {}", e);
-								}
+							// Ensure session is saved
+							if let Err(e) = chat_session.save() {
+								log_debug!("Warning: Failed to save session after cancellation: {}", e);
 							}
-							// Continue with the session
 							continue;
-						} else {
-							// It's a regular exit command
+						}
+						InputResult::Exit => {
+							// Ctrl+D is an explicit request to quit: exit now. Any detached
+							// background job dies with the process (octofs is killed on
+							// shutdown), so there is nothing to wait for — an interactive
+							// user asking to leave must not be held on a build. (A one-shot
+							// `--format` run is different: there the model is mid-task
+							// waiting for a job it launched, so that loop does wait.)
+							// Ctrl+D pressed - graceful exit handled in input.rs
+							// Learning extraction on exit (skip if /done already extracted).
+							// Handed to a detached child process: the runtime dies with this
+							// loop, so an in-process task would be aborted, and awaiting one
+							// held the terminal for a whole LLM round-trip.
+							if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
+								crate::supervisor::learning::extract::extract_lessons_before_exit(
+									&chat_session,
+									&current_config,
+									role.clone(),
+									Some(&current_dir),
+								);
+							}
+							// Kill any running async jobs
+							crate::mcp::agent::functions::kill_all_jobs();
+							// Ensure session is saved
+							if let Err(e) = chat_session.save() {
+								log_debug!("Warning: Failed to save session: {}", e);
+							}
 							break;
 						}
-					}
-					CommandResult::Handled => {
-						// Command was handled successfully, continue with session
-						continue;
-					}
-					CommandResult::HandledWithOutput(mut json_output) => {
-						if let CommandOutput::Reply { quote, .. } = &*json_output {
-							// A blank line after the quote, so the answer starts
-							// outside it.
-							reply_prefill = Some(format!("{}\n\n", quote));
+					};
+
+					// Check if the input is an exit command
+					if input == "/exit" || input == "/quit" {
+						// Learning extraction on exit (skip if /done already extracted).
+						// Detached child process — see the Ctrl+D path above.
+						if current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
+							crate::supervisor::learning::extract::extract_lessons_before_exit(
+								&chat_session,
+								&current_config,
+								role.clone(),
+								Some(&current_dir),
+							);
 						}
-						// Command was handled with output
-						// Print it for CLI using existing display functions
-						print_command_output(&mut json_output, &mut chat_session, &current_config)
-							.await;
-						continue;
+						// Kill any running async jobs before exiting
+						crate::mcp::agent::functions::kill_all_jobs();
+						// Show resume command with session ID
+						let resume_cmd =
+							format!("octomind run --resume {}", chat_session.session.info.name).bright_cyan();
+						println!("\nTo continue this session, run: {}", resume_cmd);
+						break;
 					}
-				}
-			}
 
-			// Start animation early to provide visual feedback during pre-processing
-			// (skill activation, layer processing, compression checks)
-			// api_executor will stop and restart with proper cost/context values
-			let animation_manager =
-				crate::session::chat::animation_manager::get_animation_manager();
-			animation_manager
-				.start_animation(
-					&crate::config::with_thread_config(|c| c.output_mode())
-						.unwrap_or(crate::session::output::OutputMode::NonInteractive),
-				)
-				.await;
-
-			// Run skill activation on user input. Inbox-injected turns (schedule,
-			// skill replay, validator, background agent) drive the next action but
-			// are not the user's request — activating on them injects skills in
-			// response to the control plane, not to anything the user asked for.
-			if !injected_source
-				.as_ref()
-				.is_some_and(|source| source.is_system_managed())
-			{
-				crate::mcp::runtime::skill_auto::run_activation(
-					&input,
-					&current_dir,
-					&mut chat_session,
-				)
-				.await;
-			}
-
-			// Check for cancellation before starting layered processing
-			if cancellation.is_cancelled() {
-				animation_manager.stop_current().await;
-				continue;
-			}
-
-			// Run pipe pre-processing if a matching [[pipe]] is configured.
-			let processed_input =
-				run_pipe_if_enabled(&input, &role, first_message_processed).await?;
-
-			// Check for cancellation after pipe processing
-			if cancellation.is_cancelled() {
-				animation_manager.stop_current().await;
-				continue;
-			}
-
-			// Snapshot the user's original input for retry-on-failure (Ctrl+G with empty input).
-			let original_input_for_retry = input.clone();
-
-			// Mark first-message processing as complete. Note: if the pipe
-			// errors above (hard stop via `?`), this line is never reached and
-			// first_message_processed stays false — so a `when = "first"` pipe
-			// will retry on the next user message. This is intentional: the
-			// first message was never successfully processed.
-			first_message_processed = true;
-			// Inject @file mentions as rendered file content. After skill
-			// activation, so file content can't false-trigger skills.
-			let final_input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
-
-			// Initialize operation context for smart tracking
-			let operation_id = format!(
-				"op_{}",
-				std::time::SystemTime::now()
-					.duration_since(std::time::UNIX_EPOCH)
-					.unwrap_or_default()
-					.as_millis()
-			);
-			let system_managed_input = injected_source
-				.as_ref()
-				.is_some_and(|source| source.is_system_managed());
-
-			// CRITICAL FIX: Set processing state BEFORE adding user message
-			// This ensures cancellation cleanup works correctly if Ctrl+C is pressed
-			// between adding the message and starting the API call
-			*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
-
-			// CRITICAL: Capture user message insertion index AFTER compression mutations.
-			// This keeps error rollback truncation aligned with current session layout.
-
-			let user_message_index = chat_session.session.messages.len();
-
-			// Runtime control input (including schedule firings) drives the next action
-			// without becoming the user's active task. Preserve source metadata through
-			// the interactive path just as ACP, WebSocket, and non-interactive modes do.
-			if system_managed_input {
-				chat_session.add_system_managed_turn_message(&final_input)?;
-			} else {
-				chat_session.add_user_message(&final_input)?;
-				// New real user message → run per-message lesson recall on the next API call.
-				chat_session.pending_recall = true;
-			}
-
-			// Create operation context for tracking
-			*current_operation.lock().unwrap() = Some(OperationContext {
-				user_message_index: Some(user_message_index),
-				assistant_message_index: None, // Will be set when assistant message is added
-			});
-
-			log_debug!(
-				"Started operation {} with user message at index {}",
-				operation_id,
-				user_message_index
-			);
-
-			// Prepare for API call using helper function
-			// Treat cancellation as a soft signal — continue the loop instead of exiting the session
-			match prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone())
-				.await
-			{
-				Ok(()) => {}
-				Err(e) if crate::session::cancellation::is_cancelled(&e) => continue,
-				Err(e) => {
-					// A preparation failure — compression, the context ceiling, a
-					// layer — is one turn's failure, exactly like a provider error:
-					// report it, roll the turn back, hand the prompt back. Ending
-					// the whole interactive session over a request that never left
-					// the machine loses every other thing the session was holding.
-					let model_for_error = chat_session.model.clone();
-					handle_api_error(
-						&mut chat_session,
-						user_message_index,
-						&model_for_error,
-						&e,
-						OutputMode::Interactive,
-					);
-					println!(
-						"{}",
-						"💡 Press Ctrl+G with empty input to retry the last failed request."
-							.dimmed()
-					);
-					last_failed_input = Some(original_input_for_retry);
-					*current_operation.lock().unwrap() = None;
-					continue;
-				}
-			}
-
-			// Capture message count BEFORE API call to detect if assistant message gets added
-			let messages_before_api = chat_session.session.messages.len();
-
-			// Check for Ctrl+C before making API call
-			if cancellation.is_cancelled() {
-				// Immediately stop and return to main loop
-				continue;
-			}
-
-			// Execute API call and process response using helper function
-			// CRITICAL FIX: Use tokio::select! to race API call against cancellation
-			// This allows INSTANT Ctrl+C response instead of waiting for API to complete
-			let user_message_index_for_error = user_message_index;
-			let model_for_error = chat_session.model.clone();
-
-			let api_result = {
-				// Set up notification forwarding for interactive terminal mode.
-				// Notifications (e.g. an MCP server's progress heartbeat) go on the
-				// spinner, not stderr: a long shell call beats every few seconds and
-				// one printed line per beat scrolls the transcript away.
-				let (notif_tx, mut notif_rx) =
-					tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
-				crate::mcp::process::set_notification_sender(None, notif_tx);
-
-				let notif_drain = tokio::spawn(async move {
-					while let Some(msg) = notif_rx.recv().await {
-						if let crate::websocket::ServerMessage::McpNotification(n) = msg {
-							let text = n
-								.params
-								.get("message")
-								.and_then(|m| m.as_str())
-								.unwrap_or(&n.method);
-							crate::session::chat::get_animation_manager()
-								.set_phase_if_running(&format!("[{}] {}", n.server, text));
+					// Skip if input is empty — unless an inbox message is waiting.
+					if input.trim().is_empty() {
+						// User pressed Enter on empty prompt. Check if an inbox
+						// message arrived while they were at the prompt.
+						crate::mcp::orchestration::flush_due_to_inbox();
+						if crate::session::inbox::has_inbox_messages() {
+							if let Some(msg) = crate::session::inbox::try_pop_inbox_message() {
+								log_debug!("Processing inbox message from {:?}", msg.source);
+								crate::session::inbox::display_injected_input(&msg);
+								injected_source = Some(msg.source.clone());
+								input = msg.content;
+							}
+						}
+						if input.trim().is_empty() {
+							continue;
 						}
 					}
-				});
 
-				let result = tokio::select! {
-					// API call branch
-					result = execute_api_call_and_process_response(
-						&mut chat_session,
-						&current_config,
-						&role,
-						operation_rx.clone(),
-						OutputMode::Interactive,
-						SilentSink,
-					) => result,
-					// Cancellation branch - INSTANT response
-					_ = async {
-						let mut cancel_rx = cancellation.operation_receiver();
-						while !*cancel_rx.borrow() {
-							if cancel_rx.changed().await.is_err() {
+					// Initialize request spending tracking at the start of each request
+					chat_session.start_request_spending_tracking();
+
+					// Immediate feedback - show that we received the input
+					// This reduces perceived latency by giving instant visual feedback
+					if !input.starts_with('/') {
+						// Flush stdout to ensure prompt is cleared immediately
+						print!("\r\x1B[K");
+						std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+					}
+
+					// Check if this is a command
+					if input.starts_with('/') {
+						// Handle special /done command separately
+						if input.trim_start().starts_with("/done") {
+							// Extract any trailing instructions after "/done"
+							let done_instructions = input
+								.trim()
+								.strip_prefix("/done")
+								.map(|s| s.trim())
+								.filter(|s| !s.is_empty())
+								.map(|s| s.to_owned());
+
+							// Wire cancellation to spinner so the watcher inside
+							// AnimationManager auto-clears on Ctrl+C, and race the
+							// handle_done future against operation_rx so a cancellation
+							// returns control to the prompt instantly.
+							use crate::session::chat::get_animation_manager;
+							let animation_manager = get_animation_manager();
+							animation_manager.set_cancel_receiver(operation_rx.clone());
+
+							let mut cancel_rx = operation_rx.clone();
+							let done_result = tokio::select! {
+								biased;
+								_ = async {
+									// Resolve as soon as the watch flips to true.
+									if *cancel_rx.borrow() { return; }
+									let _ = cancel_rx.changed().await;
+								} => {
+									log_debug!("/done cancelled by user");
+									None
+								}
+								r = super::commands::handle_done(
+									&mut chat_session,
+									&current_config,
+									operation_rx.clone(),
+								) => Some(r),
+							};
+
+							// Always tear down the spinner before returning to the
+							// prompt — `continue` below skips the regular stop_current
+							// at the bottom of the loop.
+							animation_manager.stop_current().await;
+
+							match done_result {
+								Some(Ok(outcome)) => {
+									use crate::session::chat::session::commands::DoneOutcome;
+									match outcome {
+										DoneOutcome::Compressed => {
+											println!("{}", "✅ Conversation compressed.".bright_green());
+										}
+										DoneOutcome::NothingToCompress => {
+											println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+										}
+										DoneOutcome::Failed(e) => {
+											println!("{}: {}", "❌ Compression failed".bright_red(), e);
+										}
+									}
+								}
+								Some(Err(e)) => {
+									println!("{}: {}", "❌ /done command failed".bright_red(), e);
+								}
+								None => {
+									// Cancelled — message already logged.
+								}
+							}
+
+							// If the user appended instructions, treat them as new user input
+							// so the model picks up the shifted focus immediately after compression.
+							if let Some(instructions) = done_instructions {
+								input = instructions;
+								// Fall through to normal user-input processing below.
+							} else {
+								continue;
+							}
+						}
+
+						// Try to process as command; a failing command reports its error and keeps the session alive
+						let command_result = match chat_session
+							.process_command(&input, &mut current_config, &role, operation_rx.clone())
+							.await
+						{
+							Ok(result) => result,
+							Err(e) => {
+								println!("{}: {:#}", "❌ Command failed".bright_red(), e);
+								continue;
+							}
+						};
+
+						match command_result {
+							CommandResult::TreatAsUserInput => {
+								// This input should be treated as user input, fall through to normal processing
+							}
+							CommandResult::SwitchSession(new_session_name) => {
+								chat_session.save()?;
+								runtime_guards.shutdown().await?;
+								let workdir = crate::mcp::get_thread_working_directory();
+								let (new_session, new_guards) =
+									crate::session::context::with_session_id(new_session_name.clone(), async {
+										crate::config::set_thread_config(&current_config);
+										crate::config::set_thread_role(&role);
+										crate::session::context::set_session_workdir(&new_session_name, workdir);
+										let session_params = SessionInitParams::new(&current_config, &role)
+											.with_name(new_session_name)
+											.with_max_retries(current_config.max_retries);
+										let mut new_session = ChatSession::initialize(session_params).await?;
+										new_session.session.info.interactive = true;
+										crate::mcp::initialize_mcp_for_role(&role, &current_config).await?;
+										let guards =
+											init_session_runtime(args, &current_config, &new_session, &role).await?;
+										setup_system_prompt_and_cache(&mut new_session, &current_config, &role, true)
+											.await?;
+										crate::mcp::runtime::skill_auto::load_env_skills(&mut new_session).await;
+										crate::mcp::runtime::capability::load_env_capabilities(&current_config, None)
+											.await;
+										Ok::<_, anyhow::Error>((new_session, guards))
+									})
+									.await?;
+								chat_session = new_session;
+								runtime_guards = new_guards;
+								first_message_processed = !chat_session.session.messages.is_empty();
+								println!(
+									"{}",
+									format!("Starting new session: {}", chat_session.session.info.name).bright_green()
+								);
+								switched = true;
 								break;
 							}
-						}
-					} => {
-						// Ctrl+C pressed - stop animation and return to prompt immediately
-						use crate::session::chat::get_animation_manager;
-						get_animation_manager().stop_current().await;
-						log_debug!("API call cancelled by user - returning to prompt");
-						crate::mcp::process::clear_notification_sender(None);
-						notif_drain.abort();
-						continue;
-					}
-				}; // end tokio::select!
-
-				crate::mcp::process::clear_notification_sender(None);
-				let _ = notif_drain.await;
-
-				result
-			}; // end notification wrapper block
-
-			match api_result {
-				Ok(_) => {
-					// CRITICAL FIX: Check for cancellation BEFORE marking as completed
-					// If cancelled during HTTP request, we need to remove the user message
-					if cancellation.is_cancelled() {
-						log_debug!(
-						"Operation cancelled during or after API call - cleaning up user message"
-					);
-
-						// Check if assistant message was added (response was processed)
-						let messages_after_api = chat_session.session.messages.len();
-						let assistant_message_added = messages_after_api > messages_before_api;
-
-						if !assistant_message_added {
-							// No assistant response was processed - remove the user message
-							if user_message_index < chat_session.session.messages.len() {
-								chat_session.session.messages.truncate(user_message_index);
-								log_debug!("Removed user message due to cancellation before assistant response");
+							CommandResult::Exit => {
+								if input.starts_with(MODEL_COMMAND) || input.starts_with(ROLE_COMMAND) {
+									// This is a command that requires config reload
+									// Reload the configuration
+									match crate::config::Config::load() {
+										Ok(updated_config) => {
+											// Update our current config with the new role-specific config
+											current_config = updated_config.get_merged_config_for_role(&role);
+											// Update thread config for logging macros
+											crate::config::set_thread_config(&current_config);
+											crate::config::set_thread_role(&role);
+										}
+										Err(e) => {
+											log_info!("Error reloading configuration: {}", e);
+										}
+									}
+									// Continue with the session
+									continue;
+								} else {
+									// It's a regular exit command
+									break;
+								}
+							}
+							CommandResult::Handled => {
+								// Command was handled successfully, continue with session
+								continue;
+							}
+							CommandResult::HandledWithOutput(mut json_output) => {
+								if let CommandOutput::Reply { quote, .. } = &*json_output {
+									// A blank line after the quote, so the answer starts
+									// outside it.
+									reply_prefill = Some(format!("{}\n\n", quote));
+								}
+								// Command was handled with output
+								// Print it for CLI using existing display functions
+								print_command_output(&mut json_output, &mut chat_session, &current_config).await;
+								continue;
 							}
 						}
-						// If assistant message was added, keep everything (conversation state is valid)
-
-						continue; // Return to main loop for next user input
 					}
 
-					// Update processing state to completed when done (only if not cancelled)
-					*processing_state.lock().unwrap() = ProcessingState::CompletedWithResults;
+					// Start animation early to provide visual feedback during pre-processing
+					// (skill activation, layer processing, compression checks)
+					// api_executor will stop and restart with proper cost/context values
+					let animation_manager = crate::session::chat::animation_manager::get_animation_manager();
+					animation_manager
+						.start_animation(
+							&crate::config::with_thread_config(|c| c.output_mode())
+								.unwrap_or(crate::session::output::OutputMode::NonInteractive),
+						)
+						.await;
 
-					// Update operation context with assistant message index if one was added
-					if let Some(ref mut op) = *current_operation.lock().unwrap() {
-						let messages_after_api = chat_session.session.messages.len();
-						if messages_after_api > messages_before_api {
-							// Assistant message was added - record its index
-							op.assistant_message_index = Some(messages_before_api);
-							log_debug!("Assistant message added at index {}", messages_before_api);
+					// Run skill activation on user input. Inbox-injected turns (schedule,
+					// skill replay, validator, background agent) drive the next action but
+					// are not the user's request — activating on them injects skills in
+					// response to the control plane, not to anything the user asked for.
+					if !injected_source
+						.as_ref()
+						.is_some_and(|source| source.is_system_managed())
+					{
+						crate::mcp::runtime::skill_auto::run_activation(&input, &current_dir, &mut chat_session).await;
+					}
+
+					// Check for cancellation before starting layered processing
+					if cancellation.is_cancelled() {
+						animation_manager.stop_current().await;
+						continue;
+					}
+
+					// Run pipe pre-processing if a matching [[pipe]] is configured.
+					let processed_input = run_pipe_if_enabled(&input, &role, first_message_processed).await?;
+
+					// Check for cancellation after pipe processing
+					if cancellation.is_cancelled() {
+						animation_manager.stop_current().await;
+						continue;
+					}
+
+					// Snapshot the user's original input for retry-on-failure (Ctrl+G with empty input).
+					let original_input_for_retry = input.clone();
+
+					// Mark first-message processing as complete. Note: if the pipe
+					// errors above (hard stop via `?`), this line is never reached and
+					// first_message_processed stays false — so a `when = "first"` pipe
+					// will retry on the next user message. This is intentional: the
+					// first message was never successfully processed.
+					first_message_processed = true;
+					// Inject @file mentions as rendered file content. After skill
+					// activation, so file content can't false-trigger skills.
+					let final_input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
+
+					// Initialize operation context for smart tracking
+					let operation_id = format!(
+						"op_{}",
+						std::time::SystemTime::now()
+							.duration_since(std::time::UNIX_EPOCH)
+							.unwrap_or_default()
+							.as_millis()
+					);
+					let system_managed_input = injected_source
+						.as_ref()
+						.is_some_and(|source| source.is_system_managed());
+
+					// CRITICAL FIX: Set processing state BEFORE adding user message
+					// This ensures cancellation cleanup works correctly if Ctrl+C is pressed
+					// between adding the message and starting the API call
+					*processing_state.lock().unwrap() = ProcessingState::CallingAPI;
+
+					// CRITICAL: Capture user message insertion index AFTER compression mutations.
+					// This keeps error rollback truncation aligned with current session layout.
+
+					let user_message_index = chat_session.session.messages.len();
+
+					// Runtime control input (including schedule firings) drives the next action
+					// without becoming the user's active task. Preserve source metadata through
+					// the interactive path just as ACP, WebSocket, and non-interactive modes do.
+					if system_managed_input {
+						chat_session.add_system_managed_turn_message(&final_input)?;
+					} else {
+						chat_session.add_user_message(&final_input)?;
+						// New real user message → run per-message lesson recall on the next API call.
+						chat_session.pending_recall = true;
+					}
+
+					// Create operation context for tracking
+					*current_operation.lock().unwrap() = Some(OperationContext {
+						user_message_index: Some(user_message_index),
+						assistant_message_index: None, // Will be set when assistant message is added
+					});
+
+					log_debug!(
+						"Started operation {} with user message at index {}",
+						operation_id,
+						user_message_index
+					);
+
+					// Prepare for API call using helper function
+					// Treat cancellation as a soft signal — continue the loop instead of exiting the session
+					match prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await {
+						Ok(()) => {}
+						Err(e) if crate::session::cancellation::is_cancelled(&e) => continue,
+						Err(e) => {
+							// A preparation failure — compression, the context ceiling, a
+							// layer — is one turn's failure, exactly like a provider error:
+							// report it, roll the turn back, hand the prompt back. Ending
+							// the whole interactive session over a request that never left
+							// the machine loses every other thing the session was holding.
+							let model_for_error = chat_session.model.clone();
+							handle_api_error(
+								&mut chat_session,
+								user_message_index,
+								&model_for_error,
+								&e,
+								OutputMode::Interactive,
+							);
+							println!(
+								"{}",
+								"💡 Press Ctrl+G with empty input to retry the last failed request.".dimmed()
+							);
+							last_failed_input = Some(original_input_for_retry);
+							*current_operation.lock().unwrap() = None;
+							continue;
 						}
 					}
 
-					// Successful turn — clear retry buffer.
-					last_failed_input = None;
-					last_failed_followup = false;
+					// Capture message count BEFORE API call to detect if assistant message gets added
+					let messages_before_api = chat_session.session.messages.len();
 
-					// Start a keepalive ping task against a frozen snapshot of
-					// the conversation. Read-only on session state — pings
-					// never mutate messages; the harvested exchanges fold into
-					// cost at the top of the next loop iteration.
-					keepalive = KeepaliveHandle::spawn(
-						&chat_session.session.messages,
-						&chat_session.model,
-						&current_config,
-						current_config.cache_keepalive_enabled,
-						std::time::Duration::from_secs(
-							current_config.cache_keepalive_max_idle_seconds,
-						),
-					);
-				}
-				Err(e) => {
-					// Distinguish follow-up failure (after tools executed) from initial-call
-					// failure. handle_api_error truncates the user message — correct only for
-					// the initial call. For follow-ups the history already contains valid
-					// assistant(tool_calls) + tool_results; truncating would discard that work.
-					let messages_after_api = chat_session.session.messages.len();
-					let is_followup_failure = messages_after_api > messages_before_api;
-
-					if is_followup_failure {
-						handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
-						last_failed_followup = true;
-					} else {
-						handle_api_error(
-							&mut chat_session,
-							user_message_index_for_error,
-							&model_for_error,
-							&e,
-							OutputMode::Interactive,
-						);
-						// Stash the original input so an empty Ctrl+G replays this turn.
-						last_failed_input = Some(original_input_for_retry);
+					// Check for Ctrl+C before making API call
+					if cancellation.is_cancelled() {
+						// Immediately stop and return to main loop
+						continue;
 					}
 
-					println!(
-						"{}",
-						"💡 Press Ctrl+G with empty input to retry the last failed request."
-							.dimmed()
-					);
+					// Execute API call and process response using helper function
+					// CRITICAL FIX: Use tokio::select! to race API call against cancellation
+					// This allows INSTANT Ctrl+C response instead of waiting for API to complete
+					let user_message_index_for_error = user_message_index;
+					let model_for_error = chat_session.model.clone();
+
+					let api_result = {
+						// Set up notification forwarding for interactive terminal mode.
+						// Notifications (e.g. an MCP server's progress heartbeat) go on the
+						// spinner, not stderr: a long shell call beats every few seconds and
+						// one printed line per beat scrolls the transcript away.
+						let (notif_tx, mut notif_rx) =
+							tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+						crate::mcp::process::set_notification_sender(None, notif_tx);
+
+						let notif_drain = tokio::spawn(async move {
+							while let Some(msg) = notif_rx.recv().await {
+								if let crate::websocket::ServerMessage::McpNotification(n) = msg {
+									let text = n.params.get("message").and_then(|m| m.as_str()).unwrap_or(&n.method);
+									crate::session::chat::get_animation_manager()
+										.set_phase_if_running(&format!("[{}] {}", n.server, text));
+								}
+							}
+						});
+
+						let result = tokio::select! {
+							// API call branch
+							result = execute_api_call_and_process_response(
+								&mut chat_session,
+								&current_config,
+								&role,
+								operation_rx.clone(),
+								OutputMode::Interactive,
+								SilentSink,
+							) => result,
+							// Cancellation branch - INSTANT response
+							_ = async {
+								let mut cancel_rx = cancellation.operation_receiver();
+								while !*cancel_rx.borrow() {
+									if cancel_rx.changed().await.is_err() {
+										break;
+									}
+								}
+							} => {
+								// Ctrl+C pressed - stop animation and return to prompt immediately
+								use crate::session::chat::get_animation_manager;
+								get_animation_manager().stop_current().await;
+								log_debug!("API call cancelled by user - returning to prompt");
+								crate::mcp::process::clear_notification_sender(None);
+								notif_drain.abort();
+								continue;
+							}
+						}; // end tokio::select!
+
+						crate::mcp::process::clear_notification_sender(None);
+						let _ = notif_drain.await;
+
+						result
+					}; // end notification wrapper block
+
+					match api_result {
+						Ok(_) => {
+							// CRITICAL FIX: Check for cancellation BEFORE marking as completed
+							// If cancelled during HTTP request, we need to remove the user message
+							if cancellation.is_cancelled() {
+								log_debug!("Operation cancelled during or after API call - cleaning up user message");
+
+								// Check if assistant message was added (response was processed)
+								let messages_after_api = chat_session.session.messages.len();
+								let assistant_message_added = messages_after_api > messages_before_api;
+
+								if !assistant_message_added {
+									// No assistant response was processed - remove the user message
+									if user_message_index < chat_session.session.messages.len() {
+										chat_session.session.messages.truncate(user_message_index);
+										log_debug!(
+											"Removed user message due to cancellation before assistant response"
+										);
+									}
+								}
+								// If assistant message was added, keep everything (conversation state is valid)
+
+								continue; // Return to main loop for next user input
+							}
+
+							// Update processing state to completed when done (only if not cancelled)
+							*processing_state.lock().unwrap() = ProcessingState::CompletedWithResults;
+
+							// Update operation context with assistant message index if one was added
+							if let Some(ref mut op) = *current_operation.lock().unwrap() {
+								let messages_after_api = chat_session.session.messages.len();
+								if messages_after_api > messages_before_api {
+									// Assistant message was added - record its index
+									op.assistant_message_index = Some(messages_before_api);
+									log_debug!("Assistant message added at index {}", messages_before_api);
+								}
+							}
+
+							// Successful turn — clear retry buffer.
+							last_failed_input = None;
+							last_failed_followup = false;
+
+							// Start a keepalive ping task against a frozen snapshot of
+							// the conversation. Read-only on session state — pings
+							// never mutate messages; the harvested exchanges fold into
+							// cost at the top of the next loop iteration.
+							keepalive = KeepaliveHandle::spawn(
+								&chat_session.session.messages,
+								&chat_session.model,
+								&current_config,
+								current_config.cache_keepalive_enabled,
+								std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
+							);
+						}
+						Err(e) => {
+							// Distinguish follow-up failure (after tools executed) from initial-call
+							// failure. handle_api_error truncates the user message — correct only for
+							// the initial call. For follow-ups the history already contains valid
+							// assistant(tool_calls) + tool_results; truncating would discard that work.
+							let messages_after_api = chat_session.session.messages.len();
+							let is_followup_failure = messages_after_api > messages_before_api;
+
+							if is_followup_failure {
+								handle_followup_api_error(&model_for_error, &e, OutputMode::Interactive);
+								last_failed_followup = true;
+							} else {
+								handle_api_error(
+									&mut chat_session,
+									user_message_index_for_error,
+									&model_for_error,
+									&e,
+									OutputMode::Interactive,
+								);
+								// Stash the original input so an empty Ctrl+G replays this turn.
+								last_failed_input = Some(original_input_for_retry);
+							}
+
+							println!(
+								"{}",
+								"💡 Press Ctrl+G with empty input to retry the last failed request.".dimmed()
+							);
+						}
+					}
+
+					// Clear operation context at the end of each successful iteration
+					*current_operation.lock().unwrap() = None;
+
+					// Stop the spinner at the turn boundary — user prompt is imminent.
+					// Without this, indicatif's steady-tick thread keeps redrawing the
+					// "Working …" line over reedline's prompt after a final assistant
+					// response (no-tools path never hits any other stop_current site).
+					// Matches the design principle in animation_manager.rs: teardown at
+					// genuine boundaries (API error, cancel, user prompt imminent).
+					crate::session::chat::get_animation_manager().stop_current().await;
 				}
-			}
-
-			// Clear operation context at the end of each successful iteration
-			*current_operation.lock().unwrap() = None;
-
-			// Stop the spinner at the turn boundary — user prompt is imminent.
-			// Without this, indicatif's steady-tick thread keeps redrawing the
-			// "Working …" line over reedline's prompt after a final assistant
-			// response (no-tools path never hits any other stop_current site).
-			// Matches the design principle in animation_manager.rs: teardown at
-			// genuine boundaries (API error, cancel, user prompt imminent).
-			crate::session::chat::get_animation_manager()
-				.stop_current()
-				.await;
-		}
 
 				Ok::<_, anyhow::Error>(switched)
-			}).await?;
-			if !switched { break; }
+			})
+			.await?;
+			if !switched {
+				break;
+			}
 		}
 		drop(runtime_guards);
 
 		// Session is ending — drain any in-flight keepalive so its cost is
 		// reflected in the persisted session log.
-		if drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true)
-			.await
-		{
+		if drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await {
 			if let Err(e) = chat_session.save() {
 				crate::log_debug!("session save failed: {}", e);
 			}
@@ -1500,10 +1392,7 @@ pub async fn run_interactive_session(
 
 /// The three session facts telemetry needs that live on the args/config rather
 /// than on the session itself.
-fn telemetry_context(
-	args: &super::params::GenericSessionArgs,
-	config: &Config,
-) -> (bool, bool, u32) {
+fn telemetry_context(args: &super::params::GenericSessionArgs, config: &Config) -> (bool, bool, u32) {
 	(
 		args.resume.is_some() || args.resume_recent,
 		config.sandbox,
@@ -1514,13 +1403,7 @@ fn telemetry_context(
 /// One row per finished session — which agent and model, how long, how many
 /// turns and tools, what it cost. Reaching a caller means the loop ended
 /// normally; failures bail earlier and are recorded as `error` in main.
-fn record_session_telemetry(
-	chat_session: &ChatSession,
-	kind: &str,
-	resumed: bool,
-	sandbox: bool,
-	mcp_servers: u32,
-) {
+fn record_session_telemetry(chat_session: &ChatSession, kind: &str, resumed: bool, sandbox: bool, mcp_servers: u32) {
 	crate::telemetry::record_session(crate::telemetry::SessionEnd {
 		kind,
 		outcome: "ok",
@@ -1547,11 +1430,7 @@ pub async fn run_interactive_session_with_input(
 	// uses the real session name — must happen after setup determines the actual name.
 	let session_id = chat_session.session.info.name.clone();
 
-	crate::session::titles::record_session_meta(
-		&session_id,
-		&role,
-		&chat_session.session.info.model,
-	);
+	crate::session::titles::record_session_meta(&session_id, &role, &chat_session.session.info.model);
 
 	let (resumed, sandbox, mcp_servers) = telemetry_context(args, config);
 
@@ -1566,594 +1445,567 @@ pub async fn run_interactive_session_with_input(
 	crate::proctitle::set_terminal_title(&title);
 
 	crate::session::context::with_session_id(session_id, async move {
-	// MCP init — progress display handled internally when stderr is a terminal
-	crate::mcp::initialize_mcp_for_role(&role, config).await?;
-	let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
-	let daemon = args.daemon;
-	let mut chat_session = chat_session;
+		// MCP init — progress display handled internally when stderr is a terminal
+		crate::mcp::initialize_mcp_for_role(&role, config).await?;
+		let _runtime_guards = init_session_runtime(args, config, &chat_session, &role).await?;
+		let daemon = args.daemon;
+		let mut chat_session = chat_session;
 
-	// Setup system prompt and cache using helper function (non-interactive mode)
-	setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
+		// Setup system prompt and cache using helper function (non-interactive mode)
+		setup_system_prompt_and_cache(&mut chat_session, &config_for_role, &role, false).await?;
 
-	crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
-	// Non-interactive paths have no spinner — env-capability progress events
-	// would have nothing to drive, so pass None.
-	crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
+		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
+		// Non-interactive paths have no spinner — env-capability progress events
+		// would have nothing to drive, so pass None.
+		crate::mcp::runtime::capability::load_env_capabilities(&config_for_role, None).await;
 
-	// Clear spinner from setup
-	if let Some(sp) = spinner {
-		sp.finish_and_clear();
-		print!("\x1B[2K\r");
-		std::io::Write::flush(&mut std::io::stdout()).ok();
-	}
+		// Clear spinner from setup
+		if let Some(sp) = spinner {
+			sp.finish_and_clear();
+			print!("\x1B[2K\r");
+			std::io::Write::flush(&mut std::io::stdout()).ok();
+		}
 
-	// Set up cancellation handling for non-interactive mode (simplified)
-	let mut cancellation = SessionCancellation::new();
+		// Set up cancellation handling for non-interactive mode (simplified)
+		let mut cancellation = SessionCancellation::new();
 
-	// Simplified tokio-based Ctrl+C handler for non-interactive mode
-	let _signal_handler = cancellation.start_signal_handler();
+		// Simplified tokio-based Ctrl+C handler for non-interactive mode
+		let _signal_handler = cancellation.start_signal_handler();
 
-	// Set the thread-local config for logging macros
-	let mut current_config = config_for_role.clone();
-	crate::config::set_thread_config(&current_config);
-	crate::config::set_thread_role(&role);
-	// Use initial_input as the input for this session (convert to owned String for mutability)
-	// Use initial_input as the input for this session (convert to owned String for mutability)
-	let mut input = initial_input.to_string();
-	// Get current directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
-	let current_dir = crate::mcp::get_thread_working_directory();
-	let mut operation_rx = cancellation.new_operation();
+		// Set the thread-local config for logging macros
+		let mut current_config = config_for_role.clone();
+		crate::config::set_thread_config(&current_config);
+		crate::config::set_thread_role(&role);
+		// Use initial_input as the input for this session (convert to owned String for mutability)
+		// Use initial_input as the input for this session (convert to owned String for mutability)
+		let mut input = initial_input.to_string();
+		// Get current directory - use thread-local if set (ACP/WebSocket), otherwise process cwd
+		let current_dir = crate::mcp::get_thread_working_directory();
+		let mut operation_rx = cancellation.new_operation();
 
-	// Idle-time prompt cache keepalive. Spawned after each successful AI
-	// turn (initial or inbox-driven), cancelled+folded before the next turn
-	// or on session exit. Read-only on session.messages.
-	let mut keepalive: Option<KeepaliveHandle> = None;
+		// Idle-time prompt cache keepalive. Spawned after each successful AI
+		// turn (initial or inbox-driven), cancelled+folded before the next turn
+		// or on session exit. Read-only on session.messages.
+		let mut keepalive: Option<KeepaliveHandle> = None;
 
-	// Skip initial message processing when daemon starts with no input.
-	if !input.is_empty() {
+		// Skip initial message processing when daemon starts with no input.
+		if !input.is_empty() {
+			// Check if this is a command (same logic as interactive session)
+			if input.starts_with('/') {
+				// Handle special /done command separately
+				if input.trim_start().starts_with("/done") {
+					// Extract any trailing instructions after "/done"
+					let done_instructions = input
+						.trim()
+						.strip_prefix("/done")
+						.map(|s| s.trim())
+						.filter(|s| !s.is_empty())
+						.map(|s| s.to_owned());
 
-	// Check if this is a command (same logic as interactive session)
-	if input.starts_with('/') {
-		// Handle special /done command separately
-		if input.trim_start().starts_with("/done") {
-			// Extract any trailing instructions after "/done"
-			let done_instructions = input.trim()
-				.strip_prefix("/done")
-				.map(|s| s.trim())
-				.filter(|s| !s.is_empty())
-				.map(|s| s.to_owned());
-
-			// Force-compress the conversation and fire lesson extraction —
-			// same lifecycle as the interactive and ACP paths.
-			match super::commands::handle_done(
-				&mut chat_session,
-				&current_config,
-				operation_rx.clone(),
-			)
-			.await
-			{
-				Ok(outcome) => {
-					use crate::session::chat::session::commands::DoneOutcome;
-					match outcome {
-						DoneOutcome::Compressed => {
-							println!("{}", "✅ Conversation compressed.".bright_green());
+					// Force-compress the conversation and fire lesson extraction —
+					// same lifecycle as the interactive and ACP paths.
+					match super::commands::handle_done(&mut chat_session, &current_config, operation_rx.clone()).await {
+						Ok(outcome) => {
+							use crate::session::chat::session::commands::DoneOutcome;
+							match outcome {
+								DoneOutcome::Compressed => {
+									println!("{}", "✅ Conversation compressed.".bright_green());
+								}
+								DoneOutcome::NothingToCompress => {
+									println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
+								}
+								DoneOutcome::Failed(e) => {
+									println!("{}: {}", "❌ Compression failed".bright_red(), e);
+								}
+							}
 						}
-						DoneOutcome::NothingToCompress => {
-							println!("{}", "ℹ️  Nothing to compress.".bright_cyan());
-						}
-						DoneOutcome::Failed(e) => {
-							println!("{}: {}", "❌ Compression failed".bright_red(), e);
+						Err(e) => {
+							println!("{}: {}", "❌ /done command failed".bright_red(), e);
 						}
 					}
+
+					// If trailing instructions were provided, treat them as user input
+					// so the model picks up the shifted focus immediately after compression.
+					if let Some(instructions) = done_instructions {
+						input = instructions;
+						// Fall through to normal user-input processing below.
+					} else {
+						if let Err(e) = chat_session.save() {
+							crate::log_debug!("session save failed: {}", e);
+						}
+						return Ok(());
+					}
 				}
-				Err(e) => {
-					println!("{}: {}", "❌ /done command failed".bright_red(), e);
-				}
-			}
 
-			// If trailing instructions were provided, treat them as user input
-			// so the model picks up the shifted focus immediately after compression.
-			if let Some(instructions) = done_instructions {
-				input = instructions;
-				// Fall through to normal user-input processing below.
-			} else {
-				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-				return Ok(());
-			}
-		}
+				// Try to process as command
+				let command_result = chat_session
+					.process_command(&input, &mut current_config, &role, operation_rx.clone())
+					.await?;
 
-		// Try to process as command
-		let command_result = chat_session
-			.process_command(&input, &mut current_config, &role, operation_rx.clone())
-			.await?;
-
-		match command_result {
-			crate::session::chat::session::commands::CommandResult::TreatAsUserInput => {
-				// This input should be treated as user input, fall through to normal processing
-			}
-			crate::session::chat::session::commands::CommandResult::Exit | crate::session::chat::session::commands::CommandResult::SwitchSession(_) => {
-				// Check if it's a session switch command
-				if input.starts_with(crate::session::chat::commands::NEW_COMMAND) {
-					println!("{}", "Note: /new is not supported in run mode. Start a new session with 'octomind run'.".yellow())
-				}
-				// Save session after command execution
-				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-				return Ok(());
-			}
-			crate::session::chat::session::commands::CommandResult::Handled => {
-				// Command was handled successfully
-				// Save session after command execution
-				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-				return Ok(());
-			}
-			crate::session::chat::session::commands::CommandResult::HandledWithOutput(
-				mut json_output,
-			) => {
-				// Command was handled with output
-				// Print it for CLI run command using existing display functions
-				print_command_output(&mut json_output, &mut chat_session, &current_config).await;
-				// Save session after command execution
-				if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
-				return Ok(());
-			}
-		}
-	}
-
-	// Run skill activation on user input
-	crate::mcp::runtime::skill_auto::run_activation(
-		&input,
-		&current_dir,
-		&mut chat_session,
-	)
-	.await;
-
-	// Pipe pre-processing if a matching [[pipe]] is configured.
-	let processed_input = run_pipe_if_enabled(
-		&input,
-		&role,
-		first_message_processed,
-	)
-	.await?;
-
-	// Inject @file mentions as rendered file content - same as interactive.
-	input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
-
-	// Add user message - same as interactive.
-	let user_message_index = chat_session.session.messages.len();
-	chat_session.add_user_message(&input)?;
-	// New user message → run per-message lesson recall on the next API call.
-	chat_session.pending_recall = true;
-
-	// Prepare for API call using helper function
-	prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
-
-	// Execute API call and process response using helper function (non-interactive mode)
-	let user_message_index_for_error = user_message_index;
-	let operation_rx_clone = operation_rx.clone();
-	let model_for_error = chat_session.model.clone();
-	// Capture message count BEFORE API call to detect follow-up failures (post-tool-execution).
-	// On follow-up failure the history already contains valid assistant(tool_calls) +
-	// tool_results — truncating would discard completed tool work.
-	let messages_before_api = chat_session.session.messages.len();
-	chat_session.start_request_spending_tracking();
-	let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-		// For JSONL mode, set up a notification channel so MCP server notifications
-		// are forwarded as structured JSON lines alongside the regular output.
-		let (notif_tx, mut notif_rx) =
-			tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
-		crate::mcp::process::set_notification_sender(None, notif_tx);
-
-		// Drain notifications to stdout in a background task
-		let drain_handle = tokio::spawn(async move {
-			while let Some(msg) = notif_rx.recv().await {
-				if let Ok(json) = serde_json::to_string(&msg) {
-					println!("{}", json);
-				}
-			}
-		});
-
-		let result = execute_api_call_and_process_response(
-			&mut chat_session,
-			&current_config,
-			&role,
-			operation_rx_clone,
-			OutputMode::Jsonl,
-			JsonlSink,
-		)
-		.await;
-
-		// Stop forwarding notifications and wait for drain to finish
-		crate::mcp::process::clear_notification_sender(None);
-		let _ = drain_handle.await;
-
-		result
-	} else {
-		// Non-interactive run mode: set up notification sender so warnings print to stderr
-		let (notif_tx, mut notif_rx) =
-			tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
-		crate::mcp::process::set_notification_sender(None, notif_tx);
-
-		let notif_drain = tokio::spawn(async move {
-			while let Some(msg) = notif_rx.recv().await {
-				if let crate::websocket::ServerMessage::McpNotification(n) = msg {
-					if !crate::logging::tracing_setup::is_structured_output_mode() {
-						use colored::Colorize;
-						eprintln!(
-							"{}",
-							format!(
-								"⚠ [{}] {}",
-								n.server,
-								n.params
-									.get("message")
-									.and_then(|m| m.as_str())
-									.unwrap_or(&n.method)
+				match command_result {
+					crate::session::chat::session::commands::CommandResult::TreatAsUserInput => {
+						// This input should be treated as user input, fall through to normal processing
+					}
+					crate::session::chat::session::commands::CommandResult::Exit
+					| crate::session::chat::session::commands::CommandResult::SwitchSession(_) => {
+						// Check if it's a session switch command
+						if input.starts_with(crate::session::chat::commands::NEW_COMMAND) {
+							println!(
+								"{}",
+								"Note: /new is not supported in run mode. Start a new session with 'octomind run'."
+									.yellow()
 							)
-							.yellow()
-						);
+						}
+						// Save session after command execution
+						if let Err(e) = chat_session.save() {
+							crate::log_debug!("session save failed: {}", e);
+						}
+						return Ok(());
 					}
-				}
-			}
-		});
-
-		let result = execute_api_call_and_process_response(
-			&mut chat_session,
-			&current_config,
-			&role,
-			operation_rx_clone,
-			OutputMode::NonInteractive,
-			SilentSink,
-		)
-		.await;
-
-		crate::mcp::process::clear_notification_sender(None);
-		let _ = notif_drain.await;
-
-		result
-	};
-	match api_result {
-		Ok(_) => {
-			// JSONL output is now streamed via callback - no need for batch output
-			// Start a keepalive ping task while the daemon waits for the next
-			// inbox message or schedule fire. Cancelled+folded at the top of
-			// the inbox-drain loop or on exit.
-			keepalive = KeepaliveHandle::spawn(
-				&chat_session.session.messages,
-				&chat_session.model,
-				&current_config,
-				current_config.cache_keepalive_enabled,
-				std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
-			);
-		}
-		Err(e) => {
-			// Kill any running async jobs on error/cancellation
-			crate::mcp::agent::functions::kill_all_jobs();
-
-			let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-				OutputMode::Jsonl
-			} else {
-				OutputMode::NonInteractive
-			};
-
-			// Distinguish follow-up failure (after tools executed) from initial-call failure.
-			// handle_api_error truncates the user message — correct only for the initial call.
-			// For follow-ups the history already contains valid assistant(tool_calls) +
-			// tool_results; truncating would discard that completed work and corrupt the
-			// persisted session log on the next reload.
-			let messages_after_api = chat_session.session.messages.len();
-			if messages_after_api > messages_before_api {
-				handle_followup_api_error(&model_for_error, &e, output_mode);
-			} else {
-				handle_api_error(
-					&mut chat_session,
-					user_message_index_for_error,
-					&model_for_error,
-					&e,
-					output_mode,
-				);
-			}
-
-			// Non-interactive (non-daemon) runs must surface API failures (wrong API
-			// key, 401, model not found, etc.) as a non-zero exit so shell scripts,
-			// CI, and external wrappers can detect them. Daemon mode stays
-			// resilient — it logs and keeps listening so transient errors don't
-			// kill the long-running process.
-			if !daemon {
-				emit_cost_frame(&mut chat_session, &current_config);
-				return Err(e);
-			}
-		}
-	}
-	} // end if !input.is_empty()
-
-	// Keep the session alive while an asynchronous producer can still inject work.
-	// Schedules, monitors, and background agents all push to the inbox — drain it here.
-	// Status snapshots are compared across reconcile windows so a stalled job
-	// can be distinguished from one that is still making progress.
-	let mut reported_job_statuses: std::collections::HashMap<String, String> =
-		std::collections::HashMap::new();
-	// Jobs the model has had a status check for. One still pending when the model
-	// ends its turn is checked at once: ending the turn is also how the model
-	// finishes, and a job it no longer needs would otherwise hold the run open for
-	// a whole reconcile window before the model could stop it.
-	let mut checked_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
-	// Deadline for the background-job safety backstop, anchored when jobs first
-	// appear. It must live outside the loop: a sleep built inside the select is
-	// recreated every pass, so the shorter reconcile branch firing on its own
-	// timer reset the longer one forever and the backstop could never elapse.
-	let mut background_job_deadline: Option<tokio::time::Instant> = None;
-	loop {
-		// Flush any due schedule entries into the inbox first.
-		crate::mcp::orchestration::flush_due_to_inbox();
-		// Idle-mode entries fire here too — non-interactive is "idle" between turns
-		// as long as nothing is in flight.
-		crate::mcp::orchestration::flush_idle_to_inbox();
-
-		// Process everything currently in the inbox. Each drain takes the batch the
-		// model can answer in one turn, so results that piled up while it worked cost
-		// one call between them, not one turn each.
-		loop {
-			let batch = crate::session::inbox::drain_inbox_batch();
-			if batch.is_empty() {
-				break;
-			}
-			for inbox_msg in &batch {
-				log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
-
-				// Tell structured consumers (JSONL) what's about to drive the AI, so a
-				// scheduled / agent / skill turn is distinguishable from a user turn.
-				// Plain non-interactive mode stays silent — adding a header line would
-				// corrupt downstream parsers that just want raw AI text.
-				if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
-					let injected =
-						crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
-							source_kind: inbox_msg.source.display_kind().to_string(),
-							source_label: inbox_msg.source.display_label(),
-							content: inbox_msg.content.clone(),
-							session_id: chat_session.session.info.name.clone(),
-						});
-					if let Ok(json) = serde_json::to_string(&injected) {
-						println!("{}", json);
+					crate::session::chat::session::commands::CommandResult::Handled => {
+						// Command was handled successfully
+						// Save session after command execution
+						if let Err(e) = chat_session.save() {
+							crate::log_debug!("session save failed: {}", e);
+						}
+						return Ok(());
+					}
+					crate::session::chat::session::commands::CommandResult::HandledWithOutput(mut json_output) => {
+						// Command was handled with output
+						// Print it for CLI run command using existing display functions
+						print_command_output(&mut json_output, &mut chat_session, &current_config).await;
+						// Save session after command execution
+						if let Err(e) = chat_session.save() {
+							crate::log_debug!("session save failed: {}", e);
+						}
+						return Ok(());
 					}
 				}
 			}
 
-			// Stop any in-flight keepalive from the previous turn and fold
-			// its cost before we add the new user message — keeps the
-			// session log's cost ordering correct.
-			drain_keepalive_into_session(
-				&mut keepalive,
-				&mut chat_session,
-				&current_config,
-				false,
-			)
-			.await;
+			// Run skill activation on user input
+			crate::mcp::runtime::skill_auto::run_activation(&input, &current_dir, &mut chat_session).await;
 
-			chat_session.add_inbox_batch(&batch)?;
+			// Pipe pre-processing if a matching [[pipe]] is configured.
+			let processed_input = run_pipe_if_enabled(&input, &role, first_message_processed).await?;
+
+			// Inject @file mentions as rendered file content - same as interactive.
+			input = crate::utils::file_renderer::expand_at_file_refs(&processed_input);
+
+			// Add user message - same as interactive.
+			let user_message_index = chat_session.session.messages.len();
+			chat_session.add_user_message(&input)?;
+			// New user message → run per-message lesson recall on the next API call.
+			chat_session.pending_recall = true;
+
+			// Prepare for API call using helper function
 			prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
 
-			let is_jsonl = current_config.runtime_output_mode.as_deref() == Some("jsonl");
-			let output_mode = if is_jsonl {
-				OutputMode::Jsonl
-			} else {
-				OutputMode::NonInteractive
-			};
+			// Execute API call and process response using helper function (non-interactive mode)
+			let user_message_index_for_error = user_message_index;
+			let operation_rx_clone = operation_rx.clone();
+			let model_for_error = chat_session.model.clone();
+			// Capture message count BEFORE API call to detect follow-up failures (post-tool-execution).
+			// On follow-up failure the history already contains valid assistant(tool_calls) +
+			// tool_results — truncating would discard completed tool work.
+			let messages_before_api = chat_session.session.messages.len();
+			chat_session.start_request_spending_tracking();
+			let api_result = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+				// For JSONL mode, set up a notification channel so MCP server notifications
+				// are forwarded as structured JSON lines alongside the regular output.
+				let (notif_tx, mut notif_rx) =
+					tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+				crate::mcp::process::set_notification_sender(None, notif_tx);
 
-			// Set up notification forwarding for this inbox message,
-			// matching the pattern used for the initial message processing.
-			let (notif_tx, mut notif_rx) =
-				tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
-			crate::mcp::process::set_notification_sender(None, notif_tx);
-
-			let drain_handle = tokio::spawn(async move {
-				while let Some(msg) = notif_rx.recv().await {
-					if is_jsonl {
+				// Drain notifications to stdout in a background task
+				let drain_handle = tokio::spawn(async move {
+					while let Some(msg) = notif_rx.recv().await {
 						if let Ok(json) = serde_json::to_string(&msg) {
 							println!("{}", json);
 						}
-					} else if let crate::websocket::ServerMessage::McpNotification(n) = msg {
-						if !crate::logging::tracing_setup::is_structured_output_mode() {
-							use colored::Colorize;
-							eprintln!(
-								"{}",
-								format!(
-									"⚠ [{}] {}",
-									n.server,
-									n.params
-										.get("message")
-										.and_then(|m| m.as_str())
-										.unwrap_or(&n.method)
-								)
-								.yellow()
-							);
-						}
 					}
-				}
-			});
+				});
 
-			let api_result = if is_jsonl {
-				execute_api_call_and_process_response(
+				let result = execute_api_call_and_process_response(
 					&mut chat_session,
 					&current_config,
 					&role,
-					operation_rx.clone(),
-					output_mode,
+					operation_rx_clone,
+					OutputMode::Jsonl,
 					JsonlSink,
 				)
-				.await
+				.await;
+
+				// Stop forwarding notifications and wait for drain to finish
+				crate::mcp::process::clear_notification_sender(None);
+				let _ = drain_handle.await;
+
+				result
 			} else {
-				execute_api_call_and_process_response(
+				// Non-interactive run mode: set up notification sender so warnings print to stderr
+				let (notif_tx, mut notif_rx) =
+					tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+				crate::mcp::process::set_notification_sender(None, notif_tx);
+
+				let notif_drain = tokio::spawn(async move {
+					while let Some(msg) = notif_rx.recv().await {
+						if let crate::websocket::ServerMessage::McpNotification(n) = msg {
+							if !crate::logging::tracing_setup::is_structured_output_mode() {
+								use colored::Colorize;
+								eprintln!(
+									"{}",
+									format!(
+										"⚠ [{}] {}",
+										n.server,
+										n.params.get("message").and_then(|m| m.as_str()).unwrap_or(&n.method)
+									)
+									.yellow()
+								);
+							}
+						}
+					}
+				});
+
+				let result = execute_api_call_and_process_response(
 					&mut chat_session,
 					&current_config,
 					&role,
-					operation_rx.clone(),
-					output_mode,
+					operation_rx_clone,
+					OutputMode::NonInteractive,
 					SilentSink,
 				)
-				.await
+				.await;
+
+				crate::mcp::process::clear_notification_sender(None);
+				let _ = notif_drain.await;
+
+				result
 			};
-
-			crate::mcp::process::clear_notification_sender(None);
-			let _ = drain_handle.await;
-
 			match api_result {
 				Ok(_) => {
-					// Spawn a fresh keepalive against the post-turn snapshot.
+					// JSONL output is now streamed via callback - no need for batch output
+					// Start a keepalive ping task while the daemon waits for the next
+					// inbox message or schedule fire. Cancelled+folded at the top of
+					// the inbox-drain loop or on exit.
 					keepalive = KeepaliveHandle::spawn(
 						&chat_session.session.messages,
 						&chat_session.model,
 						&current_config,
 						current_config.cache_keepalive_enabled,
-						std::time::Duration::from_secs(
-							current_config.cache_keepalive_max_idle_seconds,
-						),
+						std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
 					);
 				}
 				Err(e) => {
-					log_debug!("Error processing inbox message: {}", e);
-					// Non-daemon non-interactive runs exit non-zero on failure;
-					// daemons keep listening so a single bad turn doesn't kill
-					// the long-running process.
+					// Kill any running async jobs on error/cancellation
+					crate::mcp::agent::functions::kill_all_jobs();
+
+					let output_mode = if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+						OutputMode::Jsonl
+					} else {
+						OutputMode::NonInteractive
+					};
+
+					// Distinguish follow-up failure (after tools executed) from initial-call failure.
+					// handle_api_error truncates the user message — correct only for the initial call.
+					// For follow-ups the history already contains valid assistant(tool_calls) +
+					// tool_results; truncating would discard that completed work and corrupt the
+					// persisted session log on the next reload.
+					let messages_after_api = chat_session.session.messages.len();
+					if messages_after_api > messages_before_api {
+						handle_followup_api_error(&model_for_error, &e, output_mode);
+					} else {
+						handle_api_error(
+							&mut chat_session,
+							user_message_index_for_error,
+							&model_for_error,
+							&e,
+							output_mode,
+						);
+					}
+
+					// Non-interactive (non-daemon) runs must surface API failures (wrong API
+					// key, 401, model not found, etc.) as a non-zero exit so shell scripts,
+					// CI, and external wrappers can detect them. Daemon mode stays
+					// resilient — it logs and keeps listening so transient errors don't
+					// kill the long-running process.
 					if !daemon {
 						emit_cost_frame(&mut chat_session, &current_config);
 						return Err(e);
 					}
 				}
 			}
+		} // end if !input.is_empty()
 
-			// Refresh operation receiver in case cancellation was triggered
-			operation_rx = cancellation.new_operation();
-		}
+		// Keep the session alive while an asynchronous producer can still inject work.
+		// Schedules, monitors, and background agents all push to the inbox — drain it here.
+		// Status snapshots are compared across reconcile windows so a stalled job
+		// can be distinguished from one that is still making progress.
+		let mut reported_job_statuses: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+		// Jobs the model has had a status check for. One still pending when the model
+		// ends its turn is checked at once: ending the turn is also how the model
+		// finishes, and a job it no longer needs would otherwise hold the run open for
+		// a whole reconcile window before the model could stop it.
+		let mut checked_jobs: std::collections::HashSet<String> = std::collections::HashSet::new();
+		// Deadline for the background-job safety backstop, anchored when jobs first
+		// appear. It must live outside the loop: a sleep built inside the select is
+		// recreated every pass, so the shorter reconcile branch firing on its own
+		// timer reset the longer one forever and the backstop could never elapse.
+		let mut background_job_deadline: Option<tokio::time::Instant> = None;
+		loop {
+			// Flush any due schedule entries into the inbox first.
+			crate::mcp::orchestration::flush_due_to_inbox();
+			// Idle-mode entries fire here too — non-interactive is "idle" between turns
+			// as long as nothing is in flight.
+			crate::mcp::orchestration::flush_idle_to_inbox();
 
-		// Check if there's anything left to wait for.
-		let has_schedules = crate::mcp::orchestration::has_pending_schedules();
-		let active_jobs = crate::mcp::agent::functions::get_job_manager()
-			.map(|m| m.active_count())
-			.unwrap_or(0);
-		let has_monitors = crate::mcp::orchestration::has_running_monitors();
-		// A detached shell job (a build, a test suite) is still running: its
-		// completion arrives as an inbox message that wakes the model with the
-		// output, so the run must not end here or it would orphan the job and
-		// drop the result the turn is waiting for.
-		let has_background_jobs = crate::session::shell_jobs::has_pending();
-		// A backgrounded tap-run is the same contract: its reply is injected into
-		// the inbox when the specialist finishes, so exiting here would orphan the
-		// subprocess and drop the reply the turn is waiting for.
-		let has_tap_runs = crate::session::tap_runs::has_running_jobs();
+			// Process everything currently in the inbox. Each drain takes the batch the
+			// model can answer in one turn, so results that piled up while it worked cost
+			// one call between them, not one turn each.
+			loop {
+				let batch = crate::session::inbox::drain_inbox_batch();
+				if batch.is_empty() {
+					break;
+				}
+				for inbox_msg in &batch {
+					log_debug!("Non-interactive: processing inbox message from {:?}", inbox_msg.source);
 
-		if !daemon
-			&& !has_schedules
-			&& !has_monitors
-			&& active_jobs == 0
-			&& !has_background_jobs
-			&& !has_tap_runs
-		{
-			break;
-		}
+					// Tell structured consumers (JSONL) what's about to drive the AI, so a
+					// scheduled / agent / skill turn is distinguishable from a user turn.
+					// Plain non-interactive mode stays silent — adding a header line would
+					// corrupt downstream parsers that just want raw AI text.
+					if current_config.runtime_output_mode.as_deref() == Some("jsonl") {
+						let injected =
+							crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+								source_kind: inbox_msg.source.display_kind().to_string(),
+								source_label: inbox_msg.source.display_label(),
+								content: inbox_msg.content.clone(),
+								session_id: chat_session.session.info.name.clone(),
+							});
+						if let Ok(json) = serde_json::to_string(&injected) {
+							println!("{}", json);
+						}
+					}
+				}
 
-		// Wait for the next event: either a schedule timer fires or an inbox message arrives.
-		let inbox_notify = crate::session::inbox::get_inbox_notify();
-		// Safety backstop for a pending background job whose completion signal
-		// never arrives (server crash, or a tool that linked a resource it never
-		// updates): far longer than any real build, but finite, so a lost signal
-		// can never hang the run forever. Armed only while background jobs are
-		// what is keeping the loop alive.
-		const BACKGROUND_JOB_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
-		// The completion push is the fast path, but it is only a notification: the
-		// resource itself is the authority. A caller working to a deadline shorter
-		// than the backstop (a CI step, a benchmark case) would otherwise be killed
-		// mid-wait with nothing to show, so re-read the authority periodically and
-		// hand the model what it says. The job is left pending — this unblocks the
-		// turn without stealing the real completion path.
-		// Arm on the first pass that has jobs, disarm when none are left, so the
-		// window measures how long jobs have actually been blocking the exit.
-		let bg_deadline = if has_background_jobs {
-			*background_job_deadline
-				.get_or_insert_with(|| tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT)
-		} else {
-			background_job_deadline = None;
-			tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT
-		};
-		tokio::select! {
-			_ = crate::mcp::orchestration::next_schedule_sleep() => {}
-			_ = async {
-				if let Some(notify) = inbox_notify {
-					notify.notified().await;
+				// Stop any in-flight keepalive from the previous turn and fold
+				// its cost before we add the new user message — keeps the
+				// session log's cost ordering correct.
+				drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, false).await;
+
+				chat_session.add_inbox_batch(&batch)?;
+				prepare_for_api_call(&mut chat_session, &current_config, operation_rx.clone()).await?;
+
+				let is_jsonl = current_config.runtime_output_mode.as_deref() == Some("jsonl");
+				let output_mode = if is_jsonl {
+					OutputMode::Jsonl
 				} else {
-					std::future::pending::<()>().await;
+					OutputMode::NonInteractive
+				};
+
+				// Set up notification forwarding for this inbox message,
+				// matching the pattern used for the initial message processing.
+				let (notif_tx, mut notif_rx) =
+					tokio::sync::mpsc::unbounded_channel::<crate::websocket::ServerMessage>();
+				crate::mcp::process::set_notification_sender(None, notif_tx);
+
+				let drain_handle = tokio::spawn(async move {
+					while let Some(msg) = notif_rx.recv().await {
+						if is_jsonl {
+							if let Ok(json) = serde_json::to_string(&msg) {
+								println!("{}", json);
+							}
+						} else if let crate::websocket::ServerMessage::McpNotification(n) = msg {
+							if !crate::logging::tracing_setup::is_structured_output_mode() {
+								use colored::Colorize;
+								eprintln!(
+									"{}",
+									format!(
+										"⚠ [{}] {}",
+										n.server,
+										n.params.get("message").and_then(|m| m.as_str()).unwrap_or(&n.method)
+									)
+									.yellow()
+								);
+							}
+						}
+					}
+				});
+
+				let api_result = if is_jsonl {
+					execute_api_call_and_process_response(
+						&mut chat_session,
+						&current_config,
+						&role,
+						operation_rx.clone(),
+						output_mode,
+						JsonlSink,
+					)
+					.await
+				} else {
+					execute_api_call_and_process_response(
+						&mut chat_session,
+						&current_config,
+						&role,
+						operation_rx.clone(),
+						output_mode,
+						SilentSink,
+					)
+					.await
+				};
+
+				crate::mcp::process::clear_notification_sender(None);
+				let _ = drain_handle.await;
+
+				match api_result {
+					Ok(_) => {
+						// Spawn a fresh keepalive against the post-turn snapshot.
+						keepalive = KeepaliveHandle::spawn(
+							&chat_session.session.messages,
+							&chat_session.model,
+							&current_config,
+							current_config.cache_keepalive_enabled,
+							std::time::Duration::from_secs(current_config.cache_keepalive_max_idle_seconds),
+						);
+					}
+					Err(e) => {
+						log_debug!("Error processing inbox message: {}", e);
+						// Non-daemon non-interactive runs exit non-zero on failure;
+						// daemons keep listening so a single bad turn doesn't kill
+						// the long-running process.
+						if !daemon {
+							emit_cost_frame(&mut chat_session, &current_config);
+							return Err(e);
+						}
+					}
 				}
-			} => {}
-			_ = tokio::time::sleep(reconcile_delay(&checked_jobs)), if has_background_jobs => {
-				reconcile_pending_background_jobs(&mut reported_job_statuses, &mut checked_jobs).await;
+
+				// Refresh operation receiver in case cancellation was triggered
+				operation_rx = cancellation.new_operation();
 			}
-			_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
-				if let Some(session_id) = crate::session::context::current_session_id() {
-					crate::session::shell_jobs::clear_for_session(&session_id);
-				}
+
+			// Check if there's anything left to wait for.
+			let has_schedules = crate::mcp::orchestration::has_pending_schedules();
+			let active_jobs = crate::mcp::agent::functions::get_job_manager()
+				.map(|m| m.active_count())
+				.unwrap_or(0);
+			let has_monitors = crate::mcp::orchestration::has_running_monitors();
+			// A detached shell job (a build, a test suite) is still running: its
+			// completion arrives as an inbox message that wakes the model with the
+			// output, so the run must not end here or it would orphan the job and
+			// drop the result the turn is waiting for.
+			let has_background_jobs = crate::session::shell_jobs::has_pending();
+			// A backgrounded tap-run is the same contract: its reply is injected into
+			// the inbox when the specialist finishes, so exiting here would orphan the
+			// subprocess and drop the reply the turn is waiting for.
+			let has_tap_runs = crate::session::tap_runs::has_running_jobs();
+
+			if !daemon && !has_schedules && !has_monitors && active_jobs == 0 && !has_background_jobs && !has_tap_runs {
+				break;
+			}
+
+			// Wait for the next event: either a schedule timer fires or an inbox message arrives.
+			let inbox_notify = crate::session::inbox::get_inbox_notify();
+			// Safety backstop for a pending background job whose completion signal
+			// never arrives (server crash, or a tool that linked a resource it never
+			// updates): far longer than any real build, but finite, so a lost signal
+			// can never hang the run forever. Armed only while background jobs are
+			// what is keeping the loop alive.
+			const BACKGROUND_JOB_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+			// The completion push is the fast path, but it is only a notification: the
+			// resource itself is the authority. A caller working to a deadline shorter
+			// than the backstop (a CI step, a benchmark case) would otherwise be killed
+			// mid-wait with nothing to show, so re-read the authority periodically and
+			// hand the model what it says. The job is left pending — this unblocks the
+			// turn without stealing the real completion path.
+			// Arm on the first pass that has jobs, disarm when none are left, so the
+			// window measures how long jobs have actually been blocking the exit.
+			let bg_deadline = if has_background_jobs {
+				*background_job_deadline.get_or_insert_with(|| tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT)
+			} else {
 				background_job_deadline = None;
-				log_debug!(
-					"A background job never signalled completion within the safety window; \
-					 abandoning it so the run can exit"
-				);
+				tokio::time::Instant::now() + BACKGROUND_JOB_MAX_WAIT
+			};
+			tokio::select! {
+				_ = crate::mcp::orchestration::next_schedule_sleep() => {}
+				_ = async {
+					if let Some(notify) = inbox_notify {
+						notify.notified().await;
+					} else {
+						std::future::pending::<()>().await;
+					}
+				} => {}
+				_ = tokio::time::sleep(reconcile_delay(&checked_jobs)), if has_background_jobs => {
+					reconcile_pending_background_jobs(&mut reported_job_statuses, &mut checked_jobs).await;
+				}
+				_ = tokio::time::sleep_until(bg_deadline), if has_background_jobs => {
+					if let Some(session_id) = crate::session::context::current_session_id() {
+						crate::session::shell_jobs::clear_for_session(&session_id);
+					}
+					background_job_deadline = None;
+					log_debug!(
+						"A background job never signalled completion within the safety window; \
+						 abandoning it so the run can exit"
+					);
+				}
 			}
 		}
-	}
 
-	// Drain any in-flight keepalive so its cost lands in the persisted log.
-	drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await;
+		// Drain any in-flight keepalive so its cost lands in the persisted log.
+		drain_keepalive_into_session(&mut keepalive, &mut chat_session, &current_config, true).await;
 
-	// A finished one-shot run learns exactly as an interactive exit does: the
-	// transcript goes to the detached `octomind distill` child, so the caller
-	// gets its exit at once. Taken before a pending fold replaces the raw turns
-	// the learner quotes. Daemons keep running and learn on `/done` and
-	// compaction like the interactive loop.
-	if !daemon
-		&& current_config.supervisor.learning.enabled
-		&& !chat_session.learning_extracted
-	{
-		crate::supervisor::learning::extract::extract_lessons_before_exit(
-			&chat_session,
-			&current_config,
-			role.clone(),
-			Some(&current_dir),
-		);
-	}
-
-	// A background fold still in flight when a one-shot run ends is a paid
-	// summary the next `-r` turn (a new process) could never collect: wait for
-	// it, bounded, so the persisted session is the compacted one. Daemons keep
-	// running and collect it at the next round like the interactive loop does.
-	if !daemon {
-		if let Err(error) = crate::session::chat::conversation_compression::collect_fold_before_exit(
-			&mut chat_session,
-			&current_config,
-		)
-		.await
-		{
-			crate::log_error!("Collecting the background fold before exit failed: {:#}", error);
+		// A finished one-shot run learns exactly as an interactive exit does: the
+		// transcript goes to the detached `octomind distill` child, so the caller
+		// gets its exit at once. Taken before a pending fold replaces the raw turns
+		// the learner quotes. Daemons keep running and learn on `/done` and
+		// compaction like the interactive loop.
+		if !daemon && current_config.supervisor.learning.enabled && !chat_session.learning_extracted {
+			crate::supervisor::learning::extract::extract_lessons_before_exit(
+				&chat_session,
+				&current_config,
+				role.clone(),
+				Some(&current_dir),
+			);
 		}
-	}
 
-	// The verify-gate and the exit-time fold above run after the turn's last cost
-	// frame; a harness billing from the last frame would otherwise miss their spend.
-	if !daemon {
-		emit_cost_frame(&mut chat_session, &current_config);
-	}
+		// A background fold still in flight when a one-shot run ends is a paid
+		// summary the next `-r` turn (a new process) could never collect: wait for
+		// it, bounded, so the persisted session is the compacted one. Daemons keep
+		// running and collect it at the next round like the interactive loop does.
+		if !daemon {
+			if let Err(error) = crate::session::chat::conversation_compression::collect_fold_before_exit(
+				&mut chat_session,
+				&current_config,
+			)
+			.await
+			{
+				crate::log_error!("Collecting the background fold before exit failed: {:#}", error);
+			}
+		}
 
-	// Save session before exit
-	if let Err(e) = chat_session.save() { crate::log_debug!("session save failed: {}", e); }
+		// The verify-gate and the exit-time fold above run after the turn's last cost
+		// frame; a harness billing from the last frame would otherwise miss their spend.
+		if !daemon {
+			emit_cost_frame(&mut chat_session, &current_config);
+		}
 
-	record_session_telemetry(
-		&chat_session,
-		if daemon { "daemon" } else { "piped" },
-		resumed,
-		sandbox,
-		mcp_servers,
-	);
-	if let Some(stop) = chat_session.spending_stop {
-		return Err(stop.into());
-	}
-	Ok(())
-	}).await
+		// Save session before exit
+		if let Err(e) = chat_session.save() {
+			crate::log_debug!("session save failed: {}", e);
+		}
+
+		record_session_telemetry(
+			&chat_session,
+			if daemon { "daemon" } else { "piped" },
+			resumed,
+			sandbox,
+			mcp_servers,
+		);
+		if let Some(stop) = chat_session.spending_stop {
+			return Err(stop.into());
+		}
+		Ok(())
+	})
+	.await
 }
 
 /// Emit the session's running usage as one JSONL cost frame. A harness bills from
@@ -2218,12 +2070,8 @@ async fn reconcile_pending_background_jobs(
 			.await
 			{
 				Ok(Ok(text)) if !text.trim().is_empty() => JobStatusRead::Snapshot(text),
-				Ok(Ok(_)) => {
-					JobStatusRead::Unavailable("the resource reports no status".to_string())
-				}
-				Ok(Err(error)) => {
-					JobStatusRead::Unavailable(format!("reading the resource failed: {error}"))
-				}
+				Ok(Ok(_)) => JobStatusRead::Unavailable("the resource reports no status".to_string()),
+				Ok(Err(error)) => JobStatusRead::Unavailable(format!("reading the resource failed: {error}")),
 				Err(_) => JobStatusRead::Unavailable("reading the resource timed out".to_string()),
 			}
 		};
@@ -2242,9 +2090,7 @@ async fn reconcile_pending_background_jobs(
 		crate::session::inbox::push_inbox_message_for_session(
 			&session_id,
 			crate::session::inbox::InboxMessage {
-				source: crate::session::inbox::InboxSource::BackgroundJob {
-					id: job.uri.clone(),
-				},
+				source: crate::session::inbox::InboxSource::BackgroundJob { id: job.uri.clone() },
 				content,
 			},
 		);
@@ -2285,10 +2131,7 @@ fn background_job_status_message(
 	reconcile_window: std::time::Duration,
 ) -> String {
 	let (text, unchanged) = match status {
-		JobStatusRead::Snapshot(snapshot) => (
-			snapshot.as_str(),
-			previous_snapshot == Some(snapshot.as_str()),
-		),
+		JobStatusRead::Snapshot(snapshot) => (snapshot.as_str(), previous_snapshot == Some(snapshot.as_str())),
 		JobStatusRead::Unavailable(reason) => (reason.as_str(), false),
 	};
 	// A command that prints only when it finishes is indistinguishable from a

@@ -19,12 +19,8 @@ use crate::session::Message;
 fn compressed_entry_wraps_body_file_context_and_archive_pointer() {
 	let dir = tempfile::tempdir().expect("temp dir");
 	let archive = dir.path().join("sessions/archive/s1/c.jsonl");
-	let rendered = format_compressed_entry_with_context(
-		"summary body",
-		"src/main.rs:1-10",
-		"c-42".to_string(),
-		Some(&archive),
-	);
+	let rendered =
+		format_compressed_entry_with_context("summary body", "src/main.rs:1-10", "c-42".to_string(), Some(&archive));
 	assert!(rendered.starts_with("<conversation_summary id=\"c-42\">\n"));
 	assert!(rendered.contains("summary body\n"));
 	assert!(rendered.contains("<file_context>\nsrc/main.rs:1-10\n</file_context>\n"));
@@ -35,10 +31,7 @@ fn compressed_entry_wraps_body_file_context_and_archive_pointer() {
 #[test]
 fn compressed_entry_with_no_sections_is_a_bare_wrapper() {
 	let rendered = format_compressed_entry_with_context("", "", "x".to_string(), None);
-	assert_eq!(
-		rendered,
-		"<conversation_summary id=\"x\">\n</conversation_summary>"
-	);
+	assert_eq!(rendered, "<conversation_summary id=\"x\">\n</conversation_summary>");
 }
 
 #[test]
@@ -82,10 +75,7 @@ fn strip_recall_index_removes_every_index_and_keeps_the_rest() {
 fn strip_block_without_a_close_tag_drops_everything_afterwards() {
 	// A malformed summary must strip cleanly instead of re-embedding the
 	// half-open block.
-	assert_eq!(
-		strip_regrown_sections("head\n<file_context>\nnever closed"),
-		"head"
-	);
+	assert_eq!(strip_regrown_sections("head\n<file_context>\nnever closed"), "head");
 }
 
 fn summary_message(findings: &[&str]) -> Message {
@@ -148,8 +138,7 @@ fn merge_latest_exact_dedupes_on_normalized_wording() {
 fn analysis_findings_tokens_is_zero_when_empty_and_grows_with_entries() {
 	assert_eq!(analysis_findings_tokens(&[]), 0);
 	let one = analysis_findings_tokens(&["single finding".to_string()]);
-	let two =
-		analysis_findings_tokens(&["single finding".to_string(), "second finding".to_string()]);
+	let two = analysis_findings_tokens(&["single finding".to_string(), "second finding".to_string()]);
 	assert!(one > 0);
 	assert!(two > one);
 }
@@ -175,11 +164,7 @@ fn select_newest_with_budget_keeps_the_newest_entries_that_fit() {
 #[test]
 fn select_findings_with_vectors_keeps_order_for_orthogonal_findings() {
 	let findings = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
-	let vectors = vec![
-		vec![1.0, 0.0, 0.0],
-		vec![0.0, 1.0, 0.0],
-		vec![0.0, 0.0, 1.0],
-	];
+	let vectors = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![0.0, 0.0, 1.0]];
 	let budget = analysis_findings_tokens(&findings);
 	assert_eq!(
 		select_findings_with_vectors(&findings, &vectors, None, budget),
@@ -215,10 +200,7 @@ fn fold_critical_knowledge_dedupes_and_trims_to_the_retention_limit() {
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 
 	// k0 is a duplicate (not re-added); the retention limit keeps the newest 2.
-	assert_eq!(
-		session.critical_knowledge,
-		vec!["k1".to_string(), "k2".to_string()]
-	);
+	assert_eq!(session.critical_knowledge, vec!["k1".to_string(), "k2".to_string()]);
 }
 
 #[test]

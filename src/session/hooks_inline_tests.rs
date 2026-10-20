@@ -44,13 +44,7 @@ fn on_filter_gates_by_tool_outcome() {
 
 	let success = hook(HookOn::Success, None, None);
 	assert!(hook_matches(&success, Some("shell"), &params, "out", true));
-	assert!(!hook_matches(
-		&success,
-		Some("shell"),
-		&params,
-		"out",
-		false
-	));
+	assert!(!hook_matches(&success, Some("shell"), &params, "out", false));
 
 	let error = hook(HookOn::Error, None, None);
 	assert!(!hook_matches(&error, Some("shell"), &params, "out", true));
@@ -94,48 +88,20 @@ fn trigger_can_match_on_an_argument() {
 fn result_regex_filters_on_output_text() {
 	let h = hook(HookOn::Any, None, Some("(?i)panic"));
 	let params = json!({});
-	assert!(hook_matches(
-		&h,
-		Some("shell"),
-		&params,
-		"thread 'main' PANICKED",
-		true
-	));
+	assert!(hook_matches(&h, Some("shell"), &params, "thread 'main' PANICKED", true));
 	assert!(!hook_matches(&h, Some("shell"), &params, "all good", true));
 }
 
 #[test]
 fn all_configured_filters_must_agree() {
-	let h = hook(
-		HookOn::Error,
-		Some(target("shell", None, None)),
-		Some("denied"),
-	);
+	let h = hook(HookOn::Error, Some(target("shell", None, None)), Some("denied"));
 	let params = json!({});
 	// Every filter satisfied.
-	assert!(hook_matches(
-		&h,
-		Some("shell"),
-		&params,
-		"permission denied",
-		false
-	));
+	assert!(hook_matches(&h, Some("shell"), &params, "permission denied", false));
 	// Right tool + text, wrong outcome.
-	assert!(!hook_matches(
-		&h,
-		Some("shell"),
-		&params,
-		"permission denied",
-		true
-	));
+	assert!(!hook_matches(&h, Some("shell"), &params, "permission denied", true));
 	// Right outcome + text, wrong tool.
-	assert!(!hook_matches(
-		&h,
-		Some("read"),
-		&params,
-		"permission denied",
-		false
-	));
+	assert!(!hook_matches(&h, Some("read"), &params, "permission denied", false));
 	// Right tool + outcome, wrong text.
 	assert!(!hook_matches(&h, Some("shell"), &params, "ok", false));
 }
@@ -160,10 +126,7 @@ fn when_satisfied_is_vacuously_true_with_no_conditions() {
 
 #[test]
 fn when_used_requires_every_target_in_the_slice() {
-	let v = validator(
-		vec![target("edit", None, None), target("shell", None, None)],
-		vec![],
-	);
+	let v = validator(vec![target("edit", None, None), target("shell", None, None)], vec![]);
 	let only_edit = [(Some("edit".to_string()), json!({}))];
 	assert!(!when_satisfied(&v, &only_edit));
 
@@ -178,10 +141,7 @@ fn when_used_requires_every_target_in_the_slice() {
 fn when_unused_requires_the_target_to_be_absent() {
 	let v = validator(vec![], vec![target("shell", None, None)]);
 	assert!(when_satisfied(&v, &[(Some("edit".to_string()), json!({}))]));
-	assert!(!when_satisfied(
-		&v,
-		&[(Some("shell".to_string()), json!({}))]
-	));
+	assert!(!when_satisfied(&v, &[(Some("shell".to_string()), json!({}))]));
 }
 
 #[test]
@@ -196,10 +156,7 @@ fn used_and_unused_are_combined() {
 
 	let edited_and_tested = [
 		(Some("edit".to_string()), json!({"path": "a.rs"})),
-		(
-			Some("shell".to_string()),
-			json!({"command": "cargo test --lib"}),
-		),
+		(Some("shell".to_string()), json!({"command": "cargo test --lib"})),
 	];
 	assert!(!when_satisfied(&v, &edited_and_tested));
 }

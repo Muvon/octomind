@@ -107,23 +107,17 @@ async fn test_skill_discovery_and_list() {
 		assert!(
 			found.iter().any(|(meta, _)| meta.name == SKILL_NAME),
 			"project skill not discovered: {:?}",
-			found
-				.iter()
-				.map(|(m, _)| m.name.clone())
-				.collect::<Vec<_>>()
+			found.iter().map(|(m, _)| m.name.clone()).collect::<Vec<_>>()
 		);
 
-		let (meta, _, content) =
-			find_skill_by_name_pub(SKILL_NAME).expect("skill resolvable by name");
+		let (meta, _, content) = find_skill_by_name_pub(SKILL_NAME).expect("skill resolvable by name");
 		assert_eq!(meta.allowed_tools, vec!["shell", "view"]);
 		assert!(content.contains(INSTRUCTIONS_MARKER));
 
 		// list with a matching pattern includes it; a nonsense pattern does not
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "list", "pattern": "widget"}),
-		))
-		.await
-		.expect("list dispatches");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "list", "pattern": "widget"})))
+			.await
+			.expect("list dispatches");
 		assert!(!is_err(&result));
 		assert!(text_of(&result).contains(SKILL_NAME));
 
@@ -154,18 +148,14 @@ async fn test_skill_use_and_forget_round_trip() {
 		.expect("dispatch");
 		assert!(is_err(&result), "got: {}", text_of(&result));
 
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "use", "name": SKILL_NAME}),
-		))
-		.await
-		.expect("use dispatches");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "use", "name": SKILL_NAME})))
+			.await
+			.expect("use dispatches");
 		assert!(!is_err(&result), "use failed: {}", text_of(&result));
 
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "forget", "name": SKILL_NAME}),
-		))
-		.await
-		.expect("forget dispatches");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "forget", "name": SKILL_NAME})))
+			.await
+			.expect("forget dispatches");
 		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
 
 		// Skill-message helpers recognise the injected wrapper format
@@ -189,10 +179,7 @@ async fn test_load_env_skills_injects_and_is_idempotent() {
 		let _tmp = skill_workdir(&sid);
 		let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 
-		std::env::set_var(
-			"OCTOMIND_SKILLS",
-			format!("{SKILL_NAME}, ,__skilltest_env_nope"),
-		);
+		std::env::set_var("OCTOMIND_SKILLS", format!("{SKILL_NAME}, ,__skilltest_env_nope"));
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut session).await;
 
 		let injected = session
@@ -242,9 +229,7 @@ fn multi_skill_workdir(session_id: &str) -> tempfile::TempDir {
 		std::fs::create_dir_all(&dir).expect("skill dir");
 		std::fs::write(
 			dir.join("SKILL.md"),
-			format!(
-				"---\nname: {name}\ndescription: Paging test skill {name}{extra}\n---\n\n{body}\n"
-			),
+			format!("---\nname: {name}\ndescription: Paging test skill {name}{extra}\n---\n\n{body}\n"),
 		)
 		.expect("write SKILL.md");
 	}
@@ -266,10 +251,7 @@ async fn test_skill_list_pagination_and_markers() {
 		.await
 		.expect("dispatch");
 		let msg = text_of(&result);
-		assert!(
-			msg.contains("Found 3 skill(s) matching pattern:"),
-			"got: {msg}"
-		);
+		assert!(msg.contains("Found 3 skill(s) matching pattern:"), "got: {msg}");
 		assert!(
 			msg.contains("Showing 1-2 of 3. Use offset=2 to see more."),
 			"got: {msg}"
@@ -295,10 +277,7 @@ async fn test_skill_list_pagination_and_markers() {
 		.await
 		.expect("dispatch");
 		let msg = text_of(&result);
-		assert!(
-			msg.contains("**skilltest-page-a** ✓ [active]"),
-			"got: {msg}"
-		);
+		assert!(msg.contains("**skilltest-page-a** ✓ [active]"), "got: {msg}");
 		crate::session::context::remove_active_skill(&sid, "skilltest-page-a");
 
 		// Compat marker: allowed-tools entry absent from the tool map.
@@ -348,11 +327,9 @@ async fn test_skill_use_silent_round_trip() {
 		.expect("dispatch");
 		assert!(text_of(&result).contains("already active"));
 
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "forget", "name": SKILL_NAME}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "forget", "name": SKILL_NAME})))
+			.await
+			.expect("dispatch");
 		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
 	})
 	.await;
@@ -373,14 +350,8 @@ async fn test_skill_use_forget_validation_and_offload() {
 				serde_json::json!({"action": action, "name": "   "}),
 				serde_json::json!({"action": action}),
 			] {
-				let result = execute_skill_tool(&skill_call(params))
-					.await
-					.expect("dispatch");
-				assert!(
-					is_err(&result),
-					"{action} must reject: {}",
-					text_of(&result)
-				);
+				let result = execute_skill_tool(&skill_call(params)).await.expect("dispatch");
+				assert!(is_err(&result), "{action} must reject: {}", text_of(&result));
 				assert!(
 					text_of(&result).contains("name"),
 					"{action} validation: {}",
@@ -400,11 +371,9 @@ async fn test_skill_use_forget_validation_and_offload() {
 
 		// Offload path: a skill that "loaded" a server forgets → refcount hits
 		// zero → server disabled + removed, and the message names it.
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "use", "name": SKILL_NAME}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "use", "name": SKILL_NAME})))
+			.await
+			.expect("dispatch");
 		assert!(!is_err(&result), "use failed: {}", text_of(&result));
 		crate::session::context::set_skill_capability_servers(
 			&sid,
@@ -412,11 +381,9 @@ async fn test_skill_use_forget_validation_and_offload() {
 			vec!["__skilltest_offload_srv".to_string()],
 		);
 
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": "forget", "name": SKILL_NAME}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "forget", "name": SKILL_NAME})))
+			.await
+			.expect("dispatch");
 		assert!(!is_err(&result), "forget failed: {}", text_of(&result));
 		assert!(
 			text_of(&result).contains("offloaded servers: __skilltest_offload_srv"),
@@ -466,11 +433,9 @@ async fn test_skill_use_unknown_capability_warns_but_activates() {
 async fn test_skill_use_and_forget_require_active_session() {
 	// Outside any with_session_id scope both actions refuse with a clear error.
 	for action in ["use", "forget"] {
-		let result = execute_skill_tool(&skill_call(
-			serde_json::json!({"action": action, "name": "any-skill"}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": action, "name": "any-skill"})))
+			.await
+			.expect("dispatch");
 		assert!(
 			is_err(&result),
 			"{action} outside session must error: {}",
@@ -495,10 +460,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -567,16 +529,11 @@ async fn test_skill_use_loads_capability_with_config_level_server() {
 	.expect("default.toml");
 
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config
 		.mcp
 		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"skilltest-cap-srv",
-			30,
-			vec![],
-		));
+		.push(crate::config::McpServerConfig::builtin("skilltest-cap-srv", 30, vec![]));
 	crate::session::context::set_session_config(&sid, &config);
 
 	crate::session::context::with_session_id(sid.clone(), async {
@@ -603,11 +560,7 @@ async fn test_skill_use_loads_capability_with_config_level_server() {
 		);
 
 		// Config-level skip: no dynamic registration, no skill-owned servers.
-		assert!(crate::session::context::get_dynamic_server_for_session(
-			&sid,
-			"skilltest-cap-srv"
-		)
-		.is_none());
+		assert!(crate::session::context::get_dynamic_server_for_session(&sid, "skilltest-cap-srv").is_none());
 		let owned = crate::session::context::take_skill_capability_servers(&sid, "skilltest-capload");
 		assert!(owned.is_empty(), "config-level servers are not skill-owned");
 	})
@@ -658,8 +611,7 @@ async fn test_skill_forget_shared_server_keeps_it() {
 		);
 
 		// The surviving skill still owns the server.
-		let remaining =
-			crate::session::context::take_skill_capability_servers(&sid, "skilltest-shared-b");
+		let remaining = crate::session::context::take_skill_capability_servers(&sid, "skilltest-shared-b");
 		assert_eq!(remaining, vec!["__skilltest_shared_srv".to_string()]);
 	})
 	.await;
@@ -684,10 +636,7 @@ impl HomeGuard {
 		let previous = std::env::var_os("HOME");
 		let dir = tempfile::tempdir().expect("home tempdir");
 		std::env::set_var("HOME", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -734,11 +683,7 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 
 	// Universal (project) skill.
 	let workdir = tempfile::tempdir().expect("workdir");
-	write_project_skill(
-		workdir.path(),
-		"skilltest-uni",
-		"description: Universal fixture\n",
-	);
+	write_project_skill(workdir.path(), "skilltest-uni", "description: Universal fixture\n");
 
 	// Agent plugin with one skill.
 	let plugin_root = workdir.path().join(".agents").join("plugins").join("plug1");
@@ -753,10 +698,7 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 	)
 	.expect("plugin.json");
 	std::fs::write(
-		plugin_root
-			.join("skills")
-			.join("skilltest-plug")
-			.join("SKILL.md"),
+		plugin_root.join("skills").join("skilltest-plug").join("SKILL.md"),
 		"---\nname: skilltest-plug\ndescription: Plugin fixture\n---\n\nPLUG-BODY\n",
 	)
 	.expect("write SKILL.md");
@@ -813,16 +755,12 @@ async fn test_find_skills_across_universal_plugin_and_evolution_sources() {
 	.expect("write registry");
 
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.supervisor.learning.evolution.enabled = true;
 	crate::session::context::set_session_config(&sid, &config);
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 		crate::supervisor::learning::evolution::init_for_session("developer");
 
 		let names: Vec<String> = find_all_skills_with_details()
@@ -859,10 +797,7 @@ async fn test_skill_list_empty_reports_no_skills() {
 
 	let workdir = tempfile::tempdir().expect("workdir");
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		let result = execute_skill_tool(&skill_call(serde_json::json!({"action": "list"})))
 			.await
@@ -897,10 +832,7 @@ async fn test_skill_use_env_gated_capability_skips_with_warning() {
 	);
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		let result = execute_skill_tool(&skill_call(
 			serde_json::json!({"action": "use", "name": "skilltest-envcap-skill"}),
@@ -909,9 +841,8 @@ async fn test_skill_use_env_gated_capability_skips_with_warning() {
 		.expect("dispatch");
 		assert!(!is_err(&result), "use failed: {}", text_of(&result));
 		assert!(
-			text_of(&result).contains(
-				"⚠️ Capability 'skilltest-envcap' skipped — missing env vars: SKILLTEST_MISSING_VAR"
-			),
+			text_of(&result)
+				.contains("⚠️ Capability 'skilltest-envcap' skipped — missing env vars: SKILLTEST_MISSING_VAR"),
 			"got: {}",
 			text_of(&result)
 		);
@@ -945,10 +876,7 @@ async fn test_skill_use_refcounts_already_enabled_server() {
 	);
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		// Pre-register and mark the server enabled in the session registry so
 		// the skill hits the already-enabled refcount branch instead of a
@@ -959,11 +887,7 @@ async fn test_skill_use_refcounts_already_enabled_server() {
 			vec![],
 		))
 		.expect("register");
-		crate::session::context::enable_dynamic_server_for_session(
-			&sid,
-			"skilltest-refcap-srv",
-			Vec::new(),
-		);
+		crate::session::context::enable_dynamic_server_for_session(&sid, "skilltest-refcap-srv", Vec::new());
 
 		let result = execute_skill_tool(&skill_call(
 			serde_json::json!({"action": "use", "name": "skilltest-refcap-skill"}),
@@ -972,15 +896,13 @@ async fn test_skill_use_refcounts_already_enabled_server() {
 		.expect("dispatch");
 		assert!(!is_err(&result), "use failed: {}", text_of(&result));
 		assert!(
-			text_of(&result)
-				.contains("Loaded capability 'skilltest-refcap' (servers: skilltest-refcap-srv)"),
+			text_of(&result).contains("Loaded capability 'skilltest-refcap' (servers: skilltest-refcap-srv)"),
 			"got: {}",
 			text_of(&result)
 		);
 
 		// The skill now owns the server for forget-time offloading.
-		let owned =
-			crate::session::context::take_skill_capability_servers(&sid, "skilltest-refcap-skill");
+		let owned = crate::session::context::take_skill_capability_servers(&sid, "skilltest-refcap-skill");
 		assert_eq!(owned, vec!["skilltest-refcap-srv".to_string()]);
 	})
 	.await;
@@ -1013,10 +935,7 @@ async fn test_skill_use_capability_enable_failures_fail_open() {
 	);
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		let result = execute_skill_tool(&skill_call(
 			serde_json::json!({"action": "use", "name": "skilltest-capfail-skill"}),
@@ -1027,10 +946,7 @@ async fn test_skill_use_capability_enable_failures_fail_open() {
 		let text = text_of(&result);
 		// Both capabilities must RESOLVE (no "not found") so the assertions
 		// below prove the registration/enable failure branches, not a parse skip.
-		assert!(
-			!text.contains("not found"),
-			"capabilities failed to resolve: {text}"
-		);
+		assert!(!text.contains("not found"), "capabilities failed to resolve: {text}");
 		assert!(
 			!text.contains("Loaded capability 'skilltest-badreg'"),
 			"unregistrable server must not load: {text}"
@@ -1044,12 +960,8 @@ async fn test_skill_use_capability_enable_failures_fail_open() {
 			"skilltest-capfail-skill"
 		));
 		// Neither broken server became skill-owned.
-		let owned =
-			crate::session::context::take_skill_capability_servers(&sid, "skilltest-capfail-skill");
-		assert!(
-			owned.is_empty(),
-			"broken servers must not be owned: {owned:?}"
-		);
+		let owned = crate::session::context::take_skill_capability_servers(&sid, "skilltest-capfail-skill");
+		assert!(owned.is_empty(), "broken servers must not be owned: {owned:?}");
 	})
 	.await;
 
@@ -1076,10 +988,7 @@ async fn test_skill_use_plugin_servers_fail_open() {
 	)
 	.expect("plugin.json");
 	std::fs::write(
-		plugin_root
-			.join("skills")
-			.join("skilltest-plugfail")
-			.join("SKILL.md"),
+		plugin_root.join("skills").join("skilltest-plugfail").join("SKILL.md"),
 		"---\nname: skilltest-plugfail\ndescription: Plugin server fixture\n---\n\nPLUGFAIL-BODY\n",
 	)
 	.expect("write SKILL.md");
@@ -1103,10 +1012,7 @@ async fn test_skill_use_plugin_servers_fail_open() {
 	.expect("mcp.json");
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		let result = execute_skill_tool(&skill_call(
 			serde_json::json!({"action": "use", "name": "skilltest-plugfail"}),
@@ -1119,10 +1025,7 @@ async fn test_skill_use_plugin_servers_fail_open() {
 			!text.contains("Loaded plugin 'plug2'"),
 			"unspawnable plugin server must not load: {text}"
 		);
-		assert!(crate::session::context::has_active_skill(
-			&sid,
-			"skilltest-plugfail"
-		));
+		assert!(crate::session::context::has_active_skill(&sid, "skilltest-plugfail"));
 	})
 	.await;
 
@@ -1137,28 +1040,17 @@ async fn test_skill_use_appends_resource_catalog() {
 	let sid = "__skilltest_resources".to_string();
 
 	let workdir = tempfile::tempdir().expect("workdir");
-	let skill_dir = workdir
-		.path()
-		.join(".agents")
-		.join("skills")
-		.join("skilltest-res");
+	let skill_dir = workdir.path().join(".agents").join("skills").join("skilltest-res");
 	std::fs::create_dir_all(skill_dir.join("scripts")).expect("scripts dir");
 	std::fs::write(
 		skill_dir.join("SKILL.md"),
 		"---\nname: skilltest-res\ndescription: Resource catalog fixture\n---\n\nRES-BODY\n",
 	)
 	.expect("write SKILL.md");
-	std::fs::write(
-		skill_dir.join("scripts").join("hello.sh"),
-		"#!/bin/sh\necho hi\n",
-	)
-	.expect("write script");
+	std::fs::write(skill_dir.join("scripts").join("hello.sh"), "#!/bin/sh\necho hi\n").expect("write script");
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 		crate::session::inbox::init_inbox_for_session();
 
 		let result = execute_skill_tool(&skill_call(
@@ -1170,8 +1062,7 @@ async fn test_skill_use_appends_resource_catalog() {
 
 		// Non-silent use queues the injection (with resource catalog) in the
 		// session inbox for the main loop to process.
-		let injected =
-			crate::session::inbox::try_pop_inbox_message().expect("skill content queued in inbox");
+		let injected = crate::session::inbox::try_pop_inbox_message().expect("skill content queued in inbox");
 		assert!(
 			injected.content.contains("## Skill Resources"),
 			"resource catalog missing from injection: {}",
@@ -1196,17 +1087,10 @@ async fn test_skill_forget_offload_failure_still_reports() {
 	let sid = "__skilltest_ghostoffload".to_string();
 
 	let workdir = tempfile::tempdir().expect("workdir");
-	write_project_skill(
-		workdir.path(),
-		"skilltest-ghost",
-		"description: Ghost server fixture\n",
-	);
+	write_project_skill(workdir.path(), "skilltest-ghost", "description: Ghost server fixture\n");
 
 	crate::session::context::with_session_id(sid.clone(), async {
-		crate::session::context::set_session_workdir(
-			&sid.to_string(),
-			workdir.path().to_path_buf(),
-		);
+		crate::session::context::set_session_workdir(&sid.to_string(), workdir.path().to_path_buf());
 
 		crate::session::context::add_active_skill(&sid, "skilltest-ghost");
 		// A server nobody registered: disable fails (logged), remove returns
@@ -1228,10 +1112,7 @@ async fn test_skill_forget_offload_failure_still_reports() {
 			"got: {}",
 			text_of(&result)
 		);
-		assert!(!crate::session::context::has_active_skill(
-			&sid,
-			"skilltest-ghost"
-		));
+		assert!(!crate::session::context::has_active_skill(&sid, "skilltest-ghost"));
 	})
 	.await;
 

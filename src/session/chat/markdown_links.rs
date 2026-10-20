@@ -140,10 +140,7 @@ fn link_destination(source: &str) -> Option<(String, usize)> {
 			remainder = remainder[title_end + 1..].trim_start();
 		}
 	}
-	if !remainder.starts_with(')')
-		|| destination.is_empty()
-		|| destination.chars().any(char::is_control)
-	{
+	if !remainder.starts_with(')') || destination.is_empty() || destination.chars().any(char::is_control) {
 		return None;
 	}
 	// OSC 8 destinations must be URIs; local Markdown file links use file://.
@@ -181,15 +178,8 @@ pub(super) fn render_links(text: FmtText<'_, '_>, links: &[MarkdownLink]) -> Str
 			let start = compound.src.as_ptr() as usize;
 			links
 				.iter()
-				.find(|link| {
-					link.label.contains(&start) && start + compound.src.len() <= link.label.end
-				})
-				.map(|link| {
-					format!(
-						"\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
-						link.destination, compound.src
-					)
-				})
+				.find(|link| link.label.contains(&start) && start + compound.src.len() <= link.label.end)
+				.map(|link| format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", link.destination, compound.src))
 		})
 		.collect();
 	let mut replacements = replacements.iter();
@@ -197,9 +187,7 @@ pub(super) fn render_links(text: FmtText<'_, '_>, links: &[MarkdownLink]) -> Str
 		.lines
 		.into_iter()
 		.map(|line| match line {
-			FmtLine::Normal(composite) => {
-				FmtLine::Normal(apply_link_sequences(composite, &mut replacements))
-			}
+			FmtLine::Normal(composite) => FmtLine::Normal(apply_link_sequences(composite, &mut replacements)),
 			FmtLine::TableRow(row) => FmtLine::TableRow(FmtTableRow {
 				cells: row
 					.cells

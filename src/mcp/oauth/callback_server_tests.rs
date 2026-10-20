@@ -155,11 +155,7 @@ async fn handle_request_returns_404_for_non_callback_paths() {
 	let (server, mut client) = tcp_pair().await;
 	let state = state_with(Some("s1"), "https://auth.example.com/oauth/token");
 	let handler = tokio::spawn(async move { handle_request(server, state).await });
-	let response = send_and_read(
-		&mut client,
-		"GET /favicon.ico HTTP/1.1\r\nHost: localhost\r\n\r\n",
-	)
-	.await;
+	let response = send_and_read(&mut client, "GET /favicon.ico HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
 	handler.await.unwrap().unwrap();
 	assert!(response.starts_with("HTTP/1.1 404"), "{response}");
 	assert!(response.contains("404 Not Found"), "{response}");
@@ -179,10 +175,7 @@ async fn handle_request_error_callback_renders_error_page_and_delivers_result() 
 	.await;
 	handler.await.unwrap().unwrap();
 	assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-	assert!(
-		response.contains("ERROR - Authorization Failed"),
-		"{response}"
-	);
+	assert!(response.contains("ERROR - Authorization Failed"), "{response}");
 	assert!(response.contains("access_denied"), "{response}");
 	match rx.await.unwrap() {
 		OAuthCallbackResult::Error { error, description } => {
@@ -212,10 +205,7 @@ async fn handle_request_success_callback_renders_ok_page_and_delivers_token() {
 	)
 	.await;
 	handler.await.unwrap().unwrap();
-	assert!(
-		response.contains("OK - Authorization Successful"),
-		"{response}"
-	);
+	assert!(response.contains("OK - Authorization Successful"), "{response}");
 	match rx.await.unwrap() {
 		OAuthCallbackResult::Success {
 			access_token,
@@ -230,9 +220,7 @@ async fn handle_request_success_callback_renders_ok_page_and_delivers_token() {
 		}
 		other => panic!("expected Success, got {other:?}"),
 	}
-	clear_token(&server_name, false, None, None, None)
-		.await
-		.unwrap();
+	clear_token(&server_name, false, None, None, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -240,9 +228,7 @@ async fn handle_request_tolerates_immediate_disconnect() {
 	let (server, client) = tcp_pair().await;
 	drop(client); // close without sending anything
 	let state = state_with(Some("s1"), "https://auth.example.com/oauth/token");
-	handle_request(server, state)
-		.await
-		.expect("zero-byte read is a no-op");
+	handle_request(server, state).await.expect("zero-byte read is a no-op");
 }
 
 // ------------------------------------------------------------------
@@ -265,10 +251,7 @@ async fn run_http_server_serves_requests_until_shutdown_flag_set() {
 		"GET /oauth/callback?error=temporarily_unavailable&state=s1 HTTP/1.1\r\n\r\n",
 	)
 	.await;
-	assert!(
-		response.contains("ERROR - Authorization Failed"),
-		"{response}"
-	);
+	assert!(response.contains("ERROR - Authorization Failed"), "{response}");
 	match rx.await.unwrap() {
 		OAuthCallbackResult::Error { error, .. } => assert_eq!(error, "temporarily_unavailable"),
 		other => panic!("expected Error, got {other:?}"),

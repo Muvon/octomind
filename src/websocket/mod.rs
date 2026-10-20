@@ -15,11 +15,12 @@
 // WebSocket module for server functionality
 
 pub mod protocol;
+pub(crate) mod run_events;
 pub mod server;
 
 // Re-export main types
 pub use protocol::{
-	AssistantPayload, ClientMessage, CostPayload, ErrorPayload, McpNotificationPayload,
-	ServerMessage, StatusPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
+	AssistantPayload, ClientMessage, CostPayload, ErrorPayload, McpNotificationPayload, ServerMessage, StatusPayload,
+	ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };
 pub use server::WebSocketServer;

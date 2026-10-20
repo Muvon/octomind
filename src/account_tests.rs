@@ -65,9 +65,7 @@ fn usage_json() -> serde_json::Value {
 /// One-shot-per-connection HTTP stub serving the given raw bodies in order.
 /// Returns the base URL to point `OCTOMIND_API_URL` at.
 async fn spawn_api(bodies: Vec<String>) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("stub addr");
 	let queue = std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from(bodies)));
 
@@ -156,11 +154,7 @@ fn machine_id_is_created_once_and_stays_stable() {
 
 	let id = machine_id().expect("first machine id");
 	assert_eq!(id.len(), 12, "machine id is a 12-char uuid slice: {id}");
-	assert_eq!(
-		machine_id().expect("second machine id"),
-		id,
-		"stable on disk"
-	);
+	assert_eq!(machine_id().expect("second machine id"), id, "stable on disk");
 	assert!(dir.join("config").join("machine-id").exists());
 }
 
@@ -245,10 +239,7 @@ fn save_session_roundtrips_and_restricts_permissions() {
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
-		let mode = std::fs::metadata(&path)
-			.expect("metadata")
-			.permissions()
-			.mode();
+		let mode = std::fs::metadata(&path).expect("metadata").permissions().mode();
 		assert_eq!(mode & 0o777, 0o600, "auth.json is owner-only");
 	}
 }
@@ -263,10 +254,7 @@ fn panel_url_passthrough_without_env_and_repoints_with_it() {
 	assert_eq!(panel_url(url), url);
 
 	std::env::set_var(PANEL_URL_ENV, "http://localhost:5199/");
-	assert_eq!(
-		panel_url(url),
-		"http://localhost:5199/app/login/cli?code=AB12-CD34"
-	);
+	assert_eq!(panel_url(url), "http://localhost:5199/app/login/cli?code=AB12-CD34");
 }
 
 // ── network paths against the local stub ────────────────────────────────────
@@ -282,15 +270,11 @@ async fn post_public_parses_both_envelope_shapes() {
 	std::env::set_var(API_URL_ENV, &url);
 
 	let ok: std::result::Result<serde_json::Value, String> =
-		post_public("/anything", serde_json::json!({}))
-			.await
-			.expect("call");
+		post_public("/anything", serde_json::json!({})).await.expect("call");
 	assert_eq!(ok.expect("data"), serde_json::json!({"x": 1}));
 
 	let err: std::result::Result<serde_json::Value, String> =
-		post_public("/anything", serde_json::json!({}))
-			.await
-			.expect("call");
+		post_public("/anything", serde_json::json!({})).await.expect("call");
 	assert_eq!(err.expect_err("error code"), "nope");
 }
 
@@ -344,10 +328,7 @@ async fn get_returns_the_payload_when_signed_in() {
 	})
 	.expect("save session");
 
-	let account = get::<Account>("/auth/me")
-		.await
-		.expect("call")
-		.expect("signed in");
+	let account = get::<Account>("/auth/me").await.expect("call").expect("signed in");
 	assert_eq!(account.email, "dev@example.com");
 	assert_eq!(account.plan, "pro");
 }
@@ -374,10 +355,7 @@ async fn get_refreshes_once_on_unauthorized_and_retries() {
 	})
 	.expect("save session");
 
-	let account = get::<Account>("/auth/me")
-		.await
-		.expect("call")
-		.expect("refreshed");
+	let account = get::<Account>("/auth/me").await.expect("call").expect("refreshed");
 	assert_eq!(account.email, "dev@example.com");
 	let s = session().expect("session persisted after refresh");
 	assert_eq!(s.jwt, "j2", "fresh jwt stored");
@@ -446,9 +424,7 @@ async fn get_surfaces_api_error_codes() {
 	})
 	.expect("save session");
 
-	let e = get::<Account>("/auth/me")
-		.await
-		.expect_err("error code surfaces");
+	let e = get::<Account>("/auth/me").await.expect_err("error code surfaces");
 	assert!(e.to_string().contains("forbidden"), "{e}");
 }
 
@@ -534,18 +510,12 @@ async fn hub_usage_serves_a_bare_hub_key() {
 	// No auth.json: the hub key is the only credential.
 	std::env::set_var(HUB_KEY_ENV, "hk-live-key");
 
-	let who = whoami()
-		.await
-		.expect("whoami")
-		.expect("hub key identifies the account");
+	let who = whoami().await.expect("whoami").expect("hub key identifies the account");
 	assert_eq!(who.plan, "pro");
 	let u = usage().await.expect("usage").expect("hub usage payload");
 	// `cap_usd` is the pre-v2 spelling and must still land on allowance_usd —
 	// the CLI ships ahead of the control plane.
-	assert_eq!(
-		u.month.as_ref().expect("legacy month window").allowance_usd,
-		100.0
-	);
+	assert_eq!(u.month.as_ref().expect("legacy month window").allowance_usd, 100.0);
 }
 
 #[tokio::test]
@@ -599,16 +569,11 @@ async fn poll_login_waits_through_pending_then_claims() {
 	.await;
 	std::env::set_var(API_URL_ENV, &url);
 
-	let claim = poll_login("dc-1", Duration::from_secs(1))
-		.await
-		.expect("claim");
+	let claim = poll_login("dc-1", Duration::from_secs(1)).await.expect("claim");
 	assert_eq!(claim.api_key, "hk-1");
 	assert_eq!(claim.jwt, "j-1");
 	assert_eq!(claim.refresh_token, "r-1");
-	assert_eq!(
-		claim.key_name, "octomind-cli",
-		"absent key_name uses the default"
-	);
+	assert_eq!(claim.key_name, "octomind-cli", "absent key_name uses the default");
 }
 
 #[tokio::test]
@@ -668,10 +633,7 @@ fn login_required_only_for_the_hosted_hub_without_a_key() {
 	std::env::remove_var(HUB_URL_ENV);
 
 	assert!(login_required("octohub:auto"));
-	assert!(
-		login_required("OctoHub:auto"),
-		"provider match is case-insensitive"
-	);
+	assert!(login_required("OctoHub:auto"), "provider match is case-insensitive");
 	assert!(
 		!login_required("ollama:fake-model"),
 		"other providers bring their own keys"

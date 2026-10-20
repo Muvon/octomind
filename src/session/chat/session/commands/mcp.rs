@@ -41,17 +41,13 @@ async fn handle_mcp_list(config: &Config, role: &str) -> Result<CommandResult> {
 	let available_functions = crate::mcp::get_available_functions(&config_for_role).await;
 
 	// Build JSON output with all data needed for display
-	let mut servers_json: std::collections::HashMap<String, Vec<String>> =
-		std::collections::HashMap::new();
+	let mut servers_json: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
 	if !available_functions.is_empty() {
 		// Group tools by server name
 		for func in &available_functions {
 			let server_name = get_tool_server_name_async(&func.name, &config_for_role).await;
-			servers_json
-				.entry(server_name)
-				.or_default()
-				.push(func.name.clone());
+			servers_json.entry(server_name).or_default().push(func.name.clone());
 		}
 	}
 
@@ -61,12 +57,10 @@ async fn handle_mcp_list(config: &Config, role: &str) -> Result<CommandResult> {
 		"total_tools": available_functions.len()
 	});
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: String::new(),
-			data: json_output,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: String::new(),
+		data: json_output,
+	})))
 }
 
 async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
@@ -74,13 +68,12 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 	let config_for_role = config.get_merged_config_for_role(role);
 
 	if config_for_role.mcp.servers.is_empty() {
-		let json_output = serde_json::json!({"subcommand": "info", "servers": [], "message": "No MCP servers configured"});
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Mcp {
-				mcp_command: String::new(),
-				data: json_output,
-			},
-		)));
+		let json_output =
+			serde_json::json!({"subcommand": "info", "servers": [], "message": "No MCP servers configured"});
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+			mcp_command: String::new(),
+			data: json_output,
+		})));
 	}
 
 	// Collect server status data
@@ -90,10 +83,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 
 	for server in &config_for_role.mcp.servers {
 		let (health, restart_info) = match server.connection_type() {
-			McpConnectionType::Builtin => (
-				crate::mcp::process::ServerHealth::Running,
-				Default::default(),
-			),
+			McpConnectionType::Builtin => (crate::mcp::process::ServerHealth::Running, Default::default()),
 			McpConnectionType::Http | McpConnectionType::Stdin => {
 				if let Some((h, r)) = server_report.get(server.name()) {
 					(*h, r.clone())
@@ -134,10 +124,7 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
 			(*h, r.clone())
 		} else {
-			(
-				crate::mcp::process::ServerHealth::Running,
-				Default::default(),
-			)
+			(crate::mcp::process::ServerHealth::Running, Default::default())
 		};
 		let health_str = match health {
 			crate::mcp::process::ServerHealth::Running => "running",
@@ -170,13 +157,10 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 			func.description.clone()
 		};
 
-		tools_by_server
-			.entry(server_name)
-			.or_default()
-			.push(serde_json::json!({
-				"name": func.name,
-				"description": short_desc,
-			}));
+		tools_by_server.entry(server_name).or_default().push(serde_json::json!({
+			"name": func.name,
+			"description": short_desc,
+		}));
 	}
 
 	append_local_server(&mut servers_data, &tools_by_server);
@@ -188,24 +172,20 @@ async fn handle_mcp_info(config: &Config, role: &str) -> Result<CommandResult> {
 		"total_tools": available_functions.len()
 	});
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: String::new(),
-			data: json_output,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: String::new(),
+		data: json_output,
+	})))
 }
 
 async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 	let config_for_role = config.get_merged_config_for_role(role);
 
 	if config_for_role.mcp.servers.is_empty() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Mcp {
-				mcp_command: "full".to_string(),
-				data: serde_json::json!({"subcommand": "full", "servers": [], "tools": {}, "message": "No MCP servers configured"}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+			mcp_command: "full".to_string(),
+			data: serde_json::json!({"subcommand": "full", "servers": [], "tools": {}, "message": "No MCP servers configured"}),
+		})));
 	}
 
 	// Collect server status data
@@ -215,10 +195,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 
 	for server in &config_for_role.mcp.servers {
 		let (health, restart_info) = match server.connection_type() {
-			McpConnectionType::Builtin => (
-				crate::mcp::process::ServerHealth::Running,
-				Default::default(),
-			),
+			McpConnectionType::Builtin => (crate::mcp::process::ServerHealth::Running, Default::default()),
 			McpConnectionType::Http | McpConnectionType::Stdin => {
 				if let Some((h, r)) = server_report.get(server.name()) {
 					(*h, r.clone())
@@ -257,10 +234,7 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 		let (health, restart_info) = if let Some((h, r)) = server_report.get(&name) {
 			(*h, r.clone())
 		} else {
-			(
-				crate::mcp::process::ServerHealth::Running,
-				Default::default(),
-			)
+			(crate::mcp::process::ServerHealth::Running, Default::default())
 		};
 		let health_str = match health {
 			crate::mcp::process::ServerHealth::Running => "running",
@@ -286,56 +260,47 @@ async fn handle_mcp_full(config: &Config, role: &str) -> Result<CommandResult> {
 
 	for func in &available_functions {
 		let server_name = get_tool_server_name_async(&func.name, &config_for_role).await;
-		tools_by_server
-			.entry(server_name)
-			.or_default()
-			.push(serde_json::json!({
-				"name": func.name,
-				"description": func.description,
-				"parameters": func.parameters,
-			}));
+		tools_by_server.entry(server_name).or_default().push(serde_json::json!({
+			"name": func.name,
+			"description": func.description,
+			"parameters": func.parameters,
+		}));
 	}
 
 	append_local_server(&mut servers_data, &tools_by_server);
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: "full".to_string(),
-			data: serde_json::json!({
-				"subcommand": "full",
-				"servers": servers_data,
-				"tools": tools_by_server,
-				"total_tools": available_functions.len(),
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: "full".to_string(),
+		data: serde_json::json!({
+			"subcommand": "full",
+			"servers": servers_data,
+			"tools": tools_by_server,
+			"total_tools": available_functions.len(),
+		}),
+	})))
 }
 
 async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult> {
 	let config_for_role = config.get_merged_config_for_role(role);
 
 	if config_for_role.mcp.servers.is_empty() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Mcp {
-				mcp_command: "health".to_string(),
-				data: serde_json::json!({"subcommand": "health", "servers": [], "message": "No MCP servers configured"}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+			mcp_command: "health".to_string(),
+			data: serde_json::json!({"subcommand": "health", "servers": [], "message": "No MCP servers configured"}),
+		})));
 	}
 
 	let monitor_running = crate::mcp::health_monitor::is_health_monitor_running();
 
 	if let Err(e) = crate::mcp::health_monitor::force_health_check(&config_for_role).await {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Mcp {
-				mcp_command: "health".to_string(),
-				data: serde_json::json!({
-					"subcommand": "health",
-					"monitor_running": monitor_running,
-					"error": format!("Health check failed: {}", e),
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+			mcp_command: "health".to_string(),
+			data: serde_json::json!({
+				"subcommand": "health",
+				"monitor_running": monitor_running,
+				"error": format!("Health check failed: {}", e),
+			}),
+		})));
 	}
 
 	let server_report = crate::mcp::server::get_server_status_report();
@@ -358,12 +323,9 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult>
 				crate::mcp::process::ServerHealth::Unreachable => "unreachable",
 			};
 
-			let last_checked_secs = restart_info.last_health_check.and_then(|t| {
-				std::time::SystemTime::now()
-					.duration_since(t)
-					.ok()
-					.map(|d| d.as_secs())
-			});
+			let last_checked_secs = restart_info
+				.last_health_check
+				.and_then(|t| std::time::SystemTime::now().duration_since(t).ok().map(|d| d.as_secs()));
 
 			servers_data.push(serde_json::json!({
 				"name": server.name(),
@@ -375,16 +337,14 @@ async fn handle_mcp_health(config: &Config, role: &str) -> Result<CommandResult>
 		}
 	}
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: "health".to_string(),
-			data: serde_json::json!({
-				"subcommand": "health",
-				"monitor_running": monitor_running,
-				"servers": servers_data,
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: "health".to_string(),
+		data: serde_json::json!({
+			"subcommand": "health",
+			"monitor_running": monitor_running,
+			"servers": servers_data,
+		}),
+	})))
 }
 
 async fn handle_mcp_dump(config: &Config, role: &str) -> Result<CommandResult> {
@@ -402,16 +362,14 @@ async fn handle_mcp_dump(config: &Config, role: &str) -> Result<CommandResult> {
 		})
 		.collect();
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: "dump".to_string(),
-			data: serde_json::json!({
-				"subcommand": "dump",
-				"tools": tools,
-				"total_tools": available_functions.len(),
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: "dump".to_string(),
+		data: serde_json::json!({
+			"subcommand": "dump",
+			"tools": tools,
+			"total_tools": available_functions.len(),
+		}),
+	})))
 }
 
 async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResult> {
@@ -434,15 +392,11 @@ async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResul
 			if let Some(props_obj) = properties.as_object() {
 				for (prop_name, prop_def) in props_obj {
 					if prop_def.get("type").is_none() && prop_def.get("oneOf").is_none() {
-						issues.push(format!(
-							"Property '{}' missing 'type' or 'oneOf' field",
-							prop_name
-						));
+						issues.push(format!("Property '{}' missing 'type' or 'oneOf' field", prop_name));
 					}
 				}
 			}
-		} else if has_type && func.parameters.get("type").and_then(|t| t.as_str()) == Some("object")
-		{
+		} else if has_type && func.parameters.get("type").and_then(|t| t.as_str()) == Some("object") {
 			issues.push("Object type schema missing 'properties' field".to_string());
 		}
 
@@ -457,17 +411,15 @@ async fn handle_mcp_validate(config: &Config, role: &str) -> Result<CommandResul
 		}));
 	}
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: "validate".to_string(),
-			data: serde_json::json!({
-				"subcommand": "validate",
-				"all_valid": all_valid,
-				"tools": tools_validation,
-				"total_tools": available_functions.len(),
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: "validate".to_string(),
+		data: serde_json::json!({
+			"subcommand": "validate",
+			"all_valid": all_valid,
+			"tools": tools_validation,
+			"total_tools": available_functions.len(),
+		}),
+	})))
 }
 
 /// Synthesize a `local` server entry from the project-local `.agents/tools/*`
@@ -506,17 +458,13 @@ fn handle_mcp_invalid() -> Result<CommandResult> {
 		"subcommand": "invalid",
 		"message": "Invalid MCP subcommand"
 	});
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Mcp {
-			mcp_command: "invalid".to_string(),
-			data: json_output,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Mcp {
+		mcp_command: "invalid".to_string(),
+		data: json_output,
+	})))
 }
 /// Perform on-demand health check for a server that's not in the status report
-async fn check_server_health_on_demand(
-	server: &crate::config::McpServerConfig,
-) -> crate::mcp::process::ServerHealth {
+async fn check_server_health_on_demand(server: &crate::config::McpServerConfig) -> crate::mcp::process::ServerHealth {
 	match server.connection_type() {
 		McpConnectionType::Stdin => {
 			// For stdin servers, check if the process is running
@@ -583,8 +531,7 @@ async fn perform_http_health_check_sync(server: &crate::config::McpServerConfig)
 			.await
 		{
 			Ok(response) => {
-				let is_healthy =
-					response.status().is_success() || response.status().is_client_error();
+				let is_healthy = response.status().is_success() || response.status().is_client_error();
 				// Both 2xx and 4xx are considered "server responding" - 5xx or connection errors are not
 				Ok(is_healthy)
 			}

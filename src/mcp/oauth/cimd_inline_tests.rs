@@ -21,10 +21,7 @@ fn test_build_client_metadata() {
 		&["read".to_string(), "write".to_string()],
 	);
 	assert_eq!(metadata.client_name, "Octomind");
-	assert_eq!(
-		metadata.redirect_uris,
-		vec!["http://localhost:34567/oauth/callback"]
-	);
+	assert_eq!(metadata.redirect_uris, vec!["http://localhost:34567/oauth/callback"]);
 	assert_eq!(metadata.grant_types, vec!["authorization_code"]);
 	assert_eq!(metadata.token_endpoint_auth_method, "none");
 	assert_eq!(metadata.scope, Some("read write".to_string()));
@@ -38,10 +35,7 @@ fn test_build_client_metadata_empty_scopes() {
 
 #[test]
 fn test_client_metadata_serialization() {
-	let metadata = build_client_metadata(
-		"http://localhost:34567/oauth/callback",
-		&["openid".to_string()],
-	);
+	let metadata = build_client_metadata("http://localhost:34567/oauth/callback", &["openid".to_string()]);
 	let json = serde_json::to_string(&metadata).unwrap();
 	assert!(json.contains("Octomind"));
 	assert!(json.contains("authorization_code"));

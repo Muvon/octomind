@@ -18,10 +18,7 @@ use super::*;
 fn test_parse_www_authenticate_header() {
 	let header = r#"Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource""#;
 	let result = parse_www_authenticate_header(header).unwrap();
-	assert_eq!(
-		result,
-		"https://api.example.com/.well-known/oauth-protected-resource"
-	);
+	assert_eq!(result, "https://api.example.com/.well-known/oauth-protected-resource");
 }
 
 #[test]
@@ -53,10 +50,7 @@ fn test_build_oauth_config() {
 
 	// client_id is empty placeholder — resolved by CIMD/DCR
 	assert!(config.client_id.is_empty());
-	assert_eq!(
-		config.authorization_url,
-		"https://api.example.com/oauth/authorize"
-	);
+	assert_eq!(config.authorization_url, "https://api.example.com/oauth/authorize");
 	assert_eq!(config.token_url, "https://api.example.com/oauth/token");
 	assert_eq!(config.scopes, vec!["read", "write"]);
 	// Public client - no secret
@@ -72,15 +66,14 @@ fn test_parse_header_edge_cases() {
 	// Empty header
 	assert!(parse_www_authenticate_header("").is_err());
 	// Multiple params — resource_metadata still extracted
-	let header = "Bearer realm=\"example\", resource_metadata=\"https://auth.example.com/.well-known/oauth-protected-resource\"";
+	let header =
+		"Bearer realm=\"example\", resource_metadata=\"https://auth.example.com/.well-known/oauth-protected-resource\"";
 	assert_eq!(
 		parse_www_authenticate_header(header).unwrap(),
 		"https://auth.example.com/.well-known/oauth-protected-resource"
 	);
 	// Unquoted value does not match the RFC 9728 format
-	assert!(
-		parse_www_authenticate_header("Bearer resource_metadata=https://example.com/prm").is_err()
-	);
+	assert!(parse_www_authenticate_header("Bearer resource_metadata=https://example.com/prm").is_err());
 	// Empty quoted value does not match
 	assert!(parse_www_authenticate_header("Bearer resource_metadata=\"\"").is_err());
 	// URL with query string survives intact
@@ -119,10 +112,7 @@ fn test_protected_resource_metadata_deserialization() {
 	assert_eq!(full.authorization_servers.len(), 2);
 
 	// authorization_servers is required
-	assert!(serde_json::from_str::<ProtectedResourceMetadata>(
-		r#"{"resource":"https://api.example.com"}"#
-	)
-	.is_err());
+	assert!(serde_json::from_str::<ProtectedResourceMetadata>(r#"{"resource":"https://api.example.com"}"#).is_err());
 }
 
 #[test]
@@ -142,10 +132,7 @@ fn test_auth_server_metadata_deserialization() {
 		)
 		.unwrap();
 	assert_eq!(full.scopes_supported, Some(vec!["read".to_string()]));
-	assert_eq!(
-		full.code_challenge_methods_supported,
-		Some(vec!["S256".to_string()])
-	);
+	assert_eq!(full.code_challenge_methods_supported, Some(vec!["S256".to_string()]));
 	assert_eq!(
 		full.registration_endpoint.as_deref(),
 		Some("https://auth.example.com/register")
@@ -154,9 +141,9 @@ fn test_auth_server_metadata_deserialization() {
 
 	// token_endpoint is required
 	assert!(serde_json::from_str::<AuthServerMetadata>(
-			r#"{"issuer":"https://auth.example.com","authorization_endpoint":"https://auth.example.com/authorize"}"#
-		)
-		.is_err());
+		r#"{"issuer":"https://auth.example.com","authorization_endpoint":"https://auth.example.com/authorize"}"#
+	)
+	.is_err());
 }
 
 // ------------------------------------------------------------------
@@ -192,10 +179,8 @@ fn test_build_oauth_config_scope_precedence() {
 	let auth = auth_metadata_fixture(Some(vec!["read".to_string()]), None, None);
 
 	// Resource scopes win over auth server scopes
-	let config = build_oauth_config_from_metadata(
-		&auth,
-		&resource_metadata_fixture(Some(vec!["mcp:read".to_string()])),
-	);
+	let config =
+		build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(Some(vec!["mcp:read".to_string()])));
 	assert_eq!(config.scopes, vec!["mcp:read".to_string()]);
 
 	// Falls back to auth server scopes when the resource lists none
@@ -204,27 +189,19 @@ fn test_build_oauth_config_scope_precedence() {
 
 	// Empty when neither document lists scopes
 	let auth_no_scopes = auth_metadata_fixture(None, None, None);
-	let config =
-		build_oauth_config_from_metadata(&auth_no_scopes, &resource_metadata_fixture(None));
+	let config = build_oauth_config_from_metadata(&auth_no_scopes, &resource_metadata_fixture(None));
 	assert!(config.scopes.is_empty());
 }
 
 #[test]
 fn test_build_oauth_config_defaults() {
-	let auth = auth_metadata_fixture(
-		None,
-		Some("https://auth.example.com/register".to_string()),
-		Some(true),
-	);
+	let auth = auth_metadata_fixture(None, Some("https://auth.example.com/register".to_string()), Some(true));
 	let config = build_oauth_config_from_metadata(&auth, &resource_metadata_fixture(None));
 
 	// client_id is a placeholder resolved later by CIMD/DCR
 	assert!(config.client_id.is_empty());
 	assert!(config.client_secret.is_empty());
-	assert_eq!(
-		config.authorization_url,
-		"https://auth.example.com/oauth/authorize"
-	);
+	assert_eq!(config.authorization_url, "https://auth.example.com/oauth/authorize");
 	assert_eq!(config.token_url, "https://auth.example.com/oauth/token");
 	assert_eq!(config.callback_url, "http://localhost:34567/oauth/callback");
 	assert_eq!(config.refresh_buffer_seconds, 300);
@@ -280,8 +257,7 @@ where
 					.lines()
 					.find_map(|l| {
 						let (key, value) = l.split_once(':')?;
-						key.eq_ignore_ascii_case("host")
-							.then(|| value.trim().to_string())
+						key.eq_ignore_ascii_case("host").then(|| value.trim().to_string())
 					})
 					.unwrap_or_default();
 				let (status, headers, body) = handler(&method, &path, &host);
@@ -347,9 +323,7 @@ async fn test_fetch_auth_server_metadata_builds_rfc8414_url() {
 	.await;
 
 	// Trailing slash on the issuer is trimmed before building the well-known URL
-	let metadata = fetch_auth_server_metadata(&format!("{url}/"))
-		.await
-		.unwrap();
+	let metadata = fetch_auth_server_metadata(&format!("{url}/")).await.unwrap();
 	assert_eq!(metadata.issuer, "https://auth.example.com");
 	assert_eq!(metadata.token_endpoint, "https://auth.example.com/token");
 	assert!(metadata.registration_endpoint.is_none());
@@ -388,8 +362,7 @@ async fn test_discover_pre_discovery_with_cimd_caches_result() {
 
 	// client_id is the local CIMD metadata document URL
 	assert!(
-		config.client_id.starts_with("http://127.0.0.1")
-			|| config.client_id.starts_with("http://localhost"),
+		config.client_id.starts_with("http://127.0.0.1") || config.client_id.starts_with("http://localhost"),
 		"unexpected client_id: {}",
 		config.client_id
 	);
@@ -518,10 +491,7 @@ async fn test_discover_errors_on_empty_authorization_servers() {
 	let err = discover_oauth_from_mcp_server(&format!("{base}/mcp/"), &name)
 		.await
 		.unwrap_err();
-	assert!(
-		err.to_string().contains("no authorization servers"),
-		"{err}"
-	);
+	assert!(err.to_string().contains("no authorization servers"), "{err}");
 }
 
 #[tokio::test]

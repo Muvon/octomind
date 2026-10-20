@@ -64,8 +64,7 @@ fn self_contained_classification_never_receives_historical_requirements() {
 #[test]
 fn scheduling_follow_up_resolves_subject_without_importing_immediate_action() {
 	let context = TaskContext {
-		current_request: "check periodically like every 2h and report status and how is it going"
-			.to_string(),
+		current_request: "check periodically like every 2h and report status and how is it going".to_string(),
 		recent_history: "Earlier user: Check live Cointrapper now\n".to_string(),
 		session_context: String::new(),
 		active_plan: String::new(),
@@ -108,10 +107,7 @@ fn follow_up_uses_minimal_rewrite_and_known_sources() {
 		r#"{"scope":"follow_up","resolved_request":"Schedule the status check hourly","evidence":[{"source":"recent_history","excerpt":"Schedule the status check every two hours"},{"source":"invented","excerpt":"unsupported"}]}"#,
 	);
 	assert_eq!(resolved.scope, ResolutionScope::FollowUp);
-	assert_eq!(
-		resolved.resolved_request,
-		"Schedule the status check hourly"
-	);
+	assert_eq!(resolved.resolved_request, "Schedule the status check hourly");
 	assert_eq!(resolved.context_sources, ["recent_history"]);
 	assert_eq!(resolved.resolution_evidence.len(), 1);
 	assert_eq!(resolved.resolution_evidence[0].source, "recent_history");
@@ -182,11 +178,7 @@ fn unsupported_follow_up_rewrite_is_rejected_as_ambiguous() {
 #[test]
 fn only_explicit_context_dependency_unlocks_follow_up_resolution() {
 	assert!(parse_classifier(r#"{"scope":"context_dependent"}"#).context_dependent);
-	for response in [
-		r#"{"scope":"self_contained"}"#,
-		r#"{"scope":"related"}"#,
-		"not json",
-	] {
+	for response in [r#"{"scope":"self_contained"}"#, r#"{"scope":"related"}"#, "not json"] {
 		assert!(!parse_classifier(response).context_dependent);
 	}
 }
@@ -361,9 +353,7 @@ fn answer_only_turn_ignores_preexisting_plan_but_not_plan_changed_this_turn() {
 
 #[test]
 fn classifier_parses_answer_only_and_defaults_to_false() {
-	let parsed = parse_classifier(
-		r#"{"scope":"context_dependent","forbids_verification":false,"answer_only":true}"#,
-	);
+	let parsed = parse_classifier(r#"{"scope":"context_dependent","forbids_verification":false,"answer_only":true}"#);
 	assert!(parsed.context_dependent);
 	assert!(parsed.answer_only);
 

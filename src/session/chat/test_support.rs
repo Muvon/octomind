@@ -43,15 +43,11 @@ pub(crate) async fn spawn_stub_with_status(responses: Vec<(u16, serde_json::Valu
 
 pub(crate) type CapturedRequests = std::sync::Arc<StdMutex<Vec<serde_json::Value>>>;
 
-pub(crate) async fn spawn_recording_stub(
-	responses: Vec<serde_json::Value>,
-) -> (String, CapturedRequests) {
+pub(crate) async fn spawn_recording_stub(responses: Vec<serde_json::Value>) -> (String, CapturedRequests) {
 	spawn_recording_stub_with_status(responses.into_iter().map(|r| (200, r)).collect()).await
 }
 
-async fn spawn_recording_stub_with_status(
-	responses: Vec<(u16, serde_json::Value)>,
-) -> (String, CapturedRequests) {
+async fn spawn_recording_stub_with_status(responses: Vec<(u16, serde_json::Value)>) -> (String, CapturedRequests) {
 	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 		.await
 		.expect("bind stub listener");
@@ -92,27 +88,23 @@ async fn spawn_recording_stub_with_status(
 					buf.extend_from_slice(&tmp[..n]);
 				}
 
-				requests.lock().expect("captured requests").push(
-					serde_json::from_slice(&buf[header_end..header_end + content_length])
-						.expect("request JSON"),
-				);
-
-				let (status, body) = queue
+				requests
 					.lock()
-					.expect("stub queue")
-					.pop_front()
-					.unwrap_or_else(|| {
-						(
-							200,
-							serde_json::json!({
-								"choices": [{
-									"message": {"role": "assistant", "content": "SCRIPT EXHAUSTED"},
-									"finish_reason": "stop"
-								}],
-								"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
-							}),
-						)
-					});
+					.expect("captured requests")
+					.push(serde_json::from_slice(&buf[header_end..header_end + content_length]).expect("request JSON"));
+
+				let (status, body) = queue.lock().expect("stub queue").pop_front().unwrap_or_else(|| {
+					(
+						200,
+						serde_json::json!({
+							"choices": [{
+								"message": {"role": "assistant", "content": "SCRIPT EXHAUSTED"},
+								"finish_reason": "stop"
+							}],
+							"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+						}),
+					)
+				});
 				let body = body.to_string();
 				let reason = if status == 200 { "OK" } else { "Error" };
 				let response = format!(
@@ -159,10 +151,7 @@ pub(crate) fn tool_calls_response(calls: &[(&str, &str, serde_json::Value)]) -> 
 	})
 }
 
-pub(crate) fn tool_call_response(
-	tool_name: &str,
-	arguments: serde_json::Value,
-) -> serde_json::Value {
+pub(crate) fn tool_call_response(tool_name: &str, arguments: serde_json::Value) -> serde_json::Value {
 	tool_calls_response(&[("call_1", tool_name, arguments)])
 }
 
@@ -170,8 +159,8 @@ pub(crate) fn tool_call_response(
 /// role, supervisor off (its gates would issue their own scripted-queue
 /// desyncing LLM calls).
 pub(crate) fn fake_provider_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config.model = "ollama:fake-model".to_string();
 	config.supervisor.enabled = false;
@@ -187,9 +176,7 @@ pub(crate) fn fake_session(user_input: &str) -> ChatSession {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.model = "ollama:fake-model".to_string();
 	session.session.info.model = "ollama:fake-model".to_string();
-	session
-		.add_user_message(user_input)
-		.expect("add user message");
+	session.add_user_message(user_input).expect("add user message");
 	session
 }
 
@@ -239,21 +226,17 @@ impl octolib::evaluation::EvaluationProvider for FakeEvaluation {
 		self.requests.lock().unwrap().push(request.clone());
 		let step = self.steps.lock().unwrap().pop_front();
 		match step {
-			Some(FakeEvaluationStep::Answers(answers)) => {
-				Ok(octolib::evaluation::EvaluationResponse {
-					model: request.model,
-					answers,
-					usage: self.usage.clone(),
-				})
+			Some(FakeEvaluationStep::Answers(answers)) => Ok(octolib::evaluation::EvaluationResponse {
+				model: request.model,
+				answers,
+				usage: self.usage.clone(),
+			}),
+			Some(FakeEvaluationStep::MissingKey(var)) => {
+				Err(octolib::evaluation::EvaluationError::MissingApiKey(var.to_string()))
 			}
-			Some(FakeEvaluationStep::MissingKey(var)) => Err(
-				octolib::evaluation::EvaluationError::MissingApiKey(var.to_string()),
-			),
 			Some(FakeEvaluationStep::Sleep(duration)) => {
 				tokio::time::sleep(duration).await;
-				Err(octolib::evaluation::EvaluationError::MissingApiKey(
-					"slept".to_string(),
-				))
+				Err(octolib::evaluation::EvaluationError::MissingApiKey("slept".to_string()))
 			}
 			None => Err(octolib::evaluation::EvaluationError::InvalidRequest(
 				"fake evaluation: no scripted step left".to_string(),
@@ -307,17 +290,10 @@ pub(crate) fn evaluate_counter(seam: crate::supervisor::evaluate::Seam, key: &st
 }
 
 /// Shorthand for a Noul answer map keyed by question id.
-pub(crate) fn nouls(
-	pairs: &[(&str, f64)],
-) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
+pub(crate) fn nouls(pairs: &[(&str, f64)]) -> std::collections::BTreeMap<String, octolib::evaluation::Answer> {
 	pairs
 		.iter()
-		.map(|(id, noul)| {
-			(
-				id.to_string(),
-				octolib::evaluation::Answer::Noul { noul: *noul },
-			)
-		})
+		.map(|(id, noul)| (id.to_string(), octolib::evaluation::Answer::Noul { noul: *noul }))
 		.collect()
 }
 

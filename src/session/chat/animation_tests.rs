@@ -31,10 +31,6 @@ fn formats_elapsed_time_at_unit_boundaries() {
 	];
 
 	for (elapsed, expected) in cases {
-		assert_eq!(
-			format_elapsed_time(elapsed),
-			expected,
-			"elapsed={elapsed:?}"
-		);
+		assert_eq!(format_elapsed_time(elapsed), expected, "elapsed={elapsed:?}");
 	}
 }

@@ -18,9 +18,7 @@
 //! first-call keyword query rides the scripted fake provider.
 
 use super::*;
-use crate::session::chat::test_support::{
-	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-};
+use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 use crate::supervisor::learning::backend::FileBackend;
 use crate::supervisor::learning::Lesson;
 use serial_test::serial;
@@ -37,10 +35,7 @@ impl TestDataDir {
 		let dir = tempfile::tempdir().expect("temporary data dir");
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -78,10 +73,7 @@ fn lesson(proj: &str, content: &str, memory_type: &str, tags: &[&str]) -> Lesson
 
 /// Keep the sender alive across the call — a dropped sender reads as a
 /// cancelled operation to the LLM-call cancellation wrapper.
-fn cancel_pair() -> (
-	tokio::sync::watch::Sender<bool>,
-	tokio::sync::watch::Receiver<bool>,
-) {
+fn cancel_pair() -> (tokio::sync::watch::Sender<bool>, tokio::sync::watch::Receiver<bool>) {
 	tokio::sync::watch::channel(false)
 }
 
@@ -137,10 +129,7 @@ async fn test_followup_retrieval_injects_and_dedupes() {
 		text.contains("<active_memory_pack "),
 		"missing active memory wrapper:\n{text}"
 	);
-	assert!(
-		text.contains("<orientation"),
-		"orientation block missing:\n{text}"
-	);
+	assert!(text.contains("<orientation"), "orientation block missing:\n{text}");
 	assert!(!injected_now.is_empty());
 
 	// A replacement pack may deliberately select the same relevant memory again;
@@ -182,15 +171,7 @@ async fn test_first_call_retrieval_uses_keyword_query() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let (_tx3, rx3) = cancel_pair();
-	let (text, _) = retrieve_and_format(
-		&config,
-		"deploy the service to the box",
-		ROLE,
-		proj,
-		true,
-		rx3,
-	)
-	.await;
+	let (text, _) = retrieve_and_format(&config, "deploy the service to the box", ROLE, proj, true, rx3).await;
 	assert!(
 		text.contains("prefer rsync over scp"),
 		"scoped lesson missing on first call:\n{text}"
@@ -205,15 +186,8 @@ async fn test_disabled_learning_injects_nothing() {
 	let mut config = fake_provider_config();
 	config.supervisor.learning.enabled = false;
 	let (_tx4, rx4) = cancel_pair();
-	let (text, injected) = retrieve_and_format(
-		&config,
-		"anything",
-		ROLE,
-		"__inject_test_proj_disabled",
-		true,
-		rx4,
-	)
-	.await;
+	let (text, injected) =
+		retrieve_and_format(&config, "anything", ROLE, "__inject_test_proj_disabled", true, rx4).await;
 	assert!(text.is_empty());
 	assert!(injected.is_empty());
 }
@@ -283,9 +257,7 @@ async fn test_long_experience_injects_card_with_full_file_reference() {
 	assert!(text.contains("full memory:"));
 	assert!(text.contains("related-memory-id"));
 	assert!(text.contains("session://s/message/3"));
-	assert!(selected
-		.iter()
-		.any(|memory| memory.content == experience.content));
+	assert!(selected.iter().any(|memory| memory.content == experience.content));
 	assert!(crate::session::estimate_tokens(&text) <= MAX_MEMORY_PACK_TOKENS);
 
 	cleanup(proj);
@@ -300,20 +272,11 @@ fn experience_card_names_only_the_live_skills_it_is_given() {
 		artifacts: vec!["evo-schema".to_string()],
 		..Default::default()
 	};
-	let card = render_item(
-		"M1",
-		&experience,
-		false,
-		None,
-		&["evolved-schema".to_string()],
-	);
+	let card = render_item("M1", &experience, false, None, &["evolved-schema".to_string()]);
 	assert!(card.contains(" skills=evolved-schema] Schema migration"));
 	assert!(!render_item("M1", &experience, false, None, &[]).contains("skills="));
 	// Outside a session nothing is applied, so a stored harness names nothing.
-	assert!(
-		crate::supervisor::learning::evolution::applied_skill_names(&experience.artifacts)
-			.is_empty()
-	);
+	assert!(crate::supervisor::learning::evolution::applied_skill_names(&experience.artifacts).is_empty());
 }
 
 #[test]
@@ -335,9 +298,7 @@ fn retrieval_rewrite_validation_accepts_keywords_and_rejects_answers() {
 // ranking and admission. `install_fake_evaluation` holds ENV_LOCK itself.
 // ---------------------------------------------------------------------------
 
-use crate::session::chat::test_support::{
-	evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep,
-};
+use crate::session::chat::test_support::{evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep};
 use crate::supervisor::evaluate::Seam;
 
 fn recall_gate_config() -> crate::config::Config {
@@ -359,15 +320,8 @@ async fn recall_gate_drops_unrelated_scoped_candidates_and_keeps_rank_order() {
 	let config = recall_gate_config();
 	let proj = "__inject_test_proj_gate";
 	let applied = evaluate_counter(Seam::Recall, "applied");
-	let mut candidates = vec![(
-		lesson(proj, "global rule: always run fmt", "learning", &[]),
-		true,
-	)];
-	for content in [
-		"reqwest retry pattern",
-		"svelte store naming",
-		"http timeout defaults",
-	] {
+	let mut candidates = vec![(lesson(proj, "global rule: always run fmt", "learning", &[]), true)];
+	for content in ["reqwest retry pattern", "svelte store naming", "http timeout defaults"] {
 		candidates.push((lesson(proj, content, "learning", &[]), false));
 	}
 	let request = "add retry with backoff to the http client";
@@ -401,18 +355,14 @@ async fn recall_gate_drops_unrelated_scoped_candidates_and_keeps_rank_order() {
 #[serial]
 #[tokio::test]
 async fn recall_gate_skips_the_call_without_scoped_candidates_and_can_leave_globals_only() {
-	let fake =
-		install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.1)]))]).await;
+	let fake = install_fake_evaluation(vec![FakeEvaluationStep::Answers(nouls(&[("c0", 0.1)]))]).await;
 	let config = recall_gate_config();
 	let proj = "__inject_test_proj_gate_empty";
 	let calls = evaluate_counter(Seam::Recall, "calls");
 	let global_only = vec![(lesson(proj, "global rule", "learning", &[]), true)];
 	let kept = filter_scoped_by_relevance(&config, "anything", global_only.clone()).await;
 	assert_eq!(kept.len(), 1);
-	assert!(
-		fake.requests().is_empty(),
-		"zero scoped candidates make no call"
-	);
+	assert!(fake.requests().is_empty(), "zero scoped candidates make no call");
 	assert_eq!(evaluate_counter(Seam::Recall, "calls"), calls);
 
 	let mut mixed = global_only;
@@ -458,10 +408,7 @@ async fn recall_gate_end_to_end_empties_the_pack_or_falls_through_when_unavailab
 	let (text, selected) = retrieve_and_format(&config, "", ROLE, proj, false, rx2).await;
 	assert!(text.contains("always run the test suite on the dev box"));
 	assert_eq!(selected.len(), 1);
-	assert_eq!(
-		evaluate_counter(Seam::Recall, "unavailable"),
-		unavailable + 1
-	);
+	assert_eq!(evaluate_counter(Seam::Recall, "unavailable"), unavailable + 1);
 
 	cleanup(proj);
 }

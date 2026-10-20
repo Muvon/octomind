@@ -27,14 +27,12 @@ use std::time::Duration;
 
 pub async fn handle_login() -> Result<CommandResult> {
 	if let Some(account) = account::whoami().await.ok().flatten() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Login {
-				already_signed_in: true,
-				account: Some(format!("{} ({})", account.email, account.plan)),
-				verification_url: None,
-				user_code: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Login {
+			already_signed_in: true,
+			account: Some(format!("{} ({})", account.email, account.plan)),
+			verification_url: None,
+			user_code: None,
+		})));
 	}
 
 	let start = account::start_login().await?;
@@ -48,10 +46,7 @@ pub async fn handle_login() -> Result<CommandResult> {
 	// depending on the single-threaded LocalSet's lifetime and keeps `/login`
 	// returning immediately so the client can open the URL.
 	std::thread::spawn(move || {
-		let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-			.enable_all()
-			.build()
-		else {
+		let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
 			return;
 		};
 		rt.block_on(async move {
@@ -68,12 +63,10 @@ pub async fn handle_login() -> Result<CommandResult> {
 		});
 	});
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Login {
-			already_signed_in: false,
-			account: None,
-			verification_url: Some(verification_url),
-			user_code: Some(user_code),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Login {
+		already_signed_in: false,
+		account: None,
+		verification_url: Some(verification_url),
+		user_code: Some(user_code),
+	})))
 }

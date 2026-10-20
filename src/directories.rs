@@ -130,12 +130,7 @@ pub fn session_socket_path(session_name: &str) -> Result<PathBuf> {
 	// "+2" covers the '/' between dir and file and the NUL terminator.
 	let budget = SUN_PATH_MAX
 		.checked_sub(run_dir.as_os_str().len() + ".sock".len() + 2)
-		.ok_or_else(|| {
-			anyhow::anyhow!(
-				"run dir {} is too long for a Unix socket path",
-				run_dir.display()
-			)
-		})?;
+		.ok_or_else(|| anyhow::anyhow!("run dir {} is too long for a Unix socket path", run_dir.display()))?;
 	// Shortest possible shortened stem is "-<8 hex>" (9 bytes).
 	if budget < 9 {
 		anyhow::bail!(

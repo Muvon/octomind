@@ -110,9 +110,7 @@ fn learning_session_stats_separate_use_from_outcome_credit() {
 fn system_managed_event_does_not_take_ownership_of_the_human_task() {
 	let mut session = make_session(Vec::new());
 
-	session
-		.add_user_message("monitor the active operation")
-		.unwrap();
+	session.add_user_message("monitor the active operation").unwrap();
 	assert!(session.completion_gate_eligible);
 
 	session
@@ -150,14 +148,10 @@ fn real_user_turn_resets_steer_streak() {
 	cs.steer_attempt = 2;
 	cs.steer_last_signal = crate::supervisor::detect::DetectorSignal::Loop;
 
-	cs.add_user_message("new task after prior loop stopped")
-		.unwrap();
+	cs.add_user_message("new task after prior loop stopped").unwrap();
 
 	assert_eq!(cs.steer_attempt, 0);
-	assert_eq!(
-		cs.steer_last_signal,
-		crate::supervisor::detect::DetectorSignal::None
-	);
+	assert_eq!(cs.steer_last_signal, crate::supervisor::detect::DetectorSignal::None);
 }
 
 #[test]
@@ -199,8 +193,7 @@ fn case1_no_markers_compressed_block_gets_cached() {
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 4).unwrap();
 	assert!(!had_cached);
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	// After drain+insert: [sys(0), user(1), COMP(2), user(3), asst(4), user(5), asst(6)]
@@ -235,8 +228,7 @@ fn case2_one_marker_inside_range_compressed_block_gets_cached() {
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 4).unwrap();
 	assert!(had_cached, "should detect the removed marker");
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	assert_eq!(
@@ -269,8 +261,7 @@ fn case3_two_markers_inside_range_compressed_block_gets_cached() {
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 5).unwrap();
 	assert!(had_cached);
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	// After drain+insert: [sys(0), user(1), COMP(2), user(3), asst(4), user(5), asst(6)]
@@ -304,8 +295,7 @@ fn case4_marker_at_start_idx_and_one_inside_moves_to_latest_preserved_boundary()
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 4).unwrap();
 	assert!(had_cached);
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	// compressed block at idx=2 + latest preserved user at idx=5
@@ -336,8 +326,7 @@ fn case5_marker_at_start_idx_only_moves_to_latest_preserved_boundary() {
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 4).unwrap();
 	assert!(!had_cached, "nothing inside range was cached");
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	assert_eq!(
@@ -366,20 +355,14 @@ fn case6_marker_in_preserved_zone_stays_untouched() {
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 3).unwrap();
 	assert!(!had_cached);
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	// Compressed block at idx 2 (cached=true) + preserved zone marker shifted to idx 5
 	assert!(markers.contains(&2), "compressed block must be cached");
 	// The preserved zone marker should still exist somewhere after the compressed block
-	let preserved_marker_exists = cs.session.messages[3..]
-		.iter()
-		.any(|m| m.cached && m.role != "system");
-	assert!(
-		preserved_marker_exists,
-		"preserved zone marker must survive untouched"
-	);
+	let preserved_marker_exists = cs.session.messages[3..].iter().any(|m| m.cached && m.role != "system");
+	assert!(preserved_marker_exists, "preserved zone marker must survive untouched");
 }
 
 // ── Case 7: system marker never touched ──────────────────────────────────────
@@ -400,13 +383,9 @@ fn case7_system_marker_never_touched_by_compression() {
 	let mut cs = make_session(messages);
 
 	let (_, _) = cs.remove_messages_in_range(1, 4).unwrap();
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
-	assert!(
-		cs.session.messages[0].cached,
-		"system marker must remain cached=true"
-	);
+	assert!(cs.session.messages[0].cached, "system marker must remain cached=true");
 }
 
 // ── Case 8: two markers already in preserved zone ────────────────────────────
@@ -437,8 +416,7 @@ fn case8_two_markers_in_preserved_zone_compressed_block_must_not_exceed_two_cont
 
 	let (_, had_cached) = cs.remove_messages_in_range(1, 3).unwrap();
 	assert!(!had_cached, "nothing inside range was cached");
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	// After compression the total number of non-system cached messages must be ≤ 2.
 	// Before the fix this was 3 (compressed block + 2 preserved markers), which
@@ -522,10 +500,7 @@ fn case9_markers_must_not_disappear_after_compression() {
 	);
 
 	// Verify marker #2 is NOT the compressed block (it's somewhere in preserved zone)
-	let marker2 = markers_after
-		.iter()
-		.find(|&&i| i != compressed_idx)
-		.unwrap();
+	let marker2 = markers_after.iter().find(|&&i| i != compressed_idx).unwrap();
 	assert!(
 		*marker2 > compressed_idx,
 		"marker #2 must be after the compressed block"
@@ -564,8 +539,7 @@ fn case10_no_markers_before_compression_both_created() {
 	assert_eq!(markers_before.len(), 0, "no markers before compression");
 
 	let (_, _) = cs.remove_messages_in_range(1, 4).unwrap();
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers_after = content_cache_indices(&cs);
 	assert_eq!(
@@ -594,8 +568,7 @@ fn case11_marker2_placed_on_tool_message() {
 	let mut cs = make_session(messages);
 
 	let (_, _) = cs.remove_messages_in_range(1, 3).unwrap();
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	assert_eq!(markers.len(), 2, "must have 2 markers, got {:?}", markers);
@@ -623,17 +596,13 @@ fn case12_compression_moves_second_marker_to_latest_preserved_message() {
 	let mut cs = make_session(messages);
 
 	let (_, _) = cs.remove_messages_in_range(1, 3).unwrap();
-	cs.insert_compressed_knowledge(1, "summary".to_string())
-		.unwrap();
+	cs.insert_compressed_knowledge(1, "summary".to_string()).unwrap();
 
 	let markers = content_cache_indices(&cs);
 	assert_eq!(markers.len(), 2, "must have exactly 2 markers");
 	assert_eq!(cs.session.messages[markers[0]].content, "summary");
 	assert_eq!(markers[1], 5, "marker #2 must move to freshest user");
-	assert!(
-		!cs.session.messages[3].cached,
-		"stale preserved marker must be evicted"
-	);
+	assert!(!cs.session.messages[3].cached, "stale preserved marker must be evicted");
 }
 
 #[test]
@@ -650,11 +619,7 @@ fn generate_session_name_format() {
 
 	// First part: YYMMDD (6 digits)
 	let date_part = parts[0];
-	assert_eq!(
-		date_part.len(),
-		6,
-		"date part should be 6 chars, got: {date_part}"
-	);
+	assert_eq!(date_part.len(), 6, "date part should be 6 chars, got: {date_part}");
 	assert!(
 		date_part.chars().all(|c| c.is_ascii_digit()),
 		"date part should be all digits, got: {date_part}"
@@ -666,11 +631,7 @@ fn generate_session_name_format() {
 
 	// Second-to-last part: HHMM (4 digits)
 	let time_part = parts[parts.len() - 2];
-	assert_eq!(
-		time_part.len(),
-		4,
-		"time part should be 4 chars, got: {time_part}"
-	);
+	assert_eq!(time_part.len(), 4, "time part should be 4 chars, got: {time_part}");
 	assert!(
 		time_part.chars().all(|c| c.is_ascii_digit()),
 		"time part should be all digits, got: {time_part}"
@@ -678,11 +639,7 @@ fn generate_session_name_format() {
 
 	// Last part: uuid4 (4 hex chars)
 	let uuid_part = parts[parts.len() - 1];
-	assert_eq!(
-		uuid_part.len(),
-		4,
-		"uuid part should be 4 chars, got: {uuid_part}"
-	);
+	assert_eq!(uuid_part.len(), 4, "uuid part should be 4 chars, got: {uuid_part}");
 	assert!(
 		uuid_part.chars().all(|c| c.is_ascii_hexdigit()),
 		"uuid part should be hex, got: {uuid_part}"

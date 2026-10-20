@@ -42,9 +42,7 @@ pub async fn prepare_for_api_call(
 	// user-owned policy.
 	if config.supervisor.enabled
 		&& chat_session.completion_gate_eligible
-		&& (config.supervisor.gate.enabled
-			|| config.supervisor.plan.enabled
-			|| config.supervisor.authorizer.enabled)
+		&& (config.supervisor.gate.enabled || config.supervisor.plan.enabled || config.supervisor.authorizer.enabled)
 		&& chat_session.gate_task.is_none()
 	{
 		let session_context = chat_session.session.info.anchor.to_xml();
@@ -57,9 +55,7 @@ pub async fn prepare_for_api_call(
 			&chat_session.session.info.session_rules,
 		) {
 			let animation_manager = crate::session::chat::get_animation_manager();
-			animation_manager
-				.set_phase("Resolving current task …")
-				.await;
+			animation_manager.set_phase("Resolving current task …").await;
 			// The condenser's specialist brief is independent of the resolution;
 			// compacting it alongside keeps the first turn from waiting twice.
 			let (resolved, ()) = tokio::join!(
@@ -123,12 +119,7 @@ pub async fn prepare_for_api_call(
 		// leaves the context over the ceiling. Returning here instead cost
 		// whole turns whenever the compression model returned one
 		// unparseable response.
-		if crate::session::chat::conversation_compression::within_ceiling_margin(
-			chat_session,
-			config,
-		)
-		.await
-		{
+		if crate::session::chat::conversation_compression::within_ceiling_margin(chat_session, config).await {
 			crate::log_info!(
 				"Forced compression inside the context ceiling margin failed: {}. Falling back to deterministic trimming.",
 				e
@@ -137,11 +128,7 @@ pub async fn prepare_for_api_call(
 			crate::log_debug!("Compression failed before API call: {}.", e);
 		}
 	}
-	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
-		chat_session,
-		config,
-	)
-	.await?;
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 
 	// Deterministic auto-activation: when the latest message is a fresh
 	// user input and a non-active capability strongly matches (margin-gated
@@ -167,9 +154,7 @@ pub async fn prepare_for_api_call(
 	if !system_message_cached {
 		if let Ok(cached) = chat_session.session.add_cache_checkpoint(true) {
 			if cached && model_supports_caching(&chat_session.model) {
-				log_info!(
-					"System message has been automatically marked for caching to save tokens."
-				);
+				log_info!("System message has been automatically marked for caching to save tokens.");
 				// Save the session to ensure the cached status is persisted
 				if let Err(e) = chat_session.save() {
 					crate::log_debug!("session save failed: {}", e);

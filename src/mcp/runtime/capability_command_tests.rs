@@ -30,8 +30,8 @@ fn cap_call(params: serde_json::Value) -> McpToolCall {
 }
 
 fn test_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -63,10 +63,9 @@ async fn test_capability_action_validation() {
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("action"));
 
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "explode"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "explode"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("Unknown action"));
 }
@@ -77,10 +76,9 @@ async fn test_capability_enable_unknown_and_disable_idempotent() {
 	let config = test_config();
 
 	// enable without a name
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "enable"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "enable"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("name"));
 
@@ -111,10 +109,9 @@ async fn test_capability_list_answers() {
 	let config = test_config();
 	// Contents depend on installed taps — only the contract matters: the
 	// command answers rather than erroring or hanging.
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(!is_err(&result), "got: {}", text_of(&result));
 	assert!(!text_of(&result).is_empty());
 }
@@ -125,12 +122,9 @@ async fn test_capability_discover_arms() {
 	let config = test_config();
 
 	// discover without intent → validation error
-	let result = execute_capability_command(
-		&cap_call(serde_json::json!({"action": "discover"})),
-		&config,
-	)
-	.await
-	.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "discover"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("intent"));
 
@@ -160,10 +154,7 @@ async fn test_load_env_capabilities_reports_failures_per_name() {
 
 	// Two bogus names (plus junk whitespace): a Starting event with both,
 	// then a failed Completed per name — never an abort.
-	std::env::set_var(
-		"OCTOMIND_CAPABILITIES",
-		"__envcap_nonexistent, ,__envcap_other",
-	);
+	std::env::set_var("OCTOMIND_CAPABILITIES", "__envcap_nonexistent, ,__envcap_other");
 	load_env_capabilities(&config, Some(&cb)).await;
 	std::env::remove_var("OCTOMIND_CAPABILITIES");
 
@@ -173,18 +164,12 @@ async fn test_load_env_capabilities_reports_failures_per_name() {
 	for e in events {
 		match e {
 			EnvCapabilityProgress::Starting { capabilities } => starting_names = capabilities,
-			EnvCapabilityProgress::Completed {
-				capability,
-				success,
-			} => completions.push((capability, success)),
+			EnvCapabilityProgress::Completed { capability, success } => completions.push((capability, success)),
 		}
 	}
 	assert_eq!(
 		starting_names,
-		vec![
-			"__envcap_nonexistent".to_string(),
-			"__envcap_other".to_string()
-		]
+		vec!["__envcap_nonexistent".to_string(), "__envcap_other".to_string()]
 	);
 	assert_eq!(completions.len(), 2, "{completions:?}");
 	assert!(
@@ -299,10 +284,7 @@ fn seed_cap(name: &str, server: &str, tools: &[&str], age_secs: u64) {
 	registry().write().unwrap().insert(
 		name.to_string(),
 		CapState {
-			server_tools: vec![(
-				server.to_string(),
-				tools.iter().map(|t| t.to_string()).collect(),
-			)],
+			server_tools: vec![(server.to_string(), tools.iter().map(|t| t.to_string()).collect())],
 			last_used: std::time::Instant::now() - std::time::Duration::from_secs(age_secs),
 		},
 	);
@@ -348,14 +330,11 @@ async fn test_capability_enable_static_server_extends_overlay() {
 	crate::mcp::runtime::dynamic::clear_all();
 	reset_registry();
 	let mut config = test_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"captest-static-srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"captest-static-srv",
+		30,
+		vec![],
+	));
 
 	// The enable path overlays capability tools onto the INITIALIZED tool
 	// map; in a filtered run nothing initializes it first, so do it here.
@@ -373,10 +352,7 @@ async fn test_capability_enable_static_server_extends_overlay() {
 	.expect("dispatch");
 	assert!(!is_err(&result), "enable failed: {}", text_of(&result));
 	let msg = text_of(&result);
-	assert!(
-		msg.contains("Activated 1 server(s): captest-static-srv"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("Activated 1 server(s): captest-static-srv"), "got: {msg}");
 	assert!(msg.contains("Tools available: tool_alpha"), "got: {msg}");
 	assert!(is_active("captest-static"));
 	assert!(crate::mcp::tool_map::get_server_for_tool("tool_alpha").is_some());
@@ -423,14 +399,11 @@ async fn test_capability_enable_static_glob_grant_exposes_real_tools() {
 	reset_registry();
 	let mut config = test_config();
 	config.mcp.servers.retain(|s| s.name() != "orchestration");
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"orchestration",
-			30,
-			vec!["schedule".to_string(), "monitor".to_string()],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"orchestration",
+		30,
+		vec!["schedule".to_string(), "monitor".to_string()],
+	));
 	crate::mcp::tool_map::initialize_tool_map(&config)
 		.await
 		.expect("init tool map");
@@ -663,9 +636,7 @@ async fn test_capability_disable_shared_server_refcounting() {
 	assert!(text_of(&result).contains("Fully shut down 1 server(s): captest-shared-srv"));
 	assert!(!is_active("captest-share-b"));
 	// The server stays registered (disabled) — removal is `remove`, not disable.
-	assert!(crate::mcp::runtime::dynamic::is_dynamic(
-		"captest-shared-srv"
-	));
+	assert!(crate::mcp::runtime::dynamic::is_dynamic("captest-shared-srv"));
 	assert!(crate::mcp::runtime::dynamic::list_servers()
 		.iter()
 		.any(|(n, _, e)| n == "captest-shared-srv" && !e));
@@ -712,11 +683,7 @@ async fn test_capability_disable_failure_reinserts_cap_for_retry() {
 	)
 	.await
 	.expect("dispatch");
-	assert!(
-		!is_err(&result),
-		"retry disable failed: {}",
-		text_of(&result)
-	);
+	assert!(!is_err(&result), "retry disable failed: {}", text_of(&result));
 	assert!(!is_active("captest-ghost"));
 
 	clear_seeded_caps(&["captest-ghost"]);
@@ -731,14 +698,11 @@ async fn test_capability_lru_eviction_on_enable() {
 	crate::mcp::runtime::dynamic::clear_all();
 	reset_registry();
 	let mut config = test_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"captest-static-srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"captest-static-srv",
+		30,
+		vec![],
+	));
 
 	// Fill the registry to the soft cap with staggered ages.
 	seed_cap("captest-lru-a", "captest-lru-a-srv", &["t_a"], 400);
@@ -762,12 +726,7 @@ async fn test_capability_lru_eviction_on_enable() {
 	assert!(is_active("captest-static"));
 	assert_eq!(captest_active_count(), 4);
 
-	clear_seeded_caps(&[
-		"captest-lru-b",
-		"captest-lru-c",
-		"captest-lru-d",
-		"captest-static",
-	]);
+	clear_seeded_caps(&["captest-lru-b", "captest-lru-c", "captest-lru-d", "captest-static"]);
 	crate::mcp::runtime::dynamic::clear_all();
 }
 
@@ -779,14 +738,11 @@ async fn test_touch_capability_for_server_protects_from_eviction() {
 	crate::mcp::runtime::dynamic::clear_all();
 	reset_registry();
 	let mut config = test_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"captest-static-srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"captest-static-srv",
+		30,
+		vec![],
+	));
 
 	seed_cap("captest-lru-a", "captest-lru-a-srv", &["t_a"], 400);
 	seed_cap("captest-lru-b", "captest-lru-b-srv", &["t_b"], 300);
@@ -805,22 +761,11 @@ async fn test_touch_capability_for_server_protects_from_eviction() {
 	.expect("dispatch");
 	assert!(!is_err(&result), "enable failed: {}", text_of(&result));
 
-	assert!(
-		is_active("captest-lru-a"),
-		"touched cap must survive eviction"
-	);
-	assert!(
-		!is_active("captest-lru-b"),
-		"next-oldest must be evicted instead"
-	);
+	assert!(is_active("captest-lru-a"), "touched cap must survive eviction");
+	assert!(!is_active("captest-lru-b"), "next-oldest must be evicted instead");
 	assert_eq!(captest_active_count(), 4);
 
-	clear_seeded_caps(&[
-		"captest-lru-a",
-		"captest-lru-c",
-		"captest-lru-d",
-		"captest-static",
-	]);
+	clear_seeded_caps(&["captest-lru-a", "captest-lru-c", "captest-lru-d", "captest-static"]);
 	crate::mcp::runtime::dynamic::clear_all();
 }
 
@@ -833,24 +778,17 @@ async fn test_capability_list_markers_and_triggers_preview() {
 	reset_registry();
 	mark_active("captest-static", vec![]);
 
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(!is_err(&result));
 	let msg = text_of(&result);
 	// The domain-bound fixture cap is filtered out (no session domain here),
 	// so 6 of the 7 installed caps are listed.
 	assert!(msg.contains("Installed capabilities (6)"), "got: {msg}");
 	assert!(msg.contains("- [active] captest-static"), "got: {msg}");
-	assert!(
-		msg.contains("- [missing env] captest-envgate"),
-		"got: {msg}"
-	);
-	assert!(
-		msg.contains("(missing env: CAPTEST_MISSING_KEY)"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("- [missing env] captest-envgate"), "got: {msg}");
+	assert!(msg.contains("(missing env: CAPTEST_MISSING_KEY)"), "got: {msg}");
 	// 4 triggers → preview shows the first 3 quoted plus the ellipsis suffix.
 	assert!(
 		msg.contains("\"use the static cap\", \"second trigger\", \"third trigger\", …"),
@@ -867,10 +805,9 @@ async fn test_capability_list_and_discover_empty_tap_set() {
 	// No fixture caps installed — only the sandbox's (nonexistent) default tap.
 	let config = test_config();
 
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(!is_err(&result));
 	assert_eq!(text_of(&result), "No capabilities installed in any tap.");
 
@@ -902,10 +839,7 @@ fn test_check_env_readiness_matrix() {
 	);
 
 	std::env::set_var("CAPTEST_ENV_KEY", "value");
-	assert_eq!(
-		check_env_readiness(&["CAPTEST_ENV_KEY".to_string()]),
-		Ok(())
-	);
+	assert_eq!(check_env_readiness(&["CAPTEST_ENV_KEY".to_string()]), Ok(()));
 	assert_eq!(check_env_readiness(&[]), Ok(()));
 	drop(env);
 }
@@ -915,10 +849,7 @@ fn test_check_env_readiness_matrix() {
 fn test_domain_availability_rules() {
 	// Universal caps (empty domains) are available everywhere, including
 	// when no session domain is set.
-	assert!(crate::agent::registry::cap_available_in_domain(
-		&[],
-		"medical"
-	));
+	assert!(crate::agent::registry::cap_available_in_domain(&[], "medical"));
 	assert!(crate::agent::registry::cap_available_in_domain(&[], ""));
 	// Domain-bound caps require an exact domain match.
 	assert!(crate::agent::registry::cap_available_in_domain(
@@ -960,9 +891,7 @@ async fn test_activate_capability_inline_mirrors_handle_enable() {
 	assert!(err.to_string().contains("requires env vars"));
 
 	// Empty cap → anyhow error.
-	let err = activate_capability_inline("captest-empty", &config)
-		.await
-		.unwrap_err();
+	let err = activate_capability_inline("captest-empty", &config).await.unwrap_err();
 	assert!(err.to_string().contains("no [[mcp.servers]] and no [deps]"));
 
 	// Deps-only success → marked active, empty server list.
@@ -1003,10 +932,9 @@ fn test_list_active_names_is_sorted() {
 async fn test_capability_disable_requires_name() {
 	let config = test_config();
 
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "disable"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "disable"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("name"));
 }
@@ -1025,14 +953,11 @@ async fn test_capability_enable_static_without_filter_reports_all_tools() {
 	crate::mcp::runtime::dynamic::clear_all();
 	reset_registry();
 	let mut config = test_config();
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::builtin(
-			"captest-staticall-srv",
-			30,
-			vec![],
-		));
+	config.mcp.servers.push(crate::config::McpServerConfig::builtin(
+		"captest-staticall-srv",
+		30,
+		vec![],
+	));
 	crate::mcp::tool_map::initialize_tool_map(&config)
 		.await
 		.expect("init tool map");
@@ -1070,11 +995,8 @@ async fn test_auto_activate_gates_before_matching() {
 	let config = test_config();
 
 	// System-managed content is never a user intent.
-	let activated = auto_activate_capabilities_for_intent(
-		"<instructions>internal steering</instructions>",
-		&config,
-	)
-	.await;
+	let activated =
+		auto_activate_capabilities_for_intent("<instructions>internal steering</instructions>", &config).await;
 	assert!(activated.is_empty());
 
 	// Too little signal to score.
@@ -1091,9 +1013,7 @@ async fn test_auto_activate_gates_before_matching() {
 		);
 		reset_registry();
 		seed_cap("captest-solo", "captest-solo-srv", &[], 0);
-		let activated =
-			auto_activate_capabilities_for_intent("please use the solo cap right now", &config)
-				.await;
+		let activated = auto_activate_capabilities_for_intent("please use the solo cap right now", &config).await;
 		assert!(activated.is_empty());
 		reset_registry();
 	}
@@ -1110,9 +1030,7 @@ async fn test_auto_activate_gates_before_matching() {
 			"[[mcp.servers]]\nname = \"captest-env-srv\"\ntype = \"stdio\"\ncommand = \"captest-no-such-binary\"\nargs = []\ntimeout_seconds = 5\ntools = []\nenv = { API_KEY = \"{{ENV:CAPTEST_MISSING_KEY}}\" }\n",
 		);
 		reset_registry();
-		let activated =
-			auto_activate_capabilities_for_intent("use the env cap right now please", &config)
-				.await;
+		let activated = auto_activate_capabilities_for_intent("use the env cap right now please", &config).await;
 		assert!(activated.is_empty());
 		assert!(!is_active("captest-envgate"));
 		reset_registry();
@@ -1150,18 +1068,13 @@ async fn test_load_env_capabilities_success_and_idempotent() {
 	let completions: Vec<(String, bool)> = events
 		.into_iter()
 		.filter_map(|e| match e {
-			EnvCapabilityProgress::Completed {
-				capability,
-				success,
-			} => Some((capability, success)),
+			EnvCapabilityProgress::Completed { capability, success } => Some((capability, success)),
 			_ => None,
 		})
 		.collect();
 	assert_eq!(starts, 2, "one Starting per run");
 	assert_eq!(completions.len(), 2, "{completions:?}");
-	assert!(completions
-		.iter()
-		.all(|(name, ok)| name == "captest-deps-ok" && *ok));
+	assert!(completions.iter().all(|(name, ok)| name == "captest-deps-ok" && *ok));
 
 	reset_registry();
 	crate::mcp::runtime::dynamic::clear_all();
@@ -1189,10 +1102,7 @@ async fn test_env_capabilities_load_for_every_session_on_the_process() {
 				"{sid} inherited another session's activation"
 			);
 			load_env_capabilities(&config, None).await;
-			assert!(
-				is_active("captest-deps-ok"),
-				"{sid} did not get the env capability"
-			);
+			assert!(is_active("captest-deps-ok"), "{sid} did not get the env capability");
 		})
 		.await;
 	}
@@ -1263,10 +1173,9 @@ async fn test_capability_list_marks_missing_env() {
 	std::env::remove_var("CAPTEST_MISSING_KEY");
 
 	let config = test_config();
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(!is_err(&result), "got: {}", text_of(&result));
 	assert!(
 		text_of(&result).contains("[missing env] captest-envgate"),
@@ -1295,10 +1204,9 @@ async fn test_capability_enumeration_fails_when_taps_broken() {
 	let config = test_config();
 
 	// `list` surfaces the enumeration failure as an error value.
-	let result =
-		execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
-			.await
-			.expect("dispatch");
+	let result = execute_capability_command(&cap_call(serde_json::json!({"action": "list"})), &config)
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(
 		text_of(&result).contains("Failed to enumerate capabilities"),
@@ -1448,12 +1356,11 @@ async fn test_auto_activate_requires_real_user_message() {
 	let config = test_config();
 
 	// Last message is an assistant turn — activation must not fire.
-	let mut session =
-		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
-			role: "assistant".to_string(),
-			content: "use the static cap please".to_string(),
-			..Default::default()
-		}]);
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
+		role: "assistant".to_string(),
+		content: "use the static cap please".to_string(),
+		..Default::default()
+	}]);
 	auto_activate_capabilities(&mut session, &config).await;
 	assert!(!is_active("captest-static"));
 
@@ -1477,11 +1384,8 @@ async fn test_auto_activate_for_intent_gates() {
 	let config = test_config();
 
 	// System-managed content is never an intent.
-	let activated = auto_activate_capabilities_for_intent(
-		"<system-note>\nuse the static cap\n</system-note>",
-		&config,
-	)
-	.await;
+	let activated =
+		auto_activate_capabilities_for_intent("<system-note>\nuse the static cap\n</system-note>", &config).await;
 	assert!(activated.is_empty());
 
 	// Below the minimum-intent gate.
@@ -1490,8 +1394,7 @@ async fn test_auto_activate_for_intent_gates() {
 
 	// A real intent with only an env-gated candidate: the env gate filters
 	// the sole candidate out before any embedding work, so nothing activates.
-	let activated =
-		auto_activate_capabilities_for_intent("use the env cap for the thing", &config).await;
+	let activated = auto_activate_capabilities_for_intent("use the env cap for the thing", &config).await;
 	assert!(activated.is_empty());
 	assert!(!is_active("captest-envgate"));
 
@@ -1538,9 +1441,7 @@ async fn test_enable_fails_when_server_registration_fails() {
 // ---------------------------------------------------------------------------
 
 use crate::agent::registry::ResolvedCapability;
-use crate::session::chat::test_support::{
-	choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep,
-};
+use crate::session::chat::test_support::{choice, evaluate_counter, install_fake_evaluation, FakeEvaluationStep};
 use crate::supervisor::evaluate::{Seam, CAPABILITY_QUESTION_ID};
 
 fn eval_cap(name: &str) -> ResolvedCapability {
@@ -1611,10 +1512,7 @@ async fn evaluate_pick_vetoes_a_cosine_winner_the_choice_rejects() {
 
 	// At the confirm floor the cosine decision stands with its own score.
 	let picked = evaluate_pick(&config, "use a now please", Some(ranked[0]), &ranked).await;
-	assert_eq!(
-		picked.map(|(score, cap)| (score, cap.name.as_str())),
-		Some((0.9, "a"))
-	);
+	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.9, "a")));
 	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
 
 	// The Choice lists the top-K by score plus `none`, over the intent alone.
@@ -1627,10 +1525,7 @@ async fn evaluate_pick_vetoes_a_cosine_winner_the_choice_rejects() {
 				criteria.keys().cloned().collect::<Vec<_>>(),
 				vec!["a", "b", "c", "d", "e", "none"]
 			);
-			assert_eq!(
-				criteria["a"],
-				Some(serde_json::Value::String("a capability".into()))
-			);
+			assert_eq!(criteria["a"], Some(serde_json::Value::String("a capability".into())));
 		}
 		other => panic!("expected a choice, got {other:?}"),
 	}
@@ -1655,10 +1550,7 @@ async fn evaluate_pick_promotes_the_choice_only_at_the_floor_and_falls_through_o
 
 	// Promoted at the floor, carrying the answer's probability as its score.
 	let picked = evaluate_pick(&config, "do the b thing please", None, &ranked).await;
-	assert_eq!(
-		picked.map(|(score, cap)| (score, cap.name.as_str())),
-		Some((0.6, "b"))
-	);
+	assert_eq!(picked.map(|(score, cap)| (score, cap.name.as_str())), Some((0.6, "b")));
 	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
 
 	// Below the floor, `none`, a choice never offered, and a provider failure
@@ -1668,9 +1560,6 @@ async fn evaluate_pick_promotes_the_choice_only_at_the_floor_and_falls_through_o
 		assert!(picked.is_none());
 	}
 	assert_eq!(evaluate_counter(Seam::Capabilities, "applied"), applied + 1);
-	assert_eq!(
-		evaluate_counter(Seam::Capabilities, "unavailable"),
-		unavailable + 2
-	);
+	assert_eq!(evaluate_counter(Seam::Capabilities, "unavailable"), unavailable + 2);
 	assert_eq!(fake.requests().len(), 5);
 }

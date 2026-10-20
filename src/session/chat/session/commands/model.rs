@@ -16,19 +16,11 @@
 
 use super::super::core::ChatSession;
 use super::{CommandOutput, CommandResult};
-use crate::config::Config;
 use anyhow::Result;
 
-pub fn handle_model(
-	session: &mut ChatSession,
-	config: &Config,
-	params: &[&str],
-) -> Result<CommandResult> {
+pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Handle model command
 	if params.is_empty() {
-		// Show current model and system default
-		let _system_model = config.get_effective_model();
-
 		// Build JSON output
 		return Ok(CommandResult::HandledWithOutput(Box::new(
 			CommandOutput::Model {
@@ -43,6 +35,23 @@ pub fn handle_model(
 
 	// Change to a new model (runtime only)
 	let new_model = params.join(" ");
+
+	// Reject anything that is not provider:model before touching the session —
+	// the same check `config --model` applies. A value like "/model gpt5" would
+	// otherwise be saved and fail on the next request, with no path back short
+	// of editing the session file.
+	if !new_model.contains(':') {
+		return Ok(CommandResult::HandledWithOutput(Box::new(
+			CommandOutput::Error {
+				error: format!("Invalid model: '{}'", new_model),
+				context: Some(serde_json::json!({
+					"expected": "provider:model",
+					"example": "openrouter:anthropic/claude-3.5-sonnet"
+				})),
+			},
+		)));
+	}
+
 	let old_model = session.model.clone();
 
 	// Log the command execution

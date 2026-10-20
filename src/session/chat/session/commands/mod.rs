@@ -461,7 +461,7 @@ pub async fn process_command(
 			}
 		}
 		LIST_COMMAND => list::handle_list(session, config, params),
-		MODEL_COMMAND => model::handle_model(session, config, params),
+		MODEL_COMMAND => model::handle_model(session, params),
 		EFFORT_COMMAND => effort::handle_effort(session, config, params),
 		NEW_COMMAND => new::handle_new(session, params),
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,

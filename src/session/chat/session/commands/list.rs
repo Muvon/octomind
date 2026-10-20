@@ -94,7 +94,11 @@ pub fn handle_list(
 				.iter()
 				.map(|(name, info)| {
 					let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-						.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M").to_string())
+						.map(|dt| {
+							dt.with_timezone(&chrono::Local)
+								.format("%Y-%m-%d %H:%M")
+								.to_string()
+						})
 						.unwrap_or_default();
 
 					let is_current = current_session_name
@@ -139,7 +143,11 @@ pub fn handle_list(
 			for (name, info) in page_sessions {
 				// Format date from timestamp
 				let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-					.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M").to_string())
+					.map(|dt| {
+						dt.with_timezone(&chrono::Local)
+							.format("%Y-%m-%d %H:%M")
+							.to_string()
+					})
 					.unwrap_or_default();
 
 				// Determine if this is the current session

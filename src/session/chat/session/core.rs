@@ -615,7 +615,11 @@ impl ChatSession {
 						// Show a brief summary of the session
 						let created_time =
 							DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
-								.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+								.map(|dt| {
+									dt.with_timezone(&chrono::Local)
+										.format("%Y-%m-%d %H:%M:%S")
+										.to_string()
+								})
 								.unwrap_or_else(|| "Unknown".to_string());
 
 						// Simplify model name

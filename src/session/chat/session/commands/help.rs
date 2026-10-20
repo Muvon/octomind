@@ -23,7 +23,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 	// Build list of command names for structured output
 	let mut commands = Vec::new();
 
-	commands.push(HELP_COMMAND.to_string());
+	commands.push(format!("{} | {}", HELP_COMMAND, HELP_COMMAND_ALT));
 	commands.push(COPY_COMMAND.to_string());
 	commands.push(REPLY_COMMAND.to_string());
 	commands.push(CLEAR_COMMAND.to_string());
@@ -65,7 +65,7 @@ pub async fn handle_help(config: &Config, role: &str) -> Result<CommandResult> {
 		}
 	}
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Help { commands },
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Help {
+		commands,
+	})))
 }

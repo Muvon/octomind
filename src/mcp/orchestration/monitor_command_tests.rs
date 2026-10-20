@@ -110,11 +110,9 @@ async fn test_monitor_start_list_stop_lifecycle() {
 			.find(|w| w.starts_with("mon-"))
 			.map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
 		{
-			let _ = execute_monitor_tool(&monitor_call(
-				serde_json::json!({"action": "stop", "id": id}),
-			))
-			.await
-			.expect("stop dispatches");
+			let _ = execute_monitor_tool(&monitor_call(serde_json::json!({"action": "stop", "id": id})))
+				.await
+				.expect("stop dispatches");
 		}
 	})
 	.await;
@@ -207,9 +205,7 @@ async fn monitor_start_validates_typed_parameters() {
 			),
 		];
 		for (params, expected) in cases {
-			let result = execute_monitor_tool(&monitor_call(params))
-				.await
-				.expect("dispatch");
+			let result = execute_monitor_tool(&monitor_call(params)).await.expect("dispatch");
 			assert!(is_err(&result), "expected error for {expected}");
 			assert!(
 				text_of(&result).contains(expected),
@@ -268,11 +264,7 @@ async fn monitor_start_reports_invalid_workdir_as_tool_error() {
 		.await
 		.expect("dispatch");
 		assert!(is_err(&result), "got: {}", text_of(&result));
-		assert!(
-			text_of(&result).contains("is invalid"),
-			"got: {}",
-			text_of(&result)
-		);
+		assert!(text_of(&result).contains("is invalid"), "got: {}", text_of(&result));
 	})
 	.await;
 	crate::session::context::cleanup_session(&sid);
@@ -281,17 +273,11 @@ async fn monitor_start_reports_invalid_workdir_as_tool_error() {
 #[tokio::test]
 async fn monitor_list_and_stop_require_session_context() {
 	for action in ["list", "stop"] {
-		let result = execute_monitor_tool(&monitor_call(
-			serde_json::json!({"action": action, "id": "mon-x"}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_monitor_tool(&monitor_call(serde_json::json!({"action": action, "id": "mon-x"})))
+			.await
+			.expect("dispatch");
 		assert!(is_err(&result), "got: {}", text_of(&result));
-		assert!(
-			text_of(&result).contains("active session"),
-			"got: {}",
-			text_of(&result)
-		);
+		assert!(text_of(&result).contains("active session"), "got: {}", text_of(&result));
 	}
 }
 
@@ -299,11 +285,9 @@ async fn monitor_list_and_stop_require_session_context() {
 async fn monitor_stop_requires_a_string_id() {
 	let sid = format!("monitor-stopid-{}", uuid::Uuid::new_v4());
 	crate::session::context::with_session_id(sid.clone(), async {
-		let result = execute_monitor_tool(&monitor_call(
-			serde_json::json!({"action": "stop", "id": 123}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_monitor_tool(&monitor_call(serde_json::json!({"action": "stop", "id": 123})))
+			.await
+			.expect("dispatch");
 		assert!(is_err(&result), "got: {}", text_of(&result));
 		assert!(
 			text_of(&result).contains("'id' must be a non-empty string"),
@@ -346,11 +330,9 @@ async fn monitor_stop_cancels_a_running_monitor() {
 		.await;
 		assert!(running.is_ok(), "monitor must register as running");
 
-		let result = execute_monitor_tool(&monitor_call(
-			serde_json::json!({"action": "stop", "id": id}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_monitor_tool(&monitor_call(serde_json::json!({"action": "stop", "id": id})))
+			.await
+			.expect("dispatch");
 		assert!(!is_err(&result), "stop failed: {}", text_of(&result));
 		assert!(
 			text_of(&result).contains("Stopping monitor"),
@@ -378,12 +360,7 @@ async fn monitor_lists_and_stops_a_background_task() {
 	crate::session::context::with_session_id(sid.clone(), async {
 		init_for_session();
 		let key = crate::session::shell_jobs::task_key("toolu_monitor");
-		let stop = crate::session::shell_jobs::register_task_for_session(
-			&sid,
-			"octofs",
-			&key,
-			"shell: cargo test",
-		);
+		let stop = crate::session::shell_jobs::register_task_for_session(&sid, "octofs", &key, "shell: cargo test");
 		crate::session::shell_jobs::set_task_status_for_session(
 			&sid,
 			&key,
@@ -404,11 +381,9 @@ async fn monitor_lists_and_stops_a_background_task() {
 			"{listing}"
 		);
 
-		let result = execute_monitor_tool(&monitor_call(
-			serde_json::json!({"action": "stop", "id": key}),
-		))
-		.await
-		.expect("dispatch");
+		let result = execute_monitor_tool(&monitor_call(serde_json::json!({"action": "stop", "id": key})))
+			.await
+			.expect("dispatch");
 		assert!(!is_err(&result), "stop failed: {}", text_of(&result));
 		assert!(
 			text_of(&result).contains("Stopping background task"),
@@ -515,9 +490,7 @@ async fn monitor_failed_exit_without_stderr_omits_stderr_section() {
 
 		let message = next_message().await;
 		assert!(
-			message
-				.content
-				.contains("command exited unsuccessfully (9)"),
+			message.content.contains("command exited unsuccessfully (9)"),
 			"got: {}",
 			message.content
 		);

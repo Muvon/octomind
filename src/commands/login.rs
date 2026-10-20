@@ -90,16 +90,10 @@ async fn login_octomind(args: &LoginArgs) -> Result<()> {
 
 	block_open("login", Some("octomind account"));
 	let kw = key_width(["code", "url"]);
-	block_row(
-		"code",
-		&start.user_code.bright_yellow().bold().to_string(),
-		kw,
-	);
+	block_row("code", &start.user_code.bright_yellow().bold().to_string(), kw);
 	block_row(
 		"url",
-		&account::panel_url(&start.verification_url)
-			.bright_cyan()
-			.to_string(),
+		&account::panel_url(&start.verification_url).bright_cyan().to_string(),
 		kw,
 	);
 	block_line("");
@@ -113,8 +107,7 @@ async fn login_octomind(args: &LoginArgs) -> Result<()> {
 	}
 	block_line("waiting…");
 
-	let claim =
-		account::poll_login(&start.device_code, Duration::from_secs(start.interval)).await?;
+	let claim = account::poll_login(&start.device_code, Duration::from_secs(start.interval)).await?;
 	let env_path = account::finish_login(&claim)?;
 
 	let who = account::whoami().await.ok().flatten();
@@ -133,16 +126,10 @@ async fn login_octomind(args: &LoginArgs) -> Result<()> {
 
 async fn login_chatgpt(args: &LoginArgs) -> Result<()> {
 	if !args.force {
-		if let Some(account) =
-			validated_chatgpt_account(chatgpt::current_account()?, chatgpt::list_models()).await?
-		{
+		if let Some(account) = validated_chatgpt_account(chatgpt::current_account()?, chatgpt::list_models()).await? {
 			block_open("login", Some("chatgpt"));
 			let kw = key_width(["account"]);
-			block_row(
-				"account",
-				&email_label(&account).bright_green().to_string(),
-				kw,
-			);
+			block_row("account", &email_label(&account).bright_green().to_string(), kw);
 			block_close_ok("login", Some("already signed in"));
 			println!();
 			println!("Use `octomind login chatgpt --force` to sign in again.");
@@ -168,11 +155,7 @@ async fn login_chatgpt(args: &LoginArgs) -> Result<()> {
 	let models = chatgpt::list_models().await?;
 
 	let kw = key_width(["account", "models"]);
-	block_row(
-		"account",
-		&email_label(&account).bright_green().to_string(),
-		kw,
-	);
+	block_row("account", &email_label(&account).bright_green().to_string(), kw);
 	let slugs: Vec<&str> = models.iter().map(|model| model.slug.as_str()).collect();
 	block_row("models", &slugs.join(", "), kw);
 	block_close_ok("login", Some("signed in"));
@@ -194,10 +177,7 @@ async fn validated_chatgpt_account(
 }
 
 fn email_label(account: &chatgpt::Account) -> &str {
-	account
-		.email
-		.as_deref()
-		.unwrap_or("(no email on the account)")
+	account.email.as_deref().unwrap_or("(no email on the account)")
 }
 
 #[cfg(test)]

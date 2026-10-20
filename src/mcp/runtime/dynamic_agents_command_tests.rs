@@ -18,9 +18,7 @@
 //! provider — the one path where a registered agent actually runs a turn.
 
 use super::*;
-use crate::session::chat::test_support::{
-	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-};
+use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 use serial_test::serial;
 
 fn agent_call(params: serde_json::Value) -> crate::mcp::McpToolCall {
@@ -71,11 +69,9 @@ async fn test_agent_tool_validation_arms() {
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("name"));
 
-	let result = execute_agent_tool_command(&agent_call(
-		serde_json::json!({"action": "add", "name": "x"}),
-	))
-	.await
-	.expect("dispatch");
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({"action": "add", "name": "x"})))
+		.await
+		.expect("dispatch");
 	assert!(is_err(&result));
 	assert!(text_of(&result).contains("system"));
 
@@ -114,11 +110,9 @@ async fn test_agent_lifecycle_and_in_process_execution() {
 	assert!(is_dynamic(name));
 	assert!(!is_enabled(name));
 
-	let result = execute_agent_tool_command(&agent_call(
-		serde_json::json!({"action": "enable", "name": name}),
-	))
-	.await
-	.expect("enable dispatches");
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({"action": "enable", "name": name})))
+		.await
+		.expect("enable dispatches");
 	assert!(!is_err(&result), "enable failed: {}", text_of(&result));
 	assert!(is_enabled(name));
 	assert!(get_enabled_agent(name).is_some());
@@ -141,11 +135,7 @@ async fn test_agent_lifecycle_and_in_process_execution() {
 	let result = crate::mcp::agent::execute_agent_command(&exec_call, &config, None)
 		.await
 		.expect("agent executes");
-	assert!(
-		!is_err(&result),
-		"dynamic agent run failed: {}",
-		text_of(&result)
-	);
+	assert!(!is_err(&result), "dynamic agent run failed: {}", text_of(&result));
 	assert!(
 		text_of(&result).contains("DYNAGENT-ANSWER"),
 		"agent answer missing: {}",
@@ -154,19 +144,15 @@ async fn test_agent_lifecycle_and_in_process_execution() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	// disable + remove tear it down
-	let result = execute_agent_tool_command(&agent_call(
-		serde_json::json!({"action": "disable", "name": name}),
-	))
-	.await
-	.expect("disable dispatches");
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({"action": "disable", "name": name})))
+		.await
+		.expect("disable dispatches");
 	assert!(!is_err(&result), "disable failed: {}", text_of(&result));
 	assert!(!is_enabled(name));
 
-	let result = execute_agent_tool_command(&agent_call(
-		serde_json::json!({"action": "remove", "name": name}),
-	))
-	.await
-	.expect("remove dispatches");
+	let result = execute_agent_tool_command(&agent_call(serde_json::json!({"action": "remove", "name": name})))
+		.await
+		.expect("remove dispatches");
 	assert!(!is_err(&result), "remove failed: {}", text_of(&result));
 	assert!(!is_dynamic(name));
 
@@ -220,8 +206,7 @@ async fn test_agent_add_infers_server_refs_from_allowed_tools() {
 	// global tool map — the inference path resolves allowed_tools entries
 	// through get_tool_server_name.
 	let config: crate::config::Config =
-		toml::from_str(include_str!("../../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	crate::mcp::tool_map::initialize_tool_map(&config)
 		.await
 		.expect("init tool map");

@@ -264,11 +264,7 @@ fn adaptive_threshold(cfg: &crate::supervisor::CondenseConfig) -> usize {
 	state.threshold()
 }
 
-fn observe_adaptive_round(
-	cfg: &crate::supervisor::CondenseConfig,
-	attempted_tokens: u64,
-	saved_tokens: u64,
-) -> usize {
+fn observe_adaptive_round(cfg: &crate::supervisor::CondenseConfig, attempted_tokens: u64, saved_tokens: u64) -> usize {
 	if !cfg.adaptive {
 		return cfg.tokens_threshold;
 	}
@@ -430,9 +426,7 @@ pub async fn condense_round(
 	if !config.supervisor.enabled || !cfg.enabled || cfg.tokens_threshold == 0 {
 		return;
 	}
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Condense,
-	);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Condense);
 
 	// Per-result trigger: only outputs that individually exceed the threshold are
 	// worth a line-range round trip. Everything below it is left exactly as the
@@ -440,10 +434,7 @@ pub async fn condense_round(
 	let sizes: Vec<usize> = results
 		.iter()
 		.map(|r| {
-			if is_plain_text_result(r)
-				&& !reads_whole_target(r, calls, whole_targets)
-				&& !is_recovery_read(r, calls)
-			{
+			if is_plain_text_result(r) && !reads_whole_target(r, calls, whole_targets) && !is_recovery_read(r, calls) {
 				estimate_tokens(&r.extract_content())
 			} else {
 				0
@@ -462,9 +453,7 @@ pub async fn condense_round(
 		let baseline_floor = cfg.tokens_threshold.max(MIN_CANDIDATE_TOKENS);
 		if cfg.adaptive
 			&& floor > baseline_floor
-			&& sizes
-				.iter()
-				.any(|&tokens| tokens > baseline_floor && tokens <= floor)
+			&& sizes.iter().any(|&tokens| tokens > baseline_floor && tokens <= floor)
 		{
 			let next = relax_adaptive_threshold(cfg).max(MIN_CANDIDATE_TOKENS);
 			crate::log_debug!(
@@ -476,21 +465,11 @@ pub async fn condense_round(
 		return;
 	}
 	if !spill_reader_available() {
-		crate::log_debug!(
-			"Condense skipped: no enabled local file-reading tool can recover a spill"
-		);
+		crate::log_debug!("Condense skipped: no enabled local file-reading tool can recover a spill");
 		return;
 	}
 
-	let (candidates, user) = build_request(
-		results,
-		calls,
-		&sizable,
-		&sizes,
-		task,
-		agent_context,
-		tool_round_intent,
-	);
+	let (candidates, user) = build_request(results, calls, &sizable, &sizes, task, agent_context, tool_round_intent);
 
 	// Name the culprits: the notice fires once per round, so without sizes a
 	// small result sitting next to it looks like the trigger.
@@ -523,16 +502,12 @@ pub async fn condense_round(
 		.sum();
 
 	if super::evaluate::enabled(config, super::evaluate::Seam::Condense) {
-		let Some(outcomes) =
-			evaluate_candidates(config, results, calls, &candidates, task, tool_round_intent).await
+		let Some(outcomes) = evaluate_candidates(config, results, calls, &candidates, task, tool_round_intent).await
 		else {
 			return;
 		};
 		let condensed = finish_round(results, cfg, floor, attempted_tokens, outcomes);
-		crate::supervisor::stats::evaluate_applied(
-			crate::supervisor::evaluate::Seam::Condense,
-			condensed,
-		);
+		crate::supervisor::stats::evaluate_applied(crate::supervisor::evaluate::Seam::Condense, condensed);
 		crate::supervisor::evaluate::avoided(
 			config,
 			crate::supervisor::evaluate::Seam::Condense,
@@ -541,8 +516,7 @@ pub async fn condense_round(
 		return;
 	}
 
-	let Some(response) = request_verdicts(config, user, operation_rx, CONDENSE_DEADLINE).await
-	else {
+	let Some(response) = request_verdicts(config, user, operation_rx, CONDENSE_DEADLINE).await else {
 		return;
 	};
 
@@ -570,11 +544,8 @@ pub async fn condense_round(
 			// bad line range used to discard every other result's correct selection.
 			Outcome {
 				result_index: candidate.result_index,
-				content: entry
-					.and_then(|entry| apply_verdict(entry, r, &original, &candidate.view)),
-				verdict: entry
-					.map_or("missing", |entry| entry.verdict.as_str())
-					.to_string(),
+				content: entry.and_then(|entry| apply_verdict(entry, r, &original, &candidate.view)),
+				verdict: entry.map_or("missing", |entry| entry.verdict.as_str()).to_string(),
 			}
 		})
 		.collect();
@@ -790,13 +761,7 @@ async fn evaluate_candidates(
 			keep.iter().filter(|kept| **kept).count(),
 			chunks.len()
 		);
-		outcomes.push(outcome_from_scores(
-			result_index,
-			r,
-			&content,
-			&chunks,
-			&keep,
-		));
+		outcomes.push(outcome_from_scores(result_index, r, &content, &chunks, &keep));
 	}
 	Some(outcomes)
 }
@@ -830,9 +795,7 @@ fn outcome_from_scores(
 	let selected: Vec<(usize, usize)> = chunks
 		.iter()
 		.enumerate()
-		.filter(|(i, _)| {
-			keep[*i] || (*i > 0 && keep[i - 1]) || keep.get(i + 1).copied().unwrap_or(false)
-		})
+		.filter(|(i, _)| keep[*i] || (*i > 0 && keep[i - 1]) || keep.get(i + 1).copied().unwrap_or(false))
 		.map(|(_, chunk)| (chunk.first_line, chunk.last_line))
 		.collect();
 	let ranges = protect_ranges(selected, &lines);
@@ -896,8 +859,7 @@ fn build_request(
 			.map(|c| compact_args(&c.parameters))
 			.unwrap_or_default();
 		let focus = format!("{task_block}\n{intent_block}\n{args}");
-		let budget =
-			(ROUND_VIEW_CAP_TOKENS * sizes[idx] / selected_tokens).max(MIN_RESULT_VIEW_TOKENS);
+		let budget = (ROUND_VIEW_CAP_TOKENS * sizes[idx] / selected_tokens).max(MIN_RESULT_VIEW_TOKENS);
 		let view = build_numbered_view(&content, budget, &focus);
 		let status = if r.is_error() { "error" } else { "ok" };
 		payload_results.push(serde_json::json!({
@@ -945,12 +907,7 @@ fn unambiguous_entries(response: &CondenseResponse) -> HashMap<&str, &Entry> {
 /// Resolve an entry into replacement content, or `None` to leave the result
 /// untouched ("keep", invalid entry, or spill failure — losing the original
 /// with no on-disk copy is never acceptable).
-fn apply_verdict(
-	entry: &Entry,
-	r: &McpToolResult,
-	original: &str,
-	view: &NumberedView,
-) -> Option<String> {
+fn apply_verdict(entry: &Entry, r: &McpToolResult, original: &str, view: &NumberedView) -> Option<String> {
 	match entry.verdict.as_str() {
 		"extract" => {
 			// Ranges always address the untouched original. The model may see a
@@ -989,12 +946,7 @@ fn protect_ranges(mut ranges: Vec<(usize, usize)>, lines: &[&str]) -> Vec<(usize
 /// Kept ranges → the inline body with omission markers and the extract notice.
 /// `None` when the selection is everything (identical to "keep") or the spill
 /// cannot be written.
-fn extract_content(
-	r: &McpToolResult,
-	original: &str,
-	lines: &[&str],
-	ranges: &[(usize, usize)],
-) -> Option<String> {
+fn extract_content(r: &McpToolResult, original: &str, lines: &[&str], ranges: &[(usize, usize)]) -> Option<String> {
 	let (body, kept) = reconstruct(lines, ranges, lines.len());
 	if kept >= lines.len() {
 		return None;
@@ -1074,11 +1026,7 @@ fn reads_whole_target(r: &McpToolResult, calls: &[McpToolCall], whole_targets: &
 		.iter()
 		.flat_map(|s| s.split_whitespace())
 		.map(normalize_path)
-		.any(|path| {
-			targets
-				.iter()
-				.any(|target| path_names_target(&path, target))
-		});
+		.any(|path| targets.iter().any(|target| path_names_target(&path, target)));
 	if hit {
 		crate::log_debug!(
 			"Condense: {} result reads a whole-task target, left in full",
@@ -1100,12 +1048,8 @@ fn collect_strings<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
 /// Lowercase, `/`-separated, without surrounding quotes or punctuation, so a
 /// target as the user wrote it compares with a path as a tool received it.
 fn normalize_path(text: &str) -> String {
-	let unquoted =
-		text.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | ',' | ';' | '(' | ')'));
-	unquoted
-		.replace('\\', "/")
-		.trim_start_matches("./")
-		.to_lowercase()
+	let unquoted = text.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | ',' | ';' | '(' | ')'));
+	unquoted.replace('\\', "/").trim_start_matches("./").to_lowercase()
 }
 
 /// A target names a path when it is the path, its trailing segments, or the
@@ -1125,8 +1069,7 @@ fn is_recovery_read(r: &McpToolResult, calls: &[McpToolCall]) -> bool {
 		.iter()
 		.find(|c| c.tool_id == r.tool_id)
 		.is_some_and(|c| crate::utils::spill::references_spill(&c.parameters));
-	let recovering =
-		reads_spill || crate::utils::spill::spill_exists(&r.tool_name, &r.extract_content());
+	let recovering = reads_spill || crate::utils::spill::spill_exists(&r.tool_name, &r.extract_content());
 	if recovering {
 		crate::log_debug!(
 			"Condense: {} result recovers a condensed output, left in full",
@@ -1290,12 +1233,7 @@ fn build_numbered_view(content: &str, max_tokens: usize, focus: &str) -> Numbere
 	}
 }
 
-fn render_numbered_selection(
-	lines: &[&str],
-	indices: &[usize],
-	total_lines: usize,
-	per_line_tokens: usize,
-) -> String {
+fn render_numbered_selection(lines: &[&str], indices: &[usize], total_lines: usize, per_line_tokens: usize) -> String {
 	let mut out = Vec::new();
 	let mut previous: Option<usize> = None;
 	for &i in indices {
@@ -1310,12 +1248,7 @@ fn render_numbered_selection(
 		} else if i > 0 {
 			out.push(format!("[… original lines 1-{i} not shown in this view …]"));
 		}
-		out.push(render_numbered_line(
-			i,
-			lines[i],
-			total_lines,
-			per_line_tokens,
-		));
+		out.push(render_numbered_line(i, lines[i], total_lines, per_line_tokens));
 		previous = Some(i);
 	}
 	if let Some(last) = previous {
@@ -1337,8 +1270,7 @@ fn render_numbered_line(index: usize, line: &str, total_lines: usize, max_tokens
 		return full;
 	}
 	let note = " [… line preview clipped; selecting this number keeps the complete original line]";
-	let content_budget =
-		max_tokens.saturating_sub(estimate_tokens(&prefix) + estimate_tokens(note));
+	let content_budget = max_tokens.saturating_sub(estimate_tokens(&prefix) + estimate_tokens(note));
 	format!(
 		"{prefix}{}{note}",
 		truncate_preserving_edges(line, content_budget.max(1))
@@ -1372,9 +1304,8 @@ fn format_ranges(ranges: &[(usize, usize)]) -> Vec<String> {
 
 fn focus_terms(focus: &str) -> Vec<String> {
 	const STOP: &[&str] = &[
-		"about", "after", "again", "agent", "before", "could", "current", "from", "have", "into",
-		"only", "result", "should", "task", "that", "their", "then", "this", "tool", "what",
-		"when", "where", "which", "with", "would",
+		"about", "after", "again", "agent", "before", "could", "current", "from", "have", "into", "only", "result",
+		"should", "task", "that", "their", "then", "this", "tool", "what", "when", "where", "which", "with", "would",
 	];
 	let mut seen = HashSet::new();
 	focus
@@ -1494,8 +1425,7 @@ fn compact_args(params: &serde_json::Value) -> String {
 	let head_chars = ARGS_CAP_CHARS * 2 / 3;
 	let tail_chars = ARGS_CAP_CHARS - head_chars;
 	let head = crate::utils::truncation::floor_char_boundary(&s, head_chars);
-	let tail_start =
-		crate::utils::truncation::floor_char_boundary(&s, s.len().saturating_sub(tail_chars));
+	let tail_start = crate::utils::truncation::floor_char_boundary(&s, s.len().saturating_sub(tail_chars));
 	format!("{}…[args middle omitted]…{}", &s[..head], &s[tail_start..])
 }
 

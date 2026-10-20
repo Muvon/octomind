@@ -240,30 +240,23 @@ fn materialize(source: &Path, content: &[u8]) -> Result<PathBuf> {
 		std::process::id(),
 		COPY_SEQ.fetch_add(1, Ordering::Relaxed)
 	));
-	std::fs::write(&tmp, content)
-		.with_context(|| format!("write script copy {}", tmp.display()))?;
+	std::fs::write(&tmp, content).with_context(|| format!("write script copy {}", tmp.display()))?;
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
 		std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o700))
 			.with_context(|| format!("chmod script copy {}", tmp.display()))?;
 	}
-	std::fs::rename(&tmp, &copy)
-		.with_context(|| format!("install script copy {}", copy.display()))?;
+	std::fs::rename(&tmp, &copy).with_context(|| format!("install script copy {}", copy.display()))?;
 	Ok(copy)
 }
 
 /// Spawn a rule script, retrying the transient ETXTBSY of a fresh copy.
-pub async fn spawn_script(
-	cmd: &mut tokio::process::Command,
-) -> std::io::Result<tokio::process::Child> {
+pub async fn spawn_script(cmd: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
 	let mut attempt = 0;
 	loop {
 		match cmd.spawn() {
-			Err(e)
-				if e.kind() == std::io::ErrorKind::ExecutableFileBusy
-					&& attempt < SPAWN_BUSY_RETRIES =>
-			{
+			Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < SPAWN_BUSY_RETRIES => {
 				attempt += 1;
 				tokio::time::sleep(SPAWN_BUSY_BACKOFF * attempt).await;
 			}
@@ -445,9 +438,9 @@ impl Guardrails {
 				return Err(anyhow!("pipe `{}` missing `command`", p.name));
 			}
 			let match_regex = match p.match_.as_deref() {
-				Some(s) if !s.is_empty() => Some(Regex::new(s).map_err(|e| {
-					anyhow!("pipe `{}`: invalid match regex `{}`: {}", p.name, s, e)
-				})?),
+				Some(s) if !s.is_empty() => {
+					Some(Regex::new(s).map_err(|e| anyhow!("pipe `{}`: invalid match regex `{}`: {}", p.name, s, e))?)
+				}
 				_ => None,
 			};
 			pipes.push(CompiledPipe {
@@ -463,8 +456,7 @@ impl Guardrails {
 
 		let mut guards = Vec::with_capacity(raw.guards.len());
 		for r in raw.guards {
-			let trigger = parse_target(&r.match_)
-				.map_err(|e| anyhow!("guard `{}`: invalid match: {}", r.match_, e))?;
+			let trigger = parse_target(&r.match_).map_err(|e| anyhow!("guard `{}`: invalid match: {}", r.match_, e))?;
 			let mut when_used = Vec::new();
 			let mut when_unused = Vec::new();
 			for item in r.when {
@@ -473,10 +465,8 @@ impl Guardrails {
 				let sign = chars.next();
 				let rest: &str = chars.as_str();
 				match sign {
-					Some('+') => when_used
-						.push(parse_target(rest).map_err(|e| anyhow!("when `{}`: {}", item, e))?),
-					Some('-') => when_unused
-						.push(parse_target(rest).map_err(|e| anyhow!("when `{}`: {}", item, e))?),
+					Some('+') => when_used.push(parse_target(rest).map_err(|e| anyhow!("when `{}`: {}", item, e))?),
+					Some('-') => when_unused.push(parse_target(rest).map_err(|e| anyhow!("when `{}`: {}", item, e))?),
 					_ => {
 						return Err(anyhow!("when entry must start with `+` or `-`: {}", item));
 					}
@@ -494,16 +484,13 @@ impl Guardrails {
 		let mut hooks = Vec::with_capacity(raw.hooks.len());
 		for h in raw.hooks {
 			let trigger = match h.match_.as_deref() {
-				Some(s) if !s.trim().is_empty() => Some(
-					parse_target(s).map_err(|e| anyhow!("hook `{}`: invalid match: {}", s, e))?,
-				),
+				Some(s) if !s.trim().is_empty() => {
+					Some(parse_target(s).map_err(|e| anyhow!("hook `{}`: invalid match: {}", s, e))?)
+				}
 				_ => None,
 			};
 			let result_regex = match h.result.as_deref() {
-				Some(s) => Some(
-					Regex::new(s)
-						.map_err(|e| anyhow!("hook: invalid result regex `{}`: {}", s, e))?,
-				),
+				Some(s) => Some(Regex::new(s).map_err(|e| anyhow!("hook: invalid result regex `{}`: {}", s, e))?),
 				None => None,
 			};
 			if h.script.trim().is_empty() {
@@ -533,9 +520,9 @@ impl Guardrails {
 				return Err(anyhow!("validator `{}` missing `script`", v.name));
 			}
 			let match_regex = match v.match_.as_deref() {
-				Some(s) if !s.is_empty() => Some(Regex::new(s).map_err(|e| {
-					anyhow!("validator `{}`: invalid match regex `{}`: {}", v.name, s, e)
-				})?),
+				Some(s) if !s.is_empty() => Some(
+					Regex::new(s).map_err(|e| anyhow!("validator `{}`: invalid match regex `{}`: {}", v.name, s, e))?,
+				),
 				_ => None,
 			};
 			let mut when_used = Vec::new();
@@ -546,16 +533,12 @@ impl Guardrails {
 				let sign = chars.next();
 				let rest: &str = chars.as_str();
 				match sign {
-					Some('+') => {
-						when_used.push(parse_target(rest).map_err(|e| {
-							anyhow!("validator `{}` when `{}`: {}", v.name, item, e)
-						})?)
-					}
-					Some('-') => {
-						when_unused.push(parse_target(rest).map_err(|e| {
-							anyhow!("validator `{}` when `{}`: {}", v.name, item, e)
-						})?)
-					}
+					Some('+') => when_used.push(
+						parse_target(rest).map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
+					),
+					Some('-') => when_unused.push(
+						parse_target(rest).map_err(|e| anyhow!("validator `{}` when `{}`: {}", v.name, item, e))?,
+					),
 					_ => {
 						return Err(anyhow!(
 							"validator `{}`: when entry must start with `+` or `-`: {}",
@@ -598,10 +581,7 @@ pub fn role_matches(filter: &[String], current: &str) -> bool {
 		}
 		// Domain prefix: filter "developer" passes "developer:..." but not
 		// "developer-foo" — require the `:` separator.
-		if current.len() > f.len()
-			&& current.starts_with(f.as_str())
-			&& current.as_bytes()[f.len()] == b':'
-		{
+		if current.len() > f.len() && current.starts_with(f.as_str()) && current.as_bytes()[f.len()] == b':' {
 			return true;
 		}
 	}
@@ -633,8 +613,7 @@ fn parse_target(s: &str) -> Result<Target> {
 	}
 	let inner = &s[open + 1..s.len() - 1];
 	let (arg_name, regex_src) = split_arg(inner);
-	let regex =
-		Regex::new(regex_src).map_err(|e| anyhow!("invalid regex `{}`: {}", regex_src, e))?;
+	let regex = Regex::new(regex_src).map_err(|e| anyhow!("invalid regex `{}`: {}", regex_src, e))?;
 	Ok(Target {
 		capability,
 		arg_name,
@@ -724,27 +703,22 @@ pub fn evaluate_guards(
 		if !rule.has.iter().all(|c| loaded.contains(c.as_str())) {
 			continue;
 		}
-		let used_ok = rule.when_used.iter().all(|t| {
-			call_log
-				.iter()
-				.any(|(c, p)| target_matches(t, c.as_deref(), p))
-		});
+		let used_ok = rule
+			.when_used
+			.iter()
+			.all(|t| call_log.iter().any(|(c, p)| target_matches(t, c.as_deref(), p)));
 		if !used_ok {
 			continue;
 		}
-		let unused_ok = rule.when_unused.iter().all(|t| {
-			!call_log
-				.iter()
-				.any(|(c, p)| target_matches(t, c.as_deref(), p))
-		});
+		let unused_ok = rule
+			.when_unused
+			.iter()
+			.all(|t| !call_log.iter().any(|(c, p)| target_matches(t, c.as_deref(), p)));
 		if !unused_ok {
 			continue;
 		}
 		if let Some(binding) = &rule.evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(
-				&binding.id,
-				binding.shadow,
-			) {
+			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
 				shadow_ids.push(binding.id.clone());
 				continue;
 			}

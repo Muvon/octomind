@@ -52,8 +52,8 @@ fn load_from(path: &Path) -> Result<Registry> {
 		}
 		Err(error) => return Err(error.into()),
 	};
-	let mut registry: Registry = serde_json::from_str(&content)
-		.with_context(|| format!("invalid evolution registry {}", path.display()))?;
+	let mut registry: Registry =
+		serde_json::from_str(&content).with_context(|| format!("invalid evolution registry {}", path.display()))?;
 	if registry.schema_version == 1 {
 		revalidate_v1(&mut registry);
 	}
@@ -111,11 +111,7 @@ pub fn get_record(id: &str) -> Result<Option<EvolutionRecord>> {
 	Ok(list_records()?.into_iter().find(|record| record.id == id))
 }
 
-pub fn create_record(
-	record: EvolutionRecord,
-	native_content: &str,
-	script: Option<&GeneratedScript>,
-) -> Result<()> {
+pub fn create_record(record: EvolutionRecord, native_content: &str, script: Option<&GeneratedScript>) -> Result<()> {
 	validate_relative_file(&record.artifact_path)?;
 	if let Some(script) = script {
 		validate_relative_file(&script.file_name)?;
@@ -123,11 +119,7 @@ pub fn create_record(
 	let path = registry_path()?;
 	config_file::with_lock(&path, || {
 		let mut registry = load_from(&path)?;
-		if registry
-			.records
-			.iter()
-			.any(|existing| existing.id == record.id)
-		{
+		if registry.records.iter().any(|existing| existing.id == record.id) {
 			anyhow::bail!("evolution record '{}' already exists", record.id);
 		}
 		if registry.records.iter().any(|existing| {
@@ -163,10 +155,7 @@ pub fn create_record(
 	})
 }
 
-pub fn mutate_record(
-	id: &str,
-	operation: impl FnOnce(&mut EvolutionRecord) -> Result<()>,
-) -> Result<EvolutionRecord> {
+pub fn mutate_record(id: &str, operation: impl FnOnce(&mut EvolutionRecord) -> Result<()>) -> Result<EvolutionRecord> {
 	let path = registry_path()?;
 	config_file::with_lock(&path, || {
 		let mut registry = load_from(&path)?;
@@ -193,11 +182,7 @@ pub fn append_history(record: &mut EvolutionRecord, event: &str, detail: impl In
 
 fn validate_relative_file(value: &str) -> Result<()> {
 	let path = Path::new(value);
-	if value.trim().is_empty()
-		|| path.is_absolute()
-		|| path.components().count() != 1
-		|| value == "."
-		|| value == ".."
+	if value.trim().is_empty() || path.is_absolute() || path.components().count() != 1 || value == "." || value == ".."
 	{
 		anyhow::bail!("invalid generated artifact file name '{}'", value);
 	}

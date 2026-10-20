@@ -21,8 +21,7 @@ use crate::config::{HookConfig, McpServerConfig, Role, RoleConfig};
 use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
 fn template_config() -> Config {
-	toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("default template must deserialize")
+	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }
 
 fn valid_layer() -> LayerConfig {
@@ -137,10 +136,7 @@ fn layer_errors_report_the_offending_index() {
 #[test]
 fn role_checks_cover_every_role_not_just_the_first() {
 	let mut config = template_config();
-	config.roles = vec![
-		role_with("fine", 1.0, 1.0, 100),
-		role_with("broken", 1.0, 1.0, 1001),
-	];
+	config.roles = vec![role_with("fine", 1.0, 1.0, 100), role_with("broken", 1.0, 1.0, 1001)];
 	let error = config.validate_model_profiles().unwrap_err().to_string();
 	assert!(error.contains("broken"), "got: {error}");
 	assert!(error.contains("top_k"), "got: {error}");
@@ -157,9 +153,7 @@ fn hook_timeout_of_one_second_is_the_valid_floor() {
 fn zero_session_token_threshold_means_disabled_and_passes() {
 	let mut config = template_config();
 	config.max_session_tokens_threshold = 0;
-	config
-		.validate_thresholds()
-		.expect("0 disables the session token cap");
+	config.validate_thresholds().expect("0 disables the session token cap");
 }
 
 #[test]
@@ -185,11 +179,7 @@ fn evaluate_model_must_be_a_supported_provider_model_pair() {
 		let error = config.validate().unwrap_err().to_string();
 		assert!(error.contains("decision.model"), "{bad:?}: {error}");
 	}
-	for good in [
-		"typesafe:jev-latest",
-		"cloudflare:typesafe/jev",
-		"octohub:auto",
-	] {
+	for good in ["typesafe:jev-latest", "cloudflare:typesafe/jev", "octohub:auto"] {
 		let mut config = template_config();
 		config.decision.model = Some(good.to_string());
 		config.validate().expect(good);
@@ -202,7 +192,9 @@ fn evaluate_section_is_strict_about_seam_keys() {
 	let section = "[decision]\nmodel = \"cloudflare:typesafe/jev\"\n";
 	assert!(template.contains(section), "template layout changed");
 	let mistyped = template.replace(
-		&format!("{section}# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.\nrecall = false\n"),
+		&format!(
+			"{section}# Filter recalled scoped lessons for relevance. Unavailable keeps candidates.\nrecall = false\n"
+		),
 		&format!("{section}recall = \"yes\"\n"),
 	);
 	assert_ne!(mistyped, template);
@@ -251,11 +243,7 @@ fn evaluate_distill_plan_and_gate_keys_are_strict_and_default_off() {
 
 	let key = "supervisor";
 	let line = format!("\n{key} = false\n");
-	assert_eq!(
-		template.matches(&line).count(),
-		1,
-		"template layout changed: {key}"
-	);
+	assert_eq!(template.matches(&line).count(), 1, "template layout changed: {key}");
 	let mistyped = template.replace(&line, &format!("\n{key} = \"yes\"\n"));
 	let error = toml::from_str::<crate::config::Config>(&mistyped)
 		.unwrap_err()
@@ -302,8 +290,7 @@ fn absent_and_empty_decision_models_disable_routing_but_keep_flags_required() {
 			crate::supervisor::evaluate::Seam::Gate
 		));
 	}
-	let mut value: toml::Value =
-		toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
+	let mut value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml")).unwrap();
 	value["decision"].as_table_mut().unwrap().remove("model");
 	let config: crate::config::Config = value.try_into().unwrap();
 	assert!(config.decision.model.is_none());
@@ -340,15 +327,11 @@ fn decision_rejects_unknown_keys_and_requires_the_section() {
 fn test_validate_clean_default_template_has_no_ignored_keys() {
 	let template = include_str!("../../config-templates/default.toml");
 	let value: toml::Value = toml::from_str(template).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
-	assert!(
-		reports.is_empty(),
-		"expected 0 ignored keys, got: {reports:?}"
-	);
+	assert!(reports.is_empty(), "expected 0 ignored keys, got: {reports:?}");
 }
 
 #[test]
@@ -356,8 +339,7 @@ fn test_validate_reports_misspelled_key() {
 	let template = include_str!("../../config-templates/default.toml");
 	let raw = template.replace("\n[model]\n", "\n[model]\nmax_tokns = 4096\n");
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -372,8 +354,7 @@ fn test_validate_reports_scalar_after_table_with_hint() {
 	let template = include_str!("../../config-templates/default.toml");
 	let raw = template.replace("\n[model]\n", "\n[model]\nsandbox = true\n");
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -395,8 +376,7 @@ fn test_validate_reports_scalar_after_nested_table_with_hint() {
 		"\n[compression.attention]\nthreshold = 50000\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -418,8 +398,7 @@ fn test_validate_reports_ignored_key_in_roles() {
 		"name = \"assistant\"\nunknown_role_key = \"bad\"\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -437,15 +416,12 @@ fn test_validate_reports_ignored_key_in_roles_model() {
 		"allowed_tools = [\"core:*\", \"orchestration:*\", \"runtime:*\", \"filesystem:*\", \"agent:*\"]\n\n[roles.model]\nunknown_model_key = \"bad\"\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
 	assert!(
-		reports
-			.iter()
-			.any(|r| r.path == "roles.0.model.unknown_model_key"),
+		reports.iter().any(|r| r.path == "roles.0.model.unknown_model_key"),
 		"expected roles.0.model.unknown_model_key, got: {reports:?}"
 	);
 }
@@ -458,8 +434,7 @@ fn test_validate_reports_ignored_key_in_mcp_servers() {
 		"name = \"orchestration\"\nunknown_mcp_key = \"bad\"\n",
 	);
 	let value: toml::Value = toml::from_str(&raw).unwrap();
-	let (mut config, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	config.ignored_keys = ignored_keys;
 
 	let reports = config.check_ignored_keys();
@@ -514,8 +489,7 @@ fn test_validate_accepts_every_mcp_server_field() {
 		template_servers.push(toml::Value::try_from(server).expect("server serializes"));
 	}
 
-	let (_, ignored_keys) =
-		crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
+	let (_, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value).unwrap();
 	assert!(
 		ignored_keys.is_empty(),
 		"every McpServerConfig field must be known, got: {ignored_keys:?}"

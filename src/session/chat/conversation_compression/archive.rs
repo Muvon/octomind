@@ -80,11 +80,7 @@ impl ArchiveBundle {
 /// (with a loud error log) on failure. Archiving must never abort the
 /// compression itself — at the hard context ceiling, failing to compress
 /// because of a disk hiccup would stall the session entirely.
-pub(crate) fn archive_messages(
-	session_name: &str,
-	compression_id: &str,
-	messages: &[Message],
-) -> Option<PathBuf> {
+pub(crate) fn archive_messages(session_name: &str, compression_id: &str, messages: &[Message]) -> Option<PathBuf> {
 	let dir = match crate::directories::get_sessions_dir() {
 		Ok(d) => d.join("archive").join(session_name),
 		Err(e) => {
@@ -141,9 +137,7 @@ pub(super) fn write_archive_with_index_to(
 	for packet in packets {
 		let block = messages
 			.get(packet.message_start..=packet.message_end)
-			.ok_or_else(|| {
-				anyhow::anyhow!("PACT packet {} points outside the archive range", packet.id)
-			})?;
+			.ok_or_else(|| anyhow::anyhow!("PACT packet {} points outside the archive range", packet.id))?;
 		entries.push(ArchiveBlockEntry {
 			id: packet.id.clone(),
 			kind: packet.kind,
@@ -162,12 +156,8 @@ pub(super) fn write_archive_with_index_to(
 		out.push_str(&serde_json::to_string(entry).context("failed to serialize PACT block")?);
 		out.push('\n');
 	}
-	std::fs::write(&index_path, out).with_context(|| {
-		format!(
-			"failed to write archive block index: {}",
-			index_path.display()
-		)
-	})?;
+	std::fs::write(&index_path, out)
+		.with_context(|| format!("failed to write archive block index: {}", index_path.display()))?;
 	Ok(ArchiveBundle {
 		path,
 		index_path,
@@ -183,18 +173,13 @@ fn block_digest(id: &str, messages: &[Message]) -> String {
 		hasher.update([0]);
 		hasher.update(serde_json::to_vec(message).expect("session messages are serializable"));
 	}
-	hasher
-		.finalize()
-		.iter()
-		.map(|byte| format!("{byte:02x}"))
-		.collect()
+	hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Write one JSON line per message to `<dir>/<compression_id>.jsonl`.
 /// Split from `archive_messages` so tests can point at a temp dir.
 fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> Result<PathBuf> {
-	std::fs::create_dir_all(dir)
-		.with_context(|| format!("failed to create archive dir: {}", dir.display()))?;
+	std::fs::create_dir_all(dir).with_context(|| format!("failed to create archive dir: {}", dir.display()))?;
 	let path = dir.join(format!("{compression_id}.jsonl"));
 	let mut out = String::new();
 	for msg in messages {
@@ -202,8 +187,7 @@ fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> R
 		out.push_str(&line);
 		out.push('\n');
 	}
-	std::fs::write(&path, out)
-		.with_context(|| format!("failed to write archive file: {}", path.display()))?;
+	std::fs::write(&path, out).with_context(|| format!("failed to write archive file: {}", path.display()))?;
 	Ok(path)
 }
 
@@ -211,9 +195,7 @@ fn write_archive_to(dir: &Path, compression_id: &str, messages: &[Message]) -> R
 /// recompression preserve transitive raw-source references and their exact
 /// archive coordinates rather than forcing every unit to cite only the
 /// immediately preceding summary packet.
-pub(crate) fn read_session_block_registry(
-	session_name: &str,
-) -> BTreeMap<String, ArchivedBlockRef> {
+pub(crate) fn read_session_block_registry(session_name: &str) -> BTreeMap<String, ArchivedBlockRef> {
 	let dir = match crate::directories::get_sessions_dir() {
 		Ok(d) => d.join("archive").join(session_name),
 		Err(_) => return BTreeMap::new(),

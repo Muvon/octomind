@@ -116,12 +116,7 @@ fn test_session_context_round_trip_and_role_splitting() {
 	set_session_context("developer", "proj-ctx-2", "/tmp/w2");
 	let (domain, spec, project, _, workdir) = get_session_context();
 	assert_eq!(
-		(
-			domain.as_str(),
-			spec.as_str(),
-			project.as_str(),
-			workdir.as_str()
-		),
+		(domain.as_str(), spec.as_str(), project.as_str(), workdir.as_str()),
 		("developer", "", "proj-ctx-2", "/tmp/w2")
 	);
 
@@ -158,17 +153,9 @@ fn test_init_session_context_derives_project_and_workdir() {
 fn test_stderr_buffer_for_isolates_servers_and_preserves_order() {
 	let alpha = stderr_buffer_for("proc-add-stderr-alpha");
 	let beta = stderr_buffer_for("proc-add-stderr-beta");
-	alpha
-		.lock()
-		.expect("alpha stderr lock")
-		.push("first".to_string());
-	beta.lock()
-		.expect("beta stderr lock")
-		.push("other-server".to_string());
-	alpha
-		.lock()
-		.expect("alpha stderr lock")
-		.push("second".to_string());
+	alpha.lock().expect("alpha stderr lock").push("first".to_string());
+	beta.lock().expect("beta stderr lock").push("other-server".to_string());
+	alpha.lock().expect("alpha stderr lock").push("second".to_string());
 	assert_eq!(
 		stderr_lines_for("proc-add-stderr-alpha"),
 		vec!["first".to_string(), "second".to_string()]
@@ -252,10 +239,7 @@ async fn test_emit_notification_buffers_until_sender_registered() {
 		params: serde_json::json!({}),
 		tool_id: None,
 	}));
-	assert!(matches!(
-		rx.try_recv(),
-		Ok(ServerMessage::McpNotification(_))
-	));
+	assert!(matches!(rx.try_recv(), Ok(ServerMessage::McpNotification(_))));
 
 	// After the sender is cleared, messages are dropped without panicking
 	clear_notification_sender(None);
@@ -309,10 +293,7 @@ fn test_server_process_http_lifecycle_kill_and_reap() {
 		.spawn()
 		.expect("spawn sleep");
 	let mut process = ServerProcess::Http(child);
-	assert!(process
-		.try_wait()
-		.expect("try_wait while running")
-		.is_none());
+	assert!(process.try_wait().expect("try_wait while running").is_none());
 	process.kill().expect("kill http process");
 
 	let mut exit = None;
@@ -332,10 +313,7 @@ fn test_is_server_running_unknown_server_records_dead_health() {
 	assert!(!is_server_running(NAME));
 	assert_eq!(get_server_health(NAME), ServerHealth::Dead);
 	let info = get_server_restart_info(NAME);
-	assert!(
-		info.last_health_check.is_some(),
-		"probe must record the check time"
-	);
+	assert!(info.last_health_check.is_some(), "probe must record the check time");
 	clear_restart_info(NAME);
 }
 
@@ -443,10 +421,10 @@ fn test_cleanup_server_process_kills_tracked_process() {
 		.arg("30")
 		.spawn()
 		.expect("spawn sleep");
-	SERVER_PROCESSES.write().unwrap().insert(
-		NAME.to_string(),
-		Arc::new(Mutex::new(ServerProcess::Http(child))),
-	);
+	SERVER_PROCESSES
+		.write()
+		.unwrap()
+		.insert(NAME.to_string(), Arc::new(Mutex::new(ServerProcess::Http(child))));
 
 	cleanup_server_process(NAME).expect("tracked process must clean up");
 	assert!(!SERVER_PROCESSES.read().unwrap().contains_key(NAME));
@@ -457,13 +435,7 @@ fn test_cleanup_server_process_kills_tracked_process() {
 #[tokio::test]
 async fn test_ensure_server_running_marks_failed_when_spawn_fails() {
 	const NAME: &str = "proc-add-spawn-fail";
-	let server = McpServerConfig::stdin(
-		NAME,
-		"definitely-not-a-real-binary",
-		Vec::new(),
-		2,
-		Vec::new(),
-	);
+	let server = McpServerConfig::stdin(NAME, "definitely-not-a-real-binary", Vec::new(), 2, Vec::new());
 	assert!(ensure_server_running(&server).await.is_err());
 	let info = get_server_restart_info(NAME);
 	assert_eq!(info.health_status, ServerHealth::Failed);
@@ -575,8 +547,7 @@ async fn test_ensure_server_running_http_without_process_fails_cleanly() {
 		.await
 		.expect_err("http configs must never be spawned as processes");
 	assert!(
-		err.to_string()
-			.contains("should not be started as a process"),
+		err.to_string().contains("should not be started as a process"),
 		"err: {err}"
 	);
 	assert_eq!(get_server_health(NAME), ServerHealth::Failed);
@@ -591,8 +562,7 @@ async fn test_start_server_process_rejects_builtin_configs() {
 		.await
 		.expect_err("builtin servers must never spawn");
 	assert!(
-		err.to_string()
-			.contains("should not be started as external process"),
+		err.to_string().contains("should not be started as external process"),
 		"err: {err}"
 	);
 }
@@ -639,10 +609,7 @@ async fn test_stop_all_servers_clears_every_registry() {
 	// An unallocatable pid keeps the PGID sweep a verified no-op (kill fails
 	// with ESRCH), so the test can never signal a real process group.
 	register_pgid(NAME, 4_000_000);
-	stderr_buffer_for(NAME)
-		.lock()
-		.unwrap()
-		.push("line".to_string());
+	stderr_buffer_for(NAME).lock().unwrap().push("line".to_string());
 	let mutex_before = get_server_restart_mutex(NAME);
 
 	stop_all_servers().expect("stop-all must succeed");
@@ -652,14 +619,8 @@ async fn test_stop_all_servers_clears_every_registry() {
 		!Arc::ptr_eq(&mutex_before, &get_server_restart_mutex(NAME)),
 		"restart mutexes must be cleared"
 	);
-	assert!(
-		stderr_lines_for(NAME).is_empty(),
-		"stderr buffers must be cleared"
-	);
-	assert!(
-		is_stdio_process_alive(NAME).is_none(),
-		"pgids must be cleared"
-	);
+	assert!(stderr_lines_for(NAME).is_empty(), "stderr buffers must be cleared");
+	assert!(is_stdio_process_alive(NAME).is_none(), "pgids must be cleared");
 
 	// Reap the child stop_all killed.
 	let mut guard = process_arc.lock().unwrap();
@@ -739,10 +700,7 @@ async fn test_perform_health_check_reports_dead_for_exited_process() {
 		tokio::time::sleep(Duration::from_millis(10)).await;
 	}
 	let process_arc = Arc::new(Mutex::new(ServerProcess::Http(child)));
-	SERVER_PROCESSES
-		.write()
-		.unwrap()
-		.insert(NAME.to_string(), process_arc);
+	SERVER_PROCESSES.write().unwrap().insert(NAME.to_string(), process_arc);
 
 	let health = perform_health_check_all_servers().await;
 	assert_eq!(health.get(NAME), Some(&ServerHealth::Dead));
@@ -807,9 +765,7 @@ async fn test_ensure_server_running_treats_locked_http_process_as_alive() {
 		let _ = locked_tx.send(());
 		let _ = release_rx.recv();
 	});
-	locked_rx
-		.recv()
-		.expect("helper thread holds the process lock");
+	locked_rx.recv().expect("helper thread holds the process lock");
 	let server = McpServerConfig::http(NAME, "http://127.0.0.1:9/mcp", 2, Vec::new());
 	let url = ensure_server_running(&server)
 		.await
@@ -912,10 +868,7 @@ async fn test_ensure_server_running_stdio_failure_includes_stderr_detail() {
 		.expect_err("silent stub must fail both handshake attempts");
 	let msg = error.to_string();
 	assert!(msg.contains("Failed to start server"), "err: {msg}");
-	assert!(
-		msg.contains("Failed to initialize stdin MCP server"),
-		"err: {msg}"
-	);
+	assert!(msg.contains("Failed to initialize stdin MCP server"), "err: {msg}");
 	assert!(msg.contains("Server stderr:"), "err: {msg}");
 	assert!(msg.contains("stub exploded"), "err: {msg}");
 

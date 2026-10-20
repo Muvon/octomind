@@ -20,9 +20,7 @@
 use super::*;
 
 fn veto_xml(defer_tag: &str) -> String {
-	format!(
-		"<should_compress>false</should_compress>\n{defer_tag}\n<current_task>finish the thing</current_task>"
-	)
+	format!("<should_compress>false</should_compress>\n{defer_tag}\n<current_task>finish the thing</current_task>")
 }
 
 #[test]
@@ -63,8 +61,7 @@ fn json_defer_reason_parses_every_known_token() {
 		("  MID_DERIVATION  ", DeferReason::MidDerivation),
 	] {
 		let summary: CompressionSummary =
-			serde_json::from_value(serde_json::json!({ "defer_reason": token }))
-				.expect("tolerant deserialization");
+			serde_json::from_value(serde_json::json!({ "defer_reason": token })).expect("tolerant deserialization");
 		assert_eq!(summary.defer_reason, expected, "token: {token}");
 	}
 }
@@ -88,11 +85,9 @@ fn json_defer_reason_tolerates_missing_null_unknown_and_wrong_type() {
 #[test]
 fn xml_defer_reason_parses_known_tokens_and_degrades_unknown_ones() {
 	assert_eq!(
-		parse_xml_summary(&veto_xml(
-			"<defer_reason>verification_in_flight</defer_reason>"
-		))
-		.expect("parses")
-		.defer_reason,
+		parse_xml_summary(&veto_xml("<defer_reason>verification_in_flight</defer_reason>"))
+			.expect("parses")
+			.defer_reason,
 		DeferReason::VerificationInFlight
 	);
 

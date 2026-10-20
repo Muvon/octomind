@@ -109,8 +109,7 @@ impl AcpErrorSink {
 		}
 
 		let file = file_guard.as_mut().unwrap();
-		let content =
-			serde_json::to_string(entry).with_context(|| "Failed to serialize error entry")?;
+		let content = serde_json::to_string(entry).with_context(|| "Failed to serialize error entry")?;
 
 		writeln!(file, "{}", content).with_context(|| "Failed to write error entry")?;
 

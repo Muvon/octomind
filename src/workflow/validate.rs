@@ -14,9 +14,7 @@
 
 //! Pre-flight validation: name uniqueness and `{{var}}` reference resolution.
 
-use super::schema::{
-	Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, Step, WorkflowDef, END_NODE,
-};
+use super::schema::{Condition, ConditionalStep, LoopStep, ParallelStep, Sequential, Step, WorkflowDef, END_NODE};
 use anyhow::{bail, Result};
 use regex::Regex;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -105,10 +103,7 @@ fn validate_graph(wf: &WorkflowDef, all_names: &HashSet<String>) -> Result<()> {
 	let mut outgoing: HashMap<&str, Vec<&super::schema::Edge>> = HashMap::new();
 	for edge in &wf.edges {
 		if !top_names.contains(edge.from.as_str()) {
-			bail!(
-				"edge.from references unknown top-level step '{}'",
-				edge.from
-			);
+			bail!("edge.from references unknown top-level step '{}'", edge.from);
 		}
 		if edge.to != END_NODE && !top_names.contains(edge.to.as_str()) {
 			bail!("edge.to references unknown top-level step '{}'", edge.to);
@@ -130,12 +125,9 @@ fn validate_graph(wf: &WorkflowDef, all_names: &HashSet<String>) -> Result<()> {
 	}
 
 	for name in &top_names {
-		let routes = outgoing.get(name).ok_or_else(|| {
-			anyhow::anyhow!(
-				"graph node '{}' has no outgoing route to another node or $end",
-				name
-			)
-		})?;
+		let routes = outgoing
+			.get(name)
+			.ok_or_else(|| anyhow::anyhow!("graph node '{}' has no outgoing route to another node or $end", name))?;
 		let unconditional: Vec<usize> = routes
 			.iter()
 			.enumerate()
@@ -149,10 +141,7 @@ fn validate_graph(wf: &WorkflowDef, all_names: &HashSet<String>) -> Result<()> {
 			);
 		}
 		if unconditional[0] + 1 != routes.len() {
-			bail!(
-				"graph node '{}' unconditional default edge must be declared last",
-				name
-			);
+			bail!("graph node '{}' unconditional default edge must be declared last", name);
 		}
 	}
 
@@ -176,10 +165,7 @@ fn validate_graph(wf: &WorkflowDef, all_names: &HashSet<String>) -> Result<()> {
 	let mut unreachable: Vec<&str> = top_names.difference(&reached).copied().collect();
 	unreachable.sort_unstable();
 	if !unreachable.is_empty() {
-		bail!(
-			"graph has unreachable top-level steps: {}",
-			unreachable.join(", ")
-		);
+		bail!("graph has unreachable top-level steps: {}", unreachable.join(", "));
 	}
 	if !reaches_end {
 		bail!("graph has no reachable route to $end");
@@ -193,8 +179,7 @@ fn validate_condition(context: &str, condition: &Condition) -> Result<()> {
 		bail!("{context} condition must set 'contains' or 'matches'");
 	}
 	if let Some(pattern) = &condition.matches {
-		Regex::new(pattern)
-			.map_err(|e| anyhow::anyhow!("{context} condition.matches invalid regex: {e}"))?;
+		Regex::new(pattern).map_err(|e| anyhow::anyhow!("{context} condition.matches invalid regex: {e}"))?;
 	}
 	Ok(())
 }
@@ -263,9 +248,8 @@ fn structural_check(step: &Step) -> Result<()> {
 						source
 					);
 				}
-				Regex::new(pattern).map_err(|e| {
-					anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {}", name, e)
-				})?;
+				Regex::new(pattern)
+					.map_err(|e| anyhow::anyhow!("dynamic parallel '{}': invalid match regex: {}", name, e))?;
 				let template = &run[0];
 				validate_fields(template)?;
 				validate_expansion(template)?;
@@ -305,10 +289,7 @@ fn structural_check(step: &Step) -> Result<()> {
 			Ok(())
 		}
 		Step::Loop(LoopStep {
-			name,
-			run,
-			exit_when,
-			..
+			name, run, exit_when, ..
 		}) => {
 			if run.is_empty() {
 				bail!("loop step '{}' must have at least 1 sub-step", name);
@@ -333,10 +314,7 @@ fn structural_check(step: &Step) -> Result<()> {
 		}) => {
 			validate_condition(&format!("conditional step '{name}'"), condition)?;
 			if on_match.is_empty() && on_no_match.is_empty() {
-				bail!(
-					"conditional step '{}' requires on_match and/or on_no_match",
-					name
-				);
+				bail!("conditional step '{}' requires on_match and/or on_no_match", name);
 			}
 			let sub_names: HashSet<&str> = run.iter().map(|s| s.name.as_str()).collect();
 			for n in on_match.iter().chain(on_no_match.iter()) {
@@ -365,10 +343,7 @@ fn validate_fields(s: &Sequential) -> Result<()> {
 	}
 	if let Some(w) = &s.workdir {
 		if w.trim().is_empty() {
-			bail!(
-				"step '{}': workdir must not be empty when specified",
-				s.name
-			);
+			bail!("step '{}': workdir must not be empty when specified", s.name);
 		}
 	}
 	Ok(())
@@ -379,10 +354,7 @@ fn validate_fields(s: &Sequential) -> Result<()> {
 /// silently ignoring the field.
 fn reject_expansion(s: &Sequential) -> Result<()> {
 	if s.count.is_some() {
-		bail!(
-			"step '{}': 'count' is only valid on parallel sub-steps",
-			s.name
-		);
+		bail!("step '{}': 'count' is only valid on parallel sub-steps", s.name);
 	}
 	Ok(())
 }
@@ -391,10 +363,7 @@ fn reject_expansion(s: &Sequential) -> Result<()> {
 fn validate_expansion(s: &Sequential) -> Result<()> {
 	if let Some(c) = s.count {
 		if c < 2 {
-			bail!(
-				"step '{}': count must be >= 2 (omit it for a single run)",
-				s.name
-			);
+			bail!("step '{}': count must be >= 2 (omit it for a single run)", s.name);
 		}
 	}
 	Ok(())
@@ -569,11 +538,7 @@ fn check_refs(step_name: &str, prompt: &str, available: &HashSet<String>) -> Res
 		if is_builtin_placeholder(var) || available.contains(var) {
 			continue;
 		}
-		bail!(
-			"step '{}' references unknown variable '{{{{{}}}}}",
-			step_name,
-			var
-		);
+		bail!("step '{}' references unknown variable '{{{{{}}}}}", step_name, var);
 	}
 	Ok(())
 }

@@ -30,15 +30,13 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 			LogLevel::Debug => "debug",
 		};
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Loglevel {
-				old_level: None,
-				new_level: None,
-				current_level: Some(level_str.to_string()),
-				available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
-				changed: false,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Loglevel {
+			old_level: None,
+			new_level: None,
+			current_level: Some(level_str.to_string()),
+			available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+			changed: false,
+		})));
 	}
 
 	// Parse the requested log level
@@ -47,14 +45,12 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 		"info" => LogLevel::Info,
 		"debug" => LogLevel::Debug,
 		_ => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: "Invalid log level. Use: none, info, or debug".to_string(),
-					context: Some(serde_json::json!({
-						"available_levels": ["none", "info", "debug"]
-					})),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: "Invalid log level. Use: none, info, or debug".to_string(),
+				context: Some(serde_json::json!({
+					"available_levels": ["none", "info", "debug"]
+				})),
+			})));
 		}
 	};
 
@@ -70,13 +66,11 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 		LogLevel::Debug => "debug",
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Loglevel {
-			old_level: None,
-			new_level: Some(level_str.to_string()),
-			current_level: None,
-			available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
-			changed: true,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Loglevel {
+		old_level: None,
+		new_level: Some(level_str.to_string()),
+		current_level: None,
+		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+		changed: true,
+	})))
 }

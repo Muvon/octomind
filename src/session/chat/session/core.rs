@@ -215,7 +215,7 @@ pub struct ChatSession {
 	pub spending_stop: Option<SpendingStop>,
 	pub pending_image: Option<crate::session::image::ImageAttachment>, // Pending image attachment
 	pub pending_video: Option<crate::session::video::VideoAttachment>, // Pending video attachment
-	pub max_retries: u32, // Maximum number of retries for provider errors
+	pub max_retries: u32,                                              // Maximum number of retries for provider errors
 	pub retry_timeout: u64,
 	pub request_timeout_seconds: u64,
 	pub was_resumed: bool, // Flag indicating if this session was resumed from an existing file
@@ -521,11 +521,7 @@ impl ChatSession {
 					use colored::*;
 					println!(
 						"{}",
-						format!(
-							"✓ Found recent session for current project: {}",
-							session_name
-						)
-						.bright_green()
+						format!("✓ Found recent session for current project: {}", session_name).bright_green()
 					);
 					Some(session_name)
 				}
@@ -533,8 +529,7 @@ impl ChatSession {
 					use colored::*;
 					println!(
 						"{}",
-						"⚠ No recent session found for current project. Creating new session."
-							.yellow()
+						"⚠ No recent session found for current project. Creating new session.".yellow()
 					);
 					None
 				}
@@ -562,8 +557,7 @@ impl ChatSession {
 			max_retries: params.max_retries,
 			..Default::default()
 		};
-		let effective_profile =
-			runtime_profile.resolve(&params.config.get_model_profile_for_role(params.role));
+		let effective_profile = runtime_profile.resolve(&params.config.get_model_profile_for_role(params.role));
 
 		// Check if we should load or create a session
 		let should_resume = if effective_resume.is_some() {
@@ -591,8 +585,7 @@ impl ChatSession {
 				Ok(session) => {
 					// Extract runtime state from session log
 					let runtime_state =
-						crate::session::extract_runtime_state_from_log(&session_file)
-							.unwrap_or_default();
+						crate::session::extract_runtime_state_from_log(&session_file).unwrap_or_default();
 
 					// Skip CLI output in structured output modes (websocket, jsonl)
 					let suppress = crate::session::output::OutputMode::from_runtime_mode(
@@ -602,21 +595,17 @@ impl ChatSession {
 
 					if !suppress {
 						// When session is loaded successfully, show its info
-						println!(
-							"{}",
-							format!("✓ Resuming session: {}", session_name).bright_green()
-						);
-						if let Some(title) = crate::session::titles::get_session_meta(&session_name)
-							.and_then(|m| m.title)
+						println!("{}", format!("✓ Resuming session: {}", session_name).bright_green());
+						if let Some(title) =
+							crate::session::titles::get_session_meta(&session_name).and_then(|m| m.title)
 						{
 							println!("{} {}", "Title:".blue(), title.white());
 						}
 
 						// Show a brief summary of the session
-						let created_time =
-							DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
-								.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
-								.unwrap_or_else(|| "Unknown".to_string());
+						let created_time = DateTime::<Utc>::from_timestamp(session.info.created_at as i64, 0)
+							.map(|dt| dt.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+							.unwrap_or_else(|| "Unknown".to_string());
 
 						// Simplify model name
 						let model_parts: Vec<&str> = session.info.model.split('/').collect();
@@ -631,16 +620,8 @@ impl ChatSession {
 
 						println!("{} {}", "Created:".blue(), created_time.white());
 						println!("{} {}", "Model:".blue(), model_name.yellow());
-						println!(
-							"{} {}",
-							"Messages:".blue(),
-							session.messages.len().to_string().white()
-						);
-						println!(
-							"{} {}",
-							"Tokens:".blue(),
-							format_number(total_tokens).bright_blue()
-						);
+						println!("{} {}", "Messages:".blue(), session.messages.len().to_string().white());
+						println!("{} {}", "Tokens:".blue(), format_number(total_tokens).bright_blue());
 						println!(
 							"{} ${:.5}",
 							"Cost:".blue(),
@@ -728,15 +709,12 @@ impl ChatSession {
 					// deliberate switch and outranks whatever `/role` the session
 					// last logged — otherwise `run reviewer --resume x` would snap
 					// straight back to the old role.
-					if let Some(restored_role) =
-						runtime_state.role.filter(|_| !params.role_explicit)
-					{
+					if let Some(restored_role) = runtime_state.role.filter(|_| !params.role_explicit) {
 						// Validate that the restored role still exists in config
 						if params.config.roles.iter().any(|r| r.name == restored_role) {
 							chat_session.role = restored_role;
 							// Update temperature and model from the restored role config
-							let role_profile =
-								params.config.get_model_profile_for_role(&chat_session.role);
+							let role_profile = params.config.get_model_profile_for_role(&chat_session.role);
 							chat_session.apply_model_profile(&role_profile);
 						}
 					}
@@ -766,11 +744,11 @@ impl ChatSession {
 					chat_session.session.info.current_non_cached_tokens = non_cached_tokens;
 
 					crate::log_debug!(
-					"Session resume: Recalculated token state - total: {}, non-cached: {} (from {} messages)",
-					total_tokens,
-					non_cached_tokens,
-					chat_session.session.messages.len()
-				);
+						"Session resume: Recalculated token state - total: {}, non-cached: {} (from {} messages)",
+						total_tokens,
+						non_cached_tokens,
+						chat_session.session.messages.len()
+					);
 
 					// Get last assistant response if any
 					for msg in chat_session.session.messages.iter().rev() {
@@ -784,16 +762,11 @@ impl ChatSession {
 					// resumed turn's finals were appended live in the prior process,
 					// and the verify-gate must judge the same deliverable after a
 					// resume as before it.
-					let turn_start =
-						crate::session::latest_task_turn_index(&chat_session.session.messages)
-							.unwrap_or(chat_session.session.messages.len());
+					let turn_start = crate::session::latest_task_turn_index(&chat_session.session.messages)
+						.unwrap_or(chat_session.session.messages.len());
 					chat_session.turn_answers = chat_session.session.messages[turn_start..]
 						.iter()
-						.filter(|m| {
-							m.role == "assistant"
-								&& m.tool_calls.is_none()
-								&& !m.content.trim().is_empty()
-						})
+						.filter(|m| m.role == "assistant" && m.tool_calls.is_none() && !m.content.trim().is_empty())
 						.map(|m| m.content.clone())
 						.collect();
 
@@ -819,8 +792,7 @@ impl ChatSession {
 
 					// Generate a new unique session name using the new format
 					let new_session_name = generate_session_name();
-					let new_session_file =
-						sessions_dir.join(format!("{}.jsonl.zst", new_session_name));
+					let new_session_file = sessions_dir.join(format!("{}.jsonl.zst", new_session_name));
 
 					// Skip CLI output in structured output modes
 					let suppress = crate::session::output::OutputMode::from_runtime_mode(
@@ -846,16 +818,12 @@ impl ChatSession {
 			}
 		} else {
 			// Create new session - skip CLI output in structured output modes
-			let suppress = crate::session::output::OutputMode::from_runtime_mode(
-				params.output_mode.as_deref().unwrap_or("plain"),
-			)
-			.should_suppress_cli_output();
+			let suppress =
+				crate::session::output::OutputMode::from_runtime_mode(params.output_mode.as_deref().unwrap_or("plain"))
+					.should_suppress_cli_output();
 			if !suppress {
 				use colored::*;
-				println!(
-					"{}",
-					format!("Starting new session: {}", session_name).bright_green()
-				);
+				println!("{}", format!("Starting new session: {}", session_name).bright_green());
 			}
 
 			let mut chat_session = ChatSession::new(ChatSessionParams {
@@ -914,10 +882,7 @@ impl ChatSession {
 			println!("{}", "📸 Image preview:".bright_cyan());
 			ImageProcessor::show_preview(&attachment)?;
 			self.pending_image = Some(attachment);
-			println!(
-				"{}",
-				"✅ Image downloaded and ready to attach!".bright_green()
-			);
+			println!("{}", "✅ Image downloaded and ready to attach!".bright_green());
 			return Ok(());
 		}
 
@@ -1002,10 +967,7 @@ impl ChatSession {
 			println!("{}", "🎬 Video preview:".bright_cyan());
 			VideoProcessor::show_preview(&attachment)?;
 			self.pending_video = Some(attachment);
-			println!(
-				"{}",
-				"✅ Video downloaded and ready to attach!".bright_green()
-			);
+			println!("{}", "✅ Video downloaded and ready to attach!".bright_green());
 			return Ok(());
 		}
 
@@ -1102,11 +1064,7 @@ impl ChatSession {
 	/// **DO NOT** use `messages.len()` as end_index - it will fail!
 	/// - WRONG: `session.remove_messages_in_range(start, session.get_message_count());`
 	/// - CORRECT: `session.remove_messages_in_range(start, session.get_message_count() - 1);`
-	pub fn remove_messages_in_range(
-		&mut self,
-		start_index: usize,
-		end_index: usize,
-	) -> Result<(usize, bool)> {
+	pub fn remove_messages_in_range(&mut self, start_index: usize, end_index: usize) -> Result<(usize, bool)> {
 		// Validate range
 		if start_index >= self.session.messages.len() {
 			return Err(anyhow::anyhow!(
@@ -1136,11 +1094,7 @@ impl ChatSession {
 		let messages_to_remove = end_index - start_index;
 
 		if messages_to_remove == 0 {
-			crate::log_debug!(
-				"No messages to remove in range {}-{}",
-				start_index,
-				end_index
-			);
+			crate::log_debug!("No messages to remove in range {}-{}", start_index, end_index);
 			return Ok((0, false));
 		}
 
@@ -1304,11 +1258,7 @@ impl ChatSession {
 
 				if let Some(m) = self.session.messages.get_mut(target_idx) {
 					m.cached = true;
-					crate::log_debug!(
-						"Placed second cache marker at index {} (role={})",
-						target_idx,
-						m.role
-					);
+					crate::log_debug!("Placed second cache marker at index {} (role={})", target_idx, m.role);
 				}
 			}
 		}
@@ -1349,10 +1299,7 @@ impl ChatSession {
 			);
 			println!("{}", "Some tools may not be available".yellow());
 		} else {
-			println!(
-				"{}",
-				"✓ MCP servers and tools updated for new role".bright_green()
-			);
+			println!("{}", "✓ MCP servers and tools updated for new role".bright_green());
 		}
 
 		// Load env-driven skills and capabilities for the new role BEFORE the
@@ -1375,10 +1322,7 @@ impl ChatSession {
 				// (or by the caller's own session-file append logic for mutations).
 				first_msg.content = new_system_prompt;
 
-				println!(
-					"{}",
-					"✓ System prompt updated with new role's tools".bright_green()
-				);
+				println!("{}", "✓ System prompt updated with new role's tools".bright_green());
 			} else {
 				// This shouldn't happen in normal operation, but handle gracefully
 				return Err(anyhow::anyhow!(
@@ -1389,10 +1333,7 @@ impl ChatSession {
 		} else {
 			// No messages yet - add system message (shouldn't happen for role switching)
 			self.add_system_message(&new_system_prompt)?;
-			println!(
-				"{}",
-				"✓ System prompt initialized for new role".bright_green()
-			);
+			println!("{}", "✓ System prompt initialized for new role".bright_green());
 		}
 
 		// Save the session to persist the changes
@@ -1422,9 +1363,7 @@ impl ChatSession {
 		if self.cached_tools.is_none() {
 			self.cached_tools = Some(crate::mcp::get_available_functions(config).await);
 		}
-		let raw = self
-			.raw_context_estimate()
-			.expect("tool definitions cached above");
+		let raw = self.raw_context_estimate().expect("tool definitions cached above");
 		self.calibrated(raw)
 	}
 
@@ -1436,11 +1375,8 @@ impl ChatSession {
 	/// partial estimate.
 	pub fn raw_context_estimate(&self) -> Option<usize> {
 		let tools = self.cached_tools.as_deref()?;
-		let mut total = crate::session::estimate_sent_full_context_tokens(
-			&self.session.messages,
-			Some(tools),
-			&self.model,
-		);
+		let mut total =
+			crate::session::estimate_sent_full_context_tokens(&self.session.messages, Some(tools), &self.model);
 		if !self
 			.session
 			.messages
@@ -1451,10 +1387,7 @@ impl ChatSession {
 				let content = crate::session::ensure_system_managed(pack);
 				let mut message = crate::session::Session::build_message("user", &content);
 				message.name = Some("__active_memory_pack".to_string());
-				total = total.saturating_add(crate::session::estimate_sent_message_tokens(
-					&message,
-					&self.model,
-				));
+				total = total.saturating_add(crate::session::estimate_sent_message_tokens(&message, &self.model));
 			}
 		}
 		Some(total)
@@ -1512,11 +1445,7 @@ impl ChatSession {
 		self.turn_started_at = Some(TurnStart {
 			at: std::time::Instant::now(),
 			main_api_time_ms: self.session.info.total_api_time_ms,
-			blocking_supervisor_time_ms: self
-				.session
-				.info
-				.supervisor_accounting
-				.blocking_wall_time_ms,
+			blocking_supervisor_time_ms: self.session.info.supervisor_accounting.blocking_wall_time_ms,
 		});
 	}
 
@@ -1534,8 +1463,8 @@ impl ChatSession {
 			split.completed += 1;
 			split.total_time_ms += elapsed.as_millis() as u64;
 			split.main_api_time_ms += info.total_api_time_ms - started_at.main_api_time_ms;
-			split.blocking_supervisor_time_ms += info.supervisor_accounting.blocking_wall_time_ms
-				- started_at.blocking_supervisor_time_ms;
+			split.blocking_supervisor_time_ms +=
+				info.supervisor_accounting.blocking_wall_time_ms - started_at.blocking_supervisor_time_ms;
 		}
 	}
 

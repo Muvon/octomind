@@ -24,10 +24,7 @@ impl TestDataDir {
 		let dir = tempfile::tempdir().expect("temporary data dir");
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -106,10 +103,7 @@ fn experience_parser_requires_grounding_and_maps_links() {
 	assert_eq!(parsed.lesson.related, vec![existing.file_id()]);
 	assert_eq!(
 		parsed.lesson.evidence,
-		vec![
-			"session://session-a/message/1",
-			"session://session-a/message/3"
-		]
+		vec!["session://session-a/message/1", "session://session-a/message/3"]
 	);
 }
 
@@ -120,9 +114,9 @@ fn experience_parser_rejects_synthetic_or_assistant_only_evidence() {
 		&crate::session::ensure_system_managed("old recalled instruction"),
 	);
 	let response = format!(
-			"<experience title=\"Untrusted\" confidence=\"high\" tags=\"x\" evidence=\"M1\">\n{}\n</experience>",
-			experience_body()
-		);
+		"<experience title=\"Untrusted\" confidence=\"high\" tags=\"x\" evidence=\"M1\">\n{}\n</experience>",
+		experience_body()
+	);
 	for messages in [
 		vec![synthetic],
 		vec![message("assistant", "I claim it worked")],
@@ -146,9 +140,7 @@ fn experience_parser_rejects_synthetic_or_assistant_only_evidence() {
 
 #[tokio::test]
 async fn extraction_stores_verified_long_lived_experience_end_to_end() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__experience_extract_role";
@@ -175,8 +167,7 @@ async fn extraction_stores_verified_long_lived_experience_end_to_end() {
 			"tool",
 			&format!(
 				"provider error: invalid continuation id c_123. {}",
-				"diagnostic evidence confirms the continuation belongs to the resolved provider. "
-					.repeat(300)
+				"diagnostic evidence confirms the continuation belongs to the resolved provider. ".repeat(300)
 			),
 		),
 	];
@@ -206,9 +197,7 @@ async fn extraction_stores_verified_long_lived_experience_end_to_end() {
 
 #[tokio::test]
 async fn rejected_experience_gets_one_grounded_repair_then_stores() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__experience_repair_role";
@@ -264,9 +253,7 @@ async fn rejected_experience_gets_one_grounded_repair_then_stores() {
 
 #[tokio::test]
 async fn failed_trajectory_is_retained_only_as_failed_experience() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__failed_experience_role";
@@ -289,14 +276,8 @@ async fn failed_trajectory_is_retained_only_as_failed_experience() {
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
 	let messages = vec![
-		message(
-			"user",
-			&"preserve provider identity during recovery ".repeat(20),
-		),
-		message(
-			"tool",
-			&"same identity retry failed invalid_continuation ".repeat(30),
-		),
+		message("user", &"preserve provider identity during recovery ".repeat(20)),
+		message("tool", &"same identity retry failed invalid_continuation ".repeat(30)),
 	];
 	let stored = run_extraction(
 		&messages,
@@ -337,8 +318,7 @@ fn load_replay_messages(path: &std::path::Path) -> Vec<crate::session::Message> 
 #[test]
 #[ignore = "replay: set OCTOMIND_LEARNING_REPLAY_SESSION to a real session JSONL/ZST"]
 fn replay_session_transcript_is_bounded_and_origin_clean() {
-	let path = std::env::var("OCTOMIND_LEARNING_REPLAY_SESSION")
-		.expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
+	let path = std::env::var("OCTOMIND_LEARNING_REPLAY_SESSION").expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
 	let messages = load_replay_messages(std::path::Path::new(&path));
 	assert!(!messages.is_empty());
 	let transcript = build_transcript(&messages);
@@ -356,8 +336,7 @@ fn replay_session_transcript_is_bounded_and_origin_clean() {
 #[tokio::test]
 #[ignore = "live replay: uses configured learning/verifier models and a real session"]
 async fn live_replay_extracts_only_grounded_memory_records() {
-	let path = std::env::var("OCTOMIND_LEARNING_REPLAY_SESSION")
-		.expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
+	let path = std::env::var("OCTOMIND_LEARNING_REPLAY_SESSION").expect("OCTOMIND_LEARNING_REPLAY_SESSION is required");
 	let messages = load_replay_messages(std::path::Path::new(&path));
 	assert!(!messages.is_empty());
 	let config = crate::config::Config::load().expect("real config loads");
@@ -468,10 +447,9 @@ async fn live_curated_trajectory_produces_grounded_experience() {
 	let experience = if verdict.supported {
 		experience
 	} else {
-		let repair_response =
-			repair_experience_response(&config, &experience, &messages, &verdict.issues)
-				.await
-				.expect("grounding repair responds");
+		let repair_response = repair_experience_response(&config, &experience, &messages, &verdict.issues)
+			.await
+			.expect("grounding repair responds");
 		println!("RAW EXPERIENCE REPAIR RESPONSE:\n{repair_response}");
 		let repaired = parse_experience_tag(
 			&repair_response,
@@ -514,10 +492,7 @@ Some trailing text."#;
 
 	let lessons = parse_lesson_tags(response, "developer", "octofs", "test-session");
 	assert_eq!(lessons.len(), 1);
-	assert_eq!(
-		lessons[0].content,
-		"Bearer token auth is required for all endpoints"
-	);
+	assert_eq!(lessons[0].content, "Bearer token auth is required for all endpoints");
 	assert_eq!(lessons[0].confidence, "high");
 	assert_eq!(lessons[0].importance, 0.9);
 	assert_eq!(lessons[0].tags, vec!["auth", "api"]);
@@ -585,11 +560,7 @@ fn test_best_overlap_finds_refinement() {
 		..Default::default()
 	}];
 	// High overlap → returns the stale lesson to supersede.
-	assert!(best_overlap(
-		"Bearer token auth is required for all octofs API endpoints",
-		&existing
-	)
-	.is_some());
+	assert!(best_overlap("Bearer token auth is required for all octofs API endpoints", &existing).is_some());
 }
 
 #[test]
@@ -688,9 +659,7 @@ fn test_build_transcript_excludes_runtime_memory_pack() {
 	let real = crate::session::Session::build_message("user", "real task");
 	let recalled = crate::session::Session::build_message(
 		"user",
-		&crate::session::ensure_system_managed(
-			"<active_memory_pack trust=\"test\">old memory</active_memory_pack>",
-		),
+		&crate::session::ensure_system_managed("<active_memory_pack trust=\"test\">old memory</active_memory_pack>"),
 	);
 	let transcript = build_transcript(&[real, recalled]);
 	assert!(transcript.contains("real task"));
@@ -726,8 +695,7 @@ fn test_build_transcript_keeps_reasoning_and_structured_tool_context() {
 	let transcript = build_transcript(&[assistant, tool]);
 
 	assert!(transcript.contains("[M1 ASSISTANT]: Checking the configuration boundary."));
-	assert!(transcript
-		.contains("[M1 ASSISTANT THINKING]: The effective config may differ from the template."));
+	assert!(transcript.contains("[M1 ASSISTANT THINKING]: The effective config may differ from the template."));
 	assert!(transcript.contains("[M1 ASSISTANT TOOL CALLS]:"));
 	assert!(transcript.contains("read_config"));
 	assert!(transcript.contains("[M2 TOOL id=call-7 name=read_config]: enabled = true"));
@@ -736,10 +704,7 @@ fn test_build_transcript_keeps_reasoning_and_structured_tool_context() {
 
 #[test]
 fn test_parse_unsupported_filters_out_of_range() {
-	assert_eq!(
-		parse_unsupported(r#"{"unsupported":[2,7,0]}"#, 3),
-		Some(vec![2])
-	);
+	assert_eq!(parse_unsupported(r#"{"unsupported":[2,7,0]}"#, 3), Some(vec![2]));
 	assert_eq!(parse_unsupported(r#"{"unsupported":[]}"#, 3), Some(vec![]));
 }
 
@@ -815,10 +780,7 @@ fn test_build_transcript_keeps_tail_of_long_user_turn() {
 		thinking: None,
 		id: None,
 	};
-	let transcript = build_transcript(&[msg(
-		"user",
-		format!("{}no, use custom error types", "x".repeat(5000)),
-	)]);
+	let transcript = build_transcript(&[msg("user", format!("{}no, use custom error types", "x".repeat(5000)))]);
 	assert!(transcript.contains("no, use custom error types"));
 }
 
@@ -858,9 +820,7 @@ fn experience_cannot_cite_a_message_hidden_by_transcript_budget() {
 		.collect::<Vec<_>>();
 	let transcript = build_transcript(&messages);
 	let hidden_tool = (2..=messages.len())
-		.find(|number| {
-			messages[number - 1].role == "tool" && !transcript.contains(&format!("[M{number} "))
-		})
+		.find(|number| messages[number - 1].role == "tool" && !transcript.contains(&format!("[M{number} ")))
 		.expect("bounded transcript omits at least one tool message");
 	let response = format!(
 			"<experience title=\"Hidden evidence\" confidence=\"high\" tags=\"x\" evidence=\"M1,M{hidden_tool}\">\n{}\n</experience>",
@@ -913,10 +873,7 @@ fn test_reconcile_candidates_caps_and_reserves_global() {
 	let out = reconcile_candidates(&scoped, &global);
 	assert_eq!(out.len(), RECONCILE_CANDIDATES);
 	// Global keeps its floor even though every scoped entry outranks it.
-	assert_eq!(
-		out.iter().filter(|l| l.scope == "global").count(),
-		RECONCILE_GLOBAL_MIN
-	);
+	assert_eq!(out.iter().filter(|l| l.scope == "global").count(), RECONCILE_GLOBAL_MIN);
 }
 
 #[test]
@@ -929,10 +886,7 @@ fn test_reconcile_candidates_excludes_orientation() {
 		memory_type: "experience".into(),
 		..lesson("a long trajectory", "scoped", 0.8)
 	};
-	let out = reconcile_candidates(
-		&[orientation, experience, lesson("a rule", "scoped", 0.5)],
-		&[],
-	);
+	let out = reconcile_candidates(&[orientation, experience, lesson("a rule", "scoped", 0.5)], &[]);
 	assert_eq!(out.len(), 1);
 	assert_eq!(out[0].content, "a rule");
 }
@@ -950,9 +904,7 @@ fn test_format_existing_emits_ids_and_scope() {
 
 #[tokio::test]
 async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__learn_e2e_role";
@@ -962,11 +914,7 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 
 	// An existing stale rule the new lesson explicitly supersedes via L1.
 	let backend = FileBackend;
-	let mut old = lesson(
-		"Bearer token auth is required for all API endpoints",
-		"scoped",
-		0.9,
-	);
+	let mut old = lesson("Bearer token auth is required for all API endpoints", "scoped", 0.9);
 	old.memory_type = "learning".to_string();
 	old.role = role.to_string();
 	old.project = project.to_string();
@@ -1008,10 +956,7 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 
 	let memories = backend.retrieve_all(role, project).await.unwrap();
 	assert_eq!(memories.len(), 2);
-	let lesson_stored = memories
-		.iter()
-		.find(|memory| memory.memory_type == "learning")
-		.unwrap();
+	let lesson_stored = memories.iter().find(|memory| memory.memory_type == "learning").unwrap();
 	assert_eq!(
 		lesson_stored.content,
 		"Bearer token auth is required for all API endpoints, including internal ones"
@@ -1039,9 +984,7 @@ async fn learn_decision_verifies_evidence_supersedes_and_stores_orientation() {
 /// stored user-wide and would have steered unrelated repositories.
 #[tokio::test]
 async fn global_claim_needs_user_wide_confirmation_or_stays_scoped() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__global_gate_role";
@@ -1087,29 +1030,22 @@ async fn global_claim_needs_user_wide_confirmation_or_stays_scoped() {
 	let backend = FileBackend;
 	let scoped = backend.retrieve_all(role, project).await.unwrap();
 	assert!(
-		scoped.iter().any(
-			|memory| memory.content.starts_with("Never modify README.md")
-				&& memory.scope == "scoped"
-		),
+		scoped
+			.iter()
+			.any(|memory| memory.content.starts_with("Never modify README.md") && memory.scope == "scoped"),
 		"{scoped:?}"
 	);
 	let global = backend.retrieve_global().await.unwrap();
 	assert!(
-		global
-			.iter()
-			.any(|memory| memory.content.starts_with("Leave builds")),
+		global.iter().any(|memory| memory.content.starts_with("Leave builds")),
 		"{global:?}"
 	);
-	assert!(!global
-		.iter()
-		.any(|memory| memory.content.contains("README")));
+	assert!(!global.iter().any(|memory| memory.content.contains("README")));
 }
 
 #[tokio::test]
 async fn learn_path_rejects_fabricated_evidence_entirely() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__learn_fabricated_role";
@@ -1137,11 +1073,7 @@ async fn learn_path_rejects_fabricated_evidence_entirely() {
 	.await
 	.unwrap();
 	assert_eq!(stored, 0);
-	assert!(FileBackend
-		.retrieve_all(role, project)
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
 
 	std::env::remove_var("OLLAMA_API_URL");
 	let _ = std::fs::remove_dir_all(&dir);
@@ -1149,9 +1081,7 @@ async fn learn_path_rejects_fabricated_evidence_entirely() {
 
 #[tokio::test]
 async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__learn_unsupported_role";
@@ -1161,11 +1091,7 @@ async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 
 	let response = r#"<decision>LEARN</decision>
 <lesson confidence="high" tags="auth" evidence="verbatim user quote survives the gate">A rule the verifier will reject</lesson>"#;
-	let url = spawn_stub(vec![
-		final_response(response),
-		final_response(r#"{"unsupported":[1]}"#),
-	])
-	.await;
+	let url = spawn_stub(vec![final_response(response), final_response(r#"{"unsupported":[1]}"#)]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let mut config = fake_provider_config();
 	config.supervisor.model.model = Some("ollama:fake-model".to_string());
@@ -1183,11 +1109,7 @@ async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 	.await
 	.unwrap();
 	assert_eq!(stored, 0);
-	assert!(FileBackend
-		.retrieve_all(role, project)
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
 
 	std::env::remove_var("OLLAMA_API_URL");
 	let _ = std::fs::remove_dir_all(&dir);
@@ -1195,9 +1117,7 @@ async fn learn_path_drops_lessons_the_verifier_marks_unsupported() {
 
 #[tokio::test]
 async fn duplicate_experience_trajectory_is_skipped() {
-	use crate::session::chat::test_support::{
-		fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-	};
+	use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
 	let _data = TestDataDir::new();
 	let role = "__experience_dup_role";
@@ -1235,8 +1155,7 @@ async fn duplicate_experience_trajectory_is_skipped() {
 			"tool",
 			&format!(
 				"provider error: invalid continuation id c_123. {}",
-				"diagnostic evidence confirms the continuation belongs to the resolved provider. "
-					.repeat(300)
+				"diagnostic evidence confirms the continuation belongs to the resolved provider. ".repeat(300)
 			),
 		),
 	];
@@ -1328,8 +1247,7 @@ fn big_tool_messages() -> Vec<crate::session::Message> {
 			"tool",
 			&format!(
 				"provider error: invalid continuation id c_123. {}",
-				"diagnostic evidence confirms the continuation belongs to the resolved provider. "
-					.repeat(300)
+				"diagnostic evidence confirms the continuation belongs to the resolved provider. ".repeat(300)
 			),
 		),
 	]
@@ -1438,17 +1356,10 @@ async fn a_same_source_near_duplicate_experience_is_skipped() {
 	.await
 	.expect("second extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
-	assert_eq!(
-		second, 0,
-		"a near-duplicate from the same source is skipped"
-	);
+	assert_eq!(second, 0, "a near-duplicate from the same source is skipped");
 
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
-	assert_eq!(
-		memories.len(),
-		1,
-		"the original experience is the only copy"
-	);
+	assert_eq!(memories.len(), 1, "the original experience is the only copy");
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1483,10 +1394,7 @@ async fn an_experience_that_fails_grounding_and_repair_is_rejected() {
 	.expect("extraction succeeds");
 	std::env::remove_var("OLLAMA_API_URL");
 
-	assert_eq!(
-		stored, 0,
-		"ungrounded work must fail closed after one repair"
-	);
+	assert_eq!(stored, 0, "ungrounded work must fail closed after one repair");
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
 	assert!(memories.is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
@@ -1522,11 +1430,7 @@ async fn an_experience_with_no_verifier_answer_is_rejected() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(stored, 0, "no verifier verdict means no experience record");
-	assert!(FileBackend
-		.retrieve_all(role, project)
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1611,10 +1515,7 @@ async fn an_identical_orientation_is_not_stored_twice() {
 	}
 
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
-	let orientations = memories
-		.iter()
-		.filter(|m| m.memory_type == "orientation")
-		.count();
+	let orientations = memories.iter().filter(|m| m.memory_type == "orientation").count();
 	assert_eq!(orientations, 1, "byte-identical orientation is skipped");
 	let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1671,24 +1572,11 @@ async fn a_refining_orientation_archives_the_one_it_restates() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	let memories = FileBackend.retrieve_all(role, project).await.unwrap();
-	let orientations: Vec<&Lesson> = memories
-		.iter()
-		.filter(|m| m.memory_type == "orientation")
-		.collect();
-	assert_eq!(
-		orientations.len(),
-		1,
-		"the restated original leaves the hot store"
-	);
-	assert!(orientations[0]
-		.content
-		.contains("forbids silent model fallback"));
+	let orientations: Vec<&Lesson> = memories.iter().filter(|m| m.memory_type == "orientation").collect();
+	assert_eq!(orientations.len(), 1, "the restated original leaves the hot store");
+	assert!(orientations[0].content.contains("forbids silent model fallback"));
 	let cold = FileBackend::read_archived(&dir);
-	assert_eq!(
-		cold.len(),
-		1,
-		"the restated original is archived, not deleted"
-	);
+	assert_eq!(cold.len(), 1, "the restated original is archived, not deleted");
 	assert!(!cold[0].content.contains("forbids silent model fallback"));
 	let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1725,11 +1613,7 @@ async fn an_orientation_the_grounding_verifier_rejects_is_not_stored() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(stored, 0);
-	assert!(FileBackend
-		.retrieve_all(role, project)
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1758,11 +1642,7 @@ async fn a_learn_decision_without_lesson_candidates_stores_nothing() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(stored, 0, "LEARN with no lesson tags stores nothing");
-	assert!(FileBackend
-		.retrieve_all(role, project)
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(FileBackend.retrieve_all(role, project).await.unwrap().is_empty());
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1853,8 +1733,7 @@ async fn verify_lessons_rejects_everything_when_the_verifier_is_down() {
 	let candidates = parse_lessons_with_evidence(response, "r", "p", "s", 0);
 	assert_eq!(candidates.len(), 1);
 
-	let url =
-		spawn_stub_with_status(vec![(500, serde_json::json!({"error": "verifier down"}))]).await;
+	let url = spawn_stub_with_status(vec![(500, serde_json::json!({"error": "verifier down"}))]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let verdicts = verify_lessons(&learning_config(), &candidates, "transcript").await;
 	std::env::remove_var("OLLAMA_API_URL");
@@ -1944,8 +1823,7 @@ async fn snapshot_extraction_spawn_gates_on_the_enabled_flag() {
 async fn before_exit_extraction_gates_on_the_enabled_flag_and_spawns_a_child() {
 	let mut config = learning_config();
 	config.supervisor.learning.enabled = false;
-	let session =
-		crate::session::chat::session::ChatSession::for_tests(vec![message("user", "hello")]);
+	let session = crate::session::chat::session::ChatSession::for_tests(vec![message("user", "hello")]);
 	// Disabled: returns without touching the filesystem.
 	extract_lessons_before_exit(&session, &config, "role".to_string(), None);
 

@@ -20,5 +20,6 @@ pub mod glob;
 pub mod spill;
 pub mod term_echo;
 pub mod terminal_output;
+pub mod text;
 pub mod time;
 pub mod truncation;

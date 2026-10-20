@@ -16,8 +16,7 @@ use super::*;
 use crate::session::TokenUsage;
 
 fn test_config() -> Config {
-	toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template")
 }
 
 fn exchange_with_usage(usage: Option<TokenUsage>) -> ProviderExchange {
@@ -30,8 +29,7 @@ fn test_track_exchange_cost_accumulates_everything() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	// Drain any external-spend residue left by other tests sharing the
 	// global ledger, so the cost assertion below is deterministic.
-	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config)
-		.expect("no-usage tracking");
+	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config).expect("no-usage tracking");
 	session.session.info.total_cost = 0.0;
 	session.session.info.total_api_calls = 0;
 
@@ -69,8 +67,7 @@ fn test_track_exchange_cost_accumulates_everything() {
 fn test_track_exchange_without_usage_counts_nothing() {
 	let config = test_config();
 	let mut session = ChatSession::for_tests(Vec::new());
-	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config)
-		.expect("tracking succeeds");
+	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config).expect("tracking succeeds");
 
 	let info = &session.session.info;
 	// No usage payload → no API call counted, no tokens attributed
@@ -84,8 +81,7 @@ fn test_track_exchange_cost_without_cost_field_still_counts_api_call() {
 	let config = test_config();
 	let mut session = ChatSession::for_tests(Vec::new());
 	// Drain external-spend residue so assertions stay deterministic.
-	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config)
-		.expect("no-usage tracking");
+	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config).expect("no-usage tracking");
 	session.session.info.total_cost = 0.0;
 
 	let usage = TokenUsage {
@@ -120,8 +116,7 @@ fn test_track_exchange_cost_without_cost_field_still_counts_api_call() {
 fn test_track_exchange_cost_accumulates_across_exchanges() {
 	let config = test_config();
 	let mut session = ChatSession::for_tests(Vec::new());
-	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config)
-		.expect("no-usage tracking");
+	CostTracker::track_exchange_cost(&mut session, &exchange_with_usage(None), &config).expect("no-usage tracking");
 	session.session.info.total_cost = 0.0;
 	session.session.info.total_api_calls = 0;
 	session.session.info.total_api_time_ms = 0;

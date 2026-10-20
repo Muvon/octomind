@@ -47,11 +47,7 @@ fn write_script(dir: &std::path::Path, rel: &str, message: &str) {
 		assert!(status.success(), "write executable hook script: {status}");
 	}
 	#[cfg(windows)]
-	std::fs::write(
-		&path,
-		format!("@echo off\r\necho {message}\r\nexit /b 1\r\n"),
-	)
-	.expect("write script");
+	std::fs::write(&path, format!("@echo off\r\necho {message}\r\nexit /b 1\r\n")).expect("write script");
 }
 
 fn hook_workdir() -> tempfile::TempDir {
@@ -69,11 +65,7 @@ fn hook_workdir() -> tempfile::TempDir {
 		&format!("hooks/notify.{SCRIPT_EXT}"),
 		"HOOK-FIRED: inspect the result",
 	);
-	write_script(
-		tmp.path(),
-		&format!("hooks/on_error.{SCRIPT_EXT}"),
-		"ERROR-HOOK-FIRED",
-	);
+	write_script(tmp.path(), &format!("hooks/on_error.{SCRIPT_EXT}"), "ERROR-HOOK-FIRED");
 	tmp
 }
 
@@ -87,23 +79,18 @@ async fn test_hook_fires_into_inbox_and_error_hook_stays_silent() {
 		crate::session::inbox::init_inbox_for_session();
 
 		let config: crate::config::Config =
-			toml::from_str(include_str!("../../config-templates/default.toml"))
-				.expect("parse default config template");
+			toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 
 		let call = crate::mcp::McpToolCall {
 			tool_name: "shell".to_string(),
 			parameters: serde_json::json!({"cmd": "make build"}),
 			tool_id: "t-hook".to_string(),
 		};
-		let result = crate::mcp::McpToolResult::success(
-			"shell".to_string(),
-			"t-hook".to_string(),
-			"build finished".to_string(),
-		);
+		let result =
+			crate::mcp::McpToolResult::success("shell".to_string(), "t-hook".to_string(), "build finished".to_string());
 		crate::session::hooks::run_hooks(&sid, &config, &[call], &[result], &[false]).await;
 
-		let msg = crate::session::inbox::try_pop_inbox_message()
-			.expect("firing hook must push an inbox message");
+		let msg = crate::session::inbox::try_pop_inbox_message().expect("firing hook must push an inbox message");
 		assert!(
 			msg.content.contains("HOOK-FIRED"),
 			"hook stdout missing: {}",
@@ -131,19 +118,14 @@ async fn test_blocked_and_hookless_calls_push_nothing() {
 		crate::session::inbox::init_inbox_for_session();
 
 		let config: crate::config::Config =
-			toml::from_str(include_str!("../../config-templates/default.toml"))
-				.expect("parse default config template");
+			toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 
 		let call = crate::mcp::McpToolCall {
 			tool_name: "shell".to_string(),
 			parameters: serde_json::json!({"cmd": "make build"}),
 			tool_id: "t-hook".to_string(),
 		};
-		let result = crate::mcp::McpToolResult::success(
-			"shell".to_string(),
-			"t-hook".to_string(),
-			"ok".to_string(),
-		);
+		let result = crate::mcp::McpToolResult::success("shell".to_string(), "t-hook".to_string(), "ok".to_string());
 		// The call is marked blocked: hooks must not run for it
 		crate::session::hooks::run_hooks(&sid, &config, &[call], &[result], &[true]).await;
 		assert!(
@@ -162,16 +144,10 @@ fn validator_workdir(extra: &str) -> tempfile::TempDir {
 	std::fs::create_dir_all(tmp.path().join(".agents")).expect(".agents");
 	std::fs::write(
 		tmp.path().join(".agents/guardrails.toml"),
-		format!(
-			"[[validator]]\nname = \"tests-ran\"\n{extra}script = \"validators/check.{SCRIPT_EXT}\"\n"
-		),
+		format!("[[validator]]\nname = \"tests-ran\"\n{extra}script = \"validators/check.{SCRIPT_EXT}\"\n"),
 	)
 	.expect("write guardrails.toml");
-	write_script(
-		tmp.path(),
-		&format!("validators/check.{SCRIPT_EXT}"),
-		"RUN cargo test",
-	);
+	write_script(tmp.path(), &format!("validators/check.{SCRIPT_EXT}"), "RUN cargo test");
 	tmp
 }
 
@@ -190,8 +166,7 @@ async fn test_turn_validator_injects_wrapped_output_into_inbox() {
 		let tmp = validator_workdir("");
 		run_validators_in(&sid, &tmp, "developer", "shipped the feature").await;
 
-		let msg = crate::session::inbox::try_pop_inbox_message()
-			.expect("validator must inject its stdout");
+		let msg = crate::session::inbox::try_pop_inbox_message().expect("validator must inject its stdout");
 		assert!(msg.content.contains("<validation validator=\"tests-ran\">"));
 		assert!(msg.content.contains("RUN cargo test"));
 		assert!(msg.content.ends_with("</validation>"));
@@ -212,11 +187,7 @@ async fn test_validator_runs_the_session_start_snapshot_after_an_edit() {
 		crate::session::inbox::init_inbox_for_session();
 
 		// Mid-session edit of the check (e.g. by the agent): applies next session.
-		write_script(
-			tmp.path(),
-			&format!("validators/check.{SCRIPT_EXT}"),
-			"EDITED-CHECK",
-		);
+		write_script(tmp.path(), &format!("validators/check.{SCRIPT_EXT}"), "EDITED-CHECK");
 		crate::session::hooks::run_turn_validators(&sid, "developer", "shipped").await;
 
 		let msg = crate::session::inbox::try_pop_inbox_message()
@@ -226,10 +197,7 @@ async fn test_validator_runs_the_session_start_snapshot_after_an_edit() {
 			"snapshot not run: {}",
 			msg.content
 		);
-		assert!(
-			!msg.content.contains("EDITED-CHECK"),
-			"edit applied mid-session"
-		);
+		assert!(!msg.content.contains("EDITED-CHECK"), "edit applied mid-session");
 
 		crate::session::inbox::clear_inbox_for_session(&sid);
 	})

@@ -26,10 +26,8 @@ fn outgoing_params_match_acp_schema() {
 
 	serde_json::from_value::<InitializeRequest>(acp_initialize_params())
 		.expect("initialize params must match ACP v1 schema");
-	serde_json::from_value::<NewSessionRequest>(acp_new_session_params(std::path::Path::new(
-		"/tmp",
-	)))
-	.expect("session/new params must match ACP v1 schema");
+	serde_json::from_value::<NewSessionRequest>(acp_new_session_params(std::path::Path::new("/tmp")))
+		.expect("session/new params must match ACP v1 schema");
 	serde_json::from_value::<PromptRequest>(acp_prompt_params("sess", "task"))
 		.expect("session/prompt params must match ACP v1 schema");
 }
@@ -173,9 +171,7 @@ async fn collects_output_and_returns_on_clean_exit() {
 	let started = Instant::now();
 	// A dropped cancel sender reads as cancellation — keep it alive for the run.
 	let (cancel_tx, cancel_rx) = watch::channel(false);
-	let out = run_fake_server(script, cancel_rx)
-		.await
-		.expect("clean run succeeds");
+	let out = run_fake_server(script, cancel_rx).await.expect("clean run succeeds");
 	assert_eq!(out, "hello");
 	// Child exited on its own — the kill grace period must not be consumed.
 	assert!(started.elapsed() < Duration::from_secs(4));
@@ -215,10 +211,7 @@ async fn kills_child_that_does_not_exit_after_response() {
 	assert_eq!(out, "hello");
 	let elapsed = started.elapsed();
 	// Returned via the grace-wait + kill path, not by hanging on wait().
-	assert!(
-		elapsed >= Duration::from_secs(5),
-		"kill fired too early: {elapsed:?}"
-	);
+	assert!(elapsed >= Duration::from_secs(5), "kill fired too early: {elapsed:?}");
 	assert!(elapsed < Duration::from_secs(15), "run hung: {elapsed:?}");
 	drop(cancel_tx);
 }
@@ -269,10 +262,7 @@ async fn cancellation_kills_child_mid_prompt() {
 	let err = run_fake_server(script, cancel_rx)
 		.await
 		.expect_err("cancellation must fail the run");
-	assert!(
-		crate::session::cancellation::is_cancelled(&err),
-		"got: {err:#}"
-	);
+	assert!(crate::session::cancellation::is_cancelled(&err), "got: {err:#}");
 	// Cancel must act immediately — not wait out any grace period.
 	assert!(started.elapsed() < Duration::from_secs(4));
 }
@@ -301,8 +291,7 @@ async fn eof_before_prompt_response_is_failure() {
 		.await
 		.expect_err("missing id=3 response must fail the run");
 	assert!(
-		err.to_string()
-			.contains("closed before the session/prompt response"),
+		err.to_string().contains("closed before the session/prompt response"),
 		"got: {err:#}"
 	);
 	drop(cancel_tx);
@@ -320,10 +309,7 @@ async fn handshake_error_response_fails_the_run() {
 		.await
 		.expect_err("initialize error must fail the run");
 	assert!(err.to_string().contains("ACP error"), "got: {err:#}");
-	assert!(
-		err.to_string().contains("handshake refused"),
-		"got: {err:#}"
-	);
+	assert!(err.to_string().contains("handshake refused"), "got: {err:#}");
 	drop(cancel_tx);
 }
 
@@ -344,8 +330,7 @@ async fn session_new_without_session_id_fails_the_run() {
 		.expect_err("missing sessionId must fail the run");
 	drop(cancel_tx);
 	assert!(
-		err.to_string()
-			.contains("No sessionId in session/new response"),
+		err.to_string().contains("No sessionId in session/new response"),
 		"got: {err:#}"
 	);
 }
@@ -364,9 +349,7 @@ async fn malformed_open_handshake_stream_times_out() {
 		.await
 		.expect_err("an open stream without a valid response must be bounded");
 	assert!(
-		error
-			.to_string()
-			.contains("Timed out waiting for ACP response id=1"),
+		error.to_string().contains("Timed out waiting for ACP response id=1"),
 		"got: {error:#}"
 	);
 }

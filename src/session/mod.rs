@@ -51,17 +51,13 @@ mod token_counter; // Token counting utilities // Comprehensive caching system
 pub mod webhook_listener; // HTTP webhook listener for hook-to-inbox injection
 
 // Provider system exports
-pub use crate::providers::{
-	AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage,
-};
+pub use crate::providers::{AiProvider, ProviderExchange, ProviderFactory, ProviderResponse, TokenUsage};
 pub use background_jobs::{AsyncAgentJobInfo, BackgroundJobManager, CompletedJob};
 pub use cache::{CacheManager, CacheStatistics};
 pub use helper_functions::summarize_context;
 pub use layers::{InputMode, Layer, LayerConfig, LayerResult};
 pub use model_utils::{model_max_input_tokens, model_supports_caching};
-pub use output::{
-	detect_output_mode, JsonlSink, OutputMode, OutputSink, SilentSink, WebSocketSink,
-};
+pub use output::{detect_output_mode, JsonlSink, OutputMode, OutputSink, SilentSink, WebSocketSink};
 pub use project_context::ProjectContext;
 pub use smart_summarizer::SmartSummarizer;
 pub use token_counter::{
@@ -258,14 +254,11 @@ fn find_block_open(content: &str, tag: &str) -> Option<usize> {
 /// verify-gate's turn window, constraint recitation) goes blind for the rest of
 /// the turn immediately after a compaction.
 pub fn latest_task_turn_index(messages: &[Message]) -> Option<usize> {
-	messages
-		.iter()
-		.rposition(is_real_user_task_message)
-		.or_else(|| {
-			messages
-				.iter()
-				.rposition(|m| m.role == "user" && continuation_task(&m.content).is_some())
-		})
+	messages.iter().rposition(is_real_user_task_message).or_else(|| {
+		messages
+			.iter()
+			.rposition(|m| m.role == "user" && continuation_task(&m.content).is_some())
+	})
 }
 
 /// The live user request — the text at [`latest_task_turn_index`], unwrapped
@@ -469,9 +462,7 @@ impl SessionInfo {
 	/// Close the previous genuine turn's call count and open a new one. A turn
 	/// that made no calls (answered from context) carries no pace signal.
 	pub fn note_turn_start(&mut self) {
-		let calls = self
-			.total_api_calls
-			.saturating_sub(self.api_calls_at_turn_start);
+		let calls = self.total_api_calls.saturating_sub(self.api_calls_at_turn_start);
 		if calls > 0 {
 			self.turn_call_counts.push(calls as u32);
 			if self.turn_call_counts.len() > TURN_HISTORY {
@@ -526,10 +517,7 @@ impl CompressionStats {
 	}
 
 	pub fn total_compressions(&self) -> usize {
-		self.task_compressions
-			+ self.phase_compressions
-			+ self.project_compressions
-			+ self.conversation_compressions
+		self.task_compressions + self.phase_compressions + self.project_compressions + self.conversation_compressions
 	}
 
 	pub fn avg_compression_ratio(&self) -> f64 {
@@ -674,24 +662,8 @@ impl Session {
 	}
 
 	// Add statistics for a specific layer
-	pub fn add_layer_stats(
-		&mut self,
-		layer_type: &str,
-		model: &str,
-		input_tokens: u64,
-		output_tokens: u64,
-		cost: f64,
-	) {
-		self.add_layer_stats_with_time(
-			layer_type,
-			model,
-			input_tokens,
-			output_tokens,
-			cost,
-			0,
-			0,
-			0,
-		);
+	pub fn add_layer_stats(&mut self, layer_type: &str, model: &str, input_tokens: u64, output_tokens: u64, cost: f64) {
+		self.add_layer_stats_with_time(layer_type, model, input_tokens, output_tokens, cost, 0, 0, 0);
 	}
 
 	// Add statistics for a specific layer with time tracking
@@ -770,16 +742,15 @@ pub mod persistence;
 pub mod picker; // Interactive fuzzy session picker (bare `octomind` in a terminal)
 pub use persistence::{
 	append_to_session_file, clean_interrupted_tool_calls, extract_runtime_state_from_log,
-	find_most_recent_session_for_project, get_sessions_dir, list_available_sessions, load_session,
-	resume_role, SessionRuntimeState,
+	find_most_recent_session_for_project, get_sessions_dir, list_available_sessions, load_session, resume_role,
+	SessionRuntimeState,
 };
 pub mod prompt;
 pub use prompt::{add_compression_hints_to_prompt, create_system_prompt};
 pub mod completion;
 pub use completion::{
-	chat_completion_with_provider, chat_completion_with_validation,
-	ensure_structured_output_support, load_structured_output_schema, ChatCompletionProviderParams,
-	ChatCompletionWithValidationParams,
+	chat_completion_with_provider, chat_completion_with_validation, ensure_structured_output_support,
+	load_structured_output_schema, ChatCompletionProviderParams, ChatCompletionWithValidationParams,
 };
 
 #[cfg(test)]

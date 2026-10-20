@@ -72,10 +72,7 @@ pub fn get_logging_mode() -> Option<LoggingMode> {
 /// In these modes, stdout/stderr are reserved for protocol communication.
 #[inline]
 pub fn is_structured_output_mode() -> bool {
-	matches!(
-		get_logging_mode(),
-		Some(LoggingMode::Acp | LoggingMode::WebSocket)
-	)
+	matches!(get_logging_mode(), Some(LoggingMode::Acp | LoggingMode::WebSocket))
 }
 
 /// Check if tracing is initialized (subscriber has been set).
@@ -170,8 +167,7 @@ fn init_cli_logging(_log_level: &str) -> Result<()> {
 			.with_env_filter(filter)
 			.finish();
 
-		tracing::subscriber::set_global_default(subscriber)
-			.with_context(|| "Failed to set tracing subscriber")?;
+		tracing::subscriber::set_global_default(subscriber).with_context(|| "Failed to set tracing subscriber")?;
 	}
 
 	Ok(())
@@ -200,8 +196,7 @@ fn init_acp_logging(log_level: &str) -> Result<()> {
 		.with_env_filter(filter)
 		.finish();
 
-	tracing::subscriber::set_global_default(subscriber)
-		.with_context(|| "Failed to set tracing subscriber")?;
+	tracing::subscriber::set_global_default(subscriber).with_context(|| "Failed to set tracing subscriber")?;
 
 	Ok(())
 }
@@ -229,8 +224,7 @@ fn init_websocket_logging(log_level: &str) -> Result<()> {
 		.with_env_filter(filter)
 		.finish();
 
-	tracing::subscriber::set_global_default(subscriber)
-		.with_context(|| "Failed to set tracing subscriber")?;
+	tracing::subscriber::set_global_default(subscriber).with_context(|| "Failed to set tracing subscriber")?;
 
 	Ok(())
 }
@@ -242,8 +236,7 @@ fn init_silent_logging() -> Result<()> {
 		.with_env_filter(EnvFilter::new("off"))
 		.finish();
 
-	tracing::subscriber::set_global_default(subscriber)
-		.with_context(|| "Failed to set tracing subscriber")?;
+	tracing::subscriber::set_global_default(subscriber).with_context(|| "Failed to set tracing subscriber")?;
 
 	Ok(())
 }

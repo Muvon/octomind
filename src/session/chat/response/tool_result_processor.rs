@@ -122,12 +122,8 @@ pub async fn process_tool_results(
 	// signal this is a free no-op.
 	if config.supervisor.enabled && config.supervisor.plan.enabled {
 		animation_manager.set_phase("Reconciling plan …").await;
-		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
-			chat_session,
-			config,
-			operation_cancelled.clone(),
-		)
-		.await
+		if let Err(error) =
+			crate::supervisor::plan::reconcile_after_actions(chat_session, config, operation_cancelled.clone()).await
 		{
 			crate::log_debug!("External plan reconciliation failed: {}", error);
 		}
@@ -147,12 +143,7 @@ pub async fn process_tool_results(
 		// model-free fallback and reports its own error when the context
 		// still does not fit, so a failed compression call must not end the
 		// turn on its own.
-		if crate::session::chat::conversation_compression::within_ceiling_margin(
-			chat_session,
-			config,
-		)
-		.await
-		{
+		if crate::session::chat::conversation_compression::within_ceiling_margin(chat_session, config).await {
 			log_info!(
 				"Forced compression inside the context ceiling margin failed during tool processing: {}. Falling back to deterministic trimming.",
 				e
@@ -164,22 +155,15 @@ pub async fn process_tool_results(
 			);
 		}
 	}
-	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
-		chat_session,
-		config,
-	)
-	.await?;
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 
 	// CRITICAL FIX: Check cache threshold AFTER all tool results are processed
 	// This ensures cache markers are set at the correct boundary - after all parallel
 	// tool results are added to session, but before sending the complete batch to server
 	let cache_start = std::time::Instant::now();
-	if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(
-		&mut chat_session.session,
-		config,
-		supports_caching,
-		role,
-	) {
+	if let Ok(true) =
+		cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching, role)
+	{
 		log_debug!("Auto-cache threshold reached after processing all tool results - cache checkpoint applied before follow-up API request.");
 	}
 	cache_check_time += cache_start.elapsed().as_millis();
@@ -235,8 +219,7 @@ pub async fn process_tool_results(
 				if !crate::logging::tracing_setup::is_structured_output_mode() {
 					println!(
 						"{}",
-						"✗ Tool follow-up cancelled due to request spending threshold."
-							.bright_red()
+						"✗ Tool follow-up cancelled due to request spending threshold.".bright_red()
 					);
 				}
 				return Ok(None);
@@ -266,14 +249,9 @@ pub async fn process_tool_results(
 	// all parallel tool calls in this round and cleared after injection.
 	let hints = crate::mcp::hint_accumulator::drain_hints();
 	if !hints.is_empty() {
-		let bullet_list = hints
-			.iter()
-			.map(|h| format!("• {h}"))
-			.collect::<Vec<_>>()
-			.join("\n");
-		let hint_message = format!(
-			"⚠️ Tool usage notice:\n{bullet_list}\n\nPlease prefer the recommended tools going forward."
-		);
+		let bullet_list = hints.iter().map(|h| format!("• {h}")).collect::<Vec<_>>().join("\n");
+		let hint_message =
+			format!("⚠️ Tool usage notice:\n{bullet_list}\n\nPlease prefer the recommended tools going forward.");
 		chat_session.add_system_managed_user_message(&hint_message)?;
 	}
 
@@ -300,14 +278,12 @@ pub async fn process_tool_results(
 	while let Some(msg) = crate::session::inbox::try_pop_system_managed_message() {
 		crate::log_debug!("Inbox delivered mid-turn from {:?}", msg.source);
 		if crate::logging::tracing_setup::is_structured_output_mode() {
-			let injected = crate::websocket::ServerMessage::Injected(
-				crate::websocket::protocol::InjectedPayload {
-					source_kind: msg.source.display_kind().to_string(),
-					source_label: msg.source.display_label(),
-					content: msg.content.clone(),
-					session_id: chat_session.session.info.name.clone(),
-				},
-			);
+			let injected = crate::websocket::ServerMessage::Injected(crate::websocket::protocol::InjectedPayload {
+				source_kind: msg.source.display_kind().to_string(),
+				source_label: msg.source.display_label(),
+				content: msg.content.clone(),
+				session_id: chat_session.session.info.name.clone(),
+			});
 			crate::mcp::process::send_notification_message(injected);
 		} else {
 			crate::session::inbox::display_injected_input(&msg);
@@ -316,8 +292,7 @@ pub async fn process_tool_results(
 	}
 
 	// Make follow-up API call
-	let follow_up_result =
-		make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
+	let follow_up_result = make_follow_up_api_call(chat_session, config, operation_cancelled.clone()).await;
 
 	// NOTE: Don't stop animation here - only stop when we're actually done with tools
 	// If there are more tools to call, the animation should continue running
@@ -327,14 +302,10 @@ pub async fn process_tool_results(
 		Ok(response) => {
 			// Use structured tool_calls from the API response; the legacy
 			// text-parse fallback never returned anything.
-			let has_more_tools = response
-				.tool_calls
-				.as_ref()
-				.is_some_and(|calls| !calls.is_empty());
+			let has_more_tools = response.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty());
 
 			// Check finish_reason to determine if we should continue the conversation
-			let should_continue_conversation =
-				check_should_continue(&response, config, has_more_tools);
+			let should_continue_conversation = check_should_continue(&response, config, has_more_tools);
 			log_debug!(
 				"Provider response [follow-up]: finish={}, tool_calls={}, continue={}",
 				response.finish_reason.as_deref().unwrap_or("none"),
@@ -390,11 +361,7 @@ pub async fn process_tool_results(
 			// Centralized error printing happens in the main loop's Err branch
 			// (handle_followup_api_error). Just log diagnostics, stop animation,
 			// and propagate so the caller can offer a Ctrl+G retry.
-			log_debug!(
-				"Follow-up API call failed for model {}: {}",
-				chat_session.model,
-				e
-			);
+			log_debug!("Follow-up API call failed for model {}: {}", chat_session.model, e);
 			log_debug!("Temperature: {}", chat_session.temperature);
 
 			// Stop animation on error before returning
@@ -419,12 +386,9 @@ async fn make_follow_up_api_call(
 	let profile = chat_session.model_profile(config);
 
 	// CRITICAL FIX: Pass cancellation token to ensure immediate cancellation
-	let validation_params = ChatCompletionWithValidationParams::from_profile(
-		&chat_session.session.messages,
-		&profile,
-		config,
-	)
-	.with_cancellation_token(cancellation_token);
+	let validation_params =
+		ChatCompletionWithValidationParams::from_profile(&chat_session.session.messages, &profile, config)
+			.with_cancellation_token(cancellation_token);
 
 	// Carry the structured-output schema onto every follow-up turn too. Without
 	// this the schema only applies to the first call (which returns a tool call,
@@ -561,18 +525,14 @@ fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 					rate_limit_headers.get("input_tokens_remaining"),
 					rate_limit_headers.get("input_tokens_limit"),
 				) {
-					rate_limit_info
-						.push(format!("Input tokens: {}/{}", input_remaining, input_limit));
+					rate_limit_info.push(format!("Input tokens: {}/{}", input_remaining, input_limit));
 				}
 
 				if let (Some(output_remaining), Some(output_limit)) = (
 					rate_limit_headers.get("output_tokens_remaining"),
 					rate_limit_headers.get("output_tokens_limit"),
 				) {
-					rate_limit_info.push(format!(
-						"Output tokens: {}/{}",
-						output_remaining, output_limit
-					));
+					rate_limit_info.push(format!("Output tokens: {}/{}", output_remaining, output_limit));
 				}
 
 				if !rate_limit_info.is_empty() {
@@ -585,10 +545,7 @@ fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 					rate_limit_headers.get("requests_remaining"),
 					rate_limit_headers.get("requests_limit"),
 				) {
-					rate_limit_info.push(format!(
-						"Requests: {}/{}",
-						requests_remaining, requests_limit
-					));
+					rate_limit_info.push(format!("Requests: {}/{}", requests_remaining, requests_limit));
 				}
 
 				if let (Some(tokens_remaining), Some(tokens_limit)) = (

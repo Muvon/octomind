@@ -24,11 +24,10 @@ use super::*;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use rmcp::model::{
-	CallToolResult, ClientRequest, ContentBlock, CreateTaskResult, DetailedTask,
-	ElicitRequestParams, GetTaskResult, InputRequest, InputRequests, InputRequiredResult,
-	JsonRpcMessage, Notification, ProgressNotificationParam, ReadResourceResult, Request,
-	RequestId, Resource, ResourceContents, ResourceUpdatedNotificationParam, ServerNotification,
-	ServerResult, SubscriptionFilter, SubscriptionsAcknowledgedNotificationParams, Task,
+	CallToolResult, ClientRequest, ContentBlock, CreateTaskResult, DetailedTask, ElicitRequestParams, GetTaskResult,
+	InputRequest, InputRequests, InputRequiredResult, JsonRpcMessage, Notification, ProgressNotificationParam,
+	ReadResourceResult, Request, RequestId, Resource, ResourceContents, ResourceUpdatedNotificationParam,
+	ServerNotification, ServerResult, SubscriptionFilter, SubscriptionsAcknowledgedNotificationParams, Task,
 	TaskPayload, TaskStatus,
 };
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
@@ -44,12 +43,7 @@ fn unique_server(tag: &str) -> String {
 	format!("octomind-test-cov-{tag}")
 }
 
-fn stdin_config(
-	name: &str,
-	command: &str,
-	args: Vec<String>,
-	timeout_seconds: u64,
-) -> McpServerConfig {
+fn stdin_config(name: &str, command: &str, args: Vec<String>, timeout_seconds: u64) -> McpServerConfig {
 	McpServerConfig::Stdin {
 		name: name.to_string(),
 		command: command.to_string(),
@@ -81,8 +75,7 @@ struct InMemoryPeer {
 fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
-	let service =
-		rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
+	let service = rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
 	InMemoryPeer {
 		service,
 		incoming: in_tx,
@@ -262,8 +255,7 @@ server.serve_forever()
 "#;
 
 fn write_script(tag: &str, body: &str) -> std::path::PathBuf {
-	let path =
-		std::env::temp_dir().join(format!("octomind-test-cov-{tag}-{}.py", std::process::id()));
+	let path = std::env::temp_dir().join(format!("octomind-test-cov-{tag}-{}.py", std::process::id()));
 	std::fs::write(&path, body).expect("write fake server script");
 	path
 }
@@ -317,10 +309,7 @@ async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 		args: vec![script.to_string_lossy().into_owned()],
 		timeout_seconds: 15,
 		tools: vec![],
-		env: HashMap::from([(
-			"OCTOMIND_TEST_ENV_MARKER".to_string(),
-			"marker-abc-123".to_string(),
-		)]),
+		env: HashMap::from([("OCTOMIND_TEST_ENV_MARKER".to_string(), "marker-abc-123".to_string())]),
 		cwd: Some(workdir.to_string_lossy().into_owned()),
 		auto_bind: None,
 	};
@@ -381,10 +370,7 @@ async fn connect_stdio_real_server_round_trip_with_cwd_and_env() {
 		}
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
-	assert!(
-		saw_ready_line,
-		"stderr drain must capture the server ready line"
-	);
+	assert!(saw_ready_line, "stderr drain must capture the server ready line");
 
 	drop(service);
 	disconnect(&name);
@@ -468,18 +454,14 @@ async fn connect_http_times_out_on_hanging_endpoint() {
 		url: format!("http://{addr}/mcp"),
 		timeout_seconds: 1,
 		tools: vec![],
-		headers: HashMap::from([(
-			"Authorization".to_string(),
-			"Bearer static-test".to_string(),
-		)]),
+		headers: HashMap::from([("Authorization".to_string(), "Bearer static-test".to_string())]),
 		auto_bind: None,
 	};
-	let error =
-		match tokio::time::timeout(WAIT + Duration::from_secs(5), connect_http(&server)).await {
-			Ok(Ok(_service)) => panic!("hanging endpoint must fail"),
-			Ok(Err(e)) => e,
-			Err(_) => panic!("connect must hit its timeout, not hang forever"),
-		};
+	let error = match tokio::time::timeout(WAIT + Duration::from_secs(5), connect_http(&server)).await {
+		Ok(Ok(_service)) => panic!("hanging endpoint must fail"),
+		Ok(Err(e)) => e,
+		Err(_) => panic!("connect must hit its timeout, not hang forever"),
+	};
 	assert!(
 		error.to_string().contains("Timed out connecting"),
 		"unexpected error: {}",
@@ -608,9 +590,7 @@ async fn get_or_connect_replaces_stale_stdio_process() {
 	register(&name, peer.service);
 
 	// Point the pgid registry at a process that has already exited.
-	let short_lived = std::process::Command::new("true")
-		.spawn()
-		.expect("spawn true");
+	let short_lived = std::process::Command::new("true").spawn().expect("spawn true");
 	let dead_pid = short_lived.id();
 	let _ = short_lived.wait_with_output();
 	// Give the OS a moment to reap the child so kill(pid, 0) fails.
@@ -622,10 +602,7 @@ async fn get_or_connect_replaces_stale_stdio_process() {
 		}
 		std::thread::sleep(std::time::Duration::from_millis(20));
 	}
-	assert!(
-		reaped,
-		"short-lived child must exit before the test continues"
-	);
+	assert!(reaped, "short-lived child must exit before the test continues");
 	super::super::process::register_pgid(&name, dead_pid);
 
 	let service = tokio::time::timeout(WAIT, get_or_connect(&server))
@@ -675,11 +652,9 @@ async fn call_tool_hits_absolute_progress_cap() {
 					if let Some(token) = token {
 						loop {
 							incoming
-								.unbounded_send(JsonRpcMessage::notification(
-									ServerNotification::ProgressNotification(Notification::new(
-										ProgressNotificationParam::new(token.clone(), 1.0),
-									)),
-								))
+								.unbounded_send(JsonRpcMessage::notification(ServerNotification::ProgressNotification(
+									Notification::new(ProgressNotificationParam::new(token.clone(), 1.0)),
+								)))
 								.expect("fake server channel must stay open");
 							// 200ms: well under the 1s idle timeout, but only
 							// ~100 notifications across the 20s cap (each one
@@ -693,12 +668,7 @@ async fn call_tool_hits_absolute_progress_cap() {
 		}
 	});
 
-	let error = match tokio::time::timeout(
-		Duration::from_secs(30),
-		call_tool(&server, &tool_call("cap"), None),
-	)
-	.await
-	{
+	let error = match tokio::time::timeout(Duration::from_secs(30), call_tool(&server, &tool_call("cap"), None)).await {
 		Ok(Ok(result)) => panic!("runaway progress must be capped, got {result:?}"),
 		Ok(Err(e)) => e,
 		Err(_) => panic!("absolute cap must fire within 30s"),
@@ -746,15 +716,13 @@ async fn call_tool_fulfills_elicitation_round() {
 				let response = match &request.request {
 					ClientRequest::CallToolRequest(call) => {
 						if call.params.input_responses.is_some() {
-							ServerResult::CallToolResult(CallToolResult::success(vec![
-								ContentBlock::text("after-input"),
-							]))
+							ServerResult::CallToolResult(CallToolResult::success(vec![ContentBlock::text(
+								"after-input",
+							)]))
 						} else {
 							let mut rounds = InputRequests::new();
 							rounds.insert("k1".to_string(), elicitation_request());
-							ServerResult::InputRequiredResult(
-								InputRequiredResult::from_input_requests(rounds),
-							)
+							ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(rounds))
 						}
 					}
 					_ => continue,
@@ -788,9 +756,7 @@ async fn call_tool_fulfills_elicitation_round() {
 		.get("inputResponses")
 		.and_then(|v| v.as_object())
 		.expect("retry must carry inputResponses");
-	let elicitation_response = responses
-		.get("k1")
-		.expect("response keyed by the request id");
+	let elicitation_response = responses.get("k1").expect("response keyed by the request id");
 	assert_eq!(
 		elicitation_response.get("action").and_then(|a| a.as_str()),
 		Some("decline"),
@@ -824,9 +790,7 @@ async fn call_tool_rejects_roots_list_input_request() {
 						.expect("deserialize roots/list request");
 						let mut rounds = InputRequests::new();
 						rounds.insert("r1".to_string(), roots);
-						ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(
-							rounds,
-						))
+						ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(rounds))
 					}
 					_ => continue,
 				};
@@ -876,9 +840,7 @@ async fn call_tool_rejects_sampling_input_request() {
 						.expect("deserialize sampling request");
 						let mut rounds = InputRequests::new();
 						rounds.insert("s1".to_string(), sampling);
-						ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(
-							rounds,
-						))
+						ServerResult::InputRequiredResult(InputRequiredResult::from_input_requests(rounds))
 					}
 					_ => continue,
 				};
@@ -912,23 +874,15 @@ async fn call_tool_exhausts_input_required_round_limit() {
 	register(&name, peer.service);
 	let server = stdin_config(&name, "unused", Vec::new(), 5);
 
-	let responder = spawn_responder(
-		peer.outgoing,
-		peer.incoming.clone(),
-		|request| match request {
-			ClientRequest::CallToolRequest(_) => Some(ServerResult::InputRequiredResult(
-				InputRequiredResult::from_request_state("perpetually-busy"),
-			)),
-			_ => None,
-		},
-	);
+	let responder = spawn_responder(peer.outgoing, peer.incoming.clone(), |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::InputRequiredResult(
+			InputRequiredResult::from_request_state("perpetually-busy"),
+		)),
+		_ => None,
+	});
 
 	// Ten state-only rounds with 50–250ms backoff ≈ 2.1s in real time.
-	let error = match tokio::time::timeout(
-		Duration::from_secs(15),
-		call_tool(&server, &tool_call("limit"), None),
-	)
-	.await
+	let error = match tokio::time::timeout(Duration::from_secs(15), call_tool(&server, &tool_call("limit"), None)).await
 	{
 		Ok(Ok(result)) => {
 			panic!("perpetual input_required must hit the round limit, got {result:?}")
@@ -997,10 +951,9 @@ async fn task_input_required_round_updates_and_completes() {
 								},
 							)
 						} else {
-							let completed = serde_json::to_value(CallToolResult::success(vec![
-								ContentBlock::text("task-done"),
-							]))
-							.expect("serialize completed result");
+							let completed =
+								serde_json::to_value(CallToolResult::success(vec![ContentBlock::text("task-done")]))
+									.expect("serialize completed result");
 							DetailedTask::new(
 								Task::new(
 									"task-in",
@@ -1073,30 +1026,19 @@ async fn task_failed_and_cancelled_payloads_surface_as_errors() {
 		register(&name, peer.service);
 		let server = stdin_config(&name, "unused", Vec::new(), 5);
 
-		let responder =
-			spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-				ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-					CreateTaskResult::new(Task::new(
-						tag,
-						TaskStatus::Working,
-						"2026-01-01T00:00:00Z",
-						"2026-01-01T00:00:00Z",
-					)),
-				)),
-				ClientRequest::GetTaskRequest(_) => {
-					let task = DetailedTask::new(
-						Task::new(
-							tag,
-							payload.status(),
-							"2026-01-01T00:00:00Z",
-							"2026-01-01T00:00:01Z",
-						),
-						payload.clone(),
-					);
-					Some(ServerResult::GetTaskResult(GetTaskResult::new(task)))
-				}
-				_ => None,
-			});
+		let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
+			ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(
+				Task::new(tag, TaskStatus::Working, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+			))),
+			ClientRequest::GetTaskRequest(_) => {
+				let task = DetailedTask::new(
+					Task::new(tag, payload.status(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"),
+					payload.clone(),
+				);
+				Some(ServerResult::GetTaskResult(GetTaskResult::new(task)))
+			}
+			_ => None,
+		});
 
 		let error = tokio::time::timeout(WAIT, call_tool(&server, &tool_call(tag), None))
 			.await
@@ -1126,14 +1068,14 @@ async fn read_resource_text_uses_the_owning_server_without_uri_assumptions() {
 	let peer = serve_in_memory(&name);
 	register(&name, peer.service);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, |request| match request {
-		ClientRequest::ReadResourceRequest(_) => Some(ServerResult::ReadResourceResult(
-			ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+		ClientRequest::ReadResourceRequest(_) => Some(ServerResult::ReadResourceResult(ReadResourceResult::new(vec![
+			ResourceContents::TextResourceContents {
 				uri: "custommcp://background/42".to_string(),
 				mime_type: Some("text/plain".to_string()),
 				text: "status: running\ncurrent output".to_string(),
 				meta: None,
-			}]),
-		)),
+			},
+		]))),
 		_ => None,
 	});
 
@@ -1200,25 +1142,21 @@ async fn watch_resource_links_continues_when_listen_fails() {
 	let service = register(&name, peer.service);
 	let linked = result_with_resource_link("job://fail-1");
 
-	crate::session::context::with_session_id(
-		format!("cov-watch-fail-{}", uuid::Uuid::new_v4()),
-		async {
-			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
-			// Answer the listen request with an unrelated result type → the
-			// client treats the stream as misbehaving and returns Err.
-			let responder =
-				spawn_responder(peer.outgoing, peer.incoming, |request| match request {
-					ClientRequest::SubscriptionsListenRequest(_) => Some(
-						ServerResult::CallToolResult(CallToolResult::success(vec![])),
-					),
-					_ => None,
-				});
-			tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
-				.await
-				.expect("listen failure must not hang the loop");
-			responder.abort();
-		},
-	)
+	crate::session::context::with_session_id(format!("cov-watch-fail-{}", uuid::Uuid::new_v4()), async {
+		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+		// Answer the listen request with an unrelated result type → the
+		// client treats the stream as misbehaving and returns Err.
+		let responder = spawn_responder(peer.outgoing, peer.incoming, |request| match request {
+			ClientRequest::SubscriptionsListenRequest(_) => {
+				Some(ServerResult::CallToolResult(CallToolResult::success(vec![])))
+			}
+			_ => None,
+		});
+		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+			.await
+			.expect("listen failure must not hang the loop");
+		responder.abort();
+	})
 	.await;
 
 	disconnect(&name);
@@ -1234,42 +1172,35 @@ async fn watch_resource_links_cancels_unacknowledged_subscription() {
 	let service = register(&name, peer.service);
 	let linked = result_with_resource_link("job://unack-1");
 
-	crate::session::context::with_session_id(
-		format!("cov-watch-unack-{}", uuid::Uuid::new_v4()),
-		async {
-			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+	crate::session::context::with_session_id(format!("cov-watch-unack-{}", uuid::Uuid::new_v4()), async {
+		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
 
-			let mut outgoing = peer.outgoing;
-			let incoming = peer.incoming;
-			let responder = tokio::spawn(async move {
-				use rmcp::model::GetMeta;
-				while let Some(message) = outgoing.next().await {
-					if let JsonRpcMessage::Request(request) = message {
-						if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
-							// Acknowledge an EMPTY filter: the requested uri
-							// is not included.
-							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(
-								Notification::new(
-									SubscriptionsAcknowledgedNotificationParams::new(
-										SubscriptionFilter::new(),
-									),
-								),
-							);
-							ack.get_meta_mut().set_subscription_id(request.id.clone());
-							incoming
-								.unbounded_send(JsonRpcMessage::notification(ack))
-								.expect("fake server channel must stay open");
-						}
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
+						// Acknowledge an EMPTY filter: the requested uri
+						// is not included.
+						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+							SubscriptionsAcknowledgedNotificationParams::new(SubscriptionFilter::new()),
+						));
+						ack.get_meta_mut().set_subscription_id(request.id.clone());
+						incoming
+							.unbounded_send(JsonRpcMessage::notification(ack))
+							.expect("fake server channel must stay open");
 					}
 				}
-			});
+			}
+		});
 
-			tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
-				.await
-				.expect("unacknowledged subscription must not hang");
-			responder.abort();
-		},
-	)
+		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+			.await
+			.expect("unacknowledged subscription must not hang");
+		responder.abort();
+	})
 	.await;
 
 	disconnect(&name);
@@ -1284,40 +1215,35 @@ async fn watch_resource_links_cancels_unwatched_subscription() {
 	let service = register(&name, peer.service);
 	let linked = result_with_resource_link("job://unwatched-1");
 
-	crate::session::context::with_session_id(
-		format!("cov-watch-unwatched-{}", uuid::Uuid::new_v4()),
-		async {
-			// Deliberately do NOT note the link as watched.
-			let mut outgoing = peer.outgoing;
-			let incoming = peer.incoming;
-			let uri = "job://unwatched-1".to_string();
-			let responder = tokio::spawn(async move {
-				use rmcp::model::GetMeta;
-				while let Some(message) = outgoing.next().await {
-					if let JsonRpcMessage::Request(request) = message {
-						if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
-							let mut filter = SubscriptionFilter::new();
-							filter.resource_subscriptions = Some(vec![uri.clone()]);
-							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(
-								Notification::new(
-									SubscriptionsAcknowledgedNotificationParams::new(filter),
-								),
-							);
-							ack.get_meta_mut().set_subscription_id(request.id.clone());
-							incoming
-								.unbounded_send(JsonRpcMessage::notification(ack))
-								.expect("fake server channel must stay open");
-						}
+	crate::session::context::with_session_id(format!("cov-watch-unwatched-{}", uuid::Uuid::new_v4()), async {
+		// Deliberately do NOT note the link as watched.
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let uri = "job://unwatched-1".to_string();
+		let responder = tokio::spawn(async move {
+			use rmcp::model::GetMeta;
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					if let ClientRequest::SubscriptionsListenRequest(_) = request.request {
+						let mut filter = SubscriptionFilter::new();
+						filter.resource_subscriptions = Some(vec![uri.clone()]);
+						let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+							SubscriptionsAcknowledgedNotificationParams::new(filter),
+						));
+						ack.get_meta_mut().set_subscription_id(request.id.clone());
+						incoming
+							.unbounded_send(JsonRpcMessage::notification(ack))
+							.expect("fake server channel must stay open");
 					}
 				}
-			});
+			}
+		});
 
-			tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
-				.await
-				.expect("unwatched subscription must not hang");
-			responder.abort();
-		},
-	)
+		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+			.await
+			.expect("unwatched subscription must not hang");
+		responder.abort();
+	})
 	.await;
 
 	disconnect(&name);
@@ -1335,114 +1261,100 @@ async fn watch_resource_links_delivers_update_and_completes() {
 	let linked = result_with_resource_link("job://full-1");
 	let uri = "job://full-1".to_string();
 
-	crate::session::context::with_session_id(
-		format!("cov-watch-full-{}", uuid::Uuid::new_v4()),
-		async {
-			crate::session::shell_jobs::note_watched_from_result(&name, &linked);
-			let mut events = crate::session::shell_jobs::subscribe_events();
+	crate::session::context::with_session_id(format!("cov-watch-full-{}", uuid::Uuid::new_v4()), async {
+		crate::session::shell_jobs::note_watched_from_result(&name, &linked);
+		let mut events = crate::session::shell_jobs::subscribe_events();
 
-			let mut outgoing = peer.outgoing;
-			let incoming = peer.incoming;
-			let push_update = incoming.clone();
-			let listen_id: StdArc<StdMutex<Option<RequestId>>> = StdArc::new(StdMutex::new(None));
-			let seen_id = StdArc::clone(&listen_id);
-			let watched_uri = uri.clone();
-			let responder = tokio::spawn(async move {
-				use rmcp::model::GetMeta;
-				while let Some(message) = outgoing.next().await {
-					if let JsonRpcMessage::Request(request) = message {
-						match request.request {
-							ClientRequest::SubscriptionsListenRequest(_) => {
-								let mut filter = SubscriptionFilter::new();
-								filter.resource_subscriptions = Some(vec![watched_uri.clone()]);
-								let mut ack =
-									ServerNotification::SubscriptionsAcknowledgedNotification(
-										Notification::new(
-											SubscriptionsAcknowledgedNotificationParams::new(
-												filter,
-											),
-										),
-									);
-								ack.get_meta_mut().set_subscription_id(request.id.clone());
-								seen_id
-									.lock()
-									.expect("listen id lock")
-									.replace(request.id.clone());
-								incoming
-									.unbounded_send(JsonRpcMessage::notification(ack))
-									.expect("fake server channel must stay open");
-							}
-							ClientRequest::ReadResourceRequest(_) => {
-								incoming
-									.unbounded_send(JsonRpcMessage::response(
-										ServerResult::ReadResourceResult(ReadResourceResult::new(
-											vec![ResourceContents::TextResourceContents {
-												uri: watched_uri.clone(),
-												mime_type: Some("text/plain".to_string()),
-												text: "job output body".to_string(),
-												meta: None,
-											}],
-										)),
-										request.id,
-									))
-									.expect("fake server channel must stay open");
-							}
-							_ => {}
-						}
-					}
-				}
-			});
-
-			// Establish the watcher.
-			tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
-				.await
-				.expect("watch setup must not hang");
-
-			// Server pushes the resource update on the open stream. The
-			// notification must carry the subscription id of the listen
-			// request — rmcp routes stream notifications by that id and
-			// rejects mismatches as an abrupt stream end.
-			let subscription_id = {
-				let mut waited = 0u32;
-				loop {
-					if let Some(id) = listen_id.lock().expect("listen id lock").clone() {
-						break id;
-					}
-					assert!(waited < 250, "listen request id must arrive");
-					waited += 1;
-					tokio::time::sleep(Duration::from_millis(4)).await;
-				}
-			};
+		let mut outgoing = peer.outgoing;
+		let incoming = peer.incoming;
+		let push_update = incoming.clone();
+		let listen_id: StdArc<StdMutex<Option<RequestId>>> = StdArc::new(StdMutex::new(None));
+		let seen_id = StdArc::clone(&listen_id);
+		let watched_uri = uri.clone();
+		let responder = tokio::spawn(async move {
 			use rmcp::model::GetMeta;
-			let mut update = ServerNotification::ResourceUpdatedNotification(Notification::new(
-				ResourceUpdatedNotificationParam::new(uri.clone()),
-			));
-			update.get_meta_mut().set_subscription_id(subscription_id);
-			push_update
-				.unbounded_send(JsonRpcMessage::notification(update))
-				.expect("fake server channel must stay open");
-
-			let session_id = crate::session::context::current_session_id()
-				.expect("session id")
-				.to_string();
-			let event = tokio::time::timeout(WAIT, events.recv())
-				.await
-				.expect("update must be delivered within the wait")
-				.expect("watch event channel must stay open");
-			match event {
-				crate::session::shell_jobs::WatchEvent::Completed {
-					session_id: s,
-					uri: u,
-				} => {
-					assert_eq!(s, session_id);
-					assert_eq!(u, uri);
+			while let Some(message) = outgoing.next().await {
+				if let JsonRpcMessage::Request(request) = message {
+					match request.request {
+						ClientRequest::SubscriptionsListenRequest(_) => {
+							let mut filter = SubscriptionFilter::new();
+							filter.resource_subscriptions = Some(vec![watched_uri.clone()]);
+							let mut ack = ServerNotification::SubscriptionsAcknowledgedNotification(Notification::new(
+								SubscriptionsAcknowledgedNotificationParams::new(filter),
+							));
+							ack.get_meta_mut().set_subscription_id(request.id.clone());
+							seen_id.lock().expect("listen id lock").replace(request.id.clone());
+							incoming
+								.unbounded_send(JsonRpcMessage::notification(ack))
+								.expect("fake server channel must stay open");
+						}
+						ClientRequest::ReadResourceRequest(_) => {
+							incoming
+								.unbounded_send(JsonRpcMessage::response(
+									ServerResult::ReadResourceResult(ReadResourceResult::new(vec![
+										ResourceContents::TextResourceContents {
+											uri: watched_uri.clone(),
+											mime_type: Some("text/plain".to_string()),
+											text: "job output body".to_string(),
+											meta: None,
+										},
+									])),
+									request.id,
+								))
+								.expect("fake server channel must stay open");
+						}
+						_ => {}
+					}
 				}
-				other => panic!("expected Completed, got {other:?}"),
 			}
+		});
 
-			responder.abort();
-		},
-	)
+		// Establish the watcher.
+		tokio::time::timeout(WAIT, watch_resource_links(&service, &name, &linked))
+			.await
+			.expect("watch setup must not hang");
+
+		// Server pushes the resource update on the open stream. The
+		// notification must carry the subscription id of the listen
+		// request — rmcp routes stream notifications by that id and
+		// rejects mismatches as an abrupt stream end.
+		let subscription_id = {
+			let mut waited = 0u32;
+			loop {
+				if let Some(id) = listen_id.lock().expect("listen id lock").clone() {
+					break id;
+				}
+				assert!(waited < 250, "listen request id must arrive");
+				waited += 1;
+				tokio::time::sleep(Duration::from_millis(4)).await;
+			}
+		};
+		use rmcp::model::GetMeta;
+		let mut update = ServerNotification::ResourceUpdatedNotification(Notification::new(
+			ResourceUpdatedNotificationParam::new(uri.clone()),
+		));
+		update.get_meta_mut().set_subscription_id(subscription_id);
+		push_update
+			.unbounded_send(JsonRpcMessage::notification(update))
+			.expect("fake server channel must stay open");
+
+		let session_id = crate::session::context::current_session_id()
+			.expect("session id")
+			.to_string();
+		let event = tokio::time::timeout(WAIT, events.recv())
+			.await
+			.expect("update must be delivered within the wait")
+			.expect("watch event channel must stay open");
+		match event {
+			crate::session::shell_jobs::WatchEvent::Completed { session_id: s, uri: u } => {
+				assert_eq!(s, session_id);
+				assert_eq!(u, uri);
+			}
+			other => panic!("expected Completed, got {other:?}"),
+		}
+
+		responder.abort();
+	})
 	.await;
 
 	disconnect(&name);
@@ -1501,10 +1413,7 @@ async fn connect_http_without_oauth_support_connects_unauthenticated() {
 	let server = McpServerConfig::http(&name, &url, 15, vec![]);
 
 	let discovery = crate::mcp::oauth::discovery::discover_oauth_from_mcp_server(&url, &name).await;
-	assert!(
-		discovery.is_err(),
-		"server without OAuth metadata must fail discovery"
-	);
+	assert!(discovery.is_err(), "server without OAuth metadata must fail discovery");
 
 	let _service = tokio::time::timeout(WAIT, connect_http(&server))
 		.await
@@ -1637,14 +1546,12 @@ async fn task_cancellation_sends_cancel_and_fails() {
 	let saw_cancel = StdArc::new(AtomicBool::new(false));
 	let flag = StdArc::clone(&saw_cancel);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(Task::new(
-				"task-cancel",
-				TaskStatus::Working,
-				"2026-01-01T00:00:00Z",
-				"2026-01-01T00:00:00Z",
-			)),
-		)),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(Task::new(
+			"task-cancel",
+			TaskStatus::Working,
+			"2026-01-01T00:00:00Z",
+			"2026-01-01T00:00:00Z",
+		)))),
 		ClientRequest::CancelTaskRequest(_) => {
 			flag.store(true, Ordering::SeqCst);
 			Some(ServerResult::task_ack(()))
@@ -1699,17 +1606,13 @@ async fn task_get_wrong_response_type_fails_the_call() {
 	let server = stdin_config(&name, "unused", Vec::new(), 5);
 
 	let responder = spawn_responder(peer.outgoing, peer.incoming, |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(Task::new(
-				"task-get-bad",
-				TaskStatus::Working,
-				"2026-01-01T00:00:00Z",
-				"2026-01-01T00:00:00Z",
-			)),
-		)),
-		ClientRequest::GetTaskRequest(_) => Some(ServerResult::CallToolResult(
-			CallToolResult::success(vec![]),
-		)),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(Task::new(
+			"task-get-bad",
+			TaskStatus::Working,
+			"2026-01-01T00:00:00Z",
+			"2026-01-01T00:00:00Z",
+		)))),
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::CallToolResult(CallToolResult::success(vec![]))),
 		_ => None,
 	});
 
@@ -1727,14 +1630,9 @@ async fn task_get_wrong_response_type_fails_the_call() {
 }
 
 fn working_task(id: &str) -> Task {
-	Task::new(
-		id,
-		TaskStatus::Working,
-		"2026-01-01T00:00:00Z",
-		"2026-01-01T00:00:00Z",
-	)
-	.with_status_message("shell: cargo test")
-	.with_poll_interval_ms(50)
+	Task::new(id, TaskStatus::Working, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")
+		.with_status_message("shell: cargo test")
+		.with_poll_interval_ms(50)
 }
 
 async fn next_inbox_batch() -> Vec<crate::session::inbox::InboxMessage> {
@@ -1764,25 +1662,23 @@ async fn session_task_runs_in_the_background_and_reaches_the_inbox() {
 	let polls = StdArc::new(AtomicUsize::new(0));
 	let counter = StdArc::clone(&polls);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(working_task("task-bg")),
-		)),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-bg",
+		)))),
 		ClientRequest::GetTaskRequest(_) => {
 			let payload = if counter.fetch_add(1, Ordering::SeqCst) < 3 {
 				TaskPayload::Working
 			} else {
-				let result =
-					serde_json::to_value(CallToolResult::success(vec![ContentBlock::text(
-						"built",
-					)]))
+				let result = serde_json::to_value(CallToolResult::success(vec![ContentBlock::text("built")]))
 					.expect("serialize completed result");
 				TaskPayload::Completed {
 					result: result.as_object().expect("object").clone(),
 				}
 			};
-			Some(ServerResult::GetTaskResult(GetTaskResult::new(
-				DetailedTask::new(working_task("task-bg"), payload),
-			)))
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task("task-bg"),
+				payload,
+			))))
 		}
 		_ => None,
 	});
@@ -1794,16 +1690,10 @@ async fn session_task_runs_in_the_background_and_reaches_the_inbox() {
 			.await
 			.expect("a session task must not hold the call")
 			.expect("the call must hand back a notice");
-		let notice = result.content[0]
-			.as_text()
-			.expect("text notice")
-			.text
-			.clone();
+		let notice = result.content[0].as_text().expect("text notice").text.clone();
 		assert!(notice.contains("mcp-task:bg-1"), "{notice}");
 		assert!(notice.contains("shell: cargo test"), "{notice}");
-		assert!(crate::session::shell_jobs::has_pending_for_session(
-			&session_id
-		));
+		assert!(crate::session::shell_jobs::has_pending_for_session(&session_id));
 
 		let batch = next_inbox_batch().await;
 		assert!(
@@ -1813,9 +1703,7 @@ async fn session_task_runs_in_the_background_and_reaches_the_inbox() {
 			"{}",
 			batch[0].content
 		);
-		assert!(!crate::session::shell_jobs::has_pending_for_session(
-			&session_id
-		));
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
 		let completed = crate::session::shell_jobs::take_completed_for_session(&session_id);
 		assert_eq!(completed.len(), 1);
 		assert_eq!(completed[0].body, "built");
@@ -1839,12 +1727,13 @@ async fn session_teardown_cancels_a_background_task() {
 	let saw_cancel = StdArc::new(AtomicBool::new(false));
 	let flag = StdArc::clone(&saw_cancel);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(working_task("task-teardown")),
-		)),
-		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(
-			DetailedTask::new(working_task("task-teardown"), TaskPayload::Working),
-		))),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-teardown",
+		)))),
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+			working_task("task-teardown"),
+			TaskPayload::Working,
+		)))),
 		ClientRequest::CancelTaskRequest(_) => {
 			flag.store(true, Ordering::SeqCst);
 			Some(ServerResult::task_ack(()))
@@ -1896,9 +1785,7 @@ async fn session_task_errors_reach_the_inbox_flagged() {
 			} else {
 				"task-fail"
 			};
-			Some(ServerResult::CreateTaskResult(CreateTaskResult::new(
-				working_task(id),
-			)))
+			Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(id))))
 		}
 		ClientRequest::GetTaskRequest(request) => {
 			let id = request.params.task_id;
@@ -1916,9 +1803,10 @@ async fn session_task_errors_reach_the_inbox_flagged() {
 					error: error.as_object().expect("object").clone(),
 				}
 			};
-			Some(ServerResult::GetTaskResult(GetTaskResult::new(
-				DetailedTask::new(working_task(&id), payload),
-			)))
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task(&id),
+				payload,
+			))))
 		}
 		_ => None,
 	});
@@ -1954,9 +1842,7 @@ async fn session_task_errors_reach_the_inbox_flagged() {
 			batch[0].content
 		);
 		assert!(batch[0].content.contains("boom"), "{}", batch[0].content);
-		assert!(!crate::session::shell_jobs::has_pending_for_session(
-			&session_id
-		));
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
 		crate::session::shell_jobs::clear_for_session(&session_id);
 	})
 	.await;
@@ -1979,15 +1865,13 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 	let saw_cancel = StdArc::new(AtomicBool::new(false));
 	let flag = StdArc::clone(&saw_cancel);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(working_task("task-stop")),
-		)),
-		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(
-			DetailedTask::new(
-				working_task("task-stop").with_status_message("shell: cargo test · running 3s"),
-				TaskPayload::Working,
-			),
-		))),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-stop",
+		)))),
+		ClientRequest::GetTaskRequest(_) => Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+			working_task("task-stop").with_status_message("shell: cargo test · running 3s"),
+			TaskPayload::Working,
+		)))),
 		ClientRequest::CancelTaskRequest(_) => {
 			flag.store(true, Ordering::SeqCst);
 			Some(ServerResult::task_ack(()))
@@ -2002,11 +1886,7 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 			.await
 			.expect("a session task must not hold the call")
 			.expect("the call must hand back a notice");
-		let notice = result.content[0]
-			.as_text()
-			.expect("text notice")
-			.text
-			.clone();
+		let notice = result.content[0].as_text().expect("text notice").text.clone();
 		assert!(
 			notice.contains("`monitor` with action `stop` and id `mcp-task:stop-1`"),
 			"{notice}"
@@ -2028,10 +1908,7 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 		.await
 		.expect("the polled status message must be recorded");
 
-		assert!(crate::session::shell_jobs::stop_task_for_session(
-			&session_id,
-			&key
-		));
+		assert!(crate::session::shell_jobs::stop_task_for_session(&session_id, &key));
 		let batch = next_inbox_batch().await;
 		assert!(
 			batch[0].content.starts_with(
@@ -2041,13 +1918,8 @@ async fn stopping_a_background_task_cancels_it_and_reports_the_stop() {
 			"{}",
 			batch[0].content
 		);
-		assert!(
-			saw_cancel.load(Ordering::SeqCst),
-			"tasks/cancel must be sent"
-		);
-		assert!(!crate::session::shell_jobs::has_pending_for_session(
-			&session_id
-		));
+		assert!(saw_cancel.load(Ordering::SeqCst), "tasks/cancel must be sent");
+		assert!(!crate::session::shell_jobs::has_pending_for_session(&session_id));
 		crate::session::shell_jobs::clear_for_session(&session_id);
 	})
 	.await;
@@ -2081,9 +1953,9 @@ async fn task_poll_keeps_going_after_a_timed_out_tasks_get() {
 	let polls = StdArc::new(AtomicUsize::new(0));
 	let counter = StdArc::clone(&polls);
 	let responder = spawn_responder(peer.outgoing, peer.incoming, move |request| match request {
-		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-			CreateTaskResult::new(working_task("task-slow")),
-		)),
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-slow",
+		)))),
 		// The first poll is never answered.
 		ClientRequest::GetTaskRequest(_) if counter.fetch_add(1, Ordering::SeqCst) == 0 => None,
 		ClientRequest::GetTaskRequest(_) => Some(completed_task("task-slow", "done")),
@@ -2115,23 +1987,19 @@ async fn poll_across_a_reconnect(
 
 	let polled = StdArc::new(AtomicBool::new(false));
 	let flag = StdArc::clone(&polled);
-	let first_responder =
-		spawn_responder(
-			first.outgoing,
-			first.incoming,
-			move |request| match request {
-				ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(
-					CreateTaskResult::new(working_task("task-moved")),
-				)),
-				ClientRequest::GetTaskRequest(_) => {
-					flag.store(true, Ordering::SeqCst);
-					Some(ServerResult::GetTaskResult(GetTaskResult::new(
-						DetailedTask::new(working_task("task-moved"), TaskPayload::Working),
-					)))
-				}
-				_ => None,
-			},
-		);
+	let first_responder = spawn_responder(first.outgoing, first.incoming, move |request| match request {
+		ClientRequest::CallToolRequest(_) => Some(ServerResult::CreateTaskResult(CreateTaskResult::new(working_task(
+			"task-moved",
+		)))),
+		ClientRequest::GetTaskRequest(_) => {
+			flag.store(true, Ordering::SeqCst);
+			Some(ServerResult::GetTaskResult(GetTaskResult::new(DetailedTask::new(
+				working_task("task-moved"),
+				TaskPayload::Working,
+			))))
+		}
+		_ => None,
+	});
 	let call = tokio::spawn(async move { call_tool(&server, &tool_call("moved-1"), None).await });
 	tokio::time::timeout(WAIT, async {
 		while !polled.load(Ordering::SeqCst) {

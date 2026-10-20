@@ -32,10 +32,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -74,10 +71,7 @@ fn plugin_with_mcp(tmp: &Path, servers_json: &str) -> (Plugin, PathBuf) {
 	write(&root.join("plugin.json"), &manifest("p"));
 	write(
 		&root.join("mcp.json"),
-		&format!(
-			r#"{{"$schema": "{}", "mcpServers": {}}}"#,
-			MCP_SCHEMA, servers_json
-		),
+		&format!(r#"{{"$schema": "{}", "mcpServers": {}}}"#, MCP_SCHEMA, servers_json),
 	);
 	let data = tmp.join("data");
 	(
@@ -98,22 +92,10 @@ fn resolve_cwd_accepts_all_spec_forms() {
 	let root = Path::new("/plugins/p");
 	let data = Path::new("/data/p");
 	assert_eq!(resolve_cwd("./sub", root, data), Some(root.join("sub")));
-	assert_eq!(
-		resolve_cwd("${PLUGIN_ROOT}", root, data),
-		Some(root.to_path_buf())
-	);
-	assert_eq!(
-		resolve_cwd("${PLUGIN_ROOT}/x", root, data),
-		Some(root.join("x"))
-	);
-	assert_eq!(
-		resolve_cwd("${PLUGIN_DATA}", root, data),
-		Some(data.to_path_buf())
-	);
-	assert_eq!(
-		resolve_cwd("${PLUGIN_DATA}/y", root, data),
-		Some(data.join("y"))
-	);
+	assert_eq!(resolve_cwd("${PLUGIN_ROOT}", root, data), Some(root.to_path_buf()));
+	assert_eq!(resolve_cwd("${PLUGIN_ROOT}/x", root, data), Some(root.join("x")));
+	assert_eq!(resolve_cwd("${PLUGIN_DATA}", root, data), Some(data.to_path_buf()));
+	assert_eq!(resolve_cwd("${PLUGIN_DATA}/y", root, data), Some(data.join("y")));
 }
 
 #[test]
@@ -122,16 +104,8 @@ fn resolve_cwd_rejects_escapes_and_unprefixed_forms() {
 	let data = Path::new("/data/p");
 	assert_eq!(resolve_cwd("./../out", root, data), None);
 	assert_eq!(resolve_cwd("${PLUGIN_DATA}/../escape", root, data), None);
-	assert_eq!(
-		resolve_cwd("/etc", root, data),
-		None,
-		"absolute paths not allowed"
-	);
-	assert_eq!(
-		resolve_cwd("relative", root, data),
-		None,
-		"bare relative not allowed"
-	);
+	assert_eq!(resolve_cwd("/etc", root, data), None, "absolute paths not allowed");
+	assert_eq!(resolve_cwd("relative", root, data), None, "bare relative not allowed");
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +126,7 @@ fn plugin_data_dir_is_namespaced_under_data_dir() {
 fn load_mcp_servers_uses_real_data_dir_and_creates_it() {
 	let _guard = DataDirGuard::new();
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let (plugin, _data) =
-		plugin_with_mcp(tmp.path(), r#"{"srv": {"type": "stdio", "command": "x"}}"#);
+	let (plugin, _data) = plugin_with_mcp(tmp.path(), r#"{"srv": {"type": "stdio", "command": "x"}}"#);
 
 	let servers = load_mcp_servers(&plugin);
 	assert_eq!(servers.len(), 1);
@@ -162,10 +135,7 @@ fn load_mcp_servers_uses_real_data_dir_and_creates_it() {
 		.expect("data dir")
 		.join("plugin-data")
 		.join("p");
-	assert!(
-		expected_data.is_dir(),
-		"PLUGIN_DATA created before servers run"
-	);
+	assert!(expected_data.is_dir(), "PLUGIN_DATA created before servers run");
 	match &servers[0] {
 		McpServerConfig::Stdin {
 			env,
@@ -208,10 +178,7 @@ fn plugin_parent_dirs_order_taps_then_project() {
 fn find_plugins_dedupes_by_name_with_tap_priority() {
 	let _guard = DataDirGuard::new();
 	let tap_plugins = default_tap_plugins_dir();
-	write(
-		&tap_plugins.join("octomind-dup/plugin.json"),
-		&manifest("octomind-dup"),
-	);
+	write(&tap_plugins.join("octomind-dup/plugin.json"), &manifest("octomind-dup"));
 	write(
 		&tap_plugins.join("octomind-tap-only/plugin.json"),
 		&manifest("octomind-tap-only"),
@@ -219,10 +186,7 @@ fn find_plugins_dedupes_by_name_with_tap_priority() {
 
 	let work = tempfile::tempdir().expect("tempdir");
 	let project = work.path().join(".agents").join("plugins");
-	write(
-		&project.join("octomind-dup/plugin.json"),
-		&manifest("octomind-dup"),
-	);
+	write(&project.join("octomind-dup/plugin.json"), &manifest("octomind-dup"));
 	write(
 		&project.join("octomind-project-only/plugin.json"),
 		&manifest("octomind-project-only"),
@@ -231,10 +195,7 @@ fn find_plugins_dedupes_by_name_with_tap_priority() {
 	crate::mcp::workdir::set_session_working_directory(work.path().to_path_buf());
 
 	let plugins = find_plugins();
-	let dup: Vec<&Plugin> = plugins
-		.iter()
-		.filter(|p| p.name == "octomind-dup")
-		.collect();
+	let dup: Vec<&Plugin> = plugins.iter().filter(|p| p.name == "octomind-dup").collect();
 	assert_eq!(dup.len(), 1, "deduplicated by manifest name");
 	assert_eq!(
 		dup[0].root,

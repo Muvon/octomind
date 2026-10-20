@@ -21,9 +21,8 @@ use crate::session::history::{append_to_session_history_file, load_session_histo
 use anyhow::Result;
 use colored::*;
 use reedline::{
-	default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, FileBackedHistory, History,
-	HistoryItem, KeyCode, KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent,
-	ReedlineMenu, Signal,
+	default_emacs_keybindings, ColumnarMenu, EditCommand, Emacs, FileBackedHistory, History, HistoryItem, KeyCode,
+	KeyModifiers, Keybindings, MenuBuilder, Reedline, ReedlineEvent, ReedlineMenu, Signal,
 };
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -184,13 +183,7 @@ fn display_cols(s: &str) -> usize {
 
 /// Number of terminal rows reedline used to render the prompt+input.
 /// Returns 0 if it couldn't be determined (callers should skip redraw).
-fn rendered_rows(
-	prompt_left: &str,
-	indicator: &str,
-	multiline: &str,
-	line: &str,
-	term_w: usize,
-) -> usize {
+fn rendered_rows(prompt_left: &str, indicator: &str, multiline: &str, line: &str, term_w: usize) -> usize {
 	if term_w == 0 {
 		return 0;
 	}
@@ -263,11 +256,7 @@ fn highlight_submitted_input(prompt_left: &str, indicator: &str, multiline: &str
 	let wrap_w = term_w.saturating_sub(2).max(1);
 
 	for raw_line in line.split('\n') {
-		let text_on = if raw_line.starts_with('>') {
-			quote_on
-		} else {
-			italic_on
-		};
+		let text_on = if raw_line.starts_with('>') { quote_on } else { italic_on };
 		let line_prefix = format!("{} {}", marker, text_on);
 		// Split by char count, matching `display_cols`'s width model (safe
 		// underestimate for wide chars — we only ever wrap earlier, never
@@ -351,10 +340,7 @@ pub fn read_user_input(
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('u'),
-		ReedlineEvent::Edit(vec![
-			EditCommand::CutFromLineStart,
-			EditCommand::CutToLineEnd,
-		]),
+		ReedlineEvent::Edit(vec![EditCommand::CutFromLineStart, EditCommand::CutToLineEnd]),
 	);
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
@@ -375,10 +361,7 @@ pub fn read_user_input(
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
 		KeyCode::Char('p'),
-		ReedlineEvent::UntilFound(vec![
-			ReedlineEvent::MenuPrevious,
-			ReedlineEvent::PreviousHistory,
-		]),
+		ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuPrevious, ReedlineEvent::PreviousHistory]),
 	);
 	keybindings.add_binding(
 		KeyModifiers::CONTROL,
@@ -430,37 +413,31 @@ pub fn read_user_input(
 
 	let line_editor = Reedline::create()
 		.with_history(history)
-		.with_completer(Box::new(
-			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
-				config.clone(),
-				role_name.clone(),
-				buffer_empty.clone(),
-				hint_available.clone(),
-				line_state.clone(),
-				replies.clone(),
-			),
-		))
+		.with_completer(Box::new(crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+			config.clone(),
+			role_name.clone(),
+			buffer_empty.clone(),
+			hint_available.clone(),
+			line_state.clone(),
+			replies.clone(),
+		)))
 		.with_menu(ReedlineMenu::EngineCompleter(completion_menu))
-		.with_highlighter(Box::new(
-			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
-				config.clone(),
-				role_name.clone(),
-				buffer_empty.clone(),
-				hint_available.clone(),
-				line_state.clone(),
-				replies.clone(),
-			),
-		))
-		.with_hinter(Box::new(
-			crate::session::chat::reedline_adapter::ReedlineAdapter::new(
-				config,
-				role_name.clone(),
-				buffer_empty.clone(),
-				hint_available,
-				line_state.clone(),
-				replies,
-			),
-		))
+		.with_highlighter(Box::new(crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+			config.clone(),
+			role_name.clone(),
+			buffer_empty.clone(),
+			hint_available.clone(),
+			line_state.clone(),
+			replies.clone(),
+		)))
+		.with_hinter(Box::new(crate::session::chat::reedline_adapter::ReedlineAdapter::new(
+			config,
+			role_name.clone(),
+			buffer_empty.clone(),
+			hint_available,
+			line_state.clone(),
+			replies,
+		)))
 		.with_quick_completions(true)
 		// Keep the @-file menu alive while the user erases to fix a typo —
 		// without this, quick completions dismiss the menu on backspace and
@@ -489,9 +466,7 @@ pub fn read_user_input(
 			let preview = inbox_slot.lock().ok().and_then(|g| g.clone());
 			if let Some(preview) = preview {
 				if !notified {
-					let msg = format!(
-						"\x1b[33m📨 Inbox message received ({preview}) — processing...\x1b[0m"
-					);
+					let msg = format!("\x1b[33m📨 Inbox message received ({preview}) — processing...\x1b[0m");
 					if sender.send(msg).is_err() {
 						break; // receiver dropped, reedline is gone
 					}
@@ -502,8 +477,7 @@ pub fn read_user_input(
 				// or clear the buffer), the empty-input fallback in the main loop
 				// will pick up the inbox message.
 				let is_empty = buffer_empty_for_thread.load(std::sync::atomic::Ordering::Relaxed);
-				let in_search =
-					reverse_search_for_thread.load(std::sync::atomic::Ordering::Relaxed);
+				let in_search = reverse_search_for_thread.load(std::sync::atomic::Ordering::Relaxed);
 				if is_empty && !in_search {
 					break_signal_for_thread.store(true, std::sync::atomic::Ordering::Relaxed);
 				}
@@ -542,9 +516,7 @@ pub fn read_user_input(
 		};
 		// Title set via /rename or /new leads; the session id stays so it can
 		// always be typed into /session or --resume.
-		let session_label = match crate::session::titles::get_session_meta(session_id)
-			.and_then(|meta| meta.title)
-		{
+		let session_label = match crate::session::titles::get_session_meta(session_id).and_then(|meta| meta.title) {
 			Some(title) => format!("{title} ({session_id})"),
 			None => session_id.to_string(),
 		};
@@ -569,11 +541,7 @@ pub fn read_user_input(
 	// reedline draws `▍ 〉` then immediately user input, with the wide `〉`
 	// naturally providing visual separation from the typed text.
 	let indicator = format!("{} {}", "▍".bright_blue(), "〉".bright_blue());
-	let prompt = crate::session::chat::ChatPrompt::new(
-		prompt_left.clone(),
-		indicator.clone(),
-		reverse_search_active,
-	);
+	let prompt = crate::session::chat::ChatPrompt::new(prompt_left.clone(), indicator.clone(), reverse_search_active);
 
 	// Clone line_state for use in the loop (original moved into edit_mode)
 	let line_state_for_check = line_state.clone();
@@ -610,15 +578,14 @@ pub fn read_user_input(
 				// Check if this is an "add without sending" request (Ctrl+G)
 				// and drain any clipboard blobs auto-attached via Ctrl+V.
 				// The flag and queue are set in edit_mode.rs.
-				let (add_without_sending, clipboard_items) =
-					if let Ok(mut state) = line_state_for_check.lock() {
-						let flag = state.add_without_sending;
-						state.add_without_sending = false;
-						let items = std::mem::take(&mut state.pending_clipboard);
-						(flag, items)
-					} else {
-						(false, Vec::new())
-					};
+				let (add_without_sending, clipboard_items) = if let Ok(mut state) = line_state_for_check.lock() {
+					let flag = state.add_without_sending;
+					state.add_without_sending = false;
+					let items = std::mem::take(&mut state.pending_clipboard);
+					(flag, items)
+				} else {
+					(false, Vec::new())
+				};
 
 				// Check if line starts with whitespace (bash-like behavior)
 				// If it does, skip adding to history (both in-memory and persistent)
@@ -630,11 +597,7 @@ pub fn read_user_input(
 					// This includes ALL inputs - both regular inputs and commands starting with '/'
 					if let Err(e) = append_to_session_history_file(&role_name, &line) {
 						// Don't fail if history can't be saved, just log it
-						log_info!(
-							"Could not append to history file for role '{}': {}",
-							role,
-							e
-						);
+						log_info!("Could not append to history file for role '{}': {}", role, e);
 					}
 				}
 
@@ -697,10 +660,7 @@ pub fn read_user_input(
 						log_info!("Reedline CPR failed {} times in a row — exiting session", n);
 						return Ok(InputResult::Exit);
 					}
-					crate::log_debug!(
-						"Reedline CPR transient failure (attempt {}), re-prompting",
-						n
-					);
+					crate::log_debug!("Reedline CPR transient failure (attempt {}), re-prompting", n);
 					// Scrub any leaked `ESC[<r>;<c>R` fragment from the current line
 					// before reedline redraws the prompt.
 					print!("\r\x1B[2K");

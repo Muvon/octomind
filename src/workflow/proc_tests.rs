@@ -42,9 +42,7 @@ fn truncate_zero_cap_is_ellipsis_only() {
 fn truncate_tail_keeps_the_end() {
 	assert_eq!(truncate_tail("  short  ", 800), "short");
 	// The tail is what matters — panics land at the end of stderr.
-	let long: String = std::iter::repeat_n('x', 100)
-		.chain(['E', 'N', 'D'])
-		.collect();
+	let long: String = std::iter::repeat_n('x', 100).chain(['E', 'N', 'D']).collect();
 	let tail = truncate_tail(&long, 5);
 	assert_eq!(tail, "…xxEND");
 }
@@ -81,16 +79,10 @@ fn format_value_short_renders_scalars_and_containers() {
 	assert_eq!(format_value_short(&json!(true)).unwrap(), "true");
 	assert_eq!(format_value_short(&json!(42)).unwrap(), "42");
 	assert_eq!(format_value_short(&json!(" hi ")).unwrap(), "\"hi\"");
-	assert_eq!(
-		format_value_short(&json!(["a", "b"])).unwrap(),
-		"[\"a\", \"b\"]"
-	);
+	assert_eq!(format_value_short(&json!(["a", "b"])).unwrap(), "[\"a\", \"b\"]");
 	// Three or more elements collapse to a count.
 	assert_eq!(format_value_short(&json!([1, 2, 3])).unwrap(), "[3 items]");
-	assert_eq!(
-		format_value_short(&json!({"a": 1, "b": 2})).unwrap(),
-		"{2 keys}"
-	);
+	assert_eq!(format_value_short(&json!({"a": 1, "b": 2})).unwrap(), "{2 keys}");
 }
 
 #[test]
@@ -211,23 +203,17 @@ fn render_event_oneline_covers_live_variants_and_skips_quiet_ones() {
 		"param-less tool use still renders"
 	);
 
-	let skill: ServerMessage = serde_json::from_str(
-		r#"{"type":"skill","action":"activate","name":"rust","session_id":"s"}"#,
-	)
-	.unwrap();
-	assert!(render_event_oneline(&skill)
-		.expect("skill renders")
-		.contains("rust"));
+	let skill: ServerMessage =
+		serde_json::from_str(r#"{"type":"skill","action":"activate","name":"rust","session_id":"s"}"#).unwrap();
+	assert!(render_event_oneline(&skill).expect("skill renders").contains("rust"));
 
 	let status: ServerMessage =
-		serde_json::from_str(r#"{"type":"status","message":"compiling crate\nmore detail"}"#)
-			.unwrap();
+		serde_json::from_str(r#"{"type":"status","message":"compiling crate\nmore detail"}"#).unwrap();
 	assert!(render_event_oneline(&status)
 		.expect("status renders")
 		.contains("compiling crate"));
 
-	let blank_status: ServerMessage =
-		serde_json::from_str(r#"{"type":"status","message":"   "}"#).unwrap();
+	let blank_status: ServerMessage = serde_json::from_str(r#"{"type":"status","message":"   "}"#).unwrap();
 	assert!(render_event_oneline(&blank_status).is_none());
 
 	let notification: ServerMessage = serde_json::from_str(
@@ -238,8 +224,7 @@ fn render_event_oneline_covers_live_variants_and_skips_quiet_ones() {
 		.expect("notification renders")
 		.contains("db"));
 
-	let error: ServerMessage =
-		serde_json::from_str(r#"{"type":"error","message":"gateway 502"}"#).unwrap();
+	let error: ServerMessage = serde_json::from_str(r#"{"type":"error","message":"gateway 502"}"#).unwrap();
 	assert!(render_event_oneline(&error)
 		.expect("error renders")
 		.contains("gateway 502"));
@@ -312,14 +297,8 @@ async fn run_step_classifies_nonzero_exit_from_test_binary() {
 	else {
 		panic!("expected NonZero, got {outcome:?}");
 	};
-	assert!(
-		code.is_some_and(|c| c != 0),
-		"libtest arg error must exit non-zero"
-	);
-	assert!(
-		!stderr_tail.is_empty(),
-		"diagnostic stderr must be captured"
-	);
+	assert!(code.is_some_and(|c| c != 0), "libtest arg error must exit non-zero");
+	assert!(!stderr_tail.is_empty(), "diagnostic stderr must be captured");
 	assert!(stats.output.is_empty(), "no assistant events can arrive");
 	assert_eq!(stats.tool_count, 0);
 }

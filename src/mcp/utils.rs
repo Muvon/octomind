@@ -60,10 +60,7 @@ pub struct ToolResponseMessage {
 }
 
 // Convert tool results to proper messages with global truncation
-pub fn tool_results_to_messages(
-	results: &[McpToolResult],
-	config: &crate::config::Config,
-) -> Vec<ToolResponseMessage> {
+pub fn tool_results_to_messages(results: &[McpToolResult], config: &crate::config::Config) -> Vec<ToolResponseMessage> {
 	let mut messages = Vec::new();
 
 	for result in results {

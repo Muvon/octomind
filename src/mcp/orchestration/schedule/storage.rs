@@ -53,12 +53,7 @@ pub struct ScheduleEntry {
 }
 
 impl ScheduleEntry {
-	pub fn new(
-		description: String,
-		message: String,
-		trigger_at: DateTime<Local>,
-		interval_secs: Option<i64>,
-	) -> Self {
+	pub fn new(description: String, message: String, trigger_at: DateTime<Local>, interval_secs: Option<i64>) -> Self {
 		let id = Uuid::new_v4().to_string()[..8].to_string();
 		Self {
 			id,
@@ -96,9 +91,7 @@ impl ScheduleEntry {
 		let trigger_at = match self.trigger_mode {
 			TriggerMode::Idle => Local::now(),
 			TriggerMode::Time => {
-				let secs = self
-					.interval_secs
-					.expect("reschedule called on non-repeating entry");
+				let secs = self.interval_secs.expect("reschedule called on non-repeating entry");
 				let interval = Duration::seconds(secs);
 				let now = Local::now();
 				// Normally advance one interval from the last trigger. But if we
@@ -220,18 +213,13 @@ impl ScheduleStore {
 
 	/// Pop the next idle-mode entry. Caller decides when "idle" actually holds.
 	pub fn pop_idle(&mut self) -> Option<ScheduleEntry> {
-		let idx = self
-			.entries
-			.iter()
-			.position(|e| e.trigger_mode == TriggerMode::Idle)?;
+		let idx = self.entries.iter().position(|e| e.trigger_mode == TriggerMode::Idle)?;
 		Some(self.entries.remove(idx))
 	}
 
 	/// Returns true if any idle-mode entries are queued.
 	pub fn has_idle(&self) -> bool {
-		self.entries
-			.iter()
-			.any(|e| e.trigger_mode == TriggerMode::Idle)
+		self.entries.iter().any(|e| e.trigger_mode == TriggerMode::Idle)
 	}
 
 	/// Duration until the next time-mode entry fires. Returns None if no time entries exist.
@@ -376,9 +364,7 @@ fn parse_time_of_day(s: &str) -> Result<DateTime<Local>> {
 
 	// If already past, schedule for tomorrow.
 	if candidate <= now {
-		let tomorrow = today
-			.succ_opt()
-			.ok_or_else(|| anyhow::anyhow!("date overflow"))?;
+		let tomorrow = today.succ_opt().ok_or_else(|| anyhow::anyhow!("date overflow"))?;
 		let next = tomorrow
 			.and_time(naive_time)
 			.and_local_timezone(Local)
@@ -404,10 +390,7 @@ fn parse_naive_time(s: &str) -> Result<NaiveTime> {
 	};
 
 	let parts: Vec<&str> = s.split(':').collect();
-	let mut hour: u32 = parts
-		.first()
-		.ok_or_else(|| anyhow::anyhow!("invalid time"))?
-		.parse()?;
+	let mut hour: u32 = parts.first().ok_or_else(|| anyhow::anyhow!("invalid time"))?.parse()?;
 	let minute: u32 = parts.get(1).unwrap_or(&"0").parse()?;
 	let second: u32 = parts.get(2).unwrap_or(&"0").parse()?;
 
@@ -437,10 +420,7 @@ fn parse_absolute_datetime(s: &str) -> Result<DateTime<Local>> {
 			.single()
 			.ok_or_else(|| anyhow::anyhow!("ambiguous local datetime"));
 	}
-	bail!(
-		"could not parse datetime '{}' — expected format: YYYY-MM-DD HH:MM",
-		s
-	)
+	bail!("could not parse datetime '{}' — expected format: YYYY-MM-DD HH:MM", s)
 }
 
 // ---------------------------------------------------------------------------

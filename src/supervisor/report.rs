@@ -154,8 +154,7 @@ pub struct MechanicUsage {
 
 impl MechanicUsage {
 	fn include(&mut self, usage: &Usage) {
-		self.reported_findings
-			.extend(usage.reported_findings.iter().cloned());
+		self.reported_findings.extend(usage.reported_findings.iter().cloned());
 		self.api_ms += usage.api_time_ms;
 		self.input_tokens += usage.input_tokens;
 		self.output_tokens += usage.output_tokens;

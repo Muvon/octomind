@@ -975,6 +975,25 @@ fn test_render_loglevel_direct_arms() {
 }
 
 #[test]
+fn test_help_rows_mention_aliases() {
+	use crate::session::chat::commands::*;
+
+	let rows = help_builtin_rows();
+	assert!(
+		rows.iter()
+			.any(|(cmd, desc)| *cmd == HELP_COMMAND && desc.contains(HELP_COMMAND_ALT)),
+		"help row must mention the {} alias",
+		HELP_COMMAND_ALT
+	);
+	assert!(
+		rows.iter()
+			.any(|(cmd, desc)| *cmd == EXIT_COMMAND && desc.contains(QUIT_COMMAND)),
+		"exit row must mention the {} alias",
+		QUIT_COMMAND
+	);
+}
+
+#[test]
 fn test_render_help_with_custom_commands() {
 	use crate::session::layers::layer_trait::{InputMode, LayerConfig, OutputMode, OutputRole};
 
@@ -988,21 +1007,11 @@ fn test_render_help_with_custom_commands() {
 		output_mode: OutputMode::None,
 		output_role: OutputRole::Assistant,
 	}]);
-	display_help(
-		&CommandOutput::Help {
-			commands: Vec::new(),
-		},
-		&config,
-	);
+	display_help(&CommandOutput::Help { commands: Vec::new() }, &config);
 
 	// No custom commands configured → builtin listing only
 	let config = test_config();
-	display_help(
-		&CommandOutput::Help {
-			commands: Vec::new(),
-		},
-		&config,
-	);
+	display_help(&CommandOutput::Help { commands: Vec::new() }, &config);
 }
 
 #[test]
@@ -1208,9 +1217,7 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 	info.supervisor_accounting
 		.kinds
 		.insert(CallKind::Evaluate, decision.clone());
-	info.supervisor_accounting
-		.seams
-		.insert(Seam::Condense, decision);
+	info.supervisor_accounting.seams.insert(Seam::Condense, decision);
 	info.supervisor_accounting
 		.kinds
 		.insert(CallKind::Resolve, Usage::default());
@@ -1231,13 +1238,7 @@ fn supervisor_table_merges_seams_hides_zero_rows_and_only_shows_real_background(
 	assert!(!table.contains("evaluate"));
 	assert!(!table.contains("resolve"));
 	assert!(!table.contains("background"));
-	assert_eq!(
-		table
-			.lines()
-			.filter(|line| line.starts_with("condense"))
-			.count(),
-		1
-	);
+	assert_eq!(table.lines().filter(|line| line.starts_with("condense")).count(), 1);
 	assert_eq!(report.mechanics[&Mechanic::Condense].chat_calls, 0);
 	assert_eq!(report.mechanics[&Mechanic::Condense].decision_calls, 2);
 	let timing_rows = info_timing_rows(&super::super::InfoTiming {
@@ -1284,17 +1285,14 @@ fn supervisor_wall_only_and_local_rows_preserve_usage_without_duplicate_outcomes
 			..Default::default()
 		},
 	);
-	let table = plain_info_render(&supervisor_table(
-		&SupervisorReport::for_session(&info),
-		120,
-	));
+	let table = plain_info_render(&supervisor_table(&SupervisorReport::for_session(&info), 120));
 	assert!(table
 		.lines()
 		.any(|line| line.starts_with("condense") && line.contains("1s 400ms")));
 	assert!(!table.contains("no model usage"));
-	assert!(table.lines().any(|line| line.starts_with("hindsight")
-		&& line.contains("local")
-		&& line.contains("800ms")));
+	assert!(table
+		.lines()
+		.any(|line| line.starts_with("hindsight") && line.contains("local") && line.contains("800ms")));
 }
 
 #[test]
@@ -1351,12 +1349,7 @@ fn supervisor_sample_renders_one_session_table_and_one_timing_split() {
 		.kinds
 		.get_mut(&CallKind::Gate)
 		.unwrap()
-		.outcome = [
-		(Outcome::Runs, 2),
-		(Outcome::Fail, 1),
-		(Outcome::RefutedGaps, 2),
-	]
-	.into();
+		.outcome = [(Outcome::Runs, 2), (Outcome::Fail, 1), (Outcome::RefutedGaps, 2)].into();
 	info.supervisor_accounting
 		.kinds
 		.get_mut(&CallKind::Authorize)
@@ -1432,26 +1425,8 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 	let mut report = SupervisorReport::default();
 	for (mechanic, chat, decision, wall, api, input, output, cost) in [
 		(Mechanic::Gate, 2, 0, 3_500, 3_500, 10_000, 268, 0.0018),
-		(
-			Mechanic::Authorize,
-			1,
-			16,
-			9_800,
-			9_700,
-			67_000,
-			1_100,
-			0.0032,
-		),
-		(
-			Mechanic::Condense,
-			0,
-			5,
-			2_900,
-			2_800,
-			66_000,
-			4_700,
-			0.0028,
-		),
+		(Mechanic::Authorize, 1, 16, 9_800, 9_700, 67_000, 1_100, 0.0032),
+		(Mechanic::Condense, 0, 5, 2_900, 2_800, 66_000, 4_700, 0.0028),
 		(Mechanic::Recall, 1, 1, 1_500, 1_500, 8_001, 371, 0.0004),
 		(Mechanic::Resolve, 1, 0, 1_400, 1_400, 239, 80, 0.0001),
 		(Mechanic::Hindsight, 1, 0, 994, 0, 0, 0, 0.0),
@@ -1491,16 +1466,9 @@ fn owner_supervisor_report() -> crate::supervisor::report::SupervisorReport {
 				(Outcome::Replaced, 5),
 			],
 		),
-		(
-			Mechanic::Recall,
-			vec![(Outcome::Items, 10), (Outcome::Applied, 9)],
-		),
+		(Mechanic::Recall, vec![(Outcome::Items, 10), (Outcome::Applied, 9)]),
 	] {
-		report
-			.mechanics
-			.get_mut(&mechanic)
-			.expect("sample mechanic")
-			.outcome = outcomes.into_iter().collect();
+		report.mechanics.get_mut(&mechanic).expect("sample mechanic").outcome = outcomes.into_iter().collect();
 	}
 	report.totals = Totals {
 		chat_calls: 6,
@@ -1539,19 +1507,10 @@ fn info_timing_split_uses_shared_durations_and_matched_turn_measurements() {
 		]
 	);
 	assert_eq!(plain_info_render(&rows[0].1), "17 · 6s 688ms avg");
-	assert_eq!(
-		plain_info_render(&rows[1].1),
-		"1 completed · 2m 15s 799ms active"
-	);
-	assert_eq!(
-		plain_info_render(&rows[2].1),
-		"2m 15s 799ms · 2m 15s 799ms last"
-	);
+	assert_eq!(plain_info_render(&rows[1].1), "1 completed · 2m 15s 799ms active");
+	assert_eq!(plain_info_render(&rows[2].1), "2m 15s 799ms · 2m 15s 799ms last");
 	assert_eq!(plain_info_render(&rows[3].1), "1m 53s 700ms");
-	assert_eq!(
-		plain_info_render(&rows[4].1),
-		"21s 200ms blocking · 16% of turn time"
-	);
+	assert_eq!(plain_info_render(&rows[4].1), "21s 200ms blocking · 16% of turn time");
 	assert_eq!(plain_info_render(&rows[5].1), "936ms");
 	assert_eq!(serde_json::to_value(&timing).expect("timing JSON"), before);
 
@@ -1574,24 +1533,9 @@ fn info_supervisor_owner_sample_fits_widths_preserves_payload_and_styles_values(
 				"{width} columns: {line}"
 			);
 		}
-		assert_eq!(
-			table
-				.lines()
-				.filter(|line| line.starts_with("total"))
-				.count(),
-			1
-		);
-		assert_eq!(
-			table
-				.lines()
-				.filter(|line| line.starts_with("authorize"))
-				.count(),
-			1
-		);
-		assert_eq!(
-			table.lines().next().expect("header").contains("outcome"),
-			width == 120
-		);
+		assert_eq!(table.lines().filter(|line| line.starts_with("total")).count(), 1);
+		assert_eq!(table.lines().filter(|line| line.starts_with("authorize")).count(), 1);
+		assert_eq!(table.lines().next().expect("header").contains("outcome"), width == 120);
 		assert!(table.contains("1 run · 1 pass"));
 		assert!(table.contains("17 checked · 16 skipped judge"));
 		assert!(table.contains("5 condensed · saved 19K tok"));
@@ -1613,9 +1557,7 @@ fn info_supervisor_owner_sample_fits_widths_preserves_payload_and_styles_values(
 			.all(|c| c == '─'));
 		if width == 80 {
 			let mut lines = table.lines();
-			let gate = lines
-				.find(|line| line.starts_with("gate"))
-				.expect("gate row");
+			let gate = lines.find(|line| line.starts_with("gate")).expect("gate row");
 			assert!(!gate.contains("run"));
 			assert_eq!(lines.next(), Some("  1 run · 1 pass"));
 			assert!(styled.contains(&"  1 run · 1 pass".dimmed().to_string()));
@@ -1625,10 +1567,7 @@ fn info_supervisor_owner_sample_fits_widths_preserves_payload_and_styles_values(
 		assert!(styled.contains(&"268".bright_green().to_string()));
 		assert!(styled.contains(&"$0.00180".bright_yellow().to_string()));
 	}
-	assert_eq!(
-		serde_json::to_value(&report).expect("supervisor JSON"),
-		before
-	);
+	assert_eq!(serde_json::to_value(&report).expect("supervisor JSON"), before);
 }
 
 #[test]
@@ -1681,10 +1620,7 @@ fn info_supervisor_outcomes_pluralize_counts_and_keep_mechanic_results() {
 				outcome: [(outcome, count)].into(),
 				..Default::default()
 			};
-			assert_eq!(
-				supervisor_outcome(Mechanic::Gate, &usage),
-				format!("{count} {label}")
-			);
+			assert_eq!(supervisor_outcome(Mechanic::Gate, &usage), format!("{count} {label}"));
 		}
 	}
 	for (mechanic, label) in [

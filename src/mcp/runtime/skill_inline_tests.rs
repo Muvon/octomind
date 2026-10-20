@@ -15,10 +15,7 @@
 use super::*;
 
 fn kinds(line: &str) -> Vec<String> {
-	parse_rule_line(line)
-		.iter()
-		.map(|c| c.to_string())
-		.collect()
+	parse_rule_line(line).iter().map(|c| c.to_string()).collect()
 }
 
 #[test]
@@ -112,10 +109,7 @@ fn word_pattern_respects_word_boundaries() {
 #[test]
 fn space_or_array_values_parse_both_syntaxes() {
 	assert_eq!(parse_space_or_array("git memory"), ["git", "memory"]);
-	assert_eq!(
-		parse_space_or_array(r#"["git", "memory"]"#),
-		["git", "memory"]
-	);
+	assert_eq!(parse_space_or_array(r#"["git", "memory"]"#), ["git", "memory"]);
 	assert_eq!(parse_space_or_array("[git, memory]"), ["git", "memory"]);
 	assert_eq!(parse_space_or_array("['git']"), ["git"]);
 	assert!(parse_space_or_array("").is_empty());

@@ -32,20 +32,15 @@ fn command_layer(name: &str, command: &str) -> LayerConfig {
 }
 
 fn config_with_commands(commands: Option<Vec<LayerConfig>>) -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config.commands = commands;
 	config
 }
 
 /// Run one `/run` invocation and return `(command_executed, data)`.
-async fn run_command(
-	session: &mut ChatSession,
-	config: &Config,
-	params: &[&str],
-) -> (String, serde_json::Value) {
+async fn run_command(session: &mut ChatSession, config: &Config, params: &[&str]) -> (String, serde_json::Value) {
 	let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
 	let result = handle_run(session, config, "assistant", params, cancel_rx)
 		.await
@@ -53,11 +48,7 @@ async fn run_command(
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected typed output");
 	};
-	let CommandOutput::Run {
-		command_executed,
-		data,
-	} = *output
-	else {
+	let CommandOutput::Run { command_executed, data } = *output else {
 		panic!("expected Run output");
 	};
 	(command_executed, data)
@@ -122,10 +113,7 @@ async fn request_threshold_breach_cancels_execution() {
 
 #[tokio::test]
 async fn execution_failure_surfaces_spawn_error() {
-	let mut config = config_with_commands(Some(vec![command_layer(
-		"cov-cmd",
-		"/nonexistent/cov-acp-binary-xyz",
-	)]));
+	let mut config = config_with_commands(Some(vec![command_layer("cov-cmd", "/nonexistent/cov-acp-binary-xyz")]));
 	config.max_session_spending_threshold = 0.0;
 	config.max_request_spending_threshold = 0.0;
 
@@ -166,8 +154,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"sessionId":"fake-session","sto
 	)
 	.expect("write fake ACP server script");
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-		.expect("make fake ACP server executable");
+	std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("make fake ACP server executable");
 	script
 }
 
@@ -233,8 +220,5 @@ async fn session_threshold_breach_cancels_execution() {
 	assert_eq!(executed, "cov-cmd");
 	assert_eq!(data["action"], "execute");
 	assert_eq!(data["success"], false);
-	assert_eq!(
-		data["error"],
-		"Command execution cancelled due to spending threshold."
-	);
+	assert_eq!(data["error"], "Command execution cancelled due to spending threshold.");
 }

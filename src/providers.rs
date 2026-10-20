@@ -23,9 +23,9 @@ use tokio::sync::watch;
 
 // Re-export octolib types with compatibility aliases
 pub use octolib::llm::{
-	AiProvider, AmazonBedrockProvider, AnthropicProvider, CloudflareWorkersAiProvider,
-	DeepSeekProvider, GenericToolCall, GoogleVertexProvider, OpenAiProvider, OpenRouterProvider,
-	ProviderFactory, StructuredOutputRequest,
+	AiProvider, AmazonBedrockProvider, AnthropicProvider, CloudflareWorkersAiProvider, DeepSeekProvider,
+	GenericToolCall, GoogleVertexProvider, OpenAiProvider, OpenRouterProvider, ProviderFactory,
+	StructuredOutputRequest,
 };
 
 // Re-export some octolib types directly
@@ -208,14 +208,9 @@ impl<'a> ChatCompletionParams<'a> {
 	}
 
 	/// Convert to octolib ChatCompletionParams with MCP tools
-	pub async fn to_octolib_params(
-		&self,
-	) -> Result<octolib::llm::ChatCompletionParams, octolib::MessageError> {
-		let octolib_messages: Result<Vec<octolib::llm::Message>, _> = self
-			.messages
-			.iter()
-			.map(convert_message_to_octolib)
-			.collect();
+	pub async fn to_octolib_params(&self) -> Result<octolib::llm::ChatCompletionParams, octolib::MessageError> {
+		let octolib_messages: Result<Vec<octolib::llm::Message>, _> =
+			self.messages.iter().map(convert_message_to_octolib).collect();
 
 		let mut octolib_messages = octolib_messages?;
 
@@ -226,10 +221,7 @@ impl<'a> ChatCompletionParams<'a> {
 		}
 
 		// Long cache TTL on system message — always enabled (Anthropic 1h cache).
-		if let Some(sys_msg) = octolib_messages
-			.iter_mut()
-			.find(|m| m.role == "system" && m.cached)
-		{
+		if let Some(sys_msg) = octolib_messages.iter_mut().find(|m| m.role == "system" && m.cached) {
 			sys_msg.cache_ttl = Some("1h".to_string());
 		}
 
@@ -324,9 +316,8 @@ impl<'a> ChatCompletionParams<'a> {
 
 		// Apply structured output schema if provided
 		if let Some(ref schema) = self.schema {
-			params = params.with_structured_output(
-				StructuredOutputRequest::json_schema(schema.clone()).with_strict_mode(),
-			);
+			params =
+				params.with_structured_output(StructuredOutputRequest::json_schema(schema.clone()).with_strict_mode());
 		}
 
 		Ok(params)
@@ -334,9 +325,7 @@ impl<'a> ChatCompletionParams<'a> {
 }
 
 /// Convert Octomind Message to octolib Message with proper error handling
-fn convert_message_to_octolib(
-	msg: &Message,
-) -> Result<octolib::llm::Message, octolib::MessageError> {
+fn convert_message_to_octolib(msg: &Message) -> Result<octolib::llm::Message, octolib::MessageError> {
 	let mut builder = match msg.role.as_str() {
 		"user" => octolib::llm::MessageBuilder::user(&msg.content),
 		"assistant" => {
@@ -355,28 +344,21 @@ fn convert_message_to_octolib(
 		}
 		"system" => octolib::llm::MessageBuilder::system(&msg.content),
 		"tool" => {
-			let tool_call_id = msg.tool_call_id.as_deref().ok_or_else(|| {
-				octolib::MessageError::MissingToolField {
+			let tool_call_id = msg
+				.tool_call_id
+				.as_deref()
+				.ok_or_else(|| octolib::MessageError::MissingToolField {
 					field: "tool_call_id".to_string(),
-				}
-			})?;
-			let name =
-				msg.name
-					.as_deref()
-					.ok_or_else(|| octolib::MessageError::MissingToolField {
-						field: "name".to_string(),
-					})?;
-			octolib::llm::MessageBuilder::tool(
-				msg.content.clone(),
-				tool_call_id.to_string(),
-				name.to_string(),
-			)
+				})?;
+			let name = msg
+				.name
+				.as_deref()
+				.ok_or_else(|| octolib::MessageError::MissingToolField {
+					field: "name".to_string(),
+				})?;
+			octolib::llm::MessageBuilder::tool(msg.content.clone(), tool_call_id.to_string(), name.to_string())
 		}
-		_ => {
-			return Err(octolib::MessageError::InvalidRole {
-				role: msg.role.clone(),
-			})
-		}
+		_ => return Err(octolib::MessageError::InvalidRole { role: msg.role.clone() }),
 	};
 
 	// Set timestamp
@@ -397,15 +379,13 @@ fn convert_message_to_octolib(
 
 	// Convert images if present
 	if let Some(images) = &msg.images {
-		let octolib_images: Vec<octolib::llm::ImageAttachment> =
-			images.iter().map(convert_image_to_octolib).collect();
+		let octolib_images: Vec<octolib::llm::ImageAttachment> = images.iter().map(convert_image_to_octolib).collect();
 		builder = builder.with_images(octolib_images);
 	}
 
 	// Convert videos if present
 	if let Some(videos) = &msg.videos {
-		let octolib_videos: Vec<octolib::llm::VideoAttachment> =
-			videos.iter().map(convert_video_to_octolib).collect();
+		let octolib_videos: Vec<octolib::llm::VideoAttachment> = videos.iter().map(convert_video_to_octolib).collect();
 		builder = builder.with_videos(octolib_videos);
 	}
 
@@ -433,20 +413,14 @@ fn convert_message_to_octolib(
 }
 
 /// Convert Octomind ImageAttachment to octolib ImageAttachment
-fn convert_image_to_octolib(
-	img: &crate::session::image::ImageAttachment,
-) -> octolib::llm::ImageAttachment {
+fn convert_image_to_octolib(img: &crate::session::image::ImageAttachment) -> octolib::llm::ImageAttachment {
 	let data = match &img.data {
-		crate::session::image::ImageData::Base64(data) => {
-			octolib::llm::ImageData::Base64(data.clone())
-		}
+		crate::session::image::ImageData::Base64(data) => octolib::llm::ImageData::Base64(data.clone()),
 		crate::session::image::ImageData::Url(url) => octolib::llm::ImageData::Url(url.clone()),
 	};
 
 	let source_type = match &img.source_type {
-		crate::session::image::SourceType::File(path) => {
-			octolib::llm::SourceType::File(path.clone())
-		}
+		crate::session::image::SourceType::File(path) => octolib::llm::SourceType::File(path.clone()),
 		crate::session::image::SourceType::Clipboard => octolib::llm::SourceType::Clipboard,
 		crate::session::image::SourceType::Url => octolib::llm::SourceType::Url,
 	};
@@ -461,20 +435,14 @@ fn convert_image_to_octolib(
 }
 
 /// Convert Octomind VideoAttachment to octolib VideoAttachment
-fn convert_video_to_octolib(
-	video: &crate::session::video::VideoAttachment,
-) -> octolib::llm::VideoAttachment {
+fn convert_video_to_octolib(video: &crate::session::video::VideoAttachment) -> octolib::llm::VideoAttachment {
 	let data = match &video.data {
-		crate::session::video::VideoData::Base64(data) => {
-			octolib::llm::VideoData::Base64(data.clone())
-		}
+		crate::session::video::VideoData::Base64(data) => octolib::llm::VideoData::Base64(data.clone()),
 		crate::session::video::VideoData::Url(url) => octolib::llm::VideoData::Url(url.clone()),
 	};
 
 	let source_type = match &video.source_type {
-		crate::session::video::SourceType::File(path) => {
-			octolib::llm::SourceType::File(path.clone())
-		}
+		crate::session::video::SourceType::File(path) => octolib::llm::SourceType::File(path.clone()),
 		crate::session::video::SourceType::Clipboard => octolib::llm::SourceType::Clipboard,
 		crate::session::video::SourceType::Url => octolib::llm::SourceType::Url,
 	};
@@ -495,13 +463,11 @@ fn convert_video_to_octolib(
 /// them to the unified GenericToolCall format that octolib requires. Hostile or
 /// buggy model output that doesn't match an expected shape returns a typed error
 /// so the request fails cleanly — it must NOT crash the long-running process.
-fn convert_to_generic_tool_calls(
+pub(crate) fn convert_to_generic_tool_calls(
 	tool_calls: &serde_json::Value,
 ) -> Result<Vec<octolib::llm::GenericToolCall>, octolib::MessageError> {
 	// Check if it's already in unified GenericToolCall format
-	if let Ok(calls) =
-		serde_json::from_value::<Vec<octolib::llm::GenericToolCall>>(tool_calls.clone())
-	{
+	if let Ok(calls) = serde_json::from_value::<Vec<octolib::llm::GenericToolCall>>(tool_calls.clone()) {
 		return Ok(calls);
 	}
 
@@ -509,11 +475,11 @@ fn convert_to_generic_tool_calls(
 	if let Some(calls_array) = tool_calls.as_array() {
 		let mut generic_calls = Vec::new();
 		for call in calls_array {
-			let function =
-				call.get("function")
-					.ok_or_else(|| octolib::MessageError::MissingToolField {
-						field: "function".to_string(),
-					})?;
+			let function = call
+				.get("function")
+				.ok_or_else(|| octolib::MessageError::MissingToolField {
+					field: "function".to_string(),
+				})?;
 
 			let (id, name, args_str) = match (
 				call.get("id").and_then(|v| v.as_str()),

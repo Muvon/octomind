@@ -74,10 +74,7 @@ pub async fn run_pipe(
 			}
 		}
 		if let Some(binding) = &pipe.evolution {
-			if crate::supervisor::learning::evolution::binding_is_shadow(
-				&binding.id,
-				binding.shadow,
-			) {
+			if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
 				crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
 				continue;
 			}
@@ -143,22 +140,13 @@ pub async fn run_pipe(
 		});
 	}
 
-	let output = match tokio::time::timeout(
-		Duration::from_secs(PIPE_TIMEOUT_SECS),
-		child.wait_with_output(),
-	)
-	.await
-	{
+	let output = match tokio::time::timeout(Duration::from_secs(PIPE_TIMEOUT_SECS), child.wait_with_output()).await {
 		Ok(Ok(o)) => o,
 		Ok(Err(e)) => {
 			return Err(anyhow!("Pipe '{}' wait failed: {}", pipe.name, e));
 		}
 		Err(_) => {
-			return Err(anyhow!(
-				"Pipe '{}' timed out after {}s",
-				pipe.name,
-				PIPE_TIMEOUT_SECS
-			));
+			return Err(anyhow!("Pipe '{}' timed out after {}s", pipe.name, PIPE_TIMEOUT_SECS));
 		}
 	};
 

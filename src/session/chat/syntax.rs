@@ -42,12 +42,7 @@ impl SyntaxHighlighter {
 		}
 	}
 
-	pub fn highlight_code_with_theme(
-		&self,
-		code: &str,
-		language: &str,
-		theme_name: &str,
-	) -> Result<String> {
+	pub fn highlight_code_with_theme(&self, code: &str, language: &str, theme_name: &str) -> Result<String> {
 		// Try to find syntax definition for the language
 		let syntax = self
 			.syntax_set

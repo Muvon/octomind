@@ -32,9 +32,7 @@
 // cost/knowledge side-effects are mode-agnostic.
 
 use super::prompt::{build_compression_prompt_json, build_compression_prompt_xml};
-use super::schema::{
-	build_compression_schema, is_summary_substantive, parse_xml_summary, CompressionSummary,
-};
+use super::schema::{build_compression_schema, is_summary_substantive, parse_xml_summary, CompressionSummary};
 use crate::config::Config;
 use crate::providers::ProviderFactory;
 use crate::session::chat::session::ChatSession;
@@ -64,13 +62,12 @@ fn decision_params<'a>(
 	operation_rx: &tokio::sync::watch::Receiver<bool>,
 	schema: Option<&serde_json::Value>,
 ) -> crate::session::ChatCompletionWithValidationParams<'a> {
-	let params =
-		crate::session::ChatCompletionWithValidationParams::from_profile(messages, profile, config)
-			.with_full_context_tokens(true)
-			.with_cancellation_token(operation_rx.clone())
-			.with_purpose(crate::providers::ModelPurpose::Compression)
-			.without_tools()
-			.without_identical_retry_on_length_cut();
+	let params = crate::session::ChatCompletionWithValidationParams::from_profile(messages, profile, config)
+		.with_full_context_tokens(true)
+		.with_cancellation_token(operation_rx.clone())
+		.with_purpose(crate::providers::ModelPurpose::Compression)
+		.without_tools()
+		.without_identical_retry_on_length_cut();
 	match schema {
 		Some(schema) => params.with_schema(schema.clone()),
 		None => params,
@@ -98,11 +95,7 @@ pub(super) async fn run_decision_call(
 			content: system_content,
 			timestamp: now,
 			cached: supports_caching,
-			cache_ttl: if supports_caching {
-				Some("1h".to_string())
-			} else {
-				None
-			},
+			cache_ttl: if supports_caching { Some("1h".to_string()) } else { None },
 			tool_call_id: None,
 			name: None,
 			tool_calls: None,
@@ -168,13 +161,7 @@ pub(super) async fn run_decision_call(
 				decision_config.max_tokens,
 				repair_profile.max_tokens
 			);
-			let mut params = decision_params(
-				&messages,
-				&repair_profile,
-				config,
-				&operation_rx,
-				schema.as_ref(),
-			);
+			let mut params = decision_params(&messages, &repair_profile, config, &operation_rx, schema.as_ref());
 			params.reasoning_effort = Some(crate::config::ReasoningEffortConfig::None);
 			// Logs from this task can be dropped (thread-local config), so the
 			// repair leaves its trace on the error the main task reports.
@@ -248,10 +235,7 @@ pub(super) fn prepare_decision(
 
 /// Per-component spend for `/info` plus the session total — recorded even when
 /// the decision ends up "don't compress" (the call happened).
-pub(super) fn record_decision_usage(
-	session: &mut ChatSession,
-	usage: Option<&crate::providers::TokenUsage>,
-) {
+pub(super) fn record_decision_usage(session: &mut ChatSession, usage: Option<&crate::providers::TokenUsage>) {
 	let Some(usage) = usage else { return };
 	let stats = &mut session.session.info.compression_stats;
 	stats.input_tokens += usage.input_tokens;
@@ -272,11 +256,7 @@ pub(super) fn record_decision_usage(
 
 /// The veto and substantive-summary rules, shared by the inline and background
 /// paths. Returns the effective should_compress.
-pub(super) fn evaluate_decision(
-	summary: &CompressionSummary,
-	no_veto: bool,
-	has_pact: bool,
-) -> bool {
+pub(super) fn evaluate_decision(summary: &CompressionSummary, no_veto: bool, has_pact: bool) -> bool {
 	let mut should_compress = summary.should_compress;
 	if !should_compress {
 		if no_veto {
@@ -284,9 +264,7 @@ pub(super) fn evaluate_decision(
 			// should_compress=true, so a false here is a protocol violation, not
 			// a decision. Override and let the substantive-summary guard stay the
 			// real safety.
-			log_info!(
-				"Decision model returned should_compress=false on a no-veto call — overriding"
-			);
+			log_info!("Decision model returned should_compress=false on a no-veto call — overriding");
 			should_compress = true;
 		} else {
 			log_debug!("AI compression decision: should_compress=false");
@@ -307,10 +285,7 @@ pub(super) fn evaluate_decision(
 /// misroute valid JSON into the text body (notably some OctoHub-routed
 /// models) still succeed. The recovered value is then deserialized into
 /// the typed `CompressionSummary`.
-fn parse_json_response(
-	response: &crate::providers::ProviderResponse,
-	model: &str,
-) -> Result<CompressionSummary> {
+fn parse_json_response(response: &crate::providers::ProviderResponse, model: &str) -> Result<CompressionSummary> {
 	let raw = match response.structured_output.clone() {
 		Some(v) => v,
 		None => {

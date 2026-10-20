@@ -27,8 +27,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -68,16 +68,14 @@ fn decode(response: ExtResponse) -> serde_json::Value {
 
 #[test]
 fn command_request_deserializes_and_defaults_args() {
-	let req: CommandRequest =
-		serde_json::from_str(r#"{"session_id": "s1", "command": "/help"}"#).expect("parse");
+	let req: CommandRequest = serde_json::from_str(r#"{"session_id": "s1", "command": "/help"}"#).expect("parse");
 	assert_eq!(req.session_id, "s1");
 	assert_eq!(req.command, "/help");
 	assert!(req.args.is_empty(), "args default to an empty vec");
 
-	let req: CommandRequest = serde_json::from_str(
-		r#"{"session_id": "s1", "command": "/model", "args": ["ollama:x", "extra"]}"#,
-	)
-	.expect("parse with args");
+	let req: CommandRequest =
+		serde_json::from_str(r#"{"session_id": "s1", "command": "/model", "args": ["ollama:x", "extra"]}"#)
+			.expect("parse with args");
 	assert_eq!(req.args, vec!["ollama:x".to_string(), "extra".to_string()]);
 
 	assert!(serde_json::from_str::<CommandRequest>(r#"{"command": "/help"}"#).is_err());
@@ -101,10 +99,7 @@ fn command_response_serializes_its_three_shapes() {
 		output: Some(serde_json::json!({"action": "exit"})),
 		error: None,
 	};
-	assert_eq!(
-		serde_json::to_value(&out).unwrap()["output"]["action"],
-		"exit"
-	);
+	assert_eq!(serde_json::to_value(&out).unwrap()["output"]["action"], "exit");
 
 	let err = CommandResponse {
 		success: false,
@@ -162,16 +157,7 @@ async fn execute_command_errors_on_an_unknown_session() {
 		command: "/help".to_string(),
 		args: Vec::new(),
 	};
-	let response = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let response = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(!response.success);
 	let error = response.error.expect("error set");
 	assert!(error.contains("session not found: nope"), "{error}");
@@ -188,16 +174,7 @@ async fn execute_command_runs_help_and_returns_the_session_to_the_map() {
 		args: Vec::new(),
 	};
 
-	let first = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let first = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(first.success, "{first:?}");
 	assert!(
 		sessions.borrow().contains_key("s1"),
@@ -205,16 +182,7 @@ async fn execute_command_runs_help_and_returns_the_session_to_the_map() {
 	);
 
 	// The reinserted session is usable again — a second command succeeds.
-	let second = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let second = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(second.success, "{second:?}");
 }
 
@@ -226,16 +194,7 @@ async fn execute_command_maps_exit_to_an_exit_action() {
 		command: "/exit".to_string(),
 		args: Vec::new(),
 	};
-	let response = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let response = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(response.success, "{response:?}");
 	assert_eq!(
 		response.output.expect("exit carries an action"),
@@ -251,16 +210,7 @@ async fn execute_command_reports_unknown_commands() {
 		command: "/definitely-not-a-command".to_string(),
 		args: Vec::new(),
 	};
-	let response = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let response = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(!response.success);
 	assert_eq!(
 		response.error.expect("error set"),
@@ -276,16 +226,7 @@ async fn execute_command_joins_args_and_persists_config_mutations() {
 		command: "/loglevel".to_string(),
 		args: vec!["debug".to_string()],
 	};
-	let response = execute_command(
-		&request,
-		&sessions,
-		&locks,
-		&config,
-		"assistant",
-		&cancellations,
-		None,
-	)
-	.await;
+	let response = execute_command(&request, &sessions, &locks, &config, "assistant", &cancellations, None).await;
 	assert!(response.success, "{response:?}");
 	// The command mutated its config clone; execute_command must write it
 	// back to the shared RefCell or the change is silently dropped.
@@ -334,10 +275,7 @@ impl TestDataDirGuard {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let previous = std::env::var("OCTOMIND_DATA_DIR").ok();
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -420,16 +358,10 @@ async fn execute_command_maps_dispatcher_errors_to_a_failed_response() {
 	})
 	.await;
 
-	assert!(
-		!response.success,
-		"the dispatcher error must fail the response"
-	);
+	assert!(!response.success, "the dispatcher error must fail the response");
 	let error = response.error.as_ref().expect("error message present");
 	assert!(error.contains("not found"), "got: {error}");
-	assert!(
-		response.output.is_none(),
-		"a failed command must not report output"
-	);
+	assert!(response.output.is_none(), "a failed command must not report output");
 	assert!(
 		sessions.borrow().contains_key("s1"),
 		"the session is returned to the map even on error"

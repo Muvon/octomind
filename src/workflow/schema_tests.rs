@@ -305,10 +305,7 @@ fn step_rejects_multiple_flags() {
 	)
 	.expect_err("multiple flags must be rejected");
 
-	assert!(
-		err.to_string().contains("at most one of"),
-		"unexpected error: {err}"
-	);
+	assert!(err.to_string().contains("at most one of"), "unexpected error: {err}");
 }
 
 #[test]

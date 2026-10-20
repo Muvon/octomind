@@ -31,10 +31,7 @@ fn test_restart_info_defaults() {
 fn test_unknown_server_reads_are_safe() {
 	// Health for a server nobody registered → Dead, not a panic
 	assert_eq!(get_server_health("proc-test-unknown"), ServerHealth::Dead);
-	assert_eq!(
-		get_server_restart_info("proc-test-unknown").restart_count,
-		0
-	);
+	assert_eq!(get_server_restart_info("proc-test-unknown").restart_count, 0);
 	// Resetting an untracked server is an explicit error
 	assert!(reset_server_failure_state("proc-test-unknown").is_err());
 	// No pgid registered → liveness is unknowable
@@ -46,16 +43,10 @@ fn test_unknown_server_reads_are_safe() {
 #[test]
 fn test_get_server_url() {
 	let http = McpServerConfig::http("proc-test-http", "http://example.com/mcp", 30, Vec::new());
-	assert_eq!(
-		get_server_url(&http).expect("http url"),
-		"http://example.com/mcp"
-	);
+	assert_eq!(get_server_url(&http).expect("http url"), "http://example.com/mcp");
 
 	let stdio = McpServerConfig::stdin("proc-test-stdio", "cat", Vec::new(), 30, Vec::new());
-	assert_eq!(
-		get_server_url(&stdio).expect("stdio url"),
-		"stdin://proc-test-stdio"
-	);
+	assert_eq!(get_server_url(&stdio).expect("stdio url"), "stdin://proc-test-stdio");
 }
 
 #[serial_test::serial]
@@ -63,10 +54,7 @@ fn test_get_server_url() {
 fn test_stderr_buffer_is_shared() {
 	let name = "proc-test-stderr";
 	let buffer = stderr_buffer_for(name);
-	buffer
-		.lock()
-		.expect("stderr buffer lock")
-		.push("boom".to_string());
+	buffer.lock().expect("stderr buffer lock").push("boom".to_string());
 	// A second lookup sees the same underlying buffer
 	assert_eq!(stderr_lines_for(name), vec!["boom".to_string()]);
 }
@@ -114,21 +102,11 @@ fn project_id_is_derived_once_per_directory() {
 		assert!(status.success());
 	};
 	git(&["init", "-q"]);
-	git(&[
-		"remote",
-		"add",
-		"origin",
-		"https://github.com/muvon/first.git",
-	]);
+	git(&["remote", "add", "origin", "https://github.com/muvon/first.git"]);
 	let first = derive_project_id_from_path(repo.path());
 	assert_eq!(first, octolib::utils::path_to_id(repo.path()));
 
-	git(&[
-		"remote",
-		"set-url",
-		"origin",
-		"https://github.com/muvon/second.git",
-	]);
+	git(&["remote", "set-url", "origin", "https://github.com/muvon/second.git"]);
 	assert_ne!(octolib::utils::path_to_id(repo.path()), first);
 	assert_eq!(derive_project_id_from_path(repo.path()), first);
 }

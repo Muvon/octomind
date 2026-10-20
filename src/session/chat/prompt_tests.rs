@@ -33,10 +33,7 @@ fn prompt() -> (ChatPrompt, Arc<AtomicBool>) {
 fn new_exposes_left_text_and_indicator() {
 	let (prompt, _) = prompt();
 	assert_eq!(prompt.render_prompt_left(), "octomind");
-	assert_eq!(
-		prompt.render_prompt_indicator(PromptEditMode::Default),
-		"▍ 〉"
-	);
+	assert_eq!(prompt.render_prompt_indicator(PromptEditMode::Default), "▍ 〉");
 }
 
 #[test]
@@ -57,10 +54,7 @@ fn indicator_resets_reverse_search_flag() {
 fn indicator_is_same_for_every_edit_mode() {
 	let (prompt, _) = prompt();
 	let default = prompt.render_prompt_indicator(PromptEditMode::Default);
-	assert_eq!(
-		prompt.render_prompt_indicator(PromptEditMode::Emacs),
-		default
-	);
+	assert_eq!(prompt.render_prompt_indicator(PromptEditMode::Emacs), default);
 	assert_eq!(
 		prompt.render_prompt_indicator(PromptEditMode::Vi(PromptViMode::Normal)),
 		default
@@ -71,10 +65,7 @@ fn indicator_is_same_for_every_edit_mode() {
 fn multiline_indicator_carries_the_prompt_rail() {
 	let (prompt, _) = prompt();
 	let multiline = prompt.render_prompt_multiline_indicator();
-	assert!(
-		multiline.contains('▍'),
-		"continuation rail missing: {multiline}"
-	);
+	assert!(multiline.contains('▍'), "continuation rail missing: {multiline}");
 }
 
 #[test]

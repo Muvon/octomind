@@ -72,12 +72,7 @@ pub async fn execute_recall(call: &McpToolCall) -> Result<McpToolResult> {
 		.parameters
 		.get("ids")
 		.and_then(|v| v.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str())
-				.map(str::to_string)
-				.collect()
-		})
+		.map(|arr| arr.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
 		.unwrap_or_default();
 
 	if ids.is_empty() {
@@ -116,10 +111,7 @@ pub async fn execute_recall(call: &McpToolCall) -> Result<McpToolResult> {
 	let mut by_index: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
 	for id in &ids {
 		let entry = &registry[id.as_str()];
-		by_index
-			.entry(entry.index_path.clone())
-			.or_default()
-			.push(id.clone());
+		by_index.entry(entry.index_path.clone()).or_default().push(id.clone());
 	}
 
 	let mut output = String::new();

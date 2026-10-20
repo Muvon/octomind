@@ -30,9 +30,7 @@ fn layer_config(name: &str, command: &str) -> LayerConfig {
 
 #[test]
 fn is_default_for_serialization_true_when_empty() {
-	let config = LayersConfig {
-		layers: HashMap::new(),
-	};
+	let config = LayersConfig { layers: HashMap::new() };
 	assert!(config.is_default_for_serialization());
 }
 
@@ -46,9 +44,7 @@ fn is_default_for_serialization_false_when_non_empty() {
 
 #[test]
 fn get_all_layers_empty_returns_empty_vec() {
-	let config = LayersConfig {
-		layers: HashMap::new(),
-	};
+	let config = LayersConfig { layers: HashMap::new() };
 	assert!(config.get_all_layers().is_empty());
 }
 
@@ -56,14 +52,8 @@ fn get_all_layers_empty_returns_empty_vec() {
 fn get_all_layers_sets_name_from_registry_key() {
 	let mut layers = HashMap::new();
 	// name field deliberately differs from the registry key to prove override
-	layers.insert(
-		"reviewer".to_string(),
-		layer_config("wrong-name", "octomind review"),
-	);
-	layers.insert(
-		"tester".to_string(),
-		layer_config("also-wrong", "octomind test"),
-	);
+	layers.insert("reviewer".to_string(), layer_config("wrong-name", "octomind review"));
+	layers.insert("tester".to_string(), layer_config("also-wrong", "octomind test"));
 	let config = LayersConfig { layers };
 
 	let mut result = config.get_all_layers();

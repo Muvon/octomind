@@ -104,10 +104,7 @@ pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
 /// inflates every context decision — the compression fire line, the ceiling
 /// margin, cache checkpoints and the pre-flight size check.
 pub fn estimate_sent_message_tokens(message: &crate::session::Message, model: &str) -> usize {
-	message_tokens(
-		message,
-		crate::session::model_utils::model_replays_thinking(model),
-	)
+	message_tokens(message, crate::session::model_utils::model_replays_thinking(model))
 }
 
 fn message_tokens(message: &crate::session::Message, count_thinking: bool) -> usize {
@@ -163,10 +160,7 @@ pub fn estimate_session_tokens(messages: &[crate::session::Message]) -> usize {
 
 /// `estimate_session_tokens` as the provider serving `model` receives it.
 pub fn estimate_sent_session_tokens(messages: &[crate::session::Message], model: &str) -> usize {
-	session_tokens(
-		messages,
-		crate::session::model_utils::model_replays_thinking(model),
-	)
+	session_tokens(messages, crate::session::model_utils::model_replays_thinking(model))
 }
 
 fn session_tokens(messages: &[crate::session::Message], count_thinking: bool) -> usize {
@@ -267,29 +261,24 @@ pub async fn calculate_minimum_session_tokens(
 	};
 
 	// Get initial messages tokens (welcome + instructions)
-	let initial_messages_tokens = match crate::session::chat::session::get_initial_messages(
-		config,
-		role,
-		current_dir,
-	)
-	.await
-	{
-		Ok(messages) => {
-			let mut total = 0;
-			for message in &messages {
-				// Calculate tokens for message content
-				total += estimate_tokens(&message.content);
-				// Add overhead for message structure (role, timestamp, etc.)
-				total += 20; // JSON overhead per message
+	let initial_messages_tokens =
+		match crate::session::chat::session::get_initial_messages(config, role, current_dir).await {
+			Ok(messages) => {
+				let mut total = 0;
+				for message in &messages {
+					// Calculate tokens for message content
+					total += estimate_tokens(&message.content);
+					// Add overhead for message structure (role, timestamp, etc.)
+					total += 20; // JSON overhead per message
+				}
+				total
 			}
-			total
-		}
-		Err(_) => {
-			// If we can't get initial messages, use conservative estimate
-			// Welcome message ~100 tokens + instructions ~200 tokens + overhead
-			320
-		}
-	};
+			Err(_) => {
+				// If we can't get initial messages, use conservative estimate
+				// Welcome message ~100 tokens + instructions ~200 tokens + overhead
+				320
+			}
+		};
 
 	// Add message array overhead and request structure overhead
 	let request_overhead = 50; // JSON structure, message array, etc.

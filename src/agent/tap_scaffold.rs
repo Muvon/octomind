@@ -76,10 +76,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	let (owner, name) = split_tap_id(tap_id)?;
 
 	if tap_id == DEFAULT_TAP {
-		bail!(
-			"'{}' is the built-in default tap — pick your own owner/name",
-			tap_id
-		);
+		bail!("'{}' is the built-in default tap — pick your own owner/name", tap_id);
 	}
 	if taps::list_taps()?.iter().any(|t| t.name == tap_id) {
 		bail!(
@@ -105,8 +102,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	}
 
 	let manifest: ScaffoldManifest = toml::from_str(
-		&fs::read_to_string(&manifest_path)
-			.context(format!("Failed to read {}", manifest_path.display()))?,
+		&fs::read_to_string(&manifest_path).context(format!("Failed to read {}", manifest_path.display()))?,
 	)
 	.context("Failed to parse scaffold.toml")?;
 	if manifest.schema != SUPPORTED_SCHEMA {
@@ -118,10 +114,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	}
 	let scaffold_root = scaffold_dir.join(&manifest.root);
 	if !scaffold_root.is_dir() {
-		bail!(
-			"Scaffold root directory missing: {}",
-			scaffold_root.display()
-		);
+		bail!("Scaffold root directory missing: {}", scaffold_root.display());
 	}
 
 	let tokens = build_tokens(owner, name, agent, manifest.defaults.agent_spec.as_deref())?;
@@ -145,10 +138,7 @@ pub fn init_tap(tap_id: &str, agent: Option<&str>, dir: Option<&Path>) -> Result
 	let created_dest = !dest.exists();
 	ensure_empty_dest(&dest)?;
 
-	let agent_tag = format!(
-		"{}:{}",
-		tokens["__AGENT_DOMAIN__"], tokens["__AGENT_SPEC__"]
-	);
+	let agent_tag = format!("{}:{}", tokens["__AGENT_DOMAIN__"], tokens["__AGENT_SPEC__"]);
 	let result = populate(&scaffold_root, &dest, &tokens, &manifest, tap_id);
 	if let Err(e) = result {
 		// Only remove what this run created; never touch a pre-existing directory.
@@ -223,12 +213,10 @@ fn populate(
 }
 
 /// Split `owner/name`, rejecting anything that is not exactly two non-empty parts.
-fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
+pub(crate) fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
 	let mut parts = tap_id.split('/');
 	match (parts.next(), parts.next(), parts.next()) {
-		(Some(owner), Some(name), None) if !owner.is_empty() && !name.is_empty() => {
-			Ok((owner, name))
-		}
+		(Some(owner), Some(name), None) if !owner.is_empty() && !name.is_empty() => Ok((owner, name)),
 		_ => bail!("Tap name must be in 'user/repo' format, got: {}", tap_id),
 	}
 }
@@ -237,9 +225,7 @@ fn split_tap_id(tap_id: &str) -> Result<(&str, &str)> {
 fn split_agent_tag(arg: &str) -> Result<(&str, &str)> {
 	let mut parts = arg.split(':');
 	match (parts.next(), parts.next(), parts.next()) {
-		(Some(domain), Some(spec), None) if !domain.is_empty() && !spec.is_empty() => {
-			Ok((domain, spec))
-		}
+		(Some(domain), Some(spec), None) if !domain.is_empty() && !spec.is_empty() => Ok((domain, spec)),
 		_ => bail!("Agent must be in 'domain:spec' format, got: {}", arg),
 	}
 }
@@ -253,9 +239,8 @@ fn build_tokens(
 	let (domain, spec) = match agent {
 		Some(arg) => split_agent_tag(arg)?,
 		None => {
-			let spec = default_spec.context(
-				"scaffold.toml defines no [defaults] agent_spec — pass --agent domain:spec",
-			)?;
+			let spec =
+				default_spec.context("scaffold.toml defines no [defaults] agent_spec — pass --agent domain:spec")?;
 			(name, spec)
 		}
 	};
@@ -264,16 +249,10 @@ fn build_tokens(
 	tokens.insert("__TAP_ID__".to_string(), format!("{}/{}", owner, name));
 	tokens.insert("__TAP_OWNER__".to_string(), owner.to_string());
 	tokens.insert("__TAP_NAME__".to_string(), name.to_string());
-	tokens.insert(
-		"__TAP_REPOSITORY__".to_string(),
-		format!("octomind-{}", name),
-	);
+	tokens.insert("__TAP_REPOSITORY__".to_string(), format!("octomind-{}", name));
 	tokens.insert("__AGENT_DOMAIN__".to_string(), domain.to_string());
 	tokens.insert("__AGENT_SPEC__".to_string(), spec.to_string());
-	tokens.insert(
-		"__YEAR__".to_string(),
-		chrono::Utc::now().format("%Y").to_string(),
-	);
+	tokens.insert("__YEAR__".to_string(), chrono::Utc::now().format("%Y").to_string());
 	Ok(tokens)
 }
 
@@ -284,14 +263,10 @@ fn ensure_empty_dest(dest: &Path) -> Result<()> {
 			bail!("Destination is not a directory: {}", dest.display());
 		}
 		if fs::read_dir(dest)?.next().is_some() {
-			bail!(
-				"Destination is not empty: {} — refusing to overwrite",
-				dest.display()
-			);
+			bail!("Destination is not empty: {} — refusing to overwrite", dest.display());
 		}
 	} else {
-		fs::create_dir_all(dest)
-			.context(format!("Failed to create destination: {}", dest.display()))?;
+		fs::create_dir_all(dest).context(format!("Failed to create destination: {}", dest.display()))?;
 	}
 	Ok(())
 }
@@ -308,12 +283,7 @@ fn render(input: &str, tokens: &BTreeMap<String, String>) -> String {
 /// contents. Symlinks are read through (`fs::metadata`/`fs::read` follow them),
 /// so the scaffold may deduplicate files via relative symlinks — the generated
 /// tap always gets real files. Binary files are copied verbatim.
-fn render_tree(
-	src: &Path,
-	dest: &Path,
-	tokens: &BTreeMap<String, String>,
-	leftover: &Regex,
-) -> Result<()> {
+fn render_tree(src: &Path, dest: &Path, tokens: &BTreeMap<String, String>, leftover: &Regex) -> Result<()> {
 	for entry in fs::read_dir(src).context(format!("Failed to read {}", src.display()))? {
 		let entry = entry?;
 		let file_name = entry
@@ -330,8 +300,7 @@ fn render_tree(
 		}
 		let src_path = entry.path();
 		let dest_path = dest.join(&rendered_name);
-		let metadata =
-			fs::metadata(&src_path).context(format!("Failed to stat {}", src_path.display()))?;
+		let metadata = fs::metadata(&src_path).context(format!("Failed to stat {}", src_path.display()))?;
 
 		if metadata.is_dir() {
 			fs::create_dir_all(&dest_path)?;
@@ -339,8 +308,7 @@ fn render_tree(
 			continue;
 		}
 
-		let bytes =
-			fs::read(&src_path).context(format!("Failed to read {}", src_path.display()))?;
+		let bytes = fs::read(&src_path).context(format!("Failed to read {}", src_path.display()))?;
 		match String::from_utf8(bytes) {
 			Ok(text) => {
 				let rendered = render(&text, tokens);
@@ -360,10 +328,7 @@ fn render_tree(
 		#[cfg(unix)]
 		{
 			use std::os::unix::fs::PermissionsExt;
-			fs::set_permissions(
-				&dest_path,
-				fs::Permissions::from_mode(metadata.permissions().mode()),
-			)?;
+			fs::set_permissions(&dest_path, fs::Permissions::from_mode(metadata.permissions().mode()))?;
 		}
 	}
 	Ok(())

@@ -58,10 +58,7 @@ impl ModelProfile {
 			));
 		}
 		if self.top_k > 1000 {
-			return Err(anyhow!(
-				"{label}.top_k must be between 0 and 1000, got: {}",
-				self.top_k
-			));
+			return Err(anyhow!("{label}.top_k must be between 0 and 1000, got: {}", self.top_k));
 		}
 		crate::providers::ProviderFactory::get_provider_for_model(&self.model)
 			.map_err(|error| anyhow!("{label}.name '{}' is invalid: {error}", self.model))?;
@@ -139,13 +136,9 @@ impl<'de> Deserialize<'de> for ModelProfileOverride {
 				})
 			}
 
-			fn visit_map<A: serde::de::MapAccess<'de>>(
-				self,
-				map: A,
-			) -> Result<Self::Value, A::Error> {
-				let fields = ModelProfileOverrideFields::deserialize(
-					serde::de::value::MapAccessDeserializer::new(map),
-				)?;
+			fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+				let fields =
+					ModelProfileOverrideFields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
 				Ok(ModelProfileOverride {
 					model: fields.model,
 					reasoning_effort: fields.reasoning_effort,
@@ -176,9 +169,7 @@ impl ModelProfileOverride {
 			top_k: self.top_k.unwrap_or(base.top_k),
 			max_retries: self.max_retries.unwrap_or(base.max_retries),
 			retry_timeout: self.retry_timeout.unwrap_or(base.retry_timeout),
-			request_timeout_seconds: self
-				.request_timeout_seconds
-				.unwrap_or(base.request_timeout_seconds),
+			request_timeout_seconds: self.request_timeout_seconds.unwrap_or(base.request_timeout_seconds),
 		}
 	}
 
@@ -193,20 +184,14 @@ impl ModelProfileOverride {
 			top_k: other.top_k.or(self.top_k),
 			max_retries: other.max_retries.or(self.max_retries),
 			retry_timeout: other.retry_timeout.or(self.retry_timeout),
-			request_timeout_seconds: other
-				.request_timeout_seconds
-				.or(self.request_timeout_seconds),
+			request_timeout_seconds: other.request_timeout_seconds.or(self.request_timeout_seconds),
 		}
 	}
 
 	/// Validate only explicitly supplied fields. Use [`Self::resolve`] followed
 	/// by [`ModelProfile::validate`] whenever a main profile is available.
 	pub fn validate_explicit(&self, label: &str) -> Result<()> {
-		if self
-			.model
-			.as_ref()
-			.is_some_and(|model| model.trim().is_empty())
-		{
+		if self.model.as_ref().is_some_and(|model| model.trim().is_empty()) {
 			return Err(anyhow!("{label}.name cannot be empty"));
 		}
 		if let Some(model) = &self.model {
@@ -219,10 +204,7 @@ impl ModelProfileOverride {
 		{
 			return Err(anyhow!("{label}.temperature must be between 0.0 and 2.0"));
 		}
-		if self
-			.top_p
-			.is_some_and(|top_p| !(0.0..=1.0).contains(&top_p))
-		{
+		if self.top_p.is_some_and(|top_p| !(0.0..=1.0).contains(&top_p)) {
 			return Err(anyhow!("{label}.top_p must be between 0.0 and 1.0"));
 		}
 		if self.top_k.is_some_and(|top_k| top_k > 1000) {

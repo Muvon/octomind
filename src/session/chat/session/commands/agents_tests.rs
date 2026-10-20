@@ -82,16 +82,8 @@ async fn list_detail_and_stats_cover_every_job_status() {
 				}),
 			},
 		));
-		crate::session::tap_runs::register_job(job(
-			"done-agent",
-			TapJobStatus::Done,
-			TapLiveState::default(),
-		));
-		crate::session::tap_runs::register_job(job(
-			"failed-agent",
-			TapJobStatus::Failed,
-			TapLiveState::default(),
-		));
+		crate::session::tap_runs::register_job(job("done-agent", TapJobStatus::Done, TapLiveState::default()));
+		crate::session::tap_runs::register_job(job("failed-agent", TapJobStatus::Failed, TapLiveState::default()));
 		crate::session::tap_runs::register_job(job(
 			"cancelled-agent",
 			TapJobStatus::Cancelled,
@@ -180,10 +172,7 @@ fn last_action_from_message_variants() {
 		"timestamp": 3,
 	}))
 	.expect("text assistant");
-	assert_eq!(
-		last_action_from_message(&msg),
-		Some("Final answer".to_string())
-	);
+	assert_eq!(last_action_from_message(&msg), Some("Final answer".to_string()));
 
 	let msg: crate::session::Message = serde_json::from_value(serde_json::json!({
 		"role": "assistant",
@@ -194,20 +183,14 @@ fn last_action_from_message_variants() {
 		]
 	}))
 	.expect("tool assistant");
-	assert_eq!(
-		last_action_from_message(&msg),
-		Some("view src/a.rs".to_string())
-	);
+	assert_eq!(last_action_from_message(&msg), Some("view src/a.rs".to_string()));
 }
 
 #[test]
 fn elapsed_secs_saturates_on_future_clock() {
 	assert!(elapsed_secs(SystemTime::now()) <= 1);
 	// A start time in the future (clock skew) must not panic or wrap.
-	assert_eq!(
-		elapsed_secs(SystemTime::now() + std::time::Duration::from_secs(600)),
-		0
-	);
+	assert_eq!(elapsed_secs(SystemTime::now() + std::time::Duration::from_secs(600)), 0);
 	// The epoch is far in the past — just needs to be large, not exact.
 	assert!(elapsed_secs(std::time::UNIX_EPOCH) > 1_000_000_000);
 }
@@ -254,8 +237,7 @@ fn write_snapshot(path: &std::path::Path, lines: &[String]) {
 		body.push_str(line);
 		body.push('\n');
 	}
-	let compressed =
-		zstd::encode_all(std::io::Cursor::new(body.as_bytes()), 3).expect("encode zst");
+	let compressed = zstd::encode_all(std::io::Cursor::new(body.as_bytes()), 3).expect("encode zst");
 	std::fs::write(path, compressed).expect("write snapshot");
 }
 
@@ -345,11 +327,7 @@ async fn detail_card_uses_snapshot_for_finished_job() {
 	let session_id = "agents-command-detail".to_string();
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::tap_runs::init_for_session();
-		crate::session::tap_runs::register_job(job(
-			"cov-agents-detail",
-			TapJobStatus::Done,
-			TapLiveState::default(),
-		));
+		crate::session::tap_runs::register_job(job("cov-agents-detail", TapJobStatus::Done, TapLiveState::default()));
 
 		// Detail: finished job → snapshot is authoritative.
 		let data = build_agents_status(&["cov-agents-detail"]).unwrap();

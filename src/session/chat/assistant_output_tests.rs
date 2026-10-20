@@ -18,8 +18,8 @@ use crate::config::Config;
 use crate::providers::ThinkingBlock;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -69,10 +69,7 @@ fn get_content_to_display_without_thinking_returns_content() {
 fn get_content_to_display_skips_thinking_prefix() {
 	let content = "Let me think.\nHere is the answer";
 	let block = thinking("Let me think.");
-	assert_eq!(
-		get_content_to_display(content, &block),
-		"Here is the answer"
-	);
+	assert_eq!(get_content_to_display(content, &block), "Here is the answer");
 }
 
 #[test]

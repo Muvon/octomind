@@ -28,9 +28,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const MARKER: &str = "PTY-E2E-MARKER";
 
 async fn spawn_openai_stub() -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
@@ -85,8 +83,7 @@ async fn spawn_openai_stub() -> String {
 
 fn write_sandbox_config(home: &std::path::Path) {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.supervisor.enabled = false;
@@ -277,9 +274,7 @@ async fn test_interactive_multi_turn_with_commands() {
 async fn test_interactive_retry_after_provider_failure() {
 	use std::sync::atomic::{AtomicUsize, Ordering};
 	// Stateful stub: two 500s, then marker answers forever.
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 	let counter = std::sync::Arc::new(AtomicUsize::new(0));
 	tokio::spawn(async move {

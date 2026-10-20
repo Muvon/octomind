@@ -136,9 +136,7 @@ pub fn stop_health_monitor() {
 }
 
 /// Check a single server's health and restart ONLY if process is dead
-async fn check_server_health_and_restart_if_dead(
-	server: &McpServerConfig,
-) -> Result<(), anyhow::Error> {
+async fn check_server_health_and_restart_if_dead(server: &McpServerConfig) -> Result<(), anyhow::Error> {
 	// A server already in the terminal Failed state gave up on purpose — it
 	// failed its initial startup, or exhausted its restart budget. Don't
 	// recompute it to Dead and re-spawn it: "if it failed to start, leave it."
@@ -190,9 +188,7 @@ async fn check_server_health_and_restart_if_dead(
 	// Update health status and last health check time
 	{
 		let mut restart_info_guard = process::SERVER_RESTART_INFO.write().unwrap();
-		let info = restart_info_guard
-			.entry(server.name().to_string())
-			.or_default();
+		let info = restart_info_guard.entry(server.name().to_string()).or_default();
 		info.health_status = health_status;
 		info.last_health_check = Some(std::time::SystemTime::now());
 	}
@@ -243,10 +239,7 @@ async fn check_server_health_and_restart_if_dead(
 			// Attempt to restart the dead server
 			match restart_dead_server(server).await {
 				Ok(()) => {
-					crate::log_info!(
-						"Health monitor successfully restarted dead server '{}'",
-						server.name()
-					);
+					crate::log_info!("Health monitor successfully restarted dead server '{}'", server.name());
 				}
 				Err(e) => {
 					crate::log_debug!(
@@ -279,11 +272,7 @@ async fn check_server_health_and_restart_if_dead(
 						server.name()
 					);
 					if let Err(e) = process::reset_server_failure_state(server.name()) {
-						crate::log_debug!(
-							"Failed to reset failure state for server '{}': {}",
-							server.name(),
-							e
-						);
+						crate::log_debug!("Failed to reset failure state for server '{}': {}", server.name(), e);
 					}
 				}
 			}
@@ -302,10 +291,7 @@ async fn check_server_health_and_restart_if_dead(
 		}
 		ServerHealth::Restarting => {
 			// Server is currently restarting, just monitor
-			crate::log_debug!(
-				"Health monitor: server '{}' is currently restarting",
-				server.name()
-			);
+			crate::log_debug!("Health monitor: server '{}' is currently restarting", server.name());
 		}
 	}
 
@@ -329,17 +315,11 @@ async fn restart_dead_server(server: &McpServerConfig) -> Result<(), anyhow::Err
 		return Ok(()); // Not an error - just can't restart remote servers
 	}
 
-	crate::log_debug!(
-		"Health monitor attempting to restart dead server '{}'",
-		server.name()
-	);
+	crate::log_debug!("Health monitor attempting to restart dead server '{}'", server.name());
 
 	match process::ensure_server_running(server).await {
 		Ok(_) => {
-			crate::log_info!(
-				"Health monitor successfully restarted dead server '{}'",
-				server.name()
-			);
+			crate::log_info!("Health monitor successfully restarted dead server '{}'", server.name());
 			Ok(())
 		}
 		Err(e) => {
@@ -402,11 +382,7 @@ pub async fn force_health_check(config: &Config) -> Result<(), anyhow::Error> {
 
 	for server in &external_servers {
 		if let Err(e) = check_server_health_and_restart_if_dead(server).await {
-			crate::log_debug!(
-				"Force health check error for server '{}': {}",
-				server.name(),
-				e
-			);
+			crate::log_debug!("Force health check error for server '{}': {}", server.name(), e);
 		}
 	}
 
@@ -422,14 +398,8 @@ fn is_http_auth_failure(error: &rmcp::service::ClientInitializeError) -> bool {
 			is_http_auth_failure(discover) || is_http_auth_failure(fallback)
 		}
 		ClientInitializeError::TransportError { error, .. } => {
-			match error
-				.error
-				.downcast_ref::<StreamableHttpError<reqwest::Error>>()
-			{
-				Some(
-					StreamableHttpError::AuthRequired(_)
-					| StreamableHttpError::InsufficientScope(_),
-				) => true,
+			match error.error.downcast_ref::<StreamableHttpError<reqwest::Error>>() {
+				Some(StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_)) => true,
 				Some(StreamableHttpError::UnexpectedServerResponse(response)) => {
 					// Without WWW-Authenticate, rmcp stores the response status here.
 					// Inspect only that prefix, never URLs, server names, or body text.
@@ -452,9 +422,7 @@ fn is_http_auth_failure(error: &rmcp::service::ClientInitializeError) -> bool {
 /// died), a reconnect attempt doubles as the health probe — the client speaks
 /// MCP 2026-07-28 with automatic legacy fallback, so this exercises the same
 /// path tool execution uses.
-async fn perform_http_health_check(
-	server: &McpServerConfig,
-) -> Result<HttpHealthResult, anyhow::Error> {
+async fn perform_http_health_check(server: &McpServerConfig) -> Result<HttpHealthResult, anyhow::Error> {
 	if server.url().is_none() {
 		return Err(anyhow::anyhow!("No URL configured for HTTP server"));
 	}
@@ -471,10 +439,7 @@ async fn perform_http_health_check(
 	crate::mcp::client::disconnect(server.name());
 	match crate::mcp::client::connect_http(server).await {
 		Ok(_) => {
-			crate::log_debug!(
-				"HTTP health check for '{}': ✅ Healthy (reconnected)",
-				server.name()
-			);
+			crate::log_debug!("HTTP health check for '{}': ✅ Healthy (reconnected)", server.name());
 			Ok(HttpHealthResult::Healthy)
 		}
 		Err(e) => {

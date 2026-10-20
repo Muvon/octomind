@@ -22,40 +22,29 @@ use anyhow::Result;
 /// Accepted levels for the `/effort` error payload, derived from the parser's
 /// own list so the two cannot drift.
 fn valid_levels() -> Vec<&'static str> {
-	ReasoningEffortConfig::ALL
-		.iter()
-		.map(|e| e.as_str())
-		.collect()
+	ReasoningEffortConfig::ALL.iter().map(|e| e.as_str()).collect()
 }
 
-pub fn handle_effort(
-	session: &mut ChatSession,
-	config: &Config,
-	params: &[&str],
-) -> Result<CommandResult> {
+pub fn handle_effort(session: &mut ChatSession, config: &Config, params: &[&str]) -> Result<CommandResult> {
 	if params.is_empty() {
 		let current = session.reasoning_effort.unwrap_or(config.reasoning_effort);
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Effort {
-				old_effort: None,
-				new_effort: current.as_str().to_string(),
-				changed: false,
-				saved: None,
-				save_error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Effort {
+			old_effort: None,
+			new_effort: current.as_str().to_string(),
+			changed: false,
+			saved: None,
+			save_error: None,
+		})));
 	}
 
 	let arg = params[0];
 	let parsed = match ReasoningEffortConfig::parse(arg) {
 		Some(e) => e,
 		None => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: format!("Invalid reasoning effort: '{}'", arg),
-					context: Some(serde_json::json!({ "valid": valid_levels() })),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: format!("Invalid reasoning effort: '{}'", arg),
+				context: Some(serde_json::json!({ "valid": valid_levels() })),
+			})));
 		}
 	};
 
@@ -79,13 +68,11 @@ pub fn handle_effort(
 		Err(e) => (Some(false), Some(e.to_string())),
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Effort {
-			old_effort: Some(old_effort),
-			new_effort: parsed.as_str().to_string(),
-			changed: true,
-			saved,
-			save_error,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Effort {
+		old_effort: Some(old_effort),
+		new_effort: parsed.as_str().to_string(),
+		changed: true,
+		saved,
+		save_error,
+	})))
 }

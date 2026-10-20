@@ -63,11 +63,7 @@ async fn test_add_list_edit_remove_lifecycle() {
 		})))
 		.await
 		.expect("edit");
-		assert!(
-			!edited.is_error(),
-			"edit failed: {}",
-			edited.extract_content()
-		);
+		assert!(!edited.is_error(), "edit failed: {}", edited.extract_content());
 		let listing = render_pending_entries().expect("entries pending");
 		assert!(listing.contains("10m"), "listing after edit: {listing}");
 
@@ -120,10 +116,7 @@ async fn test_idle_default_and_due_flush() {
 
 		// The ID survives the reschedule, otherwise the entry can never be removed.
 		let listing = render_pending_entries().expect("rescheduled entry listed");
-		assert!(
-			listing.contains(&id),
-			"rescheduled entry must keep id {id}: {listing}"
-		);
+		assert!(listing.contains(&id), "rescheduled entry must keep id {id}: {listing}");
 		let removed = execute_schedule_tool(&call(serde_json::json!({
 			"command": "remove",
 			"id": id
@@ -144,10 +137,7 @@ async fn test_error_paths() {
 			(serde_json::json!({"command": "explode"}), "unknown command"),
 			(serde_json::json!({"command": "add"}), "message"),
 			(serde_json::json!({"command": "remove"}), "id"),
-			(
-				serde_json::json!({"command": "remove", "id": "nope1234"}),
-				"nope1234",
-			),
+			(serde_json::json!({"command": "remove", "id": "nope1234"}), "nope1234"),
 			(
 				serde_json::json!({"command": "edit", "id": "nope1234"}),
 				"edit requires at least one of",
@@ -229,10 +219,7 @@ async fn test_has_pending_schedules_and_idle_flags() {
 		.expect("add timed entry");
 		assert!(!timed.is_error(), "content: {}", timed.extract_content());
 		assert!(has_pending_schedules());
-		assert!(
-			!has_pending_idle_schedules(),
-			"timed entry is not idle-mode"
-		);
+		assert!(!has_pending_idle_schedules(), "timed entry is not idle-mode");
 
 		let idle = execute_schedule_tool(&call(serde_json::json!({
 			"command": "add",
@@ -393,10 +380,7 @@ async fn restore_is_a_noop_for_unreadable_and_non_zstd_logs() {
 	crate::session::context::with_session_id(sid, async {
 		restore_schedule_for_session("unreadable");
 		restore_schedule_for_session("garbage");
-		assert!(
-			!has_pending_schedules(),
-			"failed restores must leave the store empty"
-		);
+		assert!(!has_pending_schedules(), "failed restores must leave the store empty");
 	})
 	.await;
 

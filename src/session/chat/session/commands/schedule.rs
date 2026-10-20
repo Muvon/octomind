@@ -36,9 +36,7 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 	// treat it as `add` — matches the common shape and avoids surprising errors.
 	let (subcommand, args_input) = match params.first().copied() {
 		None => ("list", ""),
-		Some(tok) if tok.contains('=') => {
-			("add", slice_after_token(input, "/schedule").unwrap_or(""))
-		}
+		Some(tok) if tok.contains('=') => ("add", slice_after_token(input, "/schedule").unwrap_or("")),
 		Some(tok) => (tok, slice_after_token(input, tok).unwrap_or("")),
 	};
 
@@ -52,14 +50,12 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 			let id = match params.get(1) {
 				Some(id) => *id,
 				None => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Schedule {
-							data: json!({
-								"subcommand": "error",
-								"message": "usage: /schedule remove <id>",
-							}),
-						},
-					)))
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+						data: json!({
+							"subcommand": "error",
+							"message": "usage: /schedule remove <id>",
+						}),
+					})))
 				}
 			};
 			json_params.insert("command".to_string(), json!("remove"));
@@ -70,14 +66,12 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 			match parse_kv_args(args_input, "add", &mut json_params) {
 				Ok(()) => {}
 				Err(e) => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Schedule {
-							data: json!({
-								"subcommand": "error",
-								"message": format!("parse error: {e}"),
-							}),
-						},
-					)))
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+						data: json!({
+							"subcommand": "error",
+							"message": format!("parse error: {e}"),
+						}),
+					})))
 				}
 			}
 		}
@@ -92,33 +86,27 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 			match parse_kv_args(args_input, "edit", &mut json_params) {
 				Ok(()) => {}
 				Err(e) => {
-					return Ok(CommandResult::HandledWithOutput(Box::new(
-						CommandOutput::Schedule {
-							data: json!({
-								"subcommand": "error",
-								"message": format!("parse error: {e}"),
-							}),
-						},
-					)))
+					return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+						data: json!({
+							"subcommand": "error",
+							"message": format!("parse error: {e}"),
+						}),
+					})))
 				}
 			}
 		}
 		"help" | "?" => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Schedule {
-					data: json!({"subcommand": "help"}),
-				},
-			)))
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+				data: json!({"subcommand": "help"}),
+			})))
 		}
 		other => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Schedule {
-					data: json!({
-						"subcommand": "error",
-						"message": format!("unknown subcommand '{other}' — use: list, add, remove, edit, help"),
-					}),
-				},
-			)))
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+				data: json!({
+					"subcommand": "error",
+					"message": format!("unknown subcommand '{other}' — use: list, add, remove, edit, help"),
+				}),
+			})))
 		}
 	}
 
@@ -132,24 +120,20 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 		Ok(result) => {
 			let text = result.extract_content();
 			let is_error = result.is_error();
-			Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Schedule {
-					data: json!({
-						"subcommand": subcommand,
-						"is_error": is_error,
-						"message": text,
-					}),
-				},
-			)))
-		}
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Schedule {
+			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
 				data: json!({
-					"subcommand": "error",
-					"message": format!("schedule tool failed: {e}"),
+					"subcommand": subcommand,
+					"is_error": is_error,
+					"message": text,
 				}),
-			},
-		))),
+			})))
+		}
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Schedule {
+			data: json!({
+				"subcommand": "error",
+				"message": format!("schedule tool failed: {e}"),
+			}),
+		}))),
 	}
 }
 
@@ -157,11 +141,7 @@ pub async fn handle_schedule(input: &str, params: &[&str]) -> Result<CommandResu
 /// optional positional id for `edit`), parsing `key=value` tokens with shell-style
 /// quoting into `json_params`. Unknown keys are passed through verbatim so future
 /// MCP-tool fields keep working without code changes.
-fn parse_kv_args(
-	args_input: &str,
-	subcommand: &str,
-	json_params: &mut Map<String, Value>,
-) -> Result<()> {
+fn parse_kv_args(args_input: &str, subcommand: &str, json_params: &mut Map<String, Value>) -> Result<()> {
 	let tokens = tokenize_shell_like(args_input)?;
 
 	let mut consumed_first_positional = false;
@@ -181,9 +161,7 @@ fn parse_kv_args(
 					consumed_first_positional = true;
 					continue;
 				}
-				anyhow::bail!(
-					"expected key=value token, got '{tok}' (use key=\"value with spaces\")"
-				);
+				anyhow::bail!("expected key=value token, got '{tok}' (use key=\"value with spaces\")");
 			}
 		}
 	}
@@ -198,8 +176,7 @@ fn slice_after_token<'a>(input: &'a str, token: &str) -> Option<&'a str> {
 		let abs = search_start + idx;
 		let before_ok = abs == 0 || input.as_bytes()[abs - 1].is_ascii_whitespace();
 		let after_idx = abs + token.len();
-		let after_ok =
-			after_idx == input.len() || input.as_bytes()[after_idx].is_ascii_whitespace();
+		let after_ok = after_idx == input.len() || input.as_bytes()[after_idx].is_ascii_whitespace();
 		if before_ok && after_ok {
 			return Some(&input[after_idx..]);
 		}

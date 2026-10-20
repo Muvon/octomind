@@ -49,9 +49,8 @@ impl Drop for TestDataDir {
 }
 
 fn test_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -83,8 +82,7 @@ fn session_info(name: &str, created_at: u64) -> SessionInfo {
 
 /// Run one `/list` invocation and return its typed output.
 fn run(session: &ChatSession, config: &Config, params: &[&str]) -> CommandOutput {
-	let result = handle_list(session, config, params)
-		.unwrap_or_else(|e| panic!("list {params:?} errored: {e}"));
+	let result = handle_list(session, config, params).unwrap_or_else(|e| panic!("list {params:?} errored: {e}"));
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected typed output");
 	};
@@ -149,10 +147,7 @@ async fn test_lists_sessions_with_metadata() {
 	assert_eq!(sessions[0]["is_current"], false);
 
 	let text = plain_text.expect("markdown");
-	assert!(
-		text.contains("# Available Sessions (Page 1 of 1)"),
-		"text: {text}"
-	);
+	assert!(text.contains("# Available Sessions (Page 1 of 1)"), "text: {text}");
 	assert!(text.contains("Showing 2 of 2 sessions"), "text: {text}");
 	assert!(text.contains("| alpha |"), "text: {text}");
 	assert!(text.contains("| beta |"), "text: {text}");
@@ -231,9 +226,7 @@ async fn test_pagination_splits_pages_and_renders_navigation() {
 
 	let second = run(&session, &config, &["2"]);
 	let CommandOutput::List {
-		sessions,
-		plain_text,
-		..
+		sessions, plain_text, ..
 	} = second
 	else {
 		panic!("expected List output");
@@ -262,9 +255,7 @@ async fn test_current_session_is_marked() {
 
 	let output = run(&session, &config, &[]);
 	let CommandOutput::List {
-		sessions,
-		plain_text,
-		..
+		sessions, plain_text, ..
 	} = output
 	else {
 		panic!("expected List output");

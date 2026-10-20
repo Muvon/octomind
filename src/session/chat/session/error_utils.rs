@@ -38,18 +38,14 @@ pub fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 					rate_limit_headers.get("input_tokens_remaining"),
 					rate_limit_headers.get("input_tokens_limit"),
 				) {
-					rate_limit_info
-						.push(format!("Input tokens: {}/{}", input_remaining, input_limit));
+					rate_limit_info.push(format!("Input tokens: {}/{}", input_remaining, input_limit));
 				}
 
 				if let (Some(output_remaining), Some(output_limit)) = (
 					rate_limit_headers.get("output_tokens_remaining"),
 					rate_limit_headers.get("output_tokens_limit"),
 				) {
-					rate_limit_info.push(format!(
-						"Output tokens: {}/{}",
-						output_remaining, output_limit
-					));
+					rate_limit_info.push(format!("Output tokens: {}/{}", output_remaining, output_limit));
 				}
 
 				if !rate_limit_info.is_empty() {
@@ -62,10 +58,7 @@ pub fn display_rate_limit_info(exchange: &crate::session::ProviderExchange) {
 					rate_limit_headers.get("requests_remaining"),
 					rate_limit_headers.get("requests_limit"),
 				) {
-					rate_limit_info.push(format!(
-						"Requests: {}/{}",
-						requests_remaining, requests_limit
-					));
+					rate_limit_info.push(format!("Requests: {}/{}", requests_remaining, requests_limit));
 				}
 
 				if let (Some(tokens_remaining), Some(tokens_limit)) = (
@@ -140,17 +133,15 @@ pub fn format_provider_error(provider_name: &str, error: &anyhow::Error) -> Stri
 
 	// Check for other common error patterns and provide better context
 	if error_str.contains("rate limit") || error_str.contains("Rate limit") {
-		return "Rate limit exceeded - you're making requests too quickly. Wait a moment before trying again.".to_string();
+		return "Rate limit exceeded - you're making requests too quickly. Wait a moment before trying again."
+			.to_string();
 	}
 
 	if error_str.contains("timeout") || error_str.contains("Timeout") {
 		return "Request timed out - the provider took too long to respond. Try again.".to_string();
 	}
 
-	if error_str.contains("API key")
-		|| error_str.contains("authentication")
-		|| error_str.contains("unauthorized")
-	{
+	if error_str.contains("API key") || error_str.contains("authentication") || error_str.contains("unauthorized") {
 		return format!(
 			"Authentication failed - check your {} API key configuration.",
 			provider_name
@@ -185,12 +176,11 @@ pub fn handle_api_error(
 
 	// Print error with provider context
 	// Extract provider name from the model string
-	let provider_name =
-		if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
-			provider
-		} else {
-			"unknown provider".to_string()
-		};
+	let provider_name = if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
+		provider
+	} else {
+		"unknown provider".to_string()
+	};
 
 	// Format error message with better context
 	let error_message = format_provider_error(&provider_name, error);
@@ -213,11 +203,7 @@ pub fn handle_api_error(
 /// Provider-specific credentials help, only for a failure classified as an
 /// auth failure: beside a server fault or a timeout, "check your API key"
 /// points away from the actual problem.
-fn credential_hint(
-	provider_name: &str,
-	error: &anyhow::Error,
-	error_message: &str,
-) -> Option<&'static str> {
+fn credential_hint(provider_name: &str, error: &anyhow::Error, error_message: &str) -> Option<&'static str> {
 	if crate::telemetry::api_error_kind(error) != "auth" {
 		return None;
 	}
@@ -262,20 +248,15 @@ fn credential_hint(
 pub fn handle_followup_api_error(model: &str, error: &anyhow::Error, mode: OutputMode) {
 	crate::telemetry::record_api_error(error);
 
-	let provider_name =
-		if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
-			provider
-		} else {
-			"unknown provider".to_string()
-		};
+	let provider_name = if let Ok((provider, _)) = crate::providers::ProviderFactory::parse_model(model) {
+		provider
+	} else {
+		"unknown provider".to_string()
+	};
 
 	let error_message = format_provider_error(&provider_name, error);
 	if mode.should_suppress_cli_output() {
-		log_info!(
-			"Follow-up call to {} failed: {}",
-			provider_name,
-			error_message
-		);
+		log_info!("Follow-up call to {} failed: {}", provider_name, error_message);
 		return;
 	}
 

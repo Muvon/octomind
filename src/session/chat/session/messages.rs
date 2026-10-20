@@ -39,12 +39,7 @@ impl ChatSession {
 	/// Re-materialize the runtime pack if compression or error cleanup removed its
 	/// transient message. At most one copy may exist in the live request context.
 	pub fn ensure_active_memory_pack_message(&mut self) {
-		if self
-			.session
-			.messages
-			.iter()
-			.any(Self::is_active_memory_message)
-		{
+		if self.session.messages.iter().any(Self::is_active_memory_message) {
 			return;
 		}
 		let Some(pack) = self.active_memory_pack.as_deref() else {
@@ -111,15 +106,8 @@ impl ChatSession {
 			use std::io::{self, Write};
 
 			println!();
-			println!(
-				"{}",
-				"⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold()
-			);
-			println!(
-				"{} ${:.5}",
-				"Current session cost:".bright_cyan(),
-				current_cost
-			);
+			println!("{}", "⚠️  SPENDING THRESHOLD REACHED ⚠️".bright_yellow().bold());
+			println!("{} ${:.5}", "Current session cost:".bright_cyan(), current_cost);
 			println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
 			println!(
 				"{} ${:.5}",
@@ -127,10 +115,7 @@ impl ChatSession {
 				cost_since_checkpoint
 			);
 			println!();
-			println!(
-				"{}",
-				"Continuing may result in additional charges.".bright_yellow()
-			);
+			println!("{}", "Continuing may result in additional charges.".bright_yellow());
 
 			// Auto-decline in non-interactive mode (run command, piped input, etc.)
 			if !std::io::stdin().is_terminal() {
@@ -143,10 +128,7 @@ impl ChatSession {
 			}
 
 			// Interactive mode - ask user for confirmation
-			print!(
-				"{}",
-				"Do you want to continue? (y/N): ".bright_white().bold()
-			);
+			print!("{}", "Do you want to continue? (y/N): ".bright_white().bold());
 			io::stdout().flush()?;
 
 			let mut input = String::new();
@@ -156,10 +138,7 @@ impl ChatSession {
 			if response == "y" || response == "yes" {
 				// User confirmed, reset checkpoint to current cost
 				self.spending_threshold_checkpoint = current_cost;
-				println!(
-					"{}",
-					"✓ Continuing session. Threshold checkpoint reset.".bright_green()
-				);
+				println!("{}", "✓ Continuing session. Threshold checkpoint reset.".bright_green());
 				println!();
 				Ok(true)
 			} else {
@@ -193,28 +172,16 @@ impl ChatSession {
 				use colored::*;
 
 				println!();
-				println!(
-					"{}",
-					"⚠️  REQUEST SPENDING THRESHOLD EXCEEDED ⚠️"
-						.bright_red()
-						.bold()
-				);
+				println!("{}", "⚠️  REQUEST SPENDING THRESHOLD EXCEEDED ⚠️".bright_red().bold());
 				println!(
 					"{} ${:.5}",
 					"Current request cost:".bright_cyan(),
 					cost_since_request_start
 				);
 				println!("{} ${:.5}", "Threshold:".bright_cyan(), threshold);
-				println!(
-					"{} ${:.5}",
-					"Total session cost:".bright_cyan(),
-					current_cost
-				);
+				println!("{} ${:.5}", "Total session cost:".bright_cyan(), current_cost);
 				println!();
-				println!(
-					"{}",
-					"Request execution stopped to prevent overspending.".bright_red()
-				);
+				println!("{}", "Request execution stopped to prevent overspending.".bright_red());
 				println!();
 			}
 
@@ -236,13 +203,9 @@ impl ChatSession {
 	fn ensure_file_initialized(&mut self) -> Result<()> {
 		if let Some(session_file) = &self.session.session_file {
 			if !session_file.exists() {
-				let summary_entry =
-					crate::session::persistence::summary_log_entry(&self.session.info);
+				let summary_entry = crate::session::persistence::summary_log_entry(&self.session.info);
 				let session_file = session_file.clone();
-				crate::session::append_to_session_file(
-					&session_file,
-					&serde_json::to_string(&summary_entry)?,
-				)?;
+				crate::session::append_to_session_file(&session_file, &serde_json::to_string(&summary_entry)?)?;
 			}
 		}
 		Ok(())
@@ -308,18 +271,15 @@ impl ChatSession {
 			// Close the previous request's cost/time window before the new one
 			// opens, so `/report` can difference the two. Best-effort: a failed
 			// checkpoint costs a report row's numbers, never the message.
-			if let Err(error) =
-				crate::session::logger::log_stats_checkpoint(session_file, &self.session.info)
-			{
+			if let Err(error) = crate::session::logger::log_stats_checkpoint(session_file, &self.session.info) {
 				log_debug!("Stats checkpoint before user message failed: {}", error);
 			}
 			let message_json = serde_json::to_string(&message)?;
 			crate::session::append_to_session_file(session_file, &message_json)?;
 		}
-		let previous_request =
-			crate::session::latest_real_user_task_content(&self.session.messages)
-				.unwrap_or_default()
-				.to_string();
+		let previous_request = crate::session::latest_real_user_task_content(&self.session.messages)
+			.unwrap_or_default()
+			.to_string();
 		crate::supervisor::authorizer::record_user_input(self, &message);
 		self.session.messages.push(message);
 		self.begin_turn_timing();
@@ -540,18 +500,14 @@ impl ChatSession {
 
 				// Check if we should automatically move the cache marker
 				let cache_manager = crate::session::cache::CacheManager::new();
-				let supports_caching =
-					crate::session::model_supports_caching(&self.session.info.model);
+				let supports_caching = crate::session::model_supports_caching(&self.session.info.model);
 				if let Ok(true) = cache_manager.check_and_apply_auto_cache_threshold(
 					&mut self.session,
 					config,
 					supports_caching,
 					role,
 				) {
-					log_info!(
-						"{}",
-						"Auto-cache threshold reached - cache checkpoint applied."
-					);
+					log_info!("{}", "Auto-cache threshold reached - cache checkpoint applied.");
 				}
 
 				let raw_cost = ex

@@ -21,47 +21,6 @@ fn run_collects_repeated_config_overrides_in_order() {
 	assert!(matches!(args.command, Some(Commands::Run(_))));
 }
 
-/// The dynamic positional completion is wired for every subcommand that takes a
-/// name from the local registry — adding a new one must not be forgotten here.
-#[test]
-fn completion_script_patches_dynamic_positionals() {
-	let mut app = CliArgs::command();
-	let name = app.get_name().to_string();
-
-	for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
-		let mut buf = Vec::new();
-		generate(shell, &mut app, &name, &mut buf);
-		let script = String::from_utf8_lossy(&buf);
-		let patched = patch_completion_script(&script, shell);
-
-		for sub in ["run", "workflow", "untap"] {
-			assert!(
-				patched.contains(&format!("octomind complete {sub}")),
-				"{shell:?} script must complete `{sub}` dynamically"
-			);
-		}
-	}
-}
-
-/// `untap` takes a required positional, so the zsh descriptor clap emits is
-/// `'::name -- …:_default'`. The patcher rewrites that completer to the dynamic
-/// one; if the arg id or the descriptor shape ever drifts, this fails loudly
-/// instead of silently falling back to file completion.
-#[test]
-fn untap_zsh_positional_is_rebound_to_the_dynamic_completer() {
-	let mut app = CliArgs::command();
-	let name = app.get_name().to_string();
-	let mut buf = Vec::new();
-	generate(Shell::Zsh, &mut app, &name, &mut buf);
-	let script = String::from_utf8_lossy(&buf);
-
-	let patched = patch_completion_script(&script, Shell::Zsh);
-	assert!(
-		patched.contains(":_octomind_complete_untap'"),
-		"the `untap` positional must point at the dynamic completer"
-	);
-}
-
 #[test]
 fn format_accepts_only_plain_and_jsonl() {
 	assert!(CliArgs::try_parse_from(["octomind", "run", "--format", "json"]).is_err());

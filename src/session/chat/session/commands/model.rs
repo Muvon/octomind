@@ -36,14 +36,15 @@ pub fn handle_model(session: &mut ChatSession, params: &[&str]) -> Result<Comman
 	// Change to a new model (runtime only)
 	let new_model = params.join(" ");
 
-	// Reject anything that is not provider:model before touching the session —
-	// the same check `config --model` applies. A value like "/model gpt5" would
-	// otherwise be saved and fail on the next request, with no path back short
-	// of editing the session file.
-	if !new_model.contains(':') {
+	// Reject anything config validation would reject before touching the session —
+	// the same `get_provider_for_model` check `Config::validate` runs on the main
+	// model (empty provider or model, unknown provider, unsupported model). A value
+	// like "/model gpt5" would otherwise be saved and fail on the next request,
+	// with no path back short of editing the session file.
+	if let Err(e) = crate::providers::ProviderFactory::get_provider_for_model(&new_model) {
 		return Ok(CommandResult::HandledWithOutput(Box::new(
 			CommandOutput::Error {
-				error: format!("Invalid model: '{}'", new_model),
+				error: format!("Invalid model '{}': {}", new_model, e),
 				context: Some(serde_json::json!({
 					"expected": "provider:model",
 					"example": "openrouter:anthropic/claude-3.5-sonnet"

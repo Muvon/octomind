@@ -150,7 +150,10 @@ fn parse_tap_arg(arg: &str) -> Result<Tap> {
 	let name = parts[0].trim().to_string();
 
 	// Validate name format
-	if !name.contains('/') || name.split('/').count() != 2 {
+	let mut halves = name.split('/');
+	let user = halves.next().unwrap_or_default();
+	let repo = halves.next().unwrap_or_default();
+	if halves.next().is_some() || user.is_empty() || repo.is_empty() {
 		anyhow::bail!("Tap name must be in 'user/repo' format, got: {}", name);
 	}
 

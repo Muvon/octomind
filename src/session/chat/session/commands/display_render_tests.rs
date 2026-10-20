@@ -975,6 +975,25 @@ fn test_render_loglevel_direct_arms() {
 }
 
 #[test]
+fn test_help_rows_mention_aliases() {
+	use crate::session::chat::commands::*;
+
+	let rows = help_builtin_rows();
+	assert!(
+		rows.iter()
+			.any(|(cmd, desc)| *cmd == HELP_COMMAND && desc.contains(HELP_COMMAND_ALT)),
+		"help row must mention the {} alias",
+		HELP_COMMAND_ALT
+	);
+	assert!(
+		rows.iter()
+			.any(|(cmd, desc)| *cmd == EXIT_COMMAND && desc.contains(QUIT_COMMAND)),
+		"exit row must mention the {} alias",
+		QUIT_COMMAND
+	);
+}
+
+#[test]
 fn test_render_help_with_custom_commands() {
 	use crate::session::layers::layer_trait::{InputMode, LayerConfig, OutputMode, OutputRole};
 

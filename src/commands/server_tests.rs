@@ -15,8 +15,8 @@
 //! Tests for `octomind server`: argument parsing, tag resolution failures,
 //! and a full startup against an ephemeral port with a sandboxed data dir.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 use octomind::Config;
 use serial_test::serial;

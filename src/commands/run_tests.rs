@@ -15,8 +15,8 @@
 //! Tests for `octomind run`: which session `resumed_session_name` resolves and
 //! how `RunArgs` parses its flags.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";

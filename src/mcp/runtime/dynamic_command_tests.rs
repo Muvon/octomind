@@ -17,8 +17,8 @@
 //! validation arm. Connection-making actions (enable) are exercised only on
 //! their error paths — nothing here spawns a real server process.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 
 fn call(params: serde_json::Value) -> crate::mcp::McpToolCall {

@@ -17,8 +17,8 @@
 //! deterministic arms — nothing here depends on which taps happen to be
 //! installed on the machine (list is asserted as "answers", not contents).
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 
 fn cap_call(params: serde_json::Value) -> McpToolCall {

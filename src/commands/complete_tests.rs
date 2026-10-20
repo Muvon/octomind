@@ -16,8 +16,8 @@
 //! sandboxed `OCTOMIND_DATA_DIR` (tap enumeration is local-only, no network)
 //! and the template config's roles.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use serial_test::serial;
 use std::path::PathBuf;
 

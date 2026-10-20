@@ -18,8 +18,8 @@
 //! are exercised without any real API. Env-mutating tests are `#[serial]` and
 //! hold `ENV_LOCK` across the awaited round trips.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

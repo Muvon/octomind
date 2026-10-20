@@ -17,8 +17,8 @@
 //! through `execute`, validation error paths, and tap-workflow listing under
 //! a sandboxed `OCTOMIND_DATA_DIR`.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use octomind::workflow::schema::{ConditionalStep, LoopStep, ParallelStep};
 use serial_test::serial;
 use tempfile::tempdir;

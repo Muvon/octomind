@@ -15,8 +15,8 @@
 //! Tests for `octomind untap`: argument parsing plus removal flows against a
 //! sandboxed data dir, seeded through the same `taps::add_tap` the CLI uses.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 use octomind::agent::taps;
 use serial_test::serial;

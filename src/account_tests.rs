@@ -18,8 +18,8 @@
 //! touches a process-global env var is `#[serial]`; async ones also hold
 //! `ENV_LOCK` for the duration of the awaited round trips.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use serial_test::serial;
 use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

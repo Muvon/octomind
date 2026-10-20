@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use crate::websocket::{
 	AssistantPayload, CostPayload, McpNotificationPayload, ThinkingPayload, ToolResultPayload, ToolUsePayload,
 };

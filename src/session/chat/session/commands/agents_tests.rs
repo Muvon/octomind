@@ -16,8 +16,8 @@
 //! the list view, the unknown-id detail error, and the stats aggregation
 //! used by `/info`.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 use crate::session::tap_runs::{TapJob, TapJobStatus, TapLiveState, TapLiveUsage};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;

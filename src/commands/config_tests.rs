@@ -18,8 +18,8 @@
 //! `OCTOMIND_DATA_DIR` so they write a throwaway config file that is then
 //! reloaded to prove the save round-trip.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use octomind::config::LogLevel;
 use serial_test::serial;
 use std::path::PathBuf;

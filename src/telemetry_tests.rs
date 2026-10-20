@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::session::chat::test_support::EnvGuard;
 use super::*;
+use crate::session::chat::test_support::EnvGuard;
 
 #[test]
 fn builtin_tools_pass_through_and_mcp_tools_collapse_to_a_category() {

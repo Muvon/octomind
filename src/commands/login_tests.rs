@@ -16,8 +16,8 @@
 //! against a local HTTP stub speaking the kisscore `[err, data]` envelope.
 //! Env-touching tests are `#[serial]` because env vars are process-global.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 use octomind::account::{self, Session};
 use serial_test::serial;

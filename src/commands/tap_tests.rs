@@ -16,8 +16,8 @@
 //! sandboxed data dir. Local-path taps avoid git entirely; the GitHub-clone
 //! branch needs the network and is deliberately not exercised here.
 
-use crate::commands::test_support::EnvGuard;
 use super::*;
+use crate::commands::test_support::EnvGuard;
 use clap::Parser;
 use octomind::agent::taps;
 use serial_test::serial;

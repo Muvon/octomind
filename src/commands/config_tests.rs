@@ -99,6 +99,45 @@ fn test_show_configuration_renders() {
 }
 
 #[test]
+fn test_root_model_row_marks_the_shipped_default() {
+	// The template config is the shipped default, so its model must be
+	// labelled "(default)".
+	let config = template_config();
+	let label = root_model_label(&config);
+	assert!(
+		label.contains("(default)"),
+		"shipped default must be labelled (default), got: {label}"
+	);
+}
+
+#[test]
+fn test_root_model_row_does_not_mark_a_user_choice_as_default() {
+	// `openrouter:anthropic/claude-3.5-haiku` was previously hard-coded as the
+	// default; a user who picked it on purpose must not be told it is one.
+	let mut config = template_config();
+	config.model = "openrouter:anthropic/claude-3.5-haiku".to_string();
+	let label = root_model_label(&config);
+	assert!(
+		!label.contains("(default)"),
+		"an explicit user model must not be labelled (default), got: {label}"
+	);
+	assert!(
+		label.contains("openrouter:anthropic/claude-3.5-haiku"),
+		"the user's model must still be shown, got: {label}"
+	);
+}
+
+#[test]
+fn test_default_model_matches_the_template() {
+	// The label above can only be right while this accessor reads the shipped
+	// template; pin it so a template edit and this comparison cannot drift.
+	assert_eq!(
+		octomind::config::validation::default_model(),
+		"octohub:auto"
+	);
+}
+
+#[test]
 fn test_validate_template_config() {
 	let mut a = args();
 	a.validate = true;

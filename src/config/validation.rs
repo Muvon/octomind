@@ -269,6 +269,18 @@ static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock:
 	toml::from_str(template).expect("config-templates/default.toml must parse")
 });
 
+/// The shipped default root model (`[model].name` in
+/// `config-templates/default.toml`). Callers that need to label or compare the
+/// untouched default must use this instead of a literal, so the value can only
+/// change in one place.
+pub fn default_model() -> &'static str {
+	DEFAULT_TEMPLATE
+		.get("model")
+		.and_then(|m| m.get("name"))
+		.and_then(toml::Value::as_str)
+		.expect("config-templates/default.toml must define [model].name")
+}
+
 /// Field names of each `McpServerConfig` variant, `type` tag included.
 /// `test_validate_accepts_every_mcp_server_field` fails when these drift from the enum.
 const BUILTIN_SERVER_KEYS: &[&str] = &["type", "name", "timeout_seconds", "tools", "auto_bind"];

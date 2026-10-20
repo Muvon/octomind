@@ -682,6 +682,18 @@ fn list_markdown_themes() {
 	println!();
 }
 
+/// Label for the `root model` row: the shipped default (from
+/// `config-templates/default.toml`) is marked `(default)`; anything the user
+/// picked themselves is shown as-is. Kept separate from the rendering so the
+/// decision is testable without ANSI colour in the way.
+fn root_model_label(config: &Config) -> String {
+	if config.model == octomind::config::validation::default_model() {
+		format!("{} (default)", config.get_effective_model())
+	} else {
+		config.model.clone()
+	}
+}
+
 /// Display comprehensive configuration information with defaults
 fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	let config_path = directories::get_config_file_path()?;
@@ -697,13 +709,7 @@ fn show_configuration(config: &Config) -> Result<(), anyhow::Error> {
 	let kw = key_width(["root model", "log level", "markdown", "theme", "max tokens"]);
 	block_row(
 		"root model",
-		&if config.model.is_empty() || config.model == "openrouter:anthropic/claude-3.5-haiku" {
-			format!("{} (default)", config.get_effective_model())
-				.bright_white()
-				.to_string()
-		} else {
-			config.model.bright_white().to_string()
-		},
+		&root_model_label(config).bright_white().to_string(),
 		kw,
 	);
 	block_row("log level", &format!("{:?}", config.log_level), kw);

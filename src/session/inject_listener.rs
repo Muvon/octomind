@@ -106,7 +106,7 @@ mod imp {
 		let listener = UnixListener::bind(&sock)?;
 		log_debug!("Inject listener bound to {:?}", sock);
 
-		// Write PID file so `octomind inject` can verify the process is alive.
+		// Write PID file so `octomind send` can verify the process is alive.
 		let pid = std::process::id();
 		let pid_file = pid_path(session_name)?;
 		std::fs::write(&pid_file, pid.to_string())?;

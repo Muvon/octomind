@@ -20,7 +20,7 @@ use std::io::{self, IsTerminal, Read};
 
 #[derive(Args, Debug, Default)]
 pub struct RunArgs {
-	/// Agent tag (e.g. `developer:general`) or role name (e.g. `developer`).
+	/// Agent tag (e.g. `developer:general`) or role name (e.g. `assistant`).
 	/// Omit to use the default role from config.
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,
@@ -48,8 +48,7 @@ pub struct RunArgs {
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 
-	/// Keep the session alive indefinitely, waiting for messages injected via `octomind inject`.
-	/// Implies non-interactive mode (requires --format).
+	/// Keep the session alive indefinitely, waiting for messages injected via `octomind send`.
 	#[arg(long)]
 	pub daemon: bool,
 

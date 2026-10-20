@@ -110,12 +110,7 @@ fn migrate_legacy_history_if_needed(role: &str) -> Result<()> {
 			.truncate(true)
 			.write(true)
 			.open(&role_history_path)
-			.with_context(|| {
-				format!(
-					"Failed to create role history file: {:?}",
-					role_history_path
-				)
-			})?;
+			.with_context(|| format!("Failed to create role history file: {:?}", role_history_path))?;
 
 		writeln!(role_file, "# OCTOMIND_HISTORY_VERSION=1")?;
 
@@ -131,17 +126,10 @@ fn migrate_legacy_history_if_needed(role: &str) -> Result<()> {
 
 		// Rename legacy backup to mark as migrated
 		let migrated_path = data_dir.join("history.migrated");
-		fs::rename(&legacy_backup, &migrated_path).with_context(|| {
-			format!(
-				"Failed to rename legacy backup file to: {:?}",
-				migrated_path
-			)
-		})?;
+		fs::rename(&legacy_backup, &migrated_path)
+			.with_context(|| format!("Failed to rename legacy backup file to: {:?}", migrated_path))?;
 
-		crate::log_debug!(
-			"Successfully migrated legacy history to: {:?}",
-			role_history_path
-		);
+		crate::log_debug!("Successfully migrated legacy history to: {:?}", role_history_path);
 		crate::log_debug!("Legacy file marked as migrated: {:?}", migrated_path);
 	}
 

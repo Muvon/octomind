@@ -24,11 +24,7 @@ use anyhow::Result;
 /// Run a matching `[[pipe]]` on `input` and return the transformed input.
 /// Returns the original input when no pipe matched. Errors are hard stops
 /// (non-zero exit, timeout, etc.).
-pub async fn run_pipe_if_enabled(
-	input: &str,
-	role: &str,
-	first_message_processed: bool,
-) -> Result<String> {
+pub async fn run_pipe_if_enabled(input: &str, role: &str, first_message_processed: bool) -> Result<String> {
 	let Some(session_id) = crate::session::context::current_session_id() else {
 		return Ok(input.to_string());
 	};
@@ -38,11 +34,7 @@ pub async fn run_pipe_if_enabled(
 	match crate::session::pipe::run_pipe(&session_id, role, input, first_message_processed).await {
 		Ok(Some(transformed)) => {
 			crate::supervisor::authorizer::note_pipe_input(&session_id, input, &transformed);
-			log_info!(
-				"Pipe transformed input ({} → {} bytes)",
-				input.len(),
-				transformed.len()
-			);
+			log_info!("Pipe transformed input ({} → {} bytes)", input.len(), transformed.len());
 			Ok(transformed)
 		}
 		Ok(None) => Ok(input.to_string()),

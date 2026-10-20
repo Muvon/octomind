@@ -95,12 +95,7 @@ pub fn machine_id() -> Result<String> {
 			return Ok(id);
 		}
 	}
-	let id: String = uuid::Uuid::new_v4()
-		.simple()
-		.to_string()
-		.chars()
-		.take(12)
-		.collect();
+	let id: String = uuid::Uuid::new_v4().simple().to_string().chars().take(12).collect();
 	std::fs::write(&path, &id).with_context(|| format!("could not write {}", path.display()))?;
 	Ok(id)
 }
@@ -133,9 +128,7 @@ fn client() -> Result<reqwest::Client> {
 
 /// kisscore answers `[err, data]` on every status, so the error CODE is what we
 /// surface — an HTTP number tells the user nothing they can act on.
-async fn envelope<T: for<'de> Deserialize<'de>>(
-	res: reqwest::Response,
-) -> Result<std::result::Result<T, String>> {
+async fn envelope<T: for<'de> Deserialize<'de>>(res: reqwest::Response) -> Result<std::result::Result<T, String>> {
 	let parsed: (Option<String>, Option<serde_json::Value>) = res
 		.json()
 		.await
@@ -169,11 +162,8 @@ struct Refreshed {
 /// Trade the refresh token for a fresh jwt and persist it. `false` = the refresh
 /// token is dead too (idle past its window, or revoked): sign in again.
 async fn refresh(s: &Session) -> Result<bool> {
-	let res: std::result::Result<Refreshed, String> = post_public(
-		"/auth/refresh",
-		serde_json::json!({ "refresh_token": s.refresh_token }),
-	)
-	.await?;
+	let res: std::result::Result<Refreshed, String> =
+		post_public("/auth/refresh", serde_json::json!({ "refresh_token": s.refresh_token })).await?;
 	match res {
 		Ok(r) => {
 			save_session(&Session {
@@ -356,12 +346,7 @@ pub async fn poll_login(device_code: &str, interval: Duration) -> Result<LoginCl
 			bail!("login timed out — start again");
 		}
 		tokio::time::sleep(interval).await;
-		match post_public::<LoginClaim>(
-			"/auth/cli/token",
-			serde_json::json!({ "device_code": device_code }),
-		)
-		.await?
-		{
+		match post_public::<LoginClaim>("/auth/cli/token", serde_json::json!({ "device_code": device_code })).await? {
 			Ok(c) => return Ok(c),
 			Err(e) if e == "pending" => continue,
 			Err(e) if e == "expired" => bail!("that code expired — start again"),
@@ -407,8 +392,7 @@ fn repoint(url: &str, panel: &str) -> String {
 fn write_hub_key(key: &str) -> Result<PathBuf> {
 	let path = get_config_dir()?.join(".env");
 	let existing = std::fs::read_to_string(&path).unwrap_or_default();
-	std::fs::write(&path, upsert(&existing, key))
-		.with_context(|| format!("could not write {}", path.display()))?;
+	std::fs::write(&path, upsert(&existing, key)).with_context(|| format!("could not write {}", path.display()))?;
 
 	// It holds a live credential: keep it owner-only.
 	#[cfg(unix)]
@@ -424,11 +408,7 @@ fn upsert(existing: &str, key: &str) -> String {
 	let prefix = format!("{}=", HUB_KEY_ENV);
 	let mut out: Vec<&str> = existing
 		.lines()
-		.filter(|l| {
-			!l.trim_start()
-				.trim_start_matches("export ")
-				.starts_with(&prefix)
-		})
+		.filter(|l| !l.trim_start().trim_start_matches("export ").starts_with(&prefix))
 		.collect();
 	let line = format!("{prefix}{key}");
 	out.push(&line);
@@ -439,10 +419,7 @@ fn upsert(existing: &str, key: &str) -> String {
 /// when there is no key, or the server rejects/predates it — a self-hosted
 /// octohub key means nothing to this API and must degrade silently.
 async fn hub_usage() -> Result<Option<HubUsageResponse>> {
-	let Some(key) = std::env::var(HUB_KEY_ENV)
-		.ok()
-		.filter(|k| !k.trim().is_empty())
-	else {
+	let Some(key) = std::env::var(HUB_KEY_ENV).ok().filter(|k| !k.trim().is_empty()) else {
 		return Ok(None);
 	};
 	let res = client()?

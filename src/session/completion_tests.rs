@@ -50,10 +50,7 @@ fn rejects_non_object_schema() {
 	let err = load_structured_output_schema(f.path().to_str().unwrap())
 		.expect_err("array must be rejected")
 		.to_string();
-	assert!(
-		err.contains("must contain a JSON object"),
-		"unexpected error: {err}"
-	);
+	assert!(err.contains("must contain a JSON object"), "unexpected error: {err}");
 }
 
 #[test]
@@ -72,8 +69,5 @@ fn reports_missing_schema_file() {
 	let err = load_structured_output_schema("/nonexistent/path/schema-xyzzy.json")
 		.expect_err("missing file must error")
 		.to_string();
-	assert!(
-		err.contains("Failed to read schema file"),
-		"unexpected error: {err}"
-	);
+	assert!(err.contains("Failed to read schema file"), "unexpected error: {err}");
 }

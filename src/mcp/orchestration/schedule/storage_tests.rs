@@ -39,12 +39,7 @@ fn new_mints_short_unique_ids_and_defaults_to_time_mode() {
 	assert_eq!(b.trigger_mode, TriggerMode::Time);
 	assert_eq!(a.interval_secs, None);
 	assert_eq!(b.interval_secs, Some(60));
-	assert!(
-		a.created_at
-			.signed_duration_since(Local::now())
-			.num_seconds()
-			.abs() <= 5
-	);
+	assert!(a.created_at.signed_duration_since(Local::now()).num_seconds().abs() <= 5);
 }
 
 #[test]
@@ -62,10 +57,7 @@ fn countdown_formats_by_magnitude() {
 	let idle = ScheduleEntry::new_idle("d".into(), "m".into(), false);
 	assert_eq!(idle.countdown(), "when idle");
 
-	assert_eq!(
-		time_entry("p", Local::now() - Duration::seconds(60)).countdown(),
-		"now"
-	);
+	assert_eq!(time_entry("p", Local::now() - Duration::seconds(60)).countdown(), "now");
 	// countdown() samples Local::now() itself, so a moment elapses between
 	// building the entry and formatting it — assert the format category with
 	// ±2s of slack instead of the exact second count.
@@ -109,10 +101,7 @@ fn reschedule_skips_catch_up_burst_when_overdue() {
 	e.interval_secs = Some(3600);
 	let next = e.reschedule();
 	// trigger_at + interval is still in the past → skip to one interval from now.
-	let from_now = next
-		.trigger_at
-		.signed_duration_since(Local::now())
-		.num_seconds();
+	let from_now = next.trigger_at.signed_duration_since(Local::now()).num_seconds();
 	assert!((3590..=3610).contains(&from_now), "from_now was {from_now}");
 }
 
@@ -123,11 +112,7 @@ fn reschedule_idle_entry_resets_trigger_to_now() {
 	let next = e.reschedule();
 	assert_eq!(next.id, e.id);
 	assert_eq!(next.trigger_mode, TriggerMode::Idle);
-	let drift = next
-		.trigger_at
-		.signed_duration_since(Local::now())
-		.num_seconds()
-		.abs();
+	let drift = next.trigger_at.signed_duration_since(Local::now()).num_seconds().abs();
 	assert!(drift <= 5, "drift was {drift}");
 }
 
@@ -171,18 +156,12 @@ fn store_add_remove_roundtrip() {
 	let mut store = ScheduleStore::new();
 	assert!(store.is_empty());
 
-	let id = store.add(time_entry(
-		"addremove",
-		Local::now() + Duration::minutes(10),
-	));
+	let id = store.add(time_entry("addremove", Local::now() + Duration::minutes(10)));
 	assert_eq!(id, "addremove");
 	assert_eq!(store.entries().len(), 1);
 
 	assert!(store.remove("addremove"));
-	assert!(
-		!store.remove("addremove"),
-		"second remove must report false"
-	);
+	assert!(!store.remove("addremove"), "second remove must report false");
 	assert!(!store.remove("never-existed"));
 	assert!(store.is_empty());
 }
@@ -190,38 +169,22 @@ fn store_add_remove_roundtrip() {
 #[test]
 fn store_edit_updates_only_provided_fields() {
 	let mut store = ScheduleStore::new();
-	store.add(time_entry(
-		"edit00001",
-		Local::now() + Duration::minutes(10),
-	));
+	store.add(time_entry("edit00001", Local::now() + Duration::minutes(10)));
 
 	assert!(store.edit("edit00001", Some("new desc".into()), None, None, None));
 	let e = &store.entries()[0];
 	assert_eq!(e.description, "new desc");
-	assert_eq!(
-		e.message, "msg-edit00001",
-		"unprovided fields stay untouched"
-	);
+	assert_eq!(e.message, "msg-edit00001", "unprovided fields stay untouched");
 	assert_eq!(e.interval_secs, None);
 
-	assert!(store.edit(
-		"edit00001",
-		None,
-		Some("new msg".into()),
-		None,
-		Some(Some(300))
-	));
+	assert!(store.edit("edit00001", None, Some("new msg".into()), None, Some(Some(300))));
 	let e = &store.entries()[0];
 	assert_eq!(e.description, "new desc");
 	assert_eq!(e.message, "new msg");
 	assert_eq!(e.interval_secs, Some(300));
 
 	assert!(store.edit("edit00001", None, None, None, Some(None)));
-	assert_eq!(
-		store.entries()[0].interval_secs,
-		None,
-		"Some(None) clears the interval"
-	);
+	assert_eq!(store.entries()[0].interval_secs, None, "Some(None) clears the interval");
 
 	assert!(!store.edit("missing-id", Some("x".into()), None, None, None));
 }
@@ -242,11 +205,7 @@ fn store_edit_retriggers_sorting_by_new_time() {
 #[test]
 fn pop_due_ignores_idle_and_pop_idle_drains_idle_only() {
 	let mut store = ScheduleStore::new();
-	store.add(ScheduleEntry::new_idle(
-		"d".into(),
-		"idle msg".into(),
-		false,
-	));
+	store.add(ScheduleEntry::new_idle("d".into(), "idle msg".into(), false));
 	store.add(time_entry("future00", Local::now() + Duration::hours(1)));
 
 	assert!(store.pop_due().is_none(), "idle entries are never time-due");
@@ -267,20 +226,11 @@ fn next_due_duration_tracks_earliest_time_entry() {
 	assert_eq!(store.next_due_duration(), None);
 
 	store.add(ScheduleEntry::new_idle("d".into(), "m".into(), true));
-	assert_eq!(
-		store.next_due_duration(),
-		None,
-		"idle entries carry no due duration"
-	);
+	assert_eq!(store.next_due_duration(), None, "idle entries carry no due duration");
 
 	store.add(time_entry("far000000", Local::now() + Duration::hours(2)));
-	store.add(time_entry(
-		"near00000",
-		Local::now() + Duration::minutes(10),
-	));
-	let d = store
-		.next_due_duration()
-		.expect("time entries must produce a duration");
+	store.add(time_entry("near00000", Local::now() + Duration::minutes(10)));
+	let d = store.next_due_duration().expect("time entries must produce a duration");
 	assert!(d >= std::time::Duration::from_secs(590), "got {d:?}");
 	assert!(d <= std::time::Duration::from_secs(610), "got {d:?}");
 
@@ -303,24 +253,11 @@ fn seed_entries_restores_trigger_ordering() {
 #[test]
 fn parse_duration_secs_edge_cases() {
 	assert_eq!(parse_duration_secs("0s").unwrap(), 0);
-	assert_eq!(
-		parse_duration_secs("1h 30m").unwrap(),
-		5400,
-		"spaces are optional"
-	);
-	assert_eq!(
-		parse_duration_secs("2h30m10s").unwrap(),
-		2 * 3600 + 30 * 60 + 10
-	);
+	assert_eq!(parse_duration_secs("1h 30m").unwrap(), 5400, "spaces are optional");
+	assert_eq!(parse_duration_secs("2h30m10s").unwrap(), 2 * 3600 + 30 * 60 + 10);
 	assert!(parse_duration_secs("").is_err());
-	assert!(
-		parse_duration_secs("10").is_err(),
-		"trailing number without unit"
-	);
-	assert!(
-		parse_duration_secs("5min").is_err(),
-		"multi-letter units are rejected"
-	);
+	assert!(parse_duration_secs("10").is_err(), "trailing number without unit");
+	assert!(parse_duration_secs("5min").is_err(), "multi-letter units are rejected");
 	assert!(
 		parse_duration_secs("999999999999h").is_err(),
 		"must hit the 10-year cap, not overflow"
@@ -339,10 +276,7 @@ fn parse_when_accepts_am_pm_seconds_and_midnight_forms() {
 	assert_eq!(midnight.hour(), 0, "12am is midnight");
 
 	let with_secs = parse_when("15:30:45").unwrap();
-	assert_eq!(
-		(with_secs.hour(), with_secs.minute(), with_secs.second()),
-		(15, 30, 45)
-	);
+	assert_eq!((with_secs.hour(), with_secs.minute(), with_secs.second()), (15, 30, 45));
 
 	// Bare 24-hour input in the 12:xx hour must stay noon — the 12am rule
 	// applies only when a meridiem was written (regression: "12:43" → 00:43).
@@ -365,10 +299,7 @@ fn parse_when_past_time_of_day_rolls_to_tomorrow() {
 	let t = parse_when("00:00").unwrap();
 	assert!(t > Local::now(), "must never schedule in the past");
 	let ahead = t.signed_duration_since(Local::now());
-	assert!(
-		ahead.num_seconds() > 0 && ahead.num_hours() <= 24,
-		"ahead was {ahead}"
-	);
+	assert!(ahead.num_seconds() > 0 && ahead.num_hours() <= 24, "ahead was {ahead}");
 	assert_eq!((t.hour(), t.minute()), (0, 0));
 }
 
@@ -377,14 +308,8 @@ fn parse_when_rejects_malformed_input() {
 	assert!(parse_when("25:00").is_err(), "hour out of range");
 	assert!(parse_when("12:99").is_err(), "minute out of range");
 	assert!(parse_when("not a time").is_err());
-	assert!(
-		parse_when("2026-13-01 10:00").is_err(),
-		"month out of range"
-	);
-	assert!(
-		parse_when("2026-03-22").is_err(),
-		"date without a time part"
-	);
+	assert!(parse_when("2026-13-01 10:00").is_err(), "month out of range");
+	assert!(parse_when("2026-03-22").is_err(), "date without a time part");
 }
 
 // --- parse_time_of_day: future-today branch ---------------------------------
@@ -403,10 +328,7 @@ fn parse_time_of_day_returns_today_when_the_time_is_still_ahead() {
 	let expected_date = if target.date_naive() == Local::now().date_naive() {
 		Local::now().date_naive()
 	} else {
-		Local::now()
-			.date_naive()
-			.succ_opt()
-			.expect("tomorrow exists")
+		Local::now().date_naive().succ_opt().expect("tomorrow exists")
 	};
 	assert_eq!(
 		parsed.date_naive(),

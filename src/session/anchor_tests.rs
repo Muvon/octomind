@@ -155,14 +155,8 @@ fn json_round_trip_preserves_state() {
 #[test]
 fn task_sig_is_deterministic_and_trim_insensitive() {
 	assert_eq!(task_sig("fix the login bug"), task_sig("fix the login bug"));
-	assert_eq!(
-		task_sig("  fix the login bug  "),
-		task_sig("fix the login bug")
-	);
-	assert_ne!(
-		task_sig("fix the login bug"),
-		task_sig("fix the logout bug")
-	);
+	assert_eq!(task_sig("  fix the login bug  "), task_sig("fix the login bug"));
+	assert_ne!(task_sig("fix the login bug"), task_sig("fix the logout bug"));
 	// 0 is reserved for "unknown" — no real input may produce it.
 	assert_ne!(task_sig(""), 0);
 	assert_ne!(task_sig("a"), 0);

@@ -155,10 +155,7 @@ fn pact_schema_requires_folds_while_legacy_schema_does_not_expose_them() {
 		.any(|field| field == "folded_units"));
 	assert_eq!(pact["properties"]["current_task"]["maxLength"], 0);
 	assert_eq!(pact["properties"]["critical_knowledge"]["maxItems"], 0);
-	assert_eq!(
-		pact["properties"]["key_entities"]["properties"]["files"]["maxItems"],
-		0
-	);
+	assert_eq!(pact["properties"]["key_entities"]["properties"]["files"]["maxItems"], 0);
 
 	let legacy = build_compression_schema(false, false);
 	assert!(legacy["properties"].get("folded_units").is_none());
@@ -167,9 +164,7 @@ fn pact_schema_requires_folds_while_legacy_schema_does_not_expose_them() {
 		.unwrap()
 		.iter()
 		.any(|field| field == "folded_units"));
-	assert!(legacy["properties"]["current_task"]
-		.get("maxLength")
-		.is_none());
+	assert!(legacy["properties"]["current_task"].get("maxLength").is_none());
 	assert_eq!(legacy["properties"]["critical_knowledge"]["maxItems"], 15);
 }
 

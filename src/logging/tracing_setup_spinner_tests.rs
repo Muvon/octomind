@@ -83,10 +83,7 @@ impl TermLike for RecordingTerm {
 		Ok(())
 	}
 	fn write_line(&self, s: &str) -> std::io::Result<()> {
-		self.calls
-			.lock()
-			.unwrap()
-			.push(format!("[write_line {s:?}]"));
+		self.calls.lock().unwrap().push(format!("[write_line {s:?}]"));
 		Ok(())
 	}
 	fn flush(&self) -> std::io::Result<()> {
@@ -119,8 +116,7 @@ fn cli_writer_suspends_spinner_around_each_write() {
 	let term = RecordingTerm {
 		calls: Arc::new(Mutex::new(Vec::new())),
 	};
-	let pb =
-		ProgressBar::with_draw_target(None, ProgressDrawTarget::term_like(Box::new(term.clone())));
+	let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::term_like(Box::new(term.clone())));
 	pb.set_style(indicatif::ProgressStyle::default_spinner());
 	pb.set_message("working");
 	pb.tick(); // initial draw
@@ -128,9 +124,7 @@ fn cli_writer_suspends_spinner_around_each_write() {
 
 	let sink = SharedSink::default();
 	let mut writer = SpinnerAwareMakeWriter(|| sink.clone()).make_writer();
-	writer
-		.write_all(b"2026 INFO log line\n")
-		.expect("write log line");
+	writer.write_all(b"2026 INFO log line\n").expect("write log line");
 	writer.flush().expect("flush");
 
 	// The log bytes arrived…

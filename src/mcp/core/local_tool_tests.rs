@@ -22,8 +22,7 @@ fn make_executable(path: &Path) {
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-			.expect("chmod +x fixture");
+		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod +x fixture");
 	}
 	#[cfg(not(unix))]
 	{
@@ -85,8 +84,7 @@ fn discover_skips_files_without_the_executable_bit() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let dir = tmp.path().join(TOOLS_DIR);
 	std::fs::create_dir_all(&dir).expect("create tools dir");
-	std::fs::write(dir.join("noexec"), "#!/bin/sh\n# @description x\necho x\n")
-		.expect("write fixture");
+	std::fs::write(dir.join("noexec"), "#!/bin/sh\n# @description x\necho x\n").expect("write fixture");
 	assert!(discover(tmp.path()).is_empty());
 }
 
@@ -106,11 +104,7 @@ fn discover_skips_directories_and_invalid_names() {
 #[test]
 fn discover_skips_scripts_without_a_description() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	write_tool(
-		tmp.path(),
-		"nodesc",
-		"#!/bin/sh\n# @param a string x\necho x\n",
-	);
+	write_tool(tmp.path(), "nodesc", "#!/bin/sh\n# @param a string x\necho x\n");
 	assert!(discover(tmp.path()).is_empty());
 }
 
@@ -119,24 +113,15 @@ fn discover_skips_scripts_without_a_description() {
 fn discover_skips_scripts_it_cannot_read() {
 	use std::os::unix::fs::PermissionsExt;
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let path = write_tool(
-		tmp.path(),
-		"noread",
-		"#!/bin/sh\n# @description x\necho x\n",
-	);
-	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o111))
-		.expect("chmod 111 fixture");
+	let path = write_tool(tmp.path(), "noread", "#!/bin/sh\n# @description x\necho x\n");
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o111)).expect("chmod 111 fixture");
 	assert!(discover(tmp.path()).is_empty());
 }
 
 #[test]
 fn get_all_functions_and_is_local_tool_follow_the_thread_workdir() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	write_tool(
-		tmp.path(),
-		"probe",
-		"#!/bin/sh\n# @description Probe.\necho ok\n",
-	);
+	write_tool(tmp.path(), "probe", "#!/bin/sh\n# @description Probe.\necho ok\n");
 	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
 	let functions = get_all_functions();
@@ -166,9 +151,7 @@ async fn execute_returns_stdout_as_success_content() {
 	);
 	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
-	let result = execute(&call("hello", json!({})))
-		.await
-		.expect("execute succeeds");
+	let result = execute(&call("hello", json!({}))).await.expect("execute succeeds");
 	assert!(!result.is_error());
 	assert_eq!(result.extract_content().trim(), "hello from tool");
 	assert_eq!(result.tool_id, "t1");
@@ -189,10 +172,7 @@ async fn execute_passes_params_via_env_and_stdin() {
 		.await
 		.expect("execute succeeds");
 	let content = result.extract_content();
-	assert!(
-		content.contains("target=x.txt"),
-		"env param missing: {content}"
-	);
+	assert!(content.contains("target=x.txt"), "env param missing: {content}");
 	assert!(
 		content.contains("\"force\":true"),
 		"stdin JSON params missing: {content}"
@@ -210,9 +190,7 @@ async fn execute_appends_stderr_with_a_marker_on_success() {
 	);
 	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
-	let result = execute(&call("noisy", json!({})))
-		.await
-		.expect("execute succeeds");
+	let result = execute(&call("noisy", json!({}))).await.expect("execute succeeds");
 	assert!(!result.is_error());
 	let content = result.extract_content();
 	assert!(content.contains("out"));
@@ -248,9 +226,7 @@ async fn execute_errors_for_an_unknown_tool_name() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	crate::mcp::workdir::set_session_working_directory(tmp.path().to_path_buf());
 
-	let err = execute(&call("ghost", json!({})))
-		.await
-		.expect_err("tool is absent");
+	let err = execute(&call("ghost", json!({}))).await.expect_err("tool is absent");
 	assert!(err.to_string().contains("not found"), "err: {err}");
 }
 

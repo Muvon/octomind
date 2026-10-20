@@ -21,8 +21,8 @@
 
 use super::*;
 use crate::session::chat::test_support::{
-	fake_provider_config, fake_session, final_response, spawn_stub, spawn_stub_with_status,
-	tool_call_response, tool_calls_response, ENV_LOCK,
+	fake_provider_config, fake_session, final_response, spawn_stub, spawn_stub_with_status, tool_call_response,
+	tool_calls_response, ENV_LOCK,
 };
 use crate::session::output::SilentSink;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -49,9 +49,7 @@ async fn test_simple_completion_turn() {
 	let config = fake_provider_config();
 	let mut session = fake_session("hi there");
 
-	run_turn(&mut session, &config)
-		.await
-		.expect("turn succeeds");
+	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	let messages = &session.session.messages;
 	assert_eq!(messages[0].role, "user");
@@ -79,9 +77,7 @@ async fn spawn_recording_stub(
 		.await
 		.expect("bind recording stub listener");
 	let addr = listener.local_addr().expect("recording stub addr");
-	let queue = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
-		responses,
-	)));
+	let queue = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(responses)));
 	let requests: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
 		std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
@@ -159,12 +155,9 @@ async fn steer_note_injected_as_system_managed_user_message() {
 
 	let config = fake_provider_config();
 	let mut session = fake_session("do the task");
-	session.steer_pending =
-		Some("<pay-attention>change approach: use the indexed lookup</pay-attention>".to_string());
+	session.steer_pending = Some("<pay-attention>change approach: use the indexed lookup</pay-attention>".to_string());
 
-	run_turn(&mut session, &config)
-		.await
-		.expect("steered turn succeeds");
+	run_turn(&mut session, &config).await.expect("steered turn succeeds");
 
 	// The queued note was consumed, not left pending for a later turn
 	assert!(session.steer_pending.is_none());
@@ -188,16 +181,13 @@ async fn steer_note_injected_as_system_managed_user_message() {
 		"steer note must precede the API request, got roles: {:?}",
 		messages.iter().map(|m| m.role.as_str()).collect::<Vec<_>>()
 	);
-	assert!(messages[assistant_pos]
-		.content
-		.contains("steer acknowledged"));
+	assert!(messages[assistant_pos].content.contains("steer acknowledged"));
 
 	// The wire proves it: the request the stub actually served already
 	// carried the note as a user-role message in its payload.
 	let captured = requests.lock().expect("captured requests");
 	assert_eq!(captured.len(), 1, "exactly one provider request expected");
-	let payload: serde_json::Value =
-		serde_json::from_str(&captured[0]).expect("request body is JSON");
+	let payload: serde_json::Value = serde_json::from_str(&captured[0]).expect("request body is JSON");
 	let carried = payload["messages"]
 		.as_array()
 		.expect("request carries a messages array")
@@ -275,12 +265,7 @@ async fn pending_async_work_allows_progressing_handback() {
 
 	crate::session::context::with_session_id(session_id.clone(), async {
 		crate::session::context::init_session_services("assistant");
-		crate::session::shell_jobs::register_for_session(
-			&session_id,
-			"test-mcp",
-			"job://test",
-			"cargo test --lib",
-		);
+		crate::session::shell_jobs::register_for_session(&session_id, "test-mcp", "job://test", "cargo test --lib");
 
 		run_turn(&mut session, &config)
 			.await
@@ -306,9 +291,7 @@ async fn test_tool_round_trip_with_unknown_tool() {
 	let config = fake_provider_config();
 	let mut session = fake_session("do the thing");
 
-	run_turn(&mut session, &config)
-		.await
-		.expect("turn succeeds");
+	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	let messages = &session.session.messages;
 	// The tool_calls assistant message is preserved for API pairing
@@ -367,9 +350,7 @@ async fn test_parallel_tools_and_multi_round_chain() {
 	let config = fake_provider_config();
 	let mut session = fake_session("run the chain");
 
-	run_turn(&mut session, &config)
-		.await
-		.expect("turn succeeds");
+	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	let messages = &session.session.messages;
 	// Every scripted call produced a tool-result message, ids preserved
@@ -412,9 +393,7 @@ async fn test_reasoning_content_is_preserved_as_thinking() {
 
 	let config = fake_provider_config();
 	let mut session = fake_session("what is 2+2?");
-	run_turn(&mut session, &config)
-		.await
-		.expect("turn succeeds");
+	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	let assistant = session
 		.session
@@ -442,22 +421,10 @@ async fn test_provider_error_surfaces_as_turn_error() {
 	let _guard = ENV_LOCK.lock().await;
 	// Persistent 500s: retries (if any) also hit an error response
 	let url = spawn_stub_with_status(vec![
-		(
-			500,
-			serde_json::json!({"error": {"message": "stub exploded"}}),
-		),
-		(
-			500,
-			serde_json::json!({"error": {"message": "stub exploded"}}),
-		),
-		(
-			500,
-			serde_json::json!({"error": {"message": "stub exploded"}}),
-		),
-		(
-			500,
-			serde_json::json!({"error": {"message": "stub exploded"}}),
-		),
+		(500, serde_json::json!({"error": {"message": "stub exploded"}})),
+		(500, serde_json::json!({"error": {"message": "stub exploded"}})),
+		(500, serde_json::json!({"error": {"message": "stub exploded"}})),
+		(500, serde_json::json!({"error": {"message": "stub exploded"}})),
 	])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -471,11 +438,7 @@ async fn test_provider_error_surfaces_as_turn_error() {
 	let result = run_turn(&mut session, &config).await;
 	assert!(result.is_err(), "persistent 500s must fail the turn");
 	// No assistant message was fabricated for the failed call
-	assert!(!session
-		.session
-		.messages
-		.iter()
-		.any(|m| m.role == "assistant"));
+	assert!(!session.session.messages.iter().any(|m| m.role == "assistant"));
 }
 
 #[tokio::test]
@@ -503,13 +466,7 @@ async fn test_empty_response_is_retried_by_validation() {
 	// turn must not panic and must not record a fabricated non-empty answer.
 	match run_turn(&mut session, &config).await {
 		Ok(()) => {
-			if let Some(last) = session
-				.session
-				.messages
-				.iter()
-				.rev()
-				.find(|m| m.role == "assistant")
-			{
+			if let Some(last) = session.session.messages.iter().rev().find(|m| m.role == "assistant") {
 				assert!(
 					last.content.is_empty() || last.content.contains("Recovered answer"),
 					"unexpected fabricated content: {}",
@@ -547,9 +504,7 @@ async fn test_real_builtin_tool_round_schedule_list() {
 		.await
 		.expect("init tool map");
 	let mut session = fake_session("list my schedules");
-	run_turn(&mut session, &config)
-		.await
-		.expect("tool round turn");
+	run_turn(&mut session, &config).await.expect("tool round turn");
 
 	let tool_msg = session
 		.session
@@ -564,11 +519,7 @@ async fn test_real_builtin_tool_round_schedule_list() {
 		"schedule must execute for real, got: {}",
 		tool_msg.content
 	);
-	let last = session
-		.session
-		.messages
-		.last()
-		.expect("final assistant message");
+	let last = session.session.messages.last().expect("final assistant message");
 	assert_eq!(last.role, "assistant");
 	assert!(last.content.contains("schedule round complete"));
 
@@ -645,11 +596,7 @@ async fn test_interactive_mode_tool_round_renders_and_truncates() {
 	.await
 	.expect("interactive turn");
 
-	let last = session
-		.session
-		.messages
-		.last()
-		.expect("final assistant message");
+	let last = session.session.messages.last().expect("final assistant message");
 	assert_eq!(last.role, "assistant");
 	assert!(last.content.contains("interactive round done"));
 
@@ -694,9 +641,7 @@ async fn test_large_tool_result_truncation_and_dedup() {
 		.expect("init tool map");
 
 	let mut session = fake_session("list every skill twice");
-	run_turn(&mut session, &config)
-		.await
-		.expect("double skill round");
+	run_turn(&mut session, &config).await.expect("double skill round");
 
 	let tool_contents: Vec<(&str, &str)> = session
 		.session
@@ -752,9 +697,7 @@ async fn test_supervised_turn_survives_scripted_control_plane() {
 	config.compression.model.model = Some("ollama:fake-model".to_string());
 
 	let mut session = fake_session("do the supervised thing and finish");
-	run_turn(&mut session, &config)
-		.await
-		.expect("supervised turn");
+	run_turn(&mut session, &config).await.expect("supervised turn");
 
 	let assistant = session
 		.session
@@ -850,10 +793,7 @@ async fn test_unfinished_progressing_handback_is_continued_until_budget() {
 
 		// Two nudges spent the budget, then the third stop reached the verify-gate
 		// and PASSED — which resets both iteration counters to zero.
-		assert_eq!(
-			session.nudge_iterations, 0,
-			"final PASS resets the nudge budget"
-		);
+		assert_eq!(session.nudge_iterations, 0, "final PASS resets the nudge budget");
 		assert_eq!(session.session.info.total_api_calls, 3);
 		let continuations = session
 			.session
@@ -922,9 +862,7 @@ async fn test_verify_gate_pass_accepts_claim_and_clears_gate_state() {
 		let mut session = fake_session("ship the feature");
 		session.completion_gate_eligible = true;
 
-		run_turn(&mut session, &config)
-			.await
-			.expect("gated turn passes");
+		run_turn(&mut session, &config).await.expect("gated turn passes");
 
 		assert!(!session.gate_failed);
 		assert!(matches!(
@@ -965,32 +903,16 @@ async fn test_verify_gate_pass_with_a_recognized_check_labels_verified() {
 		let path = dir.path().join("stats.rs");
 		std::fs::write(&path, "pub fn counter() -> u32 { 1 }").expect("write edit fixture");
 		let edit = serde_json::json!({"command": "str_replace", "path": path});
-		session
-			.evidence
-			.record("text_editor", &edit, true, false, 12);
+		session.evidence.record("text_editor", &edit, true, false, 12);
 		// The edit round moved the tree; the next round ran a check on it.
-		session.detectors.note_round_verification(
-			Some(10),
-			Some(11),
-			false,
-			false,
-			true,
-			false,
-			true,
-		);
-		session.detectors.note_round_verification(
-			Some(11),
-			Some(11),
-			true,
-			false,
-			false,
-			false,
-			true,
-		);
+		session
+			.detectors
+			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
+		session
+			.detectors
+			.note_round_verification(Some(11), Some(11), true, false, false, false, true);
 
-		run_turn(&mut session, &config)
-			.await
-			.expect("gated turn passes");
+		run_turn(&mut session, &config).await.expect("gated turn passes");
 
 		assert!(!session.gate_failed);
 		assert!(matches!(
@@ -1030,32 +952,15 @@ async fn test_verify_gate_gaps_inject_advisory_and_rerun_turn() {
 		let mut session = fake_session("verify the counter");
 		session.completion_gate_eligible = true;
 		// Missing detector clearance must neither bypass nor replace a real gap.
-		session.detectors.note_round_verification(
-			Some(10),
-			Some(11),
-			false,
-			false,
-			true,
-			false,
-			true,
-		);
+		session
+			.detectors
+			.note_round_verification(Some(10), Some(11), false, false, true, false, true);
 
-		run_turn(&mut session, &config)
-			.await
-			.expect("gaps re-run completes");
+		run_turn(&mut session, &config).await.expect("gaps re-run completes");
 
-		assert_eq!(
-			session.gate_iterations, 0,
-			"PASS resets the iteration budget"
-		);
-		assert!(
-			session.last_gate_gaps.is_empty(),
-			"PASS clears retained gaps"
-		);
-		assert!(
-			!session.gate_failed,
-			"re-run without a new claim ends the turn cleanly"
-		);
+		assert_eq!(session.gate_iterations, 0, "PASS resets the iteration budget");
+		assert!(session.last_gate_gaps.is_empty(), "PASS clears retained gaps");
+		assert!(!session.gate_failed, "re-run without a new claim ends the turn cleanly");
 		let advisory = session
 			.session
 			.messages
@@ -1103,18 +1008,12 @@ async fn test_verify_gate_indeterminate_fails_closed_after_reentry() {
 			.await
 			.expect("indeterminate re-entry completes");
 
-		assert!(
-			session.gate_failed,
-			"unreadable verdict must not pass silently"
-		);
+		assert!(session.gate_failed, "unreadable verdict must not pass silently");
 		assert!(matches!(
 			session.learning_outcome,
 			crate::supervisor::learning::TrajectoryOutcome::Unknown
 		));
-		assert_eq!(
-			session.gate_iterations, 2,
-			"both stops verified, budget spent"
-		);
+		assert_eq!(session.gate_iterations, 2, "both stops verified, budget spent");
 		session
 			.session
 			.messages
@@ -1144,11 +1043,8 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 		let sid = format!("api-exec-heuristic-evidence-{mixed_command}");
 		crate::session::context::with_session_id(sid.clone(), async {
 			crate::session::context::init_session_services("assistant");
-			let (url, requests) = spawn_recording_stub(vec![
-				done_response("Requested artifact saved."),
-				verifier_pass(),
-			])
-			.await;
+			let (url, requests) =
+				spawn_recording_stub(vec![done_response("Requested artifact saved."), verifier_pass()]).await;
 			std::env::set_var("OLLAMA_API_URL", &url);
 
 			let config = supervised_config();
@@ -1159,12 +1055,8 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 			let content = "requested-artifact-content-from-disk";
 			std::fs::write(&path, content).expect("write artifact fixture");
 			let write = serde_json::json!({"command": "create", "path": path});
-			let seq = session
-				.evidence
-				.record("text_editor", &write, true, false, 25);
-			session
-				.evidence
-				.record_ground(seq, "File created successfully");
+			let seq = session.evidence.record("text_editor", &write, true, false, 25);
+			session.evidence.record_ground(seq, "File created successfully");
 			session.evidence.record(
 				"memorize",
 				&serde_json::json!({"related_files": [path], "content": "artifact saved"}),
@@ -1186,19 +1078,11 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 				session.evidence.record_command_output(command, output);
 			}
 			// Model the detector's conservative verdict even though evidence exists.
-			session.detectors.note_round_verification(
-				Some(10),
-				Some(11),
-				false,
-				false,
-				true,
-				false,
-				true,
-			);
+			session
+				.detectors
+				.note_round_verification(Some(10), Some(11), false, false, true, false, true);
 
-			run_turn(&mut session, &config)
-				.await
-				.expect("independent verification");
+			run_turn(&mut session, &config).await.expect("independent verification");
 
 			assert!(!session.gate_failed);
 			// The verifier passed, but no check was recognized after the change:
@@ -1210,11 +1094,7 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 			assert_eq!(session.nudge_iterations, 0);
 			assert_eq!(session.session.info.total_api_calls, 1, "no agent re-run");
 			let captured = requests.lock().expect("captured requests");
-			assert_eq!(
-				captured.len(),
-				2,
-				"agent response then independent verifier"
-			);
+			assert_eq!(captured.len(), 2, "agent response then independent verifier");
 			let payload: serde_json::Value = serde_json::from_str(&captured[1]).expect("JSON");
 			let evidence = payload["messages"]
 				.as_array()
@@ -1224,10 +1104,7 @@ async fn test_unrecognized_verification_reaches_gate_with_evidence() {
 				.filter_map(|m| m["content"].as_str())
 				.collect::<Vec<_>>()
 				.join("\n");
-			assert!(
-				evidence.contains(content),
-				"verifier receives the saved content"
-			);
+			assert!(evidence.contains(content), "verifier receives the saved content");
 			assert!(evidence.contains("This heuristic does not establish"));
 			assert!(!evidence.contains("NO check of any kind has succeeded"));
 			if mixed_command {
@@ -1345,14 +1222,9 @@ async fn test_learning_injection_builds_active_memory_pack() {
 		config.supervisor.model.model = Some("ollama:fake-model".to_string());
 
 		let mut session = fake_session("push my branch safely");
-		run_turn(&mut session, &config)
-			.await
-			.expect("turn with recall");
+		run_turn(&mut session, &config).await.expect("turn with recall");
 
-		assert!(
-			session.learning_injected,
-			"first call must mark learning injected"
-		);
+		assert!(session.learning_injected, "first call must mark learning injected");
 		assert!(
 			session.active_memory_pack.is_some(),
 			"global lesson must land in the pack"
@@ -1399,13 +1271,9 @@ async fn test_interactive_mode_session_threshold_decline_skips_api_call() {
 	let messages_before = session.session.messages.len();
 	let calls_before = session.session.info.total_api_calls;
 
-	run_turn_mode(
-		&mut session,
-		&config,
-		crate::session::output::OutputMode::Interactive,
-	)
-	.await
-	.expect("declined turn returns Ok");
+	run_turn_mode(&mut session, &config, crate::session::output::OutputMode::Interactive)
+		.await
+		.expect("declined turn returns Ok");
 
 	assert_eq!(
 		session.session.messages.len(),
@@ -1429,13 +1297,9 @@ async fn test_interactive_mode_request_threshold_decline_skips_api_call() {
 	session.session.info.total_cost = 1.0;
 	let messages_before = session.session.messages.len();
 
-	run_turn_mode(
-		&mut session,
-		&config,
-		crate::session::output::OutputMode::Interactive,
-	)
-	.await
-	.expect("declined turn returns Ok");
+	run_turn_mode(&mut session, &config, crate::session::output::OutputMode::Interactive)
+		.await
+		.expect("declined turn returns Ok");
 
 	assert_eq!(
 		session.session.messages.len(),
@@ -1503,9 +1367,7 @@ async fn test_stale_active_memory_pack_cleared_when_learning_disabled() {
 	let mut session = fake_session("hi there");
 	session.active_memory_pack = Some("stale pack content".to_string());
 
-	run_turn(&mut session, &config)
-		.await
-		.expect("turn succeeds");
+	run_turn(&mut session, &config).await.expect("turn succeeds");
 
 	assert!(
 		session.active_memory_pack.is_none(),

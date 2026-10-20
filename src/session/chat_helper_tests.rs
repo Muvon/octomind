@@ -18,8 +18,7 @@ type CC<'a> = CommandCompleter<'a>;
 
 fn test_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	// /run completion merges the role config; without a role_map that merge
 	// hits the load-time invariant panic.
 	config.build_role_map();
@@ -83,14 +82,8 @@ fn pair(s: &str) -> Pair {
 #[test]
 fn test_find_common_prefix() {
 	assert_eq!(CC::find_common_prefix(&[]), "");
-	assert_eq!(
-		CC::find_common_prefix(&[pair("src/main.rs")]),
-		"src/main.rs"
-	);
-	assert_eq!(
-		CC::find_common_prefix(&[pair("src/main.rs"), pair("src/mcp")]),
-		"src/m"
-	);
+	assert_eq!(CC::find_common_prefix(&[pair("src/main.rs")]), "src/main.rs");
+	assert_eq!(CC::find_common_prefix(&[pair("src/main.rs"), pair("src/mcp")]), "src/m");
 	assert_eq!(CC::find_common_prefix(&[pair("abc"), pair("xyz")]), "");
 	// Multi-byte common prefix must land on a char boundary
 	assert_eq!(CC::find_common_prefix(&[pair("télé"), pair("téla")]), "tél");
@@ -140,8 +133,7 @@ fn test_complete_file_path_directory_listing() {
 /// global, and parallel tests mutating it would race each other.
 #[test]
 fn test_fuzzy_match_and_at_dispatch() {
-	*FILE_CACHE.lock().expect("file cache lock") =
-		Some(vec!["src/main.rs".to_string(), "README.md".to_string()]);
+	*FILE_CACHE.lock().expect("file cache lock") = Some(vec!["src/main.rs".to_string(), "README.md".to_string()]);
 
 	let matches = CC::fuzzy_match_files("main", 10);
 	assert_eq!(matches.len(), 1);
@@ -162,10 +154,7 @@ fn test_fuzzy_match_and_at_dispatch() {
 	// process cwd (the crate root during tests) repopulates it from disk.
 	*FILE_CACHE.lock().expect("file cache lock") = None;
 	let disk = CC::fuzzy_match_files("main", 10);
-	assert!(
-		!disk.is_empty(),
-		"rg must list src/main.rs from the crate root"
-	);
+	assert!(!disk.is_empty(), "rg must list src/main.rs from the crate root");
 	assert!(disk.iter().all(|p| p.replacement.starts_with('@')));
 }
 
@@ -187,10 +176,7 @@ fn test_complete_at_path() {
 	// Prefix filtering is case-insensitive and keeps the typed prefix verbatim
 	let filtered = CC::complete_at_path(&format!("{}/NO", base.display()));
 	assert_eq!(filtered.len(), 1);
-	assert_eq!(
-		filtered[0].replacement,
-		format!("@{}/notes.txt", base.display())
-	);
+	assert_eq!(filtered[0].replacement, format!("@{}/notes.txt", base.display()));
 
 	// Relative parent paths resolve against the cwd
 	assert!(CC::is_path_query("../"));
@@ -236,18 +222,12 @@ fn test_hint() {
 
 	assert_eq!(completer.hint(""), None);
 	assert_eq!(completer.hint("not a command"), None);
-	assert_eq!(
-		completer.hint("/image"),
-		Some(" <path_to_image>".to_string())
-	);
+	assert_eq!(completer.hint("/image"), Some(" <path_to_image>".to_string()));
 	assert_eq!(
 		completer.hint("/mcp"),
 		Some(" [list|info|full|health|dump|validate]".to_string())
 	);
-	assert_eq!(
-		completer.hint("/loglevel"),
-		Some(" [none|info|debug]".to_string())
-	);
+	assert_eq!(completer.hint("/loglevel"), Some(" [none|info|debug]".to_string()));
 }
 
 #[test]
@@ -287,9 +267,7 @@ fn test_complete_image_empty_part_lists_cwd() {
 	let (start, candidates) = completer.complete("/image ", 7);
 	assert_eq!(start, 7);
 	assert!(!candidates.is_empty());
-	assert!(candidates[0]
-		.replacement
-		.ends_with(std::path::MAIN_SEPARATOR));
+	assert!(candidates[0].replacement.ends_with(std::path::MAIN_SEPARATOR));
 }
 
 #[test]
@@ -466,12 +444,8 @@ fn test_complete_video_file_completion() {
 	let line = format!("/video {}/", base.display());
 	let (start, candidates) = completer.complete(&line, line.len());
 	assert_eq!(start, 7);
-	assert!(!candidates
-		.iter()
-		.any(|c| c.replacement.ends_with("pic.png")));
-	assert!(candidates
-		.iter()
-		.any(|c| c.replacement.ends_with("clip.mp4")));
+	assert!(!candidates.iter().any(|c| c.replacement.ends_with("pic.png")));
+	assert!(candidates.iter().any(|c| c.replacement.ends_with("clip.mp4")));
 }
 
 #[test]
@@ -484,15 +458,9 @@ fn test_argument_candidates_cover_alias_and_unknown() {
 
 	// Aliases the handlers accept must be present, or highlighting would mark
 	// a valid argument red
-	assert!(CC::argument_candidates("/schedule")
-		.expect("schedule")
-		.contains(&"rm"));
-	assert!(CC::argument_candidates("/learning")
-		.expect("learning")
-		.contains(&"get"));
-	assert!(CC::argument_candidates("/effort")
-		.expect("effort")
-		.contains(&"x-high"));
+	assert!(CC::argument_candidates("/schedule").expect("schedule").contains(&"rm"));
+	assert!(CC::argument_candidates("/learning").expect("learning").contains(&"get"));
+	assert!(CC::argument_candidates("/effort").expect("effort").contains(&"x-high"));
 
 	// Commands with free-form or dynamic arguments are not validated
 	assert!(CC::argument_candidates("/run").is_none());
@@ -525,10 +493,7 @@ fn test_hint_extended() {
 	let completer = CommandCompleter::new(&config, "developer");
 
 	// Exact-name hints
-	assert_eq!(
-		completer.hint("/prompt"),
-		Some(" <template_name>".to_string())
-	);
+	assert_eq!(completer.hint("/prompt"), Some(" <template_name>".to_string()));
 	assert_eq!(completer.hint("/run"), Some(" <command_name>".to_string()));
 	assert_eq!(
 		completer.hint("/context"),
@@ -537,19 +502,13 @@ fn test_hint_extended() {
 	assert_eq!(completer.hint("/role"), Some(" <role_name>".to_string()));
 	assert_eq!(completer.hint("/model"), Some(" <model_name>".to_string()));
 
-	assert_eq!(
-		completer.hint("/copy"),
-		Some(" [last|assistant|user|all]".to_string())
-	);
+	assert_eq!(completer.hint("/copy"), Some(" [last|assistant|user|all]".to_string()));
 	assert_eq!(completer.hint("/reply"), Some(" [N|words]".to_string()));
 	assert_eq!(
 		completer.hint("/effort"),
 		Some(" [none|low|medium|high|xhigh|max]".to_string())
 	);
-	assert_eq!(
-		completer.hint("/status"),
-		Some(" [agents|monitors|jobs]".to_string())
-	);
+	assert_eq!(completer.hint("/status"), Some(" [agents|monitors|jobs]".to_string()));
 	assert_eq!(
 		completer.hint("/schedule"),
 		Some(" [list|remove|add|edit|help]".to_string())
@@ -558,18 +517,9 @@ fn test_hint_extended() {
 		completer.hint("/learning"),
 		Some(" [list|show|delete|clear|evolution]".to_string())
 	);
-	assert_eq!(
-		completer.hint("/video"),
-		Some(" <path_to_video>".to_string())
-	);
-	assert_eq!(
-		completer.hint("/workflow"),
-		Some(" <name> [input...]".to_string())
-	);
-	assert_eq!(
-		completer.hint("/skill"),
-		Some(" [<name>|<page>|*pattern*]".to_string())
-	);
+	assert_eq!(completer.hint("/video"), Some(" <path_to_video>".to_string()));
+	assert_eq!(completer.hint("/workflow"), Some(" <name> [input...]".to_string()));
+	assert_eq!(completer.hint("/skill"), Some(" [<name>|<page>|*pattern*]".to_string()));
 	assert_eq!(completer.hint("/list"), Some(" [page]".to_string()));
 	assert_eq!(completer.hint("/rename"), Some(" [title]".to_string()));
 	assert_eq!(completer.hint("/new"), Some(" [title]".to_string()));
@@ -595,27 +545,18 @@ fn test_hint_extended() {
 		completer.hint("/mcp "),
 		Some("list|info|full|health|dump|validate".to_string())
 	);
-	assert_eq!(
-		completer.hint("/loglevel "),
-		Some("none|info|debug".to_string())
-	);
+	assert_eq!(completer.hint("/loglevel "), Some("none|info|debug".to_string()));
 	assert_eq!(
 		completer.hint("/model "),
 		Some("Start typing model name...".to_string())
 	);
 
-	assert_eq!(
-		completer.hint("/copy "),
-		Some("last|assistant|user|all".to_string())
-	);
+	assert_eq!(completer.hint("/copy "), Some("last|assistant|user|all".to_string()));
 	assert_eq!(
 		completer.hint("/effort "),
 		Some("none|low|medium|high|xhigh|max".to_string())
 	);
-	assert_eq!(
-		completer.hint("/status "),
-		Some("agents|monitors|jobs".to_string())
-	);
+	assert_eq!(completer.hint("/status "), Some("agents|monitors|jobs".to_string()));
 	assert_eq!(
 		completer.hint("/schedule "),
 		Some("list|remove|add|edit|help".to_string())
@@ -690,9 +631,7 @@ fn test_complete_file_path_edge_cases() {
 	std::fs::write(base.join("pic.png"), b"x").expect("write image");
 	let listing = CC::complete_file_path(&format!("{}/", base.display()), MediaKind::Image);
 	assert_eq!(listing.len(), 2);
-	assert!(listing[0]
-		.replacement
-		.starts_with(base.display().to_string().as_str()));
+	assert!(listing[0].replacement.starts_with(base.display().to_string().as_str()));
 	assert!(listing[0].replacement.ends_with("subdir/"));
 	assert!(listing[1].replacement.ends_with("pic.png"));
 }
@@ -713,14 +652,9 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	let home_listing = CC::complete_file_path("~/", MediaKind::Image);
 	assert!(!home_listing.is_empty());
 	assert!(
-		home_listing
-			.iter()
-			.all(|c| c.replacement.starts_with(&home_str)),
+		home_listing.iter().all(|c| c.replacement.starts_with(&home_str)),
 		"entries must stay under home: {:?}",
-		home_listing
-			.iter()
-			.map(|c| &c.replacement)
-			.collect::<Vec<_>>()
+		home_listing.iter().map(|c| &c.replacement).collect::<Vec<_>>()
 	);
 
 	// "~/name" without a slash converts the match back to tilde notation
@@ -728,9 +662,7 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	std::fs::create_dir_all(&probe).expect("mkdir probe");
 	let matches = CC::complete_file_path("~/octomind_complete_probe", MediaKind::Image);
 	assert!(
-		matches
-			.iter()
-			.any(|c| c.replacement == "~/octomind_complete_probe/"),
+		matches.iter().any(|c| c.replacement == "~/octomind_complete_probe/"),
 		"{matches:?}"
 	);
 	std::fs::remove_dir(&probe).expect("cleanup probe");
@@ -744,10 +676,7 @@ fn test_complete_file_path_tilde_relative_and_inside_cwd() {
 	let cwd = std::env::current_dir().expect("cwd");
 	let inside = CC::complete_file_path(&format!("{}/sr", cwd.display()), MediaKind::Image);
 	assert!(!inside.is_empty());
-	assert!(
-		inside.iter().all(|c| !c.replacement.starts_with('/')),
-		"{inside:?}"
-	);
+	assert!(inside.iter().all(|c| !c.replacement.starts_with('/')), "{inside:?}");
 }
 
 /// Cursor positioned inside the "/cmd " prefix: the argument part is

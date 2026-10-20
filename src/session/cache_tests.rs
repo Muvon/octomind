@@ -65,10 +65,7 @@ fn test_automatic_cache_markers() {
 #[test]
 fn rolling_content_markers_preserve_previous_and_advance_to_current() {
 	let manager = CacheManager::new();
-	let mut session = Session::new(
-		"cache-roll".to_string(),
-		"anthropic:claude-sonnet-4-6".to_string(),
-	);
+	let mut session = Session::new("cache-roll".to_string(), "anthropic:claude-sonnet-4-6".to_string());
 	session.messages = vec![
 		Message::default(),
 		Message {
@@ -95,9 +92,7 @@ fn rolling_content_markers_preserve_previous_and_advance_to_current() {
 		},
 	];
 
-	assert!(manager
-		.apply_cache_to_message(&mut session, 4, true)
-		.unwrap());
+	assert!(manager.apply_cache_to_message(&mut session, 4, true).unwrap());
 	let markers: Vec<usize> = session
 		.messages
 		.iter()
@@ -147,18 +142,9 @@ fn cache_marker_serde_roundtrip_preserves_all_fields() {
 
 #[test]
 fn cache_marker_type_serde_uses_variant_names() {
-	assert_eq!(
-		serde_json::to_string(&CacheMarkerType::System).unwrap(),
-		"\"System\""
-	);
-	assert_eq!(
-		serde_json::to_string(&CacheMarkerType::Tools).unwrap(),
-		"\"Tools\""
-	);
-	assert_eq!(
-		serde_json::to_string(&CacheMarkerType::Content).unwrap(),
-		"\"Content\""
-	);
+	assert_eq!(serde_json::to_string(&CacheMarkerType::System).unwrap(), "\"System\"");
+	assert_eq!(serde_json::to_string(&CacheMarkerType::Tools).unwrap(), "\"Tools\"");
+	assert_eq!(serde_json::to_string(&CacheMarkerType::Content).unwrap(), "\"Content\"");
 	let parsed: CacheMarkerType = serde_json::from_str("\"Tools\"").unwrap();
 	assert_eq!(parsed, CacheMarkerType::Tools);
 }
@@ -179,8 +165,7 @@ fn test_session(model: &str) -> Session {
 }
 
 fn test_config() -> Config {
-	toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template")
 }
 
 // ── add_automatic_cache_markers ──────────────────────────────────────────────
@@ -190,10 +175,7 @@ fn automatic_markers_require_caching_support() {
 	let manager = CacheManager::new();
 	let mut messages = vec![msg("system", "sys prompt", false), msg("user", "hi", false)];
 	manager.add_automatic_cache_markers(&mut messages, true, false);
-	assert!(
-		!messages[0].cached,
-		"no markers when the provider cannot cache"
-	);
+	assert!(!messages[0].cached, "no markers when the provider cannot cache");
 	assert!(!messages[1].cached);
 }
 
@@ -217,38 +199,26 @@ fn automatic_markers_cache_first_and_last_system_message_with_tools() {
 	// Without tools only the first system message is cached.
 	manager.add_automatic_cache_markers(&mut messages, false, true);
 	assert!(messages[0].cached);
-	assert!(
-		!messages[2].cached,
-		"last system only cached when tools exist"
-	);
+	assert!(!messages[2].cached, "last system only cached when tools exist");
 
 	// With tools the LAST system message (tool definitions) is cached too.
 	messages[0].cached = false;
 	manager.add_automatic_cache_markers(&mut messages, true, true);
 	assert!(messages[0].cached);
-	assert!(
-		messages[2].cached,
-		"last system message must be cached with tools"
-	);
+	assert!(messages[2].cached, "last system message must be cached with tools");
 	assert!(!messages[1].cached, "user content is never auto-cached");
 }
 
 #[test]
 fn automatic_markers_skip_non_system_first_message() {
 	let manager = CacheManager::new();
-	let mut messages = vec![
-		msg("user", "hi", false),
-		msg("system", "late system", false),
-	];
+	let mut messages = vec![msg("user", "hi", false), msg("system", "late system", false)];
 	manager.add_automatic_cache_markers(&mut messages, true, true);
 	assert!(
 		!messages[0].cached,
 		"first-message rule only applies to the system role"
 	);
-	assert!(
-		messages[1].cached,
-		"last system message still cached with tools"
-	);
+	assert!(messages[1].cached, "last system message still cached with tools");
 }
 
 #[test]
@@ -382,10 +352,7 @@ fn auto_threshold_eviction_clears_stale_ttl_when_marker_rolls_forward() {
 		session.messages[0].cache_ttl, None,
 		"eviction must clear the stale TTL with the marker"
 	);
-	assert!(
-		session.messages[1].cached,
-		"previous frontier survives as marker #1"
-	);
+	assert!(session.messages[1].cached, "previous frontier survives as marker #1");
 }
 
 // ── update_token_tracking / estimate_current_session_tokens ──────────────────
@@ -446,9 +413,7 @@ fn apply_cache_disabled_is_noop() {
 	let mut session = test_session("anthropic/claude-sonnet-4-6");
 	session.messages = vec![msg("user", "hi", false)];
 	session.info.current_total_tokens = 42;
-	assert!(!manager
-		.apply_cache_to_message(&mut session, 0, false)
-		.unwrap());
+	assert!(!manager.apply_cache_to_message(&mut session, 0, false).unwrap());
 	assert!(!session.messages[0].cached);
 	assert_eq!(
 		session.info.current_total_tokens, 42,
@@ -475,9 +440,7 @@ fn apply_cache_already_cached_returns_false_without_counter_reset() {
 	session.messages = vec![msg("user", "hi", true)];
 	session.info.current_total_tokens = 42;
 	session.info.current_non_cached_tokens = 7;
-	assert!(!manager
-		.apply_cache_to_message(&mut session, 0, true)
-		.unwrap());
+	assert!(!manager.apply_cache_to_message(&mut session, 0, true).unwrap());
 	assert_eq!(session.info.current_total_tokens, 42);
 	assert_eq!(session.info.current_non_cached_tokens, 7);
 }
@@ -491,9 +454,7 @@ fn apply_cache_marks_message_and_resets_current_counters() {
 	session.info.current_non_cached_tokens = 300;
 	let before = session.info.last_cache_checkpoint_time;
 
-	assert!(manager
-		.apply_cache_to_message(&mut session, 0, true)
-		.unwrap());
+	assert!(manager.apply_cache_to_message(&mut session, 0, true).unwrap());
 	assert!(session.messages[0].cached);
 	assert_eq!(
 		session.info.current_total_tokens, 0,
@@ -515,9 +476,7 @@ fn apply_cache_keeps_existing_markers_below_the_two_marker_limit() {
 		msg("assistant", "work", false),
 		msg("user", "boundary two target", false),
 	];
-	assert!(manager
-		.apply_cache_to_message(&mut session, 2, true)
-		.unwrap());
+	assert!(manager.apply_cache_to_message(&mut session, 2, true).unwrap());
 	assert!(
 		session.messages[0].cached,
 		"one existing marker is below the limit and must survive"
@@ -546,10 +505,7 @@ fn clear_content_markers_clears_content_roles_but_keeps_system() {
 	];
 
 	let cleared = manager.clear_content_cache_markers(&mut session);
-	assert_eq!(
-		cleared, 3,
-		"user + assistant + tool markers are content markers"
-	);
+	assert_eq!(cleared, 3, "user + assistant + tool markers are content markers");
 	assert!(session.messages[0].cached, "system marker must survive");
 	assert!(!session.messages[1].cached);
 	assert_eq!(
@@ -599,10 +555,7 @@ fn statistics_count_markers_by_role() {
 fn statistics_virtual_tool_marker_requires_cached_system_and_tools() {
 	let manager = CacheManager::new();
 	let config = test_config();
-	assert!(
-		!config.mcp.servers.is_empty(),
-		"default template ships builtin servers"
-	);
+	assert!(!config.mcp.servers.is_empty(), "default template ships builtin servers");
 
 	// Cached system + caching model + configured servers → virtual tool marker.
 	let mut session = test_session("anthropic/claude-sonnet-4-6");
@@ -646,10 +599,7 @@ fn statistics_report_token_totals_and_cache_efficiency() {
 	session.info.current_total_tokens = 425;
 
 	let stats = manager.get_cache_statistics(&session);
-	assert_eq!(
-		stats.total_input_tokens, 425,
-		"input + cache read + cache write"
-	);
+	assert_eq!(stats.total_input_tokens, 425, "input + cache read + cache write");
 	assert_eq!(stats.total_output_tokens, 60);
 	assert_eq!(stats.total_cache_read_tokens, 300);
 	assert_eq!(stats.total_cache_write_tokens, 25);

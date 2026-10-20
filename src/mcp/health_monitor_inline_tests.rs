@@ -17,8 +17,8 @@ use serial_test::serial;
 use std::collections::HashMap;
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -77,8 +77,7 @@ async fn spawn_health_stub(status: u16) -> String {
 					buf.extend_from_slice(&tmp[..n]);
 				}
 			}
-			let response =
-				format!("HTTP/1.1 {status} Stub\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+			let response = format!("HTTP/1.1 {status} Stub\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
 			let _ = sock.write_all(response.as_bytes()).await;
 			let _ = sock.shutdown().await;
 		}
@@ -219,10 +218,7 @@ async fn health_check_leaves_failed_servers_untouched() {
 		.expect("terminal Failed state must short-circuit");
 	let info = process::get_server_restart_info(NAME);
 	assert_eq!(info.health_status, ServerHealth::Failed);
-	assert!(
-		info.last_health_check.is_none(),
-		"failed entry must not be recomputed"
-	);
+	assert!(info.last_health_check.is_none(), "failed entry must not be recomputed");
 	clear_restart_info(NAME);
 }
 
@@ -235,9 +231,7 @@ async fn http_health_check_requires_a_url() {
 #[test]
 fn http_auth_failure_uses_transport_status_and_challenges() {
 	use rmcp::service::ClientInitializeError;
-	use rmcp::transport::streamable_http_client::{
-		AuthRequiredError, InsufficientScopeError, StreamableHttpError,
-	};
+	use rmcp::transport::streamable_http_client::{AuthRequiredError, InsufficientScopeError, StreamableHttpError};
 
 	let classify = |error: StreamableHttpError<reqwest::Error>| {
 		is_http_auth_failure(&ClientInitializeError::TransportError {
@@ -252,23 +246,18 @@ fn http_auth_failure_uses_transport_status_and_challenges() {
 	for (response, expected) in [
 		("HTTP 401 Unauthorized: ", true),
 		("HTTP 403 Forbidden: ", true),
-		(
-			"HTTP 500 Internal Server Error: HTTP 401 Unauthorized",
-			false,
-		),
+		("HTTP 500 Internal Server Error: HTTP 401 Unauthorized", false),
 		("HTTP 404 Not Found: /403/forbidden", false),
 	] {
 		assert_eq!(
-			classify(StreamableHttpError::UnexpectedServerResponse(
-				response.into()
-			)),
+			classify(StreamableHttpError::UnexpectedServerResponse(response.into())),
 			expected,
 			"{response}"
 		);
 	}
-	assert!(classify(StreamableHttpError::AuthRequired(
-		AuthRequiredError::new("Bearer realm=\"test\"".into())
-	)));
+	assert!(classify(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+		"Bearer realm=\"test\"".into()
+	))));
 	assert!(classify(StreamableHttpError::InsufficientScope(
 		InsufficientScopeError::new("Bearer scope=\"tools\"".into(), Some("tools".into()))
 	)));

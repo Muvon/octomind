@@ -17,12 +17,7 @@ use super::*;
 fn response_with_finish(finish_reason: Option<&str>) -> crate::providers::ProviderResponse {
 	crate::providers::ProviderResponse {
 		content: String::new(),
-		exchange: crate::providers::ProviderExchange::new(
-			serde_json::json!({}),
-			serde_json::json!({}),
-			None,
-			"test",
-		),
+		exchange: crate::providers::ProviderExchange::new(serde_json::json!({}), serde_json::json!({}), None, "test"),
 		tool_calls: None,
 		thinking: None,
 		finish_reason: finish_reason.map(str::to_string),
@@ -33,9 +28,8 @@ fn response_with_finish(finish_reason: Option<&str>) -> crate::providers::Provid
 
 #[test]
 fn test_check_should_continue() {
-	let config =
-		toml::from_str::<Config>(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let config = toml::from_str::<Config>(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 
 	// Tool-call finish reasons continue regardless of has_more_tools
 	for reason in ["tool_calls", "tool_use"] {
@@ -63,21 +57,12 @@ fn test_check_should_continue() {
 	));
 
 	// No finish reason: fall back to whether tools are pending
-	assert!(check_should_continue(
-		&response_with_finish(None),
-		&config,
-		true
-	));
-	assert!(!check_should_continue(
-		&response_with_finish(None),
-		&config,
-		false
-	));
+	assert!(check_should_continue(&response_with_finish(None), &config, true));
+	assert!(!check_should_continue(&response_with_finish(None), &config, false));
 }
 
 fn template_config() -> Config {
-	toml::from_str(include_str!("../../../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../../../config-templates/default.toml")).expect("parse default config template")
 }
 
 fn full_usage() -> crate::providers::TokenUsage {
@@ -95,10 +80,8 @@ fn full_usage() -> crate::providers::TokenUsage {
 
 #[test]
 fn test_extract_tool_content_success_and_error() {
-	let success =
-		crate::mcp::McpToolResult::success("t".to_string(), "i".to_string(), "ok body".to_string());
-	let error =
-		crate::mcp::McpToolResult::error("t".to_string(), "i".to_string(), "bad body".to_string());
+	let success = crate::mcp::McpToolResult::success("t".to_string(), "i".to_string(), "ok body".to_string());
+	let error = crate::mcp::McpToolResult::error("t".to_string(), "i".to_string(), "bad body".to_string());
 
 	assert_eq!(extract_tool_content(&success), "ok body");
 	assert_eq!(extract_tool_content(&error), "bad body");
@@ -153,12 +136,7 @@ fn test_handle_follow_up_cost_tracking_raw_cost_fallback() {
 fn test_handle_follow_up_cost_tracking_no_usage_is_noop() {
 	let mut session = crate::session::chat::session::ChatSession::for_tests(Vec::new());
 	let config = template_config();
-	let exchange = crate::providers::ProviderExchange::new(
-		serde_json::json!({}),
-		serde_json::json!({}),
-		None,
-		"test",
-	);
+	let exchange = crate::providers::ProviderExchange::new(serde_json::json!({}), serde_json::json!({}), None, "test");
 
 	handle_follow_up_cost_tracking(&mut session, &exchange, &config);
 
@@ -170,17 +148,12 @@ fn test_handle_follow_up_cost_tracking_no_usage_is_noop() {
 fn test_display_rate_limit_info_all_provider_branches() {
 	// Smoke coverage: every branch only logs; the value is exercising all
 	// header-combination paths without panicking.
-	let exchange_with_headers =
-		|provider: &str, headers: std::collections::HashMap<String, String>| {
-			let mut exchange = crate::providers::ProviderExchange::new(
-				serde_json::json!({}),
-				serde_json::json!({}),
-				None,
-				provider,
-			);
-			exchange.rate_limit_headers = Some(headers);
-			exchange
-		};
+	let exchange_with_headers = |provider: &str, headers: std::collections::HashMap<String, String>| {
+		let mut exchange =
+			crate::providers::ProviderExchange::new(serde_json::json!({}), serde_json::json!({}), None, provider);
+		exchange.rate_limit_headers = Some(headers);
+		exchange
+	};
 
 	let mut headers = std::collections::HashMap::new();
 	headers.insert("tokens_remaining".to_string(), "1000".to_string());
@@ -210,12 +183,7 @@ fn test_display_rate_limit_info_all_provider_branches() {
 	display_rate_limit_info(&exchange_with_headers("groq", generic_headers));
 
 	// No headers at all: early return
-	let plain = crate::providers::ProviderExchange::new(
-		serde_json::json!({}),
-		serde_json::json!({}),
-		None,
-		"test",
-	);
+	let plain = crate::providers::ProviderExchange::new(serde_json::json!({}), serde_json::json!({}), None, "test");
 	display_rate_limit_info(&plain);
 }
 
@@ -253,11 +221,7 @@ async fn test_process_tool_results_request_spending_stop_returns_none() {
 	session.request_spending_checkpoint = 0.0;
 
 	let results = vec![
-		crate::mcp::McpToolResult::success(
-			"view".to_string(),
-			"i1".to_string(),
-			"body one".to_string(),
-		),
+		crate::mcp::McpToolResult::success("view".to_string(), "i1".to_string(), "body one".to_string()),
 		crate::mcp::McpToolResult::error("shell".to_string(), "i2".to_string(), "boom".to_string()),
 	];
 	let (_tx, rx) = tokio::sync::watch::channel(false);
@@ -272,12 +236,8 @@ async fn test_process_tool_results_request_spending_stop_returns_none() {
 		Some(crate::session::chat::session::SpendingStop::Request)
 	);
 	// Both tool results were appended as tool-role messages before the stop
-	let tool_messages: Vec<&crate::session::Message> = session
-		.session
-		.messages
-		.iter()
-		.filter(|m| m.role == "tool")
-		.collect();
+	let tool_messages: Vec<&crate::session::Message> =
+		session.session.messages.iter().filter(|m| m.role == "tool").collect();
 	assert_eq!(tool_messages.len(), 2);
 	assert_eq!(tool_messages[0].content, "body one");
 	assert_eq!(tool_messages[1].content, "boom");
@@ -287,9 +247,9 @@ async fn test_process_tool_results_request_spending_stop_returns_none() {
 #[tokio::test]
 async fn test_process_tool_results_follow_up_final_answer() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response("All done"),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"All done",
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
@@ -306,8 +266,7 @@ async fn test_process_tool_results_follow_up_final_answer() {
 		.await
 		.expect("follow-up round trip");
 
-	let (content, _exchange, tool_calls, _response_id, _thinking) =
-		outcome.expect("final answer is Some");
+	let (content, _exchange, tool_calls, _response_id, _thinking) = outcome.expect("final answer is Some");
 	assert!(content.contains("All done"));
 	assert!(tool_calls.is_none());
 	assert_eq!(session.session.info.total_api_calls, 1);
@@ -317,10 +276,12 @@ async fn test_process_tool_results_follow_up_final_answer() {
 #[tokio::test]
 async fn test_process_tool_results_follow_up_more_tools_continues() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::tool_call_response("view", serde_json::json!({})),
-	])
-	.await;
+	let url =
+		crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::tool_call_response(
+			"view",
+			serde_json::json!({}),
+		)])
+		.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = crate::session::chat::test_support::fake_provider_config();
@@ -346,9 +307,9 @@ async fn test_process_tool_results_follow_up_more_tools_continues() {
 #[tokio::test]
 async fn test_process_tool_results_injects_pending_hints_before_follow_up() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response("noted"),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"noted",
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
@@ -376,9 +337,7 @@ async fn test_process_tool_results_injects_pending_hints_before_follow_up() {
 			.iter()
 			.find(|m| m.role == "user" && m.content.contains("Tool usage notice"))
 			.expect("hint injected as user message");
-		assert!(hint_message
-			.content
-			.contains("Prefer `view` over shell cat"));
+		assert!(hint_message.content.contains("Prefer `view` over shell cat"));
 
 		crate::session::context::cleanup_session(&session_id);
 	})
@@ -388,9 +347,9 @@ async fn test_process_tool_results_injects_pending_hints_before_follow_up() {
 #[tokio::test]
 async fn test_process_tool_results_injects_supervisor_steer_note() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response("steered"),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"steered",
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
@@ -443,18 +402,15 @@ async fn test_process_tool_results_follow_up_error_propagates() {
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 
 	let outcome = process_tool_results(results, 10, &mut session, &config, "assistant", rx).await;
-	assert!(
-		outcome.is_err(),
-		"provider failure must propagate to the caller"
-	);
+	assert!(outcome.is_err(), "provider failure must propagate to the caller");
 }
 
 #[tokio::test]
 async fn test_process_tool_results_delivers_background_results_mid_turn() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response("acked"),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		"acked",
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
@@ -509,8 +465,7 @@ async fn test_process_tool_results_delivers_background_results_mid_turn() {
 			.messages
 			.iter()
 			.any(|m| m.content.contains("a new user request")));
-		let queued =
-			crate::session::inbox::try_pop_inbox_message().expect("user injection still queued");
+		let queued = crate::session::inbox::try_pop_inbox_message().expect("user injection still queued");
 		assert_eq!(queued.content, "a new user request");
 
 		crate::session::context::cleanup_session(&session_id);
@@ -540,12 +495,10 @@ async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
 		})
 		.collect();
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	assert!(
-		process_tool_results(results, 1, &mut session, &config, "assistant", rx)
-			.await
-			.unwrap()
-			.is_none()
-	);
+	assert!(process_tool_results(results, 1, &mut session, &config, "assistant", rx)
+		.await
+		.unwrap()
+		.is_none());
 	let messages: Vec<_> = session
 		.session
 		.messages
@@ -556,14 +509,9 @@ async fn mixed_and_image_only_tool_results_keep_images_when_text_is_capped() {
 	assert!(messages[0].content.contains("TRUNCATED"));
 	assert!(messages[1].content.is_empty());
 	for (index, message) in messages.iter().enumerate() {
-		assert_eq!(
-			message.tool_call_id.as_deref(),
-			Some(format!("call-{index}").as_str())
-		);
+		assert_eq!(message.tool_call_id.as_deref(), Some(format!("call-{index}").as_str()));
 		let images = message.images.as_ref().unwrap();
 		assert_eq!(images.len(), 1);
-		assert!(
-			matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U=")
-		);
+		assert!(matches!(&images[0].data, crate::session::image::ImageData::Base64(data) if data == "aW1hZ2U="));
 	}
 }

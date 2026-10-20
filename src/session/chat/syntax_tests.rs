@@ -24,10 +24,7 @@ fn test_default_matches_new() {
 		via_new.syntax_set.syntaxes().len(),
 		via_default.syntax_set.syntaxes().len()
 	);
-	assert_eq!(
-		via_new.theme_set.themes.len(),
-		via_default.theme_set.themes.len()
-	);
+	assert_eq!(via_new.theme_set.themes.len(), via_default.theme_set.themes.len());
 }
 
 #[test]
@@ -41,11 +38,7 @@ fn test_highlight_empty_code() {
 #[test]
 fn test_highlight_unknown_language_falls_back_to_plain_text() {
 	let highlighter = SyntaxHighlighter::new();
-	let result = highlighter.highlight_code_with_theme(
-		"just some words",
-		"not-a-real-language",
-		"base16-ocean.dark",
-	);
+	let result = highlighter.highlight_code_with_theme("just some words", "not-a-real-language", "base16-ocean.dark");
 	assert!(result.is_ok());
 	// Plain-text fallback still emits styled output containing the source text
 	let highlighted = result.unwrap();

@@ -142,10 +142,7 @@ fn completing_the_plan_deactivates_it_without_dropping_data() {
 	assert!(!s.has_active_plan().unwrap());
 	// The plan itself is still readable for reporting.
 	assert_eq!(s.get_plan_title().unwrap(), "demo");
-	assert!(matches!(
-		s.get_plan().unwrap().status,
-		PlanStatus::Completed
-	));
+	assert!(matches!(s.get_plan().unwrap().status, PlanStatus::Completed));
 }
 
 #[test]
@@ -170,24 +167,15 @@ fn touched_at_tracks_every_model_engagement_but_not_runtime_bookkeeping() {
 	// whole test runs within one wall-clock second.
 	s.set_touched_at(1);
 	s.add_step_details("notes".into()).unwrap();
-	assert!(
-		s.touched_at() > 1,
-		"add_step_details must refresh the clock"
-	);
+	assert!(s.touched_at() > 1, "add_step_details must refresh the clock");
 
 	s.set_touched_at(1);
 	s.complete_current_task("done a".into()).unwrap();
-	assert!(
-		s.touched_at() > 1,
-		"complete_current_task must refresh the clock"
-	);
+	assert!(s.touched_at() > 1, "complete_current_task must refresh the clock");
 
 	s.set_touched_at(1);
 	s.replace_remaining(vec![task("b2"), task("c2")]).unwrap();
-	assert!(
-		s.touched_at() > 1,
-		"replace_remaining must refresh the clock"
-	);
+	assert!(s.touched_at() > 1, "replace_remaining must refresh the clock");
 
 	// Message-range bookkeeping is runtime-owned, not the model engaging
 	// with the plan — it must not refresh the staleness clock.
@@ -204,9 +192,7 @@ fn touched_at_tracks_every_model_engagement_but_not_runtime_bookkeeping() {
 	// resume can mark it stale.
 	let snapshot = {
 		let mut other = MemoryPlanStorage::new();
-		other
-			.create_plan("restored".to_string(), vec![task("x")])
-			.unwrap();
+		other.create_plan("restored".to_string(), vec![task("x")]).unwrap();
 		other.get_plan().unwrap().clone()
 	};
 	let mut s = MemoryPlanStorage::new();

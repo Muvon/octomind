@@ -32,10 +32,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -101,10 +98,7 @@ fn parse_tag_rejects_invalid_agent_names() {
 
 #[test]
 fn is_stale_true_for_missing_file() {
-	assert!(is_stale(
-		&PathBuf::from("/nonexistent/registry-test.toml"),
-		24
-	));
+	assert!(is_stale(&PathBuf::from("/nonexistent/registry-test.toml"), 24));
 }
 
 #[test]
@@ -120,10 +114,7 @@ fn is_stale_true_when_older_than_ttl() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let path = tmp.path().join("manifest.toml");
 	fs::write(&path, "x").expect("write");
-	let file = std::fs::File::options()
-		.write(true)
-		.open(&path)
-		.expect("open");
+	let file = std::fs::File::options().write(true).open(&path).expect("open");
 	file.set_modified(SystemTime::now() - Duration::from_secs(25 * 3600))
 		.expect("backdate mtime");
 	assert!(is_stale(&path, 24));
@@ -135,10 +126,7 @@ fn cache_path_lives_under_agents_dir_and_creates_it() {
 	let _guard = DataDirGuard::new();
 	let path = cache_path("devtool", "helper").expect("cache path");
 	let data = crate::directories::get_octomind_data_dir().expect("data dir");
-	assert_eq!(
-		path,
-		data.join("agents").join("devtool").join("helper.toml")
-	);
+	assert_eq!(path, data.join("agents").join("devtool").join("helper.toml"));
 	assert!(path.parent().expect("parent").is_dir(), "cache dir created");
 }
 
@@ -152,12 +140,8 @@ async fn fetch_manifest_reads_from_tap_and_populates_cache() {
 	let _env = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
-	let manifest =
-		"# Title: Helper\n# Description: Helps.\n\n[[roles]]\nname = \"devtool:helper\"\n";
-	write_file(
-		&tap.join("agents").join("devtool").join("helper.toml"),
-		manifest,
-	);
+	let manifest = "# Title: Helper\n# Description: Helps.\n\n[[roles]]\nname = \"devtool:helper\"\n";
+	write_file(&tap.join("agents").join("devtool").join("helper.toml"), manifest);
 
 	let (toml, root) = fetch_manifest("devtool:helper", &RegistryConfig::default())
 		.await
@@ -226,10 +210,7 @@ fn list_all_tap_agents_enumerates_sorted_and_skips_non_toml() {
 		&tap.join("agents").join("a-cat").join("alpha.toml"),
 		"# Title: Alpha\n# Description: a\n",
 	);
-	write_file(
-		&tap.join("agents").join("a-cat").join("notes.txt"),
-		"not a manifest",
-	);
+	write_file(&tap.join("agents").join("a-cat").join("notes.txt"), "not a manifest");
 
 	let agents = list_all_tap_agents().expect("list");
 	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
@@ -243,10 +224,7 @@ fn list_all_tap_agents_enumerates_sorted_and_skips_non_toml() {
 fn list_all_tap_agents_fails_on_manifest_missing_headers() {
 	let _guard = DataDirGuard::new();
 	let tap = default_tap_dir();
-	write_file(
-		&tap.join("agents").join("x").join("bad.toml"),
-		"# no headers\n",
-	);
+	write_file(&tap.join("agents").join("x").join("bad.toml"), "# no headers\n");
 	assert!(list_all_tap_agents().is_err());
 }
 
@@ -368,10 +346,7 @@ fn parse_capability_toml_provider_override_selects_file() {
 	let tap = default_tap_dir();
 	let cap_dir = tap.join("capabilities").join("deploy-helper");
 	write_file(&cap_dir.join("config.toml"), "triggers = [\"deploy\"]\n");
-	write_file(
-		&cap_dir.join("custom.toml"),
-		"[deps]\nrequire = [\"helm\"]\n",
-	);
+	write_file(&cap_dir.join("custom.toml"), "[deps]\nrequire = [\"helm\"]\n");
 
 	// Without an override only `default.toml` is a provider — not found.
 	assert!(parse_capability_toml("deploy-helper", &HashMap::new()).is_err());
@@ -392,27 +367,19 @@ fn parse_capability_toml_resolves_bare_baseline_and_org_prefixed_refs() {
 	install_taps_file(&data_dir, &[("acme/tools", Some(&acme))]);
 	for (root, trigger) in [(&baseline, "baseline search"), (&acme, "acme search")] {
 		let cap_dir = root.join("capabilities").join("codesearch");
-		write_file(
-			&cap_dir.join("config.toml"),
-			&format!("triggers = [\"{trigger}\"]\n"),
-		);
+		write_file(&cap_dir.join("config.toml"), &format!("triggers = [\"{trigger}\"]\n"));
 		write_file(&cap_dir.join("default.toml"), "[deps]\n");
 	}
 
 	// Bare: user taps come before the baseline, so acme wins the search.
 	let bare = parse_capability_toml("codesearch", &HashMap::new()).expect("bare resolves");
 	assert_eq!(bare.tap_root, acme);
-	let pinned = parse_capability_toml("octomind/codesearch", &HashMap::new())
-		.expect("baseline prefix resolves");
+	let pinned = parse_capability_toml("octomind/codesearch", &HashMap::new()).expect("baseline prefix resolves");
 	assert_eq!(pinned.tap_root, baseline);
 	assert_eq!(pinned.triggers, vec!["baseline search".to_string()]);
-	let org =
-		parse_capability_toml("acme/codesearch", &HashMap::new()).expect("org prefix resolves");
+	let org = parse_capability_toml("acme/codesearch", &HashMap::new()).expect("org prefix resolves");
 	assert_eq!(org.tap_root, acme);
-	assert_eq!(
-		org.name, "codesearch",
-		"resolved name is always the bare name"
-	);
+	assert_eq!(org.name, "codesearch", "resolved name is always the bare name");
 
 	let err = parse_capability_toml("ghost/codesearch", &HashMap::new()).expect_err("unknown org");
 	assert!(err.to_string().contains("No connected tap for prefix"));
@@ -441,8 +408,7 @@ fn list_all_capabilities_lists_installed_sorted() {
 #[test]
 fn resolve_capabilities_passthrough_when_none_declared() {
 	let raw = "[[roles]]\nname = \"x\"\n";
-	let (out, deps) =
-		resolve_capabilities(raw, Path::new("/nonexistent-tap"), &HashMap::new()).expect("resolve");
+	let (out, deps) = resolve_capabilities(raw, Path::new("/nonexistent-tap"), &HashMap::new()).expect("resolve");
 	assert!(deps.is_empty());
 	assert_eq!(out, raw);
 }
@@ -471,10 +437,7 @@ fn resolve_capabilities_merges_and_strips_capabilities() {
 	let (out, _deps) = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
 	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
 
-	assert!(
-		value.get("capabilities").is_none(),
-		"capabilities key stripped"
-	);
+	assert!(value.get("capabilities").is_none(), "capabilities key stripped");
 	let deps: Vec<&str> = value["deps"]["require"]
 		.as_array()
 		.unwrap()
@@ -512,20 +475,13 @@ fn resolve_capabilities_merges_and_strips_capabilities() {
 fn resolve_capabilities_dedupes_servers_by_name() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let cap_dir = tmp.path().join("capabilities").join("dep-cap");
-	write_file(
-		&cap_dir.join("default.toml"),
-		"[[mcp.servers]]\nname = \"agent-srv\"\n",
-	);
+	write_file(&cap_dir.join("default.toml"), "[[mcp.servers]]\nname = \"agent-srv\"\n");
 
 	let raw = "capabilities = [\"dep-cap\"]\n\n[[mcp.servers]]\nname = \"agent-srv\"\n";
 	let (out, _deps) = resolve_capabilities(raw, tmp.path(), &HashMap::new()).expect("resolve");
 	let value: toml::Value = toml::from_str(&out).expect("output is valid toml");
 	let servers = value["mcp"]["servers"].as_array().expect("servers");
-	assert_eq!(
-		servers.len(),
-		1,
-		"same-name capability server not duplicated"
-	);
+	assert_eq!(servers.len(), 1, "same-name capability server not duplicated");
 }
 
 #[test]
@@ -543,10 +499,7 @@ fn resolve_capabilities_rejects_unknown_tap_prefix() {
 fn resolve_capabilities_pairs_each_dep_with_its_own_tap() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(
-		&tmp.path()
-			.join("capabilities")
-			.join("dep-cap")
-			.join("default.toml"),
+		&tmp.path().join("capabilities").join("dep-cap").join("default.toml"),
 		"[deps]\nrequire = [\"kubectl\"]\n",
 	);
 
@@ -564,10 +517,7 @@ fn resolve_capabilities_pairs_each_dep_with_its_own_tap() {
 #[test]
 fn merge_string_array_dedupes_and_appends() {
 	let mut table = toml::map::Map::new();
-	table.insert(
-		"key".to_string(),
-		toml::Value::Array(vec!["a".into(), "b".into()]),
-	);
+	table.insert("key".to_string(), toml::Value::Array(vec!["a".into(), "b".into()]));
 	merge_string_array(&mut table, "key", &["b".to_string(), "c".to_string()]);
 	let items: Vec<&str> = table
 		.get("key")
@@ -598,10 +548,7 @@ fn merge_string_array_creates_missing_key() {
 /// A local tap directory layout: `<data>/taps/<user>/octomind-<repo>`.
 fn user_tap_dir(data_dir: &Path, name: &str) -> PathBuf {
 	let (user, repo) = name.split_once('/').expect("tap name is user/repo");
-	data_dir
-		.join("taps")
-		.join(user)
-		.join(format!("octomind-{repo}"))
+	data_dir.join("taps").join(user).join(format!("octomind-{repo}"))
 }
 
 /// Write a taps.toml listing user taps (local_path kept so load_taps never
@@ -688,10 +635,7 @@ async fn fetch_manifest_first_tap_wins_on_duplicate_manifests() {
 	write_agent_manifest(&second, "dup", "var", "# second tap manifest\n");
 	install_taps_file(
 		&data_dir,
-		&[
-			("probe/first", Some(&first)),
-			("probe/second", Some(&second)),
-		],
+		&[("probe/first", Some(&first)), ("probe/second", Some(&second))],
 	);
 
 	let (raw, tap_root) = fetch_manifest("dup:var", &registry_config())
@@ -756,10 +700,7 @@ async fn fetch_manifest_serves_stale_cache_and_refreshes_in_background() {
 		}
 	})
 	.await;
-	assert!(
-		refreshed.is_ok(),
-		"background refresh did not rewrite the cache"
-	);
+	assert!(refreshed.is_ok(), "background refresh did not rewrite the cache");
 }
 
 // --- list_all_tap_agents / list_all_tap_workflows edge branches -------------
@@ -781,10 +722,7 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 		"# Title: Dup\n# Description: From the user tap.\n",
 	);
 	// A second user tap whose directory does not exist (agents_dir() errors).
-	install_taps_file(
-		&data_dir,
-		&[("probe/dup", Some(&user_tap)), ("probe/ghost", None)],
-	);
+	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
 
 	// Default tap: one good agent, a duplicate of the user tap's role, a stray
 	// non-directory entry, an unreadable category, and a directory named *.toml.
@@ -800,31 +738,18 @@ fn list_all_tap_agents_skips_broken_unreadable_and_duplicate_entries() {
 		"var",
 		"# Title: Good\n# Description: The good agent.\n",
 	);
-	std::fs::write(
-		default_tap.join("agents").join("stray.md"),
-		"not a category",
-	)
-	.expect("write stray file");
+	std::fs::write(default_tap.join("agents").join("stray.md"), "not a category").expect("write stray file");
 	let locked = default_tap.join("agents").join("locked");
 	std::fs::create_dir_all(&locked).expect("create locked category");
 	chmod(&locked, 0o000);
-	let toml_dir = default_tap
-		.join("agents")
-		.join("good")
-		.join("dirnamed.toml");
+	let toml_dir = default_tap.join("agents").join("good").join("dirnamed.toml");
 	std::fs::create_dir_all(&toml_dir).expect("create dir named like a manifest");
 
 	let agents = list_all_tap_agents().expect("enumeration succeeds");
 	let roles: Vec<&str> = agents.iter().map(|a| a.role.as_str()).collect();
 	assert_eq!(roles, vec!["dup:both", "good:var"], "skipped entries");
-	let dup = agents
-		.iter()
-		.find(|a| a.role == "dup:both")
-		.expect("dup listed");
-	assert_eq!(
-		dup.source_tap, "probe/dup",
-		"first tap wins over the default tap"
-	);
+	let dup = agents.iter().find(|a| a.role == "dup:both").expect("dup listed");
+	assert_eq!(dup.source_tap, "probe/dup", "first tap wins over the default tap");
 
 	chmod(&locked, 0o755);
 }
@@ -838,21 +763,13 @@ fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
 	let default_tap = default_tap_dir();
 	let workflows = default_tap.join("workflows");
 	std::fs::create_dir_all(&workflows).expect("create workflows dir");
-	std::fs::write(
-		workflows.join("good.toml"),
-		"description = \"the good workflow\"\n",
-	)
-	.expect("write good workflow");
+	std::fs::write(workflows.join("good.toml"), "description = \"the good workflow\"\n").expect("write good workflow");
 
 	// A user tap whose workflows dir cannot be read is skipped entirely.
 	let user_tap = user_tap_dir(&data_dir, "probe/locked");
 	let locked_workflows = user_tap.join("workflows");
 	std::fs::create_dir_all(&locked_workflows).expect("create locked workflows");
-	std::fs::write(
-		locked_workflows.join("hidden.toml"),
-		"description = \"x\"\n",
-	)
-	.expect("write hidden workflow");
+	std::fs::write(locked_workflows.join("hidden.toml"), "description = \"x\"\n").expect("write hidden workflow");
 	chmod(&locked_workflows, 0o000);
 	install_taps_file(&data_dir, &[("probe/locked", Some(&user_tap))]);
 
@@ -872,11 +789,7 @@ fn list_all_tap_workflows_skips_unreadable_and_non_utf8_entries() {
 
 	let workflows_list = list_all_tap_workflows().expect("enumeration succeeds");
 	let names: Vec<&str> = workflows_list.iter().map(|w| w.name.as_str()).collect();
-	assert_eq!(
-		names,
-		vec!["good"],
-		"only the readable UTF-8 workflow is listed"
-	);
+	assert_eq!(names, vec!["good"], "only the readable UTF-8 workflow is listed");
 
 	chmod(&locked_workflows, 0o755);
 	chmod(&unreadable, 0o644);
@@ -892,18 +805,13 @@ fn parse_capability_toml_skips_taps_with_missing_directories() {
 	let default_tap = default_tap_dir();
 	let cap_dir = default_tap.join("capabilities").join("probe-cap");
 	std::fs::create_dir_all(&cap_dir).expect("create capability dir");
-	std::fs::write(
-		cap_dir.join("config.toml"),
-		"triggers = [\"probe thing\"]\n",
-	)
-	.expect("write config");
+	std::fs::write(cap_dir.join("config.toml"), "triggers = [\"probe thing\"]\n").expect("write config");
 	std::fs::write(cap_dir.join("default.toml"), "[deps]\n").expect("write provider");
 
 	// A user tap whose directory does not exist must be skipped, not fatal.
 	install_taps_file(&data_dir, &[("probe/ghost", None)]);
 
-	let resolved =
-		parse_capability_toml("probe-cap", &HashMap::new()).expect("capability resolves");
+	let resolved = parse_capability_toml("probe-cap", &HashMap::new()).expect("capability resolves");
 	assert_eq!(resolved.name, "probe-cap");
 	assert_eq!(resolved.triggers, vec!["probe thing".to_string()]);
 }
@@ -920,20 +828,15 @@ fn parse_capability_toml_surfaces_provider_file_failures() {
 	std::fs::write(unreadable.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
 	std::fs::write(unreadable.join("default.toml"), "[deps]\n").expect("provider");
 	chmod(&unreadable.join("default.toml"), 0o000);
-	let err = parse_capability_toml("unreadable-cap", &HashMap::new())
-		.expect_err("unreadable provider must fail");
-	assert!(
-		err.to_string().contains("Failed to read provider file"),
-		"got: {err:#}"
-	);
+	let err = parse_capability_toml("unreadable-cap", &HashMap::new()).expect_err("unreadable provider must fail");
+	assert!(err.to_string().contains("Failed to read provider file"), "got: {err:#}");
 	chmod(&unreadable.join("default.toml"), 0o644);
 
 	let malformed = default_tap.join("capabilities").join("malformed-cap");
 	std::fs::create_dir_all(&malformed).expect("create capability dir");
 	std::fs::write(malformed.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
 	std::fs::write(malformed.join("default.toml"), "not = = toml").expect("provider");
-	let err = parse_capability_toml("malformed-cap", &HashMap::new())
-		.expect_err("malformed provider must fail");
+	let err = parse_capability_toml("malformed-cap", &HashMap::new()).expect_err("malformed provider must fail");
 	assert!(
 		err.to_string().contains("Failed to parse provider file"),
 		"got: {err:#}"
@@ -974,8 +877,7 @@ type = "http"
 	)
 	.expect("write provider");
 
-	let resolved =
-		parse_capability_toml("wired-cap", &HashMap::new()).expect("capability resolves");
+	let resolved = parse_capability_toml("wired-cap", &HashMap::new()).expect("capability resolves");
 	let mut keys = resolved.required_env_keys.clone();
 	keys.sort();
 	assert_eq!(
@@ -1005,10 +907,7 @@ fn list_all_capabilities_skips_broken_unreadable_and_duplicate_entries() {
 	std::fs::create_dir_all(&dup_dir).expect("create dup capability");
 	std::fs::write(dup_dir.join("config.toml"), "triggers = [\"t\"]\n").expect("config");
 	std::fs::write(dup_dir.join("default.toml"), "[deps]\n").expect("provider");
-	install_taps_file(
-		&data_dir,
-		&[("probe/dup", Some(&user_tap)), ("probe/ghost", None)],
-	);
+	install_taps_file(&data_dir, &[("probe/dup", Some(&user_tap)), ("probe/ghost", None)]);
 
 	// Default tap: duplicate of the user capability, one good capability, a
 	// stray file, and an unreadable capability directory.
@@ -1022,11 +921,7 @@ fn list_all_capabilities_skips_broken_unreadable_and_duplicate_entries() {
 	std::fs::write(good.join("config.toml"), "triggers = [\"good thing\"]\n").expect("config");
 	std::fs::write(good.join("default.toml"), "[deps]\n").expect("provider");
 
-	std::fs::write(
-		default_tap.join("capabilities").join("stray.md"),
-		"not a capability",
-	)
-	.expect("write stray file");
+	std::fs::write(default_tap.join("capabilities").join("stray.md"), "not a capability").expect("write stray file");
 	let locked = default_tap.join("capabilities").join("locked-cap");
 	std::fs::create_dir_all(&locked).expect("create locked capability");
 	chmod(&locked, 0o000);

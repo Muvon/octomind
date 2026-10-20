@@ -163,18 +163,13 @@ pub async fn run_extraction(
 		!role.trim().is_empty(),
 		"learning extraction needs the session role: role-less records are unreachable by recall"
 	);
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Distill,
-	);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Distill);
 
 	let backend = FileBackend;
 	crate::log_debug!("Learning extraction: role={}, project={}", role, project);
 
 	// Retrieve existing lessons (scoped + global) for dedup context and supersede.
-	let existing_scoped = backend
-		.retrieve_all(role, project)
-		.await
-		.unwrap_or_default();
+	let existing_scoped = backend.retrieve_all(role, project).await.unwrap_or_default();
 	let existing_global = backend.retrieve_global().await.unwrap_or_default();
 	crate::log_debug!(
 		"Learning extraction: {} scoped + {} global existing lessons",
@@ -246,18 +241,10 @@ pub async fn run_extraction(
 						"Experience grounding requested one repair: {}",
 						verdict.issues.join("; ")
 					);
-					if let Some(repaired) = repair_experience(
-						config,
-						&experience,
-						messages,
-						&reconcile,
-						&verdict.issues,
-					)
-					.await
+					if let Some(repaired) =
+						repair_experience(config, &experience, messages, &reconcile, &verdict.issues).await
 					{
-						verify_experience(config, &repaired, messages)
-							.await
-							.then_some(repaired)
+						verify_experience(config, &repaired, messages).await.then_some(repaired)
 					} else {
 						None
 					}
@@ -346,35 +333,16 @@ pub async fn run_extraction(
 	// above is independent, so still return its count even when there are no lessons.
 	if !response.contains("<decision>LEARN</decision>") {
 		crate::log_debug!("Learning extraction: model decided NONE — no lessons");
-		return finish_extraction(
-			&backend,
-			config,
-			role,
-			project,
-			session_name,
-			messages,
-			stored,
-		)
-		.await;
+		return finish_extraction(&backend, config, role, project, session_name, messages, stored).await;
 	}
 
-	let candidates =
-		parse_lessons_with_evidence(&response, role, project, session_name, reconcile.len());
+	let candidates = parse_lessons_with_evidence(&response, role, project, session_name, reconcile.len());
 	crate::log_debug!(
 		"Learning extraction: LLM returned {} lessons with evidence",
 		candidates.len()
 	);
 	if candidates.is_empty() {
-		return finish_extraction(
-			&backend,
-			config,
-			role,
-			project,
-			session_name,
-			messages,
-			stored,
-		)
-		.await;
+		return finish_extraction(&backend, config, role, project, session_name, messages, stored).await;
 	}
 
 	// Verification gate (closes the Self-Confirmation Trap at entry): a lesson
@@ -416,32 +384,21 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(
-			&backend,
-			config,
-			role,
-			project,
-			session_name,
-			messages,
-			stored,
-		)
-		.await;
+		return finish_extraction(&backend, config, role, project, session_name, messages, stored).await;
 	}
 
 	// 2. Does the evidence actually support each lesson's rule? The evaluation
 	//    seam answers per candidate; otherwise one batched LLM pass does.
 	//    Fail-closed — an unverifiable rule must not become durable state.
 	let view = verifier_view(&transcript, &grounding, &candidates);
-	let keep =
-		if crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Distill)
-		{
-			match evaluate_lessons(config, &candidates, &view).await {
-				Some(keep) => keep,
-				None => vec![false; candidates.len()],
-			}
-		} else {
-			verify_lessons(config, &candidates, &view).await
-		};
+	let keep = if crate::supervisor::evaluate::enabled(config, crate::supervisor::evaluate::Seam::Distill) {
+		match evaluate_lessons(config, &candidates, &view).await {
+			Some(keep) => keep,
+			None => vec![false; candidates.len()],
+		}
+	} else {
+		verify_lessons(config, &candidates, &view).await
+	};
 	let candidates: Vec<Candidate> = candidates
 		.into_iter()
 		.zip(keep.iter())
@@ -456,16 +413,7 @@ pub async fn run_extraction(
 		})
 		.collect();
 	if candidates.is_empty() {
-		return finish_extraction(
-			&backend,
-			config,
-			role,
-			project,
-			session_name,
-			messages,
-			stored,
-		)
-		.await;
+		return finish_extraction(&backend, config, role, project, session_name, messages, stored).await;
 	}
 
 	// 3. User-wide is the widest claim a rule can make: it steers every project
@@ -509,10 +457,7 @@ pub async fn run_extraction(
 			&existing_lessons_scoped
 		};
 
-		if existing
-			.iter()
-			.any(|e| e.content.trim() == lesson.content.trim())
-		{
+		if existing.iter().any(|e| e.content.trim() == lesson.content.trim()) {
 			crate::log_debug!("Learning skipped (identical): {}", lesson.content);
 			continue;
 		}
@@ -524,10 +469,7 @@ pub async fn run_extraction(
 			.and_then(|i| reconcile.get(i))
 			.filter(|old| old.scope == lesson.scope)
 		{
-			if let Err(e) = backend
-				.delete(&old.file_id(), &old.role, &old.project)
-				.await
-			{
+			if let Err(e) = backend.delete(&old.file_id(), &old.role, &old.project).await {
 				crate::log_debug!("Learning supersede delete failed: {}", e);
 			} else {
 				crate::log_debug!("Learning superseded: {} → {}", old.content, lesson.content);
@@ -548,16 +490,7 @@ pub async fn run_extraction(
 		}
 	}
 
-	finish_extraction(
-		&backend,
-		config,
-		role,
-		project,
-		session_name,
-		messages,
-		stored,
-	)
-	.await
+	finish_extraction(&backend, config, role, project, session_name, messages, stored).await
 }
 
 /// Run deterministic cleanup and bounded file-store maintenance after every
@@ -583,15 +516,7 @@ async fn finish_extraction(
 		crate::log_debug!("Learning retention maintenance failed: {}", error);
 	}
 	if stored > 0 {
-		match super::evolution::synthesize_after_extraction(
-			messages,
-			config,
-			role,
-			project,
-			session_name,
-		)
-		.await
-		{
+		match super::evolution::synthesize_after_extraction(messages, config, role, project, session_name).await {
 			Ok(ids) if ids.is_empty() => crate::log_debug!("Evolution synthesis: no candidate"),
 			Ok(ids) => crate::log_debug!("Evolution candidates stored: {}", ids.join(", ")),
 			Err(error) => crate::log_debug!("Evolution synthesis failed closed: {}", error),
@@ -620,10 +545,7 @@ fn should_extract_experience(
 	transcript: &str,
 	outcome: super::TrajectoryOutcome,
 ) -> bool {
-	let tools = messages
-		.iter()
-		.filter(|message| message.role == "tool")
-		.count();
+	let tools = messages.iter().filter(|message| message.role == "tool").count();
 	let users = messages
 		.iter()
 		.filter(|message| crate::session::is_real_user_task_message(message))
@@ -913,11 +835,7 @@ const VERIFY_TRANSCRIPT_CHARS: usize = 12_000;
 /// already carry that quote. The head is chronological and its user turns are
 /// head/tail-capped, so without this a correction late in a long session is
 /// judged against text that does not contain its quote and is rejected.
-fn verifier_view(
-	transcript: &str,
-	grounding: &[(usize, &str)],
-	candidates: &[Candidate],
-) -> String {
+fn verifier_view(transcript: &str, grounding: &[(usize, &str)], candidates: &[Candidate]) -> String {
 	let mut view: String = transcript.chars().take(VERIFY_TRANSCRIPT_CHARS).collect();
 	for ((number, content), candidate) in grounding.iter().zip(candidates) {
 		if view.contains(candidate.evidence.as_str()) {
@@ -947,20 +865,11 @@ async fn evaluate_lessons(config: &Config, lessons: &[Candidate], view: &str) ->
 			.collect::<Vec<_>>(),
 		"transcript": view,
 	});
-	let replaced = crate::session::estimate_tokens(&state.to_string())
-		+ crate::session::estimate_tokens(VERIFY_LESSONS_PROMPT);
-	let answers = evaluate::run(
-		config,
-		Seam::Distill,
-		state,
-		evaluate::distill_questions(lessons.len()),
-	)
-	.await?;
+	let replaced =
+		crate::session::estimate_tokens(&state.to_string()) + crate::session::estimate_tokens(VERIFY_LESSONS_PROMPT);
+	let answers = evaluate::run(config, Seam::Distill, state, evaluate::distill_questions(lessons.len())).await?;
 	let keep: Vec<bool> = (0..lessons.len())
-		.map(|slot| {
-			evaluate::probability(&answers, &evaluate::distill_question_id(slot))
-				>= evaluate::DISTILL_KEEP_AT
-		})
+		.map(|slot| evaluate::probability(&answers, &evaluate::distill_question_id(slot)) >= evaluate::DISTILL_KEEP_AT)
 		.collect();
 	crate::log_debug!(
 		"evaluate distill: kept {} of {} lessons",
@@ -1020,9 +929,7 @@ async fn verify_lessons(config: &Config, lessons: &[Candidate], view: &str) -> V
 		);
 		return vec![false; lessons.len()];
 	};
-	(0..lessons.len())
-		.map(|i| !unsupported.contains(&(i + 1)))
-		.collect()
+	(0..lessons.len()).map(|i| !unsupported.contains(&(i + 1))).collect()
 }
 
 /// Extract the unsupported index list from the verifier's JSON, dropping
@@ -1057,10 +964,7 @@ struct OrientationParseContext<'a> {
 /// missing, malformed, assistant-only, or budget-hidden evidence fails closed.
 /// Parsing proves only that the citations exist; the caller still runs the
 /// grounding verifier on what they say.
-fn parse_orientation_tags(
-	response: &str,
-	context: &OrientationParseContext<'_>,
-) -> Vec<GroundedCandidate> {
+fn parse_orientation_tags(response: &str, context: &OrientationParseContext<'_>) -> Vec<GroundedCandidate> {
 	let mut out = Vec::new();
 	let now = chrono::Utc::now().to_rfc3339();
 	let mut remaining = response;
@@ -1131,10 +1035,7 @@ fn parse_orientation_tags(
 	out
 }
 
-fn parse_orientation_evidence(
-	attrs: &str,
-	context: &OrientationParseContext<'_>,
-) -> Option<Vec<usize>> {
+fn parse_orientation_evidence(attrs: &str, context: &OrientationParseContext<'_>) -> Option<Vec<usize>> {
 	let raw = extract_attr(attrs, "evidence")?;
 	let ids = raw.split(',').map(str::trim).collect::<Vec<_>>();
 	if ids.is_empty() || ids.len() > 4 || ids.iter().any(|id| id.is_empty()) {
@@ -1184,10 +1085,7 @@ struct ExperienceParseContext<'a> {
 	outcome: super::TrajectoryOutcome,
 }
 
-fn parse_experience_tag(
-	response: &str,
-	context: &ExperienceParseContext<'_>,
-) -> Option<GroundedCandidate> {
+fn parse_experience_tag(response: &str, context: &ExperienceParseContext<'_>) -> Option<GroundedCandidate> {
 	let messages = context.messages;
 	let transcript = context.transcript;
 	let reconcile = context.reconcile;
@@ -1215,11 +1113,7 @@ fn parse_experience_tag(
 
 	let mut message_numbers = Vec::new();
 	for raw in extract_attr(attrs, "evidence")?.split(',').take(6) {
-		let number = raw
-			.trim()
-			.trim_start_matches(['M', 'm'])
-			.parse::<usize>()
-			.ok()?;
+		let number = raw.trim().trim_start_matches(['M', 'm']).parse::<usize>().ok()?;
 		let message = messages.get(number.checked_sub(1)?)?;
 		if !is_transcript_evidence(message) || !transcript.contains(&format!("[M{number} ")) {
 			return None;
@@ -1245,9 +1139,7 @@ fn parse_experience_tag(
 	let mut related = Vec::new();
 	if let Some(raw) = extract_attr(attrs, "related") {
 		for token in raw.split(',') {
-			if let Some(index) =
-				parse_supersedes(&format!("supersedes=\"{}\"", token.trim()), reconcile.len())
-			{
+			if let Some(index) = parse_supersedes(&format!("supersedes=\"{}\"", token.trim()), reconcile.len()) {
 				let id = reconcile[index].file_id();
 				if !related.contains(&id) {
 					related.push(id);
@@ -1322,8 +1214,8 @@ async fn verify_experience(
 		let Ok(user) = experience_verifier_payload(candidate, messages) else {
 			return false;
 		};
-		let replaced = crate::session::estimate_tokens(&user)
-			+ crate::session::estimate_tokens(VERIFY_EXPERIENCE_PROMPT);
+		let replaced =
+			crate::session::estimate_tokens(&user) + crate::session::estimate_tokens(VERIFY_EXPERIENCE_PROMPT);
 		let Some(answers) = evaluate::run(
 			config,
 			Seam::Distill,
@@ -1336,8 +1228,7 @@ async fn verify_experience(
 		};
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
-			>= evaluate::MEMORY_SUPPORT_AT;
+		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::MEMORY_SUPPORT_AT;
 	}
 	experience_verdict(config, candidate, messages)
 		.await
@@ -1356,9 +1247,7 @@ async fn experience_verdict(
 	candidate: &GroundedCandidate,
 	messages: &[crate::session::Message],
 ) -> Option<ExperienceVerdict> {
-	let response = experience_verifier_response(config, candidate, messages)
-		.await
-		.ok()?;
+	let response = experience_verifier_response(config, candidate, messages).await.ok()?;
 	parse_experience_verdict(&response)
 }
 
@@ -1379,10 +1268,7 @@ async fn experience_verifier_response(
 	.await
 }
 
-fn experience_verifier_payload(
-	candidate: &GroundedCandidate,
-	messages: &[crate::session::Message],
-) -> Result<String> {
+fn experience_verifier_payload(candidate: &GroundedCandidate, messages: &[crate::session::Message]) -> Result<String> {
 	let cited = render_experience_evidence(candidate, messages)?;
 	Ok(format!(
 		"<proposed_memory outcome=\"{}\" cited_messages=\"{}\">\n{}\n</proposed_memory>\n\n<transcript trust=\"untrusted\">\n{}\n</transcript>",
@@ -1473,10 +1359,7 @@ async fn repair_experience_response(
 	.await
 }
 
-fn render_experience_evidence(
-	candidate: &GroundedCandidate,
-	messages: &[crate::session::Message],
-) -> Result<String> {
+fn render_experience_evidence(candidate: &GroundedCandidate, messages: &[crate::session::Message]) -> Result<String> {
 	let mut cited = String::new();
 	for number in &candidate.message_numbers {
 		let Some(message) = messages.get(number.saturating_sub(1)) else {
@@ -1506,8 +1389,7 @@ fn word_overlap(new_content: &str, existing_content: &str) -> f64 {
 		return 0.0;
 	}
 	let existing_lower = existing_content.to_lowercase();
-	let existing_words: std::collections::HashSet<&str> =
-		existing_lower.split_whitespace().collect();
+	let existing_words: std::collections::HashSet<&str> = existing_lower.split_whitespace().collect();
 	let overlap = new_words.intersection(&existing_words).count();
 	overlap as f64 / new_words.len() as f64
 }
@@ -1545,11 +1427,7 @@ const RECONCILE_GLOBAL_MIN: usize = 5;
 /// creation time then content, since directory read order is not stable.
 fn reconcile_candidates(scoped: &[Lesson], global: &[Lesson]) -> Vec<Lesson> {
 	let ranked = |ls: &[Lesson]| {
-		let mut v: Vec<Lesson> = ls
-			.iter()
-			.filter(|l| l.memory_type == "learning")
-			.cloned()
-			.collect();
+		let mut v: Vec<Lesson> = ls.iter().filter(|l| l.memory_type == "learning").cloned().collect();
 		v.sort_by(|a, b| {
 			b.importance
 				.partial_cmp(&a.importance)
@@ -1562,10 +1440,7 @@ fn reconcile_candidates(scoped: &[Lesson], global: &[Lesson]) -> Vec<Lesson> {
 	let global = ranked(global);
 	let scoped = ranked(scoped);
 	let reserved = global.len().min(RECONCILE_GLOBAL_MIN);
-	let mut out: Vec<Lesson> = scoped
-		.into_iter()
-		.take(RECONCILE_CANDIDATES - reserved)
-		.collect();
+	let mut out: Vec<Lesson> = scoped.into_iter().take(RECONCILE_CANDIDATES - reserved).collect();
 	out.extend(global.into_iter().take(RECONCILE_CANDIDATES - out.len()));
 	out
 }
@@ -1751,11 +1626,7 @@ fn spawn_distill_process(
 	session_file: Option<&std::path::Path>,
 ) -> Result<()> {
 	let exe = std::env::current_exe()?;
-	let snapshot = std::env::temp_dir().join(format!(
-		"octomind-distill-{}-{}.json",
-		session_name,
-		std::process::id()
-	));
+	let snapshot = std::env::temp_dir().join(format!("octomind-distill-{}-{}.json", session_name, std::process::id()));
 	std::fs::write(&snapshot, serde_json::to_vec(messages)?)?;
 	let mut command = std::process::Command::new(exe);
 	command.arg("distill");
@@ -1785,11 +1656,7 @@ fn spawn_distill_process(
 }
 
 /// LLM call for lesson extraction — no `ChatSession` reference, no cost tracking.
-async fn call_extraction_llm(
-	config: &Config,
-	system_content: String,
-	user_content: String,
-) -> Result<String> {
+async fn call_extraction_llm(config: &Config, system_content: String, user_content: String) -> Result<String> {
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	call_learning_llm(
 		config,
@@ -1856,27 +1723,18 @@ pub(crate) async fn call_supervisor_json(
 	operation_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<serde_json::Value> {
 	let profile = config.get_supervisor_model_profile();
-	let (provider, actual_model) =
-		crate::providers::ProviderFactory::get_provider_for_model(&profile.model)?;
+	let (provider, actual_model) = crate::providers::ProviderFactory::get_provider_for_model(&profile.model)?;
 	let enforced = provider.enforces_response_schema(&actual_model);
-	let response = call_supervisor_model(
-		config,
-		prompt,
-		kind,
-		enforced.then_some(schema),
-		operation_rx,
-	)
-	.await?;
+	let response = call_supervisor_model(config, prompt, kind, enforced.then_some(schema), operation_rx).await?;
 	if let Some(value) = response.structured_output {
 		return Ok(value);
 	}
-	crate::session::chat::conversation_compression::extract_json_lenient(&response.content)
-		.ok_or_else(|| {
-			anyhow::anyhow!(
-				"model '{}' returned no JSON object (schema enforced: {enforced})",
-				profile.model
-			)
-		})
+	crate::session::chat::conversation_compression::extract_json_lenient(&response.content).ok_or_else(|| {
+		anyhow::anyhow!(
+			"model '{}' returned no JSON object (schema enforced: {enforced})",
+			profile.model
+		)
+	})
 }
 
 async fn call_supervisor_model(
@@ -1919,13 +1777,11 @@ async fn call_supervisor_model(
 	];
 
 	let profile = config.get_supervisor_model_profile();
-	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(
-		&messages, &profile, config,
-	)
-	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx)
-	.with_purpose(crate::providers::ModelPurpose::Supervisor)
-	.without_tools();
+	let mut params = crate::session::ChatCompletionWithValidationParams::from_profile(&messages, &profile, config)
+		.with_full_context_tokens(true)
+		.with_cancellation_token(operation_rx)
+		.with_purpose(crate::providers::ModelPurpose::Supervisor)
+		.without_tools();
 	if let Some(schema) = schema {
 		params = params.with_schema(schema);
 	}

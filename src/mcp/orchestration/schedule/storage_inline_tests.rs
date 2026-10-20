@@ -18,10 +18,7 @@ use chrono::{Datelike, Timelike};
 #[test]
 fn test_parse_now() {
 	let t = parse_when("now").unwrap();
-	let diff = t
-		.signed_duration_since(Local::now())
-		.num_milliseconds()
-		.abs();
+	let diff = t.signed_duration_since(Local::now()).num_milliseconds().abs();
 	assert!(diff < 100, "expected ~0ms, got {}", diff);
 }
 
@@ -42,33 +39,21 @@ fn test_parse_relative_minutes() {
 fn test_parse_relative_hours() {
 	let t = parse_when("in 2h").unwrap();
 	let diff = t.signed_duration_since(Local::now()).num_seconds();
-	assert!(
-		(7195..=7205).contains(&diff),
-		"expected ~7200s, got {}",
-		diff
-	);
+	assert!((7195..=7205).contains(&diff), "expected ~7200s, got {}", diff);
 }
 
 #[test]
 fn test_parse_relative_combined() {
 	let t = parse_when("in 1h30m").unwrap();
 	let diff = t.signed_duration_since(Local::now()).num_seconds();
-	assert!(
-		(5395..=5405).contains(&diff),
-		"expected ~5400s, got {}",
-		diff
-	);
+	assert!((5395..=5405).contains(&diff), "expected ~5400s, got {}", diff);
 }
 
 #[test]
 fn test_parse_relative_with_spaces() {
 	let t = parse_when("in 1h 30m 10s").unwrap();
 	let diff = t.signed_duration_since(Local::now()).num_seconds();
-	assert!(
-		(5405..=5415).contains(&diff),
-		"expected ~5410s, got {}",
-		diff
-	);
+	assert!((5405..=5415).contains(&diff), "expected ~5410s, got {}", diff);
 }
 
 #[test]

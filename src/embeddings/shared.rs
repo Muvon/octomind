@@ -107,9 +107,7 @@ impl Client {
 
 	pub(super) async fn embed_many(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
 		let (mut reader, _) = self.connect().await?;
-		let req = serde_json::to_string(&Request {
-			texts: texts.to_vec(),
-		})?;
+		let req = serde_json::to_string(&Request { texts: texts.to_vec() })?;
 		reader.get_mut().write_all(req.as_bytes()).await?;
 		reader.get_mut().write_all(b"\n").await?;
 		let mut line = String::new();
@@ -153,8 +151,7 @@ pub(super) async fn join() -> Result<Elected> {
 	for _ in 0..ATTEMPTS {
 		// Bind before claiming: the file must never advertise a port that
 		// isn't listening yet, or a fast client gets a connection refused.
-		let listener =
-			TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).await?;
+		let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).await?;
 		let port = listener.local_addr()?.port();
 		let token = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()).replace('-', "");
 		let endpoint = Endpoint {
@@ -177,10 +174,7 @@ pub(super) async fn join() -> Result<Elected> {
 					tokenizer: tokenizer_json,
 				};
 				serve(listener, token, hello);
-				crate::log_debug!(
-					"embeddings: elected owner of the shared model on port {}",
-					port
-				);
+				crate::log_debug!("embeddings: elected owner of the shared model on port {}", port);
 				return Ok(Elected {
 					role: Role::Owner,
 					revision: model.revision.clone(),
@@ -196,11 +190,10 @@ pub(super) async fn join() -> Result<Elected> {
 				};
 				match client.connect().await {
 					Ok((_, hello)) => {
-						let tokenizer: Tokenizer = hello.tokenizer.parse().map_err(|e| {
-							anyhow::anyhow!(
-								"shared embedding service sent an unusable tokenizer: {e}"
-							)
-						})?;
+						let tokenizer: Tokenizer = hello
+							.tokenizer
+							.parse()
+							.map_err(|e| anyhow::anyhow!("shared embedding service sent an unusable tokenizer: {e}"))?;
 						crate::log_debug!(
 							"embeddings: using shared model owned by pid {} (no local weights loaded)",
 							existing.pid
@@ -253,10 +246,9 @@ fn claim(path: &PathBuf, endpoint: &Endpoint) -> Result<bool> {
 }
 
 fn read_endpoint(path: &PathBuf) -> Result<Endpoint> {
-	let raw = std::fs::read_to_string(path)
-		.with_context(|| format!("failed to read {}", path.display()))?;
-	let endpoint: Endpoint = serde_json::from_str(&raw)
-		.with_context(|| format!("malformed endpoint file {}", path.display()))?;
+	let raw = std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+	let endpoint: Endpoint =
+		serde_json::from_str(&raw).with_context(|| format!("malformed endpoint file {}", path.display()))?;
 	if endpoint.model != super::MODEL_NAME {
 		bail!("endpoint file advertises model {}", endpoint.model);
 	}

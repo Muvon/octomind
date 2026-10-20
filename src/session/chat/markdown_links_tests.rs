@@ -46,10 +46,7 @@ fn plain_link_is_extracted_and_rendered_as_osc8() {
 	let (links, rendered) = render("see [docs](https://example.com) now");
 	assert_eq!(links.len(), 1);
 	assert_eq!(links[0].destination, "https://example.com/");
-	assert!(
-		rendered.contains("\x1b]8;;https://example.com/\x1b\\"),
-		"{rendered:?}"
-	);
+	assert!(rendered.contains("\x1b]8;;https://example.com/\x1b\\"), "{rendered:?}");
 	assert!(rendered.contains("docs"), "{rendered:?}");
 	assert!(rendered.contains("\x1b]8;;\x1b\\"), "{rendered:?}");
 }
@@ -92,11 +89,7 @@ fn balanced_nested_parentheses_stay_in_the_destination() {
 fn relative_path_becomes_a_file_url() {
 	let (links, _) = render("[f](README.md)");
 	assert_eq!(links.len(), 1);
-	assert!(
-		links[0].destination.starts_with("file://"),
-		"{}",
-		links[0].destination
-	);
+	assert!(links[0].destination.starts_with("file://"), "{}", links[0].destination);
 	assert!(links[0].destination.ends_with("/README.md"));
 }
 

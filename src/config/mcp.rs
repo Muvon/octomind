@@ -114,15 +114,9 @@ impl McpServerConfig {
 	/// Get timeout seconds regardless of variant
 	pub fn timeout_seconds(&self) -> u64 {
 		match self {
-			McpServerConfig::Builtin {
-				timeout_seconds, ..
-			} => *timeout_seconds,
-			McpServerConfig::Http {
-				timeout_seconds, ..
-			} => *timeout_seconds,
-			McpServerConfig::Stdin {
-				timeout_seconds, ..
-			} => *timeout_seconds,
+			McpServerConfig::Builtin { timeout_seconds, .. } => *timeout_seconds,
+			McpServerConfig::Http { timeout_seconds, .. } => *timeout_seconds,
+			McpServerConfig::Stdin { timeout_seconds, .. } => *timeout_seconds,
 		}
 	}
 
@@ -215,13 +209,7 @@ impl McpServerConfig {
 	}
 
 	/// Create a stdin server configuration
-	pub fn stdin(
-		name: &str,
-		command: &str,
-		args: Vec<String>,
-		timeout_seconds: u64,
-		tools: Vec<String>,
-	) -> Self {
+	pub fn stdin(name: &str, command: &str, args: Vec<String>, timeout_seconds: u64, tools: Vec<String>) -> Self {
 		Self::Stdin {
 			name: name.to_string(),
 			command: command.to_string(),
@@ -391,9 +379,7 @@ impl RoleMcpConfig {
 						}
 						// Concrete allow-list — union runtime capability extras.
 						Some(mut tools) => {
-							for extra in
-								crate::config::runtime_overlay::extras_for_server(server_name)
-							{
+							for extra in crate::config::runtime_overlay::extras_for_server(server_name) {
 								if !tools.iter().any(|t| t == &extra) {
 									tools.push(extra);
 								}
@@ -453,17 +439,14 @@ impl RoleMcpConfig {
 				result.push(server);
 				added_names.insert(server_name.clone());
 			} else {
-				crate::log_debug!(
-					"Server '{server_name}' referenced by role but not found in global registry"
-				);
+				crate::log_debug!("Server '{server_name}' referenced by role but not found in global registry");
 			}
 		}
 
 		// Second: add servers that auto-bind to this role
 		if let Some(role) = role_name {
 			for server_config in global_servers {
-				if server_config.auto_binds_to(role) && !added_names.contains(server_config.name())
-				{
+				if server_config.auto_binds_to(role) && !added_names.contains(server_config.name()) {
 					result.push(server_config.clone());
 					added_names.insert(server_config.name().to_string());
 				}

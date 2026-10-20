@@ -105,8 +105,7 @@ fn test_capture_self_report_credits_only_ids_in_active_pack() {
 }
 
 fn template_config() -> Config {
-	toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template")
+	toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template")
 }
 
 /// OutputSink that records every emitted message for inspection.
@@ -209,16 +208,8 @@ fn test_add_assistant_message_without_tool_calls_records_turn_answer() {
 	let config = template_config();
 	let exchange = ProviderExchange::new(json!({}), json!({}), None, "test");
 
-	add_assistant_message_with_tool_calls(
-		&mut session,
-		"the answer",
-		&exchange,
-		None,
-		&None,
-		&config,
-		"assistant",
-	)
-	.expect("assistant message");
+	add_assistant_message_with_tool_calls(&mut session, "the answer", &exchange, None, &None, &config, "assistant")
+		.expect("assistant message");
 
 	let message = &session.session.messages[0];
 	assert!(message.tool_calls.is_none());
@@ -295,10 +286,7 @@ fn test_capture_self_report_blocked_state() {
 		session.last_self_report,
 		Some(crate::supervisor::detect::SelfReport::Blocked)
 	);
-	assert_eq!(
-		session.last_self_report_reason.as_deref(),
-		Some("waiting on perms")
-	);
+	assert_eq!(session.last_self_report_reason.as_deref(), Some("waiting on perms"));
 }
 
 #[test]
@@ -347,24 +335,18 @@ fn test_params_builders_and_emit() {
 #[tokio::test]
 async fn test_get_tool_server_name_async_unknown_tool() {
 	let config = template_config();
-	assert_eq!(
-		get_tool_server_name_async("zzz_no_such_tool", &config).await,
-		"unknown"
-	);
+	assert_eq!(get_tool_server_name_async("zzz_no_such_tool", &config).await, "unknown");
 }
 
 /// The tool loop gate requires at least one configured MCP server; the
 /// template has none, so tests that must enter the loop push a builtin one.
 fn config_with_core_server(mut config: Config) -> Config {
-	config
-		.mcp
-		.servers
-		.push(crate::config::McpServerConfig::Builtin {
-			name: "core".to_string(),
-			timeout_seconds: 300,
-			tools: vec![],
-			auto_bind: None,
-		});
+	config.mcp.servers.push(crate::config::McpServerConfig::Builtin {
+		name: "core".to_string(),
+		timeout_seconds: 300,
+		tools: vec![],
+		auto_bind: None,
+	});
 	config
 }
 
@@ -375,8 +357,7 @@ fn recording_sink() -> RecordingSink {
 #[cfg(unix)]
 fn make_executable(path: &std::path::Path) {
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-		.expect("chmod +x fixture");
+	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod +x fixture");
 }
 
 /// Write an executable local-tool script under `<workdir>/.agents/tools/<name>`.
@@ -412,9 +393,7 @@ async fn test_process_response_final_answer_emits_thinking_assistant_and_cost() 
 		mode: OutputMode::Jsonl,
 	};
 
-	process_response(params)
-		.await
-		.expect("final answer processing");
+	process_response(params).await.expect("final answer processing");
 
 	let messages = sink.0.lock().expect("sink lock");
 	assert_eq!(messages.len(), 3, "{messages:?}");
@@ -530,9 +509,7 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 		mode: OutputMode::Jsonl,
 	};
 
-	process_response(params)
-		.await
-		.expect("tool round processing");
+	process_response(params).await.expect("tool round processing");
 
 	let messages = sink.0.lock().expect("sink lock");
 	assert!(messages.iter().any(
@@ -557,12 +534,7 @@ async fn test_process_response_tool_round_emits_tooluse_result_and_final_answer(
 	);
 	drop(messages);
 
-	let roles: Vec<&str> = session
-		.session
-		.messages
-		.iter()
-		.map(|m| m.role.as_str())
-		.collect();
+	let roles: Vec<&str> = session.session.messages.iter().map(|m| m.role.as_str()).collect();
 	assert_eq!(roles, vec!["user", "assistant", "tool", "assistant"]);
 	assert_eq!(session.session.messages[3].content, "All done");
 }
@@ -633,9 +605,7 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 			.messages
 			.iter()
 			.enumerate()
-			.filter(|(_, m)| {
-				m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:")
-			})
+			.filter(|(_, m)| m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:"))
 			.collect();
 		assert_eq!(
 			advisories.len(),
@@ -649,13 +619,9 @@ async fn test_process_response_supervisor_loop_fires_steer_mid_turn() {
 				.collect::<Vec<_>>()
 		);
 		let (index, advisory) = advisories[0];
-		assert!(crate::session::is_system_managed_user_content(
-			&advisory.content
-		));
+		assert!(crate::session::is_system_managed_user_content(&advisory.content));
 		assert!(advisory.content.contains("identical calls"));
-		assert!(advisory
-			.content
-			.contains("arrives on its own as your next message"));
+		assert!(advisory.content.contains("arrives on its own as your next message"));
 		assert!(advisory
 			.content
 			.contains("If the tool registered automatic background-result delivery"));
@@ -759,9 +725,7 @@ async fn test_process_response_supervisor_no_progress_fires_on_reworded_calls() 
 			.messages
 			.iter()
 			.enumerate()
-			.filter(|(_, m)| {
-				m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:")
-			})
+			.filter(|(_, m)| m.role == "user" && m.content.starts_with("<pay-attention>\nAdvisory:"))
 			.collect();
 		assert_eq!(
 			advisories.len(),
@@ -890,17 +854,10 @@ async fn test_process_response_request_spending_stop_ends_turn_without_final_ans
 		mode: OutputMode::Jsonl,
 	};
 
-	process_response(params)
-		.await
-		.expect("spending stop is not an error");
+	process_response(params).await.expect("spending stop is not an error");
 
 	// The tool round ran, but the follow-up was refused: no final answer
-	let roles: Vec<&str> = session
-		.session
-		.messages
-		.iter()
-		.map(|m| m.role.as_str())
-		.collect();
+	let roles: Vec<&str> = session.session.messages.iter().map(|m| m.role.as_str()).collect();
 	assert_eq!(roles, vec!["user", "assistant", "tool"]);
 	assert!(session.turn_answers.is_empty());
 }
@@ -925,8 +882,7 @@ async fn cost_frame_reports_auxiliary_models_at_their_own_cost() {
 		assert_eq!(frame.aux_cost, 0.005);
 		assert_eq!(frame.aux_input_tokens, 1_050);
 		assert_eq!(
-			frame.supervisor_accounting.mechanics[&crate::supervisor::report::Mechanic::Gate]
-				.wall_blocking_ms,
+			frame.supervisor_accounting.mechanics[&crate::supervisor::report::Mechanic::Gate].wall_blocking_ms,
 			400
 		);
 	})

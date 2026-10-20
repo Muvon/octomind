@@ -22,22 +22,16 @@ use crate::session::list_available_sessions;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
-pub fn handle_list(
-	session: &ChatSession,
-	_config: &Config,
-	params: &[&str],
-) -> Result<CommandResult> {
+pub fn handle_list(session: &ChatSession, _config: &Config, params: &[&str]) -> Result<CommandResult> {
 	// Parse optional page parameter
 	let page = if !params.is_empty() {
 		match params[0].parse::<usize>() {
 			Ok(p) if p > 0 => p,
 			_ => {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Error {
-						error: "Page number must be a positive integer".to_string(),
-						context: None,
-					},
-				)));
+				return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+					error: "Page number must be a positive integer".to_string(),
+					context: None,
+				})));
 			}
 		}
 	} else {
@@ -47,15 +41,13 @@ pub fn handle_list(
 	match list_available_sessions() {
 		Ok(sessions) => {
 			if sessions.is_empty() {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::List {
-						sessions: vec![],
-						total_sessions: 0,
-						page,
-						total_pages: 0,
-						plain_text: Some("No sessions found.".to_string()),
-					},
-				)));
+				return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::List {
+					sessions: vec![],
+					total_sessions: 0,
+					page,
+					total_pages: 0,
+					plain_text: Some("No sessions found.".to_string()),
+				})));
 			}
 
 			// Pagination settings
@@ -64,15 +56,13 @@ pub fn handle_list(
 			let total_pages = total_sessions.div_ceil(SESSIONS_PER_PAGE);
 
 			if page > total_pages {
-				return Ok(CommandResult::HandledWithOutput(Box::new(
-					CommandOutput::Error {
-						error: format!("Page {} not found. Total pages: {}", page, total_pages),
-						context: Some(serde_json::json!({
-							"page": page,
-							"total_pages": total_pages
-						})),
-					},
-				)));
+				return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+					error: format!("Page {} not found. Total pages: {}", page, total_pages),
+					context: Some(serde_json::json!({
+						"page": page,
+						"total_pages": total_pages
+					})),
+				})));
 			}
 
 			// Calculate pagination bounds
@@ -94,17 +84,10 @@ pub fn handle_list(
 				.iter()
 				.map(|(name, info)| {
 					let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-						.map(|dt| {
-							dt.with_timezone(&chrono::Local)
-								.format("%Y-%m-%d %H:%M")
-								.to_string()
-						})
+						.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 						.unwrap_or_default();
 
-					let is_current = current_session_name
-						.as_ref()
-						.map(|s| s == name)
-						.unwrap_or(false);
+					let is_current = current_session_name.as_ref().map(|s| s == name).unwrap_or(false);
 					let total_tokens = info.total_tokens();
 
 					serde_json::json!({
@@ -125,10 +108,7 @@ pub fn handle_list(
 			let mut markdown_content = String::new();
 
 			// Add header with pagination info
-			markdown_content.push_str(&format!(
-				"# Available Sessions (Page {} of {})\n\n",
-				page, total_pages
-			));
+			markdown_content.push_str(&format!("# Available Sessions (Page {} of {})\n\n", page, total_pages));
 			markdown_content.push_str(&format!(
 				"Showing {} of {} sessions\n\n",
 				page_sessions.len(),
@@ -143,11 +123,7 @@ pub fn handle_list(
 			for (name, info) in page_sessions {
 				// Format date from timestamp
 				let created_time = DateTime::<Utc>::from_timestamp(info.created_at as i64, 0)
-					.map(|dt| {
-						dt.with_timezone(&chrono::Local)
-							.format("%Y-%m-%d %H:%M")
-							.to_string()
-					})
+					.map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
 					.unwrap_or_default();
 
 				// Determine if this is the current session
@@ -193,10 +169,7 @@ pub fn handle_list(
 				if page < total_pages {
 					markdown_content.push_str(&format!("- Next: `/list {}`\n", page + 1));
 				}
-				markdown_content.push_str(&format!(
-					"- Go to page: `/list <page>` (1-{})\n\n",
-					total_pages
-				));
+				markdown_content.push_str(&format!("- Go to page: `/list <page>` (1-{})\n\n", total_pages));
 			}
 
 			markdown_content.push_str("## Session Management\n\n");
@@ -205,22 +178,18 @@ pub fn handle_list(
 			// Don't render here - let display_cli handle it to avoid double printing
 			// The markdown_content is passed to CommandOutput::List for display_cli to render
 
-			Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::List {
-					sessions: sessions_json,
-					total_sessions,
-					page,
-					total_pages,
-					plain_text: Some(markdown_content),
-				},
-			)))
+			Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::List {
+				sessions: sessions_json,
+				total_sessions,
+				page,
+				total_pages,
+				plain_text: Some(markdown_content),
+			})))
 		}
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error: format!("Failed to list sessions: {}", e),
-				context: None,
-			},
-		))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error: format!("Failed to list sessions: {}", e),
+			context: None,
+		}))),
 	}
 }
 

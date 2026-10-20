@@ -55,12 +55,10 @@ static CAP_LOOKUP: RwLock<Option<HashMap<SessionId, Arc<CapLookup>>>> = RwLock::
 /// their `when` conditions against `call_log[cursor..]` — i.e. calls made
 /// since this validator last ran. When the validator runs, the cursor is
 /// advanced to `call_log.len()` so subsequent runs see a fresh slice.
-static VALIDATOR_CURSORS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> =
-	RwLock::new(None);
+static VALIDATOR_CURSORS: RwLock<Option<HashMap<SessionId, HashMap<String, usize>>>> = RwLock::new(None);
 
 /// Per-session, per-pipe run counters. Keyed by (SessionId, pipe_name).
-static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>> =
-	RwLock::new(None);
+static PIPE_RUN_COUNTS: RwLock<Option<HashMap<SessionId, HashMap<String, u64>>>> = RwLock::new(None);
 
 /// Per-session message counter (total user messages including current).
 static MESSAGE_COUNTS: RwLock<Option<HashMap<SessionId, u64>>> = RwLock::new(None);
@@ -204,12 +202,7 @@ fn get_or_build_lookup(session_id: &SessionId, config: &Config) -> Arc<CapLookup
 /// Resolve a tool call to its capability name. Tries static taps first
 /// (exact `server:tool`, then `server:*`); falls back to the dynamic
 /// `runtime_overlay` for capabilities activated mid-session.
-pub fn resolve_capability(
-	session_id: &SessionId,
-	config: &Config,
-	server: Option<&str>,
-	tool: &str,
-) -> Option<String> {
+pub fn resolve_capability(session_id: &SessionId, config: &Config, server: Option<&str>, tool: &str) -> Option<String> {
 	let server = server?;
 	let lookup = get_or_build_lookup(session_id, config);
 	if let Some(name) = lookup.exact.get(&(server.to_string(), tool.to_string())) {
@@ -267,18 +260,12 @@ pub fn preview_batch(
 	calls: &[crate::mcp::McpToolCall],
 ) -> GuardPreview {
 	let rules = get_rules(session_id).unwrap_or_default();
-	let loaded = config
-		.mcp
-		.servers
-		.iter()
-		.map(|s| s.name().to_string())
-		.collect();
+	let loaded = config.mcp.servers.iter().map(|s| s.name().to_string()).collect();
 	let mut log = get_call_log(session_id);
 	let mut hard = Vec::new();
 	let mut generated = Vec::new();
 	for call in calls {
-		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
-			.map(|s| s.name().to_string());
+		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name).map(|s| s.name().to_string());
 		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
 		let mut matched = Vec::new();
 		let mut deny = None;
@@ -287,13 +274,8 @@ pub fn preview_batch(
 				guards: vec![rule.clone()],
 				..Default::default()
 			};
-			let evaluation = crate::config::guardrails::evaluate_guards(
-				&single,
-				cap.as_deref(),
-				&call.parameters,
-				&log,
-				&loaded,
-			);
+			let evaluation =
+				crate::config::guardrails::evaluate_guards(&single, cap.as_deref(), &call.parameters, &log, &loaded);
 			if let Some((message, binding)) = evaluation.blocked {
 				if let Some(binding) = binding {
 					matched.push((binding.id, message));
@@ -331,30 +313,22 @@ pub fn check_batch_admitted(
 	// from the same log, and skipping recording would make `+used` checks
 	// fail on perfectly valid runs.
 	let rules_opt = get_rules(session_id);
-	let has_guards = rules_opt
-		.as_ref()
-		.map(|r| !r.guards.is_empty())
-		.unwrap_or(false);
-	let loaded: std::collections::HashSet<String> = config
-		.mcp
-		.servers
-		.iter()
-		.map(|s| s.name().to_string())
-		.collect();
+	let has_guards = rules_opt.as_ref().map(|r| !r.guards.is_empty()).unwrap_or(false);
+	let loaded: std::collections::HashSet<String> = config.mcp.servers.iter().map(|s| s.name().to_string()).collect();
 	let mut out = Vec::with_capacity(calls.len());
 	for (index, call) in calls.iter().enumerate() {
 		let admission = admissions.get(index);
 		let filtered = rules_opt.as_ref().map(|rules| {
 			let mut rules = rules.as_ref().clone();
 			rules.guards.retain(|rule| {
-				!rule.evolution.as_ref().is_some_and(|binding| {
-					admission.is_some_and(|a| a.overridden_guards.contains(&binding.id))
-				})
+				!rule
+					.evolution
+					.as_ref()
+					.is_some_and(|binding| admission.is_some_and(|a| a.overridden_guards.contains(&binding.id)))
 			});
 			rules
 		});
-		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
-			.map(|s| s.name().to_string());
+		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name).map(|s| s.name().to_string());
 		let cap = resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
 		let msg = if has_guards {
 			let log = get_call_log(session_id);
@@ -370,10 +344,7 @@ pub fn check_batch_admitted(
 			}
 			if let Some((message, binding)) = evaluation.blocked {
 				if let Some(binding) = binding {
-					crate::supervisor::learning::evolution::mark_behavior_used(
-						session_id,
-						&binding.id,
-					);
+					crate::supervisor::learning::evolution::mark_behavior_used(session_id, &binding.id);
 				}
 				Some(message)
 			} else {

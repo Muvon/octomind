@@ -114,10 +114,7 @@ pub fn register_agent(agent: DynamicAgentConfig) -> Result<()> {
 	let manager = get_agent_manager();
 	let mut state = manager.write().unwrap();
 	if state.agents.contains_key(&agent_name) {
-		anyhow::bail!(
-			"Agent '{}' already registered. Use 'remove' first.",
-			agent_name
-		);
+		anyhow::bail!("Agent '{}' already registered. Use 'remove' first.", agent_name);
 	}
 	state.agents.insert(agent_name.clone(), agent);
 	state.enabled.insert(agent_name, false);
@@ -477,10 +474,7 @@ pub async fn execute_agent_tool_command(call: &crate::mcp::McpToolCall) -> Resul
 		_ => Ok(McpToolResult::error(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"Unknown action: {}. Use: add, enable, disable, remove, list",
-				action
-			),
+			format!("Unknown action: {}. Use: add, enable, disable, remove, list", action),
 		)),
 	}
 }
@@ -562,53 +556,31 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		}
 	};
 
-	let welcome = params
-		.get("welcome")
-		.and_then(|v| v.as_str())
-		.unwrap_or("")
-		.to_string();
+	let welcome = params.get("welcome").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-	let model = params
-		.get("model")
-		.and_then(|v| v.as_str())
-		.map(String::from);
+	let model = params.get("model").and_then(|v| v.as_str()).map(String::from);
 
-	let temperature = params
-		.get("temperature")
-		.and_then(|v| v.as_f64())
-		.map(|t| t as f32);
+	let temperature = params.get("temperature").and_then(|v| v.as_f64()).map(|t| t as f32);
 
-	let top_p = params
-		.get("top_p")
-		.and_then(|v| v.as_f64())
-		.map(|t| t as f32);
+	let top_p = params.get("top_p").and_then(|v| v.as_f64()).map(|t| t as f32);
 
-	let top_k = params
-		.get("top_k")
-		.and_then(|v| v.as_u64())
-		.map(|t| t as u32);
+	let top_k = params.get("top_k").and_then(|v| v.as_u64()).map(|t| t as u32);
 
 	let mut server_refs: Vec<String> = params
 		.get("server_refs")
 		.and_then(|v| v.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect()
-		})
+		.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 		.unwrap_or_default();
 
 	// Validate server_refs — accept both config-defined and dynamic servers
 	if !server_refs.is_empty() {
-		let dynamic_names: std::collections::HashSet<String> =
-			crate::mcp::runtime::dynamic::list_servers()
-				.into_iter()
-				.map(|(name, _, _)| name)
-				.collect();
+		let dynamic_names: std::collections::HashSet<String> = crate::mcp::runtime::dynamic::list_servers()
+			.into_iter()
+			.map(|(name, _, _)| name)
+			.collect();
 
 		// Config servers are available via the global tool map
-		let config_names: std::collections::HashSet<String> =
-			crate::mcp::tool_map::get_all_server_names();
+		let config_names: std::collections::HashSet<String> = crate::mcp::tool_map::get_all_server_names();
 
 		let all_names: std::collections::HashSet<&str> = dynamic_names
 			.iter()
@@ -621,15 +593,11 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					format!(
-						"Server '{}' not found. Available servers: {}",
-						server_ref,
-						{
-							let mut names: Vec<&str> = all_names.iter().copied().collect();
-							names.sort();
-							names.join(", ")
-						}
-					),
+					format!("Server '{}' not found. Available servers: {}", server_ref, {
+						let mut names: Vec<&str> = all_names.iter().copied().collect();
+						names.sort();
+						names.join(", ")
+					}),
 				));
 			}
 		}
@@ -638,11 +606,7 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 	let allowed_tools: Vec<String> = params
 		.get("allowed_tools")
 		.and_then(|v| v.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect()
-		})
+		.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 		.unwrap_or_default();
 
 	let workdir = params
@@ -660,10 +624,7 @@ async fn handle_agent_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		}
 		if !inferred_servers.is_empty() {
 			server_refs = inferred_servers.into_iter().collect();
-			crate::log_debug!(
-				"Auto-populated server_refs from allowed_tools: {:?}",
-				server_refs
-			);
+			crate::log_debug!("Auto-populated server_refs from allowed_tools: {:?}", server_refs);
 		}
 	}
 

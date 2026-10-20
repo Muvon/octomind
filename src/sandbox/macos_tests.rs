@@ -16,10 +16,7 @@ use super::*;
 
 #[test]
 fn ordinary_paths_are_unchanged() {
-	assert_eq!(
-		escape_profile_str("/Users/dev/project"),
-		"/Users/dev/project"
-	);
+	assert_eq!(escape_profile_str("/Users/dev/project"), "/Users/dev/project");
 	assert_eq!(escape_profile_str("/tmp/a b/c-d.e"), "/tmp/a b/c-d.e");
 }
 

@@ -37,10 +37,7 @@ fn continue_delta_counts_each_turn_once() {
 	// ~3x overcount that summing raw cumulative figures would produce.
 	let summed = d1.cost + d2.cost + d3.cost;
 	assert!((summed - 0.45).abs() < 1e-9, "summed={summed}");
-	assert_eq!(
-		d1.total_tokens() + d2.total_tokens() + d3.total_tokens(),
-		450
-	);
+	assert_eq!(d1.total_tokens() + d2.total_tokens() + d3.total_tokens(), 450);
 }
 
 fn seq(name: &str) -> Sequential {
@@ -66,9 +63,7 @@ fn expand_count_replicates_with_own_model() {
 	s.model = Some("openai:gpt-5".into());
 	let reps = expand_substep(&s);
 	assert_eq!(reps.len(), 3);
-	assert!(reps
-		.iter()
-		.all(|r| r.seq.model.as_deref() == Some("openai:gpt-5")));
+	assert!(reps.iter().all(|r| r.seq.model.as_deref() == Some("openai:gpt-5")));
 	assert_eq!(reps[2].label, "candidate #3");
 }
 
@@ -83,8 +78,7 @@ fn expand_none_is_single_passthrough() {
 #[test]
 fn extract_items_xml_capture_group() {
 	let re = Regex::new(r"(?s)<task>(.*?)</task>").unwrap();
-	let src =
-		"Here are tasks:\n<task>research A\nspanning lines</task>\nnoise\n<task>research B</task>";
+	let src = "Here are tasks:\n<task>research A\nspanning lines</task>\nnoise\n<task>research B</task>";
 	let items = extract_items(&re, src);
 	assert_eq!(items, vec!["research A\nspanning lines", "research B"]);
 }
@@ -148,16 +142,10 @@ fn graph_edge_selects_condition_then_default() {
 		},
 	];
 	let mut outputs = HashMap::from([("review".to_string(), "needs work".to_string())]);
-	assert_eq!(
-		select_graph_edge(&edges, &outputs, "review").unwrap(),
-		"fix"
-	);
+	assert_eq!(select_graph_edge(&edges, &outputs, "review").unwrap(), "fix");
 
 	outputs.insert("review".into(), "PASS".into());
-	assert_eq!(
-		select_graph_edge(&edges, &outputs, "review").unwrap(),
-		END_NODE
-	);
+	assert_eq!(select_graph_edge(&edges, &outputs, "review").unwrap(), END_NODE);
 }
 
 #[test]
@@ -171,8 +159,7 @@ fn graph_edge_rejects_unavailable_condition_output() {
 			matches: None,
 		}),
 	}];
-	let err = select_graph_edge(&edges, &HashMap::new(), "review")
-		.expect_err("missing route output must fail");
+	let err = select_graph_edge(&edges, &HashMap::new(), "review").expect_err("missing route output must fail");
 	assert!(err.to_string().contains("unavailable"), "got: {err}");
 }
 
@@ -183,8 +170,7 @@ fn graph_edge_without_route_is_an_error() {
 		to: "b".into(),
 		when: None,
 	}];
-	let err = select_graph_edge(&edges, &HashMap::new(), "orphan")
-		.expect_err("a node with no outgoing edge must fail");
+	let err = select_graph_edge(&edges, &HashMap::new(), "orphan").expect_err("a node with no outgoing edge must fail");
 	assert!(err.to_string().contains("no matching route"), "got: {err}");
 }
 
@@ -211,10 +197,7 @@ fn graph_edge_named_output_is_read_instead_of_current_node() {
 		("fix".to_string(), "PASS".to_string()),
 		("verdict".to_string(), "FAIL".to_string()),
 	]);
-	assert_eq!(
-		select_graph_edge(&edges, &outputs, "fix").unwrap(),
-		"review"
-	);
+	assert_eq!(select_graph_edge(&edges, &outputs, "fix").unwrap(), "review");
 }
 
 #[test]
@@ -231,10 +214,7 @@ fn graph_edge_ignores_other_nodes_edges() {
 			when: None,
 		},
 	];
-	assert_eq!(
-		select_graph_edge(&edges, &HashMap::new(), "here").unwrap(),
-		"right"
-	);
+	assert_eq!(select_graph_edge(&edges, &HashMap::new(), "here").unwrap(), "right");
 }
 
 #[test]
@@ -349,8 +329,7 @@ fn resolve_workdir_passes_through_none_and_rejects_missing_dir() {
 	assert_eq!(abs, dir.path());
 
 	let missing = dir.path().join("nope");
-	let err = resolve_workdir("build", Some(missing.to_str().unwrap()))
-		.expect_err("missing workdir must fail loudly");
+	let err = resolve_workdir("build", Some(missing.to_str().unwrap())).expect_err("missing workdir must fail loudly");
 	assert!(err.to_string().contains("build"), "got: {err}");
 	assert!(err.to_string().contains("not a directory"), "got: {err}");
 }
@@ -367,22 +346,15 @@ fn resolve_workdir_makes_relative_paths_absolute() {
 // ---- Executor: fold_stats / enforce_budget / substitute / next_graph_node ----
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
 
 #[test]
 fn fold_stats_passes_fresh_sessions_through_unchanged() {
-	let mut ex = Executor::new(
-		"wf".to_string(),
-		&template_config(),
-		false,
-		None,
-		false,
-		HashSet::new(),
-	);
+	let mut ex = Executor::new("wf".to_string(), &template_config(), false, None, false, HashSet::new());
 	// Fresh sessions never advance a baseline — every invocation reports as-is.
 	let first = ex.fold_stats("s", SessionMode::Fresh, &cumulative(0.25, 250));
 	assert!((first.cost - 0.25).abs() < 1e-9);
@@ -392,37 +364,17 @@ fn fold_stats_passes_fresh_sessions_through_unchanged() {
 
 #[test]
 fn fold_stats_folds_continue_sessions_into_per_turn_deltas() {
-	let mut ex = Executor::new(
-		"wf".to_string(),
-		&template_config(),
-		false,
-		None,
-		false,
-		HashSet::new(),
-	);
+	let mut ex = Executor::new("wf".to_string(), &template_config(), false, None, false, HashSet::new());
 	let d1 = ex.fold_stats("c", SessionMode::Continue, &cumulative(0.10, 100));
 	let d2 = ex.fold_stats("c", SessionMode::Continue, &cumulative(0.25, 250));
-	assert!(
-		(d1.cost - 0.10).abs() < 1e-9,
-		"first turn reports its full spend"
-	);
-	assert!(
-		(d2.cost - 0.15).abs() < 1e-9,
-		"second turn reports only the delta"
-	);
+	assert!((d1.cost - 0.10).abs() < 1e-9, "first turn reports its full spend");
+	assert!((d2.cost - 0.15).abs() < 1e-9, "second turn reports only the delta");
 	assert_eq!(d1.total_tokens() + d2.total_tokens(), 250);
 }
 
 #[test]
 fn enforce_budget_aborts_only_when_the_cap_is_crossed() {
-	let mut ex = Executor::new(
-		"wf".to_string(),
-		&template_config(),
-		false,
-		None,
-		false,
-		HashSet::new(),
-	);
+	let mut ex = Executor::new("wf".to_string(), &template_config(), false, None, false, HashSet::new());
 	// No cap: never aborts.
 	ex.totals.cost = 99.0;
 	assert!(ex.enforce_budget("any").is_ok());
@@ -435,30 +387,16 @@ fn enforce_budget_aborts_only_when_the_cap_is_crossed() {
 	let err = ex.enforce_budget("runaway").expect_err("cap must abort");
 	let msg = err.to_string();
 	assert!(msg.contains("budget exceeded"), "got: {msg}");
-	assert!(
-		msg.contains("runaway"),
-		"the offending step is named: {msg}"
-	);
+	assert!(msg.contains("runaway"), "the offending step is named: {msg}");
 }
 
 #[tokio::test]
 async fn substitute_resolves_input_and_prior_outputs_and_keeps_unknowns() {
-	let mut ex = Executor::new(
-		"wf".to_string(),
-		&template_config(),
-		false,
-		None,
-		false,
-		HashSet::new(),
-	);
+	let mut ex = Executor::new("wf".to_string(), &template_config(), false, None, false, HashSet::new());
 	ex.outputs.insert("plan".to_string(), "PLANNED".to_string());
 
 	let resolved = ex
-		.substitute(
-			"{{input}} then {{plan}} then {{not_a_var}}",
-			"DO",
-			"developer:general",
-		)
+		.substitute("{{input}} then {{plan}} then {{not_a_var}}", "DO", "developer:general")
 		.await
 		.expect("substitution is pure text resolution");
 	assert_eq!(resolved, "DO then PLANNED then {{not_a_var}}");
@@ -467,14 +405,7 @@ async fn substitute_resolves_input_and_prior_outputs_and_keeps_unknowns() {
 #[tokio::test]
 async fn substitute_graph_mode_rejects_outputs_not_on_the_route() {
 	let known: HashSet<String> = ["later".to_string()].into_iter().collect();
-	let mut ex = Executor::new(
-		"wf".to_string(),
-		&template_config(),
-		false,
-		None,
-		true,
-		known,
-	);
+	let mut ex = Executor::new("wf".to_string(), &template_config(), false, None, true, known);
 
 	let err = ex
 		.substitute("use {{later}}", "DO", "developer:general")
@@ -532,26 +463,12 @@ to = "fix"
 	)
 	.expect("graph workflow parses");
 
-	let mut ex = Executor::new(
-		"g".to_string(),
-		&template_config(),
-		false,
-		None,
-		true,
-		HashSet::new(),
-	);
-	ex.outputs
-		.insert("review".to_string(), "needs work".to_string());
-	assert_eq!(
-		ex.next_graph_node(&wf, "review").expect("default edge"),
-		"fix"
-	);
+	let mut ex = Executor::new("g".to_string(), &template_config(), false, None, true, HashSet::new());
+	ex.outputs.insert("review".to_string(), "needs work".to_string());
+	assert_eq!(ex.next_graph_node(&wf, "review").expect("default edge"), "fix");
 
 	ex.outputs.insert("review".to_string(), "PASS".to_string());
-	assert_eq!(
-		ex.next_graph_node(&wf, "review").expect("conditional edge"),
-		END_NODE
-	);
+	assert_eq!(ex.next_graph_node(&wf, "review").expect("conditional edge"), END_NODE);
 }
 
 // ---- Totals ----
@@ -583,10 +500,7 @@ fn totals_add_sums_every_counter() {
 #[test]
 fn with_stderr_appends_a_tail_only_when_present() {
 	assert_eq!(with_stderr("boom".to_string(), "   "), "boom");
-	assert_eq!(
-		with_stderr("boom".to_string(), "details"),
-		"boom\n  stderr: details"
-	);
+	assert_eq!(with_stderr("boom".to_string(), "details"), "boom\n  stderr: details");
 }
 
 #[test]
@@ -663,10 +577,7 @@ async fn exec_sequential_retries_tag_attempts_and_fail_loudly() {
 		.await
 		.expect_err("both attempts must fail");
 	let msg = err.to_string();
-	assert!(
-		msg.contains("step 'flaky' failed after 2 attempts"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("step 'flaky' failed after 2 attempts"), "got: {msg}");
 }
 
 #[tokio::test]
@@ -689,11 +600,7 @@ async fn exec_sequential_continue_creates_and_reuses_session_id() {
 	ex.exec_sequential(s, "DO", "")
 		.await
 		.expect_err("subprocess fails on first use");
-	let id = ex
-		.session_ids
-		.get("cont")
-		.cloned()
-		.expect("session id created");
+	let id = ex.session_ids.get("cont").cloned().expect("session id created");
 	assert!(id.starts_with("wf-c-cont-"), "got: {id}");
 
 	ex.exec_sequential(s, "DO", "")
@@ -729,13 +636,8 @@ async fn exec_sequential_continue_retry_before_first_success_starts_a_new_sessio
 	let mut ex = executor_for("c", false);
 	ex.session_ids
 		.insert("cont".to_string(), "wf-c-cont-failed".to_string());
-	ex.exec_sequential(s, "DO", "")
-		.await
-		.expect_err("both attempts fail");
-	let id = ex
-		.session_ids
-		.get("cont")
-		.expect("the retry opened a session");
+	ex.exec_sequential(s, "DO", "").await.expect_err("both attempts fail");
+	let id = ex.session_ids.get("cont").expect("the retry opened a session");
 	assert_ne!(
 		id, "wf-c-cont-failed",
 		"a retry must not resume the failed first attempt's session"
@@ -744,16 +646,10 @@ async fn exec_sequential_continue_retry_before_first_success_starts_a_new_sessio
 
 	// A session that already completed a turn holds earlier rounds: its retry
 	// keeps it (and folds the failed attempt with /done).
-	ex.session_ids
-		.insert("cont".to_string(), "wf-c-cont-used".to_string());
+	ex.session_ids.insert("cont".to_string(), "wf-c-cont-used".to_string());
 	ex.used_continue.insert("cont".to_string(), true);
-	ex.exec_sequential(s, "DO", "")
-		.await
-		.expect_err("both attempts fail");
-	assert_eq!(
-		ex.session_ids.get("cont"),
-		Some(&"wf-c-cont-used".to_string())
-	);
+	ex.exec_sequential(s, "DO", "").await.expect_err("both attempts fail");
+	assert_eq!(ex.session_ids.get("cont"), Some(&"wf-c-cont-used".to_string()));
 }
 
 #[tokio::test]
@@ -776,12 +672,10 @@ async fn exec_sequential_continue_reuse_sends_done_and_feeds_prior_output() {
 	// Pre-stage a used Continue session: the executor must send best-effort
 	// /done to the old session and nudge with the prior step's output
 	// instead of re-sending the full templated prompt.
-	ex.session_ids
-		.insert("cont".to_string(), "wf-c-cont-fixed".to_string());
+	ex.session_ids.insert("cont".to_string(), "wf-c-cont-fixed".to_string());
 	ex.used_continue.insert("cont".to_string(), true);
 	ex.last_step = Some("prev".to_string());
-	ex.outputs
-		.insert("prev".to_string(), "prior verdict".to_string());
+	ex.outputs.insert("prev".to_string(), "prior verdict".to_string());
 
 	let err = ex
 		.exec_sequential(s, "DO", "")
@@ -825,8 +719,7 @@ async fn exec_sequential_spawn_error_names_the_cause() {
 	use std::os::unix::fs::PermissionsExt;
 
 	let dir = tempfile::tempdir().expect("temp dir");
-	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000))
-		.expect("chmod 000");
+	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
 	struct Restore(std::path::PathBuf);
 	impl Drop for Restore {
 		fn drop(&mut self) {
@@ -918,10 +811,7 @@ async fn exec_parallel_dynamic_invalid_regex_fails_at_run_time() {
 		.exec_parallel(p, "DO")
 		.await
 		.expect_err("invalid regex must fail at run time");
-	assert!(
-		err.to_string().contains("invalid match regex"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("invalid match regex"), "got: {err}");
 }
 
 #[tokio::test]
@@ -945,12 +835,8 @@ async fn exec_parallel_dynamic_zero_items_fails() {
 		panic!("expected a parallel step");
 	};
 	let mut ex = executor_for("wf", false);
-	ex.outputs
-		.insert("gen".to_string(), "no markers here".to_string());
-	let err = ex
-		.exec_parallel(p, "DO")
-		.await
-		.expect_err("zero matches must fail");
+	ex.outputs.insert("gen".to_string(), "no markers here".to_string());
+	let err = ex.exec_parallel(p, "DO").await.expect_err("zero matches must fail");
 	assert!(err.to_string().contains("found 0 items"), "got: {err}");
 }
 
@@ -979,18 +865,13 @@ async fn exec_parallel_dynamic_replicas_fail_and_block_aborts() {
 		panic!("expected a parallel step");
 	};
 	let mut ex = executor_for("wf", false);
-	ex.outputs.insert(
-		"gen".to_string(),
-		"<task>alpha</task>\n<task>beta</task>".to_string(),
-	);
+	ex.outputs
+		.insert("gen".to_string(), "<task>alpha</task>\n<task>beta</task>".to_string());
 	let err = ex
 		.exec_parallel(p, "DO")
 		.await
 		.expect_err("both replicas fail → block aborts");
-	assert!(
-		err.to_string().contains("only 0/2 replicas succeeded"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("only 0/2 replicas succeeded"), "got: {err}");
 	// During fan-out the block's own name is the per-item variable — the
 	// last matched item stays bound even though the block then aborted.
 	assert_eq!(ex.outputs.get("fan"), Some(&"beta".to_string()));
@@ -1002,8 +883,7 @@ async fn exec_parallel_static_spawn_errors_throttled_abort() {
 	use std::os::unix::fs::PermissionsExt;
 
 	let dir = tempfile::tempdir().expect("temp dir");
-	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000))
-		.expect("chmod 000");
+	std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
 	struct Restore(std::path::PathBuf);
 	impl Drop for Restore {
 		fn drop(&mut self) {
@@ -1043,10 +923,7 @@ async fn exec_parallel_static_spawn_errors_throttled_abort() {
 		.exec_parallel(p, "DO")
 		.await
 		.expect_err("both throttled replicas fail to spawn");
-	assert!(
-		err.to_string().contains("only 0/2 replicas succeeded"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("only 0/2 replicas succeeded"), "got: {err}");
 }
 
 #[tokio::test]
@@ -1077,10 +954,7 @@ async fn exec_parallel_static_count_expansion_reports_total() {
 		.exec_parallel(p, "DO")
 		.await
 		.expect_err("all three expanded replicas fail");
-	assert!(
-		err.to_string().contains("only 0/3 replicas succeeded"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("only 0/3 replicas succeeded"), "got: {err}");
 }
 
 #[tokio::test]
@@ -1106,10 +980,7 @@ async fn exec_conditional_without_prior_output_fails() {
 		.exec_node(&wf.steps[0], "DO")
 		.await
 		.expect_err("no prior output to test must fail");
-	assert!(
-		err.to_string().contains("no prior step output to test"),
-		"got: {err}"
-	);
+	assert!(err.to_string().contains("no prior step output to test"), "got: {err}");
 }
 
 #[tokio::test]
@@ -1137,8 +1008,7 @@ async fn exec_conditional_unknown_target_fails() {
 		.await
 		.expect_err("a target that never ran must fail");
 	assert!(
-		err.to_string()
-			.contains("condition target 'ghost' has no output"),
+		err.to_string().contains("condition target 'ghost' has no output"),
 		"got: {err}"
 	);
 }
@@ -1174,8 +1044,7 @@ async fn exec_conditional_matched_branch_runs_and_fails() {
 		.await
 		.expect_err("the chosen branch's subprocess fails");
 	assert!(
-		err.to_string()
-			.contains("step 'yes' failed after 1 attempts"),
+		err.to_string().contains("step 'yes' failed after 1 attempts"),
 		"got: {err}"
 	);
 }
@@ -1205,8 +1074,7 @@ async fn exec_conditional_empty_branches_store_empty_outputs() {
 	)
 	.expect("workflow parses");
 	let mut ex = executor_for("wf", true);
-	ex.outputs
-		.insert("prev".to_string(), "go right ahead".to_string());
+	ex.outputs.insert("prev".to_string(), "go right ahead".to_string());
 	ex.exec_node(&wf.steps[0], "DO")
 		.await
 		.expect("a conditional with no branches is trivially Ok");
@@ -1305,8 +1173,7 @@ async fn execute_graph_aborts_when_first_node_fails() {
 		.await
 		.expect_err("the entry node's subprocess fails");
 	assert!(
-		err.to_string()
-			.contains("step 'start' failed after 1 attempts"),
+		err.to_string().contains("step 'start' failed after 1 attempts"),
 		"got: {err}"
 	);
 }
@@ -1342,10 +1209,7 @@ fn continued_steps_preserve_five_category_totals() {
 				(input, read, write, output, reasoning)
 			);
 			assert_eq!(delta.prompt_tokens(), input + read + write);
-			assert_eq!(
-				delta.total_tokens(),
-				input + read + write + output + reasoning
-			);
+			assert_eq!(delta.total_tokens(), input + read + write + output + reasoning);
 			totals.add(&delta);
 			assert_eq!(totals.total_tokens(), current.total_tokens());
 			assert_eq!(totals.prompt_tokens(), current.prompt_tokens());
@@ -1398,8 +1262,7 @@ fn install_step_fixture() {
 	let path = FIXTURE.get_or_init(|| {
 		let path = std::env::temp_dir().join("octomind-run-tests-step-fixture.sh");
 		std::fs::write(&path, FIXTURE_SCRIPT).expect("write fixture script");
-		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-			.expect("chmod fixture script");
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod fixture script");
 		path
 	});
 	crate::workflow::proc::set_test_step_exe(Some(path.clone()));
@@ -1423,10 +1286,7 @@ async fn exec_sequential_ok_returns_stats_and_folds_into_totals() {
 		panic!("expected a sequential step");
 	};
 	let mut ex = executor_for("wf", false);
-	let stats = ex
-		.exec_sequential(s, "DO", "")
-		.await
-		.expect("fixture step succeeds");
+	let stats = ex.exec_sequential(s, "DO", "").await.expect("fixture step succeeds");
 	assert_eq!(stats.output, "SUCCEED: all good");
 	assert!((stats.cost - 0.01).abs() < 1e-9);
 	assert_eq!(stats.input_tokens, 40);
@@ -1454,20 +1314,14 @@ async fn exec_sequential_continue_success_folds_second_turn_to_delta() {
 		panic!("expected a sequential step");
 	};
 	let mut ex = executor_for("c", false);
-	let first = ex
-		.exec_sequential(s, "DO", "")
-		.await
-		.expect("first turn succeeds");
+	let first = ex.exec_sequential(s, "DO", "").await.expect("first turn succeeds");
 	assert!((first.cost - 0.01).abs() < 1e-9);
 	assert_eq!(ex.used_continue.get("cont"), Some(&true));
 
 	// The fixture reports the same cumulative frame both turns, so the
 	// second turn's folded delta is zero — cumulative figures are not
 	// double-counted on session reuse.
-	let second = ex
-		.exec_sequential(s, "DO", "")
-		.await
-		.expect("second turn succeeds");
+	let second = ex.exec_sequential(s, "DO", "").await.expect("second turn succeeds");
 	assert!(
 		second.cost.abs() < 1e-9,
 		"second turn delta must fold to zero, got {}",
@@ -1499,10 +1353,7 @@ async fn exec_sequential_empty_output_fails_with_attempt_count() {
 		.await
 		.expect_err("empty output must fail the step");
 	let msg = err.to_string();
-	assert!(
-		msg.contains("produced no assistant output (attempt 2/2)"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("produced no assistant output (attempt 2/2)"), "got: {msg}");
 	assert!(msg.contains("failed after 2 attempts"), "got: {msg}");
 }
 
@@ -1530,10 +1381,7 @@ async fn exec_sequential_timeout_reports_elapsed_seconds() {
 		.await
 		.expect_err("timeout must fail the step");
 	let msg = err.to_string();
-	assert!(
-		msg.contains("timed out after 1s (attempt 1/1)"),
-		"got: {msg}"
-	);
+	assert!(msg.contains("timed out after 1s (attempt 1/1)"), "got: {msg}");
 }
 
 #[cfg(unix)]
@@ -1563,15 +1411,9 @@ async fn exec_loop_exits_when_condition_matches() {
 	ex.exec_node(&wf.steps[0], "DO")
 		.await
 		.expect("loop exits on the first match");
-	assert_eq!(
-		ex.outputs.get("worker"),
-		Some(&"SUCCEED: job DONE".to_string())
-	);
+	assert_eq!(ex.outputs.get("worker"), Some(&"SUCCEED: job DONE".to_string()));
 	// The loop's canonical output is the last sub-step's output.
-	assert_eq!(
-		ex.outputs.get("refine"),
-		Some(&"SUCCEED: job DONE".to_string())
-	);
+	assert_eq!(ex.outputs.get("refine"), Some(&"SUCCEED: job DONE".to_string()));
 }
 
 #[cfg(unix)]
@@ -1601,10 +1443,7 @@ async fn exec_loop_max_iterations_without_match_still_succeeds() {
 	ex.exec_node(&wf.steps[0], "DO")
 		.await
 		.expect("loop completes at max iterations");
-	assert_eq!(
-		ex.outputs.get("refine"),
-		Some(&"SUCCEED: plain".to_string())
-	);
+	assert_eq!(ex.outputs.get("refine"), Some(&"SUCCEED: plain".to_string()));
 }
 
 #[cfg(unix)]
@@ -1629,9 +1468,7 @@ async fn exec_parallel_static_success_wires_each_substep_output() {
 	)
 	.expect("workflow parses");
 	let mut ex = executor_for("wf", false);
-	ex.exec_node(&wf.steps[0], "DO")
-		.await
-		.expect("both branches succeed");
+	ex.exec_node(&wf.steps[0], "DO").await.expect("both branches succeed");
 	assert_eq!(ex.outputs.get("a"), Some(&"SUCCEED: alpha".to_string()));
 	assert_eq!(ex.outputs.get("b"), Some(&"SUCCEED: beta".to_string()));
 	// Two sub-steps → the block's own output is the labeled join.
@@ -1665,9 +1502,7 @@ async fn exec_parallel_dynamic_success_expands_one_branch_per_match() {
 		"tasks".to_string(),
 		"<task>SUCCEED: one</task><task>SUCCEED: two</task>".to_string(),
 	);
-	ex.exec_node(&wf.steps[0], "DO")
-		.await
-		.expect("both matched items run");
+	ex.exec_node(&wf.steps[0], "DO").await.expect("both matched items run");
 	// Each branch's prompt resolved the block name to its own item.
 	let worker = ex.outputs.get("worker").expect("sub-step output stored");
 	assert!(worker.contains("do SUCCEED: one"), "got: {worker}");
@@ -1737,9 +1572,7 @@ async fn exec_conditional_matched_branch_succeeds_and_skips_the_rest() {
 	.expect("workflow parses");
 	let mut ex = executor_for("wf", true);
 	ex.outputs.insert("prev".to_string(), "PASS GO".to_string());
-	ex.exec_node(&wf.steps[0], "DO")
-		.await
-		.expect("the chosen branch runs");
+	ex.exec_node(&wf.steps[0], "DO").await.expect("the chosen branch runs");
 	assert_eq!(ex.outputs.get("yes"), Some(&"ship it".to_string()));
 	// The skipped branch resolves to an empty entry.
 	assert_eq!(ex.outputs.get("nope"), Some(&String::new()));
@@ -1826,8 +1659,7 @@ async fn execute_graph_mode_aborts_when_max_transitions_is_exceeded() {
 		.await
 		.expect_err("cycle must abort at max_transitions");
 	assert!(
-		err.to_string()
-			.contains("graph exceeded max_transitions (2)"),
+		err.to_string().contains("graph exceeded max_transitions (2)"),
 		"got: {err}"
 	);
 }

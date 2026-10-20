@@ -594,11 +594,7 @@ impl Config {
 	/// Now relies entirely on config - no more runtime injection
 	pub fn get_server_config(&self, server_name: &str) -> Option<McpServerConfig> {
 		// Get from loaded registry
-		self.mcp
-			.servers
-			.iter()
-			.find(|s| s.name() == server_name)
-			.cloned()
+		self.mcp.servers.iter().find(|s| s.name() == server_name).cloned()
 	}
 
 	/// Get enabled servers for a role with runtime core server injection
@@ -619,9 +615,7 @@ impl Config {
 
 	/// Get the current output mode as a typed enum
 	pub fn output_mode(&self) -> crate::session::output::OutputMode {
-		crate::session::output::OutputMode::from_runtime_mode(
-			self.runtime_output_mode.as_deref().unwrap_or("plain"),
-		)
+		crate::session::output::OutputMode::from_runtime_mode(self.runtime_output_mode.as_deref().unwrap_or("plain"))
 	}
 
 	/// Get the model for the specified role
@@ -741,9 +735,7 @@ where
 {
 	// Try session-scoped first (WebSocket mode)
 	if let Some(session_id) = crate::session::context::current_session_id() {
-		return crate::session::context::get_session_config(&session_id)
-			.as_ref()
-			.map(f);
+		return crate::session::context::get_session_config(&session_id).as_ref().map(f);
 	}
 	// Fall back to thread-local (CLI mode)
 	CURRENT_CONFIG.with(|c| (*c.borrow()).as_ref().map(f))
@@ -922,8 +914,7 @@ macro_rules! log_conditional {
 		}
 	};
 	(info: $info_msg:expr, default: $default_msg:expr) => {
-		if let Some(should_info) =
-			$crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled())
+		if let Some(should_info) = $crate::config::with_thread_config(|config| config.get_log_level().is_info_enabled())
 		{
 			if should_info {
 				if $crate::logging::tracing_setup::is_tracing_initialized() {

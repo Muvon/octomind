@@ -28,9 +28,7 @@ fn fingerprint_is_some_and_deterministic_inside_git_repo() {
 #[serial_test::serial]
 fn fingerprint_moves_when_the_tree_changes_and_back() {
 	let baseline = fingerprint();
-	let probe = std::env::current_dir()
-		.unwrap()
-		.join(".octomind_fingerprint_probe");
+	let probe = std::env::current_dir().unwrap().join(".octomind_fingerprint_probe");
 	std::fs::write(&probe, b"probe").unwrap();
 	let dirty = fingerprint();
 	std::fs::remove_file(&probe).unwrap();
@@ -39,14 +37,8 @@ fn fingerprint_moves_when_the_tree_changes_and_back() {
 	let baseline = baseline.expect("repo fingerprint");
 	let dirty = dirty.expect("repo fingerprint");
 	let restored = restored.expect("repo fingerprint");
-	assert_ne!(
-		baseline, dirty,
-		"an untracked file must move the fingerprint"
-	);
-	assert_eq!(
-		baseline, restored,
-		"removing the probe must restore the baseline"
-	);
+	assert_ne!(baseline, dirty, "an untracked file must move the fingerprint");
+	assert_eq!(baseline, restored, "removing the probe must restore the baseline");
 }
 
 /// Version control is one way to observe a filesystem, not a precondition for
@@ -95,10 +87,7 @@ fn fingerprint_follows_the_session_anchor_not_the_process_cwd() {
 		"the process never moved; only the session did"
 	);
 	assert!(first.is_some());
-	assert_ne!(
-		first, second,
-		"an edit in the session's own tree must be observed"
-	);
+	assert_ne!(first, second, "an edit in the session's own tree must be observed");
 }
 
 /// A tree too large to measure reports "unknown", never a partial hash — a
@@ -168,10 +157,7 @@ fn a_failing_git_status_degrades_to_the_walk_not_to_a_stale_value() {
 		None => std::env::remove_var("GIT_WORK_TREE"),
 	}
 	std::env::set_current_dir(&original).unwrap();
-	assert!(
-		broken.is_some(),
-		"a broken git falls back, it does not blind"
-	);
+	assert!(broken.is_some(), "a broken git falls back, it does not blind");
 	assert_ne!(
 		broken, after_edit,
 		"the fallback must track the tree, not cache a value"
@@ -194,10 +180,7 @@ fn fingerprint_mixes_file_metadata_and_tracks_changes() {
 	let second = fingerprint();
 	let _ = std::fs::remove_file(&name);
 	assert!(second.is_some());
-	assert_ne!(
-		first, second,
-		"a size/mtime change must move the fingerprint"
-	);
+	assert_ne!(first, second, "a size/mtime change must move the fingerprint");
 }
 
 // ---------------------------------------------------------------------------
@@ -221,8 +204,7 @@ fn git_in(root: &std::path::Path, args: &[&str]) {
 
 /// Move a file's mtime forward without touching a byte of it.
 fn bump_mtime(path: &std::path::Path) {
-	let modified =
-		std::fs::metadata(path).unwrap().modified().unwrap() + std::time::Duration::from_secs(60);
+	let modified = std::fs::metadata(path).unwrap().modified().unwrap() + std::time::Duration::from_secs(60);
 	std::fs::File::options()
 		.write(true)
 		.open(path)

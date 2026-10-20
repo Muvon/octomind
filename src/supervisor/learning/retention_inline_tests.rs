@@ -24,10 +24,7 @@ impl TestDataDir {
 		let dir = tempfile::tempdir().expect("temporary data dir");
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -119,12 +116,8 @@ async fn cold_archive_is_lossless_and_leaves_the_hot_scan() {
 	assert_eq!(moved_from, hot);
 	assert!(!hot.exists());
 	assert!(cold.exists());
-	let recalled = super::super::backend::file::FileBackend::retrieve_archived(
-		&hot_dir,
-		&["archived".to_string()],
-		"",
-		2,
-	);
+	let recalled =
+		super::super::backend::file::FileBackend::retrieve_archived(&hot_dir, &["archived".to_string()], "", 2);
 	assert_eq!(recalled.len(), 1);
 	assert_eq!(recalled[0].content, item.content);
 	assert_eq!(recalled[0].storage_path, cold.display().to_string());
@@ -135,10 +128,7 @@ async fn cold_archive_is_lossless_and_leaves_the_hot_scan() {
 		.unwrap();
 	assert!(hot.exists());
 	assert!(!cold.exists());
-	let promoted = backend
-		.retrieve_all(&item.role, &item.project)
-		.await
-		.unwrap();
+	let promoted = backend.retrieve_all(&item.role, &item.project).await.unwrap();
 	assert_eq!(promoted.len(), 1);
 	assert_eq!(promoted[0].use_count, 1);
 }
@@ -151,10 +141,7 @@ async fn short_rules_obey_hard_budget_without_synthetic_merge_or_deletion() {
 	let backend = super::super::backend::file::FileBackend;
 	for index in 0..24 {
 		let mut item = memory(
-			&format!(
-				"rule {index}: {}",
-				"preserve this grounded constraint ".repeat(180)
-			),
+			&format!("rule {index}: {}", "preserve this grounded constraint ".repeat(180)),
 			"learning",
 		);
 		item.created = format!("2026-01-01T00:00:{index:02}Z");
@@ -169,9 +156,7 @@ async fn short_rules_obey_hard_budget_without_synthetic_merge_or_deletion() {
 	assert_eq!(report.consolidated, 0);
 	assert!(report.archived > 0);
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
-	assert!(
-		storage_tokens(&hot) <= SCOPED_LEARNING_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR
-	);
+	assert!(storage_tokens(&hot) <= SCOPED_LEARNING_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR);
 	let archive = crate::directories::get_learning_dir("developer", "project")
 		.unwrap()
 		.join(".archive")
@@ -196,36 +181,18 @@ fn catalog_entry_paths_and_search_text_are_compact() {
 		created: "2026-01-01T00:00:00Z".to_string(),
 	};
 	let hot = std::path::Path::new("/hot");
-	assert_eq!(
-		entry.path(hot),
-		hot.join(".archive").join("learning").join("note.md")
-	);
-	assert_eq!(
-		entry.search_text(),
-		"postgres rule use connection pooling db"
-	);
+	assert_eq!(entry.path(hot), hot.join(".archive").join("learning").join("note.md"));
+	assert_eq!(entry.search_text(), "postgres rule use connection pooling db");
 }
 
 #[test]
 fn hard_budget_covers_every_kind_and_falls_back_to_learning() {
 	assert_eq!(hard_budget("learning", true), GLOBAL_LEARNING_HARD_TOKENS);
-	assert_eq!(
-		hard_budget("orientation", true),
-		GLOBAL_ORIENTATION_HARD_TOKENS
-	);
-	assert_eq!(
-		hard_budget("experience", true),
-		GLOBAL_EXPERIENCE_HARD_TOKENS
-	);
+	assert_eq!(hard_budget("orientation", true), GLOBAL_ORIENTATION_HARD_TOKENS);
+	assert_eq!(hard_budget("experience", true), GLOBAL_EXPERIENCE_HARD_TOKENS);
 	assert_eq!(hard_budget("learning", false), SCOPED_LEARNING_HARD_TOKENS);
-	assert_eq!(
-		hard_budget("orientation", false),
-		SCOPED_ORIENTATION_HARD_TOKENS
-	);
-	assert_eq!(
-		hard_budget("experience", false),
-		SCOPED_EXPERIENCE_HARD_TOKENS
-	);
+	assert_eq!(hard_budget("orientation", false), SCOPED_ORIENTATION_HARD_TOKENS);
+	assert_eq!(hard_budget("experience", false), SCOPED_EXPERIENCE_HARD_TOKENS);
 	assert_eq!(hard_budget("other", true), GLOBAL_LEARNING_HARD_TOKENS);
 	assert_eq!(hard_budget("other", false), SCOPED_LEARNING_HARD_TOKENS);
 }
@@ -264,16 +231,12 @@ fn jaccard_is_zero_for_empty_sets_and_short_tokens_are_dropped() {
 	let words = normalized_words("an the key value pair");
 	assert!(words.contains("key"));
 	assert!(words.contains("the"), "three-character words are retained");
-	assert!(
-		!words.contains("an"),
-		"words shorter than three are dropped"
-	);
+	assert!(!words.contains("an"), "words shorter than three are dropped");
 }
 
 #[test]
 fn valid_experience_shape_requires_word_budget_and_all_headings() {
-	let headings =
-		"## Objective\n## Durable knowledge\n## Outcome and evidence\n## Reuse conditions";
+	let headings = "## Objective\n## Durable knowledge\n## Outcome and evidence\n## Reuse conditions";
 	let words = (0..200)
 		.map(|index| format!("word{index}"))
 		.collect::<Vec<_>>()
@@ -361,10 +324,7 @@ async fn replace_with_consolidation_rolls_back_when_a_source_is_missing() {
 	assert!(!cold_dir.join(format!("{}.md", first.file_id())).exists());
 }
 
-async fn store_global_orientation(
-	index: usize,
-	backend: &super::super::backend::file::FileBackend,
-) {
+async fn store_global_orientation(index: usize, backend: &super::super::backend::file::FileBackend) {
 	// Grow the record until it holds ~3.3k tokens so three records cross the
 	// 8k global hard watermark while any pair stays under the 8k
 	// consolidation input cap, regardless of which tokenizer is active.
@@ -445,11 +405,9 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 		store_global_orientation(index, &backend).await;
 	}
 
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response(
-			r#"{"merge":false,"title":"unused","content":"unused"}"#,
-		),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		r#"{"merge":false,"title":"unused","content":"unused"}"#,
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", url);
 	let mut config = crate::session::chat::test_support::fake_provider_config();
@@ -462,12 +420,8 @@ async fn rejected_merge_still_enforces_the_soft_watermark() {
 	assert_eq!(report.consolidated, 0);
 	assert!(report.archived > 0);
 	let hot = backend.retrieve_global().await.unwrap();
-	assert!(
-		storage_tokens(&hot) <= GLOBAL_ORIENTATION_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR
-	);
-	assert!(hot
-		.iter()
-		.all(|item| !item.source.starts_with("retention:")));
+	assert!(storage_tokens(&hot) <= GLOBAL_ORIENTATION_HARD_TOKENS * SOFT_NUMERATOR / SOFT_DENOMINATOR);
+	assert!(hot.iter().all(|item| !item.source.starts_with("retention:")));
 
 	if let Some(value) = previous_url {
 		std::env::set_var("OLLAMA_API_URL", value);
@@ -501,11 +455,9 @@ async fn store_recurring_rule(backend: &super::super::backend::file::FileBackend
 
 /// Point the supervisor model at a stub answering the user-wide review.
 async fn promotion_verdict(supported: bool) -> Config {
-	let url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response(&format!(
-			r#"{{"supported":{supported},"issues":[]}}"#
-		)),
-	])
+	let url = crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+		&format!(r#"{{"supported":{supported},"issues":[]}}"#),
+	)])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", url);
 	let mut config = crate::session::chat::test_support::fake_provider_config();
@@ -527,9 +479,7 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 	backend.store(&pair).await.unwrap();
 
 	let config = promotion_verdict(true).await;
-	let promoted = promote_recurring(&backend, &config, "fresh-session")
-		.await
-		.unwrap();
+	let promoted = promote_recurring(&backend, &config, "fresh-session").await.unwrap();
 	std::env::remove_var("OLLAMA_API_URL");
 	assert_eq!(promoted, 1);
 
@@ -546,23 +496,14 @@ async fn recurring_scoped_rules_promote_to_global_and_archive_sources() {
 		assert_eq!(hot.len(), 1);
 		assert_eq!(hot[0].content, "Prefer tabs in TOML files");
 	}
-	assert!(backend
-		.retrieve_all("developer", "octofs")
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(backend.retrieve_all("developer", "octofs").await.unwrap().is_empty());
 	for project in ["octolib", "octofs"] {
 		let cold = super::super::backend::file::FileBackend::read_archived(
 			&crate::directories::get_learning_dir("developer", project).unwrap(),
 		);
 		assert_eq!(cold.len(), 1);
 	}
-	assert_eq!(
-		promote_recurring(&backend, &config, "fresh-session")
-			.await
-			.unwrap(),
-		0
-	);
+	assert_eq!(promote_recurring(&backend, &config, "fresh-session").await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -573,9 +514,7 @@ async fn recurring_rule_the_verifier_declines_stays_scoped() {
 	store_recurring_rule(&backend, "fresh-session").await;
 
 	let config = promotion_verdict(false).await;
-	let promoted = promote_recurring(&backend, &config, "fresh-session")
-		.await
-		.unwrap();
+	let promoted = promote_recurring(&backend, &config, "fresh-session").await.unwrap();
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(promoted, 0);
@@ -597,9 +536,7 @@ async fn recurring_rule_is_reviewed_only_when_this_session_restated_it() {
 	// The verifier would approve, but no instance came from this extraction,
 	// so the cluster is not put up for review at all.
 	let config = promotion_verdict(true).await;
-	let promoted = promote_recurring(&backend, &config, "unrelated-session")
-		.await
-		.unwrap();
+	let promoted = promote_recurring(&backend, &config, "unrelated-session").await.unwrap();
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(promoted, 0);
@@ -616,98 +553,88 @@ fn retention_chat_calls() -> u64 {
 #[tokio::test]
 async fn decision_promotion_verification_uses_the_instances_and_never_chat() {
 	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
-	use crate::session::chat::test_support::{
-		install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
-	};
-	for (step, expected) in [
-		(
-			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
-			true,
-		),
-		(
-			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
-			false,
-		),
-		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
-		(FakeEvaluationStep::Answers(nouls(&[])), false),
-	] {
-		let fake = install_fake_evaluation(vec![step]).await;
-		let (url, captured) = spawn_recording_stub(Vec::new()).await;
-		std::env::set_var("OLLAMA_API_URL", url);
-		let chat_calls = retention_chat_calls();
-		let mut config = crate::session::chat::test_support::fake_provider_config();
-		config.supervisor.enabled = true;
-		config.decision.supervisor = true;
-		let member = memory(RECURRING_RULE, "learning");
-		assert_eq!(verify_user_wide(&config, &[&member]).await, expected);
-		assert!(captured.lock().unwrap().is_empty());
-		assert_eq!(fake.requests().len(), 1);
-		assert_eq!(
-			fake.requests()[0].state,
-			serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content}]})
-		);
-		assert_eq!(retention_chat_calls() - chat_calls, 0);
-		std::env::remove_var("OLLAMA_API_URL");
-	}
-	}).await;
+		use crate::session::chat::test_support::{
+			install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+		};
+		for (step, expected) in [
+			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
+			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+			(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+			(FakeEvaluationStep::Answers(nouls(&[])), false),
+		] {
+			let fake = install_fake_evaluation(vec![step]).await;
+			let (url, captured) = spawn_recording_stub(Vec::new()).await;
+			std::env::set_var("OLLAMA_API_URL", url);
+			let chat_calls = retention_chat_calls();
+			let mut config = crate::session::chat::test_support::fake_provider_config();
+			config.supervisor.enabled = true;
+			config.decision.supervisor = true;
+			let member = memory(RECURRING_RULE, "learning");
+			assert_eq!(verify_user_wide(&config, &[&member]).await, expected);
+			assert!(captured.lock().unwrap().is_empty());
+			assert_eq!(fake.requests().len(), 1);
+			assert_eq!(
+				fake.requests()[0].state,
+				serde_json::json!({"instances":[{"project":member.project,"role":member.role,"rule":member.content}]})
+			);
+			assert_eq!(retention_chat_calls() - chat_calls, 0);
+			std::env::remove_var("OLLAMA_API_URL");
+		}
+	})
+	.await;
 }
 
 #[tokio::test]
 async fn decision_merge_verification_retains_the_writer_and_rejects_unavailable_answers() {
 	crate::session::context::with_session_id(uuid::Uuid::new_v4().to_string(), async {
-	use crate::session::chat::test_support::{
-		final_response, install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
-	};
-	for (step, expected) in [
-		(
-			FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])),
-			true,
-		),
-		(
-			FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])),
-			false,
-		),
-		(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
-		(FakeEvaluationStep::Answers(nouls(&[])), false),
-	] {
-		let fake = install_fake_evaluation(vec![step]).await;
-		let sources = [
-			memory(
-				&"retain the grounded constraints ".repeat(40),
-				"orientation",
-			),
-			memory(&"preserve the outcome boundary ".repeat(40), "orientation"),
-		];
-		let (url, captured) = spawn_recording_stub(vec![final_response(r#"{"merge":true,"title":"merged","content":"retain grounded constraints and preserve outcome boundaries"}"#)]).await;
-		std::env::set_var("OLLAMA_API_URL", url);
-		let chat_calls = retention_chat_calls();
-		let mut config = crate::session::chat::test_support::fake_provider_config();
-		config.supervisor.enabled = true;
-		config.supervisor.model.model = Some("ollama:fake-model".into());
-		config.decision.supervisor = true;
-		let merged = propose_and_verify(&config, &sources).await;
-		assert_eq!(merged.is_some(), expected);
-		assert_eq!(captured.lock().unwrap().len(), 1, "merge writer only");
-		assert_eq!(
-			captured.lock().unwrap()[0]["messages"][0]["content"],
-			CONSOLIDATE_PROMPT
-		);
-		let requests = fake.requests();
-		assert_eq!(requests.len(), 1);
-		assert_eq!(
-			requests[0].state["sources"],
-			serde_json::json!(sources.iter().map(source_view).collect::<Vec<_>>())
-		);
-		let candidate = build_consolidated(
-			&sources,
-			"merged",
-			"retain grounded constraints and preserve outcome boundaries",
-		);
-		assert_eq!(requests[0].state["candidate"], source_view(&candidate));
-		assert_eq!(retention_chat_calls() - chat_calls, 1);
-		std::env::remove_var("OLLAMA_API_URL");
-	}
-	}).await;
+		use crate::session::chat::test_support::{
+			final_response, install_fake_evaluation, nouls, spawn_recording_stub, FakeEvaluationStep,
+		};
+		for (step, expected) in [
+			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.5)])), true),
+			(FakeEvaluationStep::Answers(nouls(&[("supported", 0.49)])), false),
+			(FakeEvaluationStep::MissingKey("CLOUDFLARE_API_KEY"), false),
+			(FakeEvaluationStep::Answers(nouls(&[])), false),
+		] {
+			let fake = install_fake_evaluation(vec![step]).await;
+			let sources = [
+				memory(&"retain the grounded constraints ".repeat(40), "orientation"),
+				memory(&"preserve the outcome boundary ".repeat(40), "orientation"),
+			];
+			let (url, captured) = spawn_recording_stub(vec![final_response(
+				r#"{"merge":true,"title":"merged","content":"retain grounded constraints and preserve outcome boundaries"}"#,
+			)])
+			.await;
+			std::env::set_var("OLLAMA_API_URL", url);
+			let chat_calls = retention_chat_calls();
+			let mut config = crate::session::chat::test_support::fake_provider_config();
+			config.supervisor.enabled = true;
+			config.supervisor.model.model = Some("ollama:fake-model".into());
+			config.decision.supervisor = true;
+			let merged = propose_and_verify(&config, &sources).await;
+			assert_eq!(merged.is_some(), expected);
+			assert_eq!(captured.lock().unwrap().len(), 1, "merge writer only");
+			assert_eq!(
+				captured.lock().unwrap()[0]["messages"][0]["content"],
+				CONSOLIDATE_PROMPT
+			);
+			let requests = fake.requests();
+			assert_eq!(requests.len(), 1);
+			assert_eq!(
+				requests[0].state["sources"],
+				serde_json::json!(sources.iter().map(source_view).collect::<Vec<_>>())
+			);
+			let candidate = build_consolidated(
+				&sources,
+				"merged",
+				"retain grounded constraints and preserve outcome boundaries",
+			);
+			assert_eq!(requests[0].state["candidate"], source_view(&candidate));
+			assert_eq!(retention_chat_calls() - chat_calls, 1);
+			std::env::remove_var("OLLAMA_API_URL");
+		}
+	})
+	.await;
 }
 
 #[tokio::test]

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-	live_in_session, ArtifactKind, ArtifactScope, EffectClass, EvolutionRecord, EvolutionState,
-	GeneratedScript, HistoryEvent, REGISTRY_SCHEMA_VERSION,
+	live_in_session, ArtifactKind, ArtifactScope, EffectClass, EvolutionRecord, EvolutionState, GeneratedScript,
+	HistoryEvent, REGISTRY_SCHEMA_VERSION,
 };
 use crate::mcp::runtime::skill::{parse_rule_line, parse_skill_meta, ActivateCheck};
 use crate::supervisor::learning::backend::FileBackend;
@@ -156,24 +156,9 @@ impl ScopeBasis {
 				.collect()
 		};
 		Self {
-			projects: distinct(
-				memories
-					.iter()
-					.map(|memory| memory.project.clone())
-					.collect(),
-			),
-			domains: distinct(
-				memories
-					.iter()
-					.map(|memory| super::domain_name(&memory.role))
-					.collect(),
-			),
-			sessions: distinct(
-				memories
-					.iter()
-					.map(|memory| memory.source.clone())
-					.collect(),
-			),
+			projects: distinct(memories.iter().map(|memory| memory.project.clone()).collect()),
+			domains: distinct(memories.iter().map(|memory| super::domain_name(&memory.role)).collect()),
+			sessions: distinct(memories.iter().map(|memory| memory.source.clone()).collect()),
 			total_use_count: memories
 				.iter()
 				.map(|memory| memory.use_count)
@@ -204,36 +189,19 @@ pub async fn synthesize(
 	project: &str,
 	session_name: &str,
 ) -> Result<Vec<String>> {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Evolution,
-	);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Evolution);
 	let memories = source_memories(role, project, session_name).await?;
 	if memories.is_empty() {
 		return Ok(Vec::new());
 	}
-	synthesize_from(
-		&memories,
-		messages,
-		None,
-		config,
-		role,
-		project,
-		session_name,
-	)
-	.await
+	synthesize_from(&memories, messages, None, config, role, project, session_name).await
 }
 
 /// Cross-store mode: the strongest pattern recurring across projects becomes
 /// at most one candidate per dimension, scoped by the recurrence. There is no
 /// transcript; the previously verified records are the evidence.
-pub async fn synthesize_store(
-	config: &crate::config::Config,
-	role: &str,
-	project: &str,
-) -> Result<Vec<String>> {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Evolution,
-	);
+pub async fn synthesize_store(config: &crate::config::Config, role: &str, project: &str) -> Result<Vec<String>> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Evolution);
 	let memories = recurring_store_cluster().await?;
 	if memories.is_empty() {
 		return Ok(Vec::new());
@@ -277,15 +245,7 @@ async fn synthesize_from(
 	session_name: &str,
 ) -> Result<Vec<String>> {
 	ensure_schema_enforcement(&config.get_supervisor_model_profile().model)?;
-	let synthesis = Synthesis::new(
-		memories,
-		messages,
-		basis,
-		config,
-		role,
-		project,
-		session_name,
-	);
+	let synthesis = Synthesis::new(memories, messages, basis, config, role, project, session_name);
 	let mut failures = Vec::new();
 	let invariant = match synthesis.propose(Dimension::Invariant, None).await {
 		Ok(proposal) => proposal,
@@ -294,10 +254,7 @@ async fn synthesize_from(
 			None
 		}
 	};
-	let domain = match synthesis
-		.propose(Dimension::Domain, invariant.as_ref())
-		.await
-	{
+	let domain = match synthesis.propose(Dimension::Domain, invariant.as_ref()).await {
 		Ok(proposal) => proposal,
 		Err(error) => {
 			failures.push(format!("domain pass: {error}"));
@@ -349,9 +306,7 @@ async fn synthesize_from(
 
 /// Only artifacts of one kind and one proposed scope can become one artifact.
 fn mergeable(left: &Proposal, right: &Proposal) -> bool {
-	left.kind == right.kind
-		&& left.scope_project == right.scope_project
-		&& left.scope_domain == right.scope_domain
+	left.kind == right.kind && left.scope_project == right.scope_project && left.scope_domain == right.scope_domain
 }
 
 /// Inputs every step of one synthesis shares, read once: the registry as it
@@ -418,17 +373,16 @@ impl<'a> Synthesis<'a> {
 			Some(basis) => basis.scope().domain,
 			None => Some(domain.clone()),
 		};
-		let available_capabilities =
-			crate::agent::registry::list_all_capabilities(&config.capabilities)
-				.unwrap_or_default()
-				.into_iter()
-				.filter(|capability| {
-					capability_domain.as_deref().is_none_or(|domain| {
-						crate::agent::registry::cap_available_in_domain(&capability.domains, domain)
-					})
-				})
-				.map(|capability| capability.name)
-				.collect::<Vec<_>>();
+		let available_capabilities = crate::agent::registry::list_all_capabilities(&config.capabilities)
+			.unwrap_or_default()
+			.into_iter()
+			.filter(|capability| {
+				capability_domain
+					.as_deref()
+					.is_none_or(|domain| crate::agent::registry::cap_available_in_domain(&capability.domains, domain))
+			})
+			.map(|capability| capability.name)
+			.collect::<Vec<_>>();
 		let loaded_servers = config
 			.mcp
 			.servers
@@ -487,8 +441,7 @@ impl<'a> Synthesis<'a> {
 			cancel_rx,
 		)
 		.await?;
-		let proposal: Proposal =
-			serde_json::from_value(value).context("invalid evolution proposal")?;
+		let proposal: Proposal = serde_json::from_value(value).context("invalid evolution proposal")?;
 		match proposal.decision.as_str() {
 			"none" => Ok(None),
 			"candidate" => Ok(Some(proposal)),
@@ -496,11 +449,7 @@ impl<'a> Synthesis<'a> {
 		}
 	}
 
-	async fn propose(
-		&self,
-		dimension: Dimension,
-		other_pass: Option<&Proposal>,
-	) -> Result<Option<Proposal>> {
+	async fn propose(&self, dimension: Dimension, other_pass: Option<&Proposal>) -> Result<Option<Proposal>> {
 		self.call(
 			synthesis_prompt(),
 			json!({
@@ -516,11 +465,7 @@ impl<'a> Synthesis<'a> {
 		self.call(
 			// The candidates' own contract travels with them: syntax and scope
 			// rules bind the merge exactly as they bound each proposal.
-			format!(
-				"{}\n\n# Proposal contract\n{}",
-				compose_prompt(),
-				synthesis_prompt()
-			),
+			format!("{}\n\n# Proposal contract\n{}", compose_prompt(), synthesis_prompt()),
 			json!({
 				"invariant_candidate": invariant,
 				"domain_candidate": domain,
@@ -541,8 +486,7 @@ impl<'a> Synthesis<'a> {
 			self.project,
 		);
 		let (mode, existing, live) = (self.mode, &self.prior, &self.live);
-		let (available_capabilities, loaded_servers) =
-			(&self.available_capabilities, &self.loaded_servers);
+		let (available_capabilities, loaded_servers) = (&self.available_capabilities, &self.loaded_servers);
 		let learning_profile = config.get_supervisor_model_profile();
 		let source = selected_memories(&proposal, memories)?;
 		let kind = parse_kind(&proposal.kind)?;
@@ -587,15 +531,8 @@ impl<'a> Synthesis<'a> {
 				.any(|memory| memory.memory_type == "learning" && !memory.evidence.is_empty());
 		let id = make_id(&proposal.name);
 		let native_name = format!("evolved-{}-{}", slug(&proposal.name), &id[id.len() - 6..]);
-		let (native, script, artifact_path) =
-			render_native(&proposal, kind, &scope, &native_name, &id)?;
-		validate_native(
-			kind,
-			&native,
-			script.as_ref(),
-			effect,
-			explicit_authorization,
-		)?;
+		let (native, script, artifact_path) = render_native(&proposal, kind, &scope, &native_name, &id)?;
+		validate_native(kind, &native, script.as_ref(), effect, explicit_authorization)?;
 		if kind == ArtifactKind::Skill {
 			screen_replay_cases(&native, &proposal.replay_cases).await?;
 		}
@@ -636,22 +573,17 @@ impl<'a> Synthesis<'a> {
 			verify_rx,
 		)
 		.await?;
-		let verdict: Verdict =
-			serde_json::from_value(verdict_value).context("invalid evolution verdict")?;
+		let verdict: Verdict = serde_json::from_value(verdict_value).context("invalid evolution verdict")?;
 		let now = chrono::Utc::now().to_rfc3339();
-		let state =
-			if verdict.supported && (effect != EffectClass::Effectful || explicit_authorization) {
-				EvolutionState::Shadow
-			} else {
-				EvolutionState::Rejected
-			};
+		let state = if verdict.supported && (effect != EffectClass::Effectful || explicit_authorization) {
+			EvolutionState::Shadow
+		} else {
+			EvolutionState::Rejected
+		};
 		let detail = if verdict.supported {
 			format!("{origin} candidate: grounding and native contract verified")
 		} else {
-			format!(
-				"rejected ({origin} candidate): {}",
-				verdict.issues.join("; ")
-			)
+			format!("rejected ({origin} candidate): {}", verdict.issues.join("; "))
 		};
 		let record = EvolutionRecord {
 			schema_version: REGISTRY_SCHEMA_VERSION,
@@ -664,10 +596,7 @@ impl<'a> Synthesis<'a> {
 			effect,
 			explicit_authorization,
 			source_memory_ids: source.iter().map(|memory| memory.file_id()).collect(),
-			evidence: source
-				.iter()
-				.flat_map(|memory| memory.evidence.clone())
-				.collect(),
+			evidence: source.iter().flat_map(|memory| memory.evidence.clone()).collect(),
 			replay_cases: proposal.replay_cases.clone(),
 			artifact_version: 1,
 			parent_version: superseded.first().cloned(),
@@ -731,8 +660,7 @@ async fn source_memories(role: &str, project: &str, session_name: &str) -> Resul
 		memory.source == session_name
 			&& !memory.evidence.is_empty()
 			&& (memory.memory_type == "learning"
-				|| (memory.memory_type == "experience"
-					&& memory.outcome == super::super::TrajectoryOutcome::Verified))
+				|| (memory.memory_type == "experience" && memory.outcome == super::super::TrajectoryOutcome::Verified))
 	});
 	memories.sort_by(|a, b| b.created.cmp(&a.created));
 	memories.truncate(MAX_SOURCE_MEMORIES);
@@ -751,10 +679,7 @@ async fn recurring_store_cluster() -> Result<Vec<Lesson>> {
 		.filter(|memory| {
 			!memory.evidence.is_empty()
 				&& match memory.memory_type.as_str() {
-					"learning" => {
-						memory.use_count >= STORE_USE_COUNT_MIN
-							|| memory.importance >= STORE_IMPORTANCE_MIN
-					}
+					"learning" => memory.use_count >= STORE_USE_COUNT_MIN || memory.importance >= STORE_IMPORTANCE_MIN,
 					"experience" => memory.outcome == TrajectoryOutcome::Verified,
 					_ => false,
 				}
@@ -847,13 +772,10 @@ async fn store_embeddings(records: &[Lesson]) -> Option<Vec<Vec<f32>>> {
 		.iter()
 		.map(|memory| {
 			let text = format!("{}\n{}", memory.title, memory.content);
-			crate::embeddings::chunk_to_token_limit(
-				&text,
-				crate::embeddings::EMBED_MAX_INPUT_TOKENS,
-			)
-			.into_iter()
-			.next()
-			.unwrap_or(text)
+			crate::embeddings::chunk_to_token_limit(&text, crate::embeddings::EMBED_MAX_INPUT_TOKENS)
+				.into_iter()
+				.next()
+				.unwrap_or(text)
 		})
 		.collect();
 	match crate::embeddings::embed_many(&texts).await {
@@ -872,19 +794,14 @@ async fn store_embeddings(records: &[Lesson]) -> Option<Vec<Vec<f32>>> {
 /// rule that needs the environment to abstain would fire on every message in
 /// a matching project, which is the false trigger this screen rejects.
 async fn screen_replay_cases(native: &str, cases: &[super::ReplayCase]) -> Result<()> {
-	let meta = parse_skill_meta(native)
-		.ok_or_else(|| anyhow::anyhow!("generated SKILL.md failed native parsing"))?;
+	let meta = parse_skill_meta(native).ok_or_else(|| anyhow::anyhow!("generated SKILL.md failed native parsing"))?;
 	let scores = replay_semantic_scores(&meta.rules, cases).await?;
 	let workdir = std::path::Path::new("");
 	for (index, case) in cases.iter().enumerate() {
 		let matched = meta.rules.iter().any(|group| {
 			group.iter().all(|check| match check {
-				ActivateCheck::Content(_) | ActivateCheck::Match(_) => {
-					check.matches(&case.input, workdir, "", None)
-				}
-				ActivateCheck::Semantic { .. } => {
-					check.matches(&case.input, workdir, "", scores.get(index))
-				}
+				ActivateCheck::Content(_) | ActivateCheck::Match(_) => check.matches(&case.input, workdir, "", None),
+				ActivateCheck::Semantic { .. } => check.matches(&case.input, workdir, "", scores.get(index)),
 				_ => true,
 			})
 		});
@@ -964,9 +881,7 @@ fn validate_activation_rules(rules: &[String]) -> Result<()> {
 				&& ((inner.starts_with('"') && inner.ends_with('"'))
 					|| (inner.starts_with('\'') && inner.ends_with('\'')));
 			if quoted {
-				anyhow::bail!(
-					"activation rule '{rule}' quotes its argument; native checks take bare arguments"
-				);
+				anyhow::bail!("activation rule '{rule}' quotes its argument; native checks take bare arguments");
 			}
 		}
 	}
@@ -999,10 +914,7 @@ fn selected_memories<'a>(proposal: &Proposal, all: &'a [Lesson]) -> Result<Vec<&
 			.iter()
 			.find(|memory| memory.file_id() == *id)
 			.ok_or_else(|| anyhow::anyhow!("candidate cited unavailable memory '{}'", id))?;
-		if !selected
-			.iter()
-			.any(|existing: &&Lesson| existing.file_id() == *id)
-		{
+		if !selected.iter().any(|existing: &&Lesson| existing.file_id() == *id) {
 			selected.push(memory);
 		}
 	}
@@ -1040,9 +952,9 @@ fn explicit_scope_supported(proposal: &Proposal, messages: &[crate::session::Mes
 	else {
 		return false;
 	};
-	messages.iter().any(|message| {
-		crate::session::is_real_user_task_message(message) && message.content.contains(quote)
-	})
+	messages
+		.iter()
+		.any(|message| crate::session::is_real_user_task_message(message) && message.content.contains(quote))
 }
 
 fn parse_kind(value: &str) -> Result<ArtifactKind> {
@@ -1108,9 +1020,7 @@ fn render_native(
 			anyhow::bail!("generated guidance requires description and body");
 		}
 		if body.chars().count() > MAX_GUIDANCE_CHARS {
-			anyhow::bail!(
-				"generated guidance exceeds {MAX_GUIDANCE_CHARS} characters; a procedure belongs in a skill"
-			);
+			anyhow::bail!("generated guidance exceeds {MAX_GUIDANCE_CHARS} characters; a procedure belongs in a skill");
 		}
 		if proposal.script_name.is_some() || proposal.script_content.is_some() {
 			anyhow::bail!("generated guidance carries no script");
@@ -1119,11 +1029,7 @@ fn render_native(
 		return Ok((format!("{body}\n"), None, "GUIDANCE.md".to_string()));
 	}
 
-	let file_name = proposal
-		.script_name
-		.as_deref()
-		.map(safe_script_name)
-		.transpose()?;
+	let file_name = proposal.script_name.as_deref().map(safe_script_name).transpose()?;
 	let script = match (file_name, proposal.script_content.as_deref()) {
 		(Some(file_name), Some(content)) if !content.trim().is_empty() => Some(GeneratedScript {
 			file_name,
@@ -1157,10 +1063,7 @@ fn render_native(
 			command: absolute_script
 				.clone()
 				.ok_or_else(|| anyhow::anyhow!("pipe requires a script"))?,
-			match_: Some(required_text(
-				proposal.match_rule.as_deref(),
-				"pipe match_rule",
-			)?),
+			match_: Some(required_text(proposal.match_rule.as_deref(), "pipe match_rule")?),
 			when: match proposal.pipe_when.as_str() {
 				"first" => "first",
 				_ => "any",
@@ -1195,12 +1098,7 @@ fn render_native(
 			});
 		}
 		ArtifactKind::Validator => {
-			if proposal.when.is_empty()
-				&& proposal
-					.assistant_match
-					.as_deref()
-					.is_none_or(str::is_empty)
-			{
+			if proposal.when.is_empty() && proposal.assistant_match.as_deref().is_none_or(str::is_empty) {
 				anyhow::bail!("generated validator requires when or assistant_match");
 			}
 			doc.validators.push(ValidatorDoc {
@@ -1208,17 +1106,12 @@ fn render_native(
 				match_: proposal.assistant_match.clone(),
 				when: proposal.when.clone(),
 				roles,
-				script: absolute_script
-					.ok_or_else(|| anyhow::anyhow!("validator requires a script"))?,
+				script: absolute_script.ok_or_else(|| anyhow::anyhow!("validator requires a script"))?,
 			});
 		}
 		ArtifactKind::Skill | ArtifactKind::Guidance => unreachable!(),
 	}
-	Ok((
-		toml::to_string_pretty(&doc)?,
-		script,
-		"guardrail.toml".to_string(),
-	))
+	Ok((toml::to_string_pretty(&doc)?, script, "guardrail.toml".to_string()))
 }
 
 fn validate_native(
@@ -1228,9 +1121,7 @@ fn validate_native(
 	effect: EffectClass,
 	explicit_authorization: bool,
 ) -> Result<()> {
-	if contains_secret_marker(native)
-		|| script.is_some_and(|script| contains_secret_marker(&script.content))
-	{
+	if contains_secret_marker(native) || script.is_some_and(|script| contains_secret_marker(&script.content)) {
 		anyhow::bail!("generated artifact contains a secret-like marker");
 	}
 	if effect == EffectClass::Effectful && !explicit_authorization {
@@ -1254,11 +1145,7 @@ fn validate_native(
 		_ => {
 			crate::config::guardrails::Guardrails::parse(native)
 				.context("generated guardrail failed native parsing")?;
-			if matches!(
-				kind,
-				ArtifactKind::Pipe | ArtifactKind::Hook | ArtifactKind::Validator
-			) && script.is_none()
-			{
+			if matches!(kind, ArtifactKind::Pipe | ArtifactKind::Hook | ArtifactKind::Validator) && script.is_none() {
 				anyhow::bail!("generated lifecycle script is missing");
 			}
 		}
@@ -1308,11 +1195,10 @@ fn validate_replay_cases(cases: &[super::ReplayCase]) -> Result<()> {
 	{
 		anyhow::bail!("candidate requires positive and negative replay cases");
 	}
-	if cases.iter().any(|case| {
-		case.label.trim().is_empty()
-			|| case.input.trim().is_empty()
-			|| case.input.chars().count() > 2_000
-	}) {
+	if cases
+		.iter()
+		.any(|case| case.label.trim().is_empty() || case.input.trim().is_empty() || case.input.chars().count() > 2_000)
+	{
 		anyhow::bail!("candidate replay case is empty or over budget");
 	}
 	Ok(())
@@ -1334,11 +1220,7 @@ fn safe_script_name(value: &str) -> Result<String> {
 }
 
 fn make_id(name: &str) -> String {
-	format!(
-		"evo-{}-{}",
-		slug(name),
-		&uuid::Uuid::new_v4().simple().to_string()[..8]
-	)
+	format!("evo-{}-{}", slug(name), &uuid::Uuid::new_v4().simple().to_string()[..8])
 }
 
 fn slug(value: &str) -> String {
@@ -1389,11 +1271,7 @@ fn evidence_excerpt(messages: &[crate::session::Message]) -> Vec<serde_json::Val
 			continue;
 		}
 		let remaining = MAX_EVIDENCE_CHARS - used;
-		let content = message
-			.content
-			.chars()
-			.take(remaining.min(4_000))
-			.collect::<String>();
+		let content = message.content.chars().take(remaining.min(4_000)).collect::<String>();
 		used += content.chars().count();
 		output.push(json!({
 			"id": format!("M{}", index + 1),
@@ -1404,10 +1282,7 @@ fn evidence_excerpt(messages: &[crate::session::Message]) -> Vec<serde_json::Val
 	output
 }
 
-fn evidence_for_memories(
-	messages: &[crate::session::Message],
-	memories: &[&Lesson],
-) -> Vec<serde_json::Value> {
+fn evidence_for_memories(messages: &[crate::session::Message], memories: &[&Lesson]) -> Vec<serde_json::Value> {
 	let wanted = memories
 		.iter()
 		.flat_map(|memory| &memory.evidence)
@@ -1437,8 +1312,7 @@ fn evidence_for_memories(
 }
 
 fn ensure_schema_enforcement(model: &str) -> Result<()> {
-	let (provider, actual_model) =
-		crate::providers::ProviderFactory::get_provider_for_model(model)?;
+	let (provider, actual_model) = crate::providers::ProviderFactory::get_provider_for_model(model)?;
 	if !provider.enforces_response_schema(&actual_model) {
 		anyhow::bail!(
 			"evolution requires schema-enforced structured output; model '{}' cannot enforce it",

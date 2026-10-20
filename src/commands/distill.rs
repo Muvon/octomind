@@ -49,12 +49,8 @@ pub struct DistillArgs {
 }
 
 pub async fn execute(args: &DistillArgs, config: &Config) -> Result<()> {
-	let raw = std::fs::read(&args.messages).with_context(|| {
-		format!(
-			"failed to read transcript snapshot {}",
-			args.messages.display()
-		)
-	})?;
+	let raw = std::fs::read(&args.messages)
+		.with_context(|| format!("failed to read transcript snapshot {}", args.messages.display()))?;
 	let _ = std::fs::remove_file(&args.messages);
 
 	let messages: Vec<octomind::session::Message> =

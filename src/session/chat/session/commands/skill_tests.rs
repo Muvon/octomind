@@ -91,10 +91,7 @@ async fn unknown_skill_name_is_reported() {
 	);
 	assert_eq!(data["subcommand"], "error");
 	assert!(
-		data["message"]
-			.as_str()
-			.expect("message")
-			.contains("not found"),
+		data["message"].as_str().expect("message").contains("not found"),
 		"unexpected message: {data}"
 	);
 }
@@ -126,11 +123,7 @@ async fn use_forget_and_page_range_roundtrip() {
 
 		// List (filtered — the machine's global skills must not crowd
 		// the fixture off the page): our skill is present and inactive.
-		let data = skill_data(
-			handle_skill(&mut session, &["*cov-roundtrip*"])
-				.await
-				.expect("list"),
-		);
+		let data = skill_data(handle_skill(&mut session, &["*cov-roundtrip*"]).await.expect("list"));
 		assert_eq!(data["subcommand"], "list");
 		let entry = data["skills"]
 			.as_array()
@@ -141,28 +134,16 @@ async fn use_forget_and_page_range_roundtrip() {
 		assert_eq!(entry["active"], false);
 
 		// Use: injects the skill content as a system-managed user message.
-		let data = skill_data(
-			handle_skill(&mut session, &[SKILL_NAME])
-				.await
-				.expect("use"),
-		);
+		let data = skill_data(handle_skill(&mut session, &[SKILL_NAME]).await.expect("use"));
 		assert_eq!(data["subcommand"], "use");
 		assert_eq!(data["name"], SKILL_NAME);
 		assert!(
-			session
-				.session
-				.messages
-				.iter()
-				.any(|m| m.content.contains(SKILL_NAME)),
+			session.session.messages.iter().any(|m| m.content.contains(SKILL_NAME)),
 			"skill content was not injected"
 		);
 
 		// List again (same filter): the skill is now marked active.
-		let data = skill_data(
-			handle_skill(&mut session, &["*cov-roundtrip*"])
-				.await
-				.expect("list"),
-		);
+		let data = skill_data(handle_skill(&mut session, &["*cov-roundtrip*"]).await.expect("list"));
 		let entry = data["skills"]
 			.as_array()
 			.expect("skills array")
@@ -172,11 +153,7 @@ async fn use_forget_and_page_range_roundtrip() {
 		assert_eq!(entry["active"], true);
 
 		// Forget: toggles the active skill off.
-		let data = skill_data(
-			handle_skill(&mut session, &[SKILL_NAME])
-				.await
-				.expect("forget"),
-		);
+		let data = skill_data(handle_skill(&mut session, &[SKILL_NAME]).await.expect("forget"));
 		assert_eq!(data["subcommand"], "forget");
 		assert_eq!(data["name"], SKILL_NAME);
 

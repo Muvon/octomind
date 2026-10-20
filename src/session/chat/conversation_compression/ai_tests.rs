@@ -16,8 +16,7 @@ use super::*;
 
 #[test]
 fn extract_json_lenient_parses_a_valid_object() {
-	let v = extract_json_lenient(r#"{"should_compress": true, "reason": "long session"}"#)
-		.expect("valid JSON parses");
+	let v = extract_json_lenient(r#"{"should_compress": true, "reason": "long session"}"#).expect("valid JSON parses");
 	assert_eq!(v["should_compress"], true);
 	assert_eq!(v["reason"], "long session");
 }
@@ -31,8 +30,7 @@ fn extract_json_lenient_parses_arrays() {
 
 #[test]
 fn extract_json_lenient_parses_nested_objects() {
-	let v = extract_json_lenient(r#"{"outer": {"inner": [1, {"deep": true}]}}"#)
-		.expect("nested JSON parses");
+	let v = extract_json_lenient(r#"{"outer": {"inner": [1, {"deep": true}]}}"#).expect("nested JSON parses");
 	assert_eq!(v["outer"]["inner"][1]["deep"], true);
 }
 

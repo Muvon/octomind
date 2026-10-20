@@ -162,10 +162,7 @@ fn test_dynamic_agent_tool_lookup_helpers() {
 		get_dynamic_agent_name_by_tool("agent___dynagent_lookup"),
 		Some("__dynagent_lookup".to_string())
 	);
-	assert_eq!(
-		get_dynamic_agent_name_by_tool("agent___dynagent_nope"),
-		None
-	);
+	assert_eq!(get_dynamic_agent_name_by_tool("agent___dynagent_nope"), None);
 	assert_eq!(get_dynamic_agent_name_by_tool("shell"), None);
 
 	// Removing an unknown agent is a None, not an error.

@@ -93,16 +93,13 @@ fn parse_input(raw: &str) -> Result<Input> {
 
 fn read_input(file: Option<&Path>) -> Result<String> {
 	match file {
-		Some(path) => std::fs::read_to_string(path)
-			.with_context(|| format!("failed to read {}", path.display())),
+		Some(path) => std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display())),
 		None => {
 			if io::stdin().is_terminal() {
 				bail!("request must be passed as a file or piped via stdin");
 			}
 			let mut buf = String::new();
-			io::stdin()
-				.read_to_string(&mut buf)
-				.context("failed to read stdin")?;
+			io::stdin().read_to_string(&mut buf).context("failed to read stdin")?;
 			Ok(buf)
 		}
 	}

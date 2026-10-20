@@ -74,10 +74,7 @@ fn bridge_info_supports_debug_and_clone() {
 
 	let debug = format!("{info:?}");
 	assert!(debug.contains("8080"), "Debug output missing port: {debug}");
-	assert!(
-		debug.contains("abc123"),
-		"Debug output missing token: {debug}"
-	);
+	assert!(debug.contains("abc123"), "Debug output missing token: {debug}");
 }
 
 #[test]
@@ -96,9 +93,7 @@ async fn plain_response_sets_status_headers_and_body() {
 	let res = plain(StatusCode::NOT_FOUND, "Not found\n");
 	assert_eq!(res.status(), StatusCode::NOT_FOUND);
 	assert_eq!(
-		res.headers()
-			.get("content-type")
-			.and_then(|v| v.to_str().ok()),
+		res.headers().get("content-type").and_then(|v| v.to_str().ok()),
 		Some("text/plain; charset=utf-8")
 	);
 	assert_eq!(
@@ -107,12 +102,7 @@ async fn plain_response_sets_status_headers_and_body() {
 			.and_then(|v| v.to_str().ok()),
 		Some("*")
 	);
-	let body = res
-		.into_body()
-		.collect()
-		.await
-		.expect("collect body")
-		.to_bytes();
+	let body = res.into_body().collect().await.expect("collect body").to_bytes();
 	assert_eq!(&body[..], b"Not found\n");
 }
 
@@ -123,10 +113,7 @@ async fn cors_preflight_returns_no_content_with_cors_headers() {
 	for (header, expected) in [
 		("access-control-allow-origin", "*"),
 		("access-control-allow-methods", "GET, OPTIONS"),
-		(
-			"access-control-allow-headers",
-			"x-bridge-token, content-type",
-		),
+		("access-control-allow-headers", "x-bridge-token, content-type"),
 		("access-control-max-age", "600"),
 	] {
 		assert_eq!(
@@ -162,10 +149,7 @@ async fn registry_replaces_entries_and_clear_removes_them() {
 	assert!(registry().lock().contains_key(&id));
 
 	clear_for_session(&id);
-	assert!(
-		!registry().lock().contains_key(&id),
-		"clear must drop the entry"
-	);
+	assert!(!registry().lock().contains_key(&id), "clear must drop the entry");
 }
 
 #[tokio::test]
@@ -173,10 +157,7 @@ async fn start_for_session_requires_session_context() {
 	let err = start_for_session(std::path::PathBuf::from("/nonexistent/session.jsonl.zst"))
 		.await
 		.expect_err("must fail outside a session context");
-	assert!(
-		err.to_string().contains("no session id"),
-		"unexpected error: {err}"
-	);
+	assert!(err.to_string().contains("no session id"), "unexpected error: {err}");
 }
 
 // ── end-to-end HTTP over loopback ──────────────────────────────────
@@ -193,16 +174,11 @@ async fn http_request(
 	let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
 		.await
 		.expect("connect");
-	let auth = token
-		.map(|t| format!("x-bridge-token: {t}\r\n"))
-		.unwrap_or_default();
+	let auth = token.map(|t| format!("x-bridge-token: {t}\r\n")).unwrap_or_default();
 	let request = format!(
 		"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{auth}Connection: close\r\nContent-Length: 0\r\n\r\n"
 	);
-	stream
-		.write_all(request.as_bytes())
-		.await
-		.expect("write request");
+	stream.write_all(request.as_bytes()).await.expect("write request");
 	let mut raw = Vec::new();
 	stream.read_to_end(&mut raw).await.expect("read response");
 	let text = String::from_utf8_lossy(&raw).to_string();
@@ -224,19 +200,13 @@ async fn http_request(
 }
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-	headers
-		.iter()
-		.find(|(k, _)| k == name)
-		.map(|(_, v)| v.as_str())
+	headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
 }
 
 async fn start_test_bridge(session_id: &str, session_file: &std::path::Path) -> BridgeInfo {
-	crate::session::context::with_session_id(
-		session_id.to_string(),
-		start_for_session(session_file.to_path_buf()),
-	)
-	.await
-	.expect("bridge must start")
+	crate::session::context::with_session_id(session_id.to_string(), start_for_session(session_file.to_path_buf()))
+		.await
+		.expect("bridge must start")
 }
 
 #[tokio::test]
@@ -258,10 +228,7 @@ async fn bridge_serves_health_and_rejects_unknown_paths_and_methods() {
 	let (status, headers, _) = http_request("OPTIONS", info.port, "/session", None).await;
 	assert_eq!(status, 204, "preflight must answer 204");
 	assert_eq!(header(&headers, "access-control-allow-origin"), Some("*"));
-	assert_eq!(
-		header(&headers, "access-control-allow-methods"),
-		Some("GET, OPTIONS")
-	);
+	assert_eq!(header(&headers, "access-control-allow-methods"), Some("GET, OPTIONS"));
 
 	clear_for_session(&"bridge-e2e-routing".to_string());
 }
@@ -270,8 +237,7 @@ async fn bridge_serves_health_and_rejects_unknown_paths_and_methods() {
 async fn session_endpoint_checks_token_and_serves_decompressed_jsonl() {
 	let tmp = tempfile::TempDir::new().expect("temp dir");
 	let file = tmp.path().join("session.jsonl.zst");
-	let raw =
-		b"{\"role\":\"user\",\"content\":\"hi\"}\n{\"role\":\"assistant\",\"content\":\"hello\"}\n";
+	let raw = b"{\"role\":\"user\",\"content\":\"hi\"}\n{\"role\":\"assistant\",\"content\":\"hello\"}\n";
 	let compressed = zstd::encode_all(raw.as_slice(), 3).expect("compress fixture");
 	std::fs::write(&file, &compressed).expect("write fixture");
 
@@ -287,18 +253,10 @@ async fn session_endpoint_checks_token_and_serves_decompressed_jsonl() {
 	assert_eq!(status, 401, "wrong token must be rejected");
 
 	// Correct token → decompressed JSONL with browser-facing headers.
-	let (status, headers, body) =
-		http_request("GET", info.port, "/session", Some(&info.token)).await;
+	let (status, headers, body) = http_request("GET", info.port, "/session", Some(&info.token)).await;
 	assert_eq!(status, 200);
-	assert_eq!(
-		body.as_bytes(),
-		raw,
-		"zstd payload must be decompressed verbatim"
-	);
-	assert_eq!(
-		header(&headers, "content-type"),
-		Some("application/x-ndjson")
-	);
+	assert_eq!(body.as_bytes(), raw, "zstd payload must be decompressed verbatim");
+	assert_eq!(header(&headers, "content-type"), Some("application/x-ndjson"));
 	assert_eq!(header(&headers, "cache-control"), Some("no-store"));
 	assert_eq!(header(&headers, "access-control-allow-origin"), Some("*"));
 
@@ -322,10 +280,7 @@ async fn session_endpoint_reports_read_and_decompress_failures() {
 	let info = start_test_bridge("bridge-e2e-garbage", &garbage).await;
 	let (status, _, body) = http_request("GET", info.port, "/session", Some(&info.token)).await;
 	assert_eq!(status, 500, "corrupt session file must 500");
-	assert!(
-		body.starts_with("Decompress failed:"),
-		"unexpected body: {body}"
-	);
+	assert!(body.starts_with("Decompress failed:"), "unexpected body: {body}");
 	clear_for_session(&"bridge-e2e-garbage".to_string());
 }
 
@@ -345,10 +300,7 @@ async fn restarting_supersedes_the_previous_bridge() {
 	// The new bridge answers; the registry holds exactly one entry for the id.
 	let (status, _, _) = http_request("GET", second.port, "/health", None).await;
 	assert_eq!(status, 200, "replacement bridge must serve");
-	assert!(
-		!registry().lock().is_empty(),
-		"registry must hold the replacement"
-	);
+	assert!(!registry().lock().is_empty(), "registry must hold the replacement");
 
 	clear_for_session(&id.to_string());
 	assert!(!registry().lock().contains_key(id));

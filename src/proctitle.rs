@@ -79,10 +79,7 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 	let last_len = libc::strlen(last);
 	let end = last.add(last_len + 1);
 	let capacity = end.offset_from(first) as usize;
-	Some(ArgvSpan {
-		start: first,
-		capacity,
-	})
+	Some(ArgvSpan { start: first, capacity })
 }
 
 #[cfg(target_os = "linux")]
@@ -99,10 +96,7 @@ unsafe fn capture_argv_span() -> Option<ArgvSpan> {
 	let capacity = std::fs::read("/proc/self/cmdline")
 		.map(|v| v.len())
 		.unwrap_or_else(|_| libc::strlen(arg0));
-	Some(ArgvSpan {
-		start: arg0,
-		capacity,
-	})
+	Some(ArgvSpan { start: arg0, capacity })
 }
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]

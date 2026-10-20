@@ -20,18 +20,15 @@
 //! - Handling multiple line ranges per file
 //! - Configurable rendering options
 
-use crate::utils::file_parser::{
-	parse_file_references, read_multiple_files, FileContent, LineRange,
-};
+use crate::utils::file_parser::{parse_file_references, read_multiple_files, FileContent, LineRange};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 // Context block extraction regex - compiled once for performance
 // Uses (?s) flag to match across newlines
-static CONTEXT_EXTRACT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"(?s)<context>(.*?)</context>").expect("Failed to compile context extraction regex")
-});
+static CONTEXT_EXTRACT_REGEX: LazyLock<Regex> =
+	LazyLock::new(|| Regex::new(r"(?s)<context>(.*?)</context>").expect("Failed to compile context extraction regex"));
 
 /// Expand context blocks in text by replacing them with rendered file content
 /// Finds all <context>...</context> blocks containing file references (file:1:3),
@@ -182,10 +179,7 @@ pub fn render_files_as_text(file_contents: &HashMap<String, Vec<FileContent>>) -
 /// Render file contents with custom options
 ///
 /// Main rendering function that supports both XML and text formats
-pub fn render_files_with_options(
-	file_contents: &HashMap<String, Vec<FileContent>>,
-	options: &RenderOptions,
-) -> String {
+pub fn render_files_with_options(file_contents: &HashMap<String, Vec<FileContent>>, options: &RenderOptions) -> String {
 	if file_contents.is_empty() {
 		return "No specific file context requested.".to_string();
 	}

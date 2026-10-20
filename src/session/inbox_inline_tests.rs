@@ -28,20 +28,14 @@ fn all_sources() -> Vec<InboxSource> {
 			id: "t1".into(),
 			role: "developer".into(),
 		},
-		InboxSource::Skill {
-			name: "deploy".into(),
-		},
-		InboxSource::SkillValidator {
-			name: "deploy".into(),
-		},
+		InboxSource::Skill { name: "deploy".into() },
+		InboxSource::SkillValidator { name: "deploy".into() },
 		InboxSource::Inject,
 		InboxSource::Webhook { hook: "ci".into() },
 		InboxSource::GuardrailHook {
 			script: "check.sh".into(),
 		},
-		InboxSource::GuardValidator {
-			name: "tests".into(),
-		},
+		InboxSource::GuardValidator { name: "tests".into() },
 	]
 }
 

@@ -51,8 +51,7 @@ pub async fn start_callback_server(
 ) -> Result<OAuthCallbackResult> {
 	// Parse the configured callback_url to extract host and port
 	let callback_url = &config.callback_url;
-	let parsed_url = Url::parse(callback_url)
-		.map_err(|e| anyhow!("Invalid callback_url '{}': {}", callback_url, e))?;
+	let parsed_url = Url::parse(callback_url).map_err(|e| anyhow!("Invalid callback_url '{}': {}", callback_url, e))?;
 
 	let host = parsed_url
 		.host_str()
@@ -83,12 +82,8 @@ pub async fn start_callback_server(
 		use sha2::{Digest, Sha256};
 		URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()))
 	};
-	let authorization_url = crate::mcp::oauth::build_authorization_url(
-		config,
-		&code_challenge,
-		&auth_state,
-		&redirect_uri,
-	);
+	let authorization_url =
+		crate::mcp::oauth::build_authorization_url(config, &code_challenge, &auth_state, &redirect_uri);
 
 	let callback_state = CallbackServerState {
 		auth_state: Arc::new(Mutex::new(Some(auth_state))),
@@ -113,19 +108,12 @@ pub async fn start_callback_server(
 	});
 
 	let auth_url_str = authorization_url.clone();
-	open_browser(&authorization_url).map_err(|e| {
-		anyhow!(
-			"Failed to open browser: {}. Please manually visit: {}",
-			e,
-			auth_url_str
-		)
-	})?;
+	open_browser(&authorization_url)
+		.map_err(|e| anyhow!("Failed to open browser: {}. Please manually visit: {}", e, auth_url_str))?;
 
 	let timeout_seconds = 300;
 	let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_seconds), async {
-		result_rx
-			.await
-			.map_err(|e| anyhow!("Result channel closed: {}", e))
+		result_rx.await.map_err(|e| anyhow!("Result channel closed: {}", e))
 	})
 	.await
 	.map_err(|_| {
@@ -145,8 +133,7 @@ async fn run_http_server(listener: &TcpListener, state: CallbackServerState) {
 			break;
 		}
 
-		let accept_result =
-			tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept()).await;
+		let accept_result = tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept()).await;
 
 		match accept_result {
 			Ok(Ok((stream, _addr))) => {
@@ -161,10 +148,7 @@ async fn run_http_server(listener: &TcpListener, state: CallbackServerState) {
 	}
 }
 
-async fn handle_request(
-	mut stream: tokio::net::TcpStream,
-	state: CallbackServerState,
-) -> Result<()> {
+async fn handle_request(mut stream: tokio::net::TcpStream, state: CallbackServerState) -> Result<()> {
 	let mut buf = [0u8; 4096];
 	let bytes_read = stream.read(&mut buf).await?;
 	if bytes_read == 0 {
@@ -260,9 +244,7 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 		let parts: Vec<&str> = pair.splitn(2, '=').collect();
 		if parts.len() == 2 {
 			let key = parts[0];
-			let value = urlencoding::decode(parts[1])
-				.unwrap_or_default()
-				.into_owned();
+			let value = urlencoding::decode(parts[1]).unwrap_or_default().into_owned();
 			crate::log_debug!("OAuth callback param: {} = {:?}", key, value);
 			match key {
 				"code" => code = Some(value),
@@ -321,14 +303,7 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 		}
 	};
 
-	match exchange_code_for_token(
-		&state.config,
-		&code,
-		&state.code_verifier,
-		&state.redirect_uri,
-	)
-	.await
-	{
+	match exchange_code_for_token(&state.config, &code, &state.code_verifier, &state.redirect_uri).await {
 		Ok(token_response) => {
 			// Clone all values before consuming the struct
 			let refresh_token = token_response.refresh_token.clone();
@@ -340,21 +315,13 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 			let expires_at = if expires_in > 0 {
 				std::time::SystemTime::now()
 					.checked_add(std::time::Duration::from_secs(expires_in))
-					.map(|t| {
-						t.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs()
-					})
+					.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
 					.unwrap_or(0)
 			} else {
 				// GitHub tokens don't expire - set to 1 year from now
 				std::time::SystemTime::now()
 					.checked_add(std::time::Duration::from_secs(365 * 24 * 60 * 60))
-					.map(|t| {
-						t.duration_since(std::time::UNIX_EPOCH)
-							.unwrap_or_default()
-							.as_secs()
-					})
+					.map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
 					.unwrap_or(0)
 			};
 
@@ -378,11 +345,7 @@ async fn process_callback(query: &str, state: &CallbackServerState) -> OAuthCall
 			OAuthCallbackResult::Success {
 				access_token,
 				refresh_token,
-				expires_in: if expires_in > 0 {
-					expires_in
-				} else {
-					365 * 24 * 60 * 60
-				},
+				expires_in: if expires_in > 0 { expires_in } else { 365 * 24 * 60 * 60 },
 				scopes,
 			}
 		}
@@ -404,9 +367,7 @@ fn open_browser(url: &str) -> Result<()> {
 	}
 	#[cfg(target_os = "windows")]
 	{
-		std::process::Command::new("cmd")
-			.args(&["/c", "start", url])
-			.spawn()?;
+		std::process::Command::new("cmd").args(&["/c", "start", url]).spawn()?;
 	}
 	Ok(())
 }

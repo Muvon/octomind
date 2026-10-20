@@ -66,13 +66,7 @@ pub async fn setup_and_initialize_session(
 	args: &GenericSessionArgs,
 	config: &Config,
 	activate_interactive_tools: bool,
-) -> Result<(
-	ChatSession,
-	Config,
-	String,
-	bool,
-	Option<indicatif::ProgressBar>,
-)> {
+) -> Result<(ChatSession, Config, String, bool, Option<indicatif::ProgressBar>)> {
 	use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 	// Read session parameters directly off the args struct.
@@ -123,8 +117,7 @@ pub async fn setup_and_initialize_session(
 	// Print startup banner before the spinner so the icon stays visible above the
 	// transient spinner line. Interactive TTY + plain output mode only.
 	let banner_printed = is_interactive
-		&& !crate::session::output::OutputMode::from_runtime_mode(&output_mode)
-			.should_suppress_cli_output();
+		&& !crate::session::output::OutputMode::from_runtime_mode(&output_mode).should_suppress_cli_output();
 	if banner_printed {
 		let cwd = crate::mcp::get_thread_working_directory();
 		let extra = vec![
@@ -179,10 +172,7 @@ pub async fn setup_and_initialize_session(
 	};
 	config_for_role.runtime_output_mode = Some(resolved_output_mode);
 	if config_for_role.max_session_tokens_threshold > 0 {
-		if let Err(e) =
-			crate::session::validate_session_token_threshold(&config_for_role, &role, &current_dir)
-				.await
-		{
+		if let Err(e) = crate::session::validate_session_token_threshold(&config_for_role, &role, &current_dir).await {
 			return Err(anyhow::anyhow!(
 				"Session initialization failed: {}\nTo fix this issue\n1. Increase max_session_tokens_threshold in your config\n2. Or disable compression by setting max_session_tokens_threshold = 0\n3. Or reduce the number of MCP servers to lower tool overhead",
 				e
@@ -191,8 +181,7 @@ pub async fn setup_and_initialize_session(
 	}
 
 	// Create or load session
-	let mut session_params =
-		SessionInitParams::new(&config_for_role, &role).with_role_explicit(args.role_explicit);
+	let mut session_params = SessionInitParams::new(&config_for_role, &role).with_role_explicit(args.role_explicit);
 
 	if let Some(name) = name {
 		session_params = session_params.with_name(name);
@@ -244,15 +233,12 @@ pub async fn setup_and_initialize_session(
 
 	// Tip + shortcuts line are shown inline next to the icon as part of
 	// `print_startup_banner` above; suppress the duplicate here.
-	let suppress = crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check)
-		.should_suppress_cli_output();
+	let suppress =
+		crate::session::output::OutputMode::from_runtime_mode(&output_mode_for_check).should_suppress_cli_output();
 	if !chat_session.was_resumed && !suppress && !banner_printed {
 		if let Some(ref sp) = spinner {
 			sp.println(format!("{}", display_random_tip().bright_yellow()));
-			sp.println(format!(
-				"{}",
-				"? for shortcuts • /help for commands".bright_black()
-			));
+			sp.println(format!("{}", "? for shortcuts • /help for commands".bright_black()));
 		} else {
 			println!("{}", display_random_tip().bright_yellow());
 			println!("{}", "? for shortcuts • /help for commands".bright_black());
@@ -271,10 +257,7 @@ pub async fn setup_and_initialize_session(
 	// Apply runtime temperature override if provided via CLI
 	if let Some(runtime_temperature) = temperature {
 		chat_session.temperature = runtime_temperature;
-		log_info!(
-			"Using runtime temperature override: {}",
-			runtime_temperature
-		);
+		log_info!("Using runtime temperature override: {}", runtime_temperature);
 	}
 
 	// Apply runtime max_tokens override if provided via CLI
@@ -286,10 +269,7 @@ pub async fn setup_and_initialize_session(
 	// Apply runtime max_retries override if provided via CLI
 	if let Some(runtime_max_retries) = max_retries {
 		chat_session.max_retries = runtime_max_retries;
-		log_info!(
-			"Using runtime max_retries override: {}",
-			runtime_max_retries
-		);
+		log_info!("Using runtime max_retries override: {}", runtime_max_retries);
 	}
 
 	// Apply structured-output schema override (from `run --schema <path>`). The
@@ -302,20 +282,14 @@ pub async fn setup_and_initialize_session(
 
 	let first_message_processed = !chat_session.session.messages.is_empty();
 
-	Ok((
-		chat_session,
-		config_for_role,
-		role,
-		first_message_processed,
-		spinner,
-	))
+	Ok((chat_session, config_for_role, role, first_message_processed, spinner))
 }
 
 /// Check that the provider for the given model string has its credentials set.
 /// Fails fast before the session starts — avoids the confusing "first message fails" UX.
 fn validate_provider_credentials(model: &str) -> Result<()> {
-	let (provider, _) = ProviderFactory::parse_model(model)
-		.map_err(|e| anyhow::anyhow!("Invalid model '{}': {}", model, e))?;
+	let (provider, _) =
+		ProviderFactory::parse_model(model).map_err(|e| anyhow::anyhow!("Invalid model '{}': {}", model, e))?;
 	if provider.eq_ignore_ascii_case("cli") {
 		return Ok(());
 	}

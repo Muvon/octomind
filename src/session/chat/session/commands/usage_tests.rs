@@ -104,9 +104,7 @@ fn legacy_usage_json() -> serde_json::Value {
 /// One-shot-per-connection HTTP stub serving the given raw bodies in order.
 /// Returns the base URL to point `OCTOMIND_API_URL` at.
 async fn spawn_api(bodies: Vec<String>) -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("stub addr");
 	let queue = std::sync::Arc::new(std::sync::Mutex::new(VecDeque::from(bodies)));
 
@@ -182,10 +180,7 @@ async fn anonymous_state_reports_signed_out_with_zeroed_numbers() {
 	};
 	assert!(!signed_in, "no credentials means signed out");
 	assert!(account.is_none());
-	assert!(
-		windows.is_empty(),
-		"nothing to report when signed out: {windows:?}"
-	);
+	assert!(windows.is_empty(), "nothing to report when signed out: {windows:?}");
 	assert_eq!(balance_usd, 0.0);
 	assert_eq!(storage_gb, 0.0);
 	assert_eq!(storage_quota_gb, 0.0);
@@ -267,17 +262,10 @@ async fn pre_v2_server_still_renders_via_the_month_window() {
 		panic!("expected Usage output");
 	};
 	// Falls back to `month`, and `cap_usd` deserializes into allowance_usd.
-	assert_eq!(
-		windows.len(),
-		1,
-		"legacy payload must collapse to one window"
-	);
+	assert_eq!(windows.len(), 1, "legacy payload must collapse to one window");
 	assert_eq!(windows[0].label, "this period", "no server label to use");
 	assert_eq!(windows[0].spent_usd, 3.0);
-	assert_eq!(
-		windows[0].allowance_usd, 100.0,
-		"cap_usd alias did not apply"
-	);
+	assert_eq!(windows[0].allowance_usd, 100.0, "cap_usd alias did not apply");
 }
 
 #[tokio::test]
@@ -306,10 +294,7 @@ async fn api_error_surfaces_as_error_output_with_login_hint() {
 		error.contains("Could not read account usage"),
 		"error must name the failure: {error}"
 	);
-	assert!(
-		error.contains("boom"),
-		"error must carry the API error code: {error}"
-	);
+	assert!(error.contains("boom"), "error must carry the API error code: {error}");
 	let hint = context
 		.as_ref()
 		.and_then(|c| c.get("hint"))

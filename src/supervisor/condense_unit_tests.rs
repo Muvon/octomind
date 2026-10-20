@@ -43,11 +43,7 @@ fn close(a: f64, b: f64) -> bool {
 	(a - b).abs() < 1e-9
 }
 
-fn config(
-	adaptive: bool,
-	tokens_threshold: usize,
-	_model: &str,
-) -> crate::supervisor::CondenseConfig {
+fn config(adaptive: bool, tokens_threshold: usize, _model: &str) -> crate::supervisor::CondenseConfig {
 	crate::supervisor::CondenseConfig {
 		enabled: true,
 		adaptive,
@@ -179,17 +175,11 @@ fn ranges_parse_rejects_empty_specs_zero_and_zero_max() {
 	assert!(parse_ranges(&specs(&["0-3"]), 10).is_none());
 	assert!(parse_ranges(&specs(&["1"]), 0).is_none());
 	// Whitespace around the numbers is tolerated.
-	assert_eq!(
-		parse_ranges(&specs(&[" 3 - 5 "]), 10).unwrap(),
-		vec![(3, 5)]
-	);
+	assert_eq!(parse_ranges(&specs(&[" 3 - 5 "]), 10).unwrap(), vec![(3, 5)]);
 	// Open-ended at the exact last line collapses to that line.
 	assert_eq!(parse_ranges(&specs(&["10-"]), 10).unwrap(), vec![(10, 10)]);
 	// Duplicate selections merge instead of double-counting.
-	assert_eq!(
-		parse_ranges(&specs(&["2", "2-3"]), 10).unwrap(),
-		vec![(2, 3)]
-	);
+	assert_eq!(parse_ranges(&specs(&["2", "2-3"]), 10).unwrap(), vec![(2, 3)]);
 }
 
 #[test]
@@ -296,10 +286,7 @@ fn unique_ids_are_all_indexed_and_empty_stays_empty() {
 	assert_eq!(entries.len(), 3);
 	assert_eq!(entries["t2"].verdict, "extract");
 
-	assert!(unambiguous_entries(&CondenseResponse {
-		results: Vec::new()
-	})
-	.is_empty());
+	assert!(unambiguous_entries(&CondenseResponse { results: Vec::new() }).is_empty());
 }
 
 #[test]
@@ -330,10 +317,7 @@ fn set_content_replaces_text_and_preserves_the_error_flag() {
 	let mut failed = McpToolResult::error("tool".into(), "t".into(), "old".into());
 	set_content(&mut failed, "new body".into());
 	assert_eq!(failed.extract_content(), "new body");
-	assert!(
-		failed.is_error(),
-		"a condensed failing tool must stay an error"
-	);
+	assert!(failed.is_error(), "a condensed failing tool must stay an error");
 }
 
 // ---------------------------------------------------------------------------
@@ -345,10 +329,7 @@ fn diagnostic_context_clamps_at_edges_and_merges_nearby_windows() {
 	assert_eq!(diagnostic_ranges(&["a", "b"]), Vec::<(usize, usize)>::new());
 
 	// Hit on the first line: the ±2 context cannot underflow below line 1.
-	assert_eq!(
-		diagnostic_ranges(&["error: first", "b", "c", "d"]),
-		vec![(1, 3)]
-	);
+	assert_eq!(diagnostic_ranges(&["error: first", "b", "c", "d"]), vec![(1, 3)]);
 
 	// Hit on the last line: the window stops at the end of the file.
 	assert_eq!(
@@ -368,11 +349,7 @@ fn focus_terms_keep_paths_intact_and_drop_stopwords_short_and_duplicates() {
 	assert!(focus_terms("").is_empty());
 	assert_eq!(
 		focus_terms("Fix this error in src/main.rs"),
-		vec![
-			"fix".to_string(),
-			"error".to_string(),
-			"src/main.rs".to_string()
-		]
+		vec!["fix".to_string(), "error".to_string(), "src/main.rs".to_string()]
 	);
 	// Punctuation splits terms; digits are alphanumeric and survive.
 	assert_eq!(focus_terms("a,b 123"), vec!["123".to_string()]);
@@ -492,8 +469,7 @@ async fn replace_on_a_full_success_view_writes_the_factual_notice() {
 	crate::session::context::with_session_id("condense-unit-replace".to_string(), async {
 		let ok = McpToolResult::success("shell".into(), "t1".into(), "a\nb\nc\nd\ne\nf".into());
 		let original = ok.extract_content();
-		let out = apply_verdict(&entry("replace", &[]), &ok, &original, &full_view(6))
-			.expect("replace applies");
+		let out = apply_verdict(&entry("replace", &[]), &ok, &original, &full_view(6)).expect("replace applies");
 		assert!(out.starts_with(CONDENSE_NOTICE_TAG));
 		assert!(out.contains("6-line"));
 		assert!(out.contains("`shell`"));
@@ -519,18 +495,12 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 	let big = McpToolResult::success(
 		"shell".into(),
 		"t0".into(),
-		(0..3_000)
-			.map(|i| format!("line {i}"))
-			.collect::<Vec<_>>()
-			.join("\n"),
+		(0..3_000).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n"),
 	);
 	let failing = McpToolResult::error(
 		"view".into(),
 		"t1".into(),
-		(0..200)
-			.map(|i| format!("row {i}"))
-			.collect::<Vec<_>>()
-			.join("\n"),
+		(0..200).map(|i| format!("row {i}")).collect::<Vec<_>>().join("\n"),
 	);
 	let small = McpToolResult::success("grep".into(), "t2".into(), "one\nmatch".into());
 	let results = vec![big, failing, small];
@@ -547,18 +517,12 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 		},
 		// t2 has no matching call: its arguments default to empty.
 	];
-	let sizes: Vec<usize> = results
-		.iter()
-		.map(|r| estimate_tokens(&r.extract_content()))
-		.collect();
+	let sizes: Vec<usize> = results.iter().map(|r| estimate_tokens(&r.extract_content())).collect();
 	let sizable = vec![0, 1, 2];
 	let (candidates, user) = build_request(&results, &calls, &sizable, &sizes, "", "", "");
 
 	assert_eq!(
-		candidates
-			.iter()
-			.map(|c| c.result_index)
-			.collect::<Vec<_>>(),
+		candidates.iter().map(|c| c.result_index).collect::<Vec<_>>(),
 		vec![0, 1, 2],
 		"candidates come back in result order"
 	);
@@ -566,10 +530,7 @@ fn build_request_orders_candidates_and_shapes_the_payload() {
 
 	let payload: serde_json::Value = serde_json::from_str(&user).expect("payload is valid JSON");
 	assert_eq!(payload["results_considered"], 3);
-	assert_eq!(
-		payload["candidate_output_tokens"],
-		sizes.iter().sum::<usize>() as u64
-	);
+	assert_eq!(payload["candidate_output_tokens"], sizes.iter().sum::<usize>() as u64);
 	assert!(
 		payload["task_context"]
 			.as_str()
@@ -598,10 +559,7 @@ fn build_request_truncates_to_the_safe_batch_size_biggest_first() {
 			)
 		})
 		.collect();
-	let sizes: Vec<usize> = results
-		.iter()
-		.map(|r| estimate_tokens(&r.extract_content()))
-		.collect();
+	let sizes: Vec<usize> = results.iter().map(|r| estimate_tokens(&r.extract_content())).collect();
 	let sizable: Vec<usize> = (0..40).collect();
 	let (candidates, user) = build_request(&results, &[], &sizable, &sizes, "task", "", "");
 
@@ -640,19 +598,13 @@ fn suffix_to_tokens_returns_whole_text_under_budget_and_a_suffix_over() {
 	let long = "token ".repeat(500);
 	let suffix = suffix_to_tokens(&long, 5);
 	assert!(!suffix.is_empty());
-	assert!(
-		long.ends_with(suffix),
-		"the suffix is a real tail of the text"
-	);
+	assert!(long.ends_with(suffix), "the suffix is a real tail of the text");
 	assert!(estimate_tokens(suffix) <= 5);
 }
 
 #[test]
 fn response_parse_rejects_reversed_braces_unterminated_fences_and_bad_json() {
-	assert!(
-		parse_response("}{").is_none(),
-		"closing before opening is not JSON"
-	);
+	assert!(parse_response("}{").is_none(), "closing before opening is not JSON");
 	assert!(
 		parse_response("```json\n{\"results\":[]}").is_none(),
 		"an unterminated fence has no extractable block"
@@ -677,19 +629,14 @@ fn observe_and_relax_return_the_configured_baseline_when_adaptive_is_off() {
 
 #[test]
 fn diagnostics_on_the_first_and_last_lines_survive_a_sampled_view() {
-	let mut lines: Vec<String> = (1..=300)
-		.map(|i| format!("plain filler line {i}"))
-		.collect();
+	let mut lines: Vec<String> = (1..=300).map(|i| format!("plain filler line {i}")).collect();
 	lines[0] = "error: boom at startup".to_string();
 	lines[299] = "error: deprecation at the end".to_string();
 	let content = lines.join("\n");
 
 	let view = build_numbered_view(&content, 250, "");
 
-	assert!(
-		view.partial,
-		"300 lines under a 250-token budget must sample"
-	);
+	assert!(view.partial, "300 lines under a 250-token budget must sample");
 	assert!(
 		view.body.contains("error: boom at startup"),
 		"a diagnostic on line 1 is queued with its context window"
@@ -731,10 +678,7 @@ fn a_huge_single_line_shrinks_its_preview_until_the_record_fits() {
 	let view = build_numbered_view(&line, 8, "");
 
 	assert!(!view.partial, "one line of one is still the whole result");
-	assert!(
-		view.body.starts_with('1'),
-		"the record keeps its original line number"
-	);
+	assert!(view.body.starts_with('1'), "the record keeps its original line number");
 	assert!(
 		view.body.chars().count() < line.chars().count(),
 		"the preview is clipped rather than the record dropped"
@@ -795,10 +739,7 @@ fn edge_truncation_shrinks_the_tail_until_the_combined_view_fits() {
 			"budget {max_tokens} exceeded: {}",
 			estimate_tokens(&out)
 		);
-		assert!(
-			out.starts_with("token"),
-			"the head survives at budget {max_tokens}"
-		);
+		assert!(out.starts_with("token"), "the head survives at budget {max_tokens}");
 	}
 	// At a budget where the tail allowance spans whole lines the final line
 	// survives; at tiny budgets the tail shrinks to a couple of tokens and
@@ -827,10 +768,7 @@ fn whole_targets_match_paths_and_commands_naming_them() {
 		serde_json::json!({"command": "sed -n '1,80p' 'README.md'"}),
 	] {
 		let (result, calls) = read_call(parameters.clone());
-		assert!(
-			reads_whole_target(&result, &calls, &targets),
-			"{parameters}"
-		);
+		assert!(reads_whole_target(&result, &calls, &targets), "{parameters}");
 	}
 
 	for parameters in [
@@ -838,10 +776,7 @@ fn whole_targets_match_paths_and_commands_naming_them() {
 		serde_json::json!({"path": "CONTRIBUTING.md"}),
 	] {
 		let (result, calls) = read_call(parameters.clone());
-		assert!(
-			!reads_whole_target(&result, &calls, &targets),
-			"{parameters}"
-		);
+		assert!(!reads_whole_target(&result, &calls, &targets), "{parameters}");
 	}
 
 	let (result, calls) = read_call(serde_json::json!({"path": "docs\\setup.md"}));

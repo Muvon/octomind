@@ -34,19 +34,14 @@ pub enum ToolExecutionContext<'a> {
 		tool_round_intent: &'a str,
 	},
 	/// Layer/agent context — tool access controlled by the ACP session's role config
-	Layer {
-		session_name: String,
-		layer_name: String,
-	},
+	Layer { session_name: String, layer_name: String },
 }
 
 impl ToolExecutionContext<'_> {
 	/// Get session name for logging
 	pub fn session_name(&self) -> &str {
 		match self {
-			ToolExecutionContext::MainSession { chat_session, .. } => {
-				&chat_session.session.info.name
-			}
+			ToolExecutionContext::MainSession { chat_session, .. } => &chat_session.session.info.name,
 			ToolExecutionContext::Layer { session_name, .. } => session_name,
 		}
 	}
@@ -66,13 +61,9 @@ impl ToolExecutionContext<'_> {
 	}
 
 	/// Get error tracker (if available)
-	pub fn error_tracker(
-		&mut self,
-	) -> Option<&mut crate::session::chat::tool_error_tracker::ToolErrorTracker> {
+	pub fn error_tracker(&mut self) -> Option<&mut crate::session::chat::tool_error_tracker::ToolErrorTracker> {
 		match self {
-			ToolExecutionContext::MainSession { tool_processor, .. } => {
-				Some(&mut tool_processor.error_tracker)
-			}
+			ToolExecutionContext::MainSession { tool_processor, .. } => Some(&mut tool_processor.error_tracker),
 			ToolExecutionContext::Layer { .. } => None, // Layers don't have error tracking yet
 		}
 	}
@@ -119,14 +110,7 @@ pub async fn execute_tools_in_context(
 		return Ok((Vec::new(), 0));
 	}
 
-	execute_tools_with_context(
-		allowed_tool_calls,
-		context,
-		config,
-		operation_cancelled,
-		mode,
-	)
-	.await
+	execute_tools_with_context(allowed_tool_calls, context, config, operation_cancelled, mode).await
 }
 
 // Execute all tool calls in parallel and collect results (legacy interface for main session)
@@ -168,8 +152,7 @@ pub async fn execute_tools_parallel(
 				0,
 			));
 		}
-		let (result, elapsed_ms) =
-			execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
+		let (result, elapsed_ms) = execute_tap_capability_inline(&current_tool_calls[0], chat_session, config).await;
 		crate::supervisor::authorizer::record_completed(
 			&chat_session.session.info.name,
 			&current_tool_calls[0],
@@ -248,8 +231,7 @@ async fn execute_tap_capability_inline(
 	let workdir = crate::mcp::workdir::get_thread_working_directory();
 	crate::mcp::runtime::skill_auto::run_activation(&prompt, &workdir, chat_session).await;
 	let mut activated_capabilities =
-		crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config)
-			.await;
+		crate::mcp::runtime::capability::auto_activate_capabilities_for_intent(&prompt, config).await;
 
 	let activated_skills = session_id
 		.as_ref()
@@ -306,14 +288,8 @@ async fn admit_tool_batch(
 			.enumerate()
 			.filter_map(|(i, m)| m.is_none().then_some(i))
 			.collect::<Vec<_>>();
-		let candidates = indices
-			.iter()
-			.map(|i| calls[*i].clone())
-			.collect::<Vec<_>>();
-		let guards = indices
-			.iter()
-			.map(|i| generated[*i].clone())
-			.collect::<Vec<_>>();
+		let candidates = indices.iter().map(|i| calls[*i].clone()).collect::<Vec<_>>();
+		let guards = indices.iter().map(|i| generated[*i].clone()).collect::<Vec<_>>();
 		let (_tx, default_rx) = tokio::sync::watch::channel(false);
 		let decisions = crate::supervisor::authorizer::check_batch(
 			&session_id,
@@ -429,12 +405,7 @@ async fn execute_tools_with_context(
 							let mut call_with_id = tool_call_clone.clone();
 							// CRITICAL: Use the original tool_id, don't change it
 							call_with_id.tool_id = tool_id_for_task.clone();
-							crate::mcp::execute_tool_call(
-								&call_with_id,
-								&config_clone,
-								cancel_token_for_task,
-							)
-							.await
+							crate::mcp::execute_tool_call(&call_with_id, &config_clone, cancel_token_for_task).await
 						})
 						.await
 					}))
@@ -444,12 +415,8 @@ async fn execute_tools_with_context(
 						crate::session::context::with_session_id(session_id, async move {
 							let mut call_with_id = tool_call_clone.clone();
 							call_with_id.tool_id = tool_id_for_task.clone();
-							crate::mcp::execute_layer_tool_call(
-								&call_with_id,
-								&config_clone,
-								cancel_token_for_task,
-							)
-							.await
+							crate::mcp::execute_layer_tool_call(&call_with_id, &config_clone, cancel_token_for_task)
+								.await
 						})
 						.await
 					}))
@@ -468,9 +435,7 @@ async fn execute_tools_with_context(
 	// Extract task info for later use
 	let task_info: Vec<(String, String, usize)> = tool_tasks
 		.iter()
-		.map(|(tool_name, _, tool_id, tool_index)| {
-			(tool_name.clone(), tool_id.clone(), *tool_index)
-		})
+		.map(|(tool_name, _, tool_id, tool_index)| (tool_name.clone(), tool_id.clone(), *tool_index))
 		.collect();
 
 	// Extract just the tasks for parallel execution
@@ -535,118 +500,151 @@ async fn execute_tools_with_context(
 		let tool_call_info = current_tool_calls
 			.iter()
 			.find(|tc| tc.tool_id == tool_id)
-			.or_else(|| {
-				current_tool_calls
-					.iter()
-					.find(|tc| tc.tool_name == tool_name)
-			});
+			.or_else(|| current_tool_calls.iter().find(|tc| tc.tool_name == tool_name));
 
 		// Store for display after execution
 		let stored_tool_call = tool_call_info.cloned();
 
 		match task_result {
-			Ok(result) => match result {
-				Ok((res, tool_time_ms)) => {
-					if block_messages
-						.get(tool_index - 1)
-						.is_some_and(Option::is_none)
-					{
-						if let Some(call) = stored_tool_call.as_ref() {
-							crate::supervisor::authorizer::record_completed(
-								&session_id_for_guardrails,
-								call,
+			Ok(result) => {
+				match result {
+					Ok((res, tool_time_ms)) => {
+						if block_messages.get(tool_index - 1).is_some_and(Option::is_none) {
+							if let Some(call) = stored_tool_call.as_ref() {
+								crate::supervisor::authorizer::record_completed(&session_id_for_guardrails, call, &res);
+							}
+						}
+						// Deduplication runs HERE, before display — so the terminal block,
+						// the sink emission (response.rs), and the AI's session message all
+						// show the SAME thing. Errors are never deduped. A successful
+						// duplicate becomes an ERROR result carrying the placeholder: it
+						// renders as a ✗ block, emits success=false to the UI, and reaches
+						// the model as an error instead of a silent "success" only the model
+						// could tell was elided. It does NOT count as a tool failure (the
+						// tool ran fine — it's a repeat), so error_tracker is left untouched.
+						// Text-only keys cannot distinguish changed image payloads or preserve
+						// their association with each new tool call; rich results are not elided.
+						let dedup_placeholder =
+							if res.is_error() || !crate::supervisor::condense::is_plain_text_result(&res) {
+								None
+							} else {
+								let content = res.extract_content();
+								// Key dedup on (tool_name, args, content): identical args with
+								// CHANGED output (re-reading a file after editing it) must reach
+								// the model, and different args that return the same bytes (a
+								// `view` that ignores its range) must not collide.
+								let args = stored_tool_call
+									.as_ref()
+									.map(|tc| tc.parameters.to_string())
+									.unwrap_or_default();
+								if crate::session::dedup::is_duplicate(&tool_name, &args, &content) {
+									// `was_truncated` selects the stronger stop+narrow message.
+									// Truncation runs later (handle_large_tool_results), so detect
+									// it directly here on the full content.
+									let was_truncated = crate::utils::truncation::truncate_mcp_response_global(
+										&content,
+										config.mcp_response_tokens_threshold,
+										&tool_name,
+									)
+									.1;
+									Some(crate::session::dedup::placeholder(&tool_name, &content, was_truncated))
+								} else {
+									crate::session::dedup::record(&tool_name, &args, &content);
+									None
+								}
+							};
+
+						// CRITICAL MCP PROTOCOL FIX: Check if result is actually an error
+						if let Some(placeholder) = dedup_placeholder {
+							// Duplicate: shown + sent as an error, but not counted as a
+							// tool failure — leave error_tracker untouched.
+							let dup_err = anyhow::anyhow!("{}", placeholder);
+							display_tool_error(
+								&stored_tool_call,
+								&tool_name,
+								&dup_err,
+								tool_index,
+								config,
+								mode,
+								context.execution_context(),
+							)
+							.await;
+							tool_results.push(crate::mcp::McpToolResult::error(
+								tool_name.clone(),
+								tool_id.clone(),
+								placeholder,
+							));
+							total_tool_time_ms += tool_time_ms;
+						} else if res.is_error() {
+							// This is an MCP error result (isError: true) - treat as error
+							_has_error = true;
+
+							// Record error in error tracker
+							if let Some(error_tracker) = context.error_tracker() {
+								let has_hit_threshold = error_tracker.record_error(&tool_name);
+								if has_hit_threshold {
+									crate::log_debug!("Tool '{}' has hit error threshold", tool_name);
+								}
+							}
+
+							// Extract error message from MCP result
+							let error_content = res.extract_content();
+							let error = anyhow::anyhow!("{}", error_content);
+
+							// Display as error, not success
+							display_tool_error(
+								&stored_tool_call,
+								&tool_name,
+								&error,
+								tool_index,
+								config,
+								mode,
+								context.execution_context(),
+							)
+							.await;
+
+							// Still push the result for conversation continuity (AI needs to see the error)
+							tool_results.push(res.clone());
+
+							// Accumulate tool execution time even for errors
+							total_tool_time_ms += tool_time_ms;
+						} else {
+							// This is a genuine success (isError: false or missing)
+							// Tool succeeded, reset the error counter (if available)
+							if let Some(error_tracker) = context.error_tracker() {
+								error_tracker.record_success(&tool_name);
+							}
+
+							// Display the complete tool execution with consolidated info
+							let display_params = ToolDisplayParams {
+								stored_tool_call: &stored_tool_call,
+								tool_name: &tool_name,
+								tool_index,
+							};
+							display_tool_success(
+								display_params,
 								&res,
-							);
+								tool_time_ms,
+								config,
+								mode,
+								context.execution_context(),
+							)
+							.await;
+
+							tool_results.push(res.clone());
+
+							// Accumulate tool execution time
+							total_tool_time_ms += tool_time_ms;
 						}
 					}
-					// Deduplication runs HERE, before display — so the terminal block,
-					// the sink emission (response.rs), and the AI's session message all
-					// show the SAME thing. Errors are never deduped. A successful
-					// duplicate becomes an ERROR result carrying the placeholder: it
-					// renders as a ✗ block, emits success=false to the UI, and reaches
-					// the model as an error instead of a silent "success" only the model
-					// could tell was elided. It does NOT count as a tool failure (the
-					// tool ran fine — it's a repeat), so error_tracker is left untouched.
-					// Text-only keys cannot distinguish changed image payloads or preserve
-					// their association with each new tool call; rich results are not elided.
-					let dedup_placeholder = if res.is_error()
-						|| !crate::supervisor::condense::is_plain_text_result(&res)
-					{
-						None
-					} else {
-						let content = res.extract_content();
-						// Key dedup on (tool_name, args, content): identical args with
-						// CHANGED output (re-reading a file after editing it) must reach
-						// the model, and different args that return the same bytes (a
-						// `view` that ignores its range) must not collide.
-						let args = stored_tool_call
-							.as_ref()
-							.map(|tc| tc.parameters.to_string())
-							.unwrap_or_default();
-						if crate::session::dedup::is_duplicate(&tool_name, &args, &content) {
-							// `was_truncated` selects the stronger stop+narrow message.
-							// Truncation runs later (handle_large_tool_results), so detect
-							// it directly here on the full content.
-							let was_truncated =
-								crate::utils::truncation::truncate_mcp_response_global(
-									&content,
-									config.mcp_response_tokens_threshold,
-									&tool_name,
-								)
-								.1;
-							Some(crate::session::dedup::placeholder(
-								&tool_name,
-								&content,
-								was_truncated,
-							))
-						} else {
-							crate::session::dedup::record(&tool_name, &args, &content);
-							None
-						}
-					};
-
-					// CRITICAL MCP PROTOCOL FIX: Check if result is actually an error
-					if let Some(placeholder) = dedup_placeholder {
-						// Duplicate: shown + sent as an error, but not counted as a
-						// tool failure — leave error_tracker untouched.
-						let dup_err = anyhow::anyhow!("{}", placeholder);
-						display_tool_error(
-							&stored_tool_call,
-							&tool_name,
-							&dup_err,
-							tool_index,
-							config,
-							mode,
-							context.execution_context(),
-						)
-						.await;
-						tool_results.push(crate::mcp::McpToolResult::error(
-							tool_name.clone(),
-							tool_id.clone(),
-							placeholder,
-						));
-						total_tool_time_ms += tool_time_ms;
-					} else if res.is_error() {
-						// This is an MCP error result (isError: true) - treat as error
+					Err(e) => {
 						_has_error = true;
 
-						// Record error in error tracker
-						if let Some(error_tracker) = context.error_tracker() {
-							let has_hit_threshold = error_tracker.record_error(&tool_name);
-							if has_hit_threshold {
-								crate::log_debug!("Tool '{}' has hit error threshold", tool_name);
-							}
-						}
-
-						// Extract error message from MCP result
-						let error_content = res.extract_content();
-						let error = anyhow::anyhow!("{}", error_content);
-
-						// Display as error, not success
+						// Display error in consolidated format for other errors
 						display_tool_error(
 							&stored_tool_call,
 							&tool_name,
-							&error,
+							&e,
 							tool_index,
 							config,
 							mode,
@@ -654,114 +652,66 @@ async fn execute_tools_with_context(
 						)
 						.await;
 
-						// Still push the result for conversation continuity (AI needs to see the error)
-						tool_results.push(res.clone());
-
-						// Accumulate tool execution time even for errors
-						total_tool_time_ms += tool_time_ms;
-					} else {
-						// This is a genuine success (isError: false or missing)
-						// Tool succeeded, reset the error counter (if available)
-						if let Some(error_tracker) = context.error_tracker() {
-							error_tracker.record_success(&tool_name);
-						}
-
-						// Display the complete tool execution with consolidated info
-						let display_params = ToolDisplayParams {
-							stored_tool_call: &stored_tool_call,
-							tool_name: &tool_name,
-							tool_index,
-						};
-						display_tool_success(
-							display_params,
-							&res,
-							tool_time_ms,
-							config,
-							mode,
-							context.execution_context(),
-						)
-						.await;
-
-						tool_results.push(res.clone());
-
-						// Accumulate tool execution time
-						total_tool_time_ms += tool_time_ms;
-					}
-				}
-				Err(e) => {
-					_has_error = true;
-
-					// Display error in consolidated format for other errors
-					display_tool_error(
-						&stored_tool_call,
-						&tool_name,
-						&e,
-						tool_index,
-						config,
-						mode,
-						context.execution_context(),
-					)
-					.await;
-
-					// Track errors for this tool (if error tracking is available)
-					let loop_detected = if let Some(error_tracker) = context.error_tracker() {
-						error_tracker.record_error(&tool_name)
-					} else {
-						false
-					};
-
-					if loop_detected {
-						// Always show loop detection warning since it's critical
-						if let Some(error_tracker) = context.error_tracker() {
-							if !mode.should_suppress_cli_output() {
-								println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
-								tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
-							}
-
-							// Add a detailed error result for loop detection
-							let loop_error_result = crate::mcp::McpToolResult::error(
-								tool_name.clone(),
-								tool_id.clone(),
-								loop_error_message(
-									&tool_name,
-									error_tracker.max_consecutive_errors(),
-									&e.to_string(),
-								),
-							);
-							tool_results.push(loop_error_result);
-						}
-					} else {
-						// Regular error - add normal error result
-						let error_result = if let Some(error_tracker) = context.error_tracker() {
-							crate::mcp::McpToolResult::error(
-								tool_name.clone(),
-								tool_id.clone(),
-								attempt_error_message(
-									error_tracker.get_error_count(&tool_name),
-									error_tracker.max_consecutive_errors(),
-									&e.to_string(),
-								),
-							)
+						// Track errors for this tool (if error tracking is available)
+						let loop_detected = if let Some(error_tracker) = context.error_tracker() {
+							error_tracker.record_error(&tool_name)
 						} else {
-							crate::mcp::McpToolResult::error(
-								tool_name.clone(),
-								tool_id.clone(),
-								format!("Tool execution failed: {}", e),
-							)
+							false
 						};
-						tool_results.push(error_result);
 
-						if let Some(error_tracker) = context.error_tracker() {
-							log_info!(
-								"Tool '{}' failed {} of {} times. Adding error to context.",
-								tool_name,
-								error_tracker.get_error_count(&tool_name),
-								error_tracker.max_consecutive_errors()
-							);
+						if loop_detected {
+							// Always show loop detection warning since it's critical
+							if let Some(error_tracker) = context.error_tracker() {
+								if !mode.should_suppress_cli_output() {
+									println!("{}", format!("⚠ Warning: {} failed {} times in a row - AI should try a different approach",
+								tool_name, error_tracker.max_consecutive_errors()).bright_yellow());
+								}
+
+								// Add a detailed error result for loop detection
+								let loop_error_result = crate::mcp::McpToolResult::error(
+									tool_name.clone(),
+									tool_id.clone(),
+									loop_error_message(
+										&tool_name,
+										error_tracker.max_consecutive_errors(),
+										&e.to_string(),
+									),
+								);
+								tool_results.push(loop_error_result);
+							}
+						} else {
+							// Regular error - add normal error result
+							let error_result = if let Some(error_tracker) = context.error_tracker() {
+								crate::mcp::McpToolResult::error(
+									tool_name.clone(),
+									tool_id.clone(),
+									attempt_error_message(
+										error_tracker.get_error_count(&tool_name),
+										error_tracker.max_consecutive_errors(),
+										&e.to_string(),
+									),
+								)
+							} else {
+								crate::mcp::McpToolResult::error(
+									tool_name.clone(),
+									tool_id.clone(),
+									format!("Tool execution failed: {}", e),
+								)
+							};
+							tool_results.push(error_result);
+
+							if let Some(error_tracker) = context.error_tracker() {
+								log_info!(
+									"Tool '{}' failed {} of {} times. Adding error to context.",
+									tool_name,
+									error_tracker.get_error_count(&tool_name),
+									error_tracker.max_consecutive_errors()
+								);
+							}
 						}
 					}
 				}
-			},
+			}
 			Err(e) => {
 				_has_error = true;
 
@@ -859,14 +809,9 @@ fn parent_task_context(chat_session: &ChatSession) -> String {
 		// for a self-contained turn it is the request itself.
 		task.push_str(&format!("Current request: {}\n", resolved.resolved_request));
 		if !resolved.whole_targets.is_empty() {
-			task.push_str(&format!(
-				"Works on as a whole: {}\n",
-				resolved.whole_targets.join(", ")
-			));
+			task.push_str(&format!("Works on as a whole: {}\n", resolved.whole_targets.join(", ")));
 		}
-	} else if let Some(req) =
-		crate::session::latest_real_user_task_content(&chat_session.session.messages)
-	{
+	} else if let Some(req) = crate::session::latest_real_user_task_content(&chat_session.session.messages) {
 		task.push_str(&format!("Current request: {req}\n"));
 	}
 	if let Some(plan) = crate::mcp::core::plan::render_plan_checklist() {
@@ -877,9 +822,7 @@ fn parent_task_context(chat_session: &ChatSession) -> String {
 
 /// The turn-admission resolution, only while it belongs to the live request:
 /// a stale one from an earlier turn would frame this turn's results wrongly.
-fn turn_resolution(
-	chat_session: &ChatSession,
-) -> Option<&crate::supervisor::resolve::ResolvedTask> {
+fn turn_resolution(chat_session: &ChatSession) -> Option<&crate::supervisor::resolve::ResolvedTask> {
 	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)?;
 	chat_session
 		.gate_task

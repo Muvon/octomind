@@ -83,10 +83,7 @@ pub fn register_server(server: McpServerConfig) -> Result<()> {
 	let manager = get_manager();
 	let mut state = manager.write().unwrap();
 	if state.servers.contains_key(&server_name) {
-		anyhow::bail!(
-			"Server '{}' already registered. Use 'remove' first.",
-			server_name
-		);
+		anyhow::bail!("Server '{}' already registered. Use 'remove' first.", server_name);
 	}
 	state.servers.insert(server_name.clone(), server);
 	state.enabled.insert(server_name, false);
@@ -100,10 +97,7 @@ pub fn register_server(server: McpServerConfig) -> Result<()> {
 ///
 /// Session-aware: uses session-scoped registry when in a session context,
 /// falls back to global singleton for CLI mode.
-pub async fn enable_server(
-	name: &str,
-	filter_tools: Option<Vec<String>>,
-) -> Result<Vec<McpFunction>> {
+pub async fn enable_server(name: &str, filter_tools: Option<Vec<String>>) -> Result<Vec<McpFunction>> {
 	// Check if we're in a session context
 	let session_id = crate::session::context::current_session_id();
 
@@ -140,11 +134,7 @@ pub async fn enable_server(
 		functions
 	};
 
-	crate::log_debug!(
-		"Dynamic server '{}' enabled with {} functions",
-		name,
-		functions.len()
-	);
+	crate::log_debug!("Dynamic server '{}' enabled with {} functions", name, functions.len());
 
 	let tool_names: Vec<String> = functions.iter().map(|f| f.name.clone()).collect();
 
@@ -218,14 +208,9 @@ pub fn disable_server_tools(
 			}
 
 			// 2. Not in dynamic registry — look it up in the merged role config.
-			if let Some(server_config) =
-				config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-			{
+			if let Some(server_config) = config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name)) {
 				// Register a session-scoped "shadow" entry so persist/enable can see it.
-				crate::session::context::register_dynamic_server_for_session(
-					&session_id,
-					server_config.clone(),
-				);
+				crate::session::context::register_dynamic_server_for_session(&session_id, server_config.clone());
 				crate::mcp::tool_map::unregister_dynamic_server_tools(name, tool_names);
 				crate::mcp::server::clear_function_cache_for_server(name);
 				return Ok(());
@@ -257,15 +242,11 @@ pub fn disable_server_tools(
 		drop(state);
 
 		// Not dynamic — try the config-loaded servers (CLI path).
-		if let Some(server_config) =
-			config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-		{
+		if let Some(server_config) = config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name)) {
 			// Stuff it into the global singleton so enable/persist find it later.
 			let manager = get_manager();
 			let mut state = manager.write().unwrap();
-			state
-				.servers
-				.insert(name.to_string(), server_config.clone());
+			state.servers.insert(name.to_string(), server_config.clone());
 			state.enabled.insert(name.to_string(), false);
 			drop(state);
 
@@ -370,10 +351,7 @@ pub fn list_servers() -> Vec<(String, Vec<String>, bool)> {
 pub fn get_functions(name: &str) -> Option<Vec<McpFunction>> {
 	// Check if we're in a session context
 	if let Some(session_id) = crate::session::context::current_session_id() {
-		return crate::session::context::get_dynamic_server_functions_for_session(
-			&session_id,
-			name,
-		);
+		return crate::session::context::get_dynamic_server_functions_for_session(&session_id, name);
 	}
 
 	// Fall back to global singleton for CLI mode
@@ -510,37 +488,30 @@ pub struct PersistResult {
 /// - disabled → `auto_bind = None` (file persists but won't auto-load)
 pub fn persist_server(name: &str, config: Option<&crate::config::Config>) -> Result<PersistResult> {
 	// Lookup order: dynamic registry (session or global) first → config servers.
-	let (server, is_enabled) =
-		if let Some(session_id) = crate::session::context::current_session_id() {
-			if let Some(found) =
-				crate::session::context::get_dynamic_server_for_session(&session_id, name)
-			{
-				found
-			} else if let Some(server_config) =
-				config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-			{
-				// Config-loaded server that was never disabled — treat as enabled.
+	let (server, is_enabled) = if let Some(session_id) = crate::session::context::current_session_id() {
+		if let Some(found) = crate::session::context::get_dynamic_server_for_session(&session_id, name) {
+			found
+		} else if let Some(server_config) = config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name)) {
+			// Config-loaded server that was never disabled — treat as enabled.
+			(server_config.clone(), true)
+		} else {
+			anyhow::bail!("Server '{}' not found", name);
+		}
+	} else {
+		let manager = get_manager();
+		let state = manager.read().unwrap();
+		if let Some(server) = state.servers.get(name).cloned() {
+			let is_enabled = *state.enabled.get(name).unwrap_or(&false);
+			(server, is_enabled)
+		} else {
+			drop(state);
+			if let Some(server_config) = config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name)) {
 				(server_config.clone(), true)
 			} else {
 				anyhow::bail!("Server '{}' not found", name);
 			}
-		} else {
-			let manager = get_manager();
-			let state = manager.read().unwrap();
-			if let Some(server) = state.servers.get(name).cloned() {
-				let is_enabled = *state.enabled.get(name).unwrap_or(&false);
-				(server, is_enabled)
-			} else {
-				drop(state);
-				if let Some(server_config) =
-					config.and_then(|c| c.mcp.servers.iter().find(|s| s.name() == name))
-				{
-					(server_config.clone(), true)
-				} else {
-					anyhow::bail!("Server '{}' not found", name);
-				}
-			}
-		};
+		}
+	};
 
 	// Determine auto_bind based on enabled state and current role
 	let auto_bind = if is_enabled {
@@ -563,17 +534,14 @@ pub fn persist_server(name: &str, config: Option<&crate::config::Config>) -> Res
 	}
 
 	let wrapper = PersistWrapper {
-		mcp: PersistMcp {
-			servers: vec![server],
-		},
+		mcp: PersistMcp { servers: vec![server] },
 	};
 
-	let toml_str = toml::to_string_pretty(&wrapper)
-		.map_err(|e| anyhow::anyhow!("Failed to serialize server config: {}", e))?;
+	let toml_str =
+		toml::to_string_pretty(&wrapper).map_err(|e| anyhow::anyhow!("Failed to serialize server config: {}", e))?;
 
 	let path = persist_file_path(name)?;
-	std::fs::write(&path, toml_str)
-		.map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path.display(), e))?;
+	std::fs::write(&path, toml_str).map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path.display(), e))?;
 
 	Ok(PersistResult { path, auto_bind })
 }
@@ -584,8 +552,7 @@ pub fn persist_server(name: &str, config: Option<&crate::config::Config>) -> Res
 pub fn unpersist_server(name: &str) -> Result<()> {
 	let path = persist_file_path(name)?;
 	if path.exists() {
-		std::fs::remove_file(&path)
-			.map_err(|e| anyhow::anyhow!("Failed to remove {}: {}", path.display(), e))?;
+		std::fs::remove_file(&path).map_err(|e| anyhow::anyhow!("Failed to remove {}: {}", path.display(), e))?;
 	}
 	Ok(())
 }
@@ -689,10 +656,7 @@ pub async fn execute_mcp_command(
 	}
 }
 
-async fn handle_list(
-	call: &crate::mcp::McpToolCall,
-	config: &crate::config::Config,
-) -> Result<McpToolResult> {
+async fn handle_list(call: &crate::mcp::McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
 	let mut lines = Vec::new();
 
 	// Configured servers from the current role's config (passed directly)
@@ -706,11 +670,7 @@ async fn handle_list(
 				crate::config::McpConnectionType::Http => "http",
 				crate::config::McpConnectionType::Stdin => "stdio",
 			};
-			(
-				s.name().to_string(),
-				type_str.to_string(),
-				s.tools().to_vec(),
-			)
+			(s.name().to_string(), type_str.to_string(), s.tools().to_vec())
 		})
 		.collect();
 
@@ -729,17 +689,13 @@ async fn handle_list(
 			} else {
 				tools.join(", ")
 			};
-			lines.push(format!(
-				"  {name} [{type_str}] {status}{persisted} → {tools_str}"
-			));
+			lines.push(format!("  {name} [{type_str}] {status}{persisted} → {tools_str}"));
 		}
 	}
 
 	// Only show dynamic servers not already listed as configured
-	let configured_names: std::collections::HashSet<&str> = configured_servers
-		.iter()
-		.map(|(n, _, _)| n.as_str())
-		.collect();
+	let configured_names: std::collections::HashSet<&str> =
+		configured_servers.iter().map(|(n, _, _)| n.as_str()).collect();
 
 	let extra_dynamic: Vec<_> = dynamic_servers
 		.iter()
@@ -753,11 +709,7 @@ async fn handle_list(
 		lines.push("Dynamic servers:".to_string());
 		lines.push("".to_string());
 		for (name, tools, is_enabled) in extra_dynamic {
-			let status = if *is_enabled {
-				"✓ enabled"
-			} else {
-				"✗ disabled"
-			};
+			let status = if *is_enabled { "✓ enabled" } else { "✗ disabled" };
 			let persisted = if is_persisted(name) { " 💾" } else { "" };
 			let tools_str = if tools.is_empty() {
 				"(all tools)".to_string()
@@ -816,11 +768,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 	let tools: Vec<String> = params
 		.get("tools")
 		.and_then(|v| v.as_array())
-		.map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect()
-		})
+		.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 		.unwrap_or_default();
 
 	// Build server config based on type
@@ -840,11 +788,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 			let args: Vec<String> = params
 				.get("args")
 				.and_then(|v| v.as_array())
-				.map(|arr| {
-					arr.iter()
-						.filter_map(|v| v.as_str().map(String::from))
-						.collect()
-				})
+				.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 				.unwrap_or_default();
 
 			McpServerConfig::Stdin {
@@ -892,10 +836,7 @@ async fn handle_add(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> {
 		Ok(()) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"Server '{}' registered. Use 'enable' to activate it.",
-				server_name
-			),
+			format!("Server '{}' registered. Use 'enable' to activate it.", server_name),
 		)),
 		Err(e) => Ok(McpToolResult::error(
 			call.tool_name.clone(),
@@ -919,12 +860,10 @@ async fn handle_enable(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> 
 		}
 	};
 
-	let filter_tools: Option<Vec<String>> =
-		params.get("tools").and_then(|v| v.as_array()).map(|arr| {
-			arr.iter()
-				.filter_map(|v| v.as_str().map(String::from))
-				.collect()
-		});
+	let filter_tools: Option<Vec<String>> = params
+		.get("tools")
+		.and_then(|v| v.as_array())
+		.map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
 
 	match enable_server(&name, filter_tools).await {
 		Ok(functions) => {
@@ -948,10 +887,7 @@ async fn handle_enable(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> 
 	}
 }
 
-async fn handle_disable(
-	call: &crate::mcp::McpToolCall,
-	config: &crate::config::Config,
-) -> Result<McpToolResult> {
+async fn handle_disable(call: &crate::mcp::McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
 	let params = &call.parameters;
 
 	let name = match params.get("name").and_then(|v| v.as_str()) {
@@ -1008,10 +944,7 @@ async fn handle_remove(call: &crate::mcp::McpToolCall) -> Result<McpToolResult> 
 	}
 }
 
-async fn handle_persist(
-	call: &crate::mcp::McpToolCall,
-	config: &crate::config::Config,
-) -> Result<McpToolResult> {
+async fn handle_persist(call: &crate::mcp::McpToolCall, config: &crate::config::Config) -> Result<McpToolResult> {
 	let params = &call.parameters;
 
 	let name = match params.get("name").and_then(|v| v.as_str()) {
@@ -1084,10 +1017,7 @@ async fn handle_unpersist(call: &crate::mcp::McpToolCall) -> Result<McpToolResul
 		Ok(()) => Ok(McpToolResult::success(
 			call.tool_name.clone(),
 			call.tool_id.clone(),
-			format!(
-				"Server '{}' unpersisted. It will no longer auto-load on startup.",
-				name
-			),
+			format!("Server '{}' unpersisted. It will no longer auto-load on startup.", name),
 		)),
 		Err(e) => Ok(McpToolResult::error(
 			call.tool_name.clone(),

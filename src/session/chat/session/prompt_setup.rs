@@ -88,7 +88,7 @@ pub async fn setup_system_prompt_and_cache(
 		if is_interactive {
 			// Add initial messages (welcome + instructions) using centralized function
 			let initial_messages =
-				super::utils::get_initial_messages(config_for_role, role, &current_dir).await?;
+				super::utils::get_initial_messages(config_for_role, role, &current_dir).await;
 			for msg in initial_messages {
 				match msg.role.as_str() {
 					"assistant" => {

@@ -267,29 +267,15 @@ pub async fn calculate_minimum_session_tokens(
 	};
 
 	// Get initial messages tokens (welcome + instructions)
-	let initial_messages_tokens = match crate::session::chat::session::get_initial_messages(
-		config,
-		role,
-		current_dir,
-	)
-	.await
-	{
-		Ok(messages) => {
-			let mut total = 0;
-			for message in &messages {
-				// Calculate tokens for message content
-				total += estimate_tokens(&message.content);
-				// Add overhead for message structure (role, timestamp, etc.)
-				total += 20; // JSON overhead per message
-			}
-			total
-		}
-		Err(_) => {
-			// If we can't get initial messages, use conservative estimate
-			// Welcome message ~100 tokens + instructions ~200 tokens + overhead
-			320
-		}
-	};
+	let initial_messages =
+		crate::session::chat::session::get_initial_messages(config, role, current_dir).await;
+	let mut initial_messages_tokens = 0;
+	for message in &initial_messages {
+		// Calculate tokens for message content
+		initial_messages_tokens += estimate_tokens(&message.content);
+		// Add overhead for message structure (role, timestamp, etc.)
+		initial_messages_tokens += 20; // JSON overhead per message
+	}
 
 	// Add message array overhead and request structure overhead
 	let request_overhead = 50; // JSON structure, message array, etc.

@@ -379,8 +379,7 @@ pub(super) async fn apply_compression(
 	)
 	.map(crate::session::anchor::task_sig);
 
-	let compression_id = crate::mcp::core::plan::compression::get_compression_id()
-		.unwrap_or_else(|| "unknown".to_string());
+	let compression_id = crate::mcp::core::plan::compression::get_compression_id();
 	let (archive_bundle, archive_fallback_reason) = if let Some(pact) = pact {
 		let archive_result = {
 			let drained = &session.session.messages[start_idx + 1..=end_idx];

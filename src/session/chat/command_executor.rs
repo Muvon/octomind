@@ -238,12 +238,10 @@ pub async fn execute_command_layer(
 			// Add initial messages (welcome + instructions) using centralized function
 			// Use thread-local if set (ACP/WebSocket), otherwise process cwd
 			let current_dir = crate::mcp::get_thread_working_directory();
-			if let Ok(initial_messages) =
+			let initial_messages =
 				crate::session::chat::session::get_initial_messages(config, role, &current_dir)
-					.await
-			{
-				final_messages.extend(initial_messages);
-			}
+					.await;
+			final_messages.extend(initial_messages);
 
 			// Add all command outputs with configured role
 			for output_text in &result.outputs {

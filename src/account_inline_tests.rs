@@ -18,16 +18,10 @@ use super::*;
 fn upsert_replaces_the_key_and_keeps_the_rest() {
 	let before = "OPENROUTER_API_KEY=abc\nOCTOHUB_API_KEY=old\nFOO=bar\n";
 	let after = upsert(before, "new");
-	assert_eq!(
-		after,
-		"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=new\n"
-	);
+	assert_eq!(after, "OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=new\n");
 	// Empty file, exported form, and repeated logins all converge on one line.
 	assert_eq!(upsert("", "k"), "OCTOHUB_API_KEY=k\n");
-	assert_eq!(
-		upsert("export OCTOHUB_API_KEY=old", "k"),
-		"OCTOHUB_API_KEY=k\n"
-	);
+	assert_eq!(upsert("export OCTOHUB_API_KEY=old", "k"), "OCTOHUB_API_KEY=k\n");
 	assert_eq!(
 		upsert(&after, "third"),
 		"OPENROUTER_API_KEY=abc\nFOO=bar\nOCTOHUB_API_KEY=third\n"

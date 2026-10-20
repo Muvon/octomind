@@ -184,11 +184,7 @@ pub(super) fn latest_analysis_findings(messages: &[crate::session::Message]) -> 
 		.iter()
 		.rev()
 		.find(|message| {
-			message.role == "assistant"
-				&& message
-					.content
-					.trim_start()
-					.starts_with(SUMMARY_TAG_OPEN_PREFIX)
+			message.role == "assistant" && message.content.trim_start().starts_with(SUMMARY_TAG_OPEN_PREFIX)
 		})
 		.map(|message| analysis_findings_from_summary(&message.content))
 		.unwrap_or_default()
@@ -229,11 +225,7 @@ fn analysis_findings_from_summary(summary: &str) -> Vec<String> {
 ///
 /// Replaces the old `<knowledge>` tag extractor — entries now arrive
 /// pre-structured as `Vec<String>` from the schema response.
-pub(super) fn fold_critical_knowledge(
-	session: &mut ChatSession,
-	config: &Config,
-	entries: &[String],
-) {
+pub(super) fn fold_critical_knowledge(session: &mut ChatSession, config: &Config, entries: &[String]) {
 	let mut added = 0usize;
 	for entry in entries.iter().filter(|e| !e.trim().is_empty()) {
 		if session.critical_knowledge.iter().any(|k| k == entry) {
@@ -331,11 +323,7 @@ fn merge_latest_exact(held: &[String], entries: &[String]) -> Vec<String> {
 		if trimmed.is_empty() {
 			continue;
 		}
-		let key = trimmed
-			.split_whitespace()
-			.collect::<Vec<_>>()
-			.join(" ")
-			.to_lowercase();
+		let key = trimmed.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
 		if let Some(index) = keys.iter().position(|existing| existing == &key) {
 			findings[index] = trimmed.to_string();
 		} else {
@@ -405,9 +393,7 @@ pub(super) fn select_findings_with_vectors(
 				.clamp(0.0, 1.0);
 			let recency = (i + 1) as f32 / findings.len().max(1) as f32;
 			let score = 0.65 * relevance + 0.10 * recency - 0.35 * redundancy;
-			if best.is_none_or(|(best_i, best_score)| {
-				score > best_score || (score == best_score && i > best_i)
-			}) {
+			if best.is_none_or(|(best_i, best_score)| score > best_score || (score == best_score && i > best_i)) {
 				best = Some((i, score));
 			}
 		}

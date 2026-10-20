@@ -28,11 +28,10 @@ use super::*;
 use futures::channel::mpsc;
 use futures::StreamExt;
 use rmcp::model::{
-	CallToolResult, ClientNotification, ClientResult, CreateTaskResult, CustomNotification,
-	DetailedTask, ElicitRequestParams, GetTaskResult, InputRequiredResult, JsonRpcMessage,
-	JsonRpcNotification, JsonRpcVersion2_0, LoggingLevel, LoggingMessageNotificationParam,
-	Notification, NotificationNoParam, ProgressNotificationParam, Request, RequestId,
-	ResourceUpdatedNotificationParam, ServerRequest, SubscriptionsAcknowledgedNotificationParams,
+	CallToolResult, ClientNotification, ClientResult, CreateTaskResult, CustomNotification, DetailedTask,
+	ElicitRequestParams, GetTaskResult, InputRequiredResult, JsonRpcMessage, JsonRpcNotification, JsonRpcVersion2_0,
+	LoggingLevel, LoggingMessageNotificationParam, Notification, NotificationNoParam, ProgressNotificationParam,
+	Request, RequestId, ResourceUpdatedNotificationParam, ServerRequest, SubscriptionsAcknowledgedNotificationParams,
 	Task, TaskPayload, TaskStatus, TaskStatusNotificationParams,
 };
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
@@ -59,8 +58,7 @@ struct InMemoryPeer {
 fn serve_in_memory(server_name: &str) -> InMemoryPeer {
 	let (in_tx, in_rx) = mpsc::unbounded::<RxJsonRpcMessage<RoleClient>>();
 	let (out_tx, out_rx) = mpsc::unbounded::<TxJsonRpcMessage<RoleClient>>();
-	let service =
-		rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
+	let service = rmcp::service::serve_directly(OctoClientHandler::new(server_name), (out_tx, in_rx), None);
 	InMemoryPeer {
 		service,
 		incoming: in_tx,
@@ -92,18 +90,10 @@ impl NotificationTap {
 
 	/// Next notification for `server`/`method`, skipping stale messages other
 	/// tests may have buffered before this tap was installed.
-	async fn next(
-		&mut self,
-		server: &str,
-		method: &str,
-	) -> crate::websocket::McpNotificationPayload {
+	async fn next(&mut self, server: &str, method: &str) -> crate::websocket::McpNotificationPayload {
 		tokio::time::timeout(WAIT, async {
 			loop {
-				let message = self
-					.rx
-					.recv()
-					.await
-					.expect("notification sender must stay open");
+				let message = self.rx.recv().await.expect("notification sender must stay open");
 				if let crate::websocket::ServerMessage::McpNotification(payload) = message {
 					if payload.server == server && payload.method == method {
 						return payload;
@@ -133,24 +123,17 @@ async fn progress_notification_carries_bound_tool_id() {
 	let binding = ProgressTokenBinding::new(&token, "call-41");
 	push_notification(
 		&peer,
-		ServerNotification::ProgressNotification(Notification::new(
-			ProgressNotificationParam::new(token.clone(), 0.5),
-		)),
+		ServerNotification::ProgressNotification(Notification::new(ProgressNotificationParam::new(token.clone(), 0.5))),
 	);
 	let payload = tap.next(&name, "notifications/progress").await;
 	assert_eq!(payload.tool_id.as_deref(), Some("call-41"));
-	assert_eq!(
-		payload.params.get("progress"),
-		Some(&serde_json::json!(0.5))
-	);
+	assert_eq!(payload.params.get("progress"), Some(&serde_json::json!(0.5)));
 
 	// Once the binding is gone the same token forwards without a tool id.
 	drop(binding);
 	push_notification(
 		&peer,
-		ServerNotification::ProgressNotification(Notification::new(
-			ProgressNotificationParam::new(token, 1.0),
-		)),
+		ServerNotification::ProgressNotification(Notification::new(ProgressNotificationParam::new(token, 1.0))),
 	);
 	let payload = tap.next(&name, "notifications/progress").await;
 	assert_eq!(payload.tool_id, None);
@@ -165,18 +148,13 @@ async fn logging_message_notification_is_forwarded() {
 
 	push_notification(
 		&peer,
-		ServerNotification::LoggingMessageNotification(Notification::new(
-			LoggingMessageNotificationParam::new(
-				LoggingLevel::Info,
-				serde_json::json!({"line": 7}),
-			),
-		)),
+		ServerNotification::LoggingMessageNotification(Notification::new(LoggingMessageNotificationParam::new(
+			LoggingLevel::Info,
+			serde_json::json!({"line": 7}),
+		))),
 	);
 	let payload = tap.next(&name, "notifications/message").await;
-	assert_eq!(
-		payload.params.get("level"),
-		Some(&serde_json::json!("info"))
-	);
+	assert_eq!(payload.params.get("level"), Some(&serde_json::json!("info")));
 	assert_eq!(
 		payload.params.get("data").and_then(|d| d.get("line")),
 		Some(&serde_json::json!(7))
@@ -201,8 +179,7 @@ async fn list_changed_notifications_are_forwarded() {
 		&peer,
 		ServerNotification::ResourceListChangedNotification(NotificationNoParam::default()),
 	);
-	tap.next(&name, "notifications/resources/list_changed")
-		.await;
+	tap.next(&name, "notifications/resources/list_changed").await;
 
 	push_notification(
 		&peer,
@@ -220,12 +197,10 @@ async fn cancelled_notification_is_forwarded_with_request_id() {
 
 	push_notification(
 		&peer,
-		ServerNotification::CancelledNotification(Notification::new(
-			CancelledNotificationParam::new(
-				Some(RequestId::Number(5)),
-				Some("done waiting".to_string()),
-			),
-		)),
+		ServerNotification::CancelledNotification(Notification::new(CancelledNotificationParam::new(
+			Some(RequestId::Number(5)),
+			Some("done waiting".to_string()),
+		))),
 	);
 	let payload = tap.next(&name, "notifications/cancelled").await;
 	assert_eq!(payload.params.get("requestId"), Some(&serde_json::json!(5)));
@@ -246,9 +221,9 @@ async fn resource_update_without_session_emits_and_stops() {
 
 	push_notification(
 		&peer,
-		ServerNotification::ResourceUpdatedNotification(Notification::new(
-			ResourceUpdatedNotificationParam::new("file:///tmp/watched".to_string()),
-		)),
+		ServerNotification::ResourceUpdatedNotification(Notification::new(ResourceUpdatedNotificationParam::new(
+			"file:///tmp/watched".to_string(),
+		))),
 	);
 	let payload = tap.next(&name, "notifications/resources/updated").await;
 	assert_eq!(
@@ -270,8 +245,7 @@ async fn subscriptions_acknowledged_and_task_status_are_forwarded() {
 			SubscriptionsAcknowledgedNotificationParams::new(SubscriptionFilter::new()),
 		)),
 	);
-	tap.next(&name, "notifications/subscriptions/acknowledged")
-		.await;
+	tap.next(&name, "notifications/subscriptions/acknowledged").await;
 
 	let task = DetailedTask::new(
 		Task::new(
@@ -284,15 +258,10 @@ async fn subscriptions_acknowledged_and_task_status_are_forwarded() {
 	);
 	push_notification(
 		&peer,
-		ServerNotification::TaskStatusNotification(Notification::new(
-			TaskStatusNotificationParams::new(task),
-		)),
+		ServerNotification::TaskStatusNotification(Notification::new(TaskStatusNotificationParams::new(task))),
 	);
 	let payload = tap.next(&name, "notifications/tasks/status").await;
-	assert_eq!(
-		payload.params.get("taskId").and_then(|t| t.as_str()),
-		Some("task-9")
-	);
+	assert_eq!(payload.params.get("taskId").and_then(|t| t.as_str()), Some("task-9"));
 }
 
 #[serial_test::serial]
@@ -310,10 +279,7 @@ async fn custom_notification_keeps_its_method_and_params() {
 		)),
 	);
 	let payload = tap.next(&name, "notifications/vendor-thing").await;
-	assert_eq!(
-		payload.params.get("hello").and_then(|h| h.as_str()),
-		Some("world")
-	);
+	assert_eq!(payload.params.get("hello").and_then(|h| h.as_str()), Some("world"));
 }
 
 #[serial_test::serial]
@@ -365,10 +331,7 @@ async fn elicitation_requests_are_surfaced_and_declined() {
 async fn registry_tracks_disconnects_per_server() {
 	let alpha = unique_server("registry-alpha");
 	let beta = unique_server("registry-beta");
-	assert!(
-		!is_connected(&alpha),
-		"unknown server must not be connected"
-	);
+	assert!(!is_connected(&alpha), "unknown server must not be connected");
 
 	let peer_a = serve_in_memory(&alpha);
 	let peer_b = serve_in_memory(&beta);
@@ -382,10 +345,7 @@ async fn registry_tracks_disconnects_per_server() {
 
 	disconnect(&alpha);
 	assert!(get(&alpha).is_none());
-	assert!(
-		!is_connected(&alpha),
-		"disconnect must remove the connection"
-	);
+	assert!(!is_connected(&alpha), "disconnect must remove the connection");
 	assert!(is_connected(&beta), "sibling connection must survive");
 
 	disconnect_all();
@@ -474,9 +434,7 @@ async fn call_tool_retries_after_state_only_input_required() {
 						.expect("state lock")
 						.push(call.params.request_state.clone());
 					let response = if rounds == 1 {
-						ServerResult::InputRequiredResult(InputRequiredResult::from_request_state(
-							"opaque-state-1",
-						))
+						ServerResult::InputRequiredResult(InputRequiredResult::from_request_state("opaque-state-1"))
 					} else {
 						ServerResult::CallToolResult(CallToolResult::success(vec![]))
 					};
@@ -529,8 +487,8 @@ async fn call_tool_polls_async_task_to_completion() {
 						ServerResult::CreateTaskResult(CreateTaskResult::new(task))
 					}
 					ClientRequest::GetTaskRequest(_) => {
-						let completed = serde_json::to_value(CallToolResult::success(vec![]))
-							.expect("serialize completed result");
+						let completed =
+							serde_json::to_value(CallToolResult::success(vec![])).expect("serialize completed result");
 						let task = DetailedTask::new(
 							Task::new(
 								"task-t1",
@@ -590,13 +548,10 @@ async fn cancelled_tool_call_notifies_the_server() {
 	});
 
 	cancel_tx.send(true).expect("cancel send must succeed");
-	let error = tokio::time::timeout(
-		WAIT,
-		call_tool(&server, &tool_call("call-cx"), Some(cancel_rx)),
-	)
-	.await
-	.expect("cancelled call must not hang")
-	.expect_err("cancelled call must fail");
+	let error = tokio::time::timeout(WAIT, call_tool(&server, &tool_call("call-cx"), Some(cancel_rx)))
+		.await
+		.expect("cancelled call must not hang")
+		.expect_err("cancelled call must fail");
 	assert!(
 		crate::session::cancellation::is_cancelled(&error),
 		"unexpected error: {error}"
@@ -647,8 +602,7 @@ async fn shared_client_sends_each_sessions_project() {
 			};
 			let wire = serde_json::to_value(call).unwrap();
 			sessions.push(
-				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
-					["experimental"]["session"]
+				wire["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]["experimental"]["session"]
 					.clone(),
 			);
 			incoming
@@ -663,13 +617,8 @@ async fn shared_client_sends_each_sessions_project() {
 	let calls = async {
 		for index in [0, 1, 0] {
 			with_session_id(ids[index].clone(), async {
-				assert!(Arc::ptr_eq(
-					&shared,
-					&get_or_connect(&server).await.unwrap()
-				));
-				call_tool(&server, &tool_call("scoped-call"), None)
-					.await
-					.unwrap();
+				assert!(Arc::ptr_eq(&shared, &get_or_connect(&server).await.unwrap()));
+				call_tool(&server, &tool_call("scoped-call"), None).await.unwrap();
 			})
 			.await;
 		}

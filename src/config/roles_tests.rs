@@ -17,10 +17,7 @@ use super::*;
 #[test]
 fn with_server_refs_sets_refs_and_empty_tools() {
 	let config = RoleMcpConfig::with_server_refs(vec!["core".to_string(), "runtime".to_string()]);
-	assert_eq!(
-		config.server_refs,
-		vec!["core".to_string(), "runtime".to_string()]
-	);
+	assert_eq!(config.server_refs, vec!["core".to_string(), "runtime".to_string()]);
 	assert!(config.allowed_tools.is_empty());
 }
 
@@ -54,10 +51,7 @@ fn sample_role() -> Role {
 			top_p: None,
 			top_k: None,
 		},
-		mcp: RoleMcpConfig::with_server_refs_and_tools(
-			vec!["core".to_string()],
-			vec!["plan".to_string()],
-		),
+		mcp: RoleMcpConfig::with_server_refs_and_tools(vec!["core".to_string()], vec!["plan".to_string()]),
 	}
 }
 
@@ -67,10 +61,7 @@ fn role_serde_json_round_trip() {
 	let json = serde_json::to_string(&role).expect("failed to serialize Role");
 	let deserialized: Role = serde_json::from_str(&json).expect("failed to deserialize Role");
 	assert_eq!(deserialized.name, "developer");
-	assert_eq!(
-		deserialized.config.model.model,
-		Some("claude-sonnet-4".to_string())
-	);
+	assert_eq!(deserialized.config.model.model, Some("claude-sonnet-4".to_string()));
 	assert_eq!(deserialized.config.system, "You are a developer.");
 	assert_eq!(deserialized.config.welcome, "Welcome!");
 	assert_eq!(deserialized.config.model.temperature, Some(0.7));
@@ -87,15 +78,7 @@ fn role_config_flattens_into_role_json() {
 	assert_eq!(json["name"], "developer");
 	assert_eq!(json["system"], "You are a developer.");
 	assert_eq!(json["welcome"], "Welcome!");
-	let temperature = json["model"]["temperature"]
-		.as_f64()
-		.expect("temperature not a number");
-	assert!(
-		(temperature - 0.7f64).abs() < 1e-6,
-		"temperature {temperature}"
-	);
-	assert!(
-		json.get("config").is_none(),
-		"config must be flattened, not nested"
-	);
+	let temperature = json["model"]["temperature"].as_f64().expect("temperature not a number");
+	assert!((temperature - 0.7f64).abs() < 1e-6, "temperature {temperature}");
+	assert!(json.get("config").is_none(), "config must be flattened, not nested");
 }

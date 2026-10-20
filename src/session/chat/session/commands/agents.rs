@@ -151,13 +151,8 @@ pub fn build_agents_status(params: &[&str]) -> Result<serde_json::Value> {
 	for job in &async_jobs {
 		running.push(async_agent_json(job));
 	}
-	running.sort_by_key(|item| {
-		std::cmp::Reverse(
-			item.get("started_unix")
-				.and_then(|value| value.as_u64())
-				.unwrap_or(0),
-		)
-	});
+	running
+		.sort_by_key(|item| std::cmp::Reverse(item.get("started_unix").and_then(|value| value.as_u64()).unwrap_or(0)));
 
 	Ok(json!({
 		"view": "agents",
@@ -189,13 +184,8 @@ pub fn active_agents_status() -> Vec<serde_json::Value> {
 	for job in async_agent_jobs() {
 		active.push(async_agent_json(&job));
 	}
-	active.sort_by_key(|item| {
-		std::cmp::Reverse(
-			item.get("started_unix")
-				.and_then(|value| value.as_u64())
-				.unwrap_or(0),
-		)
-	});
+	active
+		.sort_by_key(|item| std::cmp::Reverse(item.get("started_unix").and_then(|value| value.as_u64()).unwrap_or(0)));
 	active
 }
 
@@ -314,10 +304,7 @@ fn last_action_from_message(msg: &Message) -> Option<String> {
 	if let Some(calls) = &msg.tool_calls {
 		if let Some(first) = calls.as_array().and_then(|a| a.first()) {
 			let func = first.get("function");
-			let name = func
-				.and_then(|f| f.get("name"))
-				.and_then(|n| n.as_str())
-				.unwrap_or("");
+			let name = func.and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("");
 			if !name.is_empty() {
 				return Some(summarize_tool(name, func.and_then(|f| f.get("arguments"))));
 			}
@@ -407,16 +394,7 @@ pub fn get_agents_stats() -> Option<serde_json::Value> {
 	}))
 }
 
-/// Single-line, length-capped (ellipsis on overflow).
-fn truncate(s: &str, max: usize) -> String {
-	let s = s.replace(['\n', '\r'], " ");
-	if s.chars().count() <= max {
-		s
-	} else {
-		let head: String = s.chars().take(max.saturating_sub(1)).collect();
-		format!("{head}…")
-	}
-}
+use crate::utils::text::truncate;
 
 #[cfg(test)]
 #[path = "agents_tests.rs"]

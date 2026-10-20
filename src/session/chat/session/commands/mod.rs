@@ -306,20 +306,14 @@ impl CommandOutput {
 			Self::Effort { .. } => display::display_effort(self),
 			Self::Role { .. } => display::display_role(self),
 			Self::Loglevel { .. } => display::display_loglevel(self),
-			Self::Copy {
-				copied,
-				length,
-				scope,
-			} => {
+			Self::Copy { copied, length, scope } => {
 				block_open("/copy", Some(scope.as_str()));
 				if *copied {
 					if let Some(len) = length {
 						let kw = key_width(["copied"]);
 						block_row(
 							"copied",
-							&format!("{} chars to clipboard", len)
-								.bright_green()
-								.to_string(),
+							&format!("{} chars to clipboard", len).bright_green().to_string(),
 							kw,
 						);
 						block_close_ok("/copy", Some(&format!("{} chars", len)));
@@ -332,9 +326,7 @@ impl CommandOutput {
 				}
 				println!();
 			}
-			Self::Reply {
-				timestamp, lines, ..
-			} => {
+			Self::Reply { timestamp, lines, .. } => {
 				let sent = age(*timestamp, crate::utils::time::now_secs());
 				block_open("/reply", Some(&format!("reply from {}", sent)));
 				let noun = if *lines == 1 { "line" } else { "lines" };
@@ -372,10 +364,7 @@ impl CommandOutput {
 			Self::Usage { .. } => display::display_usage(self),
 			Self::Login { .. } => display::display_login(self),
 			Self::Analyze { .. } => display::display_analyze(self),
-			Self::Rename {
-				session_name,
-				title,
-			} => {
+			Self::Rename { session_name, title } => {
 				block_open("/rename", None);
 				match title {
 					Some(t) => {
@@ -424,11 +413,7 @@ pub async fn process_command(
 	let Some(&command) = input_parts.first() else {
 		return Ok(CommandResult::TreatAsUserInput);
 	};
-	let params = if input_parts.len() > 1 {
-		&input_parts[1..]
-	} else {
-		&[]
-	};
+	let params = if input_parts.len() > 1 { &input_parts[1..] } else { &[] };
 
 	// Use current session role instead of original startup role
 	let current_role = session.role.clone();
@@ -457,13 +442,11 @@ pub async fn process_command(
 			}
 		}
 		LIST_COMMAND => list::handle_list(session, config, params),
-		MODEL_COMMAND => model::handle_model(session, config, params),
+		MODEL_COMMAND => model::handle_model(session, params),
 		EFFORT_COMMAND => effort::handle_effort(session, config, params),
 		NEW_COMMAND => new::handle_new(session, params),
 		MCP_COMMAND => mcp::handle_mcp(config, &current_role, params).await,
-		RUN_COMMAND => {
-			run::handle_run(session, config, &current_role, params, operation_cancelled).await
-		}
+		RUN_COMMAND => run::handle_run(session, config, &current_role, params, operation_cancelled).await,
 
 		IMAGE_COMMAND => image::handle_image(session, params).await,
 		VIDEO_COMMAND => video::handle_video(session, params).await,

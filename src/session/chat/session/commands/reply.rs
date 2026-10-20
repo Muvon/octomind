@@ -82,9 +82,7 @@ pub fn assistant_replies(session: &ChatSession) -> Vec<Reply> {
 /// ignoring case. An empty query matches everything.
 pub fn matches_words(text: &str, query: &str) -> bool {
 	let text = text.to_lowercase();
-	query
-		.split_whitespace()
-		.all(|word| text.contains(&word.to_lowercase()))
+	query.split_whitespace().all(|word| text.contains(&word.to_lowercase()))
 }
 
 /// `text` as a markdown blockquote. Blank lines become a bare `>` so the
@@ -129,25 +127,21 @@ pub fn handle_reply(session: &ChatSession, params: &[&str]) -> Result<CommandRes
 		} else {
 			format!("No reply contains '{}'.", query)
 		};
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Error {
-				error,
-				context: Some(serde_json::json!({
-					"replies": replies.len(),
-					"hint": "Use /reply [N|words]; 1 is the latest reply. Press Tab after '/reply ' to pick one.",
-				})),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+			error,
+			context: Some(serde_json::json!({
+				"replies": replies.len(),
+				"hint": "Use /reply [N|words]; 1 is the latest reply. Press Tab after '/reply ' to pick one.",
+			})),
+		})));
 	};
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Reply {
-			number,
-			timestamp: reply.timestamp,
-			lines: reply.text.lines().count(),
-			quote: quote(&reply.text),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Reply {
+		number,
+		timestamp: reply.timestamp,
+		lines: reply.text.lines().count(),
+		quote: quote(&reply.text),
+	})))
 }
 
 #[cfg(test)]

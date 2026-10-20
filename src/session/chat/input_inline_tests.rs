@@ -55,18 +55,12 @@ fn highlight_submitted_input_bails_safely_without_tty() {
 
 #[tokio::test]
 async fn calculate_current_context_tokens_counts_tools_and_messages() {
-	let config: Config = toml::from_str(include_str!("../../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let config: Config =
+		toml::from_str(include_str!("../../../config-templates/default.toml")).expect("parse default config template");
 	let empty = calculate_current_context_tokens(&[], &config, "assistant").await;
-	assert!(
-		empty > 0,
-		"system prompt + tool schemas must count: {empty}"
-	);
+	assert!(empty > 0, "system prompt + tool schemas must count: {empty}");
 
-	let messages = vec![crate::session::Session::build_message(
-		"user",
-		"hello world",
-	)];
+	let messages = vec![crate::session::Session::build_message("user", "hello world")];
 	let with_message = calculate_current_context_tokens(&messages, &config, "assistant").await;
 	assert!(with_message > empty);
 }

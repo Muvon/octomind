@@ -33,8 +33,8 @@ fn uncached_user_message() -> Message {
 }
 
 fn template_config() -> Config {
-	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let mut config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -221,8 +221,5 @@ async fn run_harvests_successful_ping_exchange() {
 
 	std::env::remove_var("OLLAMA_API_URL");
 
-	assert!(
-		!exchanges.is_empty(),
-		"at least one scripted ping must be harvested"
-	);
+	assert!(!exchanges.is_empty(), "at least one scripted ping must be harvested");
 }

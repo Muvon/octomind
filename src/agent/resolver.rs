@@ -49,9 +49,8 @@ pub async fn resolve_config_and_role(
 			.await
 			.context(format!("Failed to fetch agent manifest for '{tag}'"))?;
 		// Resolve capabilities before input/env/dep resolution
-		let (resolved_toml, dep_entries) =
-			registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
-				.context("Failed to resolve agent capabilities")?;
+		let (resolved_toml, dep_entries) = registry::resolve_capabilities(&raw_toml, &tap_root, &config.capabilities)
+			.context("Failed to resolve agent capabilities")?;
 		// INPUT first (persistent credential store), then ENV (environment / .env fallback)
 		let resolved_toml = inputs::resolve_inputs(&resolved_toml).await?;
 		let resolved_toml = inputs::resolve_env_vars(&resolved_toml).await?;
@@ -71,14 +70,13 @@ pub async fn resolve_config_and_role(
 			deps::run_dep_entries(&entries, &root, status_cb).await?;
 		}
 		// Always inject the tag as the role name — manifests never need to declare it.
-		let tagged_toml = inject_role_name(&resolved_toml, tag)
-			.context("Failed to inject role name into agent manifest")?;
-		let mut merged = merge_agent_toml(config, &tagged_toml)
-			.context("Failed to merge agent manifest into config")?;
+		let tagged_toml =
+			inject_role_name(&resolved_toml, tag).context("Failed to inject role name into agent manifest")?;
+		let mut merged =
+			merge_agent_toml(config, &tagged_toml).context("Failed to merge agent manifest into config")?;
 
 		// First role in merged config that isn't in the base config
-		let base_names: std::collections::HashSet<&str> =
-			config.roles.iter().map(|r| r.name.as_str()).collect();
+		let base_names: std::collections::HashSet<&str> = config.roles.iter().map(|r| r.name.as_str()).collect();
 		let role = merged
 			.roles
 			.iter()
@@ -109,15 +107,11 @@ fn inject_role_name(toml_str: &str, tag: &str) -> Result<String> {
 	// This matches what resolve_config_and_role returns as the role string.
 	let role_name = tag;
 
-	let mut value: toml::Value =
-		toml::from_str(toml_str).context("Failed to parse agent manifest TOML")?;
+	let mut value: toml::Value = toml::from_str(toml_str).context("Failed to parse agent manifest TOML")?;
 
 	if let Some(toml::Value::Array(roles)) = value.get_mut("roles") {
 		if let Some(toml::Value::Table(table)) = roles.first_mut() {
-			table.insert(
-				"name".to_string(),
-				toml::Value::String(role_name.to_string()),
-			);
+			table.insert("name".to_string(), toml::Value::String(role_name.to_string()));
 		}
 	}
 

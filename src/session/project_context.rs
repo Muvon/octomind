@@ -105,11 +105,7 @@ impl ProjectContext {
 
 		if let Ok(output) = git_check {
 			if output.status.success() {
-				if let Ok(output) = Command::new("git")
-					.args(["ls-files"])
-					.current_dir(project_dir)
-					.output()
-				{
+				if let Ok(output) = Command::new("git").args(["ls-files"]).current_dir(project_dir).output() {
 					if output.status.success() {
 						return Some(String::from_utf8_lossy(&output.stdout).to_string());
 					}
@@ -164,9 +160,7 @@ impl ProjectContext {
 						.or_insert_with(|| TreeNode::Directory(BTreeMap::new()));
 
 					// Now get the mutable reference to continue navigation
-					if let Some(TreeNode::Directory(ref mut dir_map)) =
-						current_map.get_mut(&part_owned)
-					{
+					if let Some(TreeNode::Directory(ref mut dir_map)) = current_map.get_mut(&part_owned) {
 						current_map = dir_map;
 					} else {
 						break; // Should not happen, but break to be safe
@@ -192,10 +186,7 @@ impl ProjectContext {
 					TreeNode::Directory(children) => {
 						result.push_str(&format!("{}{}{}/\n", prefix, current_prefix, name));
 						if !children.is_empty() {
-							result.push_str(&render_tree(
-								children,
-								&format!("{}{}", prefix, next_prefix),
-							));
+							result.push_str(&render_tree(children, &format!("{}{}", prefix, next_prefix)));
 						}
 					}
 				}

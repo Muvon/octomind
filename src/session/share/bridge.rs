@@ -175,11 +175,7 @@ async fn handle(
 	}
 }
 
-async fn serve_session(
-	req: Request<Incoming>,
-	session_file: &std::path::Path,
-	token: &str,
-) -> Response<Full<Bytes>> {
+async fn serve_session(req: Request<Incoming>, session_file: &std::path::Path, token: &str) -> Response<Full<Bytes>> {
 	let hdr = req
 		.headers()
 		.get("x-bridge-token")
@@ -192,15 +188,8 @@ async fn serve_session(
 	let bytes = match tokio::fs::read(session_file).await {
 		Ok(b) => b,
 		Err(e) => {
-			log_error!(
-				"/analyze bridge: failed to read {}: {}",
-				session_file.display(),
-				e
-			);
-			return plain(
-				StatusCode::INTERNAL_SERVER_ERROR,
-				&format!("Read failed: {}\n", e),
-			);
+			log_error!("/analyze bridge: failed to read {}: {}", session_file.display(), e);
+			return plain(StatusCode::INTERNAL_SERVER_ERROR, &format!("Read failed: {}\n", e));
 		}
 	};
 
@@ -235,10 +224,7 @@ fn cors_preflight() -> Response<Full<Bytes>> {
 	*res.status_mut() = StatusCode::NO_CONTENT;
 	let h = res.headers_mut();
 	h.insert("access-control-allow-origin", "*".parse().unwrap());
-	h.insert(
-		"access-control-allow-methods",
-		"GET, OPTIONS".parse().unwrap(),
-	);
+	h.insert("access-control-allow-methods", "GET, OPTIONS".parse().unwrap());
 	h.insert(
 		"access-control-allow-headers",
 		"x-bridge-token, content-type".parse().unwrap(),

@@ -32,9 +32,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 const MARKER: &str = "WS-E2E-MARKER";
 
 async fn spawn_openai_stub() -> String {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("bind stub");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
 	let addr = listener.local_addr().expect("addr");
 
 	tokio::spawn(async move {
@@ -89,8 +87,7 @@ async fn spawn_openai_stub() -> String {
 
 fn sandbox_config() -> octomind::config::Config {
 	let mut config: octomind::config::Config =
-		toml::from_str(include_str!("../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../config-templates/default.toml")).expect("parse default config template");
 	config.model = "ollama:fake-model".to_string();
 	config.default = "assistant".to_string();
 	config.supervisor.enabled = false;
@@ -103,9 +100,7 @@ fn sandbox_config() -> octomind::config::Config {
 }
 
 async fn free_port() -> u16 {
-	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-		.await
-		.expect("probe port");
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("probe port");
 	let port = listener.local_addr().expect("addr").port();
 	drop(listener);
 	port
@@ -144,10 +139,7 @@ async fn test_ws_session_message_roundtrip() {
 	// Redirect all session/data I/O into the sandbox before the server does
 	// any of it. Sole test in this binary — no other thread reads env.
 	std::env::set_var("HOME", home.path());
-	std::env::set_var(
-		"OCTOMIND_DATA_DIR",
-		home.path().join(".local/share/octomind"),
-	);
+	std::env::set_var("OCTOMIND_DATA_DIR", home.path().join(".local/share/octomind"));
 	std::env::set_var("OLLAMA_API_URL", &stub_url);
 	std::env::set_var("DO_NOT_TRACK", "1");
 
@@ -231,10 +223,7 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("send model command");
-	read_until(&mut socket, "model command ack", 30, |t| {
-		t.contains("cmd-2")
-	})
-	.await;
+	read_until(&mut socket, "model command ack", 30, |t| t.contains("cmd-2")).await;
 
 	// Exercise the remaining read-only/session-local command surfaces through
 	// the production WebSocket dispatcher. Each command must acknowledge its
@@ -280,10 +269,7 @@ async fn test_ws_session_message_roundtrip() {
 		))
 		.await
 		.expect("resume session");
-	read_until(&mut socket, "session resume ack", 30, |t| {
-		t.contains("sess-2")
-	})
-	.await;
+	read_until(&mut socket, "session resume ack", 30, |t| t.contains("sess-2")).await;
 
 	// Inbox injection: a queued message for this session is surfaced to the
 	// client as an Injected frame before the AI answers it.
@@ -353,10 +339,9 @@ async fn test_ws_session_message_roundtrip() {
 	// a connection carrying an Origin header must fail at the handshake.
 	use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 	let mut request = url.clone().into_client_request().expect("request");
-	request.headers_mut().insert(
-		"Origin",
-		"http://evil.example".parse().expect("header value"),
-	);
+	request
+		.headers_mut()
+		.insert("Origin", "http://evil.example".parse().expect("header value"));
 	assert!(
 		tokio_tungstenite::connect_async(request).await.is_err(),
 		"handshake with a browser Origin must be refused"

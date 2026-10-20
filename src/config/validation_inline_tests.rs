@@ -16,8 +16,7 @@ use super::*;
 use crate::session::layers::{InputMode, LayerConfig, OutputMode, OutputRole};
 
 fn template_config() -> Config {
-	toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("default template must deserialize")
+	toml::from_str(include_str!("../../config-templates/default.toml")).expect("default template must deserialize")
 }
 
 fn valid_layer() -> LayerConfig {
@@ -171,9 +170,7 @@ fn session_token_threshold_caps_at_two_million() {
 	assert!(error.contains("2,000,000"), "got: {error}");
 
 	config.max_session_tokens_threshold = 2_000_000;
-	config
-		.validate_thresholds()
-		.expect("the boundary itself must pass");
+	config.validate_thresholds().expect("the boundary itself must pass");
 }
 
 #[test]
@@ -198,9 +195,7 @@ fn role_sampling_bounds_are_enforced_with_inclusive_boundaries() {
 		role_with("lower-edge", 0.0, 0.0, 1),
 		role_with("upper-edge", 2.0, 1.0, 1000),
 	];
-	config
-		.validate_model_profiles()
-		.expect("both edges are legal values");
+	config.validate_model_profiles().expect("both edges are legal values");
 
 	let cases = [
 		("too-hot", 2.1, 1.0, 1000, "temperature"),
@@ -222,10 +217,7 @@ fn markdown_theme_cannot_be_empty() {
 	let mut config = template_config();
 	config.markdown_theme.clear();
 	let error = config.validate_required_fields().unwrap_err().to_string();
-	assert!(
-		error.contains("Markdown theme field cannot be empty"),
-		"got: {error}"
-	);
+	assert!(error.contains("Markdown theme field cannot be empty"), "got: {error}");
 }
 
 #[test]
@@ -243,26 +235,14 @@ fn hooks_validation_accepts_well_formed_hooks() {
 #[test]
 fn hooks_validation_rejects_each_malformed_shape() {
 	let cases = [
-		(
-			"empty name",
-			hook("", "127.0.0.1:1", "s.sh", 30),
-			"empty name",
-		),
-		(
-			"empty bind",
-			hook("a", "", "s.sh", 30),
-			"empty bind address",
-		),
+		("empty name", hook("", "127.0.0.1:1", "s.sh", 30), "empty name"),
+		("empty bind", hook("a", "", "s.sh", 30), "empty bind address"),
 		(
 			"invalid bind",
 			hook("a", "not-an-address", "s.sh", 30),
 			"invalid bind address",
 		),
-		(
-			"empty script",
-			hook("a", "127.0.0.1:1", "", 30),
-			"empty script path",
-		),
+		("empty script", hook("a", "127.0.0.1:1", "", 30), "empty script path"),
 		(
 			"zero timeout",
 			hook("a", "127.0.0.1:1", "s.sh", 0),
@@ -316,13 +296,7 @@ fn mcp_validation_rejects_zero_and_over_large_timeouts() {
 	let error = config.validate_mcp_config().unwrap_err().to_string();
 	assert!(error.contains("invalid timeout"), "got: {error}");
 
-	config.mcp.servers = vec![McpServerConfig::stdin(
-		"local",
-		"node",
-		vec![],
-		3601,
-		vec![],
-	)];
+	config.mcp.servers = vec![McpServerConfig::stdin("local", "node", vec![], 3601, vec![])];
 	let error = config.validate_mcp_config().unwrap_err().to_string();
 	assert!(error.contains("too high"), "got: {error}");
 }
@@ -356,10 +330,7 @@ fn compression_model_check_requires_a_resolvable_model() {
 	let shipped = config.get_compression_model_profile().model;
 	config.compression.model.model = Some(String::new());
 	let error = config.validate_model_profiles().unwrap_err().to_string();
-	assert!(
-		error.contains("compression.model.name cannot be empty"),
-		"got: {error}"
-	);
+	assert!(error.contains("compression.model.name cannot be empty"), "got: {error}");
 
 	config.compression.model.model = Some("not-a-provider:model".to_string());
 	let error = config.validate_model_profiles().unwrap_err().to_string();

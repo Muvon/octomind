@@ -38,10 +38,7 @@ fn unknown_status_codes_get_actionable_context() {
 #[test]
 fn unmapped_status_code_falls_back_to_a_generic_note() {
 	let out = format_provider_error("openai", &err("API error 418 <unknown status code>"));
-	assert_eq!(
-		out,
-		"HTTP 418 - Server error - temporary issue with the provider."
-	);
+	assert_eq!(out, "HTTP 418 - Server error - temporary issue with the provider.");
 }
 
 #[test]
@@ -109,10 +106,7 @@ fn credential_hints_accompany_only_auth_failures() {
 		None
 	);
 	assert_eq!(
-		hint(
-			"anthropic",
-			"Anthropic API error 500 Internal Server Error: upstream"
-		),
+		hint("anthropic", "Anthropic API error 500 Internal Server Error: upstream"),
 		None
 	);
 	assert_eq!(hint("weird", "socket hang up"), None);
@@ -143,10 +137,7 @@ fn credential_hints_accompany_only_auth_failures() {
 		"OctoHub API error 403: model 'x' is not permitted for this API key"
 	)
 	.is_some_and(|hint| hint.contains("current plan")));
-	assert_eq!(
-		hint("octohub", "OctoHub API error 401: run `octomind login`"),
-		None
-	);
+	assert_eq!(hint("octohub", "OctoHub API error 401: run `octomind login`"), None);
 }
 
 #[test]
@@ -163,17 +154,12 @@ fn multibyte_error_text_does_not_panic() {
 
 #[test]
 fn rate_limit_info_renders_every_provider_shape() {
-	let exchange_with_headers =
-		|provider: &str, headers: Option<std::collections::HashMap<String, String>>| {
-			let mut exchange = crate::session::ProviderExchange::new(
-				serde_json::json!({}),
-				serde_json::json!({}),
-				None,
-				provider,
-			);
-			exchange.rate_limit_headers = headers;
-			exchange
-		};
+	let exchange_with_headers = |provider: &str, headers: Option<std::collections::HashMap<String, String>>| {
+		let mut exchange =
+			crate::session::ProviderExchange::new(serde_json::json!({}), serde_json::json!({}), None, provider);
+		exchange.rate_limit_headers = headers;
+		exchange
+	};
 
 	let mut anthropic = std::collections::HashMap::new();
 	anthropic.insert("tokens_remaining".to_string(), "1000".to_string());
@@ -238,28 +224,14 @@ fn api_error_removes_failed_user_message_and_prints_provider_help() {
 		&err("API error 401 Unauthorized"),
 		OutputMode::NonInteractive,
 	);
-	handle_api_error(
-		&mut session,
-		0,
-		"openai:gpt-x",
-		&err("timeout"),
-		OutputMode::Jsonl,
-	);
+	handle_api_error(&mut session, 0, "openai:gpt-x", &err("timeout"), OutputMode::Jsonl);
 }
 
 #[test]
 fn followup_error_prints_without_touching_history() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.add_user_message("q").unwrap();
-	handle_followup_api_error(
-		"openai:gpt-x",
-		&err("connection timeout"),
-		OutputMode::NonInteractive,
-	);
-	handle_followup_api_error(
-		"openai:gpt-x",
-		&err("connection timeout"),
-		OutputMode::Jsonl,
-	);
+	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::NonInteractive);
+	handle_followup_api_error("openai:gpt-x", &err("connection timeout"), OutputMode::Jsonl);
 	assert_eq!(session.session.messages.len(), 1);
 }

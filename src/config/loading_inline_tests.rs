@@ -129,8 +129,7 @@ fn test_role_merged_config() {
 
 #[test]
 fn interactive_role_adds_only_schedule_and_monitor() {
-	let mut config: Config =
-		toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+	let mut config: Config = toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
 	config.build_role_map();
 
 	let regular = config.get_merged_config_for_role("tester");
@@ -173,12 +172,8 @@ fn interactive_role_adds_only_schedule_and_monitor() {
 
 #[test]
 fn interactive_role_synthesizes_missing_orchestration_builtin() {
-	let mut config: Config =
-		toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
-	config
-		.mcp
-		.servers
-		.retain(|server| server.name() != "orchestration");
+	let mut config: Config = toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+	config.mcp.servers.retain(|server| server.name() != "orchestration");
 	config.build_role_map();
 
 	let interactive = config.get_merged_config_for_interactive_role("tester");
@@ -193,15 +188,11 @@ fn interactive_role_synthesizes_missing_orchestration_builtin() {
 
 #[test]
 fn interactive_role_preserves_existing_orchestration_grants() {
-	let mut config: Config =
-		toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
+	let mut config: Config = toml::from_str(&get_test_config_with_custom_role()).expect("parse test config");
 	config.build_role_map();
 	let tester = config.role_map.get_mut("tester").expect("tester role");
 	tester.mcp.server_refs.push("orchestration".to_string());
-	tester
-		.mcp
-		.allowed_tools
-		.push("orchestration:tap".to_string());
+	tester.mcp.allowed_tools.push("orchestration:tap".to_string());
 
 	let interactive = config.get_merged_config_for_interactive_role("tester");
 	let orchestration = interactive
@@ -211,10 +202,7 @@ fn interactive_role_preserves_existing_orchestration_grants() {
 		.find(|server| server.name() == "orchestration")
 		.expect("orchestration server");
 	assert_eq!(orchestration.tools(), ["tap", "schedule", "monitor"]);
-	assert!(interactive
-		.mcp
-		.allowed_tools
-		.contains(&"orchestration:tap".to_string()));
+	assert!(interactive.mcp.allowed_tools.contains(&"orchestration:tap".to_string()));
 	assert!(interactive
 		.mcp
 		.allowed_tools
@@ -289,14 +277,8 @@ fn test_auto_bind_server_appears_in_merged_servers() {
 	let merged = config.get_merged_config_for_role("developer");
 	let names: Vec<&str> = merged.mcp.servers.iter().map(|s| s.name()).collect();
 
-	assert!(
-		names.contains(&"explicit"),
-		"explicit server missing: {names:?}"
-	);
-	assert!(
-		names.contains(&"auto_bound"),
-		"auto_bound server missing: {names:?}"
-	);
+	assert!(names.contains(&"explicit"), "explicit server missing: {names:?}");
+	assert!(names.contains(&"auto_bound"), "auto_bound server missing: {names:?}");
 	assert!(
 		!names.contains(&"other_bound"),
 		"other_bound should NOT auto-bind to developer: {names:?}"
@@ -309,16 +291,10 @@ fn test_auto_bind_patches_server_refs_in_role_map() {
 	config.build_role_map();
 
 	let merged = config.get_merged_config_for_role("developer");
-	let role_entry = merged
-		.role_map
-		.get("developer")
-		.expect("developer role must exist");
+	let role_entry = merged.role_map.get("developer").expect("developer role must exist");
 
 	assert!(
-		role_entry
-			.mcp
-			.server_refs
-			.contains(&"auto_bound".to_string()),
+		role_entry.mcp.server_refs.contains(&"auto_bound".to_string()),
 		"auto_bound must be added to role_map server_refs, got: {:?}",
 		role_entry.mcp.server_refs
 	);
@@ -338,10 +314,7 @@ fn test_auto_bind_patches_allowed_tools_wildcard() {
 
 	// allowed_tools is non-empty (`explicit:*`) so patching must add `auto_bound:*`
 	assert!(
-		merged
-			.mcp
-			.allowed_tools
-			.contains(&"auto_bound:*".to_string()),
+		merged.mcp.allowed_tools.contains(&"auto_bound:*".to_string()),
 		"auto_bound:* must be appended to allowed_tools, got: {:?}",
 		merged.mcp.allowed_tools
 	);
@@ -381,10 +354,7 @@ fn test_auto_bind_empty_allowed_tools_stays_empty() {
 	// server_refs still patched even when allowed_tools is empty
 	let role_entry = merged.role_map.get("developer").unwrap();
 	assert!(
-		role_entry
-			.mcp
-			.server_refs
-			.contains(&"auto_bound".to_string()),
+		role_entry.mcp.server_refs.contains(&"auto_bound".to_string()),
 		"auto_bound must still be in server_refs even when allowed_tools is empty"
 	);
 }

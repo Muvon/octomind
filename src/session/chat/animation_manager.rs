@@ -83,8 +83,7 @@ impl AnimationState {
 	}
 
 	pub fn update_max_threshold(&self, threshold: usize) {
-		self.max_threshold
-			.store(threshold as u64, Ordering::Relaxed);
+		self.max_threshold.store(threshold as u64, Ordering::Relaxed);
 	}
 
 	pub fn get_max_threshold(&self) -> usize {
@@ -147,12 +146,7 @@ impl AnimationManager {
 		let cost_bits = self.state.cost.load(Ordering::Relaxed);
 		let ctx = self.state.context_tokens.load(Ordering::Relaxed);
 		let thresh = self.state.max_threshold.load(Ordering::Relaxed);
-		pb.set_message(build_spinner_message(
-			cost_bits,
-			ctx,
-			thresh,
-			&self.resolved_label(),
-		));
+		pb.set_message(build_spinner_message(cost_bits, ctx, thresh, &self.resolved_label()));
 	}
 
 	/// Get shared animation state for external updates.
@@ -253,13 +247,9 @@ impl AnimationManager {
 		if !output_mode.should_show_animations() {
 			if output_mode.is_terminal_mode() {
 				if cost > 0.0 {
-					println!(
-						" ── cost: ${:.5} ────────────────────────────────────────",
-						cost
-					);
+					println!(" ── cost: ${:.5} ────────────────────────────────────────", cost);
 				} else if max_threshold > 0 {
-					let percentage =
-						(context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0);
+					let percentage = (context_tokens as f64 / max_threshold as f64 * 100.0).min(100.0);
 					println!(
 						" ── context: {:.1}% ────────────────────────────────────────",
 						percentage
@@ -364,21 +354,18 @@ impl AnimationManager {
 		let pb = ProgressBar::new_spinner();
 		pb.set_style(
 			ProgressStyle::default_spinner()
-				.with_key(
-					"elapsed_custom",
-					|ps: &ProgressState, w: &mut dyn std::fmt::Write| {
-						let elapsed = ps.elapsed();
-						if elapsed.as_secs() > 0 {
-							let _ = write!(
-								w,
-								"({} • Ctrl+C to interrupt)",
-								crate::session::chat::animation::format_elapsed_time(elapsed)
-							);
-						} else {
-							let _ = write!(w, "(Ctrl+C to interrupt)");
-						}
-					},
-				)
+				.with_key("elapsed_custom", |ps: &ProgressState, w: &mut dyn std::fmt::Write| {
+					let elapsed = ps.elapsed();
+					if elapsed.as_secs() > 0 {
+						let _ = write!(
+							w,
+							"({} • Ctrl+C to interrupt)",
+							crate::session::chat::animation::format_elapsed_time(elapsed)
+						);
+					} else {
+						let _ = write!(w, "(Ctrl+C to interrupt)");
+					}
+				})
 				.template(" {spinner:.cyan} {msg:.cyan} {elapsed_custom:.cyan.dim}")
 				.unwrap()
 				.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧"),
@@ -513,8 +500,7 @@ fn build_spinner_message(cost_bits: u64, ctx: u64, thresh: u64, label: &str) -> 
 }
 
 /// Global animation manager instance.
-pub static GLOBAL_ANIMATION_MANAGER: std::sync::OnceLock<AnimationManager> =
-	std::sync::OnceLock::new();
+pub static GLOBAL_ANIMATION_MANAGER: std::sync::OnceLock<AnimationManager> = std::sync::OnceLock::new();
 
 /// Get global animation manager instance.
 pub fn get_animation_manager() -> &'static AnimationManager {

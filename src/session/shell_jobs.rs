@@ -85,8 +85,7 @@ pub(crate) struct PendingResource {
 }
 
 // session id -> resources advertised but not yet delivered into the inbox.
-static WATCHED: RwLock<Option<HashMap<String, HashMap<String, WatchedResource>>>> =
-	RwLock::new(None);
+static WATCHED: RwLock<Option<HashMap<String, HashMap<String, WatchedResource>>>> = RwLock::new(None);
 
 // session id -> completions waiting for the evidence ledger's next owner.
 static COMPLETED: RwLock<Option<HashMap<String, Vec<CompletedJob>>>> = RwLock::new(None);
@@ -129,11 +128,7 @@ pub fn resource_links_in(result: &CallToolResult) -> Vec<(String, String)> {
 					.clone()
 					.filter(|title| !title.is_empty())
 					.unwrap_or_else(|| resource.name.clone());
-				let label = if label.is_empty() {
-					resource.uri.clone()
-				} else {
-					label
-				};
+				let label = if label.is_empty() { resource.uri.clone() } else { label };
 				Some((resource.uri.clone(), label))
 			}
 			_ => None,
@@ -176,13 +171,7 @@ pub fn register_task_for_session(
 	label: &str,
 ) -> tokio::sync::watch::Receiver<bool> {
 	let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-	register(
-		session_id,
-		server_name,
-		key,
-		label,
-		Some(std::sync::Arc::new(stop_tx)),
-	);
+	register(session_id, server_name, key, label, Some(std::sync::Arc::new(stop_tx)));
 	stop_rx
 }
 
@@ -257,10 +246,8 @@ pub fn attach_sequence_for_session(session_id: &str, uri: &str, sequence: u64) {
 		.unwrap()
 		.as_mut()
 		.and_then(|registry| registry.get_mut(session_id))
-		.and_then(|jobs| {
-			jobs.iter_mut()
-				.find(|job| job.uri == uri && job.sequence.is_none())
-		}) {
+		.and_then(|jobs| jobs.iter_mut().find(|job| job.uri == uri && job.sequence.is_none()))
+	{
 		job.sequence = Some(sequence);
 	}
 }
@@ -387,10 +374,7 @@ pub fn pending_labels() -> Vec<String> {
 		return Vec::new();
 	};
 	let guard = WATCHED.read().unwrap();
-	let Some(jobs) = guard
-		.as_ref()
-		.and_then(|registry| registry.get(&session_id))
-	else {
+	let Some(jobs) = guard.as_ref().and_then(|registry| registry.get(&session_id)) else {
 		return Vec::new();
 	};
 	let mut labels: Vec<String> = jobs

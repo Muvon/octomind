@@ -30,10 +30,9 @@ use std::path::{Path, PathBuf};
 pub(crate) use registry::create_record;
 pub use registry::{get_record, list_records, mutate_record};
 pub use runtime::{
-	active_skill_dirs, all_skill_bindings, applied_skill_names, binding_is_shadow,
-	clear_for_session, deliver_guidance, generated_guardrails, init_for_session,
-	mark_behavior_used, mark_shadow_match, mark_skill_activated, reinforce_session, skill_binding,
-	SkillBinding, TurnVerdict,
+	active_skill_dirs, all_skill_bindings, applied_skill_names, binding_is_shadow, clear_for_session, deliver_guidance,
+	generated_guardrails, init_for_session, mark_behavior_used, mark_shadow_match, mark_skill_activated,
+	reinforce_session, skill_binding, SkillBinding, TurnVerdict,
 };
 
 /// The only user-facing evolution knob. Models, evidence thresholds, trial
@@ -335,10 +334,7 @@ pub fn domain_name(role: &str) -> String {
 /// delivery leaves: a guidance note's per-rule tag, an evolved skill's
 /// injection. Shadow behavior is never delivered, so a marker means treatment.
 /// Pipes, guards, hooks, and validators leave no marker and are not listed.
-pub fn live_in_session(
-	messages: &[crate::session::Message],
-	records: &[EvolutionRecord],
-) -> Vec<String> {
+pub fn live_in_session(messages: &[crate::session::Message], records: &[EvolutionRecord]) -> Vec<String> {
 	records
 		.iter()
 		.filter(|record| {

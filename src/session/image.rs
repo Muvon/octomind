@@ -119,17 +119,10 @@ impl ImageProcessor {
 
 		// Download the image
 		let client = Client::new();
-		let response = client
-			.get(url)
-			.header("User-Agent", "Octomind/1.0")
-			.send()
-			.await?;
+		let response = client.get(url).header("User-Agent", "Octomind/1.0").send().await?;
 
 		if !response.status().is_success() {
-			return Err(anyhow::anyhow!(
-				"Failed to download image: HTTP {}",
-				response.status()
-			));
+			return Err(anyhow::anyhow!("Failed to download image: HTTP {}", response.status()));
 		}
 
 		// Check content type
@@ -188,8 +181,7 @@ impl ImageProcessor {
 	pub fn load_from_clipboard() -> Result<Option<ImageAttachment>> {
 		use arboard::Clipboard;
 
-		let mut clipboard =
-			Clipboard::new().map_err(|_| anyhow::anyhow!("Failed to access clipboard"))?;
+		let mut clipboard = Clipboard::new().map_err(|_| anyhow::anyhow!("Failed to access clipboard"))?;
 
 		match clipboard.get_image() {
 			Ok(img_data) => {
@@ -234,8 +226,7 @@ impl ImageProcessor {
 		}
 
 		// Calculate new dimensions maintaining aspect ratio
-		let ratio =
-			(Self::MAX_WIDTH as f32 / width as f32).min(Self::MAX_HEIGHT as f32 / height as f32);
+		let ratio = (Self::MAX_WIDTH as f32 / width as f32).min(Self::MAX_HEIGHT as f32 / height as f32);
 
 		let new_width = (width as f32 * ratio) as u32;
 		let new_height = (height as f32 * ratio) as u32;
@@ -463,10 +454,7 @@ impl ImageProcessor {
 
 	/// Check if extension is supported
 	fn is_supported_extension(ext: &str) -> bool {
-		matches!(
-			ext.to_lowercase().as_str(),
-			"png" | "jpg" | "jpeg" | "gif" | "webp"
-		)
+		matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp")
 	}
 
 	/// Guess media type from URL
@@ -491,9 +479,7 @@ impl ImageProcessor {
 			"image/jpeg" => Ok(ImageFormat::Jpeg),
 			"image/gif" => Ok(ImageFormat::Gif),
 			"image/webp" => Ok(ImageFormat::WebP),
-			_ => Err(anyhow::anyhow!(
-				"Unsupported image media type: {media_type}"
-			)),
+			_ => Err(anyhow::anyhow!("Unsupported image media type: {media_type}")),
 		}
 	}
 

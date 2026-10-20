@@ -28,9 +28,8 @@ fn msgs(roles: &[&str]) -> Vec<Message> {
 }
 
 fn template_config() -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: crate::config::Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -51,10 +50,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().unwrap();
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			_dir: dir,
-			previous,
-		}
+		Self { _dir: dir, previous }
 	}
 }
 
@@ -77,11 +73,7 @@ fn sole_session_file() -> std::path::PathBuf {
 		.filter(|path| path.extension().is_some_and(|ext| ext == "zst"))
 		.collect();
 	files.sort();
-	assert_eq!(
-		files.len(),
-		1,
-		"expected exactly one session file, got {files:?}"
-	);
+	assert_eq!(files.len(), 1, "expected exactly one session file, got {files:?}");
 	files.pop().unwrap()
 }
 
@@ -210,18 +202,12 @@ async fn background_job_finished_status_is_forgotten() {
 	let session_id = "main-loop-finished-background-job";
 	let uri = "custommcp://tasks/finished";
 	crate::session::shell_jobs::clear_for_session(session_id);
-	crate::session::shell_jobs::register_for_session(
-		session_id,
-		"custommcp",
-		uri,
-		"background task",
-	);
+	crate::session::shell_jobs::register_for_session(session_id, "custommcp", uri, "background task");
 	assert!(crate::session::shell_jobs::complete_for_session(
 		session_id, uri, "done"
 	));
 
-	let mut reported_statuses =
-		std::collections::HashMap::from([(uri.to_string(), "still working".to_string())]);
+	let mut reported_statuses = std::collections::HashMap::from([(uri.to_string(), "still working".to_string())]);
 	let mut checked_jobs = std::collections::HashSet::from([uri.to_string()]);
 	crate::session::context::with_session_id(session_id.to_string(), async {
 		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
@@ -238,12 +224,7 @@ async fn background_job_left_running_at_turn_end_is_checked_at_once() {
 	let session_id = "main-loop-unchecked-background-job";
 	let uri = "custommcp://tasks/unchecked";
 	crate::session::shell_jobs::clear_for_session(session_id);
-	crate::session::shell_jobs::register_for_session(
-		session_id,
-		"custommcp",
-		uri,
-		"background task",
-	);
+	crate::session::shell_jobs::register_for_session(session_id, "custommcp", uri, "background task");
 
 	crate::session::context::with_session_id(session_id.to_string(), async {
 		let mut checked_jobs = std::collections::HashSet::new();
@@ -263,12 +244,7 @@ async fn background_task_status_check_reports_the_polled_status() {
 	let key = crate::session::shell_jobs::task_key("toolu_task");
 	let status = "shell: cargo test · PID 42 (stop: kill -- -42) · running 30s · test a ... ok";
 	crate::session::shell_jobs::clear_for_session(session_id);
-	let _stop = crate::session::shell_jobs::register_task_for_session(
-		session_id,
-		"custommcp",
-		&key,
-		"background task",
-	);
+	let _stop = crate::session::shell_jobs::register_task_for_session(session_id, "custommcp", &key, "background task");
 	crate::session::shell_jobs::set_task_status_for_session(session_id, &key, status);
 
 	crate::session::context::with_session_id(session_id.to_string(), async {
@@ -278,18 +254,13 @@ async fn background_task_status_check_reports_the_polled_status() {
 		assert_eq!(reconcile_delay(&checked_jobs), std::time::Duration::ZERO);
 		reconcile_pending_background_jobs(&mut reported_statuses, &mut checked_jobs).await;
 		assert!(checked_jobs.contains(&key));
-		assert_eq!(
-			reported_statuses.get(&key).map(String::as_str),
-			Some(status)
-		);
+		assert_eq!(reported_statuses.get(&key).map(String::as_str), Some(status));
 		let batch = crate::session::inbox::drain_inbox_batch();
 		assert_eq!(batch.len(), 1);
 		assert!(batch[0].content.contains(status), "{}", batch[0].content);
 	})
 	.await;
-	assert!(crate::session::shell_jobs::has_pending_for_session(
-		session_id
-	));
+	assert!(crate::session::shell_jobs::has_pending_for_session(session_id));
 	crate::session::shell_jobs::clear_for_session(session_id);
 }
 
@@ -469,8 +440,7 @@ async fn test_run_session_with_input_plain_turn() {
 		.await
 		.expect("plain turn completes");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session persisted");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session persisted");
 	assert!(
 		loaded
 			.messages
@@ -502,12 +472,13 @@ async fn test_run_session_with_input_done_command_exits_cleanly() {
 		.await
 		.expect("bare /done exits cleanly");
 
-	let loaded = crate::session::persistence::load_session(&sole_session_file())
-		.expect("session persisted after /done");
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session persisted after /done");
 	assert!(
-		loaded.messages.iter().all(|m| {
-			m.role != "user" || crate::session::is_system_managed_user_content(&m.content)
-		}),
+		loaded
+			.messages
+			.iter()
+			.all(|m| { m.role != "user" || crate::session::is_system_managed_user_content(&m.content) }),
 		"bare /done must not add a genuine user message: {:?}",
 		loaded
 			.messages
@@ -524,10 +495,7 @@ async fn test_run_session_with_input_done_with_instructions_processes_turn() {
 	let _guard = ENV_LOCK.lock().await;
 	let _data = DataDirGuard::new();
 
-	let url = spawn_stub(vec![crate::session::chat::test_support::final_response(
-		"Wrapped up",
-	)])
-	.await;
+	let url = spawn_stub(vec![crate::session::chat::test_support::final_response("Wrapped up")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 
 	let config = fake_provider_config();
@@ -535,8 +503,7 @@ async fn test_run_session_with_input_done_with_instructions_processes_turn() {
 		.await
 		.expect("/done with instructions falls through to a normal turn");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session persisted");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session persisted");
 	assert!(
 		loaded
 			.messages
@@ -567,12 +534,13 @@ async fn test_run_session_with_input_info_command_handled() {
 		.await
 		.expect("command input is handled without an API call");
 
-	let loaded = crate::session::persistence::load_session(&sole_session_file())
-		.expect("session persisted after command");
+	let loaded =
+		crate::session::persistence::load_session(&sole_session_file()).expect("session persisted after command");
 	assert!(
-		loaded.messages.iter().all(|m| {
-			m.role != "user" || crate::session::is_system_managed_user_content(&m.content)
-		}),
+		loaded
+			.messages
+			.iter()
+			.all(|m| { m.role != "user" || crate::session::is_system_managed_user_content(&m.content) }),
 		"a handled command must not add a genuine user message: {:?}",
 		loaded
 			.messages
@@ -622,8 +590,7 @@ async fn test_run_session_with_input_exit_command_saves_and_exits() {
 		.await
 		.expect("/exit exits cleanly");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	assert!(
 		loaded
 			.messages
@@ -666,8 +633,7 @@ async fn test_run_session_with_input_unknown_slash_treated_as_user_input() {
 		.await
 		.expect("unknown slash input runs as a normal turn");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	assert!(
 		loaded
 			.messages
@@ -722,15 +688,9 @@ async fn test_run_session_with_input_followup_api_error_propagates() {
 	let url = crate::session::chat::test_support::spawn_stub_with_status(vec![
 		(
 			200,
-			crate::session::chat::test_support::tool_call_response(
-				"schedule",
-				serde_json::json!({"command": "list"}),
-			),
+			crate::session::chat::test_support::tool_call_response("schedule", serde_json::json!({"command": "list"})),
 		),
-		(
-			500,
-			serde_json::json!({"error": {"message": "follow-up exploded"}}),
-		),
+		(500, serde_json::json!({"error": {"message": "follow-up exploded"}})),
 	])
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
@@ -767,8 +727,7 @@ async fn test_run_session_with_input_jsonl_mode_completes_turn() {
 		.await
 		.expect("jsonl-mode turn completes");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	assert!(
 		loaded
 			.messages
@@ -813,13 +772,10 @@ async fn test_run_session_with_input_due_schedule_drives_second_turn() {
 		.await
 		.expect("schedule round trip completes");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
 	assert!(
-		contents
-			.iter()
-			.any(|c| c.contains("scheduled follow-up work")),
+		contents.iter().any(|c| c.contains("scheduled follow-up work")),
 		"the fired schedule entry must land as a user turn: {contents:?}"
 	);
 	assert!(
@@ -871,8 +827,7 @@ async fn test_run_session_with_input_batches_two_due_schedules_into_one_turn() {
 		.await
 		.expect("schedule round trip completes");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
 	let first = contents
 		.iter()
@@ -883,15 +838,11 @@ async fn test_run_session_with_input_batches_two_due_schedules_into_one_turn() {
 		.position(|c| c.contains("second reminder"))
 		.expect("second entry delivered");
 	assert!(
-		loaded.messages[first..=second]
-			.iter()
-			.all(|m| m.role == "user"),
+		loaded.messages[first..=second].iter().all(|m| m.role == "user"),
 		"both due entries must land in one turn, with no model round between them: {contents:?}"
 	);
 	assert!(
-		contents
-			.iter()
-			.any(|c| c.contains("handled both reminders")),
+		contents.iter().any(|c| c.contains("handled both reminders")),
 		"the batched delivery must reach the model: {contents:?}"
 	);
 
@@ -967,21 +918,15 @@ async fn test_run_session_with_input_done_compresses_resumed_session() {
 	let mut config = fake_provider_config();
 	config.compression.model.model = Some("ollama:fake-model".to_string());
 	config.supervisor.learning.enabled = false;
-	let args = super::super::GenericSessionArgs::resume(
-		"cov-done-compress".to_string(),
-		"assistant".to_string(),
-	);
+	let args = super::super::GenericSessionArgs::resume("cov-done-compress".to_string(), "assistant".to_string());
 	run_interactive_session_with_input(&args, &config, "/done wrap up the task")
 		.await
 		.expect("resumed /done with instructions completes");
 
-	let loaded =
-		crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
+	let loaded = crate::session::persistence::load_session(&sole_session_file()).expect("session saved");
 	let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
 	assert!(
-		contents
-			.iter()
-			.any(|c| c.contains("COMPRESS-RESUME-CONTEXT")),
+		contents.iter().any(|c| c.contains("COMPRESS-RESUME-CONTEXT")),
 		"the compression summary must replace the drained turns: {contents:?}"
 	);
 	assert!(
@@ -1043,10 +988,7 @@ async fn info_supervisor_usage_reaches_non_interactive_jsonl_and_cli() {
 		};
 		config.runtime_output_mode = Some("jsonl".to_string());
 		let json = output.to_json();
-		assert_eq!(
-			json["supervisor_accounting"]["mechanics"]["resolve"]["chat_calls"],
-			2
-		);
+		assert_eq!(json["supervisor_accounting"]["mechanics"]["resolve"]["chat_calls"], 2);
 		assert_eq!(json["timing"]["tools_runtime_time_ms"], 700);
 		print_command_output(&mut output, &mut session, &config).await;
 		config.runtime_output_mode = None;

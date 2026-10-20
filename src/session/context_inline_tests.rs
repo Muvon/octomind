@@ -39,10 +39,7 @@ async fn current_session_id_returns_none_outside_scope() {
 #[tokio::test]
 async fn with_session_id_propagates_id_to_inner_future() {
 	let id = unique_id("propagate");
-	let observed = with_session_id(id.clone(), async {
-		current_session_id().expect("inside scope")
-	})
-	.await;
+	let observed = with_session_id(id.clone(), async { current_session_id().expect("inside scope") }).await;
 	assert_eq!(observed, id);
 	// And the id is gone after the scope ends.
 	assert!(current_session_id().is_none());
@@ -83,10 +80,7 @@ fn active_skills_are_session_scoped() {
 		get_active_skills(&a),
 		vec!["programming-rust".to_string(), "shell".to_string()]
 	);
-	assert_eq!(
-		get_active_skills(&b),
-		vec!["marketing-backlink".to_string()]
-	);
+	assert_eq!(get_active_skills(&b), vec!["marketing-backlink".to_string()]);
 
 	assert!(has_active_skill(&a, "shell"));
 	assert!(!has_active_skill(&a, "marketing-backlink"));

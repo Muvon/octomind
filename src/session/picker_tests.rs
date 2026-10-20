@@ -14,13 +14,7 @@
 
 use super::*;
 
-fn entry(
-	name: &str,
-	title: Option<&str>,
-	role: Option<&str>,
-	model: Option<&str>,
-	created_at: u64,
-) -> PickerEntry {
+fn entry(name: &str, title: Option<&str>, role: Option<&str>, model: Option<&str>, created_at: u64) -> PickerEntry {
 	PickerEntry {
 		name: name.to_string(),
 		title: title.map(|t| t.to_string()),
@@ -73,10 +67,7 @@ fn label_without_title_omits_em_dash_separator() {
 		1_700_000_000,
 	);
 	let label = e.label();
-	assert!(
-		!label.contains('—'),
-		"no title must mean no em dash: {label}"
-	);
+	assert!(!label.contains('—'), "no title must mean no em dash: {label}");
 	assert!(
 		label.contains("abc123  developer  claude-opus-4-7"),
 		"unexpected label layout: {label}"
@@ -87,14 +78,8 @@ fn label_without_title_omits_em_dash_separator() {
 fn label_with_empty_title_string_is_treated_as_missing() {
 	let e = entry("abc123", Some(""), Some("developer"), None, 1_700_000_000);
 	let label = e.label();
-	assert!(
-		!label.contains('—'),
-		"empty title must not render em dash: {label}"
-	);
-	assert!(
-		label.contains("abc123  developer"),
-		"unexpected label layout: {label}"
-	);
+	assert!(!label.contains('—'), "empty title must not render em dash: {label}");
+	assert!(label.contains("abc123  developer"), "unexpected label layout: {label}");
 }
 
 #[test]

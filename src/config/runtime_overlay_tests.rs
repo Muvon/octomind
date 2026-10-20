@@ -41,11 +41,7 @@ fn extras_unions_across_capabilities() {
 
 	let mut got = extras_for_server("octofs");
 	got.sort();
-	let mut expected = vec![
-		"shell".to_string(),
-		"text_editor".to_string(),
-		"view".to_string(),
-	];
+	let mut expected = vec!["shell".to_string(), "text_editor".to_string(), "view".to_string()];
 	expected.sort();
 	assert_eq!(got, expected);
 }

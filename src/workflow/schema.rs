@@ -209,23 +209,11 @@ impl<'de> Deserialize<'de> for Step {
 	fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
 		let mut table = toml::Table::deserialize(d)?;
 
-		let parallel = table
-			.remove("parallel")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
-		let loop_ = table
-			.remove("loop")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
-		let conditional = table
-			.remove("conditional")
-			.and_then(|v| v.as_bool())
-			.unwrap_or(false);
+		let parallel = table.remove("parallel").and_then(|v| v.as_bool()).unwrap_or(false);
+		let loop_ = table.remove("loop").and_then(|v| v.as_bool()).unwrap_or(false);
+		let conditional = table.remove("conditional").and_then(|v| v.as_bool()).unwrap_or(false);
 
-		let flags = [parallel, loop_, conditional]
-			.iter()
-			.filter(|b| **b)
-			.count();
+		let flags = [parallel, loop_, conditional].iter().filter(|b| **b).count();
 		if flags > 1 {
 			return Err(serde::de::Error::custom(
 				"step may set at most one of: parallel, loop, conditional",

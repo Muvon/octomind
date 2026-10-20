@@ -23,8 +23,7 @@
 //! not a real result and should not trigger validators.
 
 use crate::config::guardrails::{
-	role_matches, spawn_script, target_matches, CompiledHook, CompiledValidator, HookOn,
-	ScriptSnapshot,
+	role_matches, spawn_script, target_matches, CompiledHook, CompiledValidator, HookOn, ScriptSnapshot,
 };
 use crate::mcp::{McpToolCall, McpToolResult};
 use crate::session::context::SessionId;
@@ -69,32 +68,18 @@ pub async fn run_hooks(
 			continue;
 		};
 
-		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name)
-			.map(|s| s.name().to_string());
-		let capability = crate::session::guardrails::resolve_capability(
-			session_id,
-			config,
-			server.as_deref(),
-			&call.tool_name,
-		);
+		let server = crate::mcp::tool_map::get_server_for_tool(&call.tool_name).map(|s| s.name().to_string());
+		let capability =
+			crate::session::guardrails::resolve_capability(session_id, config, server.as_deref(), &call.tool_name);
 		let result_text = result.extract_content();
 		let success = !result.is_error();
 
 		for hook in &rules.hooks {
-			if !hook_matches(
-				hook,
-				capability.as_deref(),
-				&call.parameters,
-				&result_text,
-				success,
-			) {
+			if !hook_matches(hook, capability.as_deref(), &call.parameters, &result_text, success) {
 				continue;
 			}
 			if let Some(binding) = &hook.evolution {
-				if crate::supervisor::learning::evolution::binding_is_shadow(
-					&binding.id,
-					binding.shadow,
-				) {
+				if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
 					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
 					continue;
 				}
@@ -217,12 +202,7 @@ async fn run_one_hook(
 		});
 	}
 
-	let output = match tokio::time::timeout(
-		Duration::from_secs(HOOK_TIMEOUT_SECS),
-		child.wait_with_output(),
-	)
-	.await
-	{
+	let output = match tokio::time::timeout(Duration::from_secs(HOOK_TIMEOUT_SECS), child.wait_with_output()).await {
 		Ok(Ok(o)) => o,
 		Ok(Err(e)) => {
 			eprintln!("guardrail hook `{}` wait failed: {}", script_display, e);
@@ -252,9 +232,7 @@ async fn run_one_hook(
 		return None;
 	}
 	Some(InboxMessage {
-		source: InboxSource::GuardrailHook {
-			script: script_display,
-		},
+		source: InboxSource::GuardrailHook { script: script_display },
 		content: stdout,
 	})
 }
@@ -311,10 +289,7 @@ pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_t
 				continue;
 			}
 			if let Some(binding) = &v.evolution {
-				if crate::supervisor::learning::evolution::binding_is_shadow(
-					&binding.id,
-					binding.shadow,
-				) {
+				if crate::supervisor::learning::evolution::binding_is_shadow(&binding.id, binding.shadow) {
 					crate::supervisor::learning::evolution::mark_shadow_match(&binding.id);
 					continue;
 				}
@@ -329,10 +304,7 @@ pub async fn run_turn_validators(session_id: &SessionId, role: &str, assistant_t
 		let triggered_by: Vec<serde_json::Value> = call_log[slice_start..]
 			.iter()
 			.filter(|(cap, params)| {
-				v.when_used.is_empty()
-					|| v.when_used
-						.iter()
-						.any(|t| target_matches(t, cap.as_deref(), params))
+				v.when_used.is_empty() || v.when_used.iter().any(|t| target_matches(t, cap.as_deref(), params))
 			})
 			.map(|(cap, params)| json!({ "capability": cap, "params": params }))
 			.collect();
@@ -433,22 +405,14 @@ async fn run_one_validator(
 		});
 	}
 
-	let output = match tokio::time::timeout(
-		Duration::from_secs(HOOK_TIMEOUT_SECS),
-		child.wait_with_output(),
-	)
-	.await
-	{
+	let output = match tokio::time::timeout(Duration::from_secs(HOOK_TIMEOUT_SECS), child.wait_with_output()).await {
 		Ok(Ok(o)) => o,
 		Ok(Err(e)) => {
 			eprintln!("validator `{}` wait failed: {}", name, e);
 			return None;
 		}
 		Err(_) => {
-			eprintln!(
-				"validator `{}` timed out after {}s",
-				name, HOOK_TIMEOUT_SECS
-			);
+			eprintln!("validator `{}` timed out after {}s", name, HOOK_TIMEOUT_SECS);
 			return None;
 		}
 	};
@@ -467,10 +431,7 @@ async fn run_one_validator(
 	if stdout.is_empty() {
 		return None;
 	}
-	let wrapped = format!(
-		"<validation validator=\"{}\">\n{}\n</validation>",
-		name, stdout
-	);
+	let wrapped = format!("<validation validator=\"{}\">\n{}\n</validation>", name, stdout);
 	Some(InboxMessage {
 		source: InboxSource::GuardValidator { name },
 		content: wrapped,

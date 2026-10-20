@@ -22,6 +22,7 @@ pub const MESSAGE_ATTACHMENTS_CAPABILITY: &str = "message_attachments_v1";
 /// The bind's session accepts `cancel`/`close` frames and a bind `role`, and
 /// echoes a request's `request_id` on the cost frame that closes its turn.
 pub const SESSION_CONTROL_CAPABILITY: &str = "session_control_v1";
+pub const RUN_EVENTS_CAPABILITY: &str = "run_events_v1";
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -121,9 +122,7 @@ impl Attachment {
 
 		let mut matches = Vec::new();
 		for entry in entries {
-			let entry = entry.map_err(|error| {
-				format!("attachment '{}' could not be located: {}", self.id, error)
-			})?;
+			let entry = entry.map_err(|error| format!("attachment '{}' could not be located: {}", self.id, error))?;
 			if entry.file_name().to_string_lossy().starts_with(&prefix) {
 				matches.push(entry.path());
 			}
@@ -189,6 +188,92 @@ pub struct CloseMessage {
 	pub session_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunLogMessage {
+	pub session_id: String,
+	pub run_id: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunEvent {
+	Prompt {
+		content: String,
+	},
+	Assistant {
+		content: String,
+	},
+	Thinking {
+		content: String,
+	},
+	ToolUse {
+		tool: String,
+		tool_id: String,
+		params: Value,
+	},
+	ToolResult {
+		tool_id: String,
+		content: String,
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		success: Option<bool>,
+	},
+	Usage {
+		cost: f64,
+		input_tokens: u64,
+		output_tokens: u64,
+	},
+	Status {
+		status: crate::session::tap_runs::TapJobStatus,
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		error: Option<String>,
+	},
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunEventPayload {
+	pub session_id: String,
+	pub run_id: String,
+	pub role: String,
+	pub seq: u64,
+	pub event: RunEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunLogPayload {
+	pub session_id: String,
+	pub run_id: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
+	pub status: String,
+	pub source: String,
+	pub seq: u64,
+	pub truncated: bool,
+	pub events: Vec<RunEvent>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub error: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub request_id: Option<String>,
+}
+
+impl RunLogPayload {
+	pub(crate) fn error(request: RunLogMessage, error: String) -> Self {
+		Self {
+			session_id: request.session_id,
+			run_id: request.run_id,
+			role: None,
+			status: "unknown".to_string(),
+			source: "disk".to_string(),
+			seq: 0,
+			truncated: false,
+			events: Vec::new(),
+			error: Some(error),
+			request_id: request.request_id,
+		}
+	}
+}
+
 /// Incoming message from client to server.
 /// Internally tagged by `"type"` so each variant carries only its own fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +284,7 @@ pub enum ClientMessage {
 	Command(CommandMessage),
 	Cancel(CancelMessage),
 	Close(CloseMessage),
+	RunLog(RunLogMessage),
 }
 
 impl ClientMessage {
@@ -222,9 +308,16 @@ impl ClientMessage {
 			ClientMessage::Command(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::Cancel(c) => validate_request_id(&c.request_id)?,
 			ClientMessage::Close(c) => validate_request_id(&c.request_id)?,
+			ClientMessage::RunLog(c) => validate_request_id(&c.request_id)?,
 		}
 
 		match self {
+			ClientMessage::RunLog(m) => {
+				if m.session_id.trim().is_empty() {
+					return Err("session_id cannot be empty".to_string());
+				}
+				crate::session::tap_runs::validate_run_id(&m.run_id)
+			}
 			ClientMessage::Session(m) => {
 				if let Some(cwd) = &m.cwd {
 					if !Path::new(cwd).is_absolute() {
@@ -280,6 +373,7 @@ impl ClientMessage {
 			ClientMessage::Command(c) => c.request_id.as_deref(),
 			ClientMessage::Cancel(c) => c.request_id.as_deref(),
 			ClientMessage::Close(c) => c.request_id.as_deref(),
+			ClientMessage::RunLog(c) => c.request_id.as_deref(),
 		}
 	}
 
@@ -290,6 +384,7 @@ impl ClientMessage {
 			ClientMessage::Command(_) => "command",
 			ClientMessage::Cancel(_) => "cancel",
 			ClientMessage::Close(_) => "close",
+			ClientMessage::RunLog(_) => "run_log",
 		}
 	}
 
@@ -300,6 +395,7 @@ impl ClientMessage {
 			ClientMessage::Command(c) => Some(c.session_id.as_str()),
 			ClientMessage::Cancel(c) => Some(c.session_id.as_str()),
 			ClientMessage::Close(c) => Some(c.session_id.as_str()),
+			ClientMessage::RunLog(c) => Some(c.session_id.as_str()),
 		}
 	}
 }
@@ -487,6 +583,8 @@ pub struct McpNotificationPayload {
 pub enum ServerMessage {
 	/// Immediate acknowledgement that a valid client input frame was received.
 	Ack(AckPayload),
+	RunEvent(RunEventPayload),
+	RunLog(RunLogPayload),
 	/// AI assistant response text
 	Assistant(AssistantPayload),
 	/// AI thinking/reasoning content (separate from assistant response)
@@ -522,10 +620,7 @@ impl ServerMessage {
 	}
 
 	pub fn error_for_request(message: String, request_id: Option<String>) -> Self {
-		ServerMessage::Error(ErrorPayload {
-			message,
-			request_id,
-		})
+		ServerMessage::Error(ErrorPayload { message, request_id })
 	}
 
 	pub fn ack(client_msg: &ClientMessage) -> Self {
@@ -538,6 +633,7 @@ impl ServerMessage {
 				ClientMessage::Session(_) => vec![
 					MESSAGE_ATTACHMENTS_CAPABILITY.to_string(),
 					SESSION_CONTROL_CAPABILITY.to_string(),
+					RUN_EVENTS_CAPABILITY.to_string(),
 				],
 				_ => Vec::new(),
 			},

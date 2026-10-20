@@ -33,11 +33,7 @@ fn transcript() -> ChatSession {
 		message("assistant", "Looking at it.", 120),
 		message("tool", "file contents", 130),
 		message("assistant", "   ", 140),
-		message(
-			"assistant",
-			"Done — parser fixed.\n\nRun the tests next?",
-			150,
-		),
+		message("assistant", "Done — parser fixed.\n\nRun the tests next?", 150),
 		message("user", "yes", 160),
 		message("assistant", "\nTests pass.\n", 170),
 	])
@@ -126,10 +122,7 @@ fn words_match_in_any_order_and_case() {
 #[test]
 fn bare_reply_quotes_the_latest() {
 	let result = handle_reply(&transcript(), &[]).expect("handled");
-	assert_eq!(
-		reply_output(result),
-		(1, 170, 1, "> Tests pass.".to_string())
-	);
+	assert_eq!(reply_output(result), (1, 170, 1, "> Tests pass.".to_string()));
 }
 
 #[test]
@@ -149,20 +142,14 @@ fn number_selects_the_nth_latest() {
 #[test]
 fn words_select_the_latest_reply_containing_them() {
 	let result = handle_reply(&transcript(), &["looking", "AT"]).expect("handled");
-	assert_eq!(
-		reply_output(result),
-		(3, 120, 1, "> Looking at it.".to_string())
-	);
+	assert_eq!(reply_output(result), (3, 120, 1, "> Looking at it.".to_string()));
 }
 
 #[test]
 fn missing_replies_are_reported() {
 	let session = transcript();
 	let out_of_range = handle_reply(&session, &["4"]).expect("handled");
-	assert_eq!(
-		error_output(out_of_range),
-		"No reply #4: this session has 3."
-	);
+	assert_eq!(error_output(out_of_range), "No reply #4: this session has 3.");
 	let zero = handle_reply(&session, &["0"]).expect("handled");
 	assert_eq!(error_output(zero), "No reply #0: this session has 3.");
 	let no_match = handle_reply(&session, &["deploy"]).expect("handled");

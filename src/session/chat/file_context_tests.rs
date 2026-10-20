@@ -63,11 +63,7 @@ fn test_extract_file_refs_from_args() {
 	assert!(out.is_empty());
 
 	// path + lines → ranged ref
-	extract_file_refs_from_args(
-		"view",
-		&json!({"path": "a.rs", "lines": [10, 20]}),
-		&mut out,
-	);
+	extract_file_refs_from_args("view", &json!({"path": "a.rs", "lines": [10, 20]}), &mut out);
 	assert_eq!(out, vec!["a.rs:10:20"]);
 
 	// path without lines → whole file

@@ -49,10 +49,7 @@ fn test_parse_tap_arg() {
 fn test_expand_path() {
 	let home = dirs::home_dir().expect("home dir in test env");
 	assert_eq!(expand_path("~/x").expect("tilde"), home.join("x"));
-	assert_eq!(
-		expand_path("/abs/path").expect("absolute"),
-		PathBuf::from("/abs/path")
-	);
+	assert_eq!(expand_path("/abs/path").expect("absolute"), PathBuf::from("/abs/path"));
 	let cwd = std::env::current_dir().expect("cwd");
 	assert_eq!(expand_path("./rel").expect("relative"), cwd.join("rel"));
 }

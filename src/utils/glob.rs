@@ -36,10 +36,7 @@ const MAX_EXPANDED_FILES: usize = 1000;
 /// # Returns
 /// * `Ok(Vec<String>)` - List of expanded file paths
 /// * `Err(anyhow::Error)` - If expansion fails or too many files found
-pub fn expand_glob_patterns_filtered(
-	patterns: &[String],
-	base_dir: Option<&str>,
-) -> Result<Vec<String>> {
+pub fn expand_glob_patterns_filtered(patterns: &[String], base_dir: Option<&str>) -> Result<Vec<String>> {
 	let mut expanded_paths = Vec::new();
 
 	// Determine the search directory
@@ -153,10 +150,7 @@ pub fn expand_glob_patterns_filtered(
 		}
 	}
 
-	crate::log_debug!(
-		"Found {} files after gitignore and dotfile filtering",
-		all_files.len()
-	);
+	crate::log_debug!("Found {} files after gitignore and dotfile filtering", all_files.len());
 
 	// Now apply glob pattern matching
 	for pattern in patterns {
@@ -205,21 +199,14 @@ pub fn expand_glob_patterns_filtered(
 			}
 		}
 
-		crate::log_debug!(
-			"Glob pattern '{}' matched {} files",
-			pattern,
-			pattern_matches
-		);
+		crate::log_debug!("Glob pattern '{}' matched {} files", pattern, pattern_matches);
 	}
 
 	// Deduplicate files in case multiple patterns match the same file
 	expanded_paths.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
 	expanded_paths.dedup_by(|a, b| Path::new(a) == Path::new(b));
 
-	crate::log_debug!(
-		"Total expanded files after deduplication: {}",
-		expanded_paths.len()
-	);
+	crate::log_debug!("Total expanded files after deduplication: {}", expanded_paths.len());
 
 	// Check if we have too many files
 	if expanded_paths.len() > MAX_EXPANDED_FILES {

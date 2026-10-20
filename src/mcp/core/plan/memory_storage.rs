@@ -56,10 +56,7 @@ impl MemoryPlanStorage {
 		if tasks.is_empty() {
 			return Err(anyhow!("A revised plan needs at least one remaining task"));
 		}
-		let plan = self
-			.plan
-			.as_mut()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_mut().ok_or_else(|| anyhow!("No active plan"))?;
 		plan.tasks.truncate(plan.current_task_index);
 		plan.tasks.extend(tasks.into_iter().map(|task| PlanTask {
 			title: task.title,
@@ -98,8 +95,8 @@ impl PlanStorage for MemoryPlanStorage {
 				summary: None,
 				status: TaskStatus::InProgress, // All tasks start as InProgress, managed by current_task_index
 				completed_at: None,
-				message_range: None,    // Initialize as None, will be set during compression
-				phase: task_data.phase, // Optional phase grouping
+				message_range: None,          // Initialize as None, will be set during compression
+				phase: task_data.phase,       // Optional phase grouping
 				valid_if: task_data.valid_if, // Optional falsifiable validity condition
 			})
 			.collect();
@@ -117,10 +114,7 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn add_step_details(&mut self, content: String) -> Result<()> {
-		let plan = self
-			.plan
-			.as_mut()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_mut().ok_or_else(|| anyhow!("No active plan"))?;
 
 		if plan.current_task_index >= plan.tasks.len() {
 			return Err(anyhow!("No current task to update"));
@@ -137,10 +131,7 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn get_current_step_details(&self) -> Result<String> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 
 		if plan.current_task_index >= plan.tasks.len() {
 			return Err(anyhow!("No current task"));
@@ -150,10 +141,7 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn complete_current_task(&mut self, summary: String) -> Result<()> {
-		let plan = self
-			.plan
-			.as_mut()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_mut().ok_or_else(|| anyhow!("No active plan"))?;
 
 		if plan.current_task_index >= plan.tasks.len() {
 			return Err(anyhow!("No current task to complete"));
@@ -173,18 +161,12 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn has_more_tasks(&self) -> Result<bool> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.current_task_index < plan.tasks.len())
 	}
 
 	fn get_task_list(&self) -> Result<Vec<(String, String, TaskStatus)>> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 
 		let mut tasks = Vec::new();
 		for (i, task) in plan.tasks.iter().enumerate() {
@@ -200,10 +182,7 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn get_current_task_info(&self) -> Result<(usize, usize, String, String)> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 
 		if plan.current_task_index >= plan.tasks.len() {
 			return Err(anyhow!("All tasks completed"));
@@ -219,10 +198,7 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn complete_plan(&mut self, _summary: String) -> Result<()> {
-		let plan = self
-			.plan
-			.as_mut()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_mut().ok_or_else(|| anyhow!("No active plan"))?;
 
 		plan.status = PlanStatus::Completed;
 		self.touch();
@@ -239,22 +215,12 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn get_plan_title(&self) -> Result<String> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.title.clone())
 	}
 
-	fn set_current_task_message_range(
-		&mut self,
-		start_index: usize,
-		end_index: usize,
-	) -> Result<()> {
-		let plan = self
-			.plan
-			.as_mut()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+	fn set_current_task_message_range(&mut self, start_index: usize, end_index: usize) -> Result<()> {
+		let plan = self.plan.as_mut().ok_or_else(|| anyhow!("No active plan"))?;
 
 		// Set message range for the task that was just completed (current_task_index - 1)
 		if plan.current_task_index == 0 {
@@ -266,19 +232,13 @@ impl PlanStorage for MemoryPlanStorage {
 			return Err(anyhow!("Invalid task index"));
 		}
 
-		plan.tasks[completed_task_index].message_range = Some(super::storage::MessageRange {
-			start_index,
-			end_index,
-		});
+		plan.tasks[completed_task_index].message_range = Some(super::storage::MessageRange { start_index, end_index });
 
 		Ok(())
 	}
 
 	fn get_last_completed_task(&self) -> Result<Option<PlanTask>> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 
 		// Get the last completed task (current_task_index - 1)
 		if plan.current_task_index == 0 {
@@ -294,26 +254,17 @@ impl PlanStorage for MemoryPlanStorage {
 	}
 
 	fn get_completed_task_count(&self) -> Result<usize> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.current_task_index)
 	}
 
 	fn get_current_task_index(&self) -> Result<usize> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.current_task_index)
 	}
 
 	fn get_total_task_count(&self) -> Result<usize> {
-		let plan = self
-			.plan
-			.as_ref()
-			.ok_or_else(|| anyhow!("No active plan"))?;
+		let plan = self.plan.as_ref().ok_or_else(|| anyhow!("No active plan"))?;
 		Ok(plan.tasks.len())
 	}
 

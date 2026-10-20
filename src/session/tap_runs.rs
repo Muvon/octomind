@@ -36,7 +36,8 @@ use tokio::sync::watch;
 
 use crate::session::context::SessionId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TapJobStatus {
 	Running,
 	Done,
@@ -105,6 +106,7 @@ pub struct TapJobInfo {
 
 struct Registry {
 	jobs: HashMap<SessionId, Vec<TapJob>>,
+	websocket: HashMap<SessionId, Option<crate::websocket::run_events::RunEvents>>,
 }
 
 static REGISTRY: RwLock<Option<Registry>> = RwLock::new(None);
@@ -116,6 +118,7 @@ where
 	let mut guard = REGISTRY.write().ok()?;
 	let reg = guard.get_or_insert_with(|| Registry {
 		jobs: HashMap::new(),
+		websocket: HashMap::new(),
 	});
 	Some(f(reg))
 }
@@ -127,6 +130,7 @@ pub fn init_for_session() {
 		None => return,
 	};
 	let _ = with_registry(|r| {
+		r.websocket.entry(session_id.clone()).or_default();
 		r.jobs.entry(session_id).or_default();
 	});
 }
@@ -140,7 +144,10 @@ pub fn clear_for_session(session_id: &SessionId) {
 			Err(_) => return,
 		};
 		match guard.as_mut() {
-			Some(reg) => reg.jobs.remove(session_id),
+			Some(reg) => {
+				reg.websocket.remove(session_id);
+				reg.jobs.remove(session_id)
+			}
 			None => None,
 		}
 	};
@@ -201,12 +208,8 @@ pub fn has_running_jobs() -> bool {
 	let Some(jobs) = reg.jobs.get(&session_id) else {
 		return false;
 	};
-	jobs.iter().any(|j| {
-		j.status
-			.read()
-			.map(|s| *s == TapJobStatus::Running)
-			.unwrap_or(false)
-	})
+	jobs.iter()
+		.any(|j| j.status.read().map(|s| *s == TapJobStatus::Running).unwrap_or(false))
 }
 
 /// Labels of the current session's still-running tap-runs, `"role (id)"` each,
@@ -300,8 +303,17 @@ pub fn cancel_job(id: &str) -> Option<TapJobStatus> {
 	let current = *job.status.read().ok()?;
 	if current == TapJobStatus::Running {
 		let _ = job.cancel_tx.send(true);
-		if let Ok(mut s) = job.status.write() {
-			*s = TapJobStatus::Cancelled;
+		// The WebSocket buffer belongs to this child until it exits; allowing a
+		// resume earlier would mix two children into the same run sequence.
+		let streaming = reg
+			.websocket
+			.get(&session_id)
+			.and_then(Option::as_ref)
+			.is_some_and(|events| events.is_running(id));
+		if !streaming {
+			if let Ok(mut s) = job.status.write() {
+				*s = TapJobStatus::Cancelled;
+			}
 		}
 		return Some(TapJobStatus::Cancelled);
 	}
@@ -312,9 +324,7 @@ pub fn cancel_job(id: &str) -> Option<TapJobStatus> {
 /// running job. Used by `tap run` when a caller resumes by id — we need the
 /// shared status cell (so the resumed turn flips it back to terminal) and
 /// a cancel receiver subscribed to the existing sender.
-pub fn get_status_and_cancel(
-	id: &str,
-) -> Option<(Arc<RwLock<TapJobStatus>>, watch::Receiver<bool>)> {
+pub fn get_status_and_cancel(id: &str) -> Option<(Arc<RwLock<TapJobStatus>>, watch::Receiver<bool>)> {
 	let session_id = crate::session::context::current_session_id()?;
 	let guard = REGISTRY.read().ok()?;
 	let reg = guard.as_ref()?;
@@ -336,6 +346,110 @@ pub fn reset_cancel(id: &str) -> Option<watch::Receiver<bool>> {
 	let (tx, rx) = watch::channel(false);
 	job.cancel_tx = tx;
 	Some(rx)
+}
+
+/// Publish the terminal state before a resume can start a new event buffer.
+pub(crate) fn finish_run(id: &str, status: &RwLock<TapJobStatus>, terminal: TapJobStatus, error: Option<String>) {
+	let mut guard = REGISTRY.write().expect("tap registry poisoned");
+	let mut status = status.write().expect("tap status poisoned");
+	if *status == TapJobStatus::Running {
+		*status = terminal;
+	}
+	if let Some(events) = crate::session::context::current_session_id()
+		.and_then(|sid| guard.as_mut()?.websocket.get_mut(&sid))
+		.and_then(Option::as_mut)
+	{
+		let parent = crate::session::context::current_session_id().expect("tap parent session");
+		events.emit(
+			&parent,
+			id,
+			crate::websocket::protocol::RunEvent::Status { status: *status, error },
+		);
+	}
+}
+
+pub(crate) fn snapshot_run_log(
+	request: &crate::websocket::protocol::RunLogMessage,
+) -> crate::websocket::protocol::RunLogPayload {
+	use crate::websocket::protocol::RunLogPayload;
+	let guard = REGISTRY.read().expect("tap registry poisoned");
+	let reg = guard.as_ref();
+	let job = reg
+		.and_then(|r| r.jobs.get(&request.session_id))
+		.and_then(|jobs| jobs.iter().find(|job| job.id == request.run_id));
+	let status = job.map(|job| *job.status.read().expect("tap status poisoned"));
+	let events = reg
+		.and_then(|r| r.websocket.get(&request.session_id))
+		.and_then(Option::as_ref);
+	if status == Some(TapJobStatus::Running) {
+		if let Some(snapshot) = events.and_then(|events| events.snapshot(request)) {
+			return snapshot;
+		}
+	}
+	RunLogPayload {
+		session_id: request.session_id.clone(),
+		run_id: request.run_id.clone(),
+		role: job.map(|job| job.role.clone()),
+		status: status.map_or("unknown", TapJobStatus::as_str).to_string(),
+		source: "disk".to_string(),
+		seq: events.map_or(0, |events| events.last_seq(&request.run_id)),
+		truncated: false,
+		events: Vec::new(),
+		error: None,
+		request_id: request.request_id.clone(),
+	}
+}
+
+/// Generated run IDs are filenames, unlike package tap IDs (`owner/repo`).
+pub fn validate_run_id(id: &str) -> Result<(), String> {
+	let valid = id
+		.strip_prefix("tap-")
+		.and_then(|rest| rest.rsplit_once('-'))
+		.is_some_and(|(role, hash)| {
+			!role.is_empty()
+				&& role
+					.bytes()
+					.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+				&& hash.len() == 6
+				&& hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+		});
+	if valid {
+		Ok(())
+	} else {
+		Err(format!("invalid run_id: {id}"))
+	}
+}
+
+pub(crate) fn enable_run_events(sender: Option<crate::websocket::server::WsSender>) {
+	let session_id = crate::session::context::current_session_id().expect("bound session context");
+	let mut guard = REGISTRY.write().expect("tap registry poisoned");
+	let events = guard
+		.as_mut()
+		.expect("tap registry initialized")
+		.websocket
+		.get_mut(&session_id)
+		.expect("session services initialized")
+		.get_or_insert_with(Default::default);
+	if let Some(sender) = sender {
+		events.bind(sender);
+	}
+}
+
+pub(crate) fn unbind_run_events(sender: &crate::websocket::server::WsSender) {
+	let mut guard = REGISTRY.write().expect("tap registry poisoned");
+	if let Some(reg) = guard.as_mut() {
+		for events in reg.websocket.values_mut().flatten() {
+			events.unbind(sender);
+		}
+	}
+}
+
+/// Returns None on other transports, including ACP's channel-based output.
+pub(crate) fn with_run_events<R>(f: impl FnOnce(&mut crate::websocket::run_events::RunEvents, &str) -> R) -> Option<R> {
+	let session_id = crate::session::context::current_session_id()?;
+	let mut guard = REGISTRY.write().expect("tap registry poisoned");
+	let events = guard.as_mut()?.websocket.get_mut(&session_id)?.as_mut()?;
+	Some(f(events, &session_id))
 }
 
 /// Generate a fresh tap-run id from a role tag — `tap-<role-with-dash>-<6hex>`.

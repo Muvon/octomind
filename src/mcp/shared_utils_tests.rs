@@ -80,10 +80,7 @@ fn test_max_lines_one_keeps_only_marker() {
 		result,
 		vec!["[4 lines truncated - use more specific patterns or increase max_lines]".to_string()]
 	);
-	assert_eq!(
-		info.as_deref(),
-		Some("Output truncated: showing 1 of 4 total lines")
-	);
+	assert_eq!(info.as_deref(), Some("Output truncated: showing 1 of 4 total lines"));
 }
 
 #[test]
@@ -92,20 +89,13 @@ fn test_truncation_preserves_head_order_and_exact_marker() {
 	assert_eq!(result.len(), 4);
 	assert_eq!(
 		result[..3].to_vec(),
-		vec![
-			"line1".to_string(),
-			"line2".to_string(),
-			"line3".to_string()
-		]
+		vec!["line1".to_string(), "line2".to_string(), "line3".to_string()]
 	);
 	assert_eq!(
 		result[3],
 		"[7 lines truncated - use more specific patterns or increase max_lines]"
 	);
-	assert_eq!(
-		info.as_deref(),
-		Some("Output truncated: showing 4 of 10 total lines")
-	);
+	assert_eq!(info.as_deref(), Some("Output truncated: showing 4 of 10 total lines"));
 }
 
 #[test]
@@ -119,10 +109,7 @@ fn test_zero_max_lines_disables_truncation_for_large_input() {
 
 #[test]
 fn test_blank_lines_count_toward_the_limit() {
-	let input: Vec<String> = ["a", "", "b", "", "c"]
-		.iter()
-		.map(|s| s.to_string())
-		.collect();
+	let input: Vec<String> = ["a", "", "b", "", "c"].iter().map(|s| s.to_string()).collect();
 	let (result, info) = apply_head_truncation(&input, 3);
 	assert_eq!(result.len(), 3);
 	assert_eq!(result[0], "a");
@@ -131,10 +118,7 @@ fn test_blank_lines_count_toward_the_limit() {
 		result[2],
 		"[3 lines truncated - use more specific patterns or increase max_lines]"
 	);
-	assert_eq!(
-		info.as_deref(),
-		Some("Output truncated: showing 3 of 5 total lines")
-	);
+	assert_eq!(info.as_deref(), Some("Output truncated: showing 3 of 5 total lines"));
 }
 
 #[test]
@@ -144,8 +128,5 @@ fn test_two_lines_with_max_one_reports_both_truncated() {
 		result,
 		vec!["[2 lines truncated - use more specific patterns or increase max_lines]".to_string()]
 	);
-	assert_eq!(
-		info.as_deref(),
-		Some("Output truncated: showing 1 of 2 total lines")
-	);
+	assert_eq!(info.as_deref(), Some("Output truncated: showing 1 of 2 total lines"));
 }

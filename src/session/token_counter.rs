@@ -104,10 +104,7 @@ pub fn estimate_message_tokens(message: &crate::session::Message) -> usize {
 /// inflates every context decision — the compression fire line, the ceiling
 /// margin, cache checkpoints and the pre-flight size check.
 pub fn estimate_sent_message_tokens(message: &crate::session::Message, model: &str) -> usize {
-	message_tokens(
-		message,
-		crate::session::model_utils::model_replays_thinking(model),
-	)
+	message_tokens(message, crate::session::model_utils::model_replays_thinking(model))
 }
 
 fn message_tokens(message: &crate::session::Message, count_thinking: bool) -> usize {
@@ -163,10 +160,7 @@ pub fn estimate_session_tokens(messages: &[crate::session::Message]) -> usize {
 
 /// `estimate_session_tokens` as the provider serving `model` receives it.
 pub fn estimate_sent_session_tokens(messages: &[crate::session::Message], model: &str) -> usize {
-	session_tokens(
-		messages,
-		crate::session::model_utils::model_replays_thinking(model),
-	)
+	session_tokens(messages, crate::session::model_utils::model_replays_thinking(model))
 }
 
 fn session_tokens(messages: &[crate::session::Message], count_thinking: bool) -> usize {
@@ -267,8 +261,7 @@ pub async fn calculate_minimum_session_tokens(
 	};
 
 	// Get initial messages tokens (welcome + instructions)
-	let initial_messages =
-		crate::session::chat::session::get_initial_messages(config, role, current_dir).await;
+	let initial_messages = crate::session::chat::session::get_initial_messages(config, role, current_dir).await;
 	let mut initial_messages_tokens = 0;
 	for message in &initial_messages {
 		// Calculate tokens for message content

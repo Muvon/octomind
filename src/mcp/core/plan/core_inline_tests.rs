@@ -54,19 +54,11 @@ async fn staleness_marker_fires_only_for_an_active_plan_older_than_the_request()
 		assert!(!unknown.contains(PLAN_STALENESS_MARKER));
 
 		// Engaging the plan clears the marker (self-clearing steering).
-		storage
-			.lock()
-			.unwrap()
-			.complete_current_task("done a".into())
-			.unwrap();
+		storage.lock().unwrap().complete_current_task("done a".into()).unwrap();
 		assert_eq!(plan_staleness_marker(11), None);
 
 		// A finished plan is not recited and cannot be stale.
-		storage
-			.lock()
-			.unwrap()
-			.complete_plan("done".into())
-			.unwrap();
+		storage.lock().unwrap().complete_plan("done".into()).unwrap();
 		assert_eq!(plan_staleness_marker(u64::MAX), None);
 		assert_eq!(render_plan_checklist_with_staleness(Some(u64::MAX)), None);
 	})
@@ -131,13 +123,8 @@ fn verified_finish_closes_every_remaining_plan_item_atomically() {
 	assert!(!storage.has_active_plan().unwrap());
 	assert_eq!(storage.get_completed_task_count().unwrap(), 3);
 	let tasks = &storage.get_plan().unwrap().tasks;
-	assert_eq!(
-		tasks[0].summary.as_deref(),
-		Some("inspection already evidenced")
-	);
-	assert!(tasks
-		.iter()
-		.all(|task| matches!(task.status, TaskStatus::Completed)));
+	assert_eq!(tasks[0].summary.as_deref(), Some("inspection already evidenced"));
+	assert!(tasks.iter().all(|task| matches!(task.status, TaskStatus::Completed)));
 	assert!(tasks[1..]
 		.iter()
 		.all(|task| task.summary.as_deref() == Some("full deliverable verified")));

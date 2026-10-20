@@ -163,9 +163,7 @@ pub(crate) async fn build(
 	minimal_frontier: bool,
 ) -> Result<PactContext> {
 	if drain_start > drain_end || drain_end >= session.session.messages.len() {
-		return Err(anyhow!(
-			"invalid PACT drain range {drain_start}..={drain_end}"
-		));
+		return Err(anyhow!("invalid PACT drain range {drain_start}..={drain_end}"));
 	}
 	let drained = &session.session.messages[drain_start..=drain_end];
 	let mut packets = build_packets(&session.session.info.name, drained, &session.model);
@@ -182,18 +180,12 @@ pub(crate) async fn build(
 		.map(|packet| packet.id.clone());
 
 	let constraints = collect_constraints(session, task_source.as_deref());
-	let verification_policy = session.session.info.verification_policy.effective(
-		session
-			.gate_task
-			.as_ref()
-			.is_some_and(|task| task.forbids_verification),
-	);
-	let governance_hash = governance_hash(
-		&session.session.messages,
-		&task_text,
-		&constraints,
-		verification_policy,
-	);
+	let verification_policy = session
+		.session
+		.info
+		.verification_policy
+		.effective(session.gate_task.as_ref().is_some_and(|task| task.forbids_verification));
+	let governance_hash = governance_hash(&session.session.messages, &task_text, &constraints, verification_policy);
 	let pinned = PinnedState {
 		task: PinnedItem {
 			text: task_text,
@@ -343,11 +335,7 @@ fn packet_linkage(messages: &[Message], kind: PacketKind) -> PacketLinkage {
 	let call_ids = tool_call_ids(owner);
 	if call_ids.is_empty()
 		|| messages.iter().skip(1).any(|message| {
-			message.role == "tool"
-				&& message
-					.tool_call_id
-					.as_deref()
-					.is_none_or(|id| !call_ids.contains(id))
+			message.role == "tool" && message.tool_call_id.as_deref().is_none_or(|id| !call_ids.contains(id))
 		}) {
 		PacketLinkage::ContiguousFallback
 	} else {
@@ -362,8 +350,7 @@ fn classify_packet(messages: &[Message]) -> (PacketKind, Provenance) {
 			return (PacketKind::TaskContinuation, Provenance::ValidatedSummary);
 		}
 		if crate::session::is_real_user_task_message(first) {
-			let has_constraint =
-				!crate::supervisor::recite::extract_constraints(&first.content).is_empty();
+			let has_constraint = !crate::supervisor::recite::extract_constraints(&first.content).is_empty();
 			return (
 				if has_constraint {
 					PacketKind::UserConstraintOrCorrection
@@ -383,16 +370,11 @@ fn classify_packet(messages: &[Message]) -> (PacketKind, Provenance) {
 	}
 	if first.role == "assistant"
 		&& (first.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
-			|| first
-				.content
-				.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
+			|| first.content.contains(super::knowledge::SUMMARY_TAG_OPEN_PREFIX))
 	{
 		return (PacketKind::PriorSummary, Provenance::ValidatedSummary);
 	}
-	(
-		PacketKind::AssistantCheckpoint,
-		Provenance::AssistantReported,
-	)
+	(PacketKind::AssistantCheckpoint, Provenance::AssistantReported)
 }
 
 fn has_tool_calls(message: &Message) -> bool {
@@ -427,11 +409,7 @@ fn stable_packet_id(session_name: &str, messages: &[Message]) -> String {
 }
 
 fn short_hex(bytes: &[u8]) -> String {
-	bytes
-		.iter()
-		.take(16)
-		.map(|byte| format!("{byte:02x}"))
-		.collect()
+	bytes.iter().take(16).map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn packet_for_offset(packets: &[EvidencePacket], offset: usize) -> Option<&EvidencePacket> {
@@ -501,8 +479,7 @@ fn link_dependencies(packets: &mut [EvidencePacket]) {
 }
 
 fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<PinnedItem> {
-	let literal_task = crate::session::latest_real_user_task_content(&session.session.messages)
-		.unwrap_or_default();
+	let literal_task = crate::session::latest_real_user_task_content(&session.session.messages).unwrap_or_default();
 	// Standing session rules pin first. The turn that set one may already be
 	// folded away, so they cite no packet rather than a false source.
 	let mut items: Vec<PinnedItem> = session
@@ -515,10 +492,7 @@ fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<
 			source: None,
 		})
 		.collect();
-	for text in crate::supervisor::recite::active_constraints(
-		&session.session.messages,
-		session.gate_task.as_ref(),
-	) {
+	for text in crate::supervisor::recite::active_constraints(&session.session.messages, session.gate_task.as_ref()) {
 		if items.iter().any(|item| item.text == text) {
 			continue;
 		}
@@ -527,9 +501,7 @@ fn collect_constraints(session: &ChatSession, task_source: Option<&str>) -> Vec<
 			// constraint. A contextual resolver may legitimately carry a constraint
 			// from its bounded evidence, but attributing that text to the literal
 			// "continue" packet would be false provenance.
-			source: task_source
-				.filter(|_| literal_task.contains(&text))
-				.map(str::to_string),
+			source: task_source.filter(|_| literal_task.contains(&text)).map(str::to_string),
 			text,
 		});
 	}
@@ -558,11 +530,7 @@ fn governance_hash(
 	short_hex(&hasher.finalize())
 }
 
-fn ground_self_report(
-	session: &ChatSession,
-	messages: &[Message],
-	packets: &[EvidencePacket],
-) -> Vec<GroundedHint> {
+fn ground_self_report(session: &ChatSession, messages: &[Message], packets: &[EvidencePacket]) -> Vec<GroundedHint> {
 	let Some(handoff) = session.last_self_report_handoff.as_ref() else {
 		return Vec::new();
 	};
@@ -623,10 +591,7 @@ fn ground_handoff(
 }
 
 fn normalize_for_match(text: &str) -> String {
-	text.split_whitespace()
-		.collect::<Vec<_>>()
-		.join(" ")
-		.to_lowercase()
+	text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 /// Smallest preview budget for a summarize candidate. Below this the head/tail
@@ -715,9 +680,7 @@ async fn allocate_lanes(
 	let mut candidates: Vec<usize> = packets
 		.iter()
 		.enumerate()
-		.filter(|(_, packet)| {
-			packet.lane == Lane::ArchiveReference && packet.provenance != Provenance::RealUser
-		})
+		.filter(|(_, packet)| packet.lane == Lane::ArchiveReference && packet.provenance != Provenance::RealUser)
 		.map(|(index, _)| index)
 		.collect();
 	let mut remaining = target_tokens.saturating_sub(used);
@@ -735,18 +698,13 @@ async fn allocate_lanes(
 	let previews: BTreeMap<usize, (PacketRender, usize)> = candidates
 		.iter()
 		.map(|index| {
-			let budget = packets[*index]
-				.tokens
-				.div_ceil(2)
-				.max(MIN_SUMMARIZE_RENDER_TOKENS);
+			let budget = packets[*index].tokens.div_ceil(2).max(MIN_SUMMARIZE_RENDER_TOKENS);
 			let rendered = render_packet_with_spans(messages, &packets[*index], budget);
 			let cost = crate::session::estimate_tokens(&rendered.content);
 			(*index, (rendered, cost))
 		})
 		.collect();
-	let all_recoverable = previews
-		.values()
-		.all(|(rendered, _)| !rendered.spans.is_empty());
+	let all_recoverable = previews.values().all(|(rendered, _)| !rendered.spans.is_empty());
 	let preview_total = previews
 		.values()
 		.map(|(_, cost)| *cost)
@@ -799,10 +757,7 @@ async fn allocate_lanes(
 		let rendered: Vec<(usize, PacketRender, usize)> = pending
 			.iter()
 			.filter_map(|candidate| {
-				let desired = packets[*candidate]
-					.tokens
-					.div_ceil(2)
-					.max(MIN_SUMMARIZE_RENDER_TOKENS);
+				let desired = packets[*candidate].tokens.div_ceil(2).max(MIN_SUMMARIZE_RENDER_TOKENS);
 				// A preview rendered at `desired` is exact for any budget that
 				// covers it; empty spans at `desired` stay empty at any smaller
 				// budget, so a known-empty preview short-circuits the re-render.
@@ -810,11 +765,8 @@ async fn allocate_lanes(
 					Some((preview, _)) if preview.spans.is_empty() => return None,
 					Some((preview, cost)) if per_packet >= desired => (preview.clone(), *cost),
 					_ => {
-						let rendered = render_packet_with_spans(
-							messages,
-							&packets[*candidate],
-							desired.min(per_packet),
-						);
+						let rendered =
+							render_packet_with_spans(messages, &packets[*candidate], desired.min(per_packet));
 						let cost = crate::session::estimate_tokens(&rendered.content);
 						(rendered, cost)
 					}
@@ -869,10 +821,7 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 	if active.provenance == Provenance::RealUser || active.kind == PacketKind::PriorSummary {
 		return HashSet::new();
 	}
-	let by_id: BTreeMap<&str, &EvidencePacket> = packets
-		.iter()
-		.map(|packet| (packet.id.as_str(), packet))
-		.collect();
+	let by_id: BTreeMap<&str, &EvidencePacket> = packets.iter().map(|packet| (packet.id.as_str(), packet)).collect();
 	let mut selected = HashSet::new();
 	let mut stack = vec![active.id.as_str()];
 	while let Some(id) = stack.pop() {
@@ -888,10 +837,10 @@ fn active_dependency_closure(packets: &[EvidencePacket]) -> HashSet<String> {
 				// by the size of the previous one until compaction frees nothing.
 				// Its durable content re-folds through the summarize lane and
 				// stays exactly recallable by block ID.
-				if by_id.get(dependency.as_str()).is_some_and(|p| {
-					matches!(p.provenance, Provenance::RealUser)
-						|| p.kind == PacketKind::PriorSummary
-				}) {
+				if by_id
+					.get(dependency.as_str())
+					.is_some_and(|p| matches!(p.provenance, Provenance::RealUser) || p.kind == PacketKind::PriorSummary)
+				{
 					continue;
 				}
 				stack.push(dependency);
@@ -916,13 +865,10 @@ async fn rank_candidates(
 		.iter()
 		.map(|index| {
 			let content = render_packet(messages, &packets[*index], 512);
-			crate::embeddings::chunk_to_token_limit(
-				&content,
-				crate::embeddings::EMBED_MAX_INPUT_TOKENS,
-			)
-			.into_iter()
-			.next()
-			.unwrap_or_default()
+			crate::embeddings::chunk_to_token_limit(&content, crate::embeddings::EMBED_MAX_INPUT_TOKENS)
+				.into_iter()
+				.next()
+				.unwrap_or_default()
 		})
 		.collect();
 	inputs.push(
@@ -971,15 +917,12 @@ fn sort_candidates(
 		}
 		let left_position = original_position[left];
 		let right_position = original_position[right];
-		let relevance =
-			scores.map(|values| values[right_position].total_cmp(&values[left_position]));
-		relevance
-			.filter(|ordering| !ordering.is_eq())
-			.unwrap_or_else(|| {
-				structural_rank(packets[*right].kind)
-					.cmp(&structural_rank(packets[*left].kind))
-					.then_with(|| right.cmp(left))
-			})
+		let relevance = scores.map(|values| values[right_position].total_cmp(&values[left_position]));
+		relevance.filter(|ordering| !ordering.is_eq()).unwrap_or_else(|| {
+			structural_rank(packets[*right].kind)
+				.cmp(&structural_rank(packets[*left].kind))
+				.then_with(|| right.cmp(left))
+		})
 	});
 }
 
@@ -1005,21 +948,13 @@ struct PacketRender {
 	spans: Vec<SourceSpan>,
 }
 
-fn render_packet_with_spans(
-	messages: &[Message],
-	packet: &EvidencePacket,
-	max_tokens: usize,
-) -> PacketRender {
+fn render_packet_with_spans(messages: &[Message], packet: &EvidencePacket, max_tokens: usize) -> PacketRender {
 	let mut rendered = String::new();
-	for (offset, message) in messages[packet.message_start..=packet.message_end]
-		.iter()
-		.enumerate()
-	{
+	for (offset, message) in messages[packet.message_start..=packet.message_end].iter().enumerate() {
 		let source = packet.message_start + offset + 1;
 		match message.role.as_str() {
 			"assistant" => {
-				let content = if message.name.as_deref()
-					== Some(super::apply::COMPRESSION_MESSAGE_NAME)
+				let content = if message.name.as_deref() == Some(super::apply::COMPRESSION_MESSAGE_NAME)
 					|| message
 						.content
 						.trim_start()
@@ -1033,14 +968,10 @@ fn render_packet_with_spans(
 					rendered.push_str(&format!("[MESSAGE {source} ASSISTANT]\n{}\n", content));
 				}
 				if let Some(thinking) = crate::session::message_thinking_content(message) {
-					rendered.push_str(&format!(
-						"[MESSAGE {source} ASSISTANT THINKING]\n{thinking}\n"
-					));
+					rendered.push_str(&format!("[MESSAGE {source} ASSISTANT THINKING]\n{thinking}\n"));
 				}
 				if let Some(calls) = message.tool_calls.as_ref() {
-					rendered.push_str(&format!(
-						"[MESSAGE {source} STRUCTURED TOOL CALLS]\n{calls}\n"
-					));
+					rendered.push_str(&format!("[MESSAGE {source} STRUCTURED TOOL CALLS]\n{calls}\n"));
 				}
 			}
 			"tool" => rendered.push_str(&format!(
@@ -1092,9 +1023,7 @@ fn extractive_edges(content: &str, max_tokens: usize) -> PacketRender {
 			spans: vec![source_span(&lines, 1, lines.len())],
 		};
 	}
-	let marker = |first: usize, last: usize| {
-		format!("[… lines {first}-{last} omitted; exact recall by block ID …]")
-	};
+	let marker = |first: usize, last: usize| format!("[… lines {first}-{last} omitted; exact recall by block ID …]");
 	let marker_tokens = crate::session::estimate_tokens(&marker(1, lines.len())).min(max_tokens);
 	let payload_budget = max_tokens.saturating_sub(marker_tokens);
 	let head_budget = payload_budget.div_ceil(2);
@@ -1134,9 +1063,7 @@ fn extractive_edges(content: &str, max_tokens: usize) -> PacketRender {
 		parts.push(tail.join("\n"));
 	}
 	let mut result = parts.join("\n");
-	while crate::session::estimate_tokens(&result) > max_tokens
-		&& (head.len() > 1 || tail.len() > 1)
-	{
+	while crate::session::estimate_tokens(&result) > max_tokens && (head.len() > 1 || tail.len() > 1) {
 		if head.len() >= tail.len() && head.len() > 1 {
 			head.pop();
 		} else if tail.len() > 1 {
@@ -1146,10 +1073,7 @@ fn extractive_edges(content: &str, max_tokens: usize) -> PacketRender {
 		if !head.is_empty() {
 			reduced.push(head.join("\n"));
 		}
-		reduced.push(marker(
-			head.len() + 1,
-			lines.len().saturating_sub(tail.len()),
-		));
+		reduced.push(marker(head.len() + 1, lines.len().saturating_sub(tail.len())));
 		if !tail.is_empty() {
 			reduced.push(tail.join("\n"));
 		}
@@ -1161,22 +1085,12 @@ fn extractive_edges(content: &str, max_tokens: usize) -> PacketRender {
 			spans.push(source_span(&lines, 1, head.len()));
 		}
 		if !tail.is_empty() {
-			spans.push(source_span(
-				&lines,
-				lines.len() - tail.len() + 1,
-				lines.len(),
-			));
+			spans.push(source_span(&lines, lines.len() - tail.len() + 1, lines.len()));
 		}
-		PacketRender {
-			content: result,
-			spans,
-		}
+		PacketRender { content: result, spans }
 	} else {
 		PacketRender {
-			content: crate::session::truncate_to_tokens(
-				"[… exact packet omitted; recall by block ID …]",
-				max_tokens,
-			),
+			content: crate::session::truncate_to_tokens("[… exact packet omitted; recall by block ID …]", max_tokens),
 			spans: Vec::new(),
 		}
 	}
@@ -1265,11 +1179,7 @@ impl PactContext {
 				state["units"] = window.iter().map(|(_, unit)| unit.clone()).collect();
 				(
 					state,
-					evaluate::compression_questions(
-						window
-							.iter()
-							.map(|(index, _)| self.packets[*index].id.as_str()),
-					),
+					evaluate::compression_questions(window.iter().map(|(index, _)| self.packets[*index].id.as_str())),
 				)
 			})
 			.collect();
@@ -1296,9 +1206,10 @@ impl PactContext {
 		let mut removed_tokens = 0usize;
 		for index in dead.into_iter().rev() {
 			let id = self.packets[index].id.as_str();
-			let depended_on = self.packets.iter().any(|packet| {
-				packet.lane != Lane::ArchiveReference && packet.depends_on.iter().any(|d| d == id)
-			});
+			let depended_on = self
+				.packets
+				.iter()
+				.any(|packet| packet.lane != Lane::ArchiveReference && packet.depends_on.iter().any(|d| d == id));
 			if depended_on {
 				continue;
 			}
@@ -1364,8 +1275,7 @@ impl PactContext {
 		archive: Option<&super::archive::ArchiveBundle>,
 		carried_request: Option<&str>,
 	) -> (String, String) {
-		let task_carried =
-			carried_request.is_some_and(|request| request.trim() == self.pinned.task.text);
+		let task_carried = carried_request.is_some_and(|request| request.trim() == self.pinned.task.text);
 		let pinned_band = format!(
 			"<pinned_state>\n{}</pinned_state>",
 			render_pinned_lines(&self.pinned, task_carried)
@@ -1374,11 +1284,7 @@ impl PactContext {
 			return (pinned_band, String::new());
 		}
 		let mut frontier = String::new();
-		for packet in self
-			.packets
-			.iter()
-			.filter(|packet| packet.lane == Lane::KeepExact)
-		{
+		for packet in self.packets.iter().filter(|packet| packet.lane == Lane::KeepExact) {
 			frontier.push_str(&packet_header(packet));
 			frontier.push_str(packet.prompt_content.trim_end());
 			frontier.push('\n');
@@ -1390,11 +1296,7 @@ impl PactContext {
 		if let Some(bundle) = archive {
 			recall.push_str(&format!("sidecar: {}\n", bundle.index_path.display()));
 		}
-		for packet in self
-			.packets
-			.iter()
-			.filter(|packet| packet.lane != Lane::KeepExact)
-		{
+		for packet in self.packets.iter().filter(|packet| packet.lane != Lane::KeepExact) {
 			let lines = archive
 				.and_then(|bundle| bundle.entry(&packet.id))
 				.map(|entry| format!(" L{}-{}", entry.archive_line_start, entry.archive_line_end))
@@ -1447,21 +1349,16 @@ impl PactContext {
 			.iter()
 			.any(crate::session::is_real_user_task_message);
 		let (scope, constraints, verification_policy) = if newer_turn {
-			(
-				prefix,
-				self.pinned.constraints.clone(),
-				self.pinned.verification_policy,
-			)
+			(prefix, self.pinned.constraints.clone(), self.pinned.verification_policy)
 		} else {
 			(
 				messages.as_slice(),
 				collect_constraints(session, None),
-				session.session.info.verification_policy.effective(
-					session
-						.gate_task
-						.as_ref()
-						.is_some_and(|task| task.forbids_verification),
-				),
+				session
+					.session
+					.info
+					.verification_policy
+					.effective(session.gate_task.as_ref().is_some_and(|task| task.forbids_verification)),
 			)
 		};
 		let task = crate::session::latest_real_user_task_content(scope)
@@ -1483,25 +1380,14 @@ impl PactContext {
 	/// sidecar to the byte-identical serialized messages that are about to be
 	/// drained. Validation happens before removal, making optional compaction a
 	/// transaction rather than a best-effort archive pointer.
-	pub(crate) fn verify_archive(
-		&self,
-		archive: &super::archive::ArchiveBundle,
-		source: &[Message],
-	) -> Result<()> {
+	pub(crate) fn verify_archive(&self, archive: &super::archive::ArchiveBundle, source: &[Message]) -> Result<()> {
 		if archive.entries.len() != self.packets.len()
-			|| self
-				.packets
-				.iter()
-				.any(|packet| archive.entry(&packet.id).is_none())
+			|| self.packets.iter().any(|packet| archive.entry(&packet.id).is_none())
 		{
 			return Err(anyhow!("PACT archive sidecar does not cover every packet"));
 		}
 
-		let ids: Vec<String> = self
-			.packets
-			.iter()
-			.map(|packet| packet.id.clone())
-			.collect();
+		let ids: Vec<String> = self.packets.iter().map(|packet| packet.id.clone()).collect();
 		let recovered = super::archive::read_blocks(&archive.index_path, &ids)?;
 		let covered: BTreeSet<usize> = self
 			.packets
@@ -1561,18 +1447,16 @@ impl PactContext {
 		// compaction. Keep next actions only when at least one cited source has
 		// user, observed-tool, or already-validated-summary authority. This runs
 		// even when the optional full validator is disabled.
-		summary.folded_units.retain(|unit| {
-			unit.kind != "next_action" || self.has_authoritative_continuation_support(unit)
-		});
+		summary
+			.folded_units
+			.retain(|unit| unit.kind != "next_action" || self.has_authoritative_continuation_support(unit));
 	}
 
 	fn has_authoritative_continuation_support(&self, unit: &FoldedUnit) -> bool {
 		unit.refs.iter().any(|source| {
 			let authoritative = matches!(
 				self.known_provenance.get(source),
-				Some(
-					Provenance::RealUser | Provenance::ToolObserved | Provenance::ValidatedSummary
-				)
+				Some(Provenance::RealUser | Provenance::ToolObserved | Provenance::ValidatedSummary)
 			);
 			if !authoritative {
 				return false;
@@ -1627,13 +1511,8 @@ impl PactContext {
 			}
 			// Active-frontier packets are live state; folding them as
 			// completed is lane amplification — downgrade instead of reject.
-			if matches!(
-				unit.status.as_str(),
-				"established" | "failed" | "superseded"
-			) && unit
-				.refs
-				.iter()
-				.any(|source| lane_of(source) == Some(Lane::KeepExact))
+			if matches!(unit.status.as_str(), "established" | "failed" | "superseded")
+				&& unit.refs.iter().any(|source| lane_of(source) == Some(Lane::KeepExact))
 			{
 				unit.status = "tentative".into();
 			}
@@ -1674,9 +1553,7 @@ impl PactContext {
 		let uncovered: Vec<&EvidencePacket> = self
 			.packets
 			.iter()
-			.filter(|packet| {
-				packet.lane == Lane::Summarize && !referenced.contains(packet.id.as_str())
-			})
+			.filter(|packet| packet.lane == Lane::Summarize && !referenced.contains(packet.id.as_str()))
 			.collect();
 		for chunk in uncovered.chunks(16) {
 			if summary.folded_units.len() >= 40 {
@@ -1691,10 +1568,7 @@ impl PactContext {
 		}
 	}
 
-	pub(crate) fn validate_summary(
-		&self,
-		summary: &CompressionSummary,
-	) -> Result<ValidationReport> {
+	pub(crate) fn validate_summary(&self, summary: &CompressionSummary) -> Result<ValidationReport> {
 		if summary.folded_units.len() > 40 {
 			return Err(anyhow!("PACT summary exceeds the 40-unit fold bound"));
 		}
@@ -1706,9 +1580,7 @@ impl PactContext {
 		let selected_tokens = self
 			.packets
 			.iter()
-			.filter(|packet| {
-				packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
-			})
+			.filter(|packet| packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary)
 			.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 			.sum::<usize>();
 		if selected_tokens > self.target_tokens {
@@ -1735,9 +1607,11 @@ impl PactContext {
 		// gutted summary. This is the runtime backstop for the allocate_lanes
 		// full-render guarantee: any future budget reintroduced on that path
 		// trips here instead of deleting distilled session state.
-		for packet in self.packets.iter().filter(|packet| {
-			packet.kind == PacketKind::PriorSummary && packet.lane == Lane::Summarize
-		}) {
+		for packet in self
+			.packets
+			.iter()
+			.filter(|packet| packet.kind == PacketKind::PriorSummary && packet.lane == Lane::Summarize)
+		{
 			let lines: Vec<&str> = packet.prompt_content.lines().collect();
 			let complete = !lines.is_empty()
 				&& packet.exact_spans.len() == 1
@@ -1749,11 +1623,8 @@ impl PactContext {
 				));
 			}
 		}
-		let packets_by_id: BTreeMap<&str, &EvidencePacket> = self
-			.packets
-			.iter()
-			.map(|packet| (packet.id.as_str(), packet))
-			.collect();
+		let packets_by_id: BTreeMap<&str, &EvidencePacket> =
+			self.packets.iter().map(|packet| (packet.id.as_str(), packet)).collect();
 		for packet in self
 			.packets
 			.iter()
@@ -1766,13 +1637,11 @@ impl PactContext {
 				// fidelity — it stays archived only when its render is empty,
 				// where its content is still recallable by block ID. Rejecting
 				// here would veto that legitimate case.
-				if packets_by_id
-					.get(dependency.as_str())
-					.is_some_and(|source| {
-						source.kind != PacketKind::PriorSummary
-							&& source.provenance != Provenance::RealUser
-							&& source.lane == Lane::ArchiveReference
-					}) {
+				if packets_by_id.get(dependency.as_str()).is_some_and(|source| {
+					source.kind != PacketKind::PriorSummary
+						&& source.provenance != Provenance::RealUser
+						&& source.lane == Lane::ArchiveReference
+				}) {
 					return Err(anyhow!(
 						"PACT selected packet {} is missing live dependency {}",
 						packet.id,
@@ -1787,11 +1656,7 @@ impl PactContext {
 			referenced.extend(unit.refs.iter().cloned());
 		}
 		self.verify_prior_references(&referenced)?;
-		for packet in self
-			.packets
-			.iter()
-			.filter(|packet| packet.lane == Lane::Summarize)
-		{
+		for packet in self.packets.iter().filter(|packet| packet.lane == Lane::Summarize) {
 			if !referenced.contains(&packet.id) {
 				return Err(anyhow!(
 					"PACT selected summarize packet has no folded unit: {}",
@@ -1809,31 +1674,24 @@ impl PactContext {
 	}
 
 	fn verify_prior_references(&self, referenced: &BTreeSet<String>) -> Result<()> {
-		let current: HashSet<&str> = self
-			.packets
-			.iter()
-			.map(|packet| packet.id.as_str())
-			.collect();
+		let current: HashSet<&str> = self.packets.iter().map(|packet| packet.id.as_str()).collect();
 		let mut by_sidecar: BTreeMap<&std::path::Path, Vec<String>> = BTreeMap::new();
 		for id in referenced {
 			if current.contains(id.as_str()) {
 				continue;
 			}
-			let entry = self.prior_recall.get(id).ok_or_else(|| {
-				anyhow!("PACT prior source {id} has no visible archive coordinate")
-			})?;
+			let entry = self
+				.prior_recall
+				.get(id)
+				.ok_or_else(|| anyhow!("PACT prior source {id} has no visible archive coordinate"))?;
 			by_sidecar
 				.entry(entry.index_path.as_path())
 				.or_default()
 				.push(id.clone());
 		}
 		for (sidecar, ids) in by_sidecar {
-			super::archive::read_blocks(sidecar, &ids).with_context(|| {
-				format!(
-					"PACT prior-source recovery failed for {}",
-					sidecar.display()
-				)
-			})?;
+			super::archive::read_blocks(sidecar, &ids)
+				.with_context(|| format!("PACT prior-source recovery failed for {}", sidecar.display()))?;
 		}
 		Ok(())
 	}
@@ -1861,26 +1719,15 @@ impl PactContext {
 			"reference",
 			"synthesis",
 		];
-		const ALLOWED_STATUSES: &[&str] = &[
-			"established",
-			"tentative",
-			"superseded",
-			"failed",
-			"pending",
-			"unknown",
-		];
+		const ALLOWED_STATUSES: &[&str] = &["established", "tentative", "superseded", "failed", "pending", "unknown"];
 		if unit.text.trim().is_empty() || unit.refs.is_empty() {
 			return Err(anyhow!("PACT folded unit {index} has no text or support"));
 		}
 		if unit.text.chars().count() > 2_000 || unit.refs.len() > 16 {
-			return Err(anyhow!(
-				"PACT folded unit {index} exceeds its content or support bound"
-			));
+			return Err(anyhow!("PACT folded unit {index} exceeds its content or support bound"));
 		}
 		if unit.refs.iter().collect::<HashSet<_>>().len() != unit.refs.len() {
-			return Err(anyhow!(
-				"PACT folded unit {index} contains duplicate support IDs"
-			));
+			return Err(anyhow!("PACT folded unit {index} contains duplicate support IDs"));
 		}
 		if !ALLOWED_KINDS.contains(&unit.kind.as_str()) {
 			return Err(anyhow!("PACT folded unit {index} has invalid kind"));
@@ -1890,9 +1737,7 @@ impl PactContext {
 		}
 		for source in &unit.refs {
 			if !self.known_provenance.contains_key(source) {
-				return Err(anyhow!(
-					"PACT folded unit {index} cites unknown block {source}"
-				));
+				return Err(anyhow!("PACT folded unit {index} cites unknown block {source}"));
 			}
 			if let Some(packet) = self.packets.iter().find(|packet| packet.id == *source) {
 				if packet.lane == Lane::ArchiveReference {
@@ -1901,19 +1746,13 @@ impl PactContext {
 					));
 				}
 				if packet.lane == Lane::KeepExact
-					&& matches!(
-						unit.status.as_str(),
-						"established" | "failed" | "superseded"
-					) {
+					&& matches!(unit.status.as_str(), "established" | "failed" | "superseded")
+				{
 					return Err(anyhow!(
 						"PACT folded unit {index} folds active-frontier packet {source} as completed state"
 					));
 				}
-			} else if !self
-				.packets
-				.iter()
-				.any(|packet| packet.prompt_content.contains(source))
-			{
+			} else if !self.packets.iter().any(|packet| packet.prompt_content.contains(source)) {
 				return Err(anyhow!(
 					"PACT folded unit {index} cites prior block {source} that was not visible to the compressor"
 				));
@@ -2002,16 +1841,13 @@ impl PactContext {
 			.packets
 			.iter()
 			.map(|packet| {
-				let archive_location =
-					archive
-						.and_then(|bundle| bundle.entry(&packet.id))
-						.map(|entry| {
-							serde_json::json!({
-								"archive": bundle_path(archive),
-								"sidecar": archive.map(|bundle| bundle.index_path.display().to_string()),
-								"jsonl_lines": [entry.archive_line_start, entry.archive_line_end],
-							})
-						});
+				let archive_location = archive.and_then(|bundle| bundle.entry(&packet.id)).map(|entry| {
+					serde_json::json!({
+						"archive": bundle_path(archive),
+						"sidecar": archive.map(|bundle| bundle.index_path.display().to_string()),
+						"jsonl_lines": [entry.archive_line_start, entry.archive_line_end],
+					})
+				});
 				serde_json::json!({
 					"id": packet.id,
 					"provenance": packet.provenance,
@@ -2095,8 +1931,7 @@ fn packet_header(packet: &EvidencePacket) -> String {
 
 /// Live pinned-band stand-in for a task the post-fold user turn already
 /// carries verbatim.
-const TASK_CARRIED_BY_USER_TURN: &str =
-	"exact text is the latest user request below this summary — not repeated here";
+const TASK_CARRIED_BY_USER_TURN: &str = "exact text is the latest user request below this summary — not repeated here";
 
 /// Compact plain-line rendering of pinned state — replaces the pretty-JSON
 /// serialization that stayed in the model's context every turn.

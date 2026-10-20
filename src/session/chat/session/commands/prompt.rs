@@ -39,14 +39,12 @@ pub async fn handle_prompt(
 			})
 			.collect();
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Prompt {
-				data: serde_json::json!({
-					"action": "list",
-					"prompts": prompts_data
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Prompt {
+			data: serde_json::json!({
+				"action": "list",
+				"prompts": prompts_data
+			}),
+		})));
 	}
 
 	let prompt_name = params[0];
@@ -56,16 +54,14 @@ pub async fn handle_prompt(
 		p
 	} else {
 		let available_prompts: Vec<&str> = config.prompts.iter().map(|p| p.name.as_str()).collect();
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Prompt {
-				data: serde_json::json!({
-					"action": "execute",
-					"success": false,
-					"error": format!("Prompt template not found: {}", prompt_name),
-					"available_prompts": available_prompts
-				}),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Prompt {
+			data: serde_json::json!({
+				"action": "execute",
+				"success": false,
+				"error": format!("Prompt template not found: {}", prompt_name),
+				"available_prompts": available_prompts
+			}),
+		})));
 	};
 
 	// Process the prompt template (support variable substitution if needed)
@@ -80,16 +76,14 @@ pub async fn handle_prompt(
 		content: processed_prompt.clone(),
 	});
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Prompt {
-			data: serde_json::json!({
-				"action": "execute",
-				"success": true,
-				"prompt_name": prompt_name,
-				"prompt_content": processed_prompt
-			}),
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Prompt {
+		data: serde_json::json!({
+			"action": "execute",
+			"success": true,
+			"prompt_name": prompt_name,
+			"prompt_content": processed_prompt
+		}),
+	})))
 }
 
 /// Process prompt template with variable substitution

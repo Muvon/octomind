@@ -333,8 +333,7 @@ impl ResolvedTask {
 /// unhook a plan the turn itself produced. A pre-existing unchanged plan is
 /// ignored for an answer-only turn: a side question is complete once answered.
 pub fn plan_applies(task: &ResolvedTask, live_plan: &str) -> bool {
-	!live_plan.is_empty()
-		&& (live_plan != task.plan_at_turn_start || (task.plan_relevant && !task.answer_only))
+	!live_plan.is_empty() && (live_plan != task.plan_at_turn_start || (task.plan_relevant && !task.answer_only))
 }
 
 impl TaskContext {
@@ -360,9 +359,7 @@ impl TaskContext {
 			active_plan: active_plan.map(str::trim).unwrap_or_default().to_string(),
 			role_context: crate::supervisor::role_context(messages),
 			verification_policy,
-			recent_user_policy_context: if verification_policy
-				== crate::supervisor::VerificationPolicy::Unspecified
-			{
+			recent_user_policy_context: if verification_policy == crate::supervisor::VerificationPolicy::Unspecified {
 				recent_real_user_turns(&messages[..current_index])
 			} else {
 				Vec::new()
@@ -438,24 +435,15 @@ pub struct ResolutionEvidence {
 /// Resolve one captured turn. Any model or parse failure falls back to the
 /// literal current request with no historical requirements (supervisor calls
 /// must never block the main agent on their own failure).
-pub async fn resolve(
-	config: &Config,
-	context: &TaskContext,
-	operation_rx: watch::Receiver<bool>,
-) -> ResolvedTask {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Resolve,
-	);
+pub async fn resolve(config: &Config, context: &TaskContext, operation_rx: watch::Receiver<bool>) -> ResolvedTask {
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Resolve);
 	let raw = context.current_request.clone();
 	if raw.trim().is_empty() {
 		return ResolvedTask::self_contained(raw);
 	}
 	let classification = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
-		SupervisorPrompt::new(
-			CLASSIFIER_PROMPT.to_string(),
-			context.render_classification_payload(),
-		),
+		SupervisorPrompt::new(CLASSIFIER_PROMPT.to_string(), context.render_classification_payload()),
 		crate::supervisor::stats::CallKind::Resolve,
 		operation_rx.clone(),
 	)
@@ -478,9 +466,7 @@ pub async fn resolve(
 			let mut parsed = match parse_classifier_checked(&response) {
 				Some(parsed) => parsed,
 				None => {
-					crate::log_info!(
-						"Classifier response unusable; retrying once with doubled output budget"
-					);
+					crate::log_info!("Classifier response unusable; retrying once with doubled output budget");
 					let retry_payload = format!(
 							"{}\n\n<format_violation>\nYour previous response was not one complete JSON object (truncated or malformed). Re-emit the classification now: output ONLY the JSON object, with no reasoning text before it.\n</format_violation>",
 							context.render_classification_payload()
@@ -494,9 +480,7 @@ pub async fn resolve(
 					.await
 					{
 						Ok(retry) => parse_classifier_checked(&retry).unwrap_or_else(|| {
-							crate::log_info!(
-									"Classifier retry still unusable; conditions checklist lost (fail-open)"
-								);
+							crate::log_info!("Classifier retry still unusable; conditions checklist lost (fail-open)");
 							classifier_fallback()
 						}),
 						Err(error) => {
@@ -507,12 +491,9 @@ pub async fn resolve(
 				}
 			};
 			parsed.validate_policy_update(context);
-			parsed.operational_constraints = grounded_operational_constraints(
-				&context.current_request,
-				&parsed.operational_constraints,
-			);
-			parsed.whole_targets =
-				grounded_whole_targets(&context.current_request, &parsed.whole_targets);
+			parsed.operational_constraints =
+				grounded_operational_constraints(&context.current_request, &parsed.operational_constraints);
+			parsed.whole_targets = grounded_whole_targets(&context.current_request, &parsed.whole_targets);
 			parsed.session_rules_update = std::mem::take(&mut parsed.session_rules_update)
 				.grounded(&context.current_request, &context.session_rules);
 			if !parsed.context_dependent {
@@ -538,10 +519,7 @@ pub async fn resolve(
 			)
 		}
 		Err(error) => {
-			crate::log_debug!(
-				"Task dependency classifier failed, using literal request: {}",
-				error
-			);
+			crate::log_debug!("Task dependency classifier failed, using literal request: {}", error);
 			let mut resolved = ResolvedTask::self_contained(raw);
 			resolved.plan_at_turn_start = context.active_plan.clone();
 			return resolved;
@@ -550,10 +528,7 @@ pub async fn resolve(
 
 	let response = crate::supervisor::learning::extract::call_supervisor_llm(
 		config,
-		SupervisorPrompt::new(
-			FOLLOWUP_PROMPT.to_string(),
-			context.render_resolution_payload(),
-		),
+		SupervisorPrompt::new(FOLLOWUP_PROMPT.to_string(), context.render_resolution_payload()),
 		crate::supervisor::stats::CallKind::Resolve,
 		operation_rx,
 	)
@@ -561,10 +536,7 @@ pub async fn resolve(
 	let mut resolved = match response {
 		Ok(response) => parse_resolution(context, &response),
 		Err(error) => {
-			crate::log_debug!(
-				"Task follow-up resolver failed, preserving ambiguity: {}",
-				error
-			);
+			crate::log_debug!("Task follow-up resolver failed, preserving ambiguity: {}", error);
 			ResolvedTask::ambiguous(raw, &context.active_plan)
 		}
 	};
@@ -623,13 +595,13 @@ fn parse_classifier(response: &str) -> ClassifierVerdict {
 /// the gate holistically passed a near-miss implementation).
 fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 	let Some(start) = response.find('{') else {
-		crate::log_info!(
-			"Classifier returned no JSON object; conditions checklist lost (fail-open)"
-		);
+		crate::log_info!("Classifier returned no JSON object; conditions checklist lost (fail-open)");
 		return None;
 	};
 	let Some(end) = response.rfind('}') else {
-		crate::log_info!("Classifier JSON unterminated (likely token-budget truncation); conditions checklist lost (fail-open)");
+		crate::log_info!(
+			"Classifier JSON unterminated (likely token-budget truncation); conditions checklist lost (fail-open)"
+		);
 		return None;
 	};
 	let Ok(parsed) = serde_json::from_str::<ClassifierOutput>(&response[start..=end]) else {
@@ -637,18 +609,11 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 		return None;
 	};
 	Some(ClassifierVerdict {
-		context_dependent: parsed
-			.scope
-			.trim()
-			.eq_ignore_ascii_case("context_dependent"),
+		context_dependent: parsed.scope.trim().eq_ignore_ascii_case("context_dependent"),
 		forbids_verification: parsed.forbids_verification,
 		verification_policy_update: match parsed.verification_policy_update.trim() {
-			value if value.eq_ignore_ascii_case("forbid") => {
-				crate::supervisor::VerificationPolicyUpdate::Forbid
-			}
-			value if value.eq_ignore_ascii_case("allow") => {
-				crate::supervisor::VerificationPolicyUpdate::Allow
-			}
+			value if value.eq_ignore_ascii_case("forbid") => crate::supervisor::VerificationPolicyUpdate::Forbid,
+			value if value.eq_ignore_ascii_case("allow") => crate::supervisor::VerificationPolicyUpdate::Allow,
 			_ => crate::supervisor::VerificationPolicyUpdate::Unchanged,
 		},
 		verification_policy_evidence: parsed.verification_policy_evidence,
@@ -705,10 +670,7 @@ fn parse_classifier_checked(response: &str) -> Option<ClassifierVerdict> {
 /// before applying the four-entry budget so unsupported candidates cannot crowd
 /// out supported ones. Selection does not make an excerpt a new instruction;
 /// its meaning and applicability still come from the full user request.
-pub(crate) fn grounded_operational_constraints(
-	request: &str,
-	candidates: &[String],
-) -> Vec<String> {
+pub(crate) fn grounded_operational_constraints(request: &str, candidates: &[String]) -> Vec<String> {
 	let mut grounded: Vec<String> = Vec::new();
 	for candidate in candidates {
 		let excerpt = candidate.trim();
@@ -736,9 +698,7 @@ pub(crate) fn grounded_whole_targets(request: &str, candidates: &[String]) -> Ve
 		let target = candidate.trim();
 		if !target.is_empty()
 			&& request.contains(&target.to_lowercase())
-			&& !grounded
-				.iter()
-				.any(|existing| existing.eq_ignore_ascii_case(target))
+			&& !grounded.iter().any(|existing| existing.eq_ignore_ascii_case(target))
 		{
 			grounded.push(target.to_string());
 		}
@@ -748,16 +708,14 @@ pub(crate) fn grounded_whole_targets(request: &str, candidates: &[String]) -> Ve
 
 impl ClassifierVerdict {
 	fn validate_policy_update(&mut self, context: &TaskContext) {
-		if self.verification_policy_update == crate::supervisor::VerificationPolicyUpdate::Unchanged
-		{
+		if self.verification_policy_update == crate::supervisor::VerificationPolicyUpdate::Unchanged {
 			return;
 		}
 		let evidence = self.verification_policy_evidence.trim();
 		let current_supports = !evidence.is_empty()
 			&& evidence.chars().count() <= RESOLUTION_EVIDENCE_CHARS
 			&& context.current_request.contains(evidence);
-		let legacy_supports = context.verification_policy
-			== crate::supervisor::VerificationPolicy::Unspecified
+		let legacy_supports = context.verification_policy == crate::supervisor::VerificationPolicy::Unspecified
 			&& !evidence.is_empty()
 			&& evidence.chars().count() <= RESOLUTION_EVIDENCE_CHARS
 			&& context
@@ -765,8 +723,7 @@ impl ClassifierVerdict {
 				.iter()
 				.any(|turn| turn.contains(evidence));
 		if !current_supports && !legacy_supports {
-			self.verification_policy_update =
-				crate::supervisor::VerificationPolicyUpdate::Unchanged;
+			self.verification_policy_update = crate::supervisor::VerificationPolicyUpdate::Unchanged;
 		}
 	}
 }
@@ -810,9 +767,8 @@ fn parse_resolution(context: &TaskContext, response: &str) -> ResolvedTask {
 					}
 					if !resolution_evidence
 						.iter()
-						.any(|known: &ResolutionEvidence| {
-							known.source == source && known.excerpt == excerpt
-						}) {
+						.any(|known: &ResolutionEvidence| known.source == source && known.excerpt == excerpt)
+					{
 						resolution_evidence.push(ResolutionEvidence {
 							source: source.to_string(),
 							excerpt: excerpt.to_string(),
@@ -854,10 +810,7 @@ fn render_recent_history(messages: &[Message]) -> String {
 			if let Some(turn) = current.take() {
 				turns.push(turn);
 			}
-			current = Some((
-				truncate_chars(message.content.trim(), HISTORY_ITEM_CHARS),
-				None,
-			));
+			current = Some((truncate_chars(message.content.trim(), HISTORY_ITEM_CHARS), None));
 		} else if message.role == "assistant" && !message.content.trim().is_empty() {
 			if let Some((_, answer)) = current.as_mut() {
 				*answer = Some(truncate_chars(message.content.trim(), HISTORY_ITEM_CHARS));

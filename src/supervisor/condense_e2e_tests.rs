@@ -87,10 +87,7 @@ async fn test_condense_declines_without_spill_reader() {
 		let mut config = condense_config();
 		config.mcp.servers.clear();
 		initialize_tool_map(&config).await.expect("empty tool map");
-		assert!(
-			!spill_reader_available(),
-			"fixture must have no spill reader"
-		);
+		assert!(!spill_reader_available(), "fixture must have no spill reader");
 		let mut results = vec![tool_result("t1", &big_body())];
 		let before = results[0].extract_content();
 		run_round(&config, &mut results).await;
@@ -121,9 +118,7 @@ async fn test_condense_ignores_small_results_in_a_large_round() {
 		.map(|i| format!("short line {i}"))
 		.collect::<Vec<_>>()
 		.join("\n");
-	let mut results: Vec<McpToolResult> = (0..20)
-		.map(|i| tool_result(&format!("t{i}"), &body))
-		.collect();
+	let mut results: Vec<McpToolResult> = (0..20).map(|i| tool_result(&format!("t{i}"), &body)).collect();
 	let before: Vec<String> = results.iter().map(|r| r.extract_content()).collect();
 	run_round(&config, &mut results).await;
 	for (result, original) in results.iter().zip(before) {
@@ -151,9 +146,7 @@ async fn test_condense_disabled_supervisor_is_a_noop() {
 
 use crate::config::McpServerConfig;
 use crate::mcp::tool_map::initialize_tool_map;
-use crate::session::chat::test_support::{
-	final_response, spawn_stub, spawn_stub_with_status, ENV_LOCK,
-};
+use crate::session::chat::test_support::{final_response, spawn_stub, spawn_stub_with_status, ENV_LOCK};
 
 /// Run one round under a session that owns an isolated tool map carrying a
 /// spill reader, registered the way runtime `mcp add` does: a dynamic server
@@ -161,11 +154,7 @@ use crate::session::chat::test_support::{
 /// so `spill_reader_available()` keys on exactly this registration path. The
 /// process map, which other tests initialize concurrently, is never consulted,
 /// and the session's map and spill files are dropped afterwards.
-async fn run_round_with_spill_reader(
-	session: &str,
-	config: &crate::config::Config,
-	results: &mut [McpToolResult],
-) {
+async fn run_round_with_spill_reader(session: &str, config: &crate::config::Config, results: &mut [McpToolResult]) {
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
 		// Spills persist under the session id across test runs, and an output
@@ -173,9 +162,7 @@ async fn run_round_with_spill_reader(
 		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
-		initialize_tool_map(&empty)
-			.await
-			.expect("tool map initializes empty");
+		initialize_tool_map(&empty).await.expect("tool map initializes empty");
 		crate::mcp::tool_map::register_dynamic_server_tools(
 			"spill-reader",
 			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
@@ -216,10 +203,7 @@ async fn a_full_round_extracts_selected_lines_and_skips_rich_results() {
 
 	plain = results.remove(0);
 	let condensed = plain.extract_content();
-	assert!(
-		condensed.contains(CONDENSE_NOTICE_TAG),
-		"the notice names the spill"
-	);
+	assert!(condensed.contains(CONDENSE_NOTICE_TAG), "the notice names the spill");
 	assert!(
 		condensed.contains("kept 11 of 200 original lines"),
 		"the kept-line count is factual: {condensed}"
@@ -296,11 +280,7 @@ async fn a_failed_condenser_call_leaves_results_as_is() {
 	let mut results = vec![tool_result("t1", &big_body())];
 	let before = results[0].extract_content();
 
-	let url = spawn_stub_with_status(vec![(
-		500,
-		serde_json::json!({"error": "condenser unavailable"}),
-	)])
-	.await;
+	let url = spawn_stub_with_status(vec![(500, serde_json::json!({"error": "condenser unavailable"}))]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	run_round_with_spill_reader("__condense_e2e_failed", &config, &mut results).await;
 	std::env::remove_var("OLLAMA_API_URL");
@@ -313,10 +293,7 @@ async fn a_failed_condenser_call_leaves_results_as_is() {
 async fn a_missing_verdict_costs_only_the_result_it_omits() {
 	let _guard = ENV_LOCK.lock().await;
 	let config = condense_config();
-	let mut results = vec![
-		tool_result("t1", &big_body()),
-		tool_result("t2", &big_body()),
-	];
+	let mut results = vec![tool_result("t1", &big_body()), tool_result("t2", &big_body())];
 	let t1_before = results[0].extract_content();
 
 	let url = spawn_stub(vec![final_response(&verdict_json(
@@ -373,9 +350,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 	// The second verdict would cut both recovery reads if they reached the
 	// condenser at all.
 	let url = spawn_stub(vec![
-		final_response(&verdict_json(
-			r#"[{"id":"t1","verdict":"extract","lines":["10-20"]}]"#,
-		)),
+		final_response(&verdict_json(r#"[{"id":"t1","verdict":"extract","lines":["10-20"]}]"#)),
 		final_response(&verdict_json(
 			r#"[{"id":"t2","verdict":"extract","lines":["1-5"]},{"id":"t3","verdict":"extract","lines":["1-5"]}]"#,
 		)),
@@ -387,9 +362,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
-		initialize_tool_map(&empty)
-			.await
-			.expect("tool map initializes empty");
+		initialize_tool_map(&empty).await.expect("tool map initializes empty");
 		crate::mcp::tool_map::register_dynamic_server_tools(
 			"spill-reader",
 			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
@@ -399,10 +372,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 		let mut first = vec![tool_result("t1", &big_body())];
 		run_round(&config, &mut first).await;
 		let notice = first[0].extract_content();
-		assert!(
-			notice.contains(CONDENSE_NOTICE_TAG),
-			"the first read is condensed"
-		);
+		assert!(notice.contains(CONDENSE_NOTICE_TAG), "the first read is condensed");
 		let spill = notice
 			.lines()
 			.skip_while(|line| !line.contains("Full original output:"))
@@ -412,10 +382,7 @@ async fn recovery_reads_of_a_condensed_output_are_left_in_full() {
 			.to_string();
 
 		let spill_body = big_body().replace("payload", "recovered");
-		let mut second = vec![
-			tool_result("t2", &big_body()),
-			tool_result("t3", &spill_body),
-		];
+		let mut second = vec![tool_result("t2", &big_body()), tool_result("t3", &spill_body)];
 		let calls = vec![
 			tool_call("t2"),
 			McpToolCall {
@@ -474,19 +441,14 @@ async fn reads_of_a_whole_task_target_are_left_in_full() {
 		crate::utils::spill::clear_current_session();
 		let mut empty = config.clone();
 		empty.mcp.servers = Vec::new();
-		initialize_tool_map(&empty)
-			.await
-			.expect("tool map initializes empty");
+		initialize_tool_map(&empty).await.expect("tool map initializes empty");
 		crate::mcp::tool_map::register_dynamic_server_tools(
 			"spill-reader",
 			&McpServerConfig::builtin("spill-reader", 30, Vec::new()),
 			&["view".to_string()],
 		);
 
-		let mut results = vec![
-			tool_result("t1", &big_body()),
-			tool_result("t2", &big_body()),
-		];
+		let mut results = vec![tool_result("t1", &big_body()), tool_result("t2", &big_body())];
 		let calls = vec![
 			McpToolCall {
 				tool_name: "shell".to_string(),
@@ -554,10 +516,7 @@ async fn the_specialist_brief_is_compacted_once_per_standing_context() {
 	std::env::set_var("OLLAMA_API_URL", &url);
 	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
 	let first = brief.clone().expect("compacted");
-	assert_eq!(
-		first.text,
-		"README architect; README.md is the working material."
-	);
+	assert_eq!(first.text, "README architect; README.md is the working material.");
 
 	// Same standing context, a new user turn: no call, the brief is reused.
 	messages.push(message("user", "now the changelog"));
@@ -565,10 +524,7 @@ async fn the_specialist_brief_is_compacted_once_per_standing_context() {
 	assert_eq!(brief.as_ref().expect("kept").text, first.text);
 
 	// The standing context changed: compacted again (second stub answer).
-	messages.push(message(
-		"user",
-		"<instructions>\nkeep docs short\n</instructions>",
-	));
+	messages.push(message("user", "<instructions>\nkeep docs short\n</instructions>"));
 	refresh_specialist_brief(&mut brief, &messages, &config, rx.clone()).await;
 	assert_eq!(
 		brief.as_ref().expect("recompacted").text,
@@ -577,10 +533,7 @@ async fn the_specialist_brief_is_compacted_once_per_standing_context() {
 
 	// A failed compaction leaves an empty brief and is not retried while the
 	// context is unchanged (the next stub answer would otherwise be taken).
-	messages.push(message(
-		"user",
-		"<instructions>\ncite sources\n</instructions>",
-	));
+	messages.push(message("user", "<instructions>\ncite sources\n</instructions>"));
 	let url = spawn_stub_with_status(vec![
 		(500, serde_json::json!({"error": "down"})),
 		(200, serde_json::json!({"error": "unused"})),

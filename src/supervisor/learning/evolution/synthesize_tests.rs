@@ -102,13 +102,7 @@ fn scoped_evidence_deterministically_narrows_global_proposal() {
 	candidate.scope_project = "global".to_string();
 	candidate.scope_domain = "global".to_string();
 	let source = memory("scoped");
-	let scope = admitted_scope(
-		&candidate,
-		&[&source],
-		"developer:general",
-		"project",
-		false,
-	);
+	let scope = admitted_scope(&candidate, &[&source], "developer:general", "project", false);
 	assert_eq!(scope.project.as_deref(), Some("project"));
 	assert_eq!(scope.domain.as_deref(), Some("developer"));
 }
@@ -117,13 +111,7 @@ fn scoped_evidence_deterministically_narrows_global_proposal() {
 fn global_evidence_may_still_be_narrowed_by_proposal() {
 	let candidate = proposal("skill");
 	let source = memory("global");
-	let scope = admitted_scope(
-		&candidate,
-		&[&source],
-		"developer:general",
-		"project",
-		false,
-	);
+	let scope = admitted_scope(&candidate, &[&source], "developer:general", "project", false);
 	assert_eq!(scope.project.as_deref(), Some("project"));
 	assert_eq!(scope.domain.as_deref(), Some("developer"));
 }
@@ -174,27 +162,18 @@ fn generated_guidance_is_bounded_scriptless_advisory_text() {
 	candidate.body = "  Run the linter before reporting done.  ".to_string();
 	candidate.script_name = None;
 	candidate.script_content = None;
-	let (native, script, path) =
-		render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap();
+	let (native, script, path) = render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap();
 	assert_eq!(native, "Run the linter before reporting done.\n");
 	assert!(script.is_none());
 	assert_eq!(path, "GUIDANCE.md");
-	validate_native(
-		ArtifactKind::Guidance,
-		&native,
-		None,
-		EffectClass::Advisory,
-		false,
-	)
-	.unwrap();
+	validate_native(ArtifactKind::Guidance, &native, None, EffectClass::Advisory, false).unwrap();
 	assert_eq!(
 		effective_class(ArtifactKind::Guidance, "effectful").unwrap(),
 		EffectClass::Advisory
 	);
 
 	candidate.body = "x".repeat(MAX_GUIDANCE_CHARS + 1);
-	let error =
-		render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
+	let error = render_native(&candidate, ArtifactKind::Guidance, &scope, "name", "id").unwrap_err();
 	assert!(error.to_string().contains("belongs in a skill"));
 
 	candidate.body = "Cite session://s/message/3 first.".to_string();
@@ -233,13 +212,7 @@ fn unsupported_capability_reference_fails_before_native_storage() {
 	let candidate = proposal("guard");
 	let error = validate_runtime_references(&candidate, ArtifactKind::Guard, &[], &[]).unwrap_err();
 	assert!(error.to_string().contains("unavailable capability"));
-	validate_runtime_references(
-		&candidate,
-		ArtifactKind::Guard,
-		&["filesystem-write".to_string()],
-		&[],
-	)
-	.unwrap();
+	validate_runtime_references(&candidate, ArtifactKind::Guard, &["filesystem-write".to_string()], &[]).unwrap();
 }
 
 #[test]
@@ -282,9 +255,7 @@ fn parse_kind_maps_every_supported_kind_and_rejects_unknown() {
 	assert_eq!(parse_kind("validator").unwrap(), ArtifactKind::Validator);
 	assert_eq!(parse_kind("guidance").unwrap(), ArtifactKind::Guidance);
 	let error = parse_kind("wizard").unwrap_err();
-	assert!(error
-		.to_string()
-		.contains("unsupported evolution artifact kind"));
+	assert!(error.to_string().contains("unsupported evolution artifact kind"));
 }
 
 #[test]
@@ -354,13 +325,7 @@ fn global_memory_with_global_proposal_stays_universal() {
 	candidate.scope_project = "global".to_string();
 	candidate.scope_domain = "global".to_string();
 	let source = memory("global");
-	let scope = admitted_scope(
-		&candidate,
-		&[&source],
-		"developer:general",
-		"project",
-		false,
-	);
+	let scope = admitted_scope(&candidate, &[&source], "developer:general", "project", false);
 	assert!(scope.project.is_none());
 	assert!(scope.domain.is_none());
 }
@@ -369,10 +334,7 @@ fn global_memory_with_global_proposal_stays_universal() {
 fn safe_script_name_rejects_traversal_and_keeps_plain_names() {
 	assert_eq!(safe_script_name("check.sh").unwrap(), "check.sh");
 	for invalid in ["", "  ", ".", "..", "a/b", "a\\b", "/etc/x", "dir/name.sh"] {
-		assert!(
-			safe_script_name(invalid).is_err(),
-			"{invalid} should be rejected"
-		);
+		assert!(safe_script_name(invalid).is_err(), "{invalid} should be rejected");
 	}
 }
 
@@ -397,20 +359,14 @@ fn contains_secret_marker_detects_each_marker() {
 		"ANTHROPIC_API_KEY=abc",
 		"OPENAI_API_KEY=abc",
 	] {
-		assert!(
-			contains_secret_marker(marker),
-			"{marker} should be detected"
-		);
+		assert!(contains_secret_marker(marker), "{marker} should be detected");
 	}
 	assert!(!contains_secret_marker("plain native artifact"));
 }
 
 #[test]
 fn required_text_rejects_blank_values() {
-	assert_eq!(
-		required_text(Some("  usable  "), "field").unwrap(),
-		"usable"
-	);
+	assert_eq!(required_text(Some("  usable  "), "field").unwrap(), "usable");
 	let error = required_text(None, "field").unwrap_err();
 	assert!(error.to_string().contains("missing field"));
 	assert!(required_text(Some("\t"), "field").is_err());
@@ -419,10 +375,7 @@ fn required_text_rejects_blank_values() {
 #[test]
 fn validate_runtime_references_accepts_signed_and_parameterized_capabilities() {
 	let mut candidate = proposal("guard");
-	candidate.when = vec![
-		"+filesystem-write".to_string(),
-		"-capability(result)".to_string(),
-	];
+	candidate.when = vec!["+filesystem-write".to_string(), "-capability(result)".to_string()];
 	candidate.match_rule = Some("capability(arg=^schema$)".to_string());
 	candidate.has = Vec::new();
 	validate_runtime_references(
@@ -453,13 +406,7 @@ fn evidence_excerpt_filters_roles_and_caps_each_entry() {
 	let synthetic = user_message("<system-note>\ninjected\n</system-note>");
 	let mut long_tool = user_message(&"x".repeat(6_000));
 	long_tool.role = "tool".to_string();
-	let excerpt = evidence_excerpt(&[
-		user_message("real task"),
-		synthetic,
-		assistant,
-		tool,
-		long_tool,
-	]);
+	let excerpt = evidence_excerpt(&[user_message("real task"), synthetic, assistant, tool, long_tool]);
 	assert_eq!(
 		excerpt
 			.iter()
@@ -467,10 +414,7 @@ fn evidence_excerpt_filters_roles_and_caps_each_entry() {
 			.collect::<Vec<_>>(),
 		vec!["M1", "M4", "M5"]
 	);
-	assert_eq!(
-		excerpt[2]["content"].as_str().unwrap().chars().count(),
-		4_000
-	);
+	assert_eq!(excerpt[2]["content"].as_str().unwrap().chars().count(), 4_000);
 }
 
 #[test]
@@ -549,17 +493,12 @@ fn live_artifacts_are_read_from_delivery_markers_only() {
 		stored_record("evo-absent", "evolved-absent", "skill"),
 	];
 	let messages = vec![
-		user_message(
-			"<system-note>\n<learned-guidance>\n<guidance id=\"evo-rule\">\nx\n</guidance>",
-		),
+		user_message("<system-note>\n<learned-guidance>\n<guidance id=\"evo-rule\">\nx\n</guidance>"),
 		user_message("<skill name=\"evolved-skill\">\nbody\n</skill>"),
 		// The guard's id in a real request is not a delivery marker.
 		user_message("why did evo-guard block me"),
 	];
-	assert_eq!(
-		live_in_session(&messages, &records),
-		vec!["evo-rule", "evo-skill"]
-	);
+	assert_eq!(live_in_session(&messages, &records), vec!["evo-rule", "evo-skill"]);
 	assert!(live_in_session(&[], &records).is_empty());
 }
 
@@ -580,14 +519,7 @@ fn validate_native_rejects_secrets_shebangless_scripts_and_broken_native() {
 		file_name: "check.sh".to_string(),
 		content: "#!/bin/sh\nAWS_SECRET_ACCESS_KEY=leak\n".to_string(),
 	};
-	let error = validate_native(
-		ArtifactKind::Guard,
-		native,
-		Some(&script),
-		EffectClass::Advisory,
-		true,
-	)
-	.unwrap_err();
+	let error = validate_native(ArtifactKind::Guard, native, Some(&script), EffectClass::Advisory, true).unwrap_err();
 	assert!(error.to_string().contains("secret-like marker"));
 
 	#[cfg(unix)]
@@ -596,14 +528,8 @@ fn validate_native_rejects_secrets_shebangless_scripts_and_broken_native() {
 			file_name: "check.sh".to_string(),
 			content: "echo no shebang".to_string(),
 		};
-		let error = validate_native(
-			ArtifactKind::Guard,
-			native,
-			Some(&script),
-			EffectClass::Advisory,
-			true,
-		)
-		.unwrap_err();
+		let error =
+			validate_native(ArtifactKind::Guard, native, Some(&script), EffectClass::Advisory, true).unwrap_err();
 		assert!(error.to_string().contains("shebang"));
 	}
 
@@ -617,24 +543,10 @@ fn validate_native_rejects_secrets_shebangless_scripts_and_broken_native() {
 	.unwrap_err();
 	assert!(error.to_string().contains("failed native parsing"));
 
-	let error = validate_native(
-		ArtifactKind::Guard,
-		"not toml {{{",
-		None,
-		EffectClass::Advisory,
-		true,
-	)
-	.unwrap_err();
+	let error = validate_native(ArtifactKind::Guard, "not toml {{{", None, EffectClass::Advisory, true).unwrap_err();
 	assert!(error.to_string().contains("failed native parsing"));
 
-	let error = validate_native(
-		ArtifactKind::Pipe,
-		native,
-		None,
-		EffectClass::Effectful,
-		true,
-	)
-	.unwrap_err();
+	let error = validate_native(ArtifactKind::Pipe, native, None, EffectClass::Effectful, true).unwrap_err();
 	assert!(error.to_string().contains("lifecycle script is missing"));
 }
 
@@ -651,14 +563,7 @@ fn render_native_shapes_pipe_hook_and_validator_and_rejects_incomplete() {
 
 	let mut pipe = proposal("pipe");
 	pipe.pipe_when = "first".to_string();
-	let (native, script, path) = render_native(
-		&pipe,
-		ArtifactKind::Pipe,
-		&scope,
-		"evolved-pipe",
-		"evo-pipe",
-	)
-	.unwrap();
+	let (native, script, path) = render_native(&pipe, ArtifactKind::Pipe, &scope, "evolved-pipe", "evo-pipe").unwrap();
 	assert_eq!(path, "guardrail.toml");
 	assert!(script.is_some());
 	assert!(native.contains("when = \"first\""));
@@ -668,14 +573,7 @@ fn render_native_shapes_pipe_hook_and_validator_and_rejects_incomplete() {
 	let mut hook = proposal("hook");
 	hook.hook_on = "error".to_string();
 	hook.result_regex = Some("error".to_string());
-	let (native, _, _) = render_native(
-		&hook,
-		ArtifactKind::Hook,
-		&scope,
-		"evolved-hook",
-		"evo-hook",
-	)
-	.unwrap();
+	let (native, _, _) = render_native(&hook, ArtifactKind::Hook, &scope, "evolved-hook", "evo-hook").unwrap();
 	assert!(native.contains("on = \"error\""));
 	assert!(native.contains("result = \"error\""));
 
@@ -712,8 +610,7 @@ fn render_native_shapes_pipe_hook_and_validator_and_rejects_incomplete() {
 	let mut validator = proposal("validator");
 	validator.when = Vec::new();
 	validator.assistant_match = None;
-	let error =
-		render_native(&validator, ArtifactKind::Validator, &scope, "name", "id").unwrap_err();
+	let error = render_native(&validator, ArtifactKind::Validator, &scope, "name", "id").unwrap_err();
 	assert!(error.to_string().contains("when or assistant_match"));
 
 	let mut mismatch = proposal("guard");
@@ -724,9 +621,7 @@ fn render_native_shapes_pipe_hook_and_validator_and_rejects_incomplete() {
 	let mut skill = proposal("skill");
 	skill.body = "  ".to_string();
 	let error = render_native(&skill, ArtifactKind::Skill, &scope, "name", "id").unwrap_err();
-	assert!(error
-		.to_string()
-		.contains("description, body, and activation rules"));
+	assert!(error.to_string().contains("description, body, and activation rules"));
 
 	let mut unsafe_name = proposal("guard");
 	unsafe_name.script_name = Some("../escape.sh".to_string());
@@ -748,9 +643,7 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let backend = FileBackend;
-	let lesson = |content: &str,
-	              memory_type: &str,
-	              outcome: crate::supervisor::learning::TrajectoryOutcome| {
+	let lesson = |content: &str, memory_type: &str, outcome: crate::supervisor::learning::TrajectoryOutcome| {
 		let mut item = memory("scoped");
 		item.content = content.to_string();
 		item.memory_type = memory_type.to_string();
@@ -805,9 +698,7 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 		backend.store(&item).await.unwrap();
 	}
 
-	let memories = source_memories("developer", "project", "session")
-		.await
-		.unwrap();
+	let memories = source_memories("developer", "project", "session").await.unwrap();
 	assert_eq!(memories.len(), 8);
 	assert!(memories.iter().all(|item| item.source == "session"));
 	assert!(memories.iter().all(|item| !item.evidence.is_empty()));
@@ -827,14 +718,10 @@ async fn source_memories_filters_by_source_evidence_and_outcome() {
 
 #[test]
 fn activation_rules_reject_quoted_arguments_and_boolean_operators() {
-	assert!(
-		validate_activation_rules(&["content(brief) match(\\bchanges\\b)".to_string()]).is_ok()
-	);
+	assert!(validate_activation_rules(&["content(brief) match(\\bchanges\\b)".to_string()]).is_ok());
 	assert!(validate_activation_rules(&["match(\"brief the changes\")".to_string()]).is_err());
 	assert!(validate_activation_rules(&["content('polish')".to_string()]).is_err());
-	assert!(
-		validate_activation_rules(&["file(Cargo.toml) && content(octolib)".to_string()]).is_err()
-	);
+	assert!(validate_activation_rules(&["file(Cargo.toml) && content(octolib)".to_string()]).is_err());
 	assert!(validate_activation_rules(&["brief the changes".to_string()]).is_err());
 }
 
@@ -866,19 +753,15 @@ async fn replay_screen_runs_text_checks_and_counts_environment_checks_as_satisfi
 			},
 		]
 	};
-	assert!(screen_replay_cases(native, &cases("write release notes"))
-		.await
-		.is_ok());
+	assert!(screen_replay_cases(native, &cases("write release notes")).await.is_ok());
 	let error = screen_replay_cases(native, &cases("brief overview of the codebase"))
 		.await
 		.unwrap_err();
 	assert!(error.to_string().contains("negative"));
 	let environment_only = native.replace("content(brief) file(README.md)", "file(README.md)");
-	assert!(
-		screen_replay_cases(&environment_only, &cases("write release notes"))
-			.await
-			.is_err()
-	);
+	assert!(screen_replay_cases(&environment_only, &cases("write release notes"))
+		.await
+		.is_err());
 }
 
 #[test]

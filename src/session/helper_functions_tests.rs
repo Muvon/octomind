@@ -53,11 +53,7 @@ fn test_summarize_context() {
 #[tokio::test]
 async fn test_process_placeholders_replaces_builtins() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let processed = process_placeholders_async(
-		"date={{DATE}} cwd={{CWD}} os={{OS}} shell={{SHELL}}",
-		tmp.path(),
-	)
-	.await;
+	let processed = process_placeholders_async("date={{DATE}} cwd={{CWD}} os={{OS}} shell={{SHELL}}", tmp.path()).await;
 	assert!(!processed.contains("{{DATE}}"), "processed: {processed}");
 	assert!(!processed.contains("{{CWD}}"), "processed: {processed}");
 	assert!(!processed.contains("{{OS}}"), "processed: {processed}");
@@ -68,18 +64,12 @@ async fn test_process_placeholders_replaces_builtins() {
 #[tokio::test]
 async fn test_process_placeholders_role_and_unknown() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let processed = process_placeholders_async_with_role(
-		"role={{ROLE}} keep={{NOT_A_PLACEHOLDER}}",
-		tmp.path(),
-		Some("tester"),
-	)
-	.await;
+	let processed =
+		process_placeholders_async_with_role("role={{ROLE}} keep={{NOT_A_PLACEHOLDER}}", tmp.path(), Some("tester"))
+			.await;
 	assert!(processed.contains("role=tester"), "processed: {processed}");
 	// Unknown placeholders are left for downstream passes
-	assert!(
-		processed.contains("{{NOT_A_PLACEHOLDER}}"),
-		"processed: {processed}"
-	);
+	assert!(processed.contains("{{NOT_A_PLACEHOLDER}}"), "processed: {processed}");
 }
 
 #[tokio::test]
@@ -87,19 +77,10 @@ async fn test_git_placeholders_in_non_git_dir() {
 	// A directory with no git repo and no README: the placeholders must
 	// resolve (to empty/fallback text), never error or remain unexpanded.
 	let tmp = tempfile::tempdir().expect("tempdir");
-	let processed = process_placeholders_async(
-		"status={{GIT_STATUS}} tree={{GIT_TREE}} readme={{README}}",
-		tmp.path(),
-	)
-	.await;
-	assert!(
-		!processed.contains("{{GIT_STATUS}}"),
-		"processed: {processed}"
-	);
-	assert!(
-		!processed.contains("{{GIT_TREE}}"),
-		"processed: {processed}"
-	);
+	let processed =
+		process_placeholders_async("status={{GIT_STATUS}} tree={{GIT_TREE}} readme={{README}}", tmp.path()).await;
+	assert!(!processed.contains("{{GIT_STATUS}}"), "processed: {processed}");
+	assert!(!processed.contains("{{GIT_TREE}}"), "processed: {processed}");
 	assert!(!processed.contains("{{README}}"), "processed: {processed}");
 }
 
@@ -107,13 +88,7 @@ async fn test_git_placeholders_in_non_git_dir() {
 async fn test_get_all_placeholders_exposes_core_keys() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let map = get_all_placeholders(tmp.path()).await;
-	for key in [
-		"{{DATE}}",
-		"{{OS}}",
-		"{{SHELL}}",
-		"{{SYSTEM}}",
-		"{{CONTEXT}}",
-	] {
+	for key in ["{{DATE}}", "{{OS}}", "{{SHELL}}", "{{SYSTEM}}", "{{CONTEXT}}"] {
 		assert!(map.contains_key(key), "missing placeholder {key}");
 	}
 }
@@ -123,10 +98,7 @@ async fn test_process_placeholders_system_and_binaries() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let processed = process_placeholders_async("sys={{SYSTEM}} bin={{BINARIES}}", tmp.path()).await;
 	assert!(!processed.contains("{{SYSTEM}}"), "processed: {processed}");
-	assert!(
-		!processed.contains("{{BINARIES}}"),
-		"processed: {processed}"
-	);
+	assert!(!processed.contains("{{BINARIES}}"), "processed: {processed}");
 	assert!(processed.contains("==== SYSTEM INFORMATION ===="));
 	assert!(processed.contains("==== END SYSTEM INFORMATION ===="));
 	assert!(processed.contains("**Shell**"));
@@ -152,24 +124,12 @@ async fn test_git_placeholders_in_real_repo() {
 		.output()
 		.expect("git add");
 
-	let processed = process_placeholders_async(
-		"s={{GIT_STATUS}} t={{GIT_TREE}} r={{README}} c={{CONTEXT}}",
-		base,
-	)
-	.await;
-	assert!(
-		processed.contains("==== GIT STATUS ===="),
-		"processed: {processed}"
-	);
-	assert!(
-		processed.contains("==== FILE TREE ===="),
-		"processed: {processed}"
-	);
+	let processed =
+		process_placeholders_async("s={{GIT_STATUS}} t={{GIT_TREE}} r={{README}} c={{CONTEXT}}", base).await;
+	assert!(processed.contains("==== GIT STATUS ===="), "processed: {processed}");
+	assert!(processed.contains("==== FILE TREE ===="), "processed: {processed}");
 	assert!(processed.contains("src/main.rs"), "processed: {processed}");
-	assert!(
-		processed.contains("==== README ===="),
-		"processed: {processed}"
-	);
+	assert!(processed.contains("==== README ===="), "processed: {processed}");
 	assert!(processed.contains("hello readme"), "processed: {processed}");
 	assert!(
 		processed.contains("==== PROJECT CONTEXT ===="),
@@ -209,10 +169,7 @@ async fn test_get_command_version_outcomes() {
 	let git_version = get_command_version("git").await;
 	assert_ne!(git_version, "missing");
 	assert!(!git_version.is_empty());
-	assert_eq!(
-		get_command_version("definitely_missing_tool_xyz").await,
-		"missing"
-	);
+	assert_eq!(get_command_version("definitely_missing_tool_xyz").await, "missing");
 }
 
 #[tokio::test]

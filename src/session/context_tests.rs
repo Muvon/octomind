@@ -39,21 +39,12 @@ fn test_workdir_anchor_and_override() {
 
 	set_session_workdir(&sid, PathBuf::from("/anchor"));
 	assert_eq!(get_current_workdir(&sid), Some(PathBuf::from("/anchor")));
-	assert_eq!(
-		get_session_workdir_anchor(&sid),
-		Some(PathBuf::from("/anchor"))
-	);
+	assert_eq!(get_session_workdir_anchor(&sid), Some(PathBuf::from("/anchor")));
 
 	// Mid-session override moves current but preserves the anchor
 	set_current_workdir(&sid, PathBuf::from("/anchor/sub"));
-	assert_eq!(
-		get_current_workdir(&sid),
-		Some(PathBuf::from("/anchor/sub"))
-	);
-	assert_eq!(
-		get_session_workdir_anchor(&sid),
-		Some(PathBuf::from("/anchor"))
-	);
+	assert_eq!(get_current_workdir(&sid), Some(PathBuf::from("/anchor/sub")));
+	assert_eq!(get_session_workdir_anchor(&sid), Some(PathBuf::from("/anchor")));
 
 	clear_session_workdir(&sid);
 	assert!(get_current_workdir(&sid).is_none());
@@ -201,11 +192,7 @@ fn test_dynamic_servers_lifecycle() {
 	assert!(get_all_dynamic_server_configs_for_session(&sid).is_empty());
 
 	// Enabling a server that was never registered fails
-	assert!(!enable_dynamic_server_for_session(
-		&sid,
-		"ghost",
-		Vec::new()
-	));
+	assert!(!enable_dynamic_server_for_session(&sid, "ghost", Vec::new()));
 
 	assert!(remove_dynamic_server_for_session(&sid, "dynsrv").is_some());
 	assert!(!has_dynamic_server(&sid, "dynsrv"));
@@ -375,8 +362,8 @@ fn session_config_set_get_clear_roundtrip() {
 	let sid = unique("cfg");
 	assert!(get_session_config(&sid).is_none());
 
-	let config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))
-		.expect("parse default config template");
+	let config: Config =
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	set_session_config(&sid, &config);
 
 	let stored = get_session_config(&sid).expect("config stored per session");
@@ -396,10 +383,7 @@ fn env_skills_lifecycle_is_session_scoped_and_idempotent() {
 	add_env_skill(&sid, "rust");
 	add_env_skill(&sid, "rust");
 	add_env_skill(&sid, "toml");
-	assert_eq!(
-		get_env_skills(&sid),
-		vec!["rust".to_string(), "toml".to_string()]
-	);
+	assert_eq!(get_env_skills(&sid), vec!["rust".to_string(), "toml".to_string()]);
 
 	clear_env_skills(&sid);
 	assert!(get_env_skills(&sid).is_empty());
@@ -415,10 +399,7 @@ async fn job_manager_initializes_resolves_and_clears_per_session() {
 
 	init_job_manager_for_session(&sid);
 	let inside = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
-	assert!(
-		inside.is_some(),
-		"manager must resolve inside the session scope"
-	);
+	assert!(inside.is_some(), "manager must resolve inside the session scope");
 
 	clear_job_manager_for_session(&sid);
 	let after = with_session_id(sid.clone(), async { get_job_manager_for_session() }).await;
@@ -455,10 +436,7 @@ async fn init_session_services_runs_the_full_init_sequence_under_scope() {
 		assert_eq!(get_session_workdir_anchor(&sid), Some(expected.clone()));
 		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
 		assert_eq!((role.as_str(), spec.as_str()), ("developer", "general"));
-		assert_eq!(
-			project,
-			crate::mcp::process::derive_project_id_from_path(&expected)
-		);
+		assert_eq!(project, crate::mcp::process::derive_project_id_from_path(&expected));
 		assert_eq!(session_id, sid);
 		assert_eq!(workdir, expected.to_string_lossy());
 		assert!(!workdir.is_empty());
@@ -483,10 +461,7 @@ async fn init_session_services_preserves_explicit_workdir_anchor() {
 		let (role, spec, project, session_id, workdir) = crate::mcp::process::get_session_context();
 		assert_eq!((role.as_str(), spec.as_str()), ("cloud", "octo"));
 		assert_eq!(session_id, sid);
-		assert_eq!(
-			project,
-			crate::mcp::process::derive_project_id_from_path(root.path())
-		);
+		assert_eq!(project, crate::mcp::process::derive_project_id_from_path(root.path()));
 		assert_eq!(workdir, root.path().to_string_lossy());
 		assert_eq!(get_current_workdir(&sid), Some(current));
 	})

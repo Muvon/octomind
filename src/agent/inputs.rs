@@ -66,8 +66,7 @@ where
 /// protocol stream). A prompt there would read EOF or a protocol frame as the
 /// answer, and `resolve_env_vars` would save that into `./.env` — where, loaded
 /// with override on every later start, it shadows the real environment.
-static PROCESS_NON_INTERACTIVE: std::sync::atomic::AtomicBool =
-	std::sync::atomic::AtomicBool::new(false);
+static PROCESS_NON_INTERACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Make every later `prompt_user` in this process fail instead of reading stdin.
 pub fn set_process_non_interactive() {
@@ -111,8 +110,7 @@ fn load_inputs() -> Result<HashMap<String, String>> {
 	if !path.exists() {
 		return Ok(HashMap::new());
 	}
-	let content = fs::read_to_string(&path)
-		.context(format!("Failed to read inputs file: {}", path.display()))?;
+	let content = fs::read_to_string(&path).context(format!("Failed to read inputs file: {}", path.display()))?;
 	let table: toml::Table = toml::from_str(&content).context("Failed to parse inputs.toml")?;
 	Ok(table
 		.into_iter()
@@ -136,10 +134,8 @@ fn save_input(key: &str, value: &str) -> Result<()> {
 	for (k, v) in &inputs {
 		table.insert(k.clone(), toml::Value::String(v.clone()));
 	}
-	let content =
-		toml::to_string_pretty(&toml::Value::Table(table)).context("Failed to serialize inputs")?;
-	fs::write(&path, content)
-		.context(format!("Failed to write inputs file: {}", path.display()))?;
+	let content = toml::to_string_pretty(&toml::Value::Table(table)).context("Failed to serialize inputs")?;
+	fs::write(&path, content).context(format!("Failed to write inputs file: {}", path.display()))?;
 	Ok(())
 }
 
@@ -207,14 +203,12 @@ pub async fn resolve_inputs(raw: &str) -> Result<String> {
 /// with a sentinel that contains no `{{` so the substitution engine ignores them.
 /// Call `restore_escaped_braces` after all substitutions to get the final `{{...}}`.
 pub fn protect_escaped_braces(s: &str) -> String {
-	s.replace("{{{{", "\x00LBRACE\x00")
-		.replace("}}}}", "\x00RBRACE\x00")
+	s.replace("{{{{", "\x00LBRACE\x00").replace("}}}}", "\x00RBRACE\x00")
 }
 
 /// Restore sentinels inserted by `protect_escaped_braces` back to literal `{{` / `}}`.
 pub fn restore_escaped_braces(s: &str) -> String {
-	s.replace("\x00LBRACE\x00", "{{")
-		.replace("\x00RBRACE\x00", "}}")
+	s.replace("\x00LBRACE\x00", "{{").replace("\x00RBRACE\x00", "}}")
 }
 
 /// Extract all unique `{{ENV:KEY}}` keys from a raw string.
@@ -246,10 +240,7 @@ fn save_env_to_dotenv(key: &str, value: &str) -> Result<()> {
 		.create(true)
 		.append(true)
 		.open(dotenv_path)
-		.context(format!(
-			"Failed to open .env for writing: {}",
-			dotenv_path.display()
-		))?;
+		.context(format!("Failed to open .env for writing: {}", dotenv_path.display()))?;
 	file.write_all(line.as_bytes())
 		.context(format!("Failed to write {key} to .env"))?;
 	Ok(())

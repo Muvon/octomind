@@ -48,10 +48,7 @@ fn test_rendered_rows() {
 	// Continuation lines use the multiline prefix (4), first line the
 	// prompt prefix (3): "ab" row + 76-char line +4 prefix = 80 → 1 row
 	let second = "y".repeat(76);
-	assert_eq!(
-		rendered_rows("", "▍ 〉", "    ", &format!("ab\n{}", second), 80),
-		2
-	);
+	assert_eq!(rendered_rows("", "▍ 〉", "    ", &format!("ab\n{}", second), 80), 2);
 	// One char more on the continuation line wraps it
 	let second_wraps = "y".repeat(77);
 	assert_eq!(
@@ -86,10 +83,8 @@ fn test_display_cols_multibyte() {
 
 #[tokio::test]
 async fn test_calculate_current_context_tokens_grows_with_messages() {
-	let config = toml::from_str::<crate::config::Config>(include_str!(
-		"../../../config-templates/default.toml"
-	))
-	.expect("parse default config template");
+	let config = toml::from_str::<crate::config::Config>(include_str!("../../../config-templates/default.toml"))
+		.expect("parse default config template");
 
 	let empty = calculate_current_context_tokens(&[], &config, "assistant").await;
 	let messages = vec![crate::session::Message {

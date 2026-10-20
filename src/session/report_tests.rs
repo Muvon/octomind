@@ -55,10 +55,7 @@ fn tools_used_is_sorted_and_dash_when_empty() {
 		("write".to_string(), 2u32),
 	]);
 	// Sorted so the same tool set always renders identically.
-	assert_eq!(
-		SessionReport::format_tools_used(&tools),
-		"read(1), shell(3), write(2)"
-	);
+	assert_eq!(SessionReport::format_tools_used(&tools), "read(1), shell(3), write(2)");
 }
 
 #[test]
@@ -96,10 +93,7 @@ fn escape_markdown_protects_table_cells() {
 fn markdown_table_escapes_every_cell_it_renders() {
 	let r = report(vec![entry("fix a|b bug", "shell|read(1)")]);
 	let table = r.generate_markdown_table();
-	let row = table
-		.lines()
-		.find(|l| l.contains("fix a"))
-		.expect("entry row present");
+	let row = table.lines().find(|l| l.contains("fix a")).expect("entry row present");
 	// The row keeps exactly the 8 pipes of a 7-column table — the two
 	// pipes coming from the data are escaped, not counted as separators.
 	assert_eq!(row.matches("\\|").count(), 2);
@@ -176,8 +170,7 @@ fn generate_from_log_tracks_messages_commands_tools_cost_and_time() {
 		serde_json::json!({"role":"assistant","content":"done","timestamp":114}),
 	];
 	for entry in entries {
-		crate::session::append_to_session_file(&path, &entry.to_string())
-			.expect("append report frame");
+		crate::session::append_to_session_file(&path, &entry.to_string()).expect("append report frame");
 	}
 
 	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
@@ -231,8 +224,7 @@ fn generate_from_log_ignores_injected_user_turns_and_relogged_messages() {
 		assistant,
 	];
 	for entry in entries {
-		crate::session::append_to_session_file(&path, &entry.to_string())
-			.expect("append report frame");
+		crate::session::append_to_session_file(&path, &entry.to_string()).expect("append report frame");
 	}
 
 	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
@@ -249,10 +241,7 @@ fn truncate_request_flattens_indented_multiline_input() {
 		SessionReport::truncate_request(pasted, 30),
 		"new file: tests/integration..."
 	);
-	assert_eq!(
-		SessionReport::truncate_request("  spaced\n\nout  ", 30),
-		"spaced out"
-	);
+	assert_eq!(SessionReport::truncate_request("  spaced\n\nout  ", 30), "spaced out");
 }
 
 #[test]
@@ -276,8 +265,7 @@ fn generate_from_log_attributes_cost_per_request_via_stats_checkpoints() {
 		}),
 	];
 	for entry in entries {
-		crate::session::append_to_session_file(&path, &entry.to_string())
-			.expect("append report frame");
+		crate::session::append_to_session_file(&path, &entry.to_string()).expect("append report frame");
 	}
 
 	let report = SessionReport::generate_from_log(path.to_str().unwrap()).expect("report");
@@ -291,8 +279,7 @@ fn generate_from_log_attributes_cost_per_request_via_stats_checkpoints() {
 
 fn write_log(path: &std::path::Path, entries: &[serde_json::Value]) {
 	for entry in entries {
-		crate::session::append_to_session_file(&path.to_path_buf(), &entry.to_string())
-			.expect("append report frame");
+		crate::session::append_to_session_file(&path.to_path_buf(), &entry.to_string()).expect("append report frame");
 	}
 }
 
@@ -380,9 +367,6 @@ fn turns_since_keeps_only_interactive_sessions_and_turns_after_the_cutoff() {
 fn project_of_reads_generated_names_and_keeps_custom_ones_whole() {
 	assert_eq!(project_of("260926-backend-1407-29c0"), "backend");
 	assert_eq!(project_of("260926-octomind-web-1345-ba55"), "octomind-web");
-	assert_eq!(
-		project_of("tap-content-social-326a0b"),
-		"tap-content-social-326a0b"
-	);
+	assert_eq!(project_of("tap-content-social-326a0b"), "tap-content-social-326a0b");
 	assert_eq!(project_of("release-notes"), "release-notes");
 }

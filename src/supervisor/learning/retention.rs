@@ -112,10 +112,7 @@ impl ArchiveCatalogEntry {
 	}
 
 	pub fn path(&self, hot_dir: &std::path::Path) -> PathBuf {
-		hot_dir
-			.join(".archive")
-			.join(&self.memory_type)
-			.join(&self.file)
+		hot_dir.join(".archive").join(&self.memory_type).join(&self.file)
 	}
 
 	pub fn search_text(&self) -> String {
@@ -126,15 +123,8 @@ impl ArchiveCatalogEntry {
 /// Maintain both the current project/role scope and the global scope.
 /// `session_name` is the extraction that triggered maintenance: only rules it
 /// just stored can open a promotion review.
-pub async fn maintain(
-	config: &Config,
-	role: &str,
-	project: &str,
-	session_name: &str,
-) -> Result<RetentionReport> {
-	let _timing = crate::supervisor::accounting::WallTimer::start(
-		crate::supervisor::stats::CallKind::Retention,
-	);
+pub async fn maintain(config: &Config, role: &str, project: &str, session_name: &str) -> Result<RetentionReport> {
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Retention);
 	let backend = FileBackend;
 	// Promotion first so a newly global rule is budgeted in the global bucket.
 	let promoted = promote_recurring(&backend, config, session_name).await?;
@@ -158,11 +148,7 @@ pub async fn maintain(
 /// stack-specific rule. A cluster is reviewed only when `session_name` just
 /// restated it, so a declined cluster is re-asked on new evidence, not on
 /// every extraction.
-async fn promote_recurring(
-	backend: &FileBackend,
-	config: &Config,
-	session_name: &str,
-) -> Result<u64> {
+async fn promote_recurring(backend: &FileBackend, config: &Config, session_name: &str) -> Result<u64> {
 	let rules: Vec<Lesson> = backend
 		.retrieve_store()
 		.await?
@@ -171,14 +157,8 @@ async fn promote_recurring(
 		.collect();
 	let mut promoted = 0_u64;
 	for cluster in recurrence_clusters(&rules, RECURRENCE_PAIR_SIGNAL) {
-		let projects: HashSet<&str> = cluster
-			.iter()
-			.map(|index| rules[*index].project.as_str())
-			.collect();
-		if projects.len() < RECURRENCE_MIN_PROJECTS
-			|| !cluster
-				.iter()
-				.any(|index| rules[*index].source == session_name)
+		let projects: HashSet<&str> = cluster.iter().map(|index| rules[*index].project.as_str()).collect();
+		if projects.len() < RECURRENCE_MIN_PROJECTS || !cluster.iter().any(|index| rules[*index].source == session_name)
 		{
 			continue;
 		}
@@ -202,9 +182,7 @@ async fn promote_recurring(
 		let mut keeper = (*keeper_source).clone();
 		keeper.scope = "global".to_string();
 		keeper.storage_path = String::new();
-		keeper
-			.related
-			.extend(others.iter().map(|item| item.file_id()));
+		keeper.related.extend(others.iter().map(|item| item.file_id()));
 		keeper.related.sort();
 		keeper.related.dedup();
 		keeper
@@ -212,10 +190,7 @@ async fn promote_recurring(
 			.extend(others.iter().flat_map(|item| item.evidence.clone()));
 		keeper.evidence.sort();
 		keeper.evidence.dedup();
-		keeper.use_count = members
-			.iter()
-			.map(|item| item.use_count)
-			.fold(0, u64::saturating_add);
+		keeper.use_count = members.iter().map(|item| item.use_count).fold(0, u64::saturating_add);
 		keeper.last_used = members
 			.iter()
 			.map(|item| item.last_used.as_str())
@@ -260,28 +235,18 @@ pub(super) async fn verify_user_wide(config: &Config, members: &[&Lesson]) -> bo
 	if evaluate::enabled(config, Seam::Distill) {
 		let replaced = crate::session::estimate_tokens(&payload.to_string())
 			+ crate::session::estimate_tokens(PROMOTE_VERIFY_PROMPT);
-		let Some(answers) = evaluate::run(
-			config,
-			Seam::Distill,
-			payload,
-			evaluate::retention_promote_question(),
-		)
-		.await
+		let Some(answers) = evaluate::run(config, Seam::Distill, payload, evaluate::retention_promote_question()).await
 		else {
 			return false;
 		};
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
-			>= evaluate::RETENTION_SUPPORT_AT;
+		return evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::RETENTION_SUPPORT_AT;
 	}
 	let (_tx, rx) = tokio::sync::watch::channel(false);
 	super::extract::call_supervisor_json(
 		config,
-		super::extract::SupervisorPrompt::new(
-			PROMOTE_VERIFY_PROMPT.to_string(),
-			payload.to_string(),
-		),
+		super::extract::SupervisorPrompt::new(PROMOTE_VERIFY_PROMPT.to_string(), payload.to_string()),
 		crate::supervisor::stats::CallKind::Retention,
 		verdict_schema(),
 		rx,
@@ -328,10 +293,7 @@ pub(crate) fn recurrence_clusters(items: &[Lesson], min_signal: f64) -> Vec<Vec<
 		let cluster_root = root(&mut parent, index);
 		groups.entry(cluster_root).or_default().push(index);
 	}
-	groups
-		.into_values()
-		.filter(|members| members.len() >= 2)
-		.collect()
+	groups.into_values().filter(|members| members.len() >= 2).collect()
 }
 
 async fn maintain_scope(
@@ -341,10 +303,7 @@ async fn maintain_scope(
 	global: bool,
 ) -> Result<RetentionReport> {
 	let mut report = RetentionReport::default();
-	let mut kinds: Vec<String> = records
-		.iter()
-		.map(|item| item.memory_type.clone())
-		.collect();
+	let mut kinds: Vec<String> = records.iter().map(|item| item.memory_type.clone()).collect();
 	kinds.sort();
 	kinds.dedup();
 
@@ -469,16 +428,8 @@ pub(crate) fn pair_signal(left: &Lesson, right: &Lesson) -> f64 {
 		&normalized_words(&format!("{} {}", left.title, left.content)),
 		&normalized_words(&format!("{} {}", right.title, right.content)),
 	);
-	let left_tags = left
-		.tags
-		.iter()
-		.map(|tag| tag.to_ascii_lowercase())
-		.collect();
-	let right_tags = right
-		.tags
-		.iter()
-		.map(|tag| tag.to_ascii_lowercase())
-		.collect();
+	let left_tags = left.tags.iter().map(|tag| tag.to_ascii_lowercase()).collect();
+	let right_tags = right.tags.iter().map(|tag| tag.to_ascii_lowercase()).collect();
 	let tags = jaccard(&left_tags, &right_tags);
 	0.75 * words + 0.25 * tags
 }
@@ -565,17 +516,13 @@ pub(crate) async fn propose_and_verify(config: &Config, sources: &[Lesson; 2]) -
 		.await?;
 		crate::supervisor::stats::evaluate_applied(Seam::Distill, 1);
 		evaluate::avoided(config, Seam::Distill, replaced);
-		return (evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID)
-			>= evaluate::RETENTION_SUPPORT_AT)
+		return (evaluate::probability(&answers, evaluate::SUPPORT_QUESTION_ID) >= evaluate::RETENTION_SUPPORT_AT)
 			.then_some(candidate);
 	}
 	let (_tx, verify_rx) = tokio::sync::watch::channel(false);
 	let verified = super::extract::call_supervisor_json(
 		config,
-		super::extract::SupervisorPrompt::new(
-			VERIFY_PROMPT.to_string(),
-			verify_payload.to_string(),
-		),
+		super::extract::SupervisorPrompt::new(VERIFY_PROMPT.to_string(), verify_payload.to_string()),
 		crate::supervisor::stats::CallKind::Retention,
 		verdict_schema(),
 		verify_rx,
@@ -623,16 +570,10 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 		.collect();
 	related.sort();
 	related.dedup();
-	let mut evidence: Vec<String> = sources
-		.iter()
-		.flat_map(|item| item.evidence.clone())
-		.collect();
+	let mut evidence: Vec<String> = sources.iter().flat_map(|item| item.evidence.clone()).collect();
 	evidence.sort();
 	evidence.dedup();
-	let mut artifacts: Vec<String> = sources
-		.iter()
-		.flat_map(|item| item.artifacts.clone())
-		.collect();
+	let mut artifacts: Vec<String> = sources.iter().flat_map(|item| item.artifacts.clone()).collect();
 	artifacts.sort();
 	artifacts.dedup();
 	let same_outcome = sources[0].outcome == sources[1].outcome;
@@ -640,10 +581,7 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 		content: content.to_string(),
 		title: title.to_string(),
 		memory_type: sources[0].memory_type.clone(),
-		importance: sources
-			.iter()
-			.map(|item| item.importance)
-			.fold(f64::INFINITY, f64::min),
+		importance: sources.iter().map(|item| item.importance).fold(f64::INFINITY, f64::min),
 		confidence: if sources.iter().all(|item| item.confidence == "high") {
 			"high".to_string()
 		} else {
@@ -682,11 +620,7 @@ fn build_consolidated(sources: &[Lesson; 2], title: &str, content: &str) -> Less
 	}
 }
 
-async fn replace_with_consolidation(
-	backend: &FileBackend,
-	sources: &[Lesson; 2],
-	merged: &Lesson,
-) -> Result<bool> {
+async fn replace_with_consolidation(backend: &FileBackend, sources: &[Lesson; 2], merged: &Lesson) -> Result<bool> {
 	backend.store(merged).await?;
 	let mut moved = Vec::new();
 	for source in sources {
@@ -695,15 +629,10 @@ async fn replace_with_consolidation(
 			Err(error) => {
 				for (hot, cold) in moved.into_iter().rev() {
 					if let Err(rollback) = std::fs::rename(&cold, &hot) {
-						crate::log_debug!(
-							"Learning retention rollback failed (data remains cold): {}",
-							rollback
-						);
+						crate::log_debug!("Learning retention rollback failed (data remains cold): {}", rollback);
 					}
 				}
-				let _ = backend
-					.delete(&merged.file_id(), &merged.role, &merged.project)
-					.await;
+				let _ = backend.delete(&merged.file_id(), &merged.role, &merged.project).await;
 				crate::log_debug!("Learning consolidation archive failed: {}", error);
 				return Ok(false);
 			}
@@ -746,10 +675,7 @@ fn append_catalog(hot_dir: &std::path::Path, item: &Lesson, cold: &std::path::Pa
 	let mut encoded = serde_json::to_vec(&entry)?;
 	encoded.push(b'\n');
 	let catalog = hot_dir.join(".archive").join("catalog.jsonl");
-	let mut file = std::fs::OpenOptions::new()
-		.create(true)
-		.append(true)
-		.open(catalog)?;
+	let mut file = std::fs::OpenOptions::new().create(true).append(true).open(catalog)?;
 	file.write_all(&encoded)?;
 	file.sync_data()?;
 	Ok(())

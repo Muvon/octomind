@@ -130,8 +130,7 @@ async fn compact_consolidation_precision() {
 		.load_dotenv_override()
 		.expect("load server credentials");
 	let mut config = crate::config::Config::load().expect("real config loads");
-	let model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	let model = std::env::var("LEARNING_BENCH_MODEL").unwrap_or_else(|_| config.get_supervisor_model_profile().model);
 	config.supervisor.model.model = Some(model.clone());
 	config.supervisor.model.model = Some(model.clone());
 
@@ -173,8 +172,5 @@ async fn compact_consolidation_precision() {
 	std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
 	println!("CONSOLIDATION_REPORT={}\n{report}", path.display());
 	assert_eq!(false_accepts, 0, "unsafe consolidation accepted: {report}");
-	assert!(
-		true_accepts >= 1,
-		"consolidator rejected every safe merge: {report}"
-	);
+	assert!(true_accepts >= 1, "consolidator rejected every safe merge: {report}");
 }

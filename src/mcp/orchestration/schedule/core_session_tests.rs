@@ -48,10 +48,7 @@ impl TempDataDir {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("create temp data dir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -92,9 +89,7 @@ fn register_running_tap_job(id: &str, running: bool) {
 			crate::session::tap_runs::TapJobStatus::Done
 		})),
 		cancel_tx,
-		live: Arc::new(std::sync::RwLock::new(
-			crate::session::tap_runs::TapLiveState::default(),
-		)),
+		live: Arc::new(std::sync::RwLock::new(crate::session::tap_runs::TapLiveState::default())),
 	});
 }
 
@@ -129,11 +124,9 @@ async fn test_is_session_idle_walks_every_busy_source() {
 		assert!(is_session_idle(), "clearing watched jobs restores idle");
 
 		// Active background agent job keeps the session busy.
-		let manager = crate::session::context::get_job_manager_for_session()
-			.expect("job manager initialized for session");
-		manager
-			.try_acquire()
-			.expect("first slot must be acquirable");
+		let manager =
+			crate::session::context::get_job_manager_for_session().expect("job manager initialized for session");
+		manager.try_acquire().expect("first slot must be acquirable");
 		assert!(!is_session_idle());
 		manager.release(crate::session::background_jobs::CompletedJob {
 			agent_name: "sched-idle-agent".to_string(),
@@ -200,8 +193,7 @@ async fn test_flush_idle_waits_for_idle_then_consumes_and_reschedules() {
 
 		// A later idle transition fires the surviving repeating entry again.
 		flush_idle_to_inbox();
-		let repeated = crate::session::inbox::try_pop_inbox_message()
-			.expect("repeating idle message fires again");
+		let repeated = crate::session::inbox::try_pop_inbox_message().expect("repeating idle message fires again");
 		assert_eq!(repeated.content, "every idle");
 		assert!(!crate::session::inbox::has_inbox_messages());
 
@@ -269,10 +261,7 @@ async fn test_flush_due_to_inbox_outside_session_uses_global_store() {
 	assert!(has_pending_schedules());
 
 	flush_due_to_inbox();
-	assert!(
-		!has_pending_schedules(),
-		"global due entry must be consumed"
-	);
+	assert!(!has_pending_schedules(), "global due entry must be consumed");
 	drain_global_store();
 }
 
@@ -471,10 +460,7 @@ async fn test_add_rejects_idle_mix_zero_and_invalid_every() {
 				result.extract_content()
 			);
 		}
-		assert!(
-			!has_pending_schedules(),
-			"no entry may be created by errors"
-		);
+		assert!(!has_pending_schedules(), "no entry may be created by errors");
 
 		crate::session::context::clear_schedule_storage(&"sched-add-validation".to_string());
 	})
@@ -568,14 +554,8 @@ async fn test_render_pending_entries_formats_idle_truncation_and_repeats() {
 
 		let listing = render_pending_entries().expect("entries rendered");
 		assert!(listing.contains("(no description)"), "{listing}");
-		assert!(
-			listing.contains("idle (when idle)"),
-			"idle trigger format: {listing}"
-		);
-		assert!(
-			listing.contains("…"),
-			"long message preview truncated: {listing}"
-		);
+		assert!(listing.contains("idle (when idle)"), "idle trigger format: {listing}");
+		assert!(listing.contains("…"), "long message preview truncated: {listing}");
 		assert!(listing.contains("🔁 Repeats every idle"), "{listing}");
 		// The preview must cut on a char boundary: no replacement bytes rendered.
 		assert!(!listing.contains('\u{FFFD}'));
@@ -590,9 +570,7 @@ async fn test_render_pending_entries_formats_idle_truncation_and_repeats() {
 		.await
 		.expect("add time repeating");
 		assert!(
-			time_entry
-				.extract_content()
-				.contains("Repeats: every 1h 30m"),
+			time_entry.extract_content().contains("Repeats: every 1h 30m"),
 			"{}",
 			time_entry.extract_content()
 		);

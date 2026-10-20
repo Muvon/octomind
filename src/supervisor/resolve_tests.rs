@@ -122,14 +122,7 @@ fn resolution_scope_str_is_stable() {
 
 #[test]
 fn capture_requires_a_real_user_turn() {
-	assert!(TaskContext::capture(
-		&[],
-		"",
-		None,
-		crate::supervisor::VerificationPolicy::Unspecified,
-		&[]
-	)
-	.is_none());
+	assert!(TaskContext::capture(&[], "", None, crate::supervisor::VerificationPolicy::Unspecified, &[]).is_none());
 	assert!(TaskContext::capture(
 		&[message("assistant", "hi")],
 		"",
@@ -142,9 +135,7 @@ fn capture_requires_a_real_user_turn() {
 
 #[test]
 fn classifier_trims_filters_and_caps_conditions() {
-	let parsed = parse_classifier(
-		r#"{"scope":"self_contained","conditions":["  run tests  ","","   ","build"]}"#,
-	);
+	let parsed = parse_classifier(r#"{"scope":"self_contained","conditions":["  run tests  ","","   ","build"]}"#);
 	assert_eq!(parsed.conditions, vec!["run tests", "build"]);
 	let many: Vec<String> = (0..30).map(|i| format!("c{i}")).collect();
 	let wire = format!(
@@ -164,10 +155,7 @@ fn classifier_operational_constraints_acceptance_and_rejection() {
 	);
 	assert_eq!(
 		parsed.operational_constraints,
-		vec![
-			"we work on the remote server",
-			"i will rerun it on the server"
-		]
+		vec!["we work on the remote server", "i will rerun it on the server"]
 	);
 	// Runaway list is capped at the recitation slot's entire budget.
 	let many: Vec<String> = (0..9).map(|i| format!("fact {i}")).collect();
@@ -217,8 +205,7 @@ fn operational_constraints_require_current_user_evidence_before_the_cap() {
 
 #[test]
 fn classifier_answer_only_clears_conditions() {
-	let parsed =
-		parse_classifier(r#"{"scope":"self_contained","answer_only":true,"conditions":["a","b"]}"#);
+	let parsed = parse_classifier(r#"{"scope":"self_contained","answer_only":true,"conditions":["a","b"]}"#);
 	assert!(parsed.answer_only);
 	assert!(parsed.conditions.is_empty());
 }
@@ -229,10 +216,7 @@ fn classifier_survives_prose_and_truncation_failures() {
 	assert!(!parse_classifier(r#"{"scope":"context_dependent""#).context_dependent);
 	assert!(!parse_classifier("no braces at all").context_dependent);
 	// JSON embedded in prose is still located via first/last brace.
-	assert!(
-		parse_classifier(r#"Sure! {"scope":"context_dependent"} hope this helps"#)
-			.context_dependent
-	);
+	assert!(parse_classifier(r#"Sure! {"scope":"context_dependent"} hope this helps"#).context_dependent);
 }
 
 #[test]
@@ -384,10 +368,7 @@ fn resolution_resolved_request_is_bounded() {
 			r#"{{"scope":"follow_up","resolved_request":"{big}","evidence":[{{"source":"recent_history","excerpt":"Schedule the status check every two hours"}}]}}"#
 		),
 	);
-	assert_eq!(
-		resolved.resolved_request.chars().count(),
-		RESOLVED_REQUEST_CHARS + 1
-	);
+	assert_eq!(resolved.resolved_request.chars().count(), RESOLVED_REQUEST_CHARS + 1);
 	assert!(resolved.resolved_request.ends_with('…'));
 }
 
@@ -438,15 +419,9 @@ async fn resolve_empty_request_short_circuits_without_a_model() {
 fn resolution_with_unterminated_or_invalid_json_stays_ambiguous() {
 	let ctx = context("do the second part");
 	let unterminated = r#"{"scope":"follow_up","resolved_request":"do ""#;
-	assert_eq!(
-		parse_resolution(&ctx, unterminated).scope,
-		ResolutionScope::Ambiguous
-	);
+	assert_eq!(parse_resolution(&ctx, unterminated).scope, ResolutionScope::Ambiguous);
 	let invalid = "{not valid json}";
-	assert_eq!(
-		parse_resolution(&ctx, invalid).scope,
-		ResolutionScope::Ambiguous
-	);
+	assert_eq!(parse_resolution(&ctx, invalid).scope, ResolutionScope::Ambiguous);
 }
 
 #[test]
@@ -589,19 +564,11 @@ async fn a_self_contained_classification_returns_with_the_full_verdict() {
 	let url = spawn_stub(vec![final_response(SELF_CONTAINED)]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let resolved = resolve(
-		&resolve_config(),
-		&resolve_context("use the staging endpoint"),
-		rx,
-	)
-	.await;
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
-	assert!(
-		resolved.forbids_verification,
-		"the classifier verdict is carried"
-	);
+	assert!(resolved.forbids_verification, "the classifier verdict is carried");
 	assert_eq!(
 		resolved.evidence_conditions,
 		vec!["the staging endpoint is used".to_string()]
@@ -621,10 +588,7 @@ async fn a_context_dependent_turn_resolves_through_the_follow_up_model() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::FollowUp);
-	assert_eq!(
-		resolved.resolved_request,
-		"Use the staging endpoint for the load test"
-	);
+	assert_eq!(resolved.resolved_request, "Use the staging endpoint for the load test");
 	assert_eq!(
 		resolved.evidence_conditions,
 		vec!["the staging endpoint is used".to_string()],
@@ -643,19 +607,11 @@ async fn an_unusable_classifier_answer_gets_one_doubled_budget_retry() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let resolved = resolve(
-		&resolve_config(),
-		&resolve_context("use the staging endpoint"),
-		rx,
-	)
-	.await;
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
-	assert!(
-		resolved.forbids_verification,
-		"the retried verdict is applied"
-	);
+	assert!(resolved.forbids_verification, "the retried verdict is applied");
 }
 
 #[tokio::test]
@@ -669,36 +625,22 @@ async fn a_failed_classifier_retry_fails_open_to_the_literal_request() {
 	.await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let resolved = resolve(
-		&resolve_config(),
-		&resolve_context("use the staging endpoint"),
-		rx,
-	)
-	.await;
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
 	assert_eq!(resolved.resolved_request, "use the staging endpoint");
-	assert!(
-		!resolved.forbids_verification,
-		"the fallback verdict is neutral"
-	);
+	assert!(!resolved.forbids_verification, "the fallback verdict is neutral");
 }
 
 #[tokio::test]
 async fn a_failed_classifier_call_uses_the_literal_request() {
 	use crate::session::chat::test_support::{spawn_stub_with_status, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
-	let url =
-		spawn_stub_with_status(vec![(500, serde_json::json!({"error": "classifier down"}))]).await;
+	let url = spawn_stub_with_status(vec![(500, serde_json::json!({"error": "classifier down"}))]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let resolved = resolve(
-		&resolve_config(),
-		&resolve_context("use the staging endpoint"),
-		rx,
-	)
-	.await;
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
@@ -728,19 +670,10 @@ async fn a_failed_follow_up_resolver_preserves_ambiguity() {
 async fn a_still_unusable_retry_fails_open() {
 	use crate::session::chat::test_support::{final_response, spawn_stub, ENV_LOCK};
 	let _guard = ENV_LOCK.lock().await;
-	let url = spawn_stub(vec![
-		final_response("first garbage"),
-		final_response("second garbage"),
-	])
-	.await;
+	let url = spawn_stub(vec![final_response("first garbage"), final_response("second garbage")]).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let resolved = resolve(
-		&resolve_config(),
-		&resolve_context("use the staging endpoint"),
-		rx,
-	)
-	.await;
+	let resolved = resolve(&resolve_config(), &resolve_context("use the staging endpoint"), rx).await;
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(resolved.scope, ResolutionScope::SelfContained);
@@ -764,11 +697,7 @@ fn whole_targets_parse_and_ground_in_the_request() {
 	assert_eq!(
 		grounded_whole_targets(
 			request,
-			&[
-				"readme".to_string(),
-				"README".to_string(),
-				"CHANGELOG".to_string()
-			]
+			&["readme".to_string(), "README".to_string(), "CHANGELOG".to_string()]
 		),
 		vec!["readme".to_string()],
 		"case-insensitive grounding, deduplicated, invented targets dropped"

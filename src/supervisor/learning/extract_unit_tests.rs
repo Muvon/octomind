@@ -56,24 +56,15 @@ fn transcript_evidence_classifies_roles() {
 	assert!(is_transcript_evidence(&msg("user", "fix the auth bug")));
 	assert!(is_transcript_evidence(&msg("assistant", "I'll fix it")));
 	assert!(is_transcript_evidence(&msg("tool", "{\"ok\":true}")));
-	assert!(!is_transcript_evidence(&msg(
-		"tool",
-		"[authorizer] Tool not executed"
-	)));
-	assert!(!is_transcript_evidence(&msg(
-		"tool",
-		"[guardrail] Tool denied"
-	)));
+	assert!(!is_transcript_evidence(&msg("tool", "[authorizer] Tool not executed")));
+	assert!(!is_transcript_evidence(&msg("tool", "[guardrail] Tool denied")));
 	assert!(!is_transcript_evidence(&msg("system", "You are helpful")));
 }
 
 #[test]
 fn transcript_evidence_rejects_non_real_user_turns() {
 	// System-managed injections are not genuine user turns.
-	let wrapped = msg(
-		"user",
-		&crate::session::ensure_system_managed("recalled instruction"),
-	);
+	let wrapped = msg("user", &crate::session::ensure_system_managed("recalled instruction"));
 	assert!(!is_transcript_evidence(&wrapped));
 	assert!(!is_transcript_evidence(&msg(
 		"user",
@@ -128,19 +119,13 @@ Bearer tokens are mandatory
 	assert_eq!(lesson.confidence, "high");
 	assert_eq!(lesson.importance, 0.9);
 	assert_eq!(lesson.scope, "global");
-	assert_eq!(
-		lesson.tags,
-		vec!["auth".to_string(), "networking".to_string()]
-	);
+	assert_eq!(lesson.tags, vec!["auth".to_string(), "networking".to_string()]);
 	assert_eq!(lesson.role, "developer");
 	assert_eq!(lesson.project, "octomind");
 	assert_eq!(lesson.source, "session-a");
 	assert!(!lesson.created.is_empty());
 	assert!(lesson.evidence.is_empty());
-	assert_eq!(
-		lesson.outcome,
-		crate::supervisor::learning::TrajectoryOutcome::Unknown
-	);
+	assert_eq!(lesson.outcome, crate::supervisor::learning::TrajectoryOutcome::Unknown);
 }
 
 #[test]
@@ -195,9 +180,7 @@ fn lessons_parse_multiple_and_supersedes_index() {
 
 #[test]
 fn experience_gate_requires_user_and_tool_messages() {
-	let tools_only: Vec<_> = (0..8)
-		.map(|i| msg("tool", &format!("evidence {i}")))
-		.collect();
+	let tools_only: Vec<_> = (0..8).map(|i| msg("tool", &format!("evidence {i}"))).collect();
 	let big = "distinct durable evidence ".repeat(4_000);
 	assert!(!should_extract_experience(
 		&tools_only,
@@ -317,10 +300,7 @@ Auth is delegated to octolib
 	assert_eq!(lesson.role, "developer");
 	assert_eq!(lesson.project, "octomind");
 	assert_eq!(lesson.source, "session-a");
-	assert_eq!(
-		lesson.evidence,
-		vec!["session://session-a/message/1".to_string()]
-	);
+	assert_eq!(lesson.evidence, vec!["session://session-a/message/1".to_string()]);
 	let transcript = build_transcript(&messages);
 	let candidates = parse_orientation_tags(
 		response,
@@ -365,18 +345,12 @@ fn orientation_skips_empty_content_and_truncates_title() {
 	assert!(parsed.is_empty());
 
 	// ASCII long content: hard cut at 80 bytes plus ellipsis (no word trim).
-	let long = format!(
-		"<orientation evidence=\"M1\">{}</orientation>",
-		"b".repeat(100)
-	);
+	let long = format!("<orientation evidence=\"M1\">{}</orientation>", "b".repeat(100));
 	let parsed = parse_orientations(&long, &messages);
 	assert_eq!(parsed[0].title, format!("{}...", "b".repeat(80)));
 
 	// Multibyte content: the cut floors to a char boundary.
-	let cjk = format!(
-		"<orientation evidence=\"M1\">{}</orientation>",
-		"日".repeat(100)
-	);
+	let cjk = format!("<orientation evidence=\"M1\">{}</orientation>", "日".repeat(100));
 	let parsed = parse_orientations(&cjk, &messages);
 	let title = &parsed[0].title;
 	assert!(title.ends_with("..."));
@@ -389,21 +363,9 @@ fn orientation_rejects_missing_invalid_or_untrusted_evidence() {
 		msg("user", "real project fact"),
 		msg("assistant", "unsupported self-report"),
 		msg("tool", "observed project fact"),
-		msg(
-			"user",
-			"<instructions>synthetic control-plane note</instructions>",
-		),
+		msg("user", "<instructions>synthetic control-plane note</instructions>"),
 	];
-	for evidence in [
-		"",
-		"M2",
-		"M4",
-		"M9",
-		"M1,M1",
-		"M1,M2",
-		"M1,M3,M1",
-		"M1,M3,M1,M3,M1",
-	] {
+	for evidence in ["", "M2", "M4", "M9", "M1,M1", "M1,M2", "M1,M3,M1", "M1,M3,M1,M3,M1"] {
 		let attr = if evidence.is_empty() {
 			String::new()
 		} else {
@@ -432,9 +394,7 @@ fn orientation_rejects_evidence_hidden_by_transcript_budget() {
 			let mut state = (index as u64).wrapping_mul(0x9E3779B97F4A7C15);
 			let mut block = String::with_capacity(512);
 			for _ in 0..32 {
-				state = state
-					.wrapping_mul(0x9E3779B97F4A7C15)
-					.wrapping_add(0xBF58476D1CE4E5B9);
+				state = state.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(0xBF58476D1CE4E5B9);
 				block.push_str(&format!("{state:016x}"));
 			}
 			msg("tool", &format!("tool evidence {index} {block}"))
@@ -605,8 +565,7 @@ fn experience_body_missing_a_required_heading_is_rejected() {
 		crate::supervisor::learning::TrajectoryOutcome::Verified,
 	);
 	let body = experience_body().replace("## Reuse conditions", "## Notes");
-	let tag =
-		format!(r#"<experience title="T" confidence="high" evidence="M1,M2">{body}</experience>"#);
+	let tag = format!(r#"<experience title="T" confidence="high" evidence="M1,M2">{body}</experience>"#);
 	assert!(
 		parse_experience_tag(&tag, &context).is_none(),
 		"a body without every required section is not an experience"
@@ -634,26 +593,10 @@ fn experience_importance_follows_the_outcome_and_confidence_ladder() {
 	let messages = grounded_messages();
 	let transcript = build_transcript(&messages);
 	let cases = [
-		(
-			crate::supervisor::learning::TrajectoryOutcome::Verified,
-			"high",
-			0.85,
-		),
-		(
-			crate::supervisor::learning::TrajectoryOutcome::Verified,
-			"medium",
-			0.75,
-		),
-		(
-			crate::supervisor::learning::TrajectoryOutcome::Failed,
-			"high",
-			0.7,
-		),
-		(
-			crate::supervisor::learning::TrajectoryOutcome::Unknown,
-			"high",
-			0.55,
-		),
+		(crate::supervisor::learning::TrajectoryOutcome::Verified, "high", 0.85),
+		(crate::supervisor::learning::TrajectoryOutcome::Verified, "medium", 0.75),
+		(crate::supervisor::learning::TrajectoryOutcome::Failed, "high", 0.7),
+		(crate::supervisor::learning::TrajectoryOutcome::Unknown, "high", 0.55),
 	];
 	for (outcome, confidence, expected) in cases {
 		let context = experience_context(&messages, &transcript, outcome);
@@ -661,8 +604,8 @@ fn experience_importance_follows_the_outcome_and_confidence_ladder() {
 			r#"<experience title="T" confidence="{confidence}" evidence="M1,M2">{}</experience>"#,
 			experience_body()
 		);
-		let parsed = parse_experience_tag(&tag, &context)
-			.unwrap_or_else(|| panic!("parses for {outcome:?}/{confidence}"));
+		let parsed =
+			parse_experience_tag(&tag, &context).unwrap_or_else(|| panic!("parses for {outcome:?}/{confidence}"));
 		assert!(
 			(parsed.lesson.importance - expected).abs() < 1e-9,
 			"{outcome:?}/{confidence}: {} != {expected}",
@@ -673,14 +616,8 @@ fn experience_importance_follows_the_outcome_and_confidence_ladder() {
 
 #[test]
 fn experience_verdict_support_helper_parses_and_rejects() {
-	assert_eq!(
-		parse_experience_supported(r#"{"supported":true}"#),
-		Some(true)
-	);
-	assert_eq!(
-		parse_experience_supported(r#"{"supported":false}"#),
-		Some(false)
-	);
+	assert_eq!(parse_experience_supported(r#"{"supported":true}"#), Some(true));
+	assert_eq!(parse_experience_supported(r#"{"supported":false}"#), Some(false));
 	assert_eq!(parse_experience_supported("not json"), None);
 }
 
@@ -705,10 +642,8 @@ fn experience_evidence_render_bails_on_an_absent_citation() {
 		r#"<experience title="T" confidence="high" evidence="M1,M2">{}</experience>"#,
 		experience_body()
 	);
-	let ok =
-		parse_experience_tag(&ok_tag, &context).expect("M1,M2 parse against the real transcript");
-	let error = render_experience_evidence(&ok, &messages[..1])
-		.expect_err("M2 is absent from the truncated slice");
+	let ok = parse_experience_tag(&ok_tag, &context).expect("M1,M2 parse against the real transcript");
+	let error = render_experience_evidence(&ok, &messages[..1]).expect_err("M2 is absent from the truncated slice");
 	assert!(
 		error.to_string().contains("M2"),
 		"the absent citation is named: {error}"

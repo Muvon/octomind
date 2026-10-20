@@ -281,8 +281,7 @@ fn lessons() -> Vec<Lesson> {
 			..Default::default()
 		},
 		Lesson {
-			content: "JPEG orientation metadata must be applied before generating thumbnails."
-				.into(),
+			content: "JPEG orientation metadata must be applied before generating thumbnails.".into(),
 			title: "image orientation".into(),
 			tags: vec!["jpeg".into()],
 			source: "distractor:image".into(),
@@ -296,8 +295,7 @@ fn lessons() -> Vec<Lesson> {
 			..Default::default()
 		},
 		Lesson {
-			content: "Accessibility focus order should follow the visual and DOM reading order."
-				.into(),
+			content: "Accessibility focus order should follow the visual and DOM reading order.".into(),
 			title: "focus order".into(),
 			tags: vec!["a11y".into()],
 			source: "distractor:a11y".into(),
@@ -335,10 +333,7 @@ fn cases(split: &str) -> Vec<Case> {
 		});
 	}
 	for domain in CHALLENGE_DOMAINS {
-		for (category, query) in [
-			("paraphrase", domain.paraphrase),
-			("indirect", domain.indirect),
-		] {
+		for (category, query) in [("paraphrase", domain.paraphrase), ("indirect", domain.indirect)] {
 			out.push(Case {
 				id: format!("{}:{category}", domain.id),
 				category,
@@ -366,8 +361,8 @@ fn cases(split: &str) -> Vec<Case> {
 
 fn raw_patterns(query: &str) -> Vec<String> {
 	const STOP: &[&str] = &[
-		"about", "after", "before", "could", "from", "have", "into", "must", "should", "their",
-		"there", "these", "this", "what", "when", "where", "which", "with", "would", "your",
+		"about", "after", "before", "could", "from", "have", "into", "must", "should", "their", "there", "these",
+		"this", "what", "when", "where", "which", "with", "would", "your",
 	];
 	let mut out: Vec<String> = query
 		.split(|character: char| !character.is_alphanumeric() && character != '_')
@@ -389,12 +384,7 @@ fn rerank_single(ranking: &[usize], lessons: &[Lesson]) -> Vec<usize> {
 			(base * importance_factor(lessons[*index].importance), *index)
 		})
 		.collect();
-	scored.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	scored.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	scored.into_iter().map(|(_, index)| index).collect()
 }
 
@@ -403,21 +393,11 @@ fn rerank_hybrid(keyword: &[usize], dense: &[usize], lessons: &[Lesson]) -> Vec<
 	for (score, index) in &mut fused {
 		*score *= importance_factor(lessons[*index].importance);
 	}
-	fused.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	fused.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	fused.into_iter().map(|(_, index)| index).collect()
 }
 
-fn rerank_weighted_hybrid(
-	keyword: &[usize],
-	dense: &[usize],
-	lessons: &[Lesson],
-	keyword_weight: f32,
-) -> Vec<usize> {
+fn rerank_weighted_hybrid(keyword: &[usize], dense: &[usize], lessons: &[Lesson], keyword_weight: f32) -> Vec<usize> {
 	let mut scores = vec![0.0_f32; lessons.len()];
 	for (rank, index) in keyword.iter().enumerate() {
 		scores[*index] += keyword_weight / (RRF_K + rank as f32 + 1.0);
@@ -432,12 +412,7 @@ fn rerank_weighted_hybrid(
 			(score > 0.0).then_some((score * importance_factor(lessons[index].importance), index))
 		})
 		.collect();
-	ranked.sort_by(|left, right| {
-		right
-			.0
-			.partial_cmp(&left.0)
-			.unwrap_or(std::cmp::Ordering::Equal)
-	});
+	ranked.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
 	ranked.into_iter().map(|(_, index)| index).collect()
 }
 
@@ -493,11 +468,8 @@ fn save_cache(path: &Path, cache: &HashMap<String, Vec<String>>) {
 	if let Some(parent) = path.parent() {
 		std::fs::create_dir_all(parent).expect("create benchmark cache dir");
 	}
-	std::fs::write(
-		path,
-		serde_json::to_vec_pretty(cache).expect("serialize rewrite cache"),
-	)
-	.expect("write rewrite cache");
+	std::fs::write(path, serde_json::to_vec_pretty(cache).expect("serialize rewrite cache"))
+		.expect("write rewrite cache");
 }
 
 #[tokio::test]
@@ -519,8 +491,8 @@ async fn compact_learning_retrieval_frontier() {
 		"calibration" | "holdout" | "challenge" | "all"
 	));
 	let mut config = crate::config::Config::load().expect("real config loads");
-	let rewrite_model = std::env::var("LEARNING_BENCH_MODEL")
-		.unwrap_or_else(|_| config.get_supervisor_model_profile().model);
+	let rewrite_model =
+		std::env::var("LEARNING_BENCH_MODEL").unwrap_or_else(|_| config.get_supervisor_model_profile().model);
 	config.supervisor.model.model = Some(rewrite_model.clone());
 	let lessons = lessons();
 	let cases = cases(&split);
@@ -528,14 +500,7 @@ async fn compact_learning_retrieval_frontier() {
 	// Warm and persist stable lesson vectors outside measured query latency.
 	let lesson_texts: Vec<String> = lessons
 		.iter()
-		.map(|lesson| {
-			format!(
-				"{} {} {}",
-				lesson.title,
-				lesson.content,
-				lesson.tags.join(" ")
-			)
-		})
+		.map(|lesson| format!("{} {} {}", lesson.title, lesson.content, lesson.tags.join(" ")))
 		.collect();
 	crate::embeddings::embed_many(&lesson_texts)
 		.await
@@ -562,9 +527,7 @@ async fn compact_learning_retrieval_frontier() {
 		let raw = raw_patterns(case.query);
 		let cache_key = format!("{}\n{}", rewrite_model, case.query);
 		let rewritten = if let Some(patterns) = cache.get(&cache_key) {
-			match crate::supervisor::learning::inject::validate_retrieval_patterns(
-				&patterns.join("\n"),
-			) {
+			match crate::supervisor::learning::inject::validate_retrieval_patterns(&patterns.join("\n")) {
 				Ok(validated) => {
 					cache_hits += 1;
 					validated
@@ -577,10 +540,7 @@ async fn compact_learning_retrieval_frontier() {
 		} else {
 			let started = Instant::now();
 			let (_tx, rx) = tokio::sync::watch::channel(false);
-			let result = crate::supervisor::learning::inject::prepare_retrieval_query(
-				&config, case.query, rx,
-			)
-			.await;
+			let result = crate::supervisor::learning::inject::prepare_retrieval_query(&config, case.query, rx).await;
 			rewrite_ms += started.elapsed().as_millis();
 			rewrite_calls += 1;
 			match result {
@@ -616,13 +576,8 @@ async fn compact_learning_retrieval_frontier() {
 		embedding_ms += started.elapsed().as_millis();
 		let dense_indices = dense_at_floor(&scores, COSINE_FLOOR);
 		let dense_rank = rerank_single(&dense_indices, &lessons);
-		let hybrid_raw_rank =
-			rerank_hybrid(&rank_by_keywords(&lessons, &raw), &dense_indices, &lessons);
-		let hybrid_rewrite_rank = rerank_hybrid(
-			&rank_by_keywords(&lessons, &rewritten),
-			&dense_indices,
-			&lessons,
-		);
+		let hybrid_raw_rank = rerank_hybrid(&rank_by_keywords(&lessons, &raw), &dense_indices, &lessons);
+		let hybrid_rewrite_rank = rerank_hybrid(&rank_by_keywords(&lessons, &rewritten), &dense_indices, &lessons);
 		let rewrite_keywords = rank_by_keywords(&lessons, &rewritten);
 		let fixed_weight_rank = sparse_rescue(
 			rerank_weighted_hybrid(&rewrite_keywords, &dense_indices, &lessons, 0.25),

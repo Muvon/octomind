@@ -66,29 +66,17 @@ impl Drop for WebhookListenerGuard {
 /// Validate hook configuration before starting.
 /// Returns the parsed `SocketAddr` and validated script path.
 pub fn validate_hook(hook: &HookConfig) -> anyhow::Result<(SocketAddr, PathBuf)> {
-	let addr: SocketAddr = hook.bind.parse().map_err(|e| {
-		anyhow::anyhow!(
-			"Hook '{}': invalid bind address '{}': {}",
-			hook.name,
-			hook.bind,
-			e
-		)
-	})?;
+	let addr: SocketAddr = hook
+		.bind
+		.parse()
+		.map_err(|e| anyhow::anyhow!("Hook '{}': invalid bind address '{}': {}", hook.name, hook.bind, e))?;
 
 	let script_path = PathBuf::from(&hook.script);
 	if !script_path.exists() {
-		anyhow::bail!(
-			"Hook '{}': script '{}' does not exist",
-			hook.name,
-			hook.script
-		);
+		anyhow::bail!("Hook '{}': script '{}' does not exist", hook.name, hook.script);
 	}
 	if !script_path.is_file() {
-		anyhow::bail!(
-			"Hook '{}': script '{}' is not a file",
-			hook.name,
-			hook.script
-		);
+		anyhow::bail!("Hook '{}': script '{}' is not a file", hook.name, hook.script);
 	}
 
 	#[cfg(unix)]
@@ -96,11 +84,7 @@ pub fn validate_hook(hook: &HookConfig) -> anyhow::Result<(SocketAddr, PathBuf)>
 		use std::os::unix::fs::PermissionsExt;
 		let metadata = std::fs::metadata(&script_path)?;
 		if metadata.permissions().mode() & 0o111 == 0 {
-			anyhow::bail!(
-				"Hook '{}': script '{}' is not executable",
-				hook.name,
-				hook.script
-			);
+			anyhow::bail!("Hook '{}': script '{}' is not executable", hook.name, hook.script);
 		}
 	}
 
@@ -127,15 +111,7 @@ pub async fn start_webhook_listener(
 
 	let name_for_task = hook_name.clone();
 	let handle = tokio::spawn(async move {
-		if let Err(e) = run_listener(
-			listener,
-			&session,
-			&name_for_task,
-			&script_path,
-			timeout_secs,
-		)
-		.await
-		{
+		if let Err(e) = run_listener(listener, &session, &name_for_task, &script_path, timeout_secs).await {
 			log_error!("Webhook listener '{}' error: {}", name_for_task, e);
 		}
 	});
@@ -198,10 +174,7 @@ async fn handle_request(
 	timeout_secs: u64,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
 	if req.method() != hyper::Method::POST {
-		return Ok(response(
-			StatusCode::METHOD_NOT_ALLOWED,
-			"Only POST allowed\n",
-		));
+		return Ok(response(StatusCode::METHOD_NOT_ALLOWED, "Only POST allowed\n"));
 	}
 
 	// Collect request metadata for script environment.
@@ -218,10 +191,7 @@ async fn handle_request(
 	let mut header_envs: Vec<(String, String)> = Vec::new();
 	for (name, value) in req.headers() {
 		if let Ok(val) = value.to_str() {
-			let env_name = format!(
-				"HOOK_HEADER_{}",
-				name.as_str().to_uppercase().replace('-', "_")
-			);
+			let env_name = format!("HOOK_HEADER_{}", name.as_str().to_uppercase().replace('-', "_"));
 			header_envs.push((env_name, val.to_string()));
 		}
 	}
@@ -294,10 +264,7 @@ async fn handle_request(
 			if output.status.success() {
 				let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
 				if content.is_empty() {
-					log_debug!(
-						"Webhook '{}': script returned empty output, skipping",
-						hook_name
-					);
+					log_debug!("Webhook '{}': script returned empty output, skipping", hook_name);
 					return Ok(response(StatusCode::NO_CONTENT, ""));
 				}
 
@@ -342,11 +309,7 @@ async fn handle_request(
 			))
 		}
 		Err(_) => {
-			log_error!(
-				"Webhook '{}': script timed out after {}s",
-				hook_name,
-				timeout_secs
-			);
+			log_error!("Webhook '{}': script timed out after {}s", hook_name, timeout_secs);
 			Ok(response(StatusCode::GATEWAY_TIMEOUT, "Script timeout\n"))
 		}
 	}

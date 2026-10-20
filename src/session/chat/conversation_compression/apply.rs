@@ -90,8 +90,7 @@ pub(super) fn extract_previous_assistant_response(content: &str) -> Option<Strin
 	if !trimmed.starts_with(CONTINUATION_TAG_OPEN) {
 		return None;
 	}
-	let start =
-		trimmed.find(&format!("\n{PREVIOUS_ASSISTANT_OPEN}"))? + 1 + PREVIOUS_ASSISTANT_OPEN.len();
+	let start = trimmed.find(&format!("\n{PREVIOUS_ASSISTANT_OPEN}"))? + 1 + PREVIOUS_ASSISTANT_OPEN.len();
 	let end = trimmed[start..].find(PREVIOUS_ASSISTANT_CLOSE)? + start;
 	let response = &trimmed[start..end];
 	(!response.is_empty()).then(|| response.to_string())
@@ -157,12 +156,7 @@ fn build_continuation_content(
 ) -> String {
 	let task_body = action.or(request).unwrap_or(CONTINUATION_FALLBACK_INTENT);
 	let previous_assistant_block = previous_assistant_response
-		.map(|response| {
-			format!(
-				"{PREVIOUS_ASSISTANT_OPEN}{}{PREVIOUS_ASSISTANT_CLOSE}\n",
-				response
-			)
-		})
+		.map(|response| format!("{PREVIOUS_ASSISTANT_OPEN}{}{PREVIOUS_ASSISTANT_CLOSE}\n", response))
 		.unwrap_or_default();
 	// When no validated frontier advanced past the request, `task_body` is the
 	// request verbatim, so a separate `<request>` block would embed the entire
@@ -249,9 +243,7 @@ fn render_background_state() -> Option<String> {
 		sections.push(schedules);
 	}
 	if let Some(session_id) = crate::session::context::current_session_id() {
-		if let Some(monitors) =
-			crate::mcp::orchestration::monitor::render_running_monitors(&session_id)
-		{
+		if let Some(monitors) = crate::mcp::orchestration::monitor::render_running_monitors(&session_id) {
 			sections.push(monitors);
 		}
 	}
@@ -276,10 +268,7 @@ fn align_compression_cache_markers(
 	summary_idx: usize,
 	supports_caching: bool,
 ) {
-	for message in messages
-		.iter_mut()
-		.filter(|message| message.role != "system")
-	{
+	for message in messages.iter_mut().filter(|message| message.role != "system") {
 		message.cached = false;
 		message.cache_ttl = None;
 	}
@@ -358,9 +347,7 @@ pub(super) async fn apply_compression(
 	// compression may proceed without recall only when storage itself is the
 	// failing component, because retaining the oversized context can deadlock the
 	// session. Governance failure is never bypassed.
-	if config.compression.attention.governance.enabled
-		&& config.compression.attention.governance.verify_hash
-	{
+	if config.compression.attention.governance.enabled && config.compression.attention.governance.verify_hash {
 		if let Some(pact) = pact {
 			pact.verify_governance(session, fold_point)?;
 		}
@@ -368,16 +355,15 @@ pub(super) async fn apply_compression(
 
 	// The fold's goal was resolved from the request at the fold point, not from
 	// one that arrived past it while a background fold ran.
-	let fold_task_sig = crate::session::latest_real_user_task_content(
-		session.session.messages.get(..fold_point).ok_or_else(|| {
+	let fold_task_sig =
+		crate::session::latest_real_user_task_content(session.session.messages.get(..fold_point).ok_or_else(|| {
 			anyhow::anyhow!(
 				"fold point {} is past the live transcript ({} messages)",
 				fold_point,
 				session.session.messages.len()
 			)
-		})?,
-	)
-	.map(crate::session::anchor::task_sig);
+		})?)
+		.map(crate::session::anchor::task_sig);
 
 	let compression_id = crate::mcp::core::plan::compression::get_compression_id();
 	let (archive_bundle, archive_fallback_reason) = if let Some(pact) = pact {
@@ -508,14 +494,13 @@ pub(super) async fn apply_compression(
 		if fc.start_line == 0 || fc.start_line > fc.end_line {
 			continue;
 		}
-		let end_line = fc.end_line.min(
-			fc.start_line
-				.saturating_add(MAX_FILE_CONTEXT_ENTRY_LINES - 1),
-		);
+		let end_line = fc
+			.end_line
+			.min(fc.start_line.saturating_add(MAX_FILE_CONTEXT_ENTRY_LINES - 1));
 		let entry = (fc.filepath.clone(), fc.start_line, end_line);
-		let cost = crate::session::estimate_tokens(&file_context::generate_file_context_content(
-			std::slice::from_ref(&entry),
-		));
+		let cost = crate::session::estimate_tokens(&file_context::generate_file_context_content(std::slice::from_ref(
+			&entry,
+		)));
 		if cost > fc_budget {
 			crate::log_debug!(
 				"Compression: dropped file context {} ({}:{}) — {} tokens over remaining budget {}",
@@ -649,12 +634,7 @@ pub(super) async fn apply_compression(
 	// 508k tokens billed per call against a 145k local view). Strip every id so
 	// the next request rebases onto the compacted transcript; the response it
 	// returns restarts the chain from there.
-	for message in session
-		.session
-		.messages
-		.iter_mut()
-		.filter(|m| m.role == "assistant")
-	{
+	for message in session.session.messages.iter_mut().filter(|m| m.role == "assistant") {
 		message.id = None;
 	}
 
@@ -679,10 +659,7 @@ pub(super) async fn apply_compression(
 		// Defensive: clear cache markers so we never blow the 2-marker budget.
 		skill_msg.cached = false;
 		skill_msg.cache_ttl = None;
-		session
-			.session
-			.messages
-			.insert(start_idx + 1 + i, skill_msg);
+		session.session.messages.insert(start_idx + 1 + i, skill_msg);
 	}
 	if skill_count > 0 {
 		log_debug!(
@@ -778,11 +755,7 @@ pub(super) async fn apply_compression(
 				.as_deref()
 				.unwrap_or_else(|| summary.current_task.trim());
 			let resolved = if current.is_empty() {
-				resolve_task_intent(
-					&last_user_message,
-					&summary.original_request,
-					&session.session.messages,
-				)
+				resolve_task_intent(&last_user_message, &summary.original_request, &session.session.messages)
 			} else {
 				current.to_string()
 			};
@@ -836,12 +809,7 @@ pub(super) async fn apply_compression(
 		.as_secs();
 
 	let summary_idx = start_idx + 1 + skill_count;
-	align_compression_cache_markers(
-		&mut session.session.messages,
-		start_idx,
-		summary_idx,
-		supports_caching,
-	);
+	align_compression_cache_markers(&mut session.session.messages, start_idx, summary_idx, supports_caching);
 
 	// Exact post-state accounting must happen after every mutation: summary,
 	// preserved skills, exact user bridge or continuation wrapper, and final
@@ -861,15 +829,9 @@ pub(super) async fn apply_compression(
 	}
 	session.session.info.context_tokens_after_last_compression = post_compression_tokens as usize;
 
-	let metrics = crate::mcp::core::plan::compression::CompressionMetrics::new(
-		messages_removed,
-		tokens_saved,
-		tokens_before,
-	);
-	crate::session::chat::cost_tracker::CostTracker::display_compression_result(
-		"Conversation",
-		&metrics,
-	);
+	let metrics =
+		crate::mcp::core::plan::compression::CompressionMetrics::new(messages_removed, tokens_saved, tokens_before);
+	crate::session::chat::cost_tracker::CostTracker::display_compression_result("Conversation", &metrics);
 	session.session.info.compression_stats.add_compression(
 		crate::session::CompressionKind::Conversation,
 		messages_removed,
@@ -902,9 +864,7 @@ pub(super) async fn apply_compression(
 		"Adaptive compression checkpoint: post_tokens={}, saved={}, next autonomous runway={:.0} calls",
 		post_compression_tokens,
 		tokens_saved,
-		super::decision::autonomous_runway(
-			session.session.info.consecutive_compressions.saturating_add(1)
-		)
+		super::decision::autonomous_runway(session.session.info.consecutive_compressions.saturating_add(1))
 	);
 
 	// Persist the final post-compression state only after skill reinjection and
@@ -952,9 +912,7 @@ pub(super) fn collect_recent_recall_context(
 			}
 			continue;
 		}
-		if message.role != "tool"
-			|| message.name.as_deref() != Some(crate::mcp::core::recall::RECALL_TOOL_NAME)
-		{
+		if message.role != "tool" || message.name.as_deref() != Some(crate::mcp::core::recall::RECALL_TOOL_NAME) {
 			continue;
 		}
 		let body = message.content.trim();

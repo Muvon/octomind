@@ -193,12 +193,7 @@ async fn lifecycle_measures_trial_against_concurrent_control_and_prunes() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let id = "evo-lifecycle-test";
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
-	super::registry::create_record(
-		record(id, ArtifactKind::Guard, EvolutionState::Shadow),
-		native,
-		None,
-	)
-	.unwrap();
+	super::registry::create_record(record(id, ArtifactKind::Guard, EvolutionState::Shadow), native, None).unwrap();
 	let policy = policy();
 
 	let session_id = "evolution-lifecycle-session".to_string();
@@ -224,10 +219,7 @@ async fn lifecycle_measures_trial_against_concurrent_control_and_prunes() {
 		// `min_samples`; then the gain clears the noise margin and the
 		// posterior bar together.
 		for turn in 0..policy.min_samples {
-			assert_eq!(
-				get_record(id).unwrap().unwrap().state,
-				EvolutionState::Trial
-			);
+			assert_eq!(get_record(id).unwrap().unwrap().state, EvolutionState::Trial);
 			mark_shadow_match(id);
 			let control = if turn % 2 == 0 { 0.05 } else { -0.15 };
 			reinforce_session(&session_id, &verdict(control, 2), &supervisor()).await;
@@ -235,12 +227,7 @@ async fn lifecycle_measures_trial_against_concurrent_control_and_prunes() {
 			reinforce_session(&session_id, &verdict(0.05, 2), &supervisor()).await;
 		}
 		let active = get_record(id).unwrap().unwrap();
-		assert_eq!(
-			active.state,
-			EvolutionState::Active,
-			"{:?}",
-			active.history.last()
-		);
+		assert_eq!(active.state, EvolutionState::Active, "{:?}", active.history.last());
 		assert!(active.promoted.is_some());
 
 		// Sustained failures erase the measured gain: the guard is pruned.
@@ -281,11 +268,7 @@ async fn schema_one_registry_revalidates_live_records_on_load() {
 	let mut trial = record("evo-v1-trial", ArtifactKind::Guard, EvolutionState::Trial);
 	trial.schema_version = 1;
 	trial.trial_uses = 2;
-	let mut rejected = record(
-		"evo-v1-rejected",
-		ArtifactKind::Guard,
-		EvolutionState::Rejected,
-	);
+	let mut rejected = record("evo-v1-rejected", ArtifactKind::Guard, EvolutionState::Rejected);
 	rejected.schema_version = 1;
 	let registry = serde_json::json!({
 		"schema_version": 1,
@@ -324,26 +307,13 @@ async fn stale_live_artifacts_retire_and_terminal_ones_stay() {
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let native = "[[guard]]\nmatch = \"shell\"\nmessage = \"blocked\"\n";
-	let old = (chrono::Utc::now()
-		- chrono::Duration::days(crate::supervisor::learning::DECAY_DAYS as i64 + 1))
-	.to_rfc3339();
-	let mut stale = record(
-		"evo-stale-active",
-		ArtifactKind::Guard,
-		EvolutionState::Active,
-	);
+	let old =
+		(chrono::Utc::now() - chrono::Duration::days(crate::supervisor::learning::DECAY_DAYS as i64 + 1)).to_rfc3339();
+	let mut stale = record("evo-stale-active", ArtifactKind::Guard, EvolutionState::Active);
 	stale.updated = old.clone();
-	let mut rejected = record(
-		"evo-stale-rejected",
-		ArtifactKind::Guard,
-		EvolutionState::Rejected,
-	);
+	let mut rejected = record("evo-stale-rejected", ArtifactKind::Guard, EvolutionState::Rejected);
 	rejected.updated = old;
-	let fresh = record(
-		"evo-fresh-active",
-		ArtifactKind::Guard,
-		EvolutionState::Active,
-	);
+	let fresh = record("evo-fresh-active", ArtifactKind::Guard, EvolutionState::Active);
 	for item in [stale, rejected, fresh] {
 		super::registry::create_record(item, native, None).unwrap();
 	}
@@ -457,9 +427,7 @@ async fn session_loader_keeps_shadow_skill_observational_and_trial_skill_loadabl
 	let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 	std::env::set_var("OCTOMIND_DATA_DIR", data.path());
 	let native = |name: &str| {
-		format!(
-			"---\nname: {name}\ndescription: test\ndomains: developer\nrules:\n  - content(schema)\n---\nbody\n"
-		)
+		format!("---\nname: {name}\ndescription: test\ndomains: developer\nrules:\n  - content(schema)\n---\nbody\n")
 	};
 	let shadow_id = "evo-shadow-skill";
 	let trial_id = "evo-trial-skill";
@@ -486,16 +454,8 @@ async fn session_loader_keeps_shadow_skill_observational_and_trial_skill_loadabl
 		crate::session::context::set_session_config(&session_id, &config);
 		crate::session::guardrails::init_for_session();
 		init_for_session("developer:general");
-		assert!(
-			skill_binding(&format!("evolved-{shadow_id}"))
-				.unwrap()
-				.shadow
-		);
-		assert!(
-			!skill_binding(&format!("evolved-{trial_id}"))
-				.unwrap()
-				.shadow
-		);
+		assert!(skill_binding(&format!("evolved-{shadow_id}")).unwrap().shadow);
+		assert!(!skill_binding(&format!("evolved-{trial_id}")).unwrap().shadow);
 		let active = active_skill_dirs();
 		assert_eq!(active.len(), 1);
 		assert_eq!(
@@ -599,10 +559,7 @@ async fn structured_synthesis(
 		"explicit_authorization":true
 	});
 	let (url, requests) = crate::session::chat::test_support::spawn_recording_stub(
-		script(proposal)
-			.into_iter()
-			.map(openai_structured_response)
-			.collect(),
+		script(proposal).into_iter().map(openai_structured_response).collect(),
 	)
 	.await;
 	std::env::set_var("OPENAI_API_URL", url);
@@ -627,15 +584,9 @@ async fn structured_synthesis(
 		thinking: None,
 		id: None,
 	}];
-	let created = synthesize_after_extraction(
-		&messages,
-		&config,
-		"developer:general",
-		"project",
-		session_name,
-	)
-	.await
-	.unwrap();
+	let created = synthesize_after_extraction(&messages, &config, "developer:general", "project", session_name)
+		.await
+		.unwrap();
 	check(created, requests.lock().unwrap().clone());
 
 	for (key, value) in [
@@ -671,9 +622,7 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 		|created, requests| {
 			assert_eq!(created.len(), 1, "one candidate across both passes");
 			assert_eq!(requests.len(), 3);
-			assert!(requests[0]
-				.to_string()
-				.contains(r#"\"dimension\": \"invariant\""#));
+			assert!(requests[0].to_string().contains(r#"\"dimension\": \"invariant\""#));
 			let domain_pass = requests[1].to_string();
 			assert!(domain_pass.contains(r#"\"dimension\": \"domain\""#));
 			assert!(domain_pass.contains(r#"\"other_pass_candidate\": {"#));
@@ -686,11 +635,7 @@ async fn structured_models_create_verified_native_candidate_end_to_end() {
 			let native = std::fs::read_to_string(stored.native_path().unwrap()).unwrap();
 			let parsed = crate::config::guardrails::Guardrails::parse(&native).unwrap();
 			assert_eq!(parsed.validators.len(), 1);
-			assert!(stored
-				.artifact_dir()
-				.unwrap()
-				.join("schema-check.sh")
-				.exists());
+			assert!(stored.artifact_dir().unwrap().join("schema-check.sh").exists());
 		},
 	)
 	.await;
@@ -709,9 +654,7 @@ async fn same_kind_candidates_compose_into_one_verified_artifact() {
 			assert_eq!(created.len(), 1, "the merge replaces both candidates");
 			assert_eq!(requests.len(), 4);
 			let compose = requests[2].to_string();
-			assert!(
-				compose.contains("invariant_candidate") && compose.contains("domain_candidate")
-			);
+			assert!(compose.contains("invariant_candidate") && compose.contains("domain_candidate"));
 			let stored = get_record(&created[0]).unwrap().unwrap();
 			assert!(stored.name.starts_with("evolved-schema-check-merged-"));
 			assert!(stored.history[0].detail.starts_with("composed candidate"));
@@ -768,9 +711,7 @@ async fn concurrent_registry_writers_preserve_every_record() {
 	let records = list_records().unwrap();
 	assert_eq!(records.len(), 8);
 	for index in 0..8 {
-		assert!(records
-			.iter()
-			.any(|item| item.id == format!("evo-concurrent-{index}")));
+		assert!(records.iter().any(|item| item.id == format!("evo-concurrent-{index}")));
 	}
 
 	if let Some(value) = previous {
@@ -884,10 +825,7 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 		(ArtifactKind::Hook, "hook"),
 		(ArtifactKind::Validator, "validator"),
 	] {
-		for (state, state_label) in [
-			(EvolutionState::Shadow, "shadow"),
-			(EvolutionState::Trial, "trial"),
-		] {
+		for (state, state_label) in [(EvolutionState::Shadow, "shadow"), (EvolutionState::Trial, "trial")] {
 			let id = format!("evo-{label}-{state_label}");
 			let script_name = format!("{label}-{state_label}.sh");
 			let marker = data.path().join(format!("{label}-{state_label}.ran"));
@@ -897,10 +835,7 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 					"[[pipe]]\nname = \"{id}\"\ncommand = \"{}\"\nmatch = \"schema\"\n",
 					script_path.display()
 				),
-				ArtifactKind::Hook => format!(
-					"[[hook]]\non = \"any\"\nscript = \"{}\"\n",
-					script_path.display()
-				),
+				ArtifactKind::Hook => format!("[[hook]]\non = \"any\"\nscript = \"{}\"\n", script_path.display()),
 				ArtifactKind::Validator => format!(
 					"[[validator]]\nname = \"{id}\"\nmatch = \"done\"\nscript = \"{}\"\n",
 					script_path.display()
@@ -944,32 +879,20 @@ async fn generated_pipe_hook_and_validator_share_native_shadow_and_trial_runtime
 		crate::session::context::set_session_role(&session_id, "developer:general");
 		crate::session::context::set_session_config(&session_id, &config);
 		crate::session::guardrails::init_for_session();
-		let records = items
-			.iter()
-			.map(|(record, _)| record.clone())
-			.collect::<Vec<_>>();
+		let records = items.iter().map(|(record, _)| record.clone()).collect::<Vec<_>>();
 		let generated = generated_guardrails(&records, &session_id).unwrap();
 		crate::session::guardrails::merge_generated_for_session(&session_id, generated);
 
-		let piped = crate::session::pipe::run_pipe(
-			&session_id,
-			"developer:general",
-			"schema changed",
-			false,
-		)
-		.await
-		.unwrap();
+		let piped = crate::session::pipe::run_pipe(&session_id, "developer:general", "schema changed", false)
+			.await
+			.unwrap();
 		assert_eq!(piped.as_deref(), Some("schema changed"));
 		let call = crate::mcp::McpToolCall {
 			tool_name: "unknown-test-tool".to_string(),
 			tool_id: "call-1".to_string(),
 			parameters: serde_json::json!({}),
 		};
-		let result = crate::mcp::McpToolResult::success(
-			call.tool_name.clone(),
-			call.tool_id.clone(),
-			"ok".to_string(),
-		);
+		let result = crate::mcp::McpToolResult::success(call.tool_name.clone(), call.tool_id.clone(), "ok".to_string());
 		crate::session::hooks::run_hooks(&session_id, &config, &[call], &[result], &[false]).await;
 		crate::session::hooks::run_turn_validators(&session_id, "developer:general", "done").await;
 

@@ -100,13 +100,12 @@ pub async fn get_initial_messages(
 			if instructions_content.trim().is_empty() {
 				log_debug!("Skipping empty instructions file {}", AGENTS_FILE);
 			} else {
-				let processed_instructions =
-					crate::session::helper_functions::process_placeholders_async_with_role(
-						&instructions_content,
-						current_dir,
-						Some(role),
-					)
-					.await;
+				let processed_instructions = crate::session::helper_functions::process_placeholders_async_with_role(
+					&instructions_content,
+					current_dir,
+					Some(role),
+				)
+				.await;
 
 				let instructions_msg = crate::session::Message {
 					role: "user".to_string(),
@@ -114,19 +113,13 @@ pub async fn get_initial_messages(
 					// this as system-managed (is_real_user_task_message) and never
 					// mistakes the project instructions for a genuine user task. Mirrors
 					// the non-interactive path in prompt_setup.rs.
-					content: format!(
-						"<instructions>\n{}\n</instructions>",
-						processed_instructions
-					),
+					content: format!("<instructions>\n{}\n</instructions>", processed_instructions),
 					cached: false,
 					..Default::default()
 				};
 				initial_messages.push(instructions_msg);
 
-				log_info!(
-					"Added {} content as user message with variable processing",
-					AGENTS_FILE
-				);
+				log_info!("Added {} content as user message with variable processing", AGENTS_FILE);
 			}
 		} else {
 			log_debug!("Failed to read {}", AGENTS_FILE);

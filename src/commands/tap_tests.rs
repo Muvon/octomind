@@ -68,8 +68,7 @@ fn tap_args_parse_optional_positionals() {
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert!(cli.args.local_path.is_none());
 
-	let cli =
-		Cli::try_parse_from(["octomind", "myorg/repo", "./local"]).expect("tap with local path");
+	let cli = Cli::try_parse_from(["octomind", "myorg/repo", "./local"]).expect("tap with local path");
 	assert_eq!(cli.args.tap.as_deref(), Some("myorg/repo"));
 	assert_eq!(cli.args.local_path.as_deref(), Some("./local"));
 }
@@ -90,10 +89,7 @@ fn tap_args_parse_init_subcommand() {
 		Some(TapCommand::Init(ref init)) => {
 			assert_eq!(init.tap, "acme/team");
 			assert_eq!(init.agent.as_deref(), Some("legal:contracts"));
-			assert_eq!(
-				init.dir.as_deref(),
-				Some(std::path::Path::new("./somewhere"))
-			);
+			assert_eq!(init.dir.as_deref(), Some(std::path::Path::new("./somewhere")));
 		}
 		ref other => panic!("expected init subcommand, got {other:?}"),
 	}
@@ -140,11 +136,7 @@ fn execute_adds_a_local_tap_and_symlinks_it() {
 
 	// The tap dir is a symlink to the live local directory.
 	let tap_dir = dir.join("taps").join("testorg").join("octomind-probe");
-	assert!(
-		tap_dir.symlink_metadata().is_ok(),
-		"symlink at {}",
-		tap_dir.display()
-	);
+	assert!(tap_dir.symlink_metadata().is_ok(), "symlink at {}", tap_dir.display());
 	assert_eq!(tap_dir.read_link().expect("symlink target"), local.path());
 }
 

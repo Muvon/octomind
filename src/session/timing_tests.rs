@@ -16,8 +16,7 @@ use super::*;
 
 fn template_timing() -> TimingConfig {
 	let config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.timing
 }
 
@@ -46,10 +45,7 @@ fn session(turns: Vec<Turn>) -> SessionTurns {
 }
 
 fn close(actual: f64, expected: f64) {
-	assert!(
-		(actual - expected).abs() < 1e-6,
-		"expected {expected}, got {actual}"
-	);
+	assert!((actual - expected).abs() < 1e-6, "expected {expected}, got {actual}");
 }
 
 #[test]
@@ -104,10 +100,7 @@ fn two_overlapping_sessions_split_attention_wait_and_energy() {
 	close(timing.longest_block_min, 53.5);
 	assert!(!timing.long_block);
 	assert!(!timing.over_budget);
-	assert!(timing
-		.sessions
-		.iter()
-		.all(|s| s.turns.iter().all(|t| !t.rubber_stamp)));
+	assert!(timing.sessions.iter().all(|s| s.turns.iter().all(|t| !t.rubber_stamp)));
 }
 
 #[test]
@@ -118,9 +111,7 @@ fn time_before_the_next_input_tells_a_code_review_from_a_behavior_check() {
 			turn(at(10, 0), at(10, 10), 30, 0, 200),
 			turn(at(10, 10) + secs, at(10, 10) + secs + 60, 2, 10, 0),
 		];
-		compute(&[session(turns)], &template_timing())
-			.sessions
-			.remove(0)
+		compute(&[session(turns)], &template_timing()).sessions.remove(0)
 	};
 
 	let reviewed = reply_after(40 * 60);

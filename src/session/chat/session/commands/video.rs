@@ -21,40 +21,32 @@ use anyhow::Result;
 pub async fn handle_video(session: &mut ChatSession, params: &[&str]) -> Result<CommandResult> {
 	// Handle /video command for attaching videos
 	if let Err(error) = session.ensure_model_supports_video() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Video {
-				video_attached: false,
-				path: None,
-				error: Some(error.to_string()),
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Video {
+			video_attached: false,
+			path: None,
+			error: Some(error.to_string()),
+		})));
 	}
 
 	if params.is_empty() {
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Video {
-				video_attached: false,
-				path: None,
-				error: None,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Video {
+			video_attached: false,
+			path: None,
+			error: None,
+		})));
 	}
 
 	let video_path = params.join(" ");
 	match session.attach_video_from_path(&video_path).await {
-		Ok(_) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Video {
-				video_attached: true,
-				path: Some(video_path),
-				error: None,
-			},
-		))),
-		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Video {
-				video_attached: false,
-				path: Some(video_path),
-				error: Some(format!("Failed to attach video: {}", e)),
-			},
-		))),
+		Ok(_) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Video {
+			video_attached: true,
+			path: Some(video_path),
+			error: None,
+		}))),
+		Err(e) => Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Video {
+			video_attached: false,
+			path: Some(video_path),
+			error: Some(format!("Failed to attach video: {}", e)),
+		}))),
 	}
 }

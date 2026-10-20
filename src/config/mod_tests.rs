@@ -78,6 +78,19 @@ fn log_level_serde_roundtrip_and_helpers() {
 	assert_eq!(LogLevel::None.as_str(), "off");
 	assert_eq!(LogLevel::Info.as_str(), "info");
 	assert_eq!(LogLevel::Debug.as_str(), "debug");
+
+	// The command vocabulary is `none`, not the tracing spelling `off`
+	assert_eq!(LogLevel::None.display_name(), "none");
+	assert_eq!(LogLevel::Info.display_name(), "info");
+	assert_eq!(LogLevel::Debug.display_name(), "debug");
+
+	// Parsing the command argument mirrors `display_name` exactly
+	assert_eq!(LogLevel::from_display_name("none"), Some(LogLevel::None));
+	assert_eq!(LogLevel::from_display_name("info"), Some(LogLevel::Info));
+	assert_eq!(LogLevel::from_display_name("debug"), Some(LogLevel::Debug));
+	assert_eq!(LogLevel::from_display_name("DEBUG"), Some(LogLevel::Debug));
+	assert_eq!(LogLevel::from_display_name("off"), None);
+	assert_eq!(LogLevel::from_display_name("verbose"), None);
 }
 
 // --- ReasoningEffortConfig ------------------------------------------------------

@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.59.0] - 2026-10-20
+
+### 📋 Release Summary
+
+Tap run events stream over WebSocket, help output includes aliases, and configuration validation reports unknown or ignored keys. Evolution and learning support compatible proposals, generated guidance, multi-pass synthesis, live-skill recall with persisted experiences, and live-artifact reporting. Tap events are fallible and race-safe; --show displays the configured root model, while session, MCP, prompt, command, replay, and Windows ACP handling were corrected.
+
+### 🚨 Breaking Changes
+
+- **run-events**: make tap run events fallible and race-safe `62fada90`
+- **config**: display configured root model in --show `4863a30a`
+
+### ✨ New Features & Enhancements
+
+- **websocket**: stream tap run events over WebSocket `49580672`
+- **help**: enhance help command to include aliases in output `7687a28a`
+- **config**: report unknown and silently ignored keys in validate mode `b45eeb6d`
+- **evolution**: compose compatible evolution proposals `459d3d14`
+- **learning**: recall live skills with persisted experiences `41e7397c`
+- **learning**: show synthesis which evolved artifacts were live `b1d3f2dd`
+- **learning**: support multi-pass learning synthesis `eef237d4`
+- **evolution**: deliver generated evolution guidance `1f3a0725`
+
+### 🔧 Improvements & Optimizations
+
+- **session**: centralize help alias formatting `cbd30c10`
+- **agent**: reuse tap ID validation `7dad3010`
+- **session**: tighten tap job state tests `cebe08d3`
+- **utils**: consolidate single-line string truncation into shared helper `b661871a`
+- format Rust code at 120 columns `34ee75d4`
+- **acp**: share scripted provider stub across ACP tests `cbbe3af5`
+- **acp**: drive an in-process sub-agent tool round over ACP `c42ddcc4`
+- **run**: add unit tests for RunArgs session resolution and flag parsing `ab84390b`
+- **config**: use a slice for API key rows `77b35c73`
+- **config**: assert the rendered Cloudflare row, not only the row list `8341df4d`
+- **cli**: cover jsonl format parsing and execution `d9f8df8b`
+- **run**: cover plain instead of the now-rejected json format `a4fcc20c`
+
+### 🐛 Bug Fixes & Stability
+
+- **websocket**: reuse tool-call conversion during replay `9af4f900`
+- **prompt**: include MCP server instructions `76117eed`
+- **tap**: reject empty halves in tap names `2a78e9ef`
+- **vars**: clarify placeholders and conflicting flags `18b35266`
+- **config**: align default model label with template defaults `fd11a697`
+- **commands**: validate model commands against provider config `7a49e234`
+- **session**: reject /model values without a provider prefix `95cfb50b`
+- **mcp**: derive sub-agent output mode without probing stdin `1b85f8d5`
+- **session**: stop ACP prompt hang on Windows stdin pipes `2e57c00d`
+- **config**: improve configuration validation diagnostics `c8f17a33`
+- **config**: preserve merged config parse context `0618162e`
+- **config**: cover nested roles, roles.model, and mcp.servers, and drop static field lists in favor of default template `d962e72f`
+- **session**: dispatch /? as help and list /usage and /login `b4aeb0db`
+- **config**: report the Cloudflare credential the provider reads `ae87942b`
+- **learning**: keep sessions running after command errors `5b89cde2`
+- **commands**: restrict --format to plain and jsonl `e346f263`
+
+### 📚 Documentation & Examples
+
+- align spelling to American English ("honored") `69e8bc43`
+- sync config reference with shipped defaults `47b49fdb`
+- **cli**: document config overrides and ChatGPT login `2b434776`
+- **cli**: correct format and distill flag reference `5e2bff2a`
+- **tap**: correct prefixed repository name in README `35080426`
+- **roles**: correct role name examples `001ac7dc`
+- **cli**: update help text and comments with current commands and roles `775165d5`
+
+### 🔄 Other Changes
+
+3 maintenance, dependency, and tooling updates not listed individually.
+
 ## [0.58.8] - 2026-10-18
 
 ### 📋 Release Summary

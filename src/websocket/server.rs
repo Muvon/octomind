@@ -300,7 +300,9 @@ struct RunSubscriptions(WsSender);
 
 impl Drop for RunSubscriptions {
 	fn drop(&mut self) {
-		crate::session::tap_runs::unbind_run_events(&self.0);
+		if let Err(error) = crate::session::tap_runs::unbind_run_events(&self.0) {
+			crate::log_error!("Failed to remove WebSocket run subscriptions: {}", error);
+		}
 	}
 }
 
@@ -1147,7 +1149,7 @@ async fn handle_session_message(
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
-		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()));
+		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()))?;
 		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
 		crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
@@ -1252,7 +1254,7 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 	match setup_and_initialize_session(&args, &config, false).await {
 		Ok((mut session, config_for_role, session_role, _, _)) => {
 			crate::session::context::init_session_services(&session_role);
-			crate::session::tap_runs::enable_run_events(None);
+			crate::session::tap_runs::enable_run_events(None).map_err(|error| error.to_string())?;
 			if let Err(e) = setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await {
 				return Err(format!("Failed to setup session {}: {}", session_id, e));
 			}

@@ -27,24 +27,30 @@ fn request() -> RunLogMessage {
 fn live_snapshot_coalesces_chunks_without_losing_sequence_and_resume_keeps_sequence() {
 	let request = request();
 	let mut events = RunEvents::default();
-	events.begin(&request.session_id, &request.run_id, "developer:cto");
+	events
+		.begin(&request.session_id, &request.run_id, "developer:cto")
+		.unwrap();
 	for content in ["one", "two"] {
-		events.emit(
-			&request.session_id,
-			&request.run_id,
-			RunEvent::Assistant {
-				content: content.into(),
-			},
-		);
+		events
+			.emit(
+				&request.session_id,
+				&request.run_id,
+				RunEvent::Assistant {
+					content: content.into(),
+				},
+			)
+			.unwrap();
 	}
 	for content in ["think", "more"] {
-		events.emit(
-			&request.session_id,
-			&request.run_id,
-			RunEvent::Thinking {
-				content: content.into(),
-			},
-		);
+		events
+			.emit(
+				&request.session_id,
+				&request.run_id,
+				RunEvent::Thinking {
+					content: content.into(),
+				},
+			)
+			.unwrap();
 	}
 	let snapshot = events.snapshot(&request).unwrap();
 	assert_eq!(snapshot.seq, 5);
@@ -61,21 +67,27 @@ fn live_snapshot_coalesces_chunks_without_losing_sequence_and_resume_keeps_seque
 			content: "thinkmore".into()
 		}
 	);
-	events.emit(
-		&request.session_id,
-		&request.run_id,
-		RunEvent::Assistant { content: "next".into() },
-	);
+	events
+		.emit(
+			&request.session_id,
+			&request.run_id,
+			RunEvent::Assistant { content: "next".into() },
+		)
+		.unwrap();
 	assert_eq!(events.snapshot(&request).unwrap().seq, snapshot.seq + 1);
 	for status in [TapJobStatus::Done, TapJobStatus::Failed, TapJobStatus::Cancelled] {
 		let before = events.last_seq(&request.run_id);
-		events.emit(
-			&request.session_id,
-			&request.run_id,
-			RunEvent::Status { status, error: None },
-		);
+		events
+			.emit(
+				&request.session_id,
+				&request.run_id,
+				RunEvent::Status { status, error: None },
+			)
+			.unwrap();
 		assert!(events.snapshot(&request).is_none(), "terminal buffer is freed");
-		events.begin(&request.session_id, &request.run_id, "developer:cto");
+		events
+			.begin(&request.session_id, &request.run_id, "developer:cto")
+			.unwrap();
 		assert_eq!(events.snapshot(&request).unwrap().seq, before + 2);
 		assert_eq!(events.snapshot(&request).unwrap().events.len(), 1);
 	}
@@ -112,6 +124,12 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 		crate::session::Message {
 			role: "system".into(),
 			content: "skip".into(),
+			..Default::default()
+		},
+		// AGENTS.md as the child seeds it: system-managed, never the task.
+		crate::session::Message {
+			role: "user".into(),
+			content: "<instructions>\n# Octomind Cloud machine\n</instructions>".into(),
 			..Default::default()
 		},
 		crate::session::Message {
@@ -201,4 +219,164 @@ fn run_id_validation_matches_generator_and_rejects_paths_and_package_names() {
 	] {
 		assert!(tap_runs::validate_run_id(id).is_err(), "{id}");
 	}
+}
+
+fn prepare_finished_replay_run(request: &RunLogMessage, dir: &Path) -> std::path::PathBuf {
+	use crate::session::tap_runs::{TapJob, TapLiveState};
+	use std::sync::{Arc, RwLock};
+	tap_runs::init_for_session();
+	tap_runs::enable_run_events(None).unwrap();
+	let (cancel_tx, _) = tokio::sync::watch::channel(false);
+	tap_runs::register_job(TapJob {
+		id: request.run_id.clone(),
+		role: "developer:cto".into(),
+		workdir: dir.to_string_lossy().into_owned(),
+		started_at: std::time::SystemTime::now(),
+		status: Arc::new(RwLock::new(TapJobStatus::Done)),
+		cancel_tx,
+		live: Arc::new(RwLock::new(TapLiveState::default())),
+	});
+	let path = dir.join(format!("{}.jsonl.zst", request.run_id));
+	let mut session = crate::session::Session::new(request.run_id.clone(), "ollama:fake-model".into());
+	session.session_file = Some(path.clone());
+	session.save().unwrap();
+	crate::session::append_to_session_file(
+		&path,
+		&serde_json::to_string(&crate::session::Message {
+			role: "user".into(),
+			content: "old task".into(),
+			..Default::default()
+		})
+		.unwrap(),
+	)
+	.unwrap();
+	path
+}
+
+#[tokio::test]
+async fn disk_replay_switches_to_live_when_resumed_during_read() {
+	let request = RunLogMessage {
+		session_id: "replay-resume-during-read".into(),
+		..request()
+	};
+	let dir = tempfile::tempdir().unwrap();
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		let path = prepare_finished_replay_run(&request, dir.path());
+		let captured = tap_runs::snapshot_run_log(&request).unwrap();
+		assert_eq!(captured.source, "disk");
+		let reply = replay_disk(&request, captured, || {
+			let _claim = tap_runs::resume_run(&request.run_id)?;
+			crate::session::append_to_session_file(
+				&path,
+				&serde_json::to_string(&crate::session::Message {
+					role: "user".into(),
+					content: "resumed task".into(),
+					..Default::default()
+				})?,
+			)?;
+			tap_runs::with_run_events(|events, parent| {
+				events.emit(
+					parent,
+					&request.run_id,
+					RunEvent::Prompt {
+						content: "resumed task".into(),
+					},
+				)
+			})?;
+			disk_events(dir.path(), &request.run_id)
+		})
+		.unwrap();
+		assert_eq!(reply.source, "live");
+		assert_eq!(reply.status, "running");
+		assert_eq!(reply.seq, 2);
+		assert_eq!(
+			reply.events,
+			vec![
+				RunEvent::Status {
+					status: TapJobStatus::Running,
+					error: None
+				},
+				RunEvent::Prompt {
+					content: "resumed task".into()
+				},
+			]
+		);
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
+}
+
+#[tokio::test]
+async fn disk_replay_retries_when_resumed_turn_finishes_during_read() {
+	let request = RunLogMessage {
+		session_id: "replay-resume-finished-during-read".into(),
+		..request()
+	};
+	let dir = tempfile::tempdir().unwrap();
+	crate::session::context::with_session_id(request.session_id.clone(), async {
+		let path = prepare_finished_replay_run(&request, dir.path());
+		let captured = tap_runs::snapshot_run_log(&request).unwrap();
+		let mut reads = 0;
+		let reply = replay_disk(&request, captured, || {
+			reads += 1;
+			if reads == 1 {
+				let claim = tap_runs::resume_run(&request.run_id)?;
+				crate::session::append_to_session_file(
+					&path,
+					&serde_json::to_string(&crate::session::Message {
+						role: "user".into(),
+						content: "resumed task".into(),
+						..Default::default()
+					})?,
+				)?;
+				tap_runs::finish_run(&request.run_id, &claim.status, TapJobStatus::Done, None)?;
+			}
+			disk_events(dir.path(), &request.run_id)
+		})
+		.unwrap();
+		assert_eq!(reads, 2);
+		assert_eq!(reply.source, "disk");
+		assert_eq!(reply.status, "done");
+		assert_eq!(reply.seq, 2);
+		assert_eq!(
+			reply.events,
+			vec![
+				RunEvent::Prompt {
+					content: "old task".into()
+				},
+				RunEvent::Prompt {
+					content: "resumed task".into()
+				},
+			]
+		);
+	})
+	.await;
+	tap_runs::clear_for_session(&request.session_id);
+}
+
+#[test]
+fn run_events_reject_duplicate_begin_and_late_emission_without_panicking() {
+	let request = request();
+	let mut events = RunEvents::default();
+	let text = RunEvent::Assistant { content: "late".into() };
+	assert!(events.emit(&request.session_id, &request.run_id, text.clone()).is_err());
+	events
+		.begin(&request.session_id, &request.run_id, "developer:cto")
+		.unwrap();
+	assert!(events
+		.begin(&request.session_id, &request.run_id, "developer:cto")
+		.is_err());
+	assert_eq!(events.snapshot(&request).unwrap().seq, 1);
+	events
+		.emit(
+			&request.session_id,
+			&request.run_id,
+			RunEvent::Status {
+				status: TapJobStatus::Done,
+				error: None,
+			},
+		)
+		.unwrap();
+	assert!(events.emit(&request.session_id, &request.run_id, text).is_err());
+	assert_eq!(events.last_seq(&request.run_id), 2);
 }

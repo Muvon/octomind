@@ -715,7 +715,7 @@ pub async fn run_acp_command(
 	tap_run_id: Option<&str>,
 	handback: bool,
 ) -> Result<String> {
-	let websocket_tap = tap_run_id.is_some() && crate::session::tap_runs::with_run_events(|_, _| ()).is_some();
+	let websocket_tap = tap_run_id.is_some() && crate::session::tap_runs::with_run_events(|_, _| Ok(()))?.is_some();
 	// Reported on drop so every exit path — success, prompt error, cancellation,
 	// a child that dies mid-stream — lands in the parent's tally exactly once.
 	// A run that never reports stays `false`: unverified is the safe default.
@@ -752,6 +752,7 @@ pub async fn run_acp_command(
 	let mut lines = BufReader::new(stdout).lines();
 
 	// 1. initialize
+	// stdin was captured above and is not taken until the prompt response; all three handshake writes have it.
 	write_acp_request(
 		stdin.as_mut().expect("child stdin is open during initialize"),
 		json!({
@@ -814,16 +815,18 @@ pub async fn run_acp_command(
 	)
 	.await?;
 
-	if websocket_tap {
-		crate::session::tap_runs::with_run_events(|events, parent| {
+	if let Some(run_id) = tap_run_id.filter(|_| websocket_tap) {
+		if let Err(error) = crate::session::tap_runs::with_run_events(|events, parent| {
 			events.emit(
 				parent,
-				tap_run_id.expect("websocket tap ID"),
+				run_id,
 				crate::websocket::protocol::RunEvent::Prompt {
 					content: task.to_string(),
 				},
-			);
-		});
+			)
+		}) {
+			crate::log_error!("Tap run {}: failed to publish prompt: {}", run_id, error);
+		}
 	}
 
 	let mut output = String::new();
@@ -1008,11 +1011,14 @@ pub(crate) fn route_child_update(msg: &Value, tap_run_id: Option<&str>, websocke
 					return;
 				}
 			};
-			crate::session::tap_runs::with_run_events(|events, parent| {
+			if let Err(error) = crate::session::tap_runs::with_run_events(|events, parent| {
 				for event in updates {
-					events.emit(parent, run_id, event);
+					events.emit(parent, run_id, event)?;
 				}
-			});
+				Ok(())
+			}) {
+				crate::log_error!("Tap run {}: failed to publish child update: {}", run_id, error);
+			}
 			return;
 		}
 	}

@@ -39,6 +39,7 @@ impl EventBuffer {
 			_ => self.events.push_back(event),
 		}
 		while self.bytes > MAX_RUN_CONTENT {
+			// bytes is the sum of queued content sizes, so positive bytes imply a nonempty queue.
 			self.bytes -= content_size(&self.events.pop_front().expect("buffer contains oversized content"));
 			self.truncated = true;
 		}
@@ -81,7 +82,8 @@ impl RunEvents {
 		self.clients.retain(|client| !client.same_channel(sender));
 	}
 
-	pub(crate) fn begin(&mut self, session_id: &str, run_id: &str, role: &str) {
+	pub(crate) fn begin(&mut self, session_id: &str, run_id: &str, role: &str) -> Result<()> {
+		anyhow::ensure!(!self.is_running(run_id), "run {run_id} is already streaming");
 		let run = self.runs.entry(run_id.to_string()).or_insert_with(|| RunState {
 			role: role.to_string(),
 			seq: 0,
@@ -95,27 +97,36 @@ impl RunEvents {
 				status: TapJobStatus::Running,
 				error: None,
 			},
-		);
+		)
 	}
 
-	pub(crate) fn emit(&mut self, session_id: &str, run_id: &str, event: RunEvent) {
-		let run = self.runs.get_mut(run_id).expect("tap run event stream started");
-		run.seq += 1;
+	pub(crate) fn emit(&mut self, session_id: &str, run_id: &str, event: RunEvent) -> Result<()> {
+		let run = self
+			.runs
+			.get_mut(run_id)
+			.with_context(|| format!("run {run_id} has no event stream"))?;
+		let buffer = run
+			.buffer
+			.as_mut()
+			.with_context(|| format!("run {run_id} is not streaming"))?;
+		let seq = run.seq.checked_add(1).context("run event sequence exhausted")?;
 		let terminal = matches!(event, RunEvent::Status { status, .. } if status != TapJobStatus::Running);
-		run.buffer.as_mut().expect("tap run is emitting").push(event.clone());
 		let payload = ServerMessage::RunEvent(RunEventPayload {
 			session_id: session_id.to_string(),
 			run_id: run_id.to_string(),
 			role: run.role.clone(),
-			seq: run.seq,
-			event,
+			seq,
+			event: event.clone(),
 		});
-		let text = serde_json::to_string(&payload).expect("run event is serializable");
+		let text = serde_json::to_string(&payload)?;
+		buffer.push(event);
+		run.seq = seq;
 		self.clients
 			.retain(|client| client.send(Message::text(text.clone())).is_ok());
 		if terminal {
 			run.buffer = None;
 		}
+		Ok(())
 	}
 
 	pub(crate) fn snapshot(&self, request: &RunLogMessage) -> Option<RunLogPayload> {
@@ -146,16 +157,33 @@ impl RunEvents {
 
 pub(crate) async fn replay(request: RunLogMessage) -> Result<RunLogPayload> {
 	tap_runs::validate_run_id(&request.run_id).map_err(anyhow::Error::msg)?;
-	let mut snapshot = tap_runs::snapshot_run_log(&request);
+	let snapshot = tap_runs::snapshot_run_log(&request)?;
 	if snapshot.source == "live" {
 		return Ok(snapshot);
 	}
 	let dir = crate::session::get_sessions_dir()?;
-	tokio::task::spawn_blocking(move || {
-		snapshot.events = disk_events(&dir, &request.run_id)?;
-		Ok(snapshot)
-	})
-	.await?
+	tokio::task::spawn_blocking(move || replay_disk(&request, snapshot, || disk_events(&dir, &request.run_id))).await?
+}
+
+fn replay_disk(
+	request: &RunLogMessage,
+	mut snapshot: RunLogPayload,
+	mut read: impl FnMut() -> Result<Vec<RunEvent>>,
+) -> Result<RunLogPayload> {
+	loop {
+		let events = read();
+		let current = tap_runs::snapshot_run_log(request)?;
+		if current.source == "live" {
+			return Ok(current);
+		}
+		if current.seq != snapshot.seq || current.status != snapshot.status {
+			snapshot = current;
+			continue;
+		}
+		snapshot = current;
+		snapshot.events = events?;
+		return Ok(snapshot);
+	}
 }
 
 pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
@@ -168,7 +196,10 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
 	let mut events = Vec::new();
 	for message in session.messages {
 		match message.role.as_str() {
-			"user" => events.push(RunEvent::Prompt {
+			// Only the task the specialist was given (and any resume turn). The log also
+			// holds system-managed user messages — AGENTS.md `<instructions>`, inbox
+			// notes, continuations — which the live stream never shows as a prompt.
+			"user" if crate::session::is_real_user_task_message(&message) => events.push(RunEvent::Prompt {
 				content: message.content,
 			}),
 			"assistant" => {

@@ -3981,7 +3981,9 @@ fn register_streaming_tap(id: &str) {
 		cancel_tx,
 		live: Arc::new(std::sync::RwLock::new(TapLiveState::default())),
 	});
-	tap_runs::with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).expect("websocket session");
+	tap_runs::with_run_events(|events, parent| events.begin(parent, id, "developer:cto"))
+		.expect("start run events")
+		.expect("websocket session");
 }
 
 fn child_text(text: &str) -> serde_json::Value {
@@ -4043,7 +4045,7 @@ async fn run_log_and_child_events_bypass_processing_and_session_lock() {
 		let subscriptions = RunSubscriptions(sender.clone());
 		with_session_id(parent.to_string(), async {
 			crate::session::context::init_session_services("developer:cto");
-			crate::session::tap_runs::enable_run_events(Some(sender.clone()));
+			crate::session::tap_runs::enable_run_events(Some(sender.clone())).unwrap();
 			set_notification_sender_for_session(&parent.to_string(), notify_tx);
 			register_streaming_tap(run_id);
 		})
@@ -4149,7 +4151,7 @@ async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
 	let sender = WsSender(sender);
 	crate::session::context::with_session_id(parent.clone(), async {
 		crate::session::context::init_session_services("developer:cto");
-		tap_runs::enable_run_events(Some(sender));
+		tap_runs::enable_run_events(Some(sender)).unwrap();
 		register_streaming_tap(run_id);
 		let running: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
 		assert_eq!(running["seq"], 1);
@@ -4194,7 +4196,9 @@ async fn tap_child_forwarding_outside_websocket_is_unchanged() {
 	crate::session::context::with_session_id(parent.clone(), async {
 		crate::session::context::init_session_services("developer:cto");
 		crate::session::context::set_notification_sender_for_session(&parent, sender);
-		assert!(crate::session::tap_runs::with_run_events(|_, _| ()).is_none());
+		assert!(crate::session::tap_runs::with_run_events(|_, _| Ok(()))
+			.unwrap()
+			.is_none());
 		crate::mcp::agent::functions::route_child_update(
 			&child_text("legacy output"),
 			Some("tap-developer-cto-abcdef"),
@@ -4222,7 +4226,7 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
 	crate::session::context::with_session_id(parent.clone(), async {
 		crate::session::context::init_session_services("developer:cto");
-		tap_runs::enable_run_events(Some(sender.clone()));
+		tap_runs::enable_run_events(Some(sender.clone())).unwrap();
 		crate::session::context::set_notification_sender_for_session(&parent, notify_tx);
 		register_streaming_tap(run_id);
 		rx.try_recv().unwrap();
@@ -4234,13 +4238,13 @@ async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwar
 			run_id: run_id.into(),
 			request_id: None,
 		};
-		let snapshot = tap_runs::snapshot_run_log(&request);
+		let snapshot = tap_runs::snapshot_run_log(&request).unwrap();
 		assert_eq!(snapshot.source, "live");
 		assert_eq!(snapshot.seq, 2);
 		assert_eq!(snapshot.events.len(), 2);
-		tap_runs::unbind_run_events(&sender);
+		tap_runs::unbind_run_events(&sender).unwrap();
 		assert!(
-			tap_runs::with_run_events(|_, _| ()).is_some(),
+			tap_runs::with_run_events(|_, _| Ok(())).unwrap().is_some(),
 			"transport outlives subscriptions"
 		);
 	})

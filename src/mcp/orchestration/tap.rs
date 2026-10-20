@@ -517,54 +517,17 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 	// Conversation history is persisted on disk by the ACP subprocess under
 	// the session name `<id>` — we don't track messages in-memory anymore.
 	let (id, role, workdir, status, cancel_rx) = if let Some(sid) = session {
-		let (status, cancel_rx) = match tap_runs::get_status_and_cancel(&sid) {
-			Some(h) => h,
-			None => {
+		let claim = match tap_runs::resume_run(&sid) {
+			Ok(claim) => claim,
+			Err(error) => {
 				return Ok(McpToolResult::error(
 					call.tool_name.clone(),
 					call.tool_id.clone(),
-					format!("No tap-run with id '{sid}' in this session."),
+					error.to_string(),
 				));
 			}
 		};
-		let info = match tap_runs::find_job(&sid) {
-			Some(i) => i,
-			None => {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!("No tap-run with id '{sid}' in this session."),
-				));
-			}
-		};
-		// Reject if a turn is already running for this job.
-		{
-			let s = match status.read() {
-				Ok(s) => *s,
-				Err(_) => {
-					return Ok(McpToolResult::error(
-						call.tool_name.clone(),
-						call.tool_id.clone(),
-						"Tap-run status lock poisoned.".to_string(),
-					));
-				}
-			};
-			if s == TapJobStatus::Running {
-				return Ok(McpToolResult::error(
-					call.tool_name.clone(),
-					call.tool_id.clone(),
-					format!("Tap-run '{sid}' is busy with a previous turn — wait or call stop."),
-				));
-			}
-		}
-		// Mark running for the new turn.
-		if let Ok(mut s) = status.write() {
-			*s = TapJobStatus::Running;
-		}
-		// Fresh cancel channel: a prior `stop` latched the old one to `true`, so
-		// the subscribed receiver would cancel this resumed turn immediately.
-		let cancel_rx = tap_runs::reset_cancel(&sid).unwrap_or(cancel_rx);
-		(sid, info.role, info.workdir, status, cancel_rx)
+		(sid, claim.role, claim.workdir, claim.status, claim.cancel_rx)
 	} else {
 		let role = match role_param {
 			Some(t) => t,
@@ -589,22 +552,25 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			cancel_tx,
 			live: Arc::new(RwLock::new(TapLiveState::default())),
 		});
+		if let Err(error) = tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role)) {
+			crate::log_error!("Tap run {}: failed to start event stream: {}", id, error);
+		}
 		(id, role, workdir, status, cancel_rx)
 	};
-
-	crate::session::tap_runs::with_run_events(|events, parent| events.begin(parent, &id, &role));
 
 	// Resolve the path to the currently-running octomind binary so the
 	// subprocess uses the same code, regardless of $PATH.
 	let exe = match std::env::current_exe() {
 		Ok(p) => p.to_string_lossy().to_string(),
 		Err(e) => {
-			tap_runs::finish_run(
+			if let Err(error) = tap_runs::finish_run(
 				&id,
 				&status,
 				TapJobStatus::Failed,
 				Some(format!("Failed to locate octomind binary: {e:#}")),
-			);
+			) {
+				crate::log_error!("Tap run {}: failed to publish terminal status: {}", id, error);
+			}
 			return Ok(McpToolResult::error(
 				call.tool_name.clone(),
 				call.tool_id.clone(),
@@ -666,7 +632,9 @@ async fn handle_run(call: &McpToolCall, _config: &Config) -> Result<McpToolResul
 			});
 			// Queue the handback before clearing Running. Graceful session shutdown
 			// can therefore never observe neither the job nor its result.
-			tap_runs::finish_run(&id_owned, &status_bg, terminal, error);
+			if let Err(error) = tap_runs::finish_run(&id_owned, &status_bg, terminal, error) {
+				crate::log_error!("Tap run {}: failed to publish terminal status: {}", id_owned, error);
+			}
 		};
 		if let Some(sid) = session_id {
 			crate::session::context::with_session_id(sid, run).await;

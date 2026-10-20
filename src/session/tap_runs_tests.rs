@@ -179,7 +179,7 @@ async fn find_job_and_live_updates_return_a_snapshot() {
 
 #[tokio::test]
 #[serial]
-async fn reset_cancel_replaces_the_latched_receiver() {
+async fn resume_run_replaces_the_latched_receiver() {
 	let session_id = "tap-runs-reset-cancel".to_string();
 	let (job, old_rx) = test_job("resume", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
 	// Read the new receiver inside the session: `clear_for_session` sends
@@ -187,7 +187,7 @@ async fn reset_cancel_replaces_the_latched_receiver() {
 	let (status, new_rx_is_clear) = crate::session::context::with_session_id(session_id.clone(), async {
 		register_job(job);
 		let status = cancel_job("resume");
-		let new_rx = reset_cancel("resume").expect("registered job has a cancellation channel");
+		let new_rx = resume_run("resume").unwrap().cancel_rx;
 		let is_clear = !*new_rx.borrow();
 		(status, is_clear)
 	})
@@ -233,10 +233,12 @@ async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
 	let id = "tap-developer-cto-abcdef";
 	crate::session::context::with_session_id(parent.clone(), async {
 		init_for_session();
-		enable_run_events(None);
+		enable_run_events(None).unwrap();
 		let (job, _) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
 		register_job(job);
-		with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).unwrap();
+		with_run_events(|events, parent| events.begin(parent, id, "developer:cto"))
+			.unwrap()
+			.unwrap();
 	})
 	.await;
 	let request = RunLogMessage {
@@ -247,12 +249,13 @@ async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
 	let emitter = tokio::spawn(crate::session::context::with_session_id(parent.clone(), async move {
 		for _ in 0..256 {
 			with_run_events(|events, parent| events.emit(parent, id, RunEvent::Assistant { content: "x".into() }))
+				.unwrap()
 				.unwrap();
 			tokio::task::yield_now().await;
 		}
 	}));
 	for _ in 0..256 {
-		let snapshot = snapshot_run_log(&request);
+		let snapshot = snapshot_run_log(&request).unwrap();
 		assert_eq!(snapshot.source, "live");
 		let text_bytes: usize = snapshot
 			.events
@@ -270,7 +273,7 @@ async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
 		tokio::task::yield_now().await;
 	}
 	emitter.await.unwrap();
-	assert_eq!(snapshot_run_log(&request).seq, 257);
+	assert_eq!(snapshot_run_log(&request).unwrap().seq, 257);
 	clear_for_session(&parent);
 }
 
@@ -281,7 +284,7 @@ async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence()
 	let id = "tap-developer-cto-abcdef";
 	crate::session::context::with_session_id(parent.clone(), async {
 		init_for_session();
-		enable_run_events(None);
+		enable_run_events(None).unwrap();
 		let (job, _) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
 		let status = job.status.clone();
 		register_job(job);
@@ -296,17 +299,18 @@ async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence()
 		{
 			*status.write().unwrap() = TapJobStatus::Running;
 			with_run_events(|events, parent| {
-				events.begin(parent, id, "developer:cto");
+				events.begin(parent, id, "developer:cto")?;
 				events.emit(
 					parent,
 					id,
 					RunEvent::Prompt {
 						content: format!("turn {turn}"),
 					},
-				);
+				)
 			})
+			.unwrap()
 			.unwrap();
-			let live = snapshot_run_log(&request);
+			let live = snapshot_run_log(&request).unwrap();
 			assert_eq!(live.source, "live");
 			assert_eq!(live.events.len(), 2, "a resume gets a fresh buffer");
 			assert_eq!(live.seq, (turn as u64) * 3 + 2);
@@ -315,13 +319,15 @@ async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence()
 				&status,
 				terminal,
 				(terminal == TapJobStatus::Failed).then(|| "failure".into()),
-			);
-			let disk = snapshot_run_log(&request);
+			)
+			.unwrap();
+			let disk = snapshot_run_log(&request).unwrap();
 			assert_eq!(disk.source, "disk");
 			assert_eq!(disk.status, terminal.as_str());
 			assert_eq!(disk.seq, live.seq + 1);
 			assert!(disk.events.is_empty());
-			assert!(with_run_events(|events, _| events.snapshot(&request))
+			assert!(with_run_events(|events, _| Ok(events.snapshot(&request)))
+				.unwrap()
 				.unwrap()
 				.is_none());
 		}
@@ -336,17 +342,83 @@ async fn websocket_tap_cancel_keeps_the_stream_running_until_child_exit() {
 	let id = "tap-developer-cto-abcdef";
 	crate::session::context::with_session_id(parent.clone(), async {
 		init_for_session();
-		enable_run_events(None);
+		enable_run_events(None).unwrap();
 		let (job, cancelled) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
 		let status = job.status.clone();
 		register_job(job);
-		with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).unwrap();
+		with_run_events(|events, parent| events.begin(parent, id, "developer:cto"))
+			.unwrap()
+			.unwrap();
 		assert_eq!(cancel_job(id), Some(TapJobStatus::Cancelled));
 		assert!(*cancelled.borrow());
 		assert_eq!(find_job(id).unwrap().status, TapJobStatus::Running);
-		finish_run(id, &status, TapJobStatus::Cancelled, None);
+		finish_run(id, &status, TapJobStatus::Cancelled, None).unwrap();
 		assert_eq!(find_job(id).unwrap().status, TapJobStatus::Cancelled);
-		assert!(!with_run_events(|events, _| events.is_running(id)).unwrap());
+		assert!(!with_run_events(|events, _| Ok(events.is_running(id))).unwrap().unwrap());
+	})
+	.await;
+	clear_for_session(&parent);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_same_id_resume_claims_exactly_one_run() {
+	use crate::session::context::with_session_id;
+	use crate::websocket::protocol::{RunEvent, RunLogMessage};
+	let parent = "tap-concurrent-resume".to_string();
+	let id = "tap-developer-cto-abcdef";
+	with_session_id(parent.clone(), async {
+		init_for_session();
+		enable_run_events(None).unwrap();
+		let (job, _) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Done);
+		register_job(job);
+	})
+	.await;
+	let barrier = Arc::new(tokio::sync::Barrier::new(3));
+	let spawn = || {
+		let barrier = barrier.clone();
+		tokio::spawn(with_session_id(parent.clone(), async move {
+			barrier.wait().await;
+			resume_run(id)
+		}))
+	};
+	let first = spawn();
+	let second = spawn();
+	barrier.wait().await;
+	let (claim, error) = match (first.await.unwrap(), second.await.unwrap()) {
+		(Ok(claim), Err(error)) | (Err(error), Ok(claim)) => (claim, error),
+		other => panic!("exactly one resume must succeed: {other:?}"),
+	};
+	assert!(error.to_string().starts_with(&format!("run {id} is already running")));
+	assert!(!*claim.cancel_rx.borrow());
+	with_session_id(parent.clone(), async {
+		let request = RunLogMessage {
+			session_id: parent.clone(),
+			run_id: id.into(),
+			request_id: None,
+		};
+		let snapshot = snapshot_run_log(&request).unwrap();
+		assert_eq!(snapshot.seq, 1, "only the winner may begin the stream");
+		assert_eq!(snapshot.events.len(), 1);
+		with_run_events(|events, parent| {
+			events.emit(
+				parent,
+				id,
+				RunEvent::Assistant {
+					content: "winner".into(),
+				},
+			)
+		})
+		.unwrap()
+		.unwrap();
+		assert_eq!(cancel_job(id), Some(TapJobStatus::Cancelled));
+		assert!(
+			*claim.cancel_rx.borrow(),
+			"the losing resume must not replace cancellation"
+		);
+		finish_run(id, &claim.status, TapJobStatus::Cancelled, None).unwrap();
+		let snapshot = snapshot_run_log(&request).unwrap();
+		assert_eq!(snapshot.seq, 3);
+		assert_eq!(snapshot.status, "cancelled");
 	})
 	.await;
 	clear_for_session(&parent);

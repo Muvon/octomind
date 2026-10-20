@@ -37,7 +37,7 @@ octomind server --host 127.0.0.1 --port 8080 --sandbox
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `TAG` | `default` (`assistant:concierge`) | Agent tag (e.g. `developer:general`) or role name (e.g. `developer`) |
+| `TAG` | `default` (`assistant:concierge`) | Agent tag (e.g. `developer:general`) or role name (e.g. `assistant`) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port`, `-p` | `8080` | Port. `0` picks a free port; the startup line `WebSocket server started on ws://<addr>` prints the bound address |
 | `--sandbox` | config `sandbox` (`false`) | Restrict all filesystem writes to the current working directory |

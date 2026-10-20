@@ -15,7 +15,7 @@
 // Role switching command implementation.
 //
 // Supports two kinds of role identifiers (identical to `octomind run <TAG>`):
-//   - Plain role name (e.g. `developer`)            → must exist in config.roles
+//   - Plain role name (e.g. `assistant`)            → must exist in config.roles
 //   - Tap agent tag   (e.g. `developer:general`)    → fetched from tap registry,
 //     INPUT/ENV resolved, dep scripts run, manifest merged into the active config
 //

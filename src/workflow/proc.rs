@@ -535,15 +535,7 @@ fn format_value_short(v: &serde_json::Value) -> Option<String> {
 	}
 }
 
-fn truncate(s: &str, n: usize) -> String {
-	let one_line = s.replace('\n', " ");
-	if one_line.chars().count() <= n {
-		one_line
-	} else {
-		let head: String = one_line.chars().take(n.saturating_sub(1)).collect();
-		format!("{head}…")
-	}
-}
+use crate::utils::text::truncate;
 
 /// Keep the last `max_chars` of `s` (panics/fatal errors usually land at
 /// the end of stderr), prefixed with `…` if anything was cut.

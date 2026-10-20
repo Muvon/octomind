@@ -132,14 +132,14 @@ fn truncate_flattens_and_elides_on_char_boundaries() {
 	assert_eq!(truncate("two\nlines", 10), "two lines");
 	let long = "x".repeat(130);
 	let cut = truncate(&long, 120);
-	assert_eq!(cut.chars().count(), 121);
+	assert_eq!(cut.chars().count(), 120);
 	assert!(cut.ends_with('…'));
 	// Multibyte characters must not be split mid-char.
 	let unicode = "é".repeat(130);
 	let cut = truncate(&unicode, 120);
-	assert_eq!(cut.chars().count(), 121);
+	assert_eq!(cut.chars().count(), 120);
 	assert!(cut.ends_with('…'));
-	assert!(cut.chars().take(120).all(|ch| ch == 'é'));
+	assert!(cut.chars().take(119).all(|ch| ch == 'é'));
 }
 
 // ── plan rendering ──────────────────────────────────────────────────────────

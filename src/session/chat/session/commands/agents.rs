@@ -394,16 +394,7 @@ pub fn get_agents_stats() -> Option<serde_json::Value> {
 	}))
 }
 
-/// Single-line, length-capped (ellipsis on overflow).
-fn truncate(s: &str, max: usize) -> String {
-	let s = s.replace(['\n', '\r'], " ");
-	if s.chars().count() <= max {
-		s
-	} else {
-		let head: String = s.chars().take(max.saturating_sub(1)).collect();
-		format!("{head}…")
-	}
-}
+use crate::utils::text::truncate;
 
 #[cfg(test)]
 #[path = "agents_tests.rs"]

@@ -147,6 +147,13 @@ fn parse_tap_arg_trims_local_path_whitespace() {
 	assert!(parse_tap_arg("").is_err());
 }
 
+#[test]
+fn parse_tap_arg_rejects_empty_halves() {
+	for name in ["foo/", "/repo", "/"] {
+		assert!(parse_tap_arg(name).is_err(), "{name:?} must be rejected");
+	}
+}
+
 // --- taps.toml persistence -------------------------------------------------
 
 #[serial]

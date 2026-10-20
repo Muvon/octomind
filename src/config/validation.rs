@@ -269,7 +269,8 @@ static DEFAULT_TEMPLATE: std::sync::LazyLock<toml::Value> = std::sync::LazyLock:
 	toml::from_str(template).expect("config-templates/default.toml must parse")
 });
 
-pub(crate) fn default_model() -> &'static str {
+/// Root `[model].name` shipped in `config-templates/default.toml`.
+pub fn default_model() -> &'static str {
 	DEFAULT_TEMPLATE
 		.get("model")
 		.and_then(|m| m.get("name"))

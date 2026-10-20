@@ -15,6 +15,7 @@
 use clap::Args;
 use colored::Colorize;
 
+use octomind::config::validation::default_model;
 use octomind::config::{Config, McpConnectionType, McpServerConfig, DEFAULT_MCP_TIMEOUT_SECONDS};
 use octomind::directories;
 use octomind::session::chat::{
@@ -682,9 +683,10 @@ fn list_markdown_themes() {
 	println!();
 }
 
-pub(crate) fn format_root_model(config: &Config) -> String {
-	if config.model == Config::default_model() {
-		format!("{} (default)", config.get_effective_model())
+/// Root model row for `--show`, labelled "(default)" when it matches the template.
+fn format_root_model(config: &Config) -> String {
+	if config.model == default_model() {
+		format!("{} (default)", config.model)
 	} else {
 		config.model.clone()
 	}

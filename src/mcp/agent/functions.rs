@@ -715,6 +715,7 @@ pub async fn run_acp_command(
 	tap_run_id: Option<&str>,
 	handback: bool,
 ) -> Result<String> {
+	let websocket_tap = tap_run_id.is_some() && crate::session::tap_runs::with_run_events(|_, _| ()).is_some();
 	// Reported on drop so every exit path — success, prompt error, cancellation,
 	// a child that dies mid-stream — lands in the parent's tally exactly once.
 	// A run that never reports stays `false`: unverified is the safe default.
@@ -813,6 +814,18 @@ pub async fn run_acp_command(
 	)
 	.await?;
 
+	if websocket_tap {
+		crate::session::tap_runs::with_run_events(|events, parent| {
+			events.emit(
+				parent,
+				tap_run_id.expect("websocket tap ID"),
+				crate::websocket::protocol::RunEvent::Prompt {
+					content: task.to_string(),
+				},
+			);
+		});
+	}
+
 	let mut output = String::new();
 	// Captured prompt-response error: if the subprocess returns
 	// `{"id":3,"error":{...}}` we want to surface it instead of silently
@@ -905,16 +918,11 @@ pub async fn run_acp_command(
 			child_cost = cost;
 		}
 
-		// Forward session/update notifications to the parent's notification
-		// sink so the user sees thinking, tool calls, and tool results
-		// streamed live — the same shape the parent renders for its own
-		// in-process tool calls.
+		// WebSocket tap runs have their own stream, independent of the parent's turn.
+		// Other subprocesses and transports retain the parent notification sink.
 		if msg.get("method").and_then(|m| m.as_str()) == Some("session/update") {
-			if let Some(run_id) = tap_run_id {
-				record_tap_live(run_id, &msg);
-			}
+			route_child_update(&msg, tap_run_id, websocket_tap);
 			if let Some(update) = msg.pointer("/params/update") {
-				forward_session_update_to_parent(update);
 				let update_kind = update.get("sessionUpdate").and_then(|u| u.as_str());
 				if update_kind == Some("user_message_chunk")
 					&& prompt_response_received
@@ -987,6 +995,30 @@ pub async fn run_acp_command(
 	}
 
 	Ok(output.trim().to_string())
+}
+
+pub(crate) fn route_child_update(msg: &Value, tap_run_id: Option<&str>, websocket_tap: bool) {
+	if let Some(run_id) = tap_run_id {
+		record_tap_live(run_id, msg);
+		if websocket_tap {
+			let updates = match crate::websocket::run_events::acp_events(msg) {
+				Ok(updates) => updates,
+				Err(error) => {
+					crate::log_error!("Tap run {}: skipping unmappable child update: {}", run_id, error);
+					return;
+				}
+			};
+			crate::session::tap_runs::with_run_events(|events, parent| {
+				for event in updates {
+					events.emit(parent, run_id, event);
+				}
+			});
+			return;
+		}
+	}
+	if let Some(update) = msg.pointer("/params/update") {
+		forward_session_update_to_parent(update);
+	}
 }
 
 /// Convert an ACP `session/update` notification into a `ServerMessage` and

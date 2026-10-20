@@ -312,7 +312,7 @@ fn test_session_ack_advertises_message_attachments() {
 	let json = serde_json::to_value(&ack).unwrap();
 	assert_eq!(
 		json["capabilities"],
-		serde_json::json!(["message_attachments_v1", "session_control_v1"])
+		serde_json::json!(["message_attachments_v1", "session_control_v1", "run_events_v1"])
 	);
 }
 

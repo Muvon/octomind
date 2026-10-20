@@ -266,7 +266,7 @@ type WsReader = SplitStream<WebSocketStream<TcpStream>>;
 /// pings while that frame runs — both send without sharing it. Frames keep their
 /// order; a send fails once the socket is gone, as a direct write would.
 #[derive(Clone)]
-struct WsSender(tokio::sync::mpsc::UnboundedSender<Message>);
+pub(crate) struct WsSender(tokio::sync::mpsc::UnboundedSender<Message>);
 
 impl WsSender {
 	fn spawn(
@@ -285,10 +285,22 @@ impl WsSender {
 		(Self(tx), writer)
 	}
 
-	fn send(&self, frame: Message) -> Result<()> {
+	pub(crate) fn same_channel(&self, other: &Self) -> bool {
+		self.0.same_channel(&other.0)
+	}
+
+	pub(crate) fn send(&self, frame: Message) -> Result<()> {
 		self.0
 			.send(frame)
 			.map_err(|_| anyhow::anyhow!("WebSocket connection closed"))
+	}
+}
+
+struct RunSubscriptions(WsSender);
+
+impl Drop for RunSubscriptions {
+	fn drop(&mut self) {
+		crate::session::tap_runs::unbind_run_events(&self.0);
 	}
 }
 
@@ -328,6 +340,7 @@ async fn serve_connection(
 	peer_addr: SocketAddr,
 	server: ServerState,
 ) -> Result<()> {
+	let _run_subscriptions = RunSubscriptions(ws_sender.clone());
 	// Track session IDs used on this connection for cleanup on disconnect
 	let mut active_session_ids: HashSet<String> = HashSet::new();
 
@@ -382,9 +395,16 @@ async fn serve_connection(
 					continue;
 				};
 
-				if let ClientMessage::Cancel(cancel) = &client_msg {
-					cancel_turn(&ctx.server, cancel);
-					continue;
+				match &client_msg {
+					ClientMessage::Cancel(cancel) => {
+						cancel_turn(&ctx.server, cancel);
+						continue;
+					}
+					ClientMessage::RunLog(request) => {
+						handle_run_log(request.clone(), ws_sender).await?;
+						continue;
+					}
+					_ => {}
 				}
 
 				let request_id = client_msg.request_id().map(ToOwned::to_owned);
@@ -481,7 +501,10 @@ async fn accept_client_frame(text: &str, ws_sender: &WsSender, peer_addr: Socket
 	// Validate message
 	if let Err(e) = client_msg.validate() {
 		log_error!("Message validation failed from {}: {}", peer_addr, e);
-		let error = ServerMessage::error_for_request(e, client_msg.request_id().map(ToOwned::to_owned));
+		let error = match client_msg {
+			ClientMessage::RunLog(request) => ServerMessage::RunLog(super::protocol::RunLogPayload::error(request, e)),
+			other => ServerMessage::error_for_request(e, other.request_id().map(ToOwned::to_owned)),
+		};
 		send_message(ws_sender, &error).await?;
 		return Ok(None);
 	}
@@ -492,9 +515,8 @@ async fn accept_client_frame(text: &str, ws_sender: &WsSender, peer_addr: Socket
 
 /// Drive one client frame to completion while still reading the socket.
 ///
-/// A `cancel` frame is acknowledged and applied immediately — that is the whole
-/// point, since the frame it stops is the one running. Pings are answered so a
-/// keepalive never times out behind a long turn. Every other frame is deferred
+/// `cancel` and `run_log` must remain usable during a running turn. Pings are
+/// answered so a keepalive never times out behind a long turn. Every other frame is deferred
 /// and processed afterwards in arrival order, exactly as if it had been read then.
 ///
 /// If the client closes or drops the connection while the frame runs a turn
@@ -525,18 +547,18 @@ async fn read_while_processing(
 			result = &mut processing => return result,
 			frame = ws_receiver.next(), if !*stream_ended => match frame {
 				Some(Ok(Message::Text(text))) => {
-					// Only `cancel` jumps the queue; anything else, valid or not, is
-					// acknowledged or refused in order once the running frame is done.
-					let is_cancel = matches!(
+					let immediate = matches!(
 						serde_json::from_str::<ClientMessage>(&text),
-						Ok(ClientMessage::Cancel(_))
+						Ok(ClientMessage::Cancel(_) | ClientMessage::RunLog(_))
 					);
-					if !is_cancel {
+					if !immediate {
 						deferred.push_back(Message::Text(text));
-					} else if let Some(ClientMessage::Cancel(cancel)) =
-						accept_client_frame(&text, ws_sender, peer_addr).await?
-					{
-						cancel_session_turn(server, &cancel.session_id);
+					} else if let Some(message) = accept_client_frame(&text, ws_sender, peer_addr).await? {
+						match message {
+							ClientMessage::Cancel(cancel) => cancel_turn(server, &cancel),
+							ClientMessage::RunLog(request) => handle_run_log(request, ws_sender).await?,
+							_ => unreachable!("immediate control frame"),
+						}
 					}
 				}
 				Some(Ok(Message::Ping(data))) => {
@@ -553,6 +575,14 @@ async fn read_while_processing(
 			},
 		}
 	}
+}
+
+async fn handle_run_log(request: super::protocol::RunLogMessage, sender: &WsSender) -> Result<()> {
+	let reply = match super::run_events::replay(request.clone()).await {
+		Ok(log) => ServerMessage::RunLog(log),
+		Err(error) => ServerMessage::RunLog(super::protocol::RunLogPayload::error(request, error.to_string())),
+	};
+	send_message(sender, &reply).await
 }
 
 /// Stop the session's running turn, wherever it runs: on this connection, on
@@ -635,6 +665,7 @@ async fn process_client_message(
 			wake_inbox_monitor(session_id).await;
 			result
 		}
+		ClientMessage::RunLog(msg) => handle_run_log(msg, ws_sender).await,
 		ClientMessage::Close(msg) => handle_close_message(msg, ws_sender, &ctx.server, active_session_ids).await,
 		// Applied by the connection loop the moment it is read, never queued here.
 		ClientMessage::Cancel(cancel) => {
@@ -1116,6 +1147,7 @@ async fn handle_session_message(
 		// Initialize session-scoped inbox, job manager, and skill pool so
 		// schedule/inbox/skill storage is keyed to this session ID.
 		crate::session::context::init_session_services(&role_for_pool);
+		crate::session::tap_runs::enable_run_events(Some(ws_sender.clone()));
 		crate::mcp::core::plan::core::restore_plan_for_session(&session_id);
 		crate::mcp::orchestration::schedule::core::restore_schedule_for_session(&session_id);
 		crate::mcp::runtime::skill_auto::load_env_skills(&mut chat_session).await;
@@ -1219,6 +1251,8 @@ async fn lookup_session(session_id: &str, server: &ServerState) -> std::result::
 	args.mode = "websocket".to_string();
 	match setup_and_initialize_session(&args, &config, false).await {
 		Ok((mut session, config_for_role, session_role, _, _)) => {
+			crate::session::context::init_session_services(&session_role);
+			crate::session::tap_runs::enable_run_events(None);
 			if let Err(e) = setup_system_prompt_and_cache(&mut session, &config_for_role, &session_role, false).await {
 				return Err(format!("Failed to setup session {}: {}", session_id, e));
 			}

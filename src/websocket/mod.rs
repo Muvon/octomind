@@ -15,6 +15,7 @@
 // WebSocket module for server functionality
 
 pub mod protocol;
+pub(crate) mod run_events;
 pub mod server;
 
 // Re-export main types

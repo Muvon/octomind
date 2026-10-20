@@ -225,3 +225,129 @@ async fn registry_is_isolated_by_session() {
 	assert!(hidden.3.is_empty());
 	assert!(visible);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tap_run_snapshot_sequence_is_atomic_with_concurrent_emission() {
+	use crate::websocket::protocol::{RunEvent, RunLogMessage};
+	let parent = "tap-atomic-snapshot".to_string();
+	let id = "tap-developer-cto-abcdef";
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		enable_run_events(None);
+		let (job, _) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
+		register_job(job);
+		with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).unwrap();
+	})
+	.await;
+	let request = RunLogMessage {
+		session_id: parent.clone(),
+		run_id: id.into(),
+		request_id: None,
+	};
+	let emitter = tokio::spawn(crate::session::context::with_session_id(parent.clone(), async move {
+		for _ in 0..256 {
+			with_run_events(|events, parent| events.emit(parent, id, RunEvent::Assistant { content: "x".into() }))
+				.unwrap();
+			tokio::task::yield_now().await;
+		}
+	}));
+	for _ in 0..256 {
+		let snapshot = snapshot_run_log(&request);
+		assert_eq!(snapshot.source, "live");
+		let text_bytes: usize = snapshot
+			.events
+			.iter()
+			.map(|event| match event {
+				RunEvent::Assistant { content } => content.len(),
+				_ => 0,
+			})
+			.sum();
+		assert_eq!(
+			text_bytes as u64,
+			snapshot.seq - 1,
+			"snapshot content and sequence must cover exactly the same emissions"
+		);
+		tokio::task::yield_now().await;
+	}
+	emitter.await.unwrap();
+	assert_eq!(snapshot_run_log(&request).seq, 257);
+	clear_for_session(&parent);
+}
+
+#[tokio::test]
+async fn tap_run_terminal_status_releases_buffer_and_resume_continues_sequence() {
+	use crate::websocket::protocol::{RunEvent, RunLogMessage};
+	let parent = "tap-terminal-replay".to_string();
+	let id = "tap-developer-cto-abcdef";
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		enable_run_events(None);
+		let (job, _) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
+		let status = job.status.clone();
+		register_job(job);
+		let request = RunLogMessage {
+			session_id: parent.clone(),
+			run_id: id.into(),
+			request_id: None,
+		};
+		for (turn, terminal) in [TapJobStatus::Done, TapJobStatus::Failed, TapJobStatus::Cancelled]
+			.into_iter()
+			.enumerate()
+		{
+			*status.write().unwrap() = TapJobStatus::Running;
+			with_run_events(|events, parent| {
+				events.begin(parent, id, "developer:cto");
+				events.emit(
+					parent,
+					id,
+					RunEvent::Prompt {
+						content: format!("turn {turn}"),
+					},
+				);
+			})
+			.unwrap();
+			let live = snapshot_run_log(&request);
+			assert_eq!(live.source, "live");
+			assert_eq!(live.events.len(), 2, "a resume gets a fresh buffer");
+			assert_eq!(live.seq, (turn as u64) * 3 + 2);
+			finish_run(
+				id,
+				&status,
+				terminal,
+				(terminal == TapJobStatus::Failed).then(|| "failure".into()),
+			);
+			let disk = snapshot_run_log(&request);
+			assert_eq!(disk.source, "disk");
+			assert_eq!(disk.status, terminal.as_str());
+			assert_eq!(disk.seq, live.seq + 1);
+			assert!(disk.events.is_empty());
+			assert!(with_run_events(|events, _| events.snapshot(&request))
+				.unwrap()
+				.is_none());
+		}
+	})
+	.await;
+	clear_for_session(&parent);
+}
+
+#[tokio::test]
+async fn websocket_tap_cancel_keeps_the_stream_running_until_child_exit() {
+	let parent = "tap-cancel-stream-owner".to_string();
+	let id = "tap-developer-cto-abcdef";
+	crate::session::context::with_session_id(parent.clone(), async {
+		init_for_session();
+		enable_run_events(None);
+		let (job, cancelled) = test_job(id, "developer:cto", UNIX_EPOCH, TapJobStatus::Running);
+		let status = job.status.clone();
+		register_job(job);
+		with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).unwrap();
+		assert_eq!(cancel_job(id), Some(TapJobStatus::Cancelled));
+		assert!(*cancelled.borrow());
+		assert_eq!(find_job(id).unwrap().status, TapJobStatus::Running);
+		finish_run(id, &status, TapJobStatus::Cancelled, None);
+		assert_eq!(find_job(id).unwrap().status, TapJobStatus::Cancelled);
+		assert!(!with_run_events(|events, _| events.is_running(id)).unwrap());
+	})
+	.await;
+	clear_for_session(&parent);
+}

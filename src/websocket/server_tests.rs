@@ -3968,3 +3968,340 @@ async fn server_with_a_token_refuses_an_unauthenticated_client() {
 	let welcome = read_json(&mut ws).await;
 	assert_eq!(welcome["type"], "status");
 }
+
+fn register_streaming_tap(id: &str) {
+	use crate::session::tap_runs::{self, TapJob, TapJobStatus, TapLiveState};
+	let (cancel_tx, _) = tokio::sync::watch::channel(false);
+	tap_runs::register_job(TapJob {
+		id: id.to_string(),
+		role: "developer:cto".to_string(),
+		workdir: ".".to_string(),
+		started_at: std::time::SystemTime::now(),
+		status: Arc::new(std::sync::RwLock::new(TapJobStatus::Running)),
+		cancel_tx,
+		live: Arc::new(std::sync::RwLock::new(TapLiveState::default())),
+	});
+	tap_runs::with_run_events(|events, parent| events.begin(parent, id, "developer:cto")).expect("websocket session");
+}
+
+fn child_text(text: &str) -> serde_json::Value {
+	serde_json::json!({"params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}}})
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn run_events_reach_every_bound_client_between_turns() {
+	let _data = TestDataDirGuard::new();
+	let server = LoopbackServer::start(Arc::new(ws_fake_config())).await;
+	let mut first = connect_ws(server.addr).await;
+	read_json(&mut first).await;
+	let parent = create_session(&mut first, None).await;
+	let mut second = connect_ws(server.addr).await;
+	read_json(&mut second).await;
+	create_session(&mut second, Some(&parent)).await;
+	// A repeated bind must not duplicate run events on the same connection.
+	create_session(&mut second, Some(&parent)).await;
+	let run_id = "tap-developer-cto-abcdef";
+	crate::session::context::with_session_id(parent.clone(), async {
+		register_streaming_tap(run_id);
+		crate::mcp::agent::functions::route_child_update(&child_text("idle child"), Some(run_id), true);
+	})
+	.await;
+	for client in [&mut first, &mut second] {
+		let running = read_json(client).await;
+		assert_eq!(running["type"], "run_event");
+		assert_eq!(running["seq"], 1);
+		let text = read_json(client).await;
+		assert_eq!(text["type"], "run_event");
+		assert_eq!(
+			text["event"],
+			serde_json::json!({"kind":"assistant","content":"idle child"})
+		);
+		assert_eq!(text["session_id"], parent);
+		assert_eq!(text["run_id"], run_id);
+		assert_eq!(text["role"], "developer:cto");
+		assert_eq!(text["seq"], 2);
+	}
+	crate::session::context::cleanup_session(&parent);
+}
+
+#[tokio::test]
+async fn run_log_and_child_events_bypass_processing_and_session_lock() {
+	use crate::session::context::{set_notification_sender_for_session, with_session_id};
+	let parent = "ws-run-log-held-turn";
+	let run_id = "tap-developer-cto-abcdef";
+	let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr = listener.local_addr().unwrap();
+	let state = ServerState::new(Arc::new(template_config()), "assistant".into(), Vec::new());
+	let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+	let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+	let handler = tokio::spawn(async move {
+		let (stream, peer) = listener.accept().await.unwrap();
+		let (sink, mut reader) = tokio_tungstenite::accept_async(stream).await.unwrap().split();
+		let (sender, writer) = WsSender::spawn(sink);
+		let subscriptions = RunSubscriptions(sender.clone());
+		with_session_id(parent.to_string(), async {
+			crate::session::context::init_session_services("developer:cto");
+			crate::session::tap_runs::enable_run_events(Some(sender.clone()));
+			set_notification_sender_for_session(&parent.to_string(), notify_tx);
+			register_streaming_tap(run_id);
+		})
+		.await;
+		let lock = get_or_create_session_lock(parent, &state.session_locks).await;
+		let processing = async {
+			let _guard = lock.lock().await;
+			entered_tx.send(()).unwrap();
+			release_rx.await.unwrap();
+			Ok(())
+		};
+		read_while_processing(
+			processing,
+			Some(parent),
+			&mut reader,
+			&sender,
+			&state,
+			&mut VecDeque::new(),
+			&mut false,
+			peer,
+		)
+		.await
+		.unwrap();
+		drop(subscriptions);
+		drop(sender);
+		writer.await.unwrap();
+	});
+	let mut client = connect_ws(addr).await;
+	entered_rx.await.unwrap();
+	assert_eq!(read_json(&mut client).await["seq"], 1);
+	with_session_id(parent.to_string(), async {
+		for text in ["first", "second"] {
+			crate::mcp::agent::functions::route_child_update(&child_text(text), Some(run_id), true);
+		}
+		crate::mcp::agent::functions::route_child_update(
+			&serde_json::json!({"params":{"update":{
+				"sessionUpdate":"tool_call","toolCallId":"call-1","title":"read","rawInput":{"path":"file.rs"}
+			}}}),
+			Some(run_id),
+			true,
+		);
+	})
+	.await;
+	for seq in 2..=4 {
+		let event = read_json(&mut client).await;
+		assert_eq!(
+			event["type"], "run_event",
+			"child frames must never be plain parent output"
+		);
+		assert_eq!(event["seq"], seq);
+	}
+	assert!(
+		notify_rx.try_recv().is_err(),
+		"parent notification sink must stay empty"
+	);
+	send_json(
+		&mut client,
+		serde_json::json!({"type":"run_log","session_id":parent,"run_id":run_id,"request_id":"snapshot"}),
+	)
+	.await;
+	assert_eq!(read_json(&mut client).await["type"], "ack");
+	let log = read_json(&mut client).await;
+	assert_eq!(log["type"], "run_log");
+	assert_eq!(log["request_id"], "snapshot");
+	assert_eq!(log["source"], "live");
+	assert!(log.get("error").is_none());
+	assert_eq!(log["seq"], 4);
+	assert_eq!(log["events"].as_array().unwrap().len(), 3);
+	assert_eq!(log["events"][1]["content"], "firstsecond");
+	with_session_id(parent.to_string(), async {
+		crate::mcp::agent::functions::route_child_update(&child_text("after snapshot"), Some(run_id), true);
+	})
+	.await;
+	let next = read_json(&mut client).await;
+	assert_eq!(next["seq"].as_u64().unwrap(), log["seq"].as_u64().unwrap() + 1);
+	assert_eq!(next["event"]["content"], "after snapshot");
+	for bad in ["../escape", "owner/repo", "tap-x-xyz"] {
+		send_json(
+			&mut client,
+			serde_json::json!({"type":"run_log","session_id":parent,"run_id":bad,"request_id":"bad-id"}),
+		)
+		.await;
+		let error = read_json(&mut client).await;
+		assert_eq!(
+			error,
+			serde_json::json!({
+				"type":"run_log","session_id":parent,"run_id":bad,"status":"unknown","source":"disk",
+				"seq":0,"truncated":false,"events":[],"error":format!("invalid run_id: {bad}"),"request_id":"bad-id"
+			})
+		);
+	}
+	release_tx.send(()).unwrap();
+	handler.await.unwrap();
+	crate::session::context::cleanup_session(&parent.to_string());
+}
+
+#[tokio::test]
+async fn unmappable_tap_update_keeps_live_state_and_streams_the_next_event() {
+	use crate::session::tap_runs;
+	let parent = "ws-unmappable-tap-update".to_string();
+	let run_id = "tap-developer-cto-abcdef";
+	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+	let sender = WsSender(sender);
+	crate::session::context::with_session_id(parent.clone(), async {
+		crate::session::context::init_session_services("developer:cto");
+		tap_runs::enable_run_events(Some(sender));
+		register_streaming_tap(run_id);
+		let running: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		assert_eq!(running["seq"], 1);
+
+		crate::mcp::agent::functions::route_child_update(
+			&serde_json::json!({"params":{"update":{
+				"sessionUpdate":"tool_call","title":"read","rawInput":{"path":"file.rs"}
+			}}}),
+			Some(run_id),
+			true,
+		);
+		assert!(matches!(
+			receiver.try_recv(),
+			Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+		));
+		let job = tap_runs::find_job(run_id).unwrap();
+		assert_eq!(job.status, tap_runs::TapJobStatus::Running);
+		assert_eq!(job.live.last_action.as_deref(), Some("read file.rs"));
+
+		crate::mcp::agent::functions::route_child_update(&child_text("still working"), Some(run_id), true);
+		let next: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+		assert_eq!(
+			next,
+			serde_json::json!({
+				"type":"run_event","session_id":parent,"run_id":run_id,"role":"developer:cto","seq":2,
+				"event":{"kind":"assistant","content":"still working"}
+			})
+		);
+		assert_eq!(
+			tap_runs::find_job(run_id).unwrap().status,
+			tap_runs::TapJobStatus::Running
+		);
+	})
+	.await;
+	crate::session::context::cleanup_session(&parent);
+}
+
+#[tokio::test]
+async fn tap_child_forwarding_outside_websocket_is_unchanged() {
+	let parent = "cli-tap-forwarding".to_string();
+	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::with_session_id(parent.clone(), async {
+		crate::session::context::init_session_services("developer:cto");
+		crate::session::context::set_notification_sender_for_session(&parent, sender);
+		assert!(crate::session::tap_runs::with_run_events(|_, _| ()).is_none());
+		crate::mcp::agent::functions::route_child_update(
+			&child_text("legacy output"),
+			Some("tap-developer-cto-abcdef"),
+			false,
+		);
+	})
+	.await;
+	match receiver.try_recv().unwrap() {
+		ServerMessage::Assistant(payload) => {
+			assert_eq!(payload.session_id, parent);
+			assert_eq!(payload.content, "legacy output");
+		}
+		other => panic!("expected unchanged parent output, got {other:?}"),
+	}
+	crate::session::context::cleanup_session(&parent);
+}
+
+#[tokio::test]
+async fn disconnected_run_subscribers_are_pruned_without_restoring_parent_forwarding() {
+	use crate::session::tap_runs;
+	let parent = "ws-run-disconnect".to_string();
+	let run_id = "tap-developer-cto-abcdef";
+	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+	let sender = WsSender(tx);
+	let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
+	crate::session::context::with_session_id(parent.clone(), async {
+		crate::session::context::init_session_services("developer:cto");
+		tap_runs::enable_run_events(Some(sender.clone()));
+		crate::session::context::set_notification_sender_for_session(&parent, notify_tx);
+		register_streaming_tap(run_id);
+		rx.try_recv().unwrap();
+		drop(rx);
+		crate::mcp::agent::functions::route_child_update(&child_text("no client"), Some(run_id), true);
+		assert!(notify_rx.try_recv().is_err());
+		let request = super::super::protocol::RunLogMessage {
+			session_id: parent.clone(),
+			run_id: run_id.into(),
+			request_id: None,
+		};
+		let snapshot = tap_runs::snapshot_run_log(&request);
+		assert_eq!(snapshot.source, "live");
+		assert_eq!(snapshot.seq, 2);
+		assert_eq!(snapshot.events.len(), 2);
+		tap_runs::unbind_run_events(&sender);
+		assert!(
+			tap_runs::with_run_events(|_, _| ()).is_some(),
+			"transport outlives subscriptions"
+		);
+	})
+	.await;
+	crate::session::context::cleanup_session(&parent);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn run_log_disk_reply_and_missing_run_echo_request_id() {
+	use crate::websocket::protocol::RunLogMessage;
+	let _data = TestDataDirGuard::new();
+	let run_id = "tap-developer-cto-abcdef";
+	let path = crate::session::get_sessions_dir()
+		.unwrap()
+		.join(format!("{run_id}.jsonl.zst"));
+	let mut session = crate::session::Session::new(run_id.into(), "ollama:fake-model".into());
+	session.session_file = Some(path.clone());
+	session.save().unwrap();
+	crate::session::append_to_session_file(
+		&path,
+		&serde_json::to_string(&crate::session::Message {
+			role: "user".into(),
+			content: "disk task".into(),
+			..Default::default()
+		})
+		.unwrap(),
+	)
+	.unwrap();
+	let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+	let sender = WsSender(sender);
+	let request = RunLogMessage {
+		session_id: "disk-parent".into(),
+		run_id: run_id.into(),
+		request_id: Some("disk-request".into()),
+	};
+	handle_run_log(request.clone(), &sender).await.unwrap();
+	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+	assert_eq!(
+		reply,
+		serde_json::json!({
+			"type":"run_log","session_id":"disk-parent","run_id":run_id,"status":"unknown","source":"disk","seq":0,
+			"truncated":false,"events":[{"kind":"prompt","content":"disk task"}],"request_id":"disk-request"
+		})
+	);
+	handle_run_log(
+		RunLogMessage {
+			run_id: "tap-missing-000000".into(),
+			..request
+		},
+		&sender,
+	)
+	.await
+	.unwrap();
+	let reply: serde_json::Value = serde_json::from_str(receiver.try_recv().unwrap().to_text().unwrap()).unwrap();
+	assert_eq!(
+		reply,
+		serde_json::json!({
+			"type":"run_log","session_id":"disk-parent","run_id":"tap-missing-000000","status":"unknown",
+			"source":"disk","seq":0,"truncated":false,"events":[],
+			"error":"run not found: tap-missing-000000","request_id":"disk-request"
+		})
+	);
+}

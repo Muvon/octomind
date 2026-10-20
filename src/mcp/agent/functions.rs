@@ -1229,16 +1229,7 @@ fn tool_arg_hint(args: &Value) -> Option<String> {
 	None
 }
 
-/// Single-line, length-capped (ellipsis on overflow).
-fn truncate_action(s: &str, max: usize) -> String {
-	let s = s.replace(['\n', '\r'], " ");
-	if s.chars().count() <= max {
-		s
-	} else {
-		let head: String = s.chars().take(max.saturating_sub(1)).collect();
-		format!("{head}…")
-	}
-}
+use crate::utils::text::truncate as truncate_action;
 
 /// Outgoing ACP request params, kept as functions so tests can validate them
 /// against the `agent-client-protocol` schema types the octomind ACP server

@@ -319,15 +319,7 @@ fn print_sub(idx: usize, s: &octomind::workflow::schema::Sequential, depth: usiz
 	println!("{indent}   prompt: {}", truncate(&s.prompt, 120));
 }
 
-fn truncate(s: &str, n: usize) -> String {
-	let one_line = s.replace('\n', " ");
-	if one_line.chars().count() <= n {
-		one_line
-	} else {
-		let head: String = one_line.chars().take(n).collect();
-		format!("{head}…")
-	}
-}
+use octomind::utils::text::truncate;
 
 #[cfg(test)]
 #[path = "workflow_tests.rs"]

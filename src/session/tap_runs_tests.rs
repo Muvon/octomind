@@ -54,16 +54,15 @@ async fn cancel_job_cancels_a_running_job() {
 	let session_id = "tap-runs-cancel-running".to_string();
 	let (job, cancel_rx) = test_job("running", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
 
-	let status = crate::session::context::with_session_id(session_id.clone(), async {
+	let (status, still_running) = crate::session::context::with_session_id(session_id.clone(), async {
 		register_job(job);
-		let status = cancel_job("running");
-		assert!(!has_running_jobs());
-		status
+		(cancel_job("running"), has_running_jobs())
 	})
 	.await;
 	clear_for_session(&session_id);
 
 	assert_eq!(status, Some(TapJobStatus::Cancelled));
+	assert!(!still_running);
 	assert!(*cancel_rx.borrow());
 }
 
@@ -136,7 +135,7 @@ async fn pending_labels_are_sorted_and_include_only_running_jobs() {
 #[serial]
 async fn find_job_and_live_updates_return_a_snapshot() {
 	let session_id = "tap-runs-live-snapshot".to_string();
-	let snapshot = crate::session::context::with_session_id(session_id.clone(), async {
+	let (snapshot, missing, job_count) = crate::session::context::with_session_id(session_id.clone(), async {
 		let (job, _) = test_job("live", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
 		register_job(job);
 		record_live_action("live", "editing src/main.rs".to_string());
@@ -149,12 +148,24 @@ async fn find_job_and_live_updates_return_a_snapshot() {
 				cost: 0.25,
 			},
 		);
+		// Updates for an unknown id must neither create a job nor touch "live".
 		record_live_action("missing", "ignored".to_string());
-		find_job("live")
+		record_live_usage(
+			"missing",
+			TapLiveUsage {
+				input_tokens: 99,
+				output_tokens: 99,
+				cache_read_tokens: 99,
+				cost: 9.0,
+			},
+		);
+		(find_job("live"), find_job("missing"), list_jobs().len())
 	})
 	.await;
 	clear_for_session(&session_id);
 
+	assert!(missing.is_none());
+	assert_eq!(job_count, 1);
 	let snapshot = snapshot.expect("registered job is found");
 	assert_eq!(snapshot.role, "developer:general");
 	assert_eq!(snapshot.workdir, "/tmp");
@@ -171,16 +182,20 @@ async fn find_job_and_live_updates_return_a_snapshot() {
 async fn reset_cancel_replaces_the_latched_receiver() {
 	let session_id = "tap-runs-reset-cancel".to_string();
 	let (job, old_rx) = test_job("resume", "developer:general", UNIX_EPOCH, TapJobStatus::Running);
-	let new_rx_is_clear = crate::session::context::with_session_id(session_id.clone(), async {
+	// Read the new receiver inside the session: `clear_for_session` sends
+	// `true` on the job's current sender, which is the replacement.
+	let (status, new_rx_is_clear) = crate::session::context::with_session_id(session_id.clone(), async {
 		register_job(job);
-		assert_eq!(cancel_job("resume"), Some(TapJobStatus::Cancelled));
-		assert!(*old_rx.borrow());
+		let status = cancel_job("resume");
 		let new_rx = reset_cancel("resume").expect("registered job has a cancellation channel");
 		let is_clear = !*new_rx.borrow();
-		is_clear
+		(status, is_clear)
 	})
 	.await;
 	clear_for_session(&session_id);
+
+	assert_eq!(status, Some(TapJobStatus::Cancelled));
+	assert!(*old_rx.borrow(), "cancel latches the old channel");
 	assert!(new_rx_is_clear);
 }
 

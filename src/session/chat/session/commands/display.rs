@@ -39,7 +39,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 
 		// (command_with_args, description) for the built-in command listing.
 		let builtins: &[(&str, &str)] = &[
-			(HELP_COMMAND, "Show this help message"),
+			(HELP_COMMAND, "Show this help message (alias: /?)"),
 			(
 				COPY_COMMAND,
 				"Copy last response, or scope: last|assistant|user|all",
@@ -87,7 +87,7 @@ pub fn display_help(output: &CommandOutput, config: &Config) {
 			),
 			(USAGE_COMMAND, "Show account usage, quotas, and balance"),
 			(LOGIN_COMMAND, "Sign in to an Octomind account"),
-			(EXIT_COMMAND, "Exit the session"),
+			(EXIT_COMMAND, "Exit the session (alias: /quit)"),
 		];
 
 		let custom_cmds: Vec<(String, &str)> = config

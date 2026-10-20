@@ -45,19 +45,18 @@ pub async fn handle_done(
 			session.learning_outcome,
 		)
 	});
-	let outcome =
-		match crate::session::chat::conversation_compression::check_and_compress_conversation(
-			session,
-			config,
-			operation_cancelled,
-			crate::session::chat::conversation_compression::CompressionTrigger::Done,
-		)
-		.await
-		{
-			Ok(true) => DoneOutcome::Compressed,
-			Ok(false) => DoneOutcome::NothingToCompress,
-			Err(e) => DoneOutcome::Failed(e.to_string()),
-		};
+	let outcome = match crate::session::chat::conversation_compression::check_and_compress_conversation(
+		session,
+		config,
+		operation_cancelled,
+		crate::session::chat::conversation_compression::CompressionTrigger::Done,
+	)
+	.await
+	{
+		Ok(true) => DoneOutcome::Compressed,
+		Ok(false) => DoneOutcome::NothingToCompress,
+		Err(e) => DoneOutcome::Failed(e.to_string()),
+	};
 
 	crate::log_debug!("/done: outcome={:?}", outcome);
 

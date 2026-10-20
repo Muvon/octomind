@@ -122,10 +122,7 @@ fn chunks_cover_every_line_exactly_once_within_the_budget() {
 		if i > 0 {
 			assert_eq!(chunk.first_line, chunks[i - 1].last_line + 1);
 		}
-		assert_eq!(
-			chunk.text,
-			lines[chunk.first_line - 1..chunk.last_line].join("\n")
-		);
+		assert_eq!(chunk.text, lines[chunk.first_line - 1..chunk.last_line].join("\n"));
 		if chunk.last_line > chunk.first_line {
 			assert!(estimate_tokens(&chunk.text) <= CONDENSE_CHUNK_TOKENS);
 		}
@@ -180,10 +177,7 @@ fn a_blank_run_stays_with_the_paragraph_it_follows() {
 
 #[test]
 fn tiny_paragraphs_merge_until_the_minimum() {
-	let text = (0..60)
-		.map(|i| format!("r{i}"))
-		.collect::<Vec<_>>()
-		.join("\n\n");
+	let text = (0..60).map(|i| format!("r{i}")).collect::<Vec<_>>().join("\n\n");
 	let chunks = chunk_lines(&text);
 	assert!(chunks.len() > 1 && chunks.len() < 60, "{}", chunks.len());
 	for chunk in &chunks[..chunks.len() - 1] {
@@ -208,17 +202,7 @@ fn a_paragraph_over_the_cap_is_split_at_the_cap() {
 
 #[tokio::test]
 async fn an_oversized_line_is_sampled_so_the_round_stays_under_the_state_cap() {
-	let fake = install_fake_evaluation(vec![chunk_answers(
-		3,
-		|slot| {
-			if slot == 1 {
-				0.9
-			} else {
-				0.1
-			}
-		},
-	)])
-	.await;
+	let fake = install_fake_evaluation(vec![chunk_answers(3, |slot| if slot == 1 { 0.9 } else { 0.1 })]).await;
 	let long = "word ".repeat(40_000);
 	let results = vec![ok("t1", &format!("short\n{long}\nshort again"))];
 	let outcomes = score(&config(true), &results, "condense-eval-oversized")
@@ -245,16 +229,13 @@ async fn an_oversized_line_is_sampled_so_the_round_stays_under_the_state_cap() {
 async fn seam_off_makes_no_call() {
 	let fake = install_fake_evaluation(vec![chunk_answers(64, |_| 0.9)]).await;
 	let results = vec![ok("t1", &body(200))];
-	assert!(score(&config(false), &results, "condense-eval-off")
-		.await
-		.is_none());
+	assert!(score(&config(false), &results, "condense-eval-off").await.is_none());
 	assert!(fake.requests().is_empty());
 }
 
 #[tokio::test]
 async fn scored_state_carries_only_the_documented_fields_per_candidate() {
-	let fake =
-		install_fake_evaluation(vec![chunk_answers(64, |_| 0.9), chunk_answers(64, |_| 0.9)]).await;
+	let fake = install_fake_evaluation(vec![chunk_answers(64, |_| 0.9), chunk_answers(64, |_| 0.9)]).await;
 	let results = vec![ok("t1", &body(120)), ok("t2", &body(80))];
 	let outcomes = score(&config(true), &results, "condense-eval-state")
 		.await
@@ -266,10 +247,7 @@ async fn scored_state_carries_only_the_documented_fields_per_candidate() {
 		let state = request.state.as_object().expect("object state");
 		let mut keys: Vec<&str> = state.keys().map(String::as_str).collect();
 		keys.sort_unstable();
-		assert_eq!(
-			keys,
-			["arguments", "chunks", "intent", "status", "task", "tool"]
-		);
+		assert_eq!(keys, ["arguments", "chunks", "intent", "status", "task", "tool"]);
 		assert_eq!(state["tool"], "shell");
 		assert_eq!(state["status"], "ok");
 		assert_eq!(state["task"], "inspect the payload");
@@ -302,22 +280,22 @@ async fn kept_chunks_keep_their_neighbours_and_diagnostics_verbatim() {
 	let text = lines.join("\n");
 	let chunks = chunk_lines(&text);
 	assert!(chunks.len() >= 6, "fixture needs several chunks");
-	let _fake = install_fake_evaluation(vec![chunk_answers(chunks.len(), |slot| {
-		if slot == 1 {
-			0.9
-		} else {
-			0.1
-		}
-	})])
+	let _fake = install_fake_evaluation(vec![chunk_answers(
+		chunks.len(),
+		|slot| {
+			if slot == 1 {
+				0.9
+			} else {
+				0.1
+			}
+		},
+	)])
 	.await;
 	let results = vec![ok("t1", &text)];
 	let outcomes = score(&config(true), &results, "condense-eval-neighbours")
 		.await
 		.expect("scored");
-	let out = outcomes[0]
-		.content
-		.as_deref()
-		.expect("a partial selection applies");
+	let out = outcomes[0].content.as_deref().expect("a partial selection applies");
 	assert_eq!(outcomes[0].verdict, "extract");
 	// Chunks 0..=2 survive verbatim: the hit and one neighbour on each side.
 	for chunk in &chunks[..3] {
@@ -334,10 +312,7 @@ async fn kept_chunks_keep_their_neighbours_and_diagnostics_verbatim() {
 		.map(|c| c.last_line - c.first_line + 1)
 		.sum::<usize>()
 		+ 3; // the diagnostic line and its two lines of context
-	assert!(
-		out.contains(&format!("kept {kept} of {last} original lines")),
-		"{out}"
-	);
+	assert!(out.contains(&format!("kept {kept} of {last} original lines")), "{out}");
 	assert!(out.contains("Full original output:"));
 }
 
@@ -354,8 +329,7 @@ async fn all_chunks_relevant_leaves_the_result_untouched() {
 
 #[tokio::test]
 async fn nothing_relevant_omits_an_ok_result_and_never_an_error_result() {
-	let _fake =
-		install_fake_evaluation(vec![chunk_answers(64, |_| 0.1), chunk_answers(64, |_| 0.1)]).await;
+	let _fake = install_fake_evaluation(vec![chunk_answers(64, |_| 0.1), chunk_answers(64, |_| 0.1)]).await;
 	let text = body(150);
 	let results = vec![
 		ok("t1", &text),
@@ -368,27 +342,14 @@ async fn nothing_relevant_omits_an_ok_result_and_never_an_error_result() {
 	assert!(notice.starts_with(CONDENSE_NOTICE_TAG));
 	assert!(notice.contains("omitted the complete 150-line successful `shell` result"));
 	assert_eq!(outcomes[0].verdict, "omit");
-	assert!(
-		outcomes[1].content.is_none(),
-		"an error result is never omitted"
-	);
+	assert!(outcomes[1].content.is_none(), "an error result is never omitted");
 	assert_eq!(outcomes[1].verdict, "omit");
 }
 
 #[tokio::test]
 async fn spill_failure_and_no_gain_leave_the_result_untouched() {
 	// No session context → no spill directory → the selection is refused.
-	let _fake = install_fake_evaluation(vec![chunk_answers(
-		64,
-		|slot| {
-			if slot == 0 {
-				0.9
-			} else {
-				0.1
-			}
-		},
-	)])
-	.await;
+	let _fake = install_fake_evaluation(vec![chunk_answers(64, |slot| if slot == 0 { 0.9 } else { 0.1 })]).await;
 	let results = vec![ok("t1", &body(150))];
 	let calls = vec![call("t1")];
 	let candidates = vec![candidate(0, &results[0].extract_content())];
@@ -446,11 +407,7 @@ async fn run_round(config: &Config, results: &mut [McpToolResult], session: &str
 /// reader, registered the way runtime `mcp add` does; the core builtin exposes
 /// no file-reading tool. The process map, which other tests initialize
 /// concurrently, is never consulted.
-async fn with_spill_reader<F: std::future::Future<Output = ()>>(
-	config: &Config,
-	session: &str,
-	body: F,
-) {
+async fn with_spill_reader<F: std::future::Future<Output = ()>>(config: &Config, session: &str, body: F) {
 	crate::mcp::tool_map::isolate_session_tool_map(session);
 	crate::session::context::with_session_id(session.to_string(), async {
 		// Spills persist under the session id across test runs, and an output
@@ -486,8 +443,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	let replaced_before = evaluate_counter(Seam::Condense, "avoided");
 	let config = config(true);
 	let mut results = round_results();
-	let (url, captured) =
-		crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
+	let (url, captured) = crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
 	std::env::set_var("OLLAMA_API_URL", url);
 	with_spill_reader(
 		&config,
@@ -499,10 +455,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	assert!(captured.lock().unwrap().is_empty());
 	std::env::remove_var("OLLAMA_API_URL");
 	assert_eq!(evaluate_counter(Seam::Condense, "calls") - calls_before, 2);
-	assert_eq!(
-		evaluate_counter(Seam::Condense, "applied") - applied_before,
-		2
-	);
+	assert_eq!(evaluate_counter(Seam::Condense, "applied") - applied_before, 2);
 	assert_eq!(
 		evaluate_counter(Seam::Condense, "avoided") - replaced_before,
 		1,
@@ -512,9 +465,7 @@ async fn a_scored_round_condenses_and_counts_applied() {
 	assert!(first.contains("payload line number 1 with"));
 	assert!(!first.contains("payload line number 199 with"));
 	assert!(first.contains("kept"));
-	assert!(results[1]
-		.extract_content()
-		.starts_with(CONDENSE_NOTICE_TAG));
+	assert!(results[1].extract_content().starts_with(CONDENSE_NOTICE_TAG));
 }
 
 #[tokio::test]
@@ -529,12 +480,8 @@ async fn a_failed_window_leaves_the_entire_round_untouched() {
 	let applied_before = evaluate_counter(Seam::Condense, "applied");
 	let config = config(true);
 	let mut results = round_results();
-	let original = results
-		.iter()
-		.map(McpToolResult::extract_content)
-		.collect::<Vec<_>>();
-	let (url, captured) =
-		crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
+	let original = results.iter().map(McpToolResult::extract_content).collect::<Vec<_>>();
+	let (url, captured) = crate::session::chat::test_support::spawn_recording_stub(Vec::new()).await;
 	std::env::set_var("OLLAMA_API_URL", &url);
 	with_spill_reader(
 		&config,
@@ -545,16 +492,10 @@ async fn a_failed_window_leaves_the_entire_round_untouched() {
 	std::env::remove_var("OLLAMA_API_URL");
 
 	assert_eq!(fake.requests().len(), 2, "both windows were issued");
-	assert_eq!(
-		evaluate_counter(Seam::Condense, "unavailable") - unavailable_before,
-		1
-	);
+	assert_eq!(evaluate_counter(Seam::Condense, "unavailable") - unavailable_before, 1);
 	assert_eq!(evaluate_counter(Seam::Condense, "applied"), applied_before);
 	assert_eq!(
-		results
-			.iter()
-			.map(McpToolResult::extract_content)
-			.collect::<Vec<_>>(),
+		results.iter().map(McpToolResult::extract_content).collect::<Vec<_>>(),
 		original
 	);
 	assert!(captured.lock().unwrap().is_empty());

@@ -22,9 +22,7 @@
 use super::*;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-	Implementation, InitializeRequest, NewSessionRequest, PromptRequest,
-};
+use agent_client_protocol::schema::v1::{Implementation, InitializeRequest, NewSessionRequest, PromptRequest};
 use agent_client_protocol::schema::ProtocolVersion;
 
 fn fixture_name() -> Option<String> {
@@ -55,18 +53,10 @@ struct ChildAcp {
 	stdout: tokio::io::BufReader<tokio::process::ChildStdout>,
 }
 
-fn spawn_fixture(
-	fixture: &str,
-	data_dir: &std::path::Path,
-	extra_env: &[(&str, &str)],
-) -> ChildAcp {
+fn spawn_fixture(fixture: &str, data_dir: &std::path::Path, extra_env: &[(&str, &str)]) -> ChildAcp {
 	let exe = std::env::current_exe().expect("test binary path");
 	let mut command = tokio::process::Command::new(exe);
-	command.args([
-		"--exact",
-		"acp::tests::acp_stdio_child_fixture",
-		"--nocapture",
-	]);
+	command.args(["--exact", "acp::tests::acp_stdio_child_fixture", "--nocapture"]);
 	command.env("OCTOMIND_ACP_TEST_FIXTURE", fixture);
 	command.env("OCTOMIND_DATA_DIR", data_dir);
 	for (key, value) in extra_env {
@@ -89,10 +79,7 @@ impl ChildAcp {
 	async fn send(&mut self, line: &str) {
 		use tokio::io::AsyncWriteExt;
 		let stdin = self.stdin.as_mut().expect("child stdin remains open");
-		stdin
-			.write_all(line.as_bytes())
-			.await
-			.expect("write request to child");
+		stdin.write_all(line.as_bytes()).await.expect("write request to child");
 		stdin.write_all(b"\n").await.expect("newline");
 		stdin.flush().await.expect("flush");
 	}
@@ -110,11 +97,10 @@ impl ChildAcp {
 		use tokio::io::AsyncBufReadExt;
 		loop {
 			let mut line = String::new();
-			let read =
-				tokio::time::timeout(Duration::from_secs(30), self.stdout.read_line(&mut line))
-					.await
-					.expect("child must not stall")
-					.expect("child stdout must stay open");
+			let read = tokio::time::timeout(Duration::from_secs(30), self.stdout.read_line(&mut line))
+				.await
+				.expect("child must not stall")
+				.expect("child stdout must stay open");
 			assert!(read > 0, "child stdout ended before the expected frame");
 			let trimmed = line.trim();
 			if trimmed.is_empty() {
@@ -151,8 +137,7 @@ fn rpc_line(id: u64, method: &str, params: serde_json::Value) -> String {
 
 fn initialize_params() -> serde_json::Value {
 	serde_json::to_value(
-		InitializeRequest::new(ProtocolVersion::LATEST)
-			.client_info(Implementation::new("e2e-client", "0.0.1")),
+		InitializeRequest::new(ProtocolVersion::LATEST).client_info(Implementation::new("e2e-client", "0.0.1")),
 	)
 	.expect("serialize initialize request")
 }
@@ -160,25 +145,21 @@ fn initialize_params() -> serde_json::Value {
 #[tokio::test(flavor = "current_thread")]
 async fn acp_stdio_serves_initialize_new_session_prompt_and_eof() {
 	let data = tempfile::tempdir().expect("tempdir");
-	let stub_url = crate::session::chat::test_support::spawn_stub(vec![
-		crate::session::chat::test_support::final_response("ACP-E2E-DONE"),
-	])
-	.await;
+	let stub_url =
+		crate::session::chat::test_support::spawn_stub(vec![crate::session::chat::test_support::final_response(
+			"ACP-E2E-DONE",
+		)])
+		.await;
 	let mut child = spawn_fixture("serve", data.path(), &[("OLLAMA_API_URL", &stub_url)]);
 
 	// 1. initialize
-	child
-		.send(&rpc_line(1, "initialize", initialize_params()))
-		.await;
+	child.send(&rpc_line(1, "initialize", initialize_params())).await;
 	let response = child.wait_for_id(1).await;
-	assert!(
-		response["result"]["agentInfo"].is_object(),
-		"got: {response}"
-	);
+	assert!(response["result"]["agentInfo"].is_object(), "got: {response}");
 
 	// 2. session/new
-	let new_session = serde_json::to_value(NewSessionRequest::new(data.path().to_path_buf()))
-		.expect("serialize session/new");
+	let new_session =
+		serde_json::to_value(NewSessionRequest::new(data.path().to_path_buf())).expect("serialize session/new");
 	child.send(&rpc_line(2, "session/new", new_session)).await;
 	let response = child.wait_for_id(2).await;
 	let session_id = response["result"]["sessionId"]
@@ -202,10 +183,7 @@ async fn acp_stdio_serves_initialize_new_session_prompt_and_eof() {
 			updates += 1;
 		}
 	}
-	assert!(
-		updates > 0,
-		"the turn must stream session/update notifications"
-	);
+	assert!(updates > 0, "the turn must stream session/update notifications");
 
 	// 4. stdin EOF ends the process cleanly.
 	child.close_stdin().await;
@@ -223,9 +201,7 @@ async fn acp_tracing_failure_is_recorded_in_the_init_error_log() {
 	std::fs::create_dir(data.path().join("logs/acp-debug.log")).expect("sabotage tracing sink");
 
 	let mut child = spawn_fixture("tracing_dir", data.path(), &[]);
-	child
-		.send(&rpc_line(1, "initialize", initialize_params()))
-		.await;
+	child.send(&rpc_line(1, "initialize", initialize_params())).await;
 	let response = child.wait_for_id(1).await;
 	assert!(
 		response["result"]["agentInfo"].is_object(),
@@ -237,10 +213,7 @@ async fn acp_tracing_failure_is_recorded_in_the_init_error_log() {
 
 	let error_log = std::fs::read_to_string(data.path().join("logs/acp-init-errors.log"))
 		.expect("the init error fallback log must exist");
-	assert!(
-		error_log.contains("Failed to initialize tracing"),
-		"got: {error_log}"
-	);
+	assert!(error_log.contains("Failed to initialize tracing"), "got: {error_log}");
 }
 
 // unix-only: a read-only directory needs Unix permission bits; Windows ACLs
@@ -253,13 +226,10 @@ async fn acp_unwritable_data_dir_still_serves_and_exits_cleanly() {
 	// fail, so the tracing init AND the ACP error sink init both fail —
 	// and the server must still serve.
 	use std::os::unix::fs::PermissionsExt;
-	std::fs::set_permissions(data.path(), PermissionsExt::from_mode(0o555))
-		.expect("chmod read-only");
+	std::fs::set_permissions(data.path(), PermissionsExt::from_mode(0o555)).expect("chmod read-only");
 
 	let mut child = spawn_fixture("readonly_data", data.path(), &[]);
-	child
-		.send(&rpc_line(1, "initialize", initialize_params()))
-		.await;
+	child.send(&rpc_line(1, "initialize", initialize_params())).await;
 	let response = child.wait_for_id(1).await;
 	assert!(
 		response["result"]["agentInfo"].is_object(),

@@ -172,9 +172,12 @@ Running a specialist fetches its manifest from the tap registry, installs any re
 Build and register your own:
 
 ```bash
-octomind tap init yourteam/octomind-tap   # scaffold, validate, git-init, and register locally
-octomind tap yourteam/octomind-tap        # on another machine, after publishing to GitHub
+octomind tap init yourteam/my-tap   # scaffold, validate, git-init, and register locally
+octomind tap yourteam/my-tap        # on another machine, after publishing to GitHub
 ```
+
+The `octomind-` prefix is added automatically: `yourteam/my-tap` maps to the repository
+`yourteam/octomind-my-tap`.
 
 ## Installation
 
@@ -263,7 +266,7 @@ Full list: [Session commands](doc/reference/02-session-commands.md).
 Octomind reports anonymous usage: which commands, tools, and models are used, plus timings, token counts, and error kinds. It never sends your code, prompts, file paths, tool arguments, or environment values. Opt out in any of three ways:
 
 ```bash
-export DO_NOT_TRACK=1          # the cross-tool standard, honoured first
+export DO_NOT_TRACK=1          # the cross-tool standard, honored first
 export OCTOMIND_TELEMETRY=0    # for subsequent commands in this shell
 # or set `telemetry = false` in config.toml
 ```

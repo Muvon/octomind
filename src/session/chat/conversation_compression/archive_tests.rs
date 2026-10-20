@@ -44,10 +44,7 @@ fn packet(id: &str, start: usize, end: usize) -> super::super::attention::Eviden
 fn archive_messages_writes_under_the_sessions_archive_directory() {
 	let data_dir = tempfile::tempdir().expect("temp data dir");
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
-	let messages = vec![
-		msg("user", "fix the parser"),
-		msg("tool", "error at line 42"),
-	];
+	let messages = vec![msg("user", "fix the parser"), msg("tool", "error at line 42")];
 	let written = archive_messages("archive-env-test", "cid-1", &messages);
 	std::env::remove_var("OCTOMIND_DATA_DIR");
 
@@ -82,10 +79,9 @@ fn read_blocks_rejects_unknown_ids() {
 	let dir = tempfile::tempdir().expect("temp dir");
 	let messages = vec![msg("assistant", "issued call"), msg("tool", "exact result")];
 	let bundle =
-		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)])
-			.expect("bundle writes");
-	let error = read_blocks(&bundle.index_path, &["b:missing".to_string()])
-		.expect_err("an unknown stable ID must not resolve");
+		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)]).expect("bundle writes");
+	let error =
+		read_blocks(&bundle.index_path, &["b:missing".to_string()]).expect_err("an unknown stable ID must not resolve");
 	assert!(error.to_string().contains("not found"));
 }
 
@@ -94,8 +90,7 @@ fn read_blocks_with_no_requested_ids_returns_no_messages() {
 	let dir = tempfile::tempdir().expect("temp dir");
 	let messages = vec![msg("assistant", "issued call"), msg("tool", "exact result")];
 	let bundle =
-		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)])
-			.expect("bundle writes");
+		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)]).expect("bundle writes");
 	let recovered = read_blocks(&bundle.index_path, &[]).expect("empty request is not an error");
 	assert!(recovered.is_empty());
 }
@@ -105,8 +100,7 @@ fn bundle_entry_resolves_stable_ids() {
 	let dir = tempfile::tempdir().expect("temp dir");
 	let messages = vec![msg("assistant", "issued call"), msg("tool", "exact result")];
 	let bundle =
-		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)])
-			.expect("bundle writes");
+		write_archive_with_index_to(dir.path(), "pact", &messages, &[packet("b:one", 0, 1)]).expect("bundle writes");
 	assert!(bundle.entry("b:one").is_some());
 	assert!(bundle.entry("b:other").is_none());
 }

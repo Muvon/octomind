@@ -179,12 +179,7 @@ impl Lesson {
 			.collect::<String>()
 			.trim_end_matches('-')
 			.to_string();
-		let ts: String = self
-			.created
-			.replace([':', '-', 'T'], "")
-			.chars()
-			.take(14)
-			.collect();
+		let ts: String = self.created.replace([':', '-', 'T'], "").chars().take(14).collect();
 		if slug.is_empty() {
 			ts
 		} else {

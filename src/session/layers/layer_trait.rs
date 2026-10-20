@@ -132,10 +132,7 @@ impl FromStr for OutputRole {
 		match s.to_lowercase().as_str() {
 			"assistant" => Ok(OutputRole::Assistant),
 			"user" => Ok(OutputRole::User),
-			_ => Err(format!(
-				"Unknown output role: '{}'. Valid options: assistant, user",
-				s
-			)),
+			_ => Err(format!("Unknown output role: '{}'. Valid options: assistant, user", s)),
 		}
 	}
 }
@@ -244,12 +241,7 @@ pub trait Layer {
 						.messages
 						.iter()
 						.rfind(|m| m.role == "assistant")
-						.map(|m| {
-							format!(
-								"Previous response:\n{}\n\nCurrent input:\n{}",
-								m.content, input
-							)
-						})
+						.map(|m| format!("Previous response:\n{}\n\nCurrent input:\n{}", m.content, input))
 						.unwrap_or_else(|| input.to_string());
 					last_assistant
 				}

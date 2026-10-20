@@ -47,10 +47,7 @@ fn adaptive_fire_line_doubles_per_consecutive_fold() {
 	// Level 0 fires at the configured threshold; each in-turn fold doubles
 	// it; the cap sits one safety margin under the ceiling.
 	assert_eq!(adaptive_fire_line(70_000, 200_000, 0, 2_000.0, 0), 70_000);
-	assert_eq!(
-		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1),
-		140_000
-	);
+	assert_eq!(adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 1), 140_000);
 	assert_eq!(
 		adaptive_fire_line(70_000, 200_000, 45_000, 2_000.0, 2),
 		190_000,
@@ -62,15 +59,9 @@ fn adaptive_fire_line_doubles_per_consecutive_fold() {
 fn fire_line_never_sits_inside_the_post_fold_safety_margin() {
 	// A gentle fold that lands just under the line must not re-fire within
 	// a few calls: the post-fold floor lifts the line above the watermark.
-	assert_eq!(
-		adaptive_fire_line(70_000, 200_000, 85_000, 2_000.0, 0),
-		95_000
-	);
+	assert_eq!(adaptive_fire_line(70_000, 200_000, 85_000, 2_000.0, 0), 95_000);
 	// The ceiling safety still wins over both floors.
-	assert_eq!(
-		adaptive_fire_line(70_000, 100_000, 95_000, 2_000.0, 0),
-		90_000
-	);
+	assert_eq!(adaptive_fire_line(70_000, 100_000, 95_000, 2_000.0, 0), 90_000);
 }
 
 #[test]
@@ -87,10 +78,7 @@ fn composed_in_turn_cycles_double_the_fire_line_until_the_cap() {
 	assert_eq!(lines, vec![70_000, 140_000, 190_000, 190_000]);
 	assert!(lines.windows(2).all(|w| w[1] >= w[0]));
 	// User turn resets the level (consecutive_compressions = 0).
-	assert_eq!(
-		adaptive_fire_line(threshold, ceiling, 45_000, growth, 0),
-		70_000
-	);
+	assert_eq!(adaptive_fire_line(threshold, ceiling, 45_000, growth, 0), 70_000);
 }
 
 #[test]
@@ -177,10 +165,7 @@ fn depth_clamps_to_gentlest_and_deepest() {
 fn depth_is_none_when_no_fold_lands_below_refire_bound() {
 	// refire_bound = 40k − 10k = 30k, but even a 16x fold leaves
 	// 30k + 70k/16 ≈ 34.4k — compressing would re-fire immediately.
-	assert_eq!(
-		compression_depth(100_000, 70_000, 40_000, 2_000.0, 5.0),
-		None
-	);
+	assert_eq!(compression_depth(100_000, 70_000, 40_000, 2_000.0, 5.0), None);
 	// Nothing to compress is never feasible.
 	assert_eq!(compression_depth(100_000, 0, 100_000, 2_000.0, 5.0), None);
 }

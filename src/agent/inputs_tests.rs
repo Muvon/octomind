@@ -32,10 +32,7 @@ impl DataDirGuard {
 		let previous = std::env::var_os("OCTOMIND_DATA_DIR");
 		let dir = tempfile::tempdir().expect("failed to create tempdir");
 		std::env::set_var("OCTOMIND_DATA_DIR", dir.path());
-		Self {
-			previous,
-			_dir: dir,
-		}
+		Self { previous, _dir: dir }
 	}
 }
 
@@ -120,8 +117,7 @@ async fn resolve_inputs_missing_key_fails_closed_when_non_interactive() {
 	let _guard = crate::session::chat::test_support::ENV_LOCK.lock().await;
 	let _data = DataDirGuard::new();
 	// Empty store + non-interactive scope → structured error, no stdin read.
-	let result =
-		with_non_interactive(async { resolve_inputs("needs {{INPUT:MISSING_KEY}}").await }).await;
+	let result = with_non_interactive(async { resolve_inputs("needs {{INPUT:MISSING_KEY}}").await }).await;
 	let err = result.unwrap_err();
 	assert!(err.to_string().contains("non-interactive"), "{err}");
 	assert!(err.to_string().contains("MISSING_KEY"), "{err}");
@@ -184,9 +180,7 @@ async fn resolve_env_vars_missing_key_fails_closed_when_non_interactive() {
 
 #[tokio::test]
 async fn resolve_env_vars_without_placeholders_is_passthrough() {
-	let resolved = resolve_env_vars("plain text, nothing to resolve")
-		.await
-		.unwrap();
+	let resolved = resolve_env_vars("plain text, nothing to resolve").await.unwrap();
 	assert_eq!(resolved, "plain text, nothing to resolve");
 }
 
@@ -209,10 +203,7 @@ impl StdinNullGuard {
 		assert!(saved_fd >= 0, "failed to dup stdin for the guard");
 		let devnull = std::fs::File::open("/dev/null").expect("open /dev/null");
 		unsafe {
-			assert!(
-				libc::dup2(devnull.as_raw_fd(), 0) == 0,
-				"failed to redirect stdin"
-			);
+			assert!(libc::dup2(devnull.as_raw_fd(), 0) == 0, "failed to redirect stdin");
 		}
 		Self { saved_fd }
 	}

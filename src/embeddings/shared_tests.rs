@@ -46,11 +46,7 @@ async fn second_participant_becomes_a_client_of_the_owner() {
 
 	// The client's tokenizer came over the wire; it must chunk like the owner's.
 	assert_eq!(
-		second
-			.tokenizer
-			.encode("shared model", false)
-			.unwrap()
-			.len(),
+		second.tokenizer.encode("shared model", false).unwrap().len(),
 		first.tokenizer.encode("shared model", false).unwrap().len()
 	);
 
@@ -76,9 +72,7 @@ async fn stale_endpoint_is_replaced() {
 	let _ = std::fs::remove_file(&path);
 	std::fs::write(&path, serde_json::to_string(&dead).unwrap()).unwrap();
 
-	let elected = join()
-		.await
-		.expect("join must recover from a stale endpoint");
+	let elected = join().await.expect("join must recover from a stale endpoint");
 	assert!(
 		matches!(elected.role, Role::Owner),
 		"the first live process after a dead owner must take ownership"

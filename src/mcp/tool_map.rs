@@ -68,13 +68,7 @@ fn target_tool_map(process_map: &SharedToolMap, config_hash: u64) -> SharedToolM
 			return Arc::clone(process_map);
 		}
 	}
-	Arc::clone(
-		session_tool_maps()
-			.write()
-			.unwrap()
-			.entry(session_id)
-			.or_default(),
-	)
+	Arc::clone(session_tool_maps().write().unwrap().entry(session_id).or_default())
 }
 
 /// Drop the tool map a session owns, if any, when the session ends.
@@ -151,10 +145,7 @@ pub async fn initialize_tool_map(config: &Config) -> Result<()> {
 		state.initialized = true;
 		state.config_hash = config_hash;
 
-		crate::log_debug!(
-			"Tool map initialized with {} tools",
-			state.tool_to_server.len()
-		);
+		crate::log_debug!("Tool map initialized with {} tools", state.tool_to_server.len());
 	}
 
 	Ok(())
@@ -349,11 +340,7 @@ pub fn unregister_dynamic_agent_tool(agent_name: &str) {
 /// Register all tools from a dynamic MCP server in the tool map
 ///
 /// Call this when a server is enabled to make its tools available.
-pub fn register_dynamic_server_tools(
-	server_name: &str,
-	server_config: &McpServerConfig,
-	tool_names: &[String],
-) {
+pub fn register_dynamic_server_tools(server_name: &str, server_config: &McpServerConfig, tool_names: &[String]) {
 	let tool_map_state = match active_tool_map() {
 		Some(state) => state,
 		None => {
@@ -364,9 +351,7 @@ pub fn register_dynamic_server_tools(
 
 	let mut state = tool_map_state.write().unwrap();
 	for tool_name in tool_names {
-		state
-			.tool_to_server
-			.insert(tool_name.clone(), server_config.clone());
+		state.tool_to_server.insert(tool_name.clone(), server_config.clone());
 		crate::log_debug!("Registered dynamic server tool: {}", tool_name);
 	}
 	crate::log_debug!(
@@ -422,9 +407,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 	for server in enabled_servers {
 		// Skip config servers that are disabled in the dynamic registry
 		if let Some(ref sid) = session_id {
-			if let Some((_, enabled)) =
-				crate::session::context::get_dynamic_server_for_session(sid, server.name())
-			{
+			if let Some((_, enabled)) = crate::session::context::get_dynamic_server_for_session(sid, server.name()) {
 				if !enabled {
 					continue;
 				}
@@ -466,9 +449,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 			McpConnectionType::Http | McpConnectionType::Stdin => {
 				// For external servers, get their actual functions
 				match crate::mcp::server::get_server_functions_cached(&server).await {
-					Ok(functions) => {
-						crate::mcp::filter_tools_by_patterns(functions, server.tools())
-					}
+					Ok(functions) => crate::mcp::filter_tools_by_patterns(functions, server.tools()),
 					Err(e) => {
 						crate::log_error!(
 							"Server '{}' is not available: {}. Verify the server is running at the configured URL.",
@@ -484,9 +465,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 		// Map each function name to this server
 		for function in server_functions {
 			// CONFIGURATION ORDER PRIORITY: First server wins for each tool
-			tool_map
-				.entry(function.name)
-				.or_insert_with(|| server.clone());
+			tool_map.entry(function.name).or_insert_with(|| server.clone());
 		}
 	}
 
@@ -495,9 +474,7 @@ async fn build_tool_server_map_impl(config: &Config) -> Result<HashMap<String, M
 		if let Some(functions) = crate::mcp::runtime::dynamic::get_functions(server.name()) {
 			for function in functions {
 				// Dynamic servers have lower priority than config servers
-				tool_map
-					.entry(function.name)
-					.or_insert_with(|| server.clone());
+				tool_map.entry(function.name).or_insert_with(|| server.clone());
 			}
 		}
 	}

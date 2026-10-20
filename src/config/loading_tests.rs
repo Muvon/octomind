@@ -21,8 +21,7 @@ use super::*;
 fn test_load_from_path_roundtrip() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	let path = tmp.path().join("config.toml");
-	std::fs::write(&path, include_str!("../../config-templates/default.toml"))
-		.expect("write template");
+	std::fs::write(&path, include_str!("../../config-templates/default.toml")).expect("write template");
 
 	let mut config = Config::load_from_path(&path).expect("load template from path");
 	assert!(!config.model.is_empty());
@@ -82,8 +81,7 @@ fn config_override_sets_a_nested_table_value() {
 #[test]
 fn config_override_falls_back_to_a_plain_string() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
-	apply_config_overrides(&mut value, &["model.reasoning_effort=low".to_string()])
-		.expect("override");
+	apply_config_overrides(&mut value, &["model.reasoning_effort=low".to_string()]).expect("override");
 	assert_eq!(value["model"]["reasoning_effort"].as_str(), Some("low"));
 }
 
@@ -92,10 +90,7 @@ fn config_override_parses_toml_boolean_and_integer_values() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
 	apply_config_overrides(
 		&mut value,
-		&[
-			"decision.recall=true".to_string(),
-			"model.max_tokens=123".to_string(),
-		],
+		&["decision.recall=true".to_string(), "model.max_tokens=123".to_string()],
 	)
 	.expect("overrides");
 	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
@@ -118,19 +113,15 @@ fn config_override_rejects_an_unknown_key() {
 #[test]
 fn config_override_rejects_array_indexing() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
-	let error = apply_config_overrides(&mut value, &["roles.0.name=developer".to_string()])
-		.expect_err("array path must fail");
-	assert!(
-		error.to_string().contains("cannot index into arrays"),
-		"got: {error:#}"
-	);
+	let error =
+		apply_config_overrides(&mut value, &["roles.0.name=developer".to_string()]).expect_err("array path must fail");
+	assert!(error.to_string().contains("cannot index into arrays"), "got: {error:#}");
 }
 
 #[test]
 fn config_override_wrong_type_is_rejected_by_deserialization() {
 	let mut value: toml::Value = toml::from_str(&template_toml()).expect("template");
-	apply_config_overrides(&mut value, &["supervisor.enabled=notabool".to_string()])
-		.expect("override");
+	apply_config_overrides(&mut value, &["supervisor.enabled=notabool".to_string()]).expect("override");
 	let error = value
 		.try_into::<Config>()
 		.expect_err("string must not deserialize as a boolean");
@@ -183,10 +174,7 @@ fn config_overrides_use_in_memory_defaults_without_creating_a_config() {
 
 	let config = loaded.expect("override load");
 	assert!(config.decision.recall);
-	assert!(
-		!path.exists(),
-		"runtime overrides must not create a config file"
-	);
+	assert!(!path.exists(), "runtime overrides must not create a config file");
 }
 
 #[test]
@@ -242,11 +230,7 @@ fn mcp_extension_files_override_same_named_servers_from_mcp_toml() {
 		.filter(|server| server.name() == "dup")
 		.collect();
 	assert_eq!(dups.len(), 1, "same-named servers must dedup to one entry");
-	assert_eq!(
-		dups[0].command(),
-		Some("second"),
-		"the mcp-*.toml entry must win"
-	);
+	assert_eq!(dups[0].command(), Some("second"), "the mcp-*.toml entry must win");
 }
 
 #[test]
@@ -260,18 +244,9 @@ fn server_arrays_concatenate_across_files() {
 	);
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
 	let names: Vec<&str> = config.mcp.servers.iter().map(|s| s.name()).collect();
-	assert!(
-		names.contains(&"core"),
-		"template servers must survive: {names:?}"
-	);
-	assert!(
-		names.contains(&"alpha-extra"),
-		"added servers must stack: {names:?}"
-	);
-	assert!(
-		names.contains(&"beta-extra"),
-		"added servers must stack: {names:?}"
-	);
+	assert!(names.contains(&"core"), "template servers must survive: {names:?}");
+	assert!(names.contains(&"alpha-extra"), "added servers must stack: {names:?}");
+	assert!(names.contains(&"beta-extra"), "added servers must stack: {names:?}");
 }
 
 #[test]
@@ -281,32 +256,21 @@ fn scalar_arrays_replace_rather_than_concatenate() {
 	write_file(tmp.path(), "b1.toml", "[mcp]\nallowed_tools = [\"one\"]\n");
 	write_file(tmp.path(), "b2.toml", "[mcp]\nallowed_tools = [\"two\"]\n");
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
-	assert_eq!(
-		config.mcp.allowed_tools,
-		vec!["two"],
-		"scalar arrays replace"
-	);
+	assert_eq!(config.mcp.allowed_tools, vec!["two"], "scalar arrays replace");
 }
 
 #[test]
 fn tables_deep_merge_across_files() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(
-		tmp.path(),
-		"decision.toml",
-		"[compression.model]\nmax_tokens = 999\n",
-	);
+	write_file(tmp.path(), "decision.toml", "[compression.model]\nmax_tokens = 999\n");
 	let config = Config::load_from_path(tmp.path()).expect("directory must load");
 	assert_eq!(config.get_compression_model_profile().max_tokens, 999);
 	assert!(
 		!config.get_compression_model_profile().model.is_empty(),
 		"sibling keys survive"
 	);
-	assert!(
-		config.compression.threshold > 0,
-		"parent table keys survive"
-	);
+	assert!(config.compression.threshold > 0, "parent table keys survive");
 }
 
 #[test]
@@ -375,11 +339,7 @@ fn update_specific_field_persists_changes_to_the_configured_path() {
 fn load_honors_the_octomind_config_path_env_override() {
 	let tmp = tempfile::tempdir().expect("tempdir");
 	write_file(tmp.path(), "config.toml", &template_toml());
-	write_file(
-		tmp.path(),
-		"override.toml",
-		"model = \"ollama:env-override\"\n",
-	);
+	write_file(tmp.path(), "override.toml", "model = \"ollama:env-override\"\n");
 	std::env::set_var("OCTOMIND_CONFIG_PATH", tmp.path().join("config.toml"));
 	let loaded = Config::load();
 	std::env::remove_var("OCTOMIND_CONFIG_PATH");
@@ -411,18 +371,9 @@ fn duplicate_server_names_across_files_keep_the_last_definition() {
 		"[[mcp.servers]]\nname = \"core\"\ntype = \"builtin\"\ntools = []\ntimeout_seconds = 99\n",
 	);
 	let config = Config::load_from_path(tmp.path()).expect("duplicate-name files still load");
-	let cores: Vec<_> = config
-		.mcp
-		.servers
-		.iter()
-		.filter(|s| s.name() == "core")
-		.collect();
+	let cores: Vec<_> = config.mcp.servers.iter().filter(|s| s.name() == "core").collect();
 	assert_eq!(cores.len(), 1, "same-name servers dedup to one entry");
-	assert_eq!(
-		cores[0].timeout_seconds(),
-		99,
-		"the later file's definition wins"
-	);
+	assert_eq!(cores[0].timeout_seconds(), 99, "the later file's definition wins");
 }
 
 // ---------------------------------------------------------------------------
@@ -441,10 +392,7 @@ fn load_injects_the_default_template_when_the_directory_is_missing() {
 
 	let config = config.expect("missing directory bootstraps a default config");
 	assert!(!config.model.is_empty());
-	assert!(
-		path.exists(),
-		"the bootstrap writes the template for the next run"
-	);
+	assert!(path.exists(), "the bootstrap writes the template for the next run");
 }
 
 #[test]
@@ -525,14 +473,8 @@ fn update_and_save_persists_the_mutation() {
 		.update_and_save(|c| c.supervisor.enabled = true)
 		.expect("update and save");
 	let on_disk = std::fs::read_to_string(&path).expect("read back");
-	assert!(
-		on_disk.contains("enabled = true"),
-		"the mutation reached the file"
-	);
-	assert!(
-		config.supervisor.enabled,
-		"the in-memory copy is updated too"
-	);
+	assert!(on_disk.contains("enabled = true"), "the mutation reached the file");
+	assert!(config.supervisor.enabled, "the in-memory copy is updated too");
 }
 
 #[test]
@@ -586,17 +528,9 @@ welcome = "agent extra role welcome"
 	let merged = merge_agent_toml(&base, agent_toml).expect("merge agent manifest");
 
 	assert_eq!(merged.model, "agent-override-model", "scalars override");
-	assert_eq!(
-		merged.mcp.servers.len(),
-		base_server_count + 1,
-		"servers concatenate"
-	);
+	assert_eq!(merged.mcp.servers.len(), base_server_count + 1, "servers concatenate");
 	assert!(
-		merged
-			.mcp
-			.servers
-			.iter()
-			.any(|s| s.name() == "agent-extra-server"),
+		merged.mcp.servers.iter().any(|s| s.name() == "agent-extra-server"),
 		"the agent's server is present"
 	);
 	assert_eq!(merged.roles.len(), base_role_count + 1, "roles concatenate");
@@ -636,11 +570,7 @@ model = "ollama:dup"
 		servers,
 		"a same-named server is not duplicated"
 	);
-	assert_eq!(
-		merged.roles.len(),
-		roles,
-		"a same-named role is not duplicated"
-	);
+	assert_eq!(merged.roles.len(), roles, "a same-named role is not duplicated");
 }
 
 #[test]
@@ -671,18 +601,11 @@ fn decision_directory_and_agent_overrides_merge_without_losing_flags() {
 	let config = Config::load_from_path(tmp.path()).unwrap();
 	assert!(config.decision.recall);
 	assert!(!config.decision.supervisor);
-	assert_eq!(
-		config.decision.model.as_deref(),
-		Some("typesafe:jev-latest")
-	);
-	let merged =
-		merge_agent_toml(&config, "[decision]\nsupervisor = true\nskills = true\n").unwrap();
+	assert_eq!(config.decision.model.as_deref(), Some("typesafe:jev-latest"));
+	let merged = merge_agent_toml(&config, "[decision]\nsupervisor = true\nskills = true\n").unwrap();
 	assert!(merged.decision.recall && merged.decision.skills && merged.decision.supervisor);
 	assert!(!merged.decision.compression && !merged.decision.capabilities);
-	assert_eq!(
-		merged.decision.model.as_deref(),
-		Some("typesafe:jev-latest")
-	);
+	assert_eq!(merged.decision.model.as_deref(), Some("typesafe:jev-latest"));
 	let role = merged.get_merged_config_for_role("developer");
 	assert!(role.decision.recall && role.decision.supervisor);
 }

@@ -27,9 +27,8 @@ fn status_is_the_only_activity_slash_command() {
 }
 
 fn test_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -38,21 +37,13 @@ fn cancel_rx() -> tokio::sync::watch::Receiver<bool> {
 	tokio::sync::watch::channel(false).1
 }
 
-async fn dispatch(
-	session: &mut ChatSession,
-	config: &mut Config,
-	input: &str,
-) -> Result<CommandResult> {
+async fn dispatch(session: &mut ChatSession, config: &mut Config, input: &str) -> Result<CommandResult> {
 	process_command(session, input, config, "assistant", cancel_rx()).await
 }
 
 /// Dispatch and, when the command produced typed output, render it through
 /// the real CLI display path (what the main loop does with it).
-async fn dispatch_rendered(
-	session: &mut ChatSession,
-	config: &mut Config,
-	input: &str,
-) -> Result<CommandResult> {
+async fn dispatch_rendered(session: &mut ChatSession, config: &mut Config, input: &str) -> Result<CommandResult> {
 	let result = dispatch(session, config, input).await?;
 	if let CommandResult::HandledWithOutput(ref output) = result {
 		let mut output = output.clone();
@@ -190,6 +181,45 @@ async fn test_model_show_and_set() {
 }
 
 #[tokio::test]
+async fn test_model_rejects_invalid_values() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+	let before = session.model.clone();
+
+	// Each value fails config validation: no provider prefix, an empty model,
+	// an empty provider, an unknown provider. Reject it and leave the session
+	// untouched. Without the guard the value was saved and the next request
+	// failed with no way back.
+	for value in ["gpt5", "openrouter:", ":gpt-4o", "nosuchprovider:some-model"] {
+		let result = dispatch_rendered(&mut session, &mut config, &format!("/model {value}"))
+			.await
+			.expect("invalid model is handled, not an error");
+		let CommandResult::HandledWithOutput(output) = result else {
+			panic!("expected typed output for invalid model {value}");
+		};
+		assert!(
+			matches!(*output, CommandOutput::Error { .. }),
+			"{value}: invalid model must report CommandOutput::Error, got {output:?}"
+		);
+		assert_eq!(session.model, before, "{value}: rejected model must not be saved");
+		assert_eq!(session.session.info.model, before);
+	}
+}
+
+#[tokio::test]
+async fn test_model_accepts_provider_qualified_value() {
+	let mut session = ChatSession::for_tests(Vec::new());
+	let mut config = test_config();
+
+	let result = dispatch(&mut session, &mut config, "/model openrouter:some/model")
+		.await
+		.expect("valid model dispatches");
+	assert!(!matches!(result, CommandResult::TreatAsUserInput));
+	assert_eq!(session.model, "openrouter:some/model");
+	assert_eq!(session.session.info.model, "openrouter:some/model");
+}
+
+#[tokio::test]
 async fn test_effort_set() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let mut config = test_config();
@@ -210,12 +240,7 @@ async fn test_display_commands_run_without_panicking() {
 	let mut config = test_config();
 	session.add_user_message("first question").expect("user");
 	session
-		.add_assistant_message(
-			"an answer with some length to it",
-			None,
-			&config,
-			"assistant",
-		)
+		.add_assistant_message("an answer with some length to it", None, &config, "assistant")
 		.expect("assistant message");
 	// Non-zero compression stats: /info renders its compression section only
 	// when compressions actually happened.
@@ -377,33 +402,24 @@ async fn test_mcp_subcommands_read_config() {
 async fn test_mcp_handlers_enumerate_builtin_tools() {
 	let config = test_config();
 
-	let result =
-		crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &["list"])
-			.await
-			.expect("mcp list");
+	let result = crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &["list"])
+		.await
+		.expect("mcp list");
 	let CommandResult::HandledWithOutput(output) = result else {
 		panic!("expected output");
 	};
 	let CommandOutput::Mcp { data, .. } = *output else {
 		panic!("expected Mcp output");
 	};
-	let servers = data
-		.get("servers")
-		.and_then(|v| v.as_object())
-		.expect("servers object");
+	let servers = data.get("servers").and_then(|v| v.as_object()).expect("servers object");
 	assert!(!servers.is_empty(), "no servers enumerated: {data}");
-	let total_tools: usize = servers
-		.values()
-		.filter_map(|v| v.as_array())
-		.map(|a| a.len())
-		.sum();
+	let total_tools: usize = servers.values().filter_map(|v| v.as_array()).map(|a| a.len()).sum();
 	assert!(total_tools > 0, "no tools enumerated: {data}");
 
 	for sub in ["info", "full", "validate", "dump"] {
-		let result =
-			crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &[sub])
-				.await
-				.unwrap_or_else(|e| panic!("mcp {sub} errored: {e}"));
+		let result = crate::session::chat::session::commands::mcp::handle_mcp(&config, "assistant", &[sub])
+			.await
+			.unwrap_or_else(|e| panic!("mcp {sub} errored: {e}"));
 		let CommandResult::HandledWithOutput(output) = result else {
 			panic!("mcp {sub}: expected output");
 		};
@@ -472,13 +488,12 @@ async fn info_throughput_counts_reasoning_tokens() {
 	session.session.info.turn_timing.completed = 2;
 	session.session.info.turn_timing.total_time_ms = 90_000;
 	session.session.info.turn_timing.last_time_ms = 40_000;
-	session.session.info.supervisor_accounting.turn_time =
-		crate::supervisor::accounting::TurnTime {
-			completed: 2,
-			total_time_ms: 90_000,
-			main_api_time_ms: 63_400,
-			blocking_supervisor_time_ms: 10_000,
-		};
+	session.session.info.supervisor_accounting.turn_time = crate::supervisor::accounting::TurnTime {
+		completed: 2,
+		total_time_ms: 90_000,
+		main_api_time_ms: 63_400,
+		blocking_supervisor_time_ms: 10_000,
+	};
 	let mut config = test_config();
 	let result = dispatch(&mut session, &mut config, "/info")
 		.await
@@ -513,19 +528,14 @@ async fn info_throughput_counts_reasoning_tokens() {
 	assert_eq!(tokens_cache_write, 20);
 	assert_eq!(tokens_reasoning, 8_900);
 	// (406 + 8_900) / 63.4 s ≈ 146.8 tok/s; output-only math would show 6.4.
-	assert!(
-		(tokens_per_second - 146.8).abs() < 0.1,
-		"{tokens_per_second}"
-	);
+	assert!((tokens_per_second - 146.8).abs() < 0.1, "{tokens_per_second}");
 	assert_eq!(timing.last_turn_time_ms, 40_000);
 }
 
 #[tokio::test]
 async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
 	crate::supervisor::accounting::isolated(async {
-		use crate::session::context::{
-			cleanup_session, current_session_id, init_session_services, with_session_id,
-		};
+		use crate::session::context::{cleanup_session, current_session_id, init_session_services, with_session_id};
 		use crate::supervisor::{
 			accounting,
 			stats::{record_call, CallKind},
@@ -570,10 +580,7 @@ async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
 			new.fold_external_spend();
 		})
 		.await;
-		assert_eq!(
-			new.info.supervisor_accounting.kinds[&CallKind::Plan].calls,
-			1
-		);
+		assert_eq!(new.info.supervisor_accounting.kinds[&CallKind::Plan].calls, 1);
 		finish_tx.send(()).unwrap();
 		extraction.await.unwrap().unwrap();
 		new.fold_external_spend();
@@ -583,10 +590,7 @@ async fn new_preserves_old_identity_while_extraction_completes_for_its_owner() {
 			old.session.info.supervisor_accounting.kinds[&CallKind::Distill].cost,
 			0.25
 		);
-		assert_eq!(
-			old.session.info.supervisor_accounting.background_runs.len(),
-			1
-		);
+		assert_eq!(old.session.info.supervisor_accounting.background_runs.len(), 1);
 		assert_eq!(
 			crate::session::persistence::load_session(old.session.session_file.as_ref().unwrap())
 				.unwrap()

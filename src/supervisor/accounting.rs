@@ -45,8 +45,7 @@ pub struct Usage {
 
 impl Usage {
 	fn add(&mut self, other: &Self) {
-		self.reported_findings
-			.extend(other.reported_findings.iter().cloned());
+		self.reported_findings.extend(other.reported_findings.iter().cloned());
 		for (&key, &count) in &other.outcome {
 			*self.outcome.entry(key).or_default() += count;
 		}
@@ -60,8 +59,7 @@ impl Usage {
 		self.background_wall_time_ms += other.background_wall_time_ms;
 	}
 	fn merge_max(&mut self, other: &Self) {
-		self.reported_findings
-			.extend(other.reported_findings.iter().cloned());
+		self.reported_findings.extend(other.reported_findings.iter().cloned());
 		for (&key, &count) in &other.outcome {
 			let own = self.outcome.entry(key).or_default();
 			*own = (*own).max(count);
@@ -73,9 +71,7 @@ impl Usage {
 		self.cost = self.cost.max(other.cost);
 		self.api_time_ms = self.api_time_ms.max(other.api_time_ms);
 		self.blocking_wall_time_ms = self.blocking_wall_time_ms.max(other.blocking_wall_time_ms);
-		self.background_wall_time_ms = self
-			.background_wall_time_ms
-			.max(other.background_wall_time_ms);
+		self.background_wall_time_ms = self.background_wall_time_ms.max(other.background_wall_time_ms);
 	}
 }
 
@@ -124,8 +120,7 @@ impl SupervisorAccounting {
 		self.turn_time.total_time_ms += other.turn_time.total_time_ms;
 		self.turn_time.main_api_time_ms += other.turn_time.main_api_time_ms;
 		self.turn_time.blocking_supervisor_time_ms += other.turn_time.blocking_supervisor_time_ms;
-		self.background_runs
-			.extend(other.background_runs.iter().cloned());
+		self.background_runs.extend(other.background_runs.iter().cloned());
 		for (&kind, usage) in &other.kinds {
 			self.kinds.entry(kind).or_default().add(usage);
 		}
@@ -140,20 +135,13 @@ impl SupervisorAccounting {
 			.zip(other.background_wall_time_ms)
 			.map(|(a, b)| a.max(b));
 		self.turn_time.completed = self.turn_time.completed.max(other.turn_time.completed);
-		self.turn_time.total_time_ms = self
-			.turn_time
-			.total_time_ms
-			.max(other.turn_time.total_time_ms);
-		self.turn_time.main_api_time_ms = self
-			.turn_time
-			.main_api_time_ms
-			.max(other.turn_time.main_api_time_ms);
+		self.turn_time.total_time_ms = self.turn_time.total_time_ms.max(other.turn_time.total_time_ms);
+		self.turn_time.main_api_time_ms = self.turn_time.main_api_time_ms.max(other.turn_time.main_api_time_ms);
 		self.turn_time.blocking_supervisor_time_ms = self
 			.turn_time
 			.blocking_supervisor_time_ms
 			.max(other.turn_time.blocking_supervisor_time_ms);
-		self.background_runs
-			.extend(other.background_runs.iter().cloned());
+		self.background_runs.extend(other.background_runs.iter().cloned());
 		for (&kind, usage) in &other.kinds {
 			self.kinds.entry(kind).or_default().merge_max(usage);
 		}
@@ -216,9 +204,7 @@ pub async fn run_background<T>(
 		background(DETACHED_USAGE.scope(Arc::clone(&bank), future)),
 	)
 	.await;
-	bank.lock()
-		.expect("detached supervisor bank poisoned")
-		.publish()?;
+	bank.lock().expect("detached supervisor bank poisoned").publish()?;
 	result
 }
 
@@ -226,10 +212,7 @@ pub async fn run_background<T>(
 /// seam usage are recorded, before cancellation can interrupt another call.
 pub(super) fn checkpoint() -> anyhow::Result<()> {
 	match DETACHED_USAGE.try_with(Arc::clone) {
-		Ok(bank) => bank
-			.lock()
-			.expect("detached supervisor bank poisoned")
-			.publish(),
+		Ok(bank) => bank.lock().expect("detached supervisor bank poisoned").publish(),
 		Err(_) => Ok(()),
 	}
 }
@@ -240,8 +223,7 @@ struct Journal {
 }
 
 fn completed() -> &'static Mutex<HashMap<SessionId, BTreeMap<String, SupervisorAccounting>>> {
-	static COMPLETED: OnceLock<Mutex<HashMap<SessionId, BTreeMap<String, SupervisorAccounting>>>> =
-		OnceLock::new();
+	static COMPLETED: OnceLock<Mutex<HashMap<SessionId, BTreeMap<String, SupervisorAccounting>>>> = OnceLock::new();
 	COMPLETED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -325,10 +307,7 @@ impl Clock {
 		} else {
 			self.blocking.enter(now);
 		}
-		self.mechanics
-			.entry((mechanic, background))
-			.or_default()
-			.enter(now);
+		self.mechanics.entry((mechanic, background)).or_default().enter(now);
 	}
 	fn leave(&mut self, mechanic: Mechanic, background: bool) {
 		if background {
@@ -438,11 +417,7 @@ pub fn record_outcome(mechanic: Mechanic, outcome: Outcome, count: u64) {
 	}
 	let bank = current_bank();
 	let mut bank = bank.lock().expect("supervisor accounting bank poisoned");
-	*mechanic
-		.usage_mut(&mut bank.usage)
-		.outcome
-		.entry(outcome)
-		.or_default() += count;
+	*mechanic.usage_mut(&mut bank.usage).outcome.entry(outcome).or_default() += count;
 }
 
 pub(super) fn record(kind: CallKind, usage: Usage) {
@@ -469,11 +444,7 @@ pub(super) fn record_seam(seam: Seam, usage: Usage) {
 
 fn take_from(banks: &mut Banks, owner: Option<SessionId>) -> SupervisorAccounting {
 	let mut result = SupervisorAccounting::default();
-	let keys = if owner.is_some() {
-		vec![owner, None]
-	} else {
-		vec![None]
-	};
+	let keys = if owner.is_some() { vec![owner, None] } else { vec![None] };
 	for key in keys {
 		let remove = if let Some(bank) = banks.get(&key) {
 			// A recorder can hold this bank before acquiring its lock. The registry
@@ -494,9 +465,7 @@ fn take_from(banks: &mut Banks, owner: Option<SessionId>) -> SupervisorAccountin
 
 pub fn take_for(owner: &str) -> SupervisorAccounting {
 	take_from(
-		&mut pending()
-			.lock()
-			.expect("supervisor accounting bank poisoned"),
+		&mut pending().lock().expect("supervisor accounting bank poisoned"),
 		Some(owner.to_owned()),
 	)
 }
@@ -504,9 +473,7 @@ pub fn take_for(owner: &str) -> SupervisorAccounting {
 #[cfg(test)]
 pub(crate) fn take() -> SupervisorAccounting {
 	take_from(
-		&mut pending()
-			.lock()
-			.expect("supervisor accounting bank poisoned"),
+		&mut pending().lock().expect("supervisor accounting bank poisoned"),
 		current_session_id(),
 	)
 }
@@ -551,27 +518,22 @@ impl WallTimer {
 
 impl Drop for WallTimer {
 	fn drop(&mut self) {
-		with_clock(
-			&self.bank,
-			&self.clock_bank,
-			Instant::now,
-			|clock, usage, now| {
-				clock.leave(self.mechanic, self.background);
-				// Keep the raw seam view for persisted journals. Standalone seams already
-				// own their mechanic interval, so adding their duration again would duplicate it.
-				if let Some(seam) = self.seam {
-					if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression) {
-						let elapsed = now.duration_since(self.started).as_millis() as u64;
-						let usage = usage.seams.entry(seam).or_default();
-						if self.background {
-							usage.background_wall_time_ms += elapsed;
-						} else {
-							usage.blocking_wall_time_ms += elapsed;
-						}
+		with_clock(&self.bank, &self.clock_bank, Instant::now, |clock, usage, now| {
+			clock.leave(self.mechanic, self.background);
+			// Keep the raw seam view for persisted journals. Standalone seams already
+			// own their mechanic interval, so adding their duration again would duplicate it.
+			if let Some(seam) = self.seam {
+				if !matches!(seam, Seam::Skills | Seam::Capabilities | Seam::Compression) {
+					let elapsed = now.duration_since(self.started).as_millis() as u64;
+					let usage = usage.seams.entry(seam).or_default();
+					if self.background {
+						usage.background_wall_time_ms += elapsed;
+					} else {
+						usage.blocking_wall_time_ms += elapsed;
 					}
 				}
-			},
-		);
+			}
+		});
 	}
 }
 

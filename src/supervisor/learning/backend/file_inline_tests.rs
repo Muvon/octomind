@@ -80,10 +80,7 @@ use_count: 7
 	assert_eq!(lesson.evidence, vec!["session://test/message/2"]);
 	assert_eq!(lesson.last_used, "2026-08-28T00:00:00Z");
 	assert_eq!(lesson.use_count, 7);
-	assert_eq!(
-		lesson.outcome,
-		crate::supervisor::learning::TrajectoryOutcome::Failed
-	);
+	assert_eq!(lesson.outcome, crate::supervisor::learning::TrajectoryOutcome::Failed);
 }
 
 #[test]
@@ -232,16 +229,10 @@ fn rank_by_keywords_is_case_insensitive() {
 #[test]
 fn rank_by_keywords_uses_phrase_terms_as_weak_fallback() {
 	let lessons = vec![
-		lesson_with(
-			"validate callback state and retain the PKCE verifier",
-			&["oauth"],
-		),
+		lesson_with("validate callback state and retain the PKCE verifier", &["oauth"]),
 		lesson_with("unrelated callback rendering", &["ui"]),
 	];
-	let ranking = rank_by_keywords(
-		&lessons,
-		&["state parameter".to_string(), "oauth callback".to_string()],
-	);
+	let ranking = rank_by_keywords(&lessons, &["state parameter".to_string(), "oauth callback".to_string()]);
 	assert_eq!(ranking.first().copied(), Some(0));
 }
 
@@ -356,10 +347,7 @@ fn weighted_rrf_keeps_dense_correction_ahead_of_sparse_stale_match() {
 	// When embeddings are absent, keyword weighting is uniform and cannot
 	// disturb its original exact-match order.
 	let sparse_only = weighted_reciprocal_rank_fusion(3, &[(&sparse, 1.0)]);
-	assert_eq!(
-		sparse_only.iter().map(|item| item.1).collect::<Vec<_>>(),
-		sparse
-	);
+	assert_eq!(sparse_only.iter().map(|item| item.1).collect::<Vec<_>>(), sparse);
 }
 
 #[test]
@@ -367,10 +355,7 @@ fn adaptive_keyword_weight_changes_only_conflict_contaminated_queries() {
 	let mut lessons = vec![lesson_with("current", &[]), lesson_with("stale", &[])];
 	lessons[0].importance = 0.9;
 	lessons[1].importance = 0.2;
-	assert_eq!(
-		adaptive_keyword_weight(&[1, 0], &[0], &lessons),
-		KEYWORD_RRF_WEIGHT
-	);
+	assert_eq!(adaptive_keyword_weight(&[1, 0], &[0], &lessons), KEYWORD_RRF_WEIGHT);
 	lessons[1].importance = 0.5;
 	assert_eq!(adaptive_keyword_weight(&[1, 0], &[0], &lessons), 1.0);
 	assert_eq!(adaptive_keyword_weight(&[1, 0], &[], &lessons), 1.0);
@@ -402,8 +387,7 @@ fn rrf_uses_one_indexed_ranks() {
 	// across one ranker. Item at rank-1 scores 1/62. Verify the math.
 	let r = vec![3usize, 7];
 	let fused = reciprocal_rank_fusion(8, &[&r]);
-	let by_idx: std::collections::HashMap<usize, f32> =
-		fused.into_iter().map(|(s, i)| (i, s)).collect();
+	let by_idx: std::collections::HashMap<usize, f32> = fused.into_iter().map(|(s, i)| (i, s)).collect();
 	let s_first = by_idx[&3];
 	let s_second = by_idx[&7];
 	let expected_first = 1.0_f32 / (RRF_K + 1.0);
@@ -429,10 +413,7 @@ fn parse_string_list_prefers_json_and_falls_back_to_brackets() {
 		parse_string_list(r#"["a","b"]"#),
 		vec!["a".to_string(), "b".to_string()]
 	);
-	assert_eq!(
-		parse_string_list(r#"[a, "b"]"#),
-		vec!["a".to_string(), "b".to_string()]
-	);
+	assert_eq!(parse_string_list(r#"[a, "b"]"#), vec!["a".to_string(), "b".to_string()]);
 	assert!(parse_string_list("[]").is_empty());
 	assert!(parse_string_list("").is_empty());
 }
@@ -452,10 +433,7 @@ related: not json
 "#;
 	let lesson = FileBackend::parse_lesson_file(content).unwrap();
 	assert_eq!(lesson.importance, 0.5);
-	assert_eq!(
-		lesson.outcome,
-		crate::supervisor::learning::TrajectoryOutcome::Unknown
-	);
+	assert_eq!(lesson.outcome, crate::supervisor::learning::TrajectoryOutcome::Unknown);
 	assert_eq!(lesson.use_count, 0);
 	assert_eq!(lesson.related, vec!["not json".to_string()]);
 
@@ -466,9 +444,7 @@ related: not json
 #[test]
 fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
 	let dir = tempfile::tempdir().unwrap();
-	let record = |importance: &str| {
-		format!("---\ncontent: \"record {importance}\"\nimportance: {importance}\n---\n")
-	};
+	let record = |importance: &str| format!("---\ncontent: \"record {importance}\"\nimportance: {importance}\n---\n");
 	std::fs::write(dir.path().join("low.md"), record("0.3")).unwrap();
 	std::fs::write(dir.path().join("high.md"), record("0.9")).unwrap();
 	std::fs::write(dir.path().join("mid.md"), record("0.6")).unwrap();
@@ -477,10 +453,7 @@ fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
 
 	let lessons = FileBackend::read_lessons_sorted(dir.path());
 	assert_eq!(
-		lessons
-			.iter()
-			.map(|lesson| lesson.content.as_str())
-			.collect::<Vec<_>>(),
+		lessons.iter().map(|lesson| lesson.content.as_str()).collect::<Vec<_>>(),
 		vec!["record 0.9", "record 0.6", "record 0.3"]
 	);
 	assert!(lessons[0].storage_path.ends_with("high.md"));
@@ -492,11 +465,7 @@ fn read_lessons_sorted_skips_invalid_files_and_orders_by_importance() {
 fn write_catalog(dir: &std::path::Path, rows: &[serde_json::Value]) {
 	let catalog = dir.join(".archive").join("catalog.jsonl");
 	std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
-	let body = rows
-		.iter()
-		.map(|row| row.to_string())
-		.collect::<Vec<_>>()
-		.join("\n");
+	let body = rows.iter().map(|row| row.to_string()).collect::<Vec<_>>().join("\n");
 	std::fs::write(catalog, body).unwrap();
 }
 
@@ -515,11 +484,7 @@ fn catalog_row(memory_type: &str, file: &str, title: &str, importance: f64) -> s
 fn write_archived_lesson(dir: &std::path::Path, memory_type: &str, file: &str, content: &str) {
 	let path = dir.join(".archive").join(memory_type).join(file);
 	std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-	std::fs::write(
-		&path,
-		format!("---\ncontent: \"{content}\"\nimportance: 0.5\n---\n"),
-	)
-	.unwrap();
+	std::fs::write(&path, format!("---\ncontent: \"{content}\"\nimportance: 0.5\n---\n")).unwrap();
 }
 
 #[test]
@@ -528,20 +493,12 @@ fn read_archived_walks_type_dirs_and_skips_non_markdown() {
 	write_archived_lesson(dir.path(), "learning", "a.md", "archived learning");
 	write_archived_lesson(dir.path(), "orientation", "b.md", "archived orientation");
 	write_archived_lesson(dir.path(), "learning", "note.txt", "ignored");
-	std::fs::write(
-		dir.path().join(".archive").join("learning").join("bad.md"),
-		"garbage",
-	)
-	.unwrap();
+	std::fs::write(dir.path().join(".archive").join("learning").join("bad.md"), "garbage").unwrap();
 
 	let lessons = FileBackend::read_archived(dir.path());
 	assert_eq!(lessons.len(), 2);
-	assert!(lessons
-		.iter()
-		.any(|lesson| lesson.content == "archived learning"));
-	assert!(lessons
-		.iter()
-		.any(|lesson| lesson.content == "archived orientation"));
+	assert!(lessons.iter().any(|lesson| lesson.content == "archived learning"));
+	assert!(lessons.iter().any(|lesson| lesson.content == "archived orientation"));
 
 	// No archive at all -> empty.
 	let empty = tempfile::tempdir().unwrap();
@@ -565,15 +522,10 @@ fn retrieve_archived_guards_limit_terms_and_ranking() {
 	);
 
 	assert!(FileBackend::retrieve_archived(dir.path(), &[], "", 2).is_empty());
-	assert!(
-		FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "", 0).is_empty()
-	);
+	assert!(FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "", 0).is_empty());
 
 	let no_catalog = tempfile::tempdir().unwrap();
-	assert!(
-		FileBackend::retrieve_archived(no_catalog.path(), &["postgres".to_string()], "", 2)
-			.is_empty()
-	);
+	assert!(FileBackend::retrieve_archived(no_catalog.path(), &["postgres".to_string()], "", 2).is_empty());
 
 	// One generic intent term never pages noise; two independent terms do.
 	assert!(FileBackend::retrieve_archived(dir.path(), &[], "oauth", 2).is_empty());
@@ -582,8 +534,7 @@ fn retrieve_archived_guards_limit_terms_and_ranking() {
 	assert_eq!(intent_hits[0].content, "oauth callback state");
 
 	// Exact patterns outrank intent-only hits; duplicate rows dedup to one file.
-	let ranked =
-		FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "oauth callback", 2);
+	let ranked = FileBackend::retrieve_archived(dir.path(), &["postgres".to_string()], "oauth callback", 2);
 	assert_eq!(ranked.len(), 2);
 	assert_eq!(ranked[0].content, "postgres migration notes");
 	assert_eq!(ranked[1].content, "oauth callback state");
@@ -614,9 +565,7 @@ fn find_archived_by_content_prefers_the_latest_row_and_returns_none_when_absent(
 
 	assert!(FileBackend::find_archived_by_content(dir.path(), "absent content").is_none());
 	let no_catalog = tempfile::tempdir().unwrap();
-	assert!(
-		FileBackend::find_archived_by_content(no_catalog.path(), "same durable content").is_none()
-	);
+	assert!(FileBackend::find_archived_by_content(no_catalog.path(), "same durable content").is_none());
 }
 
 #[test]
@@ -688,10 +637,7 @@ async fn experience_harness_survives_store_and_parse() {
 	experience.artifacts = vec!["evo-rule".to_string(), "evo-skill".to_string()];
 	FileBackend.store(&experience).await.unwrap();
 
-	let stored = FileBackend
-		.retrieve_all("developer", "project")
-		.await
-		.unwrap();
+	let stored = FileBackend.retrieve_all("developer", "project").await.unwrap();
 	assert_eq!(stored.len(), 1);
 	assert_eq!(stored[0].artifacts, experience.artifacts);
 	// Records written before the field existed parse with no harness.
@@ -725,14 +671,7 @@ async fn store_retrieve_delete_and_has_lessons_across_scopes() {
 	global.created = "2026-01-02T00:00:00Z".to_string();
 	backend.store(&global).await.unwrap();
 
-	assert_eq!(
-		backend
-			.retrieve_all("developer", "project")
-			.await
-			.unwrap()
-			.len(),
-		1
-	);
+	assert_eq!(backend.retrieve_all("developer", "project").await.unwrap().len(), 1);
 	assert_eq!(backend.retrieve_global().await.unwrap().len(), 1);
 	assert!(backend.has_lessons("developer", "project").await);
 	assert!(!backend.has_lessons("writer", "other").await);
@@ -743,37 +682,22 @@ async fn store_retrieve_delete_and_has_lessons_across_scopes() {
 		.is_empty());
 
 	// Empty query short-circuits to the importance-ordered head.
-	let head = backend
-		.retrieve("", &[], "developer", "project", 5)
-		.await
-		.unwrap();
+	let head = backend.retrieve("", &[], "developer", "project", 5).await.unwrap();
 	assert_eq!(head.len(), 1);
 	assert_eq!(head[0].content, "scoped bearer token rule");
 
 	// Keyword retrieval ranks the matching hot record without embeddings.
 	let ranked = backend
-		.retrieve(
-			"auth intent",
-			&["bearer".to_string()],
-			"developer",
-			"project",
-			5,
-		)
+		.retrieve("auth intent", &["bearer".to_string()], "developer", "project", 5)
 		.await
 		.unwrap();
 	assert_eq!(ranked.len(), 1);
 	assert_eq!(ranked[0].content, "scoped bearer token rule");
 
 	// Global ids delete from the shared dir; unknown ids fail loudly.
-	backend
-		.delete(&global.file_id(), "developer", "project")
-		.await
-		.unwrap();
+	backend.delete(&global.file_id(), "developer", "project").await.unwrap();
 	assert!(backend.retrieve_global().await.unwrap().is_empty());
-	assert!(backend
-		.delete("missing-id", "developer", "project")
-		.await
-		.is_err());
+	assert!(backend.delete("missing-id", "developer", "project").await.is_err());
 
 	// An archive-only scope still reports lessons via the catalog.
 	crate::supervisor::learning::retention::archive_record(&scoped).unwrap();
@@ -813,9 +737,7 @@ async fn reinforce_cold_archives_floor_importance_and_ignores_unknown_content() 
 		.unwrap();
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
 	assert!(hot.is_empty());
-	let cold = FileBackend::read_archived(
-		&crate::directories::get_learning_dir("developer", "project").unwrap(),
-	);
+	let cold = FileBackend::read_archived(&crate::directories::get_learning_dir("developer", "project").unwrap());
 	assert_eq!(cold.len(), 1);
 	assert_eq!(cold[0].importance, 0.0);
 
@@ -848,11 +770,7 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 		.await
 		.unwrap();
 	backend
-		.store(&lesson(
-			"fresh weak rule",
-			0.3,
-			&chrono::Utc::now().to_rfc3339(),
-		))
+		.store(&lesson("fresh weak rule", 0.3, &chrono::Utc::now().to_rfc3339()))
 		.await
 		.unwrap();
 	backend
@@ -868,23 +786,10 @@ async fn prune_stale_archives_only_stale_weak_entries() {
 	recently_used.last_used = chrono::Utc::now().to_rfc3339();
 	backend.store(&recently_used).await.unwrap();
 
-	backend
-		.prune_stale("developer", "project", 0)
-		.await
-		.unwrap();
-	assert_eq!(
-		backend
-			.retrieve_all("developer", "project")
-			.await
-			.unwrap()
-			.len(),
-		5
-	);
+	backend.prune_stale("developer", "project", 0).await.unwrap();
+	assert_eq!(backend.retrieve_all("developer", "project").await.unwrap().len(), 5);
 
-	backend
-		.prune_stale("developer", "project", 365)
-		.await
-		.unwrap();
+	backend.prune_stale("developer", "project", 365).await.unwrap();
 	let hot = backend.retrieve_all("developer", "project").await.unwrap();
 	assert_eq!(hot.len(), 4);
 	assert!(hot.iter().all(|item| item.content != "stale weak rule"));
@@ -921,11 +826,7 @@ async fn reinforce_reactivates_archived_entries_and_bumps_them_in_place() {
 	scoped.importance = 0.3;
 	backend.store(&scoped).await.unwrap();
 	crate::supervisor::learning::retention::archive_record(&scoped).unwrap();
-	assert!(backend
-		.retrieve_all("developer", "project")
-		.await
-		.unwrap()
-		.is_empty());
+	assert!(backend.retrieve_all("developer", "project").await.unwrap().is_empty());
 
 	backend
 		.reinforce(&scoped.content, "developer", "project", 0.3)
@@ -958,15 +859,8 @@ async fn reinforce_reactivates_archived_entries_and_bumps_them_in_place() {
 	assert!((hot_global[0].importance - 0.6).abs() < 1e-9);
 
 	// A scoped id deletes from the scoped dir on the first candidate path.
-	backend
-		.delete(&scoped.file_id(), "developer", "project")
-		.await
-		.unwrap();
-	assert!(backend
-		.retrieve_all("developer", "project")
-		.await
-		.unwrap()
-		.is_empty());
+	backend.delete(&scoped.file_id(), "developer", "project").await.unwrap();
+	assert!(backend.retrieve_all("developer", "project").await.unwrap().is_empty());
 	assert_eq!(backend.retrieve_global().await.unwrap().len(), 1);
 
 	if let Some(value) = previous {

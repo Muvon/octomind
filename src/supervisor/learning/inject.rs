@@ -77,8 +77,7 @@ pub async fn retrieve_and_format(
 	if !learning.enabled {
 		return (String::new(), Vec::new());
 	}
-	let _timing =
-		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Recall);
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Recall);
 
 	let backend = FileBackend;
 	crate::log_debug!(
@@ -113,29 +112,17 @@ pub async fn retrieve_and_format(
 		Vec::new()
 	};
 	if !patterns.is_empty() {
-		crate::log_debug!(
-			"Learning retrieval: query keywords: {}",
-			patterns.join(", ")
-		);
+		crate::log_debug!("Learning retrieval: query keywords: {}", patterns.join(", "));
 	}
 	// Cold global rules are not injected unconditionally: page only exact
 	// lexical matches from their compact catalog, then charge them to the same
 	// 512-token global sub-budget as hot global rules.
-	match backend
-		.retrieve_archived_global(user_input, &patterns, 2)
-		.await
-	{
+	match backend.retrieve_archived_global(user_input, &patterns, 2).await {
 		Ok(items) => candidates.extend(items.into_iter().map(|lesson| (lesson, true))),
 		Err(error) => crate::log_debug!("Learning: cold global retrieve failed: {}", error),
 	}
 	match backend
-		.retrieve(
-			user_input,
-			&patterns,
-			role,
-			project,
-			FILE_RETRIEVAL_CANDIDATES,
-		)
+		.retrieve(user_input, &patterns, role, project, FILE_RETRIEVAL_CANDIDATES)
 		.await
 	{
 		Ok(s) => candidates.extend(s.into_iter().map(|lesson| (lesson, false))),
@@ -163,13 +150,8 @@ pub async fn retrieve_and_format(
 		let id = format!("M{}", selected.len() + 1);
 		let reference = memory_reference(&lesson, global);
 		let skills = crate::supervisor::learning::evolution::applied_skill_names(&lesson.artifacts);
-		let item_tokens = crate::session::estimate_tokens(&render_item(
-			&id,
-			&lesson,
-			global,
-			reference.as_deref(),
-			&skills,
-		));
+		let item_tokens =
+			crate::session::estimate_tokens(&render_item(&id, &lesson, global, reference.as_deref(), &skills));
 		if global && global_tokens.saturating_add(item_tokens) > MAX_GLOBAL_PACK_TOKENS {
 			continue;
 		}
@@ -235,13 +217,7 @@ async fn filter_scoped_by_relevance(
 			})
 		}).collect::<Vec<_>>(),
 	});
-	let Some(answers) = evaluate::run(
-		config,
-		Seam::Recall,
-		state,
-		evaluate::recall_questions(scoped.len()),
-	)
-	.await
+	let Some(answers) = evaluate::run(config, Seam::Recall, state, evaluate::recall_questions(scoped.len())).await
 	else {
 		return candidates;
 	};
@@ -288,23 +264,19 @@ fn render_item(
 		)
 	} else if lesson.memory_type == "experience" {
 		let inline = crate::session::truncate_to_tokens(&lesson.content, EXPERIENCE_INLINE_TOKENS);
-		let recovery =
-			if crate::session::estimate_tokens(&lesson.content) > EXPERIENCE_INLINE_TOKENS {
-				reference
-					.strip_prefix(" ref=")
-					.map(|path| format!(" … full memory: {path}"))
-					.unwrap_or_else(|| " … full memory available in the learning store".to_string())
-			} else {
-				String::new()
-			};
+		let recovery = if crate::session::estimate_tokens(&lesson.content) > EXPERIENCE_INLINE_TOKENS {
+			reference
+				.strip_prefix(" ref=")
+				.map(|path| format!(" … full memory: {path}"))
+				.unwrap_or_else(|| " … full memory available in the learning store".to_string())
+		} else {
+			String::new()
+		};
 		// The record's harness, limited to skills loadable in this session.
 		let skills = if skills.is_empty() {
 			String::new()
 		} else {
-			format!(
-				" skills={}",
-				crate::supervisor::escape_xml_text(&skills.join(","))
-			)
+			format!(" skills={}", crate::supervisor::escape_xml_text(&skills.join(",")))
 		};
 		format!(
 			"- [{id} scope={scope} experience outcome={} confidence={}{} related={} evidence={}{}] {}\n{}{}\n",
@@ -337,11 +309,7 @@ fn memory_reference(lesson: &crate::supervisor::learning::Lesson, global: bool) 
 	} else {
 		crate::directories::get_learning_dir(&lesson.role, &lesson.project).ok()?
 	};
-	Some(
-		dir.join(format!("{}.md", lesson.file_id()))
-			.display()
-			.to_string(),
-	)
+	Some(dir.join(format!("{}.md", lesson.file_id())).display().to_string())
 }
 
 fn format_pack(selected: &[SelectedMemory]) -> String {
@@ -420,9 +388,7 @@ pub(crate) fn validate_retrieval_patterns(response: &str) -> Result<Vec<String>>
 		let forbidden = ['<', '>', '=', '"', '\'', '!', '?'];
 		if pattern.chars().count() > 64
 			|| !(1..=5).contains(&words)
-			|| pattern
-				.chars()
-				.any(|character| forbidden.contains(&character))
+			|| pattern.chars().any(|character| forbidden.contains(&character))
 		{
 			anyhow::bail!("invalid retrieval rewrite: non-keyword line");
 		}

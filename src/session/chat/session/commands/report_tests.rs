@@ -20,9 +20,8 @@
 use super::*;
 
 fn template_config() -> Config {
-	let mut config: Config =
-		toml::from_str(include_str!("../../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: Config = toml::from_str(include_str!("../../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -41,14 +40,10 @@ fn error_output(result: CommandResult) -> (String, serde_json::Value) {
 #[test]
 fn unknown_period_reports_usage() {
 	let session = ChatSession::for_tests(Vec::new());
-	let (error, context) =
-		error_output(handle_report(&session, &template_config(), &["fortnight"]).unwrap());
+	let (error, context) = error_output(handle_report(&session, &template_config(), &["fortnight"]).unwrap());
 	assert!(error.contains("fortnight"), "{error}");
 	assert!(
-		context["hint"]
-			.as_str()
-			.expect("hint")
-			.contains("Usage: /report"),
+		context["hint"].as_str().expect("hint").contains("Usage: /report"),
 		"{context}"
 	);
 }
@@ -56,9 +51,7 @@ fn unknown_period_reports_usage() {
 #[test]
 fn extra_arguments_report_usage() {
 	let session = ChatSession::for_tests(Vec::new());
-	let (error, _) = error_output(
-		handle_report(&session, &template_config(), &["day", "here", "extra"]).unwrap(),
-	);
+	let (error, _) = error_output(handle_report(&session, &template_config(), &["day", "here", "extra"]).unwrap());
 	assert!(error.contains("day here extra"), "{error}");
 }
 
@@ -68,10 +61,7 @@ fn session_report_without_a_session_file_explains_auto_save() {
 	let (error, context) = error_output(handle_report(&session, &template_config(), &[]).unwrap());
 	assert!(error.contains("No session file"), "{error}");
 	assert!(
-		context["hint"]
-			.as_str()
-			.expect("hint")
-			.contains("auto-saved"),
+		context["hint"].as_str().expect("hint").contains("auto-saved"),
 		"{context}"
 	);
 }

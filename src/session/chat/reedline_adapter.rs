@@ -18,8 +18,8 @@ use crate::config::Config;
 use crate::session::chat::session::commands::{age, matches_words, quote, Reply};
 use nu_ansi_term::{Color, Style};
 use reedline::{
-	CommandLineSearch, Completer, CompletionResult, Highlighter, Hinter, History, SearchFilter,
-	SearchQuery, Span, StyledText, Suggestion,
+	CommandLineSearch, Completer, CompletionResult, Highlighter, Hinter, History, SearchFilter, SearchQuery, Span,
+	StyledText, Suggestion,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -63,9 +63,7 @@ impl ReedlineAdapter {
 	/// is validated against the command's accepted set: green when it matches,
 	/// red when it does not. The rest of the line stays plain.
 	fn push_remainder(styled: &mut StyledText, command: &str, remainder: &str) {
-		let Some(accepted) =
-			crate::session::chat_helper::CommandCompleter::argument_candidates(command)
-		else {
+		let Some(accepted) = crate::session::chat_helper::CommandCompleter::argument_candidates(command) else {
 			styled.push((Style::new(), remainder.to_string()));
 			return;
 		};
@@ -80,10 +78,7 @@ impl ReedlineAdapter {
 		}
 		if !argument.is_empty() {
 			let argument_lower = argument.to_lowercase();
-			let argument_style = if accepted
-				.iter()
-				.any(|candidate| candidate.starts_with(&argument_lower))
-			{
+			let argument_style = if accepted.iter().any(|candidate| candidate.starts_with(&argument_lower)) {
 				Style::new().fg(Color::Green)
 			} else {
 				Style::new().fg(Color::Red)
@@ -149,10 +144,7 @@ impl ReedlineAdapter {
 			.iter()
 			.flat_map(|reply| {
 				let sent = age(reply.timestamp, now);
-				reply
-					.text
-					.lines()
-					.map(move |text| (text.trim(), sent.clone()))
+				reply.text.lines().map(move |text| (text.trim(), sent.clone()))
 			})
 			// A lone code fence carries nothing worth quoting.
 			.filter(|(text, _)| !text.is_empty() && !text.starts_with("```"))
@@ -190,8 +182,7 @@ impl Completer for ReedlineAdapter {
 		if let Some(suggestions) = self.reply_suggestions(line, pos) {
 			return CompletionResult::fresh(suggestions);
 		}
-		let completer =
-			crate::session::chat_helper::CommandCompleter::new(self.config.as_ref(), &self.role);
+		let completer = crate::session::chat_helper::CommandCompleter::new(self.config.as_ref(), &self.role);
 		let (start_pos, candidates) = completer.complete(line, pos);
 
 		let span_start = start_pos.min(pos);
@@ -258,14 +249,7 @@ impl Highlighter for ReedlineAdapter {
 }
 
 impl Hinter for ReedlineAdapter {
-	fn handle(
-		&mut self,
-		line: &str,
-		pos: usize,
-		history: &dyn History,
-		use_ansi_coloring: bool,
-		cwd: &str,
-	) -> String {
+	fn handle(&mut self, line: &str, pos: usize, history: &dyn History, use_ansi_coloring: bool, cwd: &str) -> String {
 		if let Ok(mut state) = self.line_state.lock() {
 			state.buffer = line.to_string();
 			state.cursor = pos;
@@ -273,10 +257,7 @@ impl Hinter for ReedlineAdapter {
 		std::hint::black_box(history);
 		std::hint::black_box(cwd);
 		let hint = if line.starts_with('/') {
-			let completer = crate::session::chat_helper::CommandCompleter::new(
-				self.config.as_ref(),
-				&self.role,
-			);
+			let completer = crate::session::chat_helper::CommandCompleter::new(self.config.as_ref(), &self.role);
 			completer.hint(line).unwrap_or_default()
 		} else if line.starts_with('>') {
 			// A quote buffer: a past quoted message's tail would only cover the
@@ -287,8 +268,7 @@ impl Hinter for ReedlineAdapter {
 		};
 		self.last_hint = hint.clone();
 		self.buffer_empty.store(line.is_empty(), Ordering::SeqCst);
-		self.hint_available
-			.store(!hint.is_empty(), Ordering::SeqCst);
+		self.hint_available.store(!hint.is_empty(), Ordering::SeqCst);
 		if use_ansi_coloring && !hint.is_empty() {
 			Style::new().dimmed().paint(hint).to_string()
 		} else {
@@ -301,11 +281,7 @@ impl Hinter for ReedlineAdapter {
 	}
 
 	fn next_hint_token(&self) -> String {
-		self.last_hint
-			.split_whitespace()
-			.next()
-			.unwrap_or("")
-			.to_string()
+		self.last_hint.split_whitespace().next().unwrap_or("").to_string()
 	}
 }
 
@@ -332,8 +308,7 @@ impl ReedlineAdapter {
 		if line.is_empty() {
 			return String::new();
 		}
-		let filter =
-			SearchFilter::from_text_search(CommandLineSearch::Prefix(line.to_string()), None);
+		let filter = SearchFilter::from_text_search(CommandLineSearch::Prefix(line.to_string()), None);
 		let query = SearchQuery::last_with_search(filter);
 		let Ok(results) = history.search(query) else {
 			return String::new();
@@ -342,10 +317,7 @@ impl ReedlineAdapter {
 			return String::new();
 		};
 		let command = &item.command_line;
-		command
-			.strip_prefix(line)
-			.map(str::to_string)
-			.unwrap_or_default()
+		command.strip_prefix(line).map(str::to_string).unwrap_or_default()
 	}
 }
 

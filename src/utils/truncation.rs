@@ -52,11 +52,7 @@ pub fn format_content_with_line_numbers(
 ) -> String {
 	if let Some((start, end)) = view_range {
 		// Handle view_range parameter with smart elision
-		let start_idx = if start == 0 {
-			0
-		} else {
-			start.saturating_sub(1)
-		}; // Convert to 0-indexed
+		let start_idx = if start == 0 { 0 } else { start.saturating_sub(1) }; // Convert to 0-indexed
 		let end_idx = if end == -1 {
 			lines.len()
 		} else {
@@ -66,16 +62,9 @@ pub fn format_content_with_line_numbers(
 		if start_idx >= lines.len() || start_idx > end_idx {
 			// Return error info for invalid ranges
 			return if start_idx >= lines.len() {
-				format!(
-					"Start line {} exceeds content length ({} lines)",
-					start,
-					lines.len()
-				)
+				format!("Start line {} exceeds content length ({} lines)", start, lines.len())
 			} else {
-				format!(
-					"Start line {} must be less than or equal to end line {}",
-					start, end
-				)
+				format!("Start line {} must be less than or equal to end line {}", start, end)
 			};
 		}
 
@@ -151,11 +140,7 @@ pub fn format_content_with_line_numbers(
 ///
 /// # Returns
 /// Formatted string with proper line numbers and smart truncation
-pub fn format_extracted_content_smart(
-	lines: &[&str],
-	start_line: usize,
-	max_display_lines: Option<usize>,
-) -> String {
+pub fn format_extracted_content_smart(lines: &[&str], start_line: usize, max_display_lines: Option<usize>) -> String {
 	let max_lines = max_display_lines.unwrap_or(50); // Default to 50 lines
 
 	if lines.len() <= max_lines {
@@ -212,12 +197,7 @@ pub fn truncate_tool_output_smart(content: &str, max_lines: usize, max_chars: us
 	} else if lines.len() > max_lines {
 		// Many lines: show first N lines + summary
 		let show_lines = max_lines.saturating_sub(1); // Reserve 1 line for summary
-		let mut result = lines
-			.iter()
-			.take(show_lines)
-			.cloned()
-			.collect::<Vec<_>>()
-			.join("\n");
+		let mut result = lines.iter().take(show_lines).cloned().collect::<Vec<_>>().join("\n");
 		result.push_str(&format!(
 			"\n... [{} more lines]",
 			lines.len().saturating_sub(show_lines)
@@ -284,10 +264,7 @@ const NOTICE_TAIL_SCAN_BYTES: usize = 4096;
 /// only place a notice of ours can be: scanning the whole body is exactly what
 /// let a payload that merely QUOTES a notice switch its own cap off.
 fn tail_carries_notice(content: &str) -> bool {
-	let from = floor_char_boundary(
-		content,
-		content.len().saturating_sub(NOTICE_TAIL_SCAN_BYTES),
-	);
+	let from = floor_char_boundary(content, content.len().saturating_sub(NOTICE_TAIL_SCAN_BYTES));
 	content[from..].contains(TRUNCATION_NOTICE_TAG)
 }
 
@@ -302,11 +279,7 @@ fn tail_carries_notice(content: &str) -> bool {
 /// the single biggest driver of truncation retry loops.
 ///
 /// Returns `(content, was_truncated)`. `max_tokens == 0` disables truncation.
-pub fn truncate_mcp_response_global(
-	content: &str,
-	max_tokens: usize,
-	tool_name: &str,
-) -> (String, bool) {
+pub fn truncate_mcp_response_global(content: &str, max_tokens: usize, tool_name: &str) -> (String, bool) {
 	if max_tokens == 0 {
 		return (content.to_string(), false);
 	}

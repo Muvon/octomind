@@ -58,8 +58,7 @@ fn serialization_round_trip() {
 		timeout: 45,
 	};
 	let serialized = toml::to_string(&config).expect("failed to serialize HookConfig");
-	let deserialized: HookConfig =
-		toml::from_str(&serialized).expect("failed to deserialize HookConfig round-trip");
+	let deserialized: HookConfig = toml::from_str(&serialized).expect("failed to deserialize HookConfig round-trip");
 	assert_eq!(deserialized.name, config.name);
 	assert_eq!(deserialized.bind, config.bind);
 	assert_eq!(deserialized.script, config.script);

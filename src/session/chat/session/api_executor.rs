@@ -40,8 +40,7 @@ fn completion_task(
 		_ => {
 			// Missing/mismatched state is uncertain. Treat the live plan as
 			// pre-existing so it cannot gain authority from missing metadata.
-			let mut resolved =
-				crate::supervisor::resolve::ResolvedTask::self_contained(task.to_string());
+			let mut resolved = crate::supervisor::resolve::ResolvedTask::self_contained(task.to_string());
 			resolved.plan_at_turn_start = live_plan.to_string();
 			resolved
 		}
@@ -87,8 +86,7 @@ fn current_turn_answer(turn_answers: &[String], max_tokens: usize) -> String {
 /// behavior is credited with the turn's API-call count as its cost.
 async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, delta: f64) {
 	let info = &chat_session.session.info;
-	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages)
-		.unwrap_or_default();
+	let request = crate::session::latest_real_user_task_content(&chat_session.session.messages).unwrap_or_default();
 	let answer = current_turn_answer(
 		&chat_session.turn_answers,
 		crate::supervisor::evaluate::EVOLUTION_ANSWER_TOKENS,
@@ -97,9 +95,7 @@ async fn reinforce_recalled(chat_session: &mut ChatSession, config: &Config, del
 		&info.name,
 		&crate::supervisor::learning::evolution::TurnVerdict {
 			delta,
-			api_calls: info
-				.total_api_calls
-				.saturating_sub(info.api_calls_at_turn_start) as u32,
+			api_calls: info.total_api_calls.saturating_sub(info.api_calls_at_turn_start) as u32,
 			request,
 			answer: &answer,
 		},
@@ -208,9 +204,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		chat_session.clear_active_memory_pack();
 	}
 	let mut memory_pack_rebuilt = false;
-	if config.supervisor.learning.enabled
-		&& (!chat_session.learning_injected || chat_session.pending_recall)
-	{
+	if config.supervisor.learning.enabled && (!chat_session.learning_injected || chat_session.pending_recall) {
 		let first_call = !chat_session.learning_injected;
 		chat_session.learning_injected = true;
 		chat_session.pending_recall = false;
@@ -218,10 +212,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// Same scope key extraction stores under, or recall reads a different dir.
 		let project = crate::supervisor::learning::evolution::project_name(None);
 		// Most recent user message drives query-based scoped retrieval.
-		let user_input =
-			crate::session::latest_real_user_task_content(&chat_session.session.messages)
-				.unwrap_or_default()
-				.to_string();
+		let user_input = crate::session::latest_real_user_task_content(&chat_session.session.messages)
+			.unwrap_or_default()
+			.to_string();
 		animation_manager.set_phase("Recalling lessons …").await;
 		let (block, selected) = crate::supervisor::learning::inject::retrieve_and_format(
 			config,
@@ -279,8 +272,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		// those first as attention decays), and its signature decides whether the
 		// anchor's goal is still the one being worked on — the user may have asked
 		// for something else since the last compaction wrote that goal.
-		let live_task =
-			crate::session::latest_real_user_task_content(&chat_session.session.messages);
+		let live_task = crate::session::latest_real_user_task_content(&chat_session.session.messages);
 		let constraints = crate::supervisor::recite::active_constraints(
 			&chat_session.session.messages,
 			chat_session.gate_task.as_ref(),
@@ -334,8 +326,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				}
 				note.push_str("</pay-attention>");
 				chat_session.add_system_managed_user_message(&note)?;
-				chat_session.pending_plan_signal =
-					Some(crate::supervisor::plan::PlanSignal::Reassess);
+				chat_session.pending_plan_signal = Some(crate::supervisor::plan::PlanSignal::Reassess);
 				crate::supervisor::notify(&format!(
 					"{} broken plan condition(s) — plan revision steered",
 					broken.len()
@@ -350,12 +341,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// specialist request. No signal means no planner call.
 	if config.supervisor.enabled && chat_session.pending_plan_signal.is_some() {
 		animation_manager.set_phase("Reconciling plan …").await;
-		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
-			chat_session,
-			config,
-			operation_rx.clone(),
-		)
-		.await
+		if let Err(error) =
+			crate::supervisor::plan::reconcile_after_actions(chat_session, config, operation_rx.clone()).await
 		{
 			crate::log_debug!("External plan reconciliation failed: {}", error);
 		}
@@ -366,30 +353,19 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// request crosses the model's usable ceiling, drop it rather than blocking the
 	// user's task; then re-check so unrelated injected state still fails closed.
 	if chat_session.active_memory_pack.is_some()
-		&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(
-			chat_session,
-			config,
-		)
-		.await
-		.is_err()
+		&& crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config)
+			.await
+			.is_err()
 	{
 		crate::log_debug!("Active memory pack dropped: insufficient context headroom");
 		chat_session.clear_active_memory_pack();
 	}
-	crate::session::chat::conversation_compression::ensure_context_within_ceiling(
-		chat_session,
-		config,
-	)
-	.await?;
+	crate::session::chat::conversation_compression::ensure_context_within_ceiling(chat_session, config).await?;
 	if memory_pack_rebuilt {
 		if let Some(pack) = chat_session.active_memory_pack.as_deref() {
 			let items = chat_session.recalled_refs.len() as u64;
 			let tokens = crate::session::estimate_tokens(pack) as u64;
-			chat_session
-				.session
-				.info
-				.learning_stats
-				.record_pack(items, tokens);
+			chat_session.session.info.learning_stats.record_pack(items, tokens);
 			crate::supervisor::stats::recall();
 			crate::supervisor::stats::memory_pack(items, tokens);
 			crate::supervisor::notify(&format!("active memory pack: {items} item(s)"));
@@ -408,12 +384,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// user/tool boundary for this new request.
 	let cache_manager = crate::session::cache::CacheManager::new();
 	let supports_caching = crate::session::model_supports_caching(&model);
-	if let Err(e) = cache_manager.check_and_apply_auto_cache_threshold(
-		&mut chat_session.session,
-		config,
-		supports_caching,
-		role,
-	) {
+	if let Err(e) =
+		cache_manager.check_and_apply_auto_cache_threshold(&mut chat_session.session, config, supports_caching, role)
+	{
 		crate::log_debug!("pre-request cache marker advance failed: {}", e);
 	}
 	// Materialize the active pack only for the provider request. It must never
@@ -425,13 +398,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// by `chat_completion_with_validation` below.
 	let schema = chat_session.schema.clone();
 	let model_profile = chat_session.model_profile(&config_clone);
-	let validation_params = ChatCompletionWithValidationParams::from_profile(
-		&chat_session.session.messages,
-		&model_profile,
-		&config_clone,
-	)
-	.with_full_context_tokens(true)
-	.with_cancellation_token(operation_rx.clone());
+	let validation_params =
+		ChatCompletionWithValidationParams::from_profile(&chat_session.session.messages, &model_profile, &config_clone)
+			.with_full_context_tokens(true)
+			.with_cancellation_token(operation_rx.clone());
 	let validation_params = if let Some(schema) = schema {
 		validation_params.with_schema(schema)
 	} else {
@@ -457,15 +427,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		Ok(response) => {
 			// CRITICAL FIX: Track exchange cost immediately after successful API call
 			// This ensures all API calls (with or without tool calls) have their costs tracked
-			if let Err(e) =
-				CostTracker::track_exchange_cost(chat_session, &response.exchange, config)
-			{
+			if let Err(e) = CostTracker::track_exchange_cost(chat_session, &response.exchange, config) {
 				if mode.is_terminal_mode() {
-					println!(
-						"{}: Failed to track exchange cost: {}",
-						"Warning".bright_yellow(),
-						e
-					);
+					println!("{}: Failed to track exchange cost: {}", "Warning".bright_yellow(), e);
 				}
 			}
 
@@ -514,17 +478,10 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// reconcile at the tool-result boundary; a final-message `phase_complete`
 	// crosses no such boundary, so without this the verifier would see plan state
 	// the manager never reconciled. Free no-op without a pending signal.
-	if config.supervisor.enabled
-		&& config.supervisor.plan.enabled
-		&& chat_session.pending_plan_signal.is_some()
-	{
+	if config.supervisor.enabled && config.supervisor.plan.enabled && chat_session.pending_plan_signal.is_some() {
 		animation_manager.set_phase("Reconciling plan …").await;
-		if let Err(error) = crate::supervisor::plan::reconcile_after_actions(
-			chat_session,
-			config,
-			operation_rx.clone(),
-		)
-		.await
+		if let Err(error) =
+			crate::supervisor::plan::reconcile_after_actions(chat_session, config, operation_rx.clone()).await
 		{
 			crate::log_debug!("External plan reconciliation failed: {}", error);
 		}
@@ -575,12 +532,8 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// hindsight (observe-only): score the turn's trace for "the user's next
 	// turn will be a correction" before the verify-gate judges the same turn;
 	// the gate verdict is recorded beside it below.
-	crate::supervisor::hindsight::observe(
-		config,
-		&chat_session.session.info.name,
-		&chat_session.session.messages,
-	)
-	.await;
+	crate::supervisor::hindsight::observe(config, &chat_session.session.info.name, &chat_session.session.messages)
+		.await;
 
 	// Supervisor verify-gate: every stop of a user-owned turn is verified before it is accepted.
 	// On gaps, inject an advisory and re-run the turn (bounded by max_iterations).
@@ -660,19 +613,12 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 		let stop = chat_session.last_self_report;
 		let hand_back = matches!(
 			stop,
-			Some(
-				crate::supervisor::detect::SelfReport::Blocked
-					| crate::supervisor::detect::SelfReport::NeedInput
-			)
+			Some(crate::supervisor::detect::SelfReport::Blocked | crate::supervisor::detect::SelfReport::NeedInput)
 		);
 		let actions = chat_session.evidence.render();
 		// Only a relevant pre-existing plan or a plan changed by this turn reaches
 		// the verifier. Unrelated old plan state remains alive but cannot add scope.
-		let plan = if plan_applies {
-			live_plan
-		} else {
-			String::new()
-		};
+		let plan = if plan_applies { live_plan } else { String::new() };
 		// Detached jobs that exited since the last pass are deferred results of
 		// recorded calls, so fold them before the verifier reads the ledger.
 		if let Some(session_id) = crate::session::context::current_session_id() {
@@ -709,9 +655,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				ground_truth.text.push_str(p);
 			}
 		}
-		let (historical_actions, grounds) = chat_session
-			.evidence
-			.verification_evidence(resolved_task.scope);
+		let (historical_actions, grounds) = chat_session.evidence.verification_evidence(resolved_task.scope);
 		let prior_gaps = chat_session.last_gate_gaps.clone();
 		crate::supervisor::stats::gate_run();
 		animation_manager.set_phase("Verifying completion …").await;
@@ -750,8 +694,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			match &verdict {
 				crate::supervisor::gate::GateVerdict::Pass => "pass",
 				crate::supervisor::gate::GateVerdict::Gaps(gaps)
-					if new_evidence
-						&& crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
+					if new_evidence && crate::supervisor::gate::gaps_unchanged(&prior_gaps, gaps) =>
 				{
 					"stall"
 				}
@@ -763,11 +706,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 			crate::supervisor::gate::GateVerdict::Pass => {
 				if plan_applies && !hand_back {
 					let summary = claim.as_deref().unwrap_or("Completion verified");
-					if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary)
-					{
+					if let Err(error) = crate::supervisor::plan::finalize_after_completion(summary) {
 						chat_session.gate_failed = true;
-						chat_session.learning_outcome =
-							crate::supervisor::learning::TrajectoryOutcome::Failed;
+						chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
 						crate::supervisor::stats::gate_fail();
 						crate::supervisor::notify(&format!(
 							"completion evidence passed, but plan finalization failed: {error}"
@@ -810,12 +751,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				} else {
 					"completion verified"
 				});
-				reinforce_recalled(
-					chat_session,
-					config,
-					if execution_verified { 0.05 } else { 0.0 },
-				)
-				.await;
+				reinforce_recalled(chat_session, config, if execution_verified { 0.05 } else { 0.0 }).await;
 			}
 			crate::supervisor::gate::GateVerdict::Gaps(gaps) => {
 				chat_session.pending_plan_signal = None;
@@ -829,12 +765,9 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					chat_session.gate_iterations = 0;
 					chat_session.last_gate_gaps.clear();
 					chat_session.gate_failed = true;
-					chat_session.learning_outcome =
-						crate::supervisor::learning::TrajectoryOutcome::Failed;
+					chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
 					crate::supervisor::stats::gate_stall();
-					let mut msg = String::from(
-						"verification did not converge — unchanged after new evidence",
-					);
+					let mut msg = String::from("verification did not converge — unchanged after new evidence");
 					for g in &gaps {
 						msg.push_str("\n- ");
 						msg.push_str(g);
@@ -876,8 +809,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 					.await;
 				}
 				chat_session.gate_failed = true;
-				chat_session.learning_outcome =
-					crate::supervisor::learning::TrajectoryOutcome::Failed;
+				chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Failed;
 				crate::supervisor::stats::gate_fail();
 				crate::log_debug!("Verify-gate: iterations exhausted; gaps remain");
 				// Name the gaps here too: this is the user's last word on the turn,
@@ -897,8 +829,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				// does, and only a later PASS clears the label. Nor is it evidence of
 				// failure: learning records it as Unknown, never as a proven failure.
 				chat_session.gate_failed = true;
-				chat_session.learning_outcome =
-					crate::supervisor::learning::TrajectoryOutcome::Unknown;
+				chat_session.learning_outcome = crate::supervisor::learning::TrajectoryOutcome::Unknown;
 				chat_session.gate_iterations += 1;
 				crate::log_debug!(
 					"Verify-gate: indeterminate: {} (iter {})",
@@ -914,9 +845,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 				) {
 					chat_session.add_system_managed_user_message(&note)?;
 					chat_session.last_self_report = None; // force the re-run to re-evaluate
-					crate::supervisor::notify(&format!(
-						"completion could not be verified ({reason}) — re-running"
-					));
+					crate::supervisor::notify(&format!("completion could not be verified ({reason}) — re-running"));
 					return Box::pin(execute_api_call_and_process_response(
 						chat_session,
 						config,
@@ -968,12 +897,7 @@ pub async fn execute_api_call_and_process_response<S: OutputSink>(
 	// A background fold still in flight at turn end: collect and apply it so
 	// the session persists compacted — replace only, never auto-continue (no
 	// agent call is made here; the summary was already paid for).
-	match crate::session::chat::conversation_compression::settle_pending_fold(
-		chat_session,
-		&config_clone,
-	)
-	.await
-	{
+	match crate::session::chat::conversation_compression::settle_pending_fold(chat_session, &config_clone).await {
 		Ok(true) => {
 			if let Err(error) = chat_session.save() {
 				crate::log_debug!("Session save after settled fold failed: {}", error);

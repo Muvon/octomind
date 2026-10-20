@@ -22,10 +22,7 @@ fn test_mcp_tool_result_is_error() {
 		"test_id".to_string(),
 		"Success message".to_string(),
 	);
-	assert!(
-		!success_result.is_error(),
-		"Success result should not be an error"
-	);
+	assert!(!success_result.is_error(), "Success result should not be an error");
 
 	// Test error result
 	let error_result = McpToolResult::error(

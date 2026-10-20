@@ -104,10 +104,7 @@ fn message_tokens_count_name_tool_calls_and_images() {
 	let mut named = msg("assistant", "text");
 	named.name = Some("read_file".to_string());
 	// name + 1 overhead token, per the OpenAI formula.
-	assert_eq!(
-		estimate_message_tokens(&named),
-		base + estimate_tokens("read_file") + 1
-	);
+	assert_eq!(estimate_message_tokens(&named), base + estimate_tokens("read_file") + 1);
 
 	let mut with_tools = msg("assistant", "text");
 	with_tools.tool_calls = Some(serde_json::json!([{"name": "shell", "args": {"cmd": "ls"}}]));
@@ -177,8 +174,7 @@ fn truncate_of_empty_input_stays_empty() {
 fn message_tokens_count_thinking() {
 	let base = estimate_message_tokens(&msg("assistant", "text"));
 	let mut with_thinking = msg("assistant", "text");
-	with_thinking.thinking =
-		Some(serde_json::json!({"reasoning": "deep thoughts about the problem"}));
+	with_thinking.thinking = Some(serde_json::json!({"reasoning": "deep thoughts about the problem"}));
 	assert!(estimate_message_tokens(&with_thinking) > base);
 }
 
@@ -220,8 +216,7 @@ fn full_context_tool_overhead_is_linear_per_tool() {
 
 fn template_config() -> crate::config::Config {
 	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../config-templates/default.toml"))
-			.expect("parse default config template");
+		toml::from_str(include_str!("../../config-templates/default.toml")).expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -244,10 +239,7 @@ async fn threshold_validation_rejects_a_tiny_threshold() {
 		.await
 		.expect_err("threshold of 1 must be rejected");
 	let message = format!("{err:#}");
-	assert!(
-		message.contains("max_session_tokens_threshold (1)"),
-		"{message}"
-	);
+	assert!(message.contains("max_session_tokens_threshold (1)"), "{message}");
 	assert!(message.contains("role 'assistant'"), "{message}");
 }
 
@@ -289,9 +281,7 @@ fn model_replays_thinking_comes_from_the_provider() {
 	assert!(!model_replays_thinking("moonshot:kimi-k2-turbo"));
 	assert!(!model_replays_thinking("ollama:minimax-m3"));
 	assert!(!model_replays_thinking("alibaba:deepseek-v4-flash-0731"));
-	assert!(!model_replays_thinking(
-		"openrouter:deepseek/deepseek-v4-flash-0731"
-	));
+	assert!(!model_replays_thinking("openrouter:deepseek/deepseek-v4-flash-0731"));
 	assert!(!model_replays_thinking("anthropic:claude-opus-5"));
 	assert!(!model_replays_thinking("octohub:auto"));
 }
@@ -303,10 +293,7 @@ fn sent_estimate_counts_thinking_only_where_the_provider_replays_it() {
 	message.thinking = Some(serde_json::json!({"content": reasoning, "tokens": 2000}));
 	let without = estimate_message_tokens(&msg("assistant", "short answer"));
 	let stored = estimate_message_tokens(&message);
-	assert!(
-		stored > without + 1000,
-		"stored size still carries the reasoning"
-	);
+	assert!(stored > without + 1000, "stored size still carries the reasoning");
 
 	let dropped = estimate_sent_message_tokens(&message, "alibaba:deepseek-v4-flash-0731");
 	assert_eq!(

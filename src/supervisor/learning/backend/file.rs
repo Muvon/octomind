@@ -20,10 +20,7 @@ fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<()> {
 	let dir = path
 		.parent()
 		.ok_or_else(|| anyhow::anyhow!("learning file has no parent: {}", path.display()))?;
-	let name = path
-		.file_name()
-		.and_then(|value| value.to_str())
-		.unwrap_or("memory");
+	let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("memory");
 	for _ in 0..32 {
 		let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
 		let temporary = dir.join(format!(".{name}.{}.{sequence}.tmp", std::process::id()));
@@ -47,10 +44,7 @@ fn atomic_write(path: &std::path::Path, content: &[u8]) -> Result<()> {
 		}
 		return result.map_err(Into::into);
 	}
-	anyhow::bail!(
-		"could not reserve temporary learning file in {}",
-		dir.display()
-	)
+	anyhow::bail!("could not reserve temporary learning file in {}", dir.display())
 }
 
 /// Reverse the `store` escaping of the quoted YAML string values: `\"` -> `"`,
@@ -86,9 +80,7 @@ fn unescape(s: &str) -> String {
 /// line-based, so an unescaped newline would split one value across lines and
 /// corrupt the record. Exact inverse of `unescape`.
 fn escape(s: &str) -> String {
-	s.replace('\\', "\\\\")
-		.replace('"', "\\\"")
-		.replace('\n', "\\n")
+	s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
 }
 
 fn parse_string_list(value: &str) -> Vec<String> {
@@ -130,10 +122,7 @@ impl FileBackend {
 			// `trim_matches('"')` would greedily eat an escaped trailing quote
 			// (`"…\""`) and leave a dangling backslash for `unescape` to mangle.
 			let val = val.trim();
-			let val = val
-				.strip_prefix('"')
-				.and_then(|v| v.strip_suffix('"'))
-				.unwrap_or(val);
+			let val = val.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(val);
 			match key {
 				"title" => lesson.title = unescape(val),
 				"content" => lesson.content = unescape(val),
@@ -245,9 +234,8 @@ impl FileBackend {
 		pattern_terms.sort();
 		pattern_terms.dedup();
 		let stopwords = [
-			"about", "after", "before", "could", "from", "have", "into", "memory", "right",
-			"should", "their", "there", "these", "this", "using", "what", "when", "where", "which",
-			"with", "would", "your",
+			"about", "after", "before", "could", "from", "have", "into", "memory", "right", "should", "their", "there",
+			"these", "this", "using", "what", "when", "where", "which", "with", "would", "your",
 		];
 		let mut intent_terms: Vec<String> = intent
 			.split(|character: char| !character.is_alphanumeric())
@@ -267,19 +255,11 @@ impl FileBackend {
 		};
 		let mut ranked = content
 			.lines()
-			.filter_map(|line| {
-				serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line).ok()
-			})
+			.filter_map(|line| serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line).ok())
 			.filter_map(|entry| {
 				let text = entry.search_text();
-				let pattern_hits = pattern_terms
-					.iter()
-					.filter(|term| text.contains(term.as_str()))
-					.count();
-				let intent_hits = intent_terms
-					.iter()
-					.filter(|term| text.contains(term.as_str()))
-					.count();
+				let pattern_hits = pattern_terms.iter().filter(|term| text.contains(term.as_str())).count();
+				let intent_hits = intent_terms.iter().filter(|term| text.contains(term.as_str())).count();
 				// LLM-prepared patterns are already selective. Raw follow-up intent
 				// needs two independent terms so one generic word cannot page noise.
 				(pattern_hits > 0 || intent_hits >= 2).then_some((
@@ -290,12 +270,10 @@ impl FileBackend {
 			})
 			.collect::<Vec<_>>();
 		ranked.sort_by(|left, right| {
-			right.0.cmp(&left.0).then_with(|| {
-				right
-					.1
-					.partial_cmp(&left.1)
-					.unwrap_or(std::cmp::Ordering::Equal)
-			})
+			right
+				.0
+				.cmp(&left.0)
+				.then_with(|| right.1.partial_cmp(&left.1).unwrap_or(std::cmp::Ordering::Equal))
 		});
 
 		let mut recalled = Vec::new();
@@ -322,9 +300,7 @@ impl FileBackend {
 	fn find_archived_by_content(dir: &std::path::Path, content: &str) -> Option<Lesson> {
 		let catalog = std::fs::read_to_string(dir.join(".archive").join("catalog.jsonl")).ok()?;
 		for line in catalog.lines().rev() {
-			let Ok(entry) =
-				serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line)
-			else {
+			let Ok(entry) = serde_json::from_str::<super::super::retention::ArchiveCatalogEntry>(line) else {
 				continue;
 			};
 			let path = entry.path(dir);
@@ -509,8 +485,7 @@ impl FileBackend {
 			for entry in std::fs::read_dir(&dir)? {
 				let entry = entry?;
 				let path = entry.path();
-				if path.extension().is_some_and(|e| e == "md")
-					&& path.file_stem().and_then(|s| s.to_str()) == Some(id)
+				if path.extension().is_some_and(|e| e == "md") && path.file_stem().and_then(|s| s.to_str()) == Some(id)
 				{
 					std::fs::remove_file(&path)?;
 					return Ok(());
@@ -534,8 +509,7 @@ impl FileBackend {
 	/// Only detached cross-store passes (recurrence promotion, store
 	/// synthesis) read the whole corpus; nothing on the user-turn path does.
 	pub(crate) async fn retrieve_store(&self) -> Result<Vec<Lesson>> {
-		let mut lessons =
-			Self::read_lessons_sorted(&crate::directories::get_global_learning_dir()?);
+		let mut lessons = Self::read_lessons_sorted(&crate::directories::get_global_learning_dir()?);
 		let root = crate::directories::get_octomind_data_dir()?.join("learning");
 		let Ok(projects) = std::fs::read_dir(&root) else {
 			return Ok(lessons);
@@ -585,34 +559,20 @@ impl FileBackend {
 				.flatten()
 				.any(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
 		});
-		hot || std::fs::metadata(dir.join(".archive").join("catalog.jsonl"))
-			.is_ok_and(|metadata| metadata.len() > 0)
+		hot || std::fs::metadata(dir.join(".archive").join("catalog.jsonl")).is_ok_and(|metadata| metadata.len() > 0)
 	}
 
-	pub(crate) async fn reinforce(
-		&self,
-		content: &str,
-		role: &str,
-		project: &str,
-		delta: f64,
-	) -> Result<()> {
+	pub(crate) async fn reinforce(&self, content: &str, role: &str, project: &str, delta: f64) -> Result<()> {
 		// Find the recalled entry (scoped first, then global) by content.
 		let mut entries = Self::read_lessons_sorted(&Self::learning_dir(role, project)?);
 		entries.extend(Self::read_lessons_sorted(
-			&crate::directories::get_global_learning_dir()?,
+			&crate::directories::get_global_learning_dir()?
 		));
 		let mut entry = entries
 			.into_iter()
 			.find(|l| l.content.trim() == content.trim())
-			.or_else(|| {
-				Self::find_archived_by_content(&Self::learning_dir(role, project).ok()?, content)
-			})
-			.or_else(|| {
-				Self::find_archived_by_content(
-					&crate::directories::get_global_learning_dir().ok()?,
-					content,
-				)
-			});
+			.or_else(|| Self::find_archived_by_content(&Self::learning_dir(role, project).ok()?, content))
+			.or_else(|| Self::find_archived_by_content(&crate::directories::get_global_learning_dir().ok()?, content));
 		let Some(mut entry) = entry.take() else {
 			return Ok(());
 		};
@@ -633,21 +593,12 @@ impl FileBackend {
 		} else {
 			entry.importance = new_importance;
 			self.store(&entry).await?; // same file_id → overwrites in place
-			crate::log_debug!(
-				"Reinforce: {} importance -> {:.2}",
-				entry.content,
-				new_importance
-			);
+			crate::log_debug!("Reinforce: {} importance -> {:.2}", entry.content, new_importance);
 		}
 		Ok(())
 	}
 
-	pub(crate) async fn prune_stale(
-		&self,
-		role: &str,
-		project: &str,
-		decay_days: u64,
-	) -> Result<()> {
+	pub(crate) async fn prune_stale(&self, role: &str, project: &str, decay_days: u64) -> Result<()> {
 		if decay_days == 0 {
 			return Ok(());
 		}
@@ -771,8 +722,7 @@ fn expand_ranked_with_links(all: &[Lesson], ranked: &[(f32, usize)], limit: usiz
 	for (index, lesson) in all.iter().enumerate() {
 		by_id.insert(lesson.file_id(), index);
 	}
-	let mut backlinks: std::collections::HashMap<&str, Vec<usize>> =
-		std::collections::HashMap::new();
+	let mut backlinks: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
 	for (index, lesson) in all.iter().enumerate() {
 		for target in &lesson.related {
 			backlinks.entry(target.as_str()).or_default().push(index);
@@ -793,10 +743,7 @@ fn expand_ranked_with_links(all: &[Lesson], ranked: &[(f32, usize)], limit: usiz
 			break;
 		}
 
-		let forward = all[root]
-			.related
-			.iter()
-			.filter_map(|id| by_id.get(id).copied());
+		let forward = all[root].related.iter().filter_map(|id| by_id.get(id).copied());
 		let reverse = backlinks
 			.get(root_id.as_str())
 			.into_iter()
@@ -838,8 +785,8 @@ fn rank_by_keywords(lessons: &[Lesson], patterns: &[String]) -> Vec<usize> {
 		return Vec::new();
 	}
 	const STOPWORDS: &[&str] = &[
-		"about", "after", "before", "could", "from", "have", "into", "should", "their", "there",
-		"these", "this", "using", "what", "when", "where", "which", "with", "would", "your",
+		"about", "after", "before", "could", "from", "have", "into", "should", "their", "there", "these", "this",
+		"using", "what", "when", "where", "which", "with", "would", "your",
 	];
 	let patterns_lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
 	let mut scored: Vec<(usize, usize)> = lessons
@@ -862,10 +809,7 @@ fn rank_by_keywords(lessons: &[Lesson], patterns: &[String]) -> Vec<usize> {
 					.collect();
 				terms.sort_unstable();
 				terms.dedup();
-				let term_hits = terms
-					.into_iter()
-					.filter(|term| haystack.contains(term))
-					.count();
+				let term_hits = terms.into_iter().filter(|term| haystack.contains(term)).count();
 				// One generic shared word ("summary", "query", "model") is
 				// not sparse evidence. Require two concepts when the exact phrase
 				// is absent; asymmetric RRF keeps this fallback secondary to dense.
@@ -908,17 +852,12 @@ fn pool_normalize(chunk_vecs: &[&[f32]]) -> Vec<f32> {
 /// Score every memory against the intent under one explicit dense policy.
 /// Results are descending and remain one-to-one with memories; admission
 /// thresholds belong to the caller because benchmarks need the raw scores.
-async fn cosine_scores(
-	lessons: &[Lesson],
-	intent: &str,
-	scoring: DenseScoring,
-) -> Result<Vec<(f32, usize)>> {
+async fn cosine_scores(lessons: &[Lesson], intent: &str, scoring: DenseScoring) -> Result<Vec<(f32, usize)>> {
 	// Query gets the same no-truncation treatment as lessons: a within-cap query
 	// embeds as one vector — kept on `embed`, which deliberately doesn't persist
 	// high-volume per-turn input to the disk cache — while an oversized query is
 	// chunked and mean-pooled so its tail isn't lost.
-	let intent_chunks =
-		crate::embeddings::chunk_to_token_limit(intent, crate::embeddings::EMBED_MAX_INPUT_TOKENS);
+	let intent_chunks = crate::embeddings::chunk_to_token_limit(intent, crate::embeddings::EMBED_MAX_INPUT_TOKENS);
 	let intent_vec = if intent_chunks.len() > 1 {
 		let vecs = crate::embeddings::embed_many(&intent_chunks).await?;
 		let refs: Vec<&[f32]> = vecs.iter().map(|v| v.as_slice()).collect();
@@ -939,11 +878,7 @@ async fn cosine_scores(
 		}
 	}
 	let chunk_vecs = crate::embeddings::embed_many(&chunk_texts).await?;
-	debug_assert_eq!(
-		chunk_vecs.len(),
-		chunk_owner.len(),
-		"chunk vec/owner misalignment"
-	);
+	debug_assert_eq!(chunk_vecs.len(), chunk_owner.len(), "chunk vec/owner misalignment");
 
 	// Group each lesson's chunk vectors, then fold to one vector per lesson.
 	let mut per_lesson: Vec<Vec<&[f32]>> = vec![Vec::new(); lessons.len()];
@@ -974,12 +909,7 @@ fn semantic_retrieval_chunks(lesson: &Lesson, max_tokens: usize) -> Vec<String> 
 	let metadata = format!("{} {}", lesson.title, lesson.tags.join(" "));
 	let mut chunks = Vec::new();
 	let mut current = String::new();
-	for paragraph in lesson
-		.content
-		.lines()
-		.map(str::trim)
-		.filter(|line| !line.is_empty())
-	{
+	for paragraph in lesson.content.lines().map(str::trim).filter(|line| !line.is_empty()) {
 		for part in crate::embeddings::chunk_to_token_limit(paragraph, max_tokens) {
 			let prospective = if current.is_empty() {
 				part.clone()
@@ -1001,17 +931,9 @@ fn semantic_retrieval_chunks(lesson: &Lesson, max_tokens: usize) -> Vec<String> 
 		return vec![metadata];
 	}
 	if chunks.len() == 1 {
-		return vec![format!(
-			"{} {} {}",
-			lesson.title,
-			lesson.content,
-			lesson.tags.join(" ")
-		)];
+		return vec![format!("{} {} {}", lesson.title, lesson.content, lesson.tags.join(" "))];
 	}
-	chunks
-		.into_iter()
-		.map(|chunk| format!("{metadata}\n{chunk}"))
-		.collect()
+	chunks.into_iter().map(|chunk| format!("{metadata}\n{chunk}")).collect()
 }
 
 /// Reciprocal Rank Fusion: given multiple ranked lists of indices into
@@ -1031,10 +953,7 @@ fn reciprocal_rank_fusion(total: usize, rankings: &[&[usize]]) -> Vec<(f32, usiz
 	weighted_reciprocal_rank_fusion(total, &weighted)
 }
 
-fn weighted_reciprocal_rank_fusion(
-	total: usize,
-	rankings: &[(&[usize], f32)],
-) -> Vec<(f32, usize)> {
+fn weighted_reciprocal_rank_fusion(total: usize, rankings: &[(&[usize], f32)]) -> Vec<(f32, usize)> {
 	if total == 0 || rankings.is_empty() {
 		return Vec::new();
 	}

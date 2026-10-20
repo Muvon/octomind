@@ -71,8 +71,7 @@ impl Config {
 	/// Get a merged config for a specific role (for backward compatibility)
 	/// This creates a new Config with role-specific settings merged into system-wide settings
 	pub fn get_merged_config_for_role(&self, mode: &str) -> Config {
-		let (_role_config, role_mcp_config, _role_layers_config, commands, system_prompt) =
-			self.get_role_config(mode);
+		let (_role_config, role_mcp_config, _role_layers_config, commands, system_prompt) = self.get_role_config(mode);
 
 		let mut merged = self.clone();
 
@@ -81,15 +80,8 @@ impl Config {
 		// Also includes servers that auto-bind to this role.
 		let enabled_servers = self.get_enabled_servers_for_role(role_mcp_config, Some(mode));
 
-		crate::log_debug!(
-			"TRACE: Role '{}' server_refs: {:?}",
-			mode,
-			role_mcp_config.server_refs
-		);
-		crate::log_debug!(
-			"TRACE: Found {} enabled servers for role",
-			enabled_servers.len()
-		);
+		crate::log_debug!("TRACE: Role '{}' server_refs: {:?}", mode, role_mcp_config.server_refs);
+		crate::log_debug!("TRACE: Found {} enabled servers for role", enabled_servers.len());
 
 		for server in &enabled_servers {
 			crate::log_debug!("TRACE: Adding server '{}' to merged config", server.name());
@@ -101,11 +93,8 @@ impl Config {
 		//   1. add auto-bind names to server_refs
 		//   2. add "<name>:*" patterns to allowed_tools (only when non-empty = restricted mode)
 		// Both the returned McpConfig AND the role_map entry are patched so any reader sees the same truth.
-		let explicit_refs: std::collections::HashSet<&str> = role_mcp_config
-			.server_refs
-			.iter()
-			.map(|s| s.as_str())
-			.collect();
+		let explicit_refs: std::collections::HashSet<&str> =
+			role_mcp_config.server_refs.iter().map(|s| s.as_str()).collect();
 		let auto_bind_names: Vec<String> = enabled_servers
 			.iter()
 			.map(|s| s.name().to_string())
@@ -171,16 +160,9 @@ impl Config {
 			.iter()
 			.find(|server| server.name() == SERVER)
 			.cloned()
-			.unwrap_or_else(|| {
-				McpServerConfig::builtin(SERVER, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new())
-			});
+			.unwrap_or_else(|| McpServerConfig::builtin(SERVER, DEFAULT_MCP_TIMEOUT_SECONDS, Vec::new()));
 
-		if let Some(server) = merged
-			.mcp
-			.servers
-			.iter_mut()
-			.find(|server| server.name() == SERVER)
-		{
+		if let Some(server) = merged.mcp.servers.iter_mut().find(|server| server.name() == SERVER) {
 			// Empty means every tool on this server is already exposed. For a
 			// concrete role filter, union in the two interactive session tools.
 			if !server.tools().is_empty() {

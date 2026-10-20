@@ -18,9 +18,7 @@ use crate::config::CURRENT_CONFIG_VERSION;
 /// Backups sitting next to `config_path`. The naming scheme is octolib's, so
 /// tests here only ever ask whether a backup was made, never what it's called.
 fn backups(config_path: &Path) -> Vec<std::path::PathBuf> {
-	let parent = config_path
-		.parent()
-		.expect("config path must have a parent");
+	let parent = config_path.parent().expect("config path must have a parent");
 	fs::read_dir(parent)
 		.expect("config directory must be readable")
 		.map(|entry| entry.expect("directory entry must be readable").path())
@@ -71,18 +69,12 @@ fn v0_config_gets_stamped_and_upgraded() {
 		migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 		Some(6000)
 	);
-	assert_eq!(
-		migrated["compression"]["attention"]["enabled"].as_bool(),
-		Some(false)
-	);
+	assert_eq!(migrated["compression"]["attention"]["enabled"].as_bool(), Some(false));
 	assert_eq!(
 		migrated["compression"]["attention"]["governance"]["verify_hash"].as_bool(),
 		Some(true)
 	);
-	assert_eq!(
-		migrated["supervisor"]["model"]["max_tokens"].as_integer(),
-		Some(8192)
-	);
+	assert_eq!(migrated["supervisor"]["model"]["max_tokens"].as_integer(), Some(8192));
 	assert!(migrated["supervisor"]["model"]["name"].as_str().is_some());
 	assert!(migrated["supervisor"].get("delegate").is_none());
 	assert!(migrated["supervisor"].get("detectors").is_none());
@@ -105,14 +97,8 @@ enabled = true
 		.expect("v2 must migrate");
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	assert_eq!(
-		migrated["compression"]["attention"]["enabled"].as_bool(),
-		Some(true)
-	);
-	assert_eq!(
-		migrated["compression"]["attention"]["validator"].as_bool(),
-		Some(true)
-	);
+	assert_eq!(migrated["compression"]["attention"]["enabled"].as_bool(), Some(true));
+	assert_eq!(migrated["compression"]["attention"]["validator"].as_bool(), Some(true));
 	assert_eq!(
 		migrated["compression"]["attention"]["governance"]["enabled"].as_bool(),
 		Some(true)
@@ -121,8 +107,7 @@ enabled = true
 
 #[test]
 fn partial_unreleased_attention_table_uses_safe_field_defaults() {
-	let parsed: crate::config::CompressionAttentionConfig =
-		toml::from_str("enabled = true\n").unwrap();
+	let parsed: crate::config::CompressionAttentionConfig = toml::from_str("enabled = true\n").unwrap();
 	assert!(parsed.enabled);
 	assert!(parsed.validator);
 	assert!(parsed.telemetry);
@@ -174,9 +159,7 @@ max_revisions = 9
 	// Dead judge keys are removed, whatever the user had set them to.
 	assert!(migrated["supervisor"].get("delegate").is_none());
 	assert!(migrated["supervisor"].get("claim_check").is_none());
-	assert!(migrated["supervisor"]
-		.get("max_consecutive_steers")
-		.is_none());
+	assert!(migrated["supervisor"].get("max_consecutive_steers").is_none());
 }
 
 #[test]
@@ -204,14 +187,9 @@ sequential_threshold = 3
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 	assert!(migration.content.contains("# keep compression notes"));
 	assert!(migrated["compression"].get("hints_enabled").is_none());
-	assert!(migrated["compression"]
-		.get("hints_pressure_threshold")
-		.is_none());
+	assert!(migrated["compression"].get("hints_pressure_threshold").is_none());
 	assert!(migrated["compression"].get("hints_min_interval").is_none());
-	assert_eq!(
-		migrated["compression"]["knowledge_retention"].as_integer(),
-		Some(17)
-	);
+	assert_eq!(migrated["compression"]["knowledge_retention"].as_integer(), Some(17));
 	assert_eq!(
 		migrated["compression"]["analysis_findings_max_tokens"].as_integer(),
 		Some(6000)
@@ -247,10 +225,7 @@ target_ratio = 4.0
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
 	// The lowest level was where compression became eligible — it carries over.
-	assert_eq!(
-		migrated["compression"]["threshold"].as_integer(),
-		Some(80000)
-	);
+	assert_eq!(migrated["compression"]["threshold"].as_integer(), Some(80000));
 	assert!(migrated["compression"].get("pressure_levels").is_none());
 }
 
@@ -280,22 +255,13 @@ trajectory_max_tokens = 3072
 	assert_eq!(migration.to_version, CURRENT_CONFIG_VERSION);
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	assert!(migrated["supervisor"]["gate"]
-		.get("verifier_model")
-		.is_none());
-	assert_eq!(
-		migrated["supervisor"]["plan"]["enabled"].as_bool(),
-		Some(false)
-	);
+	assert!(migrated["supervisor"]["gate"].get("verifier_model").is_none());
+	assert_eq!(migrated["supervisor"]["plan"]["enabled"].as_bool(), Some(false));
 	assert!(migrated["supervisor"]["plan"].get("model").is_none());
 	// Hardcoded budgets and auto-adoption knobs are shed by v7.
-	assert!(migrated["supervisor"]["gate"]
-		.get("max_iterations")
-		.is_none());
+	assert!(migrated["supervisor"]["gate"].get("max_iterations").is_none());
 	assert!(migrated["supervisor"]["plan"].get("max_tokens").is_none());
-	assert!(migrated["supervisor"]["plan"]
-		.get("adoption_min_actions")
-		.is_none());
+	assert!(migrated["supervisor"]["plan"].get("adoption_min_actions").is_none());
 }
 
 #[test]
@@ -308,10 +274,7 @@ fn v3_without_pressure_levels_takes_template_threshold() {
 		.expect("v3 must migrate");
 
 	let migrated: toml::Value = toml::from_str(&migration.content).unwrap();
-	assert_eq!(
-		migrated["compression"]["threshold"].as_integer(),
-		Some(70000)
-	);
+	assert_eq!(migrated["compression"]["threshold"].as_integer(), Some(70000));
 }
 
 #[test]
@@ -364,10 +327,7 @@ ignore_cost = true
 	let model = migrated["compression"]["model"].as_table().unwrap();
 	assert!(!model.contains_key("ignore_cost"));
 	assert_eq!(model["max_tokens"].as_integer(), Some(16000));
-	assert_eq!(
-		migrated["compression"]["threshold"].as_integer(),
-		Some(70000)
-	);
+	assert_eq!(migrated["compression"]["threshold"].as_integer(), Some(70000));
 }
 
 #[test]
@@ -445,11 +405,7 @@ model = "openai:gpt-5-mini"
 
 #[test]
 fn future_version_is_rejected_rather_than_downgraded() {
-	let future = DEFAULT_CONFIG_TEMPLATE.replacen(
-		&format!("version = {CURRENT_CONFIG_VERSION}"),
-		"version = 99",
-		1,
-	);
+	let future = DEFAULT_CONFIG_TEMPLATE.replacen(&format!("version = {CURRENT_CONFIG_VERSION}"), "version = 99", 1);
 	let error = plan()
 		.migrate(&future, DEFAULT_CONFIG_TEMPLATE)
 		.expect_err("a newer config must not be rewritten");
@@ -465,9 +421,7 @@ fn invalid_toml_fails_before_any_write() {
 
 #[test]
 fn non_integer_version_is_rejected() {
-	assert!(plan()
-		.migrate("version = \"1\"\n", DEFAULT_CONFIG_TEMPLATE)
-		.is_err());
+	assert!(plan().migrate("version = \"1\"\n", DEFAULT_CONFIG_TEMPLATE).is_err());
 }
 
 #[test]
@@ -501,8 +455,7 @@ fn upgrade_is_idempotent_and_backs_up_once() {
 
 #[test]
 fn force_upgrade_errors_when_config_is_missing() {
-	let missing =
-		std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
+	let missing = std::env::temp_dir().join(format!("octomind-absent-{}.toml", uuid::Uuid::new_v4()));
 	assert!(force_upgrade_config(&missing).is_err());
 }
 // --- plan() structure -------------------------------------------------
@@ -541,9 +494,7 @@ fn a_sparse_config_at_the_current_version_is_left_untouched() {
 // --- individual steps, called directly on DocumentMut -----------------
 
 fn template_document() -> toml_edit::DocumentMut {
-	DEFAULT_CONFIG_TEMPLATE
-		.parse()
-		.expect("embedded template must parse")
+	DEFAULT_CONFIG_TEMPLATE.parse().expect("embedded template must parse")
 }
 
 fn user_document(content: &str) -> toml_edit::DocumentMut {
@@ -590,31 +541,23 @@ fn add_delegate_gate_creates_supervisor_from_template_on_empty_document() {
 #[test]
 fn add_delegate_gate_preserves_an_existing_supervisor_section() {
 	let template = template_document();
-	let mut document =
-		user_document("[supervisor]\nenabled = false\nmodel = \"openrouter:custom/model\"\n");
+	let mut document = user_document("[supervisor]\nenabled = false\nmodel = \"openrouter:custom/model\"\n");
 	add_delegate_gate(&mut document, &template).unwrap();
 
 	let supervisor = roundtrip(&document)["supervisor"].clone();
 	assert_eq!(supervisor["enabled"].as_bool(), Some(false));
-	assert_eq!(
-		supervisor["model"].as_str(),
-		Some("openrouter:custom/model")
-	);
+	assert_eq!(supervisor["model"].as_str(), Some("openrouter:custom/model"));
 }
 
 #[test]
 fn add_v3_required_fields_fills_gaps_without_overwriting() {
 	let template = template_document();
-	let mut document =
-		user_document("[compression]\nthreshold = 12345\nanalysis_findings_max_tokens = 99\n");
+	let mut document = user_document("[compression]\nthreshold = 12345\nanalysis_findings_max_tokens = 99\n");
 	add_v3_required_fields(&mut document, &template).unwrap();
 
 	let compression = roundtrip(&document)["compression"].clone();
 	assert_eq!(compression["threshold"].as_integer(), Some(12345));
-	assert_eq!(
-		compression["analysis_findings_max_tokens"].as_integer(),
-		Some(99)
-	);
+	assert_eq!(compression["analysis_findings_max_tokens"].as_integer(), Some(99));
 	assert_eq!(compression["attention"]["enabled"].as_bool(), Some(false));
 }
 
@@ -625,10 +568,7 @@ fn add_v3_required_fields_creates_compression_whole_on_empty_document() {
 	add_v3_required_fields(&mut document, &template).unwrap();
 
 	let compression = roundtrip(&document)["compression"].clone();
-	assert_eq!(
-		compression["analysis_findings_max_tokens"].as_integer(),
-		Some(6000)
-	);
+	assert_eq!(compression["analysis_findings_max_tokens"].as_integer(), Some(6000));
 	assert!(compression["attention"].is_table());
 }
 
@@ -636,8 +576,8 @@ fn add_v3_required_fields_creates_compression_whole_on_empty_document() {
 fn collapse_pressure_levels_keeps_an_existing_threshold_and_drops_the_ladder() {
 	let template = template_document();
 	let mut document = user_document(
-			"[compression]\nthreshold = 50000\n\n[[compression.pressure_levels]]\nthreshold = 80000\ntarget_ratio = 2.0\n",
-		);
+		"[compression]\nthreshold = 50000\n\n[[compression.pressure_levels]]\nthreshold = 80000\ntarget_ratio = 2.0\n",
+	);
 	collapse_pressure_levels(&mut document, &template).unwrap();
 
 	let compression = roundtrip(&document)["compression"].clone();
@@ -696,17 +636,13 @@ fn add_v5_supervisor_fields_merges_gate_and_plan_into_a_partial_supervisor() {
 #[test]
 fn add_v5_supervisor_fields_never_overwrites_custom_gate_values() {
 	let template = template_document();
-	let mut document = user_document(
-		"[supervisor.gate]\nenabled = false\nverifier_model = \"openai:custom-verifier\"\n",
-	);
+	let mut document =
+		user_document("[supervisor.gate]\nenabled = false\nverifier_model = \"openai:custom-verifier\"\n");
 	add_v5_supervisor_fields(&mut document, &template).unwrap();
 
 	let gate = roundtrip(&document)["supervisor"]["gate"].clone();
 	assert_eq!(gate["enabled"].as_bool(), Some(false));
-	assert_eq!(
-		gate["verifier_model"].as_str(),
-		Some("openai:custom-verifier")
-	);
+	assert_eq!(gate["verifier_model"].as_str(), Some("openai:custom-verifier"));
 	assert!(gate.get("max_tokens").is_none());
 }
 
@@ -789,10 +725,7 @@ max_inject = 4
 
 	let gate = supervisor["gate"].clone();
 	assert_eq!(gate["enabled"].as_bool(), Some(true));
-	assert_eq!(
-		gate["verifier_model"].as_str(),
-		Some("openai:custom-verifier")
-	);
+	assert_eq!(gate["verifier_model"].as_str(), Some("openai:custom-verifier"));
 	assert_eq!(gate["max_tokens"].as_integer(), Some(1024));
 	for key in [
 		"max_iterations",
@@ -831,8 +764,8 @@ fn remove_v7_supervisor_judges_is_a_noop_without_supervisor() {
 fn remove_v8_compression_ignore_cost_drops_only_that_key() {
 	let template = template_document();
 	let mut document = user_document(
-			"[compression.decision]\nmodel = \"openai:gpt-5-mini\"\nmax_tokens = 16000\nignore_cost = true\n",
-		);
+		"[compression.decision]\nmodel = \"openai:gpt-5-mini\"\nmax_tokens = 16000\nignore_cost = true\n",
+	);
 	remove_v8_compression_ignore_cost(&mut document, &template).unwrap();
 
 	let decision = roundtrip(&document)["compression"]["decision"].clone();
@@ -867,9 +800,8 @@ fn remove_v8_compression_ignore_cost_tolerates_missing_or_malformed_sections() {
 #[test]
 fn add_v9_adaptive_condense_adds_the_switch_without_touching_existing_values() {
 	let template = template_document();
-	let mut document = user_document(
-			"[supervisor.condense]\nenabled = true\ntokens_threshold = 4321\nmodel = \"anthropic:custom\"\n",
-		);
+	let mut document =
+		user_document("[supervisor.condense]\nenabled = true\ntokens_threshold = 4321\nmodel = \"anthropic:custom\"\n");
 	add_v9_adaptive_condense(&mut document, &template).unwrap();
 
 	let condense = roundtrip(&document)["supervisor"]["condense"].clone();
@@ -882,8 +814,7 @@ fn add_v9_adaptive_condense_adds_the_switch_without_touching_existing_values() {
 #[test]
 fn add_v9_adaptive_condense_never_overwrites_an_existing_adaptive_value() {
 	let template = template_document();
-	let mut document =
-		user_document("[supervisor.condense]\nadaptive = true\ntokens_threshold = 1000\n");
+	let mut document = user_document("[supervisor.condense]\nadaptive = true\ntokens_threshold = 1000\n");
 	add_v9_adaptive_condense(&mut document, &template).unwrap();
 	// Running the step twice must stay a no-op for user-set values.
 	add_v9_adaptive_condense(&mut document, &template).unwrap();
@@ -910,9 +841,7 @@ fn remove_v10_learning_backends_tolerates_missing_sections() {
 	remove_v10_learning_backends(&mut empty, &template).unwrap();
 	assert!(empty.as_table().is_empty());
 
-	let mut document = user_document(
-		"[supervisor.learning]\nenabled = true\nbackend = \"mcp\"\nstore = \"bad\"\n",
-	);
+	let mut document = user_document("[supervisor.learning]\nenabled = true\nbackend = \"mcp\"\nstore = \"bad\"\n");
 	remove_v10_learning_backends(&mut document, &template).unwrap();
 	let learning = roundtrip(&document)["supervisor"]["learning"]
 		.as_table()
@@ -997,34 +926,12 @@ gate = true
 
 #[test]
 fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
-	for enabled in [
-		"authorizer",
-		"condense",
-		"distill",
-		"plan",
-		"gate",
-		"evolution",
-	] {
-		let flags = [
-			"authorizer",
-			"condense",
-			"distill",
-			"plan",
-			"gate",
-			"evolution",
-		]
-		.map(|key| {
-			format!(
-				"# {key} preference\n{key} = {} # {key} rationale\n",
-				key == enabled
-			)
-		})
-		.concat();
+	for enabled in ["authorizer", "condense", "distill", "plan", "gate", "evolution"] {
+		let flags = ["authorizer", "condense", "distill", "plan", "gate", "evolution"]
+			.map(|key| format!("# {key} preference\n{key} = {} # {key} rationale\n", key == enabled))
+			.concat();
 		let original = format!("version = 21\n# custom decision settings\n[supervisor.evaluate]\n# custom decision model\nmodel = \"typesafe:jev-latest\" # preserve me\nrecall = true\nskills = true\ncapabilities = true\ncompression = true\n{flags}");
-		let migration = plan()
-			.migrate(&original, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.unwrap();
+		let migration = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
 		assert_eq!(value["version"].as_integer(), Some(22));
 		assert!(value
@@ -1034,23 +941,12 @@ fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
 		assert_eq!(decision.model.as_deref(), Some("typesafe:jev-latest"));
 		assert!(
-			decision.supervisor
-				&& decision.recall
-				&& decision.skills
-				&& decision.capabilities
-				&& decision.compression
+			decision.supervisor && decision.recall && decision.skills && decision.capabilities && decision.compression
 		);
 		assert!(migration.content.contains("# preserve me"));
 		assert!(migration.content.contains("# custom decision model"));
 		assert!(migration.content.contains("# custom decision settings"));
-		for key in [
-			"authorizer",
-			"condense",
-			"distill",
-			"plan",
-			"gate",
-			"evolution",
-		] {
+		for key in ["authorizer", "condense", "distill", "plan", "gate", "evolution"] {
 			assert!(migration.content.contains(&format!("# {key} preference")));
 			assert!(migration.content.contains(&format!("# {key} rationale")));
 		}
@@ -1059,14 +955,8 @@ fn v22_moves_values_and_comments_and_ors_each_supervisor_switch() {
 
 #[test]
 fn v22_fills_missing_flags_and_preserves_absent_or_empty_new_model() {
-	for existing in [
-		"version = 21\n",
-		"version = 21\n[supervisor.evaluate]\ngate = false\n",
-	] {
-		let migration = plan()
-			.migrate(existing, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.unwrap();
+	for existing in ["version = 21\n", "version = 21\n[supervisor.evaluate]\ngate = false\n"] {
+		let migration = plan().migrate(existing, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
 		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
 		assert!(
@@ -1079,10 +969,7 @@ fn v22_fills_missing_flags_and_preserves_absent_or_empty_new_model() {
 	}
 	for model in ["", "model = \"\"\n"] {
 		let original = format!("version = 21\n[decision]\n{model}supervisor = true\n");
-		let migration = plan()
-			.migrate(&original, DEFAULT_CONFIG_TEMPLATE)
-			.unwrap()
-			.unwrap();
+		let migration = plan().migrate(&original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 		let value: toml::Value = toml::from_str(&migration.content).unwrap();
 		let decision: crate::config::DecisionConfig = value["decision"].clone().try_into().unwrap();
 		assert_eq!(
@@ -1112,13 +999,15 @@ fn v22_rejects_malformed_values_and_conflicting_tables() {
 		"[decision]\nsupervisor = false\n[supervisor.evaluate]\nevolution = true",
 		"[decision]\nsupervisor = true\n[supervisor.evaluate]\ngate = false",
 	] {
-		assert!(plan().migrate(&format!("version = 21\n{body}\n"), DEFAULT_CONFIG_TEMPLATE).is_err(), "{body}");
+		assert!(
+			plan()
+				.migrate(&format!("version = 21\n{body}\n"), DEFAULT_CONFIG_TEMPLATE)
+				.is_err(),
+			"{body}"
+		);
 	}
 	let original = "version = 21\n[decision]\nrecall = true\nsupervisor = true\n[supervisor.evaluate]\nrecall = true\ngate = true\n";
-	let migration = plan()
-		.migrate(original, DEFAULT_CONFIG_TEMPLATE)
-		.unwrap()
-		.unwrap();
+	let migration = plan().migrate(original, DEFAULT_CONFIG_TEMPLATE).unwrap().unwrap();
 	let value: toml::Value = toml::from_str(&migration.content).unwrap();
 	assert_eq!(value["decision"]["recall"].as_bool(), Some(true));
 	assert_eq!(value["decision"]["supervisor"].as_bool(), Some(true));

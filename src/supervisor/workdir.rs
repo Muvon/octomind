@@ -111,10 +111,7 @@ fn git_fingerprint(root: &Path) -> Option<u64> {
 			continue;
 		};
 		md.len().hash(&mut h);
-		let readable = md.is_file()
-			&& md.len() <= CONTENT_BYTE_CAP
-			&& budget >= md.len()
-			&& reads < CONTENT_FILE_CAP;
+		let readable = md.is_file() && md.len() <= CONTENT_BYTE_CAP && budget >= md.len() && reads < CONTENT_FILE_CAP;
 		if readable {
 			if let Ok(bytes) = std::fs::read(&full) {
 				budget = budget.saturating_sub(bytes.len() as u64);
@@ -163,10 +160,7 @@ fn walk_fingerprint(root: &Path, cap: usize) -> Option<u64> {
 			let Ok(md) = std::fs::symlink_metadata(&path) else {
 				continue;
 			};
-			path.strip_prefix(root)
-				.unwrap_or(&path)
-				.to_string_lossy()
-				.hash(&mut h);
+			path.strip_prefix(root).unwrap_or(&path).to_string_lossy().hash(&mut h);
 			if md.is_dir() {
 				stack.push(path);
 				continue;

@@ -23,9 +23,7 @@
 use super::*;
 use crate::mcp::core::plan::sidecar_start;
 use crate::session::chat::session::ChatSession;
-use crate::session::chat::test_support::{
-	fake_provider_config, final_response, spawn_stub, ENV_LOCK,
-};
+use crate::session::chat::test_support::{fake_provider_config, final_response, spawn_stub, ENV_LOCK};
 
 fn plan_directive(title: &str) -> crate::supervisor::plan::PlanTaskDirective {
 	crate::supervisor::plan::PlanTaskDirective {
@@ -100,10 +98,9 @@ async fn test_done_compression_end_to_end() {
 	let before = session.session.messages.len();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done)
+		.await
+		.expect("compression pipeline");
 	assert!(compressed, "forced /done compression must compress");
 
 	// The drained turns were replaced by summary/continuation plumbing that
@@ -144,15 +141,9 @@ async fn test_unparseable_summary_errors_and_keeps_messages() {
 	let before = session.session.messages.clone();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let result =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done).await;
+	let result = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done).await;
 	assert!(result.is_err(), "unparseable summary must error, not drain");
-	let after: Vec<String> = session
-		.session
-		.messages
-		.iter()
-		.map(|m| m.content.clone())
-		.collect();
+	let after: Vec<String> = session.session.messages.iter().map(|m| m.content.clone()).collect();
 	let before: Vec<String> = before.iter().map(|m| m.content.clone()).collect();
 	assert_eq!(before, after, "failed compression must not touch messages");
 
@@ -172,12 +163,10 @@ async fn test_compression_cancelled_before_api_call() {
 	let (tx, rx) = tokio::sync::watch::channel(false);
 	tx.send(true).expect("signal cancellation");
 
-	let result =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done).await;
+	let result = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Done).await;
 	let err = result.expect_err("cancelled compression must error");
 	assert!(
-		err.downcast_ref::<crate::session::cancellation::Cancelled>()
-			.is_some(),
+		err.downcast_ref::<crate::session::cancellation::Cancelled>().is_some(),
 		"expected Cancelled, got: {err}"
 	);
 
@@ -194,10 +183,9 @@ async fn test_automatic_below_threshold_is_a_noop() {
 	let before = session.session.messages.len();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("no-op check");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("no-op check");
 	assert!(!compressed);
 	assert_eq!(session.session.messages.len(), before);
 }
@@ -237,10 +225,9 @@ async fn verify_midturn_e2e_mid_task_automatic_compression_keeps_user_request() 
 	session.session.info.model = "ollama:fake-model".to_string();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(compressed, "mid-task automatic compression must compress");
 
 	let wrapper = session
@@ -299,14 +286,10 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 	session.session.info.model = "ollama:fake-model".to_string();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
-	assert!(
-		compressed,
-		"fresh-follow-up automatic compression must compress"
-	);
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
+	assert!(compressed, "fresh-follow-up automatic compression must compress");
 
 	let joined = session
 		.session
@@ -316,8 +299,7 @@ async fn verify_midturn_e2e_fresh_follow_up_keeps_exact_bridge_without_wrapper()
 		.collect::<Vec<_>>()
 		.join("\n---\n");
 	assert!(
-		joined.contains("brand-new follow-up request")
-			&& joined.contains("the exact answer being followed up"),
+		joined.contains("brand-new follow-up request") && joined.contains("the exact answer being followed up"),
 		"exact [assistant, new request] bridge must survive verbatim, got:\n{joined}"
 	);
 	assert!(
@@ -364,20 +346,16 @@ async fn verify_forced_fold_drains_a_request_the_retry_sent_again() {
 		msg("assistant", "reading the Spanish draft"),
 		msg("tool", "draft contents"),
 		msg("user", request),
-		msg(
-			"user",
-			"<pay-attention>\nRe-anchor on your task.\n</pay-attention>",
-		),
+		msg("user", "<pay-attention>\nRe-anchor on your task.\n</pay-attention>"),
 		msg("user", request),
 	]);
 	session.model = "ollama:fake-model".to_string();
 	session.session.info.model = "ollama:fake-model".to_string();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("forced fold must drain the unanswered request");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("forced fold must drain the unanswered request");
 	assert!(compressed, "the ceiling fold must land");
 
 	let copies: usize = session
@@ -458,27 +436,21 @@ async fn verify_compaction_drops_provider_chain_ids() {
 	}
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(compressed, "mid-task automatic compression must compress");
 
 	let messages = &session.session.messages;
 	assert!(
-		messages
-			.iter()
-			.any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
+		messages.iter().any(|m| m.content.contains("COMPRESS-E2E-CONTEXT")),
 		"summary missing after compression"
 	);
 	let live = messages
 		.iter()
 		.find(|m| m.content == "running the build now")
 		.expect("live tail assistant must survive the fold");
-	assert!(
-		live.id.is_none(),
-		"retained live assistant kept its chain id"
-	);
+	assert!(live.id.is_none(), "retained live assistant kept its chain id");
 	let leaked: Vec<String> = messages
 		.iter()
 		.filter(|m| m.role == "assistant")
@@ -524,10 +496,9 @@ async fn regime_session(config: &mut crate::config::Config) -> ChatSession {
 async fn settle_folds(session: &mut ChatSession, config: &crate::config::Config) -> bool {
 	for _ in 0..100 {
 		let (_tx, rx) = tokio::sync::watch::channel(false);
-		let compressed =
-			check_and_compress_conversation(session, config, rx, CompressionTrigger::Automatic)
-				.await
-				.expect("compression pipeline");
+		let compressed = check_and_compress_conversation(session, config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
 		if compressed {
 			return true;
 		}
@@ -584,15 +555,11 @@ async fn verify_background_fold_discards_on_range_change() {
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed, "the trigger call must only spawn, not block");
-	assert!(
-		session.fold_job.is_some(),
-		"a background fold must be parked"
-	);
+	assert!(session.fold_job.is_some(), "a background fold must be parked");
 	let before = session.session.messages.len();
 
 	// The drained range changes while the fold is in flight: the stale
@@ -608,10 +575,9 @@ async fn verify_background_fold_discards_on_range_change() {
 		tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 	}
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed, "a stale fold must be discarded");
 	assert_eq!(
 		session.session.messages.len(),
@@ -649,10 +615,9 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		!compressed && session.fold_job.is_none(),
 		"mid-turn with a two-call horizon must not fold on size alone"
@@ -663,10 +628,9 @@ async fn verify_mid_turn_waits_until_the_pace_justifies_a_fold() {
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls - 2;
 	session.session.info.turn_call_counts = vec![30, 30, 30];
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		!compressed && session.fold_job.is_some(),
 		"a demonstrated long pace must schedule a background fold"
@@ -723,10 +687,9 @@ async fn verify_ceiling_margin_folds_inline_and_overrides_the_veto() {
 	config.max_session_tokens_threshold = live + 1;
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		compressed,
 		"inside the ceiling margin the fold must land on the trigger call, veto or not"
@@ -768,27 +731,18 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 	let before = session.session.messages.len();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
-	assert!(
-		!compressed && session.fold_job.is_some(),
-		"the trigger call spawns"
-	);
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
+	assert!(!compressed && session.fold_job.is_some(), "the trigger call spawns");
 	wait_until_finished(&session).await;
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed, "a garbage summary must not fold");
-	assert_eq!(
-		session.session.messages.len(),
-		before,
-		"transcript untouched"
-	);
+	assert_eq!(session.session.messages.len(), before, "transcript untouched");
 	assert!(
 		session.fold_job.is_none(),
 		"a failed attempt must not be re-spawned on the same round"
@@ -803,10 +757,9 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 	session.session.info.total_api_calls = session.fold_cooldown_until_call - 1;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		!compressed && session.fold_job.is_none(),
 		"no unforced attempt inside the cooldown"
@@ -816,10 +769,9 @@ async fn verify_failed_background_fold_backs_off_for_a_runway() {
 	session.session.info.total_api_calls = session.fold_cooldown_until_call;
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		!compressed && session.fold_job.is_some(),
 		"after the cooldown a fresh attempt is spawned"
@@ -849,30 +801,16 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 	let before = session.session.messages.len();
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
-	assert!(
-		!compressed && session.fold_job.is_some(),
-		"the trigger call spawns"
-	);
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
+	assert!(!compressed && session.fold_job.is_some(), "the trigger call spawns");
 
 	// A fold that never finishes: turn end leaves it parked and returns at once.
-	let FoldJob {
-		handle,
-		ctx,
-		cancel,
-	} = session.fold_job.take().expect("parked");
+	let FoldJob { handle, ctx, cancel } = session.fold_job.take().expect("parked");
 	handle.abort();
 	let never = tokio::spawn(async {
-		std::future::pending::<
-			Result<(
-				schema::CompressionSummary,
-				Option<crate::providers::TokenUsage>,
-			)>,
-		>()
-		.await
+		std::future::pending::<Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>>().await
 	});
 	session.fold_job = Some(FoldJob {
 		handle: never,
@@ -891,28 +829,18 @@ async fn verify_turn_end_settle_applies_only_a_finished_fold() {
 		session.fold_job.is_some(),
 		"a running fold stays parked for the next round"
 	);
-	assert_eq!(
-		session.session.messages.len(),
-		before,
-		"transcript untouched"
-	);
+	assert_eq!(session.session.messages.len(), before, "transcript untouched");
 	session.fold_job.take().expect("parked").handle.abort();
 
 	// A finished fold is applied at turn end.
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
-	assert!(
-		!compressed && session.fold_job.is_some(),
-		"a fresh attempt spawns"
-	);
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
+	assert!(!compressed && session.fold_job.is_some(), "a fresh attempt spawns");
 	wait_until_finished(&session).await;
 	assert!(
-		settle_pending_fold(&mut session, &config)
-			.await
-			.expect("settle"),
+		settle_pending_fold(&mut session, &config).await.expect("settle"),
 		"a finished fold is applied at turn end"
 	);
 	assert!(session.fold_job.is_none(), "collected");
@@ -948,19 +876,16 @@ async fn verify_background_fold_survives_the_operation_sender_being_dropped() {
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 
 	let (tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed && session.fold_job.is_some(), "spawned");
 	// The turn ends: the operation channel is replaced and its sender dropped
 	// before the fold task has sent its request.
 	drop(tx);
 	wait_until_finished(&session).await;
 	assert!(
-		settle_pending_fold(&mut session, &config)
-			.await
-			.expect("settle"),
+		settle_pending_fold(&mut session, &config).await.expect("settle"),
 		"the fold must land although the operation that started it is gone"
 	);
 	assert!(
@@ -994,31 +919,18 @@ async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
 	let before = session.session.messages.len();
 
 	// Nothing parked: a no-op.
-	assert!(!collect_fold_before_exit(&mut session, &config)
-		.await
-		.expect("no fold"));
+	assert!(!collect_fold_before_exit(&mut session, &config).await.expect("no fold"));
 
 	// A fold that never finishes is abandoned once the request budget is spent.
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed && session.fold_job.is_some(), "spawned");
-	let FoldJob {
-		handle,
-		ctx,
-		cancel,
-	} = session.fold_job.take().expect("parked");
+	let FoldJob { handle, ctx, cancel } = session.fold_job.take().expect("parked");
 	handle.abort();
 	let never = tokio::spawn(async {
-		std::future::pending::<
-			Result<(
-				schema::CompressionSummary,
-				Option<crate::providers::TokenUsage>,
-			)>,
-		>()
-		.await
+		std::future::pending::<Result<(schema::CompressionSummary, Option<crate::providers::TokenUsage>)>>().await
 	});
 	session.fold_job = Some(FoldJob {
 		handle: never,
@@ -1043,24 +955,17 @@ async fn verify_exit_collects_a_running_fold_within_the_request_budget() {
 		session.fold_cooldown_until_call > session.session.info.total_api_calls,
 		"abandoning starts the failure cooldown"
 	);
-	assert_eq!(
-		session.session.messages.len(),
-		before,
-		"transcript untouched"
-	);
+	assert_eq!(session.session.messages.len(), before, "transcript untouched");
 
 	// A fold that does finish is applied before exit.
 	session.fold_cooldown_until_call = 0;
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed && session.fold_job.is_some(), "spawned again");
 	assert!(
-		collect_fold_before_exit(&mut session, &config)
-			.await
-			.expect("collect"),
+		collect_fold_before_exit(&mut session, &config).await.expect("collect"),
 		"a finishing fold is applied before exit"
 	);
 	assert!(session.fold_job.is_none(), "collected");
@@ -1103,16 +1008,13 @@ async fn verify_length_cut_fold_is_repaired_once_with_reasoning_off() {
 	session.session.info.api_calls_at_turn_start = session.session.info.total_api_calls;
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(!compressed && session.fold_job.is_some(), "spawned");
 	wait_until_finished(&session).await;
 	assert!(
-		settle_pending_fold(&mut session, &config)
-			.await
-			.expect("settle"),
+		settle_pending_fold(&mut session, &config).await.expect("settle"),
 		"the repaired fold must land"
 	);
 	assert!(
@@ -1164,20 +1066,13 @@ async fn verify_second_length_cut_fails_the_fold_without_identical_retries() {
 		cancel: _cancel,
 		..
 	} = session.fold_job.take().expect("parked");
-	let error = handle
-		.await
-		.expect("join")
-		.expect_err("two length cuts fail the fold");
+	let error = handle.await.expect("join").expect_err("two length cuts fail the fold");
 	let empty = error
 		.downcast_ref::<crate::session::completion::EmptyCompletion>()
 		.expect("typed empty-completion error");
 	assert!(empty.is_length_cut());
 	assert_eq!(empty.attempts, 1, "a length cut is never re-sent unchanged");
-	assert_eq!(
-		session.session.messages.len(),
-		before,
-		"transcript untouched"
-	);
+	assert_eq!(session.session.messages.len(), before, "transcript untouched");
 
 	std::env::remove_var("OLLAMA_API_URL");
 }
@@ -1217,14 +1112,9 @@ async fn verify_corroborated_deferral_holds_without_a_paid_call() {
 		});
 
 		let (_tx, rx) = tokio::sync::watch::channel(false);
-		let compressed = check_and_compress_conversation(
-			&mut session,
-			&config,
-			rx,
-			CompressionTrigger::Automatic,
-		)
-		.await
-		.expect("compression pipeline");
+		let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+			.await
+			.expect("compression pipeline");
 
 		assert!(!compressed, "a corroborated deferral must not fold");
 		assert!(
@@ -1277,10 +1167,9 @@ async fn verify_uncorroborated_deferral_is_overruled_and_the_fold_lands() {
 	});
 
 	let (_tx, rx) = tokio::sync::watch::channel(false);
-	let compressed =
-		check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
-			.await
-			.expect("compression pipeline");
+	let compressed = check_and_compress_conversation(&mut session, &config, rx, CompressionTrigger::Automatic)
+		.await
+		.expect("compression pipeline");
 	assert!(
 		!compressed && session.fold_job.is_some(),
 		"an overruled deferral is not an emergency: the fold still runs in the background"

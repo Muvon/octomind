@@ -19,9 +19,8 @@
 use super::*;
 
 fn default_config() -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: crate::config::Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config
 }
@@ -131,9 +130,7 @@ fn session_info_json_separates_command_layers_and_aggregates() {
 	];
 	let info = session.get_session_info_json();
 	let regular = info["layers"]["regular"].as_array().expect("regular array");
-	let commands = info["layers"]["commands"]
-		.as_array()
-		.expect("commands array");
+	let commands = info["layers"]["commands"].as_array().expect("commands array");
 	assert_eq!(regular.len(), 1);
 	assert_eq!(commands.len(), 1);
 
@@ -291,9 +288,7 @@ fn display_session_info_renders_layer_notes() {
 async fn display_session_context_with_populated_session() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	let config = default_config();
-	session
-		.add_user_message("inspect the logs")
-		.expect("add user message");
+	session.add_user_message("inspect the logs").expect("add user message");
 	session
 		.add_assistant_message("On it.", None, &config, "assistant")
 		.expect("add assistant message");
@@ -339,22 +334,14 @@ async fn test_context_rendering_rich_messages_and_edge_filters() {
 
 	// "all" renders every optional row: cached, tool call id, name, images,
 	// tool calls, and the truncation notice.
-	session
-		.display_session_context_filtered(&config, "all")
-		.await;
+	session.display_session_context_filtered(&config, "all").await;
 
 	// Unknown filter → error block; "user" with no user messages → empty match.
-	session
-		.display_session_context_filtered(&config, "bogus")
-		.await;
-	session
-		.display_session_context_filtered(&config, "user")
-		.await;
+	session.display_session_context_filtered(&config, "bogus").await;
+	session.display_session_context_filtered(&config, "user").await;
 
 	// Debug mode lifts the content limit and switches the mode footer.
 	let mut debug_config = default_config();
 	debug_config.log_level = crate::config::LogLevel::Debug;
-	session
-		.display_session_context_filtered(&debug_config, "all")
-		.await;
+	session.display_session_context_filtered(&debug_config, "all").await;
 }

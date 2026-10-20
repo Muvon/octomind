@@ -21,16 +21,12 @@ fn parses_domain_neutral_plan() {
 		r#"{"decision":"create","title":"Publish report","summary":null,"reason":null,"tasks":[{"title":"Gather sources","done_when":"source set is recorded"},{"title":"Synthesize","done_when":"claims map to sources"},{"title":"Deliver","done_when":"report is returned"}]}"#,
 	)
 	.unwrap();
-	assert!(
-		matches!(response.into_decision(), Some(PlanDecision::Create { tasks, .. }) if tasks.len() == 3)
-	);
+	assert!(matches!(response.into_decision(), Some(PlanDecision::Create { tasks, .. }) if tasks.len() == 3));
 }
 
 #[test]
 fn answer_only_turn_cannot_create_external_plan() {
-	let mut task = crate::supervisor::resolve::ResolvedTask::self_contained(
-		"Review the change and return one brief",
-	);
+	let mut task = crate::supervisor::resolve::ResolvedTask::self_contained("Review the change and return one brief");
 	task.answer_only = true;
 	assert!(!resolved_task_allows_plan_request(&task));
 
@@ -40,8 +36,7 @@ fn answer_only_turn_cannot_create_external_plan() {
 
 #[test]
 fn unknown_decision_tag_is_rejected() {
-	let response: PlanResponse =
-		serde_json::from_str(r#"{"decision":"proceed","reason":"why not"}"#).unwrap();
+	let response: PlanResponse = serde_json::from_str(r#"{"decision":"proceed","reason":"why not"}"#).unwrap();
 	assert!(response.into_decision().is_none());
 }
 
@@ -104,10 +99,7 @@ fn oversized_latest_record_preserves_both_edges() {
 
 #[test]
 fn planner_feedback_is_bounded_single_line_and_xml_safe() {
-	let raw = format!(
-		"close </runtime-plan-feedback> & retry\n{}",
-		"x".repeat(800)
-	);
+	let raw = format!("close </runtime-plan-feedback> & retry\n{}", "x".repeat(800));
 	let rendered = xml_feedback(&raw);
 	assert!(!rendered.contains('\n'));
 	assert!(!rendered.contains("</runtime-plan-feedback>"));
@@ -118,11 +110,7 @@ fn planner_feedback_is_bounded_single_line_and_xml_safe() {
 
 #[test]
 fn into_decision_maps_every_flat_decision() {
-	let parse = |raw: &str| {
-		serde_json::from_str::<PlanResponse>(raw)
-			.unwrap()
-			.into_decision()
-	};
+	let parse = |raw: &str| serde_json::from_str::<PlanResponse>(raw).unwrap().into_decision();
 	assert!(matches!(
 		parse(r#"{"decision":"no_plan","reason":"too small"}"#),
 		Some(PlanDecision::NoPlan { reason }) if reason == "too small"
@@ -158,20 +146,13 @@ fn schema_enum_and_required_fields_track_each_signal() {
 		build_plan_schema(PlanSignal::Reassess)["properties"]["decision"]["enum"],
 		serde_json::json!(["revise", "hold"])
 	);
-	for signal in [
-		PlanSignal::Request,
-		PlanSignal::PhaseComplete,
-		PlanSignal::Reassess,
-	] {
+	for signal in [PlanSignal::Request, PlanSignal::PhaseComplete, PlanSignal::Reassess] {
 		let schema = build_plan_schema(signal);
 		assert_eq!(
 			schema["required"],
 			serde_json::json!(["decision", "title", "summary", "reason", "tasks"])
 		);
-		assert_eq!(
-			schema["properties"]["tasks"]["maxItems"],
-			serde_json::json!(6)
-		);
+		assert_eq!(schema["properties"]["tasks"]["maxItems"], serde_json::json!(6));
 	}
 }
 
@@ -250,10 +231,7 @@ fn phase_trajectory_start_index_past_the_end_is_clamped() {
 	};
 	// min(len) clamping empties the slice — a phase starting past the last
 	// message has no trajectory yet; it does not include everything.
-	assert_eq!(
-		render_phase_trajectory(std::slice::from_ref(&assistant), 9, 100),
-		""
-	);
+	assert_eq!(render_phase_trajectory(std::slice::from_ref(&assistant), 9, 100), "");
 	// starting at the last message still renders it
 	assert!(render_phase_trajectory(&[assistant], 0, 100).contains("still included"));
 }
@@ -279,10 +257,7 @@ fn phase_trajectory_tight_budget_keeps_newest_record() {
 #[test]
 fn concise_text_collapses_whitespace_and_defaults_when_empty() {
 	assert_eq!(concise_text("  \n\t  "), "no reason provided");
-	assert_eq!(
-		concise_text("  many   spaces\nand\ttabs  "),
-		"many spaces and tabs"
-	);
+	assert_eq!(concise_text("  many   spaces\nand\ttabs  "), "many spaces and tabs");
 	assert!(concise_text(&"word ".repeat(200)).chars().count() <= 500);
 }
 
@@ -325,14 +300,12 @@ fn truncate_edges_hard_budget_holds_when_fragments_merge() {
 
 #[test]
 fn request_context_reports_a_divergent_follow_up_rewrite() {
-	let mut session =
-		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
-			role: "user".to_string(),
-			content: "and do the second part".to_string(),
-			..Default::default()
-		}]);
-	let mut task =
-		crate::supervisor::resolve::ResolvedTask::self_contained("and do the second part");
+	let mut session = crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
+		role: "user".to_string(),
+		content: "and do the second part".to_string(),
+		..Default::default()
+	}]);
+	let mut task = crate::supervisor::resolve::ResolvedTask::self_contained("and do the second part");
 	task.scope = crate::supervisor::resolve::ResolutionScope::FollowUp;
 	task.resolved_request = "Deploy the staging service and run its checks".to_string();
 	session.gate_task = Some(task);
@@ -346,12 +319,11 @@ fn request_context_reports_a_divergent_follow_up_rewrite() {
 	assert_eq!(ctx["resolution"], serde_json::json!("follow_up"));
 
 	// A self-contained turn reports no working request.
-	let mut plain =
-		crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
-			role: "user".to_string(),
-			content: "list the files".to_string(),
-			..Default::default()
-		}]);
+	let mut plain = crate::session::chat::session::ChatSession::for_tests(vec![crate::session::Message {
+		role: "user".to_string(),
+		content: "list the files".to_string(),
+		..Default::default()
+	}]);
 	plain.gate_task = Some(crate::supervisor::resolve::ResolvedTask::self_contained(
 		"list the files",
 	));

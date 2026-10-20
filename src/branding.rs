@@ -36,13 +36,7 @@ const ICON_ROWS: [Row; 4] = [
 	(None, &[(BODY, "▟█████▙")]),
 	(
 		Some(BODY),
-		&[
-			(BODY, "█"),
-			(EYE, "▝▘"),
-			(BODY, "█"),
-			(EYE, "▝▘"),
-			(BODY, "█"),
-		],
+		&[(BODY, "█"), (EYE, "▝▘"), (BODY, "█"), (EYE, "▝▘"), (BODY, "█")],
 	),
 	(None, &[(BODY, "▟▀█▀█▀▙")]),
 	(None, &[(BODY, "▛ ▛ ▛ ▛")]),

@@ -20,9 +20,8 @@ use super::*;
 use crate::session::chat::session::ChatSession;
 
 fn config_with_threshold(threshold: usize) -> crate::config::Config {
-	let mut config: crate::config::Config =
-		toml::from_str(include_str!("../../../../config-templates/default.toml"))
-			.expect("parse default config template");
+	let mut config: crate::config::Config = toml::from_str(include_str!("../../../../config-templates/default.toml"))
+		.expect("parse default config template");
 	config.build_role_map();
 	config.compression.threshold = threshold;
 	config
@@ -39,14 +38,9 @@ async fn test_disabled_threshold_never_compresses() {
 	session.add_user_message("hello").expect("user");
 	let before = session.session.messages.len();
 
-	check_and_compress_conversation(
-		&mut session,
-		&config,
-		cancel_rx(),
-		CompressionTrigger::Automatic,
-	)
-	.await
-	.expect("disabled compression is a no-op");
+	check_and_compress_conversation(&mut session, &config, cancel_rx(), CompressionTrigger::Automatic)
+		.await
+		.expect("disabled compression is a no-op");
 	assert_eq!(session.session.messages.len(), before);
 }
 
@@ -58,14 +52,9 @@ async fn test_small_session_below_threshold_is_untouched() {
 	session.add_user_message("short question").expect("user");
 	let before = session.session.messages.len();
 
-	check_and_compress_conversation(
-		&mut session,
-		&config,
-		cancel_rx(),
-		CompressionTrigger::Automatic,
-	)
-	.await
-	.expect("below-threshold compression is a no-op");
+	check_and_compress_conversation(&mut session, &config, cancel_rx(), CompressionTrigger::Automatic)
+		.await
+		.expect("below-threshold compression is a no-op");
 	assert_eq!(session.session.messages.len(), before);
 }
 

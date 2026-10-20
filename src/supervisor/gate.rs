@@ -588,10 +588,7 @@ impl EvidenceLedger {
 		}
 		let output_chars = output.chars().count();
 		let bounded = if output_chars > CITATION_GROUNDS_CHARS {
-			output
-				.chars()
-				.take(CITATION_GROUNDS_CHARS)
-				.collect::<String>()
+			output.chars().take(CITATION_GROUNDS_CHARS).collect::<String>()
 		} else {
 			output.to_string()
 		};
@@ -697,9 +694,7 @@ impl EvidenceLedger {
 		// can never disagree on what a mutation touched.
 		if mutation && !error {
 			for p in crate::supervisor::detect::param_paths(parameters) {
-				if self.mutated_paths.len() < MUTATED_PATHS_CAP
-					&& !self.mutated_paths.iter().any(|e| e == &p)
-				{
+				if self.mutated_paths.len() < MUTATED_PATHS_CAP && !self.mutated_paths.iter().any(|e| e == &p) {
 					self.mutated_paths.push(p);
 				}
 			}
@@ -753,22 +748,14 @@ impl EvidenceLedger {
 
 	/// Render actions observed at or after `checkpoint`.
 	pub fn render_since(&self, checkpoint: u64) -> String {
-		if self
-			.entries
-			.iter()
-			.all(|entry| entry.last_sequence < checkpoint)
-		{
+		if self.entries.iter().all(|entry| entry.last_sequence < checkpoint) {
 			return String::new();
 		}
 		let mut out = String::new();
 		if checkpoint == 0 && self.dropped > 0 {
 			out.push_str(&format!("(+{} earlier actions dropped)\n", self.dropped));
 		}
-		for e in self
-			.entries
-			.iter()
-			.filter(|entry| entry.last_sequence >= checkpoint)
-		{
+		for e in self.entries.iter().filter(|entry| entry.last_sequence >= checkpoint) {
 			let kind = if e.mutation { "[mut]" } else { "[read]" };
 			let outcome = if e.error { "ERROR" } else { "ok" };
 			out.push_str(&format!(
@@ -900,10 +887,7 @@ pub fn render_ground_truth(ledger: &EvidenceLedger) -> RenderedEvidence {
 	}
 	let mut output_sequences = HashSet::new();
 	let mut has_unknown_output_provenance = false;
-	for (sequence, _) in output_starts
-		.into_iter()
-		.filter(|(_, start)| *start < s.len())
-	{
+	for (sequence, _) in output_starts.into_iter().filter(|(_, start)| *start < s.len()) {
 		match sequence {
 			Some(sequence) => {
 				output_sequences.insert(sequence);
@@ -940,10 +924,7 @@ fn git_status() -> String {
 				.map(|l| format!("{l}\n"))
 				.collect();
 			if total > GT_STATUS_MAX_LINES {
-				s.push_str(&format!(
-					"(+{} more entries)\n",
-					total - GT_STATUS_MAX_LINES
-				));
+				s.push_str(&format!("(+{} more entries)\n", total - GT_STATUS_MAX_LINES));
 			}
 			s
 		}
@@ -1066,13 +1047,8 @@ pub struct GateInput<'a> {
 /// as verified completion. A malformed protocol receives one bounded format
 /// retry; substantive gaps and transport failures never retry here. A blocking
 /// verdict gets one refutation pass (see [`REFUTE_PROMPT`]) before it is charged.
-pub async fn verify(
-	config: &Config,
-	input: GateInput<'_>,
-	operation_rx: watch::Receiver<bool>,
-) -> GateVerdict {
-	let _timing =
-		crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Gate);
+pub async fn verify(config: &Config, input: GateInput<'_>, operation_rx: watch::Receiver<bool>) -> GateVerdict {
+	let _timing = crate::supervisor::accounting::WallTimer::start(crate::supervisor::stats::CallKind::Gate);
 	if input.task.trim().is_empty() || input.result.trim().is_empty() {
 		return GateVerdict::Indeterminate("empty task or result".to_string());
 	}
@@ -1082,20 +1058,8 @@ pub async fn verify(
 	let model = config.get_supervisor_model_profile().model;
 	let conditions = input.evidence_conditions.len();
 	let encoding = Encoding::for_model(&model);
-	crate::log_debug!(
-		"Verify-gate wire mode: {} (model '{}')",
-		encoding.as_str(),
-		model
-	);
-	let (raw, mut report) = match ask_verifier(
-		config,
-		encoding,
-		conditions,
-		user.clone(),
-		operation_rx.clone(),
-	)
-	.await
-	{
+	crate::log_debug!("Verify-gate wire mode: {} (model '{}')", encoding.as_str(), model);
+	let (raw, mut report) = match ask_verifier(config, encoding, conditions, user.clone(), operation_rx.clone()).await {
 		Ok(answer) => answer,
 		Err(e) => {
 			crate::log_info!("Verify-gate verifier '{}' unavailable: {}", model, e);
@@ -1113,14 +1077,7 @@ pub async fn verify(
 		visibility = output_visibility(&input, &readback);
 		user = format!("{}{}", render_gate_input(&input), visibility.render());
 		user.push_str(&readback.text);
-		let (raw, answered) = match ask_verifier(
-			config,
-			encoding,
-			conditions,
-			user.clone(),
-			operation_rx.clone(),
-		)
-		.await
+		let (raw, answered) = match ask_verifier(config, encoding, conditions, user.clone(), operation_rx.clone()).await
 		{
 			Ok(answer) => answer,
 			Err(e) => {
@@ -1128,22 +1085,14 @@ pub async fn verify(
 				return GateVerdict::Indeterminate(e.to_string());
 			}
 		};
-		crate::log_debug!(
-			"Verify-gate readback {:?} response ({}):\n{}",
-			wanted,
-			model,
-			raw
-		);
+		crate::log_debug!("Verify-gate readback {:?} response ({}):\n{}", wanted, model, raw);
 		report = answered;
 	}
 	// The evidence decision is one-shot. Only a structurally malformed response
 	// receives the bounded format-repair call below.
 	let mut verdict = report.verdict(conditions, &visibility.unseen);
 	if let GateVerdict::Indeterminate(reason) = verdict.clone() {
-		crate::log_info!(
-			"Verify-gate protocol invalid ({}); retrying format once",
-			reason
-		);
+		crate::log_info!("Verify-gate protocol invalid ({}); retrying format once", reason);
 		// Do not echo parser text derived from the malformed model response back
 		// into an instruction-bearing block. The retry needs the contract, not
 		// attacker-controlled tag names or content.
@@ -1155,15 +1104,7 @@ pub async fn verify(
 		let retry_user = format!(
             "{user}\n\n<format_violation>\nYour previous response did not match the required protocol. Re-evaluate the same evidence and emit {condition_rule}, all four named evidence shapes exactly once, then gaps or PASS. Do not omit a line and do not add alternate fields.\n</format_violation>"
         );
-		match ask_verifier(
-			config,
-			encoding,
-			conditions,
-			retry_user,
-			operation_rx.clone(),
-		)
-		.await
-		{
+		match ask_verifier(config, encoding, conditions, retry_user, operation_rx.clone()).await {
 			Ok((raw, retry)) => {
 				crate::log_debug!("Verify-gate format retry response ({}):\n{}", model, raw);
 				verdict = retry.verdict(conditions, &visibility.unseen);
@@ -1248,9 +1189,7 @@ enum Encoding {
 impl Encoding {
 	fn for_model(model: &str) -> Self {
 		match crate::providers::ProviderFactory::get_provider_for_model(model) {
-			Ok((provider, actual_model)) if provider.enforces_response_schema(&actual_model) => {
-				Encoding::Json
-			}
+			Ok((provider, actual_model)) if provider.enforces_response_schema(&actual_model) => Encoding::Json,
 			// An unresolvable model is a transport failure for the call itself to
 			// report, never a reason to attach a schema the provider may reject.
 			_ => Encoding::Text,
@@ -1293,29 +1232,14 @@ fn render_gate_prompt(encoding: Encoding, expected_conditions: usize) -> String 
 	let prompt = GATE_PROMPT
 		.replace(
 			"{condition_checklist}",
-			if has_conditions {
-				GATE_CONDITION_CHECKLIST
-			} else {
-				""
-			},
+			if has_conditions { GATE_CONDITION_CHECKLIST } else { "" },
 		)
 		.replace(
 			"{condition_response}",
-			if has_conditions {
-				GATE_CONDITION_RESPONSE
-			} else {
-				""
-			},
+			if has_conditions { GATE_CONDITION_RESPONSE } else { "" },
 		);
 	let (format, conditions) = match encoding {
-		Encoding::Text => (
-			GATE_TEXT_FORMAT,
-			if has_conditions {
-				GATE_TEXT_CONDITION
-			} else {
-				""
-			},
-		),
+		Encoding::Text => (GATE_TEXT_FORMAT, if has_conditions { GATE_TEXT_CONDITION } else { "" }),
 		Encoding::Json => (
 			GATE_JSON_FORMAT,
 			if has_conditions {
@@ -1345,10 +1269,7 @@ async fn ask_verifier(
 		Encoding::Json => {
 			let value = crate::supervisor::learning::extract::call_supervisor_json(
 				config,
-				SupervisorPrompt::new(
-					render_gate_prompt(Encoding::Json, expected_conditions),
-					user,
-				),
+				SupervisorPrompt::new(render_gate_prompt(Encoding::Json, expected_conditions), user),
 				crate::supervisor::stats::CallKind::Gate,
 				build_gate_schema(expected_conditions),
 				operation_rx,
@@ -1360,10 +1281,7 @@ async fn ask_verifier(
 		Encoding::Text => {
 			let resp = crate::supervisor::learning::extract::call_supervisor_llm(
 				config,
-				SupervisorPrompt::new(
-					render_gate_prompt(Encoding::Text, expected_conditions),
-					user,
-				),
+				SupervisorPrompt::new(render_gate_prompt(Encoding::Text, expected_conditions), user),
 				crate::supervisor::stats::CallKind::Gate,
 				operation_rx,
 			)
@@ -1512,11 +1430,7 @@ fn build_gate_schema(expected_conditions: usize) -> serde_json::Value {
 /// Evaluation-model refutation: one Noul per charged finding over the same
 /// evidence the verifier saw. `None` means the seam is off or unavailable and
 /// the chat refuter decides.
-async fn evaluate_refute(
-	config: &Config,
-	evidence: &str,
-	gaps: &[String],
-) -> Option<(Vec<String>, Vec<String>)> {
+async fn evaluate_refute(config: &Config, evidence: &str, gaps: &[String]) -> Option<(Vec<String>, Vec<String>)> {
 	use crate::supervisor::evaluate::{self, Seam};
 	let state = serde_json::json!({
 		"evidence": evidence,
@@ -1526,27 +1440,13 @@ async fn evaluate_refute(
 			.map(|(i, gap)| serde_json::json!({ "number": i + 1, "text": gap }))
 			.collect::<Vec<_>>(),
 	});
-	let replaced = crate::session::estimate_tokens(&state.to_string())
-		+ crate::session::estimate_tokens(REFUTE_PROMPT);
-	let answers = evaluate::run(
-		config,
-		Seam::Gate,
-		state,
-		evaluate::gate_questions(gaps.len()),
-	)
-	.await?;
+	let replaced = crate::session::estimate_tokens(&state.to_string()) + crate::session::estimate_tokens(REFUTE_PROMPT);
+	let answers = evaluate::run(config, Seam::Gate, state, evaluate::gate_questions(gaps.len())).await?;
 	let refuted: HashSet<usize> = (0..gaps.len())
-		.filter(|slot| {
-			evaluate::probability(&answers, &evaluate::gate_question_id(*slot))
-				>= evaluate::GATE_REFUTE_AT
-		})
+		.filter(|slot| evaluate::probability(&answers, &evaluate::gate_question_id(*slot)) >= evaluate::GATE_REFUTE_AT)
 		.map(|slot| slot + 1)
 		.collect();
-	crate::log_debug!(
-		"evaluate gate: refuted {} of {} findings",
-		refuted.len(),
-		gaps.len()
-	);
+	crate::log_debug!("evaluate gate: refuted {} of {} findings", refuted.len(), gaps.len());
 	crate::supervisor::stats::evaluate_applied(Seam::Gate, 1);
 	evaluate::avoided(config, Seam::Gate, replaced);
 	Some(split_refuted(gaps, &refuted))
@@ -1566,11 +1466,7 @@ async fn refute(
 	let mut user = String::from(evidence);
 	user.push_str("\n\n<charged_findings>\n");
 	for (i, gap) in gaps.iter().enumerate() {
-		user.push_str(&format!(
-			"<finding n=\"{}\">{}</finding>\n",
-			i + 1,
-			xml_text(gap)
-		));
+		user.push_str(&format!("<finding n=\"{}\">{}</finding>\n", i + 1, xml_text(gap)));
 	}
 	user.push_str("</charged_findings>");
 	let kind = crate::supervisor::stats::CallKind::Gate;
@@ -1775,9 +1671,7 @@ fn output_visibility(input: &GateInput<'_>, readback: &RenderedEvidence) -> Outp
 		let sequence = entry.last_sequence;
 		let output = input.grounds.iter().find(|(n, _)| *n == sequence);
 		let (status, unseen) = match output {
-			_ if input.ground_truth.output_sequences.contains(&sequence) => {
-				("excerpt visible in ground truth", false)
-			}
+			_ if input.ground_truth.output_sequences.contains(&sequence) => ("excerpt visible in ground truth", false),
 			Some((_, output)) if readback.output_sequences.contains(&sequence) => {
 				if output.chars().count() > READBACK_HEAD + READBACK_TAIL {
 					("partial: readback middle omitted", false)
@@ -1786,10 +1680,7 @@ fn output_visibility(input: &GateInput<'_>, readback: &RenderedEvidence) -> Outp
 				}
 			}
 			None if entry.bytes == 0 => ("empty output", false),
-			_ if has_unknown_output_provenance => (
-				"visibility unknown: emitted excerpt lacks provenance",
-				false,
-			),
+			_ if has_unknown_output_provenance => ("visibility unknown: emitted excerpt lacks provenance", false),
 			Some(_) => ("not shown in readback or ground truth", true),
 			None => ("not retained; no ground-truth excerpt", true),
 		};
@@ -1867,10 +1758,7 @@ fn bounded_output(output: &str) -> String {
 /// simply does not match, which leaves the ordinary bounded retry in charge.
 pub fn gaps_unchanged(prior: &[String], current: &[String]) -> bool {
 	fn normalized(gap: &str) -> String {
-		gap.split_whitespace()
-			.collect::<Vec<_>>()
-			.join(" ")
-			.to_lowercase()
+		gap.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 	}
 	if prior.is_empty() || prior.len() != current.len() {
 		return false;
@@ -1888,10 +1776,7 @@ pub fn gaps_unchanged(prior: &[String], current: &[String]) -> bool {
 fn render_gate_input(input: &GateInput<'_>) -> String {
 	let claim_line = match input.claim {
 		Some(c) if !c.trim().is_empty() => {
-			format!(
-				"\n\n<agent_stated_claim>{}</agent_stated_claim>",
-				xml_text(c)
-			)
+			format!("\n\n<agent_stated_claim>{}</agent_stated_claim>", xml_text(c))
 		}
 		_ => String::new(),
 	};
@@ -1907,8 +1792,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 			xml_text(input.actions)
 		)
 	};
-	let historical_block = if input.task_scope
-		== crate::supervisor::resolve::ResolutionScope::FollowUp
+	let historical_block = if input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp
 		&& !input.historical_actions.trim().is_empty()
 	{
 		format!(
@@ -1918,9 +1802,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 	} else {
 		String::new()
 	};
-	let resolution_block = if input.task_scope
-		== crate::supervisor::resolve::ResolutionScope::FollowUp
-	{
+	let resolution_block = if input.task_scope == crate::supervisor::resolve::ResolutionScope::FollowUp {
 		let sources = if input.context_sources.is_empty() {
 			"unspecified".to_string()
 		} else {
@@ -1945,10 +1827,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 			xml_text(&evidence)
 		)
 	} else {
-		format!(
-			"\n\n<task_resolution scope=\"{}\" />",
-			input.task_scope.as_str()
-		)
+		format!("\n\n<task_resolution scope=\"{}\" />", input.task_scope.as_str())
 	};
 	let role_block = if input.role_context.trim().is_empty() {
 		String::new()
@@ -1961,10 +1840,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 	let plan_block = if input.plan.trim().is_empty() {
 		String::new()
 	} else {
-		format!(
-			"\n\n<active_plan>\n{}\n</active_plan>",
-			xml_text(input.plan)
-		)
+		format!("\n\n<active_plan>\n{}\n</active_plan>", xml_text(input.plan))
 	};
 	let ground_truth_block = if input.ground_truth.text.trim().is_empty() {
 		String::new()
@@ -2004,9 +1880,7 @@ fn render_gate_input(input: &GateInput<'_>) -> String {
 }
 
 fn xml_attribute(value: &str) -> String {
-	xml_text(value)
-		.replace('"', "&quot;")
-		.replace('\'', "&apos;")
+	xml_text(value).replace('"', "&quot;").replace('\'', "&apos;")
 }
 
 /// The four evidence shapes every verdict rules on, in protocol order. One
@@ -2023,12 +1897,7 @@ const REQUIRED_SHAPES: [&str; 4] = [
 /// was shown; the fourth names its own reading of the code — a suspicion that is
 /// reported to the user and never charged. One list: the prompt, the JSON
 /// schema, and [`VerifierReport::verdict`] state the same contract.
-const CONDITION_BASES: [&str; 4] = [
-	"recorded_output",
-	"ground_truth",
-	"absent_action",
-	BASIS_INFERENCE,
-];
+const CONDITION_BASES: [&str; 4] = ["recorded_output", "ground_truth", "absent_action", BASIS_INFERENCE];
 const BASIS_INFERENCE: &str = "inference";
 
 /// Verdict values on the JSON path — the same three answers the text protocol
@@ -2126,12 +1995,7 @@ fn text_report(resp: &str) -> VerifierReport {
 		pass: resp.contains("<verdict>PASS</verdict>"),
 		readback: elements(resp, "readback")
 			.into_iter()
-			.filter_map(|(attributes, _)| {
-				attr(attributes, "seq")
-					.trim_start_matches('#')
-					.parse::<u64>()
-					.ok()
-			})
+			.filter_map(|(attributes, _)| attr(attributes, "seq").trim_start_matches('#').parse::<u64>().ok())
 			.collect(),
 	}
 }
@@ -2223,10 +2087,7 @@ impl VerifierReport {
 				return GateVerdict::Indeterminate("shape without name".to_string());
 			}
 			if !seen_shapes.insert(shape.name.as_str()) {
-				return GateVerdict::Indeterminate(format!(
-					"duplicate evidence shape: {}",
-					shape.name
-				));
+				return GateVerdict::Indeterminate(format!("duplicate evidence shape: {}", shape.name));
 			}
 			// Three-valued, and deliberately asymmetric. "unknown" says the verifier
 			// could not see what would settle the shape — a limit of its input, never a
@@ -2236,23 +2097,14 @@ impl VerifierReport {
 				"yes" if outside_view(&shape.sources, unseen) => window_advisory = true,
 				"yes" => {
 					if let Some(finding) = charged(&shape.settles, &shape.reason) {
-						unmatched.push(format!(
-							"Evidence shape '{}' present: {finding}",
-							shape.name
-						));
+						unmatched.push(format!("Evidence shape '{}' present: {finding}", shape.name));
 					}
 				}
 				"no" | "unknown" => {}
-				_ => {
-					return GateVerdict::Indeterminate(
-						"shape without yes/no/unknown result".to_string(),
-					)
-				}
+				_ => return GateVerdict::Indeterminate("shape without yes/no/unknown result".to_string()),
 			}
 		}
-		if REQUIRED_SHAPES
-			.iter()
-			.any(|shape| !seen_shapes.contains(*shape))
+		if REQUIRED_SHAPES.iter().any(|shape| !seen_shapes.contains(*shape))
 			|| seen_shapes.len() != REQUIRED_SHAPES.len()
 		{
 			return GateVerdict::Indeterminate("incomplete evidence-shape checklist".to_string());
@@ -2272,28 +2124,15 @@ impl VerifierReport {
 				// violation: it can be neither charged nor excused.
 				"unmatched" => match condition.basis.as_str() {
 					BASIS_INFERENCE => {}
-					"recorded_output" if outside_view(&condition.sources, unseen) => {
-						window_advisory = true
+					"recorded_output" if outside_view(&condition.sources, unseen) => window_advisory = true,
+					basis if CONDITION_BASES.contains(&basis) => {
+						unmatched.push(format!("Unmatched condition {n}: {}", condition.observation))
 					}
-					basis if CONDITION_BASES.contains(&basis) => unmatched.push(format!(
-						"Unmatched condition {n}: {}",
-						condition.observation
-					)),
-					"" => {
-						return GateVerdict::Indeterminate(format!(
-							"condition {n} unmatched without basis"
-						))
-					}
-					_ => {
-						return GateVerdict::Indeterminate(format!(
-							"condition {n} has invalid basis"
-						))
-					}
+					"" => return GateVerdict::Indeterminate(format!("condition {n} unmatched without basis")),
+					_ => return GateVerdict::Indeterminate(format!("condition {n} has invalid basis")),
 				},
 				"matched" | "unknown" => {}
-				_ => {
-					return GateVerdict::Indeterminate(format!("condition {n} has invalid status"))
-				}
+				_ => return GateVerdict::Indeterminate(format!("condition {n} has invalid status")),
 			}
 		}
 		if seen_conditions.len() != expected_conditions
@@ -2340,10 +2179,7 @@ impl VerifierReport {
 			let limit = match condition.status.as_str() {
 				"unknown" => "unsettled",
 				"unmatched" if condition.basis == BASIS_INFERENCE => "suspected by inference only",
-				"unmatched"
-					if condition.basis == "recorded_output"
-						&& outside_view(&condition.sources, unseen) =>
-				{
+				"unmatched" if condition.basis == "recorded_output" && outside_view(&condition.sources, unseen) => {
 					"output outside gate view"
 				}
 				_ => continue,
@@ -2352,23 +2188,16 @@ impl VerifierReport {
 				.index
 				.map(|n| n.to_string())
 				.unwrap_or_else(|| "?".to_string());
-			reported.push(format!(
-				"condition {number} {limit}: {}",
-				condition.observation
-			));
+			reported.push(format!("condition {number} {limit}: {}", condition.observation));
 		}
 		for shape in &self.shapes {
 			match shape.found.as_str() {
 				"unknown" => reported.push(format!("{} unsettled: {}", shape.name, shape.reason)),
-				"yes" if outside_view(&shape.sources, unseen) => reported.push(format!(
-					"{} output outside gate view: {}",
-					shape.name, shape.reason
-				)),
+				"yes" if outside_view(&shape.sources, unseen) => {
+					reported.push(format!("{} output outside gate view: {}", shape.name, shape.reason))
+				}
 				"yes" if charged(&shape.settles, &shape.reason).is_none() => {
-					reported.push(format!(
-						"{} names no closing observation: {}",
-						shape.name, shape.reason
-					))
+					reported.push(format!("{} names no closing observation: {}", shape.name, shape.reason))
 				}
 				_ => {}
 			}
@@ -2377,10 +2206,7 @@ impl VerifierReport {
 			if outside_view(&finding.sources, unseen) {
 				reported.push(format!("gap output outside gate view: {}", finding.text));
 			} else if charged(&finding.settles, &finding.text).is_none() {
-				reported.push(format!(
-					"gap names no closing observation: {}",
-					finding.text
-				));
+				reported.push(format!("gap names no closing observation: {}", finding.text));
 			}
 		}
 		reported

@@ -112,9 +112,7 @@ impl BackgroundJobManager {
 			)
 		};
 		crate::session::inbox::push_inbox_message(crate::session::inbox::InboxMessage {
-			source: crate::session::inbox::InboxSource::BackgroundAgent {
-				name: job.agent_name,
-			},
+			source: crate::session::inbox::InboxSource::BackgroundAgent { name: job.agent_name },
 			content,
 		});
 	}

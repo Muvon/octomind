@@ -24,29 +24,25 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 		// Show current log level - use system-wide getter
 		let current_level = config.get_log_level();
 
-		return Ok(CommandResult::HandledWithOutput(Box::new(
-			CommandOutput::Loglevel {
-				old_level: None,
-				new_level: None,
-				current_level: Some(current_level.display_name().to_string()),
-				available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
-				changed: false,
-			},
-		)));
+		return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Loglevel {
+			old_level: None,
+			new_level: None,
+			current_level: Some(current_level.display_name().to_string()),
+			available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+			changed: false,
+		})));
 	}
 
 	// Parse the requested log level
 	let new_level = match LogLevel::from_display_name(params[0]) {
 		Some(level) => level,
 		None => {
-			return Ok(CommandResult::HandledWithOutput(Box::new(
-				CommandOutput::Error {
-					error: "Invalid log level. Use: none, info, or debug".to_string(),
-					context: Some(serde_json::json!({
-						"available_levels": ["none", "info", "debug"]
-					})),
-				},
-			)));
+			return Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Error {
+				error: "Invalid log level. Use: none, info, or debug".to_string(),
+				context: Some(serde_json::json!({
+					"available_levels": ["none", "info", "debug"]
+				})),
+			})));
 		}
 	};
 
@@ -60,13 +56,11 @@ pub fn handle_loglevel(config: &mut Config, params: &[&str]) -> Result<CommandRe
 	// Propagate the change to thread-local storage so logging macros use the new level
 	crate::config::set_thread_config(config);
 
-	Ok(CommandResult::HandledWithOutput(Box::new(
-		CommandOutput::Loglevel {
-			old_level: Some(old_level.display_name().to_string()),
-			new_level: Some(new_level.display_name().to_string()),
-			current_level: None,
-			available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
-			changed,
-		},
-	)))
+	Ok(CommandResult::HandledWithOutput(Box::new(CommandOutput::Loglevel {
+		old_level: Some(old_level.display_name().to_string()),
+		new_level: Some(new_level.display_name().to_string()),
+		current_level: None,
+		available_levels: vec!["none".to_string(), "info".to_string(), "debug".to_string()],
+		changed,
+	})))
 }

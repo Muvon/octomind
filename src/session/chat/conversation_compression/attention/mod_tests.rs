@@ -127,10 +127,7 @@ fn runtime_event_never_becomes_real_user_provenance() {
 		"openrouter:test",
 	);
 	assert_eq!(packets.last().unwrap().kind, PacketKind::RuntimeEvent);
-	assert_eq!(
-		packets.last().unwrap().provenance,
-		Provenance::RuntimeSystemManaged
-	);
+	assert_eq!(packets.last().unwrap().provenance, Provenance::RuntimeSystemManaged);
 }
 
 #[test]
@@ -218,19 +215,18 @@ fn genuine_user_pivot_replaces_runtime_trigger_as_action_parent() {
 #[test]
 fn validated_continuation_keeps_protocol_and_runtime_trigger_in_active_closure() {
 	let prior = Message {
-			role: "assistant".into(),
-			content: "<conversation_summary id=\"old\"><folded_state>established protocol</folded_state></conversation_summary>".into(),
-			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
-			..Default::default()
-		};
+		role: "assistant".into(),
+		content:
+			"<conversation_summary id=\"old\"><folded_state>established protocol</folded_state></conversation_summary>"
+				.into(),
+		name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
+		..Default::default()
+	};
 	let continuation = message(
-			"user",
-			"<continuation>\n<task>continue the established monitoring protocol</task>\n</continuation>",
-		);
-	let runtime = message(
 		"user",
-		"<system-note>scheduled check is due now</system-note>",
+		"<continuation>\n<task>continue the established monitoring protocol</task>\n</continuation>",
 	);
+	let runtime = message("user", "<system-note>scheduled check is due now</system-note>");
 	let call = Message {
 		role: "assistant".into(),
 		tool_calls: Some(serde_json::json!([{
@@ -278,9 +274,9 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 			..Default::default()
 		};
 	let continuation = message(
-			"user",
-			"<continuation>\n<task>monitor the active operation through completion</task>\n</continuation>",
-		);
+		"user",
+		"<continuation>\n<task>monitor the active operation through completion</task>\n</continuation>",
+	);
 	let mut old_call = message("assistant", "completed an earlier diagnostic");
 	old_call.tool_calls = Some(serde_json::json!([{
 		"id": "old-call",
@@ -332,9 +328,7 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 	// input only), so the budget invariant covers everything but it.
 	let selected_tokens = packets
 		.iter()
-		.filter(|packet| {
-			packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
-		})
+		.filter(|packet| packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary)
 		.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 		.sum::<usize>();
 	assert_eq!(packets[0].kind, PacketKind::PriorSummary);
@@ -344,19 +338,11 @@ async fn monitoring_replay_keeps_protocol_and_trigger_while_archiving_closed_noi
 		.contains("Use the established resource reference"));
 
 	assert_eq!(
-		packets
-			.iter()
-			.find(|packet| packet.id == old_packet_id)
-			.unwrap()
-			.lane,
+		packets.iter().find(|packet| packet.id == old_packet_id).unwrap().lane,
 		Lane::ArchiveReference
 	);
 	assert_eq!(
-		packets
-			.iter()
-			.find(|packet| packet.id == live_packet_id)
-			.unwrap()
-			.lane,
+		packets.iter().find(|packet| packet.id == live_packet_id).unwrap().lane,
 		Lane::KeepExact
 	);
 	assert!(packets[1].lane == Lane::KeepExact);
@@ -389,11 +375,7 @@ fn extractive_preview_keeps_exact_edges_and_line_numbers() {
 	assert_eq!(preview.spans[1].end_line, 200);
 	assert_eq!(
 		preview.spans[0],
-		source_span(
-			&source.lines().collect::<Vec<_>>(),
-			1,
-			preview.spans[0].end_line
-		)
+		source_span(&source.lines().collect::<Vec<_>>(), 1, preview.spans[0].end_line)
 	);
 }
 
@@ -452,11 +434,7 @@ fn validator_accepts_supported_fold_and_rejects_authority_or_lane_amplification(
 	};
 	assert!(supported.validate_summary(&summary).is_ok());
 
-	let runtime = pact_with(packet(
-		"b:event",
-		Provenance::RuntimeSystemManaged,
-		Lane::Summarize,
-	));
+	let runtime = pact_with(packet("b:event", Provenance::RuntimeSystemManaged, Lane::Summarize));
 	let mut invalid = summary.clone();
 	invalid.folded_units[0].refs = vec!["b:event".into()];
 	assert!(runtime
@@ -465,11 +443,7 @@ fn validator_accepts_supported_fold_and_rejects_authority_or_lane_amplification(
 		.to_string()
 		.contains("amplifies"));
 
-	let archive_only = pact_with(packet(
-		"b:archived",
-		Provenance::ToolObserved,
-		Lane::ArchiveReference,
-	));
+	let archive_only = pact_with(packet("b:archived", Provenance::ToolObserved, Lane::ArchiveReference));
 	invalid.folded_units[0].refs = vec!["b:archived".into()];
 	assert!(archive_only
 		.validate_summary(&invalid)
@@ -477,11 +451,7 @@ fn validator_accepts_supported_fold_and_rejects_authority_or_lane_amplification(
 		.to_string()
 		.contains("archive-only"));
 
-	let active = pact_with(packet(
-		"b:active",
-		Provenance::ToolObserved,
-		Lane::KeepExact,
-	));
+	let active = pact_with(packet("b:active", Provenance::ToolObserved, Lane::KeepExact));
 	invalid.folded_units[0].refs = vec!["b:active".into()];
 	assert!(active
 		.validate_summary(&invalid)
@@ -492,10 +462,7 @@ fn validator_accepts_supported_fold_and_rejects_authority_or_lane_amplification(
 
 #[test]
 fn runtime_or_assistant_state_cannot_become_continuation_action() {
-	for provenance in [
-		Provenance::RuntimeSystemManaged,
-		Provenance::AssistantReported,
-	] {
+	for provenance in [Provenance::RuntimeSystemManaged, Provenance::AssistantReported] {
 		let pact = pact_with(packet("b:advisory", provenance, Lane::Summarize));
 		let mut summary = CompressionSummary {
 			folded_units: vec![FoldedUnit {
@@ -524,11 +491,7 @@ fn runtime_or_assistant_state_cannot_become_continuation_action() {
 	pact.normalize_summary(&mut summary);
 	assert_eq!(summary.folded_units.len(), 1);
 
-	let pact = pact_with(packet(
-		"b:descriptor",
-		Provenance::ToolObserved,
-		Lane::ArchiveReference,
-	));
+	let pact = pact_with(packet("b:descriptor", Provenance::ToolObserved, Lane::ArchiveReference));
 	let mut summary = CompressionSummary {
 		folded_units: vec![FoldedUnit {
 			text: "guess the next action from an archive descriptor".into(),
@@ -545,13 +508,8 @@ fn runtime_or_assistant_state_cannot_become_continuation_action() {
 #[test]
 fn repair_strips_archive_refs_and_keeps_valid_support() {
 	let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
-	let archived = packet(
-		"b:archived",
-		Provenance::ToolObserved,
-		Lane::ArchiveReference,
-	);
-	pact.known_provenance
-		.insert(archived.id.clone(), archived.provenance);
+	let archived = packet("b:archived", Provenance::ToolObserved, Lane::ArchiveReference);
+	pact.known_provenance.insert(archived.id.clone(), archived.provenance);
 	pact.packets.push(archived);
 	let mut summary = CompressionSummary {
 		folded_units: vec![FoldedUnit {
@@ -569,18 +527,9 @@ fn repair_strips_archive_refs_and_keeps_valid_support() {
 
 #[test]
 fn repair_downgrades_frontier_fold_and_drops_unsalvageable_units() {
-	let mut pact = pact_with(packet(
-		"b:active",
-		Provenance::ToolObserved,
-		Lane::KeepExact,
-	));
-	let archived = packet(
-		"b:archived",
-		Provenance::ToolObserved,
-		Lane::ArchiveReference,
-	);
-	pact.known_provenance
-		.insert(archived.id.clone(), archived.provenance);
+	let mut pact = pact_with(packet("b:active", Provenance::ToolObserved, Lane::KeepExact));
+	let archived = packet("b:archived", Provenance::ToolObserved, Lane::ArchiveReference);
+	pact.known_provenance.insert(archived.id.clone(), archived.provenance);
 	pact.packets.push(archived);
 	let mut summary = CompressionSummary {
 		folded_units: vec![
@@ -632,11 +581,7 @@ fn repair_covers_uncited_summarize_packets_with_reference_units() {
 
 #[test]
 fn repair_downgrades_assistant_only_established_claims() {
-	let pact = pact_with(packet(
-		"b:claim",
-		Provenance::AssistantReported,
-		Lane::Summarize,
-	));
+	let pact = pact_with(packet("b:claim", Provenance::AssistantReported, Lane::Summarize));
 	let mut summary = CompressionSummary {
 		folded_units: vec![FoldedUnit {
 			text: "assistant said it is done".into(),
@@ -672,15 +617,10 @@ fn validator_rejects_unrepresented_summarize_packets() {
 #[test]
 fn validator_rejects_prior_sources_that_are_not_exactly_recoverable() {
 	let prior_id = "b:prior-source".to_string();
-	let mut summary_packet = packet(
-		"b:visible-prior-summary",
-		Provenance::ValidatedSummary,
-		Lane::Summarize,
-	);
+	let mut summary_packet = packet("b:visible-prior-summary", Provenance::ValidatedSummary, Lane::Summarize);
 	summary_packet.prompt_content = format!("prior fold refs={prior_id}");
 	let mut pact = pact_with(summary_packet);
-	pact.known_provenance
-		.insert(prior_id.clone(), Provenance::ToolObserved);
+	pact.known_provenance.insert(prior_id.clone(), Provenance::ToolObserved);
 	pact.prior_recall.insert(
 		prior_id.clone(),
 		super::super::archive::ArchivedBlockRef {
@@ -703,20 +643,14 @@ fn validator_rejects_prior_sources_that_are_not_exactly_recoverable() {
 		..Default::default()
 	};
 	let error = pact.validate_summary(&summary).unwrap_err();
-	assert!(error
-		.to_string()
-		.contains("PACT prior-source recovery failed"));
+	assert!(error.to_string().contains("PACT prior-source recovery failed"));
 	pact.sanitize_for_forced_compression(&mut summary);
 	assert!(summary.folded_units.is_empty());
 }
 
 #[test]
 fn telemetry_contains_cost_and_span_proof_but_no_evidence_text() {
-	let mut evidence = packet(
-		"b:credential-pointer",
-		Provenance::ToolObserved,
-		Lane::Summarize,
-	);
+	let mut evidence = packet("b:credential-pointer", Provenance::ToolObserved, Lane::Summarize);
 	evidence.prompt_content = "SECRET_VALUE_MUST_NOT_BE_LOGGED".into();
 	evidence.exact_spans = vec![SourceSpan {
 		start_line: 1,
@@ -785,10 +719,7 @@ fn self_report_cannot_reactivate_state_before_a_new_real_user_boundary() {
 	let stale = "continue with the earlier incompatible trajectory";
 	let messages = vec![
 		message("assistant", stale),
-		message(
-			"user",
-			"Use the corrected trajectory from this point forward.",
-		),
+		message("user", "Use the corrected trajectory from this point forward."),
 	];
 	let packets = build_packets("session", &messages, "openrouter:test");
 	let handoff = crate::supervisor::detect::SelfReportHandoff {
@@ -923,11 +854,7 @@ fn embedding_unavailable_fallback_is_structural_and_deterministic() {
 	runtime.kind = PacketKind::RuntimeEvent;
 	let mut tool = packet("b:tool", Provenance::ToolObserved, Lane::ArchiveReference);
 	tool.kind = PacketKind::ToolInteraction;
-	let mut summary = packet(
-		"b:summary",
-		Provenance::ValidatedSummary,
-		Lane::ArchiveReference,
-	);
+	let mut summary = packet("b:summary", Provenance::ValidatedSummary, Lane::ArchiveReference);
 	summary.kind = PacketKind::PriorSummary;
 	let packets = vec![runtime, tool, summary];
 	let grounded = HashSet::from(["b:grounded-runtime"]);
@@ -941,11 +868,7 @@ fn embedding_unavailable_fallback_is_structural_and_deterministic() {
 
 #[test]
 fn selected_packets_require_live_dependency_closure() {
-	let dependency = packet(
-		"b:dependency",
-		Provenance::ToolObserved,
-		Lane::ArchiveReference,
-	);
+	let dependency = packet("b:dependency", Provenance::ToolObserved, Lane::ArchiveReference);
 	let mut child = packet("b:child", Provenance::AssistantReported, Lane::Summarize);
 	child.depends_on = vec![dependency.id.clone()];
 	let known_provenance = BTreeMap::from([
@@ -1025,9 +948,7 @@ fn validator_rejects_exact_frontier_without_recoverable_span() {
 	exact.prompt_content = "[… exact packet omitted; recall by block ID …]".into();
 	exact.exact_spans.clear();
 	let pact = pact_with(exact);
-	let error = pact
-		.validate_summary(&CompressionSummary::default())
-		.unwrap_err();
+	let error = pact.validate_summary(&CompressionSummary::default()).unwrap_err();
 	assert!(error.to_string().contains("no recoverable source span"));
 }
 
@@ -1103,25 +1024,14 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 	// exhausted) must NOT fail validation as a missing live dependency of
 	// the selected packets that depend on it — that veto would reject
 	// every such compression instead of the nesting.
-	let mut prior_packet = packet(
-		"b:prior-summary",
-		Provenance::ValidatedSummary,
-		Lane::ArchiveReference,
-	);
+	let mut prior_packet = packet("b:prior-summary", Provenance::ValidatedSummary, Lane::ArchiveReference);
 	prior_packet.kind = PacketKind::PriorSummary;
-	let mut continuation_packet = packet(
-		"b:continuation",
-		Provenance::ValidatedSummary,
-		Lane::KeepExact,
-	);
+	let mut continuation_packet = packet("b:continuation", Provenance::ValidatedSummary, Lane::KeepExact);
 	continuation_packet.kind = PacketKind::TaskContinuation;
 	continuation_packet.depends_on = vec![prior_packet.id.clone()];
 	let known_provenance = BTreeMap::from([
 		(prior_packet.id.clone(), prior_packet.provenance),
-		(
-			continuation_packet.id.clone(),
-			continuation_packet.provenance,
-		),
+		(continuation_packet.id.clone(), continuation_packet.provenance),
 	]);
 	let pact = PactContext {
 		enabled: true,
@@ -1135,9 +1045,7 @@ async fn prior_summary_never_enters_the_exact_frontier_so_summaries_cannot_nest(
 		target_tokens: 40,
 		metrics: PactMetrics::default(),
 	};
-	assert!(pact
-		.validate_summary(&CompressionSummary::default())
-		.is_ok());
+	assert!(pact.validate_summary(&CompressionSummary::default()).is_ok());
 }
 
 fn prior_summary_message(lines: &[String]) -> Message {
@@ -1176,9 +1084,7 @@ async fn prior_summary_fold_input_is_complete_regardless_of_budget() {
 	// the prior summary must reach the fold model whole under ANY budget.
 	// 1,000 lines: large enough that any hidden size cap between the
 	// render and the fold prompt would visibly truncate.
-	let prior_lines: Vec<String> = (1..=1_000)
-		.map(|line| format!("prior folded line {line}"))
-		.collect();
+	let prior_lines: Vec<String> = (1..=1_000).map(|line| format!("prior folded line {line}")).collect();
 	let continuation = message(
 		"user",
 		"<continuation>\n<task>finish the benchmark reconciliation</task>\n</continuation>",
@@ -1295,9 +1201,7 @@ async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
 	// charging it against the summarize budget would starve every other
 	// archive candidate out of the fold whenever the prior summary is
 	// large — exactly the sessions that need folding the most.
-	let prior_lines: Vec<String> = (1..=300)
-		.map(|line| format!("prior folded line {line}"))
-		.collect();
+	let prior_lines: Vec<String> = (1..=300).map(|line| format!("prior folded line {line}")).collect();
 	let continuation = message(
 		"user",
 		"<continuation>\n<task>finish the benchmark reconciliation</task>\n</continuation>",
@@ -1339,9 +1243,7 @@ async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
 		.find(|packet| packet.kind == PacketKind::PriorSummary)
 		.expect("prior summary packet exists");
 	assert_eq!(prior_packet.lane, Lane::Summarize);
-	assert!(prior_packet
-		.prompt_content
-		.contains("prior folded line 300"));
+	assert!(prior_packet.prompt_content.contains("prior folded line 300"));
 	let old_pair = packets
 		.iter()
 		.find(|packet| packet.id == old_pair_id)
@@ -1355,9 +1257,7 @@ async fn prior_summary_full_render_does_not_consume_the_summarize_budget() {
 	// prior's fold input.
 	let context_selected: usize = packets
 		.iter()
-		.filter(|packet| {
-			packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary
-		})
+		.filter(|packet| packet.lane != Lane::ArchiveReference && packet.kind != PacketKind::PriorSummary)
 		.map(|packet| crate::session::estimate_tokens(&packet.prompt_content))
 		.sum();
 	assert!(
@@ -1436,10 +1336,7 @@ fn validator_vetoes_a_prior_summary_folded_from_a_gutted_render() {
 
 	// Head/tail extraction leaves two edge spans — vetoed.
 	let gutted = build_prior(
-		vec![
-			source_span(&lines, 1, 10),
-			source_span(&lines, 30, lines.len()),
-		],
+		vec![source_span(&lines, 1, 10), source_span(&lines, 30, lines.len())],
 		&content,
 	);
 	assert!(gutted
@@ -1484,10 +1381,7 @@ async fn legacy_nested_prior_summary_folds_whole_after_stripping_regrown_section
 			name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
 			..Default::default()
 		};
-	let continuation = message(
-		"user",
-		"<continuation>\n<task>keep going</task>\n</continuation>",
-	);
+	let continuation = message("user", "<continuation>\n<task>keep going</task>\n</continuation>");
 	let messages = vec![prior, continuation];
 	let mut packets = build_packets("legacy-blob", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
@@ -1525,10 +1419,7 @@ async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
 		name: Some(super::super::apply::COMPRESSION_MESSAGE_NAME.into()),
 		..Default::default()
 	};
-	let continuation = message(
-		"user",
-		"<continuation>\n<task>keep going</task>\n</continuation>",
-	);
+	let continuation = message("user", "<continuation>\n<task>keep going</task>\n</continuation>");
 	let mut call = message("assistant", "checking");
 	call.tool_calls = Some(serde_json::json!([{
 		"id": "c1",
@@ -1564,25 +1455,16 @@ async fn empty_prior_summary_render_stays_archived_without_vetoing_the_cycle() {
 		target_tokens: 200,
 		metrics: PactMetrics::default(),
 	};
-	assert!(pact
-		.validate_summary(&CompressionSummary::default())
-		.is_ok());
+	assert!(pact.validate_summary(&CompressionSummary::default()).is_ok());
 }
 
 #[tokio::test]
 async fn every_prior_summary_folds_whole_when_a_legacy_session_carries_several() {
 	// Pre-fix sessions can hold more than one summary message; each one is
 	// distilled state and each must reach the fold model complete.
-	let first_lines: Vec<String> = (1..=50)
-		.map(|line| format!("first epoch line {line}"))
-		.collect();
-	let second_lines: Vec<String> = (1..=50)
-		.map(|line| format!("second epoch line {line}"))
-		.collect();
-	let continuation = message(
-		"user",
-		"<continuation>\n<task>keep going</task>\n</continuation>",
-	);
+	let first_lines: Vec<String> = (1..=50).map(|line| format!("first epoch line {line}")).collect();
+	let second_lines: Vec<String> = (1..=50).map(|line| format!("second epoch line {line}")).collect();
+	let continuation = message("user", "<continuation>\n<task>keep going</task>\n</continuation>");
 	let mut call = message("assistant", "checking");
 	call.tool_calls = Some(serde_json::json!([{
 		"id": "c1",
@@ -1623,9 +1505,7 @@ async fn compaction_with_only_a_prior_summary_still_folds_it_whole() {
 	// Back-to-back compactions can fire with nothing after the previous
 	// summary. The closure is empty then — the prior must still fold with
 	// full content instead of being stranded as an archive pointer.
-	let prior_lines: Vec<String> = (1..=100)
-		.map(|line| format!("prior folded line {line}"))
-		.collect();
+	let prior_lines: Vec<String> = (1..=100).map(|line| format!("prior folded line {line}")).collect();
 	let messages = vec![prior_summary_message(&prior_lines)];
 	let mut packets = build_packets("prior-only", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
@@ -1648,13 +1528,9 @@ fn fold_prompt_pins_the_live_plan_checklist_inside_pinned_state() {
 	// stale-plan/summary split once sent a session chasing a step it had
 	// already been re-scoped away from).
 	let mut pact = pact_with(packet("b:tool", Provenance::ToolObserved, Lane::Summarize));
-	pact.plan_focus =
-		"Live plan (1/4 done):\n✅ run the case\n🔄 capture the rerun ← current".into();
+	pact.plan_focus = "Live plan (1/4 done):\n✅ run the case\n🔄 capture the rerun ← current".into();
 	let view = pact.prompt_view();
-	let pinned_block = view
-		.split("</pinned_state>")
-		.next()
-		.expect("pinned_state present");
+	let pinned_block = view.split("</pinned_state>").next().expect("pinned_state present");
 	assert!(pinned_block.contains("live_plan:"));
 	assert!(pinned_block.contains("capture the rerun ← current"));
 
@@ -1685,14 +1561,7 @@ async fn tiny_summarize_candidate_renders_whole_instead_of_poisoning_its_depende
 	}]));
 	let mut live_result = message("tool", "run alive");
 	live_result.tool_call_id = Some("live-1".into());
-	let messages = vec![
-		continuation,
-		old_call,
-		old_result,
-		trigger,
-		live_call,
-		live_result,
-	];
+	let messages = vec![continuation, old_call, old_result, trigger, live_call, live_result];
 	let mut packets = build_packets("tiny-candidate", &messages, "openrouter:test");
 	link_dependencies(&mut packets);
 	let continuation_id = packets[0].id.clone();
@@ -1717,11 +1586,7 @@ async fn tiny_summarize_candidate_renders_whole_instead_of_poisoning_its_depende
 
 #[test]
 fn repeated_compaction_keeps_visible_prior_block_recall_coordinates() {
-	let mut pact = pact_with(packet(
-		"b:current",
-		Provenance::ValidatedSummary,
-		Lane::Summarize,
-	));
+	let mut pact = pact_with(packet("b:current", Provenance::ValidatedSummary, Lane::Summarize));
 	pact.prior_recall.insert(
 		"b:prior".into(),
 		super::super::archive::ArchivedBlockRef {
@@ -1801,8 +1666,7 @@ fn live_pinned_band_points_at_a_request_the_user_turn_carries() {
 
 #[test]
 fn ground_self_report_requires_handoff_and_grounds_candidates() {
-	let mut session =
-		ChatSession::for_tests(vec![message("user", "stabilise the deploy pipeline now")]);
+	let mut session = ChatSession::for_tests(vec![message("user", "stabilise the deploy pipeline now")]);
 	session.last_self_report_handoff = Some(crate::supervisor::detect::SelfReportHandoff {
 		focus: "stabilise the deploy pipeline now".to_string(),
 		next: String::new(),
@@ -1914,10 +1778,7 @@ async fn standing_session_rules_are_pinned_and_governed() {
 		pact.pinned.constraints
 	);
 	let (pinned_band, _) = pact.render_live_bands(None, None);
-	assert!(
-		pinned_band.contains("constraint: never push to main"),
-		"{pinned_band}"
-	);
+	assert!(pinned_band.contains("constraint: never push to main"), "{pinned_band}");
 
 	let fold_point = session.session.messages.len();
 	assert!(pact.verify_governance(&session, fold_point).is_ok());
@@ -2076,9 +1937,7 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 	}
 	assert_eq!(governed.prompt_view(), attended.prompt_view());
 	assert!(
-		governed
-			.prompt_view()
-			.contains("thread panicked at src/deploy.rs:42"),
+		governed.prompt_view().contains("thread panicked at src/deploy.rs:42"),
 		"{}",
 		governed.prompt_view()
 	);
@@ -2098,9 +1957,7 @@ async fn governance_only_build_carries_the_same_evidence_as_attention_enabled() 
 // Pre-fold pruning through the compression seam
 // ---------------------------------------------------------------------------
 
-use crate::session::chat::test_support::{
-	evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep,
-};
+use crate::session::chat::test_support::{evaluate_counter, install_fake_evaluation, nouls, FakeEvaluationStep};
 use crate::supervisor::evaluate::{compression_question_id, Seam, COMPRESSION_SAMPLE_TOKENS};
 
 fn supervisor(compression: bool) -> crate::config::Config {
@@ -2216,17 +2073,7 @@ async fn prune_scores_only_summarize_tool_packets_with_bounded_samples() {
 
 #[tokio::test]
 async fn prune_demotes_below_threshold_with_the_unadmitted_shape() {
-	let _fake = install_fake_evaluation(vec![unit_answers(
-		2,
-		|slot| {
-			if slot == 0 {
-				0.1
-			} else {
-				0.9
-			}
-		},
-	)])
-	.await;
+	let _fake = install_fake_evaluation(vec![unit_answers(2, |slot| if slot == 0 { 0.1 } else { 0.9 })]).await;
 	let applied_before = evaluate_counter(Seam::Compression, "applied");
 	let mut pact = pact_with_packets(vec![
 		tool_packet("b:dead", Lane::Summarize, &long_output("build", 40)),
@@ -2253,26 +2100,18 @@ async fn prune_demotes_below_threshold_with_the_unadmitted_shape() {
 	assert_eq!(live.exact_spans, live_before.exact_spans);
 
 	let view = pact.prompt_view();
-	let dead_header = view
-		.find("[b:dead archive_reference")
-		.expect("demoted header");
-	let descriptor = view
-		.find(&format!("descriptor: {}", dead.descriptor))
-		.unwrap();
+	let dead_header = view.find("[b:dead archive_reference").expect("demoted header");
+	let descriptor = view.find(&format!("descriptor: {}", dead.descriptor)).unwrap();
 	let live_header = view.find("[b:live summarize").expect("kept header");
 	assert!(dead_header < descriptor && descriptor < live_header);
 	assert!(!view.contains("build output line 1 with"));
 	assert!(view.contains("view output line 1 with"));
-	assert_eq!(
-		evaluate_counter(Seam::Compression, "applied") - applied_before,
-		1
-	);
+	assert_eq!(evaluate_counter(Seam::Compression, "applied") - applied_before, 1);
 }
 
 #[tokio::test]
 async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
-	let _fake =
-		install_fake_evaluation(vec![unit_answers(2, |_| 0.1), unit_answers(2, |_| 0.1)]).await;
+	let _fake = install_fake_evaluation(vec![unit_answers(2, |_| 0.1), unit_answers(2, |_| 0.1)]).await;
 	let applied_before = evaluate_counter(Seam::Compression, "applied");
 	let mut checkpoint = packet("b:check", Provenance::AssistantReported, Lane::Summarize);
 	checkpoint.kind = PacketKind::AssistantCheckpoint;
@@ -2289,10 +2128,7 @@ async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
 	assert_eq!(pact.packets[2].lane, Lane::ArchiveReference);
 	assert_eq!(pact.packets[0].lane, Lane::Summarize);
 	assert!(!pact.packets[0].prompt_content.is_empty());
-	assert_eq!(
-		evaluate_counter(Seam::Compression, "applied") - applied_before,
-		1
-	);
+	assert_eq!(evaluate_counter(Seam::Compression, "applied") - applied_before, 1);
 	pact.validate_summary(&CompressionSummary {
 		should_compress: true,
 		current_task: "continue the task".to_string(),
@@ -2322,17 +2158,10 @@ async fn prune_keeps_a_unit_a_selected_packet_depends_on() {
 
 #[tokio::test]
 async fn prune_windows_many_units_in_packet_order() {
-	let fake =
-		install_fake_evaluation(vec![unit_answers(96, |_| 0.9), unit_answers(34, |_| 0.9)]).await;
+	let fake = install_fake_evaluation(vec![unit_answers(96, |_| 0.9), unit_answers(34, |_| 0.9)]).await;
 	let calls_before = evaluate_counter(Seam::Compression, "calls");
 	let packets: Vec<EvidencePacket> = (0..130)
-		.map(|i| {
-			tool_packet(
-				&format!("b:u{i}"),
-				Lane::Summarize,
-				&format!("unit {i} output"),
-			)
-		})
+		.map(|i| tool_packet(&format!("b:u{i}"), Lane::Summarize, &format!("unit {i} output")))
 		.collect();
 	let mut pact = pact_with_packets(packets);
 	pact.prune_dead_tool_packets(&supervisor(true)).await;
@@ -2355,10 +2184,7 @@ async fn prune_windows_many_units_in_packet_order() {
 				<= crate::supervisor::evaluate::MAX_STATE_TOKENS
 		);
 	}
-	assert_eq!(
-		evaluate_counter(Seam::Compression, "calls") - calls_before,
-		2
-	);
+	assert_eq!(evaluate_counter(Seam::Compression, "calls") - calls_before, 2);
 	assert!(pact.packets.iter().all(|p| p.lane == Lane::Summarize));
 }
 
@@ -2372,13 +2198,7 @@ async fn prune_unavailable_window_demotes_nothing() {
 	let unavailable_before = evaluate_counter(Seam::Compression, "unavailable");
 	let applied_before = evaluate_counter(Seam::Compression, "applied");
 	let packets: Vec<EvidencePacket> = (0..100)
-		.map(|i| {
-			tool_packet(
-				&format!("b:u{i}"),
-				Lane::Summarize,
-				&format!("unit {i} output"),
-			)
-		})
+		.map(|i| tool_packet(&format!("b:u{i}"), Lane::Summarize, &format!("unit {i} output")))
 		.collect();
 	let mut pact = pact_with_packets(packets);
 	let before = pact.prompt_view();
@@ -2389,10 +2209,7 @@ async fn prune_unavailable_window_demotes_nothing() {
 		evaluate_counter(Seam::Compression, "unavailable") - unavailable_before,
 		1
 	);
-	assert_eq!(
-		evaluate_counter(Seam::Compression, "applied"),
-		applied_before
-	);
+	assert_eq!(evaluate_counter(Seam::Compression, "applied"), applied_before);
 }
 
 #[tokio::test]
@@ -2445,8 +2262,7 @@ async fn prune_leaves_archive_verification_and_validation_intact() {
 		&pact.packets,
 	)
 	.expect("archive writes");
-	pact.verify_archive(&bundle, drained)
-		.expect("archive verifies");
+	pact.verify_archive(&bundle, drained).expect("archive verifies");
 	let archived = std::fs::read_to_string(&bundle.path).expect("archive readable");
 	assert!(archived.contains("thread panicked at src/deploy.rs:42"));
 

@@ -17,8 +17,7 @@ use clap::Args;
 use colored::*;
 use octomind::config::Config;
 use octomind::session::chat::{
-	block_close_ok, block_line, block_open, block_row, block_row_text, block_section,
-	block_section_with,
+	block_close_ok, block_line, block_open, block_row, block_row_text, block_section, block_section_with,
 };
 use octomind::session::helper_functions::get_all_placeholders;
 use std::env;
@@ -26,12 +25,30 @@ use std::env;
 #[derive(Args)]
 pub struct VarsArgs {
 	/// Show preview of placeholder values (3 lines)
-	#[arg(short, long)]
+	#[arg(short, long, conflicts_with = "expand")]
 	pub preview: bool,
 
 	/// Show full expanded values for placeholders
-	#[arg(short, long)]
+	#[arg(short, long, conflicts_with = "preview")]
 	pub expand: bool,
+}
+
+fn placeholder_description(placeholder: &str) -> &'static str {
+	match placeholder {
+		"{{DATE}}" => "Current date and time with timezone",
+		"{{SHELL}}" => "Current shell name and version",
+		"{{OS}}" => "Operating system information",
+		"{{BINARIES}}" => "Available development tools and their versions",
+		"{{CWD}}" => "Current working directory",
+		"{{HOME}}" => "User home directory",
+		"{{SYSTEM}}" => "Complete system information (date, shell, OS, binaries, CWD)",
+		"{{CONTEXT}}" => "Project context information (README, git status, git tree)",
+		"{{GIT_STATUS}}" => "Git repository status",
+		"{{GIT_TREE}}" => "Git file tree",
+		"{{README}}" => "Project README content",
+		"{{ROLE}}" => "Active session role, resolved separately for each session",
+		_ => "Project context variable",
+	}
 }
 
 pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
@@ -55,6 +72,7 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 		.map(|(n, _)| n.len())
 		.max()
 		.unwrap_or(0)
+		.max("{{ROLE}}".len())
 		.min(24);
 
 	if !args.expand && !args.preview && !sorted_placeholders.is_empty() {
@@ -69,18 +87,12 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 			if value.trim().is_empty() {
 				block_section_with(placeholder, "empty");
 			} else if args.expand || (lines.len() <= 5 && tokens <= 200) {
-				block_section_with(
-					placeholder,
-					&format!("{} line(s), {} tokens", lines.len(), tokens),
-				);
+				block_section_with(placeholder, &format!("{} line(s), {} tokens", lines.len(), tokens));
 				for line in value.lines() {
 					block_row_text(line);
 				}
 			} else {
-				block_section_with(
-					placeholder,
-					&format!("{} line(s), {} tokens", lines.len(), tokens),
-				);
+				block_section_with(placeholder, &format!("{} line(s), {} tokens", lines.len(), tokens));
 				let mut preview_lines = Vec::new();
 				for line in lines.iter().take(10) {
 					let trimmed = line.trim();
@@ -105,25 +117,17 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 				}
 			}
 		} else {
-			let description = match placeholder.as_str() {
-				"{{DATE}}" => "Current date and time with timezone",
-				"{{SHELL}}" => "Current shell name and version",
-				"{{OS}}" => "Operating system information",
-				"{{BINARIES}}" => "Available development tools and their versions",
-				"{{CWD}}" => "Current working directory",
-				"{{ROLE}}" => "Current session role (developer, assistant, etc.)",
-				"{{SYSTEM}}" => "Complete system information (date, shell, OS, binaries, CWD)",
-				"{{CONTEXT}}" => "Project context information (README, git status, git tree)",
-				"{{GIT_STATUS}}" => "Git repository status",
-				"{{GIT_TREE}}" => "Git file tree",
-				"{{README}}" => "Project README content",
-				_ => "Project context variable",
-			};
+			let description = placeholder_description(placeholder);
 			block_row(placeholder, &description.dimmed().to_string(), name_width);
 		}
 	}
 
 	if !args.expand && !args.preview {
+		block_row(
+			"{{ROLE}}",
+			&placeholder_description("{{ROLE}}").dimmed().to_string(),
+			name_width,
+		);
 		block_line(
 			&"Use --preview (-p) for preview values or --expand (-e) for full values."
 				.dimmed()
@@ -131,10 +135,11 @@ pub async fn execute(args: &VarsArgs, _config: &Config) -> Result<()> {
 		);
 	}
 
-	block_close_ok(
-		"vars",
-		Some(&format!("{} placeholder(s)", sorted_placeholders.len())),
-	);
+	block_close_ok("vars", Some(&format!("{} placeholder(s)", sorted_placeholders.len())));
 	println!();
 	Ok(())
 }
+
+#[cfg(test)]
+#[path = "vars_tests.rs"]
+mod tests;

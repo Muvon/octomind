@@ -27,8 +27,8 @@ fn lesson_defaults_are_quote_first_and_scoped() {
 
 #[test]
 fn lesson_defaults_apply_through_serde_too() {
-	let lesson: Lesson = toml::from_str("content = \"a quoted user rule\"")
-		.expect("only the quote is required; the rest default");
+	let lesson: Lesson =
+		toml::from_str("content = \"a quoted user rule\"").expect("only the quote is required; the rest default");
 	assert_eq!(lesson.content, "a quoted user rule");
 	assert_eq!(lesson.memory_type, "learning");
 	assert_eq!(lesson.scope, "scoped");

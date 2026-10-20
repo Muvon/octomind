@@ -13,16 +13,12 @@ pub mod token_store;
 // Re-export commonly used types
 pub use callback_server::{start_callback_server, OAuthCallbackResult};
 pub use cimd::{resolve_client_id, stop_cimd_server};
-pub use discovery::{
-	clear_all_discovered_oauth_cache, clear_discovered_oauth_cache, discover_oauth_from_mcp_server,
-};
+pub use discovery::{clear_all_discovered_oauth_cache, clear_discovered_oauth_cache, discover_oauth_from_mcp_server};
 pub use flow::{
-	build_authorization_url, exchange_code_for_token, generate_pkce_pair, generate_state,
-	is_token_expired, refresh_access_token, OAuthTokenResponse, PkcePair,
+	build_authorization_url, exchange_code_for_token, generate_pkce_pair, generate_state, is_token_expired,
+	refresh_access_token, OAuthTokenResponse, PkcePair,
 };
-pub use token_store::{
-	clear_token, get_valid_token, load_token, save_token, TokenMetadata, TokenResult,
-};
+pub use token_store::{clear_token, get_valid_token, load_token, save_token, TokenMetadata, TokenResult};
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -104,21 +100,14 @@ impl OAuthConfig {
 			return Err("OAuth client_id cannot be empty".to_string());
 		}
 
-		let auth_url = Url::parse(&self.authorization_url).map_err(|e| {
-			format!(
-				"OAuth authorization_url is invalid: {}. Must be a valid URL",
-				e
-			)
-		})?;
+		let auth_url = Url::parse(&self.authorization_url)
+			.map_err(|e| format!("OAuth authorization_url is invalid: {}. Must be a valid URL", e))?;
 
 		if auth_url.scheme() != "https"
 			&& auth_url.host_str() != Some("localhost")
 			&& auth_url.host_str() != Some("127.0.0.1")
 		{
-			return Err(
-				"OAuth authorization_url must use HTTPS or http://localhost/http://127.0.0.1"
-					.to_string(),
-			);
+			return Err("OAuth authorization_url must use HTTPS or http://localhost/http://127.0.0.1".to_string());
 		}
 
 		let token_url = Url::parse(&self.token_url)
@@ -128,9 +117,7 @@ impl OAuthConfig {
 			&& token_url.host_str() != Some("localhost")
 			&& token_url.host_str() != Some("127.0.0.1")
 		{
-			return Err(
-				"OAuth token_url must use HTTPS or http://localhost/http://127.0.0.1".to_string(),
-			);
+			return Err("OAuth token_url must use HTTPS or http://localhost/http://127.0.0.1".to_string());
 		}
 
 		let callback_url = Url::parse(&self.callback_url)
@@ -161,10 +148,7 @@ lazy_static::lazy_static! {
 
 /// Starts the complete OAuth authorization flow. `server_name` keys the token
 /// store — it must be the MCP config server name that lookups use.
-pub async fn start_oauth_flow(
-	config: &OAuthConfig,
-	server_name: &str,
-) -> Result<OAuthCallbackResult, anyhow::Error> {
+pub async fn start_oauth_flow(config: &OAuthConfig, server_name: &str) -> Result<OAuthCallbackResult, anyhow::Error> {
 	config
 		.validate()
 		.map_err(|e| anyhow::anyhow!("OAuth config validation failed: {}", e))?;

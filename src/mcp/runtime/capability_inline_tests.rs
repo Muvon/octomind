@@ -46,10 +46,7 @@ fn schema_has_required_action() {
 fn active_registry_marks_and_clears() {
 	let cap = "test.cap.alpha";
 	assert!(!is_active(cap));
-	mark_active(
-		cap,
-		vec![("test-server".to_string(), vec!["t1".to_string()])],
-	);
+	mark_active(cap, vec![("test-server".to_string(), vec!["t1".to_string()])]);
 	assert!(is_active(cap));
 	registry().write().unwrap().remove(cap);
 	assert!(!is_active(cap));
@@ -80,10 +77,7 @@ fn filter_for_server_strips_specific_tool_namespace() {
 		"playwright:browser_click".to_string(),
 	];
 	let f = filter_for_server(&patterns, "playwright").expect("should produce a filter");
-	assert_eq!(
-		f,
-		vec!["browser_navigate".to_string(), "browser_click".to_string()]
-	);
+	assert_eq!(f, vec!["browser_navigate".to_string(), "browser_click".to_string()]);
 }
 
 #[test]
@@ -112,10 +106,7 @@ fn filter_for_server_mixed_patterns_only_keeps_relevant_ones() {
 		"shared_tool".to_string(),
 	];
 	let f = filter_for_server(&patterns, "playwright").expect("filter applies");
-	assert_eq!(
-		f,
-		vec!["browser_navigate".to_string(), "shared_tool".to_string()]
-	);
+	assert_eq!(f, vec!["browser_navigate".to_string(), "shared_tool".to_string()]);
 }
 
 #[test]
@@ -245,10 +236,7 @@ fn touch_capability_updates_timestamp_for_owning_cap() {
 	std::thread::sleep(std::time::Duration::from_millis(2));
 	touch_capability_for_server(server);
 	let after = registry().read().unwrap().get(cap).unwrap().last_used;
-	assert!(
-		after > before,
-		"touch_capability_for_server should bump last_used"
-	);
+	assert!(after > before, "touch_capability_for_server should bump last_used");
 	registry().write().unwrap().remove(cap);
 }
 
@@ -595,18 +583,9 @@ async fn capability_routing_fixtures_match_expected_caps() {
 
 	// Positive fixtures: clear intent → expected capability.
 	let positives: &[(&str, &str)] = &[
-		(
-			"EXPLAIN ANALYZE this slow postgres query",
-			"database-postgres",
-		),
-		(
-			"look at the postgres users table schema",
-			"database-postgres",
-		),
-		(
-			"I have a sqlite database I need to query",
-			"database-sqlite",
-		),
+		("EXPLAIN ANALYZE this slow postgres query", "database-postgres"),
+		("look at the postgres users table schema", "database-postgres"),
+		("I have a sqlite database I need to query", "database-sqlite"),
 		("open a .db file and check the tables", "database-sqlite"),
 		("read the contents of this file", "filesystem"),
 		("list everything in the current directory", "filesystem"),
@@ -621,10 +600,7 @@ async fn capability_routing_fixtures_match_expected_caps() {
 		("show me running docker containers", "docker"),
 		("build a docker image", "docker"),
 		("send a slack message to the team", "messaging-slack"),
-		(
-			"post in a slack channel about the deploy",
-			"messaging-slack",
-		),
+		("post in a slack channel about the deploy", "messaging-slack"),
 		("send a discord message", "messaging-discord"),
 		("post to discord", "messaging-discord"),
 		("show me git log", "versioning"),
@@ -667,9 +643,7 @@ async fn capability_routing_fixtures_match_expected_caps() {
 			Some((_, c)) if c.name == *expected => positive_correct += 1,
 			other => positive_misses.push(format!(
 				"{intent:?} → expected {expected}, got {:?}",
-				other
-					.as_ref()
-					.map(|(s, c)| format!("{} (score {:.2})", c.name, s))
+				other.as_ref().map(|(s, c)| format!("{} (score {:.2})", c.name, s))
 			)),
 		}
 	}
@@ -691,10 +665,9 @@ async fn capability_routing_fixtures_match_expected_caps() {
 		let result = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN);
 		match &result {
 			None => negative_abstained += 1,
-			Some((s, c)) => negative_misses.push(format!(
-				"{intent:?} → expected None, got {} (score {:.2})",
-				c.name, s
-			)),
+			Some((s, c)) => {
+				negative_misses.push(format!("{intent:?} → expected None, got {} (score {:.2})", c.name, s))
+			}
 		}
 	}
 
@@ -945,11 +918,7 @@ async fn capability_routing_diversity_fixtures() {
 			Some("codesearch-structural"),
 		),
 		// docker — including CLI-style "docker ps"
-		(
-			"paraphrase",
-			"show me running docker containers",
-			Some("docker"),
-		),
+		("paraphrase", "show me running docker containers", Some("docker")),
 		("paraphrase", "docker ps please", Some("docker")),
 		(
 			"paraphrase",
@@ -957,38 +926,22 @@ async fn capability_routing_diversity_fixtures() {
 			Some("docker"),
 		),
 		// kubernetes — kubectl-style + question form
-		(
-			"paraphrase",
-			"kubectl get pods in my cluster",
-			Some("kubernetes"),
-		),
+		("paraphrase", "kubectl get pods in my cluster", Some("kubernetes")),
 		(
 			"paraphrase",
 			"what pods are running in my k8s cluster",
 			Some("kubernetes"),
 		),
 		// webfetch
-		(
-			"paraphrase",
-			"fetch the contents of this URL",
-			Some("webfetch"),
-		),
-		(
-			"paraphrase",
-			"download this webpage so I can read it",
-			Some("webfetch"),
-		),
+		("paraphrase", "fetch the contents of this URL", Some("webfetch")),
+		("paraphrase", "download this webpage so I can read it", Some("webfetch")),
 		// filesystem — concrete file names
 		(
 			"paraphrase",
 			"what files are in the current directory",
 			Some("filesystem"),
 		),
-		(
-			"paraphrase",
-			"read the contents of package.json",
-			Some("filesystem"),
-		),
+		("paraphrase", "read the contents of package.json", Some("filesystem")),
 		// --- Non-coding paraphrases: real LLM tasks beyond code ---
 		// messaging-slack
 		(
@@ -1002,27 +955,11 @@ async fn capability_routing_diversity_fixtures() {
 			Some("messaging-slack"),
 		),
 		// calendar
-		(
-			"paraphrase",
-			"what meetings do I have tomorrow",
-			Some("calendar"),
-		),
-		(
-			"paraphrase",
-			"schedule a 30 minute meeting with Bob",
-			Some("calendar"),
-		),
+		("paraphrase", "what meetings do I have tomorrow", Some("calendar")),
+		("paraphrase", "schedule a 30 minute meeting with Bob", Some("calendar")),
 		// maps
-		(
-			"paraphrase",
-			"how do I get to the airport from my office",
-			Some("maps"),
-		),
-		(
-			"paraphrase",
-			"find coffee shops near this location",
-			Some("maps"),
-		),
+		("paraphrase", "how do I get to the airport from my office", Some("maps")),
+		("paraphrase", "find coffee shops near this location", Some("maps")),
 		// --- Ambiguous: only *truly* balanced cross-domain prompts.
 		// Each of these splits between two caps with a top-1/top-2 gap
 		// under 0.02 on the published int8 granite graph (kubernetes 0.721
@@ -1035,16 +972,8 @@ async fn capability_routing_diversity_fixtures() {
 		// answers both, and forcing abstention there would cripple real
 		// single-cap intents. Re-probe candidates with
 		// octomind-tap/model/scripts/eval_runtime_gate.py after a retrain.
-		(
-			"ambiguous",
-			"post the kubectl get pods output to slack",
-			None,
-		),
-		(
-			"ambiguous",
-			"check which docker container is running postgres",
-			None,
-		),
+		("ambiguous", "post the kubectl get pods output to slack", None),
+		("ambiguous", "check which docker container is running postgres", None),
 		("ambiguous", "put the meeting location on the map", None),
 		// --- Short: mid-session acks (most common false-positive class) ---
 		("short", "try", None),
@@ -1086,12 +1015,10 @@ async fn capability_routing_diversity_fixtures() {
 						(s, cap)
 					})
 					.collect();
-				let mut ranked: Vec<(f32, String)> =
-					scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
+				let mut ranked: Vec<(f32, String)> = scored.iter().map(|(s, c)| (*s, c.name.clone())).collect();
 				ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-				let outcome =
-					select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN)
-						.map(|(_, c)| c.name.clone());
+				let outcome = select_with_margin(scored, AUTO_ACTIVATE_THRESHOLD, AUTO_ACTIVATE_MARGIN)
+					.map(|(_, c)| c.name.clone());
 				(outcome, ranked)
 			};
 
@@ -1127,9 +1054,7 @@ async fn capability_routing_diversity_fixtures() {
 		} else {
 			*correct as f32 / *total as f32
 		};
-		report.push_str(&format!(
-			"  {cat:>12}: {correct:>2}/{total:<2}  ({acc:.2})\n"
-		));
+		report.push_str(&format!("  {cat:>12}: {correct:>2}/{total:<2}  ({acc:.2})\n"));
 		for m in misses {
 			report.push_str(&format!("                - {m}\n"));
 		}
@@ -1164,9 +1089,9 @@ async fn capability_routing_diversity_fixtures() {
 		);
 		let acc = correct as f32 / total as f32;
 		assert!(
-				acc >= *min_acc,
-				"category {cat}: accuracy {acc:.2} below {min_acc:.2} ({correct}/{total} correct){report}"
-			);
+			acc >= *min_acc,
+			"category {cat}: accuracy {acc:.2} below {min_acc:.2} ({correct}/{total} correct){report}"
+		);
 	}
 }
 
@@ -1187,12 +1112,7 @@ fn apply_capability_answer_confirms_vetoes_promotes_and_rejects_unknown() {
 		Ok(Some("a"))
 	);
 	assert_eq!(
-		apply_capability_answer(
-			Some("a"),
-			&names,
-			"none",
-			&p(&[("a", 0.04), ("none", 0.96)])
-		),
+		apply_capability_answer(Some("a"), &names, "none", &p(&[("a", 0.04), ("none", 0.96)])),
 		Ok(None)
 	);
 
@@ -1201,10 +1121,7 @@ fn apply_capability_answer_confirms_vetoes_promotes_and_rejects_unknown() {
 		apply_capability_answer(None, &names, "b", &p(&[("b", 0.6)])),
 		Ok(Some("b"))
 	);
-	assert_eq!(
-		apply_capability_answer(None, &names, "b", &p(&[("b", 0.59)])),
-		Ok(None)
-	);
+	assert_eq!(apply_capability_answer(None, &names, "b", &p(&[("b", 0.59)])), Ok(None));
 	assert_eq!(
 		apply_capability_answer(None, &names, "none", &p(&[("none", 1.0)])),
 		Ok(None)

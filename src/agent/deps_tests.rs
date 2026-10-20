@@ -35,12 +35,7 @@ async fn run_dep_entries_reports_status_and_runs_scripts() {
 	run_dep_entries(
 		&["acme/probe".to_string()],
 		tmp.path(),
-		Some(&|status| {
-			statuses
-				.lock()
-				.expect("statuses lock")
-				.push(status.to_string())
-		}),
+		Some(&|status| statuses.lock().expect("statuses lock").push(status.to_string())),
 	)
 	.await
 	.expect("successful dep script resolves");
@@ -56,10 +51,7 @@ async fn run_dep_entries_missing_script_is_an_error() {
 	let err = run_dep_entries(&["acme/ghost".to_string()], tmp.path(), None)
 		.await
 		.expect_err("missing dep script must fail");
-	assert!(
-		format!("{err:#}").contains("Dep script not found"),
-		"got: {err:#}"
-	);
+	assert!(format!("{err:#}").contains("Dep script not found"), "got: {err:#}");
 	assert!(
 		format!("{err:#}").contains("Dependency 'acme/ghost' failed"),
 		"got: {err:#}"
@@ -85,11 +77,7 @@ async fn run_dep_entries_failure_without_stderr_omits_stderr_trailer() {
 #[tokio::test]
 async fn run_dep_entries_failure_includes_captured_stderr() {
 	let tmp = tempfile::tempdir().expect("tempdir");
-	write_dep(
-		tmp.path(),
-		"acme/loud",
-		"echo 'installer exploded' >&2\nexit 3\n",
-	);
+	write_dep(tmp.path(), "acme/loud", "echo 'installer exploded' >&2\nexit 3\n");
 
 	let err = run_dep_entries(&["acme/loud".to_string()], tmp.path(), None)
 		.await

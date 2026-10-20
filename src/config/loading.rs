@@ -79,25 +79,16 @@ fn normalize_model_profile_syntax(value: &mut toml::Value) {
 			}
 		}
 	}
-	if let Some(supervisor) = root
-		.get_mut("supervisor")
-		.and_then(toml::Value::as_table_mut)
-	{
+	if let Some(supervisor) = root.get_mut("supervisor").and_then(toml::Value::as_table_mut) {
 		normalize_model_owner(supervisor);
-		if let Some(learning) = supervisor
-			.get_mut("learning")
-			.and_then(toml::Value::as_table_mut)
-		{
+		if let Some(learning) = supervisor.get_mut("learning").and_then(toml::Value::as_table_mut) {
 			learning.remove("model");
 			for key in MODEL_PROFILE_FIELDS {
 				learning.remove(key);
 			}
 		}
 	}
-	if let Some(compression) = root
-		.get_mut("compression")
-		.and_then(toml::Value::as_table_mut)
-	{
+	if let Some(compression) = root.get_mut("compression").and_then(toml::Value::as_table_mut) {
 		if !compression.contains_key("model") {
 			if let Some(decision) = compression.remove("decision") {
 				compression.insert("model".to_string(), decision);
@@ -158,11 +149,7 @@ fn dedup_tables_by_name(arr: Vec<toml::Value>) -> toml::Value {
 
 	// First pass: record last index for each name
 	for (i, item) in arr.iter().enumerate() {
-		if let Some(name) = item
-			.as_table()
-			.and_then(|t| t.get("name"))
-			.and_then(|v| v.as_str())
-		{
+		if let Some(name) = item.as_table().and_then(|t| t.get("name")).and_then(|v| v.as_str()) {
 			seen.insert(name.to_string(), i);
 		}
 	}
@@ -223,11 +210,10 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 	files.sort_by(|a, b| load_rank(a).cmp(&load_rank(b)).then_with(|| a.cmp(b)));
 
 	for file in &files {
-		let content = fs::read_to_string(file)
-			.context(format!("Failed to read TOML file: {}", file.display()))?;
+		let content = fs::read_to_string(file).context(format!("Failed to read TOML file: {}", file.display()))?;
 
-		let mut value: toml::Value = toml::from_str(&content)
-			.context(format!("Failed to parse TOML file: {}", file.display()))?;
+		let mut value: toml::Value =
+			toml::from_str(&content).context(format!("Failed to parse TOML file: {}", file.display()))?;
 		reject_legacy_evaluate(&value)?;
 		normalize_model_profile_syntax(&mut value);
 
@@ -238,9 +224,7 @@ fn load_and_merge_toml_from_directory(dir: &Path) -> Result<toml::Value> {
 		});
 	}
 
-	merged.ok_or_else(|| {
-		anyhow::anyhow!("No TOML files found in config directory: {}", dir.display())
-	})
+	merged.ok_or_else(|| anyhow::anyhow!("No TOML files found in config directory: {}", dir.display()))
 }
 
 fn parse_config_override_value(value: &str) -> toml::Value {
@@ -252,9 +236,9 @@ fn parse_config_override_value(value: &str) -> toml::Value {
 
 fn apply_config_overrides(merged: &mut toml::Value, overrides: &[String]) -> Result<()> {
 	for override_ in overrides {
-		let (path, raw_value) = override_.split_once('=').with_context(|| {
-			format!("Invalid config override '{override_}': expected key=value")
-		})?;
+		let (path, raw_value) = override_
+			.split_once('=')
+			.with_context(|| format!("Invalid config override '{override_}': expected key=value"))?;
 		let keys: Vec<&str> = path.split('.').collect();
 		anyhow::ensure!(
 			!path.is_empty() && keys.iter().all(|key| !key.is_empty()),
@@ -270,9 +254,7 @@ fn apply_config_overrides(merged: &mut toml::Value, overrides: &[String]) -> Res
 				toml::Value::Array(_) => {
 					anyhow::bail!("Config override path '{path}' cannot index into arrays")
 				}
-				_ => anyhow::bail!(
-					"Config override path '{path}' traverses a value that is not a table"
-				),
+				_ => anyhow::bail!("Config override path '{path}' traverses a value that is not a table"),
 			};
 		}
 
@@ -309,10 +291,7 @@ impl Config {
 
 		// Ensure the parent directory exists
 		if let Some(parent) = config_path.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create config directory: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
 		// Write the default template
@@ -343,8 +322,8 @@ impl Config {
 		// Use the existing embedded template, but parse directly into memory
 		const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../config-templates/default.toml");
 
-		let mut config: Config = toml::from_str(DEFAULT_CONFIG_TEMPLATE)
-			.context("Failed to parse default configuration template")?;
+		let mut config: Config =
+			toml::from_str(DEFAULT_CONFIG_TEMPLATE).context("Failed to parse default configuration template")?;
 
 		// Build role map from roles array
 		config.build_role_map();
@@ -384,9 +363,8 @@ impl Config {
 
 		if !config_dir.exists() {
 			if !overrides.is_empty() {
-				let mut merged_value: toml::Value =
-					toml::from_str(include_str!("../../config-templates/default.toml"))
-						.context("Failed to parse default configuration template")?;
+				let mut merged_value: toml::Value = toml::from_str(include_str!("../../config-templates/default.toml"))
+					.context("Failed to parse default configuration template")?;
 				apply_config_overrides(&mut merged_value, overrides)?;
 				return Self::deserialize_loaded_config(merged_value, config_path);
 			}
@@ -403,10 +381,7 @@ impl Config {
 				e.ok()
 					.map(|f| {
 						f.file_type()
-							.map(|t| {
-								t.is_file()
-									&& f.path().extension().map(|e| e == "toml").unwrap_or(false)
-							})
+							.map(|t| t.is_file() && f.path().extension().map(|e| e == "toml").unwrap_or(false))
 							.unwrap_or(false)
 					})
 					.unwrap_or(false)
@@ -439,14 +414,9 @@ impl Config {
 		Self::deserialize_loaded_config(merged_value, config_path)
 	}
 
-	fn deserialize_loaded_config(
-		merged_value: toml::Value,
-		config_path: std::path::PathBuf,
-	) -> Result<Self> {
-		let (mut config, ignored_keys) =
-			crate::config::validation::deserialize_with_ignored_keys(merged_value).context(
-				"Failed to parse merged TOML configuration. All required fields must be present.",
-			)?;
+	fn deserialize_loaded_config(merged_value: toml::Value, config_path: std::path::PathBuf) -> Result<Self> {
+		let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(merged_value)
+			.context("Failed to parse merged TOML configuration. All required fields must be present.")?;
 		config.ignored_keys = ignored_keys;
 
 		// Store the config path for future saves
@@ -481,21 +451,14 @@ impl Config {
 
 		// Ensure the parent directory exists
 		if let Some(parent) = config_path.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create config directory: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
 		// Serialize to TOML
-		let config_str =
-			toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
+		let config_str = toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
-		fs::write(&config_path, config_str).context(format!(
-			"Failed to write config to {}",
-			config_path.display()
-		))?;
+		fs::write(&config_path, config_str).context(format!("Failed to write config to {}", config_path.display()))?;
 
 		// stderr, never stdout: ACP and MCP stdio modes carry JSON-RPC on stdout,
 		// and a first run creates this file before the protocol starts.
@@ -511,9 +474,8 @@ impl Config {
 			// Load and merge all TOML files from directory
 			let merged_value = load_and_merge_toml_from_directory(path)?;
 
-			let (mut config, ignored_keys) =
-				crate::config::validation::deserialize_with_ignored_keys(merged_value)
-					.context("Failed to parse merged TOML configuration")?;
+			let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(merged_value)
+				.context("Failed to parse merged TOML configuration")?;
 			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.join("config.toml"));
@@ -524,14 +486,12 @@ impl Config {
 			Ok(config)
 		} else {
 			// Load single file
-			let config_str = fs::read_to_string(path)
-				.context(format!("Failed to read config from {}", path.display()))?;
-			let mut value: toml::Value =
-				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			let config_str =
+				fs::read_to_string(path).context(format!("Failed to read config from {}", path.display()))?;
+			let mut value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
 			reject_legacy_evaluate(&value)?;
 			normalize_model_profile_syntax(&mut value);
-			let (mut config, ignored_keys) =
-				crate::config::validation::deserialize_with_ignored_keys(value)?;
+			let (mut config, ignored_keys) = crate::config::validation::deserialize_with_ignored_keys(value)?;
 			config.ignored_keys = ignored_keys;
 
 			config.config_path = Some(path.to_path_buf());
@@ -550,19 +510,14 @@ impl Config {
 
 		// Ensure the parent directory exists
 		if let Some(parent) = path.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create config directory: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
 		// Serialize to TOML
-		let config_str =
-			toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
+		let config_str = toml::to_string_pretty(self).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
-		fs::write(path, config_str)
-			.context(format!("Failed to write config to {}", path.display()))?;
+		fs::write(path, config_str).context(format!("Failed to write config to {}", path.display()))?;
 
 		eprintln!("Configuration saved to {}", path.display());
 		Ok(())
@@ -595,22 +550,15 @@ impl Config {
 
 		// Ensure the parent directory exists
 		if let Some(parent) = config_path.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create config directory: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
 		// Create clean config for saving (no internal servers)
 		let clean_config = self.create_clean_copy_for_saving();
-		let config_str =
-			toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
+		let config_str = toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
-		fs::write(&config_path, config_str).context(format!(
-			"Failed to write config to {}",
-			config_path.display()
-		))?;
+		fs::write(&config_path, config_str).context(format!("Failed to write config to {}", config_path.display()))?;
 
 		// Update self with the changes (but keep internal servers in memory)
 		updater(self);
@@ -635,16 +583,11 @@ impl Config {
 		};
 
 		let mut disk_config = if config_path.exists() {
-			let config_str = fs::read_to_string(&config_path).context(format!(
-				"Failed to read config from {}",
-				config_path.display()
-			))?;
-			let value: toml::Value =
-				toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
+			let config_str = fs::read_to_string(&config_path)
+				.context(format!("Failed to read config from {}", config_path.display()))?;
+			let value: toml::Value = toml::from_str(&config_str).context("Failed to parse TOML configuration")?;
 			reject_legacy_evaluate(&value)?;
-			let mut config: Config = value
-				.try_into()
-				.context("Failed to parse TOML configuration")?;
+			let mut config: Config = value.try_into().context("Failed to parse TOML configuration")?;
 			config.config_path = Some(config_path.clone());
 			// SIMPLIFIED: Don't initialize internal servers
 			config
@@ -664,22 +607,15 @@ impl Config {
 
 		// Ensure the parent directory exists
 		if let Some(parent) = config_path.parent() {
-			fs::create_dir_all(parent).context(format!(
-				"Failed to create config directory: {}",
-				parent.display()
-			))?;
+			fs::create_dir_all(parent).context(format!("Failed to create config directory: {}", parent.display()))?;
 		}
 
 		// Create clean config for saving (no internal servers)
 		let clean_config = disk_config.create_clean_copy_for_saving();
-		let config_str =
-			toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
+		let config_str = toml::to_string(&clean_config).context("Failed to serialize configuration to TOML")?;
 
 		// Write to file
-		fs::write(&config_path, config_str).context(format!(
-			"Failed to write config to {}",
-			config_path.display()
-		))?;
+		fs::write(&config_path, config_str).context(format!("Failed to write config to {}", config_path.display()))?;
 
 		// Update self with the changes (but keep internal servers in memory)
 		updater(self);
@@ -694,15 +630,13 @@ impl Config {
 /// **concatenates** `mcp.servers` and `roles` arrays so the agent's additions
 /// stack on top of the user's base config. All other keys use override semantics.
 pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
-	let mut agent_value: toml::Value =
-		toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
+	let mut agent_value: toml::Value = toml::from_str(agent_toml).context("Failed to parse agent manifest TOML")?;
 	reject_legacy_evaluate(&agent_value)?;
 	normalize_model_profile_syntax(&mut agent_value);
 
 	// Serialize base config to toml::Value so we can manipulate it
 	let base_str = toml::to_string(base).context("Failed to serialize base config")?;
-	let mut base_value: toml::Value =
-		toml::from_str(&base_str).context("Failed to re-parse base config")?;
+	let mut base_value: toml::Value = toml::from_str(&base_str).context("Failed to re-parse base config")?;
 
 	// Concatenate mcp.servers (additive, skip duplicates by name). The base may
 	// have no [mcp] table or no servers array at all (common — many user configs
@@ -723,11 +657,7 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 			if let toml::Value::Array(base_servers) = base_servers {
 				let existing_names: std::collections::HashSet<String> = base_servers
 					.iter()
-					.filter_map(|s| {
-						s.get("name")
-							.and_then(|n| n.as_str())
-							.map(|n| n.to_string())
-					})
+					.filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()))
 					.collect();
 				for server in agent_servers {
 					let name = server.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -745,11 +675,7 @@ pub fn merge_agent_toml(base: &Config, agent_toml: &str) -> Result<Config> {
 	{
 		let existing_names: std::collections::HashSet<String> = base_roles
 			.iter()
-			.filter_map(|r| {
-				r.get("name")
-					.and_then(|n| n.as_str())
-					.map(|n| n.to_string())
-			})
+			.filter_map(|r| r.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()))
 			.collect();
 		for role in agent_roles {
 			let name = role.get("name").and_then(|n| n.as_str()).unwrap_or("");

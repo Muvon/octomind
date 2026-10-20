@@ -104,15 +104,9 @@ async fn display_renders_status_icons_and_the_current_task() {
 		let display = get_current_plan_display().await.unwrap();
 		assert!(display.starts_with("PLAN: Ship it"), "display: {display}");
 		assert!(display.contains("✅ 1. alpha"), "display: {display}");
-		assert!(
-			display.contains("🔄 2. beta (IN PROGRESS)"),
-			"display: {display}"
-		);
+		assert!(display.contains("🔄 2. beta (IN PROGRESS)"), "display: {display}");
 		assert!(display.contains("⏳ 3. gamma"), "display: {display}");
-		assert!(
-			display.contains("CURRENT: Task 2/3 - beta"),
-			"display: {display}"
-		);
+		assert!(display.contains("CURRENT: Task 2/3 - beta"), "display: {display}");
 		assert!(display.contains("📝 Done when: beta"), "display: {display}");
 
 		let json = get_current_plan_json().await.unwrap();
@@ -137,11 +131,7 @@ async fn details_expand_every_phase_state() {
 			.unwrap()
 			.create_plan(
 				"Review".to_string(),
-				vec![
-					task("inspect", None),
-					task("synthesize", None),
-					task("deliver", None),
-				],
+				vec![task("inspect", None), task("synthesize", None), task("deliver", None)],
 			)
 			.unwrap();
 		storage
@@ -175,34 +165,18 @@ async fn checklist_expands_valid_if_for_open_tasks_only() {
 				],
 			)
 			.unwrap();
-		storage
-			.lock()
-			.unwrap()
-			.complete_current_task("done".into())
-			.unwrap();
+		storage.lock().unwrap().complete_current_task("done".into()).unwrap();
 
 		let checklist = render_plan_checklist().expect("active plan renders");
-		assert!(
-			checklist.contains("Live plan (1/3 done)"),
-			"checklist: {checklist}"
-		);
+		assert!(checklist.contains("Live plan (1/3 done)"), "checklist: {checklist}");
 		assert!(checklist.contains("✅ done"), "checklist: {checklist}");
-		assert!(
-			checklist.contains("🔄 open ← current"),
-			"checklist: {checklist}"
-		);
-		assert!(
-			checklist.contains("   Done when: open"),
-			"checklist: {checklist}"
-		);
+		assert!(checklist.contains("🔄 open ← current"), "checklist: {checklist}");
+		assert!(checklist.contains("   Done when: open"), "checklist: {checklist}");
 		assert!(
 			checklist.contains("⤷ task 2 valid if: file_exists: Cargo.toml"),
 			"checklist: {checklist}"
 		);
-		assert!(
-			!checklist.contains("⤷ task 1"),
-			"completed tasks drop their condition"
-		);
+		assert!(!checklist.contains("⤷ task 1"), "completed tasks drop their condition");
 	})
 	.await;
 }
@@ -222,20 +196,11 @@ async fn broken_conditions_report_only_broken_open_ones() {
 				"Mixed".to_string(),
 				vec![
 					// Completed: broken condition is irrelevant — never reported.
-					task(
-						"finished",
-						Some(&format!("file_absent: {}", present.display())),
-					),
+					task("finished", Some(&format!("file_absent: {}", present.display()))),
 					// Open + deterministically broken → reported.
-					task(
-						"wrongpath",
-						Some(&format!("file_absent: {}", present.display())),
-					),
+					task("wrongpath", Some(&format!("file_absent: {}", present.display()))),
 					// Open + holds → not reported.
-					task(
-						"rightpath",
-						Some(&format!("file_exists: {}", present.display())),
-					),
+					task("rightpath", Some(&format!("file_exists: {}", present.display()))),
 					// Open + not machine-checkable → ignored.
 					task("prose", Some("the API still returns 200")),
 				],
@@ -270,14 +235,8 @@ async fn plan_file_conditions_use_the_session_anchor_and_survive_workdir_switche
 	crate::session::context::with_session_id(sid.clone(), async {
 		crate::mcp::workdir::set_session_working_directory(anchor.path().to_path_buf());
 		crate::mcp::workdir::set_thread_working_directory(active.path().to_path_buf());
-		assert_eq!(
-			check_condition("file_exists: condition-fixture"),
-			Some(true)
-		);
-		assert_eq!(
-			check_condition("file_absent: condition-fixture"),
-			Some(false)
-		);
+		assert_eq!(check_condition("file_exists: condition-fixture"), Some(true));
+		assert_eq!(check_condition("file_absent: condition-fixture"), Some(false));
 		assert_eq!(check_condition("file_exists: missing-fixture"), Some(false));
 		assert_eq!(check_condition("file_absent: missing-fixture"), Some(true));
 		assert_eq!(
@@ -323,14 +282,8 @@ fn filesystem_observation_errors_do_not_prove_absence() {
 	let dir = tempfile::tempdir().expect("fixture directory");
 	let cycle = dir.path().join("cycle");
 	std::os::unix::fs::symlink(&cycle, &cycle).expect("symlink cycle");
-	assert_eq!(
-		check_condition(&format!("file_exists: {}", cycle.display())),
-		None
-	);
-	assert_eq!(
-		check_condition(&format!("file_absent: {}", cycle.display())),
-		None
-	);
+	assert_eq!(check_condition(&format!("file_exists: {}", cycle.display())), None);
+	assert_eq!(check_condition(&format!("file_absent: {}", cycle.display())), None);
 }
 
 #[tokio::test]
@@ -412,16 +365,14 @@ async fn restore_replays_the_latest_snapshot_into_session_storage() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 
 	let session = unique_session("restore-latest");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("older", 3, 0))
-		.expect("first snapshot");
+	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("older", 3, 0)).expect("first snapshot");
 	// A malformed plan payload must be skipped, not abort the replay.
 	crate::session::persistence::append_to_session_file(
 		&crate::session::logger::get_session_log_file(&session).unwrap(),
 		r#"{"type":"PLAN_SNAPSHOT","plan":{"title":123}}"#,
 	)
 	.expect("malformed entry appends");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("newest", 3, 1))
-		.expect("second snapshot");
+	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("newest", 3, 1)).expect("second snapshot");
 
 	crate::session::context::with_session_id(session.clone(), async {
 		restore_plan_for_session(&session);
@@ -445,8 +396,7 @@ async fn restore_honors_a_trailing_clear_marker() {
 	std::env::set_var("OCTOMIND_DATA_DIR", data_dir.path());
 
 	let session = unique_session("restore-cleared");
-	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("gone", 2, 0))
-		.expect("snapshot");
+	crate::session::logger::log_plan_snapshot(&session, &plan_fixture("gone", 2, 0)).expect("snapshot");
 	crate::session::logger::log_plan_cleared(&session).expect("clear marker");
 
 	crate::session::context::with_session_id(session.clone(), async {

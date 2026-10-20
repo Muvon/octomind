@@ -238,8 +238,7 @@ fn plugin_data_dir(plugin_name: &str) -> anyhow::Result<PathBuf> {
 
 /// Single non-recursive substitution of the two spec placeholders.
 fn expand_placeholders(s: &str, root: &str, data: &str) -> String {
-	s.replace("${PLUGIN_ROOT}", root)
-		.replace("${PLUGIN_DATA}", data)
+	s.replace("${PLUGIN_ROOT}", root).replace("${PLUGIN_DATA}", data)
 }
 
 /// Resolve a `cwd` value to an absolute path. Spec allows only `./`-relative,
@@ -358,12 +357,7 @@ fn build_stdio(
 	let entry: StdioEntry = match serde_json::from_value(value) {
 		Ok(e) => e,
 		Err(e) => {
-			crate::log_debug!(
-				"plugin '{}': server '{}' invalid stdio entry: {}",
-				plugin.name,
-				name,
-				e
-			);
+			crate::log_debug!("plugin '{}': server '{}' invalid stdio entry: {}", plugin.name, name, e);
 			return None;
 		}
 	};

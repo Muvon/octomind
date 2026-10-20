@@ -70,10 +70,7 @@ mod imp {
 			if let Ok(pid) = pid_path(&self.session_name) {
 				let _ = std::fs::remove_file(&pid);
 			}
-			log_debug!(
-				"Inject listener cleaned up for session '{}'",
-				self.session_name
-			);
+			log_debug!("Inject listener cleaned up for session '{}'", self.session_name);
 		}
 	}
 
@@ -106,7 +103,7 @@ mod imp {
 		let listener = UnixListener::bind(&sock)?;
 		log_debug!("Inject listener bound to {:?}", sock);
 
-		// Write PID file so `octomind inject` can verify the process is alive.
+		// Write PID file so `octomind send` can verify the process is alive.
 		let pid = std::process::id();
 		let pid_file = pid_path(session_name)?;
 		std::fs::write(&pid_file, pid.to_string())?;
@@ -115,10 +112,7 @@ mod imp {
 		loop {
 			match listener.accept().await {
 				Ok((mut stream, _)) => {
-					log_debug!(
-						"Inject listener: connection accepted for session '{}'",
-						session_name
-					);
+					log_debug!("Inject listener: connection accepted for session '{}'", session_name);
 
 					// Read the full message (client shuts down write half after sending).
 					let mut buf = Vec::new();
@@ -204,10 +198,7 @@ mod imp {
 	impl Drop for InjectListenerGuard {
 		fn drop(&mut self) {
 			self.task.abort();
-			log_debug!(
-				"Inject listener cleaned up for session '{}'",
-				self.session_name
-			);
+			log_debug!("Inject listener cleaned up for session '{}'", self.session_name);
 		}
 	}
 
@@ -235,17 +226,12 @@ mod imp {
 
 		// Create the first server instance. `first_pipe_instance` ensures no
 		// stale pipe from a previous crash can conflict.
-		let mut server = ServerOptions::new()
-			.first_pipe_instance(true)
-			.create(&name)?;
+		let mut server = ServerOptions::new().first_pipe_instance(true).create(&name)?;
 
 		loop {
 			// Wait for a client to connect.
 			server.connect().await?;
-			log_debug!(
-				"Inject listener: connection accepted for session '{}'",
-				session_name
-			);
+			log_debug!("Inject listener: connection accepted for session '{}'", session_name);
 
 			// Read the full message (client shuts down write half after sending).
 			let mut buf = Vec::new();

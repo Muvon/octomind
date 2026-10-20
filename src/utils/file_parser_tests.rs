@@ -72,19 +72,10 @@ config/settings.toml:10:20
 	assert_eq!(refs["src/main.rs"][0], LineRange { start: 1, end: 50 });
 
 	assert_eq!(refs["src/lib.rs"].len(), 1);
-	assert_eq!(
-		refs["src/lib.rs"][0],
-		LineRange {
-			start: 100,
-			end: 150
-		}
-	);
+	assert_eq!(refs["src/lib.rs"][0], LineRange { start: 100, end: 150 });
 
 	assert_eq!(refs["config/settings.toml"].len(), 1);
-	assert_eq!(
-		refs["config/settings.toml"][0],
-		LineRange { start: 10, end: 20 }
-	);
+	assert_eq!(refs["config/settings.toml"][0], LineRange { start: 10, end: 20 });
 }
 
 #[test]
@@ -102,17 +93,8 @@ Continue with implementation...
 	let refs = parse_file_references(content);
 	assert_eq!(refs.len(), 2);
 
-	assert_eq!(
-		refs["src/session/mod.rs"][0],
-		LineRange {
-			start: 200,
-			end: 300
-		}
-	);
-	assert_eq!(
-		refs["tests/integration.rs"][0],
-		LineRange { start: 1, end: 100 }
-	);
+	assert_eq!(refs["src/session/mod.rs"][0], LineRange { start: 200, end: 300 });
+	assert_eq!(refs["tests/integration.rs"][0], LineRange { start: 1, end: 100 });
 }
 
 #[test]
@@ -124,13 +106,7 @@ We need to look at src/core.rs:50:100 and also check lib/utils.rs:1:25 for the i
 	let refs = parse_file_references(content);
 	assert_eq!(refs.len(), 2);
 
-	assert_eq!(
-		refs["src/core.rs"][0],
-		LineRange {
-			start: 50,
-			end: 100
-		}
-	);
+	assert_eq!(refs["src/core.rs"][0], LineRange { start: 50, end: 100 });
 	assert_eq!(refs["lib/utils.rs"][0], LineRange { start: 1, end: 25 });
 }
 
@@ -233,22 +209,10 @@ tests/integration_test.rs:1:50
 	assert_eq!(refs.len(), 3);
 	assert_eq!(
 		refs["src/session/chat/continuation.rs"][0],
-		LineRange {
-			start: 100,
-			end: 200
-		}
+		LineRange { start: 100, end: 200 }
 	);
-	assert_eq!(
-		refs["src/config/mod.rs"][0],
-		LineRange {
-			start: 50,
-			end: 100
-		}
-	);
-	assert_eq!(
-		refs["tests/integration_test.rs"][0],
-		LineRange { start: 1, end: 50 }
-	);
+	assert_eq!(refs["src/config/mod.rs"][0], LineRange { start: 50, end: 100 });
+	assert_eq!(refs["tests/integration_test.rs"][0], LineRange { start: 1, end: 50 });
 }
 
 #[test]
@@ -309,38 +273,23 @@ C:\Users\dk\main.rs:10:20
 </context>";
 	let refs = parse_file_references(content);
 	assert_eq!(refs.len(), 1);
-	assert_eq!(
-		refs[r"C:\Users\dk\main.rs"][0],
-		LineRange { start: 10, end: 20 }
-	);
+	assert_eq!(refs[r"C:\Users\dk\main.rs"][0], LineRange { start: 10, end: 20 });
 
 	// Forward-slash drive path in free text (fallback pattern)
 	let refs = parse_file_references(r"See C:/dev/project/src/main.rs:1:5 for details");
 	assert_eq!(refs.len(), 1);
-	assert_eq!(
-		refs["C:/dev/project/src/main.rs"][0],
-		LineRange { start: 1, end: 5 }
-	);
+	assert_eq!(refs["C:/dev/project/src/main.rs"][0], LineRange { start: 1, end: 5 });
 
 	// Backslash drive path in free text (fallback pattern)
 	let refs = parse_file_references(r"See C:\Users\dk\main.rs:5:10 for details");
 	assert_eq!(refs.len(), 1);
-	assert_eq!(
-		refs[r"C:\Users\dk\main.rs"][0],
-		LineRange { start: 5, end: 10 }
-	);
+	assert_eq!(refs[r"C:\Users\dk\main.rs"][0], LineRange { start: 5, end: 10 });
 }
 
 #[test]
 fn test_line_range_boundaries() {
 	assert_eq!(LineRange::new(1, 1), Some(LineRange { start: 1, end: 1 }));
-	assert_eq!(
-		LineRange::new(1, 10000),
-		Some(LineRange {
-			start: 1,
-			end: 10000
-		})
-	);
+	assert_eq!(LineRange::new(1, 10000), Some(LineRange { start: 1, end: 10000 }));
 	assert!(LineRange::new(1, 10001).is_none());
 	assert!(LineRange::new(10000, 10000).is_some());
 }
@@ -392,10 +341,7 @@ fn test_read_multiple_files_missing_file_and_multiple_ranges() {
 		existing.clone(),
 		vec![LineRange::new(1, 2).unwrap(), LineRange::new(3, 4).unwrap()],
 	);
-	file_refs.insert(
-		"does_not_exist.txt".to_string(),
-		vec![LineRange::new(1, 10).unwrap()],
-	);
+	file_refs.insert("does_not_exist.txt".to_string(), vec![LineRange::new(1, 10).unwrap()]);
 
 	let results = read_multiple_files(&file_refs);
 

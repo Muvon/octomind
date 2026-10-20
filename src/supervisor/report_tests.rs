@@ -43,9 +43,7 @@ fn folds_chat_decisions_and_outcomes_without_evaluate_rows_or_double_usage() {
 	info.supervisor_accounting
 		.kinds
 		.insert(CallKind::Evaluate, decision.clone());
-	info.supervisor_accounting
-		.seams
-		.insert(Seam::Gate, decision);
+	info.supervisor_accounting.seams.insert(Seam::Gate, decision);
 	info.supervisor_accounting
 		.kinds
 		.insert(CallKind::Resolve, Usage::default());
@@ -53,12 +51,7 @@ fn folds_chat_decisions_and_outcomes_without_evaluate_rows_or_double_usage() {
 	let report = SupervisorReport::for_session(&info);
 	let gate = &report.mechanics[&Mechanic::Gate];
 	assert_eq!(
-		(
-			gate.chat_calls,
-			gate.decision_calls,
-			gate.wall_blocking_ms,
-			gate.api_ms
-		),
+		(gate.chat_calls, gate.decision_calls, gate.wall_blocking_ms, gate.api_ms),
 		(4, 2, 1_400, 1_300)
 	);
 	assert_eq!(
@@ -162,14 +155,8 @@ async fn resume_preserves_the_same_mechanic_outcomes_and_authorizer_state() {
 			let mut resumed = crate::session::persistence::load_session(&path).unwrap();
 			resumed.fold_external_spend();
 			assert_eq!(SupervisorReport::for_session(&resumed.info), expected);
-			assert_eq!(
-				expected.mechanics[&Mechanic::Gate].outcome[&Outcome::RefutedGaps],
-				2
-			);
-			assert_eq!(
-				expected.mechanics[&Mechanic::Authorize].outcome[&Outcome::Checked],
-				11
-			);
+			assert_eq!(expected.mechanics[&Mechanic::Gate].outcome[&Outcome::RefutedGaps], 2);
+			assert_eq!(expected.mechanics[&Mechanic::Authorize].outcome[&Outcome::Checked], 11);
 		})
 		.await;
 	})
@@ -197,9 +184,7 @@ fn advisory_only_gate_outcomes_survive_reporting_and_old_reports_still_load() {
 		.unwrap()
 		.remove("reported_findings");
 	let restored: SupervisorReport = serde_json::from_value(json).unwrap();
-	assert!(restored.mechanics[&Mechanic::Gate]
-		.reported_findings
-		.is_empty());
+	assert!(restored.mechanics[&Mechanic::Gate].reported_findings.is_empty());
 	let usage = serde_json::to_value(Usage::default()).unwrap();
 	assert!(usage.get("reported_findings").is_none());
 	assert!(serde_json::from_value::<Usage>(usage)

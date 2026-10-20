@@ -20,7 +20,7 @@ use std::io::{self, IsTerminal, Read};
 
 #[derive(Args, Debug, Default)]
 pub struct RunArgs {
-	/// Agent tag (e.g. `developer:general`) or role name (e.g. `developer`).
+	/// Agent tag (e.g. `developer:general`) or role name (e.g. `assistant`).
 	/// Omit to use the default role from config.
 	#[arg(value_name = "TAG")]
 	pub tag: Option<String>,
@@ -48,8 +48,7 @@ pub struct RunArgs {
 	#[arg(long, short = 'm', value_name = "MODEL")]
 	pub model: Option<String>,
 
-	/// Keep the session alive indefinitely, waiting for messages injected via `octomind inject`.
-	/// Implies non-interactive mode (requires --format).
+	/// Keep the session alive indefinitely, waiting for messages injected via `octomind send`.
 	#[arg(long)]
 	pub daemon: bool,
 
@@ -119,19 +118,14 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	};
 
 	// Resolve config and role (tap/dep resolution only — MCP init happens after session ID is set)
-	let (run_config, role) =
-		octomind::agent::resolver::resolve_config_and_role(tag.as_deref(), config, None).await?;
+	let (run_config, role) = octomind::agent::resolver::resolve_config_and_role(tag.as_deref(), config, None).await?;
 
 	let session_args = octomind::session::chat::session::GenericSessionArgs {
 		role: role.clone(),
 		role_explicit: args.tag.is_some(),
 		mode: args.format.clone().unwrap_or_else(|| "plain".to_string()),
 		name: args.name.clone(),
-		resume: args
-			.resume
-			.clone()
-			.filter(|s| !s.is_empty())
-			.or(picker_resume),
+		resume: args.resume.clone().filter(|s| !s.is_empty()).or(picker_resume),
 		resume_recent: args.resume_recent,
 		model: args.model.clone(),
 		daemon: args.daemon,
@@ -143,12 +137,7 @@ pub async fn execute(args: &RunArgs, config: &Config) -> Result<()> {
 	let result = if is_interactive_session {
 		session::chat::run_interactive_session(&session_args, &run_config).await
 	} else {
-		session::chat::run_interactive_session_with_input(
-			&session_args,
-			&run_config,
-			&piped_input.unwrap(),
-		)
-		.await
+		session::chat::run_interactive_session_with_input(&session_args, &run_config, &piped_input.unwrap()).await
 	};
 	// What the supervisor did and spent this run (gate runs, steers, blocks,
 	// condense savings, its own token/time bill) — the counters exist only in

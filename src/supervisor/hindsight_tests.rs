@@ -40,10 +40,7 @@ fn trace_opens_with_the_task_and_maps_every_role() {
 		assistant,
 		message("tool", "fn main() {}"),
 		message("tool", "Error: no such file"),
-		message(
-			"user",
-			"<pay-attention>\nverification found gaps\n</pay-attention>",
-		),
+		message("user", "<pay-attention>\nverification found gaps\n</pay-attention>"),
 		message("assistant", "Done."),
 	];
 	let events = trace(&messages);
@@ -105,8 +102,5 @@ fn result_status_reads_the_text_head() {
 	assert_eq!(result_status("ok"), Status::Ok);
 	assert_eq!(result_status("  Error: boom"), Status::Error);
 	assert_eq!(result_status("Blocked by guardrail"), Status::Denied);
-	assert_eq!(
-		result_status("[Request interrupted by user]"),
-		Status::Interrupted
-	);
+	assert_eq!(result_status("[Request interrupted by user]"), Status::Interrupted);
 }

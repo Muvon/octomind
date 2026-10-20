@@ -125,23 +125,15 @@ fn dcr_registration_response_requires_client_id() {
 #[serial]
 #[tokio::test]
 async fn cimd_server_serves_metadata_document_over_http() {
-	let client_id_url = start_cimd_server(
-		"http://127.0.0.1:34567/oauth/callback",
-		&["mcp:read".to_string()],
-	)
-	.await
-	.expect("CIMD server should start");
-	assert!(
-		client_id_url.starts_with("http://localhost:"),
-		"{client_id_url}"
-	);
+	let client_id_url = start_cimd_server("http://127.0.0.1:34567/oauth/callback", &["mcp:read".to_string()])
+		.await
+		.expect("CIMD server should start");
+	assert!(client_id_url.starts_with("http://localhost:"), "{client_id_url}");
 	assert!(client_id_url.ends_with("/.well-known/oauth-client.json"));
 
 	// The listener binds 127.0.0.1; swap the advertised host for the fetch.
 	let fetch_url = client_id_url.replacen("localhost", "127.0.0.1", 1);
-	let response = reqwest::get(&fetch_url)
-		.await
-		.expect("fetch metadata document");
+	let response = reqwest::get(&fetch_url).await.expect("fetch metadata document");
 	assert_eq!(response.status(), 200);
 	assert_eq!(
 		response
@@ -185,9 +177,7 @@ async fn cimd_server_answers_preflight_and_rejects_unknown_paths() {
 	let response = String::from_utf8_lossy(&buf[..n]).to_string();
 	assert!(response.starts_with("HTTP/1.1 204"), "{response}");
 	assert!(
-		response
-			.to_lowercase()
-			.contains("access-control-allow-origin: *"),
+		response.to_lowercase().contains("access-control-allow-origin: *"),
 		"{response}"
 	);
 
@@ -232,11 +222,7 @@ async fn resolve_client_id_prefers_cimd_when_supported() {
 
 #[tokio::test]
 async fn resolve_client_id_registers_via_dcr_when_cimd_unsupported() {
-	let endpoint = spawn_http_stub(
-		"200 OK",
-		r#"{"client_id":"dcr-client-1","client_secret":"dcr-secret"}"#,
-	)
-	.await;
+	let endpoint = spawn_http_stub("200 OK", r#"{"client_id":"dcr-client-1","client_secret":"dcr-secret"}"#).await;
 	let metadata = auth_metadata(Some(false), Some(endpoint));
 	let config = resolve_client_id(oauth_config(), &metadata)
 		.await
@@ -247,15 +233,11 @@ async fn resolve_client_id_registers_via_dcr_when_cimd_unsupported() {
 
 #[tokio::test]
 async fn resolve_client_id_surfaces_dcr_http_failure() {
-	let endpoint =
-		spawn_http_stub("400 Bad Request", r#"{"error":"invalid_client_metadata"}"#).await;
+	let endpoint = spawn_http_stub("400 Bad Request", r#"{"error":"invalid_client_metadata"}"#).await;
 	let metadata = auth_metadata(None, Some(endpoint));
-	let err = resolve_client_id(oauth_config(), &metadata)
-		.await
-		.unwrap_err();
+	let err = resolve_client_id(oauth_config(), &metadata).await.unwrap_err();
 	assert!(
-		err.to_string()
-			.contains("DCR registration failed with status 400"),
+		err.to_string().contains("DCR registration failed with status 400"),
 		"{err}"
 	);
 }
@@ -264,21 +246,14 @@ async fn resolve_client_id_surfaces_dcr_http_failure() {
 async fn resolve_client_id_surfaces_dcr_connection_failure() {
 	let endpoint = closed_port_url("register").await;
 	let metadata = auth_metadata(None, Some(endpoint));
-	let err = resolve_client_id(oauth_config(), &metadata)
-		.await
-		.unwrap_err();
+	let err = resolve_client_id(oauth_config(), &metadata).await.unwrap_err();
 	assert!(err.to_string().contains("DCR registration failed"), "{err}");
 }
 
 #[tokio::test]
 async fn resolve_client_id_fails_without_cimd_or_dcr() {
 	let metadata = auth_metadata(Some(false), None);
-	let err = resolve_client_id(oauth_config(), &metadata)
-		.await
-		.unwrap_err();
-	assert!(
-		err.to_string().contains("Cannot resolve OAuth client_id"),
-		"{err}"
-	);
+	let err = resolve_client_id(oauth_config(), &metadata).await.unwrap_err();
+	assert!(err.to_string().contains("Cannot resolve OAuth client_id"), "{err}");
 	assert!(err.to_string().contains("auth.example.com"), "{err}");
 }

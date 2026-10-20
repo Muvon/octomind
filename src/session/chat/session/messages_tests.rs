@@ -34,12 +34,9 @@ fn active_memory_pack_materializes_once_and_can_be_restored_or_cleared() {
 	assert!(session.session.messages.is_empty());
 	session.ensure_active_memory_pack_message();
 	assert_eq!(session.session.messages.len(), 1);
-	session.recalled_refs.push((
-		"M1".into(),
-		"memory".into(),
-		"assistant".into(),
-		"project".into(),
-	));
+	session
+		.recalled_refs
+		.push(("M1".into(), "memory".into(), "assistant".into(), "project".into()));
 	session.used_memory_ids.insert("M1".into());
 	session.clear_active_memory_pack();
 	assert!(session.session.messages.is_empty());
@@ -136,9 +133,7 @@ fn user_message_is_added_and_gate_eligible() {
 fn system_managed_turn_message_is_wrapped_and_not_turn_owned() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.completion_gate_eligible = true;
-	session
-		.add_system_managed_turn_message("background event")
-		.unwrap();
+	session.add_system_managed_turn_message("background event").unwrap();
 	let message = session.session.messages.last().unwrap();
 	assert_eq!(message.role, "user");
 	assert!(message.content.contains("background event"));
@@ -150,14 +145,10 @@ fn deferred_turn_hands_eligibility_to_the_resuming_delivery_once() {
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.completion_gate_eligible = true;
 	session.gate_deferred = true;
-	session
-		.add_system_managed_turn_message("job result")
-		.unwrap();
+	session.add_system_managed_turn_message("job result").unwrap();
 	assert!(session.completion_gate_eligible);
 	assert!(!session.gate_deferred);
-	session
-		.add_system_managed_turn_message("schedule fired")
-		.unwrap();
+	session.add_system_managed_turn_message("schedule fired").unwrap();
 	assert!(!session.completion_gate_eligible);
 	session.gate_deferred = true;
 	session.add_user_message("new request").unwrap();
@@ -221,9 +212,7 @@ fn inbox_batch_takes_turn_semantics_once_from_its_head() {
 	session.add_inbox_batch(&batch).unwrap();
 
 	assert_eq!(session.session.messages.len(), 2);
-	assert!(session.session.messages[0]
-		.content
-		.contains("job a finished"));
+	assert!(session.session.messages[0].content.contains("job a finished"));
 	assert!(session.session.messages[1].content.contains("job b failed"));
 	// The head claims the deferred turn; the tail rides along without blanking it
 	// (a second add_system_managed_turn_message would — see the deferred-turn test).
@@ -272,9 +261,7 @@ fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
 	);
 
 	session.fold_cooldown_until_call = 50;
-	session
-		.add_system_managed_user_message("control-plane note")
-		.unwrap();
+	session.add_system_managed_user_message("control-plane note").unwrap();
 	assert_eq!(
 		session.fold_cooldown_until_call, 50,
 		"a system-managed injection must not clear the cooldown"
@@ -284,24 +271,18 @@ fn user_turn_clears_fold_cooldown_but_system_managed_injection_does_not() {
 #[test]
 fn user_turn_clears_a_pending_fold_deferral_but_system_managed_injection_does_not() {
 	let mut session = ChatSession::for_tests(Vec::new());
-	session.fold_deferral = Some(
-		crate::session::chat::conversation_compression::FoldDeferral {
-			reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
-			step: Some(0),
-		},
-	);
+	session.fold_deferral = Some(crate::session::chat::conversation_compression::FoldDeferral {
+		reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
+		step: Some(0),
+	});
 
-	session
-		.add_system_managed_user_message("control-plane note")
-		.unwrap();
+	session.add_system_managed_user_message("control-plane note").unwrap();
 	assert_eq!(
 		session.fold_deferral,
-		Some(
-			crate::session::chat::conversation_compression::FoldDeferral {
-				reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
-				step: Some(0),
-			}
-		),
+		Some(crate::session::chat::conversation_compression::FoldDeferral {
+			reason: crate::session::chat::conversation_compression::DeferReason::MidDerivation,
+			step: Some(0),
+		}),
 		"a system-managed injection must not clear a deferral"
 	);
 
@@ -329,8 +310,7 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 		])),
 		..Default::default()
 	};
-	crate::session::append_to_session_file(&path, &serde_json::to_string(&parent).unwrap())
-		.unwrap();
+	crate::session::append_to_session_file(&path, &serde_json::to_string(&parent).unwrap()).unwrap();
 	session.session.messages.push(parent);
 	for (id, text, has_image) in [
 		("mixed", "caption", true),
@@ -357,17 +337,8 @@ fn tool_image_messages_roundtrip_through_session_persistence() {
 		.unwrap();
 	session.save().unwrap();
 	let restored = crate::session::load_session(&path).unwrap();
-	let original: Vec<_> = session
-		.session
-		.messages
-		.iter()
-		.filter(|m| m.role == "tool")
-		.collect();
-	let loaded: Vec<_> = restored
-		.messages
-		.iter()
-		.filter(|m| m.role == "tool")
-		.collect();
+	let original: Vec<_> = session.session.messages.iter().filter(|m| m.role == "tool").collect();
+	let loaded: Vec<_> = restored.messages.iter().filter(|m| m.role == "tool").collect();
 	assert_eq!(loaded.len(), 3);
 	for (original, loaded) in original.iter().zip(loaded) {
 		assert_eq!(
@@ -382,25 +353,15 @@ fn genuine_turn_archives_evidence_but_system_messages_do_not() {
 	use crate::supervisor::resolve::ResolutionScope::FollowUp;
 	let mut session = ChatSession::for_tests(Vec::new());
 	session.add_user_message("audit every provider").unwrap();
-	let seq = session.evidence.record(
-		"view",
-		&serde_json::json!({"path":"providers"}),
-		false,
-		false,
-		16,
-	);
-	session
+	let seq = session
 		.evidence
-		.record_ground(seq, "anthropic.rs\nopenai.rs");
+		.record("view", &serde_json::json!({"path":"providers"}), false, false, 16);
+	session.evidence.record_ground(seq, "anthropic.rs\nopenai.rs");
 	session
 		.add_system_managed_user_message("<pay-attention>verify</pay-attention>")
 		.unwrap();
 	assert!(!session.evidence.render().is_empty());
-	assert!(session
-		.evidence
-		.verification_evidence(FollowUp)
-		.0
-		.is_empty());
+	assert!(session.evidence.verification_evidence(FollowUp).0.is_empty());
 	session.add_user_message("so we are good?").unwrap();
 	assert!(session.evidence.render().is_empty());
 	assert!(session.evidence.grounds().is_empty());

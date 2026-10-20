@@ -94,12 +94,7 @@ impl SessionRulesUpdate {
 	/// replaces a rule lands the replacement. Returns whether the rules changed.
 	pub fn apply(&self, rules: &mut Vec<String>) -> bool {
 		let previous = rules.clone();
-		rules.retain(|rule| {
-			!self
-				.revoke
-				.iter()
-				.any(|revocation| &revocation.rule == rule)
-		});
+		rules.retain(|rule| !self.revoke.iter().any(|revocation| &revocation.rule == rule));
 		for rule in &self.add {
 			if !rules.contains(rule) {
 				rules.push(rule.clone());

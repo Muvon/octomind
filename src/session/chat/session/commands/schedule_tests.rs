@@ -133,9 +133,7 @@ async fn test_implicit_add_without_subcommand() {
 async fn test_add_list_edit_remove_lifecycle() {
 	crate::session::context::with_session_id("sched-cmd-lifecycle".to_string(), async {
 		// add with quoted multi-word values
-		let added =
-			run("/schedule add when=\"in 5m\" message=\"check the build\" description=\"ci poll\"")
-				.await;
+		let added = run("/schedule add when=\"in 5m\" message=\"check the build\" description=\"ci poll\"").await;
 		assert_eq!(added["is_error"], false, "add failed: {added}");
 		let message = added["message"].as_str().expect("message");
 		assert!(message.contains("✅ Scheduled ["), "message: {message}");
@@ -157,10 +155,7 @@ async fn test_add_list_edit_remove_lifecycle() {
 		let after_edit = run("/schedule").await;
 		let listing = after_edit["message"].as_str().expect("message");
 		assert!(listing.contains("10m"), "listing after edit: {listing}");
-		assert!(
-			listing.contains("check the deploy"),
-			"listing after edit: {listing}"
-		);
+		assert!(listing.contains("check the deploy"), "listing after edit: {listing}");
 
 		// remove, then the schedule is empty again
 		let removed = run(&format!("/schedule remove {id}")).await;

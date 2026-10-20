@@ -30,11 +30,7 @@ async fn test_sidecar_plan_lifecycle() {
 		assert!(!has_active_plan());
 		assert!(render_plan_checklist().is_none());
 
-		sidecar_start(
-			"Ship the feature",
-			&[directive("implement"), directive("verify")],
-		)
-		.expect("plan starts");
+		sidecar_start("Ship the feature", &[directive("implement"), directive("verify")]).expect("plan starts");
 		assert!(has_active_plan());
 
 		// Double-start is rejected while a plan is active
@@ -48,11 +44,7 @@ async fn test_sidecar_plan_lifecycle() {
 		let checklist = render_plan_checklist().expect("still active");
 		assert!(!checklist.is_empty());
 
-		sidecar_revise(
-			"scope changed",
-			&[directive("implement v2"), directive("verify v2")],
-		)
-		.expect("revise");
+		sidecar_revise("scope changed", &[directive("implement v2"), directive("verify v2")]).expect("revise");
 		let checklist = render_plan_checklist().expect("revised plan renders");
 		assert!(checklist.contains("v2"), "checklist: {checklist}");
 

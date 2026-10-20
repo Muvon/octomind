@@ -302,20 +302,24 @@ async fn run_with_cleanup(command: Commands, config: Config) -> Result<(), anyho
 
 /// Patch the clap-generated completion script to add dynamic positional
 /// completions, by calling `octomind complete <sub>` at runtime. Applied to
-/// both `run` (agent tags + roles) and `workflow` (tap workflow names).
+/// `run` (agent tags + roles), `workflow` (tap workflow names) and `untap`
+/// (installed tap names).
 fn patch_completion_script(script: &str, shell: Shell) -> String {
 	match shell {
 		Shell::Bash => {
 			let s = patch_bash(script, "run", "TAG");
-			patch_bash(&s, "workflow", "NAME")
+			let s = patch_bash(&s, "workflow", "NAME");
+			patch_bash(&s, "untap", "TAP")
 		}
 		Shell::Zsh => {
 			let s = patch_zsh(script, "run", "tag");
-			patch_zsh(&s, "workflow", "name")
+			let s = patch_zsh(&s, "workflow", "name");
+			patch_zsh(&s, "untap", "name")
 		}
 		Shell::Fish => {
 			let s = patch_fish(script, "run", "Agent tag or role name");
-			patch_fish(&s, "workflow", "Workflow name")
+			let s = patch_fish(&s, "workflow", "Workflow name");
+			patch_fish(&s, "untap", "Installed tap name")
 		}
 		// PowerShell and Elvish: emit as-is (no dynamic patching needed for now)
 		_ => script.to_string(),

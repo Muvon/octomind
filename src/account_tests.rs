@@ -18,6 +18,7 @@
 //! touches a process-global env var is `#[serial]`; async ones also hold
 //! `ENV_LOCK` for the duration of the awaited round trips.
 
+use crate::session::chat::test_support::EnvGuard;
 use super::*;
 use serial_test::serial;
 use std::collections::VecDeque;
@@ -26,27 +27,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::session::chat::test_support::ENV_LOCK;
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop — a failed assert must not leak
-/// a sandboxed data dir or API URL into the next test.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 /// A fresh per-test data dir under the system temp dir.
 fn sandbox(tag: &str) -> PathBuf {

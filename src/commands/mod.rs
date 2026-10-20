@@ -23,6 +23,8 @@ pub mod run;
 pub mod send;
 pub mod server;
 pub mod tap;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod untap;
 pub mod vars;
 pub mod workflow;

@@ -15,32 +15,13 @@
 //! Tests for `octomind untap`: argument parsing plus removal flows against a
 //! sandboxed data dir, seeded through the same `taps::add_tap` the CLI uses.
 
+use crate::commands::test_support::EnvGuard;
 use super::*;
 use clap::Parser;
 use octomind::agent::taps;
 use serial_test::serial;
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 fn sandbox(tag: &str) -> std::path::PathBuf {
 	let dir = std::env::temp_dir().join(format!("octomind-untap-{tag}-{}", std::process::id()));

@@ -15,32 +15,13 @@
 //! Tests for `octomind server`: argument parsing, tag resolution failures,
 //! and a full startup against an ephemeral port with a sandboxed data dir.
 
+use crate::commands::test_support::EnvGuard;
 use super::*;
 use clap::Parser;
 use octomind::Config;
 use serial_test::serial;
 
 const DATA_DIR_KEY: &str = "OCTOMIND_DATA_DIR";
-
-/// Snapshot env vars and restore them on drop.
-struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-impl EnvGuard {
-	fn new(keys: &[&'static str]) -> Self {
-		Self(keys.iter().map(|k| (*k, std::env::var_os(k))).collect())
-	}
-}
-
-impl Drop for EnvGuard {
-	fn drop(&mut self) {
-		for (key, saved) in &self.0 {
-			match saved {
-				Some(v) => std::env::set_var(key, v),
-				None => std::env::remove_var(key),
-			}
-		}
-	}
-}
 
 fn template_config() -> Config {
 	let mut config: Config = toml::from_str(include_str!("../../config-templates/default.toml"))

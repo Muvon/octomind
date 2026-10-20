@@ -123,9 +123,10 @@ fn disk_replay_uses_real_session_writer_and_preserves_tool_pairing() {
 			role: "assistant".into(),
 			content: "working".into(),
 			thinking: Some(json!({"content": "reason"})),
-			tool_calls: Some(
-				json!([{"id": "call-1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"file.rs\"}"}}]),
-			),
+			// What message_handler actually persists: octolib's unified GenericToolCall
+			// JSON. The OpenAI `function` shape here once hid a replay that failed on
+			// every real log (dev, 2026-10-20).
+			tool_calls: Some(json!([{"id": "call-1", "name": "read", "arguments": {"path": "file.rs"}}])),
 			..Default::default()
 		},
 		crate::session::Message {

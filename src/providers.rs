@@ -463,7 +463,7 @@ fn convert_video_to_octolib(video: &crate::session::video::VideoAttachment) -> o
 /// them to the unified GenericToolCall format that octolib requires. Hostile or
 /// buggy model output that doesn't match an expected shape returns a typed error
 /// so the request fails cleanly — it must NOT crash the long-running process.
-fn convert_to_generic_tool_calls(
+pub(crate) fn convert_to_generic_tool_calls(
 	tool_calls: &serde_json::Value,
 ) -> Result<Vec<octolib::llm::GenericToolCall>, octolib::MessageError> {
 	// Check if it's already in unified GenericToolCall format

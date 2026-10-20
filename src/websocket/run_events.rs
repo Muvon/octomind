@@ -183,18 +183,15 @@ pub(crate) fn disk_events(dir: &Path, run_id: &str) -> Result<Vec<RunEvent>> {
 					});
 				}
 				if let Some(calls) = message.tool_calls {
-					for call in calls.as_array().context("assistant tool_calls must be an array")? {
-						let function = call.get("function").context("tool call function missing")?;
-						let arguments = function.get("arguments").context("tool call arguments missing")?;
-						let params = match arguments {
-							Value::String(text) => serde_json::from_str(text).context("invalid tool call arguments")?,
-							Value::Object(_) => arguments.clone(),
-							_ => anyhow::bail!("tool call arguments must be an object or JSON string"),
-						};
+					// Same reader the provider path uses: the log stores octolib's unified
+					// GenericToolCall JSON, older logs the OpenAI `function` shape.
+					for call in crate::providers::convert_to_generic_tool_calls(&calls)
+						.context("stored assistant tool_calls")?
+					{
 						events.push(RunEvent::ToolUse {
-							tool: required_string(function, "name")?,
-							tool_id: required_string(call, "id")?,
-							params,
+							tool: call.name,
+							tool_id: call.id,
+							params: call.arguments,
 						});
 					}
 				}
